@@ -355,7 +355,6 @@ Sandboxed code execution configuration. Defaults live in [`configs/00-defaults/s
 | `no_new_privileges` | bool | `true` | Prevent privilege escalation inside the container |
 | `drop_capabilities` | list[str] | `["ALL"]` | Linux capabilities to drop |
 | `privileged` | bool | `false` | Run the container in privileged mode (dangerous) |
-| `env_allowlist` | list[str] | `[]` | Environment variable names allowed through to the container |
 
 #### `[sandbox.concurrency]`
 

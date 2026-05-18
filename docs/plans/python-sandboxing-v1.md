@@ -815,7 +815,6 @@ class SecurityConfig:
     noNewPrivileges: bool = True
     dropCapabilities: tuple[str, ...] = ("ALL",)
     privileged: bool = False
-    envAllowlist: tuple[str, ...] = ()
 
 @dataclass(slots=True)
 class ConcurrencyConfig:

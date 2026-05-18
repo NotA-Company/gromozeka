@@ -9,19 +9,23 @@ Classes:
         sandbox containers.
 """
 
+import json
 import logging
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Sequence
+from typing import List, Sequence
 
-from lib.sandbox.config import PythonRuntimeConfig
-from lib.sandbox.enums import RuntimeName
-from lib.sandbox.types import ArtifactInfo, ResourceLimits
+from packaging.requirements import Requirement
+
+from lib.sandbox.backends.base import ContainerOutcome
+
+from ...enums import RuntimeName
+from ...errors import InvalidPackageSpec
+from ...types import PackageInfo, ResourceLimits
+from ..base import Runtime
 
 logger = logging.getLogger(__name__)
 
 
-class PythonRuntime:
+class PythonRuntime(Runtime):
     """Python language runtime for sandboxed execution.
 
     Generates Docker commands for running Python code with timeout
@@ -33,13 +37,13 @@ class PythonRuntime:
 
     name: RuntimeName = RuntimeName.PYTHON
 
-    def __init__(self, config: PythonRuntimeConfig) -> None:
-        """Initialise the Python runtime.
+    def getScriptName(self) -> str:
+        """Get the script file name for this runtime.
 
-        Args:
-            config: Python runtime configuration.
+        Returns:
+            The script file name.
         """
-        self._config = config
+        return "main.py"
 
     def runCommand(
         self,
@@ -73,7 +77,7 @@ class PythonRuntime:
             "sh",
             "-c",
             (
-                f"python -u /workspace/.run/{runId}/main.py "
+                f"python -u /workspace/.run/{runId}/{self.getScriptName()} "
                 f"{stdinPart} "
                 f"> /workspace/.run/{runId}/stdout.log "
                 f"2> /workspace/.run/{runId}/stderr.log"
@@ -111,62 +115,64 @@ class PythonRuntime:
         cmd.extend(packages)
         return cmd
 
-    def listCommand(self) -> list[str]:
+    def listCommand(self, stdoutPath: str, stderrPath: str) -> list[str]:
         """Build the Docker command for listing installed packages.
 
         Returns:
             Command list that outputs JSON to stdout.
         """
         return [
-            "python",
-            "-m",
-            "pip",
-            "list",
-            "--format=json",
-            "--path",
-            self._config.libMountPath,
+            "sh",
+            "-c",
+            (
+                f"python -m pip list --format=json --path '{self._config.libMountPath}' "
+                f"> {stdoutPath} "
+                f"2> {stderrPath}"
+            ),
         ]
 
-    def detectArtifacts(
-        self,
-        workspacePath: Path,
-        *,
-        sinceMtime: float,
-    ) -> list[ArtifactInfo]:
-        """Walk the workspace excluding ``.run/``, return files newer than *sinceMtime*.
+    def parseListCommandOutput(self, outcome: ContainerOutcome, stdout: str, stderr: str) -> List[PackageInfo]:
+        """Parse the output from the list command.
 
         Args:
-            workspacePath: The session workspace directory.
-            sinceMtime: Timestamp (float) to compare file mtimes against.
+            outcome: The container execution outcome (unused but part of protocol).
+            stdout: The stdout content from the list command.
+            stderr: The stderr content from the list command.
 
         Returns:
-            List of :class:`ArtifactInfo` for new or modified files.
+            List of installed package information.
         """
-        results: list[ArtifactInfo] = []
-        runDir = workspacePath / ".run"
-
-        for entry in workspacePath.rglob("*"):
-            # Skip .run/ directory and everything under it
-            try:
-                entry.relative_to(runDir)
-                continue  # This is under .run/
-            except ValueError:
-                pass  # Not under .run/
-
-            if entry.is_file():
-                try:
-                    stat = entry.stat()
-                    if stat.st_mtime > sinceMtime:
-                        results.append(
-                            ArtifactInfo(
-                                path=str(entry.relative_to(workspacePath)),
-                                sizeBytes=stat.st_size,
-                                modifiedAt=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
-                                mimeType=None,
-                                sha256=None,
-                            )
-                        )
-                except OSError:
+        ret: List[PackageInfo] = []
+        if not stdout:
+            return ret
+        try:
+            data = json.loads(stdout)
+            if not isinstance(data, list):
+                logger.error(f"Expected JSON-serialized list of objects, but got: {type(data).__name__}({data!r})")
+                return ret
+            for pkgInfo in data:
+                if not isinstance(pkgInfo, dict):
+                    logger.error(f"Each element should be dict, but got {type(pkgInfo).__name__}({pkgInfo!r})")
                     continue
+                ret.append(PackageInfo(name=pkgInfo["name"], version=pkgInfo["version"]))
+        except json.JSONDecodeError as exc:
+            logger.exception(exc)
+            logger.error(f"Can not parse pip list output: {exc}")
+        return ret
 
-        return results
+    async def validatePackageSpec(self, spec: str) -> None:
+        """Validate a package spec for install.
+
+        Rejects specs containing shell metacharacters or starting with '-'.
+
+        Args:
+            spec: The package spec string.
+
+        Raises:
+            InvalidPackageSpec: If the spec is invalid.
+        """
+        # Basic PEP 508 validation (lightweight)
+        try:
+            Requirement(spec)
+        except Exception as exc:
+            raise InvalidPackageSpec(spec=spec, reason=str(exc)) from exc

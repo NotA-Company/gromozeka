@@ -7,6 +7,8 @@ Usage:
     ./venv/bin/python3 scripts/sandbox_bootstrap.py
         [--config-dir configs/00-defaults]
         [--config-dir configs/local]
+        [--dotenv .env]
+        [--packages numpy pandas]
         [--runtime python]
         [--upgrade]
         [--init-storage]
@@ -16,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -23,27 +26,24 @@ _REPO_ROOT = str(Path(__file__).parent.parent.resolve())
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from lib.sandbox.config import PythonRuntimeConfig, SandboxConfig, StorageConfig  # noqa: E402
+from internal.config.manager import ConfigManager  # noqa: E402
+from lib.sandbox.config import SandboxConfig  # noqa: E402
 from lib.sandbox.enums import RuntimeName  # noqa: E402
 from lib.sandbox.manager import SandboxManager  # noqa: E402
 from lib.sandbox.storage import ensureDirectoryLayout  # noqa: E402
 
 
-def buildConfig(rootDir: str) -> SandboxConfig:
-    """Build a minimal SandboxConfig for bootstrapping.
+def buildConfig(configManager: ConfigManager) -> SandboxConfig:
+    """Build a SandboxConfig from the ConfigManager.
 
     Args:
-        rootDir: The storage root directory.
+        configManager: The ConfigManager instance.
 
     Returns:
-        A SandboxConfig with reasonable defaults.
+        A SandboxConfig loaded from configuration.
     """
-    storage = StorageConfig(rootDir=rootDir)
-    pythonRuntime = PythonRuntimeConfig()
-    return SandboxConfig(
-        storage=storage,
-        runtimes={RuntimeName.PYTHON: pythonRuntime},
-    )
+    sandboxConfig = configManager.get("sandbox", {})
+    return SandboxConfig.fromDict(sandboxConfig)
 
 
 def parseArgs() -> argparse.Namespace:
@@ -60,7 +60,18 @@ def parseArgs() -> argparse.Namespace:
         "--config-dir",
         action="append",
         default=[],
-        help="Config directory to load (repeatable). " "If not provided, uses defaults from the library.",
+        help="Config directory to load (repeatable).",
+    )
+    parser.add_argument(
+        "--dotenv",
+        default=".env",
+        help="Path to .env file for environment variables (default: .env).",
+    )
+    parser.add_argument(
+        "--packages",
+        action="append",
+        default=[],
+        help="Packages to install (repeatable; overrides config default).",
     )
     parser.add_argument(
         "--runtime",
@@ -78,11 +89,6 @@ def parseArgs() -> argparse.Namespace:
         action="store_true",
         help="Create the storage directory tree if it does not exist.",
     )
-    parser.add_argument(
-        "--root-dir",
-        default="/var/lib/gromozeka/sandbox",
-        help="Storage root directory (default: /var/lib/gromozeka/sandbox).",
-    )
     return parser.parse_args()
 
 
@@ -94,14 +100,24 @@ async def main() -> int:
     """
     args = parseArgs()
 
-    rootDir = args.root_dir
+    # Convert relative paths to absolute paths
+    if args.config_dir:
+        args.config_dir = [os.path.abspath(dir_path) for dir_path in args.config_dir]
+
+    # Load configuration
+    print("Loading configuration...")
+    configManager = ConfigManager(
+        configPath="config.toml",
+        configDirs=args.config_dir,
+        dotEnvFile=args.dotenv,
+    )
+    config = buildConfig(configManager)
+
     runtime = RuntimeName(args.runtime)
+    rootDir = config.storage.rootDir
 
     print(f"Bootstrapping sandbox runtime: {runtime.value}")
     print(f"Storage root: {rootDir}")
-
-    # Build config
-    config = buildConfig(rootDir)
 
     # Initialize storage if requested
     if args.init_storage:
@@ -109,21 +125,19 @@ async def main() -> int:
         ensureDirectoryLayout(config.storage)
         print("Storage initialized.")
 
-    # Build starter packages list
-    # These are the default starter packages from the integration design doc §3.1
-    starterPackages = [
-        "numpy",
-        "pandas",
-        "matplotlib",
-        "scipy",
-        "sympy",
-        "scikit-learn",
-        "pillow",
-        "requests",
-    ]
+    # Build packages list from CLI args or config
+    if args.packages:
+        packagesToInstall = args.packages
+    else:
+        bootstrapConfig = configManager.get("sandbox.bootstrap", {})
+        packagesToInstall = bootstrapConfig.get("starter_packages", [])
 
-    print(f"\nStarter packages to install: {len(starterPackages)}")
-    for pkg in starterPackages:
+    if not packagesToInstall:
+        print("ERROR: No packages to install. Use --packages or configure sandbox.bootstrap.starter_packages")
+        return 1
+
+    print(f"\nPackages to install: {len(packagesToInstall)}")
+    for pkg in packagesToInstall:
         print(f"  - {pkg}")
 
     # Initialize SandboxManager
@@ -133,20 +147,30 @@ async def main() -> int:
 
     # Prepare runtime (build images if needed)
     print(f"Preparing runtime {runtime.value}...")
+    prepared = False
     try:
-        runtimeInfo = await manager.prepareRuntime(runtime)
-        print(f"  Run image: {runtimeInfo.runImageTag}")
-        print(f"  Install image: {runtimeInfo.installImageTag}")
-        print(f"  Library pool: {runtimeInfo.libPoolPath}")
+        prepared = await manager.prepareRuntime(runtime)
     except Exception as exc:
         print(f"  WARNING: Could not prepare runtime: {exc}")
         print("  Continuing anyway (images may be pre-built)")
 
-    # Install starter packages
-    print(f"\nInstalling {len(starterPackages)} packages...")
+    if prepared:
+        print("  Runtime prepared successfully")
+    else:
+        print("  Runtime already prepared or preparation skipped")
+
+    # Show runtime config info
+    runtimeConfig = config.runtimes.get(runtime)
+    if runtimeConfig is not None:
+        print(f"  Run image: {runtimeConfig.runImageTag}")
+        print(f"  Install image: {runtimeConfig.installImageTag}")
+        print(f"  Library pool: {config.storage.rootDir}/runtimes/{runtime.value}/libs")
+
+    # Install packages
+    print(f"\nInstalling {len(packagesToInstall)} packages...")
     try:
-        result = await manager.installRuntimeLibraries(
-            starterPackages,
+        success = await manager.installRuntimeLibraries(
+            packagesToInstall,
             runtime=runtime,
             upgrade=args.upgrade,
         )
@@ -159,22 +183,10 @@ async def main() -> int:
     print("BOOTSTRAP SUMMARY")
     print("=" * 60)
     print(f"Runtime:          {runtime.value}")
-    print(f"Pool version:     {result.poolVersion}")
-    print(f"Installed:        {len(result.installed)}")
-    print(f"Skipped:          {len(result.skipped)}")
-    print(f"Failed:           {len(result.failed)}")
+    print(f"Packages:         {len(packagesToInstall)}")
+    print(f"Status:           {'SUCCESS' if success else 'FAILED'}")
 
-    if result.skipped:
-        print("\nSkipped packages:")
-        for pkg in result.skipped:
-            print(f"  - {pkg}")
-
-    if result.failed:
-        print("\nFailed packages:")
-        for pkg, reason in result.failed:
-            print(f"  - {pkg}: {reason}")
-
-    if result.failed:
+    if not success:
         return 1
 
     print("\nBootstrap complete.")

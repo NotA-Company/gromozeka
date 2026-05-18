@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence
 
 if TYPE_CHECKING:
@@ -341,3 +342,41 @@ def checkIfProperCommandName(command: str) -> bool:
 def now() -> datetime.datetime:
     """Get current date and time in UTC"""
     return datetime.datetime.now(datetime.timezone.utc)
+
+
+def slottedObjectToDict(
+    data: object, *, includePrivate: bool = False, recursive: bool = False, omitNone: bool = False
+) -> Dict[str, Any]:
+    """Convert model instance to dictionary representation.
+
+    Args:
+        includePrivate: Whether to include private attributes in output
+        recursive: Whether to recursively convert nested models to dicts
+
+    Returns:
+        Dictionary representation of the model instance
+    """
+    ret = {}
+    slots: Iterator[str] = (s for c in data.__class__.__mro__[:-1] for s in c.__slots__)
+
+    if not includePrivate:
+        slots = (attr for attr in slots if not attr.startswith("_"))
+
+    for key in slots:
+        value = getattr(data, key, None)
+
+        if value is not None:
+            if recursive and isinstance(value, object) and hasattr(value.__class__, "__slots__"):
+                ret[key] = slottedObjectToDict(
+                    value,
+                    includePrivate=includePrivate,
+                    recursive=recursive,
+                    omitNone=omitNone,
+                )
+            else:
+                ret[key] = value
+        else:
+            if not omitNone:
+                ret[key] = value
+
+    return ret

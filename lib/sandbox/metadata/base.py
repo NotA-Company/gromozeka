@@ -1,152 +1,34 @@
 """Protocol and dataclasses for sandbox metadata persistence.
 
 Defines the :class:`MetadataStore` protocol that every persistence backend
-(filesystem, database) must implement, along with the record dataclasses
-used to represent sessions, runs, and runtime metadata on disk.
+(filesystem, database) must implement, along with the :class:`SessionInfo`
+dataclass used to represent session metadata on disk.
 
 Classes:
-    SessionRecord: Persisted form of SessionInfo with internal bookkeeping.
-    RunRecord: Persisted form of RunInfo.
-    RuntimeRecord: Persisted form of RuntimeInfo.
-    MetadataStore: Protocol for persistence backends.
+    SessionInfo: Persisted metadata for a sandbox session.
+    MetadataStore: Protocol for persistence backends (filesystem, database).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
-from typing import TYPE_CHECKING, Protocol
+from abc import ABC, abstractmethod
+from collections.abc import Sequence
+from typing import List
 
-from lib.sandbox.enums import RuntimeName
-
-if TYPE_CHECKING:
-    from lib.sandbox.types import RunInfo, SessionInfo
+from ..enums import RuntimeName
+from ..types import PackageInfo, RunInfo, SessionInfo
 
 
-@dataclass(slots=True)
-class SessionRecord:
-    """Persisted form of SessionInfo with internal bookkeeping.
-
-    Attributes:
-        sessionId: Unique identifier for the session.
-        sessionHash: Hash of the session configuration for deduplication.
-        runtime: Runtime environment used by this session.
-        workspacePath: Host-side path to the workspace directory.
-        createdAt: Timestamp when the session was created.
-        updatedAt: Timestamp when the session was last updated.
-        expiresAt: Timestamp when the session will expire.
-        metadata: Opaque key-value pairs controlled by the caller.
-        schemaVersion: Schema version for forward-compatible migrations.
-    """
-
-    sessionId: str
-    sessionHash: str
-    runtime: RuntimeName
-    workspacePath: str
-    createdAt: datetime
-    updatedAt: datetime
-    expiresAt: datetime
-    metadata: dict[str, str]
-    schemaVersion: int = 1
-
-    def toSessionInfo(self) -> SessionInfo:
-        """Convert this record to a SessionInfo.
-
-        Returns:
-            A SessionInfo instance.
-        """
-        from lib.sandbox.types import SessionInfo
-
-        return SessionInfo(
-            sessionId=self.sessionId,
-            runtime=self.runtime,
-            workspacePath=self.workspacePath,
-            createdAt=self.createdAt,
-            updatedAt=self.updatedAt,
-            expiresAt=self.expiresAt,
-            metadata=self.metadata,
-        )
-
-
-@dataclass(slots=True)
-class RunRecord:
-    """Persisted form of RunInfo.
-
-    Attributes:
-        runId: Unique identifier for the run.
-        sessionId: Session that owns this run.
-        runtime: Runtime environment used for this run.
-        startedAt: Timestamp when the run started.
-        finishedAt: Timestamp when the run finished, or None if still running.
-        status: Current status of the run (``"queued"``, ``"running"``,
-            ``"completed"``, ``"failed"``, ``"cancelled"``).
-        exitCode: Process exit code, or None if not yet available.
-        schemaVersion: Schema version for forward-compatible migrations.
-    """
-
-    runId: str
-    sessionId: str
-    runtime: RuntimeName
-    startedAt: datetime
-    finishedAt: datetime | None
-    status: str
-    exitCode: int | None
-    schemaVersion: int = 1
-
-    def toRunInfo(self) -> RunInfo:
-        """Convert this record to a RunInfo.
-
-        Returns:
-            A RunInfo instance.
-        """
-        from typing import Literal, cast
-
-        from lib.sandbox.types import RunInfo
-
-        return RunInfo(
-            runId=self.runId,
-            sessionId=self.sessionId,
-            runtime=self.runtime,
-            startedAt=self.startedAt,
-            finishedAt=self.finishedAt,
-            status=cast(Literal["queued", "running", "completed", "failed", "cancelled"], self.status),
-            exitCode=self.exitCode,
-        )
-
-
-@dataclass(slots=True)
-class RuntimeRecord:
-    """Persisted form of runtime metadata.
-
-    Attributes:
-        runtime: Runtime identifier (use ``runtime`` not ``name`` per the
-            metadata store interface).
-        runImageTag: Docker image tag used for execution.
-        installImageTag: Docker image tag used for library installation.
-        libPoolPath: Host-side path to the pre-installed library pool.
-        libPoolVersion: SHA-256 hash of the library pool contents.
-        packageCount: Number of pre-installed packages in the pool.
-        schemaVersion: Schema version for forward-compatible migrations.
-    """
-
-    runtime: RuntimeName
-    runImageTag: str
-    installImageTag: str
-    libPoolPath: str
-    libPoolVersion: str
-    packageCount: int
-    schemaVersion: int = 1
-
-
-class MetadataStore(Protocol):
+class MetadataStore(ABC):
     """Protocol for persistence backends (filesystem, database).
 
     Every metadata store must implement this interface so that
-    :class:`SandboxManager` can persist and recover session, run, and
-    runtime state without knowing the concrete storage mechanism.
+    :class:`SandboxManager` can persist and recover session and run state
+    without knowing the concrete storage mechanism.
     """
 
-    async def loadSession(self, sessionId: str) -> SessionRecord | None:
+    @abstractmethod
+    async def loadSession(self, sessionId: str) -> SessionInfo | None:
         """Load a session record by ID.
 
         Args:
@@ -157,7 +39,8 @@ class MetadataStore(Protocol):
         """
         ...
 
-    async def saveSession(self, record: SessionRecord) -> None:
+    @abstractmethod
+    async def saveSession(self, record: SessionInfo) -> None:
         """Persist a session record.
 
         Args:
@@ -168,6 +51,7 @@ class MetadataStore(Protocol):
         """
         ...
 
+    @abstractmethod
     async def deleteSession(self, sessionId: str) -> None:
         """Delete a session record by ID.
 
@@ -179,18 +63,17 @@ class MetadataStore(Protocol):
         """
         ...
 
-    async def listSessions(self, *, runtime: RuntimeName | None = None) -> list[SessionRecord]:
-        """List session records, optionally filtered by runtime.
-
-        Args:
-            runtime: If provided, only return sessions for this runtime.
+    @abstractmethod
+    async def listSessions(self) -> list[str]:
+        """List session records.
 
         Returns:
-            List of matching session records.
+            List of session IDs.
         """
         ...
 
-    async def loadRun(self, runId: str) -> RunRecord | None:
+    @abstractmethod
+    async def loadRun(self, runId: str) -> RunInfo | None:
         """Load a run record by ID.
 
         Args:
@@ -201,7 +84,8 @@ class MetadataStore(Protocol):
         """
         ...
 
-    async def saveRun(self, record: RunRecord) -> None:
+    @abstractmethod
+    async def saveRun(self, record: RunInfo) -> None:
         """Persist a run record.
 
         Args:
@@ -212,6 +96,7 @@ class MetadataStore(Protocol):
         """
         ...
 
+    @abstractmethod
     async def deleteRun(self, runId: str) -> None:
         """Delete a run record by ID.
 
@@ -223,7 +108,8 @@ class MetadataStore(Protocol):
         """
         ...
 
-    async def listRunsForSession(self, sessionId: str) -> list[RunRecord]:
+    @abstractmethod
+    async def listRunsForSession(self, sessionId: str) -> List[RunInfo]:
         """List all run records for a given session.
 
         Args:
@@ -234,22 +120,25 @@ class MetadataStore(Protocol):
         """
         ...
 
-    async def loadRuntime(self, runtime: RuntimeName) -> RuntimeRecord | None:
-        """Load a runtime record by name.
+    @abstractmethod
+    async def loadPackagesInfo(self, runtime: RuntimeName) -> List[PackageInfo]:
+        """Load installed package information for a runtime.
 
         Args:
-            runtime: Runtime identifier to look up.
+            runtime: The runtime to load package info for.
 
         Returns:
-            The runtime record, or None if not found.
+            List of PackageInfo for installed packages.
         """
         ...
 
-    async def saveRuntime(self, record: RuntimeRecord) -> None:
-        """Persist a runtime record.
+    @abstractmethod
+    async def savePackagesInfo(self, runtime: RuntimeName, packagesInfo: Sequence[PackageInfo]) -> None:
+        """Save installed package information for a runtime.
 
         Args:
-            record: The runtime record to save.
+            runtime: The runtime to save package info for.
+            packagesInfo: List of PackageInfo to save.
 
         Returns:
             None

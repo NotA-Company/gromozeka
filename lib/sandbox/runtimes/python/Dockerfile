@@ -1,4 +1,4 @@
-FROM python:3.12-alpine
+FROM alpine:3.23
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -6,9 +6,9 @@ ENV PYTHONUNBUFFERED=1 \
     PATH="/home/sandbox/.local/bin:${PATH}" \
     PYTHONPATH="/sandbox/libs"
 
-# coreutils gives us GNU `timeout` semantics (busybox's also works,
+# Install Python 3. Run coreutils gives us GNU `timeout` semantics (busybox's also works,
 # but coreutils is explicit and supports --kill-after consistently)
-RUN apk add --no-cache coreutils \
+RUN apk add --no-cache python3 coreutils sqlite tzdata \
  && adduser -D -u 1000 sandbox \
  && mkdir -p /workspace /sandbox/libs \
  && chown -R sandbox:sandbox /workspace /sandbox

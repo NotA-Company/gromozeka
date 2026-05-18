@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .config import GcConfig
+from .enums import RunStatus
 from .metadata.base import MetadataStore
 
 if TYPE_CHECKING:
@@ -62,20 +63,26 @@ class GarbageCollector:
             Number of sessions removed.
         """
         now = datetime.now(timezone.utc)
-        sessions = await self._metadata.listSessions()
         removed = 0
 
-        for session in sessions:
-            if session.expiresAt < now:
-                logger.info("GC: removing expired session %s (expired %s)", session.sessionId, session.expiresAt)
-                # Delete the entire sessions/<hash>/ parent directory
-                workspacePath = Path(session.workspacePath)
-                parentDir = workspacePath.parent  # sessions/<hash>/
-                if parentDir.exists():
-                    shutil.rmtree(parentDir)
-                # Delete metadata
-                await self._metadata.deleteSession(session.sessionId)
-                removed += 1
+        for sessionId in await self._metadata.listSessions():
+            try:
+                session = await self._metadata.loadSession(sessionId)
+                if session is None:
+                    continue
+                if session.expiresAt < now:
+                    logger.info("GC: removing expired session %s (expired %s)", session.sessionId, session.expiresAt)
+                    # Delete the entire sessions/<hash>/ parent directory
+                    workspacePath = Path(session.workspacePath)
+                    parentDir = workspacePath.parent  # sessions/<hash>/
+                    if parentDir.exists():
+                        shutil.rmtree(parentDir)
+                    # Delete metadata
+                    await self._metadata.deleteSession(session.sessionId)
+                    removed += 1
+            except Exception as exc:
+                logger.debug("GC: error processing session %s: %s", sessionId, exc)
+                continue
 
         return removed
 
@@ -95,8 +102,8 @@ class GarbageCollector:
             return 0
 
         # Build set of known session hashes
-        allSessions = await self._metadata.listSessions()
-        knownHashes = {s.sessionHash for s in allSessions}
+        allSessions = [await self._metadata.loadSession(sessionId) for sessionId in await self._metadata.listSessions()]
+        knownHashes = {s.sessionHash for s in allSessions if s is not None}
 
         cutoff = datetime.now(timezone.utc).timestamp() - (self._config.orphanWorkspaceRetentionMinutes * 60)
 
@@ -133,8 +140,11 @@ class GarbageCollector:
         removed = 0
 
         # We need to iterate all sessions and check their runs
-        sessions = await self._metadata.listSessions()
-        for session in sessions:
+        for sessionId in await self._metadata.listSessions():
+            session = await self._metadata.loadSession(sessionId)
+            if session is None:
+                logger.error(f"Session#{sessionId} has no valid info file")
+                continue
             runs = await self._metadata.listRunsForSession(session.sessionId)
             for run in runs:
                 if run.finishedAt is None:
@@ -166,8 +176,17 @@ class GarbageCollector:
 
         try:
             managed = await self._backend.listManagedContainers()
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to list managed containers: %s", exc, exc_info=True)
             return 0
+
+        # Build set of active run IDs from metadata
+        activeRunIds = set()
+        for sessionId in await self._metadata.listSessions():
+            session = await self._metadata.loadSession(sessionId)
+            if session:
+                runs = await self._metadata.listRunsForSession(session.sessionId)
+                activeRunIds.update(r.runId for r in runs if r.status == RunStatus.RUNNING)
 
         now = datetime.now(timezone.utc)
         cutoff = now.timestamp() - (self._config.orphanContainerRetentionMinutes * 60)
@@ -175,6 +194,10 @@ class GarbageCollector:
 
         for container in managed:
             try:
+                runId = container.labels.get("sandbox.runId")
+                if runId in activeRunIds:
+                    continue  # Skip containers for active runs
+
                 createdAt = container.createdAt
                 if createdAt:
                     try:
@@ -196,7 +219,7 @@ class GarbageCollector:
         """Run all collection passes and return counts.
 
         Returns:
-            Tuple of (removedContainers, removedSessions, removedRuns, removedOrphans, errors).
+            Tuple containing (removedContainers, removedSessions, removedRuns, removedOrphans, errors).
         """
         errors: list[str] = []
 

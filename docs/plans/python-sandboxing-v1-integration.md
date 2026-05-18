@@ -204,7 +204,6 @@ read_only_rootfs    = true
 no_new_privileges   = true
 drop_capabilities   = ["ALL"]
 privileged          = false
-env_allowlist       = []
 
 [sandbox.concurrency]
 max_queued_runs_per_session  = 4

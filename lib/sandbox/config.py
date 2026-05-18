@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Literal
 
 from .enums import BackendName, RuntimeName
+from .errors import ConfigError
 from .types import ResourceLimits
 
 
@@ -53,7 +54,7 @@ class StorageConfig:
             A StorageConfig instance.
         """
         if "root-dir" not in data:
-            raise ValueError("Storage config requires root-dir value")
+            raise ConfigError("Storage config requires root-dir value")
         return cls(
             rootDir=data["root-dir"],
             dirMode=int(data.get("dir-mode", "0700"), 0),
@@ -164,8 +165,6 @@ class SecurityConfig:
         noNewPrivileges: If True, prevent privilege escalation inside the container.
         dropCapabilities: Linux capabilities to drop (typically ``("ALL",)``).
         privileged: If True, run the container in privileged mode (dangerous).
-        envAllowlist: Tuple of environment variable names allowed through to
-            the container.
     """
 
     user: str = "1000:1000"
@@ -173,7 +172,6 @@ class SecurityConfig:
     noNewPrivileges: bool = True
     dropCapabilities: tuple[str, ...] = ("ALL",)
     privileged: bool = False
-    envAllowlist: tuple[str, ...] = ()
 
     @classmethod
     def fromDict(cls, data: dict) -> "SecurityConfig":
@@ -191,7 +189,6 @@ class SecurityConfig:
             noNewPrivileges=data.get("no-new-privileges", True),
             dropCapabilities=tuple(data.get("drop-capabilities", ("ALL",))),
             privileged=data.get("privileged", False),
-            envAllowlist=tuple(data.get("env-allowlist", ())),
         )
 
 
@@ -301,8 +298,8 @@ class InstallContainerConfig:
 
 
 @dataclass(slots=True)
-class PythonRuntimeConfig:
-    """Python-specific runtime configuration.
+class BasicRuntimeConfig:
+    """Basic runtime configuration.
 
     Attributes:
         runImageTag: Docker image tag used for code execution.
@@ -314,40 +311,35 @@ class PythonRuntimeConfig:
         installContainer: Resource limits for the install container.
     """
 
-    runImageTag: str = "gromozeka-sandbox-python:run"
-    installImageTag: str = "gromozeka-sandbox-python:install"
-    runDockerfile: str = "lib/sandbox/runtimes/python/Dockerfile"
-    installDockerfile: str = "lib/sandbox/runtimes/python/Dockerfile.install"
-    libMountPath: str = "/sandbox/libs"
-    env: dict[str, str] = field(
-        default_factory=lambda: {
-            "PYTHONUNBUFFERED": "1",
-            "PYTHONDONTWRITEBYTECODE": "1",
-            "MPLBACKEND": "Agg",
-            "PYTHONPATH": "/sandbox/libs",
-        }
-    )
-    installContainer: InstallContainerConfig = field(default_factory=InstallContainerConfig)
+    runImageTag: str
+    installImageTag: str
+    runDockerfile: str
+    installDockerfile: str
+    libMountPath: str
+    env: dict[str, str]
+    installContainer: InstallContainerConfig
 
     @classmethod
-    def fromDict(cls, data: dict) -> "PythonRuntimeConfig":
-        """Construct a PythonRuntimeConfig from a dict with kebab-case keys.
+    def fromDict(cls, data: dict, runtime: RuntimeName) -> "BasicRuntimeConfig":
+        """Construct a BasicRuntimeConfig from a dict with kebab-case keys.
 
         Args:
             data: Dictionary with kebab-case keys.
+            runtime: The runtime name these settings apply to.
 
         Returns:
-            A PythonRuntimeConfig instance.
+            A BasicRuntimeConfig instance.
         """
-        envRaw = data.get("env", {})
-        env = {str(k): str(v) for k, v in envRaw.items()} if envRaw else {}
+        envRaw = data.get("env")
+        if not isinstance(envRaw, dict):
+            envRaw = {}
         return cls(
-            runImageTag=data.get("run-image-tag", "gromozeka-sandbox-python:run"),
-            installImageTag=data.get("install-image-tag", "gromozeka-sandbox-python:install"),
-            runDockerfile=data.get("run-dockerfile", "lib/sandbox/runtimes/python/Dockerfile"),
-            installDockerfile=data.get("install-dockerfile", "lib/sandbox/runtimes/python/Dockerfile.install"),
-            libMountPath=data.get("lib-mount-path", "/sandbox/libs"),
-            env=env,
+            runImageTag=data.get("run-image-tag", f"gromozeka-sandbox-{runtime}:run"),
+            installImageTag=data.get("install-image-tag", f"gromozeka-sandbox-{runtime}:install"),
+            runDockerfile=data.get("run-dockerfile", f"lib/sandbox/runtimes/{runtime}/Dockerfile"),
+            installDockerfile=data.get("install-dockerfile", f"lib/sandbox/runtimes/{runtime}/Dockerfile.install"),
+            libMountPath=data.get("lib-mount-path", f"/sandbox/libs/{runtime}"),
+            env={str(k): str(v) for k, v in envRaw.items()},
             installContainer=InstallContainerConfig.fromDict(data.get("install-container", {})),
         )
 
@@ -376,7 +368,7 @@ class SandboxConfig:
     security: SecurityConfig = field(default_factory=SecurityConfig)
     concurrency: ConcurrencyConfig = field(default_factory=ConcurrencyConfig)
     gc: GcConfig = field(default_factory=GcConfig)
-    runtimes: dict[RuntimeName, PythonRuntimeConfig | Any] = field(default_factory=dict)
+    runtimes: dict[RuntimeName, BasicRuntimeConfig] = field(default_factory=dict)
 
     @classmethod
     def fromDict(cls, data: Dict[str, Any]) -> "SandboxConfig":
@@ -389,15 +381,12 @@ class SandboxConfig:
             A SandboxConfig instance.
         """
         runtimesRaw = data.get("runtimes", {})
-        runtimes: dict[RuntimeName, PythonRuntimeConfig | Any] = {}
+        runtimes: dict[RuntimeName, BasicRuntimeConfig] = {}
         for name, rtData in runtimesRaw.items():
             rtName = RuntimeName(name)
             if not isinstance(rtData, dict):
                 raise ValueError(f"Runtime config for {rtName} must be a dict, got {type(rtData).__name__}")
-            if rtName == RuntimeName.PYTHON:
-                runtimes[rtName] = PythonRuntimeConfig.fromDict(rtData)
-            else:
-                runtimes[rtName] = rtData
+            runtimes[rtName] = BasicRuntimeConfig.fromDict(rtData, rtName)
         return cls(
             storage=StorageConfig.fromDict(data.get("storage", {})),
             backend=BackendConfig.fromDict(data.get("backend", {})),

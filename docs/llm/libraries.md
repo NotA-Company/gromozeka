@@ -576,7 +576,7 @@ print(result.exitCode)  # 0
 await manager.shutdown()
 ```
 
-See [`sandbox.md`](sandbox.md) for the complete coding patterns, configuration rules, and anti-patterns.
+See [`sandbox.md`](sandbox.md) for the complete coding patterns, configuration rules, and anti-patterns. Note that package installation is administered via admin-only operations; see the security considerations in [`sandbox.md`](sandbox.md#security-considerations) for details on how arbitrary package spec injection is prevented.
 
 ---
 

@@ -22,10 +22,10 @@ from lib.sandbox.config import ConcurrencyConfig, GcConfig, SandboxConfig, Stora
 from lib.sandbox.enums import RuntimeName
 from lib.sandbox.gc import GarbageCollector
 from lib.sandbox.manager import SandboxManager
-from lib.sandbox.metadata.base import RunRecord, SessionRecord
+from lib.sandbox.metadata.base import SessionInfo
 from lib.sandbox.metadata.filesystem import FilesystemMetadataStore
 from lib.sandbox.storage import sessionHash
-from lib.sandbox.types import GcResult
+from lib.sandbox.types import GcResult, RunInfo
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -72,7 +72,7 @@ def _makeSessionRecord(
     *,
     expiresAt: datetime | None = None,
     createdAt: datetime | None = None,
-) -> SessionRecord:
+) -> SessionInfo:
     """Create a SessionRecord for testing.
 
     Args:
@@ -84,17 +84,18 @@ def _makeSessionRecord(
     Returns:
         A SessionRecord instance.
     """
+    from lib.sandbox.types import ResourceLimits
+
     now = datetime.now(timezone.utc)
-    return SessionRecord(
+    return SessionInfo(
         sessionId=sessionId,
         sessionHash=sessionHash(sessionId),
-        runtime=RuntimeName.PYTHON,
         workspacePath=workspacePath,
         createdAt=createdAt or now,
         updatedAt=now,
         expiresAt=expiresAt or (now + timedelta(minutes=30)),
+        limits=ResourceLimits(),  # Add default limits
         metadata={},
-        schemaVersion=1,
     )
 
 
@@ -105,8 +106,8 @@ def _makeRunRecord(
     startedAt: datetime | None = None,
     finishedAt: datetime | None = None,
     status: str = "completed",
-) -> RunRecord:
-    """Create a RunRecord for testing.
+) -> RunInfo:
+    """Create a RunInfo for testing.
 
     Args:
         runId: The run identifier.
@@ -116,18 +117,24 @@ def _makeRunRecord(
         status: Run status string.
 
     Returns:
-        A RunRecord instance.
+        A RunInfo instance.
     """
+    from lib.sandbox.enums import RunStatus
+
     now = datetime.now(timezone.utc)
-    return RunRecord(
+    # Map status string to RunStatus enum
+    statusEnum = RunStatus.COMPLETED if status == "completed" else RunStatus.RUNNING
+    if status == "failed":
+        statusEnum = RunStatus.FAILED
+
+    return RunInfo(
         runId=runId,
         sessionId=sessionId,
         runtime=RuntimeName.PYTHON,
         startedAt=startedAt or (now - timedelta(minutes=2)),
         finishedAt=finishedAt,
-        status=status,
+        status=statusEnum,
         exitCode=0 if finishedAt is not None else None,
-        schemaVersion=1,
     )
 
 

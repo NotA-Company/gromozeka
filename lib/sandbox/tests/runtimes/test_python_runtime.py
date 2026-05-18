@@ -1,25 +1,18 @@
-"""Tests for :class:`PythonRuntime` command generation and artifact detection.
+"""Tests for :class:`PythonRuntime` command generation.
 
 Covers:
 - ``runCommand`` shape with and without stdin redirection.
 - ``runCommand`` timeout value placement.
 - ``installCommand`` base shape, ``--upgrade`` flag, and package ordering.
 - ``listCommand`` exact output.
-- ``detectArtifacts`` mtime filtering, ``.run/`` exclusion, and
-  :class:`ArtifactInfo` field population.
-- ``name`` class attribute.
 """
-
-import os
-import time
-from pathlib import Path
 
 import pytest
 
-from lib.sandbox.config import PythonRuntimeConfig
+from lib.sandbox.config import BasicRuntimeConfig, InstallContainerConfig
 from lib.sandbox.enums import RuntimeName
 from lib.sandbox.runtimes.python.runtime import PythonRuntime
-from lib.sandbox.types import ArtifactInfo, ResourceLimits
+from lib.sandbox.types import ResourceLimits
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -27,13 +20,21 @@ from lib.sandbox.types import ArtifactInfo, ResourceLimits
 
 
 @pytest.fixture
-def config() -> PythonRuntimeConfig:
-    """Return a default :class:`PythonRuntimeConfig`."""
-    return PythonRuntimeConfig()
+def config() -> BasicRuntimeConfig:
+    """Return a default :class:`BasicRuntimeConfig`."""
+    return BasicRuntimeConfig(
+        runImageTag="gromozeka-sandbox-python:run",
+        installImageTag="gromozeka-sandbox-python:install",
+        runDockerfile="lib/sandbox/runtimes/python/Dockerfile",
+        installDockerfile="lib/sandbox/runtimes/python/Dockerfile.install",
+        libMountPath="/sandbox/libs/python",
+        env={},
+        installContainer=InstallContainerConfig(),
+    )
 
 
 @pytest.fixture
-def runtime(config: PythonRuntimeConfig) -> PythonRuntime:
+def runtime(config: BasicRuntimeConfig) -> PythonRuntime:
     """Return a :class:`PythonRuntime` initialised with the default config."""
     return PythonRuntime(config)
 
@@ -115,7 +116,7 @@ class TestInstallCommand:
             "pip",
             "install",
             "--target",
-            "/sandbox/libs",
+            runtime._config.libMountPath,
         ]
         assert "--no-cache-dir" in cmd
         assert "--no-input" in cmd
@@ -149,105 +150,14 @@ class TestListCommand:
 
     def testExactCommand(self, runtime: PythonRuntime) -> None:
         """Verify listCommand returns the exact expected command."""
-        assert runtime.listCommand() == [
-            "python",
-            "-m",
-            "pip",
-            "list",
-            "--format=json",
-            "--path",
-            "/sandbox/libs",
+        stdoutPath = "/tmp/stdout.json"
+        stderrPath = "/tmp/stderr.log"
+        cmd = runtime.listCommand(stdoutPath, stderrPath)
+        assert cmd == [
+            "sh",
+            "-c",
+            f"python -m pip list --format=json --path '{runtime._config.libMountPath}' > {stdoutPath} 2> {stderrPath}",
         ]
-
-
-# ---------------------------------------------------------------------------
-# detectArtifacts
-# ---------------------------------------------------------------------------
-
-
-class TestDetectArtifacts:
-    """Tests for :meth:`PythonRuntime.detectArtifacts`."""
-
-    def testDetectsNewFile(self, runtime: PythonRuntime, tmp_path: Path) -> None:
-        """Files modified after sinceMtime are detected."""
-        # Create a file with a known mtime
-        testFile = tmp_path / "output.txt"
-        testFile.write_text("hello")
-
-        # Use a sinceMtime slightly in the past
-        sinceMtime = time.time() - 10
-        # Ensure the file mtime is newer than sinceMtime
-        os.utime(testFile, (sinceMtime + 100, sinceMtime + 100))
-
-        artifacts = runtime.detectArtifacts(tmp_path, sinceMtime=sinceMtime)
-        assert len(artifacts) == 1
-        assert artifacts[0].path == "output.txt"
-        assert artifacts[0].sizeBytes == 5  # "hello"
-
-    def testExcludesOldFile(self, runtime: PythonRuntime, tmp_path: Path) -> None:
-        """Files modified before sinceMtime are excluded."""
-        testFile = tmp_path / "old.txt"
-        testFile.write_text("old content")
-
-        # Set mtime well in the past
-        oldTime = time.time() - 1000
-        os.utime(testFile, (oldTime, oldTime))
-
-        sinceMtime = time.time()
-        artifacts = runtime.detectArtifacts(tmp_path, sinceMtime=sinceMtime)
-        assert len(artifacts) == 0
-
-    def testExcludesRunDir(self, runtime: PythonRuntime, tmp_path: Path) -> None:
-        """Files under .run/ are excluded from detection."""
-        runDir = tmp_path / ".run"
-        runDir.mkdir()
-        runFile = runDir / "main.py"
-        runFile.write_text("print('hi')")
-
-        # Also create a real artifact
-        realFile = tmp_path / "result.txt"
-        realFile.write_text("data")
-        recentTime = time.time() + 100
-        os.utime(realFile, (recentTime, recentTime))
-
-        artifacts = runtime.detectArtifacts(tmp_path, sinceMtime=0.0)
-        paths = [a.path for a in artifacts]
-        assert ".run/main.py" not in paths
-        assert "result.txt" in paths
-
-    def testSubdirectoryFiles(self, runtime: PythonRuntime, tmp_path: Path) -> None:
-        """Files in subdirectories are detected with correct relative paths."""
-        subDir = tmp_path / "subdir"
-        subDir.mkdir()
-        subFile = subDir / "nested.csv"
-        subFile.write_text("a,b,c")
-
-        recentTime = time.time() + 100
-        os.utime(subFile, (recentTime, recentTime))
-
-        artifacts = runtime.detectArtifacts(tmp_path, sinceMtime=0.0)
-        assert len(artifacts) == 1
-        assert artifacts[0].path == str(Path("subdir") / "nested.csv")
-
-    def testArtifactInfoFields(self, runtime: PythonRuntime, tmp_path: Path) -> None:
-        """Verify all ArtifactInfo fields are populated correctly."""
-        testFile = tmp_path / "data.bin"
-        content = b"\x00\x01\x02\x03"
-        testFile.write_bytes(content)
-
-        recentTime = time.time() + 100
-        os.utime(testFile, (recentTime, recentTime))
-
-        artifacts = runtime.detectArtifacts(tmp_path, sinceMtime=0.0)
-        assert len(artifacts) == 1
-
-        art = artifacts[0]
-        assert isinstance(art, ArtifactInfo)
-        assert art.path == "data.bin"
-        assert art.sizeBytes == len(content)
-        assert art.modifiedAt is not None
-        assert art.mimeType is None
-        assert art.sha256 is None
 
 
 # ---------------------------------------------------------------------------

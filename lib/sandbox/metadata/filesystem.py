@@ -19,18 +19,21 @@ Classes:
 import asyncio
 import json
 import logging
-from dataclasses import fields as dataclassFields
-from datetime import datetime
+from collections.abc import Sequence
 from pathlib import Path
+from typing import List
 
-from lib.sandbox.enums import RuntimeName
-from lib.sandbox.metadata.base import RunRecord, RuntimeRecord, SessionRecord
-from lib.sandbox.storage import atomicWriteJson, sessionHash
+from lib.utils import TTLDict
+
+from ..enums import RuntimeName
+from ..storage import atomicWriteJson, sessionHash
+from ..types import PackageInfo, RunInfo, SessionInfo
+from .base import MetadataStore
 
 logger = logging.getLogger(__name__)
 
 
-class FilesystemMetadataStore:
+class FilesystemMetadataStore(MetadataStore):
     """MetadataStore implementation backed by JSON files on the host filesystem.
 
     Records are stored under ``${rootDir}/meta/`` with the layout::
@@ -58,7 +61,7 @@ class FilesystemMetadataStore:
         self._rootDir = rootDir
         self._tmpDir = tmpDir
         self._metaDir = rootDir / "meta"
-        self._locks: dict[str, asyncio.Lock] = {}
+        self._locks: TTLDict[str, asyncio.Lock] = TTLDict[str, asyncio.Lock]().setDefaultTTL(300).setGCTimeout(600)
 
     # ---- Private helpers ----
 
@@ -108,90 +111,6 @@ class FilesystemMetadataStore:
         """
         return self._metaDir / "runtimes" / f"{runtime.value}.json"
 
-    def _serializeRecord(self, record: SessionRecord | RunRecord | RuntimeRecord) -> dict:
-        """Convert a record dataclass to a JSON-serializable dict.
-
-        Handles datetime → ISO format string and enum → string.
-
-        Args:
-            record: The record to serialize.
-
-        Returns:
-            A JSON-serializable dict.
-        """
-        data: dict = {}
-        for field in dataclassFields(record):
-            fieldValue = getattr(record, field.name)
-            if isinstance(fieldValue, datetime):
-                data[field.name] = fieldValue.isoformat()
-            elif isinstance(fieldValue, RuntimeName):
-                data[field.name] = fieldValue.value
-            else:
-                data[field.name] = fieldValue
-        return data
-
-    def _deserializeSessionRecord(self, data: dict) -> SessionRecord:
-        """Convert a JSON dict back to a SessionRecord.
-
-        Args:
-            data: The raw dict from JSON.
-
-        Returns:
-            A SessionRecord instance.
-        """
-        return SessionRecord(
-            sessionId=data["sessionId"],
-            sessionHash=data["sessionHash"],
-            runtime=RuntimeName(data["runtime"]),
-            workspacePath=data["workspacePath"],
-            createdAt=datetime.fromisoformat(data["createdAt"]),
-            updatedAt=datetime.fromisoformat(data["updatedAt"]),
-            expiresAt=datetime.fromisoformat(data["expiresAt"]),
-            metadata=data.get("metadata", {}),
-            schemaVersion=data.get("schemaVersion", 1),
-        )
-
-    def _deserializeRunRecord(self, data: dict) -> RunRecord:
-        """Convert a JSON dict back to a RunRecord.
-
-        Args:
-            data: The raw dict from JSON.
-
-        Returns:
-            A RunRecord instance.
-        """
-        finishedAt = data.get("finishedAt")
-        exitCode = data.get("exitCode")
-        return RunRecord(
-            runId=data["runId"],
-            sessionId=data["sessionId"],
-            runtime=RuntimeName(data["runtime"]),
-            startedAt=datetime.fromisoformat(data["startedAt"]),
-            finishedAt=datetime.fromisoformat(finishedAt) if finishedAt else None,
-            status=data["status"],
-            exitCode=exitCode if exitCode is not None else None,
-            schemaVersion=data.get("schemaVersion", 1),
-        )
-
-    def _deserializeRuntimeRecord(self, data: dict) -> RuntimeRecord:
-        """Convert a JSON dict back to a RuntimeRecord.
-
-        Args:
-            data: The raw dict from JSON.
-
-        Returns:
-            A RuntimeRecord instance.
-        """
-        return RuntimeRecord(
-            runtime=RuntimeName(data["runtime"]),
-            runImageTag=data["runImageTag"],
-            installImageTag=data["installImageTag"],
-            libPoolPath=data["libPoolPath"],
-            libPoolVersion=data["libPoolVersion"],
-            packageCount=data["packageCount"],
-            schemaVersion=data.get("schemaVersion", 1),
-        )
-
     def _readJsonFile(self, path: Path) -> dict | None:
         """Read and parse a JSON file. Returns None if the file doesn't exist.
 
@@ -211,7 +130,7 @@ class FilesystemMetadataStore:
 
     # ---- Session operations ----
 
-    async def loadSession(self, sessionId: str) -> SessionRecord | None:
+    async def loadSession(self, sessionId: str) -> SessionInfo | None:
         """Load a session record from disk.
 
         Args:
@@ -224,12 +143,12 @@ class FilesystemMetadataStore:
         if data is None:
             return None
         try:
-            return self._deserializeSessionRecord(data)
+            return SessionInfo.fromDict(data)
         except (KeyError, ValueError) as exc:
             logger.warning("Malformed session record for %s: %s", sessionId, exc)
             return None
 
-    async def saveSession(self, record: SessionRecord) -> None:
+    async def saveSession(self, record: SessionInfo) -> None:
         """Atomically save a session record to disk.
 
         Args:
@@ -237,10 +156,9 @@ class FilesystemMetadataStore:
         """
         path = self._sessionPath(record.sessionId)
         async with self._getLock(record.sessionId):
-            await asyncio.to_thread(
-                atomicWriteJson,
+            atomicWriteJson(
                 path,
-                self._serializeRecord(record),
+                record.toDict(),
                 tmpDir=self._tmpDir,
             )
 
@@ -257,34 +175,31 @@ class FilesystemMetadataStore:
             except OSError:
                 logger.warning("Failed to delete session file: %s", path, exc_info=True)
 
-    async def listSessions(self, *, runtime: RuntimeName | None = None) -> list[SessionRecord]:
-        """List all sessions, optionally filtered by runtime.
-
-        Args:
-            runtime: If set, only return sessions for this runtime.
+    async def listSessions(self) -> list[str]:
+        """List all sessions.
 
         Returns:
-            List of session records.
+            List of session IDs.
         """
         sessionsDir = self._metaDir / "sessions"
         if not sessionsDir.exists():
             return []
-        records: list[SessionRecord] = []
+        records: list[str] = []
         for f in sessionsDir.glob("*.json"):
             data = self._readJsonFile(f)
-            if data is None:
+            if not isinstance(data, dict):
+                logger.warning(f"Session file {f} is not valid json file")
                 continue
             try:
-                record = self._deserializeSessionRecord(data)
-                if runtime is None or record.runtime == runtime:
-                    records.append(record)
+                record = SessionInfo.fromDict(data)
+                records.append(record.sessionId)
             except (KeyError, ValueError):
-                logger.warning("Skipping malformed session file: %s", f)
+                logger.warning(f"Skipping malformed session file: {f}")
         return records
 
     # ---- Run operations ----
 
-    async def loadRun(self, runId: str) -> RunRecord | None:
+    async def loadRun(self, runId: str) -> RunInfo | None:
         """Load a run record from disk.
 
         Args:
@@ -297,12 +212,12 @@ class FilesystemMetadataStore:
         if data is None:
             return None
         try:
-            return self._deserializeRunRecord(data)
+            return RunInfo.fromDict(data)
         except (KeyError, ValueError) as exc:
             logger.warning("Malformed run record for %s: %s", runId, exc)
             return None
 
-    async def saveRun(self, record: RunRecord) -> None:
+    async def saveRun(self, record: RunInfo) -> None:
         """Atomically save a run record to disk.
 
         Args:
@@ -310,10 +225,9 @@ class FilesystemMetadataStore:
         """
         path = self._runPath(record.runId)
         async with self._getLock(record.runId):
-            await asyncio.to_thread(
-                atomicWriteJson,
+            atomicWriteJson(
                 path,
-                self._serializeRecord(record),
+                record.toDict(),
                 tmpDir=self._tmpDir,
             )
 
@@ -330,7 +244,7 @@ class FilesystemMetadataStore:
             except OSError:
                 logger.warning("Failed to delete run file: %s", path, exc_info=True)
 
-    async def listRunsForSession(self, sessionId: str) -> list[RunRecord]:
+    async def listRunsForSession(self, sessionId: str) -> list[RunInfo]:
         """List all runs for a given session.
 
         Args:
@@ -342,50 +256,59 @@ class FilesystemMetadataStore:
         runsDir = self._metaDir / "runs"
         if not runsDir.exists():
             return []
-        records: list[RunRecord] = []
+        records: list[RunInfo] = []
         for f in runsDir.glob("*.json"):
             data = self._readJsonFile(f)
             if data is None:
                 continue
             try:
-                record = self._deserializeRunRecord(data)
+                record = RunInfo.fromDict(data)
                 if record.sessionId == sessionId:
                     records.append(record)
             except (KeyError, ValueError):
                 logger.warning("Skipping malformed run file: %s", f)
         return records
 
-    # ---- Runtime operations ----
-
-    async def loadRuntime(self, runtime: RuntimeName) -> RuntimeRecord | None:
-        """Load a runtime record from disk.
+    def _packagesInfoPath(self, runtime: RuntimeName) -> Path:
+        """Get the JSON file path for runtime package information.
 
         Args:
             runtime: The runtime name.
 
         Returns:
-            The RuntimeRecord, or None if not found or malformed.
+            The file path for package info JSON.
         """
-        data = self._readJsonFile(self._runtimePath(runtime))
-        if data is None:
-            return None
-        try:
-            return self._deserializeRuntimeRecord(data)
-        except (KeyError, ValueError) as exc:
-            logger.warning("Malformed runtime record for %s: %s", runtime, exc)
-            return None
+        return self._metaDir / "runtimes" / runtime.value / "packages.json"
 
-    async def saveRuntime(self, record: RuntimeRecord) -> None:
-        """Atomically save a runtime record to disk.
+    async def loadPackagesInfo(self, runtime: RuntimeName) -> List[PackageInfo]:
+        """Load installed package information for a runtime.
 
         Args:
-            record: The runtime record to persist.
+            runtime: The runtime to load package info for.
+
+        Returns:
+            List of PackageInfo for installed packages. Returns empty list if
+            no package information is available or on parse errors.
         """
-        path = self._runtimePath(record.runtime)
-        async with self._getLock(f"runtime_{record.runtime.value}"):
-            await asyncio.to_thread(
-                atomicWriteJson,
-                path,
-                self._serializeRecord(record),
+        data = self._readJsonFile(self._packagesInfoPath(runtime))
+        if data is None:
+            return []
+        try:
+            return [PackageInfo.fromDict(v) for v in data]
+        except (KeyError, ValueError) as exc:
+            logger.warning("Malformed packages record for %s: %s", runtime, exc)
+            return []
+
+    async def savePackagesInfo(self, runtime: RuntimeName, packagesInfo: Sequence[PackageInfo]) -> None:
+        """Save installed package information for a runtime.
+
+        Args:
+            runtime: The runtime to save package info for.
+            packagesInfo: List of PackageInfo to save.
+        """
+        async with self._getLock(runtime.value):
+            atomicWriteJson(
+                self._packagesInfoPath(runtime),
+                [v.toDict() for v in packagesInfo],
                 tmpDir=self._tmpDir,
             )

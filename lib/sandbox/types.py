@@ -9,32 +9,25 @@ Enums are imported from :mod:`lib.sandbox.enums` — they are NOT redefined here
 Classes:
     NetworkPolicy: Controls network access for a sandboxed session.
     ResourceLimits: CPU, memory, and timeout constraints for a sandboxed run.
-    InputFile: A file to inject into the sandbox workspace before execution.
-    SessionInfo: Metadata about an active sandbox session.
-    SessionUsage: Disk and run-count usage metrics for a session.
     ShutdownResult: Result of shutting down the sandbox manager.
     RunInfo: Status metadata for a single code execution run.
     RunResult: Full output of a completed (or failed) code execution run.
-    ArtifactInfo: A file artifact produced or modified during a run.
     FileInfo: Lightweight metadata about a file inside the workspace.
     FileContent: File content read back from the workspace (may be truncated).
     PackageInfo: A resolved package name and version.
-    LibraryInstallResult: Outcome of installing libraries into a runtime pool.
-    LibraryRemoveResult: Outcome of removing libraries from a runtime pool.
-    DropSessionResult: Outcome of dropping (destroying) a sandbox session.
     HealthcheckResult: Aggregated health status of the sandbox subsystem.
     GcResult: Outcome of a garbage-collection sweep.
-    RecoveryResult: Outcome of a crash-recovery pass.
-    RuntimeInfo: Static metadata about a configured runtime.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Dict
 
-from .enums import RuntimeName
+import lib.utils as libUtils
+
+from .enums import RunStatus, RuntimeName
 
 # ============================================================================
 # Input classes (frozen — immutable after construction)
@@ -58,8 +51,10 @@ class ResourceLimits:
 
     Attributes:
         memoryMb: Maximum memory in megabytes.
-        memorySwapMb: Swap allowance in megabytes. ``None`` disables swap
-            entirely; equal to ``memoryMb`` allows full swap.
+        memorySwapMb: Total memory+swap limit in megabytes (Docker MemorySwap).
+            When set, the effective swap available is ``memorySwapMb - memoryMb``.
+            When set to ``None`` (default), swap is disabled by setting
+            MemorySwap equal to memoryMb.
         cpuCount: Fractional CPU core limit.
         pidsLimit: Maximum number of PIDs inside the container.
         timeoutSeconds: Wall-clock timeout before SIGTERM.
@@ -67,11 +62,19 @@ class ResourceLimits:
     """
 
     memoryMb: int = 512
-    memorySwapMb: int | None = 512
+    memorySwapMb: int | None = None
     cpuCount: float = 1.0
     pidsLimit: int = 64
     timeoutSeconds: int = 30
     timeoutGraceSeconds: int = 5
+
+    def toDict(self) -> Dict[str, Any]:
+        """Convert a ResourceLimits to a JSON-serializable dict.
+
+        Returns:
+            A dict representation of the ResourceLimits.
+        """
+        return libUtils.slottedObjectToDict(self, recursive=True)
 
     @classmethod
     def fromDict(cls, data: dict) -> "ResourceLimits":
@@ -83,115 +86,23 @@ class ResourceLimits:
         Returns:
             A ResourceLimits instance.
         """
+        memorySwapMb = None
+        rawSwap = data.get("memory-swap-mb")
+        if rawSwap is not None and rawSwap != "":
+            memorySwapMb = max(32, int(rawSwap))
         return cls(
-            memoryMb=int(data.get("memory-mb", 512)),
-            memorySwapMb=int(data.get("memory-swap-mb", 512)) if data.get("memory-swap-mb") is not None else None,
-            cpuCount=float(data.get("cpu-count", 1.0)),
-            pidsLimit=int(data.get("pids-limit", 64)),
-            timeoutSeconds=int(data.get("timeout-seconds", 30)),
-            timeoutGraceSeconds=int(data.get("timeout-grace-seconds", 5)),
+            memoryMb=max(32, int(data.get("memory-mb", 512))),
+            memorySwapMb=memorySwapMb,
+            cpuCount=max(0.1, float(data.get("cpu-count", 1.0))),
+            pidsLimit=max(8, int(data.get("pids-limit", 64))),
+            timeoutSeconds=max(30, int(data.get("timeout-seconds", 60))),
+            timeoutGraceSeconds=max(0, int(data.get("timeout-grace-seconds", 10))),
         )
-
-
-@dataclass(slots=True, frozen=True)
-class InputFile:
-    """A file to inject into the sandbox workspace before execution.
-
-    Attributes:
-        path: Destination path relative to ``/workspace``.
-        content: File content as bytes or a UTF-8 string.
-        overwrite: If True, replace an existing file at the same path.
-    """
-
-    path: str
-    content: bytes | str
-    overwrite: bool = True
 
 
 # ============================================================================
 # Output classes (mutable — callers may update in-place)
 # ============================================================================
-
-
-@dataclass(slots=True)
-class ArtifactInfo:
-    """A file artifact produced or modified during a run.
-
-    Attributes:
-        path: Path relative to the workspace root.
-        sizeBytes: File size in bytes.
-        modifiedAt: Last-modified timestamp.
-        mimeType: MIME type if known, otherwise None.
-        sha256: Hex-encoded SHA-256 digest if computed, otherwise None.
-    """
-
-    path: str
-    sizeBytes: int
-    modifiedAt: datetime
-    mimeType: str | None
-    sha256: str | None
-
-
-@dataclass(slots=True)
-class SessionInfo:
-    """Metadata about an active sandbox session.
-
-    Attributes:
-        sessionId: Unique identifier for the session.
-        runtime: Runtime environment used by this session.
-        workspacePath: Host-side path to the workspace directory.
-        createdAt: Timestamp when the session was created.
-        updatedAt: Timestamp when the session was last updated.
-        expiresAt: Timestamp when the session will expire.
-        metadata: Opaque key-value pairs controlled by the caller.
-    """
-
-    sessionId: str
-    runtime: RuntimeName
-    workspacePath: str
-    createdAt: datetime
-    updatedAt: datetime
-    expiresAt: datetime
-    metadata: dict[str, str]
-
-    @classmethod
-    def fromRecord(cls, record: Any) -> "SessionInfo":
-        """Construct a SessionInfo from a SessionRecord.
-
-        Args:
-            record: The persisted session record (duck-typed for import cycle avoidance).
-
-        Returns:
-            A SessionInfo instance.
-        """
-        return cls(
-            sessionId=record.sessionId,
-            runtime=record.runtime,
-            workspacePath=record.workspacePath,
-            createdAt=record.createdAt,
-            updatedAt=record.updatedAt,
-            expiresAt=record.expiresAt,
-            metadata=record.metadata,
-        )
-
-
-@dataclass(slots=True)
-class SessionUsage:
-    """Disk and run-count usage metrics for a session.
-
-    Attributes:
-        sessionId: Unique identifier for the session.
-        fileCount: Number of files in the workspace.
-        totalBytes: Total size of all files in bytes.
-        runCount: Number of runs executed in this session.
-        measuredAt: Timestamp when the measurement was taken.
-    """
-
-    sessionId: str
-    fileCount: int
-    totalBytes: int
-    runCount: int
-    measuredAt: datetime
 
 
 @dataclass(slots=True)
@@ -226,27 +137,35 @@ class RunInfo:
     runtime: RuntimeName
     startedAt: datetime
     finishedAt: datetime | None
-    status: Literal["queued", "running", "completed", "failed", "cancelled"]
+    status: RunStatus
     exitCode: int | None
 
+    def toDict(self) -> Dict[str, Any]:
+        """Convert a RunInfo to a JSON-serializable dict.
+
+        Returns:
+            A dict representation of the RunInfo with datetime→isoformat and enum→str conversions.
+        """
+        return libUtils.slottedObjectToDict(self, recursive=True)
+
     @classmethod
-    def fromRecord(cls, record: Any) -> "RunInfo":
-        """Construct a RunInfo from a RunRecord.
+    def fromDict(cls, data: Dict[str, Any]) -> "RunInfo":
+        """Construct a RunInfo from a dict.
 
         Args:
-            record: The persisted run record (duck-typed for import cycle avoidance).
+            data: Dictionary containing run info data with camelCase keys.
 
         Returns:
             A RunInfo instance.
         """
-        return cls(
-            runId=record.runId,
-            sessionId=record.sessionId,
-            runtime=record.runtime,
-            startedAt=record.startedAt,
-            finishedAt=record.finishedAt,
-            status=record.status,
-            exitCode=record.exitCode,
+        return RunInfo(
+            runId=data["runId"],
+            sessionId=data["sessionId"],
+            runtime=RuntimeName(data["runtime"]),
+            startedAt=datetime.fromisoformat(data["startedAt"]),
+            finishedAt=datetime.fromisoformat(data["finishedAt"]) if data.get("finishedAt") is not None else None,
+            status=RunStatus(data["status"]),
+            exitCode=int(data["exitCode"]) if data.get("exitCode") is not None else None,
         )
 
 
@@ -269,10 +188,7 @@ class RunResult:
         startedAt: Timestamp when the run started.
         finishedAt: Timestamp when the run finished.
         elapsedMs: Wall-clock elapsed time in milliseconds.
-        newArtifacts: Files that appeared or changed during the run.
-        limits: Resource limits that were applied to this run.
         networkEnabled: Whether the run actually had network access.
-        libPoolVersion: Version hash of the library pool used.
         error: Error message if the run failed, otherwise None.
     """
 
@@ -290,10 +206,7 @@ class RunResult:
     startedAt: datetime
     finishedAt: datetime
     elapsedMs: int
-    newArtifacts: list[ArtifactInfo]
-    limits: ResourceLimits
     networkEnabled: bool
-    libPoolVersion: str
     error: str | None
 
     def toDict(self) -> dict[str, Any]:
@@ -318,7 +231,6 @@ class RunResult:
             "finishedAt": self.finishedAt.isoformat(),
             "elapsedMs": self.elapsedMs,
             "networkEnabled": self.networkEnabled,
-            "libPoolVersion": self.libPoolVersion,
             "error": self.error,
         }
 
@@ -371,58 +283,28 @@ class PackageInfo:
     name: str
     version: str
 
+    def toDict(self) -> Dict[str, Any]:
+        """Convert a PackageInfo to a JSON-serializable dict.
 
-@dataclass(slots=True)
-class LibraryInstallResult:
-    """Outcome of installing libraries into a runtime pool.
+        Returns:
+            A dict representation of the PackageInfo.
+        """
+        return libUtils.slottedObjectToDict(self, recursive=True)
 
-    Attributes:
-        runtime: Runtime environment that was targeted.
-        installed: Packages that were successfully installed.
-        skipped: Package names that were already present.
-        failed: Packages that failed to install, with reasons.
-        poolVersion: SHA-256 hash of the sorted (name, version) tuples.
-    """
+    @classmethod
+    def fromDict(cls, data: Dict[str, Any]) -> "PackageInfo":
+        """Construct a PackageInfo from a dict.
 
-    runtime: RuntimeName
-    installed: list[PackageInfo]
-    skipped: list[str]
-    failed: list[tuple[str, str]]
-    poolVersion: str
+        Args:
+            data: Dictionary containing package name and version.
 
-
-@dataclass(slots=True)
-class LibraryRemoveResult:
-    """Outcome of removing libraries from a runtime pool.
-
-    Attributes:
-        runtime: Runtime environment that was targeted.
-        removed: Package names that were successfully removed.
-        notFound: Package names that were not present in the pool.
-        poolVersion: SHA-256 hash of the sorted (name, version) tuples.
-    """
-
-    runtime: RuntimeName
-    removed: list[str]
-    notFound: list[str]
-    poolVersion: str
-
-
-@dataclass(slots=True)
-class DropSessionResult:
-    """Outcome of dropping (destroying) a sandbox session.
-
-    Attributes:
-        sessionId: Unique identifier of the session that was dropped.
-        existed: True if the session existed at drop time.
-        runsCancelled: Number of active runs that were cancelled.
-        errors: Non-fatal errors encountered during cleanup.
-    """
-
-    sessionId: str
-    existed: bool
-    runsCancelled: int
-    errors: list[str]
+        Returns:
+            A PackageInfo instance.
+        """
+        return PackageInfo(
+            name=data["name"],
+            version=data.get("version", ""),
+        )
 
 
 @dataclass(slots=True)
@@ -431,16 +313,10 @@ class HealthcheckResult:
 
     Attributes:
         ok: True if all subsystems are healthy.
-        backend: Backend-specific health details.
-        runtimes: Per-runtime health details.
-        storage: Storage subsystem health details.
         errors: List of error messages from unhealthy subsystems.
     """
 
     ok: bool
-    backend: dict[str, Any]
-    runtimes: dict[str, dict[str, Any]]
-    storage: dict[str, Any]
     errors: list[str]
 
 
@@ -464,38 +340,130 @@ class GcResult:
 
 
 @dataclass(slots=True)
-class RecoveryResult:
-    """Outcome of a crash-recovery pass.
+class SessionInfo:
+    """Persisted metadata for a sandbox session.
 
     Attributes:
-        reapedContainers: Number of stale containers reaped.
-        releasedLocks: Number of stale locks released.
-        reconciledPools: Number of library pools reconciled.
-        errors: Non-fatal errors encountered during recovery.
+        sessionId: Unique identifier for the session.
+        sessionHash: Hash of the session ID for stable filesystem naming.
+        workspacePath: Host-side path to the workspace directory.
+        createdAt: Timestamp when the session was created.
+        updatedAt: Timestamp when the session was last updated.
+        expiresAt: Timestamp when the session will expire.
+        limits: Resource limits for runs in this session.
+        metadata: Opaque key-value pairs controlled by the caller.
     """
 
-    reapedContainers: int
-    releasedLocks: int
-    reconciledPools: int
-    errors: list[str]
+    sessionId: str
+    sessionHash: str
+    workspacePath: str
+    createdAt: datetime
+    updatedAt: datetime
+    expiresAt: datetime
+    limits: ResourceLimits
+    metadata: dict[str, str]
+
+    def toDict(self) -> Dict[str, Any]:
+        """Convert the SessionInfo to a dictionary.
+
+        Returns:
+            Dictionary representation of the SessionInfo.
+        """
+        return libUtils.slottedObjectToDict(self, recursive=True)
+
+    @classmethod
+    def fromDict(cls, data: Dict[str, Any]) -> "SessionInfo":
+        """Create a SessionInfo from a dictionary.
+
+        Args:
+            data: Dictionary containing SessionInfo fields with keys
+                matching the field names. Datetime fields must be ISO format.
+
+        Returns:
+            SessionInfo instance reconstructed from the dictionary.
+
+        Raises:
+            KeyError: If required keys are missing from data.
+            ValueError: If datetime values are not valid ISO format.
+        """
+        return SessionInfo(
+            sessionId=data["sessionId"],
+            sessionHash=data["sessionHash"],
+            workspacePath=data["workspacePath"],
+            createdAt=datetime.fromisoformat(data["createdAt"]),
+            updatedAt=datetime.fromisoformat(data["updatedAt"]),
+            expiresAt=datetime.fromisoformat(data["expiresAt"]),
+            limits=ResourceLimits.fromDict(data["limits"]),
+            metadata=data.get("metadata", {}),
+        )
 
 
 @dataclass(slots=True)
-class RuntimeInfo:
-    """Static metadata about a configured runtime.
+class ContainerSpec:
+    """Specification for creating and running a container.
 
     Attributes:
-        name: Runtime identifier.
-        runImageTag: Docker image tag used for execution.
-        installImageTag: Docker image tag used for library installation.
-        libPoolPath: Host-side path to the pre-installed library pool.
-        libPoolVersion: SHA-256 hash of the library pool contents.
-        packageCount: Number of pre-installed packages in the pool.
+        name: Container name.
+        image: Container image tag.
+        command: Command and arguments to execute inside the container.
+        mounts: Volume mount specifications (hostPath, containerPath, mode).
+        env: Environment variables to inject into the container.
+        limits: Resource limits (CPU, memory, timeout) for the container.
+        network: Network mode — ``"none"`` or ``"bridge"``.
+        user: ``uid:gid`` string for the container process.
+        readOnlyRoot: If True, mount the root filesystem as read-only.
+        capDrop: Linux capabilities to drop.
+        securityOpt: Additional Docker security options.
+        labels: Key-value labels attached to the container.
     """
 
-    name: RuntimeName
-    runImageTag: str
-    installImageTag: str
-    libPoolPath: str
-    libPoolVersion: str
-    packageCount: int
+    name: str
+    image: str
+    command: list[str]
+    mounts: list[dict[str, str]]
+    env: dict[str, str]
+    limits: ResourceLimits
+    network: str
+    user: str
+    readOnlyRoot: bool
+    capDrop: list[str]
+    securityOpt: list[str]
+    labels: dict[str, str]
+
+
+@dataclass(slots=True)
+class ContainerOutcome:
+    """Result of running a container to completion.
+
+    Attributes:
+        containerId: Docker container ID.
+        exitCode: Process exit code, or None if not available.
+        signal: Termination signal name, or None.
+        oomKilled: True if the container was killed due to out-of-memory.
+        inspects: Raw Docker inspect output for the container.
+    """
+
+    containerId: str
+    exitCode: int | None
+    signal: str | None
+    oomKilled: bool
+    inspects: dict[str, Any]
+
+
+@dataclass(slots=True)
+class ManagedContainerInfo:
+    """Metadata about a managed container.
+
+    Attributes:
+        containerId: Docker container ID.
+        name: Container name.
+        labels: Key-value labels attached to the container.
+        status: Container status string (e.g. ``"running"``, ``"exited"``).
+        createdAt: ISO-8601 timestamp when the container was created.
+    """
+
+    containerId: str
+    name: str
+    labels: dict[str, str]
+    status: str
+    createdAt: str

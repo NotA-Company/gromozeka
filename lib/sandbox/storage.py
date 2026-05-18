@@ -26,6 +26,7 @@ from .errors import PathOutsideWorkspace
 logger = logging.getLogger(__name__)
 
 # Subdirectory tree relative to rootDir that ensureDirectoryLayout creates.
+# Each string represents a path component relative to the sandbox root directory.
 _DIRECTORY_LAYOUT: list[str] = [
     "runtimes",
     "sessions",
@@ -80,10 +81,12 @@ def resolveWorkspacePath(workspaceRoot: Path, requested: str) -> Path:
     resolvedRoot = workspaceRoot.resolve()
     candidate = (resolvedRoot / requested).resolve()
 
-    # 4. Verify the resolved path still starts with the workspace root.
-    #    Use os.path.commonpath for a robust prefix check that handles
-    #    trailing slashes and .. correctly.
-    if not str(candidate).startswith(str(resolvedRoot) + os.sep) and candidate != resolvedRoot:
+    # 4. Verify the resolved path is still within the workspace root.
+    #    Use pathlib's relative_to which is robust across platforms
+    #    and handles symlinks/trailing slashes correctly.
+    try:
+        candidate.relative_to(resolvedRoot)
+    except ValueError:
         raise PathOutsideWorkspace(f"path {requested!r} resolves outside workspace root {resolvedRoot}")
 
     return candidate
@@ -91,7 +94,7 @@ def resolveWorkspacePath(workspaceRoot: Path, requested: str) -> Path:
 
 def atomicWriteJson(
     path: Path,
-    payload: dict,
+    payload: dict | list,
     *,
     tmpDir: Path,
     fileMode: int = 0o600,

@@ -210,6 +210,22 @@ Not `>=0.21.0` — version ranges are forbidden.
 
 ---
 
+## Security Considerations
+
+### Package installation is admin-only
+
+Package installation in the sandbox is an admin-only operation. End users cannot inject arbitrary package specs (URL-based, editable installs, etc.) — only the bot administrator can install packages via the bootstrap script or admin commands.
+
+The `installRuntimeLibraries` method in `SandboxManager` enforces this security boundary through:
+
+- **Input validation**: The `_validatePackageSpec` method rejects specs containing shell metacharacters (`&`, `|`, `;`, backticks, command substitution) or flag-like specs starting with `-`
+- **Controlled execution**: The `pip install` command is constructed from pre-validated package names; spec-level injection is not possible
+- **Admin-only access**: The method is only called from admin contexts (bootstrap scripts, admin commands) and never exposed to end-user code execution
+
+This design ensures that package installation remains a privileged operation, protecting against supply chain attacks that would otherwise allow end users to introduce arbitrary Python code via malicious package specs.
+
+---
+
 ## Testing
 
 ### Fast tests

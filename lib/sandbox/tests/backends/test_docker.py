@@ -16,9 +16,9 @@ import pytest
 from lib.sandbox.backends.base import ContainerOutcome, ContainerSpec, ManagedContainerInfo
 from lib.sandbox.backends.docker import DockerBackend
 from lib.sandbox.config import DockerBackendConfig
-from lib.sandbox.enums import BackendName, RuntimeName
+from lib.sandbox.enums import BackendName
 from lib.sandbox.errors import DockerUnavailable
-from lib.sandbox.types import HealthcheckResult, ResourceLimits, RuntimeInfo
+from lib.sandbox.types import HealthcheckResult, ResourceLimits
 
 DOCKER_AVAILABLE = os.environ.get("DOCKER_AVAILABLE", "0") == "1"
 
@@ -210,66 +210,6 @@ class TestDockerBackendUnit:
         # When swap is None, MemorySwap equals Memory (disables swap)
         assert config2["HostConfig"]["MemorySwap"] == 512 * 1024 * 1024
 
-    def testResolveDockerfilePath(self) -> None:
-        """Verify _resolveDockerfilePath returns a path for known runtimes.
-
-        Returns:
-            None
-        """
-        backend = DockerBackend(_makeConfig())
-        runtime = RuntimeInfo(
-            name=RuntimeName.PYTHON,
-            runImageTag="gromozeka-sandbox-python:run",
-            installImageTag="gromozeka-sandbox-python:install",
-            libPoolPath="/tmp/pools/python",
-            libPoolVersion="abc123",
-            packageCount=0,
-        )
-        path = backend._resolveDockerfilePath(runtime)
-        assert "python" in path
-        assert path.endswith("Dockerfile")
-
-    def testResolveDockerfilePathRaisesForUnknownRuntime(self) -> None:
-        """Verify _resolveDockerfilePath raises ImageNotFound for unknown runtimes.
-
-        Returns:
-            None
-        """
-        backend = DockerBackend(_makeConfig())
-        # Create a RuntimeInfo with a name that has no Dockerfile mapping.
-        # RuntimeName only has PYTHON, so we test by constructing a RuntimeInfo
-        # and then checking the fallback path. Since we can't create new
-        # RuntimeName values, we test the method's behavior indirectly.
-        runtime = RuntimeInfo(
-            name=RuntimeName.PYTHON,
-            runImageTag="gromozeka-sandbox-python:run",
-            installImageTag="gromozeka-sandbox-python:install",
-            libPoolPath="/tmp/pools/python",
-            libPoolVersion="abc123",
-            packageCount=0,
-        )
-        # Python should NOT raise
-        backend._resolveDockerfilePath(runtime)  # no exception
-
-    def testResolveInstallDockerfilePath(self) -> None:
-        """Verify _resolveInstallDockerfilePath returns the install Dockerfile path.
-
-        Returns:
-            None
-        """
-        backend = DockerBackend(_makeConfig())
-        runtime = RuntimeInfo(
-            name=RuntimeName.PYTHON,
-            runImageTag="gromozeka-sandbox-python:run",
-            installImageTag="gromozeka-sandbox-python:install",
-            libPoolPath="/tmp/pools/python",
-            libPoolVersion="abc123",
-            packageCount=0,
-        )
-        path = backend._resolveInstallDockerfilePath(runtime)
-        assert "python" in path
-        assert path.endswith("Dockerfile.install")
-
 
 # ============================================================================
 # Integration tests (require Docker daemon)
@@ -316,19 +256,18 @@ class TestDockerBackendIntegration:
         result = await backend.healthcheck()
         assert isinstance(result, HealthcheckResult)
         assert result.ok is True
-        assert "version" in result.backend
         await backend.close()
 
     @pytest.mark.asyncio
     async def testHealthcheckBackendInfo(self) -> None:
-        """Verify healthcheck returns Docker version info.
+        """Verify healthcheck returns successful result when Docker is available.
 
         Returns:
             None
         """
         backend = DockerBackend(_makeConfig())
         result = await backend.healthcheck()
-        assert result.backend.get("version") != "unknown"
+        assert result.ok is True
         await backend.close()
 
     @pytest.mark.asyncio

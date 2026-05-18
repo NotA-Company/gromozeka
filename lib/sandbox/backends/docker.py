@@ -19,27 +19,25 @@ from typing import Any
 
 import aiodocker
 
-from lib.sandbox.backends.base import (
-    ContainerOutcome,
-    ContainerSpec,
-    ManagedContainerInfo,
+from ..config import DockerBackendConfig
+from ..enums import BackendName
+from ..errors import DockerUnavailable, ImageBuildFailed
+from ..types import ContainerOutcome, ContainerSpec, HealthcheckResult, ManagedContainerInfo
+from .base import (
+    SandboxBackend,
 )
-from lib.sandbox.config import DockerBackendConfig
-from lib.sandbox.enums import BackendName
-from lib.sandbox.errors import DockerUnavailable, ImageBuildFailed, ImageNotFound
-from lib.sandbox.types import HealthcheckResult, RuntimeInfo
 
 logger = logging.getLogger(__name__)
 
 
-class DockerBackend:
+class DockerBackend(SandboxBackend):
     """SandboxBackend implementation using Docker via aiodocker.
 
     Manages container lifecycle (create, run, inspect, kill, remove)
     and image management for sandbox runtimes.
 
     Attributes:
-        name: Identifies this backend as Docker.
+        name: BackendName.DOCKER, identifies this backend as Docker.
     """
 
     name: BackendName = BackendName.DOCKER
@@ -72,16 +70,26 @@ class DockerBackend:
                 return self._client
             except Exception:
                 # Stale connection — close connector then client
+                connectorClosed = False
+                connectorAttempted = False
+                clientClosed = False
                 try:
                     if hasattr(self._client, "session") and self._client.session is not None:
                         if self._client.session.connector is not None:
+                            connectorAttempted = True
                             await self._client.session.connector.close()  # type: ignore[reportAttributeAccessIssue]
-                except Exception:
-                    pass
+                    connectorClosed = True
+                except Exception as exc:
+                    logger.warning("Failed to close connector during stale client cleanup: %s", exc)
                 try:
                     await self._client.close()
-                except Exception:
-                    pass
+                    clientClosed = True
+                except Exception as exc:
+                    logger.warning("Failed to close client during stale client cleanup: %s", exc)
+                if connectorAttempted and not connectorClosed:
+                    logger.warning("Stale client cleanup: connector close failed")
+                if not clientClosed:
+                    logger.warning("Stale client cleanup: client close failed")
                 self._client = None
 
         url = os.environ.get("DOCKER_HOST", self._config.baseUrl)
@@ -98,41 +106,36 @@ class DockerBackend:
         """Check Docker daemon connectivity.
 
         Returns:
-            HealthcheckResult with ok=True if Docker is reachable,
-            along with daemon version info.
+            HealthcheckResult with ok=True if Docker is reachable, ok=False
+            otherwise. The errors list contains error details if the check fails.
         """
         errors: list[str] = []
-        backendInfo: dict[str, Any] = {}
         try:
             client = await self._getClient()
-            versionInfo = await client.version()
-            backendInfo = {"version": versionInfo.get("Version", "unknown")}
+            _ = await client.version()
         except Exception as exc:
             errors.append(str(exc))
-            backendInfo = {"error": str(exc)}
 
         return HealthcheckResult(
             ok=len(errors) == 0,
-            backend=backendInfo,
-            runtimes={},
-            storage={},
             errors=errors,
         )
 
     async def ensureImage(
         self,
-        runtime: RuntimeInfo,
+        imageTag: str,
+        imageFile: str,
         *,
         rebuild: bool = False,
     ) -> None:
         """Ensure both run and install Docker images are present, building if necessary.
 
         If an image already exists and *rebuild* is False, skips building
-        that image.  Otherwise, builds the image from the Dockerfile
-        referenced by the runtime configuration.
+        that image.  Otherwise, builds the image from the Dockerfile.
 
         Args:
-            runtime: Runtime metadata carrying image tags and Dockerfile paths.
+            imageTag: Docker image tag to ensure exists.
+            imageFile: Path to the Dockerfile for building.
             rebuild: If True, force a rebuild even if the image exists.
 
         Raises:
@@ -141,66 +144,28 @@ class DockerBackend:
         client = await self._getClient()
 
         # Build run image
-        runTag = runtime.runImageTag
-        runNeedsBuild = rebuild
-        if not rebuild:
-            try:
-                await client.images.inspect(runTag)
-                logger.info("Run image %s already exists, skipping build", runTag)
-            except aiodocker.DockerError:
-                logger.info("Run image %s not found, building...", runTag)
-                runNeedsBuild = True
 
-        if runNeedsBuild:
-            runDockerfilePath = self._resolveDockerfilePath(runtime)
-            await self._buildImage(client, runTag, runDockerfilePath)
+        hasImage = any([imageTag in image.get("RepoTags", []) for image in await client.images.list()])
 
-        # Build install image
-        installTag = runtime.installImageTag
-        installNeedsBuild = rebuild
-        if not rebuild:
-            try:
-                await client.images.inspect(installTag)
-                logger.info("Install image %s already exists, skipping build", installTag)
-            except aiodocker.DockerError:
-                logger.info("Install image %s not found, building...", installTag)
-                installNeedsBuild = True
+        if rebuild or not hasImage:
+            logger.info("Building image %s from Dockerfile %s", imageTag, imageFile)
+            await self._buildImage(client, imageTag, imageFile)
 
-        if installNeedsBuild:
-            installDockerfilePath = self._resolveInstallDockerfilePath(runtime)
-            await self._buildImage(client, installTag, installDockerfilePath)
-
-    def _resolveDockerfilePath(self, runtime: RuntimeInfo) -> str:
-        """Resolve the Dockerfile path for a runtime.
+    async def removeImage(
+        self,
+        imageTag: str,
+    ) -> None:
+        """Remove a Docker image by tag.
 
         Args:
-            runtime: The runtime metadata.
-
-        Returns:
-            The filesystem path to the Dockerfile.
-
-        Raises:
-            ImageNotFound: If the runtime is not recognized.
+            imageTag: Docker image tag to remove.
         """
-        if runtime.name.value == "python":
-            return "lib/sandbox/runtimes/python/Dockerfile"
-        raise ImageNotFound(f"No Dockerfile path configured for runtime {runtime.name.value}")
-
-    def _resolveInstallDockerfilePath(self, runtime: RuntimeInfo) -> str:
-        """Resolve the install Dockerfile path for a runtime.
-
-        Args:
-            runtime: The runtime metadata.
-
-        Returns:
-            The filesystem path to the install Dockerfile.
-
-        Raises:
-            ImageNotFound: If the runtime is not recognized.
-        """
-        if runtime.name.value == "python":
-            return "lib/sandbox/runtimes/python/Dockerfile.install"
-        raise ImageNotFound(f"No install Dockerfile path configured for runtime {runtime.name.value}")
+        try:
+            client = await self._getClient()
+            await client.images.delete(imageTag)
+            logger.info("Removed image %s", imageTag)
+        except aiodocker.DockerError as exc:
+            logger.warning("Failed to remove image %s: %s", imageTag, exc)
 
     async def _buildImage(
         self,
@@ -272,6 +237,29 @@ class DockerBackend:
         except asyncio.TimeoutError:
             # Container timed out - kill it
             await self.killContainer(container.id, signal="SIGKILL")
+            # Brief delay for container state to stabilize after SIGKILL
+            await asyncio.sleep(0.1)
+            try:
+                inspectData = await container.show()
+            except Exception as exc:
+                logger.warning("Failed to inspect container after timeout: %s", exc)
+                return ContainerOutcome(
+                    containerId=container.id,
+                    exitCode=-1,
+                    signal="SIGKILL",
+                    oomKilled=False,
+                    inspects={},
+                )
+            exitCode = inspectData.get("State", {}).get("ExitCode")
+            oomKilled = inspectData.get("State", {}).get("OOMKilled", False)
+            signal = "SIGKILL" if exitCode is not None and exitCode != 0 else None
+            return ContainerOutcome(
+                containerId=container.id,
+                exitCode=exitCode,
+                signal=signal,
+                oomKilled=oomKilled,
+                inspects=inspectData,
+            )
 
         inspectData = await container.show()
         exitCode = inspectData.get("State", {}).get("ExitCode")
@@ -289,10 +277,13 @@ class DockerBackend:
         """Convert a ContainerSpec to the aiodocker/Docker API container config dict.
 
         Args:
-            spec: The container specification.
+            spec: The container specification defining image, command, mounts,
+                environment variables, user, limits, and other container settings.
 
         Returns:
-            Dict suitable for ``aiodocker.containers.create``.
+            Dictionary containing the container configuration in the format
+            expected by aiodocker.containers.create with keys like Image, Cmd,
+            Env, HostConfig, Labels, and WorkingDir.
         """
         binds: list[str] = []
         for m in spec.mounts:
@@ -318,7 +309,7 @@ class DockerBackend:
         if spec.limits.memorySwapMb is not None:
             hostConfig["MemorySwap"] = spec.limits.memorySwapMb * 1024 * 1024
         else:
-            # Disable swap entirely when memorySwapMb is None
+            # Set MemorySwap equal to memory to disable swap (Docker MemorySwap == total limit)
             hostConfig["MemorySwap"] = spec.limits.memoryMb * 1024 * 1024
 
         labels = spec.labels.copy()
@@ -388,7 +379,9 @@ class DockerBackend:
         """List all containers with the ``sandbox.managed=true`` label.
 
         Returns:
-            Metadata for each managed container.
+            List of ManagedContainerInfo objects, each containing containerId,
+            name, labels, status, and createdAt timestamp for every container
+            tagged as managed by this sandbox backend.
         """
         client = await self._getClient()
         filters = {"label": ["sandbox.managed=true"]}

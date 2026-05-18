@@ -90,14 +90,21 @@ class UnknownRuntime(RuntimeError):
 class MissingDependenciesError(RuntimeError):
     """Raised when required dependencies are not installed in the sandbox.
 
-    Args:
-        missing: List of package names that could not be found.
-
     Attributes:
-        missing: Package names that were not resolved.
+        missing: List of package names that could not be found.
     """
 
+    missing: list[str]
+
     def __init__(self, missing: list[str]) -> None:
+        """Initialize the missing dependencies error.
+
+        Args:
+            missing: List of package names that could not be found.
+
+        Returns:
+            None
+        """
         self.missing: list[str] = missing
         super().__init__(f"missing dependencies: {', '.join(missing)}")
 
@@ -133,16 +140,24 @@ class LibraryPoolLocked(LibraryError):
 class InvalidPackageSpec(LibraryError):
     """Raised when a package specification is invalid or unsafe.
 
-    Args:
-        spec: The original package specification string.
-        reason: Human-readable explanation of why the spec is invalid.
-
     Attributes:
         spec: The original package specification string.
         reason: Human-readable explanation of why the spec is invalid.
     """
 
+    spec: str
+    reason: str
+
     def __init__(self, spec: str, reason: str) -> None:
+        """Initialize the invalid package spec error.
+
+        Args:
+            spec: The original package specification string.
+            reason: Human-readable explanation of why the spec is invalid.
+
+        Returns:
+            None
+        """
         self.spec: str = spec
         self.reason: str = reason
         super().__init__(f"invalid package spec {spec!r}: {reason}")

@@ -2,8 +2,8 @@
 
 [sandbox.storage]
 root-dir = "/var/lib/gromozeka/sandbox"
-dir-mode = "0700"
-file-mode = "0600"
+dir-mode = "0o700"
+file-mode = "0o600"
 
 [sandbox.backend]
 name = "docker"
@@ -32,7 +32,6 @@ read-only-rootfs = true
 no-new-privileges = true
 drop-capabilities = ["ALL"]
 privileged = false
-env-allowlist = []
 
 [sandbox.concurrency]
 max-queued-runs-per-session = 4

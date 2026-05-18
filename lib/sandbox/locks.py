@@ -50,6 +50,9 @@ class SessionLockRegistry:
 
         Args:
             config: Concurrency configuration.
+
+        Returns:
+            None
         """
         self._config = config
         self._semaphores: dict[str, asyncio.Semaphore] = {}
@@ -66,6 +69,9 @@ class SessionLockRegistry:
         Args:
             sessionId: The session to acquire a slot for.
 
+        Returns:
+            None
+
         Raises:
             SessionBusy: If all semaphore slots are already taken.
             SessionDropped: If the session was force-cancelled.
@@ -73,10 +79,7 @@ class SessionLockRegistry:
         if sessionId in self._cancelled:
             raise SessionDropped(f"Session {sessionId} has been dropped")
 
-        if sessionId not in self._semaphores:
-            self._semaphores[sessionId] = asyncio.Semaphore(self._config.maxQueuedRunsPerSession + 1)
-
-        sem = self._semaphores[sessionId]
+        sem = self._semaphores.setdefault(sessionId, asyncio.Semaphore(self._config.maxQueuedRunsPerSession + 1))
         # Check if queue is full BEFORE blocking.
         # asyncio.Semaphore._value is the internal counter; <= 0 means all slots taken.
         if sem._value <= 0:  # noqa: SLF001
@@ -98,6 +101,9 @@ class SessionLockRegistry:
 
         Args:
             sessionId: The session to release a slot for.
+
+        Returns:
+            None
         """
         if sessionId in self._semaphores:
             try:
@@ -114,6 +120,9 @@ class SessionLockRegistry:
 
         Args:
             sessionId: The session to force-cancel.
+
+        Returns:
+            None
         """
         self._cancelled.add(sessionId)
         if sessionId in self._semaphores:
@@ -145,6 +154,9 @@ class SessionLockRegistry:
 
         Args:
             sessionId: The session to clear.
+
+        Returns:
+            None
         """
         self._cancelled.discard(sessionId)
         # Remove semaphore so a fresh one is created on next use
@@ -188,12 +200,18 @@ class GlobalRunLimiter:
         Args:
             maxConcurrent: Maximum number of concurrent runs globally.
             waitSeconds: Maximum seconds to wait before raising SandboxBusy.
+
+        Returns:
+            None
         """
         self._semaphore = asyncio.Semaphore(maxConcurrent)
         self._waitSeconds: float = waitSeconds
 
     async def acquire(self) -> None:
         """Acquire the global run semaphore.
+
+        Returns:
+            None
 
         Raises:
             SandboxBusy: If the semaphore cannot be acquired within
@@ -208,7 +226,11 @@ class GlobalRunLimiter:
             raise SandboxBusy(f"Global sandbox concurrency cap reached " f"(waited {self._waitSeconds}s)") from None
 
     def release(self) -> None:
-        """Release the global run semaphore."""
+        """Release the global run semaphore.
+
+        Returns:
+            None
+        """
         self._semaphore.release()
 
     @asynccontextmanager
@@ -265,5 +287,29 @@ def releasePoolLock(lockHandle: IO[str]) -> None:
 
     Args:
         lockHandle: The handle returned by :func:`acquirePoolLock`.
+
+    Returns:
+        None
     """
     lockHandle.close()  # closing the file releases the flock
+
+
+@asynccontextmanager
+async def poolLock(runtime: RuntimeName, poolDir: Path):
+    """Async context manager for acquiring and releasing a pool lock.
+
+    Args:
+        runtime: The runtime whose pool to lock.
+        poolDir: The runtime's pool directory.
+
+    Yields:
+        The lock handle to be passed to releasePoolLock.
+
+    Raises:
+        LibraryPoolLocked: If another process holds the lock.
+    """
+    lock = await acquirePoolLock(runtime=runtime, poolDir=poolDir)
+    try:
+        yield lock
+    finally:
+        releasePoolLock(lock)
