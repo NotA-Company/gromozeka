@@ -108,6 +108,8 @@ permission:
     "wc": allow
     "wc *": allow
     "echo *": allow
+    "diff": allow
+    "diff *": allow
   edit: deny
   write: deny
   task: deny
