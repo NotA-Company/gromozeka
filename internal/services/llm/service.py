@@ -11,7 +11,7 @@ import re
 import uuid
 from collections.abc import Awaitable, Callable, MutableSequence, Sequence
 from threading import RLock
-from typing import Any, Dict, List, Optional, TypeAlias, Union
+from typing import Any, Dict, List, Optional, Tuple, TypeAlias, Union
 
 from internal.bot.models.chat_settings import ChatSettingsDict, ChatSettingsKey
 from lib import utils
@@ -198,6 +198,38 @@ class LLMService:
             return True
         return False
 
+    def _tryParseJson(self, data: str) -> Tuple[Any, int]:
+        """Parse JSON string with fallback for common formatting issues.
+
+        Attempts to parse a JSON string using the standard JSON decoder. If that
+        fails, tries to fix a common issue where single quotes are incorrectly
+        escaped (e.g., `\'` inside a double‑quoted string) before retrying.
+        The method returns both the parsed Python object and the index where
+        parsing stopped, matching the signature of `json.JSONDecoder.raw_decode`.
+
+        Args:
+            data: The JSON string to parse.
+
+        Returns:
+            A tuple (parsed_object, end_index) where `parsed_object` is the
+            decoded Python object (dict, list, etc.) and `end_index` is the
+            position in `data` immediately after the parsed JSON.
+
+        Raises:
+            json.JSONDecodeError: If the input cannot be parsed even after the
+                fallback attempt. The original error is re‑raised.
+        """
+        try:
+            return json.JSONDecoder().raw_decode(data)
+        except json.JSONDecodeError:
+            # Try to fix common issues
+            try:
+                return json.JSONDecoder().raw_decode(re.sub(r"(?<=[^\\])\\'", r"'", data))
+            except json.JSONDecodeError as e2:
+                logger.warning(f"JSON fix attempt failed: {e2}")
+            # If nothing helps, just reraise original error
+            raise
+
     def _matchTextForJSONToolCall(self, mlRunResult: ModelRunResult) -> bool:
         """Detect a tool call embedded in a JSON code block within the model response text.
 
@@ -225,7 +257,7 @@ class LLMService:
             logger.debug(f"JSON found: {match.groups()}")
             try:
                 jsonStr = match.group(2)
-                jsonData, endPos = json.JSONDecoder().raw_decode(jsonStr)
+                jsonData, endPos = self._tryParseJson(jsonStr)
                 suffixStr = jsonStr[endPos:] + match.group(3)
                 logger.debug(f"JSON result: {jsonData}")
                 parameters = None
@@ -263,7 +295,7 @@ class LLMService:
         """
         resultText = mlRunResult.resultText.strip()
         match = re.match(
-            r"^(.*?)(?:\[TOOL_CALL_START\]\s*)(\S+?)({.*})\s*(.*?)\s*$",
+            r"^(.*?)\[TOOL_CALL_START\]\s*(\S+?)\s*({.*})\s*(.*?)\s*$",
             resultText,
             re.DOTALL,
         )
@@ -271,7 +303,7 @@ class LLMService:
             try:
                 logger.debug(f"TOOL_CALL_START found: {match.groups()}")
                 toolArgsStr = match.group(3)
-                toolArgs, endPos = json.JSONDecoder().raw_decode(toolArgsStr)
+                toolArgs, endPos = self._tryParseJson(toolArgsStr)
                 suffixStr = toolArgsStr[endPos:].strip() + match.group(4)
                 return self._tryApplyToolCallMatch(
                     mlRunResult,
@@ -282,7 +314,7 @@ class LLMService:
                     suffixStr=suffixStr,
                 )
             except json.JSONDecodeError as e:
-                logger.warning(f"Failed to decode JSON: {e}")
+                logger.warning(f"Failed to decode JSON: {e!r}")
         return False
 
     def _matchTextForToolCallSquareBracketsAndJson(self, mlRunResult: ModelRunResult) -> bool:
@@ -315,7 +347,7 @@ class LLMService:
             try:
                 logger.debug(f"[tool_name]+{{json}} found: {match.groups()}")
                 toolArgsStr = match.group(3)
-                toolArgs, endPos = json.JSONDecoder().raw_decode(toolArgsStr)
+                toolArgs, endPos = self._tryParseJson(toolArgsStr)
                 suffixStr = toolArgsStr[endPos:].strip() + match.group(4)
                 return self._tryApplyToolCallMatch(
                     mlRunResult,

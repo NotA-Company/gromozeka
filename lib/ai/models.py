@@ -413,7 +413,7 @@ class LLMToolCall:
         return utils.jsonDumps(
             {"id": self.id, "name": self.name, "parameters": self.parameters},
         )
-    
+
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({str(self)})"
 
@@ -1032,6 +1032,9 @@ class ModelRunResult:
                     parts.append(f"{name}={value!r}")
 
         return f"{type(self).__name__}({', '.join(parts)})"
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({str(self)})"
 
     def toModelMessage(self) -> ModelMessage:
         """Convert the result to a ModelMessage.
