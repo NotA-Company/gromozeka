@@ -10,12 +10,12 @@
 
 | Module | Purpose |
 |--------|---------|
-| `manager.py` | `SandboxManager` singleton — sessions, runs, files, libraries, GC, health |
+| `manager.py` | `SandboxManager` singleton — sessions, runs, files, libraries, GC, health, recovery |
 | `types.py` | Public dataclasses (`RunResult`, `SessionInfo`, `ResourceLimits`, etc.) |
 | `enums.py` | `RuntimeName`, `BackendName` |
 | `config.py` | Configuration dataclasses (`SandboxConfig`, `StorageConfig`, etc.) |
-| `errors.py` | Exception hierarchy (`SandboxError` → `SessionError`, `RunError`, etc.) |
-| `locks.py` | Per-session FIFO lock registry, global run semaphore, pool flock |
+| `errors.py` | Exception hierarchy (`SandboxError` → `ConfigError`, `BackendError`, `SessionError`, `SandboxRuntimeError`, `RunError`, `LibraryError`, `FileError`, `SandboxBusy`, `SessionBusy`, `SessionDropped`) |
+| `locks.py` | Per-session mutex registry with bounded waiters and force-cancel, global run semaphore, pool flock |
 | `storage.py` | Workspace path resolution, atomic JSON writes, directory layout |
 | `gc.py` | Garbage collector for expired sessions, orphan workspaces, run records |
 | `backends/docker.py` | Docker backend via `aiodocker==0.26.0` |
@@ -24,7 +24,7 @@
 
 ### Bot Integration
 
-SandboxHandler (`internal/bot/common/handlers/sandbox.py`) provides slash commands and LLM tool integration:
+SandboxHandler (`internal/bot/common/handlers/sandbox.py`) provides slash commands, LLM tool integration, and lifecycle management:
 
 **Slash commands:**
 - `/run <code>` (alias: `/python`) — Execute Python code in sandbox
@@ -34,7 +34,12 @@ SandboxHandler (`internal/bot/common/handlers/sandbox.py`) provides slash comman
 - `/sandbox install <packages...>` — Install Python packages (admin only)
 
 **LLM tool:**
-- `run_python(code, packages?)` — Execute Python code in sandbox, returns `{"done": bool, "output": str | None, "exitCode": int | None, "errorMessage": str | None}`
+- `run_python(code, packages?)` — Execute Python code in sandbox, returns `{"done": bool, "stdout": str | None, "stderr": str | None, "exitCode": int | None, "elapsedMs": int | None, "errorMessage": str | None}` (plus optional `"oomKilled": bool`, `"timedOut": bool`, `"signal": str` on success)
+
+**Lifecycle hooks:**
+- `CRON_JOB` — Periodic garbage collection (every 30 minutes)
+- `DO_EXIT` — Graceful shutdown: calls `SandboxManager.shutdown()` to cancel active runs and close the backend connection
+- One-time startup recovery: on first cron tick, calls `SandboxManager.recover()` to reconcile stale containers, orphaned workspaces, and stale `RUNNING` run records (marks them `FAILED`) after an unclean restart
 
 **Chat setting:**
 - `allow-sandbox` — Per-chat gate for sandbox functionality (default: false)
@@ -117,6 +122,8 @@ dirMode = int(data.get("dir-mode", "0700"), 0)  # base 0 auto-detects octal
 ### ResourceLimits — has its own fromDict
 
 `ResourceLimits` is a dataclass in `types.py` (not `config.py`), but has `fromDict()` accepting kebab-case keys. `SandboxConfig.fromDict()` calls `ResourceLimits.fromDict()` — never `ResourceLimits(**data)`.
+
+**Minimum timeout clamping:** `ResourceLimits.fromDict()` clamps `timeout-seconds` to a minimum of 30. If the configured value is below 30, it logs a warning and uses 30 instead. This prevents misconfigured containers that would time out before the inner `timeout` command can send SIGTERM.
 
 ---
 
@@ -227,6 +234,52 @@ aiodocker==0.26.0
 ```
 
 Not `>=0.21.0` — version ranges are forbidden.
+
+### 11. Watchdog timeout must accommodate inner timeout
+
+The Docker backend's `runOneshot` uses a watchdog timeout that accounts for the container's own `timeout` command plus a grace period:
+
+```python
+watchdogTimeout = spec.limits.timeoutSeconds + spec.limits.timeoutGraceSeconds + 1
+```
+
+The container's `timeout` command sends SIGTERM at `timeoutSeconds`, then waits `timeoutGraceSeconds` before SIGKILL. The backend's `asyncio.wait_for` is a fallback — the container's own timeout handles graceful termination and exits with code 124 on timeout. The extra 1-second buffer ensures the backend doesn't kill a container that's still in its grace period.
+
+**NEVER** set the watchdog timeout equal to just `timeoutSeconds` — this would kill containers that are still in their SIGTERM grace period.
+
+### 12. Package metadata must be refreshed after install
+
+`installRuntimeLibraries()` calls `_refreshPackageList()` after a successful install to ensure `listRuntimeLibraries()` reflects the newly installed packages. The refresh is wrapped in a try/except guard — a refresh failure does not cause the install to be reported as failed.
+
+### 13. Bootstrap script config lookup uses nested dict access
+
+`sandbox_bootstrap.py` accesses the `sandbox` config section via `configManager.get("sandbox", {})` and then navigates nested dicts with `.get()`. **NEVER** use dotted-key access like `configManager.get("sandbox.bootstrap.starter-packages")` — ConfigManager returns nested dicts, not flat dotted-key namespaces.
+
+```python
+# CORRECT — nested dict access
+sandboxConfig = configManager.get("sandbox", {})
+bootstrapConfig = sandboxConfig.get("bootstrap", {})
+packages = bootstrapConfig.get("starter-packages", [])
+
+# WRONG — dotted key (ConfigManager does not support this)
+packages = configManager.get("sandbox.bootstrap.starter-packages", [])
+```
+
+### 14. Startup recovery reconciles stale state
+
+`SandboxHandler` performs a one-time `SandboxManager.recover()` call on the first cron tick. This reconciles any stale containers, orphaned workspaces, and outdated metadata left over from a previous crash or unclean shutdown. The `_recoveryDone` flag ensures this runs exactly once per process lifetime.
+
+### 15. timedOut detection checks both exit code and signal
+
+`RunResult.timedOut` is `True` when the container's exit code is 124 (the `timeout` command's exit code) **or** when the termination signal is `SIGKILL`. A SIGKILL without exit code 124 can happen when the container is OOM-killed or force-killed during the grace period. Always check `timedOut` rather than comparing `exitCode == 124` directly.
+
+### 16. runOneshot cleans up orphaned containers on failure
+
+If an exception (including `CancelledError`) occurs during container creation, start, or inspection after `runOneshot` creates the container, the container is automatically removed before the exception is re-raised. This prevents orphaned containers from leaking. On success, the caller is responsible for removing the container via `removeContainer()`.
+
+### 17. readFile output is bounded
+
+`readFile()` accepts a `maxBytes` parameter. When provided, only `maxBytes` bytes are read, and a `truncated` flag is set if the file exceeds the limit. The sandbox handler always passes `maxBytes=3000` when reading stdout/stderr to avoid overwhelming message delivery. Never call `readFile()` without `maxBytes` on untrusted container output.
 
 ---
 

@@ -452,6 +452,12 @@ ls -1 internal/database/migrations/versions/ | grep "migration_" | sort -V | tai
 | `getCaseInsensitiveComparison()` for exact matches | Provider method for case-insensitive exact match | Use for username/email lookups, chat settings keys |
 | Schema requirements for structured output | OpenAI strict mode: all properties required, `additionalProperties: false`, no root `oneOf`/`anyOf` | See tasks.md §4.5 for complete rules and example |
 | `sqlToCustomType()` handles `Optional[T]` | Returns `(True, None)` for `Optional[...]` when data is `None` | Properly unwraps Union types and handles `None` values for nullable columns |
+| `TTLDict.set(key, value, ttl=None)` clears expiration | Passing `ttl=None` explicitly removes any previous expiration, making the entry never expire | If you want to keep the existing TTL when rewriting a value, use `d.set(key, value)` (no `ttl` arg) to apply `defaultTTL`, or pass the desired TTL explicitly |
+| `ConfigManager.get()` returns nested dicts | `configManager.get("sandbox")` returns a nested dict, not a flat namespace | Use `.get("key", {})` to navigate nested sections; **never** use dotted keys like `configManager.get("sandbox.bootstrap.starter-packages")` |
+| Sandbox watchdog timeout includes grace period | `watchdogTimeout = timeoutSeconds + timeoutGraceSeconds + 1` | The backend's `asyncio.wait_for` is a fallback; the container's own `timeout` command handles graceful termination |
+| `SessionLockRegistry` uses `asyncio.Lock` + waiter counter | Each session has an `asyncio.Lock` (mutex) with a `waiters` counter tracking all tasks that entered `acquire()` but haven't exited yet. This replaced the former `asyncio.Semaphore` model to support force-cancel semantics. Do NOT reintroduce `asyncio.Semaphore` for per-session queuing | The `waiters` counter is a best-effort hint; the actual Lock acquisition enforces mutual exclusion. `forceCancel()` sets a `cancelled` flag and releases the Lock so every waiter wakes and raises `SessionDropped` |
+| `ResourceLimits.fromDict()` clamps `timeout-seconds` | Values below 30 are clamped to 30 with a `logger.warning` | Prevents misconfigured containers that would time out before the inner `timeout` command can send SIGTERM |
+| `RunResult.timedOut` checks both exit code and signal | `timedOut` is `True` when `exitCode == 124` **or** `signal == "SIGKILL"` | A SIGKILL without exit code 124 can happen during OOM or force-kill; always check `timedOut` rather than comparing `exitCode` directly |
 
 ---
 
@@ -866,4 +872,4 @@ Before deploying a new schema, you can test it locally:
 ---
 
 *This guide is auto-maintained and should be updated whenever new patterns or gotchas are discovered*
-*Last updated: 2026-05-15*
+*Last updated: 2026-05-20*

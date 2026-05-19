@@ -375,8 +375,7 @@ def slottedObjectToDict(
                 )
             else:
                 ret[key] = value
-        else:
-            if not omitNone:
-                ret[key] = value
+        elif not omitNone:
+            ret[key] = value
 
     return ret

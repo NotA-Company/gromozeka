@@ -28,7 +28,7 @@ class MetadataStore(ABC):
     """
 
     @abstractmethod
-    async def loadSession(self, sessionId: str) -> SessionInfo | None:
+    async def loadSession(self, sessionId: str, *, byHash: bool = False) -> SessionInfo | None:
         """Load a session record by ID.
 
         Args:
@@ -64,11 +64,11 @@ class MetadataStore(ABC):
         ...
 
     @abstractmethod
-    async def listSessions(self) -> list[str]:
-        """List session records.
+    async def loadAllSessions(self) -> List[SessionInfo]:
+        """Load all sessions in a single batch operation.
 
         Returns:
-            List of session IDs.
+            List of all SessionInfo objects.
         """
         ...
 

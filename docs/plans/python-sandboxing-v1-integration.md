@@ -237,7 +237,7 @@ pids_limit      = 256
 
 # Used by scripts/sandbox-bootstrap.py — not by the library itself.
 [sandbox.bootstrap]
-starter_packages = [
+starter-packages = [
     "numpy",
     "pandas",
     "matplotlib",
@@ -405,7 +405,7 @@ Behaviour:
 
 1. Initialise `ConfigManager` with the supplied config dirs.
 2. Build a `SandboxConfig` and `SandboxManager`.
-3. Read `sandbox.bootstrap.starter_packages`.
+3. Read `sandbox.bootstrap.starter-packages`.
 4. Call `manager.prepareRuntime(...)` to ensure images exist.
 5. Call `manager.installRuntimeLibraries(packages, upgrade=upgrade)`.
 6. Print a summary table (installed / skipped / failed) and the resulting `poolVersion`.

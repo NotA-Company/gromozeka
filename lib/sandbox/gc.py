@@ -65,11 +65,8 @@ class GarbageCollector:
         now = datetime.now(timezone.utc)
         removed = 0
 
-        for sessionId in await self._metadata.listSessions():
+        for session in await self._metadata.loadAllSessions():
             try:
-                session = await self._metadata.loadSession(sessionId)
-                if session is None:
-                    continue
                 if session.expiresAt < now:
                     logger.info("GC: removing expired session %s (expired %s)", session.sessionId, session.expiresAt)
                     # Delete the entire sessions/<hash>/ parent directory
@@ -81,7 +78,7 @@ class GarbageCollector:
                     await self._metadata.deleteSession(session.sessionId)
                     removed += 1
             except Exception as exc:
-                logger.debug("GC: error processing session %s: %s", sessionId, exc)
+                logger.debug("GC: error processing session %s: %s", session.sessionId, exc)
                 continue
 
         return removed
@@ -102,8 +99,8 @@ class GarbageCollector:
             return 0
 
         # Build set of known session hashes
-        allSessions = [await self._metadata.loadSession(sessionId) for sessionId in await self._metadata.listSessions()]
-        knownHashes = {s.sessionHash for s in allSessions if s is not None}
+        allSessions = await self._metadata.loadAllSessions()
+        knownHashes = {s.sessionHash for s in allSessions}
 
         cutoff = datetime.now(timezone.utc).timestamp() - (self._config.orphanWorkspaceRetentionMinutes * 60)
 
@@ -140,11 +137,7 @@ class GarbageCollector:
         removed = 0
 
         # We need to iterate all sessions and check their runs
-        for sessionId in await self._metadata.listSessions():
-            session = await self._metadata.loadSession(sessionId)
-            if session is None:
-                logger.error(f"Session#{sessionId} has no valid info file")
-                continue
+        for session in await self._metadata.loadAllSessions():
             runs = await self._metadata.listRunsForSession(session.sessionId)
             for run in runs:
                 if run.finishedAt is None:
@@ -182,11 +175,9 @@ class GarbageCollector:
 
         # Build set of active run IDs from metadata
         activeRunIds = set()
-        for sessionId in await self._metadata.listSessions():
-            session = await self._metadata.loadSession(sessionId)
-            if session:
-                runs = await self._metadata.listRunsForSession(session.sessionId)
-                activeRunIds.update(r.runId for r in runs if r.status == RunStatus.RUNNING)
+        for session in await self._metadata.loadAllSessions():
+            runs = await self._metadata.listRunsForSession(session.sessionId)
+            activeRunIds.update(r.runId for r in runs if r.status == RunStatus.RUNNING)
 
         now = datetime.now(timezone.utc)
         cutoff = now.timestamp() - (self._config.orphanContainerRetentionMinutes * 60)

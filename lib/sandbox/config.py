@@ -57,8 +57,8 @@ class StorageConfig:
             raise ConfigError("Storage config requires root-dir value")
         return cls(
             rootDir=data["root-dir"],
-            dirMode=int(data.get("dir-mode", "0700"), 0),
-            fileMode=int(data.get("file-mode", "0600"), 0),
+            dirMode=int(data.get("dir-mode", "0o700"), 0),
+            fileMode=int(data.get("file-mode", "0o600"), 0),
         )
 
 
@@ -122,19 +122,15 @@ class BackendConfig:
 
 @dataclass(slots=True)
 class SessionDefaults:
-    """Default session parameters (runtime, TTLs, timeouts).
+    """Default session parameters (runtime, TTLs).
 
     Attributes:
         runtime: Default runtime for new sessions.
         idleTtlMinutes: Minutes of inactivity before a session is eligible
             for garbage collection.
-        hardTtlMinutes: Absolute maximum session lifetime in minutes.
-        runTimeoutSeconds: Default wall-clock timeout per code execution run.
     """
 
     idleTtlMinutes: int = 30
-    hardTtlMinutes: int = 120
-    runTimeoutSeconds: int = 30
 
     @classmethod
     def fromDict(cls, data: dict) -> "SessionDefaults":
@@ -148,8 +144,6 @@ class SessionDefaults:
         """
         return cls(
             idleTtlMinutes=int(data.get("idle-ttl-minutes", 30)),
-            hardTtlMinutes=int(data.get("hard-ttl-minutes", 120)),
-            runTimeoutSeconds=int(data.get("run-timeout-seconds", 30)),
         )
 
 

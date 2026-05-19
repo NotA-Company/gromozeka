@@ -84,14 +84,16 @@ class SandboxHandler(BaseBotHandler):
         logger.info("Sandbox config injected successfully")
 
         self.queueService.registerDelayedTaskHandler(function=DelayedTaskFunction.CRON_JOB, handler=self._dtCronJob)
+        self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, self._dtOnExit)
         self._lastCronRun = time.time()
+        self._recoveryDone = False
         # Register LLM tool for sandboxed code execution
         self.llmService.registerTool(
             name="run_python",
             description=(
                 "Execute Python code in a sandboxed environment and return stdout/stderr output. "
                 "Use this to run calculations, process data, or test code snippets. "
-                # "The code runs in an isolated environment with no network access by default. "
+                # Network access is enabled for LLM-triggered code execution.
                 "Environment is preserved between calls."
             ),
             parameters=[
@@ -115,13 +117,40 @@ class SandboxHandler(BaseBotHandler):
         return f"chat#{ensuredMessage.recipient.id}"
 
     async def _dtCronJob(self, task: DelayedTask) -> None:
+
+        # One-time startup recovery on first cron tick
+        if not self._recoveryDone:
+            self._recoveryDone = True
+            try:
+                await SandboxManager.getInstance().recover()
+                logger.info("Sandbox recovery completed")
+            except Exception as e:
+                logger.error("Sandbox recovery failed: %s", e)
+                logger.exception(e)
+
         now = time.time()
-        # Run each 30 minutes
+        # Run GC each 30 minutes
         if now - self._lastCronRun < 1800:
             return
         self._lastCronRun = now
+
         ret = await SandboxManager.getInstance().collectGarbage()
         logger.debug(f"Sandbox GC Result: {ret}")
+
+    async def _dtOnExit(self, task: DelayedTask) -> None:
+        """Handle sandbox cleanup on application shutdown.
+
+        Calls the sandbox manager shutdown to cancel active runs and close
+        the backend connection gracefully.
+
+        Args:
+            task: The delayed task triggering this handler.
+        """
+        logger.info("Sandbox handler shutting down...")
+        try:
+            await SandboxManager.getInstance().shutdown(cleanVolumes=False)
+        except Exception as e:
+            logger.error("Error during sandbox shutdown: %s", e)
 
     async def _llmToolRunSandboxCode(
         self,
@@ -141,7 +170,9 @@ class SandboxHandler(BaseBotHandler):
             **kwargs: Additional keyword arguments (ignored).
 
         Returns:
-            JSON string: ``{"done": bool, "output": str | None, "exitCode": int | None, "errorMessage": str | None}``
+            JSON string: ``{"done": bool, "exitCode": int | None, "elapsedMs": int | None,
+            "stdout": str | None, "stderr": str | None, "errorMessage": str | None}``
+            Optional keys on success: ``"oomKilled": bool``, ``"timedOut": bool``, ``"signal": str``.
         """
         try:
             # Validate context
@@ -193,21 +224,23 @@ class SandboxHandler(BaseBotHandler):
 
             if result.stdoutBytes > 0:
                 try:
-                    stdoutContent = await manager.readFile(sessionId, result.stdoutPath)
+                    stdoutContent = await manager.readFile(sessionId, result.stdoutPath, maxBytes=4096)
                     stdoutText = str(stdoutContent.content)
                     if stdoutText:
                         ret["stdout"] = stdoutText.rstrip()
+                        ret["stdout-len"] = result.stdoutBytes
                 except Exception as e:
                     logger.exception(e)
                     logger.error("Failed to read stdout: %s", e)
 
             if result.stderrBytes > 0:
                 try:
-                    stderrContent = await manager.readFile(sessionId, result.stderrPath)
+                    stderrContent = await manager.readFile(sessionId, result.stderrPath, maxBytes=4096)
                     stderrText = str(stderrContent.content)
 
                     if stderrText:
                         ret["stderr"] = stderrText.rstrip()
+                        ret["stderr-len"] = result.stderrBytes
                 except Exception as e:
                     logger.error("Failed to read stderr: %s", e)
 
@@ -344,7 +377,7 @@ class SandboxHandler(BaseBotHandler):
             if result.stdoutBytes > 0:
                 try:
                     # Read stdout file
-                    stdoutContent = await manager.readFile(sessionId, result.stdoutPath)
+                    stdoutContent = await manager.readFile(sessionId, result.stdoutPath, maxBytes=4096)
                     stdoutText = (
                         stdoutContent.content if isinstance(stdoutContent.content, str) else str(stdoutContent.content)
                     )
@@ -364,7 +397,7 @@ class SandboxHandler(BaseBotHandler):
                 outputLines.append("```")
                 try:
                     # Read stderr file
-                    stderrContent = await manager.readFile(sessionId, result.stderrPath)
+                    stderrContent = await manager.readFile(sessionId, result.stderrPath, maxBytes=4096)
                     stderrText = (
                         stderrContent.content if isinstance(stderrContent.content, str) else str(stderrContent.content)
                     )
@@ -664,8 +697,9 @@ class SandboxHandler(BaseBotHandler):
                 )
                 return
 
-            # Session exists, build status
-            lastRun = runs[-1] if runs else None
+            # Sort by startedAt so the last element is the most recent run
+            runs.sort(key=lambda r: r.startedAt, reverse=True)
+            lastRun = runs[0]
 
             lines = [
                 f"Sandbox session: {sessionId}",

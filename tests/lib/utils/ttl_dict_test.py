@@ -402,6 +402,43 @@ class TestTTLDictExpiration(unittest.TestCase):
         self.assertIn("a", d)
         self.assertNotIn("b", d)
 
+    def test_set_ttl_none_clears_previous_expiration(self) -> None:
+        """Test that rewriting a key with ttl=None clears the old expiration.
+
+        Regression test: previously, set(key, value, ttl=None) left the old
+        expiration timestamp in _expirations, causing the entry to expire at
+        the original deadline despite the caller's intent to make it non-expiring.
+        """
+        d = TTLDict[str, int]()
+        # Set a key with a short TTL
+        d.set("key", 1, ttl=1)
+        # Overwrite the same key with ttl=None — should clear the old expiration
+        d.set("key", 2, ttl=None)
+        # Sleep past the original 1-second deadline
+        time.sleep(2)
+        # Force GC — the entry must still exist because ttl=None cleared the expiration
+        d.gc(force=True)
+        self.assertIn("key", d)
+        self.assertEqual(d["key"], 2)
+
+    def test_set_default_ttl_none_clears_previous_expiration(self) -> None:
+        """Test that rewriting a key with defaultTTL=None clears the old expiration.
+
+        When defaultTTL is None and set() is called without an explicit ttl,
+        actualTTL resolves to None, which should also clear any previous expiration.
+        """
+        d = TTLDict[str, int]()
+        # Set a key with a short TTL
+        d.set("key", 1, ttl=1)
+        # Overwrite using defaultTTL=None (no explicit ttl argument)
+        d.setDefaultTTL(None)
+        d.set("key", 2)
+        # Sleep past the original 1-second deadline
+        time.sleep(2)
+        d.gc(force=True)
+        self.assertIn("key", d)
+        self.assertEqual(d["key"], 2)
+
     def test_mixed_ttl_values(self) -> None:
         """Test mixing different TTL values"""
         d = TTLDict[str, int]()

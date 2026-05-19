@@ -129,11 +129,16 @@ async def main() -> int:
     if args.packages:
         packagesToInstall = args.packages
     else:
-        bootstrapConfig = configManager.get("sandbox.bootstrap", {})
-        packagesToInstall = bootstrapConfig.get("starter_packages", [])
+        sandboxConfig = configManager.get("sandbox", {})
+        if not isinstance(sandboxConfig, dict):
+            sandboxConfig = {}
+        bootstrapConfig = sandboxConfig.get("bootstrap", {})
+        if not isinstance(bootstrapConfig, dict):
+            bootstrapConfig = {}
+        packagesToInstall = bootstrapConfig.get("starter-packages", [])
 
     if not packagesToInstall:
-        print("ERROR: No packages to install. Use --packages or configure sandbox.bootstrap.starter_packages")
+        print("ERROR: No packages to install. Use --packages or configure sandbox.bootstrap.starter-packages")
         return 1
 
     print(f"\nPackages to install: {len(packagesToInstall)}")

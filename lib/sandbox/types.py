@@ -21,6 +21,7 @@ Classes:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict
@@ -28,6 +29,8 @@ from typing import Any, Dict
 import lib.utils as libUtils
 
 from .enums import RunStatus, RuntimeName
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # Input classes (frozen — immutable after construction)
@@ -69,12 +72,25 @@ class ResourceLimits:
     timeoutGraceSeconds: int = 5
 
     def toDict(self) -> Dict[str, Any]:
-        """Convert a ResourceLimits to a JSON-serializable dict.
+        """Convert a ResourceLimits to a JSON-serializable dict with kebab-case keys.
+
+        The output uses kebab-case keys so that ``fromDict(toDict(x))`` round-trips
+        correctly.  This differs from the generic ``slottedObjectToDict`` which
+        produces camelCase keys that ``fromDict`` cannot parse back.
 
         Returns:
-            A dict representation of the ResourceLimits.
+            A dict representation of the ResourceLimits with kebab-case keys.
         """
-        return libUtils.slottedObjectToDict(self, recursive=True)
+        result: Dict[str, Any] = {
+            "memory-mb": self.memoryMb,
+            "cpu-count": self.cpuCount,
+            "pids-limit": self.pidsLimit,
+            "timeout-seconds": self.timeoutSeconds,
+            "timeout-grace-seconds": self.timeoutGraceSeconds,
+        }
+        if self.memorySwapMb is not None:
+            result["memory-swap-mb"] = self.memorySwapMb
+        return result
 
     @classmethod
     def fromDict(cls, data: dict) -> "ResourceLimits":
@@ -90,13 +106,17 @@ class ResourceLimits:
         rawSwap = data.get("memory-swap-mb")
         if rawSwap is not None and rawSwap != "":
             memorySwapMb = max(32, int(rawSwap))
+        timeoutSeconds = int(data.get("timeout-seconds", 30))
+        if timeoutSeconds < 30:
+            logger.warning("Configured timeout-seconds=%d is below minimum 30, using 30", timeoutSeconds)
+            timeoutSeconds = 30
         return cls(
             memoryMb=max(32, int(data.get("memory-mb", 512))),
             memorySwapMb=memorySwapMb,
             cpuCount=max(0.1, float(data.get("cpu-count", 1.0))),
             pidsLimit=max(8, int(data.get("pids-limit", 64))),
-            timeoutSeconds=max(30, int(data.get("timeout-seconds", 60))),
-            timeoutGraceSeconds=max(0, int(data.get("timeout-grace-seconds", 10))),
+            timeoutSeconds=timeoutSeconds,
+            timeoutGraceSeconds=max(0, int(data.get("timeout-grace-seconds", 5))),
         )
 
 
@@ -143,10 +163,21 @@ class RunInfo:
     def toDict(self) -> Dict[str, Any]:
         """Convert a RunInfo to a JSON-serializable dict.
 
+        Produces camelCase keys with enums serialized as strings and datetimes
+        as ISO-8601 strings so that ``fromDict(toDict(x))`` round-trips correctly.
+
         Returns:
             A dict representation of the RunInfo with datetime→isoformat and enum→str conversions.
         """
-        return libUtils.slottedObjectToDict(self, recursive=True)
+        return {
+            "runId": self.runId,
+            "sessionId": self.sessionId,
+            "runtime": self.runtime.value,
+            "startedAt": self.startedAt.isoformat(),
+            "finishedAt": self.finishedAt.isoformat() if self.finishedAt is not None else None,
+            "status": self.status.value,
+            "exitCode": self.exitCode,
+        }
 
     @classmethod
     def fromDict(cls, data: Dict[str, Any]) -> "RunInfo":
@@ -364,12 +395,26 @@ class SessionInfo:
     metadata: dict[str, str]
 
     def toDict(self) -> Dict[str, Any]:
-        """Convert the SessionInfo to a dictionary.
+        """Convert the SessionInfo to a JSON-serializable dictionary.
+
+        Produces camelCase keys for SessionInfo's own fields (matching what
+        ``fromDict`` expects) and delegates to ``ResourceLimits.toDict()`` for
+        the nested ``limits`` field so that the kebab-case keys round-trip
+        correctly.  Datetimes are serialized as ISO-8601 strings.
 
         Returns:
             Dictionary representation of the SessionInfo.
         """
-        return libUtils.slottedObjectToDict(self, recursive=True)
+        return {
+            "sessionId": self.sessionId,
+            "sessionHash": self.sessionHash,
+            "workspacePath": self.workspacePath,
+            "createdAt": self.createdAt.isoformat(),
+            "updatedAt": self.updatedAt.isoformat(),
+            "expiresAt": self.expiresAt.isoformat(),
+            "limits": self.limits.toDict(),
+            "metadata": dict(self.metadata),
+        }
 
     @classmethod
     def fromDict(cls, data: Dict[str, Any]) -> "SessionInfo":

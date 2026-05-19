@@ -15,8 +15,6 @@ image-pull-policy = "if-not-present"
 
 [sandbox.defaults]
 idle-ttl-minutes = 30
-hard-ttl-minutes = 120
-run-timeout-seconds = 30
 
 [sandbox.limits]
 memory-mb = 512
@@ -64,7 +62,7 @@ pids-limit = 256
 
 # Used by scripts/sandbox-bootstrap.py — not by the library itself.
 [sandbox.bootstrap]
-starter_packages = [
+starter-packages = [
     "numpy",
     "pandas",
     "matplotlib",

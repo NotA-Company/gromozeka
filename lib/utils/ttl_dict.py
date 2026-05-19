@@ -172,6 +172,9 @@ class TTLDict(Dict[K, V]):
             super().__setitem__(key, value)
             if actualTTL is not None:
                 self._expirations[key] = time.time() + actualTTL
+            else:
+                # Explicit ttl=None: clear any previous expiration so the entry never expires
+                self._expirations.pop(key, None)
 
             # Run GC after setting
             self.gc(force=False)
@@ -304,9 +307,9 @@ class TTLDict(Dict[K, V]):
 
             # For new keys, set expiration to None (use default TTL)
             if self.defaultTTL is not None:
-                extireAt = time.time() + self.defaultTTL
+                expireAt = time.time() + self.defaultTTL
                 for key in newKeys:
-                    self._expirations[key] = extireAt
+                    self._expirations[key] = expireAt
 
             self.gc(force=False)
 

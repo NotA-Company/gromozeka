@@ -1,8 +1,9 @@
 """Tests for sandbox lock registry and concurrency limiter (lib.sandbox.locks).
 
 Covers:
-- SessionLockRegistry: concurrent acquire/release, overflow, force-cancel,
-  lazy creation, session independence, clearCancelled recovery.
+- SessionLockRegistry: serial acquire/release, overflow, force-cancel,
+  force-cancel wakes blocked waiters, lazy creation, session independence,
+  clearCancelled recovery.
 - GlobalRunLimiter: acquire/release, SandboxBusy on timeout, release frees slot.
 - acquirePoolLock / releasePoolLock: basic acquisition, LibraryPoolLocked on
   contention.
@@ -51,18 +52,18 @@ def registry(concurrencyConfig: ConcurrencyConfig) -> SessionLockRegistry:
 # ============================================================================
 
 
-async def testSessionLockRegistryConcurrentAcquireRelease() -> None:
-    """Verify that multiple workers can acquire and release slots concurrently.
+async def testSessionLockRegistrySerialAcquireRelease() -> None:
+    """Verify that workers execute serially (one active holder at a time).
 
-    With maxQueuedRunsPerSession=10 (11 slots), 5 workers should all complete.
+    With maxQueuedRunsPerSession=3, 3 workers should all complete serially.
 
     Returns:
         None
     """
-    config = ConcurrencyConfig(maxQueuedRunsPerSession=10, maxConcurrentRunsGlobal=10, globalQueueWaitSeconds=60)
+    config = ConcurrencyConfig(maxQueuedRunsPerSession=3, maxConcurrentRunsGlobal=10, globalQueueWaitSeconds=60)
     registry = SessionLockRegistry(config)
     completionCount = 0
-    sessionId = "session-concurrent"
+    sessionId = "session-serial"
 
     async def worker() -> None:
         nonlocal completionCount
@@ -73,10 +74,10 @@ async def testSessionLockRegistryConcurrentAcquireRelease() -> None:
         finally:
             registry.release(sessionId)
 
-    tasks = [asyncio.create_task(worker()) for _ in range(5)]
+    tasks = [asyncio.create_task(worker()) for _ in range(3)]
     await asyncio.gather(*tasks)
 
-    assert completionCount == 5
+    assert completionCount == 3
 
 
 # ============================================================================
@@ -87,8 +88,9 @@ async def testSessionLockRegistryConcurrentAcquireRelease() -> None:
 async def testSessionLockRegistryOverflow(concurrencyConfig: ConcurrencyConfig) -> None:
     """Verify that exceeding maxQueuedRunsPerSession raises SessionBusy.
 
-    With maxQueuedRunsPerSession=2, the semaphore has 3 slots.  Fill all 3
-    slots, then verify the 4th acquire raises SessionBusy.
+    With maxQueuedRunsPerSession=2, the system supports 1 active + 1 queued
+    (2 total in-flight).  Start 1 active holder + 1 queued waiter, then
+    verify the 3rd acquire raises SessionBusy.
 
     Args:
         concurrencyConfig: Concurrency config with maxQueuedRunsPerSession=2.
@@ -98,20 +100,48 @@ async def testSessionLockRegistryOverflow(concurrencyConfig: ConcurrencyConfig) 
     """
     registry = SessionLockRegistry(concurrencyConfig)
     sessionId = "session-overflow"
+    overflowDetected = False
 
-    # Fill all 3 slots (maxQueuedRunsPerSession=2, so 2+1=3)
-    await registry.acquire(sessionId)
-    await registry.acquire(sessionId)
-    await registry.acquire(sessionId)
-
-    # The 4th should raise SessionBusy
-    with pytest.raises(SessionBusy):
+    async def holder() -> None:
+        """Hold the lock to block queue waiters."""
         await registry.acquire(sessionId)
+        try:
+            await asyncio.sleep(0.2)
+        finally:
+            registry.release(sessionId)
 
-    # Clean up
-    registry.release(sessionId)
-    registry.release(sessionId)
-    registry.release(sessionId)
+    async def queuedWorker() -> None:
+        """Queue a waiter that will block behind the holder."""
+        await registry.acquire(sessionId)
+        try:
+            pass
+        finally:
+            registry.release(sessionId)
+
+    async def overflowWorker() -> None:
+        """This should get SessionBusy because queue is full."""
+        nonlocal overflowDetected
+        try:
+            await registry.acquire(sessionId)
+        except SessionBusy:
+            overflowDetected = True
+
+    # Start holder first so it takes the lock
+    holderTask = asyncio.create_task(holder())
+    await asyncio.sleep(0.01)  # Let holder acquire
+
+    # Queue 1 waiter (fills the queue: 1 holder + 1 queued = 2 total)
+    queuedTask = asyncio.create_task(queuedWorker())
+    await asyncio.sleep(0.01)  # Let it queue up
+
+    # 3rd attempt should raise SessionBusy
+    overflowTask = asyncio.create_task(overflowWorker())
+    await asyncio.sleep(0.01)
+    await holderTask  # Let holder finish, releasing the waiter
+    await queuedTask
+    await overflowTask
+
+    assert overflowDetected
 
 
 # ============================================================================
@@ -149,32 +179,50 @@ async def testSessionLockRegistryForceCancel(registry: SessionLockRegistry) -> N
 # ============================================================================
 
 
-async def testSessionLockRegistryForceCancelWakesMultipleWaiters() -> None:
-    """Verify that forceCancel causes all subsequent callers to receive SessionDropped.
+async def testSessionLockRegistryForceCancelWakesBlockedWaiters() -> None:
+    """Verify that forceCancel wakes waiters blocked on the lock.
 
-    After forceCancel, any new acquire() calls should immediately raise
-    SessionDropped, regardless of how many callers attempt to acquire.
+    Holder takes the lock, waiters queue up.  forceCancel should cause ALL
+    queued waiters to receive SessionDropped.
 
     Returns:
         None
     """
     config = ConcurrencyConfig(maxQueuedRunsPerSession=10, maxConcurrentRunsGlobal=10, globalQueueWaitSeconds=60)
     registry = SessionLockRegistry(config)
-    sessionId = "session-multi-cancel"
+    sessionId = "session-wake"
+    cancelledCount = 0
 
-    # Acquire a slot
-    await registry.acquire(sessionId)
+    async def holder() -> None:
+        await registry.acquire(sessionId)
+        try:
+            await asyncio.sleep(0.2)  # Hold lock while waiters queue
+        finally:
+            registry.release(sessionId)
 
-    # Force-cancel the session
+    async def queuedWorker() -> None:
+        nonlocal cancelledCount
+        try:
+            await registry.acquire(sessionId)
+        except SessionDropped:
+            cancelledCount += 1
+
+    # Start holder
+    holderTask = asyncio.create_task(holder())
+    await asyncio.sleep(0.01)
+
+    # Queue 3 waiters
+    waiterTasks = [asyncio.create_task(queuedWorker()) for _ in range(3)]
+    await asyncio.sleep(0.01)
+
+    # Force cancel while waiters are blocked
     registry.forceCancel(sessionId)
 
-    # Multiple callers should all receive SessionDropped
-    for _ in range(3):
-        with pytest.raises(SessionDropped):
-            await registry.acquire(sessionId)
+    # Wait for all tasks
+    await holderTask
+    await asyncio.gather(*waiterTasks)
 
-    # Clean up
-    registry.release(sessionId)
+    assert cancelledCount == 3, f"Expected 3 cancelled waiters, got {cancelledCount}"
 
 
 # ============================================================================
@@ -201,9 +249,9 @@ async def testSessionLockRegistryDifferentSessionsIndependent(registry: SessionL
     await registry.acquire(session1)
     await registry.acquire(session2)
 
-    # Both should have semaphores without issue
-    assert session1 in registry._semaphores
-    assert session2 in registry._semaphores
+    # Both should have states without issue
+    assert session1 in registry._states
+    assert session2 in registry._states
 
     registry.release(session1)
     registry.release(session2)
@@ -225,12 +273,12 @@ async def testSessionLockRegistryLazyCreation(registry: SessionLockRegistry) -> 
     """
     sessionId = "session-lazy"
 
-    # No semaphore should exist yet
-    assert sessionId not in registry._semaphores
+    # No state should exist yet
+    assert sessionId not in registry._states
 
-    # After acquire, a semaphore should exist
+    # After acquire, a state should exist
     await registry.acquire(sessionId)
-    assert sessionId in registry._semaphores
+    assert sessionId in registry._states
 
     registry.release(sessionId)
 
@@ -258,8 +306,8 @@ async def testSessionLockRegistryIsCancelledAndClear(registry: SessionLockRegist
 
     registry.clearCancelled(sessionId)
     assert not registry.isCancelled(sessionId)
-    # After clearCancelled, the semaphore should also be removed
-    assert sessionId not in registry._semaphores
+    # After clearCancelled, the state should also be removed
+    assert sessionId not in registry._states
 
 
 # ============================================================================
@@ -512,3 +560,64 @@ async def testAcquirePoolLockCreatesDirectory(tmp_path: Path) -> None:
         assert poolDir.exists()
     finally:
         releasePoolLock(handle)
+
+
+# ============================================================================
+# SessionLockRegistry — forceCancel + acquire + release + clearCancelled sequence
+# ============================================================================
+
+
+async def testSessionLockRegistryForceCancelAcquireReleaseClearSequence() -> None:
+    """Verify waiter counter integrity across forceCancel + acquire + release.
+
+    Simulates the dropSession(force=True) lock interaction:
+    1. Acquire the lock
+    2. forceCancel (sets cancelled=True, releases lock)
+    3. acquire raises SessionDropped (before incrementing waiters)
+    4. release should NOT decrement waiters (lock was never acquired)
+    5. clearCancelled resets state
+    6. Next acquire should succeed with waiters=1
+
+    Returns:
+        None
+    """
+    config = ConcurrencyConfig(maxQueuedRunsPerSession=2, maxConcurrentRunsGlobal=10, globalQueueWaitSeconds=60)
+    registry = SessionLockRegistry(config)
+    sessionId = "session-drop-seq"
+
+    # 1. Acquire the lock (waiters=1)
+    await registry.acquire(sessionId)
+
+    # Verify waiters is 1 (holder)
+    state = registry._states[sessionId]
+    assert state.waiters == 1
+
+    # 2. forceCancel — sets cancelled and releases lock
+    registry.forceCancel(sessionId)
+    assert state.cancelled
+    # Lock was released, so holder's release will catch RuntimeError
+
+    # 3. Release the original holder (RuntimeError expected, suppressed in release())
+    registry.release(sessionId)
+    # waiters should be 0 now (was 1, decremented to 0)
+    assert state.waiters == 0
+
+    # 4. acquire should raise SessionDropped WITHOUT incrementing waiters
+    with pytest.raises(SessionDropped):
+        await registry.acquire(sessionId)
+    # waiters should still be 0
+    assert state.waiters == 0
+
+    # 5. clearCancelled resets state
+    registry.clearCancelled(sessionId)
+    assert sessionId not in registry._states
+    assert not registry.isCancelled(sessionId)
+
+    # 6. Next acquire should work normally (fresh state, waiters=1 after acquire)
+    await registry.acquire(sessionId)
+    newState = registry._states[sessionId]
+    assert newState.waiters == 1
+    assert not newState.cancelled
+
+    registry.release(sessionId)
+    assert newState.waiters == 0

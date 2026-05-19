@@ -145,7 +145,11 @@ class DockerBackend(SandboxBackend):
 
         # Build run image
 
-        hasImage = any([imageTag in image.get("RepoTags", []) for image in await client.images.list()])
+        try:
+            await client.images.inspect(imageTag)
+            hasImage = True
+        except aiodocker.DockerError:
+            hasImage = False
 
         if rebuild or not hasImage:
             logger.info("Building image %s from Dockerfile %s", imageTag, imageFile)
@@ -221,8 +225,11 @@ class DockerBackend(SandboxBackend):
     async def runOneshot(self, *, spec: ContainerSpec) -> ContainerOutcome:
         """Create a container from *spec*, start it, and wait for completion.
 
-        Does NOT remove the container — the caller collects artifacts first,
-        then calls :meth:`removeContainer`.
+        If the method raises before returning a :class:`ContainerOutcome`, the
+        container is removed automatically so that no orphaned containers leak.
+
+        On success the container is NOT removed — the caller collects artifacts
+        first, then calls :meth:`removeContainer`.
 
         Args:
             spec: Container specification with image, command, mounts, env,
@@ -230,54 +237,76 @@ class DockerBackend(SandboxBackend):
 
         Returns:
             ContainerOutcome with exit code, OOM status, and inspect data.
+
+        Raises:
+            Exception: Any error from container creation, start, wait, or
+                inspect.  The container (if created) is removed before
+                re-raising.
         """
         client = await self._getClient()
         containerConfig = self._specToContainerConfig(spec)
 
-        container = await client.containers.create(config=containerConfig, name=spec.name)
-        await container.start()
-
-        # Wait for container to finish, respecting the timeout limit
+        container = None
         try:
-            await asyncio.wait_for(container.wait(), timeout=spec.limits.timeoutSeconds)
-        except asyncio.TimeoutError:
-            # Container timed out - kill it
-            await self.killContainer(container.id, signal="SIGKILL")
-            # Brief delay for container state to stabilize after SIGKILL
-            await asyncio.sleep(0.1)
+            container = await client.containers.create(config=containerConfig, name=spec.name)
+            await container.start()
+
+            # Watchdog timeout: give the inner `timeout` wrapper its full
+            # TERM → grace → KILL cycle, plus 1 s buffer.  The backend
+            # wait_for is a fallback — the container's own `timeout` command
+            # handles graceful termination and exits 124 on timeout.
+            watchdogTimeout = spec.limits.timeoutSeconds + spec.limits.timeoutGraceSeconds + 1
             try:
-                inspectData = await container.show()
-            except Exception as exc:
-                logger.warning("Failed to inspect container after timeout: %s", exc)
+                await asyncio.wait_for(container.wait(), timeout=watchdogTimeout)
+            except asyncio.TimeoutError:
+                # Container timed out - kill it
+                await self.killContainer(container.id, signal="SIGKILL")
+                # Brief delay for container state to stabilize after SIGKILL
+                await asyncio.sleep(0.1)
+                try:
+                    inspectData = await container.show()
+                except Exception as exc:
+                    logger.warning("Failed to inspect container after timeout: %s", exc)
+                    return ContainerOutcome(
+                        containerId=container.id,
+                        exitCode=-1,
+                        signal="SIGKILL",
+                        oomKilled=False,
+                        inspects={},
+                    )
+                if not isinstance(inspectData, dict):
+                    logger.error(f"inspectData expected to be Dict, but got {inspectData!r}")
+                    inspectData = {}
+
+                exitCode = inspectData.get("State", {}).get("ExitCode")
                 return ContainerOutcome(
                     containerId=container.id,
-                    exitCode=-1,
-                    signal="SIGKILL",
-                    oomKilled=False,
-                    inspects={},
+                    exitCode=exitCode,
+                    signal="SIGKILL" if exitCode is not None and exitCode != 0 else None,
+                    oomKilled=inspectData.get("State", {}).get("OOMKilled", False),
+                    inspects=inspectData,
                 )
-            exitCode = inspectData.get("State", {}).get("ExitCode")
-            oomKilled = inspectData.get("State", {}).get("OOMKilled", False)
-            signal = "SIGKILL" if exitCode is not None and exitCode != 0 else None
+
+            inspectData = await container.show()
+            if not isinstance(inspectData, dict):
+                logger.error(f"inspectData expected to be Dict, but got {inspectData!r}")
+                inspectData = {}
+
             return ContainerOutcome(
                 containerId=container.id,
-                exitCode=exitCode,
-                signal=signal,
-                oomKilled=oomKilled,
+                exitCode=inspectData.get("State", {}).get("ExitCode"),
+                signal=None,
+                oomKilled=inspectData.get("State", {}).get("OOMKilled", False),
                 inspects=inspectData,
             )
-
-        inspectData = await container.show()
-        exitCode = inspectData.get("State", {}).get("ExitCode")
-        oomKilled = inspectData.get("State", {}).get("OOMKilled", False)
-
-        return ContainerOutcome(
-            containerId=container.id,
-            exitCode=exitCode,
-            signal=None,
-            oomKilled=oomKilled,
-            inspects=inspectData,
-        )
+        except BaseException as e:
+            logger.exception(e)
+            if container is not None:
+                try:
+                    await self.removeContainer(container.id, force=True)
+                except Exception as e2:
+                    logger.error(f"Exception raised during container#{container.id} cleanup: {e2!r}")
+            raise
 
     def _specToContainerConfig(self, spec: ContainerSpec) -> dict[str, Any]:
         """Convert a ContainerSpec to the aiodocker/Docker API container config dict.

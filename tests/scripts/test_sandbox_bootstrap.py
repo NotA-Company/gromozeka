@@ -316,7 +316,7 @@ class TestSandboxBootstrapMock:
         mockParseArgs.return_value = mockArgs
 
         mockConfigManager = MagicMock()
-        mockConfigManager.get.return_value = {"starter_packages": []}
+        mockConfigManager.get.return_value = {"bootstrap": {"starter-packages": []}}
         mockConfigManagerClass.return_value = mockConfigManager
 
         # Run main
@@ -400,14 +400,14 @@ class TestSandboxBootstrapIntegration:
         # Create minimal config
         configContent = """
 [sandbox]
-storage.root_dir = "{workspace}"
+storage.root-dir = "{workspace}"
 
 [sandbox.runtimes.python]
-run_image_tag = "python:3.12-slim"
-install_image_tag = "python:3.12-slim"
+run-image-tag = "python:3.12-slim"
+install-image-tag = "python:3.12-slim"
 
 [sandbox.bootstrap]
-starter_packages = ["six"]
+starter-packages = ["six"]
 """.format(workspace=str(testWorkspace))
 
         configPath = testConfigDir / "config.toml"
@@ -476,3 +476,60 @@ class TestSandboxBootstrapConfig:
 
         # Verify config was built
         assert config is not None
+
+    @patch("scripts.sandbox_bootstrap.SandboxManager")
+    @patch("scripts.sandbox_bootstrap.ConfigManager")
+    @patch("scripts.sandbox_bootstrap.parseArgs")
+    @patch("scripts.sandbox_bootstrap.buildConfig")
+    @pytest.mark.asyncio
+    async def test_mainReadsStarterPackagesFromNestedConfig(
+        self,
+        mockBuildConfig: MagicMock,
+        mockParseArgs: MagicMock,
+        mockConfigManagerClass: MagicMock,
+        mockSandboxManagerClass: MagicMock,
+    ) -> None:
+        """Verify main() reads starter-packages via nested dict traversal, not dotted keys.
+
+        ConfigManager.get() does not support dotted-path traversal, so
+        ``configManager.get("sandbox.bootstrap", {})`` always returns the
+        default ``{}``.  The real lookup must go through
+        ``configManager.get("sandbox", {})`` then dig into the ``bootstrap``
+        sub-dict manually.  This is a regression test for that bug.
+        """
+        # Setup mocks
+        mockArgs = MagicMock()
+        mockArgs.config_dir = []
+        mockArgs.dotenv = ".env"
+        mockArgs.packages = []  # No CLI packages — must come from config
+        mockArgs.runtime = "python"
+        mockArgs.upgrade = False
+        mockArgs.init_storage = False
+        mockParseArgs.return_value = mockArgs
+
+        # The nested dict shape that ConfigManager.get("sandbox", {}) returns
+        mockConfigManager = MagicMock()
+        mockConfigManager.get.return_value = {
+            "bootstrap": {"starter-packages": ["numpy", "pandas"]},
+        }
+        mockConfigManagerClass.return_value = mockConfigManager
+
+        mockConfig = MagicMock()
+        mockConfig.storage.rootDir = "/tmp/test"
+        mockConfig.runtimes = {RuntimeName.PYTHON: MagicMock()}
+        mockBuildConfig.return_value = mockConfig
+
+        mockManager = AsyncMock()
+        mockManager.prepareRuntime = AsyncMock(return_value=True)
+        mockManager.installRuntimeLibraries = AsyncMock(return_value=True)
+        mockSandboxManagerClass.getInstance.return_value = mockManager
+        mockSandboxManagerClass.injectConfig = MagicMock()
+
+        # Run main
+        exitCode = await main()
+
+        # Verify packages were read from nested config
+        mockManager.installRuntimeLibraries.assert_called_once()
+        callArgs = mockManager.installRuntimeLibraries.call_args
+        assert callArgs[0][0] == ["numpy", "pandas"]
+        assert exitCode == 0

@@ -1,12 +1,12 @@
-"""Per-session semaphore registry and global concurrency limiter for sandbox execution.
+"""Per-session mutex registry and global concurrency limiter for sandbox execution.
 
-Provides bounded concurrency within a session via :class:`SessionLockRegistry`,
+Provides serialised execution within a session via :class:`SessionLockRegistry`,
 a global concurrency cap via :class:`GlobalRunLimiter`, and cross-process
 library-pool locking via :func:`acquirePoolLock` / :func:`releasePoolLock`.
 
 Classes:
-    SessionLockRegistry: Per-session asyncio.Semaphore registry with bounded
-        slots and force-cancel support.
+    SessionLockRegistry: Per-session asyncio.Lock registry with bounded
+        waiter count and force-cancel support.
     GlobalRunLimiter: Global asyncio.Semaphore cap with timeout-based rejection.
 
 Functions:
@@ -20,6 +20,7 @@ import asyncio
 import fcntl
 import logging
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO
 
@@ -30,19 +31,35 @@ from .errors import LibraryPoolLocked, SandboxBusy, SessionBusy, SessionDropped
 logger = logging.getLogger(__name__)
 
 
-class SessionLockRegistry:
-    """Per-session semaphore-based concurrency registry for sandbox execution.
+@dataclass
+class _SessionState:
+    """Mutable state for a single session's lock.
 
-    Uses ``asyncio.Semaphore`` keyed by *sessionId* with
-    ``maxQueuedRunsPerSession + 1`` slots (1 for the executing holder + N for
-    queued waiters).  Provides a force-cancel mechanism that releases all
-    semaphore slots so every waiter can proceed, detect cancellation, and
-    raise ``SessionDropped``.
+    Attributes:
+        lock: Mutex serialising execution within the session.
+        waiters: Number of tasks that have entered ``acquire()`` but not yet
+            exited (either via ``release()`` or by raising on cancellation).
+        cancelled: Whether the session has been force-cancelled.
+    """
+
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    waiters: int = 0
+    cancelled: bool = False
+
+
+class SessionLockRegistry:
+    """Per-session mutex-based concurrency registry for sandbox execution.
+
+    Uses ``asyncio.Lock`` keyed by *sessionId* with a waiter counter to
+    enforce "1 active + N queued" semantics.  At most one run executes per
+    session at a time; up to ``maxQueuedRunsPerSession`` additional tasks may
+    queue.  Provides a force-cancel mechanism that marks the session as
+    cancelled and releases the mutex so every waiter can wake, detect
+    cancellation, and raise ``SessionDropped``.
 
     Attributes:
         _config: Concurrency configuration.
-        _semaphores: Mapping from sessionId to its ``asyncio.Semaphore``.
-        _cancelled: Set of sessionIds that have been force-cancelled.
+        _states: Mapping from sessionId to its :class:`_SessionState`.
     """
 
     def __init__(self, config: ConcurrencyConfig) -> None:
@@ -55,68 +72,76 @@ class SessionLockRegistry:
             None
         """
         self._config = config
-        self._semaphores: dict[str, asyncio.Semaphore] = {}
-        self._cancelled: set[str] = set()
+        self._states: dict[str, _SessionState] = {}
 
     async def acquire(self, sessionId: str) -> None:
-        """Acquire a session slot, waiting if necessary.
+        """Acquire the session mutex, waiting if necessary.
 
-        Uses an ``asyncio.Semaphore`` with ``maxQueuedRunsPerSession + 1``
-        slots per session.  If all slots are taken, raises :class:`SessionBusy`
-        before blocking.  If the session was force-cancelled, raises
-        :class:`SessionDropped`.
+        If the session is already force-cancelled, raises
+        :class:`SessionDropped` immediately.  If the number of in-flight
+        tasks (holder + waiters) has reached ``maxQueuedRunsPerSession``,
+        raises :class:`SessionBusy` before blocking.  Otherwise increments
+        the waiter counter and blocks on the mutex.  After acquiring, checks
+        cancellation again and raises :class:`SessionDropped` if the session
+        was cancelled while waiting.
 
         Args:
-            sessionId: The session to acquire a slot for.
+            sessionId: The session to acquire the mutex for.
 
         Returns:
             None
 
         Raises:
-            SessionBusy: If all semaphore slots are already taken.
+            SessionBusy: If the session queue is already full.
             SessionDropped: If the session was force-cancelled.
         """
-        if sessionId in self._cancelled:
+        state = self._states.setdefault(sessionId, _SessionState())
+        if state.cancelled:
             raise SessionDropped(f"Session {sessionId} has been dropped")
-
-        sem = self._semaphores.setdefault(sessionId, asyncio.Semaphore(self._config.maxQueuedRunsPerSession + 1))
-        # Check if queue is full BEFORE blocking.
-        # asyncio.Semaphore._value is the internal counter; <= 0 means all slots taken.
-        if sem._value <= 0:  # noqa: SLF001
+        if state.waiters >= self._config.maxQueuedRunsPerSession:
             raise SessionBusy(
                 f"Session {sessionId} queue full "
                 f"({self._config.maxQueuedRunsPerSession}/{self._config.maxQueuedRunsPerSession})"
             )
-
-        # Acquire a slot (atomic, FIFO-ordered)
-        await sem.acquire()
-
-        # Check for force-cancel after acquiring
-        if sessionId in self._cancelled:
-            sem.release()
-            raise SessionDropped(f"Session {sessionId} was dropped while waiting")
+        state.waiters += 1
+        try:
+            await state.lock.acquire()
+            if state.cancelled:
+                state.lock.release()
+                raise SessionDropped(f"Session {sessionId} was dropped while waiting")
+        except BaseException:
+            state.waiters -= 1
+            raise
 
     def release(self, sessionId: str) -> None:
-        """Release a session slot, allowing the next waiter to proceed.
+        """Release the session mutex, allowing the next waiter to proceed.
 
         Args:
-            sessionId: The session to release a slot for.
+            sessionId: The session to release the mutex for.
 
         Returns:
             None
         """
-        if sessionId in self._semaphores:
-            try:
-                self._semaphores[sessionId].release()
-            except ValueError:
-                pass  # Already at max
+        state = self._states[sessionId]
+        if state.waiters <= 0:
+            logger.warning(
+                "release() called with waiters=%d for session %s — possible unpaired release",
+                state.waiters,
+                sessionId,
+            )
+        state.waiters -= 1
+        try:
+            state.lock.release()
+        except RuntimeError:
+            pass  # Lock already released (e.g. after forceCancel cascade)
 
     def forceCancel(self, sessionId: str) -> None:
         """Force-cancel all waiters for a session.
 
-        Marks the session as cancelled and releases all semaphore slots so
-        every waiter can wake up, check cancellation, and raise
-        :class:`SessionDropped`.  Called by ``dropSession(force=True)``.
+        Marks the session as cancelled and releases the mutex so the current
+        holder (or one waiter) wakes up.  Subsequent waiters in
+        :meth:`acquire` will see the cancelled flag before acquiring and
+        cascade the release, each raising :class:`SessionDropped`.
 
         Args:
             sessionId: The session to force-cancel.
@@ -124,16 +149,12 @@ class SessionLockRegistry:
         Returns:
             None
         """
-        self._cancelled.add(sessionId)
-        if sessionId in self._semaphores:
-            sem = self._semaphores[sessionId]
-            # Release all slots so ALL waiters can wake up, check cancellation,
-            # and raise SessionDropped
-            for _ in range(self._config.maxQueuedRunsPerSession + 1):
-                try:
-                    sem.release()
-                except ValueError:
-                    break  # Released all possible slots
+        state = self._states.setdefault(sessionId, _SessionState())
+        state.cancelled = True
+        try:
+            state.lock.release()
+        except RuntimeError:
+            pass  # Lock not currently held
 
     def isCancelled(self, sessionId: str) -> bool:
         """Check whether a session has been force-cancelled.
@@ -144,13 +165,14 @@ class SessionLockRegistry:
         Returns:
             True if the session has been force-cancelled.
         """
-        return sessionId in self._cancelled
+        state = self._states.get(sessionId)
+        return state.cancelled if state is not None else False
 
     def clearCancelled(self, sessionId: str) -> None:
         """Clear the cancelled flag after full cleanup.
 
-        Removes the cancelled flag and the semaphore so a fresh one is created
-        on next use.
+        Resets the cancelled flag and removes the session state so a fresh
+        one is created on next use.
 
         Args:
             sessionId: The session to clear.
@@ -158,13 +180,14 @@ class SessionLockRegistry:
         Returns:
             None
         """
-        self._cancelled.discard(sessionId)
-        # Remove semaphore so a fresh one is created on next use
-        self._semaphores.pop(sessionId, None)
+        state = self._states.get(sessionId)
+        if state is not None:
+            state.cancelled = False
+        self._states.pop(sessionId, None)
 
     @asynccontextmanager
     async def sessionLock(self, sessionId: str):
-        """Async context manager for session lock acquisition.
+        """Async context manager for session mutex acquisition.
 
         Args:
             sessionId: The session to acquire a lock for.
@@ -173,7 +196,7 @@ class SessionLockRegistry:
             None
 
         Raises:
-            SessionBusy: If all semaphore slots are already taken.
+            SessionBusy: If the session queue is already full.
             SessionDropped: If the session was force-cancelled.
         """
         await self.acquire(sessionId)

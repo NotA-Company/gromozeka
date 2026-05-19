@@ -78,16 +78,17 @@ class FilesystemMetadataStore(MetadataStore):
             self._locks[key] = asyncio.Lock()
         return self._locks[key]
 
-    def _sessionPath(self, sessionId: str) -> Path:
+    def _sessionPath(self, sessionId: str, *, byHash: bool = False) -> Path:
         """Get the JSON file path for a session record.
 
         Args:
-            sessionId: The session identifier.
-
+            sessionId: The session identifier or hash if byHash == True.
+            byHash: if sessionId should be treaded as sessionHash
         Returns:
             The file path.
         """
-        return self._metaDir / "sessions" / f"{sessionHash(sessionId)}.json"
+        _sessionHash = sessionId if byHash else sessionHash(sessionId)
+        return self._metaDir / "sessions" / f"{_sessionHash}.json"
 
     def _runPath(self, runId: str) -> Path:
         """Get the JSON file path for a run record.
@@ -130,16 +131,18 @@ class FilesystemMetadataStore(MetadataStore):
 
     # ---- Session operations ----
 
-    async def loadSession(self, sessionId: str) -> SessionInfo | None:
+    async def loadSession(self, sessionId: str, *, byHash: bool = False) -> SessionInfo | None:
         """Load a session record from disk.
 
         Args:
             sessionId: The session identifier.
+            byHash: If session should be loaded by it's hash, not ID (Default: False).
 
         Returns:
             The SessionRecord, or None if not found or malformed.
         """
-        data = self._readJsonFile(self._sessionPath(sessionId))
+
+        data = self._readJsonFile(self._sessionPath(sessionId, byHash=byHash))
         if data is None:
             return None
         try:
@@ -175,27 +178,26 @@ class FilesystemMetadataStore(MetadataStore):
             except OSError:
                 logger.warning("Failed to delete session file: %s", path, exc_info=True)
 
-    async def listSessions(self) -> list[str]:
-        """List all sessions.
+    async def loadAllSessions(self) -> List[SessionInfo]:
+        """Load all sessions in a single batch operation.
+
+        Uses asyncio.gather to load sessions in parallel for better performance
+        than calling loadSession() individually in a loop.
 
         Returns:
-            List of session IDs.
+            List of all SessionInfo objects found in the store.
         """
         sessionsDir = self._metaDir / "sessions"
         if not sessionsDir.exists():
             return []
-        records: list[str] = []
-        for f in sessionsDir.glob("*.json"):
-            data = self._readJsonFile(f)
-            if not isinstance(data, dict):
-                logger.warning(f"Session file {f} is not valid json file")
-                continue
-            try:
-                record = SessionInfo.fromDict(data)
-                records.append(record.sessionId)
-            except (KeyError, ValueError):
-                logger.warning(f"Skipping malformed session file: {f}")
-        return records
+        sessionHashes = [f.name.rsplit(".", maxsplit=1)[0] for f in sessionsDir.glob("*.json")]
+        if not sessionHashes:
+            return []
+        results = await asyncio.gather(
+            *(self.loadSession(sid, byHash=True) for sid in sessionHashes),
+            return_exceptions=True,
+        )
+        return [s for s in results if isinstance(s, SessionInfo)]
 
     # ---- Run operations ----
 

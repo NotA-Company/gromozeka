@@ -28,9 +28,9 @@ from lib.sandbox.errors import (
     RunError,
     RunOomKilled,
     RunTimedOut,
-    RuntimeError,
     SandboxBusy,
     SandboxError,
+    SandboxRuntimeError,
     SessionBusy,
     SessionDropped,
     SessionError,
@@ -53,7 +53,7 @@ _ALL_ERROR_CLASSES = [
     SessionNotFound,
     SessionBusy,
     SessionDropped,
-    RuntimeError,
+    SandboxRuntimeError,
     UnknownRuntime,
     MissingDependenciesError,
     RunError,
@@ -103,9 +103,9 @@ _PARENT_CHILD_PAIRS: list[tuple[type, type]] = [
     (SessionError, SessionNotFound),
     (SessionError, SessionBusy),
     (SessionError, SessionDropped),
-    (SandboxError, RuntimeError),
-    (RuntimeError, UnknownRuntime),
-    (RuntimeError, MissingDependenciesError),
+    (SandboxError, SandboxRuntimeError),
+    (SandboxRuntimeError, UnknownRuntime),
+    (SandboxRuntimeError, MissingDependenciesError),
     (SandboxError, RunError),
     (RunError, RunTimedOut),
     (RunError, RunOomKilled),
@@ -170,7 +170,7 @@ def testMissingDependenciesErrorEmptyList() -> None:
     """
     exc = MissingDependenciesError([])
     assert exc.missing == []
-    assert isinstance(exc, RuntimeError)
+    assert isinstance(exc, SandboxRuntimeError)
     assert isinstance(exc, SandboxError)
 
 

@@ -119,6 +119,10 @@ class SandboxManager:
     def getInstance(cls) -> "SandboxManager":
         """Get or create the singleton SandboxManager instance.
 
+        Config must be injected via injectConfig() before calling this method.
+        If config is missing, raises RuntimeError immediately — preventing the
+        singleton from being stored in a broken state.
+
         Args:
             cls: The SandboxManager class.
 
@@ -128,6 +132,8 @@ class SandboxManager:
         Raises:
             RuntimeError: If injectConfig() has not been called before getInstance().
         """
+        if cls._configInstance is None:
+            raise RuntimeError("SandboxConfig not injected. Call injectConfig() first.")
         if cls._instance is None:
             return cls()
         return cls._instance
@@ -335,6 +341,7 @@ class SandboxManager:
 
         # Create workspace directory
         workspacePath.mkdir(parents=True, exist_ok=True)
+        # Reset permissions on every use as a security measure, even if the directory already exists.
         os.chmod(workspacePath, self._config.storage.dirMode)
 
         await self._metadata.saveSession(
@@ -353,7 +360,7 @@ class SandboxManager:
 
         return True
 
-    async def listSessions(self) -> list[str]:
+    async def listSessions(self) -> list[SessionInfo]:
         """List all sessions.
 
         Args:
@@ -362,7 +369,7 @@ class SandboxManager:
         Returns:
             List of session IDs.
         """
-        return await self._metadata.listSessions()
+        return await self._metadata.loadAllSessions()
 
     async def touchSession(self, sessionId: str, *, ttlMinutes: int | None = None) -> bool:
         """Refresh a session's last-activity timestamp and optionally extend its TTL.
@@ -410,7 +417,7 @@ class SandboxManager:
                 if container.labels.get("sandbox.sessionId", None) != sessionId:
                     continue
 
-                # No need to try to kill container, as we are removeing it with force=True
+                # No need to try to kill container, as we are removing it with force=True
                 try:
                     await self._backend.removeContainer(containerId=container.containerId, force=True)
                 except Exception as exc:
@@ -429,6 +436,14 @@ class SandboxManager:
                 raise
 
         try:
+            # Delete all run records for this session before deleting the session itself
+            runs = await self._metadata.listRunsForSession(sessionId)
+            for run in runs:
+                try:
+                    await self._metadata.deleteRun(run.runId)
+                except Exception as exc:
+                    logger.warning("Failed to delete run %s for session %s: %s", run.runId, sessionId, exc)
+
             # Delete workspace directory
             workspacePath = Path(record.workspacePath)
             if workspacePath.exists():
@@ -538,13 +553,14 @@ class SandboxManager:
                     installedNames = {p.name for p in await self.listRuntimeLibraries(runtime=runtime)}
                     missing = [p for p in requiredPackages if p not in installedNames]
                     if missing:
-                        logger.error(f"Missing required {runtime} libs: {missing}")
+                        logger.warning(f"Missing required {runtime} libs: {missing}")
                         raise MissingDependenciesError(missing=missing)
 
                 # Step 6: Set up run directory
                 workspacePath = Path(sessionInfo.workspacePath)
                 # Ensure workspace directory exists (might be missing if tmp_path changed)
                 workspacePath.mkdir(parents=True, exist_ok=True)
+                # Reset permissions on every use as a security measure, even if the directory already exists.
                 os.chmod(workspacePath, self._config.storage.dirMode)
                 runDir = workspacePath / ".run" / runId
                 runDir.mkdir(parents=True, exist_ok=True)
@@ -566,7 +582,7 @@ class SandboxManager:
                 mounts: list[dict[str, str]] = [
                     {"hostPath": str(workspacePath.absolute()), "containerPath": "/workspace", "mode": "rw"},
                 ]
-                if Path(hostLibPool).exists():
+                if hostLibPool.exists():
                     mounts.append(
                         {
                             "hostPath": str(hostLibPool.absolute()),
@@ -634,7 +650,7 @@ class SandboxManager:
                         # Step 11: Detect outcome
                         finishedAt = datetime.now(timezone.utc)
                         elapsedMs = int((finishedAt - startTime).total_seconds() * 1000)
-                        timedOut = outcome.exitCode == 124
+                        timedOut = outcome.exitCode == 124 or outcome.signal == "SIGKILL"
                         oomKilled = outcome.oomKilled
 
                         # Step 12: Read output sizes
@@ -685,7 +701,10 @@ class SandboxManager:
                         )
                     finally:
                         # Step 15: Remove container (always, even on error)
-                        await self._backend.removeContainer(outcome.containerId)
+                        try:
+                            await self._backend.removeContainer(outcome.containerId)
+                        except Exception:
+                            logger.exception("Failed to remove container %s", outcome.containerId)
                 except Exception as exc:
                     # Step 16 (error path): Update RunRecord to failed
                     finishedAt = datetime.now(timezone.utc)
@@ -840,9 +859,10 @@ class SandboxManager:
         fullSize = resolved.stat().st_size
         truncated = maxBytes is not None and fullSize > maxBytes
 
-        # Read raw bytes first
-        raw = resolved.read_bytes()
-        if maxBytes is not None:
+        # Read at most maxBytes+1 to detect truncation without loading the entire file
+        with resolved.open("rb") as fh:
+            raw = fh.read(maxBytes + 1) if maxBytes is not None else fh.read()
+        if truncated:
             raw = raw[:maxBytes]
 
         content: bytes | str
@@ -953,7 +973,7 @@ class SandboxManager:
             # Step 7: Run install container
             outcome = await self._backend.runOneshot(
                 spec=ContainerSpec(
-                    name=f"sandbox-install-{uuid.uuid4().hex[:12]}",
+                    name=f"sandbox-install-{uuid.uuid4().hex}",
                     image=runtimeImpl._config.installImageTag,
                     command=runtimeImpl.installCommand(validated, upgrade=upgrade),
                     mounts=[
@@ -986,13 +1006,26 @@ class SandboxManager:
                 )
             )
 
-            return all(
+            success = all(
                 [
                     not outcome.oomKilled,
                     outcome.signal is None,
                     outcome.exitCode == 0,
                 ]
             )
+
+            # Refresh package metadata after successful install so that
+            # listRuntimeLibraries() reflects the newly installed packages.
+            if success:
+                try:
+                    await self._refreshPackageList(runtime, libsDir)
+                except Exception:
+                    logger.exception(
+                        "Failed to refresh package list after successful install for %s",
+                        runtime.value,
+                    )
+
+            return success
 
     # ---- Operational ----
 
@@ -1036,8 +1069,8 @@ class SandboxManager:
 
         if cleanVolumes:
             try:
-                sessions = await self._metadata.listSessions()
-                for sessionId in sessions:
+                for session in await self._metadata.loadAllSessions():
+                    sessionId = session.sessionId
                     try:
                         await self.dropSession(sessionId, force=True)
                         cleanedVolumes += 1
@@ -1049,6 +1082,25 @@ class SandboxManager:
                 errMsg = f"Failed to list sessions for cleanup: {exc}"
                 errors.append(errMsg)
                 logger.error(errMsg)
+
+        # Cancel active runs across all sessions before closing backend
+        cancelledRuns = 0
+        if not cleanVolumes:
+            try:
+                for session in await self._metadata.loadAllSessions():
+                    sessionId = session.sessionId
+                    runs = await self._metadata.listRunsForSession(sessionId)
+                    for run in runs:
+                        if run.status == RunStatus.RUNNING:
+                            try:
+                                await self.cancelRun(run.runId)
+                                cancelledRuns += 1
+                            except Exception as exc:
+                                logger.warning("Failed to cancel run %s during shutdown: %s", run.runId, exc)
+            except Exception as exc:
+                logger.error("Failed to cancel active runs during shutdown: %s", exc)
+
+        logger.info("Shutdown cancelled %d active runs", cancelledRuns)
 
         # Close backend
         try:
@@ -1089,22 +1141,44 @@ class SandboxManager:
 
         # Step 2: Reconcile metadata with on-disk workspace presence
         try:
-            sessions = await self._metadata.listSessions()
-            for sessionId in sessions:
-                sessionInfo = await self._metadata.loadSession(sessionId)
-                if sessionInfo is None:
-                    # Imposiburu, actually
-                    logger.error("Session info file not found for session %s", sessionId)
-                    continue
+            sessions = await self._metadata.loadAllSessions()
+            for sessionInfo in sessions:
                 workspacePath = Path(sessionInfo.workspacePath)
                 if not workspacePath.exists():
                     logger.warning(
                         "Recovery: session %s metadata exists but workspace is missing",
-                        sessionId,
+                        sessionInfo.sessionId,
                     )
-                    await self._metadata.deleteSession(sessionId)
+                    # Clean up orphaned run records before deleting the session
+                    runs = await self._metadata.listRunsForSession(sessionInfo.sessionId)
+                    for run in runs:
+                        try:
+                            await self._metadata.deleteRun(run.runId)
+                        except Exception as exc:
+                            logger.warning(
+                                "Recovery: failed to delete orphaned run %s for session %s: %s",
+                                run.runId,
+                                sessionInfo.sessionId,
+                                exc,
+                            )
+                    await self._metadata.deleteSession(sessionInfo.sessionId)
         except Exception as exc:
             logger.error(f"Failed to reconcile sessions: {exc}")
+
+        # Step 2b: Mark stale RUNNING runs as FAILED
+        try:
+            sessions = await self._metadata.loadAllSessions()
+            for sessionInfo in sessions:
+                runs = await self._metadata.listRunsForSession(sessionInfo.sessionId)
+                for run in runs:
+                    if run.status == RunStatus.RUNNING:
+                        run.status = RunStatus.FAILED
+                        run.finishedAt = datetime.now(timezone.utc)
+                        run.exitCode = -1
+                        await self._metadata.saveRun(run)
+                        logger.info("Recovery: marked stale run %s as FAILED", run.runId)
+        except Exception as exc:
+            logger.error("Failed to reconcile stale runs: %s", exc)
 
         # Step 3: Refresh pool versions for each runtime
         for name in self._runtimes.keys():
@@ -1212,7 +1286,7 @@ class SandboxManager:
 
         outcome = await self._backend.runOneshot(
             spec=ContainerSpec(
-                name=f"sandbox-list-{uuid.uuid4().hex[:12]}",
+                name=f"sandbox-list-{uuid.uuid4().hex}",
                 image=runtimeImpl._config.installImageTag,
                 command=runtimeImpl.listCommand(
                     stdoutPath=f"/data/{stdoutFilename}",

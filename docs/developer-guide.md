@@ -1494,7 +1494,7 @@ Safely execute untrusted Python code in Docker containers. Provides a `SandboxMa
 | `SecurityConfig` | `lib/sandbox/config.py` | Container security constraints |
 | `ConcurrencyConfig` | `lib/sandbox/config.py` | Global and per-session concurrency limits |
 | `GcConfig` | `lib/sandbox/config.py` | GC schedule and retention policies |
-| `PythonRuntimeConfig` | `lib/sandbox/config.py` | Python runtime configuration |
+| `BasicRuntimeConfig` | `lib/sandbox/config.py` | Python runtime configuration |
 | `RunResult` | `lib/sandbox/types.py` | Result of a code execution run |
 | `SessionInfo` | `lib/sandbox/types.py` | Session metadata |
 | `ResourceLimits` | `lib/sandbox/types.py` | Container resource limits |
@@ -1505,11 +1505,11 @@ Safely execute untrusted Python code in Docker containers. Provides a `SandboxMa
 from lib.sandbox import SandboxManager, SandboxConfig, StorageConfig
 
 config = SandboxConfig(storage=StorageConfig(rootDir="/var/lib/gromozeka/sandbox"))
+SandboxManager.injectConfig(config)
 manager = SandboxManager.getInstance()
-await manager.initialize(config)
 
 # Create a session and run code
-session = await manager.createSession()
+session = await manager.createSession("my-session")
 result = await manager.runCode(session.sessionId, "print(2 + 2)")
 print(result.exitCode, result.stdout)  # 0, "4\n"
 
@@ -2084,7 +2084,7 @@ This script:
 
 1. Creates the storage directory (if `--init-storage` is passed) with the configured `dir_mode` and `file_mode`.
 2. Builds the **run image** (`gromozeka-sandbox-python:run`) from `lib/sandbox/runtimes/python/Dockerfile`.
-3. Builds the **install image** (`gromozeka-sandbox-python:install`) from `lib/sandbox/runtimes/python/Dockerfile.install`, which includes the `starter_packages` listed in `[sandbox.bootstrap]`.
+3. Builds the **install image** (`gromozeka-sandbox-python:install`) from `lib/sandbox/runtimes/python/Dockerfile.install`, which includes the `starter-packages` listed in `[sandbox.bootstrap]`.
 
 Images are also built on demand by `SandboxManager.prepareRuntime()` if they are not present and `image_pull_policy` is not `"never"`.
 

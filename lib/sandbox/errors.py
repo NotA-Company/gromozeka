@@ -16,7 +16,7 @@ Hierarchy::
         SessionNotFound
         SessionBusy
         SessionDropped
-      RuntimeError
+      SandboxRuntimeError
         UnknownRuntime
         MissingDependenciesError
       RunError
@@ -79,15 +79,15 @@ class SessionDropped(SessionError):
     """Raised at waiters when a session is force-dropped."""
 
 
-class RuntimeError(SandboxError):  # noqa: A001  — intentional shadow of builtins.RuntimeError
+class SandboxRuntimeError(SandboxError):
     """Raised when a runtime-related error occurs in the sandbox."""
 
 
-class UnknownRuntime(RuntimeError):
+class UnknownRuntime(SandboxRuntimeError):
     """Raised when the requested runtime is not recognised."""
 
 
-class MissingDependenciesError(RuntimeError):
+class MissingDependenciesError(SandboxRuntimeError):
     """Raised when required dependencies are not installed in the sandbox.
 
     Attributes:

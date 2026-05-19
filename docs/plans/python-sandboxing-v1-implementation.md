@@ -370,7 +370,7 @@ Can run in parallel with Phase 5 after Phase 3 is signed off.
 - **Specialist**: `software-developer`
 - **Dependencies**: Phase 3, WP-4.1
 - **Files**: `scripts/sandbox-bootstrap.py` (new)
-- **Tasks**: Implement per [§6 of integration doc](python-sandboxing-v1-integration.md#6-bootstrap-script). CLI flags: `--config-dir` (repeatable), `--runtime`, `--upgrade`, `--init-storage`. Reads `sandbox.bootstrap.starter_packages`. Calls `prepareRuntime` then `installRuntimeLibraries`. Prints a summary table.
+- **Tasks**: Implement per [§6 of integration doc](python-sandboxing-v1-integration.md#6-bootstrap-script). CLI flags: `--config-dir` (repeatable), `--runtime`, `--upgrade`, `--init-storage`. Reads `sandbox.bootstrap.starter-packages`. Calls `prepareRuntime` then `installRuntimeLibraries`. Prints a summary table.
 - **Acceptance**:
   - Running on a clean install installs the starter pack.
   - Re-running with `--upgrade` upgrades to latest.

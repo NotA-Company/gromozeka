@@ -10,6 +10,7 @@ Run integration tests with Docker enabled::
 """
 
 import os
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -433,3 +434,201 @@ class TestDockerBackendIntegration:
         finally:
             if originalDockerHost is not None:
                 os.environ["DOCKER_HOST"] = originalDockerHost
+
+
+# ============================================================================
+# Regression tests for container leak fix (no Docker required)
+# ============================================================================
+
+
+class TestRunOneshotContainerCleanup:
+    """Verify runOneshot cleans up containers when exceptions occur.
+
+    Regression tests for the container leak: if start(), wait(), or show()
+    raises after the container has been created, the container must be
+    removed before re-raising so it is not orphaned.
+    """
+
+    @pytest.mark.asyncio
+    async def testCleanupOnStartFailure(self) -> None:
+        """Container is removed when start() raises after create().
+
+        Returns:
+            None
+        """
+        backend = DockerBackend(_makeConfig())
+        spec = _makeSpec()
+
+        mockContainer = AsyncMock()
+        mockContainer.id = "fake-container-id"
+        mockContainer.start = AsyncMock(side_effect=RuntimeError("start failed"))
+
+        mockClient = MagicMock()
+        mockClient.containers.create = AsyncMock(return_value=mockContainer)
+
+        removeContainerCalls: list[str] = []
+
+        async def fakeRemoveContainer(containerId: str, *, force: bool = True) -> None:
+            removeContainerCalls.append(containerId)
+
+        with patch.object(backend, "_getClient", new=AsyncMock(return_value=mockClient)):
+            with patch.object(backend, "removeContainer", side_effect=fakeRemoveContainer):
+                with pytest.raises(RuntimeError, match="start failed"):
+                    await backend.runOneshot(spec=spec)
+
+        assert removeContainerCalls == ["fake-container-id"]
+
+    @pytest.mark.asyncio
+    async def testCleanupOnWaitFailure(self) -> None:
+        """Container is removed when wait() raises after start().
+
+        Returns:
+            None
+        """
+        backend = DockerBackend(_makeConfig())
+        spec = _makeSpec()
+
+        mockContainer = AsyncMock()
+        mockContainer.id = "fake-container-id"
+        mockContainer.start = AsyncMock()
+        mockContainer.wait = AsyncMock(side_effect=RuntimeError("wait crashed"))
+
+        mockClient = MagicMock()
+        mockClient.containers.create = AsyncMock(return_value=mockContainer)
+
+        removeContainerCalls: list[str] = []
+
+        async def fakeRemoveContainer(containerId: str, *, force: bool = True) -> None:
+            removeContainerCalls.append(containerId)
+
+        with patch.object(backend, "_getClient", new=AsyncMock(return_value=mockClient)):
+            with patch.object(backend, "removeContainer", side_effect=fakeRemoveContainer):
+                with pytest.raises(RuntimeError, match="wait crashed"):
+                    await backend.runOneshot(spec=spec)
+
+        assert removeContainerCalls == ["fake-container-id"]
+
+    @pytest.mark.asyncio
+    async def testCleanupOnShowFailure(self) -> None:
+        """Container is removed when show() raises after successful wait().
+
+        Returns:
+            None
+        """
+        backend = DockerBackend(_makeConfig())
+        spec = _makeSpec()
+
+        mockContainer = AsyncMock()
+        mockContainer.id = "fake-container-id"
+        mockContainer.start = AsyncMock()
+        mockContainer.wait = AsyncMock()
+        mockContainer.show = AsyncMock(side_effect=RuntimeError("show crashed"))
+
+        mockClient = MagicMock()
+        mockClient.containers.create = AsyncMock(return_value=mockContainer)
+
+        removeContainerCalls: list[str] = []
+
+        async def fakeRemoveContainer(containerId: str, *, force: bool = True) -> None:
+            removeContainerCalls.append(containerId)
+
+        with patch.object(backend, "_getClient", new=AsyncMock(return_value=mockClient)):
+            with patch.object(backend, "removeContainer", side_effect=fakeRemoveContainer):
+                with pytest.raises(RuntimeError, match="show crashed"):
+                    await backend.runOneshot(spec=spec)
+
+        assert removeContainerCalls == ["fake-container-id"]
+
+    @pytest.mark.asyncio
+    async def testNoCleanupWhenCreateFails(self) -> None:
+        """No removeContainer call when create() itself raises.
+
+        If the container was never created, there is nothing to clean up.
+
+        Returns:
+            None
+        """
+        backend = DockerBackend(_makeConfig())
+        spec = _makeSpec()
+
+        mockClient = MagicMock()
+        mockClient.containers.create = AsyncMock(side_effect=RuntimeError("create failed"))
+
+        removeContainerCalls: list[str] = []
+
+        async def fakeRemoveContainer(containerId: str, *, force: bool = True) -> None:
+            removeContainerCalls.append(containerId)
+
+        with patch.object(backend, "_getClient", new=AsyncMock(return_value=mockClient)):
+            with patch.object(backend, "removeContainer", side_effect=fakeRemoveContainer):
+                with pytest.raises(RuntimeError, match="create failed"):
+                    await backend.runOneshot(spec=spec)
+
+        assert removeContainerCalls == []
+
+    @pytest.mark.asyncio
+    async def testCleanupSuppressedOnRemoveError(self) -> None:
+        """Container cleanup error is suppressed; original exception re-raised.
+
+        If removeContainer itself raises, the original exception must still
+        propagate — the cleanup failure must not swallow it.
+
+        Returns:
+            None
+        """
+        backend = DockerBackend(_makeConfig())
+        spec = _makeSpec()
+
+        mockContainer = AsyncMock()
+        mockContainer.id = "fake-container-id"
+        mockContainer.start = AsyncMock(side_effect=RuntimeError("start failed"))
+
+        mockClient = MagicMock()
+        mockClient.containers.create = AsyncMock(return_value=mockContainer)
+
+        async def brokenRemoveContainer(containerId: str, *, force: bool = True) -> None:
+            raise RuntimeError("remove also failed")
+
+        with patch.object(backend, "_getClient", new=AsyncMock(return_value=mockClient)):
+            with patch.object(backend, "removeContainer", side_effect=brokenRemoveContainer):
+                with pytest.raises(RuntimeError, match="start failed"):
+                    await backend.runOneshot(spec=spec)
+
+    @pytest.mark.asyncio
+    async def testNoCleanupOnSuccess(self) -> None:
+        """removeContainer is NOT called on the success path.
+
+        On success, the caller is responsible for cleanup via removeContainer.
+
+        Returns:
+            None
+        """
+        backend = DockerBackend(_makeConfig())
+        spec = _makeSpec()
+
+        mockContainer = AsyncMock()
+        mockContainer.id = "fake-container-id"
+        mockContainer.start = AsyncMock()
+        mockContainer.wait = AsyncMock()
+        mockContainer.show = AsyncMock(
+            return_value={
+                "State": {"ExitCode": 0, "OOMKilled": False},
+            }
+        )
+
+        mockClient = MagicMock()
+        mockClient.containers.create = AsyncMock(return_value=mockContainer)
+
+        removeContainerCalls: list[str] = []
+
+        async def fakeRemoveContainer(containerId: str, *, force: bool = True) -> None:
+            removeContainerCalls.append(containerId)
+
+        with patch.object(backend, "_getClient", new=AsyncMock(return_value=mockClient)):
+            with patch.object(backend, "removeContainer", side_effect=fakeRemoveContainer):
+                outcome = await backend.runOneshot(spec=spec)
+
+        assert isinstance(outcome, ContainerOutcome)
+        assert outcome.exitCode == 0
+        assert outcome.containerId == "fake-container-id"
+        assert removeContainerCalls == []
