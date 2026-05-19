@@ -22,6 +22,26 @@
 | `runtimes/python/runtime.py` | Python runtime with `timeout` wrapper and artifact detection |
 | `metadata/filesystem.py` | Filesystem-backed metadata store (JSON) |
 
+### Bot Integration
+
+SandboxHandler (`internal/bot/common/handlers/sandbox.py`) provides slash commands and LLM tool integration:
+
+**Slash commands:**
+- `/run <code>` (alias: `/python`) — Execute Python code in sandbox
+- `/sandbox files [path]` — List files in sandbox workspace
+- `/sandbox read <path>` — Read a file from sandbox workspace
+- `/sandbox status` — Show sandbox session status
+- `/sandbox install <packages...>` — Install Python packages (admin only)
+
+**LLM tool:**
+- `run_python(code, packages?)` — Execute Python code in sandbox, returns `{"done": bool, "output": str | None, "exitCode": int | None, "errorMessage": str | None}`
+
+**Chat setting:**
+- `allow-sandbox` — Per-chat gate for sandbox functionality (default: false)
+
+See [`handlers.md`](handlers.md) for handler registration and command implementation details.
+See [`configuration.md`](configuration.md) for `sandbox.enabled` config key and `allow-sandbox` chat setting.
+
 **Import paths:**
 ```python
 from lib.sandbox import SandboxManager
