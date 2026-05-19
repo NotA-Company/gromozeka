@@ -34,7 +34,7 @@ from .models import ExtraDataDict
 logger = logging.getLogger(__name__)
 
 
-LLMToolHandler: TypeAlias = Callable[..., Awaitable[str]]
+LLMToolHandler: TypeAlias = Callable[..., Awaitable[Any]]
 """Type alias for async tool handler functions.
 
 Handlers are async callables that take tool parameters and extra data,

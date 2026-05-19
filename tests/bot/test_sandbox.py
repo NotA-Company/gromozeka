@@ -171,6 +171,7 @@ def _makeHandler(
     configManager: Optional[Mock] = None,
     chatSettings: Optional[Dict[ChatSettingsKey, ChatSettingsValue]] = None,
     mockSandboxManager: Optional[AsyncMock] = None,
+    sandboxEnabled: bool = True,
 ) -> tuple:
     """Construct a SandboxHandler with stubs ready for tests.
 
@@ -178,11 +179,12 @@ def _makeHandler(
         configManager: Optional preconfigured config-manager stub.
         chatSettings: Optional override for the chat-settings dict.
         mockSandboxManager: Optional preconfigured sandbox manager mock.
+        sandboxEnabled: Whether sandbox is enabled at the handler level.
 
     Returns:
         Tuple (handler, mocks) where mocks is a dict of injected mocks.
     """
-    cm = configManager if configManager is not None else _makeConfigManager()
+    cm = configManager if configManager is not None else _makeConfigManager(sandboxEnabled=sandboxEnabled)
 
     # Mock database with minimal setup
     db = Mock()
@@ -196,6 +198,12 @@ def _makeHandler(
         database=db,
         botProvider=BotProvider.TELEGRAM,
     )
+
+    # Set sandboxEnabled if config has sandbox section
+    if sandboxEnabled and (configManager is not None or cm.get("sandbox") is not None):
+        handler.sandboxEnabled = True
+    else:
+        handler.sandboxEnabled = False
 
     # Stub getChatSettings and sendMessage
     cs = chatSettings if chatSettings is not None else _makeChatSettings()
@@ -278,27 +286,101 @@ def mockSandboxManager():
 # ---------------------------------------------------------------------------
 
 
-# 1. newMessageHandler gating tests
+# 1. Command access gating tests
 
 
-async def test_newMessageHandler_skipped_when_allow_sandbox_false(mockSandboxManager: AsyncMock) -> None:
-    """Handler returns SKIPPED when allow-sandbox setting is False."""
+async def test_run_command_gated_when_sandbox_not_configured(mockSandboxManager: AsyncMock) -> None:
+    """Test /run command is blocked when sandbox is not configured globally."""
+    handler, mocks = _makeHandler(sandboxEnabled=False, chatSettings=_makeChatSettings(allowSandbox=True))
+    em = _makeEnsuredMessage()
+
+    await cast(Any, handler).run_command(em, "run", 'print("hello")', Mock(), None)
+
+    # Verify no sandbox execution
+    mockSandboxManager.runCode.assert_not_called()
+
+    # Verify error message sent
+    assert mocks["sendMessage"].call_count == 1
+    sendKwargs = mocks["sendMessage"].call_args.kwargs
+    assert "not configured" in sendKwargs["messageText"]
+
+
+async def test_run_command_gated_when_allow_sandbox_false(mockSandboxManager: AsyncMock) -> None:
+    """Test /run command is blocked when allow-sandbox setting is False."""
     handler, mocks = _makeHandler(chatSettings=_makeChatSettings(allowSandbox=False))
     em = _makeEnsuredMessage()
 
-    result = await handler.newMessageHandler(em, Mock())
+    await cast(Any, handler).run_command(em, "run", 'print("hello")', Mock(), None)
 
-    assert result.name == "SKIPPED"
+    # Verify no sandbox execution
+    mockSandboxManager.runCode.assert_not_called()
+
+    # Verify error message sent
+    assert mocks["sendMessage"].call_count == 1
+    sendKwargs = mocks["sendMessage"].call_args.kwargs
+    assert "not enabled for this chat" in sendKwargs["messageText"]
 
 
-async def test_newMessageHandler_next_when_allow_sandbox_true(mockSandboxManager: AsyncMock) -> None:
-    """Handler returns NEXT when allow-sandbox setting is True."""
+async def test_run_command_allowed_when_allow_sandbox_true(mockSandboxManager: AsyncMock) -> None:
+    """Test /run command proceeds when allow-sandbox setting is True."""
     handler, mocks = _makeHandler(chatSettings=_makeChatSettings(allowSandbox=True))
     em = _makeEnsuredMessage()
 
-    result = await handler.newMessageHandler(em, Mock())
+    # Mock successful execution with stdout
+    mockResult = _makeRunResult(exitCode=0, stdoutBytes=5, stderrBytes=0)
+    mockSandboxManager.runCode = AsyncMock(return_value=mockResult)
+    mockSandboxManager.readFile = AsyncMock(
+        return_value=FileContent(path="stdout.txt", sizeBytes=5, bytesRead=5, truncated=False, content="hello")
+    )
 
-    assert result.name == "NEXT"
+    await cast(Any, handler).run_command(em, "run", 'print("hello")', Mock(), None)
+
+    # Verify sandbox execution occurred
+    mockSandboxManager.runCode.assert_called_once()
+
+    # Verify result message sent
+    assert mocks["sendMessage"].call_count == 1
+    sendKwargs = mocks["sendMessage"].call_args.kwargs
+    assert "hello" in sendKwargs["messageText"]
+
+
+async def test_sandbox_command_gated_when_allow_sandbox_false(mockSandboxManager: AsyncMock) -> None:
+    """Test /sandbox files command is blocked when allow-sandbox setting is False."""
+    handler, mocks = _makeHandler(chatSettings=_makeChatSettings(allowSandbox=False))
+    em = _makeEnsuredMessage()
+
+    await cast(Any, handler).sandbox_command(em, "sandbox", "files", Mock(), None)
+
+    # Verify no sandbox operation
+    mockSandboxManager.listFiles.assert_not_called()
+
+    # Verify error message sent
+    assert mocks["sendMessage"].call_count == 1
+    sendKwargs = mocks["sendMessage"].call_args.kwargs
+    assert "not enabled for this chat" in sendKwargs["messageText"]
+
+
+async def test_sandbox_command_allowed_when_allow_sandbox_true(mockSandboxManager: AsyncMock) -> None:
+    """Test /sandbox files command proceeds when allow-sandbox setting is True."""
+    handler, mocks = _makeHandler(chatSettings=_makeChatSettings(allowSandbox=True))
+    em = _makeEnsuredMessage()
+
+    # Mock file listing
+    mockSandboxManager.listFiles = AsyncMock(
+        return_value=[
+            _makeFileInfo("main.py", 1024, isDirectory=False),
+        ]
+    )
+
+    await cast(Any, handler).sandbox_command(em, "sandbox", "files", Mock(), None)
+
+    # Verify sandbox operation occurred
+    mockSandboxManager.listFiles.assert_called_once()
+
+    # Verify result message sent
+    assert mocks["sendMessage"].call_count == 1
+    sendKwargs = mocks["sendMessage"].call_args.kwargs
+    assert "main.py" in sendKwargs["messageText"]
 
 
 # 2. /run command tests

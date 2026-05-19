@@ -15,7 +15,8 @@ Per-chat gating is supported via the `allow-sandbox` chat setting.
 """
 
 import logging
-from typing import Optional
+from collections.abc import Sequence
+from typing import Any, Dict, Optional
 
 from internal.bot.common.models import UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
@@ -31,6 +32,7 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import MessageCategory
+from lib.ai import LLMFunctionParameter, LLMParameterType
 from lib.sandbox import (
     InvalidPackageSpec,
     PathOutsideWorkspace,
@@ -42,7 +44,7 @@ from lib.sandbox import (
     SessionNotFound,
 )
 
-from .base import BaseBotHandler, HandlerResultStatus
+from .base import BaseBotHandler
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +78,32 @@ class SandboxHandler(BaseBotHandler):
                 SandboxManager.injectConfig(sandboxConfig)
                 self.sandboxEnabled = True
                 logger.info("Sandbox config injected successfully")
+
+                # Register LLM tool for sandboxed code execution
+                self.llmService.registerTool(
+                    name="run_python",
+                    description=(
+                        "Execute Python code in a sandboxed environment and return stdout/stderr output. "
+                        "Use this to run calculations, process data, or test code snippets. "
+                        "The code runs in an isolated environment with no network access by default. "
+                        "Environment is preserved between calls."
+                    ),
+                    parameters=[
+                        LLMFunctionParameter(
+                            name="code",
+                            description="Python source code to execute in the sandbox",
+                            type=LLMParameterType.STRING,
+                            required=True,
+                        ),
+                        LLMFunctionParameter(
+                            name="packages",
+                            description="List of packages, required for running script",
+                            type=LLMParameterType.ARRAY,
+                            required=False,
+                        ),
+                    ],
+                    handler=self._llmToolRunSandboxCode,
+                )
             except Exception as e:
                 logger.error(f"Failed to parse sandbox config: {e}")
                 self.sandboxEnabled = False
@@ -83,9 +111,133 @@ class SandboxHandler(BaseBotHandler):
             logger.error("Sandbox config section not found — sandbox commands will not work")
             self.sandboxEnabled = False
 
-    def getSessionId(self, ensuredMessage:EnsuredMessage) -> str:
+    def getSessionId(self, ensuredMessage: EnsuredMessage) -> str:
         return f"chat#{ensuredMessage.recipient.id}"
 
+    async def _llmToolRunSandboxCode(
+        self,
+        extraData: Dict[str, Any],
+        code: str,
+        packages: Optional[Sequence[str]] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """LLM tool handler for sandboxed Python code execution.
+
+        Executes Python code in a Docker sandbox and returns the output.
+        Uses chat-level session isolation (sessionId = chatId).
+
+        Args:
+            extraData: Tool-call context dict. Must contain ``ensuredMessage``.
+            code: Python source code to execute.
+            **kwargs: Additional keyword arguments (ignored).
+
+        Returns:
+            JSON string: ``{"done": bool, "output": str | None, "exitCode": int | None, "errorMessage": str | None}``
+        """
+        try:
+            # Validate context
+            if extraData is None or "ensuredMessage" not in extraData:
+                return {"done": False, "errorMessage": "Missing chat context"}
+
+            ensuredMessage = extraData["ensuredMessage"]
+            if not isinstance(ensuredMessage, EnsuredMessage):
+                return {"done": False, "errorMessage": "Invalid chat context"}
+
+            chatId = ensuredMessage.recipient.id
+
+            # Check sandbox availability
+            if not self.sandboxEnabled:
+                return {"done": False, "errorMessage": "Sandbox is not configured"}
+
+            # Check per-chat setting
+            settings = await self.getChatSettings(chatId)
+            if not settings[ChatSettingsKey.ALLOW_SANDBOX].toBool():
+                return {"done": False, "errorMessage": "Sandbox not enabled for this chat"}
+
+            # Execute code
+            manager = SandboxManager.getInstance()
+            result = await manager.runCode(
+                sessionId=str(chatId),
+                code=code,
+                requiredPackages=packages,
+                runtime=RuntimeName.PYTHON,
+            )
+
+            if result.error:
+                return {"done": False, "errorMessage": result.error}
+
+            # Read stdout and stderr files
+            ret = {
+                "done": True,
+                "exitCode": result.exitCode,
+                "elapsedMs": result.elapsedMs,
+            }
+            if result.oomKilled:
+                ret["oomKilled"] = True
+            if result.timedOut:
+                ret["timedOut"] = True
+            if result.signal:
+                ret["signal"] = result.signal
+
+            sessionId = str(chatId)
+
+            if result.stdoutBytes > 0:
+                try:
+                    stdoutContent = await manager.readFile(sessionId, result.stdoutPath)
+                    stdoutText = str(stdoutContent.content)
+                    if stdoutText:
+                        ret["stdout"] = stdoutText.rstrip()
+                except Exception as e:
+                    logger.error("Failed to read stdout: %s", e)
+
+            if result.stderrBytes > 0:
+                try:
+                    stderrContent = await manager.readFile(sessionId, result.stderrPath)
+                    stderrText = str(stderrContent.content)
+
+                    if stderrText:
+                        ret["stderr"] = stderrText.rstrip()
+                except Exception as e:
+                    logger.error("Failed to read stderr: %s", e)
+
+            return ret
+
+        except SessionBusy:
+            return {"done": False, "errorMessage": "Session is busy, try again later"}
+        except SandboxBusy:
+            return {"done": False, "errorMessage": "All sandbox workers are busy, try again later"}
+        except Exception as e:
+            logger.error("Sandbox LLM tool error: %s", e)
+            return {"done": False, "errorMessage": str(e)}
+
+    async def _checkSandboxAccess(self, ensuredMessage: EnsuredMessage) -> bool:
+        """Check if sandbox is enabled for this chat. Sends error reply if not.
+
+        Args:
+            ensuredMessage: The message to check access for.
+
+        Returns:
+            True if access is allowed, False if denied (error message sent).
+        """
+        if not self.sandboxEnabled:
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="Sandbox is not configured.",
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+            return False
+
+        chatId = ensuredMessage.recipient.id
+        settings = await self.getChatSettings(chatId)
+        if not settings[ChatSettingsKey.ALLOW_SANDBOX].toBool():
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="Sandbox is not enabled for this chat.",
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+            return False
+
+        return True
 
     @commandHandlerV2(
         commands=("run", "python"),
@@ -125,12 +277,7 @@ class SandboxHandler(BaseBotHandler):
             Output is truncated at approximately 3000 characters to avoid hitting
             message size limits.
         """
-        if not self.sandboxEnabled:
-            await self.sendMessage(
-                ensuredMessage,
-                messageText="Sandbox is not configured.",
-                messageCategory=MessageCategory.BOT_ERROR,
-            )
+        if not await self._checkSandboxAccess(ensuredMessage):
             return
 
         # Extract code from args or replied-to message
@@ -272,12 +419,7 @@ class SandboxHandler(BaseBotHandler):
         Returns:
             None
         """
-        if not self.sandboxEnabled:
-            await self.sendMessage(
-                ensuredMessage,
-                messageText="Sandbox is not configured.",
-                messageCategory=MessageCategory.BOT_ERROR,
-            )
+        if not await self._checkSandboxAccess(ensuredMessage):
             return
 
         argsList = args.strip().split(maxsplit=1)

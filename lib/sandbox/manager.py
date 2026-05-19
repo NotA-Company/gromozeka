@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import RLock
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import lib.utils as libUtils
 
@@ -478,7 +478,7 @@ class SandboxManager:
         code: str,
         *,
         runtime: RuntimeName,
-        requiredPackages: Sequence[str] = (),
+        requiredPackages: Optional[Sequence[str]] = None,
         network: NetworkPolicy | None = None,
         stdin: str | None = None,
         env: dict[str, str] | None = None,
