@@ -840,9 +840,13 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
     },
     ChatSettingsKey.ALLOW_SANDBOX: {
         "type": ChatSettingsType.BOOL,
-        "short": "Включить песочницу для кода",
-        "long": "Включает возможность выполнять код в изолированной среде (sandbox) в этом чате. "
-        "Команды /run и /sandbox станут доступны.",
+        "short": "Песочницу для кода",
+        "long": (
+            "Включает возможность выполнять код "
+            "(на данный момент только Python) "
+            "в изолированной среде (sandbox) в этом чате. \n"
+            "Команды /run и /sandbox станут доступны."
+        ),
         "page": ChatSettingsPage.BOT_OWNER,
     },
     ChatSettingsKey.DELETE_DENIED_COMMANDS: {

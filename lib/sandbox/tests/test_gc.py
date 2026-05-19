@@ -59,7 +59,6 @@ def _makeConfig(
         ),
         gc=GcConfig(
             enabled=gcEnabled,
-            intervalSeconds=60,
             runRetentionMinutes=runRetentionMinutes,
             orphanWorkspaceRetentionMinutes=orphanWorkspaceRetentionMinutes,
         ),

@@ -132,7 +132,6 @@ class SessionDefaults:
         runTimeoutSeconds: Default wall-clock timeout per code execution run.
     """
 
-    runtime: RuntimeName = RuntimeName.PYTHON
     idleTtlMinutes: int = 30
     hardTtlMinutes: int = 120
     runTimeoutSeconds: int = 30
@@ -148,7 +147,6 @@ class SessionDefaults:
             A SessionDefaults instance.
         """
         return cls(
-            runtime=RuntimeName(data.get("runtime", "python")),
             idleTtlMinutes=int(data.get("idle-ttl-minutes", 30)),
             hardTtlMinutes=int(data.get("hard-ttl-minutes", 120)),
             runTimeoutSeconds=int(data.get("run-timeout-seconds", 30)),
@@ -232,7 +230,6 @@ class GcConfig:
 
     Attributes:
         enabled: If True, the GC loop runs at the configured interval.
-        intervalSeconds: Seconds between GC sweeps.
         orphanContainerRetentionMinutes: Minutes to retain orphaned containers
             before removal.
         orphanWorkspaceRetentionMinutes: Minutes to retain orphaned workspace
@@ -242,7 +239,6 @@ class GcConfig:
     """
 
     enabled: bool = True
-    intervalSeconds: int = 60
     orphanContainerRetentionMinutes: int = 10
     orphanWorkspaceRetentionMinutes: int = 60
     runRetentionMinutes: int = 1440
@@ -259,7 +255,6 @@ class GcConfig:
         """
         return cls(
             enabled=data.get("enabled", True),
-            intervalSeconds=int(data.get("interval-seconds", 60)),
             orphanContainerRetentionMinutes=int(data.get("orphan-container-retention-minutes", 10)),
             orphanWorkspaceRetentionMinutes=int(data.get("orphan-workspace-retention-minutes", 60)),
             runRetentionMinutes=int(data.get("run-retention-minutes", 1440)),

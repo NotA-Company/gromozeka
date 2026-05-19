@@ -201,13 +201,19 @@ class DockerBackend(SandboxBackend):
         tarBuffer.seek(0)
 
         try:
-            await client.images.build(
+            ret = await client.images.build(
                 fileobj=tarBuffer,
                 tag=tag,
                 path_dockerfile=dockerfileName,
                 rm=True,
                 pull=True,
+                encoding="identity",
             )
+            # logger.debug(f"Build result: {json.dumps(ret, indent=2)}")
+            if ret and "error" in ret[-1]:
+                logger.error(f"Error during building docker image: {ret[-1]}")
+                raise ImageBuildFailed(f"Error during building docker image: {ret[-1]}")
+
             logger.info("Successfully built image %s", tag)
         except aiodocker.DockerError as exc:
             raise ImageBuildFailed(f"Build failed for {tag}: {exc}") from exc

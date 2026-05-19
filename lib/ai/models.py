@@ -413,6 +413,9 @@ class LLMToolCall:
         return utils.jsonDumps(
             {"id": self.id, "name": self.name, "parameters": self.parameters},
         )
+    
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({str(self)})"
 
 
 class ModelMessage:

@@ -14,7 +14,6 @@ base-url = "unix:///var/run/docker.sock"
 image-pull-policy = "if-not-present"
 
 [sandbox.defaults]
-runtime = "python"
 idle-ttl-minutes = 30
 hard-ttl-minutes = 120
 run-timeout-seconds = 30
@@ -41,7 +40,6 @@ global-queue-wait-seconds = 60
 
 [sandbox.gc]
 enabled = true
-interval-seconds = 600
 orphan-container-retention-minutes = 10
 orphan-workspace-retention-minutes = 60
 run-retention-minutes = 1440

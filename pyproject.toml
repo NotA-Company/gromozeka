@@ -29,6 +29,7 @@ exclude = [
     "ext",
     "**/node_modules",
     "**/.*",
+    "storage",
 ]
 venvPath = "."
 venv = "venv"
@@ -48,6 +49,7 @@ exclude = [
     "dist",
     "venv",
     "ext",
+    "storage",
 ]
 per-file-ignores = [
     "__init__.py:F401",

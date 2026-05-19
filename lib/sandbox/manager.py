@@ -253,7 +253,7 @@ class SandboxManager:
             try:
                 await self._backend.ensureImage(
                     imageTag=runtimeConfig.runImageTag,
-                    imageFile=runtimeConfig.runDockerfile,
+                    imageFile=str(Path(runtimeConfig.runDockerfile).absolute()),
                     rebuild=rebuildImage,
                 )
             except ImageBuildFailed as exc:
@@ -265,7 +265,7 @@ class SandboxManager:
             try:
                 await self._backend.ensureImage(
                     imageTag=runtimeConfig.installImageTag,
-                    imageFile=runtimeConfig.installDockerfile,
+                    imageFile=str(Path(runtimeConfig.installDockerfile).absolute()),
                     rebuild=rebuildImage,
                 )
             except ImageBuildFailed as exc:
@@ -445,7 +445,7 @@ class SandboxManager:
 
         return errors
 
-    def _getLibPoolPath(self, runtime: RuntimeName) -> str:
+    def _getLibPoolPath(self, runtime: RuntimeName) -> Path:
         """Get the library pool directory path for a runtime.
 
         Args:
@@ -455,7 +455,8 @@ class SandboxManager:
         Returns:
             The host path to the library pool.
         """
-        return str(Path(self._config.storage.rootDir) / "runtimes" / runtime.value / "libs")
+
+        return Path(self._config.storage.rootDir) / "runtimes" / runtime.value / "libs"
 
     async def _touchSessionInternal(self, record: SessionInfo, ttlMinutes: int) -> None:
         """Bump the session TTL without the full touchSession API overhead.
@@ -563,11 +564,15 @@ class SandboxManager:
                 hostLibPool = self._getLibPoolPath(runtime)
 
                 mounts: list[dict[str, str]] = [
-                    {"hostPath": str(workspacePath), "containerPath": "/workspace", "mode": "rw"},
+                    {"hostPath": str(workspacePath.absolute()), "containerPath": "/workspace", "mode": "rw"},
                 ]
                 if Path(hostLibPool).exists():
                     mounts.append(
-                        {"hostPath": hostLibPool, "containerPath": runtimeImpl._config.libMountPath, "mode": "ro"}
+                        {
+                            "hostPath": str(hostLibPool.absolute()),
+                            "containerPath": runtimeImpl._config.libMountPath,
+                            "mode": "ro",
+                        }
                     )
 
                 # Build env
@@ -689,6 +694,7 @@ class SandboxManager:
                     runRecord.exitCode = -1
                     await self._metadata.saveRun(runRecord)
                     logger.error("Run %s failed: %s", runId, exc)
+                    logger.exception(exc)
                     raise
 
                 # Step 17: Bump session TTL
@@ -762,11 +768,11 @@ class SandboxManager:
         if record is None:
             raise SessionNotFound(f"Session {sessionId} not found")
 
-        workspacePath = Path(record.workspacePath)
+        workspacePath = Path(record.workspacePath).resolve().absolute()
         # "/" means workspace root — resolveWorkspacePath rejects absolute paths,
         # so handle it directly.
         if path == "/":
-            resolved = workspacePath.resolve()
+            resolved = workspacePath.resolve().absolute()
         else:
             resolved = resolveWorkspacePath(workspacePath, path)
 

@@ -6,11 +6,9 @@ ENV PYTHONUNBUFFERED=1 \
 # Install Python 3 and build toolchain so source-only packages compile on musl.
 # Keep this list trimmed — every addition increases image size.
 RUN apk add --no-cache \
-        python3 \
-        py3-pip \
+        python3 py3-pip py3-wheel py3-setuptools \
         build-base \
-        gcc git libmagic make musl-dev nodejs sqlite tzdata \
- && python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel \
+        git libmagic sqlite tzdata \
  && adduser -D -u 1000 sandbox \
  && mkdir -p /sandbox/libs \
  && chown -R sandbox:sandbox /sandbox

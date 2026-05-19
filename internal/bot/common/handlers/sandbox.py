@@ -15,6 +15,7 @@ Per-chat gating is supported via the `allow-sandbox` chat setting.
 """
 
 import logging
+import time
 from collections.abc import Sequence
 from typing import Any, Dict, Optional
 
@@ -32,17 +33,18 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import MessageCategory
+from internal.services.queue_service import DelayedTask, DelayedTaskFunction
 from lib.ai import LLMFunctionParameter, LLMParameterType
 from lib.sandbox import (
     InvalidPackageSpec,
     PathOutsideWorkspace,
     RuntimeName,
     SandboxBusy,
-    SandboxConfig,
     SandboxManager,
     SessionBusy,
     SessionNotFound,
 )
+from lib.sandbox.types import NetworkPolicy
 
 from .base import BaseBotHandler
 
@@ -72,47 +74,54 @@ class SandboxHandler(BaseBotHandler):
 
         # Inject sandbox config into SandboxManager singleton if present
         sandboxRaw = self.configManager.get("sandbox")
-        if sandboxRaw:
-            try:
-                sandboxConfig = SandboxConfig.fromDict(sandboxRaw)
-                SandboxManager.injectConfig(sandboxConfig)
-                self.sandboxEnabled = True
-                logger.info("Sandbox config injected successfully")
-
-                # Register LLM tool for sandboxed code execution
-                self.llmService.registerTool(
-                    name="run_python",
-                    description=(
-                        "Execute Python code in a sandboxed environment and return stdout/stderr output. "
-                        "Use this to run calculations, process data, or test code snippets. "
-                        "The code runs in an isolated environment with no network access by default. "
-                        "Environment is preserved between calls."
-                    ),
-                    parameters=[
-                        LLMFunctionParameter(
-                            name="code",
-                            description="Python source code to execute in the sandbox",
-                            type=LLMParameterType.STRING,
-                            required=True,
-                        ),
-                        LLMFunctionParameter(
-                            name="packages",
-                            description="List of packages, required for running script",
-                            type=LLMParameterType.ARRAY,
-                            required=False,
-                        ),
-                    ],
-                    handler=self._llmToolRunSandboxCode,
-                )
-            except Exception as e:
-                logger.error(f"Failed to parse sandbox config: {e}")
-                self.sandboxEnabled = False
-        else:
-            logger.error("Sandbox config section not found — sandbox commands will not work")
+        if not sandboxRaw or not isinstance(sandboxRaw, dict) or not sandboxRaw.get("enabled", False):
+            logger.error("Sandbox is disabled — sandbox commands will not work")
             self.sandboxEnabled = False
+            return
+
+        SandboxManager.injectConfig(sandboxRaw)
+        self.sandboxEnabled = True
+        logger.info("Sandbox config injected successfully")
+
+        self.queueService.registerDelayedTaskHandler(function=DelayedTaskFunction.CRON_JOB, handler=self._dtCronJob)
+        self._lastCronRun = time.time()
+        # Register LLM tool for sandboxed code execution
+        self.llmService.registerTool(
+            name="run_python",
+            description=(
+                "Execute Python code in a sandboxed environment and return stdout/stderr output. "
+                "Use this to run calculations, process data, or test code snippets. "
+                # "The code runs in an isolated environment with no network access by default. "
+                "Environment is preserved between calls."
+            ),
+            parameters=[
+                LLMFunctionParameter(
+                    name="code",
+                    description="Python source code to execute in the sandbox",
+                    type=LLMParameterType.STRING,
+                    required=True,
+                ),
+                LLMFunctionParameter(
+                    name="packages",
+                    description="List of packages, required for running script",
+                    type=LLMParameterType.ARRAY,
+                    required=False,
+                ),
+            ],
+            handler=self._llmToolRunSandboxCode,
+        )
 
     def getSessionId(self, ensuredMessage: EnsuredMessage) -> str:
         return f"chat#{ensuredMessage.recipient.id}"
+
+    async def _dtCronJob(self, task: DelayedTask) -> None:
+        now = time.time()
+        # Run each 30 minutes
+        if now - self._lastCronRun < 1800:
+            return
+        self._lastCronRun = now
+        ret = await SandboxManager.getInstance().collectGarbage()
+        logger.debug(f"Sandbox GC Result: {ret}")
 
     async def _llmToolRunSandboxCode(
         self,
@@ -155,12 +164,15 @@ class SandboxHandler(BaseBotHandler):
                 return {"done": False, "errorMessage": "Sandbox not enabled for this chat"}
 
             # Execute code
+            sessionId = self.getSessionId(ensuredMessage)
+
             manager = SandboxManager.getInstance()
             result = await manager.runCode(
-                sessionId=str(chatId),
+                sessionId=sessionId,
                 code=code,
                 requiredPackages=packages,
                 runtime=RuntimeName.PYTHON,
+                network=NetworkPolicy(enabled=True),
             )
 
             if result.error:
@@ -179,8 +191,6 @@ class SandboxHandler(BaseBotHandler):
             if result.signal:
                 ret["signal"] = result.signal
 
-            sessionId = str(chatId)
-
             if result.stdoutBytes > 0:
                 try:
                     stdoutContent = await manager.readFile(sessionId, result.stdoutPath)
@@ -188,6 +198,7 @@ class SandboxHandler(BaseBotHandler):
                     if stdoutText:
                         ret["stdout"] = stdoutText.rstrip()
                 except Exception as e:
+                    logger.exception(e)
                     logger.error("Failed to read stdout: %s", e)
 
             if result.stderrBytes > 0:
@@ -301,10 +312,18 @@ class SandboxHandler(BaseBotHandler):
         sessionId = self.getSessionId(ensuredMessage)
 
         try:
-            result = await manager.runCode(sessionId=sessionId, code=code, runtime=RuntimeName.PYTHON)
+            result = await manager.runCode(
+                sessionId=sessionId,
+                code=code,
+                runtime=RuntimeName.PYTHON,
+                network=NetworkPolicy(enabled=True),
+            )
 
             # Format response
-            lines = [f"Exit code: {result.exitCode}"]
+            lines = [
+                f"Exit code: {result.exitCode}",
+                f"Elapsed: {result.elapsedMs / 1000:.2f}s",
+            ]
 
             if result.stdoutBytes > 0:
                 lines.append("Stdout:")
@@ -382,6 +401,7 @@ class SandboxHandler(BaseBotHandler):
             )
         except Exception as e:
             logger.error(f"Error running code: {e}")
+            logger.exception(e)
             await self.sendMessage(
                 ensuredMessage,
                 messageText=f"Error: {e}",
@@ -497,10 +517,10 @@ class SandboxHandler(BaseBotHandler):
             lines = [f"Files in {listPath}:"]
             for file in files:
                 if file.isDirectory:
-                    lines.append(f"  [DIR]  {file.path}/")
+                    lines.append(f"  [DIR]  `{file.path}`/")
                 else:
                     sizeKb = file.sizeBytes / 1024
-                    lines.append(f"  [FILE] {file.path} ({sizeKb:.1f} KB)")
+                    lines.append(f"  [FILE] `{file.path}` ({sizeKb:.1f} KB)")
 
             response = "\n".join(lines)
             await self.sendMessage(
@@ -524,6 +544,7 @@ class SandboxHandler(BaseBotHandler):
             )
         except Exception as e:
             logger.error(f"Error listing files: {e}")
+            logger.exception(e)
             await self.sendMessage(
                 ensuredMessage,
                 messageText=f"Error: {e}",

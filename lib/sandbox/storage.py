@@ -78,7 +78,7 @@ def resolveWorkspacePath(workspaceRoot: Path, requested: str) -> Path:
     # 3. Join with workspace root and resolve.
     #    We resolve workspaceRoot first so that symlinks in the root itself
     #    are accounted for.
-    resolvedRoot = workspaceRoot.resolve()
+    resolvedRoot = workspaceRoot.absolute().resolve()
     candidate = (resolvedRoot / requested).resolve()
 
     # 4. Verify the resolved path is still within the workspace root.
