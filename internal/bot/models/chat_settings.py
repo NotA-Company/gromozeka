@@ -364,6 +364,8 @@ class ChatSettingsKey(StrEnum):
     # Allowing different commands in chat
     ALLOW_TOOLS_COMMANDS = "allow-tools-commands"
     """Whether tool commands (/draw, /analyze, etc.) are allowed."""
+    ALLOW_SANDBOX = "allow-sandbox"
+    """Whether sandbox code execution is enabled for this chat."""
     DELETE_DENIED_COMMANDS = "delete-denied-commands"
     """Whether to delete messages with denied commands."""
     # Allowing different reactions in chat (to mention/reply/random)
@@ -835,6 +837,13 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "short": "Разрешить команды использования инструментов (`/draw`, ...)",
         "long": "Разрешить команды использования различных инструментов (Например `/draw`, `/analyze` и т.д.)",
         "page": ChatSettingsPage.PAID,
+    },
+    ChatSettingsKey.ALLOW_SANDBOX: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Включить песочницу для кода",
+        "long": "Включает возможность выполнять код в изолированной среде (sandbox) в этом чате. "
+        "Команды /run и /sandbox станут доступны.",
+        "page": ChatSettingsPage.BOT_OWNER,
     },
     ChatSettingsKey.DELETE_DENIED_COMMANDS: {
         "type": ChatSettingsType.BOOL,

@@ -1,4 +1,5 @@
 [sandbox]
+enabled = false
 
 [sandbox.storage]
 root-dir = "/var/lib/gromozeka/sandbox"

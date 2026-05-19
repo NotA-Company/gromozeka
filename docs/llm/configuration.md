@@ -303,7 +303,11 @@ Discovery-structure-template placeholders: `{description}` (from web search resu
 
 ### `[sandbox]`
 
-Sandboxed code execution configuration. Defaults live in [`configs/00-defaults/sandbox.toml`](../../configs/00-defaults/sandbox.toml).
+Sandboxed code execution configuration. Defaults live in [`configs/00-defaults/sandbox.toml`](../../configs/00-defaults/sandbox.toml). The handler is registered conditionally on `enabled = true` and per-chat gated by the `allow-sandbox` chat setting.
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `enabled` | bool | `false` | Master switch — operator must flip to register `SandboxHandler` |
 
 #### `[sandbox.storage]`
 
