@@ -4,7 +4,19 @@ provider = "yc-openai"
 model_id = "aliceai-llm"
 model_version = "latest"
 temperature = 0.3
-context = 32768
+context = 65536
+support_tools = true
+support_text = true
+support_images = false
+support_structured_output = true
+tier = "paid"
+
+[models.models.aliceai-llm-flash]
+provider = "yc-openai"
+model_id = "aliceai-llm"
+model_version = "latest"
+temperature = 0.3
+context = 65536
 support_tools = true
 support_text = true
 support_images = false
