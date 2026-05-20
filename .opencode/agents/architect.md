@@ -70,6 +70,7 @@ description: >-
   </example>
 mode: all
 model: smartest
+reasoningEffort: high
 steps: 50
 color: "#FFD700"
 permission:

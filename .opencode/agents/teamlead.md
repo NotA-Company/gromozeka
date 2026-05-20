@@ -73,6 +73,7 @@ description: >-
   </example>
 mode: all
 model: orchestrator
+reasoningEffort: high
 color: "#87CEEB"
 permission:
   bash: deny

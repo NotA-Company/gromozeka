@@ -79,6 +79,7 @@ description: >-
   </example>
 mode: all
 model: standard
+reasoningEffort: high
 temperature: 0.1
 color: "#FF9500"
 permission:

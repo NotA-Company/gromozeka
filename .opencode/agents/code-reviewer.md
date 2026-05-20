@@ -76,6 +76,7 @@ description: >-
   </example>
 mode: all
 model: smart
+reasoningEffort: high
 temperature: 0.1
 steps: 60
 color: "#34C759"
