@@ -20,6 +20,8 @@
 | Add or change TOML configuration | [`configuration.md`](configuration.md) |
 | Write or run tests, understand test fixtures | [`testing.md`](testing.md) |
 | Follow a step-by-step task workflow or avoid pitfalls | [`tasks.md`](tasks.md) |
+| Reuse durable cross-task memory and repo gotchas | [`teamlead-memory.md`](teamlead-memory.md) |
+| Reuse archived task-specific memories for completed subsystems | [`memories/index.md`](memories/index.md) |
 
 ---
 
@@ -167,6 +169,7 @@ make test
 | `lib/` | Reusable library code |
 | `tests/` | Integration test suite |
 | `docs/` | Documentation |
+| `docs/llm/memories/` | Archived task-specific working memories for completed features/subsystems |
 
 ### 4.2 Entry Points
 
@@ -263,8 +266,10 @@ make test
 - [`configuration.md`](configuration.md) — TOML config sections, ConfigManager methods
 - [`testing.md`](testing.md) — Test fixtures, pytest patterns, golden data framework
 - [`tasks.md`](tasks.md) — Step-by-step task workflows, anti-patterns
+- [`teamlead-memory.md`](teamlead-memory.md) — Durable cross-task memory, repo gotchas, workflow lessons
+- [`memories/index.md`](memories/index.md) — Task-specific memory index for completed subsystems/features
 
 ---
 
 *This guide is auto-maintained and should be updated whenever significant architectural changes are made*
-*Last updated: 2026-05-17*
+*Last updated: 2026-05-20*
