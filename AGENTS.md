@@ -98,7 +98,8 @@ Layout (see [`docs/llm/index.md`](docs/llm/index.md) §4 for line-level map):
   `ls -1 internal/database/migrations/versions/ | grep migration_ | sort -V | tail -1`.
 - [`lib/`](lib/) — reusable, no bot deps. `lib/ai/` (provider registry in
   [`lib/ai/manager.py`](lib/ai/manager.py)), `lib/rate_limiter/`,
-  `lib/max_bot/`, `lib/markdown/`, `lib/bayes_filter/`, etc.
+  `lib/max_bot/`, `lib/markdown/`, `lib/bayes_filter/`,
+  `lib/sandbox/` (sandboxed code execution in Docker), etc.
 - [`lib/ext_modules/`](lib/ext_modules/) — vendored/extension subpackages
   (e.g. `grabliarium`) with their own `pyproject.toml`/tests. Treated
   separately by the formatter.

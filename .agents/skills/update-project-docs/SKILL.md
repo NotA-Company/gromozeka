@@ -4,9 +4,10 @@ description: >
   Guides the agent through updating all relevant Gromozeka project documentation
   after making code changes. Use this skill after implementing a feature, fixing
   a bug, refactoring, adding a handler/service/library, changing database schema,
-  or modifying configuration. Provides a decision matrix mapping change types to
-  specific doc sections. Triggers: update docs, sync documentation, documentation
-  update, doc maintenance, post-implementation docs.
+  or modifying configuration, including durable memory files when needed.
+  Provides a decision matrix mapping change types to specific doc sections.
+  Triggers: update docs, sync documentation, documentation update, doc
+  maintenance, post-implementation docs, teamlead memory, task memory.
 ---
 
 # Update Gromozeka Project Documentation
@@ -14,7 +15,7 @@ description: >
 ## When to use
 
 - After any non-cosmetic code change — feature, refactor, bug fix affecting behavior, schema change, config change, new library, new handler.
-- After discovering a new gotcha or invariant worth recording.
+- After discovering a new gotcha, invariant, or durable memory worth recording.
 - When explicitly asked to "sync docs" or "update the docs".
 
 ## When NOT to use
@@ -44,6 +45,8 @@ A single change may match multiple rows. Apply all that match.
 | Architecture shift | Changed dependency direction, new ADR, changed invariant |
 | New hard rule | Newly enforced convention all agents must follow |
 | New gotcha / anti-pattern | Newly discovered task-specific pitfall |
+| New repo-wide durable memory | Reusable discovery that should stay in cross-task memory |
+| New subsystem-specific durable memory | Reusable discovery that belongs to one completed subsystem/feature |
 | Refactor | Renamed/moved files or symbols — path references in docs may be stale |
 | New test pattern | New fixture, new marker, new golden-data convention |
 
@@ -62,13 +65,23 @@ A single change may match multiple rows. Apply all that match.
 | Architecture shift | [`docs/llm/architecture.md`](../../../docs/llm/architecture.md). Add or amend an ADR if the decision is load-bearing. |
 | New test pattern | [`docs/llm/testing.md`](../../../docs/llm/testing.md). |
 | New gotcha / anti-pattern | [`docs/llm/tasks.md`](../../../docs/llm/tasks.md) — §2 for anti-patterns, §3 for gotchas table, §4 for lessons-learned narratives. |
-| Refactor | Search all `docs/llm/*.md` for old paths/symbol names. |
+| New repo-wide durable memory | [`docs/llm/teamlead-memory.md`](../../../docs/llm/teamlead-memory.md). Keep it compact; only store cross-task facts or workflow lessons. |
+| New subsystem-specific durable memory | Relevant file under [`docs/llm/memories/`](../../../docs/llm/memories/) **and** [`docs/llm/memories/index.md`](../../../docs/llm/memories/index.md). If you create a new memory file or change discovery flow, also update [`docs/llm/index.md`](../../../docs/llm/index.md) and the pointers in [`docs/llm/teamlead-memory.md`](../../../docs/llm/teamlead-memory.md). |
+| Refactor | Search all `docs/llm/**/*.md` (include `docs/llm/memories/`) for old paths/symbol names. |
 
 ### How to add entries
 
 - **New handler** row to `handlers.md`: describe what messages it handles, what commands it owns, parallelism, any conditional registration predicate.
 - **New service** entry in `services.md`: location, `getInstance()` call, key public methods (with signatures), initialization side effects, thread-safety notes.
 - **New library** row in `libraries.md` §overview table: path, one-line purpose.
+
+### Memory routing rules
+
+- Put **canonical behavior, invariants, workflows, and user-facing guidance** in the focused docs such as `handlers.md`, `database.md`, `configuration.md`, `testing.md`, and `tasks.md`.
+- Put **cross-task operational memory** in [`docs/llm/teamlead-memory.md`](../../../docs/llm/teamlead-memory.md) when it is reusable across many tasks but too narrow or informal for the canon.
+- Put **subsystem- or completed-feature-specific memory** in `docs/llm/memories/<topic>.md` when it would clutter `teamlead-memory.md`; keep [`docs/llm/memories/index.md`](../../../docs/llm/memories/index.md) updated so agents can discover it.
+- Keep memory docs lean. If a fact graduates into a real project invariant, move it into the canonical docs and/or `AGENTS.md` instead of only leaving it in memory.
+- If memory docs contradict the code or canonical docs, fix or delete the stale memory — do not preserve drift.
 
 Do **not** write `self.services.<name>` — that attribute does not exist. Handlers access services via direct attributes set in [`BaseBotHandler.__init__`](../../../internal/bot/common/handlers/base.py) (`self.db`, `self.cache`, `self.queueService`, `self.storage`, `self.llmService`, `self.configManager`), all populated via `Service.getInstance()`. For `LLMManager`, access it via `self.llmService.getLLMManager()` — it is not a direct attribute.
 
@@ -79,7 +92,7 @@ Root [`AGENTS.md`](../../../AGENTS.md) is the compact, authoritative agent guide
 - A new **hard rule** applies project-wide (naming, forbidden library, new portability constraint, new ordering invariant).
 - A new **load-bearing gotcha** rises to the level of "would bite every agent that doesn't know it."
 
-Do **not** put narrow task-specific lessons in `AGENTS.md` — those go in `docs/llm/tasks.md` §4.
+Do **not** put narrow task-specific lessons in `AGENTS.md` — those go in `docs/llm/tasks.md` when they are canonical task guidance, or in `docs/llm/memories/` when they are archived subsystem memory.
 
 If you add a new skill under `.agents/skills/`, also add it to the "available skills" / references list at the bottom of `AGENTS.md` so humans reading it see the surface area.
 
@@ -126,6 +139,8 @@ Before declaring docs complete:
 - [ ] Naming conventions in examples are correct (camelCase for variables/functions/methods, PascalCase for classes, UPPER_CASE for constants).
 - [ ] Line-number references (if any) match current files — these rot fast; prefer heading-based references when possible.
 - [ ] Schema changes updated all three schema docs.
+- [ ] Relevant memory surfaces were considered: `docs/llm/teamlead-memory.md` for cross-task facts, `docs/llm/memories/` for subsystem-specific memory.
+- [ ] If you added a new file under `docs/llm/memories/`, both `docs/llm/memories/index.md` and `docs/llm/index.md` were updated.
 - [ ] New hard rules or load-bearing gotchas reflected in `AGENTS.md`.
 - [ ] `.agents/skills/` index updated if you added a skill.
 - [ ] `make format lint && make test` still green — this catches code examples that drifted.
@@ -145,8 +160,10 @@ If any step fails, fix it before closing the task. Stale docs are worse than ver
 | New chat setting | `tasks.md` §4.1 only if the example list is now stale | — | — | — | — |
 | Architecture shift | `architecture.md` | — | If invariant changes | Possibly | — |
 | New gotcha | `tasks.md` (§2/§3/§4) | — | Only if load-bearing | — | — |
+| New repo-wide durable memory | `teamlead-memory.md` | — | Only if it becomes a hard rule | — | — |
+| New subsystem-specific durable memory | `docs/llm/memories/<topic>.md`, `docs/llm/memories/index.md`, maybe `index.md` | — | No | — | — |
 | New hard rule | Relevant `docs/llm/*.md` | — | Yes | Yes, if covered | — |
-| Refactor | Search all `docs/llm/*.md` for old paths | If schema paths moved | If anything it references moved | Same | Same |
+| Refactor | Search all `docs/llm/**/*.md` for old paths | If schema paths moved | If anything it references moved | Same | Same |
 | New skill | — | — | Update "available skills" / references list | — | — |
 
 ## Reminders

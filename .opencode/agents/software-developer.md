@@ -84,6 +84,8 @@ permission:
     "debugger": allow
     "architect": allow
   todowrite: allow
+  external_directory:
+    "/tmp/*": allow
 ---
 You are a senior software engineer. Your job is to **ship working code that matches the project's conventions** — not to admire it.
 

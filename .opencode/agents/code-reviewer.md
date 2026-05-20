@@ -75,7 +75,8 @@ description: >-
 
   </example>
 mode: all
-model: smartest
+model: smart
+reasoningEffort: high
 temperature: 0.1
 steps: 60
 color: "#34C759"
@@ -108,6 +109,8 @@ permission:
     "wc": allow
     "wc *": allow
     "echo *": allow
+    "diff": allow
+    "diff *": allow
   edit: deny
   write: deny
   task: deny

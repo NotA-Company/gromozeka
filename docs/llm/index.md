@@ -8,7 +8,7 @@
 
 ## Navigation — Which Doc Should I Read?
 
-| If you need to... | Read this doc |
+ | If you need to... | Read this doc |
 |---|---|
 | Understand project overview, commands, mandatory rules | **This file** (`index.md`) |
 | Understand architecture, ADRs, design decisions | [`architecture.md`](architecture.md) |
@@ -16,9 +16,12 @@
 | Add/modify database tables, migrations, or queries | [`database.md`](database.md) |
 | Use Cache, Queue, LLM, Storage, or RateLimiter services | [`services.md`](services.md) |
 | Use lib/ai, lib/cache, lib/markdown, lib/max_bot, etc. | [`libraries.md`](libraries.md) |
+| Use or modify the sandbox library | [`sandbox.md`](sandbox.md) |
 | Add or change TOML configuration | [`configuration.md`](configuration.md) |
 | Write or run tests, understand test fixtures | [`testing.md`](testing.md) |
 | Follow a step-by-step task workflow or avoid pitfalls | [`tasks.md`](tasks.md) |
+| Reuse durable cross-task memory and repo gotchas | [`teamlead-memory.md`](teamlead-memory.md) |
+| Reuse archived task-specific memories for completed subsystems | [`memories/index.md`](memories/index.md) |
 
 ---
 
@@ -166,6 +169,7 @@ make test
 | `lib/` | Reusable library code |
 | `tests/` | Integration test suite |
 | `docs/` | Documentation |
+| `docs/llm/memories/` | Archived task-specific working memories for completed features/subsystems |
 
 ### 4.2 Entry Points
 
@@ -208,7 +212,7 @@ make test
  | Path | Purpose |
 |---|---|
 | [`internal/bot/common/bot.py`](../../internal/bot/common/bot.py) | `TheBot` — platform-agnostic bot API |
-| [`internal/bot/common/handlers/`](../../internal/bot/common/handlers/) | All 21+ handler implementations (incl. `DivinationHandler` for `/taro` & `/runes`, plus base/manager/module_loader, tests, examples, and 15+ handlers) |
+  | [`internal/bot/common/handlers/`](../../internal/bot/common/handlers/) | All 20+ handler implementations (incl. `DivinationHandler` for `/taro` & `/runes`, `SandboxHandler` for code execution, plus base/manager/module_loader, tests, examples, and 15+ functional handlers) |
 | [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) | `BaseBotHandler` — handler base class |
 | [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) | `HandlersManager` — handler chain |
 | [`internal/bot/telegram/application.py`](../../internal/bot/telegram/application.py) | Telegram-specific bot application |
@@ -245,6 +249,8 @@ make test
 | [`lib/stats/`](../../lib/stats/) | Statistics collection library (`StatsStorage`, `NullStatsStorage`, `GLOBAL_CONSUMER_ID`) |
 | [`lib/ext_modules/`](../../lib/ext_modules/) | External custom modules (Grabliarium etc.) |
 | [`lib/divination/`](../../lib/divination/) | Tarot & runes pure-logic library (decks, layouts, drawing); used by `DivinationHandler` |
+| [`lib/sandbox/`](../../lib/sandbox/) | Sandboxed code execution (Docker + Python); `SandboxManager` singleton |
+| [`lib/utils/`](../../lib/utils/) | Utilities: `TTLDict` (TTL-enabled dict), `getAgeInSecs`, `parseDelay`, `jsonDumps`, `packDict`/`unpackDict` |
 | [`lib/logging_utils.py`](../../lib/logging_utils.py) | `initLogging()` helper |
 
 ---
@@ -256,11 +262,14 @@ make test
 - [`database.md`](database.md) — DB operations, migrations, schema, multi-source routing
 - [`services.md`](services.md) — CacheService, QueueService, LLMService, StorageService, RateLimiter
 - [`libraries.md`](libraries.md) — lib/ai, lib/cache, lib/markdown, lib/max_bot and more
+- [`sandbox.md`](sandbox.md) — Sandbox coding patterns, configuration, and anti-patterns
 - [`configuration.md`](configuration.md) — TOML config sections, ConfigManager methods
 - [`testing.md`](testing.md) — Test fixtures, pytest patterns, golden data framework
 - [`tasks.md`](tasks.md) — Step-by-step task workflows, anti-patterns
+- [`teamlead-memory.md`](teamlead-memory.md) — Durable cross-task memory, repo gotchas, workflow lessons
+- [`memories/index.md`](memories/index.md) — Task-specific memory index for completed subsystems/features
 
 ---
 
-*This guide is auto-maintained and should be updated whenever significant architectural changes are made*  
-*Last updated: 2026-05-14*
+*This guide is auto-maintained and should be updated whenever significant architectural changes are made*
+*Last updated: 2026-05-20*

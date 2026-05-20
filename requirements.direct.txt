@@ -1,4 +1,5 @@
 # Runtime
+aiodocker==0.26.0
 aiosqlite==0.22.1
 boto3==1.43.8
 html-to-markdown==3.1.0

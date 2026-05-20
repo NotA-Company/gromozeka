@@ -5,9 +5,10 @@ description: >
   before making non-trivial changes or answering non-trivial questions. Use this
   skill when onboarding to the project, starting a new task, or when the agent
   needs to understand project architecture, conventions, patterns, and current
-  state. Triggers: read docs, understand project, build context, onboarding,
-  project overview, learn codebase, project structure, how does this work, what
-  patterns, get familiar.
+  state, including durable memory files under `docs/llm/`. Triggers: read docs,
+  understand project, build context, onboarding, project overview, learn
+  codebase, project structure, how does this work, what patterns, get familiar,
+  teamlead memory, task memory.
 ---
 
 # Read Gromozeka Project Documentation
@@ -44,19 +45,33 @@ Do not skip this. Everything downstream assumes you've seen it.
 
 **Read:** [`docs/llm/index.md`](../../../docs/llm/index.md).
 
-Gives you the project map (directories, key files with line counts), singleton access table, entry points, and a navigation matrix pointing to focused docs.
+Gives you the project map (directories, key files with line counts), singleton access table, entry points, and a navigation matrix pointing to focused docs and memory companions.
 
-### Step 3 — Task-relevant focused docs (selective)
+### Step 3 — Durable memory companions
 
-`docs/llm/` contains 9 focused docs. **Read only those that match your task** — do not read them all.
+Read the lightweight memory surfaces that capture reusable discoveries from prior work:
+
+- [`docs/llm/teamlead-memory.md`](../../../docs/llm/teamlead-memory.md) — cross-task memory, repo gotchas, workflow lessons.
+- [`docs/llm/memories/index.md`](../../../docs/llm/memories/index.md) — index of archived task/subsystem-specific memories.
+
+Then read only the specific memory file(s) relevant to your task. Example: if you are touching `lib/sandbox/`, sandbox config, or sandbox bot integration, also read [`docs/llm/memories/sandbox.md`](../../../docs/llm/memories/sandbox.md).
+
+Important: memory docs are **companions**, not the primary canon. Their authority is lower than `AGENTS.md`, the focused `docs/llm/*.md` references, and the code itself.
+
+### Step 4 — Task-relevant focused docs (selective)
+
+`docs/llm/` contains canonical focused docs plus memory companions. **Read only the focused docs that match your task** — do not read them all.
 
 | Your task involves… | Read |
 |---|---|
+| Cross-task durable gotchas / prior agent discoveries | [`docs/llm/teamlead-memory.md`](../../../docs/llm/teamlead-memory.md) |
+| Archived subsystem/task-specific history | [`docs/llm/memories/index.md`](../../../docs/llm/memories/index.md) and the relevant file under `docs/llm/memories/` |
 | Creating/modifying a handler or bot command | [`docs/llm/handlers.md`](../../../docs/llm/handlers.md) |
 | Database schema, migrations, queries | [`docs/llm/database.md`](../../../docs/llm/database.md) **and** [`docs/sql-portability-guide.md`](../../../docs/sql-portability-guide.md) |
 | Schema documentation updates | [`docs/database-schema.md`](../../../docs/database-schema.md) **and** [`docs/database-schema-llm.md`](../../../docs/database-schema-llm.md) (dual docs, keep in sync) |
 | Singleton services (Cache/Queue/LLM/Storage/RateLimiter) | [`docs/llm/services.md`](../../../docs/llm/services.md) |
 | `lib/` libraries, LLM providers, Max client, markdown, bayes, etc. | [`docs/llm/libraries.md`](../../../docs/llm/libraries.md) |
+| Sandbox library / runtime / Docker-backed code execution | [`docs/llm/sandbox.md`](../../../docs/llm/sandbox.md) **and** [`docs/llm/memories/sandbox.md`](../../../docs/llm/memories/sandbox.md) |
 | TOML configuration, `ConfigManager`, `.env*` | [`docs/llm/configuration.md`](../../../docs/llm/configuration.md) |
 | Writing or modifying tests | [`docs/llm/testing.md`](../../../docs/llm/testing.md) |
 | Architectural decisions, ADRs, component dependencies | [`docs/llm/architecture.md`](../../../docs/llm/architecture.md) |
@@ -64,14 +79,15 @@ Gives you the project map (directories, key files with line counts), singleton a
 
 Multiple rows may apply (e.g. handler + DB → both `handlers.md` and `database.md` + `sql-portability-guide.md`).
 
-### Step 4 — Human-oriented guide (optional)
+### Step 5 — Human-oriented guide (optional)
 
 [`docs/developer-guide.md`](../../../docs/developer-guide.md) is human-oriented and partially redundant with the LLM docs. Consult only when the LLM docs leave a gap you can't close otherwise. Do not trust hardcoded section numbers — find content by heading.
 
 ## Rules of engagement
 
 - **Code wins on conflict.** If docs contradict the source, the source is authoritative; flag the drift in your response so docs can be corrected later.
-- **Be selective.** Reading all nine `docs/llm/*.md` wastes context. The navigation matrix above is the budget.
+- **Canonical docs outrank memory docs.** Treat `teamlead-memory.md` and `docs/llm/memories/*.md` as reusable hints and historical context, not as stronger authority than the focused docs or the code.
+- **Be selective.** Blanket-reading all `docs/llm/**/*.md` wastes context. Use the navigation matrix above and read only the relevant focused docs plus the memory file(s) that actually apply.
 - **`lib/ext_modules/*`** subpackages (e.g. `grabliarium`) have their own `pyproject.toml` and are formatted separately by `make format`. If you're editing there, note it.
 
 ## Verification
@@ -80,7 +96,8 @@ Before acting on the task, you should be able to state — in task-specific term
 
 1. Which hard rules from `AGENTS.md` constrain this change (naming, no-pydantic, SQL portability, handler ordering, secrets)?
 2. Which file(s) you'll touch, by concrete path.
-3. Which docs will need updating after the change (if any). If the change is structural, load the `update-project-docs` skill afterward.
-4. Which command(s) you'll run to verify the change (`make format lint`, `make test`, targeted pytest).
+3. Which memory file(s), if any, are relevant to this task (`teamlead-memory.md` and/or a file under `docs/llm/memories/`).
+4. Which docs will need updating after the change (if any). If the change is structural, load the `update-project-docs` skill afterward.
+5. Which command(s) you'll run to verify the change (`make format lint`, `make test`, targeted pytest).
 
-If any answer is fuzzy, re-read the relevant doc from Steps 1–3.
+If any answer is fuzzy, re-read the relevant material from Steps 1–4.

@@ -1,0 +1,18 @@
+FROM alpine:3.23
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Install Python 3 and build toolchain so source-only packages compile on musl.
+# Keep this list trimmed — every addition increases image size.
+RUN apk add --no-cache \
+        python3 py3-pip py3-wheel py3-setuptools \
+        build-base \
+        git libmagic sqlite tzdata \
+ && adduser -D -u 1000 sandbox \
+ && mkdir -p /sandbox/libs \
+ && chown -R sandbox:sandbox /sandbox
+
+USER sandbox
+WORKDIR /sandbox
+CMD ["python", "-m", "pip", "--version"]

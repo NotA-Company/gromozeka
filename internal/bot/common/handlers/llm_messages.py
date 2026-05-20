@@ -144,7 +144,7 @@ class LLMMessageHandler(BaseBotHandler):
                 try:
                     logger.debug(f"Sending intermediate message. LLM Result status is: {mRet.status}")
                     prefixStr = chatSettings[ChatSettingsKey.INTERMEDIATE_MESSAGE_PREFIX].toStr()
-                    if ret.isFallback:
+                    if mRet.isFallback:
                         prefixStr += chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr()
                     await self.sendMessage(
                         ensuredMessage,
@@ -158,7 +158,6 @@ class LLMMessageHandler(BaseBotHandler):
                 except Exception as e:
                     logger.error(f"Failed to send intermediate message: {e}")
 
-        # TODO: Make extraData typedDict (or dataclass?)
         ret = await self.llmService.generateTextViaLLM(
             messages,
             chatId=ensuredMessage.recipient.id,
