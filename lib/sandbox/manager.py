@@ -1183,6 +1183,7 @@ class SandboxManager:
         # Step 3: Refresh pool versions for each runtime
         for name in self._runtimes.keys():
             try:
+                await self.prepareRuntime(name)
                 libsDir = Path(self._config.storage.rootDir) / "runtimes" / name.value / "libs"
                 if libsDir.exists():
                     await self._refreshPackageList(name, libsDir)
