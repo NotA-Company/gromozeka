@@ -5,7 +5,7 @@
 **Implementation Location:** `lib/aurumentation/` — complete implementation of the golden data testing system for AI providers
 
 **Current Usage:**
-- See `tests/lib_ai/golden/` for AI provider golden data
+- See `tests/lib/ai/golden/` for AI provider golden data
 - See `docs/llm/testing.md` §6 for current golden data testing documentation
 - See `golden-data-testing-system-v2.md` for the complete system design
 

@@ -310,7 +310,7 @@ make test
 Docker tests require Colima/Docker running and two env vars:
 ```bash
 DOCKER_HOST="unix:///Users/vgoshev/.colima/default/docker.sock" DOCKER_AVAILABLE=1 \
-./venv/bin/pytest lib/sandbox/tests/ -v -m slow
+./venv/bin/pytest tests/lib/sandbox/ -v -m slow
 ```
 
 - 19 Docker integration tests across `test_docker.py`, `test_manager_runs_integration.py`, `test_manager_libs_integration.py`

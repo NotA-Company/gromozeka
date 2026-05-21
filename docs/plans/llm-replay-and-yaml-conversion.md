@@ -288,7 +288,7 @@ Elapsed: 3.45s
 
 5. **Result reporting:** Format and send the summary message.
 
-6. **Tests:** Add tests in `internal/bot/common/handlers/test_dev_commands.py`
+6. **Tests:** Add tests in `tests/bot/common/handlers/test_dev_commands.py`
    (or extend the existing test file if one exists) covering:
    - Missing model argument
    - Unknown model name

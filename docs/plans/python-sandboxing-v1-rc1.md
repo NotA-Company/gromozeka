@@ -846,7 +846,7 @@ Per [`docs/llm/testing.md`](../llm/testing.md):
 
 3. **Property tests** for path resolution and session-id hashing (no UTF-8 oddities corrupt the layout).
 
-`testpaths` already includes `lib/` ([`pyproject.toml`](../../pyproject.toml)); tests live at `lib/sandbox/tests/`.
+`testpaths` already includes `lib/` ([`pyproject.toml`](../../pyproject.toml)); tests live at `tests/lib/sandbox/`.
 
 ---
 

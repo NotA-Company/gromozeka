@@ -6,7 +6,7 @@
 
 **Current Implementation:** The design has been implemented with minor adjustments. See `lib/geocode_maps/client.py` for the actual client.
 
-**Note:** This is a historical design document. For current usage, see the source code and golden data tests in `tests/geocode_maps/golden/`.
+**Note:** This is a historical design document. For current usage, see the source code and golden data tests in `tests/lib/geocode_maps/golden/`.
 
 ---
 
@@ -819,9 +819,9 @@ except Exception as e:
 ### Phase 5: Testing (Priority: High)
 
 11. **Create test files**
-    - [`test_client.py`](lib/geocode_maps/test_client.py) - Unit tests
-    - [`test_integration.py`](lib/geocode_maps/test_integration.py) - Integration tests
-    - [`test_models.py`](lib/geocode_maps/test_models.py) - Model validation
+    - [`test_client.py`](tests/lib/geocode_maps/test_client.py) - Unit tests
+    - [`test_integration.py`](tests/lib/geocode_maps/test_integration.py) - Integration tests
+    - [`test_models.py`](tests/lib/geocode_maps/test_models.py) - Model validation
 
 12. **Implement unit tests**
     - Mock HTTP responses
@@ -838,7 +838,7 @@ except Exception as e:
 
 ### Unit Tests
 
-**File**: [`lib/geocode_maps/test_client.py`](lib/geocode_maps/test_client.py)
+**File**: [`tests/lib/geocode_maps/test_client.py`](tests/lib/geocode_maps/test_client.py)
 
 ```python
 import pytest
@@ -926,7 +926,7 @@ async def test_rate_limiting():
 
 ### Integration Tests
 
-**File**: [`lib/geocode_maps/test_integration.py`](lib/geocode_maps/test_integration.py)
+**File**: [`tests/lib/geocode_maps/test_integration.py`](tests/lib/geocode_maps/test_integration.py)
 
 ```python
 import pytest
@@ -1002,7 +1002,7 @@ async def test_caching_behavior():
 
 ### Model Tests
 
-**File**: [`lib/geocode_maps/test_models.py`](lib/geocode_maps/test_models.py)
+**File**: [`tests/lib/geocode_maps/test_models.py`](tests/lib/geocode_maps/test_models.py)
 
 ```python
 import pytest

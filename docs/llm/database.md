@@ -423,7 +423,7 @@ class Database:
 - [ ] Method has type hints
 - [ ] Uses context manager `with self.db._getConnection()`
 - [ ] Migration created if schema changed
-- [ ] Tests in `tests/test_db_wrapper.py`
+- [ ] Tests in `tests/database/test_db_wrapper.py`
 - [ ] Ran `make format lint` and `make test`
 
 ---

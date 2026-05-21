@@ -1054,7 +1054,7 @@ self.llmManager = LLMManager(
 
 ## 9. Tests
 
-### 9.1 `lib/stats/test/test_null_storage.py`
+### 9.1 `tests/lib/stats/test_null_storage.py`
 
 ```python
 """Unit tests for NullStatsStorage."""
@@ -1086,7 +1086,7 @@ async def testNullAggregateWithLimit():
     assert result == 0
 ```
 
-### 9.2 `lib/stats/test/test_sql_storage.py`
+### 9.2 `tests/lib/stats/test_sql_storage.py`
 
 Integration tests using `testDatabase` fixture. Test cases:
 
@@ -1102,7 +1102,7 @@ Integration tests using `testDatabase` fixture. Test cases:
 - **`testRecordNonFiniteValues`** — NaN/Inf values are handled without crashes.
 - **`testRecordFailureIsNonFatal`** — simulate DB error, verify no exception propagates.
 
-### 9.3 `lib/ai/test_stat_integration.py`
+### 9.3 `tests/lib/ai/test_stat_integration.py`
 
 Test that `AbstractModel` records stats through the chain:
 
@@ -1120,7 +1120,7 @@ Note: The repo uses `asyncio_mode = "auto"` — no `@pytest.mark.asyncio` decora
 | 2 | `lib/stats/` — ABC + Null | `lib/stats/__init__.py`, `lib/stats/stats_storage.py` | `software-developer` | — |
 | 3 | DB-backed storage (v3: `DatabaseStatsStorage`) | `internal/database/stats_storage.py` | `software-developer` | 1, 2 |
 | 4 | `ConfigManager.getStatsConfig()` | `internal/config/manager.py` | `software-developer` | — |
-| 5 | Tests for `lib/stats` | `lib/stats/test/test_null_storage.py`, `lib/stats/test/test_sql_storage.py` | `software-developer` | 2, 3 |
+| 5 | Tests for `lib/stats` | `tests/lib/stats/test_null_storage.py`, `tests/lib/stats/test_sql_storage.py` | `software-developer` | 2, 3 |
 | 6 | Quality gates | `make format lint && make test` | `run-quality-gates` | 5 |
 | 7 | LLMManager integration | `lib/ai/manager.py` | `software-developer` | 2 |
 | 8 | AbstractModel integration (labels, best-effort) | `lib/ai/abstract.py` | `software-developer` | 2, 7 |

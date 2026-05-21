@@ -20,28 +20,64 @@
 
 ## 1. Test Directory Structure
 
+> **MANDATORY RULE — all new tests MUST follow this layout. No exceptions.**
+> Never add test files inside `lib/` or `internal/`. Every test file lives under `tests/`.
+
+The mirror layout is the only valid location for test files:
+
+- `internal/X/Y.py` → `tests/X/test_Y.py` (strip `internal/` prefix)
+- `lib/X/Y.py` → `tests/lib/X/test_Y.py` (preserve `lib/` prefix)
+- Cross-cutting tests go in `tests/integration/` or `tests/verification/`
+
+**No collocated tests.** If you find an old test file inside `lib/` or `internal/`, move it to the corresponding `tests/` location before adding new test cases.
+
+Example: to test `lib/ai/manager.py`, create `tests/lib/ai/test_manager.py` — never `lib/ai/test_manager.py`.
+
 ```
 tests/
-├── conftest.py              # Global fixtures
-├── utils.py                 # Test helper functions
-├── test_db_wrapper.py       # Database tests
-├── test_llm_service.py      # LLMService tests
-├── test_queue_service.py    # QueueService tests
-├── bot/                     # Bot handler tests
-├── fixtures/                # Golden data / test fixtures
-├── integration/             # Integration tests
-├── lib_ai/                  # LLMManager / AI tests
-├── lib_ratelimiter/         # Rate limiter tests
-├── lib_utils/               # Utility function tests
-├── openweathermap/          # Weather client tests
-├── services/                # Service tests
-└── yandex_search/           # Yandex search tests
+├── conftest.py                              # Global fixtures
+├── utils.py                                 # Test helper functions
+├── bot/                                     # Bot handler tests
+│   ├── common/handlers/
+│   ├── models/
+│   ├── test_divination_discovery.py
+│   ├── test_divination_handler.py
+│   └── test_sandbox.py
+├── config/                                  # Config tests
+├── database/                                # Database tests
+│   ├── integration/
+│   ├── migrations/
+│   ├── performance/
+│   ├── providers/
+│   └── repositories/
+├── fixtures/                                # Golden data / test fixtures
+├── integration/                             # Cross-cutting integration tests
+├── lib/                                     # Library tests (mirrors lib/ structure)
+│   ├── ai/                                  # LLMManager / AI tests + golden data
+│   ├── aurumentation/
+│   ├── bayes_filter/
+│   ├── cache/
+│   ├── divination/                          # Divination tests + golden data
+│   ├── geocode_maps/                        # Geocoding tests + golden data
+│   ├── markdown/
+│   ├── openweathermap/                       # Weather tests + golden data
+│   ├── rate_limiter/
+│   ├── sandbox/
+│   ├── stats/
+│   ├── utils/
+│   └── yandex_search/                        # Search tests + golden data
+├── models/                                  # Model tests
+├── scripts/                                 # Script tests
+├── services/                                # Service tests
+│   ├── cache/
+│   ├── llm/
+│   ├── queue_service/
+│   └── storage/
+└── verification/                            # Cross-cutting verification tests
 ```
 
-**Test discovery paths** (from [`pyproject.toml`](../../pyproject.toml:56)):
-- `tests/` — main test suite
-- `lib/` — library unit tests
-- `internal/` — internal unit tests
+**Test discovery** (from [`pyproject.toml`](../../pyproject.toml:59)):
+- `testpaths = ["tests", "lib", "internal"]` — only `tests/` contains test files; `lib/` and `internal/` are kept in config for pytest collection compatibility but have no collocated test files. New tests must never be added inside `lib/` or `internal/`.
 
 ---
 
@@ -76,11 +112,11 @@ From [`tests/conftest.py`](../../tests/conftest.py):
 
 ## 3. Pytest Configuration
 
-**Config:** [`pyproject.toml:56`](../../pyproject.toml:56)
+**Config:** [`pyproject.toml:59`](../../pyproject.toml:59)
 
 ```toml
 [tool.pytest.ini_options]
-testpaths = ["tests", "lib", "internal"]
+testpaths = ["tests", "lib", "internal"]  # only tests/ has test files now
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*", "test*"]
@@ -101,10 +137,10 @@ asyncio_mode = "auto"  # All async tests run automatically
 make test
 
 # Run single test file
-./venv/bin/pytest tests/test_db_wrapper.py -v
+./venv/bin/pytest tests/database/test_db_wrapper.py -v
 
 # Run specific test class
-./venv/bin/pytest tests/bot/test_some_handler.py::TestSomeHandler -v
+./venv/bin/pytest tests/bot/common/handlers/test_some_handler.py::TestSomeHandler -v
 
 # Run with coverage
 ./venv/bin/pytest --cov=internal --cov-report=html
@@ -233,12 +269,12 @@ Golden data tests use the lib/aurumentation framework with transport-level httpx
 
 ### Golden Data Locations
 
-Per-service golden data directories:
-- `tests/lib_ai/golden` - AI provider golden data
-- `tests/openweathermap/golden` - Weather client golden data
-- `tests/yandex_search/golden` - Search client golden data
-- `tests/geocode_maps/golden` - Geocoding golden data
-- `tests/divination/golden` - Divination service golden data
+Per-service golden data directories (all under `tests/lib/`):
+- `tests/lib/ai/golden` - AI provider golden data
+- `tests/lib/openweathermap/golden` - Weather client golden data
+- `tests/lib/yandex_search/golden` - Search client golden data
+- `tests/lib/geocode_maps/golden` - Geocoding golden data
+- `tests/lib/divination/golden` - Divination service golden data
 
 ### How Golden Data Works
 
@@ -273,7 +309,7 @@ class TestOpenWeatherMapClient:
     @pytest.fixture
     async def goldenWeatherMinsk(self):
         """Load and replay golden data for Minsk weather"""
-        scenario_file = Path("tests/openweathermap/golden/Get_weather_for_Minsk_Belarus.json")
+        scenario_file = Path("tests/lib/openweathermap/golden/Get_weather_for_Minsk_Belarus.json")
         with open(scenario_file) as f:
             scenario = json.load(f)
 
@@ -313,7 +349,7 @@ class TestOpenWeatherMapClient:
 
 ```bash
 # 1. Create scenario JSON file
-cat > tests/openweathermap/scenarios.json << EOF
+cat > tests/lib/openweathermap/scenarios.json << EOF
 [
   {
     "description": "Get weather for Minsk, Belarus",
@@ -337,12 +373,12 @@ EOF
 # 2. Run collector (requires real API key in environment)
 export OPENWEATHERMAP_API_KEY=your_real_api_key
 ./venv/bin/python3 -m lib.aurumentation.collector \
-  --input tests/openweathermap/scenarios.json \
-  --output tests/openweathermap/golden/ \
+  --input tests/lib/openweathermap/scenarios.json \
+  --output tests/lib/openweathermap/golden/ \
   --secrets OPENWEATHERMAP_API_KEY
 
 # 3. Verify no secrets in generated files
-grep -r "sk-" tests/openweathermap/golden/  # Should return nothing
+grep -r "sk-" tests/lib/openweathermap/golden/  # Should return nothing
 ```
 
 ---
@@ -421,4 +457,4 @@ class TestMyFeature:
 ---
 
 *This guide is auto-maintained and should be updated whenever testing patterns change*  
-*Last updated: 2026-04-18*
+*Last updated: 2026-05-21*

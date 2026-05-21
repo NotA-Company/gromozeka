@@ -320,7 +320,7 @@ def getMigration() -> type[BaseMigration]:
 
 ```bash
 # Run the migration test suite
-./venv/bin/python3 internal/database/migrations/test_migrations.py
+./venv/bin/python3 tests/database/migrations/test_migrations.py
 ```
 
 ---
@@ -464,7 +464,7 @@ async def down(self, sqlProvider: "BaseSQLProvider") -> None:
 ### Run Test Suite
 
 ```bash
-./venv/bin/python3 internal/database/migrations/test_migrations.py
+./venv/bin/python3 tests/database/migrations/test_migrations.py
 ```
 
 ### Test Coverage

@@ -305,18 +305,22 @@ gromozeka/
 │   ├── logging_utils.py            # Logging helpers (initLogging)
 │   └── utils.py                    # Shared utility functions
 │
-├── tests/                          # Test suite
+├── tests/                          # Test suite (all tests live here)
 │   ├── conftest.py                 # Shared pytest fixtures
 │   ├── utils.py                    # Test utilities
-│   ├── bot/                        # Bot layer tests
-│   ├── fixtures/                   # Golden data fixtures (JSON)
-│   ├── geocode_maps/               # Geocode Maps client tests
-│   ├── integration/                # Integration tests
-│   ├── lib_ai/                     # LLM library tests
-│   ├── lib_ratelimiter/            # Rate limiter tests
-│   ├── openweathermap/             # Weather client tests
+│   ├── bot/                        # Bot handler tests
+│   ├── config/                     # Config tests
+│   ├── database/                   # Database tests
+│   ├── fixtures/                    # Golden data fixtures (JSON)
+│   ├── integration/                # Cross-cutting integration tests
+│   ├── lib/                        # Library tests (mirrors lib/ structure)
+│   │   ├── ai/                     # LLM / AI tests + golden data
+│   │   ├── markdown/               # Markdown parser tests
+│   │   ├── openweathermap/          # Weather client tests + golden data
+│   │   └── ...                     # Other lib package tests
+│   ├── models/                     # Model tests
 │   ├── services/                   # Service layer tests
-│   └── yandex_search/              # Yandex search client tests
+│   └── verification/               # Cross-cutting verification tests
 │
 ├── docs/                           # Project documentation
 │   └── reports/                    # Development reports and ADRs
@@ -1545,10 +1549,10 @@ make coverage
 # HTML report at: htmlcov/index.html
 
 # Run specific test file
-./venv/bin/python3 -m pytest tests/test_db_wrapper.py -v
+./venv/bin/pytest tests/database/test_db_wrapper.py -v
 
 # Run specific test function
-./venv/bin/python3 -m pytest tests/test_db_wrapper.py::test_my_function -v
+./venv/bin/pytest tests/database/test_db_wrapper.py::test_my_function -v
 
 # Run only slow tests
 ./venv/bin/python3 -m pytest -m slow
@@ -1559,12 +1563,9 @@ make coverage
 
 ### Test Structure
 
-Test files are discovered from three paths (configured in [`pyproject.toml`](pyproject.toml:57)):
-- `tests/` — main test suite
-- `lib/` — library-level unit tests
-- `internal/` — internal module unit tests
+Test files are discovered from three paths (configured in [`pyproject.toml`](pyproject.toml:59)), but all test files now live exclusively under `tests/` — there are no collocated test files in `lib/` or `internal/`. Test directories mirror source structure: `internal/X/Y.py` → `tests/X/test_Y.py`; `lib/X/Y.py` → `tests/lib/X/test_Y.py`.
 
-Test files must match `test_*.py` or `*_test.py` Test classes must start with `Test`, and test functions with `test_`
+Test files must match `test_*.py` or `*_test.py`. Test classes must start with `Test`, and test functions with `test_`
 
 ### Golden Data Framework
 
@@ -1572,23 +1573,20 @@ For API client tests (weather, geocoding, search), the project uses a **golden d
 
 **How it works:**
 
-1. **Record mode**: Tests are run with real API calls, and responses are saved as JSON fixtures in `tests/fixtures/`
+1. **Record mode**: Tests are run with real API calls, and responses are saved as JSON fixtures in `tests/lib/<service>/golden/`
 2. **Replay mode**: Tests load the fixture files instead of making real API calls
 
 **Structure:**
 
 ```
 tests/
-├── fixtures/                   # Stored API response fixtures
-│   ├── weather/
-│   │   ├── moscow_current.json
-│   │   └── ...
-│   ├── geocoding/
-│   └── ...
-├── openweathermap/
-│   └── test_weather_client.py  # Tests using fixtures
-└── geocode_maps/
-    └── test_client.py
+└── lib/
+    ├── openweathermap/
+    │   ├── golden/                    # Golden data for weather client
+    │   └── test_weather_client.py     # Tests using golden data
+    └── geocode_maps/
+        ├── golden/                    # Golden data for geocoding
+        └── test_client.py
 ```
 
 **Example test using fixtures:**

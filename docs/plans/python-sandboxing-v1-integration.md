@@ -442,7 +442,7 @@ make format lint
 make test
 ```
 
-`make test` includes the new tests under `lib/sandbox/tests/`. Integration tests that require Docker are gated on a `DOCKER_AVAILABLE` env check and skipped by default in CI unless Docker is present.
+`make test` includes the new tests under `tests/lib/sandbox/`. Integration tests that require Docker are gated on a `DOCKER_AVAILABLE` env check and skipped by default in CI unless Docker is present.
 
 ---
 

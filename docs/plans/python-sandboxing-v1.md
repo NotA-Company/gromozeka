@@ -1037,7 +1037,7 @@ class SandboxBackend(Protocol):
 
 ## 16. Testing strategy
 
-Per [`docs/llm/testing.md`](../llm/testing.md). Tests live at `lib/sandbox/tests/`.
+Per [`docs/llm/testing.md`](../llm/testing.md). Tests live at `tests/lib/sandbox/`.
 
 1. **Unit tests** (no Docker required):
    - `storage.resolveWorkspacePath` — path traversal, symlink escapes, absolute paths.
