@@ -197,6 +197,34 @@ the image generation methods follow the same pattern:
 This split allows the public API to provide consistent behavior (fallback,
 JSON logging) while keeping provider implementations simple.
 
+**Image generation transports:** OpenAI-compatible providers support two
+image-generation transports:
+
+1. **Chat-completions path** (default): Uses `chat.completions.create()` with
+   `modalities = ["image", "text"]`. The image is returned in
+   `response.choices[0].message.images`. This is the path used when
+   `image_generation_api` is not set or set to any value other than
+   `"openai-images"`.
+
+2. **OpenAI Images API path**: Uses `client.images.generate()` directly.
+   Enabled by setting `image_generation_api = "openai-images"` in model config.
+   This path calls `_generateImageViaImagesApi()` which extracts a plain-text
+   prompt from messages and sends it to the Images API.
+
+**Hook methods for image generation:**
+
+| Method | Class | Purpose |
+|--------|-------|---------|
+| `_getImageModelId()` | `BasicOpenAIModel` | Returns model ID for Images API. Override to use a different ID (e.g., YC uses `art://...`). |
+| `_getImageRequestOptions()` | `BasicOpenAIModel` | Returns whitelisted options from `image_options` config. Prevents arbitrary config injection. |
+| `_getClientParams()` | `BasicOpenAIProvider` | Returns extra params for OpenAI client init (applied to all requests). YC overrides it to return `{"project": folderId}`, which is required by YC's Images API and also present on text calls via the `OpenAI-Project` header. |
+
+**Yandex Cloud OpenAI image models:** YC uses a distinct URI scheme for image
+models: `art://{folderId}/{modelId}/{modelVersion}` (vs. `gpt://...` for text).
+The `_getImageModelId()` override in `YcOpenaiModel` constructs this URI.
+Additionally, `_getClientParams()` in `YcOpenaiProvider` adds the `project`
+parameter required by YC's Images API endpoint.
+
 **Schema requirements (strict mode).** Most providers forward your
 schema to OpenAI's `response_format = {"type": "json_schema",
 "json_schema": {"strict": true, ...}}` mode. To be portable
@@ -637,5 +665,5 @@ d.gc(force=True)          # Remove expired entries
 
 ---
 
-*This guide is auto-maintained and should be updated whenever library APIs change*  
-*Last updated: 2026-05-20*
+*This guide is auto-maintained and should be updated whenever library APIs change*
+*Last updated: 2026-05-21*

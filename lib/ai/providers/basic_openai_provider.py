@@ -25,7 +25,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+import httpx
 import openai
+from openai.types import ImagesResponse
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
@@ -42,6 +44,47 @@ from ..models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# === Image generation helpers ===
+
+
+def _extractImagePrompt(messages: Sequence[ModelMessage]) -> str:
+    """Extract a plain-text prompt from a sequence of messages for image generation.
+
+    The OpenAI Images API expects a single string prompt. This helper
+    accepts only text messages (rejecting embedded images or multimodal
+    input) and joins their textual content with double newlines.
+
+    Args:
+        messages: A sequence of ModelMessage objects.
+
+    Returns:
+        The joined text prompt string.
+
+    Raises:
+        ValueError: If messages is empty or contains no textual content.
+    """
+    parts: List[str] = []
+    if len(messages) > 1:
+        logger.warning(
+            f"Image generation expect single prompt, but {len(messages)} given. they will be merged into one"
+        )
+    for msg in messages:
+        content = msg.content
+        if isinstance(content, str) and content.strip():
+            parts.append(content.strip())
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text = block.get("text", "")
+                    if text.strip():
+                        parts.append(text.strip())
+
+    if not parts:
+        raise ValueError("No textual content found in messages for image generation")
+
+    return "\n\n".join(parts)
 
 
 @dataclass(slots=True, frozen=True)
@@ -183,6 +226,38 @@ class BasicOpenAIModel(AbstractModel):
             The model identifier string to use in OpenAI API calls.
         """
         return self.modelId
+
+    def _getImageModelId(self) -> str:
+        """Get the model identifier to use for image generation via the Images API.
+
+        Subclasses can override this to provide a different model identifier
+        for image generation (e.g., Yandex Cloud uses ``art://...`` instead of
+        ``gpt://...``).
+
+        Returns:
+            The model identifier string to use in ``images.generate()`` calls.
+        """
+        return self._getModelId()
+
+    def _getImageRequestOptions(self) -> Dict[str, Any]:
+        """Get whitelisted image generation options from model extraConfig.
+
+        Reads ``self._config["image_options"]`` and returns only known,
+        explicitly supported keys. This prevents arbitrary config keys from
+        being forwarded to the OpenAI Images API.
+
+        Returns:
+            A dictionary of sanitized image generation request parameters.
+        """
+        options = self._config.get("image_options", {})
+        if not isinstance(options, dict):
+            return {}
+
+        result: Dict[str, Any] = {}
+        for key in ("size", "quality", "output_format", "background", "moderation", "n", "response_format", "user"):
+            if key in options:
+                result[key] = options[key]
+        return result
 
     def _getExtraParams(self) -> Dict[str, Any]:
         """Get extra parameters for the API call.
@@ -500,6 +575,30 @@ class BasicOpenAIModel(AbstractModel):
         )
 
     async def _generateImage(self, messages: Sequence[ModelMessage]) -> ModelRunResult:
+        """Generate an image using the configured image transport.
+
+        Dispatches to the OpenAI Images API path
+        (:meth:`_generateImageViaImagesApi`) when the model config sets
+        ``image_generation_api = "openai-images"``. Otherwise falls back to
+        the default chat-completions image path inherited from
+        :class:`BasicOpenAIModel`.
+
+        Args:
+            messages: A sequence of ModelMessage objects representing the
+                conversation history. The last message typically contains
+                the image generation prompt.
+
+        Returns:
+            A ModelRunResult containing the generated image binary data
+            and metadata.
+        """
+        match self._config.get("image_generation_api"):
+            case "openai-images":
+                return await self._generateImageViaImagesApi(messages)
+            case _:
+                return await self._generateImageViaChatsApi(messages)
+
+    async def _generateImageViaChatsApi(self, messages: Sequence[ModelMessage]) -> ModelRunResult:
         """Generate an image using the OpenAI-compatible model.
 
         Sends a chat completion request with image generation enabled via the
@@ -593,6 +692,163 @@ class BasicOpenAIModel(AbstractModel):
             inputTokens=outcome.inputTokens,
             outputTokens=outcome.outputTokens,
             totalTokens=outcome.totalTokens,
+        )
+
+    async def _generateImageViaImagesApi(self, messages: Sequence[ModelMessage]) -> ModelRunResult:
+        """Generate an image using the OpenAI Images API (``client.images.generate()``).
+
+        This is a second image-generation transport, separate from the existing
+        chat-completions path in :meth:`_generateImage`. Only models explicitly
+        configured for this transport should use it.
+
+        Extracts a plain-text prompt from ``messages``, builds a request with
+        whitelisted options from model ``image_options`` config, calls the
+        OpenAI Images API, and maps the response into a :class:`ModelRunResult`.
+
+        Supports both ``b64_json`` and URL-based responses (downloads with
+        ``httpx`` if needed). Uses only the first image when multiple are
+        returned.
+
+        Args:
+            messages: A sequence of ModelMessage objects. Must contain at
+                least one text message providing the image prompt.
+
+        Returns:
+            A ModelRunResult containing the generated image binary data,
+            MIME type, token usage (if present), and status.
+
+        Raises:
+            NotImplementedError: If image generation is not supported by this model.
+            RuntimeError: If the OpenAI client is not initialized.
+            ValueError: If no textual prompt can be extracted from messages.
+        """
+        if not self._config.get("support_images", False):
+            raise NotImplementedError(f"Image generation isn't supported by {self.modelId}")
+
+        if not self._client:
+            raise RuntimeError("OpenAI client not initialized!")
+
+        # Extract prompt
+        prompt = _extractImagePrompt(messages)
+
+        # Build request params
+        requestParams: Dict[str, Any] = {
+            "model": self._getImageModelId(),
+            "prompt": prompt,
+            "n": 1,  # by default, expect 1 image
+            "output_format": "png",
+        }
+
+        # Apply whitelisted options
+        imageOptions = self._getImageRequestOptions()
+        requestParams.update(imageOptions)
+
+        logger.info(
+            f"Calling images.generate with model={requestParams['model']}, "
+            f"size={requestParams.get('size', 'default')}"
+        )
+
+        try:
+            response = await self._client.images.generate(**requestParams)
+        except openai.BadRequestError as e:
+            logger.exception(e)
+            logger.error(f"Error from Images API: {e}")
+            return ModelRunResult(
+                rawResult=None,
+                status=ModelResultStatus.ERROR,
+                error=e,
+            )
+
+        # Validate response
+        if not isinstance(response, ImagesResponse) or not response or not response.data:
+            inputTokens: Optional[int] = None
+            outputTokens: Optional[int] = None
+            totalTokens: Optional[int] = None
+            if hasattr(response, "usage") and response.usage is not None:
+                inputTokens = getattr(response.usage, "input_tokens", None)
+                outputTokens = getattr(response.usage, "output_tokens", None)
+                totalTokens = getattr(response.usage, "total_tokens", None)
+
+            return ModelRunResult(
+                rawResult=response,
+                status=ModelResultStatus.ERROR,
+                error=ValueError("No image data in response"),
+                inputTokens=inputTokens,
+                outputTokens=outputTokens,
+                totalTokens=totalTokens,
+            )
+
+        # Handle multiple images
+        if len(response.data) > 1:
+            logger.warning(
+                f"Multiple ({len(response.data)}) images returned by model {self.modelId}, using only the first one"
+            )
+
+        imageData = response.data[0]
+
+        # Extract token usage BEFORE image-data branches so all paths benefit
+        inputTokens: Optional[int] = None
+        outputTokens: Optional[int] = None
+        totalTokens: Optional[int] = None
+        if response.usage is not None:
+            inputTokens = response.usage.input_tokens
+            outputTokens = response.usage.output_tokens
+            totalTokens = response.usage.total_tokens
+
+        # Determine MIME type from output_format or default to png
+        outputFormat = imageOptions.get("output_format", "png")
+        mimeTypes: Dict[str, str] = {
+            "png": "image/png",
+            "jpeg": "image/jpeg",
+            "webp": "image/webp",
+        }
+        mediaMimeType = mimeTypes.get(outputFormat, "image/png")
+
+        # Extract image bytes
+        mediaData: Optional[bytes] = None
+        if imageData.b64_json:
+            mediaData = base64.b64decode(imageData.b64_json)
+        elif imageData.url:
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    fetchResponse = await client.get(imageData.url)
+                    fetchResponse.raise_for_status()
+                    mediaData = fetchResponse.content
+                    contentType = str(fetchResponse.headers.get("content-type", ""))
+                    if contentType.startswith("image/"):
+                        mediaMimeType = contentType.split(";")[0].strip()
+            except httpx.HTTPError as e:
+                logger.error(f"Failed to download image from URL: {e}")
+                return ModelRunResult(
+                    rawResult=response,
+                    status=ModelResultStatus.ERROR,
+                    error=e,
+                    inputTokens=inputTokens,
+                    outputTokens=outputTokens,
+                    totalTokens=totalTokens,
+                )
+        else:
+            return ModelRunResult(
+                rawResult=response,
+                status=ModelResultStatus.ERROR,
+                error=ValueError("Response image has neither b64_json nor url"),
+                inputTokens=inputTokens,
+                outputTokens=outputTokens,
+                totalTokens=totalTokens,
+            )
+
+        # Extract revised prompt if present
+        resultText = imageData.revised_prompt or ""
+
+        return ModelRunResult(
+            rawResult=response,
+            status=ModelResultStatus.FINAL,
+            resultText=resultText,
+            mediaMimeType=mediaMimeType,
+            mediaData=mediaData,
+            inputTokens=inputTokens,
+            outputTokens=outputTokens,
+            totalTokens=totalTokens,
         )
 
 

@@ -15,14 +15,16 @@ Test Coverage:
     - Configuration and extra parameters
 """
 
+import base64
 from typing import Any, Dict
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from openai import AsyncOpenAI
 from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.types.completion_usage import CompletionUsage
+from openai.types.images_response import ImagesResponse
 
 from lib.ai.models import ModelMessage, ModelResultStatus, ModelStructuredResult
 from lib.ai.providers.yc_openai_provider import YcOpenaiModel, YcOpenaiProvider
@@ -1210,3 +1212,186 @@ async def testGenerateStructuredHappyPath(
     assert callKwargs["response_format"]["type"] == "json_schema"
     assert callKwargs["response_format"]["json_schema"]["name"] == "ycShape"
     assert callKwargs["response_format"]["json_schema"]["schema"] == _YC_SAMPLE_SCHEMA
+
+
+# ============================================================================
+# Image Generation Tests
+# ============================================================================
+
+
+def testGetClientParams(ycOpenaiProvider: YcOpenaiProvider) -> None:
+    """Test YC OpenAI provider returns correct client parameters.
+
+    Verifies that _getClientParams returns the project parameter
+    set to the configured folder ID.
+
+    Args:
+        ycOpenaiProvider: YC OpenAI provider instance.
+
+    Raises:
+        AssertionError: If client params are incorrect.
+    """
+    result: Dict[str, Any] = ycOpenaiProvider._getClientParams()
+    assert result == {"project": ycOpenaiProvider._folderId}
+    assert result["project"] == "b1g2abc3def4ghi5jklm"
+
+
+def testGetImageModelId(ycOpenaiModel: YcOpenaiModel) -> None:
+    """Test YC OpenAI model returns correct image model ID format.
+
+    Verifies that _getImageModelId returns the art:// format
+    specific to Yandex Cloud image models.
+
+    Args:
+        ycOpenaiModel: YC OpenAI model instance.
+
+    Raises:
+        AssertionError: If image model ID format is incorrect.
+    """
+    ycOpenaiModel._config["support_images"] = True
+    modelId: str = ycOpenaiModel._getImageModelId()
+    assert modelId == "art://b1g2abc3def4ghi5jklm/yandexgpt/latest"
+    assert modelId.startswith("art://")
+
+
+def testGetImageModelIdNoFolder() -> None:
+    """Test YC OpenAI model raises error without folder_id for images.
+
+    Verifies that ValueError is raised when attempting to get image
+    model ID with an empty folder_id.
+
+    Raises:
+        ValueError: Expected to be raised with message "folder_id is required".
+    """
+    provider: YcOpenaiProvider = YcOpenaiProvider.__new__(YcOpenaiProvider)
+
+    with patch("openai.AsyncOpenAI"):
+        model: YcOpenaiModel = YcOpenaiModel(
+            provider=provider,
+            modelId="yandexgpt",
+            modelVersion="latest",
+            temperature=0.6,
+            contextSize=8192,
+            statsStorage=NullStatsStorage(),
+            openAiClient=Mock(spec=AsyncOpenAI),
+            folderId="",
+        )
+        model._config["support_images"] = True
+
+        with pytest.raises(ValueError, match="folder_id is required"):
+            model._getImageModelId()
+
+
+@pytest.mark.asyncio
+async def testGenerateImageViaImagesApiDispatch(
+    ycOpenaiModel: YcOpenaiModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test image generation dispatches to Images API when configured.
+
+    Verifies that when image_generation_api is set to "openai-images",
+    the model uses client.images.generate() instead of chat.completions.
+
+    Args:
+        ycOpenaiModel: YC OpenAI model instance.
+        mockAsyncOpenAI: Mocked AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If dispatch logic is incorrect.
+    """
+    # Configure model for openai-images transport
+    ycOpenaiModel._config["image_generation_api"] = "openai-images"
+    ycOpenaiModel._config["support_images"] = True
+
+    # Setup mock images API with proper isinstance check
+    mockImageResponse = MagicMock()
+    mockImageResponse.__class__ = ImagesResponse  # type: ignore[assignment]
+    mockImageData = Mock()
+    mockImageData.b64_json = base64.b64encode(b"test-image-bytes").decode()
+    mockImageData.revised_prompt = ""
+    mockImageResponse.data = [mockImageData]
+    mockImageResponse.usage = None
+
+    mockAsyncOpenAI.images = Mock()
+    mockAsyncOpenAI.images.generate = AsyncMock(return_value=mockImageResponse)
+
+    result = await ycOpenaiModel.generateImage(sampleMessages)
+
+    # Verify images.generate was called
+    assert mockAsyncOpenAI.images.generate.called is True
+
+    # Verify chat.completions.create was NOT called
+    assert mockAsyncOpenAI.chat.completions.create.called is False
+
+    # Verify model kwarg uses art:// format
+    callKwargs = mockAsyncOpenAI.images.generate.call_args.kwargs
+    assert callKwargs["model"].startswith("art://")
+    assert callKwargs["prompt"] == "Ты полезный ассистент\n\nПривет! Как дела?"
+
+    # Verify result contains image data
+    assert result.mediaData == b"test-image-bytes"
+    assert result.mediaMimeType == "image/png"
+
+    # Verify no tokens are reported for images API
+    assert result.inputTokens is None
+    assert result.outputTokens is None
+    assert result.totalTokens is None
+    assert result.resultText == ""
+
+
+@pytest.mark.asyncio
+async def testGenerateImageWithoutOpenaiImagesFlag(
+    ycOpenaiModel: YcOpenaiModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test image generation uses chat-completions path without openai-images flag.
+
+    Verifies that when image_generation_api is NOT set to "openai-images",
+    the model falls back to the inherited chat-completions image path.
+
+    Args:
+        ycOpenaiModel: YC OpenAI model instance.
+        mockAsyncOpenAI: Mocked AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If fallback logic is incorrect.
+    """
+    # Configure model for chat-completions transport (default)
+    ycOpenaiModel._config["image_generation_api"] = "chat-completions"
+    ycOpenaiModel._config["support_images"] = True
+
+    # Setup mock chat.completions API with image response
+    mockResponse: Mock = Mock(spec=ChatCompletion)
+    mockChoice: Mock = Mock(spec=Choice)
+    mockMessage = Mock()
+    mockMessage.content = "Generated image"
+    mockMessage.tool_calls = None
+
+    # Create image data URL
+    encoded: str = base64.b64encode(b"fallback-image-bytes").decode()
+    mockMessage.images = [{"image_url": {"url": f"data:image/png;base64,{encoded}"}}]
+
+    mockChoice.message = mockMessage
+    mockChoice.finish_reason = "stop"
+    mockResponse.choices = [mockChoice]
+
+    mockUsage: Mock = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 10
+    mockUsage.completion_tokens = 20
+    mockUsage.total_tokens = 30
+    mockResponse.usage = mockUsage
+
+    mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
+
+    result = await ycOpenaiModel.generateImage(sampleMessages)
+
+    # Verify chat.completions.create was called
+    assert mockAsyncOpenAI.chat.completions.create.called is True
+
+    # Verify model kwarg uses gpt:// format (text model ID)
+    callKwargs = mockAsyncOpenAI.chat.completions.create.call_args.kwargs
+    assert callKwargs["model"].startswith("gpt://")
+
+    # Verify result contains image data
+    assert result.mediaData == b"fallback-image-bytes"
+    assert result.mediaMimeType == "image/png"

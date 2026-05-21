@@ -16,10 +16,12 @@ Test Categories:
     - Integration Tests: End-to-end workflow tests
 """
 
+import base64
 import json
-from typing import Any, Dict
-from unittest.mock import AsyncMock, Mock, patch
+from typing import Any, Dict, Optional
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
+import httpx
 import openai
 import pytest
 from openai import AsyncOpenAI
@@ -30,6 +32,7 @@ from openai.types.chat.chat_completion_message_tool_call import (
     Function,
 )
 from openai.types.completion_usage import CompletionUsage
+from openai.types.images_response import ImagesResponse
 
 from lib.ai.models import (
     LLMFunctionParameter,
@@ -42,6 +45,7 @@ from lib.ai.models import (
 from lib.ai.providers.basic_openai_provider import (
     BasicOpenAIModel,
     BasicOpenAIProvider,
+    _extractImagePrompt,
 )
 from lib.stats import NullStatsStorage, StatsStorage
 
@@ -1329,6 +1333,44 @@ def _makeStructuredResponse(content: str, finishReason: str) -> Mock:
     return mockResponse
 
 
+def _makeImagesResponse(
+    imageDataList: list[Dict[str, Any]],
+    usage: Optional[Dict[str, int]] = None,
+) -> Mock:
+    """Build a mock ImagesResponse that passes isinstance checks.
+
+    Args:
+        imageDataList: List of dicts with keys 'b64_json', 'url', 'revised_prompt'.
+        usage: Optional dict with 'input_tokens', 'output_tokens', 'total_tokens'.
+
+    Returns:
+        Mock: A ``MagicMock`` with ``__class__`` set to ``ImagesResponse``.
+    """
+    mockResponse = MagicMock()
+    mockResponse.__class__ = ImagesResponse  # type: ignore[assignment]
+
+    mockDataItems = []
+    for itemData in imageDataList:
+        mockItem = Mock()
+        mockItem.b64_json = itemData.get("b64_json")
+        mockItem.url = itemData.get("url")
+        mockItem.revised_prompt = itemData.get("revised_prompt")
+        mockDataItems.append(mockItem)
+
+    mockResponse.data = mockDataItems
+
+    if usage is not None:
+        mockUsage = Mock()
+        mockUsage.input_tokens = usage.get("input_tokens")
+        mockUsage.output_tokens = usage.get("output_tokens")
+        mockUsage.total_tokens = usage.get("total_tokens")
+        mockResponse.usage = mockUsage
+    else:
+        mockResponse.usage = None
+
+    return mockResponse
+
+
 @pytest.mark.asyncio
 async def testGenerateStructuredSuccess(
     testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
@@ -1729,3 +1771,532 @@ async def testExecuteChatCompletionUnknownFinishReason(
 
     assert outcome.status == ModelResultStatus.UNKNOWN
     assert outcome.error is None
+
+
+# =======
+# OpenAI Images API tests
+# =======
+
+
+@pytest.mark.asyncio
+async def testGenerateImageViaImagesApiNotSupported(
+    testModel: BasicOpenAIModel, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test _generateImageViaImagesApi raises NotImplementedError when not supported.
+
+    Args:
+        testModel: The test model instance.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        NotImplementedError: Expected — image generation is disabled.
+    """
+    testModel._config["support_images"] = False
+
+    with pytest.raises(NotImplementedError, match="Image generation isn't supported"):
+        await testModel._generateImageViaImagesApi(sampleMessages)
+
+
+@pytest.mark.asyncio
+async def testGenerateImageViaImagesApiNoClient(
+    testModel: BasicOpenAIModel, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test _generateImageViaImagesApi raises RuntimeError when client is None.
+
+    Args:
+        testModel: The test model instance.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        RuntimeError: Expected — OpenAI client is not initialized.
+    """
+    testModel._config["support_images"] = True
+    testModel._client = None  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError, match="OpenAI client not initialized"):
+        await testModel._generateImageViaImagesApi(sampleMessages)
+
+
+@pytest.mark.asyncio
+async def testGenerateImageViaImagesApiSuccessB64Json(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test successful image generation with b64_json response.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If result fields do not match expectations.
+    """
+    testModel._config["support_images"] = True
+
+    mockResponse = _makeImagesResponse(
+        [{"b64_json": base64.b64encode(b"testimg").decode(), "url": None, "revised_prompt": None}]
+    )
+
+    mockAsyncOpenAI.images = Mock()
+    mockAsyncOpenAI.images.generate = AsyncMock(return_value=mockResponse)
+
+    result = await testModel._generateImageViaImagesApi(sampleMessages)
+
+    assert result.status == ModelResultStatus.FINAL
+    assert result.mediaData == b"testimg"
+    assert result.mediaMimeType == "image/png"
+
+
+@pytest.mark.asyncio
+async def testGenerateImageViaImagesApiEmptyResponse(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test _generateImageViaImagesApi returns ERROR status on empty response.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If result status is not ERROR.
+    """
+    testModel._config["support_images"] = True
+
+    mockResponse = _makeImagesResponse([])
+
+    mockAsyncOpenAI.images = Mock()
+    mockAsyncOpenAI.images.generate = AsyncMock(return_value=mockResponse)
+
+    result = await testModel._generateImageViaImagesApi(sampleMessages)
+
+    assert result.status == ModelResultStatus.ERROR
+
+
+@pytest.mark.asyncio
+async def testGenerateImageViaImagesApiWithUsage(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test _generateImageViaImagesApi extracts token usage from response.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If token counts do not match expectations.
+    """
+    testModel._config["support_images"] = True
+
+    mockResponse = _makeImagesResponse(
+        [{"b64_json": base64.b64encode(b"testimg").decode(), "url": None, "revised_prompt": None}],
+        usage={"input_tokens": 100, "output_tokens": 50, "total_tokens": 150},
+    )
+
+    mockAsyncOpenAI.images = Mock()
+    mockAsyncOpenAI.images.generate = AsyncMock(return_value=mockResponse)
+
+    result = await testModel._generateImageViaImagesApi(sampleMessages)
+
+    assert result.inputTokens == 100
+    assert result.outputTokens == 50
+    assert result.totalTokens == 150
+
+
+@pytest.mark.asyncio
+async def testGenerateImageViaImagesApiWithImageOptions(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test _generateImageViaImagesApi passes image_options to API call.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If image options are not passed correctly.
+    """
+    testModel._config["support_images"] = True
+    testModel._config["image_options"] = {"size": "1024x1024", "output_format": "jpeg", "n": 1}
+
+    mockResponse = _makeImagesResponse(
+        [{"b64_json": base64.b64encode(b"testimg").decode(), "url": None, "revised_prompt": None}]
+    )
+
+    mockAsyncOpenAI.images = Mock()
+    mockAsyncOpenAI.images.generate = AsyncMock(return_value=mockResponse)
+
+    result = await testModel._generateImageViaImagesApi(sampleMessages)
+
+    callKwargs = mockAsyncOpenAI.images.generate.call_args.kwargs
+    assert callKwargs["size"] == "1024x1024"
+    assert callKwargs["output_format"] == "jpeg"
+    assert result.mediaMimeType == "image/jpeg"
+
+
+@pytest.mark.asyncio
+async def testGenerateImageViaImagesApiMultipleImages(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test _generateImageViaImagesApi uses only first image when multiple returned.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If first image is not used.
+    """
+    testModel._config["support_images"] = True
+
+    mockResponse = _makeImagesResponse(
+        [
+            {"b64_json": base64.b64encode(b"img1").decode(), "url": None, "revised_prompt": None},
+            {"b64_json": base64.b64encode(b"img2").decode(), "url": None, "revised_prompt": None},
+        ]
+    )
+
+    mockAsyncOpenAI.images = Mock()
+    mockAsyncOpenAI.images.generate = AsyncMock(return_value=mockResponse)
+
+    result = await testModel._generateImageViaImagesApi(sampleMessages)
+
+    assert result.mediaData == b"img1"
+
+
+@pytest.mark.asyncio
+async def testGenerateImageViaImagesApiRevisedPrompt(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test _generateImageViaImagesApi extracts revised_prompt from response.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If revised_prompt is not extracted correctly.
+    """
+    testModel._config["support_images"] = True
+
+    mockResponse = _makeImagesResponse(
+        [{"b64_json": base64.b64encode(b"testimg").decode(), "url": None, "revised_prompt": "A cat in a hat"}]
+    )
+
+    mockAsyncOpenAI.images = Mock()
+    mockAsyncOpenAI.images.generate = AsyncMock(return_value=mockResponse)
+
+    result = await testModel._generateImageViaImagesApi(sampleMessages)
+
+    assert result.resultText == "A cat in a hat"
+
+
+@pytest.mark.asyncio
+async def testGenerateImageViaImagesApiUnknownFormat(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test _generateImageViaImagesApi defaults to png for unknown output_format.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If MIME type does not default to image/png.
+    """
+    testModel._config["support_images"] = True
+    testModel._config["image_options"] = {"output_format": "tiff"}
+
+    mockResponse = _makeImagesResponse(
+        [{"b64_json": base64.b64encode(b"testimg").decode(), "url": None, "revised_prompt": None}]
+    )
+
+    mockAsyncOpenAI.images = Mock()
+    mockAsyncOpenAI.images.generate = AsyncMock(return_value=mockResponse)
+
+    result = await testModel._generateImageViaImagesApi(sampleMessages)
+
+    assert result.mediaMimeType == "image/png"
+
+
+def testExtractImagePromptSimple() -> None:
+    """Test _extractImagePrompt joins simple text messages.
+
+    Raises:
+        AssertionError: If prompt is not joined correctly.
+    """
+    messages = [
+        ModelMessage(role="user", content="Draw a cat"),
+        ModelMessage(role="user", content="In a hat"),
+    ]
+    prompt = _extractImagePrompt(messages)
+    assert prompt == "Draw a cat\n\nIn a hat"
+
+
+def testExtractImagePromptEmpty() -> None:
+    """Test _extractImagePrompt raises ValueError on empty content.
+
+    Raises:
+        ValueError: Expected — no textual content in messages.
+    """
+    messages = [ModelMessage(role="user", content="")]
+    with pytest.raises(ValueError, match="No textual content found"):
+        _extractImagePrompt(messages)
+
+
+def testExtractImagePromptMultimodal() -> None:
+    """Test _extractImagePrompt extracts text from multimodal content.
+
+    Raises:
+        AssertionError: If text is not extracted correctly from multimodal content.
+    """
+    messages = [
+        ModelMessage(
+            role="user",
+            content=[  # type: ignore[arg-type]
+                {"type": "text", "text": "Draw a cat"},
+                {"type": "image", "image_url": "http://example.com/cat.jpg"},
+            ],
+        )
+    ]
+    prompt = _extractImagePrompt(messages)
+    assert prompt == "Draw a cat"
+
+
+# ============================================================================
+# Additional Images API Tests (Phase 1 Review Fixes)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def testGenerateImageViaImagesApiUrlDownload(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test URL download path in _generateImageViaImagesApi.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If result fields do not match expectations.
+    """
+    testModel._config["support_images"] = True
+
+    mockResponse = _makeImagesResponse(
+        [{"b64_json": None, "url": "https://example.com/image.png", "revised_prompt": None}]
+    )
+
+    mockAsyncOpenAI.images = Mock()
+    mockAsyncOpenAI.images.generate = AsyncMock(return_value=mockResponse)
+
+    mockHttpxResponse = Mock()
+    mockHttpxResponse.content = b"downloaded"
+    mockHttpxResponse.raise_for_status = Mock()
+    mockHttpxResponse.headers = {"content-type": "image/png"}
+
+    mockClient = AsyncMock()
+    mockClient.get = AsyncMock(return_value=mockHttpxResponse)
+    mockClient.__aenter__ = AsyncMock(return_value=mockClient)
+    mockClient.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("httpx.AsyncClient", return_value=mockClient):
+        result = await testModel._generateImageViaImagesApi(sampleMessages)
+
+    assert result.status == ModelResultStatus.FINAL
+    assert result.mediaData == b"downloaded"
+    assert result.mediaMimeType == "image/png"
+
+
+@pytest.mark.asyncio
+async def testGenerateImageViaImagesApiUrlDownloadError(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test httpx download error in _generateImageViaImagesApi.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If result status is not ERROR or error is not set.
+    """
+    testModel._config["support_images"] = True
+
+    mockResponse = _makeImagesResponse(
+        [{"b64_json": None, "url": "https://example.com/image.png", "revised_prompt": None}]
+    )
+
+    mockAsyncOpenAI.images = Mock()
+    mockAsyncOpenAI.images.generate = AsyncMock(return_value=mockResponse)
+
+    mockClient = AsyncMock()
+    mockClient.get = AsyncMock(side_effect=httpx.HTTPError("Connection failed"))
+    mockClient.__aenter__ = AsyncMock(return_value=mockClient)
+    mockClient.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("httpx.AsyncClient", return_value=mockClient):
+        result = await testModel._generateImageViaImagesApi(sampleMessages)
+
+    assert result.status == ModelResultStatus.ERROR
+    assert isinstance(result.error, httpx.HTTPError)
+    assert "Connection failed" in str(result.error)
+
+
+@pytest.mark.asyncio
+async def testGenerateImageViaImagesApiNeitherField(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test 'neither b64_json nor url' error path.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If result status is not ERROR or error message is incorrect.
+    """
+    testModel._config["support_images"] = True
+
+    mockResponse = _makeImagesResponse([{"b64_json": None, "url": None, "revised_prompt": None}])
+
+    mockAsyncOpenAI.images = Mock()
+    mockAsyncOpenAI.images.generate = AsyncMock(return_value=mockResponse)
+
+    result = await testModel._generateImageViaImagesApi(sampleMessages)
+
+    assert result.status == ModelResultStatus.ERROR
+    assert isinstance(result.error, ValueError)
+    assert "neither" in str(result.error).lower()
+
+
+@pytest.mark.asyncio
+async def testGenerateImageViaImagesApiBadRequestError(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test BadRequestError handling in _generateImageViaImagesApi.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If result status is not ERROR or error is not the exception.
+    """
+    testModel._config["support_images"] = True
+
+    mockResponse = Mock()
+    mockResponse.status_code = 400
+
+    badReqError = openai.BadRequestError("Bad request", response=mockResponse, body=None)
+
+    mockAsyncOpenAI.images = Mock()
+    mockAsyncOpenAI.images.generate = AsyncMock(side_effect=badReqError)
+
+    result = await testModel._generateImageViaImagesApi(sampleMessages)
+
+    assert result.status == ModelResultStatus.ERROR
+    assert result.error is badReqError
+
+
+def testGetImageRequestOptionsNonDict(testModel: BasicOpenAIModel) -> None:
+    """Test _getImageRequestOptions returns empty dict for non-dict image_options.
+
+    Args:
+        testModel: The test model instance.
+
+    Raises:
+        AssertionError: If result is not empty dict.
+    """
+    testModel._config["image_options"] = "invalid"
+    assert testModel._getImageRequestOptions() == {}
+
+
+def testExtractImagePromptEmptyList() -> None:
+    """Test _extractImagePrompt raises ValueError on empty list.
+
+    Raises:
+        ValueError: Expected — no textual content in messages.
+    """
+    with pytest.raises(ValueError, match="No textual content found"):
+        _extractImagePrompt([])
+
+
+def testGetImageModelIdDefault(testModel: BasicOpenAIModel) -> None:
+    """Test _getImageModelId returns same as _getModelId by default.
+
+    Args:
+        testModel: The test model instance.
+
+    Raises:
+        AssertionError: If model IDs don't match.
+    """
+    assert testModel._getImageModelId() == testModel._getModelId()
+
+
+@pytest.mark.asyncio
+async def testGenerateImageViaImagesApiModelAndPrompt(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test that model and prompt kwargs are passed correctly to images.generate.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If model or prompt kwargs are incorrect.
+    """
+    testModel._config["support_images"] = True
+
+    mockResponse = _makeImagesResponse(
+        [{"b64_json": base64.b64encode(b"testimg").decode(), "url": None, "revised_prompt": None}]
+    )
+
+    mockAsyncOpenAI.images = Mock()
+    mockAsyncOpenAI.images.generate = AsyncMock(return_value=mockResponse)
+
+    await testModel._generateImageViaImagesApi(sampleMessages)
+
+    callKwargs = mockAsyncOpenAI.images.generate.call_args.kwargs
+    assert callKwargs["model"] == "test-model"
+    assert callKwargs["prompt"] == "You are a helpful assistant\n\nHello, how are you?"
+
+
+@pytest.mark.asyncio
+async def testGenerateImageViaImagesApiResponseDataNone(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test _generateImageViaImagesApi returns ERROR when response.data is None.
+
+    Args:
+        testModel: The test model instance.
+        mockAsyncOpenAI: The mock AsyncOpenAI client.
+        sampleMessages: Sample messages for testing.
+
+    Raises:
+        AssertionError: If result status is not ERROR.
+    """
+    testModel._config["support_images"] = True
+
+    mockResponse = MagicMock()
+    mockResponse.__class__ = ImagesResponse  # type: ignore[assignment]
+    mockResponse.data = None  # type: ignore[assignment]
+    mockResponse.usage = None
+
+    mockAsyncOpenAI.images = Mock()
+    mockAsyncOpenAI.images.generate = AsyncMock(return_value=mockResponse)
+
+    result = await testModel._generateImageViaImagesApi(sampleMessages)
+
+    assert result.status == ModelResultStatus.ERROR
