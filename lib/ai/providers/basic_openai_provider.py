@@ -737,6 +737,7 @@ class BasicOpenAIModel(AbstractModel):
             "prompt": prompt,
             "n": 1,  # by default, expect 1 image
             "output_format": "png",
+            "response_format": "b64_json",
         }
 
         # Apply whitelisted options
@@ -808,10 +809,22 @@ class BasicOpenAIModel(AbstractModel):
         mediaData: Optional[bytes] = None
         if imageData.b64_json:
             mediaData = base64.b64decode(imageData.b64_json)
+            imageData.b64_json = f"{imageData.b64_json[:32]}...({len(imageData.b64_json)} chars)"
         elif imageData.url:
+            imageUrl = httpx.URL(imageData.url)
+            if imageUrl.scheme != "https":
+                return ModelRunResult(
+                    rawResult=response,
+                    status=ModelResultStatus.ERROR,
+                    error=ValueError(f"Unsupported image URL scheme: {imageUrl.scheme}"),
+                    inputTokens=inputTokens,
+                    outputTokens=outputTokens,
+                    totalTokens=totalTokens,
+                )
+
             try:
                 async with httpx.AsyncClient(timeout=30.0) as client:
-                    fetchResponse = await client.get(imageData.url)
+                    fetchResponse = await client.get(imageUrl)
                     fetchResponse.raise_for_status()
                     mediaData = fetchResponse.content
                     contentType = str(fetchResponse.headers.get("content-type", ""))

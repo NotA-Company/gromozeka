@@ -56,6 +56,7 @@ How to use this file:
 - `YcOpenaiModel` uses `gpt://...` URIs for text and `art://...` URIs for images — two different URI schemes from the same provider.
 - `YcOpenaiProvider._folderId` is set **before** `super().__init__()` so `_getClientParams()` (called during `_initClient()`) can access it. This ordering is critical.
 - `_getClientParams()` affects ALL requests through the OpenAI client (text, images, tools), not just the API it was added for.
+- `image_generation_api = "openai-images"` dispatch in `BasicOpenAIModel._generateImage()` is **generic** — it works for any `BasicOpenAIModel` subclass, not just `YcOpenaiModel`. Old docs claimed it was YC-only; this was corrected in `docs/llm/configuration.md`.
 
 ## Teamlead Workflow Lessons (continued)
 

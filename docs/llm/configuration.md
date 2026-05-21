@@ -177,9 +177,10 @@ The `image_generation_api` key selects the transport for image generation:
 | unset or any other | Chat-completions | Uses `chat.completions.create()` with `modalities = ["image", "text"]` |
 | `"openai-images"` | OpenAI Images API | Uses `client.images.generate()` directly |
 
-**Provider support:** Currently, ``image_generation_api = "openai-images"`` is only
-supported by the ``yc-openai`` provider. Other providers ignore this setting and
-continue using the chat-completions image path.
+**Provider support:** Any OpenAI-compatible provider (any ``BasicOpenAIModel``
+subclass) can use ``image_generation_api = "openai-images"`` by setting it in the
+model config. Providers that don't set it continue using the chat-completions
+image path by default.
 
 When `image_generation_api = "openai-images"`, the `image_options` table provides
 model-level defaults for image requests. Only whitelisted keys are forwarded:
