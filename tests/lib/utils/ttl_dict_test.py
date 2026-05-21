@@ -2,13 +2,10 @@
 Test suite for lib/utils/ttl_dict.py
 """
 
-import os
-import sys
 import time
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
-from lib.utils.ttl_dict import TTLDict  # noqa: E402
+from lib.utils.ttl_dict import TTLDict
 
 
 class TestTTLDictBasic(unittest.TestCase):
