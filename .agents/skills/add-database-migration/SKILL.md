@@ -192,8 +192,8 @@ If the change adds or modifies tables the app queries, update the relevant modul
 
 ## Step 6 — Tests
 
-- Migration tests live in [`internal/database/migrations/test_migrations.py`](../../../internal/database/migrations/test_migrations.py). Add a test that exercises `up()` and `down()`.
-- Repository-level tests go in [`tests/test_db_wrapper.py`](../../../tests/test_db_wrapper.py) or a collocated `test_*.py` next to the module you changed.
+- Migration tests live in [`tests/database/migrations/test_migrations.py`](../../../tests/database/migrations/test_migrations.py). Add a test that exercises `up()` and `down()`.
+- Repository-level tests go in [`tests/database/test_db_wrapper.py`](../../../tests/database/test_db_wrapper.py) or a collocated `test_*.py` next to the module you changed.
 - `asyncio_mode = "auto"` is set — write `async def test_…` without `@pytest.mark.asyncio`.
 - Reuse fixtures from [`tests/conftest.py`](../../../tests/conftest.py) (`testDatabase`, etc.).
 

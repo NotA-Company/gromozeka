@@ -868,7 +868,7 @@ else:
 
 ## 8. Tests
 
-### 8.1 `lib/stat/test/test_null_storage.py`
+### 8.1 `tests/lib/stat/test_null_storage.py`
 
 ```python
 """Unit tests for NullStatStorage."""
@@ -892,7 +892,7 @@ async def testNullAggregateWithLimit():
     assert result == 0
 ```
 
-### 8.2 `lib/stat/test/test_sql_storage.py`
+### 8.2 `tests/lib/stat/test_sql_storage.py`
 
 Integration tests using an in-memory SQLite provider. Test cases:
 
@@ -961,7 +961,7 @@ async def testMultipleConsumers(testDatabase):
     ...
 ```
 
-### 8.3 `lib/ai/test_stat_integration.py`
+### 8.3 `tests/lib/ai/test_stat_integration.py`
 
 Test that `AbstractModel` records stats through the chain:
 
@@ -984,7 +984,7 @@ async def testGenerateTextRecordsStats(mockModel, mockStatStorage):
 | 1 | Migration 016 | `migrations/versions/migration_016_add_stat_tables.py` | `add-database-migration` | — |
 | 2 | `lib/stat/` — ABC + Null | `lib/stat/__init__.py`, `lib/stat/stat_storage.py` | `software-developer` | — |
 | 3 | DB-backed storage | `internal/database/stat_storage.py` | `software-developer` | 1, 2 |
-| 4 | Tests for `lib/stat` | `lib/stat/test/test_null_storage.py`, `lib/stat/test/test_sql_storage.py` | `software-developer` | 2, 3 |
+| 4 | Tests for `lib/stat` | `tests/lib/stat/test_null_storage.py`, `tests/lib/stat/test_sql_storage.py` | `software-developer` | 2, 3 |
 | 5 | Quality gates | `make format lint && make test` | `run-quality-gates` | 4 |
 | 6 | LLMManager integration | `lib/ai/manager.py` | `software-developer` | 2 |
 | 7 | AbstractModel integration | `lib/ai/abstract.py` | `software-developer` | 2, 6 |

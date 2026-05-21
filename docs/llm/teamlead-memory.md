@@ -65,3 +65,18 @@ How to use this file:
 - The `explore` subagent (model: `cheap`) and `code-reviewer` (model: `smart`) are reliable for read-only work; `software-developer` needs `standard` model to be functional.
 - When production code has `isinstance(x, SomeType)` guards, mock objects in tests need `MagicMock().__class__ = SomeType` to pass them. Cleaner than constructing real SDK objects and doesn't require knowing all constructor params.
 - If the user adds guards to production code and tests break, fix the tests — don't remove the guards. The user's intent is clear: guards are there by design.
+
+## Test Reorganization (completed 2026-05-21)
+
+- Plan document: [`docs/plans/test-reorganization.md`](../../docs/plans/test-reorganization.md) — full mapping tables, phases, risks.
+- **Completed:** All ~74 test files moved from collocated locations into `tests/` with source-structure mirroring.
+- **Conventions:**
+  - `internal/X/Y.py` → `tests/X/test_Y.py` (strip `internal/` prefix).
+  - `lib/X/Y.py` → `tests/lib/X/test_Y.py` (full `tests/lib/` prefix).
+  - Cross-cutting tests stay at `tests/integration/`, `tests/verification/`.
+  - `testpaths` stays `["tests", "lib", "internal"]` (lib/ and internal/ now have no test files; harmless).
+- Old directories `tests/lib_ai/`, `tests/lib_utils/`, `tests/lib_ratelimiter/`, `tests/divination/`, `tests/geocode_maps/`, `tests/openweathermap/`, `tests/yandex_search/` removed.
+- Non-test files (`lib/markdown/test/run_tests.sh`, `README.md`, `MarkdownV2_demo.py`) remain in place under `lib/markdown/test/`.
+  - Final: **2342 passed, 11 skipped** (skipped = Docker sandbox tests without daemon).
+- **New test rule** (added to `docs/llm/testing.md`, `AGENTS.md`, `docs/llm/index.md`, `docs/llm/tasks.md`): all new tests MUST use mirror layout under `tests/`. No new collocated tests in `lib/` or `internal/`.
+- **Post-reorg doc audit**: `docs/llm/` and `AGENTS.md` are clean. Fixed stale paths in `docs/plans/` (10 files), `docs/design/` (1 file), `docs/templates/` (1 file), `docs/suggestions/` (1 file), `.agents/skills/` (1 file), `internal/database/migrations/README.md`. Left `docs/archive/` untouched (historical records).

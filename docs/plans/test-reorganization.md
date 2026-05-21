@@ -211,7 +211,7 @@ Steps per batch: `git mv` files → fix imports → `make test` → code review.
 `ai` (with `providers/`), `sandbox` (with `backends/` and `runtimes/`)
 
 **Batch 2.3 — Large packages** (~25 files):
-`divination` (with `decks/`), `markdown` (17 files)
+`divination` (with `decks/`), `markdown` (17 test `.py` files; the `test/` subdirectory is flattened — files move from `lib/markdown/test/test_*.py` directly to `tests/lib/markdown/test_*.py`, dropping the `test/` nesting. Non-test files `run_tests.sh`, `README.md`, and `MarkdownV2_demo.py` remain in `lib/markdown/test/`).
 
 ### Phase 3: Move `internal/` Collocated Tests
 
@@ -374,7 +374,7 @@ tests/
 |---|---|---|
 | 1 | **Import breakage** — moved files have relative imports or `sys.path` hacks that reference old locations. | Phase 0 catalogs all imports upfront; each batch fixes imports before running tests. |
 | 2 | **`tests/lib/utils/` collision** — `ttl_dict_test.py` already lives there while `lib_utils/test_utils.py` tests a different file. | Verify no collision before merging; the two test files cover different source modules. |
-| 3 | **`lib/markdown/test/` contains non-test files** (`run_tests.sh`, `README.md`, `MarkdownV2_demo.py`). | Explicit decision needed (see Open Questions). |
+| 3 | ~~**`lib/markdown/test/` contains non-test files**~~ (`run_tests.sh`, `README.md`, `MarkdownV2_demo.py`). | **Resolved:** these non-test files stay in `lib/markdown/test/` — they will not be moved. Only the 17 `test_*.py` files are relocated. |
 | 4 | **Golden-data `__init__.py` files define `GOLDEN_DATA_PATH` constants** that reference relative paths. | Update path constants after move; run golden tests to verify. |
 | 5 | **`conftest.py` accessibility** — `lib/stats/test/conftest.py` must remain visible to the moved test files. | Moves to `tests/lib/stats/conftest.py` where pytest discovers it. |
 | 6 | **Step budget** — 74+ file moves exceed a single session limit. | Batched approach (Phases 2–4) keeps each PR scoped and reviewable. |
@@ -382,6 +382,34 @@ tests/
 
 ## Open Questions
 
-1. **What to do with `lib/markdown/test/run_tests.sh`, `README.md`, and `MarkdownV2_demo.py`?** These are not Python test modules but live inside the test directory. Options: (a) leave them in place and only move `.py` test files, (b) move them alongside tests into `tests/lib/markdown/`, (c) move non-test files to `lib/markdown/examples/` or similar.
+All open questions resolved:
 
-2. **Should `lib/markdown/test/` be flattened?** The `test/` subdirectory nesting is unusual — all other packages place test files directly under the package root. Flattening (dropping `test/` prefix) would match the convention used for every other lib package. Preserving nesting would keep the current structure at the cost of inconsistency.
+- **Markdown tests will be flattened** — the `test/` subdirectory is dropped, so `lib/markdown/test/test_*.py` moves to `tests/lib/markdown/test_*.py`. This matches the convention used by every other lib package.
+- **Non-test files stay in place** — `lib/markdown/test/run_tests.sh`, `lib/markdown/test/README.md`, and `lib/markdown/test/MarkdownV2_demo.py` are not moved. They remain under `lib/markdown/test/` to be dealt with separately later.
+
+---
+
+## Completion Notes
+
+**Status:** Completed 2026-05-21.
+
+**What was done (vs planned):**
+
+- All 55 collocated `lib/` test files moved to `tests/lib/<pkg>/` (Phase 2).
+- All 7 collocated `internal/` test files moved to `tests/<module>/` (Phase 3).
+- All 5 flat root tests moved to their mirror directories (Phase 4a).
+- All underscore-style `lib_*` directories merged into `tests/lib/<pkg>/` (Phase 4b).
+- All top-level service directories (`tests/divination/`, `tests/geocode_maps/`, `tests/openweathermap/`, `tests/yandex_search/`) moved into `tests/lib/<pkg>/` (Phase 4c).
+- Infrastructure files (`conftest.py`, `__init__.py`) moved as planned (Phase 4d).
+- Empty source-side test directories removed from `lib/` and `internal/`.
+- Orphaned top-level test directories (`tests/lib_ai/`, `tests/lib_utils/`, `tests/lib_ratelimiter/`, `tests/divination/`, `tests/geocode_maps/`, `tests/openweathermap/`, `tests/yandex_search/`) removed.
+- `pyproject.toml` `testpaths` left as `["tests", "lib", "internal"]` — harmless, no tests remain in `lib/` or `internal/`.
+
+**Deviations from plan:**
+
+- `tests/` also acquired several additional test directories not in the original plan: `tests/bot/models/`, `tests/database/providers/`, `tests/database/performance/`, `tests/database/integration/`, `tests/models/`, `tests/scripts/`, `tests/services/storage/`. These were added during development and follow the same mirroring convention.
+- The file count (111 test `.py` files excluding `__init__.py`) is higher than the ~74 originally cataloged due to tests added during the reorganization work itself.
+- The `tests/utils/ttl_dict_test.py` collision risk noted in the plan (Risk #2) was resolved — both `test_utils.py` and `ttl_dict_test.py` coexist in `tests/lib/utils/`.
+- `lib/markdown/test/` still contains `run_tests.sh`, `README.md`, and `MarkdownV2_demo.py` as non-test artifacts (per plan decision).
+
+**Final test file count:** 111 `.py` files (excluding `__init__.py`) under `tests/`, zero collocated test files remaining in `lib/` or `internal/`.

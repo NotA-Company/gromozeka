@@ -34,7 +34,7 @@ START
 │         └── External API? → Add new lib or reuse existing
 │             ↓
 │         Register handler in HandlersManager (manager.py:249)
-│         Write tests in tests/bot/
+│         Write tests in tests/bot/ (mirror layout: tests/bot/common/handlers/test_my_handler.py)
 │         Run: make format lint && make test
 │         DONE
 ```
@@ -67,7 +67,7 @@ START
 │         - Register conditionally in HandlersManager (like WeatherHandler)
 │
 └── Step 4: Tests
-          - tests/lib_my_service/ for client tests (with golden data)
+          - tests/lib/<service_name>/ for client tests (with golden data, mirroring lib/ structure)
           - tests/bot/ for handler tests
           - Run: make format lint && make test
           DONE
@@ -125,8 +125,8 @@ START
 │         Update affected table schemas.
 │
 └── Step 7: Tests
-          - tests/test_db_wrapper.py
-          - internal/database/migrations/test_migrations.py
+          - tests/database/test_db_wrapper.py
+          - tests/database/migrations/test_migrations.py
           - Run: make format lint && make test
           DONE
 ```
@@ -163,7 +163,7 @@ START
 │         api-key = "${MY_PROVIDER_API_KEY}"
 │
 └── Step 5: Tests
-          Path: lib/ai/providers/test_my_provider.py
+          Path: tests/lib/ai/providers/test_my_provider.py (mirror layout, NOT collocated in lib/)
           Run: make format lint && make test
           DONE
 ```
@@ -194,7 +194,7 @@ START
 │   └── A service used by handler → Fix the service (separate task)
 │
 ├── Step 3: Write regression test FIRST
-│         in tests/bot/test_<handler_name>.py
+│         in tests/bot/test_<handler_name>.py (mirror layout, under tests/)
 │         Test should FAIL before fix
 │
 ├── Step 4: Fix the bug

@@ -284,7 +284,7 @@ from lib.ai import ModelStructuredResult
 2. Class: `MyProvider(AbstractLLMProvider)`
 3. Must implement: `_createModel(modelConfig) -> AbstractModel`
 4. Register in `lib/ai/manager.py:40` — add to `providerTypes` dict: `{"my-provider": MyProvider}`
-5. Tests in `lib/ai/providers/test_my_provider.py`
+5. Tests in `tests/lib/ai/providers/test_my_provider.py`
 
 ---
 
@@ -366,7 +366,7 @@ from lib.markdown.parser import markdownToMarkdownV2
 result: str = markdownToMarkdownV2(text: str) -> str
 ```
 
-**Tests:** `lib/markdown/test/` — run with `make test`
+**Tests:** `tests/lib/markdown/` — run with `make test`
 
 ---
 
@@ -437,7 +437,7 @@ weather = await client.getCurrentWeather(lat=55.75, lon=37.62)
 geocoding = await client.geocode(cityName="Moscow")
 ```
 
-**Tests:** Uses golden data framework in `lib/openweathermap/test_weather_client.py`
+**Tests:** Uses golden data framework in `tests/lib/openweathermap/test_weather_client.py`
 
 ---
 

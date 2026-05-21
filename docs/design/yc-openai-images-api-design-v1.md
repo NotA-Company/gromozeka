@@ -474,7 +474,7 @@ This design favors **correctness and compatibility over elegance**. Having both 
 Target files:
 
 - `lib/ai/providers/basic_openai_provider.py`
-- `lib/ai/providers/test_basic_openai_provider.py`
+- `tests/lib/ai/providers/test_basic_openai_provider.py`
 
 Tasks:
 
@@ -490,7 +490,7 @@ Tasks:
 Target files:
 
 - `lib/ai/providers/yc_openai_provider.py`
-- `lib/ai/providers/test_yc_openai_provider.py`
+- `tests/lib/ai/providers/test_yc_openai_provider.py`
 
 Tasks:
 
@@ -525,8 +525,8 @@ make test
 Recommended targeted tests during iteration:
 
 ```bash
-./venv/bin/pytest lib/ai/providers/test_basic_openai_provider.py -v
-./venv/bin/pytest lib/ai/providers/test_yc_openai_provider.py -v
+./venv/bin/pytest tests/lib/ai/providers/test_basic_openai_provider.py -v
+./venv/bin/pytest tests/lib/ai/providers/test_yc_openai_provider.py -v
 ```
 
 ### Phase 5 — Live smoke validation

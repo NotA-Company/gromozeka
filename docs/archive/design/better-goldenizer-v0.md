@@ -5,7 +5,7 @@ This document describes the initial concept that led to the golden data testing 
 **Current Implementation:**
 - See `golden-data-testing-system-v2.md` for the completed design
 - Implementation location: `lib/aurumentation/`
-- Usage: `tests/lib_ai/golden/`, `tests/openweathermap/golden/`, `tests/yandex_search/golden/`, `tests/geocode_maps/golden/`, `tests/divination/golden/`
+- Usage: `tests/lib/ai/golden/`, `tests/lib/openweathermap/golden/`, `tests/lib/yandex_search/golden/`, `tests/lib/geocode_maps/golden/`, `tests/lib/divination/golden/`
 
 ---
 

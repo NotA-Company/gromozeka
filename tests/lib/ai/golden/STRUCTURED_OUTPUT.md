@@ -105,7 +105,7 @@ recorded; leave the other skipped.
 ## Replay (CI, no credentials)
 
 ```bash
-./venv/bin/pytest tests/lib_ai/golden -v
+./venv/bin/pytest tests/lib/ai/golden -v
 ```
 
 No API keys needed — the replayer serves responses from the recorded JSON files.

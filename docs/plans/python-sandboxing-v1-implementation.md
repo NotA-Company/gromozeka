@@ -31,7 +31,7 @@ Every dispatch must include these in the brief, regardless of WP:
    - For anything under `lib/ext_modules/*`: `make format` handles those subpackages.
 
 3. **Testing rules** (per [`docs/llm/testing.md`](../llm/testing.md)):
-   - `testpaths = ["tests", "lib", "internal"]` — collocated tests under `lib/sandbox/tests/` are real and run automatically.
+   - `testpaths = ["tests", "lib", "internal"]` — collocated tests under `tests/lib/sandbox/` are real and run automatically.
    - `asyncio_mode = "auto"` — write `async def test_…` with no decorator.
    - Reuse fixtures from [`tests/conftest.py`](../../tests/conftest.py) where they fit.
    - Regression test on every bug fix (failing-then-passing).
@@ -104,7 +104,7 @@ Phases 1, 2, 3 are strictly sequential. Phase 4 (bootstrap script + default conf
 - **Acceptance**:
   - `from lib.sandbox import RuntimeName, BackendName` works.
   - `RuntimeName("python")` returns the member.
-- **Tests**: `lib/sandbox/tests/test_enums.py` — value coverage, string compat.
+- **Tests**: `tests/lib/sandbox/test_enums.py` — value coverage, string compat.
 - **Verify**: `make format lint && make test`.
 
 ### WP-1.2 — Public dataclasses
@@ -186,7 +186,7 @@ Phases 1, 2, 3 are strictly sequential. Phase 4 (bootstrap script + default conf
   - `atomicWriteJson(path: Path, payload: dict, *, tmpDir: Path) -> None` — write to temp file under `tmpDir`, `fsync`, rename. Use the configured `fileMode` / `dirMode`.
   - `ensureDirectoryLayout(config: StorageConfig) -> None` — create the directory tree from [§7](python-sandboxing-v1.md#7-storage-layout) with correct modes and ownership (best-effort if not root; warn if chown fails).
 - **Acceptance**: All helpers pure / side-effect-only-where-marked; full path-traversal coverage in tests.
-- **Tests**: `lib/sandbox/tests/test_storage.py` — extensive `resolveWorkspacePath` cases (absolute, `..`, symlink, null byte, unicode); atomic write survives simulated crash (temp file left behind); hash determinism.
+- **Tests**: `tests/lib/sandbox/test_storage.py` — extensive `resolveWorkspacePath` cases (absolute, `..`, symlink, null byte, unicode); atomic write survives simulated crash (temp file left behind); hash determinism.
 
 ### WP-2.2 — `FilesystemMetadataStore`
 
@@ -195,7 +195,7 @@ Phases 1, 2, 3 are strictly sequential. Phase 4 (bootstrap script + default conf
 - **Files**: `lib/sandbox/metadata/filesystem.py` (new)
 - **Tasks**: Implement every method of the `MetadataStore` Protocol against JSON files under `${rootDir}/meta/`. Uses `atomicWriteJson` for all writes. Records carry a `schemaVersion` field (start at `1`).
 - **Acceptance**: Round-trip every record type; concurrent writes to the same key serialise correctly (`asyncio.Lock` keyed by id); `listSessions(runtime=...)` filtering works.
-- **Tests**: `lib/sandbox/tests/test_metadata_filesystem.py` — CRUD per record type, concurrent writes via `asyncio.gather`, malformed JSON recovery, schema-version mismatch behaviour (raise `ConfigError`).
+- **Tests**: `tests/lib/sandbox/test_metadata_filesystem.py` — CRUD per record type, concurrent writes via `asyncio.gather`, malformed JSON recovery, schema-version mismatch behaviour (raise `ConfigError`).
 
 ### WP-2.3 — Lock registry
 
@@ -207,7 +207,7 @@ Phases 1, 2, 3 are strictly sequential. Phase 4 (bootstrap script + default conf
   - Global run semaphore (`asyncio.Semaphore`) with `globalQueueWaitSeconds` timeout → `SandboxBusy`.
   - `acquirePoolLock(runtime: RuntimeName, poolDir: Path)` — sync `fcntl.flock` wrapped in `asyncio.to_thread`. Non-blocking; on failure → `LibraryPoolLocked`.
 - **Acceptance**: FIFO ordering provable in tests; force-cancel wakes waiters without breaking other sessions' locks.
-- **Tests**: `lib/sandbox/tests/test_locks.py` — submit N coroutines concurrently, assert completion order; overflow path; force-cancel path; flock test using a real temp file.
+- **Tests**: `tests/lib/sandbox/test_locks.py` — submit N coroutines concurrently, assert completion order; overflow path; force-cancel path; flock test using a real temp file.
 
 ### WP-2.4 — Session lifecycle on `SandboxManager`
 
@@ -219,7 +219,7 @@ Phases 1, 2, 3 are strictly sequential. Phase 4 (bootstrap script + default conf
   - `createSession` idempotent unless `forceRecreate=True`.
   - `getSessionUsage` walks workspace, returns size + file count.
   - `dropSession(force=False)` waits for session lock; `force=True` cancels waiters.
-- **Tests**: `lib/sandbox/tests/test_manager_sessions.py` — idempotency, TTL bump on touch, drop+recreate cycle, usage math, force-drop semantics.
+- **Tests**: `tests/lib/sandbox/test_manager_sessions.py` — idempotency, TTL bump on touch, drop+recreate cycle, usage math, force-drop semantics.
 
 ### WP-2.5 — File API on `SandboxManager`
 
@@ -228,7 +228,7 @@ Phases 1, 2, 3 are strictly sequential. Phase 4 (bootstrap script + default conf
 - **Files**: `lib/sandbox/manager.py` (extend)
 - **Tasks**: Implement `listFiles`, `readFile`, `writeFile`, `deleteFile`. All paths through `resolveWorkspacePath`. `readFile(maxBytes=...)` enforces the read-time cap and reports `truncated`.
 - **Acceptance**: Path traversal attempts raise `PathOutsideWorkspace`; binary vs text reads honour `encoding`; large file truncation correct to the byte.
-- **Tests**: `lib/sandbox/tests/test_manager_files.py` — write/read/list/delete round-trips, path safety, encoding handling, truncation boundary cases.
+- **Tests**: `tests/lib/sandbox/test_manager_files.py` — write/read/list/delete round-trips, path safety, encoding handling, truncation boundary cases.
 
 ### WP-2.6 — Garbage collector (filesystem only)
 
@@ -237,7 +237,7 @@ Phases 1, 2, 3 are strictly sequential. Phase 4 (bootstrap script + default conf
 - **Files**: `lib/sandbox/gc.py` (new), `lib/sandbox/manager.py` (extend with `collectGarbage`)
 - **Tasks**: Implement the workspace-side GC from [§12.1](python-sandboxing-v1.md#121-collectgarbage): expired sessions, orphan workspace dirs, expired run records (records + `.run/<runId>/` removed as a unit). Container GC stub in place — implemented in Phase 3.
 - **Acceptance**: GC removes expected items; refuses to touch the library pool; returns accurate `GcResult` counts.
-- **Tests**: `lib/sandbox/tests/test_gc.py` — synthetic directory trees, expired vs unexpired, orphan detection, retention boundaries.
+- **Tests**: `tests/lib/sandbox/test_gc.py` — synthetic directory trees, expired vs unexpired, orphan detection, retention boundaries.
 
 ### WP-2.7 — Phase 2 review
 
@@ -272,7 +272,7 @@ Phases 1, 2, 3 are strictly sequential. Phase 4 (bootstrap script + default conf
 - **Files**: `lib/sandbox/runtimes/python/runtime.py` (new), `lib/sandbox/runtimes/python/__init__.py` (new)
 - **Tasks**: Implement `PythonRuntime` per [§14.3](python-sandboxing-v1.md#143-pythonruntime-class). `runCommand` emits the `timeout -s TERM -k <grace> <secs> sh -c '…'` wrapper with stdin/stdout/stderr redirections. `detectArtifacts` walks the workspace excluding `.run/`.
 - **Acceptance**: Generated commands match the design exactly; artifact detection finds new/modified files.
-- **Tests**: `lib/sandbox/tests/runtimes/test_python_runtime.py` — command shape (string comparison), artifact detection against synthetic file trees with mtime manipulation.
+- **Tests**: `tests/lib/sandbox/runtimes/test_python_runtime.py` — command shape (string comparison), artifact detection against synthetic file trees with mtime manipulation.
 
 ### WP-3.3 — `DockerBackend`
 
@@ -284,7 +284,7 @@ Phases 1, 2, 3 are strictly sequential. Phase 4 (bootstrap script + default conf
   - Smoke test: build the Python run image, launch `docker run alpine echo hi` equivalent through `runOneshot`, get `exitCode=0`.
   - OOM detection works: a container killed by the OOM killer returns `oomKilled=True`.
   - `listManagedContainers` filters by the `sandbox.managed=true` label.
-- **Tests**: `lib/sandbox/tests/backends/test_docker.py` marked `@pytest.mark.slow`, gated on `DOCKER_AVAILABLE` (define this as a top-level pytest skip in `conftest.py`).
+- **Tests**: `tests/lib/sandbox/backends/test_docker.py` marked `@pytest.mark.slow`, gated on `DOCKER_AVAILABLE` (define this as a top-level pytest skip in `conftest.py`).
 
 ### WP-3.4 — `runCode` end-to-end
 
@@ -399,7 +399,7 @@ Can run in parallel with Phase 4 after Phase 3 is signed off. Internally sequent
   - Public methods: `runCodeForChat`, `readArtifact`, `listArtifacts`, `installLibrariesAdmin`, `removeLibrariesAdmin`, `listLibraries`, `healthcheck`.
   - Schedule `manager.recover()` once on init via `asyncio.create_task`.
 - **Acceptance**: Service initialises cleanly; all public methods dispatch to `SandboxManager`; admin methods enforce owner check.
-- **Tests**: `internal/services/sandbox/tests/test_service.py` — inject a fake `SandboxManager`, verify dispatch and admin gating. Cover the `bot_owners` username-vs-int gotcha explicitly.
+- **Tests**: `tests/services/sandbox/test_service.py` — inject a fake `SandboxManager`, verify dispatch and admin gating. Cover the `bot_owners` username-vs-int gotcha explicitly.
 
 ### WP-5.2 — `RunPythonHandler`
 

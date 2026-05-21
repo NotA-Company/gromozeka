@@ -61,7 +61,7 @@ make test
 ./venv/bin/python3 main.py --config-dir configs/
 
 # Run single test file
-./venv/bin/pytest tests/test_db_wrapper.py -v
+./venv/bin/pytest tests/database/test_db_wrapper.py -v
 ```
 
 ---
@@ -167,7 +167,7 @@ make test
 | `configs/` | Configuration directory (TOML files) |
 | `internal/` | Internal application code |
 | `lib/` | Reusable library code |
-| `tests/` | Integration test suite |
+| `tests/` | Test suite — **all** tests live here, mirroring source structure (`lib/X/Y.py` → `tests/lib/X/test_Y.py`; `internal/X/Y.py` → `tests/X/test_Y.py`). No collocated tests in `lib/` or `internal/`. |
 | `docs/` | Documentation |
 | `docs/llm/memories/` | Archived task-specific working memories for completed features/subsystems |
 

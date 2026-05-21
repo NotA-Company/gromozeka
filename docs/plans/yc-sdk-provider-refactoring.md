@@ -852,14 +852,14 @@ Results Back"):
 
 - `tests/conftest.py` provides shared fixtures: `testDatabase`, `mockBot`,
   `mockConfigManager`, `resetLlmServiceSingleton` (autouse).
-- `lib/ai/test_manager.py` uses `MockProvider` classes that mock
+- `tests/lib/ai/test_manager.py` uses `MockProvider` classes that mock
   `YcAIProvider`.
-- Golden-data tests in `tests/lib_ai/golden/` use the `YcSdkModelWrapper`
-  from `tests/lib_ai/model_wrappers.py`.
+- Golden-data tests in `tests/lib/ai/golden/` use the `YcSdkModelWrapper`
+  from `tests/lib/ai/model_wrappers.py`.
 
 ### 7.2 New test files
 
-Create `lib/ai/providers/test_yc_sdk_provider.py` with:
+Create `tests/lib/ai/providers/test_yc_sdk_provider.py` with:
 
 | Test class | Tests |
 |---|---|
@@ -884,7 +884,7 @@ For `listRemoteModels()`, mock `httpx.AsyncClient.get()`.
 ### 7.4 Regression tests
 
 - All existing golden-data tests must continue to pass unchanged.
-- The `YcSdkModelWrapper` in `tests/lib_ai/model_wrappers.py` should work
+- The `YcSdkModelWrapper` in `tests/lib/ai/model_wrappers.py` should work
   without modification (it just calls `YcAIProvider(config)`).
 
 ---
@@ -896,7 +896,7 @@ For `listRemoteModels()`, mock `httpx.AsyncClient.get()`.
 | `lib/ai/providers/yc_sdk_provider.py` | **Major refactor** | Remove `_initModel`/`self._ycModel`, add `_getModel()`, implement `_generateStructured`, add tool conversion, update auth, improve error handling |
 | `configs/00-defaults/providers.toml` | **Minor** | Add `auth_type` key under `yc-sdk` provider |
 | `configs/00-defaults/yc-sdk-models.toml` | **Minor** | Add text models with `support_tools = true`, `support_structured_output = true` |
-| `lib/ai/providers/test_yc_sdk_provider.py` | **New** | Unit tests for all new functionality |
+| `tests/lib/ai/providers/test_yc_sdk_provider.py` | **New** | Unit tests for all new functionality |
 | `docs/llm/libraries.md` | **Update** | Document new YC SDK provider capabilities |
 | `docs/other/yc-ai-sdk/gap-analysis.md` | **Update** | Mark completed items in capability matrix |
 

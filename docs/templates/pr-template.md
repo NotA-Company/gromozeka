@@ -187,13 +187,13 @@ q3r4s5t refactor(utils): improve code readability
 ```make test
 
 ...
-internal/services/cache/test_cache_service.py .....................................                                                                        [100%]
+tests/services/cache/test_cache_service.py .....................................                                                                        [100%]
 
 ====================================================================== slowest 4 durations =======================================================================
-15.31s call     lib/yandex_search/test_performance.py::TestCachePerformance::testCacheMemoryUsage
-10.38s call     lib/yandex_search/test_performance.py::TestMemoryAndResourceUsage::testMemoryCleanupAfterRequests
-3.00s call     lib/openweathermap/test_dict_cache.py::test_dict_cache
-2.50s call     lib/openweathermap/test_dict_cache.py::TestDictCacheAdvanced::test_cache_ttl_boundary_conditions
+15.31s call     tests/lib/yandex_search/test_performance.py::TestCachePerformance::testCacheMemoryUsage
+10.38s call     tests/lib/yandex_search/test_performance.py::TestMemoryAndResourceUsage::testMemoryCleanupAfterRequests
+3.00s call     tests/lib/openweathermap/test_dict_cache.py::test_dict_cache
+2.50s call     tests/lib/openweathermap/test_dict_cache.py::TestDictCacheAdvanced::test_cache_ttl_boundary_conditions
 ================================================================ 1330 passed in 67.48s (0:01:07) =================================================================
 
 ✅ All tests completed

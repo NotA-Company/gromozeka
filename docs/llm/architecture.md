@@ -480,17 +480,17 @@ Services MUST be initialized in this order:
 
 | File Modified | What Could Break | Verification |
 |---|---|---|
-| [`internal/database/database.py`](../../internal/database/database.py) | All DB operations, all handlers that use `self.db` | `make test` — `tests/integration/test_database_operations.py` |
+| [`internal/database/database.py`](../../internal/database/database.py) | All DB operations, all handlers that use `self.db` | `make test` — `tests/database/integration/` |
 | [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) | ALL handlers (they all inherit from `BaseBotHandler`) | Full `make test` |
 | [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) | Handler chain order, command routing, parallelism | Full `make test` |
 | [`internal/config/manager.py`](../../internal/config/manager.py) | Config loading for the entire app | Full `make test` |
 | [`internal/services/cache/service.py`](../../internal/services/cache/service.py) | Chat settings, user data, admin caching | Full `make test` |
-| [`lib/ai/abstract.py`](../../lib/ai/abstract.py) | ALL LLM provider implementations | `make test` — `tests/lib_ai/` |
-| [`lib/ai/manager.py`](../../lib/ai/manager.py) | Model selection, provider init | `make test` — `tests/lib_ai/` |
+| [`lib/ai/abstract.py`](../../lib/ai/abstract.py) | ALL LLM provider implementations | `make test` — `tests/lib/ai/` |
+| [`lib/ai/manager.py`](../../lib/ai/manager.py) | Model selection, provider init | `make test` — `tests/lib/ai/` |
 | [`lib/ai/models.py`](../../lib/ai/models.py) | Message format, tool definitions | ALL handler tests that use LLM |
 | [`lib/cache/interface.py`](../../lib/cache/interface.py) | All cache implementations | `make test` — cache tests |
 | [`internal/bot/common/bot.py`](../../internal/bot/common/bot.py) | All message sending/receiving operations | Full `make test` |
-| [`lib/markdown/parser.py`](../../lib/markdown/parser.py) | All message formatting in both platforms | Markdown tests in `lib/markdown/test/` |
+| [`lib/markdown/parser.py`](../../lib/markdown/parser.py) | All message formatting in both platforms | Markdown tests in `tests/lib/markdown/` |
 
 ### 2.4 Safe vs. Risky Modifications
 
