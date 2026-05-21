@@ -1,121 +1,140 @@
 # Possible YC Models: https://aistudio.yandex.ru/docs/ru/ai-studio/concepts/generation/models.html
 [models.models.aliceai-llm]
-provider = "yc-openai"
-model_id = "aliceai-llm"
-model_version = "latest"
-temperature = 0.3
-context = 65536
-support_tools = true
-support_text = true
-support_images = false
+provider        = "yc-openai"
+model_id        = "aliceai-llm"
+model_version   = "latest"
+temperature     = 0.3
+context         = 65536
+support_tools   = true
+support_text    = true
+support_images  = false
 support_structured_output = true
-tier = "paid"
+tier            = "paid"
 
 [models.models.aliceai-llm-flash]
-provider = "yc-openai"
-model_id = "aliceai-llm"
-model_version = "latest"
-temperature = 0.3
-context = 65536
-support_tools = true
-support_text = true
-support_images = false
+provider        = "yc-openai"
+model_id        = "aliceai-llm"
+model_version   = "latest"
+temperature     = 0.3
+context         = 65536
+support_tools   = true
+support_text    = true
+support_images  = false
 support_structured_output = true
-tier = "paid"
+tier            = "paid"
 
 [models.models.yandexgpt]
-provider = "yc-openai"
-model_id = "yandexgpt-5.1"
-model_version = "latest"
-temperature = 0.3
-context = 32768
-support_tools = true
-support_text = true
-support_images = false
+provider        = "yc-openai"
+model_id        = "yandexgpt-5.1"
+model_version   = "latest"
+temperature     = 0.3
+context         = 32768
+support_tools   = true
+support_text    = true
+support_images  = false
 support_structured_output = true
-tier = "friend"
+tier            = "friend"
 
 [models.models.yandexgpt-lite]
-provider = "yc-openai"
-model_id = "yandexgpt-lite"
-model_version="latest"
-temperature = 0.3
-context = 32768
-support_tools = true
-support_text = true
-support_images = false
+provider        = "yc-openai"
+model_id        = "yandexgpt-lite"
+model_version   = "latest"
+temperature     = 0.3
+context         = 32768
+support_tools   = true
+support_text    = true
+support_images  = false
 support_structured_output = true
-tier = "paid"
+tier            = "paid"
 
 [models.models."yc/gpt-oss-120b"]
-provider = "yc-openai"
-model_id = "gpt-oss-120b"
-model_version="latest"
-temperature = 0.5
-context = 131072
-support_tools = true
-support_text = true
-support_images = false
+provider        = "yc-openai"
+model_id        = "gpt-oss-120b"
+model_version   = "latest"
+temperature     = 0.5
+context         = 131072
+support_tools   = true
+support_text    = true
+support_images  = false
 support_structured_output = true
-tier = "paid"
+tier            = "paid"
 
 [models.models."yc/deepseek-v32"]
-provider = "yc-openai"
-model_id = "deepseek-v32"
-model_version="latest"
-temperature = 0.5
-context = 131072
-support_tools = true
-support_text = true
-support_images = false
+provider        = "yc-openai"
+model_id        = "deepseek-v32"
+model_version   = "latest"
+temperature     = 0.5
+context         = 131072
+support_tools   = true
+support_text    = true
+support_images  = false
 support_structured_output = true
-tier = "paid"
+tier            = "paid"
 
 [models.models."yc/gpt-oss-20b"]
-provider = "yc-openai"
-model_id = "gpt-oss-20b"
-model_version="latest"
-temperature = 0.2
-context = 131072
-support_tools = true
-support_text = true
-support_images = false
+provider        = "yc-openai"
+model_id        = "gpt-oss-20b"
+model_version   = "latest"
+temperature     = 0.2
+context         = 131072
+support_tools   = true
+support_text    = true
+support_images  = false
 support_structured_output = true
-tier = "paid"
+tier            = "paid"
 
 [models.models."yc/qwen3-235b-a22b-fp8"]
-provider = "yc-openai"
-model_id = "qwen3-235b-a22b-fp8"
-model_version="latest"
-temperature = 0.5
-context = 262144
-support_tools = true
-support_text = true
-support_images = false
+provider        = "yc-openai"
+model_id        = "qwen3-235b-a22b-fp8"
+model_version   = "latest"
+temperature     = 0.5
+context         = 262144
+support_tools   = true
+support_text    = true
+support_images  = false
 support_structured_output = true
-tier = "friend"
+tier            = "friend"
 
 [models.models."yc/gemma-3-27b-it"]
-enabled = false # Will be decomissed on 2026-05-15
-provider = "yc-openai"
-model_id = "gemma-3-27b-it"
-model_version="latest"
-temperature = 0.4
-context = 131072
-support_tools = true
-support_text = true
-support_images = false
+enabled         = false # Will be decomissed on 2026-05-15
+provider        = "yc-openai"
+model_id        = "gemma-3-27b-it"
+model_version   = "latest"
+temperature     = 0.4
+context         = 131072
+support_tools   = true
+support_text    = true
+support_images  = false
 support_structured_output = true
-tier = "friend"
+tier            = "friend"
 
 [models.models."yc/qwen3.6-35b-a3b"]
-provider = "yc-openai"
-model_id = "qwen3.6-35b-a3b"
-model_version="latest"
-temperature = 0.4
-context = 262144
-support_tools = true
-support_text = true
-support_images = false
+provider        = "yc-openai"
+model_id        = "qwen3.6-35b-a3b"
+model_version   = "latest"
+temperature     = 0.3
+context         = 262144
+support_tools   = true
+support_text    = true
+support_images  = false
 support_structured_output = true
-tier = "paid"
+tier            = "paid"
+
+[models.models."aliceai-image-art"]
+provider        = "yc-openai"
+model_id        = "aliceai-image-art-3.0"
+model_version   = "latest"
+temperature     = 0.2
+context         = 500
+support_tools   = false
+support_text    = false
+support_images  = true
+support_structured_output   = false
+image_generation_api        = "openai-images"
+tier            = "paid"
+
+[models.models."aliceai-image-art".image_options]
+size            = "1024x1024"
+output_format   = "png"
+moderation      = "low"
+

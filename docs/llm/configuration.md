@@ -150,6 +150,76 @@ enabled = true
 - `"iam_token"` — uses `iam_token` from config or `YC_IAM_TOKEN` env var
 - `"yc_cli"` — uses `yc` CLI (requires `yc_profile` for non-default profiles)
 
+**Model configuration keys:**
+
+| Key | Type | Default | Purpose |
+|-----|------|---------|---------|
+| `provider` | str | required | Provider name from `[models.providers]` |
+| `model_id` | str | required | Model identifier for API calls |
+| `model_version` | str | `"latest"` | Model version string |
+| `temperature` | float | required | Sampling temperature (0.0–2.0) |
+| `context` | int | required | Max context window in tokens |
+| `tier` | str | `"free"` | Access tier for rate limiting |
+| `enabled` | bool | `true` | Whether model is available |
+| `support_tools` | bool | `false` | Enable tool/function calling |
+| `support_text` | bool | `true` | Enable text generation |
+| `support_images` | bool | `false` | Enable image generation |
+| `support_structured_output` | bool | `false` | Enable JSON schema output |
+| `image_generation_api` | str | unset | Image transport: `"openai-images"` for Images API, unset for chat-completions |
+| `image_options` | table | `{}` | Whitelisted image generation options |
+
+**Image generation configuration:**
+
+The `image_generation_api` key selects the transport for image generation:
+
+| Value | Transport | Description |
+|-------|-----------|-------------|
+| unset or any other | Chat-completions | Uses `chat.completions.create()` with `modalities = ["image", "text"]` |
+| `"openai-images"` | OpenAI Images API | Uses `client.images.generate()` directly |
+
+**Provider support:** Any OpenAI-compatible provider (any ``BasicOpenAIModel``
+subclass) can use ``image_generation_api = "openai-images"`` by setting it in the
+model config. Providers that don't set it continue using the chat-completions
+image path by default.
+
+When `image_generation_api = "openai-images"`, the `image_options` table provides
+model-level defaults for image requests. Only whitelisted keys are forwarded:
+
+| Key | Type | Example | Purpose |
+|-----|------|---------|---------|
+| `size` | str | `"1024x1024"` | Image dimensions |
+| `quality` | str | `"hd"` | Image quality level |
+| `output_format` | str | `"png"` | Output format: `"png"`, `"jpeg"`, `"webp"` |
+| `background` | str | `"transparent"` | Background type |
+| `moderation` | str | `"low"` | Content moderation level |
+| `n` | int | `1` | Number of images to generate |
+| `response_format` | str | `"b64_json"` | Response format |
+| `user` | str | `"user-123"` | User identifier for tracking |
+
+**Example — Yandex Cloud image model:**
+```toml
+[models.models."aliceai-image-art"]
+provider                 = "yc-openai"
+model_id                 = "aliceai-image-art-3.0"
+model_version            = "latest"
+temperature              = 0.2
+context                  = 500
+support_tools            = false
+support_text             = false
+support_images           = true
+support_structured_output = false
+image_generation_api     = "openai-images"
+tier                     = "paid"
+
+[models.models."aliceai-image-art".image_options]
+size           = "1024x1024"
+output_format  = "png"
+```
+
+**Security note:** The `image_options` table is whitelisted to prevent arbitrary
+config keys from being forwarded to the API. Only the keys listed above are
+recognized; unknown keys are silently ignored.
+
 ### `[ratelimiter]`
 
 ```toml
@@ -491,4 +561,4 @@ apiKey: str = myConfig.get("api-key", "")
 ---
 
 *This guide is auto-maintained and should be updated whenever configuration sections change*
-*Last updated: 2026-05-17*
+*Last updated: 2026-05-21*
