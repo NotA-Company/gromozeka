@@ -840,7 +840,7 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
     },
     ChatSettingsKey.ALLOW_SANDBOX: {
         "type": ChatSettingsType.BOOL,
-        "short": "Песочницу для кода",
+        "short": "Песочница для кода",
         "long": (
             "Включает возможность выполнять код "
             "(на данный момент только Python) "
