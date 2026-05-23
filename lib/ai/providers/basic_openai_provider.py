@@ -31,6 +31,7 @@ from openai.types import ImagesResponse
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
+from lib.proxy import ProxyConfig
 from lib.stats import StatsStorage
 
 from ..abstract import AbstractLLMProvider, AbstractModel
@@ -823,7 +824,9 @@ class BasicOpenAIModel(AbstractModel):
                 )
 
             try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
+                # Resolve proxy for image download
+                proxyKwargs = ProxyConfig.fromServiceDict(self.provider.config).toKwargs()
+                async with httpx.AsyncClient(**proxyKwargs, timeout=30.0) as client:
                     fetchResponse = await client.get(imageUrl)
                     fetchResponse.raise_for_status()
                     mediaData = fetchResponse.content
@@ -875,6 +878,7 @@ class BasicOpenAIProvider(AbstractLLMProvider):
 
     Attributes:
         _client: The OpenAI async client instance for API communication.
+        _proxyHttpClient: The httpx.AsyncClient created for proxy support, or None.
         config: Configuration dictionary for the provider.
         models: Dictionary of registered model instances.
 
@@ -897,7 +901,9 @@ class BasicOpenAIProvider(AbstractLLMProvider):
             Exception: If client initialization fails.
         """
         super().__init__(config)
+        # _client and _proxyHttpClient are initialized in _initClient()
         self._client: Optional[openai.AsyncOpenAI] = None
+        self._proxyHttpClient: Optional[httpx.AsyncClient] = None
         self._initClient()
 
     def _getBaseUrl(self) -> str:
@@ -966,6 +972,14 @@ class BasicOpenAIProvider(AbstractLLMProvider):
             }
             client_params.update(self._getClientParams())
 
+            # Proxy support: resolve from provider config + stored global proxy
+            proxyConfig = ProxyConfig.fromServiceDict(self.config)
+            proxyKwargs = proxyConfig.toKwargs()
+            if proxyKwargs:
+                self._proxyHttpClient = httpx.AsyncClient(**proxyKwargs)
+                client_params["http_client"] = self._proxyHttpClient
+                logger.debug(f"{self.__class__.__name__} using proxy: {proxyConfig.getProxyURL(maskPassword=True)}")
+
             self._client = openai.AsyncOpenAI(**client_params)
 
             logger.info(f"{self.__class__.__name__} initialized, dood!")
@@ -1030,6 +1044,16 @@ class BasicOpenAIProvider(AbstractLLMProvider):
         except Exception as e:
             logger.error(f"Failed to list remote models: {e}")
             return {}
+
+    async def aclose(self) -> None:
+        """Close the proxy HTTP client and any resources it holds.
+
+        Must be called before the provider is discarded to avoid
+        ResourceWarning on Python 3.12+.
+        """
+        if self._proxyHttpClient is not None:
+            await self._proxyHttpClient.aclose()
+            self._proxyHttpClient = None
 
     def addModel(
         self,

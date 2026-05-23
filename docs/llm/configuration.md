@@ -57,9 +57,12 @@
 ### `[database]`
 
 | Key | Type | Purpose |
-|---|---|---|
+|---|---|---|---|
 | `default` | str | Default provider name |
 | `providers.<name>.provider` | str | Provider type: `"sqlite3"` or `"sqlink"` (selectable); `"mysql"` and `"postgresql"` exist but are not yet selectable |
+| `providers.<name>.use-proxy` | bool | Enable proxy routing for this provider (sqlink only; requires `[proxy].enabled = true`) |
+| `providers.<name>.proxy.type` | str | Proxy protocol override for this provider: `"http"` or `"socks5"` |
+| `providers.<name>.proxy.address` | str | Proxy address override for this provider |
 | `providers.<name>.parameters.dbPath` | str | Database file path (SQLite providers) |
 | `providers.<name>.parameters.readOnly` | bool | Read-only flag |
 | `providers.<name>.parameters.timeout` | int | Connection timeout (seconds) |
@@ -120,6 +123,26 @@ timeout = 10
 - **Special case:** In-memory SQLite3 (`:memory:`) defaults to `true` to prevent data loss
 
 **Note:** Database configuration uses `providers` (not `sources`) for provider abstraction with `provider = "sqlite3"` or `"sqlink"`. MySQL and PostgreSQL providers exist in the codebase but are not selectable yet. See [`database.md`](database.md) for details on multi-source routing and repository usage.
+
+**Proxy support for sqlink providers:** sqlink uses HTTP/HTTPS internally and supports proxy routing. Enable it with `use-proxy = true` at the provider level (requires `[proxy].enabled = true` globally). Optionally override the global proxy with a `[database.providers.<name>.proxy]` sub-table.
+
+```toml
+# Example: sqlink provider with proxy
+[database.providers.archive]
+provider = "sqlink"
+use-proxy = true
+# [database.providers.archive.proxy]
+# type = "http"
+# address = "${DB_PROXY_ADDRESS}"
+
+[database.providers.archive.parameters]
+url = "https://sqlink.example.com"
+user = "bot"
+password = "${SQLINK_PASSWORD}"
+database = "archive"
+timeout = 30
+keepConnection = true
+```
 
 ### `[models]`
 
@@ -371,6 +394,59 @@ Discovery-structure-template placeholders: `{description}` (from web search resu
 
 ---
 
+### `[proxy]`
+
+Global proxy configuration for routing outbound HTTP traffic through an HTTP or SOCKS5 proxy. Defaults live in [`configs/00-defaults/proxy.toml`](../../configs/00-defaults/proxy.toml).
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `enabled` | bool | `false` | Master kill-switch. When `false`, NO service uses proxy regardless of per-service `use-proxy` flags. |
+| `type` | `"http"` \| `"socks5"` | `"http"` | Proxy protocol type. |
+| `address` | str | `""` | Full proxy URL including scheme and port (e.g., `"http://proxy:8080"`, `"socks5://proxy:1080"`). Use `${ENV_VAR}` substitution for secrets. |
+| `user` | str | `""` | Username for proxy authentication. Leave empty if no auth. Use `${ENV_VAR}` substitution. |
+| `password` | str | `""` | Password for proxy authentication. Leave empty if no auth. Use `${ENV_VAR}` substitution. |
+
+**Resolution model:** The `[proxy]` section is a global default. Individual services opt in with `use-proxy = true` in their own config section and can override the global proxy with a `[<service>.proxy]` sub-table (with the same `type`, `address`, `user`, `password` keys). Resolution is handled by the `ProxyConfig` class in [`lib/proxy/__init__.py`](../../lib/proxy/__init__.py), using `ProxyConfig.fromServiceDict()` for per-service resolution and `ProxyConfig.getCombined()` to merge with the global config. `ProxyHelper.getInstance().setGlobalProxyConfig()` is called once from `main.py` to store the global config.
+
+**Example — enable proxy for a specific service:**
+
+```toml
+# configs/local/proxy.toml
+[proxy]
+enabled = true
+type = "http"
+address = "${PROXY_ADDRESS}"
+user = "${PROXY_USER}"
+password = "${PROXY_PASSWORD}"
+
+# In the service's config (e.g., bot-defaults.toml or 00-config.toml):
+[yandex-search]
+enabled = true
+use-proxy = true          # Opt this service into the global proxy
+api-key = "${YANDEX_API_KEY}"
+```
+
+**Example — per-service override:**
+
+```toml
+[openweathermap]
+enabled = true
+use-proxy = true
+api-key = "${OWM_API_KEY}"
+
+[openweathermap.proxy]
+type = "socks5"
+address = "${OWM_PROXY_ADDRESS}"
+user = ""
+password = ""
+```
+
+**Services that support proxy:** Telegram bot, Max Messenger bot, all OpenAI-compatible LLM providers, OpenRouter `listRemoteModels()`, image downloads, Yandex Search (including web-fetch), OpenWeatherMap, Geocode Maps, sqlink database providers.
+
+**Restart required:** Proxy config is loaded at startup. Changing it requires a bot restart.
+
+---
+
 ### `[sandbox]`
 
 Sandboxed code execution configuration. Defaults live in [`configs/00-defaults/sandbox.toml`](../../configs/00-defaults/sandbox.toml). The handler is registered conditionally on `enabled = true` and per-chat gated by the `allow-sandbox` chat setting.
@@ -501,6 +577,7 @@ Used by `scripts/sandbox_bootstrap.py` — not by the library itself.
 | `getStorageConfig()` | `Dict[str, Any]` | `[storage]` section |
 | `getGeocodeMapsConfig()` | `Dict[str, Any]` | `[geocode-maps]` section |
 | `getStatsConfig()` | `Dict[str, Any]` | `[stats]` section |
+| `getProxyConfig()` | `Dict[str, Any]` | `[proxy]` section |
 
 ---
 
@@ -561,4 +638,4 @@ apiKey: str = myConfig.get("api-key", "")
 ---
 
 *This guide is auto-maintained and should be updated whenever configuration sections change*
-*Last updated: 2026-05-21*
+*Last updated: 2026-05-23*

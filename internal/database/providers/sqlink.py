@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Optional
 
 import sqlink
 
+from lib.proxy import ProxyConfig, ProxyConfigDict
+
 from . import utils
 from .base import BaseSQLProvider, ExcludedValue, FetchType, ParametrizedQuery, QueryResult
 
@@ -31,9 +33,20 @@ class SQLinkProvider(BaseSQLProvider):
         password: Password used for authentication.
         database: Name of the database to connect to.
         timeout: Seconds to wait for a query response before raising an error.
+        proxy: Optional proxy URL string for HTTP/HTTPS routing through a proxy.
     """
 
-    __slots__ = ("_connection", "url", "user", "password", "database", "timeout", "keepConnection", "_connectLock")
+    __slots__ = (
+        "_connection",
+        "url",
+        "user",
+        "password",
+        "database",
+        "timeout",
+        "keepConnection",
+        "_connectLock",
+        "_proxy",
+    )
 
     def __init__(
         self,
@@ -44,6 +57,8 @@ class SQLinkProvider(BaseSQLProvider):
         database: str,
         timeout: int = 30,
         keepConnection: Optional[bool] = None,
+        proxy: Optional[ProxyConfigDict] = None,
+        **kwargs,
     ) -> None:
         """Initialise the SQLink provider.
 
@@ -56,6 +71,9 @@ class SQLinkProvider(BaseSQLProvider):
             keepConnection: If ``True``, connect on creation and keep connection open.
                 If ``False``, do not connect on creation.
                 If ``None`` (default), treat as ``False``.
+            proxy: Optional HTTP/HTTPS proxy URL for routing connections through
+                a proxy server. When ``None``, sqlink falls back to
+                ``HTTPS_PROXY``/``HTTP_PROXY`` environment variables.
 
         Returns:
             None.
@@ -73,6 +91,11 @@ class SQLinkProvider(BaseSQLProvider):
         """Seconds to wait for a query response before raising an error."""
         self.keepConnection: bool = keepConnection if keepConnection is not None else False
         """If ``True``, the connection is kept open across operations."""
+        self._proxy = ProxyConfig.fromDict(
+            proxy if proxy is not None else {},
+            useProxy=kwargs.get("use-proxy"),
+        ).getProxyURL()
+        """Proxy URL for HTTP/HTTPS routing, or ``None`` to disable."""
 
         self._connection: Optional[sqlink.AsyncConnection] = None
         """Active SQLink connection, or ``None`` if not connected."""
@@ -108,6 +131,7 @@ class SQLinkProvider(BaseSQLProvider):
                 database=self.database,
                 timeout=self.timeout,
                 autoRefresh=True,
+                proxy=self._proxy,
             )
 
             logger.debug(f"Connected to SQLink database {self.url}/{self.database}")

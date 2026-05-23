@@ -54,6 +54,7 @@ from lib.ai import (
 )
 from lib.ai.models import ModelMessage, ModelResultStatus
 from lib.cache import JsonKeyGenerator, JsonValueConverter, StringKeyGenerator, StringValueConverter
+from lib.proxy import ProxyConfig
 from lib.yandex_search import SearchRequestKeyGenerator, YandexSearchClient
 
 from .base import BaseBotHandler
@@ -81,6 +82,7 @@ class YandexSearchHandler(BaseBotHandler):
         yandexSearchClient (YandexSearchClient): Client for Yandex Search API interactions
         yandexSearchDefaults (Dict[str, Any]): Default search parameters from configuration
         llmService (LLMService): Service for LLM tool registration and management
+        _proxyConfig: Resolved ProxyConfig for this handler. Empty (type NONE) when proxy is not configured.
     """
 
     def __init__(self, *, configManager: ConfigManager, database: Database, botProvider: BotProvider) -> None:
@@ -106,6 +108,13 @@ class YandexSearchHandler(BaseBotHandler):
         if not ysConfig.get("enabled", False):
             logger.error("YandexSearch integration is not enabled")
             raise RuntimeError("YandexSearch integration is not enabled, can not load YandexSearchHandler")
+
+        # Resolve proxy for Yandex Search and web-fetch
+        self._proxyConfig = ProxyConfig.fromServiceDict(ysConfig)
+        maskedUrl = self._proxyConfig.getProxyURL(maskPassword=True)
+        if maskedUrl:
+            logger.info(f"Proxy enabled for Yandex Search: {maskedUrl}")
+
         self.yandexSearchClient = YandexSearchClient(
             apiKey=ysConfig["api-key"],
             folderId=ysConfig["folder-id"],
@@ -118,6 +127,7 @@ class YandexSearchHandler(BaseBotHandler):
             ),
             cacheTTL=int(ysConfig.get("cache-ttl", 30)),
             rateLimiterQueue=ysConfig.get("ratelimiter-queue", "yandex-search"),
+            proxyConfig=self._proxyConfig,
         )
         self.yandexSearchDefaults = ysConfig.get("defaults", {})
         ys_xml.DEBUG_PRINT_FULL = bool(ysConfig.get("dump-full-xml", False))
@@ -462,22 +472,28 @@ class YandexSearchHandler(BaseBotHandler):
                 - 'error' (str): Error message if download failed
 
         Note:
-            Uses HTTP/2 with a 60-second timeout, follows up to 5 redirects,
-            and sets a user agent header to avoid blocking.
+            Uses HTTP/2 (unless SOCKS5 proxy is active, which requires HTTP/1.1)
+            with a 60-second timeout, follows up to 5 redirects, and sets a
+            user agent header to avoid blocking.
         """
         try:
+            # SOCKS5 transport does not support HTTP/2; disable it when proxy is SOCKS5
+            proxyKwargs = self._proxyConfig.toKwargs()
+            useHttp2 = "transport" not in proxyKwargs
+            if not useHttp2:
+                logger.warning("HTTP/2 disabled for web-fetch: SOCKS5 transport does not support HTTP/2")
+
             async with httpx.AsyncClient(
-                http2=True,
+                **proxyKwargs,
+                http2=useHttp2,
                 timeout=httpx.Timeout(60),  # Set Timeout to 1 minute for everything
                 follow_redirects=True,
                 max_redirects=5,
                 headers={
-                    "User-Agent": "Mozilla/5.0 (compatible; MyWebScraper/1.0)",
+                    "User-Agent": "Mozilla/5.0 (compatible; Gromozeka/1.0)",
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                     "Accept-Language": "ru-RU,ru,en-US,en;q=0.5",
                     "Accept-Encoding": "gzip, deflate",
-                    # "Connection": "keep-alive",
-                    # TODO: add proxy support via config
                 },
             ) as client:
                 # response: requests.Response = requests.get(url, timeout=(120.0, 120.0))

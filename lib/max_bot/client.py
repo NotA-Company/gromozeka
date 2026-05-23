@@ -16,6 +16,7 @@ import httpx
 from lib import utils
 from lib.max_bot.models import AttachmentRequest, Button, Keyboard
 from lib.max_bot.models.upload import FileUploadResult, UploadedAudio, UploadedFile, UploadedVideo
+from lib.proxy import ProxyConfig, ProxyType
 
 from .constants import (
     API_BASE_URL,
@@ -112,6 +113,7 @@ class MaxBotClient:
         "_pollingTask",
         "_isPolling",
         "_myInfo",
+        "_proxyConfig",
     )
 
     def __init__(
@@ -121,6 +123,7 @@ class MaxBotClient:
         timeout: int = DEFAULT_TIMEOUT,
         maxRetries: int = MAX_RETRIES,
         retryBackoffFactor: float = RETRY_BACKOFF_FACTOR,
+        proxyConfig: Optional[ProxyConfig] = None,
     ) -> None:
         """Initialize the Max Bot client.
 
@@ -130,6 +133,9 @@ class MaxBotClient:
             timeout: Request timeout in seconds (default: 30)
             maxRetries: Maximum number of retry attempts (default: 3)
             retryBackoffFactor: Backoff factor for retry delays (default: 1.0)
+            proxyConfig: Optional keyword arguments to spread into httpx.AsyncClient
+                for proxy support (e.g. {"proxy": "http://proxy:8080"} or
+                {"transport": AsyncProxyTransport(...)}). Defaults to None (no proxy).
 
         Raises:
             ConfigurationError: If accessToken is empty or invalid
@@ -146,6 +152,9 @@ class MaxBotClient:
         self._pollingTask: Optional[asyncio.Task] = None
         self._isPolling = False
         self._myInfo: Optional[BotInfo] = None
+        self._proxyConfig: ProxyConfig = (
+            proxyConfig if proxyConfig is not None else ProxyConfig(proxyType=ProxyType.NONE)
+        )
 
         logger.debug(f"MaxBotClient initialized for {self.baseUrl}")
 
@@ -186,12 +195,12 @@ class MaxBotClient:
 
         if getNew or httpClient is None or httpClient.is_closed:
             httpClient = httpx.AsyncClient(
+                **self._proxyConfig.toKwargs(),
                 base_url=self.baseUrl,
                 timeout=httpx.Timeout(self.timeout),
                 headers={
                     "User-Agent": f"Gromozeka/{VERSION}",
                 },
-                # params={"v": "0.0.1"},
             )
             logger.debug("Created new HTTP client")
 

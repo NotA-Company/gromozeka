@@ -36,6 +36,7 @@ from lib.ai import (
 from lib.cache import JsonKeyGenerator, JsonValueConverter, StringKeyGenerator
 from lib.geocode_maps import GeocodeMapsClient, SearchResult
 from lib.openweathermap import OpenWeatherMapClient, WeatherData
+from lib.proxy import ProxyConfig
 
 from .base import BaseBotHandler
 
@@ -73,6 +74,12 @@ class WeatherHandler(BaseBotHandler):
             logger.error("OpenWeatherMap integration is not enabled")
             raise RuntimeError("OpenWeatherMap integration is not enabled, can not load WeatherHandler")
 
+        # Resolve proxy for OpenWeatherMap
+        weatherProxyConfig = ProxyConfig.fromServiceDict(openWeatherMapConfig)
+        maskedProxyUrl = weatherProxyConfig.getProxyURL(maskPassword=True)
+        if maskedProxyUrl:
+            logger.info(f"Proxy enabled for OpenWeatherMap: {maskedProxyUrl}")
+
         self.openWeatherMapClient = OpenWeatherMapClient(
             apiKey=openWeatherMapConfig["api-key"],
             weatherCache=GenericDatabaseCache(
@@ -92,12 +99,19 @@ class WeatherHandler(BaseBotHandler):
             requestTimeout=openWeatherMapConfig.get("request-timeout", 10),
             defaultLanguage=openWeatherMapConfig.get("default-language", "ru"),
             rateLimiterQueue=openWeatherMapConfig.get("ratelimiter-queue", "openweathermap"),
+            proxyConfig=weatherProxyConfig,
         )
 
         self.geocodeMapsClient: Optional[GeocodeMapsClient] = None
         geocodeMapsConfig = self.configManager.getGeocodeMapsConfig()
         # logger.debug(f"geocoderConfig: {utils.jsonDumps(geocodeMapsConfig, indent=2)}")
         if geocodeMapsConfig.get("enabled"):
+            # Resolve proxy for Geocode Maps
+            geocodeProxyConfig = ProxyConfig.fromServiceDict(geocodeMapsConfig)
+            maskedProxyUrl = geocodeProxyConfig.getProxyURL(maskPassword=True)
+            if maskedProxyUrl:
+                logger.info(f"Proxy enabled for Geocode Maps: {maskedProxyUrl}")
+
             geocodeTTL = int(geocodeMapsConfig.get("cache-ttl", 2592000))
             self.geocodeMapsClient = GeocodeMapsClient(
                 apiKey=geocodeMapsConfig["api-key"],
@@ -125,6 +139,7 @@ class WeatherHandler(BaseBotHandler):
                 requestTimeout=geocodeMapsConfig.get("request-timeout", 10),
                 rateLimiterQueue=geocodeMapsConfig.get("ratelimiter-queue", "geocode-maps"),
                 acceptLanguage=geocodeMapsConfig.get("accept-language", "ru"),
+                proxyConfig=geocodeProxyConfig,
             )
 
         self.llmService = LLMService.getInstance()

@@ -64,7 +64,12 @@ class LLMManager:
             response = model.generate("Hello, world!")
     """
 
-    def __init__(self, config: Dict[str, Any], *, statsStorage: Optional[StatsStorage] = None) -> None:
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        *,
+        statsStorage: Optional[StatsStorage] = None,
+    ) -> None:
         """Initialize the LLM manager with configuration.
 
         Args:
@@ -122,6 +127,8 @@ class LLMManager:
                 if providerType not in providerTypes:
                     raise ValueError(f"Unknown provider type {providerType} for provider {provider_name}")
 
+                # Pass global proxy config as a separate kwarg — never mutate the
+                # caller's config dict, which would leak credentials into it.
                 self.providers[provider_name] = providerTypes[providerType](provider_config)
                 logger.info(f"Initialized {provider_name} provider with type {providerType}")
             except Exception as e:
@@ -244,3 +251,13 @@ class LLMManager:
             List of provider names that have been successfully initialized.
         """
         return list(self.providers.keys())
+
+    async def aclose(self) -> None:
+        """Close all providers that support async cleanup.
+
+        Iterates over all registered providers and calls aclose() on each.
+        The base AbstractLLMProvider.aclose() is a no-op, so only providers
+        that override it (e.g. BasicOpenAIProvider) perform real cleanup.
+        """
+        for provider in self.providers.values():
+            await provider.aclose()

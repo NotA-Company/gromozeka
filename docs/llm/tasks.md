@@ -628,6 +628,24 @@ This runs `isort` to properly organize imports according to the project's style 
 **Exception note:**
 The only valid exception for placing an import inside a method is to resolve a cyclic dependency that cannot be broken by refactoring. This is rare and should be documented with a comment explaining why it was necessary.
 
+**For optional dependencies**, use a module-level ``try/except ImportError``
+block that sets a ``_AVAILABLE`` boolean flag:
+
+.. code-block:: python
+
+   # At module top level — NEVER inside a function:
+   try:
+       from httpx_socks import AsyncProxyTransport
+       _HTTPX_SOCKS_AVAILABLE = True
+   except ImportError:
+       _HTTPX_SOCKS_AVAILABLE = False
+
+   # Usage:
+   def buildClientKwargs(config: ProxyConfig) -> ProxyKwargs:
+       if config["type"] == "socks5" and not _HTTPX_SOCKS_AVAILABLE:
+           raise ImportError("SOCKS5 proxy requires httpx-socks[asyncio]")
+       ...
+
 ---
 
 ### 4.3 Code Duplication (Best Practice)
@@ -855,6 +873,54 @@ Before deploying a new schema, you can test it locally:
 - If you need optional fields, you must either make them required with a default semantic value (e.g., `null`, empty string) or restructure your schema to handle the logic in code after parsing
 - The `strict=True` parameter in `generateStructured()` requests strict enforcement from providers that support it
 - Always import `ModelStructuredResult` from `lib.ai` to get proper type hints for the result
+
+---
+
+### 4.6 String Enum Conventions
+
+ALWAYS use :class:`~enum.StrEnum` for named string constants. NEVER use
+``typing.Literal["a", "b"]``.
+
+**Why:**
+
+- ``Literal`` is a type-system-only construct — it provides no runtime
+  behaviour, no names, and no documentation value.
+- :class:`StrEnum` members are named constants that compare equal to their
+  string values (``ProxyType.HTTP == "http"`` is ``True``).
+- IDEs auto-complete :class:`StrEnum` members; they do not auto-complete
+  ``Literal`` strings.
+- Refactoring (rename) is trivially safe with enums; ``Literal`` strings
+  require manual search-and-replace.
+
+**Correct:**
+
+.. code-block:: python
+
+   from enum import StrEnum
+
+   class HandlerResultStatus(StrEnum):
+       CONTINUE = "continue"
+       STOP = "stop"
+
+   def process(status: HandlerResultStatus) -> None:
+       if status == HandlerResultStatus.CONTINUE:
+           ...
+
+**Wrong:**
+
+.. code-block:: python
+
+   from typing import Literal
+
+   Status = Literal["continue", "stop"]
+
+   def process(status: Status) -> None:
+       if status == "continue":  # magic string
+           ...
+
+The project already uses :class:`StrEnum` extensively (``ChatSettingsKey``,
+``HandlerParallelism``, ``MediaStatus``, ``MessageType``, ``ProxyType``).
+New code follows the same pattern.
 
 ---
 

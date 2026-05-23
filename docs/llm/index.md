@@ -152,6 +152,52 @@ make test
 **Linting tools:** Black (120 chars), Flake8, Pyright, isort  
 **Config:** [`pyproject.toml`](../../pyproject.toml)
 
+### 3.6 Enum Conventions
+
+String enums are used throughout the project for named string constants with
+explicit serialisation behaviour. Always use :class:`~enum.StrEnum` from the
+standard library, **not** ``typing.Literal["a", "b"]``.
+
+.. code-block:: python
+
+   from enum import StrEnum
+
+   class HandlerResultStatus(StrEnum):
+       CONTINUE = "continue"
+       STOP = "stop"
+
+:class:`StrEnum` is preferred over :class:`str, enum.Enum` and over
+``typing.Literal`` because it provides:
+
+- Named constants that are self-documenting.
+- String-based identity — ``ProxyType.HTTP == "http"`` is ``True``.
+- Implicit ``str`` conversion for logging and serialisation.
+- IDE-friendly auto-completion (unlike ``Literal``).
+
+When you would write ``Literal["a", "b"]``, write a :class:`StrEnum` instead.
+
+### 3.7 Import Placement
+
+**All imports must be at the top of the file.** Never place imports inside
+methods, functions, or conditional branches of a function. This rule applies
+equally to third-party and standard-library imports.
+
+For **optional dependencies** that may not be installed, use a module-level
+``try/except ImportError`` block with an ``_AVAILABLE`` boolean guard:
+
+.. code-block:: python
+
+   try:
+       from httpx_socks import AsyncProxyTransport
+       _HTTPX_SOCKS_AVAILABLE = True
+   except ImportError:
+       _HTTPX_SOCKS_AVAILABLE = False
+
+The ``_AVAILABLE`` flag is checked at usage sites rather than relying on a
+runtime ``ImportError`` during execution. Inline imports are **only** acceptable
+when a genuine cyclic dependency makes a top-level import impossible — this is
+vanishingly rare in the Gromozeka codebase (see :ref:`tasks.md §4.2 <tasks-import-placement>`).
+
 ---
 
 ## 4. Project Map
@@ -244,6 +290,7 @@ make test
 | [`lib/markdown/parser.py`](../../lib/markdown/parser.py) | Markdown → MarkdownV2 parser |
 | [`lib/max_bot/client.py`](../../lib/max_bot/client.py) | Max Messenger HTTP client |
 | [`lib/openweathermap/client.py`](../../lib/openweathermap/client.py) | OpenWeatherMap API client |
+| [`lib/proxy/__init__.py`](../../lib/proxy/__init__.py) | Proxy resolution package — `ProxyConfig` class, `ProxyHelper` singleton, `ProxyType` StrEnum, `ProxyKwargs` TypedDict |
 | [`lib/yandex_search/`](../../lib/yandex_search/) | Yandex Search API client |
 | [`lib/geocode_maps/client.py`](../../lib/geocode_maps/client.py) | Geocode Maps API client |
 | [`lib/stats/`](../../lib/stats/) | Statistics collection library (`StatsStorage`, `NullStatsStorage`, `GLOBAL_CONSUMER_ID`) |
@@ -272,4 +319,4 @@ make test
 ---
 
 *This guide is auto-maintained and should be updated whenever significant architectural changes are made*
-*Last updated: 2026-05-20*
+*Last updated: 2026-05-23*

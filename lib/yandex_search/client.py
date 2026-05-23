@@ -38,6 +38,7 @@ from typing import Optional
 import httpx
 
 from lib.cache import CacheInterface, NullCache
+from lib.proxy import ProxyConfig, ProxyType
 from lib.rate_limiter import RateLimiterManager
 
 from .models import (
@@ -99,6 +100,7 @@ class YandexSearchClient:
         "useCache",
         "rateLimiterQueue",
         "_rateLimiter",
+        "_proxyConfig",
     )
 
     API_ENDPOINT = "https://searchapi.api.cloud.yandex.net/v2/web/search"
@@ -113,6 +115,7 @@ class YandexSearchClient:
         cache: Optional[CacheInterface[SearchRequest, SearchResponse]] = None,
         cacheTTL: Optional[int] = 3600,
         rateLimiterQueue: str = "yandex-search",
+        proxyConfig: Optional[ProxyConfig] = None,
     ):
         """Initialize Yandex Search client.
 
@@ -140,6 +143,9 @@ class YandexSearchClient:
             rateLimiterQueue: Name of the rate limiter queue to use for API throttling.
                 Default is "yandex-search". The rate limiter helps prevent API quota
                 exhaustion by limiting the number of requests per time period.
+            proxyConfig: Proxy configuration as a :class:`ProxyConfig` instance.
+                Converted to httpx keyword arguments via ``ProxyConfig.toKwargs()``.
+                When ``None`` (default), no proxy is used.
 
         Raises:
             ValueError: If neither iamToken nor apiKey is provided, or if folderId is empty.
@@ -173,6 +179,9 @@ class YandexSearchClient:
         self.cacheTTL = cacheTTL
         self.rateLimiterQueue = rateLimiterQueue
         self._rateLimiter = RateLimiterManager.getInstance()
+        self._proxyConfig: ProxyConfig = (
+            proxyConfig if proxyConfig is not None else ProxyConfig(proxyType=ProxyType.NONE)
+        )
 
     async def search(
         self,
@@ -351,7 +360,7 @@ class YandexSearchClient:
                 headers["Authorization"] = f"Api-Key {self.apiKey}"
 
             # Create new session for each request
-            async with httpx.AsyncClient(timeout=self.requestTimeout) as session:
+            async with httpx.AsyncClient(**self._proxyConfig.toKwargs(), timeout=self.requestTimeout) as session:
                 response = await session.post(self.API_ENDPOINT, headers=headers, json=request)
 
                 if response.status_code == 200:
