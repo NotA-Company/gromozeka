@@ -57,12 +57,12 @@
 ### `[database]`
 
 | Key | Type | Purpose |
-|---|---|---|---|
+|---|---|---|
 | `default` | str | Default provider name |
 | `providers.<name>.provider` | str | Provider type: `"sqlite3"` or `"sqlink"` (selectable); `"mysql"` and `"postgresql"` exist but are not yet selectable |
-| `providers.<name>.use-proxy` | bool | Enable proxy routing for this provider (sqlink only; requires `[proxy].enabled = true`) |
-| `providers.<name>.proxy.type` | str | Proxy protocol override for this provider: `"http"` or `"socks5"` |
-| `providers.<name>.proxy.address` | str | Proxy address override for this provider |
+| `providers.<name>.parameters.use-proxy` | bool | Enable proxy routing for this provider (sqlink only; requires `[proxy].enabled = true`) |
+| `providers.<name>.parameters.proxy.type` | str | Proxy protocol override for this provider: `"http"` or `"socks5"` |
+| `providers.<name>.parameters.proxy.address` | str | Proxy address override for this provider |
 | `providers.<name>.parameters.dbPath` | str | Database file path (SQLite providers) |
 | `providers.<name>.parameters.readOnly` | bool | Read-only flag |
 | `providers.<name>.parameters.timeout` | int | Connection timeout (seconds) |
@@ -124,16 +124,14 @@ timeout = 10
 
 **Note:** Database configuration uses `providers` (not `sources`) for provider abstraction with `provider = "sqlite3"` or `"sqlink"`. MySQL and PostgreSQL providers exist in the codebase but are not selectable yet. See [`database.md`](database.md) for details on multi-source routing and repository usage.
 
-**Proxy support for sqlink providers:** sqlink uses HTTP/HTTPS internally and supports proxy routing. Enable it with `use-proxy = true` at the provider level (requires `[proxy].enabled = true` globally). Optionally override the global proxy with a `[database.providers.<name>.proxy]` sub-table.
+**Proxy support for sqlink providers:** sqlink uses HTTP/HTTPS internally and supports proxy routing. Enable it with `use-proxy = true` under `[database.providers.<name>.parameters]` (requires `[proxy].enabled = true` globally). Optionally override the global proxy with a `[database.providers.<name>.parameters.proxy]` sub-table.
+
+**IMPORTANT:** The `use-proxy` and `proxy` keys for sqlink must be nested under `parameters`, not directly under the provider block. `getSqlProvider()` extracts `config["parameters"]` and forwards it to the provider constructor. Keys at the provider-block level are ignored. If overriding the global proxy with a per-provider `[database.providers.<name>.parameters.proxy]` sub-table, include `enabled = true` inside the sub-table for the override to take effect (see proxy task memory for `fromServiceConfig` semantics).
 
 ```toml
 # Example: sqlink provider with proxy
 [database.providers.archive]
 provider = "sqlink"
-use-proxy = true
-# [database.providers.archive.proxy]
-# type = "http"
-# address = "${DB_PROXY_ADDRESS}"
 
 [database.providers.archive.parameters]
 url = "https://sqlink.example.com"
@@ -142,6 +140,10 @@ password = "${SQLINK_PASSWORD}"
 database = "archive"
 timeout = 30
 keepConnection = true
+use-proxy = true
+# [database.providers.archive.parameters.proxy]
+# type = "http"
+# address = "${DB_PROXY_ADDRESS}"
 ```
 
 ### `[models]`
@@ -406,7 +408,7 @@ Global proxy configuration for routing outbound HTTP traffic through an HTTP or 
 | `user` | str | `""` | Username for proxy authentication. Leave empty if no auth. Use `${ENV_VAR}` substitution. |
 | `password` | str | `""` | Password for proxy authentication. Leave empty if no auth. Use `${ENV_VAR}` substitution. |
 
-**Resolution model:** The `[proxy]` section is a global default. Individual services opt in with `use-proxy = true` in their own config section and can override the global proxy with a `[<service>.proxy]` sub-table (with the same `type`, `address`, `user`, `password` keys). Resolution is handled by the `ProxyConfig` class in [`lib/proxy/__init__.py`](../../lib/proxy/__init__.py), using `ProxyConfig.fromServiceDict()` for per-service resolution and `ProxyConfig.getCombined()` to merge with the global config. `ProxyHelper.getInstance().setGlobalProxyConfig()` is called once from `main.py` to store the global config.
+**Resolution model:** The `[proxy]` section is a global default. Individual services opt in with `use-proxy = true` in their own config section and can override the global proxy with a `[<service>.proxy]` sub-table (with the same `type`, `address`, `user`, `password` keys). Resolution is handled by the `ProxyConfig` class in [`lib/proxy/__init__.py`](../../lib/proxy/__init__.py), using `ProxyConfig.fromServiceConfig()` for per-service resolution and `ProxyConfig.getCombined()` to merge with the global config. `ProxyHelper.getInstance().setGlobalProxyConfig()` is called once from `main.py` to store the global config.
 
 **Example — enable proxy for a specific service:**
 
@@ -435,11 +437,14 @@ use-proxy = true
 api-key = "${OWM_API_KEY}"
 
 [openweathermap.proxy]
+enabled = true              # REQUIRED: without this, the override is silently ignored
 type = "socks5"
 address = "${OWM_PROXY_ADDRESS}"
 user = ""
 password = ""
 ```
+
+**When `enabled` is omitted from the `[service.proxy]` sub-section**, `ProxyConfig.fromServiceConfig()` produces a config with `enabled=False`, which `getCombined()` treats as "inherit from global." The per-service override fields (`type`, `address`, etc.) are ignored. Always include `enabled = true` when you intend to override the global proxy for a specific service.
 
 **Services that support proxy:** Telegram bot, Max Messenger bot, all OpenAI-compatible LLM providers, OpenRouter `listRemoteModels()`, image downloads, Yandex Search (including web-fetch), OpenWeatherMap, Geocode Maps, sqlink database providers.
 

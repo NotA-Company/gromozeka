@@ -350,7 +350,11 @@ class TelegramBotApplication:
         botConfig = self.configManager.getBotConfig()
 
         # --- Proxy support ---
-        proxyConfig = ProxyConfig.fromServiceDict(botConfig).getCombined()
+        # getCombined() is called explicitly here (before getProxyURL/toKwargs)
+        # so the match block can switch on the resolved proxyType; getProxyURL()
+        # and toKwargs() call getCombined() internally as well, so when we pass
+        # the already-combined config to them the second getCombined() is a no-op.
+        proxyConfig = ProxyConfig.fromServiceConfig(botConfig).getCombined()
 
         appBuilder = (
             Application.builder()
@@ -374,6 +378,9 @@ class TelegramBotApplication:
                 logger.info("Proxy enabled for Telegram bot: %s", proxyConfig.getProxyURL(maskPassword=True))
 
             case ProxyType.SOCKS5:
+                # Create separate HTTPXRequest instances for the main client and
+                # the get_updates client. Each gets its own AsyncProxyTransport
+                # so the two polling loops do not share connection state.
                 mainRequest = HTTPXRequest(httpx_kwargs=proxyConfig.toKwargs())  # pyright: ignore[reportArgumentType]
                 getUpdatesRequest = HTTPXRequest(
                     httpx_kwargs=proxyConfig.toKwargs()  # pyright: ignore[reportArgumentType]

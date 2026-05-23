@@ -290,7 +290,7 @@ class MaxBotApplication:
 
         # --- Proxy support ---
         botConfig = self.configManager.getBotConfig()
-        proxyConfig = ProxyConfig.fromServiceDict(botConfig)
+        proxyConfig = ProxyConfig.fromServiceConfig(botConfig)
         maskedUrl = proxyConfig.getProxyURL(maskPassword=True)
         if maskedUrl:
             logger.info("Proxy enabled for Max bot: %s", maskedUrl)

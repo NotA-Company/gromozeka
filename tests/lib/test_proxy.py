@@ -10,26 +10,18 @@ from lib.proxy import ProxyConfig, ProxyConfigDict, ProxyHelper, ProxyType
 
 @pytest.fixture
 def resetProxyHelper() -> Generator[ProxyHelper, None, None]:
-    """Reset ProxyHelper singleton and patch getGlobalProxyConfig.
+    """Reset ProxyHelper singleton and set a default global proxy config.
 
-    The current getGlobalProxyConfig() implementation has a bug: it calls
-    ProxyConfig.fromDict() on an already-instantiated ProxyConfig instance
-    (which has __slots__ and no .get() method), causing an AttributeError.
-    This fixture patches getGlobalProxyConfig on the singleton instance to
-    return the stored ProxyConfig directly, bypassing the crash.
+    Sets the global config to ``{enabled: True}`` so that the kill-switch in
+    ``getCombined()`` is open by default. Individual tests that need a different
+    global state can call ``setGlobalProxyConfig()`` to override it.
 
     Yields:
         The ProxyHelper singleton instance.
     """
     ProxyHelper._instance = None
     helper = ProxyHelper.getInstance()
-
-    def _patchedGetGlobal() -> ProxyConfig:
-        if helper.globalProxyConfig is None:
-            raise TypeError("need to call setGlobalProxyConfig() first")
-        return helper.globalProxyConfig
-
-    helper.getGlobalProxyConfig = _patchedGetGlobal  # type: ignore[method-assign]
+    helper.setGlobalProxyConfig({"enabled": True})
     yield helper
     ProxyHelper._instance = None
 
@@ -104,7 +96,7 @@ class TestProxyConfigFromDict:
         """
         result = ProxyConfig.fromDict({}, useProxy=True)
         assert result.type is None
-        assert result.address == ""
+        assert result.address is None
         assert result.user is None
         assert result.password is None
 
@@ -171,7 +163,11 @@ class TestProxyConfigFromDict:
         assert result.address == "http://p:80"
 
     def test_useProxyDefault_enabledFalse_usesNONE(self) -> None:
-        """When useProxy is not given and enabled is not True, proxyType is NONE.
+        """When useProxy is not given and enabled is False, type is preserved and enabled is False.
+
+        The ``enabled`` flag is independent of ``proxyType`` — ``enabled=False``
+        means "inherit from global in getCombined()", not that the proxy type
+        is forced to NONE.
 
         Args:
             None
@@ -180,12 +176,32 @@ class TestProxyConfigFromDict:
             None
         """
         result = ProxyConfig.fromDict({"enabled": False, "type": ProxyType.HTTP, "address": "http://p:80"})
-        assert result.type == ProxyType.NONE
+        assert result.type == ProxyType.HTTP
+        assert result.enabled is False
+
+    def test_disabledWithEmptyAddress_doesNotRaiseValueError(self) -> None:
+        """Regression: ``enabled=False`` with empty address no longer raises ValueError.
+
+        Previously, the combination ``{"enabled": False, "type": HTTP, "address": ""}``
+        caused ProxyConfig.__init__ to validate the address before checking
+        ``enabled``, resulting in a ValueErrror at startup. The fix removed
+        the premature validation, so the constructor now accepts this input.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
+        result = ProxyConfig.fromDict({"enabled": False, "type": ProxyType.HTTP, "address": ""})
+        # No ValueError raised
+        assert result.type == ProxyType.HTTP
+        assert result.enabled is False
         assert result.address == ""
 
 
-class TestProxyConfigFromServiceDict:
-    """Tests for ProxyConfig.fromServiceDict() classmethod."""
+class TestProxyConfigFromServiceConfig:
+    """Tests for ProxyConfig.fromServiceConfig() classmethod."""
 
     def test_noUseProxy_returnsNONE(self) -> None:
         """When the dict has no \"use-proxy\" key, proxy is disabled (type NONE).
@@ -196,7 +212,7 @@ class TestProxyConfigFromServiceDict:
         Returns:
             None
         """
-        result = ProxyConfig.fromServiceDict({})
+        result = ProxyConfig.fromServiceConfig({})
         assert result.type == ProxyType.NONE
         assert result.address == ""
 
@@ -209,7 +225,7 @@ class TestProxyConfigFromServiceDict:
         Returns:
             None
         """
-        result = ProxyConfig.fromServiceDict({"use-proxy": False})
+        result = ProxyConfig.fromServiceConfig({"use-proxy": False})
         assert result.type == ProxyType.NONE
 
     def test_useProxyTrue_noProxySection_returnsNoneType(self) -> None:
@@ -223,9 +239,9 @@ class TestProxyConfigFromServiceDict:
         Returns:
             None
         """
-        result = ProxyConfig.fromServiceDict({"use-proxy": True})
+        result = ProxyConfig.fromServiceConfig({"use-proxy": True})
         assert result.type is None
-        assert result.address == ""
+        assert result.address is None
         assert result.user is None
         assert result.password is None
 
@@ -238,7 +254,7 @@ class TestProxyConfigFromServiceDict:
         Returns:
             None
         """
-        result = ProxyConfig.fromServiceDict({"use-proxy": True, "proxy": {"address": "http://s:80"}})
+        result = ProxyConfig.fromServiceConfig({"use-proxy": True, "proxy": {"address": "http://s:80"}})
         assert result.type is None
         assert result.address == "http://s:80"
 
@@ -251,11 +267,40 @@ class TestProxyConfigFromServiceDict:
         Returns:
             None
         """
-        result = ProxyConfig.fromServiceDict(
+        result = ProxyConfig.fromServiceConfig(
             {"use-proxy": True, "proxy": {"type": ProxyType.SOCKS5, "address": "socks5://s:1080"}}
         )
         assert result.type == ProxyType.SOCKS5
         assert result.address == "socks5://s:1080"
+
+    def test_useProxyTrue_noExplicitEnabled_returnsEnabledFalse(self) -> None:
+        """When ``use-proxy`` is True but the proxy sub-section has no ``enabled``
+        key, ``enabled`` defaults to False.
+
+        This is intentional: ``fromServiceConfig`` reads ``enabled`` from the
+        ``proxy`` sub-dict via ``fromDict``, and ``fromDict`` uses
+        ``data.get("enabled") is True``. The ``use-proxy`` flag controls
+        whether the config is treated as a service override (True) or a
+        global config (None), but does NOT set ``enabled`` directly.
+
+        When ``enabled`` is False:
+          - ``getCombined()`` ignores the service fields and returns a copy of
+            the global config instead.
+          - Put ``enabled: true`` in the ``proxy`` sub-section to use
+            service-level proxy settings.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
+        result = ProxyConfig.fromServiceConfig(
+            {"use-proxy": True, "proxy": {"type": ProxyType.SOCKS5, "address": "socks5://service:1080"}}
+        )
+        assert result.type == ProxyType.SOCKS5
+        assert result.address == "socks5://service:1080"
+        assert result.enabled is False
 
 
 class TestProxyConfigGetProxyURL:
@@ -330,15 +375,15 @@ class TestProxyConfigGetProxyURL:
         config = ProxyConfig(ProxyType.NONE, "")
         assert config.getProxyURL() is None
 
-    def test_emptyAddress_causesValueError(self, resetProxyHelper: ProxyHelper) -> None:
-        """When type is non-NONE but address is empty after combining, ValueError is raised.
+    def test_emptyAddress_acceptedInConstructor(self, resetProxyHelper: ProxyHelper) -> None:
+        """Non-NONE type with empty address is accepted by the constructor.
 
-        Because ProxyConfig.__init__ rejects non-NONE type with empty address,
-        the only way to reach _buildProxyUrl with an empty address is via
-        getCombined producing a non-NONE type with a falsy address from the
-        global config. However, setGlobalProxyConfig also goes through
-        ProxyConfig.__init__, making this path unreachable with valid inputs.
-        As a result, the ValueError is effectively a dead-code guard.
+        The constructor no longer validates that non-NONE proxy types have a
+        non-empty address. Validation now happens in ``_buildProxyUrl``, which
+        checks that the address has a parseable hostname. This means a
+        ``ProxyConfig`` with type=HTTP and address="" can be created and
+        passed to ``getCombined()`` without errors — the error only surfaces
+        when ``getProxyURL()`` or ``toKwargs()`` calls ``_buildProxyUrl``.
 
         Args:
             resetProxyHelper: Fixture setting up ProxyHelper singleton.
@@ -346,9 +391,15 @@ class TestProxyConfigGetProxyURL:
         Returns:
             None
         """
-        # Default guard in constructor prevents creating ProxyConfig(HTTP, "")
-        with pytest.raises(ValueError, match="address should be valid"):
-            ProxyConfig(ProxyType.HTTP, "")
+        resetProxyHelper.setGlobalProxyConfig({"enabled": True, "type": ProxyType.NONE, "address": ""})
+        # Constructor no longer raises — empty address is accepted
+        config = ProxyConfig(ProxyType.HTTP, "")
+        assert config.type == ProxyType.HTTP
+        assert config.address == ""
+
+        # The error now surfaces in _buildProxyUrl, which getProxyURL calls
+        with pytest.raises(ValueError, match="missing or unparseable"):
+            config.getProxyURL()
 
     def test_specialCharsEncoded(self, resetProxyHelper: ProxyHelper) -> None:
         """Special characters in user/password are percent-encoded in the URL.
@@ -483,7 +534,7 @@ class TestProxyHelper:
         assert h1 is h2
 
     def test_setAndGet_roundtrip(self, resetProxyHelper: ProxyHelper) -> None:
-        """Setting a global config and checking attributes via patched getGlobalProxyConfig.
+        """Setting a global config and reading it back via getGlobalProxyConfig.
 
         Args:
             resetProxyHelper: Fixture setting up ProxyHelper singleton.
@@ -503,6 +554,9 @@ class TestProxyHelper:
     def test_getBeforeSet_raisesTypeError(self) -> None:
         """Calling getGlobalProxyConfig before setGlobalProxyConfig raises TypeError.
 
+        Resets the singleton and calls getGlobalProxyConfig() without
+        setting a config first, verifying the guard clause.
+
         Args:
             None
 
@@ -511,15 +565,6 @@ class TestProxyHelper:
         """
         ProxyHelper._instance = None
         helper = ProxyHelper.getInstance()
-
-        def _unpatchedGet() -> ProxyConfig:
-            # Simulate the original unpatched method behavior (the buggy path
-            # is not relevant here — this tests the guard clause only)
-            if helper.globalProxyConfig is None:
-                raise TypeError("need to call setGlobalProxyConfig() first")
-            return helper.globalProxyConfig
-
-        helper.getGlobalProxyConfig = _unpatchedGet  # type: ignore[method-assign]
         with pytest.raises(TypeError, match="setGlobalProxyConfig"):
             helper.getGlobalProxyConfig()
 
@@ -573,7 +618,9 @@ class TestProxyConfigGetCombined:
             None
         """
         self._setupGlobal(resetProxyHelper)
-        serviceConfig = ProxyConfig.fromServiceDict({"use-proxy": True, "proxy": {"address": "http://s:80"}})
+        serviceConfig = ProxyConfig.fromServiceConfig(
+            {"use-proxy": True, "proxy": {"enabled": True, "address": "http://s:80"}}
+        )
         combined = serviceConfig.getCombined()
         assert combined.address == "http://s:80"
 
@@ -587,7 +634,7 @@ class TestProxyConfigGetCombined:
             None
         """
         self._setupGlobal(resetProxyHelper)
-        serviceConfig = ProxyConfig.fromServiceDict({"use-proxy": True, "proxy": {"address": "http://s:80"}})
+        serviceConfig = ProxyConfig.fromServiceConfig({"use-proxy": True, "proxy": {"address": "http://s:80"}})
         combined = serviceConfig.getCombined()
         assert combined.type == ProxyType.HTTP
 
@@ -601,8 +648,8 @@ class TestProxyConfigGetCombined:
             None
         """
         self._setupGlobal(resetProxyHelper)
-        serviceConfig = ProxyConfig.fromServiceDict(
-            {"use-proxy": True, "proxy": {"type": ProxyType.SOCKS5, "address": "socks5://s:1080"}}
+        serviceConfig = ProxyConfig.fromServiceConfig(
+            {"use-proxy": True, "proxy": {"enabled": True, "type": ProxyType.SOCKS5, "address": "socks5://s:1080"}}
         )
         combined = serviceConfig.getCombined()
         assert combined.type == ProxyType.SOCKS5
@@ -618,7 +665,7 @@ class TestProxyConfigGetCombined:
             None
         """
         self._setupGlobal(resetProxyHelper)
-        serviceConfig = ProxyConfig.fromServiceDict({"use-proxy": True, "proxy": {"address": "http://s:80"}})
+        serviceConfig = ProxyConfig.fromServiceConfig({"use-proxy": True, "proxy": {"address": "http://s:80"}})
         combined = serviceConfig.getCombined()
         assert combined.user == "gu"
         assert combined.password == "gpw"
@@ -633,10 +680,10 @@ class TestProxyConfigGetCombined:
             None
         """
         self._setupGlobal(resetProxyHelper)
-        serviceConfig = ProxyConfig.fromServiceDict(
+        serviceConfig = ProxyConfig.fromServiceConfig(
             {
                 "use-proxy": True,
-                "proxy": {"address": "http://s:80", "user": "su", "password": "spw"},
+                "proxy": {"enabled": True, "address": "http://s:80", "user": "su", "password": "spw"},
             }
         )
         combined = serviceConfig.getCombined()
@@ -653,7 +700,7 @@ class TestProxyConfigGetCombined:
             None
         """
         self._setupGlobal(resetProxyHelper)
-        serviceConfig = ProxyConfig.fromServiceDict({"use-proxy": True, "proxy": {"address": ""}})
+        serviceConfig = ProxyConfig.fromServiceConfig({"use-proxy": True, "proxy": {"address": ""}})
         combined = serviceConfig.getCombined()
         assert combined.address == "http://global:80"
 
@@ -667,7 +714,7 @@ class TestProxyConfigGetCombined:
             None
         """
         self._setupGlobal(resetProxyHelper)
-        serviceConfig = ProxyConfig.fromServiceDict({"use-proxy": True, "proxy": {"address": ""}})
+        serviceConfig = ProxyConfig.fromServiceConfig({"use-proxy": True, "proxy": {"address": ""}})
         combined = serviceConfig.getCombined()
         assert combined.type == ProxyType.HTTP
         assert combined.address == "http://global:80"
@@ -687,7 +734,7 @@ class TestProxyConfigGetCombined:
             None
         """
         self._setupGlobal(resetProxyHelper)
-        serviceConfig = ProxyConfig.fromServiceDict({"use-proxy": True})
+        serviceConfig = ProxyConfig.fromServiceConfig({"use-proxy": True})
         combined = serviceConfig.getCombined()
         assert combined.type == ProxyType.HTTP
         assert combined.address == "http://global:80"
@@ -704,7 +751,7 @@ class TestProxyConfigGetCombined:
             None
         """
         self._setupGlobal(resetProxyHelper)
-        serviceConfig = ProxyConfig.fromServiceDict({"use-proxy": False})
+        serviceConfig = ProxyConfig.fromServiceConfig({"use-proxy": False})
         combined = serviceConfig.getCombined()
         assert combined.type == ProxyType.NONE
         assert combined.address == ""

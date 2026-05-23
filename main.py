@@ -100,11 +100,10 @@ class GromozekBot:
         closing database connections. Each step runs even if the previous
         one raises, to maximize resource cleanup.
         """
-        if hasattr(self, "llmManager"):
-            try:
-                await self.llmManager.aclose()
-            except Exception:
-                logger.exception("Error closing LLM manager during shutdown")
+        try:
+            await self.llmManager.aclose()
+        except Exception:
+            logger.exception("Error closing LLM manager during shutdown")
 
         try:
             await self.database.manager.closeAll()

@@ -825,7 +825,7 @@ class BasicOpenAIModel(AbstractModel):
 
             try:
                 # Resolve proxy for image download
-                proxyKwargs = ProxyConfig.fromServiceDict(self.provider.config).toKwargs()
+                proxyKwargs = ProxyConfig.fromServiceConfig(self.provider.config).toKwargs()
                 async with httpx.AsyncClient(**proxyKwargs, timeout=30.0) as client:
                     fetchResponse = await client.get(imageUrl)
                     fetchResponse.raise_for_status()
@@ -973,7 +973,7 @@ class BasicOpenAIProvider(AbstractLLMProvider):
             client_params.update(self._getClientParams())
 
             # Proxy support: resolve from provider config + stored global proxy
-            proxyConfig = ProxyConfig.fromServiceDict(self.config)
+            proxyConfig = ProxyConfig.fromServiceConfig(self.config)
             proxyKwargs = proxyConfig.toKwargs()
             if proxyKwargs:
                 self._proxyHttpClient = httpx.AsyncClient(**proxyKwargs)

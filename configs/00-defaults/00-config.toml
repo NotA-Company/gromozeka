@@ -36,18 +36,18 @@ default = "default"
 [database.providers.default]
 provider = "sqlite3"
 
-# Proxy support for database providers that use HTTP (e.g., sqlink):
-# use-proxy = false
-# [database.providers.default.proxy]
-# type = "http"
-# address = "${DB_PROXY_ADDRESS}"
-
 [database.providers.default.parameters]
 dbPath = "bot_data.db"
 readOnly = false
 timeout = 30
 useWal = true
 keepConnection = true  # Connect on creation and keep connection open
+
+# Proxy support for database providers that use HTTP (e.g., sqlink):
+# use-proxy = false
+# [database.providers.default.parameters.proxy]
+# type = "http"
+# address = "${DB_PROXY_ADDRESS}"
 
 # [ratelimiter]
 [ratelimiter.ratelimiters.default]

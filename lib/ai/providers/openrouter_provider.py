@@ -289,7 +289,7 @@ class OpenrouterProvider(BasicOpenAIProvider):
                 headers["Authorization"] = f"Bearer {apiKey}"
 
             # Resolve proxy for OpenRouter API calls
-            proxyKwargs = ProxyConfig.fromServiceDict(self.config).toKwargs()
+            proxyKwargs = ProxyConfig.fromServiceConfig(self.config).toKwargs()
             async with httpx.AsyncClient(**proxyKwargs, timeout=30) as client:
                 response = await client.get(
                     "https://openrouter.ai/api/v1/models",

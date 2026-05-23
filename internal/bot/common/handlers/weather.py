@@ -75,7 +75,7 @@ class WeatherHandler(BaseBotHandler):
             raise RuntimeError("OpenWeatherMap integration is not enabled, can not load WeatherHandler")
 
         # Resolve proxy for OpenWeatherMap
-        weatherProxyConfig = ProxyConfig.fromServiceDict(openWeatherMapConfig)
+        weatherProxyConfig = ProxyConfig.fromServiceConfig(openWeatherMapConfig)
         maskedProxyUrl = weatherProxyConfig.getProxyURL(maskPassword=True)
         if maskedProxyUrl:
             logger.info(f"Proxy enabled for OpenWeatherMap: {maskedProxyUrl}")
@@ -107,7 +107,7 @@ class WeatherHandler(BaseBotHandler):
         # logger.debug(f"geocoderConfig: {utils.jsonDumps(geocodeMapsConfig, indent=2)}")
         if geocodeMapsConfig.get("enabled"):
             # Resolve proxy for Geocode Maps
-            geocodeProxyConfig = ProxyConfig.fromServiceDict(geocodeMapsConfig)
+            geocodeProxyConfig = ProxyConfig.fromServiceConfig(geocodeMapsConfig)
             maskedProxyUrl = geocodeProxyConfig.getProxyURL(maskPassword=True)
             if maskedProxyUrl:
                 logger.info(f"Proxy enabled for Geocode Maps: {maskedProxyUrl}")

@@ -110,7 +110,7 @@ class YandexSearchHandler(BaseBotHandler):
             raise RuntimeError("YandexSearch integration is not enabled, can not load YandexSearchHandler")
 
         # Resolve proxy for Yandex Search and web-fetch
-        self._proxyConfig = ProxyConfig.fromServiceDict(ysConfig)
+        self._proxyConfig = ProxyConfig.fromServiceConfig(ysConfig)
         maskedUrl = self._proxyConfig.getProxyURL(maskPassword=True)
         if maskedUrl:
             logger.info(f"Proxy enabled for Yandex Search: {maskedUrl}")
