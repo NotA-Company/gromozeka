@@ -126,7 +126,7 @@ class TestOpenWeatherMapClient:
             sample_geocoding_response: Mock geocoding API response.
         """
         # Mock API response
-        with patch.object(client, "_makeRequest", return_value=sample_geocoding_response):
+        with patch.object(OpenWeatherMapClient, "_makeRequest", return_value=sample_geocoding_response):
             result = await client.getCoordinates("Moscow", "RU")
 
         # Verify result
@@ -147,7 +147,7 @@ class TestOpenWeatherMapClient:
         Args:
             client: OpenWeatherMapClient instance.
         """
-        with patch.object(client, "_makeRequest", return_value=[]):
+        with patch.object(OpenWeatherMapClient, "_makeRequest", return_value=[]):
             result = await client.getCoordinates("NonexistentCity")
 
         assert result is None
@@ -164,7 +164,7 @@ class TestOpenWeatherMapClient:
             sample_weather_response: Mock weather API response.
         """
         # Mock API response
-        with patch.object(client, "_makeRequest", return_value=sample_weather_response):
+        with patch.object(OpenWeatherMapClient, "_makeRequest", return_value=sample_weather_response):
             result = await client.getWeather(55.7558, 37.6173)
 
         # Verify result
@@ -191,7 +191,7 @@ class TestOpenWeatherMapClient:
             sample_weather_response: Mock weather API response.
         """
         # Mock both API calls
-        with patch.object(client, "_makeRequest") as mock_request:
+        with patch.object(OpenWeatherMapClient, "_makeRequest") as mock_request:
             mock_request.side_effect = [sample_geocoding_response, sample_weather_response]
 
             result = await client.getWeatherByCity("Moscow", "RU")
@@ -216,7 +216,7 @@ class TestOpenWeatherMapClient:
         Args:
             client: OpenWeatherMapClient instance.
         """
-        with patch.object(client, "_makeRequest", return_value=[]):
+        with patch.object(OpenWeatherMapClient, "_makeRequest", return_value=[]):
             result = await client.getWeatherByCity("NonexistentCity")
 
         assert result is None
@@ -232,7 +232,7 @@ class TestOpenWeatherMapClient:
             client: OpenWeatherMapClient instance.
         """
         # Mock API error
-        with patch.object(client, "_makeRequest", return_value=None):
+        with patch.object(OpenWeatherMapClient, "_makeRequest", return_value=None):
             result = await client.getCoordinates("Moscow")
 
         assert result is None
@@ -287,7 +287,7 @@ class TestIntegration:
             "daily": [],
         }
 
-        with patch.object(client, "_makeRequest") as mock_request:
+        with patch.object(OpenWeatherMapClient, "_makeRequest") as mock_request:
             mock_request.side_effect = [geocoding_response, weather_response]
 
             result = await client.getWeatherByCity("Moscow", "RU")
@@ -500,7 +500,7 @@ class TestWeatherClientErrorHandling:
         Args:
             client: OpenWeatherMapClient instance.
         """
-        with patch.object(client, "_makeRequest", return_value=[]):
+        with patch.object(OpenWeatherMapClient, "_makeRequest", return_value=[]):
             result = await client.getCoordinates("NonexistentCity")
 
         assert result is None
@@ -515,7 +515,7 @@ class TestWeatherClientErrorHandling:
         Args:
             client: OpenWeatherMapClient instance.
         """
-        with patch.object(client, "_makeRequest", return_value=None):
+        with patch.object(OpenWeatherMapClient, "_makeRequest", return_value=None):
             result = await client.getWeather(55.7558, 37.6173)
 
         assert result is None
@@ -532,12 +532,12 @@ class TestWeatherClientErrorHandling:
             client: OpenWeatherMapClient instance.
         """
         # Latitude out of range (-90 to 90)
-        with patch.object(client, "_makeRequest", return_value=None):
+        with patch.object(OpenWeatherMapClient, "_makeRequest", return_value=None):
             result = await client.getWeather(95.0, 37.6173)
         assert result is None
 
         # Longitude out of range (-180 to 180)
-        with patch.object(client, "_makeRequest", return_value=None):
+        with patch.object(OpenWeatherMapClient, "_makeRequest", return_value=None):
             result = await client.getWeather(55.7558, 200.0)
         assert result is None
 
@@ -551,7 +551,7 @@ class TestWeatherClientErrorHandling:
         Args:
             client: OpenWeatherMapClient instance.
         """
-        with patch.object(client, "_makeRequest", return_value=[]):
+        with patch.object(OpenWeatherMapClient, "_makeRequest", return_value=[]):
             result = await client.getCoordinates("")
 
         assert result is None
@@ -577,7 +577,7 @@ class TestWeatherClientErrorHandling:
             }
         ]
 
-        with patch.object(client, "_makeRequest", return_value=sample_response):
+        with patch.object(OpenWeatherMapClient, "_makeRequest", return_value=sample_response):
             result = await client.getCoordinates("São Paulo", "BR")
 
         assert result is not None
@@ -702,7 +702,7 @@ class TestWeatherClientRateLimiting:
             "daily": [],
         }
 
-        with patch.object(client, "_makeRequest", return_value=sample_weather):
+        with patch.object(OpenWeatherMapClient, "_makeRequest", return_value=sample_weather):
             # Make multiple concurrent requests
             tasks = [client.getWeather(55.7558 + i * 0.1, 37.6173) for i in range(5)]
             results = await asyncio.gather(*tasks)
@@ -761,7 +761,7 @@ class TestWeatherClientDataValidation:
             }
         ]
 
-        with patch.object(client, "_makeRequest", return_value=sample_response):
+        with patch.object(OpenWeatherMapClient, "_makeRequest", return_value=sample_response):
             result = await client.getCoordinates("Moscow", "RU")
 
             assert result is not None
@@ -802,7 +802,7 @@ class TestWeatherClientDataValidation:
             "daily": [],
         }
 
-        with patch.object(client, "_makeRequest", return_value=sample_response):
+        with patch.object(OpenWeatherMapClient, "_makeRequest", return_value=sample_response):
             result = await client.getWeather(55.7558, 37.6173)
 
             assert result is not None
@@ -828,7 +828,7 @@ class TestWeatherClientDataValidation:
         # Response without optional 'state' field
         sample_response = [{"name": "Moscow", "lat": 55.7558, "lon": 37.6173, "country": "RU", "local_names": {}}]
 
-        with patch.object(client, "_makeRequest", return_value=sample_response):
+        with patch.object(OpenWeatherMapClient, "_makeRequest", return_value=sample_response):
             result = await client.getCoordinates("Moscow", "RU")
 
             assert result is not None
@@ -854,7 +854,7 @@ class TestWeatherClientDataValidation:
             "daily": [],
         }
 
-        with patch.object(client, "_makeRequest", return_value=sample_response):
+        with patch.object(OpenWeatherMapClient, "_makeRequest", return_value=sample_response):
             result = await client.getWeather(55.7558, 37.6173)
 
             assert result is not None
@@ -880,7 +880,7 @@ class TestWeatherClientDataValidation:
             "daily": [],
         }
 
-        with patch.object(client, "_makeRequest", return_value=sample_response) as mock_request:
+        with patch.object(OpenWeatherMapClient, "_makeRequest", return_value=sample_response) as mock_request:
             await client.getWeather(55.7558, 37.6173)
 
             # Verify units=metric is passed in request
@@ -900,7 +900,7 @@ class TestWeatherClientDataValidation:
         # Valid coordinates
         sample_response = [{"name": "Moscow", "lat": 55.7558, "lon": 37.6173, "country": "RU", "local_names": {}}]
 
-        with patch.object(client, "_makeRequest", return_value=sample_response):
+        with patch.object(OpenWeatherMapClient, "_makeRequest", return_value=sample_response):
             result = await client.getCoordinates("Moscow", "RU")
 
             assert result is not None
@@ -931,7 +931,7 @@ class TestWeatherClientDataValidation:
             "daily": [],
         }
 
-        with patch.object(client, "_makeRequest", return_value=sample_response):
+        with patch.object(OpenWeatherMapClient, "_makeRequest", return_value=sample_response):
             result = await client.getWeather(55.7558, 37.6173)
 
             assert result is not None
@@ -960,7 +960,7 @@ class TestWeatherClientDataValidation:
             "daily": [],
         }
 
-        with patch.object(client, "_makeRequest", return_value=sample_response):
+        with patch.object(OpenWeatherMapClient, "_makeRequest", return_value=sample_response):
             result = await client.getWeather(55.7558, 37.6173)
 
             assert result is not None
@@ -993,7 +993,7 @@ class TestWeatherClientDataValidation:
             ],
         }
 
-        with patch.object(client, "_makeRequest", return_value=sample_response):
+        with patch.object(OpenWeatherMapClient, "_makeRequest", return_value=sample_response):
             result = await client.getWeather(55.7558, 37.6173)
 
             assert result is not None
@@ -1024,7 +1024,7 @@ class TestWeatherClientDataValidation:
             "daily": [],
         }
 
-        with patch.object(client, "_makeRequest", return_value=sample_response):
+        with patch.object(OpenWeatherMapClient, "_makeRequest", return_value=sample_response):
             result = await client.getWeather(55.7558, 37.6173)
 
             assert result is not None

@@ -885,6 +885,16 @@ class AbstractLLMProvider(ABC):
             return True
         return False
 
+    async def aclose(self) -> None:
+        """Close provider resources (HTTP clients, connections, etc.).
+
+        Subclasses that create resources requiring async cleanup (e.g. proxy
+        HTTP clients) should override this method.  The default implementation
+        is a no-op so that callers can safely iterate over all providers and
+        call ``aclose()`` without ``hasattr`` checks.
+        """
+        pass
+
     def __str__(self) -> str:
         """Return string representation of the provider.
 

@@ -18,8 +18,9 @@
 9. [Testing Guide](#9-testing-guide)
 10. [Code Quality](#10-code-quality)
 11. [Deployment](#11-deployment)
-12. [Bootstrapping the Sandbox](#12-bootstrapping-the-sandbox)
-13. [Common Development Tasks](#13-common-development-tasks)
+12. [Proxy Configuration](#12-proxy-configuration)
+13. [Bootstrapping the Sandbox](#13-bootstrapping-the-sandbox)
+14. [Common Development Tasks](#14-common-development-tasks)
 
 ---
 
@@ -1524,7 +1525,7 @@ await manager.installLibrary(session.sessionId, "numpy")
 await manager.shutdown()
 ```
 
-**Configuration:** Defaults in [`configs/00-defaults/sandbox.toml`](configs/00-defaults/sandbox.toml). See [Section 12 - Bootstrapping the Sandbox](#12-bootstrapping-the-sandbox) for setup instructions.
+**Configuration:** Defaults in [`configs/00-defaults/sandbox.toml`](configs/00-defaults/sandbox.toml). See [Section 13 - Bootstrapping the Sandbox](#13-bootstrapping-the-sandbox) for setup instructions.
 
 ---
 
@@ -1871,6 +1872,41 @@ make format lint    # Fix formatting + check for issues
 make test           # Ensure all tests pass
 ```
 
+**Enum Conventions**
+
+Use :class:`~enum.StrEnum` for all string-based enumerations — do not use
+``typing.Literal["a", "b"]`` or bare strings. :class:`StrEnum` (from the
+standard library ``enum`` module) provides named constants that are equal
+to their string values and are safe to refactor.
+
+.. code-block:: python
+
+   from enum import StrEnum
+
+   class HandlerResultStatus(StrEnum):
+       CONTINUE = "continue"
+       STOP = "stop"
+
+This is already the project-wide convention (e.g. ``ChatSettingsKey``,
+``ProxyType``). New code must follow it.
+
+**Import Placement**
+
+All imports belong at the top of the file. For optional dependencies that
+may not be installed (e.g. ``httpx-socks``), use a module-level
+``try/except ImportError`` block:
+
+.. code-block:: python
+
+   try:
+       from httpx_socks import AsyncProxyTransport
+       _HTTPX_SOCKS_AVAILABLE = True
+   except ImportError:
+       _HTTPX_SOCKS_AVAILABLE = False
+
+Never place ``import`` or ``from ... import`` inside a method or function
+body unless a cyclic dependency makes it genuinely unavoidable.
+
 ---
 
 ## 11. Deployment
@@ -2051,7 +2087,116 @@ api-key = "${OPENROUTER_API_KEY}"
 
 ---
 
-## 12. Bootstrapping the Sandbox
+## 12. Proxy Configuration
+
+Gromozeka supports routing outbound HTTP traffic through configurable HTTP or SOCKS5 proxies. This is useful when the bot runs in environments where direct internet access is restricted.
+
+### Enabling Proxy
+
+Proxy is **disabled by default** — enabling it requires setting `[proxy].enabled = true` and opting in each service individually.
+
+**Step 1:** Add proxy credentials to your `.env` file (never commit these):
+
+```bash
+# .env.local (never committed)
+PROXY_ADDRESS="http://proxy.corp.example.com:8080"
+PROXY_USER="bot-user"
+PROXY_PASSWORD="s3cret"
+```
+
+**Step 2:** Create a proxy config override (e.g., `configs/local/proxy.toml`):
+
+```toml
+# configs/local/proxy.toml
+[proxy]
+enabled = true
+type = "http"              # "http" or "socks5"
+address = "${PROXY_ADDRESS}"
+user = "${PROXY_USER}"
+password = "${PROXY_PASSWORD}"
+```
+
+**Step 3:** Opt in individual services by adding `use-proxy = true` to their config sections:
+
+```toml
+# In your local config override:
+[yandex-search]
+enabled = true
+use-proxy = true              # Opt this service into the global proxy
+api-key = "${YANDEX_API_KEY}"
+
+[openweathermap]
+enabled = true
+use-proxy = true
+api-key = "${OWM_API_KEY}"
+
+[geocode-maps]
+use-proxy = true
+
+[bot]
+use-proxy = true              # Route Telegram/Max bot traffic through proxy
+```
+
+**Step 4:** Restart the bot. Proxy config is loaded at startup only — changes require a restart.
+
+### Per-Service Overrides
+
+Any service can override the global proxy with its own `proxy` sub-table:
+
+```toml
+[yandex-search]
+enabled = true
+use-proxy = true
+api-key = "${YANDEX_API_KEY}"
+
+[yandex-search.proxy]
+type = "socks5"
+address = "${YANDEX_SOCKS5_ADDRESS}"
+user = ""
+password = ""
+```
+
+### SOCKS5 Setup
+
+For SOCKS5 proxies, set `type = "socks5"` and install the `httpx-socks` package (included in `requirements.txt`):
+
+```toml
+[proxy]
+enabled = true
+type = "socks5"
+address = "socks5://proxy.example.com:1080"
+user = "${PROXY_USER}"
+password = "${PROXY_PASSWORD}"
+```
+
+**Limitation:** SOCKS5 proxy is incompatible with HTTP/2. When a SOCKS5 proxy is active, the Yandex Search web-fetch client (`_downloadUrl()`) automatically disables HTTP/2.
+
+### How Resolution Works
+
+The `ProxyConfig` class in `lib/proxy/__init__.py` applies a 4-step resolution:
+
+1. **Master kill-switch:** If `[proxy].enabled` is `false` or absent → no proxy for any service.
+2. **Service opt-in:** If `use-proxy` is falsy or absent in the service config → no proxy for that service.
+3. **Per-service override:** If the service has a `proxy` sub-table with a non-empty `address` → use the override (missing fields fall back to global).
+4. **Global fallback:** Use the global `[proxy]` settings.
+
+### Services That Support Proxy
+
+| Service | Config Section | Proxy Resolution |
+|---|---|---|
+| Telegram bot | `[bot]` | `TelegramBotApplication.run()` |
+| Max Messenger bot | `[bot]` | `MaxBotApplication._runPolling()` |
+| OpenAI-compatible LLM providers | `[models.providers.<name>]` | `BasicOpenAIProvider._initClient()` via `_globalProxy` |
+| Image download (LLM) | `[models.providers.<name>]` | `BasicOpenAIProvider._generateImageViaImagesApi()` via `_globalProxy` |
+| OpenRouter `listRemoteModels()` | `[models.providers.openrouter]` | `OpenrouterProvider.listRemoteModels()` via `_globalProxy` |
+| Yandex Search | `[yandex-search]` | `YandexSearchHandler.__init__()` |
+| Web-fetch (Yandex Search) | `[yandex-search]` | Same proxy as Yandex Search |
+| OpenWeatherMap | `[openweathermap]` | `WeatherHandler.__init__()` |
+| Geocode Maps | `[geocode-maps]` | `WeatherHandler.__init__()` |
+
+---
+
+## 13. Bootstrapping the Sandbox
 
 The sandbox library (`lib/sandbox/`) executes untrusted Python code inside Docker containers. Before using it, you need to set up the storage directory and build the Docker images.
 
@@ -2092,7 +2237,7 @@ All sandbox settings live in [`configs/00-defaults/sandbox.toml`](configs/00-def
 
 ---
 
-## 13. Common Development Tasks
+## 14. Common Development Tasks
 
 ### 13.1 Adding a New Handler
 

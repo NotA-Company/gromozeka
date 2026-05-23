@@ -17,6 +17,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.request import HTTPXRequest
 
 from internal.bot.common.handlers import HandlersManager
 from internal.bot.models import BotProvider, CommandPermission, EnsuredMessage, MessageSender
@@ -26,6 +27,7 @@ from internal.database import Database
 from internal.models import MessageId
 from internal.services.queue_service import QueueService
 from lib import utils
+from lib.proxy import ProxyConfig, ProxyType
 from lib.rate_limiter import RateLimiterManager
 
 logger = logging.getLogger(__name__)
@@ -347,6 +349,13 @@ class TelegramBotApplication:
 
         botConfig = self.configManager.getBotConfig()
 
+        # --- Proxy support ---
+        # getCombined() is called explicitly here (before getProxyURL/toKwargs)
+        # so the match block can switch on the resolved proxyType; getProxyURL()
+        # and toKwargs() call getCombined() internally as well, so when we pass
+        # the already-combined config to them the second getCombined() is a no-op.
+        proxyConfig = ProxyConfig.fromServiceConfig(botConfig).getCombined()
+
         appBuilder = (
             Application.builder()
             .token(self.botToken)
@@ -355,6 +364,34 @@ class TelegramBotApplication:
             .post_stop(self.postStop)
             .local_mode(botConfig.get("localMode", False))
         )
+
+        # Apply proxy to both the main HTTP client and the get_updates client.
+        # PTB builder uses .proxy() for HTTP proxies and .request() with a
+        # custom HTTPXRequest for SOCKS5 (which uses a transport).
+        match proxyConfig.type:
+            case ProxyType.HTTP:
+                proxyUrl = proxyConfig.getProxyURL()
+                if proxyUrl is None:
+                    raise ValueError("proxy.address should be specified in case of HTTP proxy type")
+
+                appBuilder = appBuilder.proxy(proxyUrl).get_updates_proxy(proxyUrl)
+                logger.info("Proxy enabled for Telegram bot: %s", proxyConfig.getProxyURL(maskPassword=True))
+
+            case ProxyType.SOCKS5:
+                # Create separate HTTPXRequest instances for the main client and
+                # the get_updates client. Each gets its own AsyncProxyTransport
+                # so the two polling loops do not share connection state.
+                mainRequest = HTTPXRequest(httpx_kwargs=proxyConfig.toKwargs())  # pyright: ignore[reportArgumentType]
+                getUpdatesRequest = HTTPXRequest(
+                    httpx_kwargs=proxyConfig.toKwargs()  # pyright: ignore[reportArgumentType]
+                )
+                appBuilder = appBuilder.request(mainRequest).get_updates_request(getUpdatesRequest)
+                logger.info("Proxy enabled for Telegram bot: %s", proxyConfig.getProxyURL(maskPassword=True))
+            case ProxyType.NONE | None:
+                # No proxy, no special processing needed
+                pass
+            case _:
+                raise ValueError(f"Unexpected proxy Type: {proxyConfig.type}")
 
         baseUrl = botConfig.get("baseUrl", None)
         if baseUrl is not None:

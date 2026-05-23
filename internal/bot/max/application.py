@@ -18,6 +18,7 @@ from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.services.queue_service.service import QueueService
 from lib import utils
+from lib.proxy import ProxyConfig
 
 # from lib import utils
 from lib.rate_limiter import RateLimiterManager
@@ -287,7 +288,14 @@ class MaxBotApplication:
             None
         """
 
-        self.maxBot = libMax.MaxBotClient(self.botToken)
+        # --- Proxy support ---
+        botConfig = self.configManager.getBotConfig()
+        proxyConfig = ProxyConfig.fromServiceConfig(botConfig)
+        maskedUrl = proxyConfig.getProxyURL(maskPassword=True)
+        if maskedUrl:
+            logger.info("Proxy enabled for Max bot: %s", maskedUrl)
+
+        self.maxBot = libMax.MaxBotClient(self.botToken, proxyConfig=proxyConfig)
 
         try:
             botInfo = await self.maxBot.getMyInfo()

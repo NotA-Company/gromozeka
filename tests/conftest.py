@@ -357,6 +357,28 @@ def resetLlmServiceSingleton():
     LLMService._instance = None
 
 
+@pytest.fixture(autouse=True)
+def resetProxyHelperSingleton() -> Generator[None, None, None]:
+    """
+    Reset ProxyHelper singleton state between tests.
+
+    Sets the global proxy config to disabled (enabled=False) so that
+    proxy resolution returns a no-op config. This prevents tests from
+    crashing when code paths call getGlobalProxyConfig().
+
+    Yields:
+        None: Fixture runs before and after each test
+    """
+    from lib.proxy import ProxyHelper
+
+    ProxyHelper.getInstance().setGlobalProxyConfig({"enabled": False})
+
+    yield
+
+    # Reset singleton instance after test
+    ProxyHelper._instance = None
+
+
 @pytest.fixture
 def mockCacheService():
     """

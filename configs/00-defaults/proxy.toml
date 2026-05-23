@@ -1,0 +1,23 @@
+# Global proxy configuration.
+# Used by any service that sets use-proxy = true and does not provide
+# its own [<service>.proxy] sub-section.
+[proxy]
+# Master kill-switch. When false, NO service uses proxy regardless of
+# per-service use-proxy flags.
+enabled = false
+
+# Proxy type: "http" or "socks5"
+type = "http"
+
+# Full proxy address including scheme and port.
+# Examples:
+#   HTTP:   "http://proxy.example.com:8080"
+#   SOCKS5: "socks5://proxy.example.com:1080"
+# Use ${ENV_VAR} substitution for secrets.
+address = ""
+
+# Optional credentials for proxy authentication (Basic Auth for HTTP,
+# username/password for SOCKS5). Leave empty if no auth is required.
+# Use ${ENV_VAR} substitution — never commit credentials.
+user = ""
+password = ""

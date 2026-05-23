@@ -286,6 +286,8 @@ from lib.ai import ModelStructuredResult
 4. Register in `lib/ai/manager.py:40` — add to `providerTypes` dict: `{"my-provider": MyProvider}`
 5. Tests in `tests/lib/ai/providers/test_my_provider.py`
 
+**Proxy support:** `LLMManager.__init__()` accepts an optional `proxyConfig` keyword argument containing the global `[proxy]` config dict. This is passed through to `BasicOpenAIProvider.__init__()`, which creates a `ProxyConfig` via `ProxyConfig.fromServiceConfig()` and calls `ProxyConfig.toKwargs()` in `_initClient()` to configure a custom `httpx.AsyncClient` for the OpenAI SDK. Image download (`_generateImageViaImagesApi`) and OpenRouter `listRemoteModels()` also resolve proxy.
+
 ---
 
 ## 2. `lib/cache` — Generic Cache Interface
@@ -395,6 +397,8 @@ from lib.max_bot import MaxBotClient, MAX_MESSAGE_LENGTH
 **IMPORTANT gotcha — Max platform sticker stubs:**
 Animated stickers have stub URLs, not real images. Always check `url.startswith(...)` before processing
 
+**Proxy support:** `MaxBotClient.__init__()` accepts an optional `proxyKwargs` keyword argument (dict to spread into `httpx.AsyncClient`). When proxy is enabled for the bot, `MaxBotApplication._runPolling()` creates a `ProxyConfig` via `ProxyConfig.fromServiceConfig()` and passes the resulting kwargs from `ProxyConfig.toKwargs()`.
+
 ---
 
 ## 6. `lib/bayes_filter` — Spam Filter
@@ -439,6 +443,8 @@ geocoding = await client.geocode(cityName="Moscow")
 
 **Tests:** Uses golden data framework in `tests/lib/openweathermap/test_weather_client.py`
 
+**Proxy support:** `OpenWeatherMapClient.__init__()` accepts an optional `proxyKwargs` keyword argument (dict to spread into `httpx.AsyncClient`). The `WeatherHandler` creates a `ProxyConfig` via `ProxyConfig.fromServiceConfig(openWeatherMapConfig)`, calls `ProxyConfig.getCombined()` to merge with the global config, then `ProxyConfig.toKwargs()` and passes the result to the client constructor.
+
 ---
 
 ## 8. `lib/geocode_maps` — Geocoding
@@ -456,6 +462,8 @@ result = await client.reverseGeocode(lat=55.75, lon=37.62)
 ```
 
 **Config:** Configured via `[geocode-maps]` TOML section, accessed via `configManager.getGeocodeMapsConfig()`
+
+**Proxy support:** `GeocodeMapsClient.__init__()` accepts an optional `proxyKwargs` keyword argument (dict to spread into `httpx.AsyncClient`). The `WeatherHandler` creates a `ProxyConfig` via `ProxyConfig.fromServiceConfig(geocodeMapsConfig)`, calls `ProxyConfig.getCombined()` to merge with the global config, then `ProxyConfig.toKwargs()` and passes the result to the client constructor.
 
 ---
 
@@ -655,6 +663,52 @@ d.gc(force=True)          # Remove expired entries
 
 ---
 
+## 13. `lib/proxy` — Proxy Resolution
+
+Class-based proxy resolution package. Lives in `lib/` with no imports from `internal/`.
+
+**Import:**
+```python
+from lib.proxy import ProxyConfig, ProxyHelper, ProxyType, ProxyKwargs
+```
+
+**Types:**
+
+| Type | Purpose |
+|---|---|
+| `ProxyType` | `StrEnum("http", "socks5", "none")` — supported proxy protocol types |
+| `ProxyKwargs(TypedDict)` | Keyword arguments for `httpx.AsyncClient` — either `proxy: str` or `transport: AsyncProxyTransport` |
+
+**Classes:**
+
+| Class | Purpose |
+|---|---|
+| `ProxyConfig` | Immutable proxy configuration (`__slots__`). Created via `fromServiceConfig()` or `fromDict()`. Methods: `getCombined()` (merge with global), `getProxyURL(maskPassword=False)` (build URL), `toKwargs()` (httpx kwargs). |
+| `ProxyHelper` | Singleton storing the global proxy config. `setGlobalProxyConfig()` called once from `main.py`; `getGlobalProxyConfig()` used internally by `ProxyConfig.getCombined()`. |
+
+**Usage pattern in service constructors:**
+```python
+from lib.proxy import ProxyConfig
+
+proxyConfig = ProxyConfig.fromServiceConfig(serviceConfig)
+proxyKwargs = proxyConfig.toKwargs()
+proxyUrl = proxyConfig.getProxyURL(maskPassword=True)
+if proxyUrl:
+    logger.info(f"Proxy enabled: {proxyUrl}")
+
+# Then in HTTP calls:
+async with httpx.AsyncClient(**proxyKwargs, timeout=30) as client:
+    ...
+```
+
+**Per-service override semantics (`fromServiceConfig`):** When a service sets `use-proxy = true` with a `[service.proxy]` sub-section, `fromServiceConfig` delegates to `fromDict` which reads `enabled` from the sub-dict via `data.get("enabled") is True`. If the sub-section omits `enabled: true`, the resulting ProxyConfig has `enabled=False`, and `getCombined()` treats it as "inherit from global" — the per-service override fields (`type`, `address`, etc.) are silently ignored. Always include `enabled: true` in the proxy sub-section when you intend to override the global config for a specific service. This is intentional behavior.
+
+**Password masking in `__repr__` / `__str__`:** Non-empty passwords render as `'***'` in `repr()` and `str()` output. This prevents accidental credential leaks through logging/debugging while keeping other fields visible. When password is `None` or an empty string, it renders verbatim. This is separate from `getProxyURL(maskPassword=True)` which replaces the password with `"REDACTED"` in the built URL.
+
+**SQLink proxy — lazy resolution:** `SQLinkProvider.__init__` accepts `proxy` and `use-proxy` inside `parameters` (see `configuration.md`) and stores a `ProxyConfig` object. The proxy URL is not resolved at construction time — resolution happens in `connect()` via `self._proxy.getProxyURL()`. This ensures the global proxy config (set by `main.py`) is available at resolution time.
+
+---
+
 ## See Also
 
 - [`index.md`](index.md) — Project overview, lib/ directory map
@@ -666,4 +720,4 @@ d.gc(force=True)          # Remove expired entries
 ---
 
 *This guide is auto-maintained and should be updated whenever library APIs change*
-*Last updated: 2026-05-21*
+*Last updated: 2026-05-23*

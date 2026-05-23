@@ -11,4 +11,6 @@ Use these files as companions to [`../teamlead-memory.md`](../teamlead-memory.md
 
 ## Available Files
 
+- [`proxy.md`](proxy.md) — durable notes for `lib/proxy/`, proxy configuration, per-service proxy overrides, HTTP client inventory, and the proxy refactoring anti-patterns.
 - [`sandbox.md`](sandbox.md) — durable notes for `lib/sandbox/`, sandbox config, Docker runtime behavior, and sandbox bot integration.
+- [`test-reorganization.md`](test-reorganization.md) — durable notes for the test layout migration (collocated -> `tests/` mirror), conventions, and post-reorg doc audit.
