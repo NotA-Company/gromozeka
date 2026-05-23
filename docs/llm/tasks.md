@@ -11,6 +11,7 @@
 1. [Common Task Decision Trees](#1-common-task-decision-trees)
 2. [Anti-Patterns — NEVER Do These](#2-anti-patterns--never-do-these)
 3. [Subtle Gotchas](#3-subtle-gotchas)
+4. [Lessons Learned & Common Pitfalls](#4-lessons-learned--common-pitfalls)
 
 ---
 
@@ -445,19 +446,12 @@ ls -1 internal/database/migrations/versions/ | grep "migration_" | sort -V | tai
 | `mediaGroupDelaySecs` default is 5.0 | Time-based Telegram media group detection | Adjust per job if source chat uploads slowly |
 | `MessageSender.name` (NOT `displayName`) | The sender's display name lives on `.name`, not `.displayName` | Use `ensuredMessage.messageSender.name` |
 | `MediaStatus` / `MessageType` are enums | They are NOT plain strings — use the enum members | `MediaStatus.DONE`, `MessageType.IMAGE` (don't pass `"done"` / `"image"`) |
-| `LLMService.registerTool` is flat-args | No nested config object — pass tool name, schema, callback, etc. as kwargs | See `DivinationHandler` registration site for an example |
-| `random.SystemRandom()` for non-deterministic draws | New convention introduced by [`lib/divination/drawing.py`](../../lib/divination/drawing.py) — prefer `random.SystemRandom()` for security/unpredictability | Tests inject a seeded `random.Random` for reproducibility instead of monkeypatching `random` |
-| Layout discovery negative cache | Failed discoveries stored as `name_en=''`, `n_symbols=0` in `divination_layouts` table | Prevents repeated failed attempts, check with `isNegativeCacheEntry()` |
-| `getLikeComparison()` for fuzzy search | Provider method for case-insensitive LIKE pattern matching | Use in `divinationLayouts.getLayout()` for fuzzy layout name search |
+| `LLMService.registerTool` is flat-args | No nested config object — pass tool name, schema, callback, etc. as kwargs | See existing handler registration sites for examples |
 | `getCaseInsensitiveComparison()` for exact matches | Provider method for case-insensitive exact match | Use for username/email lookups, chat settings keys |
-| Schema requirements for structured output | OpenAI strict mode: all properties required, `additionalProperties: false`, no root `oneOf`/`anyOf` | See tasks.md §4.5 for complete rules and example |
+| Schema requirements for structured output | OpenAI strict mode: all properties required, `additionalProperties: false`, no root `oneOf`/`anyOf` | See tasks.md §4.2 for complete rules and example |
 | `sqlToCustomType()` handles `Optional[T]` | Returns `(True, None)` for `Optional[...]` when data is `None` | Properly unwraps Union types and handles `None` values for nullable columns |
 | `TTLDict.set(key, value, ttl=None)` clears expiration | Passing `ttl=None` explicitly removes any previous expiration, making the entry never expire | If you want to keep the existing TTL when rewriting a value, use `d.set(key, value)` (no `ttl` arg) to apply `defaultTTL`, or pass the desired TTL explicitly |
 | `ConfigManager.get()` returns nested dicts | `configManager.get("sandbox")` returns a nested dict, not a flat namespace | Use `.get("key", {})` to navigate nested sections; **never** use dotted keys like `configManager.get("sandbox.bootstrap.starter-packages")` |
-| Sandbox watchdog timeout includes grace period | `watchdogTimeout = timeoutSeconds + timeoutGraceSeconds + 1` | The backend's `asyncio.wait_for` is a fallback; the container's own `timeout` command handles graceful termination |
-| `SessionLockRegistry` uses `asyncio.Lock` + waiter counter | Each session has an `asyncio.Lock` (mutex) with a `waiters` counter tracking all tasks that entered `acquire()` but haven't exited yet. This replaced the former `asyncio.Semaphore` model to support force-cancel semantics. Do NOT reintroduce `asyncio.Semaphore` for per-session queuing | The `waiters` counter is a best-effort hint; the actual Lock acquisition enforces mutual exclusion. `forceCancel()` sets a `cancelled` flag and releases the Lock so every waiter wakes and raises `SessionDropped` |
-| `ResourceLimits.fromDict()` clamps `timeout-seconds` | Values below 30 are clamped to 30 with a `logger.warning` | Prevents misconfigured containers that would time out before the inner `timeout` command can send SIGTERM |
-| `RunResult.timedOut` checks both exit code and signal | `timedOut` is `True` when `exitCode == 124` **or** `signal == "SIGKILL"` | A SIGKILL without exit code 124 can happen during OOM or force-kill; always check `timedOut` rather than comparing `exitCode` directly |
 
 ---
 
@@ -507,29 +501,18 @@ After adding entries to `_chatSettingsInfo`, you **MUST** also add default value
 
 ```bash
 # You add the ChatSettingsKey and _chatSettingsInfo entries...
-$ /settings divination-discovery-info-prompt
-# Setting name: divination-discovery-info-prompt
-# Short: Discover divination layouts via web search
-# Long: Allows dynamic discovery of custom layouts using AI
+$ /settings your-new-setting
+# Setting name: your-new-setting
+# Short: Description of the setting
+# Long: Detailed description
 # Current value: [EMPTY - no default configured!]
-# User tries to use the feature... ERROR: No prompt available
-```
-
-**Example of including defaults (GOOD):**
-
-```bash
-# User runs /settings and sees:
-# Setting name: divination-discovery-info-prompt
-# Short: Discover divination layouts via web search
-# Long: Allows dynamic discovery of custom layouts using AI
-# Current value: "I need information about a {systemId}..."
-# User tries the feature... SUCCESS! It works immediately
+# User tries to use the feature... ERROR: No value available
 ```
 
 **How to add default values:**
 
 The default values should:
-- Match the key names from `ChatSettingsKey` (using kebab-case: `DIVINATION_DISCOVERY_INFO_PROMPT` → `divination-discovery-info-prompt`)
+- Match the key names from `ChatSettingsKey` (using kebab-case: `YOUR_NEW_SETTING` → `your-new-setting`)
 - Be placed in the appropriate config file based on the `page` field
 - Use proper TOML syntax with triple quotes for multi-line strings
 - Include placeholders in format `{placeholderName}` if the prompt uses them
@@ -543,21 +526,6 @@ your-new-setting = """
 This is the default value for your new setting.
 Use triple quotes for multi-line content.
 Include placeholders like {userName} if needed.
-"""
-
-divination-discovery-info-prompt = """
-I need information about a {systemId} divination layout called "{layoutName}".
-The user wants to use this layout for a reading, but it's not in my predefined list.
-
-Use the web_search tool to find information about this layout. Look for:
-1. What is the name of this layout?
-2. How many cards/runes are drawn in it?
-3. What are the positions? For each position, describe:
-   - The name of the position (usually in English)
-   - What this position represents or asks about
-
-Search for authoritative sources on {systemId} layouts, books, or websites that describe this specific spread.
-Return a detailed description of the layout including all position meanings.
 """
 ```
 
@@ -577,227 +545,20 @@ Return a detailed description of the layout including all position meanings.
 
 ---
 
-### 4.2 Import Placement (CRITICAL)
-
-**NEVER** place imports inside methods or functions unless absolutely unavoidable (even for cyclic dependencies). All imports must be at the top of the file.
-
-**Common mistake to avoid:**
-
-```python
-# WRONG — imports inside method (anti-pattern!)
-class MyClass:
-    def someMethod(self):
-        import json  # This should be at the top!
-        from datetime import datetime  # So should this!
-        ...
-```
-
-**Correct pattern:**
-
-```python
-# CORRECT — all imports at the top
-import json
-from datetime import datetime
-from typing import Optional
-
-class MyClass:
-    def someMethod(self):
-        # Use the already-imported modules
-        data = json.loads(...)
-        now = datetime.now()
-        ...
-```
-
-**After adding imports, always run:**
-
-```bash
-make format
-```
-
-This runs `isort` to properly organize imports according to the project's style guide. Imports should be sorted into these sections:
-1. Standard library imports
-2. Third-party imports
-3. Local application imports
-
-**Why this matters:**
-- Import placement affects code readability and maintainability
-- `isort` enforces consistent import ordering across the codebase
-- Imports inside methods are harder to discover and maintain
-- The `make format` pipeline expects imports to be organized correctly
-
-**Exception note:**
-The only valid exception for placing an import inside a method is to resolve a cyclic dependency that cannot be broken by refactoring. This is rare and should be documented with a comment explaining why it was necessary.
-
-**For optional dependencies**, use a module-level ``try/except ImportError``
-block that sets a ``_AVAILABLE`` boolean flag:
-
-.. code-block:: python
-
-   # At module top level — NEVER inside a function:
-   try:
-       from httpx_socks import AsyncProxyTransport
-       _HTTPX_SOCKS_AVAILABLE = True
-   except ImportError:
-       _HTTPX_SOCKS_AVAILABLE = False
-
-   # Usage:
-   def buildClientKwargs(config: ProxyConfig) -> ProxyKwargs:
-       if config["type"] == "socks5" and not _HTTPX_SOCKS_AVAILABLE:
-           raise ImportError("SOCKS5 proxy requires httpx-socks[asyncio]")
-       ...
-
----
-
-### 4.3 Code Duplication (Best Practice)
-
-When you find yourself implementing the same logic in multiple places, extract it into a helper method. This makes the code more maintainable and reduces bugs.
-
-**Example of the problem:**
-
-```python
-# WRONG — same logic duplicated in two places
-class MyHandler(BaseBotHandler):
-    async def _handleReadingFromArgs(self, ensuredMessage, args):
-        # Layout discovery logic duplicated here
-        layout = self._findLayoutByNameOrCode(args[0])
-
-    async def _runReadingForTool(self, ensuredMessage, args):
-        # Same layout discovery logic duplicated here
-        layout = self._findLayoutByNameOrCode(args[0])
-```
-
-**Correct approach:**
-
-```python
-# CORRECT — extracted into a helper method
-class MyHandler(BaseBotHandler):
-    async def _discoverLayout(
-        self,
-        layoutIdentifier: str
-    ) -> Optional[Layout]:
-        """Discover layout by name or code.
-
-        Args:
-            layoutIdentifier: Layout name or code to search for
-
-        Returns:
-            Layout object if found, None otherwise
-        """
-        # Single implementation
-        return self._findLayoutByNameOrCode(layoutIdentifier)
-
-    async def _handleReadingFromArgs(self, ensuredMessage, args):
-        layout = await self._discoverLayout(args[0])
-
-    async def _runReadingForTool(self, ensuredMessage, args):
-        layout = await self._discoverLayout(args[0])
-```
-
-**Why this matters:**
-- Single source of truth for the logic
-- Easier to maintain — fix once, applies everywhere
-- Reduces chance of subtle differences between copies
-- Makes testing easier — test one method, not multiple locations
-- When debugging, you only need to trace through one implementation
-
-**When to extract:**
-- Logic appears 2+ times
-- The logic is more than 1-2 lines
-- The logic has any complexity (if statements, error handling, etc.)
-
----
-
-### 4.4 Type Safety in Tests (Testing)
-
-When mocking objects like `EnsuredMessage`, use the actual class types rather than plain dictionaries. This prevents type-related bugs and ensures tests catch real issues.
-
-**Common mistake to avoid:**
-
-```python
-# WRONG — using dict instead of actual class type
-def test_ReadingHandler():
-    # Type: dict, not EnsuredMessage
-    mockMessage = {
-        "messageId": 123,
-        "messageText": "/taro",
-        "chatId": 456,
-    }
-    # May pass type check but fail at runtime with missing fields
-```
-
-**Correct approach:**
-
-```python
-# CORRECT — using actual class types
-from internal.bot.models import EnsuredMessage
-
-def test_ReadingHandler():
-    mockMessage = EnsuredMessage(
-        messageId=MessageId(123),  # MessageId wrapping int (Telegram uses int)
-        messageText="/taro",
-        chatId=456,  # Type: int
-        messageSender=MessageSender(id=789, isBot=False,
-        timestamp=datetime.now(),
-    )
-```
-
-**Why this matters:**
-- Type checkers (pyright) can verify all required fields are present
-- Tests catch type errors that would occur in production
-- Mock objects match the actual API shape
-- Prevents runtime errors from missing or incorrectly-typed fields
-- Makes refactoring safer — if `EnsuredMessage` changes, test errors will show you what to update
-
-**Implementation tips:**
-- Use pytest fixtures for commonly-used mock objects
-- Check `tests/conftest.py` for existing fixtures like `mockMessage`
-- Use `mocker.Mock` for methods, but keep the object type correct
-- Always import types from their actual modules, don't redefine them in tests
-
----
-
-### 4.5 Strict JSON Schema Format for Structured Output
+### 4.2 Strict JSON Schema Format for Structured Output
 
 When using `LLMService.generateStructured()`, the `schema` parameter must be a **strict JSON Schema** — not Python type hints, classes, or TypedDict. OpenAI's structured outputs and some other providers enforce strict validation and will reject schemas that don't follow this format.
 
-**Common mistake to avoid:**
-
-```python
-# WRONG — passing Python types/classes, schema is not valid JSON Schema
-from typing import TypedDict
-
-class MyResponse(TypedDict):
-    answer: str
-    confidence: float
-
-result = await llmService.generateStructured(
-    prompt="What is 2+2?",
-    schema=MyResponse,  # WRONG! This is not a JSON Schema!
-    ...
-)
-
-# ALSO WRONG — using Python type names in schema
-schema = {
-    "type": "object",
-    "properties": {
-        "answer": {"type": str},       # WRONG! str is a Python type, not a JSON Schema type
-        "confidence": {"type": float}, # WRONG! float is Python, not JSON Schema
-    },
-    # Missing required and additionalProperties fields
-}
-```
-
 **Correct approach:**
 
 ```python
-# CORRECT — proper JSON Schema with no optional fields
 schema = {
     "type": "object",
     "properties": {
-        "answer": {"type": "string"},        # JSON Schema type, not str
-        "confidence": {"type": "number"},   # JSON Schema type, not float/int
+        "answer": {"type": "string"},        # JSON Schema type, not Python str
+        "confidence": {"type": "number"},     # JSON Schema type, not Python float/int
     },
-    "required": ["answer", "confidence"],    # ALL fields are required
+    "required": ["answer", "confidence"],     # ALL fields are required
     "additionalProperties": False,            # No extra fields allowed
 }
 
@@ -818,109 +579,25 @@ if result.status == ModelResultStatus.FINAL:
 **Required JSON Schema elements:**
 
 1. **`"type": "object"`** at the top level
-2. **`"properties"`** dict containing all field definitions
-3. Each property must have a valid JSON Schema type:
-   - `"string"` (not `str`)
-   - `"number"` (not `float` or `int`)
-   - `"integer"` (whole numbers only)
-   - `"boolean"` (not `bool`)
-   - `"array"` (not `list`)
-   - `"object"` (for nested objects)
-4. **`"required"`** array listing **ALL fields** — no optional fields allowed
-5. **`"additionalProperties": False`** to ensure strict validation
+2. **`"properties"`** dict — each property uses JSON Schema types: `"string"`, `"number"`, `"integer"`, `"boolean"`, `"array"`, `"object"`
+3. **`"required"`** array listing **ALL fields** — no optional fields allowed
+4. **`"additionalProperties": False`** to ensure strict validation
+5. Nested objects and array items must follow the same strict rules
+
+**Common mistakes:** passing Python types/classes instead of JSON Schema dicts (`schema=MyTypedDict`), using Python type names in values (`{"type": str}`), omitting `required` or `additionalProperties`.
 
 **Why this matters:**
 
-- **OpenAI structured outputs** requires strict JSON Schema format and will reject any schema that doesn't meet these requirements
-- **YC OpenAI's native models** (yandexgpt, aliceai-llm, deepseek-v32) enforce this strictly and return HTTP 400 "Invalid JSON Schema: all fields must be required" when violated
-- Other providers may have similar validation — using the strict format ensures compatibility across all providers
-- Mistakes here result in hard-to-debug API errors rather than clear Python type errors
+- **OpenAI structured outputs** rejects any schema that doesn't meet these requirements
+- **YC OpenAI's native models** (yandexgpt, aliceai-llm, deepseek-v32) return HTTP 400 "Invalid JSON Schema: all fields must be required" when violated
+- Mistakes result in hard-to-debug API errors rather than clear Python type errors
 
-**Reference implementation:**
-
-See [`scripts/check_structured_output.py`](../../scripts/check_structured_output.py) for the reference implementation. This script probes each configured model with a strictly-formatted schema to verify structured output support. The probe schema (lines 106-114) demonstrates the correct format:
-
-```python
-# From scripts/check_structured_output.py — correct strict schema format
-_PROBE_SCHEMA: Dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "answer": {"type": "string"},
-        "confidence": {"type": "number"},
-    },
-    "required": ["answer", "confidence"],
-    "additionalProperties": False,
-}
-```
-
-**Testing your schemas:**
-
-Before deploying a new schema, you can test it locally:
+**Reference:** See [`scripts/check_structured_output.py`](../../scripts/check_structured_output.py) for a working example (probe schema at lines 106-114). Run it to test schema support:
 
 ```bash
-# Test structured output with the current configuration
 ./venv/bin/python3 scripts/check_structured_output.py
-
-# Test only specific providers/models
 ./venv/bin/python3 scripts/check_structured_output.py --provider yc-openai
-./venv/bin/python3 scripts/check_structured_output.py --model "yc-openai/yandexgpt"
 ```
-
-**Additional notes:**
-
-- Nested objects are supported, but each nested object must also follow the strict format with `required` and `additionalProperties: False`
-- Arrays can specify an `items` schema, but the items themselves must follow the same strict rules if they are objects
-- If you need optional fields, you must either make them required with a default semantic value (e.g., `null`, empty string) or restructure your schema to handle the logic in code after parsing
-- The `strict=True` parameter in `generateStructured()` requests strict enforcement from providers that support it
-- Always import `ModelStructuredResult` from `lib.ai` to get proper type hints for the result
-
----
-
-### 4.6 String Enum Conventions
-
-ALWAYS use :class:`~enum.StrEnum` for named string constants. NEVER use
-``typing.Literal["a", "b"]``.
-
-**Why:**
-
-- ``Literal`` is a type-system-only construct — it provides no runtime
-  behaviour, no names, and no documentation value.
-- :class:`StrEnum` members are named constants that compare equal to their
-  string values (``ProxyType.HTTP == "http"`` is ``True``).
-- IDEs auto-complete :class:`StrEnum` members; they do not auto-complete
-  ``Literal`` strings.
-- Refactoring (rename) is trivially safe with enums; ``Literal`` strings
-  require manual search-and-replace.
-
-**Correct:**
-
-.. code-block:: python
-
-   from enum import StrEnum
-
-   class HandlerResultStatus(StrEnum):
-       CONTINUE = "continue"
-       STOP = "stop"
-
-   def process(status: HandlerResultStatus) -> None:
-       if status == HandlerResultStatus.CONTINUE:
-           ...
-
-**Wrong:**
-
-.. code-block:: python
-
-   from typing import Literal
-
-   Status = Literal["continue", "stop"]
-
-   def process(status: Status) -> None:
-       if status == "continue":  # magic string
-           ...
-
-The project already uses :class:`StrEnum` extensively (``ChatSettingsKey``,
-``HandlerParallelism``, ``MediaStatus``, ``MessageType``, ``ProxyType``).
-New code follows the same pattern.
 
 ---
 
@@ -938,4 +615,4 @@ New code follows the same pattern.
 ---
 
 *This guide is auto-maintained and should be updated whenever new patterns or gotchas are discovered*
-*Last updated: 2026-05-20*
+*Last updated: 2026-05-23*

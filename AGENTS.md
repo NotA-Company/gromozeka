@@ -12,8 +12,8 @@ captures only what an agent would likely get wrong without help.
   (see "SQL portability" below). Custom migrations live under
   [`internal/database/migrations/versions/`](internal/database/migrations/versions/).
 - Multi-platform bot: Telegram **and** Max Messenger. Mode picked by config
-  (`bot.mode`), wired in [`main.py:54`](main.py:54).
-- Entry point: [`main.py`](main.py:1) → `GromozekBot` → `TelegramBotApplication`
+  (`bot.mode`), wired in [`main.py`](main.py).
+- Entry point: [`main.py`](main.py) → `GromozekBot` → `TelegramBotApplication`
   or `MaxBotApplication`.
 
 ## Run / dev commands (use these literally)
@@ -229,11 +229,6 @@ TOML, hierarchical, merged recursively. Loaded by
 - Singleton init uses a `hasattr(self, 'initialized')` guard — don't
   re-implement that pattern, just call `getInstance()`.
 
-## Documentation Maintenance
-
-See [`docs/documentation-review-process.md`](docs/documentation-review-process.md) for the systematic
-process of reviewing and maintaining documentation.
-
 ## Existing instruction sources (do not duplicate, prefer linking)
 
 - [`docs/llm/index.md`](docs/llm/index.md) — canonical agent guide and index
@@ -242,6 +237,8 @@ process of reviewing and maintaining documentation.
 - [`docs/database-schema.md`](docs/database-schema.md) and
   [`docs/database-schema-llm.md`](docs/database-schema-llm.md) — keep both in
   sync when changing schema
+- [`docs/documentation-review-process.md`](docs/documentation-review-process.md) — systematic
+  process for reviewing and maintaining documentation
 - [`.agents/skills/`](.agents/skills/) — loadable task-specific skills. Load
   the matching one via the `skill` tool when its trigger applies:
   - [`read-project-docs`](.agents/skills/read-project-docs/SKILL.md) — onboarding / context-building before non-trivial work
