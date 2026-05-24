@@ -1,11 +1,11 @@
 # Runtime
 aiodocker==0.26.0
 aiosqlite==0.22.1
-boto3==1.43.8
+boto3==1.43.14
 html-to-markdown==3.1.0
 httpx[http2]==0.28.1
 httpx-socks[asyncio]==0.11.0
-openai==2.36.0
+openai==2.38.0
 python-dateutil==2.9.0.post0
 python-magic==0.4.27
 python-telegram-bot==22.7
@@ -18,7 +18,7 @@ sqlink @ git+https://git@git.sourcecraft.dev/notacompany/py-sqlink-client.git
 PyYAML==6.0.3
 
 # Formatters
-black==26.3.1
+black==26.5.1
 isort==8.0.1
 
 # Linters
