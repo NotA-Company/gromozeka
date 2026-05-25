@@ -28,6 +28,7 @@ from typing import List, Optional
 import httpx
 
 from lib.cache import CacheInterface, NullCache
+from lib.proxy import ProxyConfig, ProxyType
 from lib.rate_limiter import RateLimiterManager
 
 from .models import CombinedWeatherResult, CurrentWeather, DailyWeather, GeocodingResult, WeatherData
@@ -85,6 +86,19 @@ class OpenWeatherMapClient:
     GEOCODING_API: str = "http://api.openweathermap.org/geo/1.0/direct"
     WEATHER_API: str = "https://api.openweathermap.org/data/3.0/onecall"
 
+    __slots__ = (
+        "apiKey",
+        "weatherCache",
+        "geocodingCache",
+        "geocodingTTL",
+        "weatherTTL",
+        "requestTimeout",
+        "defaultLanguage",
+        "rateLimiterQueue",
+        "_proxyConfig",
+        "_rateLimiter",
+    )
+
     def __init__(
         self,
         apiKey: str,
@@ -95,6 +109,7 @@ class OpenWeatherMapClient:
         requestTimeout: int = 10,
         defaultLanguage: str = "ru",
         rateLimiterQueue: str = "openweathermap",
+        proxyConfig: Optional[ProxyConfig] = None,
     ) -> None:
         """Initialize OpenWeatherMap client.
 
@@ -113,6 +128,8 @@ class OpenWeatherMapClient:
                 location names. Defaults to "ru" (Russian).
             rateLimiterQueue: Name of the rate limiter queue to use for API
                 request throttling. Defaults to "openweathermap".
+            proxyConfig: Optional keyword arguments to spread into
+                ``httpx.AsyncClient`` for proxy support.  Defaults to None (no proxy).
         """
         self.apiKey = apiKey
         self.weatherCache: CacheInterface[str, WeatherData] = (
@@ -126,6 +143,9 @@ class OpenWeatherMapClient:
         self.requestTimeout = requestTimeout
         self.defaultLanguage = defaultLanguage
         self.rateLimiterQueue = rateLimiterQueue
+        self._proxyConfig: ProxyConfig = (
+            proxyConfig if proxyConfig is not None else ProxyConfig(proxyType=ProxyType.NONE)
+        )
         self._rateLimiter = RateLimiterManager.getInstance()
 
     async def getCoordinates(
@@ -450,7 +470,7 @@ class OpenWeatherMapClient:
             await self._rateLimiter.applyLimit(self.rateLimiterQueue)
 
             # Create new session for each request
-            async with httpx.AsyncClient(timeout=self.requestTimeout) as session:
+            async with httpx.AsyncClient(**self._proxyConfig.toKwargs(), timeout=self.requestTimeout) as session:
                 response: httpx.Response = await session.get(url, params=params)
                 if response.status_code == 200:
                     data: dict = response.json()

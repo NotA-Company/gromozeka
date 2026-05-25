@@ -86,6 +86,8 @@ save-prefix = "media-"
 
 # Allow tools commands (/draw, /analyze, etc...)
 allow-tools-commands = true
+# Enable sandbox code execution for this chat
+allow-sandbox = false
 # Delete message with commands, which deniend in chat (for flood protection purposes)
 delete-denied-commands = false
 
@@ -140,15 +142,15 @@ paid-tier-untill-ts = 0
 # Per-char ratelimiters for LLM usage and Tools-usage
 llm-ratelimiter                 = "chat-default"
 
-chat-model                      = "openrouter/mistral-7b-instruct:free"
-fallback-model                  = "openrouter/gemma-3-12b-it:free"
-summary-model                   = "openrouter/gemma-3-12b-it:free"
-summary-fallback-model          = "openrouter/gpt-oss-20b:free"
-image-parsing-model             = "openrouter/gemma-3-27b-it:free"
-image-parsing-fallback-model    = "openrouter/qwen3-vl-235b-a22b-instruct"
+chat-model                      = "openrouter/free"
+fallback-model                  = "aliceai-llm-flash"
+summary-model                   = "openrouter/free"
+summary-fallback-model          = "aliceai-llm-flash"
+image-parsing-model             = "openrouter/free"
+image-parsing-fallback-model    = "yc/qwen3.6-35b-a3b"
 image-generation-model          = "yandex-art"
 image-generation-fallback-model = "openrouter/gemini-2.5-flash-image"
-condensing-model                = "openrouter/gemma-3-27b-it:free"
+condensing-model                = "openrouter/free"
 
 summary-prompt     = """
 Суммаризируй переписку. Укажи:

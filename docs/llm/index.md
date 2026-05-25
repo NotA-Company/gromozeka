@@ -8,7 +8,7 @@
 
 ## Navigation — Which Doc Should I Read?
 
-| If you need to... | Read this doc |
+ | If you need to... | Read this doc |
 |---|---|
 | Understand project overview, commands, mandatory rules | **This file** (`index.md`) |
 | Understand architecture, ADRs, design decisions | [`architecture.md`](architecture.md) |
@@ -16,9 +16,12 @@
 | Add/modify database tables, migrations, or queries | [`database.md`](database.md) |
 | Use Cache, Queue, LLM, Storage, or RateLimiter services | [`services.md`](services.md) |
 | Use lib/ai, lib/cache, lib/markdown, lib/max_bot, etc. | [`libraries.md`](libraries.md) |
+| Use or modify the sandbox library | [`sandbox.md`](sandbox.md) |
 | Add or change TOML configuration | [`configuration.md`](configuration.md) |
 | Write or run tests, understand test fixtures | [`testing.md`](testing.md) |
 | Follow a step-by-step task workflow or avoid pitfalls | [`tasks.md`](tasks.md) |
+| Reuse durable cross-task memory and repo gotchas | [`teamlead-memory.md`](teamlead-memory.md) |
+| Reuse archived task-specific memories for completed subsystems | [`memories/index.md`](memories/index.md) |
 
 ---
 
@@ -58,7 +61,7 @@ make test
 ./venv/bin/python3 main.py --config-dir configs/
 
 # Run single test file
-./venv/bin/pytest tests/test_db_wrapper.py -v
+./venv/bin/pytest tests/database/test_db_wrapper.py -v
 ```
 
 ---
@@ -149,6 +152,52 @@ make test
 **Linting tools:** Black (120 chars), Flake8, Pyright, isort  
 **Config:** [`pyproject.toml`](../../pyproject.toml)
 
+### 3.6 Enum Conventions
+
+String enums are used throughout the project for named string constants with
+explicit serialisation behaviour. Always use :class:`~enum.StrEnum` from the
+standard library, **not** ``typing.Literal["a", "b"]``.
+
+.. code-block:: python
+
+   from enum import StrEnum
+
+   class HandlerResultStatus(StrEnum):
+       CONTINUE = "continue"
+       STOP = "stop"
+
+:class:`StrEnum` is preferred over :class:`str, enum.Enum` and over
+``typing.Literal`` because it provides:
+
+- Named constants that are self-documenting.
+- String-based identity — ``ProxyType.HTTP == "http"`` is ``True``.
+- Implicit ``str`` conversion for logging and serialisation.
+- IDE-friendly auto-completion (unlike ``Literal``).
+
+When you would write ``Literal["a", "b"]``, write a :class:`StrEnum` instead.
+
+### 3.7 Import Placement
+
+**All imports must be at the top of the file.** Never place imports inside
+methods, functions, or conditional branches of a function. This rule applies
+equally to third-party and standard-library imports.
+
+For **optional dependencies** that may not be installed, use a module-level
+``try/except ImportError`` block with an ``_AVAILABLE`` boolean guard:
+
+.. code-block:: python
+
+   try:
+       from httpx_socks import AsyncProxyTransport
+       _HTTPX_SOCKS_AVAILABLE = True
+   except ImportError:
+       _HTTPX_SOCKS_AVAILABLE = False
+
+The ``_AVAILABLE`` flag is checked at usage sites rather than relying on a
+runtime ``ImportError`` during execution. Inline imports are **only** acceptable
+when a genuine cyclic dependency makes a top-level import impossible — this is
+vanishingly rare in the Gromozeka codebase (see :ref:`tasks.md §4.2 <tasks-import-placement>`).
+
 ---
 
 ## 4. Project Map
@@ -164,8 +213,9 @@ make test
 | `configs/` | Configuration directory (TOML files) |
 | `internal/` | Internal application code |
 | `lib/` | Reusable library code |
-| `tests/` | Integration test suite |
+| `tests/` | Test suite — **all** tests live here, mirroring source structure (`lib/X/Y.py` → `tests/lib/X/test_Y.py`; `internal/X/Y.py` → `tests/X/test_Y.py`). No collocated tests in `lib/` or `internal/`. |
 | `docs/` | Documentation |
+| `docs/llm/memories/` | Archived task-specific working memories for completed features/subsystems |
 
 ### 4.2 Entry Points
 
@@ -208,7 +258,7 @@ make test
  | Path | Purpose |
 |---|---|
 | [`internal/bot/common/bot.py`](../../internal/bot/common/bot.py) | `TheBot` — platform-agnostic bot API |
-| [`internal/bot/common/handlers/`](../../internal/bot/common/handlers/) | All 21+ handler implementations (incl. `DivinationHandler` for `/taro` & `/runes`, plus base/manager/module_loader, tests, examples, and 15+ handlers) |
+  | [`internal/bot/common/handlers/`](../../internal/bot/common/handlers/) | All 20+ handler implementations (incl. `DivinationHandler` for `/taro` & `/runes`, `SandboxHandler` for code execution, plus base/manager/module_loader, tests, examples, and 15+ functional handlers) |
 | [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) | `BaseBotHandler` — handler base class |
 | [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) | `HandlersManager` — handler chain |
 | [`internal/bot/telegram/application.py`](../../internal/bot/telegram/application.py) | Telegram-specific bot application |
@@ -240,11 +290,14 @@ make test
 | [`lib/markdown/parser.py`](../../lib/markdown/parser.py) | Markdown → MarkdownV2 parser |
 | [`lib/max_bot/client.py`](../../lib/max_bot/client.py) | Max Messenger HTTP client |
 | [`lib/openweathermap/client.py`](../../lib/openweathermap/client.py) | OpenWeatherMap API client |
+| [`lib/proxy/__init__.py`](../../lib/proxy/__init__.py) | Proxy resolution package — `ProxyConfig` class, `ProxyHelper` singleton, `ProxyType` StrEnum, `ProxyKwargs` TypedDict |
 | [`lib/yandex_search/`](../../lib/yandex_search/) | Yandex Search API client |
 | [`lib/geocode_maps/client.py`](../../lib/geocode_maps/client.py) | Geocode Maps API client |
 | [`lib/stats/`](../../lib/stats/) | Statistics collection library (`StatsStorage`, `NullStatsStorage`, `GLOBAL_CONSUMER_ID`) |
 | [`lib/ext_modules/`](../../lib/ext_modules/) | External custom modules (Grabliarium etc.) |
 | [`lib/divination/`](../../lib/divination/) | Tarot & runes pure-logic library (decks, layouts, drawing); used by `DivinationHandler` |
+| [`lib/sandbox/`](../../lib/sandbox/) | Sandboxed code execution (Docker + Python); `SandboxManager` singleton |
+| [`lib/utils/`](../../lib/utils/) | Utilities: `TTLDict` (TTL-enabled dict), `getAgeInSecs`, `parseDelay`, `jsonDumps`, `packDict`/`unpackDict` |
 | [`lib/logging_utils.py`](../../lib/logging_utils.py) | `initLogging()` helper |
 
 ---
@@ -256,11 +309,14 @@ make test
 - [`database.md`](database.md) — DB operations, migrations, schema, multi-source routing
 - [`services.md`](services.md) — CacheService, QueueService, LLMService, StorageService, RateLimiter
 - [`libraries.md`](libraries.md) — lib/ai, lib/cache, lib/markdown, lib/max_bot and more
+- [`sandbox.md`](sandbox.md) — Sandbox coding patterns, configuration, and anti-patterns
 - [`configuration.md`](configuration.md) — TOML config sections, ConfigManager methods
 - [`testing.md`](testing.md) — Test fixtures, pytest patterns, golden data framework
 - [`tasks.md`](tasks.md) — Step-by-step task workflows, anti-patterns
+- [`teamlead-memory.md`](teamlead-memory.md) — Durable cross-task memory, repo gotchas, workflow lessons
+- [`memories/index.md`](memories/index.md) — Task-specific memory index for completed subsystems/features
 
 ---
 
-*This guide is auto-maintained and should be updated whenever significant architectural changes are made*  
-*Last updated: 2026-05-14*
+*This guide is auto-maintained and should be updated whenever significant architectural changes are made*
+*Last updated: 2026-05-23*

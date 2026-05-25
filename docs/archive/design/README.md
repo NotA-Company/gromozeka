@@ -20,7 +20,7 @@ This directory contains **historical design documents** and Architecture Decisio
 | [`bot-handlers-refactoring-v1.md`](bot-handlers-refactoring-v1.md) | 🔴 Historical | Historical refactoring plan — handler architecture has since evolved |
 | [`geocode-maps-client-design-v0.md`](geocode-maps-client-design-v0.md) | 🟡 Reference-able | Implementation likely followed this design; verify against [`lib/geocode_maps/`](../../../lib/geocode_maps/) for actual current implementation |
 | [`golden-data-testing-system-v0.md`](golden-data-testing-system-v0.md) | 🔴 Historical | Early golden-data testing design — see [`docs/llm/testing.md`](../../llm/testing.md) for current testing guidance |
-| [`golden-data-testing-system-v1.md`](golden-data-testing-system-v1.md) | 🟡 Partially Historical | v1 design — may partially reflect current golden testing setup in [`tests/lib_ai/golden/`](../../../tests/lib_ai/golden/) |
+| [`golden-data-testing-system-v1.md`](golden-data-testing-system-v1.md) | 🟡 Partially Historical | v1 design — may partially reflect current golden testing setup in `tests/lib/ai/golden/` |
 
 ## Common Staleness Patterns
 

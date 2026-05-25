@@ -75,6 +75,7 @@ from .media import MediaHandler
 from .message_preprocessor import MessagePreprocessorHandler
 from .react_on_user import ReactOnUserMessageHandler
 from .resender import ResenderHandler
+from .sandbox import SandboxHandler
 from .spam import SpamHandler
 from .summarization import SummarizationHandler
 from .topic_manager import TopicManagerHandler
@@ -514,6 +515,13 @@ class HandlersManager(CommandHandlerGetterInterface):
             self.handlers.append(
                 (
                     DivinationHandler(configManager=configManager, database=database, botProvider=botProvider),
+                    HandlerParallelism.PARALLEL,
+                )
+            )
+        if self.configManager.get("sandbox", {}).get("enabled", False):
+            self.handlers.append(
+                (
+                    SandboxHandler(configManager=configManager, database=database, botProvider=botProvider),
                     HandlerParallelism.PARALLEL,
                 )
             )

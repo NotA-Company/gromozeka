@@ -18,6 +18,8 @@
 8. [lib/geocode_maps — Geocoding](#8-libgeocode_maps--geocoding)
 9. [lib/stats — Statistics Collection](#9-libstats--statistics-collection)
 10. [lib/divination — Tarot & Runes Logic](#10-libdivination--tarot--runes-logic)
+11. [lib/sandbox — Sandboxed Code Execution](#11-libsandbox--sandboxed-code-execution)
+12. [lib/utils — Utilities & TTLDict](#12-libutils--utilities--ttldict)
 
 ---
 
@@ -195,6 +197,34 @@ the image generation methods follow the same pattern:
 This split allows the public API to provide consistent behavior (fallback,
 JSON logging) while keeping provider implementations simple.
 
+**Image generation transports:** OpenAI-compatible providers support two
+image-generation transports:
+
+1. **Chat-completions path** (default): Uses `chat.completions.create()` with
+   `modalities = ["image", "text"]`. The image is returned in
+   `response.choices[0].message.images`. This is the path used when
+   `image_generation_api` is not set or set to any value other than
+   `"openai-images"`.
+
+2. **OpenAI Images API path**: Uses `client.images.generate()` directly.
+   Enabled by setting `image_generation_api = "openai-images"` in model config.
+   This path calls `_generateImageViaImagesApi()` which extracts a plain-text
+   prompt from messages and sends it to the Images API.
+
+**Hook methods for image generation:**
+
+| Method | Class | Purpose |
+|--------|-------|---------|
+| `_getImageModelId()` | `BasicOpenAIModel` | Returns model ID for Images API. Override to use a different ID (e.g., YC uses `art://...`). |
+| `_getImageRequestOptions()` | `BasicOpenAIModel` | Returns whitelisted options from `image_options` config. Prevents arbitrary config injection. |
+| `_getClientParams()` | `BasicOpenAIProvider` | Returns extra params for OpenAI client init (applied to all requests). YC overrides it to return `{"project": folderId}`, which is required by YC's Images API and also present on text calls via the `OpenAI-Project` header. |
+
+**Yandex Cloud OpenAI image models:** YC uses a distinct URI scheme for image
+models: `art://{folderId}/{modelId}/{modelVersion}` (vs. `gpt://...` for text).
+The `_getImageModelId()` override in `YcOpenaiModel` constructs this URI.
+Additionally, `_getClientParams()` in `YcOpenaiProvider` adds the `project`
+parameter required by YC's Images API endpoint.
+
 **Schema requirements (strict mode).** Most providers forward your
 schema to OpenAI's `response_format = {"type": "json_schema",
 "json_schema": {"strict": true, ...}}` mode. To be portable
@@ -254,7 +284,9 @@ from lib.ai import ModelStructuredResult
 2. Class: `MyProvider(AbstractLLMProvider)`
 3. Must implement: `_createModel(modelConfig) -> AbstractModel`
 4. Register in `lib/ai/manager.py:40` — add to `providerTypes` dict: `{"my-provider": MyProvider}`
-5. Tests in `lib/ai/providers/test_my_provider.py`
+5. Tests in `tests/lib/ai/providers/test_my_provider.py`
+
+**Proxy support:** `LLMManager.__init__()` accepts an optional `proxyConfig` keyword argument containing the global `[proxy]` config dict. This is passed through to `BasicOpenAIProvider.__init__()`, which creates a `ProxyConfig` via `ProxyConfig.fromServiceConfig()` and calls `ProxyConfig.toKwargs()` in `_initClient()` to configure a custom `httpx.AsyncClient` for the OpenAI SDK. Image download (`_generateImageViaImagesApi`) and OpenRouter `listRemoteModels()` also resolve proxy.
 
 ---
 
@@ -336,7 +368,7 @@ from lib.markdown.parser import markdownToMarkdownV2
 result: str = markdownToMarkdownV2(text: str) -> str
 ```
 
-**Tests:** `lib/markdown/test/` — run with `make test`
+**Tests:** `tests/lib/markdown/` — run with `make test`
 
 ---
 
@@ -364,6 +396,8 @@ from lib.max_bot import MaxBotClient, MAX_MESSAGE_LENGTH
 
 **IMPORTANT gotcha — Max platform sticker stubs:**
 Animated stickers have stub URLs, not real images. Always check `url.startswith(...)` before processing
+
+**Proxy support:** `MaxBotClient.__init__()` accepts an optional `proxyKwargs` keyword argument (dict to spread into `httpx.AsyncClient`). When proxy is enabled for the bot, `MaxBotApplication._runPolling()` creates a `ProxyConfig` via `ProxyConfig.fromServiceConfig()` and passes the resulting kwargs from `ProxyConfig.toKwargs()`.
 
 ---
 
@@ -407,7 +441,9 @@ weather = await client.getCurrentWeather(lat=55.75, lon=37.62)
 geocoding = await client.geocode(cityName="Moscow")
 ```
 
-**Tests:** Uses golden data framework in `lib/openweathermap/test_weather_client.py`
+**Tests:** Uses golden data framework in `tests/lib/openweathermap/test_weather_client.py`
+
+**Proxy support:** `OpenWeatherMapClient.__init__()` accepts an optional `proxyKwargs` keyword argument (dict to spread into `httpx.AsyncClient`). The `WeatherHandler` creates a `ProxyConfig` via `ProxyConfig.fromServiceConfig(openWeatherMapConfig)`, calls `ProxyConfig.getCombined()` to merge with the global config, then `ProxyConfig.toKwargs()` and passes the result to the client constructor.
 
 ---
 
@@ -426,6 +462,8 @@ result = await client.reverseGeocode(lat=55.75, lon=37.62)
 ```
 
 **Config:** Configured via `[geocode-maps]` TOML section, accessed via `configManager.getGeocodeMapsConfig()`
+
+**Proxy support:** `GeocodeMapsClient.__init__()` accepts an optional `proxyKwargs` keyword argument (dict to spread into `httpx.AsyncClient`). The `WeatherHandler` creates a `ProxyConfig` via `ProxyConfig.fromServiceConfig(geocodeMapsConfig)`, calls `ProxyConfig.getCombined()` to merge with the global config, then `ProxyConfig.toKwargs()` and passes the result to the client constructor.
 
 ---
 
@@ -526,6 +564,151 @@ reading = drawSymbols(system, layout, question="What about my career?")
 
 ---
 
+## 11. `lib/sandbox/` — Sandboxed Code Execution
+
+Safely execute untrusted Python code in Docker containers. Provides a
+singleton `SandboxManager` entry point that composes a backend (Docker),
+runtimes (Python), metadata store (filesystem), and lock registry.
+
+- **Coding patterns & constraints:** [`sandbox.md`](sandbox.md)
+- **Design:** [`docs/plans/python-sandboxing-v1.md`](../plans/python-sandboxing-v1.md)
+- **Integration:** [`docs/plans/python-sandboxing-v1-integration.md`](../plans/python-sandboxing-v1-integration.md)
+
+Key modules:
+
+| Module | Purpose |
+|--------|---------|
+| [`manager.py`](../../lib/sandbox/manager.py) | `SandboxManager` singleton — sessions, runs, files, libraries, GC, health, recovery |
+| [`types.py`](../../lib/sandbox/types.py) | Public dataclasses (`RunResult`, `SessionInfo`, `ResourceLimits`, etc.) |
+| [`enums.py`](../../lib/sandbox/enums.py) | `RuntimeName`, `BackendName` |
+| [`config.py`](../../lib/sandbox/config.py) | Configuration dataclasses (`SandboxConfig`, `StorageConfig`, etc.) |
+| [`errors.py`](../../lib/sandbox/errors.py) | Exception hierarchy (`SandboxError` → `ConfigError`, `BackendError`, `SessionError`, `SandboxRuntimeError`, `RunError`, `LibraryError`, `FileError`, `SandboxBusy`, `SessionBusy`, `SessionDropped`) |
+| [`locks.py`](../../lib/sandbox/locks.py) | Per-session mutex registry with bounded waiters and force-cancel, global run semaphore, pool flock |
+| [`storage.py`](../../lib/sandbox/storage.py) | Workspace path resolution, atomic JSON writes, directory layout |
+| [`gc.py`](../../lib/sandbox/gc.py) | Garbage collector for expired sessions, orphan workspaces, run records |
+| [`backends/docker.py`](../../lib/sandbox/backends/docker.py) | Docker backend via `aiodocker` |
+| [`runtimes/python/runtime.py`](../../lib/sandbox/runtimes/python/runtime.py) | Python runtime with `timeout` wrapper and artifact detection |
+| [`metadata/filesystem.py`](../../lib/sandbox/metadata/filesystem.py) | Filesystem-backed metadata store (JSON) |
+
+**Import:**
+```python
+from lib.sandbox import SandboxManager
+from lib.sandbox.config import SandboxConfig, StorageConfig
+from lib.sandbox.types import RunResult, SessionInfo, ResourceLimits
+from lib.sandbox.enums import RuntimeName, BackendName
+```
+
+**Quick start:**
+```python
+from lib.sandbox import SandboxManager, SandboxConfig, StorageConfig
+
+config = SandboxConfig(storage=StorageConfig(rootDir="/var/lib/gromozeka/sandbox"))
+SandboxManager.injectConfig(config)
+manager = SandboxManager.getInstance()
+
+session = await manager.createSession("my-session")
+result = await manager.runCode(session.sessionId, "print(2 + 2)")
+print(result.exitCode)  # 0
+
+await manager.shutdown()
+```
+
+See [`sandbox.md`](sandbox.md) for the complete coding patterns, configuration rules, and anti-patterns. Note that package installation is administered via admin-only operations; see the security considerations in [`sandbox.md`](sandbox.md#security-considerations) for details on how arbitrary package spec injection is prevented.
+
+---
+
+## 12. `lib/utils` — Utilities & TTLDict
+
+General-purpose utilities and a TTL-enabled dictionary.
+
+**Import:**
+```python
+from lib.utils import TTLDict, getAgeInSecs, parseDelay, jsonDumps, packDict, unpackDict
+```
+
+**Key classes:**
+
+| Class | File | Purpose |
+|---|---|---|
+| [`TTLDict`](../../lib/utils/ttl_dict.py) | `lib/utils/ttl_dict.py` | Dict subclass with per-entry TTL and automatic expiration |
+
+**TTLDict usage:**
+```python
+from lib.utils import TTLDict
+
+d = TTLDict[str, int]()
+d.setDefaultTTL(60)       # Default TTL: 60 seconds
+d.set("key1", 1, ttl=120) # Custom TTL: 120 seconds
+d.set("key2", 2)          # Uses default TTL
+d.set("key3", 3, ttl=None) # Never expires
+d.gc(force=True)          # Remove expired entries
+```
+
+**TTLDict key behaviors:**
+
+- `set(key, value, ttl=...)` — `ttl` defaults to `defaultTTL`; passing `ttl=None` explicitly clears any previous expiration, making the entry never expire. This is important: rewriting an entry that previously had a TTL with `ttl=None` removes the expiration, preventing stale entries from being collected.
+- `__setitem__` delegates to `set()` with default TTL.
+- `gc(force=False)` only runs if `gcTimeout` seconds have passed since the last GC; `gc(force=True)` always runs.
+- Thread-safe via `RLock`.
+
+**Other utilities:**
+
+| Function | Purpose |
+|---|---|
+| `getAgeInSecs(dt)` | Seconds elapsed since a `datetime` |
+| `parseDelay(s)` | Parse human delay strings (`"1d2h30m"`) into seconds |
+| `jsonDumps(obj, **kw)` | JSON serialization with datetime support |
+| `packDict(d)` / `unpackDict(d)` | Dict serialization helpers |
+| `load_dotenv(path)` | Load `.env` files into `os.environ` |
+
+---
+
+## 13. `lib/proxy` — Proxy Resolution
+
+Class-based proxy resolution package. Lives in `lib/` with no imports from `internal/`.
+
+**Import:**
+```python
+from lib.proxy import ProxyConfig, ProxyHelper, ProxyType, ProxyKwargs
+```
+
+**Types:**
+
+| Type | Purpose |
+|---|---|
+| `ProxyType` | `StrEnum("http", "socks5", "none")` — supported proxy protocol types |
+| `ProxyKwargs(TypedDict)` | Keyword arguments for `httpx.AsyncClient` — either `proxy: str` or `transport: AsyncProxyTransport` |
+
+**Classes:**
+
+| Class | Purpose |
+|---|---|
+| `ProxyConfig` | Immutable proxy configuration (`__slots__`). Created via `fromServiceConfig()` or `fromDict()`. Methods: `getCombined()` (merge with global), `getProxyURL(maskPassword=False)` (build URL), `toKwargs()` (httpx kwargs). |
+| `ProxyHelper` | Singleton storing the global proxy config. `setGlobalProxyConfig()` called once from `main.py`; `getGlobalProxyConfig()` used internally by `ProxyConfig.getCombined()`. |
+
+**Usage pattern in service constructors:**
+```python
+from lib.proxy import ProxyConfig
+
+proxyConfig = ProxyConfig.fromServiceConfig(serviceConfig)
+proxyKwargs = proxyConfig.toKwargs()
+proxyUrl = proxyConfig.getProxyURL(maskPassword=True)
+if proxyUrl:
+    logger.info(f"Proxy enabled: {proxyUrl}")
+
+# Then in HTTP calls:
+async with httpx.AsyncClient(**proxyKwargs, timeout=30) as client:
+    ...
+```
+
+**Per-service override semantics (`fromServiceConfig`):** When a service sets `use-proxy = true` with a `[service.proxy]` sub-section, `fromServiceConfig` delegates to `fromDict` which reads `enabled` from the sub-dict via `data.get("enabled") is True`. If the sub-section omits `enabled: true`, the resulting ProxyConfig has `enabled=False`, and `getCombined()` treats it as "inherit from global" — the per-service override fields (`type`, `address`, etc.) are silently ignored. Always include `enabled: true` in the proxy sub-section when you intend to override the global config for a specific service. This is intentional behavior.
+
+**Password masking in `__repr__` / `__str__`:** Non-empty passwords render as `'***'` in `repr()` and `str()` output. This prevents accidental credential leaks through logging/debugging while keeping other fields visible. When password is `None` or an empty string, it renders verbatim. This is separate from `getProxyURL(maskPassword=True)` which replaces the password with `"REDACTED"` in the built URL.
+
+**SQLink proxy — lazy resolution:** `SQLinkProvider.__init__` accepts `proxy` and `use-proxy` inside `parameters` (see `configuration.md`) and stores a `ProxyConfig` object. The proxy URL is not resolved at construction time — resolution happens in `connect()` via `self._proxy.getProxyURL()`. This ensures the global proxy config (set by `main.py`) is available at resolution time.
+
+---
+
 ## See Also
 
 - [`index.md`](index.md) — Project overview, lib/ directory map
@@ -536,5 +719,5 @@ reading = drawSymbols(system, layout, question="What about my career?")
 
 ---
 
-*This guide is auto-maintained and should be updated whenever library APIs change*  
-*Last updated: 2026-05-14*
+*This guide is auto-maintained and should be updated whenever library APIs change*
+*Last updated: 2026-05-23*

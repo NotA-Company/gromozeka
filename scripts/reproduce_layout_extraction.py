@@ -71,6 +71,7 @@ from internal.services.cache import CacheService  # noqa: E402
 from internal.services.llm.service import LLMService  # noqa: E402
 from lib.ai import ModelMessage  # noqa: E402
 from lib.ai.manager import LLMManager  # noqa: E402
+from lib.proxy import ProxyHelper  # noqa: E402
 from lib.rate_limiter import RateLimiterManager  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -304,7 +305,12 @@ async def main() -> int:
         dotEnvFile=args.dotenv_file,
     )
 
-    db = Database(configManager.getDatabaseConfig())  # pyright: ignore[reportArgumentType]
+    # Store and register global proxy config for all services
+    ProxyHelper.getInstance().setGlobalProxyConfig(configManager.getProxyConfig())
+
+    db = Database(
+        configManager.getDatabaseConfig(),  # pyright: ignore[reportArgumentType]
+    )
     llmManager = LLMManager(configManager.getModelsConfig())
 
     cache = CacheService.getInstance()

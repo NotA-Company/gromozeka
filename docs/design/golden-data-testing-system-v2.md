@@ -2,7 +2,7 @@
 
 **Created:** 2025-11-02
 **Status:** ✅ Implemented (in lib/aurumentation)
-**Implementation Location:** `lib/aurumentation/` — see golden data directories: `tests/lib_ai/golden/`, `tests/openweathermap/golden/`, `tests/yandex_search/golden/`, `tests/geocode_maps/golden/`, `tests/divination/golden/`
+**Implementation Location:** `lib/aurumentation/` — see golden data directories: `tests/lib/ai/golden/`, `tests/lib/openweathermap/golden/`, `tests/lib/yandex_search/golden/`, `tests/lib/geocode_maps/golden/`, `tests/lib/divination/golden/`
 **Priority:** High
 **Author:** Architect Mode
 **Supersedes:** golden-data-testing-system-v1.md
@@ -24,7 +24,7 @@ The system is currently in production use for:
 - Yandex Search client testing
 - Geocoding service testing
 
-For current usage examples, see files in `tests/lib_ai/test_*.py` and the per-service golden directories listed above.
+For current usage examples, see files in `tests/lib/ai/test_*.py` and the per-service golden directories listed above.
 
 ## Executive Summary
 

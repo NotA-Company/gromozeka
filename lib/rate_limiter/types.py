@@ -13,7 +13,7 @@ The module defines:
 import sys
 from typing import Any, Dict, NotRequired
 
-if sys.version_info >= (3, 14):
+if sys.version_info >= (3, 15):
     from typing import TypedDict
 else:
     from typing_extensions import TypedDict

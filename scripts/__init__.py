@@ -11,4 +11,7 @@ Scripts in this package:
         structured-output (JSON Schema) support and report which models
         are ready to have ``support_structured_output`` flipped to ``true``
         in the config files.
+    sandbox_bootstrap.py — Install the starter Python library set into
+        the sandbox lib pool. Run once on a fresh deployment or whenever
+        the starter list changes.
 """

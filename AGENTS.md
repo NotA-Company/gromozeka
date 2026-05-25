@@ -12,8 +12,8 @@ captures only what an agent would likely get wrong without help.
   (see "SQL portability" below). Custom migrations live under
   [`internal/database/migrations/versions/`](internal/database/migrations/versions/).
 - Multi-platform bot: Telegram **and** Max Messenger. Mode picked by config
-  (`bot.mode`), wired in [`main.py:54`](main.py:54).
-- Entry point: [`main.py`](main.py:1) → `GromozekBot` → `TelegramBotApplication`
+  (`bot.mode`), wired in [`main.py`](main.py).
+- Entry point: [`main.py`](main.py) → `GromozekBot` → `TelegramBotApplication`
   or `MaxBotApplication`.
 
 ## Run / dev commands (use these literally)
@@ -38,14 +38,50 @@ These come from [`docs/llm/index.md`](docs/llm/index.md):
 - **Type hints required** on all function/method params and returns; on
   locals when type isn't obvious.
 - Run Python via `./venv/bin/python3` — not `python` / `python3`.
+- **`requirements.txt` is a frozen/locked file.** Never add non-pinned dependency
+  entries there. When adding a new direct dependency, add it to
+  ``requirements.direct.txt`` (under the ``# Runtime`` section) with exact version pin. ``requirements.txt`` is regenerated from ``requirements.direct.txt`` via ``freeze-requirements``; do not edit it by hand.
 - Do **not** `cd` into subdirectories; run everything from repo root.
 - Do **not** use `python -c '...'` for ad-hoc tests — write a script file.
-- Do **not** add imports inside of methods or functions. All imports should be
-  at the top of the file. Import inside methods is only acceptable when there's
-  a cyclic dependency that makes it unavoidable. When adding imports to the top,
-  run `make format` to properly organize them.
+- Do **not** add imports inside of methods or functions. All imports must be
+  at the top of the file. For optional dependencies, use a module-level
+  ``try/except ImportError`` with an ``_AVAILABLE`` boolean flag:
+
+  ```python
+  try:
+      from httpx_socks import AsyncProxyTransport
+      _HTTPX_SOCKS_AVAILABLE = True
+  except ImportError:
+      _HTTPX_SOCKS_AVAILABLE = False
+  ```
+
+  Note: do NOT use PEP 695 ``type`` aliases (``type AsyncProxyTransport = NoneType``)
+  for conditional-import fallbacks. Pyright cannot reconcile a union of a runtime
+  class and a ``TypeAliasType``. Do NOT assign ``None`` or define a dummy stub
+  class in the except branch — leave the block empty aside from the ``_AVAILABLE``
+  flag. Pyright follows the ``try`` branch for type resolution, and the
+  ``_AVAILABLE`` guard prevents runtime access to the undefined name.
+
+  Imports inside methods are only acceptable when a cyclic dependency makes
+  it unavoidable. When adding imports to the top, run ``make format`` to
+  properly organise them.
 - **No pydantic.** The repo deliberately avoids it. Use raw dicts +
   hand-rolled type-hinted classes of TypedDict.
+- **Prefer class-based designs over free-function collections.** When a feature
+  has related operations that share state or compose together, put them in a
+  cohesive class with methods rather than a set of module-level functions.
+  Apply project patterns (StrEnum, TypedDict, singleton) from the start.
+- **String enums: use `StrEnum`** (from `enum`), not `Literal["a", "b"]`.
+  `StrEnum` provides named constants, string serialisation, and is
+  self-documenting. Example:
+
+  ```python
+  from enum import StrEnum
+
+  class ProxyType(StrEnum):
+      HTTP = "http"
+      SOCKS5 = "socks5"
+  ```
 - **Regression tests on every bug fix.** When fixing a bug — whether in production
   code, test code, or config — write a regression test that FAILS before the fix
   and PASSES after it. Include tests for edge cases that the bug touched (e.g.,
@@ -68,8 +104,10 @@ nothing is broken. This is mandatory - see docs/llm/index.md §3.5.
 
 ## Tests
 
-- `pyproject.toml` sets `testpaths = ["tests", "lib", "internal"]` —
-  collocated tests under `lib/` and `internal/` are real and get run.
+- `pyproject.toml` sets `testpaths = ["tests", "lib", "internal"]`, but all test files now live exclusively under `tests/` — `lib/` and `internal/` have no collocated tests. Test directories mirror source structure:
+  - Tests for `lib/X/Y.py` go in `tests/lib/X/test_Y.py`.
+  - Tests for `internal/X/Y.py` go in `tests/X/test_Y.py` (strip `internal/`).
+  - **No new collocated tests in `lib/` or `internal/`.** All new test files MUST go under `tests/`.
 - `asyncio_mode = "auto"` → write `async def test_…` with no decorator.
 - Custom markers exist (`slow`, `performance`, `benchmark`, `memory`,
   `stress`, `profile`); none are auto-skipped, deselect with `-m "not slow"`.
@@ -79,7 +117,7 @@ nothing is broken. This is mandatory - see docs/llm/index.md §3.5.
 - Singletons (`LLMService`, `CacheService`, `QueueService`, `StorageService`,
   `RateLimiterManager`) leak state across tests; reset `_instance = None` in
   fixtures or rely on the existing autouse reset.
-- Golden-data API tests in `tests/fixtures/` — don't hit real APIs.
+- Golden-data API tests live in per-service `golden/` subdirectories under `tests/lib/` — don't hit real APIs.
 
 ## Architecture cheatsheet
 
@@ -98,7 +136,8 @@ Layout (see [`docs/llm/index.md`](docs/llm/index.md) §4 for line-level map):
   `ls -1 internal/database/migrations/versions/ | grep migration_ | sort -V | tail -1`.
 - [`lib/`](lib/) — reusable, no bot deps. `lib/ai/` (provider registry in
   [`lib/ai/manager.py`](lib/ai/manager.py)), `lib/rate_limiter/`,
-  `lib/max_bot/`, `lib/markdown/`, `lib/bayes_filter/`, etc.
+  `lib/max_bot/`, `lib/markdown/`, `lib/bayes_filter/`,
+  `lib/sandbox/` (sandboxed code execution in Docker), etc.
 - [`lib/ext_modules/`](lib/ext_modules/) — vendored/extension subpackages
   (e.g. `grabliarium`) with their own `pyproject.toml`/tests. Treated
   separately by the formatter.
@@ -190,11 +229,6 @@ TOML, hierarchical, merged recursively. Loaded by
 - Singleton init uses a `hasattr(self, 'initialized')` guard — don't
   re-implement that pattern, just call `getInstance()`.
 
-## Documentation Maintenance
-
-See [`docs/documentation-review-process.md`](docs/documentation-review-process.md) for the systematic
-process of reviewing and maintaining documentation.
-
 ## Existing instruction sources (do not duplicate, prefer linking)
 
 - [`docs/llm/index.md`](docs/llm/index.md) — canonical agent guide and index
@@ -203,6 +237,8 @@ process of reviewing and maintaining documentation.
 - [`docs/database-schema.md`](docs/database-schema.md) and
   [`docs/database-schema-llm.md`](docs/database-schema-llm.md) — keep both in
   sync when changing schema
+- [`docs/documentation-review-process.md`](docs/documentation-review-process.md) — systematic
+  process for reviewing and maintaining documentation
 - [`.agents/skills/`](.agents/skills/) — loadable task-specific skills. Load
   the matching one via the `skill` tool when its trigger applies:
   - [`read-project-docs`](.agents/skills/read-project-docs/SKILL.md) — onboarding / context-building before non-trivial work

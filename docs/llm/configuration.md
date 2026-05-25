@@ -60,6 +60,9 @@
 |---|---|---|
 | `default` | str | Default provider name |
 | `providers.<name>.provider` | str | Provider type: `"sqlite3"` or `"sqlink"` (selectable); `"mysql"` and `"postgresql"` exist but are not yet selectable |
+| `providers.<name>.parameters.use-proxy` | bool | Enable proxy routing for this provider (sqlink only; requires `[proxy].enabled = true`) |
+| `providers.<name>.parameters.proxy.type` | str | Proxy protocol override for this provider: `"http"` or `"socks5"` |
+| `providers.<name>.parameters.proxy.address` | str | Proxy address override for this provider |
 | `providers.<name>.parameters.dbPath` | str | Database file path (SQLite providers) |
 | `providers.<name>.parameters.readOnly` | bool | Read-only flag |
 | `providers.<name>.parameters.timeout` | int | Connection timeout (seconds) |
@@ -121,6 +124,28 @@ timeout = 10
 
 **Note:** Database configuration uses `providers` (not `sources`) for provider abstraction with `provider = "sqlite3"` or `"sqlink"`. MySQL and PostgreSQL providers exist in the codebase but are not selectable yet. See [`database.md`](database.md) for details on multi-source routing and repository usage.
 
+**Proxy support for sqlink providers:** sqlink uses HTTP/HTTPS internally and supports proxy routing. Enable it with `use-proxy = true` under `[database.providers.<name>.parameters]` (requires `[proxy].enabled = true` globally). Optionally override the global proxy with a `[database.providers.<name>.parameters.proxy]` sub-table.
+
+**IMPORTANT:** The `use-proxy` and `proxy` keys for sqlink must be nested under `parameters`, not directly under the provider block. `getSqlProvider()` extracts `config["parameters"]` and forwards it to the provider constructor. Keys at the provider-block level are ignored. If overriding the global proxy with a per-provider `[database.providers.<name>.parameters.proxy]` sub-table, include `enabled = true` inside the sub-table for the override to take effect (see proxy task memory for `fromServiceConfig` semantics).
+
+```toml
+# Example: sqlink provider with proxy
+[database.providers.archive]
+provider = "sqlink"
+
+[database.providers.archive.parameters]
+url = "https://sqlink.example.com"
+user = "bot"
+password = "${SQLINK_PASSWORD}"
+database = "archive"
+timeout = 30
+keepConnection = true
+use-proxy = true
+# [database.providers.archive.parameters.proxy]
+# type = "http"
+# address = "${DB_PROXY_ADDRESS}"
+```
+
 ### `[models]`
 
 ```toml
@@ -149,6 +174,76 @@ enabled = true
 - `"api_key"` — uses `api_key` from config or `YC_API_KEY` env var
 - `"iam_token"` — uses `iam_token` from config or `YC_IAM_TOKEN` env var
 - `"yc_cli"` — uses `yc` CLI (requires `yc_profile` for non-default profiles)
+
+**Model configuration keys:**
+
+| Key | Type | Default | Purpose |
+|-----|------|---------|---------|
+| `provider` | str | required | Provider name from `[models.providers]` |
+| `model_id` | str | required | Model identifier for API calls |
+| `model_version` | str | `"latest"` | Model version string |
+| `temperature` | float | required | Sampling temperature (0.0–2.0) |
+| `context` | int | required | Max context window in tokens |
+| `tier` | str | `"free"` | Access tier for rate limiting |
+| `enabled` | bool | `true` | Whether model is available |
+| `support_tools` | bool | `false` | Enable tool/function calling |
+| `support_text` | bool | `true` | Enable text generation |
+| `support_images` | bool | `false` | Enable image generation |
+| `support_structured_output` | bool | `false` | Enable JSON schema output |
+| `image_generation_api` | str | unset | Image transport: `"openai-images"` for Images API, unset for chat-completions |
+| `image_options` | table | `{}` | Whitelisted image generation options |
+
+**Image generation configuration:**
+
+The `image_generation_api` key selects the transport for image generation:
+
+| Value | Transport | Description |
+|-------|-----------|-------------|
+| unset or any other | Chat-completions | Uses `chat.completions.create()` with `modalities = ["image", "text"]` |
+| `"openai-images"` | OpenAI Images API | Uses `client.images.generate()` directly |
+
+**Provider support:** Any OpenAI-compatible provider (any ``BasicOpenAIModel``
+subclass) can use ``image_generation_api = "openai-images"`` by setting it in the
+model config. Providers that don't set it continue using the chat-completions
+image path by default.
+
+When `image_generation_api = "openai-images"`, the `image_options` table provides
+model-level defaults for image requests. Only whitelisted keys are forwarded:
+
+| Key | Type | Example | Purpose |
+|-----|------|---------|---------|
+| `size` | str | `"1024x1024"` | Image dimensions |
+| `quality` | str | `"hd"` | Image quality level |
+| `output_format` | str | `"png"` | Output format: `"png"`, `"jpeg"`, `"webp"` |
+| `background` | str | `"transparent"` | Background type |
+| `moderation` | str | `"low"` | Content moderation level |
+| `n` | int | `1` | Number of images to generate |
+| `response_format` | str | `"b64_json"` | Response format |
+| `user` | str | `"user-123"` | User identifier for tracking |
+
+**Example — Yandex Cloud image model:**
+```toml
+[models.models."aliceai-image-art"]
+provider                 = "yc-openai"
+model_id                 = "aliceai-image-art-3.0"
+model_version            = "latest"
+temperature              = 0.2
+context                  = 500
+support_tools            = false
+support_text             = false
+support_images           = true
+support_structured_output = false
+image_generation_api     = "openai-images"
+tier                     = "paid"
+
+[models.models."aliceai-image-art".image_options]
+size           = "1024x1024"
+output_format  = "png"
+```
+
+**Security note:** The `image_options` table is whitelisted to prevent arbitrary
+config keys from being forwarded to the API. Only the keys listed above are
+recognized; unknown keys are silently ignored.
 
 ### `[ratelimiter]`
 
@@ -301,6 +396,174 @@ Discovery-structure-template placeholders: `{description}` (from web search resu
 
 ---
 
+### `[proxy]`
+
+Global proxy configuration for routing outbound HTTP traffic through an HTTP or SOCKS5 proxy. Defaults live in [`configs/00-defaults/proxy.toml`](../../configs/00-defaults/proxy.toml).
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `enabled` | bool | `false` | Master kill-switch. When `false`, NO service uses proxy regardless of per-service `use-proxy` flags. |
+| `type` | `"http"` \| `"socks5"` | `"http"` | Proxy protocol type. |
+| `address` | str | `""` | Full proxy URL including scheme and port (e.g., `"http://proxy:8080"`, `"socks5://proxy:1080"`). Use `${ENV_VAR}` substitution for secrets. |
+| `user` | str | `""` | Username for proxy authentication. Leave empty if no auth. Use `${ENV_VAR}` substitution. |
+| `password` | str | `""` | Password for proxy authentication. Leave empty if no auth. Use `${ENV_VAR}` substitution. |
+
+**Resolution model:** The `[proxy]` section is a global default. Individual services opt in with `use-proxy = true` in their own config section and can override the global proxy with a `[<service>.proxy]` sub-table (with the same `type`, `address`, `user`, `password` keys). Resolution is handled by the `ProxyConfig` class in [`lib/proxy/__init__.py`](../../lib/proxy/__init__.py), using `ProxyConfig.fromServiceConfig()` for per-service resolution and `ProxyConfig.getCombined()` to merge with the global config. `ProxyHelper.getInstance().setGlobalProxyConfig()` is called once from `main.py` to store the global config.
+
+**Example — enable proxy for a specific service:**
+
+```toml
+# configs/local/proxy.toml
+[proxy]
+enabled = true
+type = "http"
+address = "${PROXY_ADDRESS}"
+user = "${PROXY_USER}"
+password = "${PROXY_PASSWORD}"
+
+# In the service's config (e.g., bot-defaults.toml or 00-config.toml):
+[yandex-search]
+enabled = true
+use-proxy = true          # Opt this service into the global proxy
+api-key = "${YANDEX_API_KEY}"
+```
+
+**Example — per-service override:**
+
+```toml
+[openweathermap]
+enabled = true
+use-proxy = true
+api-key = "${OWM_API_KEY}"
+
+[openweathermap.proxy]
+enabled = true              # REQUIRED: without this, the override is silently ignored
+type = "socks5"
+address = "${OWM_PROXY_ADDRESS}"
+user = ""
+password = ""
+```
+
+**When `enabled` is omitted from the `[service.proxy]` sub-section**, `ProxyConfig.fromServiceConfig()` produces a config with `enabled=False`, which `getCombined()` treats as "inherit from global." The per-service override fields (`type`, `address`, etc.) are ignored. Always include `enabled = true` when you intend to override the global proxy for a specific service.
+
+**Services that support proxy:** Telegram bot, Max Messenger bot, all OpenAI-compatible LLM providers, OpenRouter `listRemoteModels()`, image downloads, Yandex Search (including web-fetch), OpenWeatherMap, Geocode Maps, sqlink database providers.
+
+**Restart required:** Proxy config is loaded at startup. Changing it requires a bot restart.
+
+---
+
+### `[sandbox]`
+
+Sandboxed code execution configuration. Defaults live in [`configs/00-defaults/sandbox.toml`](../../configs/00-defaults/sandbox.toml). The handler is registered conditionally on `enabled = true` and per-chat gated by the `allow-sandbox` chat setting.
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `enabled` | bool | `false` | Master switch — operator must flip to register `SandboxHandler` |
+
+#### `[sandbox.storage]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `root-dir` | str | `"/var/lib/gromozeka/sandbox"` | Host-side root directory for sandbox workspaces and data |
+| `dir-mode` | str (octal) | `"0o700"` | Octal permission mode for created directories |
+| `file-mode` | str (octal) | `"0o600"` | Octal permission mode for created files |
+
+#### `[sandbox.backend]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `name` | str | `"docker"` | Execution backend (`"docker"` is the only backend currently) |
+
+#### `[sandbox.backend.docker]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `base-url` | str | `"unix:///var/run/docker.sock"` | Docker daemon socket URL or TCP address |
+| `image-pull-policy` | str | `"if-not-present"` | When to pull images: `"never"`, `"if-not-present"`, or `"always"` |
+
+#### `[sandbox.defaults]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `idle-ttl-minutes` | int | `30` | Minutes of inactivity before a session is eligible for GC |
+
+#### `[sandbox.limits]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `memory-mb` | int | `512` | Memory limit per container in megabytes |
+| `memory-swap-mb` | int | `512` | Swap memory limit in megabytes (same as `memory-mb` means no swap) |
+| `cpu-count` | float | `1.0` | CPU count limit per container |
+| `pids-limit` | int | `64` | Maximum number of PIDs inside the container |
+| `timeout-seconds` | int | `30` | Default run timeout in seconds |
+| `timeout-grace-seconds` | int | `5` | Grace period after timeout before killing the container |
+
+#### `[sandbox.security]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `user` | str | `"1000:1000"` | `uid:gid` for the container process |
+| `read-only-rootfs` | bool | `true` | Mount the container root filesystem as read-only |
+| `no-new-privileges` | bool | `true` | Prevent privilege escalation inside the container |
+| `drop-capabilities` | list[str] | `["ALL"]` | Linux capabilities to drop |
+| `privileged` | bool | `false` | Run the container in privileged mode (dangerous) |
+
+#### `[sandbox.concurrency]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `max-queued-runs-per-session` | int | `4` | Maximum queued runs per session before rejecting |
+| `max-concurrent-runs-global` | int | `8` | Maximum concurrent runs across all sessions |
+| `global-queue-wait-seconds` | int | `60` | Maximum seconds a run waits in the global queue |
+
+#### `[sandbox.gc]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `enabled` | bool | `true` | Enable the GC loop |
+| `orphan-container-retention-minutes` | int | `10` | Minutes to retain orphaned containers |
+| `orphan-workspace-retention-minutes` | int | `60` | Minutes to retain orphaned workspace directories |
+| `run-retention-minutes` | int | `1440` | Minutes to retain completed run records |
+
+#### `[sandbox.runtimes.python]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `run-image-tag` | str | `"gromozeka-sandbox-python:run"` | Docker image tag for code execution |
+| `install-image-tag` | str | `"gromozeka-sandbox-python:install"` | Docker image tag for library installation |
+| `run-dockerfile` | str | `"lib/sandbox/runtimes/python/Dockerfile"` | Path to the Dockerfile for the run image |
+| `install-dockerfile` | str | `"lib/sandbox/runtimes/python/Dockerfile.install"` | Path to the Dockerfile for the install image |
+| `lib-mount-path` | str | `"/sandbox/libs"` | Container-side path where the library pool is mounted |
+
+#### `[sandbox.runtimes.python.env]`
+
+Default environment variables injected into Python containers. Keys are variable names, values are strings.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `PYTHONUNBUFFERED` | `"1"` | Disable Python output buffering |
+| `PYTHONDONTWRITEBYTECODE` | `"1"` | Don't write `.pyc` files |
+| `MPLBACKEND` | `"Agg"` | Matplotlib non-interactive backend |
+| `PYTHONPATH` | `"/sandbox/libs"` | Python module search path |
+
+#### `[sandbox.runtimes.python.install-container]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `timeout-seconds` | int | `600` | Wall-clock timeout for the install container |
+| `memory-mb` | int | `1024` | Memory limit for the install container in megabytes |
+| `pids-limit` | int | `256` | Maximum PIDs inside the install container |
+
+#### `[sandbox.bootstrap]`
+
+Used by `scripts/sandbox_bootstrap.py` — not by the library itself.
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `starter-packages` | list[str] | `["numpy", "pandas", "matplotlib", ...]` | Packages pre-installed into the install image during bootstrap |
+
+---
+
 ## 3. ConfigManager Methods
 
 **File:** [`internal/config/manager.py:59`](../../internal/config/manager.py:59)
@@ -319,6 +582,7 @@ Discovery-structure-template placeholders: `{description}` (from web search resu
 | `getStorageConfig()` | `Dict[str, Any]` | `[storage]` section |
 | `getGeocodeMapsConfig()` | `Dict[str, Any]` | `[geocode-maps]` section |
 | `getStatsConfig()` | `Dict[str, Any]` | `[stats]` section |
+| `getProxyConfig()` | `Dict[str, Any]` | `[proxy]` section |
 
 ---
 
@@ -379,4 +643,4 @@ apiKey: str = myConfig.get("api-key", "")
 ---
 
 *This guide is auto-maintained and should be updated whenever configuration sections change*
-*Last updated: 2026-05-09*
+*Last updated: 2026-05-23*

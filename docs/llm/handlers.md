@@ -37,10 +37,11 @@
 | [`help_command.py`](../../internal/bot/common/handlers/help_command.py) | `HelpHandler` | `/help` command |
 | [`react_on_user.py`](../../internal/bot/common/handlers/react_on_user.py) | `ReactOnUserMessageHandler` | Telegram-only reactions |
 | [`topic_manager.py`](../../internal/bot/common/handlers/topic_manager.py) | `TopicManagerHandler` | Telegram forum topics |
-| [`weather.py`](../../internal/bot/common/handlers/weather.py) | `WeatherHandler` | Weather commands (if enabled) |
-| [`yandex_search.py`](../../internal/bot/common/handlers/yandex_search.py) | `YandexSearchHandler` | Yandex Search (if enabled) |
+| [`weather.py`](../../internal/bot/common/handlers/weather.py) | `WeatherHandler` | Weather commands (if enabled). Proxy: resolves proxy separately for `OpenWeatherMapClient` and `GeocodeMapsClient` in `__init__()`, using the `[openweathermap]` and `[geocode-maps]` config sections respectively. |
+| [`yandex_search.py`](../../internal/bot/common/handlers/yandex_search.py) | `YandexSearchHandler` | Yandex Search (if enabled). Proxy: resolves proxy in `__init__()` for both the Yandex Search client and the `_downloadUrl()` web-fetch method. The former `TODO: add proxy support via config` comment was removed from `_downloadUrl()`. When SOCKS5 is active, HTTP/2 is automatically disabled for web-fetch. |
 | [`resender.py`](../../internal/bot/common/handlers/resender.py) | `ResenderHandler` | Message resending (if enabled) |
 | [`divination.py`](../../internal/bot/common/handlers/divination.py) | `DivinationHandler` | `/taro` & `/runes` readings (if `divination.enabled`) — includes layout discovery via LLM + web search |
+| [`sandbox.py`](../../internal/bot/common/handlers/sandbox.py) | `SandboxHandler` | Sandboxed Python code execution (if `sandbox.enabled` and `allow-sandbox` chat setting). Commands: `/run <code>` (alias: `/python`), `/sandbox files|read|status|install`. LLM tool: `run_python(code, packages?)`. Lifecycle: registers `CRON_JOB` (periodic GC) and `DO_EXIT` (graceful shutdown) delayed-task handlers; performs one-time `SandboxManager.recover()` on first cron tick to reconcile stale containers after restarts. |
 | [`llm_messages.py`](../../internal/bot/common/handlers/llm_messages.py) | `LLMMessageHandler` | **LAST** in chain; LLM responses |
 | [`example_custom_handler.py`](../../internal/bot/common/handlers/example_custom_handler.py) | `ExampleCustomHandler` | Template for custom handlers |
 
@@ -390,7 +391,7 @@ Full chain:
 9. `HelpHandler` — PARALLEL — help command
 10. (Telegram only) `ReactOnUserMessageHandler` — PARALLEL
 11. (Telegram only) `TopicManagerHandler` — PARALLEL
-12. (if enabled) `WeatherHandler`, `YandexSearchHandler`, `ResenderHandler`, `DivinationHandler` — PARALLEL
+12. (if enabled) `WeatherHandler`, `YandexSearchHandler`, `ResenderHandler`, `DivinationHandler`, `SandboxHandler` — PARALLEL
 13. (custom handlers) — PARALLEL
 14. `LLMMessageHandler` — SEQUENTIAL — **MUST BE LAST**
 
@@ -429,4 +430,4 @@ Full chain:
 ---
 
 *This guide is auto-maintained and should be updated whenever significant handler changes are made*  
-*Last updated: 2026-05-15*
+*Last updated: 2026-05-23*

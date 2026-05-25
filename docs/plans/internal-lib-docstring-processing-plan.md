@@ -139,7 +139,7 @@ This document provides a comprehensive plan for systematically adding and improv
 |-------|----------|-----------|--------|-------|
 | 1 | 1.1 | `internal/config/__init__.py` | [x] | |
 | 1 | 1.1 | `internal/config/manager.py` | [x] | |
-| 1 | 1.1 | `internal/config/test_manager.py` | [x] | |
+| 1 | 1.1 | `tests/config/test_manager.py` | [x] | |
 | 1 | 1.2 | `internal/models/__init__.py` | [x] | |
 | 1 | 1.2 | `internal/models/shared_enums.py` | [x] | |
 | 1 | 1.2 | `internal/models/types.py` | [x] | |
@@ -147,7 +147,7 @@ This document provides a comprehensive plan for systematically adding and improv
 | 1 | 1.3 | `internal/services/cache/models.py` | [x] | |
 | 1 | 1.3 | `internal/services/cache/service.py` | [x] | |
 | 1 | 1.3 | `internal/services/cache/types.py` | [x] | |
-| 1 | 1.3 | `internal/services/cache/test_cache_service.py` | [x] | |
+| 1 | 1.3 | `tests/services/cache/test_cache_service.py` | [x] | |
 
 ### Stage 2: Database Layer
 
@@ -158,7 +158,7 @@ This document provides a comprehensive plan for systematically adding and improv
 | 2 | 2.1 | `internal/database/generic_cache.py` | [x] | |
 | 2 | 2.1 | `internal/database/manager.py` | [x] | |
 | 2 | 2.1 | `internal/database/models.py` | [x] | |
-| 2 | 2.1 | `internal/database/test_utils.py` | [x] | |
+| 2 | 2.1 | `tests/database/test_utils.py` | [x] | |
 | 2 | 2.1 | `internal/database/utils.py` | [x] | |
 | 2 | 2.2 | `internal/database/providers/__init__.py` | [x] | |
 | 2 | 2.2 | `internal/database/providers/base.py` | [x] | |
@@ -184,7 +184,7 @@ This document provides a comprehensive plan for systematically adding and improv
 | 2 | 4.1 | `internal/database/migrations/base.py` | [x] | |
 | 2 | 4.1 | `internal/database/migrations/create_migration.py` | [x] | |
 | 2 | 4.1 | `internal/database/migrations/manager.py` | [x] | |
-| 2 | 4.1 | `internal/database/migrations/test_migrations.py` | [x] | |
+| 2 | 4.1 | `tests/database/migrations/test_migrations.py` | [x] | |
 | 2 | 4.1 | `internal/database/migrations/versions/__init__.py` | [x] | |
 | 2 | 4.1 | `internal/database/migrations/versions/migration_001_initial_schema.py` | [x] | |
 | 2 | 4.1 | `internal/database/migrations/versions/migration_002_add_is_spammer_to_chat_users.py` | [x] | |
@@ -227,7 +227,7 @@ This document provides a comprehensive plan for systematically adding and improv
 | 3 | 3.2 | `internal/bot/common/handlers/resender.py` | [x] | |
 | 3 | 3.2 | `internal/bot/common/handlers/spam.py` | [x] | |
 | 3 | 3.2 | `internal/bot/common/handlers/summarization.py` | [x] | |
-| 3 | 3.2 | `internal/bot/common/handlers/test_module_loader.py` | [x] | |
+| 3 | 3.2 | `tests/bot/common/handlers/test_module_loader.py` | [x] | |
 | 3 | 2.2 | `internal/bot/common/handlers/topic_manager.py` | [x] | |
 | 3 | 2.2 | `internal/bot/common/handlers/user_data.py` | [x] | |
 | 3 | 2.2 | `internal/bot/common/handlers/weather.py` | [x] | |
@@ -260,14 +260,14 @@ This document provides a comprehensive plan for systematically adding and improv
 | 5 | 5.1 | `lib/ai/abstract.py` | [x] | |
 | 5 | 5.1 | `lib/ai/manager.py` | [x] | |
 | 5 | 5.1 | `lib/ai/models.py` | [x] | |
-| 5 | 5.1 | `lib/ai/test_manager.py` | [x] | |
+| 5 | 5.1 | `tests/lib/ai/test_manager.py` | [x] | |
 | 5 | 5.2 | `lib/ai/providers/__init__.py` | [x] | |
 | 5 | 5.2 | `lib/ai/providers/basic_openai_provider.py` | [x] | |
 | 5 | 5.2 | `lib/ai/providers/custom_openai_provider.py` | [x] | |
 | 5 | 5.2 | `lib/ai/providers/openrouter_provider.py` | [x] | |
-| 5 | 5.2 | `lib/ai/providers/test_basic_openai_provider.py` | [x] | |
-| 5 | 5.2 | `lib/ai/providers/test_openrouter_provider.py` | [x] | |
-| 5 | 5.2 | `lib/ai/providers/test_yc_openai_provider.py` | [x] | |
+| 5 | 5.2 | `tests/lib/ai/providers/test_basic_openai_provider.py` | [x] | |
+| 5 | 5.2 | `tests/lib/ai/providers/test_openrouter_provider.py` | [x] | |
+| 5 | 5.2 | `tests/lib/ai/providers/test_yc_openai_provider.py` | [x] | |
 | 5 | 5.2 | `lib/ai/providers/yc_openai_provider.py` | [x] | |
 | 5 | 5.2 | `lib/ai/providers/yc_sdk_provider.py` | [x] | |
 
@@ -280,18 +280,18 @@ This document provides a comprehensive plan for systematically adding and improv
 | 6 | 6.1 | `lib/cache/interface.py` | [x] | |
 | 6 | 6.1 | `lib/cache/key_generator.py` | [x] | |
 | 6 | 6.1 | `lib/cache/null_cache.py` | [x] | |
-| 6 | 6.1 | `lib/cache/test_dict_cache.py` | [x] | |
-| 6 | 6.1 | `lib/cache/test_integration.py` | [x] | |
-| 6 | 6.1 | `lib/cache/test_null_cache.py` | [x] | |
+| 6 | 6.1 | `tests/lib/cache/test_dict_cache.py` | [x] | |
+| 6 | 6.1 | `tests/lib/cache/test_integration.py` | [x] | |
+| 6 | 6.1 | `tests/lib/cache/test_null_cache.py` | [x] | |
 | 6 | 6.1 | `lib/cache/types.py` | [x] | |
 | 6 | 6.1 | `lib/cache/value_converter.py` | [x] | |
 | 6 | 6.2 | `lib/rate_limiter/__init__.py` | [x] | |
 | 6 | 6.2 | `lib/rate_limiter/interface.py` | [x] | |
 | 6 | 6.2 | `lib/rate_limiter/manager.py` | [x] | |
 | 6 | 6.2 | `lib/rate_limiter/sliding_window.py` | [x] | |
-| 6 | 6.2 | `lib/rate_limiter/test_integration.py` | [x] | |
-| 6 | 6.2 | `lib/rate_limiter/test_manager.py` | [x] | |
-| 6 | 6.2 | `lib/rate_limiter/test_sliding_window.py` | [x] | |
+| 6 | 6.2 | `tests/lib/rate_limiter/test_integration.py` | [x] | |
+| 6 | 6.2 | `tests/lib/rate_limiter/test_manager.py` | [x] | |
+| 6 | 6.2 | `tests/lib/rate_limiter/test_sliding_window.py` | [x] | |
 | 6 | 6.2 | `lib/rate_limiter/types.py` | [x] | |
 | 6 | 6.3 | `lib/aurumentation/__init__.py` | [x] | |
 | 6 | 6.3 | `lib/aurumentation/cli.py` | [x] | |
@@ -300,7 +300,7 @@ This document provides a comprehensive plan for systematically adding and improv
 | 6 | 6.3 | `lib/aurumentation/provider.py` | [x] | |
 | 6 | 6.3 | `lib/aurumentation/recorder.py` | [x] | |
 | 6 | 6.3 | `lib/aurumentation/replayer.py` | [x] | |
-| 6 | 6.3 | `lib/aurumentation/test_helpers.py` | [x] | |
+| 6 | 6.3 | `tests/lib/aurumentation/test_helpers.py` | [x] | |
 | 6 | 6.3 | `lib/aurumentation/transports.py` | [x] | |
 | 6 | 6.3 | `lib/aurumentation/types.py` | [x] | |
 
@@ -311,19 +311,19 @@ This document provides a comprehensive plan for systematically adding and improv
 | 7 | 7.1 | `lib/openweathermap/__init__.py` | [x] | Completed 2026-05-04 |
 | 7 | 7.1 | `lib/openweathermap/client.py` | [x] | Completed 2026-05-04 |
 | 7 | 7.1 | `lib/openweathermap/models.py` | [x] | Completed 2026-05-04 |
-| 7 | 7.1 | `lib/openweathermap/test_weather_client.py` | [x] | Completed 2026-05-04 |
+| 7 | 7.1 | `tests/lib/openweathermap/test_weather_client.py` | [x] | Completed 2026-05-04 |
 | 7 | 7.2 | `lib/geocode_maps/__init__.py` | [x] | Completed 2026-05-04 |
 | 7 | 7.2 | `lib/geocode_maps/client.py` | [x] | Completed 2026-05-04 |
 | 7 | 7.2 | `lib/geocode_maps/models.py` | [x] | Completed 2026-05-04 |
-| 7 | 7.2 | `lib/geocode_maps/test_client.py` | [x] | Completed 2026-05-04 |
+| 7 | 7.2 | `tests/lib/geocode_maps/test_client.py` | [x] | Completed 2026-05-04 |
 | 7 | 7.3 | `lib/yandex_search/__init__.py` | [x] | Completed 2026-05-04 |
 | 7 | 7.3 | `lib/yandex_search/cache_utils.py` | [x] | Completed 2026-05-04 |
 | 7 | 7.3 | `lib/yandex_search/client.py` | [x] | Completed 2026-05-04 |
 | 7 | 7.3 | `lib/yandex_search/models.py` | [x] | Completed 2026-05-04 |
-| 7 | 7.3 | `lib/yandex_search/test_client.py` | [x] | Completed 2026-05-04 |
-| 7 | 7.3 | `lib/yandex_search/test_integration.py` | [x] | Completed 2026-05-04 |
-| 7 | 7.3 | `lib/yandex_search/test_performance.py` | [x] | Completed 2026-05-04 |
-| 7 | 7.3 | `lib/yandex_search/test_xml_parser.py` | [x] | Completed 2026-05-04 |
+| 7 | 7.3 | `tests/lib/yandex_search/test_client.py` | [x] | Completed 2026-05-04 |
+| 7 | 7.3 | `tests/lib/yandex_search/test_integration.py` | [x] | Completed 2026-05-04 |
+| 7 | 7.3 | `tests/lib/yandex_search/test_performance.py` | [x] | Completed 2026-05-04 |
+| 7 | 7.3 | `tests/lib/yandex_search/test_xml_parser.py` | [x] | Completed 2026-05-04 |
 | 7 | 7.3 | `lib/yandex_search/xml_parser.py` | [x] | Completed 2026-05-04 |
 | 7 | 7.4 | `lib/max_bot/__init__.py` | [x] | Completed 2026-05-04 |
 | 7 | 7.4 | `lib/max_bot/client.py` | [x] | Completed 2026-05-04 |
@@ -351,7 +351,7 @@ This document provides a comprehensive plan for systematically adding and improv
 | 8 | 8.1 | `lib/bayes_filter/bayes_filter.py` | [x] | Completed 2026-05-05 |
 | 8 | 8.1 | `lib/bayes_filter/models.py` | [x] | Completed 2026-05-05 |
 | 8 | 8.1 | `lib/bayes_filter/storage_interface.py` | [x] | Completed 2026-05-05 |
-| 8 | 8.1 | `lib/bayes_filter/test_bayes_filter.py` | [x] | Completed 2026-05-05 |
+| 8 | 8.1 | `tests/lib/bayes_filter/test_bayes_filter.py` | [x] | Completed 2026-05-05 |
 | 8 | 8.1 | `lib/bayes_filter/tokenizer.py` | [x] | Completed 2026-05-05 |
 | 8 | 8.2 | `lib/markdown/__init__.py` | [x] | Completed 2026-05-05 |
 | 8 | 8.2 | `lib/markdown/ast_nodes.py` | [x] | Completed 2026-05-05 |

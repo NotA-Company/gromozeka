@@ -136,7 +136,7 @@ Callers keep using `db.getChatInfo(...)` etc. by delegating on the façade — b
 #### Risk Assessment
 
 - High risk: many callers import methods by name directly from `DatabaseWrapper`, so the façade forwarding layer must be exact
-- All `tests/test_db_wrapper.py` must be split and updated
+- All `tests/database/test_db_wrapper.py` must be split and updated
 - Recommend a phased extraction: one repository per PR with full test coverage
 
 #### Affected Files
@@ -144,7 +144,7 @@ Callers keep using `db.getChatInfo(...)` etc. by delegating on the façade — b
 - [`internal/database/wrapper.py`](../internal/database/wrapper.py) — split into many
 - `internal/database/repositories/` — new directory
 - Every handler and service that calls `self.db.*` — no signature changes if façade is maintained
-- [`tests/test_db_wrapper.py`](../tests/test_db_wrapper.py)
+- [`tests/database/test_db_wrapper.py`](../../tests/database/test_db_wrapper.py)
 
 ---
 

@@ -18,7 +18,9 @@
 9. [Testing Guide](#9-testing-guide)
 10. [Code Quality](#10-code-quality)
 11. [Deployment](#11-deployment)
-12. [Common Development Tasks](#12-common-development-tasks)
+12. [Proxy Configuration](#12-proxy-configuration)
+13. [Bootstrapping the Sandbox](#13-bootstrapping-the-sandbox)
+14. [Common Development Tasks](#14-common-development-tasks)
 
 ---
 
@@ -121,7 +123,8 @@ The project is organized in a strict layered architecture where each layer only 
 ┌────────▼──────────────────────────────────────────────────────┐
 │                       Libraries (lib/)                         │
 │  ai/  cache/  rate_limiter/  max_bot/  openweathermap/        │
-│  yandex_search/  geocode_maps/  bayes_filter/  markdown/       │
+│  yandex_search/  geocode_maps/  bayes_filter/  markdown/     │
+│  sandbox/  divination/  stats/                                │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -281,21 +284,44 @@ gromozeka/
 │   │   ├── inline_parser.py        # Inline-level parser
 │   │   ├── renderer.py             # HTMLRenderer, MarkdownV2Renderer
 │   │   └── ast_nodes.py            # AST node types
+│   ├── sandbox/                    # Sandboxed code execution (Docker)
+│   │   ├── manager.py              # SandboxManager singleton
+│   │   ├── config.py               # Configuration dataclasses
+│   │   ├── types.py                # Public dataclasses (RunResult, etc.)
+│   │   ├── enums.py                # RuntimeName, BackendName
+│   │   ├── errors.py               # Exception hierarchy
+│   │   ├── locks.py                # Per-session FIFO locks, global semaphore
+│   │   ├── storage.py              # Workspace path resolution, atomic writes
+│   │   ├── gc.py                   # Garbage collector for expired sessions
+│   │   ├── backends/               # Execution backends
+│   │   │   ├── base.py             # SandboxBackend ABC
+│   │   │   └── docker.py           # Docker backend
+│   │   ├── runtimes/               # Language runtimes
+│   │   │   ├── base.py             # Runtime ABC
+│   │   │   └── python/             # Python runtime
+│   │   │       └── runtime.py      # PythonRuntime
+│   │   └── metadata/               # Session/run metadata
+│   │       ├── base.py             # MetadataStore ABC
+│   │       └── filesystem.py      # Filesystem-backed store
 │   ├── logging_utils.py            # Logging helpers (initLogging)
 │   └── utils.py                    # Shared utility functions
 │
-├── tests/                          # Test suite
+├── tests/                          # Test suite (all tests live here)
 │   ├── conftest.py                 # Shared pytest fixtures
 │   ├── utils.py                    # Test utilities
-│   ├── bot/                        # Bot layer tests
-│   ├── fixtures/                   # Golden data fixtures (JSON)
-│   ├── geocode_maps/               # Geocode Maps client tests
-│   ├── integration/                # Integration tests
-│   ├── lib_ai/                     # LLM library tests
-│   ├── lib_ratelimiter/            # Rate limiter tests
-│   ├── openweathermap/             # Weather client tests
+│   ├── bot/                        # Bot handler tests
+│   ├── config/                     # Config tests
+│   ├── database/                   # Database tests
+│   ├── fixtures/                    # Golden data fixtures (JSON)
+│   ├── integration/                # Cross-cutting integration tests
+│   ├── lib/                        # Library tests (mirrors lib/ structure)
+│   │   ├── ai/                     # LLM / AI tests + golden data
+│   │   ├── markdown/               # Markdown parser tests
+│   │   ├── openweathermap/          # Weather client tests + golden data
+│   │   └── ...                     # Other lib package tests
+│   ├── models/                     # Model tests
 │   ├── services/                   # Service layer tests
-│   └── yandex_search/              # Yandex search client tests
+│   └── verification/               # Cross-cutting verification tests
 │
 ├── docs/                           # Project documentation
 │   └── reports/                    # Development reports and ADRs
@@ -1458,6 +1484,49 @@ mdv2 = parser.toMarkdownV2("# Header\n\n**Bold** text")
 html = parser.toHTML("# Header\n\n**Bold** text")
 ```
 
+### 8.10 Sandboxed Code Execution (`lib/sandbox/`)
+
+Safely execute untrusted Python code in Docker containers. Provides a `SandboxManager` singleton that manages sessions, runs, files, libraries, and garbage collection.
+
+**Key classes:**
+
+| Class | File | Description |
+|---|---|---|
+| `SandboxManager` | `lib/sandbox/manager.py` | Singleton entry point — sessions, runs, files, libraries, GC, health |
+| `SandboxConfig` | `lib/sandbox/config.py` | Top-level configuration dataclass |
+| `StorageConfig` | `lib/sandbox/config.py` | Storage paths and permissions |
+| `BackendConfig` | `lib/sandbox/config.py` | Backend selection and settings |
+| `SecurityConfig` | `lib/sandbox/config.py` | Container security constraints |
+| `ConcurrencyConfig` | `lib/sandbox/config.py` | Global and per-session concurrency limits |
+| `GcConfig` | `lib/sandbox/config.py` | GC schedule and retention policies |
+| `BasicRuntimeConfig` | `lib/sandbox/config.py` | Python runtime configuration |
+| `RunResult` | `lib/sandbox/types.py` | Result of a code execution run |
+| `SessionInfo` | `lib/sandbox/types.py` | Session metadata |
+| `ResourceLimits` | `lib/sandbox/types.py` | Container resource limits |
+
+**Usage example:**
+
+```python
+from lib.sandbox import SandboxManager, SandboxConfig, StorageConfig
+
+config = SandboxConfig(storage=StorageConfig(rootDir="/var/lib/gromozeka/sandbox"))
+SandboxManager.injectConfig(config)
+manager = SandboxManager.getInstance()
+
+# Create a session and run code
+session = await manager.createSession("my-session")
+result = await manager.runCode(session.sessionId, "print(2 + 2)")
+print(result.exitCode, result.stdout)  # 0, "4\n"
+
+# Install a library
+await manager.installLibrary(session.sessionId, "numpy")
+
+# Clean up
+await manager.shutdown()
+```
+
+**Configuration:** Defaults in [`configs/00-defaults/sandbox.toml`](configs/00-defaults/sandbox.toml). See [Section 13 - Bootstrapping the Sandbox](#13-bootstrapping-the-sandbox) for setup instructions.
+
 ---
 
 ## 9. Testing Guide
@@ -1481,10 +1550,10 @@ make coverage
 # HTML report at: htmlcov/index.html
 
 # Run specific test file
-./venv/bin/python3 -m pytest tests/test_db_wrapper.py -v
+./venv/bin/pytest tests/database/test_db_wrapper.py -v
 
 # Run specific test function
-./venv/bin/python3 -m pytest tests/test_db_wrapper.py::test_my_function -v
+./venv/bin/pytest tests/database/test_db_wrapper.py::test_my_function -v
 
 # Run only slow tests
 ./venv/bin/python3 -m pytest -m slow
@@ -1495,12 +1564,9 @@ make coverage
 
 ### Test Structure
 
-Test files are discovered from three paths (configured in [`pyproject.toml`](pyproject.toml:57)):
-- `tests/` — main test suite
-- `lib/` — library-level unit tests
-- `internal/` — internal module unit tests
+Test files are discovered from three paths (configured in [`pyproject.toml`](pyproject.toml:59)), but all test files now live exclusively under `tests/` — there are no collocated test files in `lib/` or `internal/`. Test directories mirror source structure: `internal/X/Y.py` → `tests/X/test_Y.py`; `lib/X/Y.py` → `tests/lib/X/test_Y.py`.
 
-Test files must match `test_*.py` or `*_test.py` Test classes must start with `Test`, and test functions with `test_`
+Test files must match `test_*.py` or `*_test.py`. Test classes must start with `Test`, and test functions with `test_`
 
 ### Golden Data Framework
 
@@ -1508,23 +1574,20 @@ For API client tests (weather, geocoding, search), the project uses a **golden d
 
 **How it works:**
 
-1. **Record mode**: Tests are run with real API calls, and responses are saved as JSON fixtures in `tests/fixtures/`
+1. **Record mode**: Tests are run with real API calls, and responses are saved as JSON fixtures in `tests/lib/<service>/golden/`
 2. **Replay mode**: Tests load the fixture files instead of making real API calls
 
 **Structure:**
 
 ```
 tests/
-├── fixtures/                   # Stored API response fixtures
-│   ├── weather/
-│   │   ├── moscow_current.json
-│   │   └── ...
-│   ├── geocoding/
-│   └── ...
-├── openweathermap/
-│   └── test_weather_client.py  # Tests using fixtures
-└── geocode_maps/
-    └── test_client.py
+└── lib/
+    ├── openweathermap/
+    │   ├── golden/                    # Golden data for weather client
+    │   └── test_weather_client.py     # Tests using golden data
+    └── geocode_maps/
+        ├── golden/                    # Golden data for geocoding
+        └── test_client.py
 ```
 
 **Example test using fixtures:**
@@ -1809,6 +1872,41 @@ make format lint    # Fix formatting + check for issues
 make test           # Ensure all tests pass
 ```
 
+**Enum Conventions**
+
+Use :class:`~enum.StrEnum` for all string-based enumerations — do not use
+``typing.Literal["a", "b"]`` or bare strings. :class:`StrEnum` (from the
+standard library ``enum`` module) provides named constants that are equal
+to their string values and are safe to refactor.
+
+.. code-block:: python
+
+   from enum import StrEnum
+
+   class HandlerResultStatus(StrEnum):
+       CONTINUE = "continue"
+       STOP = "stop"
+
+This is already the project-wide convention (e.g. ``ChatSettingsKey``,
+``ProxyType``). New code must follow it.
+
+**Import Placement**
+
+All imports belong at the top of the file. For optional dependencies that
+may not be installed (e.g. ``httpx-socks``), use a module-level
+``try/except ImportError`` block:
+
+.. code-block:: python
+
+   try:
+       from httpx_socks import AsyncProxyTransport
+       _HTTPX_SOCKS_AVAILABLE = True
+   except ImportError:
+       _HTTPX_SOCKS_AVAILABLE = False
+
+Never place ``import`` or ``from ... import`` inside a method or function
+body unless a cyclic dependency makes it genuinely unavoidable.
+
 ---
 
 ## 11. Deployment
@@ -1989,9 +2087,159 @@ api-key = "${OPENROUTER_API_KEY}"
 
 ---
 
-## 12. Common Development Tasks
+## 12. Proxy Configuration
 
-### 12.1 Adding a New Handler
+Gromozeka supports routing outbound HTTP traffic through configurable HTTP or SOCKS5 proxies. This is useful when the bot runs in environments where direct internet access is restricted.
+
+### Enabling Proxy
+
+Proxy is **disabled by default** — enabling it requires setting `[proxy].enabled = true` and opting in each service individually.
+
+**Step 1:** Add proxy credentials to your `.env` file (never commit these):
+
+```bash
+# .env.local (never committed)
+PROXY_ADDRESS="http://proxy.corp.example.com:8080"
+PROXY_USER="bot-user"
+PROXY_PASSWORD="s3cret"
+```
+
+**Step 2:** Create a proxy config override (e.g., `configs/local/proxy.toml`):
+
+```toml
+# configs/local/proxy.toml
+[proxy]
+enabled = true
+type = "http"              # "http" or "socks5"
+address = "${PROXY_ADDRESS}"
+user = "${PROXY_USER}"
+password = "${PROXY_PASSWORD}"
+```
+
+**Step 3:** Opt in individual services by adding `use-proxy = true` to their config sections:
+
+```toml
+# In your local config override:
+[yandex-search]
+enabled = true
+use-proxy = true              # Opt this service into the global proxy
+api-key = "${YANDEX_API_KEY}"
+
+[openweathermap]
+enabled = true
+use-proxy = true
+api-key = "${OWM_API_KEY}"
+
+[geocode-maps]
+use-proxy = true
+
+[bot]
+use-proxy = true              # Route Telegram/Max bot traffic through proxy
+```
+
+**Step 4:** Restart the bot. Proxy config is loaded at startup only — changes require a restart.
+
+### Per-Service Overrides
+
+Any service can override the global proxy with its own `proxy` sub-table:
+
+```toml
+[yandex-search]
+enabled = true
+use-proxy = true
+api-key = "${YANDEX_API_KEY}"
+
+[yandex-search.proxy]
+type = "socks5"
+address = "${YANDEX_SOCKS5_ADDRESS}"
+user = ""
+password = ""
+```
+
+### SOCKS5 Setup
+
+For SOCKS5 proxies, set `type = "socks5"` and install the `httpx-socks` package (included in `requirements.txt`):
+
+```toml
+[proxy]
+enabled = true
+type = "socks5"
+address = "socks5://proxy.example.com:1080"
+user = "${PROXY_USER}"
+password = "${PROXY_PASSWORD}"
+```
+
+**Limitation:** SOCKS5 proxy is incompatible with HTTP/2. When a SOCKS5 proxy is active, the Yandex Search web-fetch client (`_downloadUrl()`) automatically disables HTTP/2.
+
+### How Resolution Works
+
+The `ProxyConfig` class in `lib/proxy/__init__.py` applies a 4-step resolution:
+
+1. **Master kill-switch:** If `[proxy].enabled` is `false` or absent → no proxy for any service.
+2. **Service opt-in:** If `use-proxy` is falsy or absent in the service config → no proxy for that service.
+3. **Per-service override:** If the service has a `proxy` sub-table with a non-empty `address` → use the override (missing fields fall back to global).
+4. **Global fallback:** Use the global `[proxy]` settings.
+
+### Services That Support Proxy
+
+| Service | Config Section | Proxy Resolution |
+|---|---|---|
+| Telegram bot | `[bot]` | `TelegramBotApplication.run()` |
+| Max Messenger bot | `[bot]` | `MaxBotApplication._runPolling()` |
+| OpenAI-compatible LLM providers | `[models.providers.<name>]` | `BasicOpenAIProvider._initClient()` via `_globalProxy` |
+| Image download (LLM) | `[models.providers.<name>]` | `BasicOpenAIProvider._generateImageViaImagesApi()` via `_globalProxy` |
+| OpenRouter `listRemoteModels()` | `[models.providers.openrouter]` | `OpenrouterProvider.listRemoteModels()` via `_globalProxy` |
+| Yandex Search | `[yandex-search]` | `YandexSearchHandler.__init__()` |
+| Web-fetch (Yandex Search) | `[yandex-search]` | Same proxy as Yandex Search |
+| OpenWeatherMap | `[openweathermap]` | `WeatherHandler.__init__()` |
+| Geocode Maps | `[geocode-maps]` | `WeatherHandler.__init__()` |
+
+---
+
+## 13. Bootstrapping the Sandbox
+
+The sandbox library (`lib/sandbox/`) executes untrusted Python code inside Docker containers. Before using it, you need to set up the storage directory and build the Docker images.
+
+### Prerequisites
+
+- **Docker** must be installed and running on the host. The sandbox communicates with Docker via the daemon socket (default: `unix:///var/run/docker.sock`).
+
+### Storage Directory
+
+The sandbox stores session workspaces, metadata, and library pools under `[sandbox.storage].root_dir` (default: `/var/lib/gromozeka/sandbox`). Create this directory and ensure the bot process can write to it:
+
+```bash
+sudo mkdir -p /var/lib/gromozeka/sandbox
+sudo chown $USER /var/lib/gromozeka/sandbox
+```
+
+Alternatively, use the `--init-storage` flag on the bootstrap script to create the directory with the correct permissions automatically.
+
+### Building Docker Images
+
+The bootstrap script builds the run and install Docker images defined in `[sandbox.runtimes.python]`:
+
+```bash
+./venv/bin/python3 scripts/sandbox_bootstrap.py --init-storage
+```
+
+This script:
+
+1. Creates the storage directory (if `--init-storage` is passed) with the configured `dir_mode` and `file_mode`.
+2. Builds the **run image** (`gromozeka-sandbox-python:run`) from `lib/sandbox/runtimes/python/Dockerfile`.
+3. Builds the **install image** (`gromozeka-sandbox-python:install`) from `lib/sandbox/runtimes/python/Dockerfile.install`, which includes the `starter-packages` listed in `[sandbox.bootstrap]`.
+
+Images are also built on demand by `SandboxManager.prepareRuntime()` if they are not present and `image_pull_policy` is not `"never"`.
+
+### Configuration
+
+All sandbox settings live in [`configs/00-defaults/sandbox.toml`](configs/00-defaults/sandbox.toml). See [`docs/llm/configuration.md`](docs/llm/configuration.md) for the full `[sandbox.*]` reference.
+
+---
+
+## 14. Common Development Tasks
+
+### 13.1 Adding a New Handler
 
 1. **Create the handler file** See [Section 6 - Creating a New Handler](#how-to-create-a-new-handler) for the complete template.
 
@@ -2016,7 +2264,7 @@ make format lint
 make test
 ```
 
-### 12.2 Adding a New API Integration
+### 13.2 Adding a New API Integration
 
 Let's say you want to integrate the "CoolAPI" service
 
@@ -2145,7 +2393,7 @@ coolapi = "coolapi"
 
 **Step 7**: Write tests using the golden data fixture pattern
 
-### 12.3 Adding a New LLM Provider
+### 13.3 Adding a New LLM Provider
 
 **Step 1**: Create the provider file
 
@@ -2296,7 +2544,7 @@ support_tools = false
 tier = "free"
 ```
 
-### 12.4 Adding a Database Migration
+### 13.4 Adding a Database Migration
 
 > ⚠️ **Critical**: Always verify the current highest version before creating a migration
 
@@ -2358,7 +2606,7 @@ class Migration(BaseMigration):
 
 **Step 5**: Update any schema documentation in `docs/`
 
-### 12.5 Adding a New Chat Setting
+### 13.5 Adding a New Chat Setting
 
 Chat settings are key-value pairs stored per-chat and cached in [`CacheService`](internal/services/cache/service.py:88)
 

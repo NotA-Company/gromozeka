@@ -43,6 +43,7 @@ from typing import Any, Dict, List, Optional, cast
 import httpx
 
 from lib.cache import CacheInterface, NullCache
+from lib.proxy import ProxyConfig, ProxyType
 from lib.rate_limiter import RateLimiterManager
 
 from .models import (
@@ -111,6 +112,7 @@ class GeocodeMapsClient:
         "acceptLanguage",
         "rateLimiterQueue",
         "_rateLimiter",
+        "_proxyConfig",
     )
 
     API_BASE_URL: str = "https://geocode.maps.co"
@@ -127,6 +129,7 @@ class GeocodeMapsClient:
         requestTimeout: int = 10,
         acceptLanguage: Optional[str] = None,
         rateLimiterQueue: str = "geocode-maps",
+        proxyConfig: Optional[ProxyConfig] = None,
     ) -> None:
         """Initialize Geocode Maps client.
 
@@ -141,6 +144,8 @@ class GeocodeMapsClient:
             requestTimeout: HTTP request timeout in seconds. Defaults to 10.
             acceptLanguage: Optional language for results (e.g., "en", "ru", "fr"). Defaults to None.
             rateLimiterQueue: Rate limiter queue name for this client. Defaults to "geocode-maps".
+            proxyConfig: Optional keyword arguments to spread into
+                ``httpx.AsyncClient`` for proxy support.  Defaults to None (no proxy).
         """
         self.apiKey = apiKey
         self.searchCache: CacheInterface[Dict[str, Any], SearchResponse] = (
@@ -158,6 +163,9 @@ class GeocodeMapsClient:
         self.requestTimeout = requestTimeout
         self.acceptLanguage = acceptLanguage
         self.rateLimiterQueue = rateLimiterQueue
+        self._proxyConfig: ProxyConfig = (
+            proxyConfig if proxyConfig is not None else ProxyConfig(proxyType=ProxyType.NONE)
+        )
         self._rateLimiter = RateLimiterManager.getInstance()
 
     async def search(
@@ -476,7 +484,7 @@ class GeocodeMapsClient:
             await self._rateLimiter.applyLimit(self.rateLimiterQueue)
 
             # Create new session for each request
-            async with httpx.AsyncClient(timeout=self.requestTimeout) as session:
+            async with httpx.AsyncClient(**self._proxyConfig.toKwargs(), timeout=self.requestTimeout) as session:
                 response = await session.get(url, params=params, headers=headers)
 
                 if response.status_code == 200:

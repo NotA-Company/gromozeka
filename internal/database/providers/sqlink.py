@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Optional
 
 import sqlink
 
+from lib.proxy import ProxyConfig, ProxyConfigDict
+
 from . import utils
 from .base import BaseSQLProvider, ExcludedValue, FetchType, ParametrizedQuery, QueryResult
 
@@ -31,9 +33,22 @@ class SQLinkProvider(BaseSQLProvider):
         password: Password used for authentication.
         database: Name of the database to connect to.
         timeout: Seconds to wait for a query response before raising an error.
+        _proxy: Proxy configuration for HTTP/HTTPS routing.
+            Stored as a :class:`~lib.proxy.ProxyConfig` and resolved lazily via
+            :meth:`~lib.proxy.ProxyConfig.getProxyURL` at connection time.
     """
 
-    __slots__ = ("_connection", "url", "user", "password", "database", "timeout", "keepConnection", "_connectLock")
+    __slots__ = (
+        "_connection",
+        "url",
+        "user",
+        "password",
+        "database",
+        "timeout",
+        "keepConnection",
+        "_connectLock",
+        "_proxy",
+    )
 
     def __init__(
         self,
@@ -44,6 +59,8 @@ class SQLinkProvider(BaseSQLProvider):
         database: str,
         timeout: int = 30,
         keepConnection: Optional[bool] = None,
+        proxy: Optional[ProxyConfigDict] = None,
+        **kwargs,
     ) -> None:
         """Initialise the SQLink provider.
 
@@ -56,6 +73,11 @@ class SQLinkProvider(BaseSQLProvider):
             keepConnection: If ``True``, connect on creation and keep connection open.
                 If ``False``, do not connect on creation.
                 If ``None`` (default), treat as ``False``.
+            proxy: Optional HTTP/HTTPS proxy configuration dictionary. Stored as
+                a :class:`~lib.proxy.ProxyConfig` object and resolved lazily
+                (via :meth:`~lib.proxy.ProxyConfig.getProxyURL`) at connection time.
+                When ``None``, no proxy is configured and sqlink falls back to
+                ``HTTPS_PROXY`` / ``HTTP_PROXY`` environment variables.
 
         Returns:
             None.
@@ -73,6 +95,16 @@ class SQLinkProvider(BaseSQLProvider):
         """Seconds to wait for a query response before raising an error."""
         self.keepConnection: bool = keepConnection if keepConnection is not None else False
         """If ``True``, the connection is kept open across operations."""
+        self._proxy: ProxyConfig = ProxyConfig.fromDict(
+            proxy if proxy is not None else {},
+            useProxy=kwargs.get("use-proxy") is True,
+        )
+        """:class:`~lib.proxy.ProxyConfig` object for proxy routing.
+
+        Resolved lazily at connection time via
+        :meth:`~lib.proxy.ProxyConfig.getProxyURL` so that the global
+        proxy configuration can be applied late.
+        """
 
         self._connection: Optional[sqlink.AsyncConnection] = None
         """Active SQLink connection, or ``None`` if not connected."""
@@ -101,6 +133,7 @@ class SQLinkProvider(BaseSQLProvider):
             if self._connection is not None:
                 return
 
+            proxyUrl = self._proxy.getProxyURL()
             self._connection = await sqlink.asyncConnect(
                 self.url,
                 username=self.user,
@@ -108,6 +141,7 @@ class SQLinkProvider(BaseSQLProvider):
                 database=self.database,
                 timeout=self.timeout,
                 autoRefresh=True,
+                proxy=proxyUrl,
             )
 
             logger.debug(f"Connected to SQLink database {self.url}/{self.database}")

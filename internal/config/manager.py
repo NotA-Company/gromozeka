@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional
 import tomli
 
 import lib.utils as utils
+from lib.proxy import ProxyConfigDict
 from lib.rate_limiter import RateLimiterManagerConfig
 
 logger = logging.getLogger(__name__)
@@ -494,3 +495,27 @@ class ConfigManager:
             False
         """
         return self.get("stats", {})
+
+    def getProxyConfig(self) -> ProxyConfigDict:
+        """Get global proxy configuration.
+
+        Returns the [proxy] section from the merged config. This dict is consumed
+        by ProxyConfig.fromDict() in lib.proxy along with a service's own config
+        to determine whether and how to proxy that service's traffic.
+
+        Returns:
+            Dictionary containing proxy configuration with keys:
+                - enabled (bool): Master kill-switch for proxy
+                - type (str): "http" or "socks5"
+                - address (str): Proxy URL
+                - user (str): Optional proxy username
+                - password (str): Optional proxy password
+            Returns an empty dict if [proxy] section is not configured.
+
+        Example:
+            >>> config_manager = ConfigManager()
+            >>> proxy_config = config_manager.getProxyConfig()
+            >>> print(proxy_config.get("enabled"))
+            False
+        """
+        return self.get("proxy", {})

@@ -22,6 +22,7 @@ from internal.database.stats_storage import DatabaseStatsStorage
 from internal.services.llm import LLMService
 from lib.ai.manager import LLMManager
 from lib.logging_utils import initLogging
+from lib.proxy import ProxyHelper
 from lib.rate_limiter import RateLimiterManager
 from lib.stats import StatsStorage
 
@@ -40,11 +41,16 @@ class GromozekBot:
         # Initialize configuration
         self.configManager = configManager
 
+        # Store and register global proxy config for all services
+        ProxyHelper.getInstance().setGlobalProxyConfig(self.configManager.getProxyConfig())
+
         # Initialize logging with config
         initLogging(self.configManager.getLoggingConfig())
 
         # Initialize database
-        self.database = Database(self.configManager.getDatabaseConfig())  # pyright: ignore[reportArgumentType]
+        self.database = Database(
+            self.configManager.getDatabaseConfig(),  # pyright: ignore[reportArgumentType]
+        )
 
         # Initialize stats storage for LLM usage tracking
         llmStatsStorage: Optional[StatsStorage] = None
@@ -87,6 +93,23 @@ class GromozekBot:
             case _:
                 raise ValueError(f"Unknown bot mode: {self.botMode}")
 
+    async def _shutdown(self) -> None:
+        """Gracefully shut down resources in correct order.
+
+        Closes LLM manager providers (proxy HTTP clients, etc.) before
+        closing database connections. Each step runs even if the previous
+        one raises, to maximize resource cleanup.
+        """
+        try:
+            await self.llmManager.aclose()
+        except Exception:
+            logger.exception("Error closing LLM manager during shutdown")
+
+        try:
+            await self.database.manager.closeAll()
+        except Exception:
+            logger.exception("Error closing database during shutdown")
+
     def run(self):
         """Start the bot."""
         try:
@@ -95,7 +118,7 @@ class GromozekBot:
             logger.exception(e)
             raise
         finally:
-            asyncio.run(self.database.manager.closeAll())
+            asyncio.run(self._shutdown())
 
 
 def parse_arguments():

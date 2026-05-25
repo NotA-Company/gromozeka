@@ -50,6 +50,7 @@ from typing import Any, Dict, Optional
 import httpx
 from openai import AsyncOpenAI
 
+from lib.proxy import ProxyConfig
 from lib.stats import StatsStorage
 
 from ..abstract import AbstractModel
@@ -287,7 +288,9 @@ class OpenrouterProvider(BasicOpenAIProvider):
             if apiKey:
                 headers["Authorization"] = f"Bearer {apiKey}"
 
-            async with httpx.AsyncClient(timeout=30) as client:
+            # Resolve proxy for OpenRouter API calls
+            proxyKwargs = ProxyConfig.fromServiceConfig(self.config).toKwargs()
+            async with httpx.AsyncClient(**proxyKwargs, timeout=30) as client:
                 response = await client.get(
                     "https://openrouter.ai/api/v1/models",
                     headers=headers,

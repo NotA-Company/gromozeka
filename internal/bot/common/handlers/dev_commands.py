@@ -1028,6 +1028,7 @@ class DevCommandsHandler(BaseBotHandler):
                     "typingManager": typingManager,
                 },
             )
+            logger.debug(f"LLM ret: {mlRet!r}")
         except Exception as exc:
             await self.sendMessage(
                 ensuredMessage,
@@ -1067,7 +1068,7 @@ class DevCommandsHandler(BaseBotHandler):
 
         await self.sendMessage(
             ensuredMessage,
-            messageText=mlRet.resultText.strip(),
+            messageText=f"```\n{mlRet.resultText.strip()}\n```",
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
             typingManager=typingManager,
         )

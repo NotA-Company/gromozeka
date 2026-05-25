@@ -19,6 +19,17 @@ max-tasks = 1024
 # Max parallel tasks per chat. All new tasks will be ignored if queue is full
 max-tasks-per-chat = 512
 
+# --- Proxy ---
+# Whether the bot platform (Telegram / Max) should route traffic through
+# the global proxy. Requires [proxy].enabled = true globally.
+use-proxy = false
+# Per-service proxy override (uncomment to use a different proxy for the bot):
+# [bot.proxy]
+# type = "socks5"
+# address = "${BOT_PROXY_ADDRESS}"
+# user = "${BOT_PROXY_USER}"
+# password = "${BOT_PROXY_PASSWORD}"
+
 [database]
 default = "default"
 
@@ -31,6 +42,12 @@ readOnly = false
 timeout = 30
 useWal = true
 keepConnection = true  # Connect on creation and keep connection open
+
+# Proxy support for database providers that use HTTP (e.g., sqlink):
+# use-proxy = false
+# [database.providers.default.parameters.proxy]
+# type = "http"
+# address = "${DB_PROXY_ADDRESS}"
 
 # [ratelimiter]
 [ratelimiter.ratelimiters.default]
@@ -82,6 +99,7 @@ level = "INFO"
 
 [openweathermap]
 enabled = false
+use-proxy = false
 # OpenWeatherMap API key from https://openweathermap.org/api (use OPENWEATHERMAP_API_KEY environment variable)
 api-key = "${OPENWEATHERMAP_API_KEY}"
 
@@ -101,6 +119,7 @@ ratelimiter-queue = "openweathermap"
 # Geocode Maps API api-key from https://geocode.maps.co/
 # If enabled, will be used for geocoding instead of OpenWeatherMap one
 enabled = false
+use-proxy = false
 # Geocoding API key from https://geocode.maps.co/ (use GEOCODING_API_KEY environment variable)
 api-key = "${GEOCODING_API_KEY}"
 
@@ -111,6 +130,7 @@ accept-language = "ru"
 
 [yandex-search]
 enabled = false
+use-proxy = false
 # Yandex Cloud credentials for Search API (use YANDEX_SEARCH_API_KEY and YANDEX_FOLDER_ID environment variables)
 api-key = "${YANDEX_SEARCH_API_KEY}"
 folder-id = "${YANDEX_FOLDER_ID}"

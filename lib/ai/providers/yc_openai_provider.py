@@ -149,6 +149,33 @@ class YcOpenaiModel(BasicOpenAIModel):
 
         return f"gpt://{self._folderId}/{self.modelId}/{self.modelVersion}"
 
+    def _getImageModelId(self) -> str:
+        """Get the Yandex Cloud-specific image model identifier.
+
+        Constructs the image model URI in Yandex Cloud's ``art://...`` format,
+        which is distinct from the ``gpt://...`` format used for text generation.
+
+        Returns:
+            The Yandex Cloud image model URI string in the format
+            ``art://{folderId}/{modelId}/{modelVersion}``.
+
+        Raises:
+            ValueError: If folderId is not set or is empty.
+
+        Example:
+            >>> model._folderId = "b1g..."
+            >>> model.modelId = "aliceai-image-art-3.0"
+            >>> model.modelVersion = "latest"
+            >>> model._getImageModelId()
+            'art://b1g.../aliceai-image-art-3.0/latest'
+        """
+        if not self._folderId:
+            raise ValueError("folder_id is required for YC OpenAI provider")
+        if not self._config.get("support_images", False):
+            raise NotImplementedError(f"Image generation isn't supported by {self.modelId}")
+
+        return f"art://{self._folderId}/{self.modelId}/{self.modelVersion}"
+
     def _getExtraParams(self) -> Dict[str, Any]:
         """Get Yandex Cloud-specific extra parameters for API calls.
 
@@ -228,6 +255,27 @@ class YcOpenaiProvider(BasicOpenAIProvider):
             raise ValueError("folder_id is required for YC OpenAI provider, dood!")
 
         super().__init__(config)
+
+    def _getClientParams(self) -> Dict[str, Any]:
+        """Get additional client parameters for Yandex Cloud.
+
+        Adds the ``project`` parameter so the OpenAI client is scoped to
+        the configured Yandex Cloud folder. This is required for the
+        Yandex Cloud OpenAI-compatible Images API.
+
+        Returns:
+            A dictionary with ``project`` set to the configured folder ID.
+
+        Note:
+            The ``project`` parameter sets the ``OpenAI-Project`` header on
+            every request through this client (text generation, image generation,
+            tool calls, etc.), not only Images API calls. This was validated
+            against YC's text generation endpoint and does not interfere with
+            the ``gpt://`` model URI folder scoping.
+        """
+        return {
+            "project": self._folderId,
+        }
 
     def _getBaseUrl(self) -> str:
         """Get the Yandex Cloud OpenAI-compatible base URL.
