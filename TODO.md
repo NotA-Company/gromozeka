@@ -1,5 +1,6 @@
 # Our TODO list
-- [ ] Subagent
+- [ ] Subagent with conversation history
+- [ ] Better random-message handling
 - [ ] Better compaction (drop tools result, more settings, drop userdata, use subagent for compaction)
 - [ ] Topic-level configs
 - [ ] Tool for last messages, last discussion messages, user messages
