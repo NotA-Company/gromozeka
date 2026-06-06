@@ -165,23 +165,11 @@ class OpenrouterModel(BasicOpenAIModel):
             A dictionary containing extra parameters to include in API calls:
             - extra_headers: Dictionary of custom HTTP headers
             - Additional provider-specific parameters (currently commented out)
-
-        Example:
-            ```python
-            params = model._getExtraParams()
-            # Returns:
-            # {
-            #     "extra_headers": {
-            #         "HTTP-Referer": "https://sourcecraft.dev/notacompany/gromozeka",
-            #         "X-Title": "Gromozeka AI Bot"
-            #     }
-            # }
-            ```
         """
         return {
             "extra_headers": {
                 # Optional. Site URL for rankings on openrouter.ai.
-                "HTTP-Referer": "https://sourcecraft.dev/notacompany/gromozeka",
+                "HTTP-Referer": "https://notacompany.org/products/gromozeka",
                 # Optional. Site title for rankings on openrouter.ai.
                 "X-Title": "Gromozeka AI Bot",
             },
