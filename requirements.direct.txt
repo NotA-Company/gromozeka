@@ -1,11 +1,11 @@
 # Runtime
-aiodocker==0.26.0
+aiodocker==0.27.0
 aiosqlite==0.22.1
-boto3==1.43.14
+boto3==1.43.24
 html-to-markdown==3.1.0
 httpx[http2]==0.28.1
 httpx-socks[asyncio]==0.11.0
-openai==2.38.0
+openai==2.41.0
 python-dateutil==2.9.0.post0
 python-magic==0.4.27
 python-telegram-bot==22.7
@@ -24,9 +24,9 @@ isort==8.0.1
 # Linters
 flake8==7.3.0
 flake8-pyproject==1.2.4
-pyright==1.1.409
+pyright==1.1.410
 
 # Testing
 pytest==9.0.3
-pytest-asyncio==1.3.0
+pytest-asyncio==1.4.0
 pytest-cov==7.1.0
