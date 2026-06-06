@@ -19,12 +19,17 @@ endif
 # Note: this isn't .PHONY target
 venv:
 	python3 -m venv $(VENV_PATH)
+	$(PIP) install --upgrade pip
 	@echo "Virtual environment created at $(VENV_PATH)"
 
 # Install all dependencies
 install: venv
 	$(PIP) install -r requirements.txt
 	@echo "Dependencies installed"
+
+install-direct: venv
+	$(PIP) install -r requirements.direct.txt
+	@echo "Direct dependencies installed"
 
 activate: venv
 	. $(VENV_PATH)/bin/activate
@@ -103,7 +108,8 @@ clean:
 help:
 	@echo "Available targets:"
 	@echo "  venv                        - Create virtual environment"
-	@echo "  install                     - Install all dependencies"
+	@echo "  install                     - Install all dependencies (from frozen snapshot)"
+	@echo "  install-direct              - Install all dependencies (from direct dependencies file)"
 	@echo "  activate                    - Activate virtual environment"
 	@echo "  freeze-requirements         - Update requirements.txt with current packages"
 	@echo "  list-outdated-requirements  - List outdated packages"
