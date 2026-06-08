@@ -22,6 +22,7 @@ How to use this file:
 
 - [`memories/proxy.md`](memories/proxy.md) — archived durable notes from the completed proxy support work. Read it when touching `lib/proxy/`, proxy config, per-service proxy overrides, or HTTP client wiring. **Note:** `fromServiceDict` was renamed to `fromServiceConfig` after the initial implementation.
 - [`memories/sandbox.md`](memories/sandbox.md) — archived durable notes from the completed `lib/sandbox` / sandbox-handler work. Read it when touching sandbox code, config, or docs.
+- **Sandbox improvements design**: [`docs/sandbox-improvements-design.md`](../../sandbox-improvements-design.md) is the design document for the upcoming sandbox enhancements (per-run workDir, file listing/reading/sending LLM tools). Read it before implementing any of the four changes. Key decisions: per-run workDir at `.run/<runId>/work/`, `workDir` field only in `RunResult` (no `files` — handler scans via `listFiles()`), MIME detection in handler layer (not in `lib/sandbox/`), line-based offset/limit in handler only, 20 MB send cap. LLM tool names: `sandbox_list_files`, `sandbox_read_file`, `sandbox_send_file` (all alongside existing `run_python`). Session lifecycle is already idle-based (no hard max lifetime) — confirmed no-op.
 - [`memories/test-reorganization.md`](memories/test-reorganization.md) — archived durable notes from the test layout migration. Read it when moving tests or changing test layout conventions.
 
 ## Proxy Module Conventions
@@ -60,6 +61,8 @@ How to use this file:
 - `image_generation_api = "openai-images"` dispatch in `BasicOpenAIModel._generateImage()` is **generic** -- it works for any `BasicOpenAIModel` subclass, not just `YcOpenaiModel`. Old docs claimed it was YC-only; this was corrected in `docs/llm/configuration.md`.
 - When production code has `isinstance(x, SomeType)` guards, mock objects in tests need `MagicMock().__class__ = SomeType` to pass them. Cleaner than constructing real SDK objects and doesn't require knowing all constructor params.
 - If the user adds guards to production code and tests break, fix the tests -- don't remove the guards. The user's intent is clear: guards are there by design.
+- Bot media sending: all goes through `TheBot.sendMessage()` with `attachmentList: List[Tuple[bytes, MessageType, Optional[str]]]`. No dedicated `sendPhoto/sendVideo/sendAudio/sendDocument` methods. MIME detection uses `magic.from_buffer(data, mime=True)` consistently across 6 call sites. MIME→MessageType mapping: `image/*`→IMAGE, `video/*`→VIDEO, `audio/*`→AUDIO, rest→DOCUMENT.
+- `python-magic==0.4.27` is a direct pinned dependency (not optional). All imports use bare `import magic` at top level (no `try/except ImportError` guard).
 
 ## Teamlead Workflow Lessons
 
