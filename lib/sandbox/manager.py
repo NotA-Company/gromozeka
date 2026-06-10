@@ -565,6 +565,10 @@ class SandboxManager:
                 runDir = workspacePath / ".run" / runId
                 runDir.mkdir(parents=True, exist_ok=True)
 
+                # Step 6b: Create per-run working directory
+                workDirPath = runDir / "work"
+                workDirPath.mkdir(parents=True, exist_ok=True)
+
                 # Step 7: Write main.py
                 mainPath = runDir / runtimeImpl.getScriptName()
                 mainPath.write_text(code, encoding="utf-8")
@@ -677,6 +681,7 @@ class SandboxManager:
                         result = RunResult(
                             runId=runId,
                             sessionId=sessionId,
+                            workDir=f".run/{runId}/work",
                             runtime=runtime,
                             stdoutPath=f".run/{runId}/stdout.log",
                             stderrPath=f".run/{runId}/stderr.log",

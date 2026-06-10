@@ -77,6 +77,7 @@ class PythonRuntime(Runtime):
             "sh",
             "-c",
             (
+                f"cd /workspace/.run/{runId}/work && "
                 f"python -u /workspace/.run/{runId}/{self.getScriptName()} "
                 f"{stdinPart} "
                 f"> /workspace/.run/{runId}/stdout.log "

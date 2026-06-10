@@ -221,6 +221,8 @@ class RunResult:
         elapsedMs: Wall-clock elapsed time in milliseconds.
         networkEnabled: Whether the run actually had network access.
         error: Error message if the run failed, otherwise None.
+        workDir: Workspace-relative path to the per-run working directory,
+            e.g. '.run/<runId>/work'.
     """
 
     runId: str
@@ -239,6 +241,7 @@ class RunResult:
     elapsedMs: int
     networkEnabled: bool
     error: str | None
+    workDir: str = ""
 
     def toDict(self) -> dict[str, Any]:
         """Convert a RunResult to a JSON-serializable dict.
@@ -249,6 +252,7 @@ class RunResult:
         return {
             "runId": self.runId,
             "sessionId": self.sessionId,
+            "workDir": self.workDir,
             "runtime": self.runtime.value,
             "stdoutPath": self.stdoutPath,
             "stderrPath": self.stderrPath,
@@ -264,6 +268,37 @@ class RunResult:
             "networkEnabled": self.networkEnabled,
             "error": self.error,
         }
+
+    @classmethod
+    def fromDict(cls, data: Dict[str, Any]) -> "RunResult":
+        """Construct a RunResult from a dict.
+
+        Args:
+            data: Dictionary containing RunResult fields with camelCase keys.
+                Datetime fields must be ISO format strings.
+
+        Returns:
+            A RunResult instance reconstructed from the dictionary.
+        """
+        return RunResult(
+            runId=data["runId"],
+            sessionId=data["sessionId"],
+            workDir=data.get("workDir", ""),
+            runtime=RuntimeName(data["runtime"]),
+            stdoutPath=data["stdoutPath"],
+            stderrPath=data["stderrPath"],
+            stdoutBytes=int(data["stdoutBytes"]),
+            stderrBytes=int(data["stderrBytes"]),
+            exitCode=int(data["exitCode"]) if data.get("exitCode") is not None else None,
+            signal=data.get("signal"),
+            timedOut=bool(data.get("timedOut", False)),
+            oomKilled=bool(data.get("oomKilled", False)),
+            startedAt=datetime.fromisoformat(data["startedAt"]),
+            finishedAt=datetime.fromisoformat(data["finishedAt"]),
+            elapsedMs=int(data["elapsedMs"]),
+            networkEnabled=bool(data.get("networkEnabled", False)),
+            error=data.get("error"),
+        )
 
 
 @dataclass(slots=True)

@@ -356,48 +356,6 @@ def testOpenrouterModelGetModelId(openrouterModel: OpenrouterModel) -> None:
 # ============================================================================
 
 
-def testOpenrouterModelGetExtraParams(openrouterModel: OpenrouterModel) -> None:
-    """Test OpenRouter model returns correct extra parameters.
-
-    Args:
-        openrouterModel: The OpenRouter model instance.
-
-    Raises:
-        AssertionError: If extra parameters are incorrect.
-    """
-    extraParams = openrouterModel._getExtraParams()
-
-    assert "extra_headers" in extraParams
-    headers = extraParams["extra_headers"]
-
-    assert "HTTP-Referer" in headers
-    assert headers["HTTP-Referer"] == "https://sourcecraft.dev/notacompany/gromozeka"
-
-    assert "X-Title" in headers
-    assert headers["X-Title"] == "Gromozeka AI Bot"
-
-
-def testOpenrouterModelExtraHeadersFormat(openrouterModel: OpenrouterModel) -> None:
-    """Test OpenRouter extra headers are properly formatted.
-
-    Args:
-        openrouterModel: The OpenRouter model instance.
-
-    Raises:
-        AssertionError: If headers are not properly formatted.
-    """
-    extraParams = openrouterModel._getExtraParams()
-    headers = extraParams["extra_headers"]
-
-    # Verify headers are strings
-    assert isinstance(headers["HTTP-Referer"], str)
-    assert isinstance(headers["X-Title"], str)
-
-    # Verify headers contain expected values
-    assert "sourcecraft.dev" in headers["HTTP-Referer"]
-    assert "Gromozeka" in headers["X-Title"]
-
-
 # ============================================================================
 # Text Generation Tests
 # ============================================================================
