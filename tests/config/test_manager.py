@@ -884,9 +884,9 @@ ttl = 3600
 class TestErrorHandling:
     """Test error handling for various failure scenarios.
 
-    This test class verifies that ConfigManager gracefully handles errors
-    including invalid TOML syntax, missing files, permission issues, and
-    other edge cases without crashing.
+    This test class verifies that ConfigManager handles errors correctly:
+    invalid TOML syntax in a config file is fatal and causes SystemExit,
+    while well-formed files load successfully.
     """
 
     def testInvalidTomlSyntax(self, tempDir: Path, invalidSyntaxToml: str) -> None:
@@ -905,21 +905,22 @@ class TestErrorHandling:
             ConfigManager(str(configPath))
 
     def testInvalidTomlInConfigDir(self, tempDir: Path, sampleConfigToml: str, invalidSyntaxToml: str) -> None:
-        """Test handling of invalid TOML in config directory.
+        """Test that invalid TOML in a config directory causes a fatal exit.
 
         Args:
             tempDir: Temporary directory fixture for test files.
             sampleConfigToml: Sample TOML configuration fixture.
             invalidSyntaxToml: Invalid TOML syntax fixture.
+
+        Raises:
+            SystemExit: When a config directory contains invalid TOML.
         """
         configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
         configDir = createConfigDir(tempDir, "configs", {"invalid.toml": invalidSyntaxToml})
 
-        # Should not crash, just skip invalid file
-        manager = ConfigManager(str(configPath), configDirs=[str(configDir)])
-
-        # Main config should still be loaded
-        assert manager.config["bot"]["token"] == "test_bot_token_123"
+        # Invalid TOML in a config dir is now fatal — bot exits on startup
+        with pytest.raises(SystemExit):
+            ConfigManager(str(configPath), configDirs=[str(configDir)])
 
     def testNonExistentConfigDirectory(self, tempDir: Path, sampleConfigToml: str) -> None:
         """Test handling of non-existent config directory.
