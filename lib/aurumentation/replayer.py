@@ -4,7 +4,7 @@ This module implements the replay coordinator that manages the
 replay process using custom httpx transports.
 """
 
-import asyncio
+import inspect
 from collections.abc import Callable
 from typing import Awaitable, List, Optional, TypeAlias
 
@@ -88,7 +88,7 @@ class GoldenDataReplayer:
 
         # Call aenterCallback if provided
         if self.aenterCallback:
-            if asyncio.iscoroutinefunction(self.aenterCallback):
+            if inspect.iscoroutinefunction(self.aenterCallback):
                 await self.aenterCallback(self)
             else:
                 self.aenterCallback(self)
@@ -113,7 +113,7 @@ class GoldenDataReplayer:
         """
         # Call aexitCallback if provided
         if self.aexitCallback:
-            if asyncio.iscoroutinefunction(self.aexitCallback):
+            if inspect.iscoroutinefunction(self.aexitCallback):
                 await self.aexitCallback(self)
             else:
                 self.aexitCallback(self)

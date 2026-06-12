@@ -10,6 +10,7 @@ recording all HTTP traffic.
 import argparse
 import asyncio
 import importlib
+import inspect
 import json
 import os
 import sys
@@ -61,7 +62,7 @@ async def collectGoldenData(scenarios: List[ScenarioDict], outputDir: Path, secr
             async with GoldenDataRecorder(secrets=secrets) as recorder:
                 # Call the method
                 method = getattr(instance, methodName)
-                if asyncio.iscoroutinefunction(method):
+                if inspect.iscoroutinefunction(method):
                     result = await method(**kwargs)
                 else:
                     result = method(**kwargs)
