@@ -410,20 +410,19 @@ class YandexSearchHandler(BaseBotHandler):
                     content,
                     options=html_to_markdown.ConversionOptions(
                         extract_metadata=False,
-                        strip_tags={"svg", "img"},
+                        strip_tags=["svg", "img"],
                     ),
                 )
-                if convertResult["content"] is not None:
-                    content = convertResult["content"]
+                if convertResult.content is not None:
+                    content = convertResult.content
                 else:
                     logger.error(
                         "No content returned after HTML-2-Markdown conversion, "
                         f"fallback to raw HTML (result is: {repr(convertResult)})"
                     )
 
-                if convertResult.get("warnings"):
-                    for convertWarning in convertResult["warnings"]:
-                        logger.warning(f"Warning during HTML-2-Markdown conversion: {convertWarning}")
+                for convertWarning in convertResult.warnings:
+                    logger.warning(f"Warning during HTML-2-Markdown conversion: {convertWarning}")
 
             if len(content) >= max_size:
                 logger.debug(f"Content length is {len(content)} > {max_size}, condensing...")

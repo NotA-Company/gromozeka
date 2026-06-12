@@ -1,9 +1,10 @@
 # Possible YC Models: https://aistudio.yandex.ru/docs/ru/ai-studio/concepts/generation/models.html
 [models.models.aliceai-llm]
+enabled         = true
 provider        = "yc-openai"
 model_id        = "aliceai-llm"
 model_version   = "latest"
-temperature     = 0.3
+temperature     = 0.2
 context         = 65536
 support_tools   = true
 support_text    = true
@@ -12,10 +13,11 @@ support_structured_output = true
 tier            = "paid"
 
 [models.models.aliceai-llm-flash]
+enabled         = true
 provider        = "yc-openai"
 model_id        = "aliceai-llm"
 model_version   = "latest"
-temperature     = 0.3
+temperature     = 0.2
 context         = 65536
 support_tools   = true
 support_text    = true
@@ -24,6 +26,7 @@ support_structured_output = true
 tier            = "paid"
 
 [models.models.yandexgpt]
+enabled         = false # Worse and more expensive than Alice AI
 provider        = "yc-openai"
 model_id        = "yandexgpt-5.1"
 model_version   = "latest"
@@ -36,6 +39,7 @@ support_structured_output = true
 tier            = "friend"
 
 [models.models.yandexgpt-lite]
+enabled         = false # Worse and more expensive than Alice AI Flash
 provider        = "yc-openai"
 model_id        = "yandexgpt-lite"
 model_version   = "latest"
@@ -51,7 +55,7 @@ tier            = "paid"
 provider        = "yc-openai"
 model_id        = "gpt-oss-120b"
 model_version   = "latest"
-temperature     = 0.5
+temperature     = 0.3
 context         = 131072
 support_tools   = true
 support_text    = true
@@ -60,11 +64,24 @@ support_structured_output = true
 tier            = "paid"
 
 [models.models."yc/deepseek-v32"]
+enabled         = false # Will be decomissioned in 2026.06
 provider        = "yc-openai"
 model_id        = "deepseek-v32"
 model_version   = "latest"
-temperature     = 0.5
+temperature     = 0.3
 context         = 131072
+support_tools   = true
+support_text    = true
+support_images  = false
+support_structured_output = true
+tier            = "paid"
+
+[models.models."yc/deepseek-v4-flash"]
+provider        = "yc-openai"
+model_id        = "deepseek-v4-flash"
+model_version   = "latest"
+temperature     = 0.3
+context         = 1048576
 support_tools   = true
 support_text    = true
 support_images  = false
@@ -75,7 +92,7 @@ tier            = "paid"
 provider        = "yc-openai"
 model_id        = "gpt-oss-20b"
 model_version   = "latest"
-temperature     = 0.2
+temperature     = 0.1
 context         = 131072
 support_tools   = true
 support_text    = true
@@ -87,21 +104,8 @@ tier            = "paid"
 provider        = "yc-openai"
 model_id        = "qwen3-235b-a22b-fp8"
 model_version   = "latest"
-temperature     = 0.5
+temperature     = 0.3
 context         = 262144
-support_tools   = true
-support_text    = true
-support_images  = false
-support_structured_output = true
-tier            = "friend"
-
-[models.models."yc/gemma-3-27b-it"]
-enabled         = false # Will be decomissed on 2026-05-15
-provider        = "yc-openai"
-model_id        = "gemma-3-27b-it"
-model_version   = "latest"
-temperature     = 0.4
-context         = 131072
 support_tools   = true
 support_text    = true
 support_images  = false

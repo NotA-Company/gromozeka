@@ -6,6 +6,7 @@ the Max Messenger Bot API using httpx with proper authentication and error handl
 """
 
 import asyncio
+import inspect
 import logging
 from collections.abc import Awaitable
 from typing import Any, Callable, Dict, List, Optional, Sequence, Union
@@ -1326,7 +1327,7 @@ class MaxBotClient:
                             break
 
                         try:
-                            if asyncio.iscoroutinefunction(handler):
+                            if inspect.iscoroutinefunction(handler):
                                 await handler(update)
                             else:
                                 handler(update)
@@ -1334,7 +1335,7 @@ class MaxBotClient:
                             logger.error(f"Error in update handler: {e}")
                             if errorHandler:
                                 try:
-                                    if asyncio.iscoroutinefunction(errorHandler):
+                                    if inspect.iscoroutinefunction(errorHandler):
                                         result = errorHandler(e)
                                         if result is not None:
                                             await result
@@ -1354,7 +1355,7 @@ class MaxBotClient:
                 logger.error(f"Error in polling loop: {e}")
                 if errorHandler:
                     try:
-                        if asyncio.iscoroutinefunction(errorHandler):
+                        if inspect.iscoroutinefunction(errorHandler):
                             result = errorHandler(e)
                             if result is not None:
                                 await result

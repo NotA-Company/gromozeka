@@ -1,0 +1,23 @@
+{
+  // ── JSONL Sync ─────────────────────────────────────────────────────────
+  // JSONL configuration for git-versioned memory history.
+  // When enabled, every add_memory/delete_memory also appends to the JSONL file.
+  // Deletions are recorded as deletion markers.
+  "jsonl": {
+    // Whether to write memory additions and deletions to JSONL file.
+    // Default: false
+    "enabled": true,
+
+    // Whether to import JSONL entries into SQLite on plugin startup.
+    // Default: false
+    "loadOnStartup": false,
+
+    // Path to JSONL file. Empty string disables JSONL even if enabled is true.
+    // Relative paths resolve against project root.
+    // Default: "" (disabled)
+    // "filePath": ".opencode/memory.jsonl",
+    "filePath": ".opencode/memory.jsonl",
+  },
+
+  "debug": true,
+}

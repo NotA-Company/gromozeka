@@ -8,6 +8,7 @@ global httpx patching.
 import argparse
 import asyncio
 import importlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -140,7 +141,7 @@ async def collectGoldenData(
 
                 # Call the method - httpx is patched globally, so all recordings are recorded
                 method = getattr(instance, methodName)
-                if asyncio.iscoroutinefunction(method):
+                if inspect.iscoroutinefunction(method):
                     result = await method(**substitutedKwargs)
                 else:
                     result = method(**substitutedKwargs)

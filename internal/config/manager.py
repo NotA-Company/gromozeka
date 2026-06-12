@@ -118,7 +118,8 @@ class ConfigManager:
 
         Raises:
             SystemExit: If the configuration file is not found and no config directories
-                are provided, or if the bot token is missing from the configuration.
+                are provided, if the bot token is missing from the configuration,
+                or if a fatal config parse/merge failure occurs during construction.
         """
         self.configPath: str = configPath
         self.configDirs: List[str] = configDirs or []
@@ -164,8 +165,9 @@ class ConfigManager:
                 if tomlFile.is_file():
                     tomlFiles.append(tomlFile)
                     logger.debug(f"Found config file: {tomlFile}")
-        except Exception as e:
-            logger.error(f"Error scanning directory {directory}: {e}")
+        except Exception:
+            logger.exception(f"Failed to scan config directory {directory}")
+            raise
 
         return sorted(tomlFiles)  # Sort for consistent ordering
 
@@ -210,13 +212,16 @@ class ConfigManager:
         If additional configuration directories are provided via `self.config_dirs`, it recursively
         scans those directories for `.toml` files and merges their contents into the main configuration.
         The method ensures that a bot token is present in the final configuration; otherwise, it exits.
+        Config file parse errors (invalid TOML, merge failures, etc.) are fatal and cause the bot to
+        exit immediately on startup.
 
         Returns:
             The loaded and merged configuration dictionary.
 
         Raises:
             SystemExit: If the main configuration file is not found and no config directories are provided,
-                        or if the bot token is missing in the configuration,
+                        if the bot token is missing in the configuration,
+                        if a config file fails to parse or merge,
                         or if an unexpected error occurs during configuration loading.
         """
         # Start with main config file
@@ -229,9 +234,13 @@ class ConfigManager:
         try:
             config: Dict[str, Any] = {}
             if hasConfigFile:
-                with open(configFile, "rb") as f:
-                    config = tomli.load(f)
-                logger.info(f"Loaded main config from {self.configPath}")
+                try:
+                    with open(configFile, "rb") as f:
+                        config = tomli.load(f)
+                    logger.info(f"Loaded main config from {self.configPath}")
+                except Exception:
+                    logger.exception(f"Failed to load main config file {configFile}")
+                    raise
 
             # Load and merge configs from directories
             if self.configDirs:
@@ -245,14 +254,11 @@ class ConfigManager:
                         try:
                             with open(tomlFile, "rb") as f:
                                 dir_config = tomli.load(f)
-
-                            # Merge this config into the main config
                             config = self._mergeConfigs(config, dir_config)
                             logger.info(f"Merged config from {tomlFile}")
-
-                        except Exception as e:
-                            logger.error(f"Failed to load config file {tomlFile}: {e}")
-                            # Continue with other files instead of exiting
+                        except Exception:
+                            logger.exception(f"Failed to load config file {tomlFile}")
+                            raise
 
             # Validate required configuration
             if not config.get("bot", {}).get("token"):
