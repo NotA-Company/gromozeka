@@ -47,3 +47,5 @@ Thumbs.db
 
 #
 lib/ext_modules/*/
+.opencode/audit
+.opencode/memory-audit-manifest.json
