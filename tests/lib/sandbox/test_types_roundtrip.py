@@ -16,7 +16,7 @@ output that ``fromDict`` can parse back without data loss.
 from datetime import datetime, timezone
 
 from lib.sandbox.enums import RunStatus, RuntimeName
-from lib.sandbox.types import PackageInfo, ResourceLimits, RunInfo, SessionInfo
+from lib.sandbox.types import PackageInfo, ResourceLimits, RunInfo, RunResult, SessionInfo
 
 # ============================================================================
 # ResourceLimits
@@ -263,3 +263,123 @@ def testPackageInfoRoundTripPreservesAllValues() -> None:
     restored = PackageInfo.fromDict(pi.toDict())
     assert restored.name == "numpy"
     assert restored.version == "1.26.0"
+
+
+# ============================================================================
+# RunResult
+# ============================================================================
+
+
+def testRunResultRoundTripPreservesAllValues() -> None:
+    """Verify that RunResult.fromDict(rr.toDict()) preserves all fields.
+
+    This tests enum serialization, datetime serialization, and the workDir
+    field which defaults to empty string when absent from the dict.
+    """
+    started = datetime(2025, 6, 1, 10, 0, 0, tzinfo=timezone.utc)
+    finished = datetime(2025, 6, 1, 10, 0, 3, tzinfo=timezone.utc)
+    rr = RunResult(
+        runId="test-run-id",
+        sessionId="sess-001",
+        workDir=".run/test-run-id/work",
+        runtime=RuntimeName.PYTHON,
+        stdoutPath="stdout.txt",
+        stderrPath="stderr.txt",
+        stdoutBytes=42,
+        stderrBytes=0,
+        exitCode=0,
+        signal=None,
+        timedOut=False,
+        oomKilled=False,
+        startedAt=started,
+        finishedAt=finished,
+        elapsedMs=3000,
+        networkEnabled=False,
+        error=None,
+    )
+    restored = RunResult.fromDict(rr.toDict())
+    assert restored.runId == "test-run-id"
+    assert restored.sessionId == "sess-001"
+    assert restored.workDir == ".run/test-run-id/work"
+    assert restored.runtime == RuntimeName.PYTHON
+    assert restored.stdoutPath == "stdout.txt"
+    assert restored.stderrPath == "stderr.txt"
+    assert restored.stdoutBytes == 42
+    assert restored.stderrBytes == 0
+    assert restored.exitCode == 0
+    assert restored.signal is None
+    assert restored.timedOut is False
+    assert restored.oomKilled is False
+    assert restored.startedAt == started
+    assert restored.finishedAt == finished
+    assert restored.elapsedMs == 3000
+    assert restored.networkEnabled is False
+    assert restored.error is None
+
+
+def testRunResultRoundTripDefaultsWorkDirToEmptyString() -> None:
+    """Verify that RunResult.fromDict() defaults workDir to empty string when absent.
+
+    Older serialisations won't include workDir, so fromDict must handle its
+    absence gracefully.
+    """
+    started = datetime(2025, 6, 1, 10, 0, 0, tzinfo=timezone.utc)
+    finished = datetime(2025, 6, 1, 10, 0, 1, tzinfo=timezone.utc)
+    data = {
+        "runId": "run-old",
+        "sessionId": "sess-old",
+        # workDir intentionally omitted
+        "runtime": "python",
+        "stdoutPath": "out.txt",
+        "stderrPath": "err.txt",
+        "stdoutBytes": 10,
+        "stderrBytes": 5,
+        "exitCode": 1,
+        "signal": None,
+        "timedOut": False,
+        "oomKilled": False,
+        "startedAt": started.isoformat(),
+        "finishedAt": finished.isoformat(),
+        "elapsedMs": 1000,
+        "networkEnabled": True,
+        "error": "boom",
+    }
+    restored = RunResult.fromDict(data)
+    assert restored.workDir == ""
+    assert restored.runId == "run-old"
+    assert restored.error == "boom"
+
+
+def testRunResultToDictProducesJsonSerializableValues() -> None:
+    """Verify that RunResult.toDict() produces JSON-serializable values.
+
+    Enums must be strings, datetimes must be ISO strings, workDir must be a
+    plain string.
+    """
+    started = datetime(2025, 6, 1, 10, 0, 0, tzinfo=timezone.utc)
+    finished = datetime(2025, 6, 1, 10, 0, 2, tzinfo=timezone.utc)
+    rr = RunResult(
+        runId="run-003",
+        sessionId="sess-003",
+        workDir=".run/run-003/work",
+        runtime=RuntimeName.PYTHON,
+        stdoutPath="stdout.txt",
+        stderrPath="stderr.txt",
+        stdoutBytes=0,
+        stderrBytes=0,
+        exitCode=0,
+        signal=None,
+        timedOut=False,
+        oomKilled=False,
+        startedAt=started,
+        finishedAt=finished,
+        elapsedMs=2000,
+        networkEnabled=False,
+        error=None,
+    )
+    d = rr.toDict()
+    assert isinstance(d["runtime"], str)
+    assert isinstance(d["startedAt"], str)
+    assert isinstance(d["finishedAt"], str)
+    assert isinstance(d["workDir"], str)
+    assert d["workDir"] == ".run/run-003/work"

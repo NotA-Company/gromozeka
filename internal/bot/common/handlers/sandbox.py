@@ -19,6 +19,8 @@ import time
 from collections.abc import Sequence
 from typing import Any, Dict, Optional
 
+import magic
+
 from internal.bot.common.models import UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import (
@@ -33,6 +35,7 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import MessageCategory
+from internal.models.shared_enums import MessageType
 from internal.services.queue_service import DelayedTask, DelayedTaskFunction
 from lib.ai import LLMFunctionParameter, LLMParameterType
 from lib.sandbox import (
@@ -49,6 +52,9 @@ from lib.sandbox.types import NetworkPolicy
 from .base import BaseBotHandler
 
 logger = logging.getLogger(__name__)
+
+MAX_SANDBOX_READ_FILE_BYTES = 65536  # 64 KB
+MAX_SANDBOX_SEND_BYTES = 20 * 1024 * 1024  # 20 MB
 
 
 class SandboxHandler(BaseBotHandler):
@@ -113,6 +119,72 @@ class SandboxHandler(BaseBotHandler):
             handler=self._llmToolRunSandboxCode,
         )
 
+        # Register sandbox file-management LLM tools
+        self.llmService.registerTool(
+            name="sandbox_list_files",
+            description="List files in the sandbox workspace (same environment where run_python executes code)",
+            parameters=[
+                LLMFunctionParameter(
+                    name="path",
+                    description="Directory path relative to sandbox workspace root (default: '.')",
+                    type=LLMParameterType.STRING,
+                ),
+                LLMFunctionParameter(
+                    name="recursive",
+                    description="Include files in subdirectories recursively (default: false)",
+                    type=LLMParameterType.BOOLEAN,
+                ),
+            ],
+            handler=self._llmToolSandboxListFiles,
+        )
+        self.llmService.registerTool(
+            name="sandbox_read_file",
+            description=(
+                "Read content of a file from the sandbox workspace " "(same environment where run_python executes code)"
+            ),
+            parameters=[
+                LLMFunctionParameter(
+                    name="path",
+                    description="File path relative to workspace root (required)",
+                    type=LLMParameterType.STRING,
+                    required=True,
+                ),
+                LLMFunctionParameter(
+                    name="offset",
+                    description="0-based line number to start reading from (default: 0)",
+                    type=LLMParameterType.NUMBER,
+                ),
+                LLMFunctionParameter(
+                    name="limit",
+                    description="Maximum number of lines to return (default: all)",
+                    type=LLMParameterType.NUMBER,
+                ),
+            ],
+            handler=self._llmToolSandboxReadFile,
+        )
+        self.llmService.registerTool(
+            name="sandbox_send_file",
+            description=(
+                "Send a file from the sandbox workspace to the user "
+                "(same environment where run_python executes code). "
+                "Automatically detects file type and sends as image, video, audio, or document."
+            ),
+            parameters=[
+                LLMFunctionParameter(
+                    name="path",
+                    description="File path relative to workspace root (required)",
+                    type=LLMParameterType.STRING,
+                    required=True,
+                ),
+                LLMFunctionParameter(
+                    name="caption",
+                    description="Optional caption text to send with the file",
+                    type=LLMParameterType.STRING,
+                ),
+            ],
+            handler=self._llmToolSandboxSendFile,
+        )
+
     def getSessionId(self, ensuredMessage: EnsuredMessage) -> str:
         return f"chat#{ensuredMessage.recipient.id}"
 
@@ -170,7 +242,7 @@ class SandboxHandler(BaseBotHandler):
             **kwargs: Additional keyword arguments (ignored).
 
         Returns:
-            JSON string: ``{"done": bool, "exitCode": int | None, "elapsedMs": int | None,
+            Dict: ``{"done": bool, "exitCode": int | None, "elapsedMs": int | None,
             "stdout": str | None, "stderr": str | None, "errorMessage": str | None}``
             Optional keys on success: ``"oomKilled": bool``, ``"timedOut": bool``, ``"signal": str``.
         """
@@ -244,6 +316,17 @@ class SandboxHandler(BaseBotHandler):
                 except Exception as e:
                     logger.error("Failed to read stderr: %s", e)
 
+            # Scan created files in workDir
+            files: list[Dict[str, Any]] = []
+            if result.workDir:
+                try:
+                    fileList = await manager.listFiles(sessionId, path=result.workDir, recursive=True)
+                    files = [{"path": f.path, "sizeBytes": f.sizeBytes, "isDirectory": f.isDirectory} for f in fileList]
+                except Exception as e:
+                    logger.error("Failed to list files in workDir: %s", e)
+            if files:
+                ret["files"] = files
+
             return ret
 
         except SessionBusy:
@@ -253,6 +336,240 @@ class SandboxHandler(BaseBotHandler):
         except Exception as e:
             logger.error("Sandbox LLM tool error: %s", e)
             return {"done": False, "errorMessage": str(e)}
+
+    async def _llmToolSandboxListFiles(
+        self, extraData: Optional[Dict[str, Any]], path: str = ".", recursive: bool = False, **kwargs: Any
+    ) -> Dict[str, Any]:
+        """LLM tool handler for listing files in the sandbox workspace.
+
+        Args:
+            extraData: Tool-call context dict. Must contain ``ensuredMessage``.
+            path: Directory path relative to sandbox workspace root (default '.').
+            recursive: Include files in subdirectories recursively (default False).
+            **kwargs: Additional keyword arguments (ignored).
+
+        Returns:
+            Dict: ``{"done": bool, "path": str, "recursive": bool,
+            "files": [{"path": str, "sizeBytes": int, "isDirectory": bool, "modifiedAt": str | None}]}``
+        """
+        try:
+            if extraData is None or "ensuredMessage" not in extraData:
+                return {"done": False, "error": "Missing chat context"}
+            ensuredMessage = extraData["ensuredMessage"]
+            if not isinstance(ensuredMessage, EnsuredMessage):
+                return {"done": False, "error": "Invalid chat context"}
+            if not self.sandboxEnabled:
+                return {"done": False, "error": "Sandbox is not configured"}
+            settings = await self.getChatSettings(ensuredMessage.recipient.id)
+            if not settings[ChatSettingsKey.ALLOW_SANDBOX].toBool():
+                return {"done": False, "error": "Sandbox not enabled for this chat"}
+            sessionId = self.getSessionId(ensuredMessage)
+            manager = SandboxManager.getInstance()
+            files = await manager.listFiles(sessionId, path=path, recursive=recursive)
+            return {
+                "done": True,
+                "path": path,
+                "recursive": recursive,
+                "files": [
+                    {
+                        "path": f.path,
+                        "sizeBytes": f.sizeBytes,
+                        "isDirectory": f.isDirectory,
+                        "modifiedAt": f.modifiedAt.isoformat() if f.modifiedAt else None,
+                    }
+                    for f in files
+                ],
+            }
+        except SessionNotFound:
+            return {"done": False, "error": "No active sandbox session. Run run_python first."}
+        except PathOutsideWorkspace:
+            return {"done": False, "error": "Access denied: path outside workspace"}
+        except NotADirectoryError:
+            return {"done": False, "error": f"Expected a directory, got a file: {path}"}
+        except FileNotFoundError:
+            return {"done": False, "error": f"File not found: {path}"}
+        except Exception as e:
+            logger.error("sandbox_list_files error: %s", e)
+            return {"done": False, "error": f"Sandbox error: {e}"}
+
+    async def _llmToolSandboxReadFile(
+        self,
+        extraData: Optional[Dict[str, Any]],
+        path: str,
+        offset: int = 0,
+        limit: Optional[int] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """LLM tool handler for reading a file from the sandbox workspace.
+
+        Reads file content and applies line-based offset/limit slicing.
+
+        Args:
+            extraData: Tool-call context dict. Must contain ``ensuredMessage``.
+            path: File path relative to workspace root (required).
+            offset: 0-based line number to start reading from (default 0).
+            limit: Maximum number of lines to return (default all).
+            **kwargs: Additional keyword arguments (ignored).
+
+        Returns:
+            Dict: ``{"done": bool, "path": str, "sizeBytes": int,
+            "totalLines": int, "offset": int, "limit": int | None,
+            "returnedLines": int, "truncated": bool, "content": str}``
+        """
+        try:
+            if extraData is None or "ensuredMessage" not in extraData:
+                return {"done": False, "error": "Missing chat context"}
+            ensuredMessage = extraData["ensuredMessage"]
+            if not isinstance(ensuredMessage, EnsuredMessage):
+                return {"done": False, "error": "Invalid chat context"}
+            if not self.sandboxEnabled:
+                return {"done": False, "error": "Sandbox is not configured"}
+            settings = await self.getChatSettings(ensuredMessage.recipient.id)
+            if not settings[ChatSettingsKey.ALLOW_SANDBOX].toBool():
+                return {"done": False, "error": "Sandbox not enabled for this chat"}
+            sessionId = self.getSessionId(ensuredMessage)
+            if offset < 0:
+                return {"done": False, "error": "offset must be >= 0"}
+            if limit is not None and limit < 0:
+                return {"done": False, "error": "limit must be >= 0"}
+            manager = SandboxManager.getInstance()
+            # Read with a reasonable maxBytes default (64 KB) to prevent unbounded reads
+            fileContent = await manager.readFile(sessionId, path, maxBytes=MAX_SANDBOX_READ_FILE_BYTES, encoding=None)
+
+            # Decode raw bytes with replacement for non-UTF-8 content
+            contentStr = fileContent.content
+            if isinstance(contentStr, bytes):
+                contentStr = contentStr.decode("utf-8", errors="replace")
+
+            lines = contentStr.splitlines(keepends=True)
+            totalLines = len(lines)
+            sliced = lines[offset : offset + limit] if limit is not None else lines[offset:]
+            sliceTruncated = offset > 0 or (limit is not None and offset + limit < totalLines)
+            return {
+                "done": True,
+                "path": path,
+                "sizeBytes": fileContent.sizeBytes,
+                "totalLines": totalLines,
+                "offset": offset,
+                "limit": limit,
+                "returnedLines": len(sliced),
+                "truncated": fileContent.truncated or sliceTruncated,
+                "bytesRead": fileContent.bytesRead,
+                "content": "".join(sliced),
+            }
+        except SessionNotFound:
+            return {"done": False, "error": "No active sandbox session. Run run_python first."}
+        except PathOutsideWorkspace:
+            return {"done": False, "error": "Access denied: path outside workspace"}
+        except IsADirectoryError:
+            return {"done": False, "error": f"Expected a file, got a directory: {path}"}
+        except FileNotFoundError:
+            return {"done": False, "error": f"File not found: {path}"}
+        except Exception as e:
+            logger.error("sandbox_read_file error: %s", e)
+            return {"done": False, "error": f"Sandbox error: {e}"}
+
+    async def _llmToolSandboxSendFile(
+        self, extraData: Optional[Dict[str, Any]], path: str, caption: Optional[str] = None, **kwargs: Any
+    ) -> Dict[str, Any]:
+        """LLM tool handler for sending a file from the sandbox workspace to the user.
+
+        Reads the file, detects its MIME type, maps it to a MessageType, and
+        sends it as an attachment via sendMessage().
+
+        Args:
+            extraData: Tool-call context dict. Must contain ``ensuredMessage``.
+            path: File path relative to workspace root (required).
+            caption: Optional caption text to send with the file.
+            **kwargs: Additional keyword arguments (ignored).
+
+        Returns:
+            Dict: ``{"done": bool, "path": str, "mimeType": str,
+            "messageType": str, "sizeBytes": int, "captionSent": bool}``
+        """
+        try:
+            if extraData is None or "ensuredMessage" not in extraData:
+                return {"done": False, "error": "Missing chat context"}
+            ensuredMessage = extraData["ensuredMessage"]
+            if not isinstance(ensuredMessage, EnsuredMessage):
+                return {"done": False, "error": "Invalid chat context"}
+            if not self.sandboxEnabled:
+                return {"done": False, "error": "Sandbox is not configured"}
+            settings = await self.getChatSettings(ensuredMessage.recipient.id)
+            if not settings[ChatSettingsKey.ALLOW_SANDBOX].toBool():
+                return {"done": False, "error": "Sandbox not enabled for this chat"}
+            sessionId = self.getSessionId(ensuredMessage)
+            manager = SandboxManager.getInstance()
+
+            # Read file bytes via SandboxManager
+            fileContent = await manager.readFile(sessionId, path, maxBytes=MAX_SANDBOX_SEND_BYTES + 1, encoding=None)
+
+            # Enforce size limit
+            if fileContent.sizeBytes > MAX_SANDBOX_SEND_BYTES:
+                return {
+                    "done": False,
+                    "error": f"File too large ({fileContent.sizeBytes} bytes, max {MAX_SANDBOX_SEND_BYTES})",
+                }
+
+            # Get raw bytes (encode if content is str)
+            data = fileContent.content
+            if isinstance(data, str):
+                data = data.encode("utf-8")
+
+            # MIME detection
+            mimeType = magic.from_buffer(data, mime=True)
+
+            # Map MIME to MessageType
+            messageType = self._mimeToMessageType(mimeType)
+
+            # Extract filename from path
+            filename = path.rsplit("/", 1)[-1] if "/" in path else path
+
+            # Send via sendMessage()
+            await self.sendMessage(
+                ensuredMessage,
+                messageText=caption if caption else None,
+                attachmentList=[(data, messageType, filename)],
+            )
+
+            return {
+                "done": True,
+                "path": path,
+                "mimeType": mimeType,
+                "messageType": messageType.value,
+                "sizeBytes": fileContent.sizeBytes,
+                "captionSent": caption is not None,
+            }
+        except SessionNotFound:
+            return {"done": False, "error": "No active sandbox session. Run run_python first."}
+        except PathOutsideWorkspace:
+            return {"done": False, "error": "Access denied: path outside workspace"}
+        except IsADirectoryError:
+            return {"done": False, "error": f"Expected a file, got a directory: {path}"}
+        except FileNotFoundError:
+            return {"done": False, "error": f"File not found: {path}"}
+        except Exception as e:
+            logger.error("sandbox_send_file error: %s", e)
+            return {"done": False, "error": f"Sandbox error: {e}"}
+
+    @staticmethod
+    def _mimeToMessageType(mimeType: str) -> MessageType:
+        """Map MIME type string to bot MessageType for attachment routing.
+
+        Args:
+            mimeType: MIME type string (e.g. 'image/png', 'video/mp4').
+
+        Returns:
+            MessageType enum value matching the MIME category.
+            Defaults to DOCUMENT for unrecognised types.
+        """
+        mainType = mimeType.split("/")[0]
+        mapping: Dict[str, MessageType] = {
+            "image": MessageType.IMAGE,
+            "video": MessageType.VIDEO,
+            "audio": MessageType.AUDIO,
+        }
+        return mapping.get(mainType, MessageType.DOCUMENT)
 
     async def _checkSandboxAccess(self, ensuredMessage: EnsuredMessage) -> bool:
         """Check if sandbox is enabled for this chat. Sends error reply if not.
@@ -374,6 +691,7 @@ class SandboxHandler(BaseBotHandler):
                 currentLength += len(line) + 1
 
             # Add actual output from result
+            codeBlockOpened = result.stdoutBytes > 0 and outputLines and outputLines[-1] == "```"
             if result.stdoutBytes > 0:
                 try:
                     # Read stdout file
@@ -389,8 +707,10 @@ class SandboxHandler(BaseBotHandler):
                     logger.error(f"Failed to read stdout: {e}")
                     outputLines.append("[Failed to read output]")
 
-            outputLines.append("```")
-            currentLength += 4  # +1 for newline, +3 for "```"
+                # Close the stdout code block only if it was opened
+                if codeBlockOpened:
+                    outputLines.append("```")
+                    currentLength += 4  # +1 for newline, +3 for "```"
 
             if result.stderrBytes > 0:
                 outputLines.append("Stderr:")
@@ -407,6 +727,32 @@ class SandboxHandler(BaseBotHandler):
                     logger.error(f"Failed to read stderr: {e}")
                     outputLines.append("[Failed to read stderr]")
                 outputLines.append("```")
+
+            # Scan created files in workDir
+            if result.workDir:
+                try:
+                    fileList = await manager.listFiles(sessionId, path=result.workDir, recursive=True)
+                    if fileList:
+                        header = "Created files:"
+                        if currentLength + len(header) + 1 <= maxLength:
+                            outputLines.append(header)
+                            currentLength += len(header) + 1
+                            skippedCount = 0
+                            for f in fileList:
+                                sizeKb = f.sizeBytes / 1024
+                                fileLine = f"  - `{f.path}` ({sizeKb:.1f} KB)"
+                                if currentLength + len(fileLine) + 1 <= maxLength:
+                                    outputLines.append(fileLine)
+                                    currentLength += len(fileLine) + 1
+                                else:
+                                    skippedCount += 1
+                            if skippedCount > 0:
+                                moreLine = f"  ...and {skippedCount} more"
+                                if currentLength + len(moreLine) + 1 <= maxLength:
+                                    outputLines.append(moreLine)
+                                    currentLength += len(moreLine) + 1
+                except Exception as e:
+                    logger.error(f"Failed to list files in workDir: {e}")
 
             if result.error:
                 outputLines.append(f"Error: {result.error}")

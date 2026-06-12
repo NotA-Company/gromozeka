@@ -4,7 +4,7 @@ This module implements the recording coordinator that manages the
 recording process using custom httpx transports.
 """
 
-import asyncio
+import inspect
 import json
 import os
 from collections.abc import Callable
@@ -89,7 +89,7 @@ class GoldenDataRecorder:
         httpx.AsyncClient = PatchedAsyncClient
 
         if self.aenterCallback:
-            if asyncio.iscoroutinefunction(self.aenterCallback):
+            if inspect.iscoroutinefunction(self.aenterCallback):
                 await self.aenterCallback(self)
             else:
                 self.aenterCallback(self)
@@ -112,7 +112,7 @@ class GoldenDataRecorder:
         """
 
         if self.aexitCallback:
-            if asyncio.iscoroutinefunction(self.aexitCallback):
+            if inspect.iscoroutinefunction(self.aexitCallback):
                 await self.aexitCallback(self)
             else:
                 self.aexitCallback(self)

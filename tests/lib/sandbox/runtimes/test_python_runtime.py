@@ -97,6 +97,12 @@ class TestRunCommand:
         assert "/workspace/.run/xyz789/stdout.log" in shellCmd
         assert "/workspace/.run/xyz789/stderr.log" in shellCmd
 
+    def testCdIntoWorkDir(self, runtime: PythonRuntime, defaultLimits: ResourceLimits) -> None:
+        """Verify the command cd's into the per-run work directory."""
+        cmd = runtime.runCommand("run99", hasStdin=False, limits=defaultLimits)
+        shellCmd = cmd[-1]
+        assert shellCmd.startswith("cd /workspace/.run/run99/work &&")
+
 
 # ---------------------------------------------------------------------------
 # installCommand

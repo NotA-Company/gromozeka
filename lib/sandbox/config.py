@@ -125,7 +125,6 @@ class SessionDefaults:
     """Default session parameters (runtime, TTLs).
 
     Attributes:
-        runtime: Default runtime for new sessions.
         idleTtlMinutes: Minutes of inactivity before a session is eligible
             for garbage collection.
     """

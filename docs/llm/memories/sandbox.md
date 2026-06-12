@@ -43,3 +43,51 @@ How to use this file:
 - `dropSession(force=True)` lock interaction is tricky: `forceCancel()` sets `cancelled=True`, then `acquire()` raises `SessionDropped` before incrementing `waiters`. Track with a `lockAcquired` flag to avoid an unpaired `release()` that corrupts the counter.
 - `except BaseException` is needed in Docker container cleanup (not just `except Exception`) because `asyncio.CancelledError` inherits from `BaseException` in Python 3.12+.
 - Defensive `waiters <= 0` guard in `release()` helps diagnose unpaired-release bugs at runtime.
+
+## Sandbox Improvements (2026-06-09)
+
+### Per-run working directory
+
+- `SandboxManager.runCode()` creates a `work/` subdirectory inside `.run/<runId>/` before execution.
+- `RunResult.workDir` carries the workspace-relative path (e.g. `.run/<runId>/work`).
+- `PythonRuntime.runCommand()` now starts with `cd /workspace/.run/{runId}/work &&` — scripts run inside the per-run directory, so files written with relative paths land there.
+- `main.py` stays in the parent `.run/<runId>/` directory (not inside `work/`), so it doesn't appear in file listings.
+- Handler scans workDir via `SandboxManager.listFiles(sessionId, path=result.workDir, recursive=True)` after execution.
+
+### LLM tools
+
+Four tools registered in `SandboxHandler.__init__()` (all gated behind `sandbox.enabled` + `allow-sandbox`):
+- `run_python` — execute Python code (existing, unchanged)
+- `sandbox_list_files` — list workspace files, params: `path` (STRING), `recursive` (BOOLEAN)
+- `sandbox_read_file` — read file content with line-based `offset` (NUMBER) and `limit` (NUMBER), 64 KB maxBytes default, handles non-UTF-8 with `errors="replace"`
+- `sandbox_send_file` — send file to user with automatic MIME detection, params: `path` (STRING), `caption` (STRING), 20 MB cap
+
+All tool handlers:
+- Return JSON `{"done": bool, ...}` — NEVER raise
+- Gate with `extraData` → `sandboxEnabled` → `allow-sandbox` chat setting
+- Normalize sandbox exceptions (`SessionNotFound`, `PathOutsideWorkspace`, etc.) into user-safe error messages
+- Use `self.getSessionId(ensuredMessage)` for session ID derivation (`chat#<id>` format)
+
+### MIME detection and file sending
+
+- `sandbox_send_file` reads files with `encoding=None` (raw bytes) for binary support.
+- MIME detection: `magic.from_buffer(data, mime=True)` in the handler layer (not in `lib/sandbox/`).
+- MIME→MessageType mapping: `image/*` → IMAGE, `video/*` → VIDEO, `audio/*` → AUDIO, rest → DOCUMENT.
+- Files sent via `self.sendMessage(ensuredMessage, attachmentList=[(data, messageType, filename)])`.
+- `MAX_SANDBOX_SEND_BYTES = 20 * 1024 * 1024` (20 MB cap, rejects oversized files).
+
+### Implementation gotchas
+
+- `RunResult.workDir` is workspace-relative (`.run/<runId>/work`), not host-absolute. This matches `stdoutPath`/`stderrPath` convention.
+- `workDir` field is at the end of `RunResult` with default `""` for backward compat (dataclass `slots=True` requires defaults at the end).
+- `RunResult.fromDict()` was added — defaults missing `workDir` to `""` for old serialized data.
+- `_sandboxReadFile()` uses `encoding=None` in `readFile()` call then decodes with `errors="replace"` — the bytes-handling branch is no longer dead code.
+- The `/run` command response tracks `codeBlockOpened` boolean to avoid stray ``` fence when no stdout but files created.
+- File list in `/run` response is budgeted against `maxLength` to avoid overflow.
+
+### Test locations
+
+- `tests/lib/sandbox/test_types_roundtrip.py` — RunResult roundtrip with workDir
+- `tests/lib/sandbox/runtimes/test_python_runtime.py` — cd into workDir prefix test
+- `tests/lib/sandbox/test_manager.py` — workDir creation and path format tests
+- `tests/bot/test_sandbox.py` — 51 handler tests covering file scanning, all four LLM tools, access control, MIME detection, size limits, and edge cases

@@ -116,6 +116,7 @@ def _makeRunResult(
     stderrPath: str = "stderr.txt",
     stdoutBytes: int = 0,
     stderrBytes: int = 0,
+    workDir: str = "",
     error: Optional[str] = None,
 ) -> RunResult:
     """Build a RunResult for mocking sandbox execution.
@@ -126,6 +127,7 @@ def _makeRunResult(
         stderrPath: Path to stderr file.
         stdoutBytes: Size of stdout.
         stderrBytes: Size of stderr.
+        workDir: Per-run working directory path.
         error: Optional error message.
 
     Returns:
@@ -135,6 +137,7 @@ def _makeRunResult(
     return RunResult(
         runId="test-run-123",
         sessionId="100",
+        workDir=workDir,
         runtime=RuntimeName.PYTHON,
         stdoutPath=stdoutPath,
         stderrPath=stderrPath,
@@ -642,3 +645,719 @@ async def test_sandbox_install_not_admin(mockSandboxManager: AsyncMock) -> None:
     assert mocks["sendMessage"].call_count == 1
     sendKwargs = mocks["sendMessage"].call_args.kwargs
     assert "not authorized" in sendKwargs["messageText"].lower() or "restricted" in sendKwargs["messageText"].lower()
+
+
+# ---------------------------------------------------------------------------
+# 7. run_command file scanning tests
+# ---------------------------------------------------------------------------
+
+
+async def test_run_command_shows_created_files(mockSandboxManager: AsyncMock) -> None:
+    """Test /run command includes 'Created files:' section when workDir has files."""
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    mockResult = _makeRunResult(exitCode=0, stdoutBytes=5, stderrBytes=0, workDir=".run/test-run-123/work")
+    mockSandboxManager.runCode = AsyncMock(return_value=mockResult)
+    mockSandboxManager.readFile = AsyncMock(
+        return_value=FileContent(path="stdout.txt", sizeBytes=5, bytesRead=5, truncated=False, content="hello")
+    )
+    mockSandboxManager.listFiles = AsyncMock(
+        return_value=[
+            _makeFileInfo("output.csv", 2048, isDirectory=False),
+            _makeFileInfo("plots", 0, isDirectory=True),
+        ]
+    )
+
+    await cast(Any, handler).run_command(em, "run", 'print("hello")', Mock(), None)
+
+    # Verify sendMessage was called with "Created files:" section
+    assert mocks["sendMessage"].call_count == 1
+    sendKwargs = mocks["sendMessage"].call_args.kwargs
+    msgText = sendKwargs["messageText"]
+    assert "Created files:" in msgText
+    assert "output.csv" in msgText
+    assert "plots" in msgText
+
+
+async def test_run_command_no_files_section_when_workdir_empty(mockSandboxManager: AsyncMock) -> None:
+    """Test /run command does not add 'Created files:' when workDir is empty string."""
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    mockResult = _makeRunResult(exitCode=0, stdoutBytes=5, stderrBytes=0, workDir="")
+    mockSandboxManager.runCode = AsyncMock(return_value=mockResult)
+    mockSandboxManager.readFile = AsyncMock(
+        return_value=FileContent(path="stdout.txt", sizeBytes=5, bytesRead=5, truncated=False, content="hello")
+    )
+
+    await cast(Any, handler).run_command(em, "run", 'print("hello")', Mock(), None)
+
+    assert mocks["sendMessage"].call_count == 1
+    sendKwargs = mocks["sendMessage"].call_args.kwargs
+    assert "Created files:" not in sendKwargs["messageText"]
+
+
+async def test_run_command_no_files_section_when_list_empty(mockSandboxManager: AsyncMock) -> None:
+    """Test /run command does not add 'Created files:' when listFiles returns empty list."""
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    mockResult = _makeRunResult(exitCode=0, stdoutBytes=5, stderrBytes=0, workDir=".run/test-run-123/work")
+    mockSandboxManager.runCode = AsyncMock(return_value=mockResult)
+    mockSandboxManager.readFile = AsyncMock(
+        return_value=FileContent(path="stdout.txt", sizeBytes=5, bytesRead=5, truncated=False, content="hello")
+    )
+    mockSandboxManager.listFiles = AsyncMock(return_value=[])
+
+    await cast(Any, handler).run_command(em, "run", 'print("hello")', Mock(), None)
+
+    assert mocks["sendMessage"].call_count == 1
+    sendKwargs = mocks["sendMessage"].call_args.kwargs
+    assert "Created files:" not in sendKwargs["messageText"]
+
+
+# ---------------------------------------------------------------------------
+# 8. _llmToolRunSandboxCode files key tests
+# ---------------------------------------------------------------------------
+
+
+async def test_llm_tool_run_includes_files_key(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolRunSandboxCode includes 'files' key in response when workDir has files."""
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    mockResult = _makeRunResult(exitCode=0, stdoutBytes=0, stderrBytes=0, workDir=".run/test-run-123/work")
+    mockSandboxManager.runCode = AsyncMock(return_value=mockResult)
+    mockSandboxManager.listFiles = AsyncMock(
+        return_value=[
+            _makeFileInfo("data.json", 256, isDirectory=False),
+        ]
+    )
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolRunSandboxCode(extraData, code="import json; print('hi')")
+
+    assert result["done"] is True
+    assert "files" in result
+    assert len(result["files"]) == 1
+    assert result["files"][0]["path"] == "data.json"
+    assert result["files"][0]["sizeBytes"] == 256
+    assert result["files"][0]["isDirectory"] is False
+
+
+async def test_llm_tool_run_no_files_key_when_workdir_empty(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolRunSandboxCode omits 'files' key when workDir is empty."""
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    mockResult = _makeRunResult(exitCode=0, stdoutBytes=0, stderrBytes=0, workDir="")
+    mockSandboxManager.runCode = AsyncMock(return_value=mockResult)
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolRunSandboxCode(extraData, code="print('hi')")
+
+    assert result["done"] is True
+    assert "files" not in result
+
+
+# ---------------------------------------------------------------------------
+# 9. _llmToolSandboxListFiles LLM tool tests
+# ---------------------------------------------------------------------------
+
+
+async def test_sandbox_list_files_returns_dict(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxListFiles returns correct dict with file list."""
+
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    mockSandboxManager.listFiles = AsyncMock(
+        return_value=[
+            _makeFileInfo("main.py", 1024, isDirectory=False),
+            _makeFileInfo("src", 0, isDirectory=True),
+        ]
+    )
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxListFiles(extraData, path=".", recursive=True)
+
+    parsed = result
+    assert parsed["done"] is True
+    assert parsed["path"] == "."
+    assert parsed["recursive"] is True
+    assert len(parsed["files"]) == 2
+    assert parsed["files"][0]["path"] == "main.py"
+    assert parsed["files"][0]["sizeBytes"] == 1024
+    assert parsed["files"][0]["isDirectory"] is False
+    assert parsed["files"][1]["isDirectory"] is True
+
+
+async def test_sandbox_list_files_missing_context(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxListFiles returns error when extraData is None."""
+
+    handler, mocks = _makeHandler()
+
+    result = await handler._llmToolSandboxListFiles(None, path=".", recursive=False)
+
+    parsed = result
+    assert parsed["done"] is False
+    assert "Missing chat context" in parsed["error"]
+
+
+async def test_sandbox_list_files_gated_when_sandbox_not_configured(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxListFiles returns error when sandbox is not configured globally."""
+
+    handler, mocks = _makeHandler(sandboxEnabled=False, chatSettings=_makeChatSettings(allowSandbox=True))
+    em = _makeEnsuredMessage()
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxListFiles(extraData, path=".", recursive=False)
+
+    parsed = result
+    assert parsed["done"] is False
+    assert "not configured" in parsed["error"]
+    mockSandboxManager.listFiles.assert_not_called()
+
+
+async def test_sandbox_list_files_gated_when_allow_sandbox_false(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxListFiles returns error when allow-sandbox setting is False."""
+
+    handler, mocks = _makeHandler(chatSettings=_makeChatSettings(allowSandbox=False))
+    em = _makeEnsuredMessage()
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxListFiles(extraData, path=".", recursive=False)
+
+    parsed = result
+    assert parsed["done"] is False
+    assert "not enabled" in parsed["error"]
+    mockSandboxManager.listFiles.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 10. _llmToolSandboxReadFile LLM tool tests
+# ---------------------------------------------------------------------------
+
+
+async def test_sandbox_read_file_returns_dict(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxReadFile returns correct dict with file content."""
+
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    fileContentText = "line1\nline2\nline3\n"
+    mockSandboxManager.readFile = AsyncMock(
+        return_value=FileContent(
+            path="test.py",
+            sizeBytes=len(fileContentText),
+            bytesRead=len(fileContentText),
+            truncated=False,
+            content=fileContentText,
+        )
+    )
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxReadFile(extraData, path="test.py")
+
+    parsed = result
+    assert parsed["done"] is True
+    assert parsed["path"] == "test.py"
+    assert parsed["totalLines"] == 3
+    assert parsed["offset"] == 0
+    assert parsed["limit"] is None
+    assert parsed["returnedLines"] == 3
+    assert parsed["truncated"] is False
+    assert parsed["content"] == "line1\nline2\nline3\n"
+
+
+async def test_sandbox_read_file_with_offset_and_limit(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxReadFile applies offset and limit slicing correctly."""
+
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    fileContentText = "line0\nline1\nline2\nline3\nline4\n"
+    mockSandboxManager.readFile = AsyncMock(
+        return_value=FileContent(
+            path="data.txt",
+            sizeBytes=len(fileContentText),
+            bytesRead=len(fileContentText),
+            truncated=False,
+            content=fileContentText,
+        )
+    )
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxReadFile(extraData, path="data.txt", offset=1, limit=2)
+
+    parsed = result
+    assert parsed["done"] is True
+    assert parsed["totalLines"] == 5
+    assert parsed["offset"] == 1
+    assert parsed["limit"] == 2
+    assert parsed["returnedLines"] == 2
+    assert parsed["truncated"] is True  # offset > 0 and offset+limit < totalLines
+    assert parsed["content"] == "line1\nline2\n"
+
+
+async def test_sandbox_read_file_offset_past_end(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxReadFile with offset > totalLines returns empty content."""
+
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    fileContentText = "line0\nline1\n"
+    mockSandboxManager.readFile = AsyncMock(
+        return_value=FileContent(
+            path="short.txt",
+            sizeBytes=len(fileContentText),
+            bytesRead=len(fileContentText),
+            truncated=False,
+            content=fileContentText,
+        )
+    )
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxReadFile(extraData, path="short.txt", offset=10)
+
+    parsed = result
+    assert parsed["done"] is True
+    assert parsed["totalLines"] == 2
+    assert parsed["returnedLines"] == 0
+    assert parsed["content"] == ""
+
+
+async def test_sandbox_read_file_limit_zero(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxReadFile with limit=0 returns empty content."""
+
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    fileContentText = "line0\nline1\n"
+    mockSandboxManager.readFile = AsyncMock(
+        return_value=FileContent(
+            path="data.txt",
+            sizeBytes=len(fileContentText),
+            bytesRead=len(fileContentText),
+            truncated=False,
+            content=fileContentText,
+        )
+    )
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxReadFile(extraData, path="data.txt", offset=0, limit=0)
+
+    parsed = result
+    assert parsed["done"] is True
+    assert parsed["returnedLines"] == 0
+    assert parsed["content"] == ""
+
+
+async def test_sandbox_read_file_empty_file(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxReadFile with an empty file."""
+
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    mockSandboxManager.readFile = AsyncMock(
+        return_value=FileContent(path="empty.txt", sizeBytes=0, bytesRead=0, truncated=False, content="")
+    )
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxReadFile(extraData, path="empty.txt")
+
+    parsed = result
+    assert parsed["done"] is True
+    assert parsed["totalLines"] == 0
+    assert parsed["content"] == ""
+
+
+async def test_sandbox_read_file_not_found(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxReadFile with non-existent file returns error dict."""
+
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    mockSandboxManager.readFile = AsyncMock(side_effect=FileNotFoundError("not found"))
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxReadFile(extraData, path="missing.txt")
+
+    parsed = result
+    assert parsed["done"] is False
+    assert "not found" in parsed["error"].lower()
+
+
+async def test_sandbox_read_file_bytes_content(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxReadFile handles bytes content from readFile (encoding=None case)."""
+
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    rawContent = b"hello world\n"
+    mockSandboxManager.readFile = AsyncMock(
+        return_value=FileContent(
+            path="binary.dat", sizeBytes=len(rawContent), bytesRead=len(rawContent), truncated=False, content=rawContent
+        )
+    )
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxReadFile(extraData, path="binary.dat")
+
+    parsed = result
+    assert parsed["done"] is True
+    assert "hello world" in parsed["content"]
+    # Verify readFile was called with encoding=None
+    mockSandboxManager.readFile.assert_called_once()
+    callKwargs = mockSandboxManager.readFile.call_args.kwargs
+    assert callKwargs["encoding"] is None
+
+
+async def test_sandbox_read_file_gated_when_sandbox_not_configured(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxReadFile returns error when sandbox is not configured globally."""
+
+    handler, mocks = _makeHandler(sandboxEnabled=False, chatSettings=_makeChatSettings(allowSandbox=True))
+    em = _makeEnsuredMessage()
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxReadFile(extraData, path="test.txt")
+
+    parsed = result
+    assert parsed["done"] is False
+    assert "not configured" in parsed["error"]
+    mockSandboxManager.readFile.assert_not_called()
+
+
+async def test_sandbox_read_file_gated_when_allow_sandbox_false(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxReadFile returns error when allow-sandbox setting is False."""
+
+    handler, mocks = _makeHandler(chatSettings=_makeChatSettings(allowSandbox=False))
+    em = _makeEnsuredMessage()
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxReadFile(extraData, path="test.txt")
+
+    parsed = result
+    assert parsed["done"] is False
+    assert "not enabled" in parsed["error"]
+    mockSandboxManager.readFile.assert_not_called()
+
+
+async def test_sandbox_read_file_negative_offset(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxReadFile rejects negative offset values."""
+
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxReadFile(extraData, path="test.txt", offset=-1)
+
+    parsed = result
+    assert parsed["done"] is False
+    assert "offset must be >= 0" in parsed["error"]
+    mockSandboxManager.readFile.assert_not_called()
+
+
+async def test_sandbox_read_file_negative_limit(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxReadFile rejects negative limit values."""
+
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxReadFile(extraData, path="test.txt", limit=-5)
+
+    parsed = result
+    assert parsed["done"] is False
+    assert "limit must be >= 0" in parsed["error"]
+    mockSandboxManager.readFile.assert_not_called()
+
+
+async def test_sandbox_read_file_truncated_from_readfile(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxReadFile reflects byte-level truncation from readFile in response."""
+
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    fileContentText = "line0\nline1\n"
+    mockSandboxManager.readFile = AsyncMock(
+        return_value=FileContent(
+            path="big.txt",
+            sizeBytes=100000,
+            bytesRead=65536,
+            truncated=True,
+            content=fileContentText,
+        )
+    )
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxReadFile(extraData, path="big.txt")
+
+    parsed = result
+    assert parsed["done"] is True
+    assert parsed["truncated"] is True
+    assert parsed["bytesRead"] == 65536
+
+
+async def test_sandbox_read_file_non_utf8_content(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxReadFile handles non-UTF-8 bytes with replacement characters."""
+
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    rawContent = b"hello \xff\xfe world\n"
+    mockSandboxManager.readFile = AsyncMock(
+        return_value=FileContent(
+            path="binary.dat", sizeBytes=len(rawContent), bytesRead=len(rawContent), truncated=False, content=rawContent
+        )
+    )
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxReadFile(extraData, path="binary.dat")
+
+    parsed = result
+    assert parsed["done"] is True
+    assert "hello" in parsed["content"]
+    assert "world" in parsed["content"]
+    # Verify readFile was called with encoding=None
+    callKwargs = mockSandboxManager.readFile.call_args.kwargs
+    assert callKwargs["encoding"] is None
+
+
+# ---------------------------------------------------------------------------
+# 11. _llmToolSandboxSendFile LLM tool tests
+# ---------------------------------------------------------------------------
+
+
+async def test_sandbox_send_file_mime_detection(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxSendFile detects MIME type and routes to correct MessageType."""
+
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    # Create a minimal valid PNG that python-magic can detect
+    # 8-byte PNG signature + IHDR chunk header
+    pngSignature = b"\x89PNG\r\n\x1a\n"
+    ihdrChunk = b"\x00\x00\x00\rIHDR" + b"\x00" * 13 + b"\x00" * 4  # IHDR data + CRC placeholder
+    imageData = pngSignature + ihdrChunk + b"\x00" * 100
+    mockSandboxManager.readFile = AsyncMock(
+        return_value=FileContent(
+            path="chart.png", sizeBytes=len(imageData), bytesRead=len(imageData), truncated=False, content=imageData
+        )
+    )
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxSendFile(extraData, path="chart.png", caption="Here is the chart")
+
+    parsed = result
+    assert parsed["done"] is True
+    assert parsed["path"] == "chart.png"
+    assert parsed["mimeType"] == "image/png"
+    assert parsed["messageType"] == "image"
+    assert parsed["captionSent"] is True
+
+    # Verify sendMessage called with attachment
+    mocks["sendMessage"].assert_called_once()
+    callKwargs = mocks["sendMessage"].call_args.kwargs
+    assert callKwargs["attachmentList"] is not None
+    assert len(callKwargs["attachmentList"]) == 1
+    attachmentData, attachmentType, attachmentName = callKwargs["attachmentList"][0]
+    assert attachmentName == "chart.png"
+    assert callKwargs["messageText"] == "Here is the chart"
+
+    # Verify readFile was called with encoding=None
+    mockSandboxManager.readFile.assert_called_once()
+    readFileKwargs = mockSandboxManager.readFile.call_args.kwargs
+    assert readFileKwargs["encoding"] is None
+
+
+async def test_sandbox_send_file_size_limit(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxSendFile rejects files exceeding MAX_SANDBOX_SEND_BYTES."""
+
+    from internal.bot.common.handlers.sandbox import MAX_SANDBOX_SEND_BYTES
+
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    largeSize = MAX_SANDBOX_SEND_BYTES + 1
+    mockSandboxManager.readFile = AsyncMock(
+        return_value=FileContent(
+            path="big.zip",
+            sizeBytes=largeSize,
+            bytesRead=MAX_SANDBOX_SEND_BYTES + 1,
+            truncated=True,
+            content=b"\x00" * 100,
+        )
+    )
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxSendFile(extraData, path="big.zip")
+
+    parsed = result
+    assert parsed["done"] is False
+    assert "too large" in parsed["error"].lower()
+
+    # Verify sendMessage was NOT called
+    mocks["sendMessage"].assert_not_called()
+
+
+async def test_sandbox_send_file_not_found(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxSendFile with non-existent file returns error dict."""
+
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    mockSandboxManager.readFile = AsyncMock(side_effect=FileNotFoundError("not found"))
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxSendFile(extraData, path="missing.png")
+
+    parsed = result
+    assert parsed["done"] is False
+    assert "not found" in parsed["error"].lower()
+
+
+async def test_sandbox_send_file_document_fallback(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxSendFile falls back to DOCUMENT for unknown MIME types."""
+
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    csvData = b"a,b,c\n1,2,3\n"
+    mockSandboxManager.readFile = AsyncMock(
+        return_value=FileContent(
+            path="data.csv", sizeBytes=len(csvData), bytesRead=len(csvData), truncated=False, content=csvData
+        )
+    )
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxSendFile(extraData, path="data.csv")
+
+    parsed = result
+    assert parsed["done"] is True
+    assert parsed["messageType"] == "document"
+
+
+async def test_sandbox_send_file_no_caption(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxSendFile without caption passes None as messageText."""
+
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    pdfData = b"%PDF-1.4" + b"\x00" * 100
+    mockSandboxManager.readFile = AsyncMock(
+        return_value=FileContent(
+            path="report.pdf", sizeBytes=len(pdfData), bytesRead=len(pdfData), truncated=False, content=pdfData
+        )
+    )
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxSendFile(extraData, path="report.pdf")
+
+    parsed = result
+    assert parsed["done"] is True
+    assert parsed["captionSent"] is False
+
+    # Verify sendMessage called with no message text
+    callKwargs = mocks["sendMessage"].call_args.kwargs
+    assert callKwargs["messageText"] is None
+
+
+async def test_sandbox_send_file_str_content(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxSendFile encodes str content to bytes before MIME detection."""
+
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage()
+
+    textContent = "hello world"
+    mockSandboxManager.readFile = AsyncMock(
+        return_value=FileContent(
+            path="hello.txt",
+            sizeBytes=len(textContent),
+            bytesRead=len(textContent),
+            truncated=False,
+            content=textContent,
+        )
+    )
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxSendFile(extraData, path="hello.txt")
+
+    parsed = result
+    assert parsed["done"] is True
+
+    # Verify sendMessage was called and attachment data is bytes
+    mocks["sendMessage"].assert_called_once()
+    callKwargs = mocks["sendMessage"].call_args.kwargs
+    attachmentData, _, _ = callKwargs["attachmentList"][0]
+    assert isinstance(attachmentData, bytes)
+
+
+async def test_sandbox_send_file_gated_when_sandbox_not_configured(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxSendFile returns error when sandbox is not configured globally."""
+
+    handler, mocks = _makeHandler(sandboxEnabled=False, chatSettings=_makeChatSettings(allowSandbox=True))
+    em = _makeEnsuredMessage()
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxSendFile(extraData, path="test.txt")
+
+    parsed = result
+    assert parsed["done"] is False
+    assert "not configured" in parsed["error"]
+    mockSandboxManager.readFile.assert_not_called()
+
+
+async def test_sandbox_send_file_gated_when_allow_sandbox_false(mockSandboxManager: AsyncMock) -> None:
+    """Test _llmToolSandboxSendFile returns error when allow-sandbox setting is False."""
+
+    handler, mocks = _makeHandler(chatSettings=_makeChatSettings(allowSandbox=False))
+    em = _makeEnsuredMessage()
+
+    extraData: Dict[str, Any] = {"ensuredMessage": em}
+    result = await handler._llmToolSandboxSendFile(extraData, path="test.txt")
+
+    parsed = result
+    assert parsed["done"] is False
+    assert "not enabled" in parsed["error"]
+    mockSandboxManager.readFile.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 12. _mimeToMessageType static helper tests
+# ---------------------------------------------------------------------------
+
+
+def test_mime_to_message_type_image() -> None:
+    """Test _mimeToMessageType maps image MIME types correctly."""
+    from internal.models.shared_enums import MessageType
+
+    assert SandboxHandler._mimeToMessageType("image/png") == MessageType.IMAGE
+    assert SandboxHandler._mimeToMessageType("image/jpeg") == MessageType.IMAGE
+    assert SandboxHandler._mimeToMessageType("image/gif") == MessageType.IMAGE
+
+
+def test_mime_to_message_type_video() -> None:
+    """Test _mimeToMessageType maps video MIME types correctly."""
+    from internal.models.shared_enums import MessageType
+
+    assert SandboxHandler._mimeToMessageType("video/mp4") == MessageType.VIDEO
+    assert SandboxHandler._mimeToMessageType("video/webm") == MessageType.VIDEO
+
+
+def test_mime_to_message_type_audio() -> None:
+    """Test _mimeToMessageType maps audio MIME types correctly."""
+    from internal.models.shared_enums import MessageType
+
+    assert SandboxHandler._mimeToMessageType("audio/mpeg") == MessageType.AUDIO
+    assert SandboxHandler._mimeToMessageType("audio/wav") == MessageType.AUDIO
+
+
+def test_mime_to_message_type_document_fallback() -> None:
+    """Test _mimeToMessageType defaults to DOCUMENT for unknown types."""
+    from internal.models.shared_enums import MessageType
+
+    assert SandboxHandler._mimeToMessageType("application/pdf") == MessageType.DOCUMENT
+    assert SandboxHandler._mimeToMessageType("text/csv") == MessageType.DOCUMENT
+    assert SandboxHandler._mimeToMessageType("application/octet-stream") == MessageType.DOCUMENT
