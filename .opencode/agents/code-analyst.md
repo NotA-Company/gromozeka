@@ -75,7 +75,7 @@ description: >-
 
   </example>
 mode: all
-model: standard
+model: code-analyzer
 temperature: 0.1
 steps: 30
 color: "#FF2D55"

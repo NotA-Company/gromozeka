@@ -9,6 +9,7 @@ Commands implemented:
 - /sandbox files [path]: List files in sandbox workspace
 - /sandbox read <path>: Read a file from sandbox workspace
 - /sandbox status: Show sandbox session status
+- /sandbox packages: List installed Python packages
 - /sandbox install <packages...>: Install Python packages (admin only)
 
 Per-chat gating is supported via the `allow-sandbox` chat setting.
@@ -16,7 +17,6 @@ Per-chat gating is supported via the `allow-sandbox` chat setting.
 
 import logging
 import time
-from collections.abc import Sequence
 from typing import Any, Dict, Optional
 
 import magic
@@ -97,10 +97,13 @@ class SandboxHandler(BaseBotHandler):
         self.llmService.registerTool(
             name="run_python",
             description=(
-                "Execute Python code in a sandboxed environment and return stdout/stderr output. "
+                "Execute Python code in a sandboxed environment and return stdout/stderr output "
+                "and list of files in work dir. "
                 "Use this to run calculations, process data, or test code snippets. "
                 # Network access is enabled for LLM-triggered code execution.
-                "Environment is preserved between calls."
+                "Environment is preserved between calls, but each invocation creates a new "
+                "temporary working directory (/workspace/.run/<uuid>/work/). "
+                "If needed Python libraries are missing, ask the admin to install them via /sandbox install."
             ),
             parameters=[
                 LLMFunctionParameter(
@@ -108,12 +111,6 @@ class SandboxHandler(BaseBotHandler):
                     description="Python source code to execute in the sandbox",
                     type=LLMParameterType.STRING,
                     required=True,
-                ),
-                LLMFunctionParameter(
-                    name="packages",
-                    description="List of packages, required for running script",
-                    type=LLMParameterType.ARRAY,
-                    required=False,
                 ),
             ],
             handler=self._llmToolRunSandboxCode,
@@ -126,7 +123,10 @@ class SandboxHandler(BaseBotHandler):
             parameters=[
                 LLMFunctionParameter(
                     name="path",
-                    description="Directory path relative to sandbox workspace root (default: '.')",
+                    description=(
+                        "Directory path relative to /workspace sandbox root (default: '.'). "
+                        "Absolute paths are also accepted and normalized relative to the workspace root."
+                    ),
                     type=LLMParameterType.STRING,
                 ),
                 LLMFunctionParameter(
@@ -145,7 +145,10 @@ class SandboxHandler(BaseBotHandler):
             parameters=[
                 LLMFunctionParameter(
                     name="path",
-                    description="File path relative to workspace root (required)",
+                    description=(
+                        "Path to the file relative to /workspace sandbox root. "
+                        "Absolute paths are also accepted and normalized relative to the workspace root."
+                    ),
                     type=LLMParameterType.STRING,
                     required=True,
                 ),
@@ -172,7 +175,10 @@ class SandboxHandler(BaseBotHandler):
             parameters=[
                 LLMFunctionParameter(
                     name="path",
-                    description="File path relative to workspace root (required)",
+                    description=(
+                        "Path to the file relative to /workspace sandbox root. "
+                        "Absolute paths are also accepted and normalized relative to the workspace root."
+                    ),
                     type=LLMParameterType.STRING,
                     required=True,
                 ),
@@ -183,6 +189,18 @@ class SandboxHandler(BaseBotHandler):
                 ),
             ],
             handler=self._llmToolSandboxSendFile,
+        )
+
+        # Register sandbox library listing LLM tool
+        self.llmService.registerTool(
+            name="sandbox_list_libraries",
+            description=(
+                "List installed Python libraries available in the sandbox environment. "
+                "Use this to discover what packages are installed before running code. "
+                "If needed libraries are missing, ask the admin to install them via /sandbox install."
+            ),
+            parameters=[],
+            handler=self._llmToolSandboxListLibraries,
         )
 
     def getSessionId(self, ensuredMessage: EnsuredMessage) -> str:
@@ -228,7 +246,6 @@ class SandboxHandler(BaseBotHandler):
         self,
         extraData: Dict[str, Any],
         code: str,
-        packages: Optional[Sequence[str]] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
         """LLM tool handler for sandboxed Python code execution.
@@ -243,28 +260,28 @@ class SandboxHandler(BaseBotHandler):
 
         Returns:
             Dict: ``{"done": bool, "exitCode": int | None, "elapsedMs": int | None,
-            "stdout": str | None, "stderr": str | None, "errorMessage": str | None}``
+            "stdout": str | None, "stderr": str | None, "error": str | None}``
             Optional keys on success: ``"oomKilled": bool``, ``"timedOut": bool``, ``"signal": str``.
         """
         try:
             # Validate context
             if extraData is None or "ensuredMessage" not in extraData:
-                return {"done": False, "errorMessage": "Missing chat context"}
+                return {"done": False, "error": "Missing chat context"}
 
             ensuredMessage = extraData["ensuredMessage"]
             if not isinstance(ensuredMessage, EnsuredMessage):
-                return {"done": False, "errorMessage": "Invalid chat context"}
+                return {"done": False, "error": "Invalid chat context"}
 
             chatId = ensuredMessage.recipient.id
 
             # Check sandbox availability
             if not self.sandboxEnabled:
-                return {"done": False, "errorMessage": "Sandbox is not configured"}
+                return {"done": False, "error": "Sandbox is not configured"}
 
             # Check per-chat setting
             settings = await self.getChatSettings(chatId)
             if not settings[ChatSettingsKey.ALLOW_SANDBOX].toBool():
-                return {"done": False, "errorMessage": "Sandbox not enabled for this chat"}
+                return {"done": False, "error": "Sandbox not enabled for this chat"}
 
             # Execute code
             sessionId = self.getSessionId(ensuredMessage)
@@ -273,13 +290,12 @@ class SandboxHandler(BaseBotHandler):
             result = await manager.runCode(
                 sessionId=sessionId,
                 code=code,
-                requiredPackages=packages,
                 runtime=RuntimeName.PYTHON,
                 network=NetworkPolicy(enabled=True),
             )
 
             if result.error:
-                return {"done": False, "errorMessage": result.error}
+                return {"done": False, "error": result.error}
 
             # Read stdout and stderr files
             ret = {
@@ -330,12 +346,12 @@ class SandboxHandler(BaseBotHandler):
             return ret
 
         except SessionBusy:
-            return {"done": False, "errorMessage": "Session is busy, try again later"}
+            return {"done": False, "error": "Session is busy, try again later"}
         except SandboxBusy:
-            return {"done": False, "errorMessage": "All sandbox workers are busy, try again later"}
+            return {"done": False, "error": "All sandbox workers are busy, try again later"}
         except Exception as e:
             logger.error("Sandbox LLM tool error: %s", e)
-            return {"done": False, "errorMessage": str(e)}
+            return {"done": False, "error": str(e)}
 
     async def _llmToolSandboxListFiles(
         self, extraData: Optional[Dict[str, Any]], path: str = ".", recursive: bool = False, **kwargs: Any
@@ -344,7 +360,8 @@ class SandboxHandler(BaseBotHandler):
 
         Args:
             extraData: Tool-call context dict. Must contain ``ensuredMessage``.
-            path: Directory path relative to sandbox workspace root (default '.').
+            path: Directory path relative to /workspace sandbox root (default '.').
+                Absolute paths are also accepted and normalized relative to the workspace root.
             recursive: Include files in subdirectories recursively (default False).
             **kwargs: Additional keyword arguments (ignored).
 
@@ -406,7 +423,8 @@ class SandboxHandler(BaseBotHandler):
 
         Args:
             extraData: Tool-call context dict. Must contain ``ensuredMessage``.
-            path: File path relative to workspace root (required).
+            path: File path relative to /workspace sandbox root (required).
+                Absolute paths are also accepted and normalized relative to the workspace root.
             offset: 0-based line number to start reading from (default 0).
             limit: Maximum number of lines to return (default all).
             **kwargs: Additional keyword arguments (ignored).
@@ -479,7 +497,8 @@ class SandboxHandler(BaseBotHandler):
 
         Args:
             extraData: Tool-call context dict. Must contain ``ensuredMessage``.
-            path: File path relative to workspace root (required).
+            path: File path relative to /workspace sandbox root (required).
+                Absolute paths are also accepted and normalized relative to the workspace root.
             caption: Optional caption text to send with the file.
             **kwargs: Additional keyword arguments (ignored).
 
@@ -550,6 +569,40 @@ class SandboxHandler(BaseBotHandler):
             return {"done": False, "error": f"File not found: {path}"}
         except Exception as e:
             logger.error("sandbox_send_file error: %s", e)
+            return {"done": False, "error": f"Sandbox error: {e}"}
+
+    async def _llmToolSandboxListLibraries(self, extraData: Optional[Dict[str, Any]], **kwargs: Any) -> Dict[str, Any]:
+        """LLM tool handler for listing installed Python libraries in the sandbox.
+
+        Returns the list of installed packages (name and version) so the LLM
+        can discover what libraries are available before running code.
+
+        Args:
+            extraData: Tool-call context dict. Must contain ``ensuredMessage``.
+            **kwargs: Additional keyword arguments (ignored).
+
+        Returns:
+            Dict: ``{"done": bool, "packages": [{"name": str, "version": str}, ...]}``
+        """
+        try:
+            if extraData is None or "ensuredMessage" not in extraData:
+                return {"done": False, "error": "Missing chat context"}
+            ensuredMessage = extraData["ensuredMessage"]
+            if not isinstance(ensuredMessage, EnsuredMessage):
+                return {"done": False, "error": "Invalid chat context"}
+            if not self.sandboxEnabled:
+                return {"done": False, "error": "Sandbox is not configured"}
+            settings = await self.getChatSettings(ensuredMessage.recipient.id)
+            if not settings[ChatSettingsKey.ALLOW_SANDBOX].toBool():
+                return {"done": False, "error": "Sandbox not enabled for this chat"}
+            manager = SandboxManager.getInstance()
+            packages = await manager.listRuntimeLibraries(RuntimeName.PYTHON)
+            return {
+                "done": True,
+                "packages": [{"name": p.name, "version": p.version} for p in packages],
+            }
+        except Exception as e:
+            logger.error("sandbox_list_libraries error: %s", e)
             return {"done": False, "error": f"Sandbox error: {e}"}
 
     @staticmethod
@@ -668,6 +721,7 @@ class SandboxHandler(BaseBotHandler):
                 runtime=RuntimeName.PYTHON,
                 network=NetworkPolicy(enabled=True),
             )
+            logger.debug(f"Run result: {result!r}")
 
             # Format response
             lines = [
@@ -753,6 +807,7 @@ class SandboxHandler(BaseBotHandler):
                                     currentLength += len(moreLine) + 1
                 except Exception as e:
                     logger.error(f"Failed to list files in workDir: {e}")
+                    logger.exception(e)
 
             if result.error:
                 outputLines.append(f"Error: {result.error}")
@@ -831,6 +886,7 @@ class SandboxHandler(BaseBotHandler):
                     "  files [path] - List files in workspace (default: root)\n"
                     "  read <path> - Read a file from workspace\n"
                     "  status - Show sandbox session status\n"
+                    "  packages - List installed Python packages\n"
                     "  install <packages...> - Install Python packages (admin only)"
                 ),
                 messageCategory=MessageCategory.BOT_ERROR,
@@ -851,6 +907,8 @@ class SandboxHandler(BaseBotHandler):
             await self._handleStatusCommand(ensuredMessage, sessionId, manager, typingManager)
         elif subcommand == "install":
             await self._handleInstallCommand(ensuredMessage, sessionId, subArgs, manager, typingManager)
+        elif subcommand == "packages":
+            await self._handlePackagesCommand(ensuredMessage, sessionId, manager, typingManager)
         else:
             await self.sendMessage(
                 ensuredMessage,
@@ -1155,6 +1213,46 @@ class SandboxHandler(BaseBotHandler):
             )
         except Exception as e:
             logger.error(f"Error installing packages: {e}")
+            await self.sendMessage(
+                ensuredMessage,
+                messageText=f"Error: {e}",
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+
+    async def _handlePackagesCommand(
+        self,
+        ensuredMessage: EnsuredMessage,
+        sessionId: str,
+        manager: SandboxManager,
+        typingManager: Optional[TypingManager],
+    ) -> None:
+        """Handle the 'packages' subcommand to list installed packages per runtime.
+
+        Iterates over all available runtimes and sends a message listing every
+        installed package (name==version) for each runtime.
+
+        Args:
+            ensuredMessage: The ensured message object containing message context.
+            sessionId: The sandbox session ID (derived from chat ID).
+            manager: The SandboxManager instance.
+            typingManager: Optional typing manager for showing typing indicators.
+
+        Returns:
+            None
+        """
+        try:
+            for runtime in RuntimeName:
+                packages = await manager.listRuntimeLibraries(runtime)
+                packageLines = "\n".join([f"{p.name}=={p.version}" for p in packages])
+                await self.sendMessage(
+                    ensuredMessage,
+                    messageText=f"Packages for {runtime.value}:\n{packageLines}",
+                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                    typingManager=typingManager,
+                )
+
+        except Exception as e:
+            logger.error(f"Error getting packages: {e}")
             await self.sendMessage(
                 ensuredMessage,
                 messageText=f"Error: {e}",

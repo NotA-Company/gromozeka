@@ -33,8 +33,12 @@ SandboxHandler (`internal/bot/common/handlers/sandbox.py`) provides slash comman
 - `/sandbox status` — Show sandbox session status
 - `/sandbox install <packages...>` — Install Python packages (admin only)
 
-**LLM tool:**
-- `run_python(code, packages?)` — Execute Python code in sandbox, returns `{"done": bool, "stdout": str | None, "stderr": str | None, "exitCode": int | None, "elapsedMs": int | None, "errorMessage": str | None}` (plus optional `"oomKilled": bool`, `"timedOut": bool`, `"signal": str` on success)
+**LLM tools:**
+- `run_python(code)` — Execute Python code in sandbox. If needed libraries are missing, ask the admin to install them via `/sandbox install`. Returns `{"done": bool, "stdout": str | None, "stderr": str | None, "exitCode": int | None, "elapsedMs": int | None, "error": str | None}` (plus optional `"oomKilled": bool`, `"timedOut": bool`, `"signal": str` on success, `"files": [...]` if workDir has created files)
+- `sandbox_list_files(path?, recursive?)` — List files in sandbox workspace
+- `sandbox_read_file(path, offset?, limit?)` — Read file content from sandbox workspace
+- `sandbox_send_file(path, caption?)` — Send a file from sandbox workspace to user (auto MIME detection)
+- `sandbox_list_libraries()` — List installed Python libraries in the sandbox. If needed libraries are missing, ask the admin to install them via `/sandbox install`. Returns `{"done": bool, "packages": [{"name": str, "version": str}, ...]}`
 
 **Lifecycle hooks:**
 - `CRON_JOB` — Periodic garbage collection (every 30 minutes)

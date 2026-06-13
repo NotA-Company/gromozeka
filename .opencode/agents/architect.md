@@ -69,7 +69,7 @@ description: >-
 
   </example>
 mode: all
-model: smartest
+model: architector
 reasoningEffort: high
 steps: 50
 color: "#FFD700"

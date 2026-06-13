@@ -78,7 +78,7 @@ description: >-
 
   </example>
 mode: all
-model: standard
+model: debugger
 reasoningEffort: high
 temperature: 0.1
 color: "#FF9500"
