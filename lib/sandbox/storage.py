@@ -53,12 +53,21 @@ def sessionHash(sessionId: str) -> str:
 def resolveWorkspacePath(workspaceRoot: Path, requested: str) -> Path:
     """Resolve a user-supplied path against the session workspace root.
 
-    Rejects paths that attempt to escape the workspace via absolute paths,
-    parent-directory traversal, or symlink-based escapes.
+    Absolute paths are normalised to relative form before resolution:
+
+    - Paths starting with ``/workspace`` strip that prefix (e.g.
+      ``/workspace/dir/file`` → ``dir/file``, ``/workspace`` → ``""``).
+    - Other absolute paths strip the leading ``/`` (e.g. ``/etc/passwd``
+      → ``etc/passwd``).
+    - Relative paths are left as-is.
+
+    After normalisation, the path is joined with the workspace root and
+    resolved.  Paths that escape the workspace via parent-directory traversal
+    or symlink-based escapes are rejected.
 
     Args:
         workspaceRoot: The absolute workspace directory for the session.
-        requested: The user-supplied relative path.
+        requested: The user-supplied path (absolute or relative).
 
     Returns:
         The resolved absolute path within the workspace.
@@ -71,9 +80,19 @@ def resolveWorkspacePath(workspaceRoot: Path, requested: str) -> Path:
     if "\0" in requested:
         raise PathOutsideWorkspace(f"path contains null byte: {requested!r}")
 
-    # 2. Reject absolute paths.
-    if requested.startswith("/"):
-        raise PathOutsideWorkspace(f"absolute paths are not allowed: {requested!r}")
+    # Preserve the original input for error messages before normalisation
+    # mutates the variable.
+    originalRequested = requested
+
+    # 2. Normalise absolute paths to relative form.
+    #    /workspace/... → strip the /workspace prefix
+    #    /... (other)   → strip the leading /
+    if requested.startswith("/workspace/"):
+        requested = requested[len("/workspace/") :]
+    elif requested == "/workspace":
+        requested = ""
+    elif requested.startswith("/"):
+        requested = requested[1:]
 
     # 3. Join with workspace root and resolve.
     #    We resolve workspaceRoot first so that symlinks in the root itself
@@ -87,7 +106,7 @@ def resolveWorkspacePath(workspaceRoot: Path, requested: str) -> Path:
     try:
         candidate.relative_to(resolvedRoot)
     except ValueError:
-        raise PathOutsideWorkspace(f"path {requested!r} resolves outside workspace root {resolvedRoot}")
+        raise PathOutsideWorkspace(f"path {originalRequested!r} resolves outside workspace root {resolvedRoot}")
 
     return candidate
 

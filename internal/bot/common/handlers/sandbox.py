@@ -97,10 +97,12 @@ class SandboxHandler(BaseBotHandler):
         self.llmService.registerTool(
             name="run_python",
             description=(
-                "Execute Python code in a sandboxed environment and return stdout/stderr output. "
+                "Execute Python code in a sandboxed environment and return stdout/stderr output "
+                "and list of files in work dir. "
                 "Use this to run calculations, process data, or test code snippets. "
                 # Network access is enabled for LLM-triggered code execution.
-                "Environment is preserved between calls."
+                "Environment is preserved between calls, but each invocation creates a new "
+                "temporary working directory (/workspace/.run/<uuid>/work/)."
             ),
             parameters=[
                 LLMFunctionParameter(
@@ -126,7 +128,10 @@ class SandboxHandler(BaseBotHandler):
             parameters=[
                 LLMFunctionParameter(
                     name="path",
-                    description="Directory path relative to sandbox workspace root (default: '.')",
+                    description=(
+                        "Directory path relative to /workspace sandbox root (default: '.'). "
+                        "Absolute paths are also accepted and normalized relative to the workspace root."
+                    ),
                     type=LLMParameterType.STRING,
                 ),
                 LLMFunctionParameter(
@@ -145,7 +150,10 @@ class SandboxHandler(BaseBotHandler):
             parameters=[
                 LLMFunctionParameter(
                     name="path",
-                    description="File path relative to workspace root (required)",
+                    description=(
+                        "Path to the file relative to /workspace sandbox root. "
+                        "Absolute paths are also accepted and normalized relative to the workspace root."
+                    ),
                     type=LLMParameterType.STRING,
                     required=True,
                 ),
@@ -172,7 +180,10 @@ class SandboxHandler(BaseBotHandler):
             parameters=[
                 LLMFunctionParameter(
                     name="path",
-                    description="File path relative to workspace root (required)",
+                    description=(
+                        "Path to the file relative to /workspace sandbox root. "
+                        "Absolute paths are also accepted and normalized relative to the workspace root."
+                    ),
                     type=LLMParameterType.STRING,
                     required=True,
                 ),
@@ -344,7 +355,8 @@ class SandboxHandler(BaseBotHandler):
 
         Args:
             extraData: Tool-call context dict. Must contain ``ensuredMessage``.
-            path: Directory path relative to sandbox workspace root (default '.').
+            path: Directory path relative to /workspace sandbox root (default '.').
+                Absolute paths are also accepted and normalized relative to the workspace root.
             recursive: Include files in subdirectories recursively (default False).
             **kwargs: Additional keyword arguments (ignored).
 
@@ -406,7 +418,8 @@ class SandboxHandler(BaseBotHandler):
 
         Args:
             extraData: Tool-call context dict. Must contain ``ensuredMessage``.
-            path: File path relative to workspace root (required).
+            path: File path relative to /workspace sandbox root (required).
+                Absolute paths are also accepted and normalized relative to the workspace root.
             offset: 0-based line number to start reading from (default 0).
             limit: Maximum number of lines to return (default all).
             **kwargs: Additional keyword arguments (ignored).
@@ -479,7 +492,8 @@ class SandboxHandler(BaseBotHandler):
 
         Args:
             extraData: Tool-call context dict. Must contain ``ensuredMessage``.
-            path: File path relative to workspace root (required).
+            path: File path relative to /workspace sandbox root (required).
+                Absolute paths are also accepted and normalized relative to the workspace root.
             caption: Optional caption text to send with the file.
             **kwargs: Additional keyword arguments (ignored).
 

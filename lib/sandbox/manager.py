@@ -773,12 +773,14 @@ class SandboxManager:
         """List files in a session workspace.
 
         All paths are resolved relative to the session workspace. Absolute
-        paths and traversal attempts are rejected.
+        paths are normalised to relative form (stripping ``/workspace``
+        prefix or leading ``/``) before resolution. Paths that escape the
+        workspace via traversal or symlinks are rejected.
 
         Args:
             self: The SandboxManager instance.
             sessionId: The session identifier.
-            path: Relative path to list (default "/" = workspace root).
+            path: Path to list (absolute or relative, default "/" = workspace root).
             recursive: If True, recurse into subdirectories.
 
         Returns:
@@ -792,13 +794,8 @@ class SandboxManager:
         if record is None:
             raise SessionNotFound(f"Session {sessionId} not found")
 
-        workspacePath = Path(record.workspacePath).resolve().absolute()
-        # "/" means workspace root — resolveWorkspacePath rejects absolute paths,
-        # so handle it directly.
-        if path == "/":
-            resolved = workspacePath.resolve().absolute()
-        else:
-            resolved = resolveWorkspacePath(workspacePath, path)
+        workspacePath = Path(record.workspacePath)
+        resolved = resolveWorkspacePath(workspacePath, path)
 
         if not resolved.exists():
             return []
@@ -837,7 +834,7 @@ class SandboxManager:
         Args:
             self: The SandboxManager instance.
             sessionId: The session identifier.
-            path: Relative path to the file.
+            path: Path to the file (absolute or relative).
             maxBytes: Maximum bytes to read (None = no limit).
             encoding: Text encoding for string output (None = raw bytes).
 
