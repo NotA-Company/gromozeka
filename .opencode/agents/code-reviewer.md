@@ -75,7 +75,7 @@ description: >-
 
   </example>
 mode: all
-model: smart
+model: code-reviewer
 reasoningEffort: high
 temperature: 0.1
 steps: 60
