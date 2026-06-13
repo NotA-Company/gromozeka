@@ -682,6 +682,7 @@ class SandboxHandler(BaseBotHandler):
                 runtime=RuntimeName.PYTHON,
                 network=NetworkPolicy(enabled=True),
             )
+            logger.debug(f"Run result: {result!r}")
 
             # Format response
             lines = [
@@ -767,6 +768,7 @@ class SandboxHandler(BaseBotHandler):
                                     currentLength += len(moreLine) + 1
                 except Exception as e:
                     logger.error(f"Failed to list files in workDir: {e}")
+                    logger.exception(e)
 
             if result.error:
                 outputLines.append(f"Error: {result.error}")

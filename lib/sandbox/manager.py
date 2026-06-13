@@ -794,7 +794,8 @@ class SandboxManager:
         if record is None:
             raise SessionNotFound(f"Session {sessionId} not found")
 
-        workspacePath = Path(record.workspacePath)
+        workspacePath = Path(record.workspacePath).absolute()
+        # logger.debug("Listing files in session %s (%s) at path %s", sessionId, workspacePath, path)
         resolved = resolveWorkspacePath(workspacePath, path)
 
         if not resolved.exists():
