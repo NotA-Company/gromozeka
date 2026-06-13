@@ -3,8 +3,9 @@
 Covers:
 - sessionHash: determinism, uniqueness, length, hex charset, known-answer.
 - resolveWorkspacePath: valid paths, nested paths, normalisation, absolute
-  rejection, traversal rejection, null-byte rejection, symlink escapes,
-  symlink within workspace, empty string, unicode paths.
+  path normalisation, workspace-prefix normalisation, traversal rejection,
+  null-byte rejection, symlink escapes, symlink within workspace, empty
+  string, unicode paths.
 - atomicWriteJson: round-trip, nested structures, temp-file cleanup on
   success, file permissions, directory creation.
 - ensureDirectoryLayout: creates expected tree, idempotent, directory modes.
@@ -146,8 +147,8 @@ class TestResolveWorkspacePath:
         result = resolveWorkspacePath(workspace, "./subdir/../file.txt")
         assert result == workspace / "file.txt"
 
-    def testAbsolutePathRejected(self, tmp_path: Path) -> None:
-        """Absolute paths are rejected.
+    def testAbsolutePathNormalized(self, tmp_path: Path) -> None:
+        """Absolute paths are normalised to relative and resolve within workspace.
 
         Args:
             tmp_path: pytest-provided temporary directory.
@@ -157,8 +158,51 @@ class TestResolveWorkspacePath:
         """
         workspace = tmp_path / "workspace"
         workspace.mkdir()
-        with pytest.raises(PathOutsideWorkspace, match="absolute"):
-            resolveWorkspacePath(workspace, "/etc/passwd")
+        # /etc/passwd → etc/passwd (strip leading /)
+        result = resolveWorkspacePath(workspace, "/etc/passwd")
+        assert result == workspace / "etc" / "passwd"
+
+    def testWorkspacePrefixNormalized(self, tmp_path: Path) -> None:
+        """Paths starting with /workspace/ strip that prefix.
+
+        Args:
+            tmp_path: pytest-provided temporary directory.
+
+        Returns:
+            None
+        """
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        result = resolveWorkspacePath(workspace, "/workspace/file.txt")
+        assert result == workspace / "file.txt"
+
+    def testWorkspacePrefixRoot(self, tmp_path: Path) -> None:
+        """/workspace resolves to the workspace root itself.
+
+        Args:
+            tmp_path: pytest-provided temporary directory.
+
+        Returns:
+            None
+        """
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        result = resolveWorkspacePath(workspace, "/workspace")
+        assert result == workspace.resolve()
+
+    def testAbsoluteWithWorkspacePrefixEscapesRejected(self, tmp_path: Path) -> None:
+        """Traversal via /workspace prefix is still rejected.
+
+        Args:
+            tmp_path: pytest-provided temporary directory.
+
+        Returns:
+            None
+        """
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        with pytest.raises(PathOutsideWorkspace):
+            resolveWorkspacePath(workspace, "/workspace/../../etc/passwd")
 
     def testTraversalEscapeRejected(self, tmp_path: Path) -> None:
         """Paths that escape via '..' are rejected.
@@ -279,6 +323,48 @@ class TestResolveWorkspacePath:
         workspace.mkdir()
         with pytest.raises(PathOutsideWorkspace):
             resolveWorkspacePath(workspace, "a/b/../../../../etc/passwd")
+
+    def testWorkspacePrefixRootTrailingSlash(self, tmp_path: Path) -> None:
+        """/workspace/ (trailing slash) resolves to workspace root.
+
+        Args:
+            tmp_path: pytest-provided temporary directory.
+
+        Returns:
+            None
+        """
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        result = resolveWorkspacePath(workspace, "/workspace/")
+        assert result == workspace.resolve()
+
+    def testAbsolutePathWithTraversalRejected(self, tmp_path: Path) -> None:
+        """Absolute path with traversal (no /workspace prefix) is rejected.
+
+        Args:
+            tmp_path: pytest-provided temporary directory.
+
+        Returns:
+            None
+        """
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        with pytest.raises(PathOutsideWorkspace):
+            resolveWorkspacePath(workspace, "/../../../etc/passwd")
+
+    def testWorkspacePrefixDoubleSlashRejected(self, tmp_path: Path) -> None:
+        """/workspace//file is rejected (double slash produces absolute remainder).
+
+        Args:
+            tmp_path: pytest-provided temporary directory.
+
+        Returns:
+            None
+        """
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        with pytest.raises(PathOutsideWorkspace):
+            resolveWorkspacePath(workspace, "/workspace//file")
 
 
 # ============================================================================

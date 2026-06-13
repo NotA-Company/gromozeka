@@ -66,7 +66,7 @@ description: >-
 
   </example>
 mode: all
-model: standard
+model: developer
 temperature: 0.1
 steps: 60
 color: "#5E5CE6"

@@ -773,12 +773,14 @@ class SandboxManager:
         """List files in a session workspace.
 
         All paths are resolved relative to the session workspace. Absolute
-        paths and traversal attempts are rejected.
+        paths are normalised to relative form (stripping ``/workspace``
+        prefix or leading ``/``) before resolution. Paths that escape the
+        workspace via traversal or symlinks are rejected.
 
         Args:
             self: The SandboxManager instance.
             sessionId: The session identifier.
-            path: Relative path to list (default "/" = workspace root).
+            path: Path to list (absolute or relative, default "/" = workspace root).
             recursive: If True, recurse into subdirectories.
 
         Returns:
@@ -792,13 +794,9 @@ class SandboxManager:
         if record is None:
             raise SessionNotFound(f"Session {sessionId} not found")
 
-        workspacePath = Path(record.workspacePath).resolve().absolute()
-        # "/" means workspace root — resolveWorkspacePath rejects absolute paths,
-        # so handle it directly.
-        if path == "/":
-            resolved = workspacePath.resolve().absolute()
-        else:
-            resolved = resolveWorkspacePath(workspacePath, path)
+        workspacePath = Path(record.workspacePath).absolute()
+        # logger.debug("Listing files in session %s (%s) at path %s", sessionId, workspacePath, path)
+        resolved = resolveWorkspacePath(workspacePath, path)
 
         if not resolved.exists():
             return []
@@ -837,7 +835,7 @@ class SandboxManager:
         Args:
             self: The SandboxManager instance.
             sessionId: The session identifier.
-            path: Relative path to the file.
+            path: Path to the file (absolute or relative).
             maxBytes: Maximum bytes to read (None = no limit).
             encoding: Text encoding for string output (None = raw bytes).
 
@@ -1137,6 +1135,7 @@ class SandboxManager:
             managed = await self._backend.listManagedContainers()
             for container in managed:
                 try:
+                    logger.debug(f"Recovery: killing old container {container.containerId}")
                     await self._backend.killContainer(container.containerId)
                     await self._backend.removeContainer(container.containerId, force=True)
                 except Exception as exc:
@@ -1158,6 +1157,9 @@ class SandboxManager:
                     runs = await self._metadata.listRunsForSession(sessionInfo.sessionId)
                     for run in runs:
                         try:
+                            logger.debug(
+                                f"Recovery: deleting orphaned run {run.runId} for session {sessionInfo.sessionId}"
+                            )
                             await self._metadata.deleteRun(run.runId)
                         except Exception as exc:
                             logger.warning(
@@ -1191,6 +1193,7 @@ class SandboxManager:
                 await self.prepareRuntime(name)
                 libsDir = Path(self._config.storage.rootDir) / "runtimes" / name.value / "libs"
                 if libsDir.exists():
+                    logger.debug(f"Refreshing package list for {name.value}")
                     await self._refreshPackageList(name, libsDir)
             except Exception as exc:
                 logger.error(f"Failed to reconcile pool for {name.value}: {exc}")
@@ -1347,4 +1350,8 @@ class SandboxManager:
 
         packages = runtimeImpl.parseListCommandOutput(outcome=outcome, stdout=stdoutStr, stderr=stderrStr)
         await self._metadata.savePackagesInfo(runtime=runtime, packagesInfo=packages)
+        logger.debug(f"Refreshed package list for {runtime.value}: {packages}")
+        # logger.debug(f"outcome: {outcome}")
+        # logger.debug(f"stdout: {stdoutStr}")
+        # logger.debug(f"stderr: {stderrStr}")
         return True

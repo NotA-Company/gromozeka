@@ -56,11 +56,16 @@ How to use this file:
 
 ### LLM tools
 
-Four tools registered in `SandboxHandler.__init__()` (all gated behind `sandbox.enabled` + `allow-sandbox`):
-- `run_python` — execute Python code (existing, unchanged)
+Five tools registered in `SandboxHandler.__init__()` (all gated behind `sandbox.enabled` + `allow-sandbox`):
+- `run_python` — execute Python code. The `packages` parameter was removed; if needed libraries are missing, the LLM should ask the admin to install them via `/sandbox install`.
 - `sandbox_list_files` — list workspace files, params: `path` (STRING), `recursive` (BOOLEAN)
 - `sandbox_read_file` — read file content with line-based `offset` (NUMBER) and `limit` (NUMBER), 64 KB maxBytes default, handles non-UTF-8 with `errors="replace"`
 - `sandbox_send_file` — send file to user with automatic MIME detection, params: `path` (STRING), `caption` (STRING), 20 MB cap
+- `sandbox_list_libraries` — list installed Python libraries (no params). Returns `{"done": bool, "packages": [{"name": str, "version": str}, ...]}`. If needed libraries are missing, the LLM should ask the admin to install them via `/sandbox install`.
+
+### Error key consistency fix (2026-06-14)
+
+`_llmToolRunSandboxCode` previously used `"errorMessage"` as the error key, while all other sandbox LLM tools used `"error"`. This was unified to `"error"` across all tools. The return format in `sandbox.md` now correctly documents `"error"`.
 
 All tool handlers:
 - Return JSON `{"done": bool, ...}` — NEVER raise
@@ -90,4 +95,46 @@ All tool handlers:
 - `tests/lib/sandbox/test_types_roundtrip.py` — RunResult roundtrip with workDir
 - `tests/lib/sandbox/runtimes/test_python_runtime.py` — cd into workDir prefix test
 - `tests/lib/sandbox/test_manager.py` — workDir creation and path format tests
-- `tests/bot/test_sandbox.py` — 51 handler tests covering file scanning, all four LLM tools, access control, MIME detection, size limits, and edge cases
+- `tests/bot/test_sandbox.py` — 51 handler tests covering file scanning, all five LLM tools, access control, MIME detection, size limits, and edge cases
+
+## Path Normalization in resolveWorkspacePath (2026-06-13)
+
+`resolveWorkspacePath()` in `lib/sandbox/storage.py` now **normalizes absolute paths** instead of rejecting them. This makes LLM tool calls more ergonomic — LLMs often produce absolute paths like `/workspace/file.txt` or `/etc/passwd`, and the old behaviour (raising `PathOutsideWorkspace`) was confusing.
+
+### Normalization rules
+
+| Input | Normalization | Result |
+|---|---|---|
+| `/workspace/sub/file.txt` | Strip `/workspace` prefix | `sub/file.txt` (relative to workspace root) |
+| `/workspace` or `/workspace/` | Strip prefix → empty string | Workspace root |
+| `/other/absolute/path` | Strip leading `/` | `other/absolute/path` (relative to workspace root) |
+| `relative/path` | No change | `relative/path` |
+
+### Security model (unchanged)
+
+After normalization, the path is joined with the workspace root and resolved via `Path.resolve()`. The resolved path is then checked with `candidate.relative_to(resolvedRoot)` — if this raises `ValueError`, the path escapes the workspace and `PathOutsideWorkspace` is raised. This jail check catches:
+
+- `..` traversal (e.g. `../../etc/passwd`)
+- Symlinks pointing outside the workspace
+- Null bytes in paths
+- Double-slash edge cases (e.g. `/workspace//file`)
+
+Error messages preserve the **original** user-supplied path (before normalization) so callers see what they sent, not the mangled version.
+
+### Downstream changes
+
+- **`SandboxManager.listFiles()`**: The `path == "/"` special case was removed. `resolveWorkspacePath` now handles `/` correctly (strips leading `/` → empty string → workspace root), so the special case is redundant.
+- **`SandboxManager.listFiles()` and `readFile()`**: Both use `Path(record.workspacePath)` directly — no redundant `.resolve().absolute()` call, since `resolveWorkspacePath` handles resolution internally.
+- **LLM tool descriptions**: `sandbox_list_files`, `sandbox_read_file`, and `sandbox_send_file` parameter descriptions now state "Absolute paths are also accepted and normalized relative to the workspace root."
+- **Handler docstrings**: Updated to match the new normalization behaviour.
+
+### Tests
+
+- `testAbsolutePathRejected` was renamed to `testAbsolutePathNormalized` (behaviour changed from rejection to normalization).
+- New edge-case tests added:
+  - `testWorkspacePrefixNormalized` — `/workspace/file.txt` → workspace root `/file.txt`
+  - `testWorkspacePrefixRoot` — `/workspace` → workspace root
+  - `testWorkspacePrefixRootTrailingSlash` — `/workspace/` → workspace root
+  - `testAbsoluteWithWorkspacePrefixEscapesRejected` — `/workspace/../../etc/passwd` still rejected
+  - `testAbsolutePathWithTraversalRejected` — `/../../../etc/passwd` still rejected
+  - `testWorkspacePrefixDoubleSlashRejected` — `/workspace//file` still rejected
