@@ -1135,6 +1135,7 @@ class SandboxManager:
             managed = await self._backend.listManagedContainers()
             for container in managed:
                 try:
+                    logger.debug(f"Recovery: killing old container {container.containerId}")
                     await self._backend.killContainer(container.containerId)
                     await self._backend.removeContainer(container.containerId, force=True)
                 except Exception as exc:
@@ -1156,6 +1157,9 @@ class SandboxManager:
                     runs = await self._metadata.listRunsForSession(sessionInfo.sessionId)
                     for run in runs:
                         try:
+                            logger.debug(
+                                f"Recovery: deleting orphaned run {run.runId} for session {sessionInfo.sessionId}"
+                            )
                             await self._metadata.deleteRun(run.runId)
                         except Exception as exc:
                             logger.warning(
@@ -1189,6 +1193,7 @@ class SandboxManager:
                 await self.prepareRuntime(name)
                 libsDir = Path(self._config.storage.rootDir) / "runtimes" / name.value / "libs"
                 if libsDir.exists():
+                    logger.debug(f"Refreshing package list for {name.value}")
                     await self._refreshPackageList(name, libsDir)
             except Exception as exc:
                 logger.error(f"Failed to reconcile pool for {name.value}: {exc}")
@@ -1345,4 +1350,8 @@ class SandboxManager:
 
         packages = runtimeImpl.parseListCommandOutput(outcome=outcome, stdout=stdoutStr, stderr=stderrStr)
         await self._metadata.savePackagesInfo(runtime=runtime, packagesInfo=packages)
+        logger.debug(f"Refreshed package list for {runtime.value}: {packages}")
+        # logger.debug(f"outcome: {outcome}")
+        # logger.debug(f"stdout: {stdoutStr}")
+        # logger.debug(f"stderr: {stderrStr}")
         return True

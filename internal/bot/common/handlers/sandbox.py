@@ -847,6 +847,7 @@ class SandboxHandler(BaseBotHandler):
                     "  files [path] - List files in workspace (default: root)\n"
                     "  read <path> - Read a file from workspace\n"
                     "  status - Show sandbox session status\n"
+                    "  packages - List installed Python packages\n"
                     "  install <packages...> - Install Python packages (admin only)"
                 ),
                 messageCategory=MessageCategory.BOT_ERROR,
@@ -867,6 +868,8 @@ class SandboxHandler(BaseBotHandler):
             await self._handleStatusCommand(ensuredMessage, sessionId, manager, typingManager)
         elif subcommand == "install":
             await self._handleInstallCommand(ensuredMessage, sessionId, subArgs, manager, typingManager)
+        elif subcommand == "packages":
+            await self._handlePackagesCommand(ensuredMessage, sessionId, manager, typingManager)
         else:
             await self.sendMessage(
                 ensuredMessage,
@@ -1171,6 +1174,41 @@ class SandboxHandler(BaseBotHandler):
             )
         except Exception as e:
             logger.error(f"Error installing packages: {e}")
+            await self.sendMessage(
+                ensuredMessage,
+                messageText=f"Error: {e}",
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+
+    async def _handlePackagesCommand(
+        self,
+        ensuredMessage: EnsuredMessage,
+        sessionId: str,
+        manager: SandboxManager,
+        typingManager: Optional[TypingManager],
+    ) -> None:
+        """
+        TODO: write
+        """
+        try:
+            for runtime in RuntimeName:
+                packages = await manager.listRuntimeLibraries(runtime)
+                await self.sendMessage(
+                    ensuredMessage,
+                    messageText=f"Packages for {runtime.value}:\n{'\n'.join([repr(package) for package in packages])}",
+                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                    typingManager=typingManager,
+                )
+
+        except SessionNotFound:
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="No active sandbox session. Run /run <code> to create one.",
+                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                typingManager=typingManager,
+            )
+        except Exception as e:
+            logger.error(f"Error getting status: {e}")
             await self.sendMessage(
                 ensuredMessage,
                 messageText=f"Error: {e}",
