@@ -4,7 +4,7 @@ Status: **Draft for review**
 
 ## 1. Executive Summary
 
-Four improvements to the Gromozeka sandbox:
+Five improvements to the Gromozeka sandbox:
 
 1. **Per-run working directory + file tracking** — each `runCode()` creates a
    fresh `work/` subdirectory; script runs inside it; `RunResult` carries the
@@ -16,6 +16,8 @@ Four improvements to the Gromozeka sandbox:
 4. **`sandbox_send_file` LLM tool** — LLM can send a workspace file to the user
    as image/video/audio/document with automatic MIME detection and an optional
    caption.
+5. **`sandbox_list_libraries` LLM tool** — LLM can discover installed Python
+   packages in the sandbox (name and version).
 
 All tools reuse existing `SandboxManager` infrastructure. The two `/sandbox files`
 and `/sandbox read` slash commands already work for users; the new LLM tools give
@@ -29,7 +31,7 @@ the LLM the same powers.
 | File listing | `SandboxManager.listFiles(sessionId, path, recursive)` — exists |
 | File reading | `SandboxManager.readFile(sessionId, path, maxBytes, encoding)` — exists |
 | File sending | Not available — files can only be read as text and sent in a message body |
-| LLM tools registered | Only `run_python` |
+| LLM tools registered | `run_python`, `sandbox_list_files`, `sandbox_read_file`, `sandbox_send_file`, `sandbox_list_libraries` (note: `packages` parameter removed from `run_python`) |
 | MIME detection in bot | `magic.from_buffer(data, mime=True)` — used in 6 call sites across `internal/bot/` and `lib/ai/` |
 | Bot file sending | `TheBot.sendMessage()` with `attachmentList: List[Tuple[bytes, MessageType, Optional[str]]]` |
 | MIME → MessageType map | `image/*` → IMAGE, `video/*` → VIDEO, `audio/*` → AUDIO, rest → DOCUMENT |
@@ -97,6 +99,12 @@ The file list is included in:
 - The `run_python` LLM tool response (as a JSON array of file paths/sizes)
 
 This keeps `SandboxManager.runCode()` focused on execution and leaves presentation to the handler layer.
+
+**Note on `run_python` `packages` parameter removal**: The `packages` parameter was
+removed from the `run_python` LLM tool for security reasons — the LLM should not
+auto-install packages at runtime. Instead, the LLM should use `sandbox_list_libraries`
+to discover available packages and ask the admin to install missing ones via
+`/sandbox install`.
 
 ### 4.2 `sandbox_list_files` LLM tool
 
@@ -317,6 +325,42 @@ parsing for LLM vision). No special-casing needed.
 `lib/sandbox/` free of `magic` imports and bot‑specific concerns. `SandboxManager.readFile()`
 already returns raw bytes — the handler does detection + routing.
 
+### 4.5 `sandbox_list_libraries` LLM tool
+
+**Registration** (in `SandboxHandler.__init__`, gated behind `sandbox.enabled`):
+
+```python
+self.llmService.registerTool(
+    "sandbox_list_libraries",
+    "List installed Python libraries available in the sandbox environment. "
+    "Use this to discover what packages are installed before running code. "
+    "If needed libraries are missing, ask the admin to install them via /sandbox install.",
+    [],
+    handler=self._sandboxListLibraries,
+)
+```
+
+**Handler method**:
+
+```python
+async def _sandboxListLibraries(
+    self, extraData: Optional[Dict[str, Any]], **kwargs: Any
+) -> str:
+    manager = SandboxManager.getInstance()
+    packages = await manager.listRuntimeLibraries(RuntimeName.PYTHON)
+    return json.dumps({
+        "done": True,
+        "packages": [{"name": p.name, "version": p.version} for p in packages],
+    })
+```
+
+Reuses existing `SandboxManager.listRuntimeLibraries()` — no library changes needed.
+
+**Design decision**: No `runtime` parameter — hardcoded to `RuntimeName.PYTHON` since
+Python is the only sandbox runtime. The method delegates to the metadata store (reads
+`packages.json`), which returns an empty list on failure rather than raising — no
+sandbox-specific exception handling needed beyond the standard access-control guards.
+
 ## 5. Architect Recommendations (all 8 questions)
 
 | Q | Recommendation | Rationale |
@@ -327,7 +371,7 @@ already returns raw bytes — the handler does detection + routing.
 | 4 — sendMessage path | Use `attachmentList` | Unified pipeline, media persistence, platform dispatch handled automatically |
 | 5 — RunResult fields | Add only `workDir: str` to RunResult (not `files`). Handler scans workDir via `listFiles()` after execution. | LLM needs to know where files were created; `workDir` provides context; scanning in handler keeps `runCode()` focused |
 | 6 — size limits | 20 MB cap, reject oversized files | Matches Telegram limit; binary files should not be truncated silently |
-| 7 — tool gating | Same `sandbox.enabled` + `allow-sandbox` for all four tools | Consistent — if sandbox is disabled, no sandbox tools should work |
+| 7 — tool gating | Same `sandbox.enabled` + `allow-sandbox` for all five tools | Consistent — if sandbox is disabled, no sandbox tools should work |
 | 8 — backward compat | No transition flag | `work/` is the correct long‑term behavior; include `workDir` in responses so the LLM self‑adapts |
 
 ## 6. Risk Assessment
@@ -360,7 +404,7 @@ This phase is **blocking** — Phases 2 and 3 depend on the workDir existing.
 ### Phase 2 — LLM tools (parallelizable)
 
 Files:
-- `internal/bot/common/handlers/sandbox.py` — register three new LLM tools, implement handler methods
+- `internal/bot/common/handlers/sandbox.py` — register four new LLM tools (`sandbox_list_files`, `sandbox_read_file`, `sandbox_send_file`, `sandbox_list_libraries`), implement handler methods; remove `packages` parameter from `run_python` tool registration and handler
 - `lib/sandbox/__init__.py` — re‑export any new types if needed
 
 Tests:
@@ -368,8 +412,9 @@ Tests:
 
 Phase 2a: `sandbox_list_files` + `sandbox_read_file` (independent of each other)
 Phase 2b: `sandbox_send_file` (uses `readFile()`, independent of list/read tools)
+Phase 2c: `sandbox_list_libraries` (uses `listRuntimeLibraries()`, independent of all other tools)
 
-All three tools are independent of each other — can be implemented in parallel.
+All four tools are independent of each other — can be implemented in parallel.
 
 ### Phase 3 — Quality gates (blocking — runs after Phases 1+2)
 
@@ -396,6 +441,8 @@ All three tools are independent of each other — can be implemented in parallel
 | `sandbox_send_file` MIME detection + MessageType routing | `tests/bot/common/handlers/test_sandbox.py` | Unit (mocked manager + real magic) |
 | `sandbox_send_file` size limit rejection | `tests/bot/common/handlers/test_sandbox.py` | Unit |
 | `sandbox_send_file` sends via sendMessage() with correct attachmentList | `tests/bot/common/handlers/test_sandbox.py` | Unit (mocked sendMessage) |
+| `sandbox_list_libraries` tool returns correct JSON with package names and versions | `tests/bot/common/handlers/test_sandbox.py` | Unit (mocked manager) |
+| `sandbox_list_libraries` tool returns empty list when no packages installed | `tests/bot/common/handlers/test_sandbox.py` | Unit (mocked manager) |
 | Full flow: script writes file → list → read → send | Integration test (manual or E2E with Docker) | E2E |
 
 ## 9. Open Issues

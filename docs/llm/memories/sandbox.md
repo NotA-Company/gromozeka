@@ -56,11 +56,16 @@ How to use this file:
 
 ### LLM tools
 
-Four tools registered in `SandboxHandler.__init__()` (all gated behind `sandbox.enabled` + `allow-sandbox`):
-- `run_python` — execute Python code (existing, unchanged)
+Five tools registered in `SandboxHandler.__init__()` (all gated behind `sandbox.enabled` + `allow-sandbox`):
+- `run_python` — execute Python code. The `packages` parameter was removed; if needed libraries are missing, the LLM should ask the admin to install them via `/sandbox install`.
 - `sandbox_list_files` — list workspace files, params: `path` (STRING), `recursive` (BOOLEAN)
 - `sandbox_read_file` — read file content with line-based `offset` (NUMBER) and `limit` (NUMBER), 64 KB maxBytes default, handles non-UTF-8 with `errors="replace"`
 - `sandbox_send_file` — send file to user with automatic MIME detection, params: `path` (STRING), `caption` (STRING), 20 MB cap
+- `sandbox_list_libraries` — list installed Python libraries (no params). Returns `{"done": bool, "packages": [{"name": str, "version": str}, ...]}`. If needed libraries are missing, the LLM should ask the admin to install them via `/sandbox install`.
+
+### Error key consistency fix (2026-06-14)
+
+`_llmToolRunSandboxCode` previously used `"errorMessage"` as the error key, while all other sandbox LLM tools used `"error"`. This was unified to `"error"` across all tools. The return format in `sandbox.md` now correctly documents `"error"`.
 
 All tool handlers:
 - Return JSON `{"done": bool, ...}` — NEVER raise
@@ -90,7 +95,7 @@ All tool handlers:
 - `tests/lib/sandbox/test_types_roundtrip.py` — RunResult roundtrip with workDir
 - `tests/lib/sandbox/runtimes/test_python_runtime.py` — cd into workDir prefix test
 - `tests/lib/sandbox/test_manager.py` — workDir creation and path format tests
-- `tests/bot/test_sandbox.py` — 51 handler tests covering file scanning, all four LLM tools, access control, MIME detection, size limits, and edge cases
+- `tests/bot/test_sandbox.py` — 51 handler tests covering file scanning, all five LLM tools, access control, MIME detection, size limits, and edge cases
 
 ## Path Normalization in resolveWorkspacePath (2026-06-13)
 
