@@ -84,25 +84,27 @@ How to use this file:
 
 ## Chat History Search (in progress)
 
-- Implementation plan: `docs/chat-history-search-plan.md` (15-step plan, validated and refined 2026-06-20)
+- Implementation plan: `docs/plans/chat-history-search-plan.md` (15-step plan, architect-reviewed 2026-06-20)
 - **Decisions made (all 5 open questions resolved)**:
   - fastembed for local embeddings (optional dep, try/except ImportError guard)
-  - Backfill: REGENERATE_EMBEDDINGS chat setting trigger + periodic worker (no /search reindex command)
+  - Backfill: REGENERATE_EMBEDDINGS chat setting trigger + CRON_JOB delayed-task in ChatSearchHandler (not a separate service in internal/services/)
   - Permissions: all users (CommandPermission.DEFAULT), matching /web_search
-  - get_summary: 5 scopes — last_hours, last_days, last_messages, thread, date_range (since/until ISO-8601)
-  - numpy added to requirements for cosine similarity
-- **User additions incorporated into plan**:
-  - No fallback for generateEmbeddings (incompatible vector spaces)
-  - 4 ChatSettingsKeys: EMBEDDING_MODEL, EMBEDDINGS_ENABLED, REGENERATE_EMBEDDINGS, MAX_MESSAGES_FOR_SEMANTIC_SEARCH
-  - Chat settings defaults live under `[bot.defaults]` in `bot-defaults.toml` (kebab-case keys), not in feature-specific TOML. `_chatSettingsInfo` TypedDict has NO default field.
-  - getModelsSupportingEmbedding removed from plan (not useful)
-  - embedding-only models set support_text = false in TOML
-  - LocalEmbeddingsProvider hosts multiple models via addModel() (no per-provider model shortcut)
-  - LocalEmbeddingModel reads embedding_dimensions from extraConfig with auto-detect fallback
-  - searchChatMessages: queryEmbedding optional (filter-only mode), rootMessageId param added, maxMessages cap via MAX_MESSAGES_FOR_SEMANTIC_SEARCH chat setting
-  - Embedding cache: TTLDict-based, chatId (int) key (not tuple), modelName in value for staleness detection, cache-ttl-seconds + cache-max-chats config
-  - getMessageThread is thin wrapper over existing getChatMessageByMessageId + getChatMessagesByRootId
-  - Fire-and-forget: asyncio.create_task() + queueService.addBackgroundTask() (matches image parsing pattern, not ensure_future)
+  - get_summary: 5 scopes — last_hours, last_days, last_messages, thread, date_range (from_date/until_date ISO-8601)
+  - numpy added to requirements for cosine similarity (already in requirements.txt per review)
+- **Architect review fixes applied (2026-06-20)**:
+  - **CRITICAL:** `AbstractModel.__init__` stores extraConfig as `self._config` — plan code snippets updated to use `self._config.get()` not `extraConfig.get()`
+  - **CRITICAL:** `LocalEmbeddingModel.__init__` signature corrected to match actual `AbstractModel.__init__` (provider first positional, modelId second, rest keyword-only after *)
+  - **CRITICAL:** OpenAI embedding API call fixed to use `self._client.embeddings.create()` (SDK method) instead of raw `self._client.post("/embeddings", ...)`
+  - **CRITICAL:** Added `updated_at TIMESTAMP NOT NULL` to `message_embeddings` schema (needed for tracking re-embeds)
+  - `message_embeddings.dimensions` is derived from `len(embedding)` in `saveMessageEmbedding()` — not passed as separate arg
+  - `ChatMessagesRepository` declares `__slots__ = ()` — new `_embeddingCache`/`_maxCachedChats` attrs must be added to __slots__
+  - Chat settings table now includes `ChatSettingsPage` column; EMBEDDING_MODEL uses STRING type (not MODEL) because existing MODEL picker doesn't filter by support_embeddings
+  - Backfill worker: CRON_JOB delayed-task handler in ChatSearchHandler (matching SandboxHandler pattern), NOT a separate `internal/services/embedding/` dir wired in main.py
+  - Regression: `MAX_MESSAGES_FOR_SEMANTIC_SEARCH` page is `BOT_OWNER_SYSTEM` in settings table but `BOT_OWNER` in consumers table (line 352) — needs reconciliation
+  - New sections: §5.3 Concurrency analysis, §8.1 Error handling summary, step budget assessment
+  - `get_summary` LLM tool params updated: `from`/`until` → `from_date`/`until_date` (avoid reserved-word issues)
+  - `self._statsStorage` → `self.statsStorage` in generateEmbeddings docstring (matches actual attribute name)
+  - `getSearchHistoryConfig()` is optional convenience accessor — handler registration uses lighter `self.configManager.get("search-history", {}).get("enabled", False)` pattern (matching divination/sandbox/resender)
 - **Key codebase validations from exploration**:
   - `AbstractModel.__init__` stores `extraConfig` as `self._config` (not `self.extraConfig`). Capability flags use `self._config.get("support_*", False)` inline, not dedicated attributes. Add `support_embeddings` to `getInfo()` dict alongside other `support_*` flags.
   - `BasicOpenAIModel` has `self._client` (AsyncOpenAI) — use `self._client.embeddings.create()` for OpenAI embeddings API
@@ -117,6 +119,8 @@ How to use this file:
   - `MessageId` wraps `int|str` — embeddings table uses `TEXT` column, call `.asStr()` before SQL binding
   - Use `asyncio.create_task()` for fire-and-forget (not `ensure_future`) — matches codebase convention
   - BLOB serialization: use `array.array('f', vec).tobytes()` (standard lib, no numpy dependency for storage)
+  - `ChatMessagesRepository.__slots__ = ()` in current code — any new instance attributes must be added to __slots__
+  - `SandboxHandler` uses CRON_JOB delayed-task pattern for periodic work (not a separate service singleton) — follow this pattern for embedding backfill
 
 ## Teamlead Workflow Lessons
 

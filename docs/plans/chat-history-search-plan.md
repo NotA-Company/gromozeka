@@ -34,10 +34,11 @@ The existing `lib/ai/` already handles provider selection, model registry, fallb
 
 ### 2.2 Changes to `lib/ai/abstract.py` — `AbstractModel`
 
-Add to `AbstractModel.__init__()`:
+Add to `AbstractModel.__init__()` (note: `extraConfig` is stored as
+`self._config` by the existing `AbstractModel.__init__`):
 
 ```python
-self.supportsEmbedding: bool = extraConfig.get("support_embeddings", False) if extraConfig else False
+self.supportsEmbedding: bool = self._config.get("support_embeddings", False)
 ```
 
 Add abstract method:
@@ -94,7 +95,7 @@ async def generateEmbeddings(
     # 1. Validate input
     # 2. Retry loop calling _generateEmbeddings(text) up to `attempts` times
     #    with exponential backoff on transient errors
-    # 3. Record stats via self._statsStorage (mirroring generateImage pattern)
+    # 3. Record stats via self.statsStorage (mirroring generateImage pattern)
     # 4. Return the embedding on success; raise RuntimeError after final failure
     # 5. NEVER fall back to a different model — the caller picks the model
     #    via EMBEDDING_MODEL chat setting, not via this method
@@ -114,21 +115,17 @@ just like every other provider-specific knob.
 
 ### 2.4 Provider implementations
 
-**OpenAI (`BasicOpenAIProvider`)**: Override `_generateEmbeddings` to call the OpenAI embeddings API endpoint. The OpenAI provider already has httpx infrastructure — just needs a new method.
+**OpenAI (`BasicOpenAIModel`)**: Override `_generateEmbeddings` to call the OpenAI embeddings API endpoint via the `openai.AsyncOpenAI` SDK client (`self._client`). The existing `BasicOpenAIModel` already has this client — just needs a new method.
 
 ```python
-# In BasicOpenAI or a mixin
+# In BasicOpenAIModel (subclass of AbstractModel, has self._client: openai.AsyncOpenAI)
 async def _generateEmbeddings(self, text: str) -> list[float]:
-    response = await self._client.post(
-        "/embeddings",
-        json={
-            "model": self.modelId,  # e.g. "text-embedding-3-small"
-            "input": text,
-            "dimensions": self.extraConfig.get("embedding_dimensions", 256),
-        },
+    response = await self._client.embeddings.create(
+        model=self._getModelId(),  # e.g. "text-embedding-3-small"
+        input=text,
+        dimensions=self._config.get("embedding_dimensions", 256),
     )
-    data = response.json()
-    return data["data"][0]["embedding"]
+    return response.data[0].embedding
 ```
 
 **Local Embeddings Provider**: New provider type `local-embeddings` in `lib/ai/providers/local_embeddings_provider.py`. Wraps `fastembed` (ONNX-based, no PyTorch dependency).
@@ -161,32 +158,34 @@ class LocalEmbeddingsProvider(AbstractLLMProvider):
 class LocalEmbeddingModel(AbstractModel):
     """Local embedding model wrapping a single fastembed TextEmbedding instance.
 
-    Model-specific configuration is read from `extraConfig`, the same way
-    OpenAI-style models consume options like `embedding_dimensions` or
-    `support_tools`. Anything not consumed by AbstractModel flows through
-    to the underlying fastembed call.
+    Model-specific configuration is read from `extraConfig` (stored as
+    `self._config` by `AbstractModel.__init__`), the same way OpenAI-style
+    models consume options like `embedding_dimensions` or `support_tools`.
+    Anything not consumed by AbstractModel flows through to the underlying
+    fastembed call.
     """
 
     def __init__(
         self,
-        name: str,
-        *,
+        provider: "LocalEmbeddingsProvider",
         modelId: str,
+        *,
+        modelVersion: str,
+        temperature: float,
+        contextSize: int,
         statsStorage: StatsStorage,
         extraConfig: Optional[Dict[str, Any]] = None,
-        # Provider-owned: shared by all models under the provider
-        providerInstance: "LocalEmbeddingsProvider",
     ) -> None:
         super().__init__(
-            name=name,
-            modelId=modelId,
-            modelVersion=modelId,       # fastembed models are versioned by their id
-            temperature=0.0,            # embeddings are deterministic
-            contextSize=0,              # N/A for embeddings
+            provider,
+            modelId,
+            modelVersion=modelVersion,  # fastembed models are versioned by their id
+            temperature=temperature,    # embeddings are deterministic; caller passes 0.0
+            contextSize=contextSize,    # N/A for embeddings; caller passes 0
             statsStorage=statsStorage,
             extraConfig=extraConfig,
         )
-        self._provider = providerInstance
+        self._provider = provider
 
         # Dimensions: prefer explicit config, fall back to fastembed metadata
         configuredDims = (extraConfig or {}).get("embedding_dimensions")
@@ -313,12 +312,12 @@ a model name resolved against the LLM registry, an enable/disable flag, a
 regeneration trigger, and a safety cap to keep the in-memory embedding
 matrix bounded on huge chats.
 
-| Setting | Type | Default (`[bot.defaults]`) | Purpose |
-|---|---|---|---|
-| `EMBEDDING_MODEL` | string (model name) | *(omitted — empty string)* | Which model from `[llm.models]` to use for embedding generation and query embedding. Empty value means "use the server-wide default". |
-| `EMBEDDINGS_ENABLED` | bool | `embeddings-enabled = true` | Per-chat kill-switch for embedding generation on save and for search commands/tools. |
-| `REGENERATE_EMBEDDINGS` | bool | `regenerate-embeddings = false` | When set to `true`, the embedding manager regenerates embeddings for messages that have no embedding yet OR an embedding from a different `model` (per the `message_embeddings.model` column). After the backfill completes, the handler resets this flag to `false`. |
-| `MAX_MESSAGES_FOR_SEMANTIC_SEARCH` | int | `max-messages-for-semantic-search = 100000` | Hard cap on how many recent messages to load into the embedding cache for semantic search. Prevents OOM on chats with millions of historical messages. |
+| Setting | Type | Default (`[bot.defaults]`) | Page | Purpose |
+|---|---|---|---|---|
+| `EMBEDDING_MODEL` | string (model name) | *(omitted — empty string)* | `ChatSettingsPage.BOT_OWNER` | Which model from `[llm.models]` to use for embedding generation and query embedding. Empty value means "use the server-wide default". Uses `ChatSettingsType.STRING` (not `MODEL`) because the `MODEL` type's UI picker only shows text-generation models; embedding models need `support_embeddings=true` filtering which the existing picker doesn't support. A future `EMBEDDING_MODEL` ChatSettingsType can be added to enable a proper picker. |
+| `EMBEDDINGS_ENABLED` | bool | `embeddings-enabled = true` | `ChatSettingsPage.BOT_OWNER` | Per-chat kill-switch for embedding generation on save and for search commands/tools. |
+| `REGENERATE_EMBEDDINGS` | bool | `regenerate-embeddings = false` | `ChatSettingsPage.BOT_OWNER` | When set to `true`, the embedding manager regenerates embeddings for messages that have no embedding yet OR an embedding from a different `model` (per the `message_embeddings.model` column). After the backfill completes, the handler resets this flag to `false`. |
+| `MAX_MESSAGES_FOR_SEMANTIC_SEARCH` | int | `max-messages-for-semantic-search = 100000` | `ChatSettingsPage.BOT_OWNER_SYSTEM` | Hard cap on how many recent messages to load into the embedding cache for semantic search. Prevents OOM on chats with millions of historical messages. |
 
 > **The `_chatSettingsInfo` TypedDict has no `default` field.** The rows above
 > mention defaults for documentation only — the canonical default lives in
@@ -427,6 +426,7 @@ CREATE TABLE IF NOT EXISTS message_embeddings (
     dimensions INTEGER NOT NULL,          -- e.g. 256, 384, 1536
     model TEXT NOT NULL,                  -- e.g. "text-embedding-3-small", "all-MiniLM-L6-v2"
     created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,        -- set in application code on insert and re-embed
     PRIMARY KEY (chat_id, message_id)
 )
 ```
@@ -553,7 +553,10 @@ and corresponding message IDs. The cache uses
 [`lib/utils/ttl_dict.py`](lib/utils/ttl_dict.py) (`TTLDict` — a thread-safe
 dict with per-entry TTL, automatic GC, and a full dict API) and lives as
 an instance attribute on `ChatMessagesRepository`, initialised in
-`__init__`.
+`__init__`. **Implementation note:** `ChatMessagesRepository` currently
+declares `__slots__ = ()` — the new `_embeddingCache` and
+`_maxCachedChats` attributes must be added to `__slots__` for this to
+work without `AttributeError`.
 
 **Why `chatId` alone, not `(chatId, modelName)`:** any chat has at most
 one embedding model active at a time (the value of the `EMBEDDING_MODEL`
@@ -761,7 +764,11 @@ async def saveMessageEmbedding(
     embedding: list[float],
     model: str,
 ) -> None:
-    """Save or update a message embedding."""
+    """Save or update a message embedding.
+
+    The `dimensions` column is derived from `len(embedding)` rather than
+    passed as a separate argument — this avoids mismatch bugs.
+    """
 
 async def getMessageEmbedding(
     self,
@@ -846,6 +853,25 @@ model = "text-embedding-3-small"  # model name from [llm.models]
 on-save = true                       # generate embeddings on message save
 ```
 
+### 5.3 Concurrency: real-time embedding vs. backfill worker
+
+Both the real-time hook (§5.1) and the backfill worker (§8 step 11) write
+to `message_embeddings` for the same chat. Because the app is
+single-process async, there is no true parallelism — only interleaving at
+`await` points. The `provider.upsert()` call is atomic (single SQL
+statement), so concurrent writes to the same `(chat_id, message_id)` row
+are safe: the last writer wins, and both writers produce the same
+embedding (same model, same text).
+
+The cache increment in `saveMessageEmbedding` (§4.1.1 write path) is
+mutated in-place on a Python list — no lock needed because the event
+loop ensures sequential access between `await` points. The only race
+scenario is: backfill rebuilds the cache from DB, then real-time hook
+appends to the OLD cache reference. Mitigation: the real-time hook
+always re-fetches `self._embeddingCache.get(chatId)` before appending,
+so if the backfill replaced the cache entry, the real-time hook sees the
+new entry and appends to it correctly.
+
 ---
 
 ## 6. `ChatSearchHandler` — Combined Handler
@@ -869,10 +895,13 @@ class ChatSearchHandler(BaseBotHandler):
 
 ### 6.3 Conditional Registration
 
-In `HandlersManager.__init__()`:
+In `HandlersManager.__init__()`, matching the existing pattern used by
+`divination`, `resender`, and `sandbox` (all use
+`self.configManager.get("section", {}).get("enabled", False)` — no
+dedicated accessor method):
 
 ```python
-if self.configManager.getSearchHistoryConfig().get("enabled", False):
+if self.configManager.get("search-history", {}).get("enabled", False):
     self.handlers.append(
         (ChatSearchHandler(configManager=configManager, database=database, botProvider=botProvider),
          HandlerParallelism.PARALLEL)
@@ -986,11 +1015,13 @@ self.llmService.registerTool(
 ```python
 self.llmService.registerTool(
     name="get_summary",
-    description="Get a summary of recent chat activity. You can specify by time period, message count, or thread.",
+    description="Get a summary of recent chat activity. You can specify by time period, message count, thread, or date range.",
     parameters=[
-        LLMFunctionParameter(name="scope", description="'last_hours', 'last_days', 'last_messages', or 'thread'", type=LLMParameterType.STRING, required=True),
+        LLMFunctionParameter(name="scope", description="'last_hours', 'last_days', 'last_messages', 'thread', or 'date_range'", type=LLMParameterType.STRING, required=True),
         LLMFunctionParameter(name="value", description="Number for scope (e.g., 24 for last_hours, 50 for last_messages)", type=LLMParameterType.NUMBER, required=False),
         LLMFunctionParameter(name="thread_message_id", description="Message ID for thread scope", type=LLMParameterType.STRING, required=False),
+        LLMFunctionParameter(name="from_date", description="Start date for date_range scope (ISO-8601, e.g. '2024-01-01')", type=LLMParameterType.STRING, required=False),
+        LLMFunctionParameter(name="until_date", description="End date for date_range scope (ISO-8601, e.g. '2024-01-31')", type=LLMParameterType.STRING, required=False),
     ],
     handler=self._llmToolGetSummary,
 )
@@ -1018,7 +1049,10 @@ max-results = 10
 default-days = 30
 ```
 
-Add `getSearchHistoryConfig()` to `ConfigManager`:
+Add `getSearchHistoryConfig()` to `ConfigManager` (optional convenience
+accessor — the handler registration in §6.3 uses the lighter
+`self.configManager.get("search-history", {})` pattern, matching
+`divination`/`sandbox`/`resender`):
 
 ```python
 def getSearchHistoryConfig(self) -> Dict[str, Any]:
@@ -1034,6 +1068,22 @@ def getSearchHistoryConfig(self) -> Dict[str, Any]:
 
 ## 8. Implementation Order
 
+**Step budget assessment:** With ~60 steps per `software-developer`
+invocation, the 15-step plan can be implemented in 3-4 invocations:
+- **Invocation 1** (steps 1-4): `lib/ai/` embedding support — Abstract,
+  OpenAI, local provider, manager registration. ~40-50 steps (new file +
+  edits to 3 existing files + tests).
+- **Invocation 2** (steps 5-9): DB layer — TypedDicts, migration,
+  repository methods, chat settings, config. ~50-60 steps (heavy
+  repository work with cache logic).
+- **Invocation 3** (steps 10-13): Handler + integration — preprocessor
+  hook, backfill worker, ChatSearchHandler, manager registration.
+  ~50-60 steps (largest step; if over budget, split step 12 into
+  "commands only" + "LLM tools only").
+- **Invocation 4** (steps 14-15): Tests + docs. ~40-50 steps.
+
+Steps 1-4 and 5-9 are independent of each other and can be parallelized.
+
 | # | Step | Files touched | Depends on |
 |---|---|---|---|
 | 1 | Add `supportsEmbedding` + `_generateEmbeddings` + `generateEmbeddings` (no fallback) to `AbstractModel` | `lib/ai/abstract.py`, `lib/ai/models.py` | — |
@@ -1042,15 +1092,27 @@ def getSearchHistoryConfig(self) -> Dict[str, Any]:
 | 4 | Register `local-embeddings` provider type in `LLMManager` (no `getModelsSupportingEmbedding()` — removed) | `lib/ai/manager.py` | Steps 2, 3 |
 | 5 | Add TypedDicts: `SearchResultDict`, `ThreadResultDict` | `internal/database/models.py` | — |
 | 6 | Migration `migration_017` — `message_embeddings` table | `internal/database/migrations/versions/migration_017_*.py` | — |
-| 7 | Repository methods: `saveMessageEmbedding`, `getMessageEmbedding`, `deleteChatEmbeddings`, `searchChatMessages` (with optional `queryEmbedding`, `rootMessageId`, and `TTLDict` cache), `listChatUsers`, `getMessageThread` (thin wrapper) | `internal/database/repositories/chat_messages.py` | Steps 5, 6 |
+| 7 | Repository methods: `saveMessageEmbedding`, `getMessageEmbedding`, `deleteChatEmbeddings`, `searchChatMessages` (with optional `queryEmbedding`, `rootMessageId`, and `TTLDict` cache), `listChatUsers`, `getMessageThread` (thin wrapper). **Note:** `ChatMessagesRepository` currently declares `__slots__ = ()`, so the new `_embeddingCache` instance attribute requires adding it to `__slots__` (e.g. `__slots__ = ("_embeddingCache", "_maxCachedChats")`) | `internal/database/repositories/chat_messages.py` | Steps 5, 6 |
 | 8 | Add 4 new `ChatSettingsKey` values + `_chatSettingsInfo` entries: `EMBEDDING_MODEL`, `EMBEDDINGS_ENABLED`, `REGENERATE_EMBEDDINGS`, `MAX_MESSAGES_FOR_SEMANTIC_SEARCH` (per §2.7; defaults live under `[bot.defaults]` in `configs/00-defaults/bot-defaults.toml`) | `internal/bot/models/chat_settings.py`, `configs/00-defaults/bot-defaults.toml` | — |
 | 9 | Add `[search-history]` config section + `getSearchHistoryConfig()` (includes `cache-ttl-seconds`, `cache-max-chats` from §4.1.1) | `configs/00-defaults/`, `internal/config/manager.py` | — |
 | 10 | Hook embedding generation into `MessagePreprocessorHandler` (reads `EMBEDDING_MODEL` and `EMBEDDINGS_ENABLED` from chat settings, falls back to `[search-history.embeddings].model`, dispatches via `asyncio.create_task` + `queueService.addBackgroundTask` per §5.1) | `internal/bot/common/handlers/message_preprocessor.py` | Steps 4, 7, 8, 9 |
-| 11 | Add embedding backfill worker (consumes `REGENERATE_EMBEDDINGS`, calls `searchChatMessages` filter-only path to find missing/stale rows, re-embeds, resets flag) | `internal/services/embedding/embedding_backfill_worker.py` (new), wired in `main.py` | Steps 7, 8 |
+| 11 | Add embedding backfill worker (consumes `REGENERATE_EMBEDDINGS`, calls `searchChatMessages` filter-only path to find missing/stale rows, re-embeds, resets flag). **Lifecycle:** register as a `CRON_JOB` delayed-task handler in `ChatSearchHandler.__init__()` (matching `SandboxHandler`'s pattern — see `internal/bot/common/handlers/sandbox.py` which registers `CRON_JOB` + `DO_EXIT` handlers), NOT wired directly in `main.py`. The worker logic lives in `ChatSearchHandler._cronEmbeddingBackfill()` or in a helper module under `internal/bot/common/handlers/` (e.g. `embedding_backfill.py`). No new `internal/services/embedding/` directory. | `internal/bot/common/handlers/search_history.py` (or helper module) | Steps 7, 8 |
 | 12 | Create `ChatSearchHandler` with `/search`, `/users` commands + 4 LLM tools (`search_messages`, `list_users`, `get_thread`, `get_summary`) | `internal/bot/common/handlers/search_history.py` | Steps 7, 8, 10 |
 | 13 | Register handler conditionally in `HandlersManager` (gated by `[search-history].enabled`, per §6.3) | `internal/bot/common/handlers/manager.py` | Steps 9, 12 |
 | 14 | Tests for all new code (handlers, repository, provider, backfill worker, cache eviction, chat-settings wiring) | `tests/` | Steps 1–13 |
 | 15 | Documentation update | `docs/llm/`, `docs/database-schema*.md` | Steps 1–14 |
+
+### 8.1 Error Handling Summary
+
+| Failure mode | Handling |
+|---|---|
+| Embedding model unavailable (deleted from TOML, API down) | `LLMManager.getModel()` returns `None`; consumer falls back to `[search-history.embeddings].model`; if that also fails, fall back to hardcoded `"text-embedding-3-small"`. If all three resolve to `None`, log an error and skip embedding generation (on-save hook) or return "embedding model not configured" (search command/tool). |
+| `fastembed` not installed | `_FASTEMBED_AVAILABLE = False`; `LocalEmbeddingsProvider` skips initialization, logs a warning. Models under `[llm.providers.local-embeddings]` are not registered. If the chat's `EMBEDDING_MODEL` points at a local model, the fallback chain kicks in (server-wide default, then hardcoded). |
+| `generateEmbeddings()` raises after all retries | On-save hook: the `asyncio.create_task` wrapper catches the exception, logs it, and returns — the message is saved without an embedding. On search: the `/search` command responds with a transient-error notice. |
+| TTLDict cache grows unbounded | Enforced by `_evictIfOverCapacity()` after every cache `set()`. The `cache-max-chats` config (default 20) caps the number of cached chats. TTL auto-eviction (default 300s) handles the common case. |
+| Backfill encounters a malformed embedding BLOB | The backfill worker wraps `np.frombuffer()` in a try/except; malformed rows are logged and skipped. A future improvement could add a `DELETE` + re-embed for corrupted rows. |
+| `REGENERATE_EMBEDDINGS` set while on-save hook is active | Safe: both paths call `provider.upsert()` which is idempotent. See §5.3 for concurrency analysis. |
+| `numpy` not available | `numpy` is a required dependency (already in `requirements.txt`). No optional-import guard needed. |
 
 ---
 
@@ -1111,10 +1173,10 @@ them here so the design rationale is preserved alongside the plan.
      - `get_summary(scope="last_hours", value=24)` — last 24 hours
      - `get_summary(scope="last_days", value=7)` — last 7 days
      - `get_summary(scope="last_messages", value=50)` — last 50 messages
-     - `get_summary(scope="thread", thread_message_id=123)` — a specific
-       thread (resolved via `getMessageThread`)
-     - `get_summary(scope="date_range", from_="2024-01-01", until="2024-01-31")`
-       — arbitrary date range
+      - `get_summary(scope="thread", thread_message_id=123)` — a specific
+        thread (resolved via `getMessageThread`)
+      - `get_summary(scope="date_range", from_date="2024-01-01", until_date="2024-01-31")`
+        — arbitrary date range
    - **Rationale:** the `date_range` form subsumes the `last_days` use
      case for power users and is the natural shape for the LLM tool. All
      four pre-existing scopes are kept for back-compat with prompts that
@@ -1135,8 +1197,8 @@ After implementation, update:
 | `docs/llm/handlers.md` | Add `ChatSearchHandler` to handler list; note the new `EMBEDDINGS_ENABLED` / `REGENERATE_EMBEDDINGS` / `MAX_MESSAGES_FOR_SEMANTIC_SEARCH` chat settings read by `MessagePreprocessorHandler` and `ChatSearchHandler`; document the `asyncio.create_task` + `queueService.addBackgroundTask` hook pattern used by the embedding save path |
 | `docs/llm/database.md` | New `message_embeddings` table, new repository methods (`searchChatMessages` with optional `queryEmbedding` + `rootMessageId` + per-`chatId` TTLDict cache, `getMessageThread` as thin wrapper) |
 | `docs/llm/libraries.md` | Embedding support in `lib/ai/` (no model fallback, `support_embeddings` field), new `LocalEmbeddingsProvider` + `LocalEmbeddingModel` (multi-model, extraConfig-driven) |
-| `docs/llm/services.md` | New `EmbeddingBackfillWorker` singleton that consumes `REGENERATE_EMBEDDINGS` |
+| `docs/llm/services.md` | Embedding backfill as a CRON_JOB delayed-task handler in `ChatSearchHandler` (not a separate service singleton) |
 | `docs/llm/configuration.md` | New `[search-history]` config section (including `cache-ttl-seconds`, `cache-max-chats`, `on-save`); 4 new chat settings (`EMBEDDING_MODEL`, `EMBEDDINGS_ENABLED`, `REGENERATE_EMBEDDINGS`, `MAX_MESSAGES_FOR_SEMANTIC_SEARCH`) with defaults wired under `[bot.defaults]` in `bot-defaults.toml`; `support_text = false` / `support_embeddings = true` model flags; multi-model `[llm.models.*]` blocks under a single `[llm.providers.local-embeddings]` |
 | `docs/llm/tasks.md` §4.1 (Chat Settings Registration — CRITICAL) | Reference this plan for the 4-site wiring pattern: enum entry → `_chatSettingsInfo` row (metadata only — no `default` field) → default in `[bot.defaults]` in `bot-defaults.toml` → consumer in `MessagePreprocessorHandler` / `ChatSearchHandler` / backfill worker / `searchChatMessages` |
-| `docs/database-schema.md` + `docs/database-schema-llm.md` | `message_embeddings` table with composite PK, `model` + `dimensions` columns, and the rationale for the `model` column (stale-embedding detection for `REGENERATE_EMBEDDINGS`) |
+| `docs/database-schema.md` + `docs/database-schema-llm.md` | `message_embeddings` table with composite PK, `model` + `dimensions` columns, `updated_at` for re-embed tracking, and the rationale for the `model` column (stale-embedding detection for `REGENERATE_EMBEDDINGS`) |
 | `docs/llm/index.md` | Project map updates: new handler, new provider, new worker, new chat settings |
