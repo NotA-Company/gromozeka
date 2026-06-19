@@ -82,6 +82,42 @@ How to use this file:
 - **Tier hierarchy** (`ChatTier` enum, `chat_settings.py:43-61`): `BANNED(1) < FREE(2) < FREE_PERSONAL(3) < PAID(4) < FRIEND(5) < BOT_OWNER(6)`. `isBetterOrEqualThan()` uses `getId()` comparison.
 - **Common footgun**: setting `paid-tier` on a chat without a future `paid-tier-untill-ts` — the paid-tier check fails silently and falls back to `base-tier`.
 
+## Chat History Search (in progress)
+
+- Implementation plan: `docs/chat-history-search-plan.md` (15-step plan, validated and refined 2026-06-20)
+- **Decisions made (all 5 open questions resolved)**:
+  - fastembed for local embeddings (optional dep, try/except ImportError guard)
+  - Backfill: REGENERATE_EMBEDDINGS chat setting trigger + periodic worker (no /search reindex command)
+  - Permissions: all users (CommandPermission.DEFAULT), matching /web_search
+  - get_summary: 5 scopes — last_hours, last_days, last_messages, thread, date_range (since/until ISO-8601)
+  - numpy added to requirements for cosine similarity
+- **User additions incorporated into plan**:
+  - No fallback for generateEmbeddings (incompatible vector spaces)
+  - 4 ChatSettingsKeys: EMBEDDING_MODEL, EMBEDDINGS_ENABLED, REGENERATE_EMBEDDINGS, MAX_MESSAGES_FOR_SEMANTIC_SEARCH
+  - Chat settings defaults live under `[bot.defaults]` in `bot-defaults.toml` (kebab-case keys), not in feature-specific TOML. `_chatSettingsInfo` TypedDict has NO default field.
+  - getModelsSupportingEmbedding removed from plan (not useful)
+  - embedding-only models set support_text = false in TOML
+  - LocalEmbeddingsProvider hosts multiple models via addModel() (no per-provider model shortcut)
+  - LocalEmbeddingModel reads embedding_dimensions from extraConfig with auto-detect fallback
+  - searchChatMessages: queryEmbedding optional (filter-only mode), rootMessageId param added, maxMessages cap via MAX_MESSAGES_FOR_SEMANTIC_SEARCH chat setting
+  - Embedding cache: TTLDict-based, chatId (int) key (not tuple), modelName in value for staleness detection, cache-ttl-seconds + cache-max-chats config
+  - getMessageThread is thin wrapper over existing getChatMessageByMessageId + getChatMessagesByRootId
+  - Fire-and-forget: asyncio.create_task() + queueService.addBackgroundTask() (matches image parsing pattern, not ensure_future)
+- **Key codebase validations from exploration**:
+  - `AbstractModel.__init__` stores `extraConfig` as `self._config` (not `self.extraConfig`). Capability flags use `self._config.get("support_*", False)` inline, not dedicated attributes. Add `support_embeddings` to `getInfo()` dict alongside other `support_*` flags.
+  - `BasicOpenAIModel` has `self._client` (AsyncOpenAI) — use `self._client.embeddings.create()` for OpenAI embeddings API
+  - `LLMManager.providerTypes` is a local variable in `_initProviders()` — add `"local-embeddings"` entry there. No `getModelsSupporting*()` methods exist yet.
+  - `ChatMessagesRepository` uses `self.manager.getProvider(chatId=..., readonly=...)` pattern — no direct `self.provider`. `upsert()` confirmed with `(table, values, conflictColumns, updateExpressions)`.
+  - Latest migration: `migration_016_add_stat_tables.py`. Next: `migration_017_*`. Pattern: class inherits `BaseMigration`, `version: int`, `up()`/`down()` with `batchExecute([ParametrizedQuery(...)])`, module-level `getMigration()`.
+  - Save point in `MessagePreprocessorHandler`: line 81, `await self.saveChatMessage(ensuredMessage, messageCategory=...)`. Handler has `self.db`, `self.llmService`, `self.configManager`.
+  - Handler registration: before LLMMessageHandler (line 539 of manager.py). Pattern: `if self.configManager.getXConfig().get("enabled", False): self.handlers.append((XHandler(...), HandlerParallelism.PARALLEL))`
+  - LLM tool registration: `self.llmService.registerTool(name, description, [LLMFunctionParameter(name=..., description=..., type=LLMParameterType.X, required=...)], handler=self._llmToolMethod)` in `__init__`
+  - `@commandHandlerV2(commands=("x",), shortDescription=..., helpMessage=..., visibility={CommandPermission.X}, availableFor={CommandPermission.X}, category=CommandCategory.X, helpOrder=CommandHandlerOrder.X)`
+  - `SummarizationHandler._doSummarization()` (line 119) calls `self.db.chatMessages.getChatMessagesSince()` + `self.llmService.generateText()` — reusable for get_summary tool
+  - `MessageId` wraps `int|str` — embeddings table uses `TEXT` column, call `.asStr()` before SQL binding
+  - Use `asyncio.create_task()` for fire-and-forget (not `ensure_future`) — matches codebase convention
+  - BLOB serialization: use `array.array('f', vec).tobytes()` (standard lib, no numpy dependency for storage)
+
 ## Teamlead Workflow Lessons
 
 - The teamlead prompt grants direct read/edit/write access only for this file; all substantive project work must still be delegated.
