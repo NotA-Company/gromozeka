@@ -660,6 +660,11 @@ debugging embedding issues without a server restart.
 
 ### 4.2 `listChatUsers()`
 
+> **Note:** the separate `listChatUsers` method shown below was later
+> merged into `getChatUsers` (see §4.2a) — both methods now share one
+> implementation. The signature below is preserved for historical
+> reference.
+
 ```python
 async def listChatUsers(
     self,
@@ -681,6 +686,31 @@ async def listChatUsers(
 
     Returns:
         List of ChatUserDict with message counts and timestamps.
+    """
+```
+
+#### 4.2a `getChatUsers()` (merged contract)
+
+```python
+async def getChatUsers(
+    self,
+    chatId: int,
+    limit: Optional[int] = None,
+    minMessages: Optional[int] = None,
+    lastActiveDays: Optional[int] = None,
+    seenSince: Optional[datetime.datetime] = None,
+    *,
+    dataSource: Optional[str] = None,
+) -> List[ChatUserDict]:
+    """List users in a chat, optionally filtered by activity.
+
+    Two modes, selected by which filters are set:
+
+    - **Default** (no `minMessages`, no `lastActiveDays`): orders by
+      `updated_at DESC` (most recently active first). Optional
+      `seenSince` further restricts to users seen after that time.
+    - **Activity-filtered** (any of `minMessages` / `lastActiveDays`
+      set): orders by `messages_count DESC` and applies both filters.
     """
 ```
 

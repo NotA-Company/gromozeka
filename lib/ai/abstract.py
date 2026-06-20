@@ -17,6 +17,7 @@ customizations.
         _generateStructured methods.
 """
 
+import asyncio
 import datetime
 import json
 import logging
@@ -447,6 +448,126 @@ class AbstractModel(ABC):
         self.printJSONLog(messages, ret, consumerId=consumerId)
         return ret
 
+    @property
+    def supportsEmbedding(self) -> bool:
+        """Whether this model supports embedding generation.
+
+        Reads the ``support_embeddings`` flag from ``self._config``
+        (which is populated from ``extraConfig`` by ``__init__``).
+        Returns False by default. Embedding-only models are typically
+        configured with ``support_text = false`` and
+        ``support_embeddings = true`` so they are never picked for
+        chat completion by mistake.
+
+        Returns:
+            True if embedding generation is enabled for this model.
+        """
+        return bool(self._config.get("support_embeddings", False))
+
+    @abstractmethod
+    async def _generateEmbeddings(self, text: str) -> list[float]:
+        """Generate embedding vector for the given text.
+
+        This is the internal method that must be implemented by concrete
+        model classes that support embedding generation. It performs the
+        actual call to the embedding backend (OpenAI embeddings API,
+        fastembed, etc.) and returns the raw float vector.
+
+        Args:
+            text: Input text to embed.
+
+        Returns:
+            List of floats representing the embedding vector.
+
+        Raises:
+            NotImplementedError: If the model does not support embeddings.
+            Exception: Provider-specific exceptions during generation.
+        """
+        raise NotImplementedError(f"Embeddings aren't supported by {self.modelId}, dood!")
+
+    async def generateEmbeddings(
+        self,
+        text: str,
+        *,
+        attempts: int = 3,
+        consumerId: Optional[str] = None,
+    ) -> list[float]:
+        """Generate an embedding vector for the given text, with retry on transient failures.
+
+        This is the public method for embedding generation. It validates the
+        input, then retries the underlying ``_generateEmbeddings`` call up
+        to ``attempts`` times with exponential backoff on transient errors,
+        records stats, and returns the embedding on success.
+
+        Unlike :meth:`generateText` / :meth:`generateImage`, this method
+        does **not** support a fallback model. Embeddings from different
+        models live in incompatible vector spaces (different dimensions,
+        different semantic spaces), so swapping to a different model
+        mid-stream would silently corrupt downstream cosine similarity
+        scores. If a chat needs a different embedding model, the caller
+        must explicitly resolve it via the ``EMBEDDING_MODEL`` chat
+        setting and re-embed.
+
+        Args:
+            text: Input text to embed.
+            attempts: Max retry attempts on transient failures (default: 3).
+            consumerId: Optional consumer identifier for stats recording
+                (e.g. chat ID).
+
+        Returns:
+            Embedding vector as list of floats.
+
+        Raises:
+            NotImplementedError: If the model does not support embeddings
+                (capability flag ``support_embeddings`` is False).
+            ValueError: If ``text`` is empty or not a string, or
+                ``attempts`` is not a positive integer.
+            RuntimeError: If all retry attempts fail.
+        """
+        if not self.supportsEmbedding:
+            raise NotImplementedError(f"Embeddings aren't supported by {self.modelId}, dood!")
+
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("text must be a non-empty string, dood!")
+        if not isinstance(attempts, int) or attempts < 1:
+            raise ValueError("attempts must be a positive integer, dood!")
+
+        lastError: Optional[Exception] = None
+        lastElapsed: float = 0.0
+        for attempt in range(1, attempts + 1):
+            startTime = time.time()
+            try:
+                embedding = await self._generateEmbeddings(text)
+                elapsed = time.time() - startTime
+                await self._recordEmbeddingStats(
+                    consumerId,
+                    success=True,
+                    error=None,
+                    elapsed=elapsed,
+                    attempts=attempt,
+                )
+                return embedding
+            except Exception as e:
+                lastError = e
+                lastElapsed = time.time() - startTime
+                logger.warning(f"generateEmbeddings attempt {attempt}/{attempts} failed for " f"{self.modelId}: {e}")
+                if attempt < attempts:
+                    # Exponential backoff: 0.5s, 1s, 2s, ...
+                    backoff = 0.5 * (2 ** (attempt - 1))
+                    await asyncio.sleep(backoff)
+
+        # All attempts failed.
+        await self._recordEmbeddingStats(
+            consumerId,
+            success=False,
+            error=lastError,
+            elapsed=lastElapsed,
+            attempts=attempts,
+        )
+        raise RuntimeError(
+            f"Embedding generation failed for {self.modelId} after {attempts} attempts: {lastError}"
+        ) from lastError
+
     async def _runWithFallback(
         self,
         models: Sequence["AbstractModel"],
@@ -597,6 +718,7 @@ class AbstractModel(ABC):
             "support_text": self._config.get("support_text", True),
             "support_images": self._config.get("support_images", False),
             "support_structured_output": self._config.get("support_structured_output", False),
+            "support_embeddings": self._config.get("support_embeddings", False),
             "tier": self._config.get("tier", "bot_owner"),
             "extra": self._config.copy(),
         }
@@ -721,6 +843,51 @@ class AbstractModel(ABC):
             )
         except Exception as e:
             logger.error("Failed to record attempt stats")
+            logger.exception(e)
+
+    async def _recordEmbeddingStats(
+        self,
+        consumerId: Optional[str],
+        *,
+        success: bool,
+        error: Optional[Exception],
+        elapsed: float,
+        attempts: int,
+    ) -> None:
+        """Record stats for a single embedding attempt. Best-effort — never raises.
+
+        Mirrors the shape of :meth:`_recordAttemptStats` but specialised for
+        embedding calls (no token counts, no structured result envelope).
+
+        Args:
+            consumerId: Consumer identifier (e.g. chat ID).
+            success: True if the embedding was produced successfully.
+            error: The captured exception on failure, or None on success.
+            elapsed: Wall-clock seconds spent on the successful (or final)
+                attempt, used for the ``elapsed_time`` metric.
+            attempts: Number of attempts it took (1 on first-try success).
+        """
+        try:
+            info = self.getInfo()
+            await self.statsStorage.record(
+                stats={
+                    "generation_embeddings": 1,
+                    "request_count": 1,
+                    "embedding_attempts": attempts,
+                    "is_error": 0 if success else 1,
+                    "elapsed_time": elapsed or 0,
+                },
+                consumerId=consumerId,
+                labels={
+                    "modelName": info.get("model_id", "unknown"),
+                    "modelId": info.get("model_id", "unknown"),
+                    "provider": info.get("provider", "unknown"),
+                    "generationType": "embedding",
+                    "status": "FINAL" if success else "ERROR",
+                },
+            )
+        except Exception as e:
+            logger.error("Failed to record embedding attempt stats")
             logger.exception(e)
 
 

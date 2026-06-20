@@ -867,6 +867,55 @@ class BasicOpenAIModel(AbstractModel):
             totalTokens=totalTokens,
         )
 
+    async def _generateEmbeddings(self, text: str) -> list[float]:
+        """Generate an embedding vector for the given text via the OpenAI embeddings API.
+
+        Uses ``self._client.embeddings.create()`` against the OpenAI-compatible
+        embeddings endpoint. ``self._getModelId()`` is reused so subclasses
+        (e.g. YC OpenAI) can transparently rewrite the model identifier when
+        needed.
+
+        The optional ``embedding_dimensions`` key in ``self._config`` is passed
+        to the ``dimensions`` parameter — OpenAI's ``text-embedding-3-*``
+        models honour this to return shortened vectors (e.g. 256, 512, 1024
+        from a 1536-dim model). Providers that ignore this argument simply
+        return their native dimensionality.
+
+        Args:
+            text: Input text to embed.
+
+        Returns:
+            The embedding vector as a list of floats (length depends on the
+            model and the ``embedding_dimensions`` config knob).
+
+        Raises:
+            NotImplementedError: If the model does not support embedding
+                generation (capability flag ``support_embeddings`` is False).
+                This check is performed by the public ``generateEmbeddings``
+                wrapper in :class:`AbstractModel` before this method is
+                called, so it is not duplicated here.
+            RuntimeError: If the OpenAI client is not initialised.
+            Exception: For API-level errors (rate limits, server errors, etc.).
+        """
+        if not self._client:
+            raise RuntimeError("OpenAI client not initialized, dood!")
+
+        params: Dict[str, Any] = {
+            "model": self._getModelId(),
+            "input": text,
+        }
+        # ``dimensions`` is optional; the OpenAI SDK accepts it as a kwarg.
+        configuredDimensions = self._config.get("embedding_dimensions")
+        if configuredDimensions is not None:
+            params["dimensions"] = int(configuredDimensions)
+
+        response = await self._client.embeddings.create(**params)
+
+        if not response.data:
+            raise ValueError(f"OpenAI embeddings response has no data for model {self.modelId}")
+
+        return list(response.data[0].embedding)
+
 
 class BasicOpenAIProvider(AbstractLLMProvider):
     """Base class for OpenAI-compatible provider implementations.

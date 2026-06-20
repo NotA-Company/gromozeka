@@ -56,15 +56,20 @@ class TTLDict(Dict[K, V]):
         >>> d.gc(force=True)  # Remove expired entries
     """
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(self, *args: Any, defaultTtl: Optional[int] = None, **kwargs: Any) -> None:
         """Initialize TTLDict with optional initial data.
 
         Args:
             *args: Positional arguments passed to dict.__init__()
+            defaultTtl: Optional default time-to-live in seconds applied to
+                every entry inserted without an explicit ``ttl`` override.
+                Mirrors :meth:`setDefaultTTL`. ``None`` (the default) means
+                entries never expire unless an explicit TTL is supplied at
+                insertion time.
             **kwargs: Keyword arguments passed to dict.__init__()
         """
         super().__init__(*args, **kwargs)
-        self.defaultTTL: Optional[int] = None
+        self.defaultTTL: Optional[int] = defaultTtl
         self.gcTimeout: int = 60
         self.lastGC: float = time.time()  # Initialize to current time to avoid premature GC on first call
         self._lock: RLock = RLock()

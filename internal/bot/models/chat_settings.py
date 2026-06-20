@@ -413,6 +413,15 @@ class ChatSettingsKey(StrEnum):
     """Whether to delete user join messages."""
     DELETE_LEFT_MESSAGES = "delete-left-messages"
     """Whether to delete user left messages."""
+    # Embedding / search settings
+    EMBEDDING_MODEL = "embedding-model"
+    """Model used for message embeddings and semantic search."""
+    EMBEDDINGS_ENABLED = "embeddings-enabled"
+    """Enable embedding generation and semantic search for this chat."""
+    MAX_MESSAGES_FOR_SEMANTIC_SEARCH = "max-messages-for-semantic-search"
+    """Max recent messages to load for semantic search ranking."""
+    REGENERATE_EMBEDDINGS = "regenerate-embeddings"
+    """Re-embedding of all messages without embeddings."""
     # Tier-related
     BASE_TIER = "base-tier"
     """Default tier level for the chat."""
@@ -1015,6 +1024,31 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "short": "Удалять сообщение о выходе пользователя",
         "long": "Удалять сообщение о выходе пользователя из чата.",
         "page": ChatSettingsPage.STANDART,
+    },
+    # Embedding / search settings
+    ChatSettingsKey.EMBEDDING_MODEL: {
+        "type": ChatSettingsType.STRING,
+        "short": "Embedding model",
+        "long": "Model used for message embeddings and semantic search.",
+        "page": ChatSettingsPage.BOT_OWNER,
+    },
+    ChatSettingsKey.EMBEDDINGS_ENABLED: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Embeddings enabled",
+        "long": "Enable embedding generation and semantic search for this chat.",
+        "page": ChatSettingsPage.BOT_OWNER,
+    },
+    ChatSettingsKey.REGENERATE_EMBEDDINGS: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Regenerate embeddings",
+        "long": "Trigger re-embedding of all messages. Self-resets after completion.",
+        "page": ChatSettingsPage.BOT_OWNER,
+    },
+    ChatSettingsKey.MAX_MESSAGES_FOR_SEMANTIC_SEARCH: {
+        "type": ChatSettingsType.INT,
+        "short": "Max messages for search",
+        "long": "Max recent messages to load for semantic search ranking.",
+        "page": ChatSettingsPage.BOT_OWNER,
     },
     # Tier-related
     ChatSettingsKey.BASE_TIER: {

@@ -396,6 +396,56 @@ Discovery-structure-template placeholders: `{description}` (from web search resu
 
 ---
 
+### `[search-history]`
+
+Chat-history semantic search configuration. Defaults live in [`configs/00-defaults/search-history.toml`](../../configs/00-defaults/search-history.toml). The `ChatSearchHandler` is registered conditionally on `enabled = true`; the per-chat `EMBEDDINGS_ENABLED` setting must also be on for messages in a given chat to be embedded and searched.
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `enabled` | bool | `false` | Master switch — operator must flip to register `ChatSearchHandler` and enable the `get_summary` LLM tool |
+
+#### `[search-history.embeddings]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `reindex-batch-size` | int | `100` | Per-batch page size for the backfill `CRON_JOB` handler in `ChatSearchHandler._dtCronJob` (`getMessagesWithoutEmbeddings(limit=...)`) |
+
+The default `EMBEDDING_MODEL` is the per-chat chat-setting default wired under `[bot.defaults].embedding-model` in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml) (currently `"local-embedding"`). A previous server-wide `[search-history.embeddings].model` key was removed because the per-chat default already provides the value, and `ChatSearchHandler._dtCronJob` resolves the model from the chat's `EMBEDDING_MODEL` setting (with no model being a silent no-op for that chat on that tick). There is no in-memory embedding cache in the DB layer — that responsibility belongs to the handler layer (via `CacheService`) and is intentionally not implemented at the repository level (decoded embeddings are re-loaded from `message_embeddings` on every search).
+
+The `MessagePreprocessorHandler.newMessageHandler` always schedules a background embedding task after a successful `saveChatMessage` when both `[search-history].enabled` (cached in `_searchEnabled` at construction time) and the per-chat `EMBEDDINGS_ENABLED` setting are on — there is no per-config kill switch on the dispatch path. To stop embedding generation entirely, set `[search-history].enabled = false` and restart the bot, or clear `EMBEDDINGS_ENABLED` for individual chats.
+
+#### `[search-history.defaults]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `max-results` | int | `10` | Default `limit` passed to `chatMessages.searchChatMessages` by the `/search` command |
+| `default-days` | int | `30` | Default `maxAgeDays` for the `/search` command when `days:` is not specified |
+
+**Chat settings keys** (defined in [`internal/bot/models/chat_settings.py`](../../internal/bot/models/chat_settings.py); defaults under `[bot.defaults]` in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml)):
+
+| `ChatSettingsKey` enum | Setting key | Page | Type | Notes |
+|---|---|---|---|---|
+| `EMBEDDING_MODEL` | `embedding-model` | `BOT_OWNER` | `STRING` | Per-chat embedding model override. Resolved by `ChatSearchHandler._dtCronJob` (backfill) and the `MessagePreprocessorHandler` embedding dispatch from the per-chat `EMBEDDING_MODEL` setting (default `"local-embedding"` from `bot-defaults.toml`). `STRING` rather than `MODEL` because the existing `MODEL` picker does not filter on `support_embeddings` |
+| `EMBEDDINGS_ENABLED` | `embeddings-enabled` | `BOT_OWNER` | `BOOL` | Per-chat kill-switch. Required for `MessagePreprocessorHandler` to embed a message after save; the `get_summary` LLM tool works regardless (it only reads `chat_messages`, not `message_embeddings`) |
+| `REGENERATE_EMBEDDINGS` | `regenerate-embeddings` | `BOT_OWNER` | `BOOL` | One-shot trigger. Setting it to `"true"` makes `ChatSearchHandler._dtCronJob` re-walk all un-embedded (or model-mismatched) messages for the chat and then resets it to `"false"` (via `setChatSetting(..., updatedBy=0)`) so the next tick is a no-op |
+| `MAX_MESSAGES_FOR_SEMANTIC_SEARCH` | `max-messages-for-semantic-search` | `BOT_OWNER` | `INT` | Cap on per-chat backfill volume. Read by `ChatSearchHandler._dtCronJob`; falls back to `100_000` on missing / unparsable / non-positive values |
+
+**Slash command** (category `CommandCategory.TOOLS`, permission `CommandPermission.DEFAULT`):
+- `/search [args]` — parse a small DSL of `key: value` filters, then AI-summarise the matches. Arguments:
+  - `keywords: <text>` — substring filter on `message_text` (case-insensitive). The first known key wins; tokens without a key prefix are merged into `keywords`. Multiple `keywords:` occurrences are concatenated.
+  - `user: @username` — resolve against `chat_users.username` (case-insensitive) via `chatUsers.getChatUsers`.
+  - `days: N` — `maxAgeDays` window. Defaults to `[search-history.defaults].default-days`.
+  - `category: user|bot|system|channel` — filter by `MessageCategory` group (see `_CATEGORY_GROUPS` in `chat_search.py`).
+  - `thread: <message_id>` — restrict to a thread (`root_message_id`).
+  - Example: `/search keywords: meeting days: 7 user: @alice`.
+
+**LLM tool** (always registered when `ChatSearchHandler` is constructed, gated only by the handler-level `[search-history].enabled` switch):
+- `get_summary(scope, value?, thread_message_id?, from_date?, until_date?)` — recaps a slice of chat history. Scopes: `last_hours` (default 24h), `last_days` (default 7), `last_messages` (default 100, hard-capped at 500), `thread` (uses `thread_message_id`), `date_range` (uses `from_date` and `until_date` ISO-8601 strings). Returns a dict with `done`, `summary`, `messageCount`, `scopeDescription`, and (on error) `error`. Gated by the chat's `ALLOW_TOOLS_COMMANDS` setting.
+
+**Per-chat backfill:** Even when a chat only just opted in to `EMBEDDINGS_ENABLED`, the `ChatSearchHandler._dtCronJob` `CRON_JOB` tick (every 60s) will close the gap for chats with `EMBEDDINGS_ENABLED = true` and no `message_embeddings` rows (greedy pass), plus any chat with `REGENERATE_EMBEDDINGS = true` (explicit trigger). Per-tick batch size is capped at `[search-history.embeddings].reindex-batch-size` (default 100 messages) with a small inter-message sleep (`BACKFILL_INTER_MESSAGE_DELAY_SECS = 0.1`) so a long pass does not monopolise the asyncio loop; the next tick picks up where the previous one stopped, so a backlog naturally walks down minute by minute. There is no separate `BackfillWorker` class — the backfill duty lives in `ChatSearchHandler`.
+
+---
+
 ### `[proxy]`
 
 Global proxy configuration for routing outbound HTTP traffic through an HTTP or SOCKS5 proxy. Defaults live in [`configs/00-defaults/proxy.toml`](../../configs/00-defaults/proxy.toml).
@@ -583,6 +633,7 @@ Used by `scripts/sandbox_bootstrap.py` — not by the library itself.
 | `getGeocodeMapsConfig()` | `Dict[str, Any]` | `[geocode-maps]` section |
 | `getStatsConfig()` | `Dict[str, Any]` | `[stats]` section |
 | `getProxyConfig()` | `Dict[str, Any]` | `[proxy]` section |
+| `getSearchHistoryConfig()` | `Dict[str, Any]` | `[search-history]` section (returns `{}` when missing) |
 
 ---
 
@@ -643,4 +694,4 @@ apiKey: str = myConfig.get("api-key", "")
 ---
 
 *This guide is auto-maintained and should be updated whenever configuration sections change*
-*Last updated: 2026-05-23*
+*Last updated: 2026-06-20*

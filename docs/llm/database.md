@@ -30,11 +30,18 @@
 | `chatMessages` | `saveChatMessage(...)` | `None` | Save incoming/outgoing message |
 | `chatMessages` | `getChatMessageByMessageId(chatId, messageId)` | `Optional[ChatMessageDict]` | Get message by ID |
 | `chatMessages` | `getChatMessagesByRootId(chatId, rootMessageId, threadId)` | `List[ChatMessageDict]` | Get thread messages |
+| `chatMessages` | `getMessageThread(chatId, messageId, *, dataSource?)` | `Optional[ThreadResultDict]` | Get target + thread root + chronological thread messages |
 | `chatMessages` | `updateChatMessageCategory(chatId, messageId, category)` | `None` | Update message category |
 | `chatMessages` | `updateChatMessageMetadata(chatId, messageId, metadata)` | `None` | Update message metadata |
+| `chatMessages` | `searchChatMessages(chatId, queryEmbedding?, userFilter?, categoryFilter?, maxAgeDays?, rootMessageId?, limit?, dataSource?)` | `List[SearchResultDict]` | Combined filter + (optional) semantic search via cosine similarity over `message_embeddings`. When `queryEmbedding` is `None` results are returned in date order with `score=0.0` |
+| `chatEmbeddings` | `saveMessageEmbedding(chatId, messageId, embedding, model)` | `None` | Upsert a float32 vector blob for `(chat_id, message_id)`. `dimensions` is derived from `len(embedding)` |
+| `chatEmbeddings` | `getMessageEmbedding(chatId, messageId)` | `Optional[MessageEmbeddingDict]` | Fetch a single embedding as a `MessageEmbeddingDict` with `message_id`, `embedding`, `dimensions`, `model`, `created_at`, `updated_at` (no JOIN against `chat_messages` — `message_text` is not included) |
+| `chatEmbeddings` | `getMessagesWithoutEmbeddings(chatId, limit, modelName)` | `List[ChatMessageDict]` | Used by `ChatSearchHandler._dtCronJob` to find messages missing an embedding for `modelName`. Returns full `ChatMessageDict` rows (joined with `chat_users` for `username`/`full_name`); the embedding table is only used as a `NOT EXISTS` filter, not selected from |
+| `chatEmbeddings` | `deleteChatEmbeddings(chatId)` | `None` | Drop all `message_embeddings` rows for a chat (used when switching to an incompatible model) |
 | `chatUsers` | `getChatUser(chatId, userId)` | `Optional[ChatUserDict]` | Get user in chat |
 | `chatUsers` | `updateChatUser(chatId, userId, username, fullName)` | `None` | Upsert user in chat |
 | `chatUsers` | `updateUserMetadata(chatId, userId, metadata)` | `None` | Update user metadata |
+| `chatUsers` | `getChatUsers(chatId, limit?, minMessages?, lastActiveDays?, seenSince?, dataSource?)` | `List[ChatUserDict]` | List users in a chat. Default mode: order by `updated_at DESC` (most recently active first) with optional `seenSince` filter. Activity-filtered mode (any of `minMessages` / `lastActiveDays` set): order by `messages_count DESC` with both filters applied |
 | `chatUsers` | `getUserChats(userId)` | `List[ChatInfoDict]` | Get all chats for user |
 | `mediaAttachments` | `addMediaAttachment(...)` | `None` | Add media attachment record |
 | `mediaAttachments` | `getMediaAttachment(mediaId)` | `Optional[MediaAttachmentDict]` | Get media by unique ID |
@@ -44,6 +51,7 @@
 | `chatSettings` | `setChatSetting(chatId, key, value, *, updatedBy)` | `None` | Set a chat setting with audit trail |
 | `chatSettings` | `getChatSetting(chatId, setting)` | `Optional[str]` | Get single setting value |
 | `chatSettings` | `getChatSettings(chatId)` | `Dict[str, tuple[str, int]]` | Get all settings as (value, updated_by) |
+| `chatSettings` | `listChatsBySetting(key, *, dataSource?)` | `Dict[int, str]` (`chat_id` → stored value) | Aggregate all `(chat_id, value)` rows whose `key` setting is present, returned as a `chat_id → value` mapping. Callers filter the `value` via `ChatSettingsValue.toBool()` (case-insensitive). Used by `ChatSearchHandler._dtCronJob` to discover chats with `REGENERATE_EMBEDDINGS=true` / `EMBEDDINGS_ENABLED=true`. Iterates *configured* providers so not-yet-touched sources in multi-source mode are still queried |
 | `cache` | `clearOldCacheEntries(ttl)` | `None` | Cleanup stale cache |
 | `delayedTasks` | `cleanupOldCompletedDelayedTasks(ttl)` | `None` | Cleanup old tasks |
 | `divinations` | `insertReading(...)` | `None` | Persist a tarot/runes reading row in `divinations` |
@@ -297,6 +305,8 @@ def getMigration() -> Type[BaseMigration]:
 | `MediaAttachmentDict` | Media file record |
 | `DelayedTaskDict` | Delayed task record |
 | `CacheDict` | Cached data entry |
+| `SearchResultDict` | Row returned by `chatMessages.searchChatMessages` — message + user + score |
+| `ThreadResultDict` | Row returned by `chatMessages.getMessageThread` — root + target + chronological thread |
 
 ### Key Enums
 
@@ -310,6 +320,13 @@ def getMigration() -> Type[BaseMigration]:
 | `USER_COMMAND` | User command message |
 | `BOT_ERROR` | Bot error message |
 | `DELETED` | Deleted message |
+| `USER_CONFIG_ANSWER` | User reply to a config prompt |
+| `USER_SPAM` | Message classified as spam |
+| `BOT_SPAM_NOTIFICATION` | Bot notification about a spam action |
+| `BOT_RESENDED` | Message resended by the bot |
+| `BOT_SUMMARY` | LLM-generated summary output |
+| `CHANNEL` | Channel post |
+| `UNSPECIFIED` | Catch-all / unset |
 
 #### `MediaStatus`
 
@@ -323,6 +340,71 @@ def getMigration() -> Type[BaseMigration]:
 #### `SpamReason`
 
 Various spam classification reasons — used by `SpamHandler`
+
+---
+
+## 5.5 `message_embeddings` Table (Chat-History Search)
+
+Sidecar table created by `migration_017`. Stores one float32 embedding per `(chat_id, message_id)` so the `ChatSearchHandler` can rank search results by cosine similarity. Backs the `search-history` feature (`[search-history] enabled = true` in TOML).
+
+**Primary Key:** `(chat_id, message_id)` — same composite natural key as `chat_messages`, no `AUTOINCREMENT`.
+
+| Column | Type | Nullable | Description |
+|---|---|---|---|
+| `chat_id` | INTEGER | No | Chat identifier (matches `chat_messages.chat_id`) |
+| `message_id` | TEXT | No | Message identifier (Telegram `int` → stringified via `MessageId.asStr()`; Max `str` verbatim) |
+| `embedding` | BLOB | No | `array.array('f', vec).tobytes()` — raw float32 little-endian |
+| `dimensions` | INTEGER | No | `len(embedding)`, derived in `saveMessageEmbedding` (not a separate arg) |
+| `model` | TEXT | No | Name of the model that produced the vector (matches `EMBEDDING_MODEL` chat setting or the server default) |
+| `created_at` | TIMESTAMP | No | Set by application code (no DB default — matches `migration_013` rules) |
+| `updated_at` | TIMESTAMP | No | Set by application code |
+
+**Indexes:** None. Composite PK lookup is the only access pattern; per-chat enumeration uses `WHERE chat_id = ?`.
+
+**Portability notes:**
+- `BLOB` is portable across SQLite, PostgreSQL (`BYTEA`), and MySQL (`BLOB`).
+- `dimensions` is stored per row so a chat that switches `EMBEDDING_MODEL` can detect stale rows without joining the LLM registry at SQL time — the backfill `CRON_JOB` handler (`ChatSearchHandler._dtCronJob`) and `getMessagesWithoutEmbeddings` filter by `model` to skip already-current rows.
+- No `AUTOINCREMENT` / `SERIAL` — composite natural key follows the project convention.
+
+**In-memory cache (handler-layer concern):** `ChatMessagesRepository` does NOT keep a per-chat `TTLDict` of decoded float matrices; the previous `_embeddingCache` and the `[search-history.embeddings].cache-ttl-seconds` / `cache-max-chats` settings were removed. Semantic search re-loads embeddings from `message_embeddings` on every call. Caching decoded vectors belongs in the handler layer (via `CacheService`) and is intentionally not implemented at the repository level.
+
+**Repository methods:**
+
+```python
+# Save (or update) the embedding for a saved message. `dimensions`
+# is derived from len(embedding).
+await db.chatEmbeddings.saveMessageEmbedding(
+    chatId=chatId,
+    messageId=messageId,
+    embedding=embedding,  # list[float]
+    model=modelName,
+)
+
+# Fetch a single embedding as a MessageEmbeddingDict. No JOIN against
+# chat_messages is performed — `message_text` is not included. To also
+# read the message text, call getChatMessageByMessageId() separately.
+record: Optional[MessageEmbeddingDict] = await db.chatEmbeddings.getMessageEmbedding(
+    chatId=chatId,
+    messageId=messageId,
+)
+embedding: Optional[list[float]] = record["embedding"] if record else None
+
+# Backfill worker input: list of full ChatMessageDict entries for messages
+# in the chat that do not yet have a current embedding for `modelName`.
+# The embedding table is only used as a NOT EXISTS filter; each entry
+# carries message_id / message_text / username / full_name, etc.
+pairs: list[ChatMessageDict] = await db.chatEmbeddings.getMessagesWithoutEmbeddings(
+    chatId=chatId,
+    limit=batchSize,
+    modelName=modelName,
+)
+
+# Drop all embeddings for a chat (e.g. when switching to an
+# incompatible model that produces different dimensions).
+await db.chatEmbeddings.deleteChatEmbeddings(chatId=chatId)
+```
+
+**Search integration:** `searchChatMessages(queryEmbedding=None, ...)` runs in filter-only mode and returns rows in date order with `score=0.0`. When `queryEmbedding` is provided, results are ranked by cosine similarity to the query vector (0..1). Embeddings are re-loaded fresh from `message_embeddings` on every call — the repository no longer keeps a `TTLDict` of decoded float matrices (the previous `_embeddingCache` and its `[search-history.embeddings].cache-ttl-seconds` / `cache-max-chats` settings were removed). Caching decoded vectors belongs in the handler layer via `CacheService` and is intentionally not implemented at the repository level.
 
 ---
 
@@ -579,13 +661,14 @@ success, value = sqlToCustomType("123", Union[int, str])
    - Validate that all historical migrations are accounted for
 
 **Known implemented migrations:**
-- `migration_001` to `migration_016` — Baseline migrations through latest schema updates
+- `migration_001` to `migration_017` — Baseline migrations through latest schema updates
 - `migration_010`: Adds `updated_by INTEGER NOT NULL` to `chat_settings` table (audit trail)
 - `migration_011` and `migration_012`: Additional schema improvements
 - `migration_013`: Removes `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns (explicit timestamp handling)
 - `migration_014`: Adds the [`divinations`](#divinations) table (composite PK `(chat_id, message_id)`) plus `idx_divinations_user_created` index for tarot/runes readings
 - `migration_015`: Adds the [`divination_layouts`](#divination_layouts) table (composite PK `(system_id, layout_id)`) plus `idx_divination_layouts_system` index for layout discovery cache
 - `migration_016`: Adds [`stat_events`](../../lib/stats/stats_storage.py) (append-only event log) and [`stat_aggregates`](../../lib/stats/stats_storage.py) (period buckets) tables for statistics collection
+- `migration_017`: Adds the [`message_embeddings`](#message_embeddings) table (composite PK `(chat_id, message_id)`) — stores float32 embedding BLOBs for semantic chat-history search via the `ChatSearchHandler`
 
 ---
 
@@ -602,4 +685,4 @@ success, value = sqlToCustomType("123", Union[int, str])
 ---
 
 *This guide is auto-maintained and should be updated whenever significant database changes are made*
-*Last updated: 2026-05-10*
+*Last updated: 2026-06-20*

@@ -192,3 +192,70 @@ class ChatSettingsRepository(BaseRepository):
         except Exception as e:
             logger.error(f"Failed to get settings for chat {chatId}: {e}")
             return {}
+
+    async def listChatsBySetting(
+        self,
+        key: str,
+        *,
+        dataSource: Optional[str] = None,
+    ) -> Dict[int, str]:
+        """List all ``(chat_id, value)`` rows whose ``key`` setting is present.
+
+        Used by ``ChatSearchHandler._dtCronJob`` to discover chats with
+        ``REGENERATE_EMBEDDINGS=true`` / ``EMBEDDINGS_ENABLED=true`` —
+        callers do the value filtering in Python via
+        :meth:`ChatSettingsValue.toBool` so the comparison stays
+        case-insensitive (``"true"``, ``"True"``, ``"TRUE"``, ``"1"``
+        all match the truthy check) and lives next to the rest of the
+        codebase's settings parsing. Returning both columns (instead of
+        just chat IDs) lets the caller re-parse the stored value with
+        the same `ChatSettingsValue` helper it uses everywhere else,
+        instead of relying on a SQL-level exact match that would silently
+        drop chats whose setting was written in a different case.
+
+        Aggregates across all **configured** data sources in multi-source
+        mode (sources that have not been accessed since startup are still
+        queried — ``getProvider`` lazily initializes each one) and
+        deduplicates by ``chat_id``.
+
+        Args:
+            key: Setting key to match (e.g. ``"regenerate-embeddings"``).
+            dataSource: Optional data source name. When provided, only that
+                source is queried. When ``None``, every configured provider
+                is consulted and the results are unioned.
+
+        Returns:
+            Dict[chatId, value]
+        """
+        logger.debug(f"Listing chats with setting {key} (dataSource={dataSource})")
+        allResults: Dict[int, str] = {}
+        # Iterate over *configured* sources, not just the ones that have
+        # been lazily initialised so far.
+        sourcesList = [dataSource] if dataSource else self.manager._providers.keys()
+
+        for sourceName in sourcesList:
+            try:
+                sqlProvider = await self.manager.getProvider(dataSource=sourceName, readonly=True)
+                rows = await sqlProvider.executeFetchAll(
+                    """
+                    SELECT chat_id, value FROM chat_settings
+                    WHERE key = :key
+                """,
+                    {"key": key},
+                )
+                for row in rows:
+                    chatId = row.get("chat_id")
+                    rowValue = row.get("value")
+                    if chatId is None or rowValue is None:
+                        logger.debug(f"Skipping row with missing chat_id or value: {row}")
+                        continue
+                    # First-write-wins on duplicates across sources; the
+                    # stored value is the same in both (settings are
+                    # per-chat, not per-source), so this only matters when
+                    # two sources both have a row for the same chat — in
+                    # which case either is correct.
+                    allResults.setdefault(chatId, rowValue)
+            except Exception as e:
+                logger.warning(f"Failed to list chats with setting {key} from source {sourceName!r}: {e}")
+                continue
+        return allResults

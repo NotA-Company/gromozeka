@@ -37,10 +37,7 @@ from internal.database.models import (
 )
 from internal.models import MessageId
 from internal.services.cache import UserActiveActionEnum, UserActiveConfigurationDict
-from lib.ai import (
-    ModelMessage,
-    ModelRunResult,
-)
+from lib.ai import ModelMessage, ModelRunResult
 
 from .base import BaseBotHandler, HandlerResultStatus
 
@@ -207,23 +204,20 @@ class SummarizationHandler(BaseBotHandler):
                     time.sleep(0.5)
                 return
 
-        systemMessage = {
-            "role": "system",
-            "content": summarizationPrompt,
-        }
-        parsedMessages = []
+        systemMessage = ModelMessage(role="system", content=summarizationPrompt)
+        parsedMessages: List[ModelMessage] = []
 
         for msg in reversed(messages):
             parsedMessages.append(
-                {
-                    "role": "user",
-                    "content": await (await EnsuredMessage.fromDBChatMessage(msg, self.db)).formatForLLM(
+                ModelMessage(
+                    role="user",
+                    content=await (await EnsuredMessage.fromDBChatMessage(msg, self.db)).formatForLLM(
                         self.db, LLMMessageFormat.JSON, stripAtsign=True
                     ),
-                }
+                )
             )
 
-        reqMessages = [systemMessage] + parsedMessages
+        reqMessages: List[ModelMessage] = [systemMessage, *parsedMessages]
 
         llmModel = chatSettings[ChatSettingsKey.SUMMARY_MODEL].toModel()
         maxTokens = llmModel.contextSize
@@ -256,9 +250,11 @@ class SummarizationHandler(BaseBotHandler):
             currentBatchLen = int(min(batchLength, len(parsedMessages) - startPos))
             batchSummarized = False
             while not batchSummarized:
-                tryMessages = parsedMessages[startPos : startPos + currentBatchLen]
-                reqMessages = [systemMessage] + tryMessages
-                tokensCount = llmModel.getEstimateTokensCount(reqMessages)
+                batchRequest: List[ModelMessage] = [
+                    systemMessage,
+                    *parsedMessages[startPos : startPos + currentBatchLen],
+                ]
+                tokensCount = llmModel.getEstimateTokensCount(batchRequest)
                 if tokensCount > maxTokens:
                     if currentBatchLen == 1:
                         resMessages.append(
@@ -277,7 +273,7 @@ class SummarizationHandler(BaseBotHandler):
                 try:
                     logger.debug(f"LLM Request messages: {reqMessages}")
                     mlRet = await self.llmService.generateText(
-                        ModelMessage.fromDictList(reqMessages),
+                        batchRequest,
                         chatId=chatId,
                         chatSettings=chatSettings,
                         modelKey=llmModel,

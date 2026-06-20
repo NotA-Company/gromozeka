@@ -258,7 +258,7 @@ vanishingly rare in the Gromozeka codebase (see :ref:`tasks.md §4.2 <tasks-impo
  | Path | Purpose |
 |---|---|
 | [`internal/bot/common/bot.py`](../../internal/bot/common/bot.py) | `TheBot` — platform-agnostic bot API |
-  | [`internal/bot/common/handlers/`](../../internal/bot/common/handlers/) | All 20+ handler implementations (incl. `DivinationHandler` for `/taro` & `/runes`, `SandboxHandler` for code execution, plus base/manager/module_loader, tests, examples, and 15+ functional handlers) |
+  | [`internal/bot/common/handlers/`](../../internal/bot/common/handlers/) | All 20+ handler implementations (incl. `DivinationHandler` for `/taro` & `/runes`, `SandboxHandler` for code execution, `ChatSearchHandler` for `/search` + `get_summary`, plus base/manager/module_loader, tests, examples, and 15+ functional handlers) |
 | [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) | `BaseBotHandler` — handler base class |
 | [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) | `HandlersManager` — handler chain |
 | [`internal/bot/telegram/application.py`](../../internal/bot/telegram/application.py) | Telegram-specific bot application |
@@ -280,7 +280,7 @@ vanishingly rare in the Gromozeka codebase (see :ref:`tasks.md §4.2 <tasks-impo
 | [`lib/ai/abstract.py`](../../lib/ai/abstract.py) | `AbstractModel`, `AbstractLLMProvider` |
 | [`lib/ai/manager.py`](../../lib/ai/manager.py) | `LLMManager` — model + provider registry |
 | [`lib/ai/models.py`](../../lib/ai/models.py) | `ModelMessage`, `ModelRunResult`, `LLMToolFunction`, etc. |
-| [`lib/ai/providers/`](../../lib/ai/providers/) | Provider implementations (OpenAI, OpenRouter, YC) |
+| [`lib/ai/providers/`](../../lib/ai/providers/) | Provider implementations (OpenAI-compatible, OpenRouter, Yandex Cloud, `local-embeddings` via `fastembed`) |
 | [`lib/cache/interface.py`](../../lib/cache/interface.py) | `CacheInterface[K,V]` — generic cache ABC |
 | [`lib/cache/dict_cache.py`](../../lib/cache/dict_cache.py) | In-memory dict-based cache impl |
 | [`lib/rate_limiter/interface.py`](../../lib/rate_limiter/interface.py) | `RateLimiterInterface` — ABC |
@@ -319,4 +319,4 @@ vanishingly rare in the Gromozeka codebase (see :ref:`tasks.md §4.2 <tasks-impo
 ---
 
 *This guide is auto-maintained and should be updated whenever significant architectural changes are made*
-*Last updated: 2026-05-23*
+*Last updated: 2026-06-20*

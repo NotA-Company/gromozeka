@@ -120,6 +120,12 @@ bayes-auto-learn = true
 # Should we use trigrams for Bayes filter? (Usefull only in case of lots of learned messages)
 bayes-use-trigrams = false
 
+# Embedding / semantic search (see docs/plans/chat-history-search-plan.md §2.7)
+embeddings-enabled = false
+regenerate-embeddings = true
+max-messages-for-semantic-search = 100000
+embedding-model = "local/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+
 # Allow reaction in bot mention (by username and by name)
 allow-mention = true
 # Allow reaction on reply of bot message

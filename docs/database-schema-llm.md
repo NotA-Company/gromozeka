@@ -6,7 +6,7 @@
 **Database Class**: [`Database`](../internal/database/database.py:1)
 **Models**: [`internal/database/models.py`](../internal/database/models.py:1)
 **Repositories**: [`internal/database/repositories/`](../internal/database/repositories/)
-**Migrations**: 16 (up to `migration_016`)
+**Migrations**: 17 (up to `migration_017`)
 
 ---
 
@@ -422,6 +422,40 @@ CREATE TABLE divination_layouts (
 
 ---
 
+### message_embeddings
+**Purpose**: Float32 embedding vectors for chat messages — powers semantic ranking in `searchChatMessages`. Created by `migration_017`. Only populated when `[search-history] enabled = true`. See [`docs/llm/database.md`](../llm/database.md) §5.5 and [`docs/llm/configuration.md`](../llm/configuration.md) §`[search-history]`.
+**Primary Key**: `(chat_id, message_id)` — same natural key as `chat_messages`
+
+```sql
+CREATE TABLE message_embeddings (
+    chat_id    INTEGER   NOT NULL,
+    message_id TEXT      NOT NULL,                             -- MessageId.asStr() (Telegram int) or verbatim (Max str)
+    embedding  BLOB      NOT NULL,                             -- array.array('f', vec).tobytes() (float32 LE)
+    dimensions INTEGER   NOT NULL,                             -- len(embedding), derived in saveMessageEmbedding
+    model      TEXT      NOT NULL,                             -- e.g. 'text-embedding-3-small' (resolved model name)
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
+    PRIMARY KEY (chat_id, message_id)
+)
+```
+
+**Indexes**: None — PK-only access; per-chat enumeration uses `WHERE chat_id = ?`.
+
+**Repository methods** (`ChatEmbeddingsRepository`):
+- `saveMessageEmbedding(chatId, messageId, embedding, model)` — upsert vector; `dimensions` derived from `len(embedding)`.
+- `getMessageEmbedding(chatId, messageId) -> Optional[MessageEmbeddingDict]` — single-row lookup that reads only the `message_embeddings` row. Returns `message_id` + the embedding fields (`embedding`, `dimensions`, `model`, `created_at`, `updated_at`). No JOIN against `chat_messages`; call `getChatMessageByMessageId` separately if the message text is also needed.
+- `getMessagesWithoutEmbeddings(chatId, limit, modelName) -> list[ChatMessageDict]` — used by `ChatSearchHandler._dtCronJob` (backfill). Returns full `ChatMessageDict` rows (joined with `chat_users` for `username`/`full_name`); the `message_embeddings` table is only used as a `NOT EXISTS` filter, not selected from. When `modelName` is set, rows whose existing embedding was made by a different model are also surfaced.
+- `deleteChatEmbeddings(chatId)` — drop all embeddings for a chat (e.g. on model switch).
+
+**Public dispatcher** (`ChatMessagesRepository`):
+- `searchChatMessages(chatId, queryEmbedding=..., ...) -> list[SearchResultDict]` — combined filter + (optional) semantic search; cosine similarity over the embedding blob when `queryEmbedding` is provided. Embeddings are re-loaded fresh from `message_embeddings` on every call. The semantic path delegates to `ChatEmbeddingsRepository._semanticSearch` via a private back-reference.
+
+**In-memory cache**: `ChatMessagesRepository` does NOT keep a per-chat `TTLDict` of decoded float matrices — the previous `_embeddingCache` and the `[search-history.embeddings].cache-ttl-seconds` / `cache-max-chats` settings were removed. Caching decoded vectors belongs in the handler layer (via `CacheService`) and is intentionally not implemented at the repository level.
+
+**Note**: No foreign-key to `chat_messages` — messages can be deleted from `chat_messages` without cascading (embeddings become orphans and are eventually overwritten by a future re-embed pass). The `model` column lets a chat switch `EMBEDDING_MODEL` cleanly: `getMessagesWithoutEmbeddings(chatId, ..., modelName=newModel)` skips rows already produced by `newModel`, so the `ChatSearchHandler._dtCronJob` backfill re-uses compatible rows.
+
+---
+
 ### stat_events
 **Purpose**: Append-only event log for raw statistics events
 **Primary Key**: `event_id` (app-generated UUID)
@@ -680,9 +714,17 @@ db.chatUsers.getChatUser(
 ```python
 db.chatUsers.getChatUsers(
     chatId: int,
-    dataSource: Optional[str] = None
+    limit: Optional[int] = None,
+    minMessages: Optional[int] = None,
+    lastActiveDays: Optional[int] = None,
+    seenSince: Optional[datetime.datetime] = None,
+    dataSource: Optional[str] = None,
 ) -> List[ChatUserDict]
 ```
+
+Default mode (no `minMessages` / `lastActiveDays`): orders by `updated_at DESC`.
+Activity-filtered mode (any of `minMessages` / `lastActiveDays` set): orders by
+`messages_count DESC` and applies both filters.
 
 **Update User Metadata**
 ```python

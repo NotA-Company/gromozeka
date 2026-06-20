@@ -2,9 +2,11 @@
 aiodocker==0.27.0
 aiosqlite==0.22.1
 boto3==1.43.32
+fastembed==0.8.0
 html-to-markdown==3.6.13
 httpx[http2]==0.28.1
 httpx-socks[asyncio]==0.11.0
+numpy==2.4.6
 openai==2.43.0
 python-dateutil==2.9.0.post0
 python-magic==0.4.27

@@ -17,7 +17,7 @@ from internal.models import MessageId
 logger = logging.getLogger(__name__)
 
 
-def convertToSQLite(data: Any) -> Union[str, int, float, None]:
+def convertToSQLite(data: Any) -> Union[str, int, float, bytes, bytearray, None]:
     """Convert data to a SQL-compatible type.
 
     Converts various Python data types to formats suitable for SQL storage across
@@ -25,7 +25,8 @@ def convertToSQLite(data: Any) -> Union[str, int, float, None]:
     booleans, datetimes, and None.
 
     Type conversion rules:
-    - str, int, float: returned as-is
+    - str, int, float, bytes, bytearray: returned as-is (raw bytes are stored
+      as BLOBs by the underlying driver)
     - dict, list, Mapping, Sequence: converted to JSON string
     - bool: converted to int (0 for False, 1 for True)
     - datetime.datetime: converted to ISO format string
@@ -36,7 +37,7 @@ def convertToSQLite(data: Any) -> Union[str, int, float, None]:
         data: The data to convert to SQL-compatible format
 
     Returns:
-        Union[str, int, float, None]: The converted data in SQL-compatible format
+        Union[str, int, float, bytes, None]: The converted data in SQL-compatible format
     """
     if data is None:
         return None
@@ -46,7 +47,7 @@ def convertToSQLite(data: Any) -> Union[str, int, float, None]:
         return data.asStr()
     elif isinstance(data, bool):
         return int(data)
-    elif isinstance(data, (str, int, float)):
+    elif isinstance(data, (str, int, float, bytes, bytearray)):
         return data
     elif isinstance(data, (dict, list, tuple, Mapping, Sequence)):
         return libUtils.jsonDumps(data)

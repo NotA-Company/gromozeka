@@ -78,7 +78,7 @@ class MockModel(AbstractModel):
         """Generate mock image response.
 
         Args:
-            messages: List of message dictionaries for the conversation
+            messages: List of message dictionaries for the image generation
 
         Returns:
             ModelRunResult: Mock result with predefined image data
@@ -89,6 +89,17 @@ class MockModel(AbstractModel):
             mediaMimeType="image/png",
             mediaData=b"fake_image_data",
         )
+
+    async def _generateEmbeddings(self, text: str) -> list[float]:
+        """Return a placeholder embedding vector.
+
+        Args:
+            text: Input text (unused by the mock).
+
+        Returns:
+            Placeholder zero-vector of fixed length.
+        """
+        return [0.0] * 4
 
     async def _generateStructured(
         self,

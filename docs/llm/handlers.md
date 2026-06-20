@@ -42,6 +42,7 @@
 | [`resender.py`](../../internal/bot/common/handlers/resender.py) | `ResenderHandler` | Message resending (if enabled) |
 | [`divination.py`](../../internal/bot/common/handlers/divination.py) | `DivinationHandler` | `/taro` & `/runes` readings (if `divination.enabled`) — includes layout discovery via LLM + web search |
 | [`sandbox.py`](../../internal/bot/common/handlers/sandbox.py) | `SandboxHandler` | Sandboxed Python code execution (if `sandbox.enabled` and `allow-sandbox` chat setting). Commands: `/run <code>` (alias: `/python`), `/sandbox files|read|status|install`. LLM tools: `run_python(code)`, `sandbox_list_files`, `sandbox_read_file`, `sandbox_send_file`, `sandbox_list_libraries`. Lifecycle: registers `CRON_JOB` (periodic GC) and `DO_EXIT` (graceful shutdown) delayed-task handlers; performs one-time `SandboxManager.recover()` on first cron tick to reconcile stale containers after restarts. |
+| [`chat_search.py`](../../internal/bot/common/handlers/chat_search.py) | `ChatSearchHandler` | Chat-history search (if `[search-history].enabled`). Command: `/search [args]` (DSL of `keywords` / `user` / `days` / `category` / `thread` filters) — returns the matching messages as a raw, human-readable list (no LLM summary). `newMessageHandler` is pass-through (`SKIPPED`); work runs via the command. Lifecycle: registers `CRON_JOB` (`_dtCronJob` — embedding backfill for chats with `EMBEDDINGS_ENABLED=true`, round-robin across enabled chats, default batch `BACKFILL_DEFAULT_BATCH_SIZE` messages) and `DO_EXIT` (`_dtOnExit` — no-op for shutdown symmetry) delayed-task handlers. There is no separate `BackfillWorker` class — backfill duty lives in this handler. |
 | [`llm_messages.py`](../../internal/bot/common/handlers/llm_messages.py) | `LLMMessageHandler` | **LAST** in chain; LLM responses |
 | [`example_custom_handler.py`](../../internal/bot/common/handlers/example_custom_handler.py) | `ExampleCustomHandler` | Template for custom handlers |
 
@@ -391,7 +392,7 @@ Full chain:
 9. `HelpHandler` — PARALLEL — help command
 10. (Telegram only) `ReactOnUserMessageHandler` — PARALLEL
 11. (Telegram only) `TopicManagerHandler` — PARALLEL
-12. (if enabled) `WeatherHandler`, `YandexSearchHandler`, `ResenderHandler`, `DivinationHandler`, `SandboxHandler` — PARALLEL
+12. (if enabled) `WeatherHandler`, `YandexSearchHandler`, `ResenderHandler`, `DivinationHandler`, `SandboxHandler`, `ChatSearchHandler` — PARALLEL
 13. (custom handlers) — PARALLEL
 14. `LLMMessageHandler` — SEQUENTIAL — **MUST BE LAST**
 
@@ -430,4 +431,4 @@ Full chain:
 ---
 
 *This guide is auto-maintained and should be updated whenever significant handler changes are made*  
-*Last updated: 2026-05-23*
+*Last updated: 2026-06-20*

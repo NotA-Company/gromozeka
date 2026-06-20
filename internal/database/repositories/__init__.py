@@ -12,8 +12,13 @@ Key Components:
     BaseRepository: Abstract base class defining the common interface and
         functionality for all repository implementations.
     CacheRepository: Handles cache-related database operations.
+    ChatEmbeddingsRepository: Manages message embeddings and the
+        semantic-search path.
     ChatInfoRepository: Manages chat metadata and information.
     ChatMessagesRepository: Handles message storage and retrieval.
+    ChatSearchRepository: Unified chat-message search (filter-only SQL
+        path and the semantic embedding path), including the public
+        ``searchChatMessages`` dispatcher.
     ChatSettingsRepository: Manages chat-specific settings and configurations.
     ChatSummarizationRepository: Handles chat summarization data.
     ChatUsersRepository: Manages user-chat relationships and memberships.
@@ -21,8 +26,8 @@ Key Components:
     DelayedTasksRepository: Manages delayed task scheduling and execution.
     DivinationsRepository: Persists tarot/runes divination readings.
     MediaAttachmentsRepository: Handles media attachment storage and metadata.
-    SpamRepository: Manages spam detection and filtering data.
-    UserDataRepository: Handles user-specific data and preferences.
+    SpamRepository: Handles spam detection and filtering data.
+    UserDataRepository: Manages user-specific data and preferences.
 
 Usage Example:
     >>> from internal.database.repositories import ChatInfoRepository
@@ -30,7 +35,7 @@ Usage Example:
     >>>
     >>> db_manager = DatabaseManager()
     >>> chat_repo = ChatInfoRepository(db_manager)
-    >>> chat_info = chat_repo.getChatInfo(chat_id=12345)
+    >>> chat_info = chat_repo.getChat_info(chat_id=12345)
 
 Architecture:
     The repository pattern implemented here separates data access logic from
@@ -46,8 +51,10 @@ Note:
 
 from .base import BaseRepository
 from .cache import CacheRepository
+from .chat_embeddings import ChatEmbeddingsRepository
 from .chat_info import ChatInfoRepository
 from .chat_messages import ChatMessagesRepository
+from .chat_search import ChatSearchRepository
 from .chat_settings import ChatSettingsRepository
 from .chat_summarization import ChatSummarizationRepository
 from .chat_users import ChatUsersRepository
@@ -61,8 +68,10 @@ from .user_data import UserDataRepository
 __all__ = [
     "BaseRepository",
     "CacheRepository",
+    "ChatEmbeddingsRepository",
     "ChatInfoRepository",
     "ChatMessagesRepository",
+    "ChatSearchRepository",
     "ChatSettingsRepository",
     "ChatSummarizationRepository",
     "ChatUsersRepository",

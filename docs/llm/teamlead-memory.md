@@ -97,10 +97,11 @@ How to use this file:
   - **CRITICAL:** OpenAI embedding API call fixed to use `self._client.embeddings.create()` (SDK method) instead of raw `self._client.post("/embeddings", ...)`
   - **CRITICAL:** Added `updated_at TIMESTAMP NOT NULL` to `message_embeddings` schema (needed for tracking re-embeds)
   - `message_embeddings.dimensions` is derived from `len(embedding)` in `saveMessageEmbedding()` — not passed as separate arg
-  - `ChatMessagesRepository` declares `__slots__ = ()` — new `_embeddingCache`/`_maxCachedChats` attrs must be added to __slots__
+  - `ChatMessagesRepository` declares `__slots__ = ()` — new `_embeddingCache`/`_maxCachedChats` attrs must be added to __slots__ (SUPERSEDED 2026-06-20: embedding cache removed from DB layer entirely, see "Post-implementation refinements" below)
   - Chat settings table now includes `ChatSettingsPage` column; EMBEDDING_MODEL uses STRING type (not MODEL) because existing MODEL picker doesn't filter by support_embeddings
   - Backfill worker: CRON_JOB delayed-task handler in ChatSearchHandler (matching SandboxHandler pattern), NOT a separate `internal/services/embedding/` dir wired in main.py
-  - Regression: `MAX_MESSAGES_FOR_SEMANTIC_SEARCH` page is `BOT_OWNER_SYSTEM` in settings table but `BOT_OWNER` in consumers table (line 352) — needs reconciliation
+  - Regression: `MAX_MESSAGES_FOR_SEMANTIC_SEARCH` ChatSettingsPage resolved → `BOT_OWNER` (not `BOT_OWNER_SYSTEM`). Plan lines 320 and 352 now agree.
+  - Backfill worker chat discovery: query DB for chats with `REGENERATE_EMBEDDINGS = true` (new repository method or direct query on `chat_settings`), process N chats per CRON_JOB tick.
   - New sections: §5.3 Concurrency analysis, §8.1 Error handling summary, step budget assessment
   - `get_summary` LLM tool params updated: `from`/`until` → `from_date`/`until_date` (avoid reserved-word issues)
   - `self._statsStorage` → `self.statsStorage` in generateEmbeddings docstring (matches actual attribute name)
@@ -121,6 +122,28 @@ How to use this file:
   - BLOB serialization: use `array.array('f', vec).tobytes()` (standard lib, no numpy dependency for storage)
   - `ChatMessagesRepository.__slots__ = ()` in current code — any new instance attributes must be added to __slots__
   - `SandboxHandler` uses CRON_JOB delayed-task pattern for periodic work (not a separate service singleton) — follow this pattern for embedding backfill
+
+## Chat History Search — Implementation Decisions (2026-06-20)
+
+- **`MAX_MESSAGES_FOR_SEMANTIC_SEARCH` page**: `BOT_OWNER` (resolved from plan inconsistency).
+- **Backfill chat discovery**: Query DB directly for chats with `REGENERATE_EMBEDDINGS = true`. Add a repository method or direct query. Process N chats per CRON_JOB tick with configurable batch size.
+- **Plan gaps fixed**: `ChatSettingsPage.BOT_OWNER` reconciled; backfill discovery specified.
+- **Two-tier embedding model resolution** (chat setting → hardcoded fallback): `MessagePreprocessorHandler._embedMessage` and `ChatSearchHandler._dtCronJob`. The per-chat `EMBEDDING_MODEL` default is now set in `bot-defaults.toml` to `"local-embedding"`, so the chat-settings default provides the value. The `[search-history.embeddings].model` server-wide default was removed (redundant with chat settings default).
+- **Parser merge semantics in `_parseSearchArgs`**: bare words merge with `keywords:`, first occurrence wins for other keys, values span tokens until next known key.
+- **Lazy import of `ChatSettingsValue` in `internal/database/repositories/chat_settings.py`**: `listChatsBySetting` imports `ChatSettingsValue` inside the method body to break a package-initialization cycle (`internal.database → internal.bot.models → internal.database`).
+- **Backfill is now a CRON_JOB handler in `ChatSearchHandler`**: there is no longer a separate `BackfillWorker` class. `ChatSearchHandler.__init__` registers `_dtCronJob` against `queueService.registerDelayedTaskHandler(DelayedTaskFunction.CRON_JOB, ...)`. The previous `internal/bot/common/workers/backfill_worker.py` module was removed and the round-robin / per-tick batch / per-message error-handling logic now lives in `ChatSearchHandler._dtCronJob`. `HandlersManager.__init__` simply appends `ChatSearchHandler` to the handler list when `[search-history].enabled` is true — no separate import, no try/except.
+- **`DO_EXIT` registration via `registerDelayedTaskHandler` is OPTIONAL, not required by `QueueService`**. `QueueService.startDelayedScheduler` already registers its own built-in `DO_EXIT` handler (`_doExitHandler`) that performs the actual graceful-shutdown bookkeeping, so a handler that has nothing to do on shutdown is free to skip the `registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, ...)` call entirely. The `SandboxHandler` / `ResenderHandler` / `HandlersManager` register one because they own resources (active sandbox runs, pending message sends, periodic cleanups) that need a coordinated teardown — `ChatSearchHandler` does not, so it only registers `CRON_JOB`. Do not assume every handler needs a `_dtOnExit`.
+- **Gate 2 review outcome (2026-06-20)**: 3 critical issues found, all fixed. 6 important issues, 2 fixed. 4 deferred.
+- **Production bugs found and fixed**: `convertToSQLite` didn't handle `bytes`; `TTLDict(defaultTtl=...)` kwarg was silently swallowed; `_filterMessageIds` AND→OR; `_parseSearchArgs` couldn't handle `key: value` with space; keyword filter applied after SQL LIMIT; IN() portability issue.
+- **Circular import workaround**: `listChatsBySetting` in `chat_settings.py` lazily imports `ChatSettingsValue`.
+- **Post-implementation refinements (2026-06-21)**: 
+  - Embedding model: switched from English-only `bge-small-en-v1.5` (384d) to multilingual `intfloat/multilingual-e5-large` (1024d) for Russian support.
+  - Cache removed from DB layer; model resolution simplified to 2-tier (chat setting → `"local-embedding"`); `on-save` config dropped (always embed if enabled); `_searchEnabled` cached in `MessagePreprocessorHandler.__init__`.
+  - `listChatsBySetting` simplified: returns `List[Dict]` with `chat_id`/`value`; callers filter via `ChatSettingsValue.toBool()`.
+  - `ChatEmbeddingsRepository` created; all embedding methods + semantic search moved there from `ChatMessagesRepository`. `listChatUsers` moved to `ChatUsersRepository`, then merged into `getChatUsers` (now exposes `limit` / `minMessages` / `lastActiveDays` / `seenSince` on a single method).
+  - `BackfillWorker` deleted; backfill is now a CRON_JOB handler (`_dtCronJob`) directly in `ChatSearchHandler` — round-robin per-chat, no flag reset.
+  - Semantic search wired into `/search`: keywords → `generateEmbeddings` → `queryEmbedding` passed to `searchChatMessages` (falls back to filter-only on failure).
+  - `fastembed==0.8.0` / `numpy==2.4.6` in requirements.
 
 ## Teamlead Workflow Lessons
 

@@ -826,6 +826,37 @@ await repo.saveLayout(
 
 ---
 
+## Chat Search Tables
+
+### message_embeddings
+
+Stores one float32 embedding vector per `(chat_id, message_id)` to enable semantic ranking of chat-history search results. Produced by the `MessagePreprocessorHandler` (real-time, post-`saveChatMessage`) and the `ChatSearchHandler._dtCronJob` backfill `CRON_JOB` (catches up un-embedded rows and `REGENERATE_EMBEDDINGS=true` triggers); consumed by `ChatMessagesRepository.searchChatMessages` for cosine-similarity ranking. See [`docs/llm/database.md`](llm/database.md) §5.5 for repository usage, and [`docs/llm/configuration.md`](llm/configuration.md) for `[search-history]` config. There is no separate `BackfillWorker` class — backfill duty lives in `ChatSearchHandler`.
+
+**Primary Key**: `(chat_id, message_id)`
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `chat_id` | INTEGER | No | - | Chat identifier (matches `chat_messages.chat_id`) |
+| `message_id` | TEXT | No | - | Message identifier (Telegram `int` → `MessageId.asStr()`; Max `str` verbatim) |
+| `embedding` | BLOB | No | - | `array.array('f', vec).tobytes()` — raw little-endian float32 vector |
+| `dimensions` | INTEGER | No | - | `len(embedding)`, derived in `saveMessageEmbedding` (not a separate arg) |
+| `model` | TEXT | No | - | Name of the model that produced the vector (matches the resolved `EMBEDDING_MODEL` chat setting: per-chat → hard-coded `"local-embedding"`) |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
+
+**Indexes**:
+- None. The composite PK is the only access pattern; per-chat enumeration uses `WHERE chat_id = ?`.
+
+**Cross-RDBMS portability:**
+- `BLOB` type is portable across SQLite, PostgreSQL (`BYTEA`), and MySQL (`BLOB`).
+- `dimensions` is stored per row so a chat that switches `EMBEDDING_MODEL` can detect stale rows without joining the LLM registry at SQL time.
+- No `AUTOINCREMENT` / `SERIAL` — composite natural key follows the project convention (see [`docs/sql-portability-guide.md`](sql-portability-guide.md)).
+- `created_at` / `updated_at` are set by application code (no DB default — matches `migration_013` rules).
+
+**Note**: Created by `migration_017`. Only populated when `[search-history] enabled = true`. The embedding dispatch in `MessagePreprocessorHandler.newMessageHandler` calls `db.chatEmbeddings.saveMessageEmbedding` for messages saved in chats with `EMBEDDINGS_ENABLED = true` (the dispatch runs whenever both `[search-history].enabled` and `EMBEDDINGS_ENABLED` are on — `_searchEnabled` is cached at construction time); the `ChatSearchHandler._dtCronJob` `CRON_JOB` handler closes the gap for messages that were saved before the feature was turned on or for chats that enabled the feature with no prior embeddings (round-robin, one chat per tick, batch `BACKFILL_DEFAULT_BATCH_SIZE` messages). There is no separate `BackfillWorker` class — backfill duty lives in `ChatSearchHandler`.
+
+---
+
 ## System Tables
 
 ### settings

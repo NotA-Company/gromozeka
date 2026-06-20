@@ -286,6 +286,47 @@ from lib.ai import ModelStructuredResult
 4. Register in `lib/ai/manager.py:40` — add to `providerTypes` dict: `{"my-provider": MyProvider}`
 5. Tests in `tests/lib/ai/providers/test_my_provider.py`
 
+**Local embeddings provider (`local-embeddings`):**
+
+[`LocalEmbeddingsProvider`](../../lib/ai/providers/local_embeddings_provider.py) hosts any number of `fastembed`-backed embedding models under the standard `addModel` pattern. Models are configured with `support_embeddings=true` (and `support_text=false` to keep them out of the chat-completion model pool). Output dimensionality can be set explicitly via `embedding_dimensions` in `extraConfig` (preferred — keeps startup fast) or detected via a one-shot probe on first use.
+
+| Aspect | Detail |
+|---|---|
+| Provider name | `local-embeddings` |
+| Backend | `fastembed` (ONNX-based, no PyTorch). Optional dependency — `ImportError` raised at provider init when not installed |
+| Model class | `LocalEmbeddingModel` — extends `AbstractModel`; overrides `_generateEmbeddings` only |
+| Extra-config keys | `support_embeddings` (required `true`), `support_text` (set `false`), `embedding_dimensions` (optional), plus any fastembed kwargs (`cache_dir`, `threads`, `max_length`, ...) |
+| Concurrency | `asyncio.to_thread` wraps the sync `TextEmbedding.embed` so the event loop stays unblocked; per-model `threading.Lock` serialises lazy model construction |
+| Text / image gen | `NotImplementedError` — local embeddings are embedding-only |
+
+**Usage example:**
+
+```toml
+[models.providers.local-embeddings]
+type = "local-embeddings"
+
+[models.models."local-minilm"]
+provider = "local-embeddings"
+model_id = "sentence-transformers/all-MiniLM-L6-v2"
+model_version = "latest"
+temperature = 0.0
+context = 0
+support_text = false
+support_embeddings = true
+embedding_dimensions = 384
+tier = "free"
+enabled = true
+```
+
+```python
+model = llmManager.getModel("local-minilm")
+vector: list[float] = await model.generateEmbeddings("hello world")
+```
+
+The vector is a plain `list[float]` — same shape every embedding backend in the codebase returns, so the chat-search pipeline (`saveMessageEmbedding` / `searchChatMessages`) works unchanged across OpenAI, Yandex, and local providers.
+
+**Default model:** `local-embedding` (intfloat/multilingual-e5-large, 1024-dim, multilingual — supports 100+ languages including Russian) is registered in [`configs/00-defaults/local-embeddings-models.toml`](../../configs/00-defaults/local-embeddings-models.toml) and is the per-chat default for the `EMBEDDING_MODEL` chat setting via `embedding-model = "local-embedding"` under `[bot.defaults]` in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml). The model resolution chain in `ChatSearchHandler._dtCronJob` (backfill) and the `MessagePreprocessorHandler` embedding dispatch is single-tier: the per-chat `EMBEDDING_MODEL` setting provides the value, and an empty / unresolvable model is a silent no-op for that chat on that tick. The server-wide `[search-history.embeddings].model` and `[search-history.embeddings].on-save` config keys were removed — the per-chat default already provides the model name, and the on-save dispatch is now unconditional whenever `[search-history].enabled` and `EMBEDDINGS_ENABLED` are both on. See [`configuration.md`](configuration.md) for the full `[search-history]` reference.
+
 **Proxy support:** `LLMManager.__init__()` accepts an optional `proxyConfig` keyword argument containing the global `[proxy]` config dict. This is passed through to `BasicOpenAIProvider.__init__()`, which creates a `ProxyConfig` via `ProxyConfig.fromServiceConfig()` and calls `ProxyConfig.toKwargs()` in `_initClient()` to configure a custom `httpx.AsyncClient` for the OpenAI SDK. Image download (`_generateImageViaImagesApi`) and OpenRouter `listRemoteModels()` also resolve proxy.
 
 ---
@@ -720,4 +761,4 @@ async with httpx.AsyncClient(**proxyKwargs, timeout=30) as client:
 ---
 
 *This guide is auto-maintained and should be updated whenever library APIs change*
-*Last updated: 2026-05-23*
+*Last updated: 2026-06-20*

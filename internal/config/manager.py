@@ -525,3 +525,12 @@ class ConfigManager:
             False
         """
         return self.get("proxy", {})
+
+    def getSearchHistoryConfig(self) -> Dict[str, Any]:
+        """Get search history configuration.
+
+        Returns:
+            Search history config dict with ``enabled``, ``embeddings``, and
+            ``defaults`` keys.
+        """
+        return self.config.get("search-history", {})
