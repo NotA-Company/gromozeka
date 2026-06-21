@@ -844,7 +844,14 @@ class ChatSearchHandler(BaseBotHandler):
             text = (r.get("message_text") or "").replace("\n", " ").strip()
             if len(text) > maxLine:
                 text = text[: maxLine - 1] + "…"
-            lines.append(f"[{dateStr}] @{username}: {text}")
+            # TODO: add Max link
+            link = ""
+            if r["chat_id"] < 0:
+                link = f"(https://t.me/c/{0 - r['chat_id'] - 1000000000000}/{r['message_id']})"
+                if r["thread_id"]:
+                    link = f"(https://t.me/c/{0 - r['chat_id'] - 1000000000000}/{r['thread_id']}/{r['message_id']})"
+
+            lines.append(f"[{dateStr}]{link} @{username}: {text}")
         return "\n".join(lines)
 
     @staticmethod
