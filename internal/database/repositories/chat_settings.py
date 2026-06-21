@@ -227,7 +227,7 @@ class ChatSettingsRepository(BaseRepository):
         Returns:
             Dict[chatId, value]
         """
-        logger.debug(f"Listing chats with setting {key} (dataSource={dataSource})")
+        # logger.debug(f"Listing chats with setting {key} (dataSource={dataSource})")
         allResults: Dict[int, str] = {}
         # Iterate over *configured* sources, not just the ones that have
         # been lazily initialised so far.

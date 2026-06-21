@@ -237,10 +237,10 @@ class ChatEmbeddingsRepository(BaseRepository):
             ordered by date descending (most recent first). Empty list
             on error.
         """
-        logger.debug(
-            f"Listing messages without embeddings for chat {chatId}: "
-            f"limit={limit}, modelName={modelName}, dataSource={dataSource}"
-        )
+        # logger.debug(
+        #     f"Listing messages without embeddings for chat {chatId}: "
+        #     f"limit={limit}, modelName={modelName}, dataSource={dataSource}"
+        # )
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)
 

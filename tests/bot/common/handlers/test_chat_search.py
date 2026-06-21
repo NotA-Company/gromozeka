@@ -71,6 +71,7 @@ def _makeChatSettings(
         :class:`ChatSettingsValue` carrying a deterministic test value.
     """
     return {
+        ChatSettingsKey.REGENERATE_EMBEDDINGS: ChatSettingsValue("true"),
         ChatSettingsKey.EMBEDDING_MODEL: ChatSettingsValue(embeddingModel),
         ChatSettingsKey.LLM_RATELIMITER: ChatSettingsValue(""),
     }
@@ -998,10 +999,10 @@ class TestDtCronJob:
         mocks["db"].chatEmbeddings.getMessagesWithoutEmbeddings.assert_not_called()
 
     async def test_cron_no_enabled_chats(self) -> None:
-        """No chats with ``REGENERATE_EMBEDDINGS=true`` → backfill is a no-op.
+        """No chats with ``EMBEDDINGS_ENABLED=true`` → backfill is a no-op.
 
         The backfill chat-discovery query targets the per-chat
-        ``REGENERATE_EMBEDDINGS`` setting (not ``EMBEDDINGS_ENABLED`` —
+        ``EMBEDDINGS_ENABLED`` setting (not ``REGENERATE_EMBEDDINGS`` —
         a chat that only enables new-message embeddings has no need
         for a backfill pass over its history). An empty result short-
         circuits the tick before any batch fetch or embedding call.
@@ -1017,8 +1018,8 @@ class TestDtCronJob:
             )
         )
 
-        # The discovery query targets REGENERATE_EMBEDDINGS specifically.
-        mocks["db"].chatSettings.listChatsBySetting.assert_awaited_once_with(key=ChatSettingsKey.REGENERATE_EMBEDDINGS)
+        # The discovery query targets EMBEDDINGS_ENABLED specifically.
+        mocks["db"].chatSettings.listChatsBySetting.assert_awaited_once_with(key=ChatSettingsKey.EMBEDDINGS_ENABLED)
         mocks["db"].chatEmbeddings.getMessagesWithoutEmbeddings.assert_not_called()
 
     async def test_cron_skips_when_embedding_model_missing(self) -> None:

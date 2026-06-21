@@ -26,6 +26,7 @@ import logging
 from enum import StrEnum
 from typing import Any, Dict, List, Optional
 
+import lib.utils as libUtils
 from internal.bot.common.embedding_utils import embedAndSaveMessage
 from internal.bot.common.models import UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
@@ -225,10 +226,14 @@ class ChatSearchHandler(BaseBotHandler):
         Returns:
             None
         """
+        startTime = libUtils.now()
         # Gate 1: discover chats that explicitly opted in to a backfill
         # pass via `REGENERATE_EMBEDDINGS = true`.
         try:
-            chatMap = await self.db.chatSettings.listChatsBySetting(key=ChatSettingsKey.REGENERATE_EMBEDDINGS)
+            # Search for chats with enabled embeddings and then filter out via REGENERATE_EMBEDDINGS
+            # as REGENERATE_EMBEDDINGS is true by default, so it won't be in database for most chats
+            # In the same time EMBEDDINGS_ENABLED is false by default, so all chats with enabled will be in DB
+            chatMap = await self.db.chatSettings.listChatsBySetting(key=ChatSettingsKey.EMBEDDINGS_ENABLED)
         except Exception as e:
             logger.warning("Backfill: failed to list enabled chats: %s", e)
             return
@@ -249,6 +254,10 @@ class ChatSearchHandler(BaseBotHandler):
         except Exception as e:
             logger.warning("Backfill: failed to read chat settings for %d: %s", chatId, e)
             return
+        if not chatSettings[ChatSettingsKey.REGENERATE_EMBEDDINGS].toBool():
+            # Regenerating embeddings is disabled for given chat
+            return
+
         modelName = chatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr()
         if not modelName:
             return
@@ -294,7 +303,13 @@ class ChatSearchHandler(BaseBotHandler):
             await asyncio.sleep(BACKFILL_INTER_MESSAGE_DELAY_SECS)
 
         if embedded > 0:
-            logger.info("Backfill: embedded %d messages in chat %d", embedded, chatId)
+            elapsedTime = libUtils.now() - startTime
+            logger.info(
+                "Backfill: embedded %d messages in chat %d (elapsed %f.2 seconds)",
+                embedded,
+                chatId,
+                elapsedTime.total_seconds(),
+            )
 
     ###
     # /search command

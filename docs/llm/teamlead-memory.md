@@ -189,6 +189,12 @@ These mistakes were made during Step 1 implementation and fixed. Don't repeat th
 
 20. **Keywords are optional if other filters exist.** The parser required keywords even when `user:` or `days:` were provided. Check that at least one argument is given, not that keywords specifically is present.
 
+## Test Mocking: Chat Settings Must Be Complete Dicts
+
+- Production code accesses `chatSettings[KEY].toBool()` via direct subscript, never `.get()` with a default. Test mocks that return sparse `ChatSettingsDict` cause `KeyError` for any key the production path reads.
+- `_makeChatSettings()` helpers must include every `ChatSettingsKey` that the production path accesses. When adding a new gate check in production (e.g., `REGENERATE_EMBEDDINGS`), the test helper must be updated to include it.
+- `test_cron_no_enabled_chats` had a second-order bug: the assertion used a stale key (`REGENERATE_EMBEDDINGS`) that didn't match the current production query (`EMBEDDINGS_ENABLED`). When production queries change, test assertions must follow.
+
 ## Teamlead Workflow Lessons
 
 - The `code-reviewer` subagent may return empty results in some sessions. If it does twice, fall back to `general` agent for the review — use the same prompt structure, just route through `general`.
