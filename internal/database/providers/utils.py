@@ -37,7 +37,8 @@ def convertToSQLite(data: Any) -> Union[str, int, float, bytes, bytearray, None]
         data: The data to convert to SQL-compatible format
 
     Returns:
-        Union[str, int, float, bytes, None]: The converted data in SQL-compatible format
+        Union[str, int, float, bytes, bytearray, None]: The converted data
+        in SQL-compatible format
     """
     if data is None:
         return None

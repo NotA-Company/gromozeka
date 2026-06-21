@@ -96,6 +96,23 @@ How to use this file:
 - `DO_EXIT` registration is OPTIONAL — not required by `QueueService`
 - See "Anti-Patterns Learned" below for the full list of 20 mistakes made and fixed during Step 1
 
+## Chat History Search — Post-Review Fixes (2026-06-21)
+
+11 review issues fixed across 9 files (one excluded: EnsuredMessage reconstruction optimization). Key changes:
+
+- **`MAX_MESSAGES_FOR_SEMANTIC_SEARCH` wired**: Previously dead config — setting existed but was never passed to `searchChatMessages`, causing silent failures on large chats (>32k messages). Now read from `targetChatSettings[ChatSettingsKey.MAX_MESSAGES_FOR_SEMANTIC_SEARCH].toInt() or None` and passed as `maxMessages=`.
+- **`_searchEnabled` removed from `_dtCronJob`**: Dead code — the handler is only constructed when `[search-history].enabled=true`. Removed the field assignment from `__init__` too.
+- **`REGENERATE_EMBEDDINGS` self-resets**: When `_dtCronJob` drains a chat's backlog, calls `self.db.chatSettings.setChatSetting(chatId, REGENERATE_EMBEDDINGS, "false", updatedBy=0)`. Uses DB repo directly (no user context in cron jobs — `self.setChatSetting` requires `MessageSender`).
+- **Rate-limit gate moved**: `self.llmService.rateLimit()` now inside `if keywords:` block only — filter-only `/search` queries don't consume LLM budget.
+- **`embedAndSaveMessage` signature preserved**: The function MUST accept `EnsuredMessage` — the user needs access to attachment data for embedding content. The signature remains `(ensuredMessage: EnsuredMessage, modelName: str, db: Database) -> bool`. The background-task race condition (review recommendation #6) is accepted: the risk of a downstream handler mutating `ensuredMessage.messageText` before the task reads it is theoretical and low. Do NOT change this signature in the future without explicit approval.
+- **`saveMessageEmbedding` exception propagation**: Removed try/except — exceptions propagate to `embedAndSaveMessage` which already has its own error boundary.
+- **Zero-vector warning**: `logger.warning` in `chat_search.py` repo when `np.linalg.norm(queryVec) < 1e-8`.
+- **Help text**: `chat: <chat_id|@username>` → `chat: <chat_id>` (username resolution not implemented).
+- **`_backfillIndex` bounded**: `%= len(enabledChats)` after increment.
+- **Lambda → `_embedSync` helper** in `local_embeddings_provider.py`.
+- **`bytearray` added** to `convertToSQLite` return type.
+- **Test**: `test_cron_disabled_by_kill_switch` → `test_cron_proceeds_after_construction`.
+
 ## Chat History Search — Implementation Decisions (2026-06-20)
 
 - **`MAX_MESSAGES_FOR_SEMANTIC_SEARCH` page**: `BOT_OWNER` (resolved from plan inconsistency).
@@ -174,6 +191,8 @@ These mistakes were made during Step 1 implementation and fixed. Don't repeat th
 
 ## Teamlead Workflow Lessons
 
+- The `code-reviewer` subagent may return empty results in some sessions. If it does twice, fall back to `general` agent for the review — use the same prompt structure, just route through `general`.
+- Parallel `software-developer` edits to the same file cause conflicts. Always reconcile with a follow-up `software-developer` pass after parallel batches on the same file.
 - The teamlead prompt grants direct read/edit/write access only for this file; all substantive project work must still be delegated.
 - For multi-file docstring passes: batch by complexity (init files + small -> medium -> large -> manager), run Gate 1 per-batch, then Gate 2 whole-work.
 - When code reviewers flag a Returns: format inconsistency, propagate the fix to ALL files in that batch (or the entire library) at once to avoid repeat reviews.

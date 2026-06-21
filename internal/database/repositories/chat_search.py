@@ -349,7 +349,13 @@ class ChatSearchRepository(BaseRepository):
             # 3. Cosine similarity over the candidate rows.
             queryVec = np.asarray(queryEmbedding, dtype=np.float32)
             candidateMatrix = np.asarray([embeddingList[i] for i in candidateIndices], dtype=np.float32)
-            queryNorm = queryVec / (np.linalg.norm(queryVec) or 1.0)
+            queryVecNorm = np.linalg.norm(queryVec)
+            if queryVecNorm < 1e-8:
+                logger.warning(
+                    f"Query embedding has near-zero norm ({queryVecNorm}) for chat {chatId}; "
+                    f"semantic search results will be arbitrary"
+                )
+            queryNorm = queryVec / (queryVecNorm or 1.0)
             rowNorms = np.linalg.norm(candidateMatrix, axis=1, keepdims=True)
             rowNorms[rowNorms == 0.0] = 1.0  # avoid div-by-zero for zero-vectors
             normalizedMatrix = candidateMatrix / rowNorms

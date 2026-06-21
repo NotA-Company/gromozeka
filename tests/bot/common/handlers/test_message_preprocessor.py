@@ -436,11 +436,12 @@ class TestEmbedMessage:
     path. The dispatch-block never-crash guarantee is its own test.
     """
 
-    async def _runHelper(self, handler: MessagePreprocessorHandler, modelName: str) -> EnsuredMessage:
-        """Call ``embedAndSaveMessage`` with a minimal real ``EnsuredMessage``.
+    async def _runHelper(self, handler: MessagePreprocessorHandler, modelName: str) -> None:
+        """Call ``embedAndSaveMessage`` with an ``EnsuredMessage``.
 
-        Returns the ``EnsuredMessage`` so callers can re-assert on its
-        fields after the helper runs.
+        Args:
+            handler: Preprocessor fixture.
+            modelName: Embedding model name.
         """
         from internal.bot.common.embedding_utils import embedAndSaveMessage
 
@@ -450,7 +451,6 @@ class TestEmbedMessage:
             modelName=modelName,
             db=handler.db,
         )
-        return ensured
 
     async def testEmbedMessageModelNotFound(self, handler: MessagePreprocessorHandler) -> None:
         """``getModel`` returns None → logged warning, no crash, no DB write.

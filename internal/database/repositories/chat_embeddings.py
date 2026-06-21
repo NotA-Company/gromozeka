@@ -69,7 +69,7 @@ class ChatEmbeddingsRepository(BaseRepository):
         messageId: MessageId,
         embedding: List[float],
         model: str,
-    ) -> None:
+    ) -> bool:
         """Save or update a message embedding.
 
         The `dimensions` column is derived from `len(embedding)` rather than
@@ -116,8 +116,11 @@ class ChatEmbeddingsRepository(BaseRepository):
                     "updated_at": ExcludedValue(),
                 },
             )
+
+            return True
         except Exception as e:
             logger.error(f"Failed to save embedding for message {messageId} in chat {chatId}: {e}")
+            return False
 
     async def getMessageEmbedding(
         self,

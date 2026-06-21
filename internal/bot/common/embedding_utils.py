@@ -35,8 +35,12 @@ async def embedAndSaveMessage(
 ) -> bool:
     """Generate an embedding for a message and persist it.
 
-    Resolves ``modelName`` through ``LLMService.getInstance()``'s LLM
-    manager, generates the vector, and saves it via
+    Accepts the full ``EnsuredMessage`` (rather than individual fields)
+    so the helper also has access to attachment data that will be needed
+    for embedding multi-modal content in the future. Resolves
+    ``modelName`` through ``LLMService.getInstance()``'s LLM manager,
+    reads the message text and identifiers from ``ensuredMessage``,
+    generates the vector, and saves it via
     ``db.chatEmbeddings.saveMessageEmbedding``. The LLM service is
     fetched via its singleton accessor so callers don't have to thread
     the dependency through.
@@ -47,22 +51,11 @@ async def embedAndSaveMessage(
     "skip and continue". This is the same never-crash contract the
     background task schedulers in this module rely on.
 
-    The chat id, message id, and text are all read off
-    ``ensuredMessage``; the caller only supplies the model name and
-    the DB handle. This keeps the call sites of the per-message
-    embedding dispatcher (``MessagePreprocessorHandler.newMessageHandler``)
-    and the backfill worker (``ChatSearchHandler._dtCronJob``) symmetric:
-    both can construct a (real or synthesised) ``EnsuredMessage`` and
-    hand it off without a separate ``(chatId, messageId, text)``
-    triple.
-
     Args:
-        ensuredMessage: The message to embed. ``ensuredMessage.recipient.id``
-            supplies the chat id, ``ensuredMessage.messageId`` the message
-            id, and ``ensuredMessage.text`` (read via ``messageText``) the
-            text to embed.
+        ensuredMessage: The persisted message object carrying chat id,
+            message id, and text for embedding.
         modelName: Embedding model name (per-chat ``EMBEDDING_MODEL``
-            setting or server-wide default).
+            setting).
         db: Database wrapper providing ``chatEmbeddings``.
 
     Returns:

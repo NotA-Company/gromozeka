@@ -6,9 +6,10 @@ Covers the three layers of the handler in isolation:
   ``/search``.
 * ``search_command`` — the ``/search`` user command (rate-limit → DB
   filter → client-side keyword filter → raw-formatted reply).
-* ``_dtCronJob`` — the embedding-backfill CRON_JOB (server kill-switch,
-  ``EMBEDDINGS_ENABLED`` chat discovery, model resolution, batch
-  embedding, per-message error handling).
+* ``_dtCronJob`` — the embedding-backfill CRON_JOB (construction-time
+  gate via ``[search-history].enabled``, ``REGENERATE_EMBEDDINGS`` chat
+  discovery, model resolution, batch embedding, per-message error
+  handling).
 
 All tests are wired through the project's :mod:`pytest` configuration
 (``asyncio_mode = "auto"``) and use the autouse singleton-reset
@@ -959,18 +960,24 @@ class TestSemanticSearch:
 class TestDtCronJob:
     """Tests for :meth:`ChatSearchHandler._dtCronJob` (embedding backfill).
 
-    Covers the kill-switch, the per-chat round-robin, the embedding
-    model resolution, the per-batch fetch + embed loop, and the
-    per-message error isolation. The handler is constructed with the
-    real ``LLMService`` singleton (the autouse ``resetLlmServiceSingleton``
-    fixture has reset it), and the database stubs are added on top.
+    Covers the construction-time gate (``[search-history].enabled``),
+    the per-chat round-robin, the embedding model resolution, the
+    per-batch fetch + embed loop, and the per-message error isolation.
+    The handler is constructed with the real ``LLMService`` singleton
+    (the autouse ``resetLlmServiceSingleton`` fixture has reset it),
+    and the database stubs are added on top.
     """
 
-    async def test_cron_disabled_by_kill_switch(self) -> None:
-        """``[search-history].enabled = false`` short-circuits the backfill tick.
+    async def test_cron_proceeds_after_construction(self) -> None:
+        """The cron job always runs its chat-discovery logic, regardless of ``enabled``.
 
-        A server-level kill-switch must never let the backfill do any
-        work, not even chat discovery.
+        The `[search-history].enabled` flag is a construction-time gate
+        enforced in ``HandlersManager`` (see ``manager.py:531``) — the
+        handler is only instantiated when the feature is enabled. The
+        cron job itself does not re-check the flag. With ``enabled=False``
+        the cron job still attempts its normal chat-discovery logic; if
+        no chat discovery mock is set up, the underlying call raises
+        and is caught by the ``except`` around ``listChatsBySetting``.
         """
         cm = _makeConfigManager(enabled=False)
         handler, mocks = _makeHandler(configManager=cm)
@@ -983,7 +990,11 @@ class TestDtCronJob:
             )
         )
 
-        mocks["db"].chatSettings.listChatsBySetting.assert_not_called()
+        # The cron job does attempt chat discovery regardless of the
+        # ``enabled`` flag — the flag is a construction-time gate only.
+        # ``listChatsBySetting`` is a plain Mock, so awaiting it raises,
+        # but that exception is caught by the try/except in ``_dtCronJob``.
+        mocks["db"].chatSettings.listChatsBySetting.assert_called_once()
         mocks["db"].chatEmbeddings.getMessagesWithoutEmbeddings.assert_not_called()
 
     async def test_cron_no_enabled_chats(self) -> None:
@@ -1072,6 +1083,59 @@ class TestDtCronJob:
         mockModel.generateEmbeddings.assert_not_called()
         mocks["db"].chatEmbeddings.getMessagesWithoutEmbeddings.assert_not_called()
 
+    def _makePendingMessage(
+        self,
+        *,
+        messageId: MessageId = MessageId(1),
+        messageText: str = "default text",
+        chatId: int = 100,
+        userId: int = 7,
+        username: str = "alice",
+        fullName: str = "Alice",
+    ) -> Dict[str, Any]:
+        """Build a :class:`ChatMessageDict`-shaped row for backfill tests.
+
+        ``EnsuredMessage.fromDBChatMessage`` (used by the backfill loop
+        to reconstruct an ``EnsuredMessage`` from the pending-message
+        row) accesses many fields beyond ``message_id`` and
+        ``message_text`` — every column from the ``chat_messages`` table.
+        This helper provides a fully populated dict with sensible
+        defaults so the factory method does not hit a ``KeyError``.
+
+        Args:
+            messageId: Value for ``message_id``.
+            messageText: Value for ``message_text``.
+            chatId: Value for ``chat_id`` (default 100).
+            userId: Value for ``user_id`` (default 7).
+            username: Value for ``username`` (default ``"alice"``).
+            fullName: Value for ``full_name`` (default ``"Alice"``).
+
+        Returns:
+            Dict matching the shape ``EnsuredMessage.fromDBChatMessage``
+            expects, with nullable fields set to ``None`` or sensible
+            falsy defaults.
+        """
+        return {
+            "chat_id": chatId,
+            "message_id": messageId,
+            "date": datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            "user_id": userId,
+            "reply_id": None,
+            "thread_id": 0,
+            "root_message_id": None,
+            "message_text": messageText,
+            "message_type": "text",
+            "message_category": MessageCategory.USER,
+            "quote_text": None,
+            "media_id": None,
+            "created_at": datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            "metadata": "",
+            "markup": "",
+            "full_name": fullName,
+            "username": username,
+            "media_group_id": None,
+        }
+
     async def test_cron_embeds_pending_messages(self) -> None:
         """A normal tick: the batch is fetched and each message is embedded + saved.
 
@@ -1099,8 +1163,8 @@ class TestDtCronJob:
         mockManager = Mock(getModel=Mock(return_value=mockModel))
         cast(Any, handler).llmService.getLLMManager = Mock(return_value=mockManager)
         pairs = [
-            {"message_id": MessageId(1), "message_text": "hello world"},
-            {"message_id": MessageId(2), "message_text": "another message"},
+            self._makePendingMessage(messageId=MessageId(1), messageText="hello world"),
+            self._makePendingMessage(messageId=MessageId(2), messageText="another message"),
         ]
         mocks["db"].chatEmbeddings.getMessagesWithoutEmbeddings = AsyncMock(return_value=pairs)
         saveMock = AsyncMock()
@@ -1151,8 +1215,8 @@ class TestDtCronJob:
         mockModel.generateEmbeddings = AsyncMock(side_effect=[RuntimeError("embedder down"), [0.4, 0.5, 0.6]])
         cast(Any, handler).llmService.getLLMManager = Mock(return_value=Mock(getModel=Mock(return_value=mockModel)))
         pairs = [
-            {"message_id": MessageId(1), "message_text": "bad message"},
-            {"message_id": MessageId(2), "message_text": "good message"},
+            self._makePendingMessage(messageId=MessageId(1), messageText="bad message"),
+            self._makePendingMessage(messageId=MessageId(2), messageText="good message"),
         ]
         mocks["db"].chatEmbeddings.getMessagesWithoutEmbeddings = AsyncMock(return_value=pairs)
         saveMock = AsyncMock()

@@ -45,14 +45,29 @@ from lib.stats import StatsStorage
 from ..abstract import AbstractLLMProvider, AbstractModel
 from ..models import LLMAbstractTool, ModelMessage, ModelRunResult
 
-logger = logging.getLogger(__name__)
-
 try:
     from fastembed import TextEmbedding
 
     _FASTEMBED_AVAILABLE = True
 except ImportError:
     _FASTEMBED_AVAILABLE = False
+
+
+logger = logging.getLogger(__name__)
+
+
+def _embedSync(embedding: TextEmbedding, text: str) -> list:
+    """Run ``embedding.embed`` synchronously for use with :func:`asyncio.to_thread`.
+
+    Args:
+        embedding: A fastembed ``TextEmbedding`` instance whose
+            ``embed`` method returns a generator of numpy arrays.
+        text: Single text to embed.
+
+    Returns:
+        Materialised list of numpy arrays, one per input text.
+    """
+    return list(embedding.embed([text]))
 
 
 class LocalEmbeddingsProvider(AbstractLLMProvider):
@@ -209,7 +224,7 @@ class LocalEmbeddingsProvider(AbstractLLMProvider):
         )
         return model
 
-    def _getOrCreateEmbedding(self, modelId: str, fastembedKwargs: Dict[str, Any]) -> Any:
+    def _getOrCreateEmbedding(self, modelId: str, fastembedKwargs: Dict[str, Any]) -> TextEmbedding:
         """Return a cached :class:`TextEmbedding` for ``modelId``, constructing it lazily.
 
         Construction is serialised per model id by a ``threading.Lock`` so
@@ -262,7 +277,7 @@ class LocalEmbeddingsProvider(AbstractLLMProvider):
         embedding = await asyncio.to_thread(self._getOrCreateEmbedding, modelId, kwargs)
         # ``embed`` returns a generator of numpy arrays. Materialise it
         # inside the thread to keep the asyncio side purely async.
-        vectors: List[Any] = await asyncio.to_thread(lambda: list(embedding.embed([text])))
+        vectors: List[Any] = await asyncio.to_thread(_embedSync, embedding, text)
         if not vectors:
             raise ValueError(f"fastembed returned no vectors for model {modelId}")
         return vectors[0]

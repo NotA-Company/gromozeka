@@ -40,14 +40,12 @@ from internal.bot.models import (
     CommandPermission,
     EnsuredMessage,
     MessageRecipient,
-    MessageSender,
     commandHandlerV2,
 )
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import ChatMessageDict, MessageCategory
 from internal.models import MessageId
-from internal.models.shared_enums import MessageType
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
 
 from .base import BaseBotHandler
@@ -165,11 +163,9 @@ class ChatSearchHandler(BaseBotHandler):
         defaultsConfig: Dict[str, Any] = searchConfig.get("defaults", {}) or {}
         self._maxResults: int = int(defaultsConfig.get("max-results", SEARCH_DEFAULT_MAX_RESULTS))
         self._defaultDays: int = int(defaultsConfig.get("default-days", SEARCH_DEFAULT_DAYS))
-        # Cached for the per-tick backfill CRON_JOB (server kill-switch
-        # and the per-tick batch size) so `_dtCronJob` does not have to
-        # re-read the config every minute. A config flip therefore
-        # requires a bot restart to take effect.
-        self._searchEnabled: bool = bool(searchConfig.get("enabled", False))
+        # Cache the per-tick batch size for the backfill CRON_JOB so
+        # `_dtCronJob` does not have to re-read the config every minute.
+        # A config flip therefore requires a bot restart to take effect.
         embeddingsConfig: Dict[str, Any] = searchConfig.get("embeddings", {}) or {}
         self._reindexBatchSize: int = int(embeddingsConfig.get("reindex-batch-size", BACKFILL_DEFAULT_BATCH_SIZE))
 
@@ -197,27 +193,24 @@ class ChatSearchHandler(BaseBotHandler):
         Runs every 60 seconds (the ``CRON_JOB`` cadence in
         :class:`QueueService`). Per tick:
 
-        1. Honour the server-level kill-switch
-           (``[search-history].enabled``) — a disabled feature must
-           never start background work.
-        2. List chats with ``REGENERATE_EMBEDDINGS=true`` via the
+        1. List chats with ``REGENERATE_EMBEDDINGS=true`` via the
            cross-source-aggregating ``ChatSettingsRepository.listChatsBySetting``
            helper. ``value`` is filtered through
            :meth:`ChatSettingsValue.toBool` so ``"true"``/``"1"`` (any
            case) match. The ``EMBEDDINGS_ENABLED`` flag is *not* used as
            the backfill trigger: a chat that flips embeddings on for new
            messages has no need for a backfill pass over its history.
-        3. Round-robin: pick the next chat in stable order, advance
-           ``_backfillIndex``.
-        4. Resolve the chat's embedding model from its ``EMBEDDING_MODEL``
-           setting. Bail out if the model is missing, unknown, or does
-           not support embeddings.
-        5. Fetch up to ``[search-history.embeddings].reindex-batch-size``
-           (default ``BACKFILL_DEFAULT_BATCH_SIZE``) messages without
-           embeddings and embed them one by one, with a small inter-call
-           sleep to keep the asyncio loop responsive.
-        6. Per-message errors are caught and logged — one bad row never
-           aborts the batch.
+         2. Round-robin: pick the next chat in stable order, advance
+            ``_backfillIndex``.
+         3. Resolve the chat's embedding model from its ``EMBEDDING_MODEL``
+            setting. Bail out if the model is missing, unknown, or does
+            not support embeddings.
+         4. Fetch up to ``[search-history.embeddings].reindex-batch-size``
+            (default ``BACKFILL_DEFAULT_BATCH_SIZE``) messages without
+            embeddings and embed them one by one, with a small inter-call
+            sleep to keep the asyncio loop responsive.
+         5. Per-message errors are caught and logged — one bad row never
+            aborts the batch.
 
         No re-entrancy guard, no inter-pass backoff, and no
         self-resetting of ``REGENERATE_EMBEDDINGS``: the per-tick batch
@@ -232,12 +225,7 @@ class ChatSearchHandler(BaseBotHandler):
         Returns:
             None
         """
-        # Gate 1: server-level kill-switch. Cached in `__init__` to avoid
-        # a `ConfigManager` round-trip on every minute-tick.
-        if not self._searchEnabled:
-            return
-
-        # Gate 2: discover chats that explicitly opted in to a backfill
+        # Gate 1: discover chats that explicitly opted in to a backfill
         # pass via `REGENERATE_EMBEDDINGS = true`.
         try:
             chatMap = await self.db.chatSettings.listChatsBySetting(key=ChatSettingsKey.REGENERATE_EMBEDDINGS)
@@ -253,6 +241,7 @@ class ChatSearchHandler(BaseBotHandler):
         # non-empty (checked above), so a zero-division never lands.
         chatId = enabledChats[self._backfillIndex % len(enabledChats)]
         self._backfillIndex += 1
+        self._backfillIndex %= len(enabledChats)
 
         # Gate 3: resolve the embedding model.
         try:
@@ -292,18 +281,10 @@ class ChatSearchHandler(BaseBotHandler):
         # asyncio loop responsive between embeddings.
         embedded = 0
         for pendingMessage in pendingMessagesList:
-            # Reconstruct a minimal ``EnsuredMessage`` from the
-            # ``ChatMessageDict`` row so the shared ``embedAndSaveMessage``
-            # helper can extract (chatId, messageId, text) via the
-            # ``EnsuredMessage`` surface — same shape the inline
-            # embedding dispatcher uses. The fields not present in the
-            # backfill row (sender, recipient type, format entities, etc.)
-            # are filled with safe defaults because the embedding helper
-            # only reads ``recipient.id``, ``messageId``, and
-            # ``messageText``.
-            ensuredMessage = await EnsuredMessage.fromDBChatMessage(pendingMessage, self.db)
-            if not ensuredMessage.messageText or not ensuredMessage.messageText.strip():
+            ensuredMessage = await EnsuredMessage.fromDBChatMessage(data=pendingMessage, db=self.db)
+            if not ensuredMessage.messageText.strip():
                 continue
+
             if await embedAndSaveMessage(
                 ensuredMessage=ensuredMessage,
                 modelName=modelName,
@@ -330,10 +311,10 @@ class ChatSearchHandler(BaseBotHandler):
             "  `days: N` — окно в днях назад (по умолчанию 30);\n"
             "  `category: user|bot|system|channel` — фильтр по типу сообщений;\n"
             "  `thread: <message_id>` — фильтр по треду (root_message_id);\n"
-            "  `chat: <chat_id|@username>` — искать в другом чате (нужны права администратора).\n"
+            "  `chat: <chat_id>` — искать в другом чате (нужны права администратора).\n"
             "Должен быть задан хотя бы один из: `keywords`, `user`, `days`, `thread`.\n"
             "Примеры: `/search keywords: meeting days: 7 user: @alice`; "
-            "`/search user: @bob days: 7`; `/search chat: @othergroup days: 3`."
+            "`/search user: @bob days: 7`; `/search chat: -1001234567890 days: 3`."
         ),
         visibility={CommandPermission.DEFAULT},
         availableFor={CommandPermission.DEFAULT},
@@ -352,8 +333,7 @@ class ChatSearchHandler(BaseBotHandler):
 
         Parses the argument string into a dict, validates that at
         least one of ``keywords``/``user``/``days``/``thread`` is
-        provided, resolves an optional ``chat:`` target (numeric id
-        or ``@username``), enforces that the sender is an admin of
+        provided, resolves an optional ``chat:`` target (numeric id), enforces that the sender is an admin of
         the target chat, runs the filter-only search through the
         chat-message repository with `limit=None` (no SQL `LIMIT` —
         see rationale inline), applies a client-side keyword filter
@@ -400,7 +380,7 @@ class ChatSearchHandler(BaseBotHandler):
                 await self.sendMessage(
                     ensuredMessage,
                     messageText=(
-                        "Не удалось определить указанный чат: проверьте `chat: <id|@username>` "
+                        "Не удалось определить указанный чат: проверьте `chat: <chat_id>` "
                         "и убедитесь, что у вас есть права администратора в нём."
                     ),
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
@@ -426,16 +406,6 @@ class ChatSearchHandler(BaseBotHandler):
                 )
                 return
 
-        # Apply rate limiting up-front so an abusive `/search` is gated
-        # **before** the (potentially expensive) DB calls. The LLM
-        # service's own rate limiter would also trigger, but only after
-        # the work is already done. Rate-limiting is keyed on the chat
-        # the user is invoking the command from, *not* the target chat
-        # being searched — the user is making a request from
-        # `currentChatId`, so the budget should be charged there.
-        # Validation runs first so a malformed `days` value (e.g.
-        # "abc") doesn't burn a rate-limit token.
-        await self.llmService.rateLimit(currentChatId, currentChatSettings)
         categoryFilter: Optional[List[MessageCategory]] = self._resolveCategoryGroup(parsed["category"])
         userId = await self._resolveUserId(chatId=targetChatId, username=parsed["user"])
         rootMessageId: Optional[MessageId] = None
@@ -445,9 +415,11 @@ class ChatSearchHandler(BaseBotHandler):
             except ValueError:
                 logger.warning(f"/search: invalid thread id {parsed['thread']!r}, ignoring")
 
-        # When keywords are provided, also generate a query embedding so
-        # the repository can do a semantic ranking pass. Any failure
-        # here is non-fatal — we fall back to filter-only mode (the same
+        # When keywords are provided, rate-limit the request (so
+        # abusive semantic searches are gated *before* any embedding
+        # call or DB work), then generate a query embedding so the
+        # repository can do a semantic ranking pass. Any failure here
+        # is non-fatal — we fall back to filter-only mode (the same
         # path used when no keywords are present) so a flaky embedding
         # API never breaks `/search`. `modelName` is also passed to
         # `searchChatMessages` so it knows which model's embeddings to
@@ -456,12 +428,24 @@ class ChatSearchHandler(BaseBotHandler):
         # in chat A should use A's embedding model.
         queryEmbedding: Optional[List[float]] = None
         embeddingModelName: Optional[str] = None
+        maxMessages: Optional[int] = None
         if keywords:
+            # Rate-limit gating: only charge LLM budget for searches
+            # that will actually hit the embedding API.
+            await self.llmService.rateLimit(currentChatId, currentChatSettings)
+
             targetChatSettings: ChatSettingsDict = (
                 currentChatSettings
                 if targetChatId == currentChatId
                 else await self.getChatSettings(chatId=targetChatId)
             )
+
+            # Resolve the per-chat cap on how many recent embeddings
+            # to load for semantic search. Prevents OOM / SQL
+            # parameter-limit errors on large chats.
+            if ChatSettingsKey.MAX_MESSAGES_FOR_SEMANTIC_SEARCH in targetChatSettings:
+                maxMessages = targetChatSettings[ChatSettingsKey.MAX_MESSAGES_FOR_SEMANTIC_SEARCH].toInt() or None
+
             embeddingModelName = targetChatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr()
             if embeddingModelName:
                 model = self.llmService.getLLMManager().getModel(embeddingModelName)
@@ -491,6 +475,12 @@ class ChatSearchHandler(BaseBotHandler):
             # still applied client-side below — semantic ranking
             # refines the *order* of an already-filtered set, it does
             # not replace keyword matching.
+            #
+            # `maxMessages` caps the number of recent embeddings loaded
+            # for the similarity pass (reads from
+            # MAX_MESSAGES_FOR_SEMANTIC_SEARCH chat setting); it is
+            # only set when keywords are present and the target chat
+            # has that setting configured.
             results = await self.db.chatSearch.searchChatMessages(
                 chatId=targetChatId,
                 queryEmbedding=queryEmbedding,
@@ -500,6 +490,7 @@ class ChatSearchHandler(BaseBotHandler):
                 rootMessageId=rootMessageId,
                 modelName=embeddingModelName,
                 limit=None,
+                maxMessages=maxMessages,
             )
         except Exception as e:
             logger.error(f"/search: repository call failed: {e}")
@@ -566,7 +557,6 @@ class ChatSearchHandler(BaseBotHandler):
             - ``hello keywords: meeting days: 7`` → ``keywords="hello meeting"``, ``days="7"``
             - ``user: @alice`` → ``user="@alice"``
             - ``category: bot`` → ``category="bot"``
-            - ``chat: @somegroup`` → ``chat="@somegroup"``
             - ``chat: -1001234567890`` → ``chat="-1001234567890"``
 
         Args:
@@ -864,7 +854,7 @@ class ChatSearchHandler(BaseBotHandler):
             "  `days: N` — окно в днях назад (по умолчанию 30);\n"
             "  `category: user|bot|system|channel` — фильтр по типу сообщений;\n"
             "  `thread: <message_id>` — фильтр по треду (root_message_id);\n"
-            "  `chat: <chat_id|@username>` — искать в другом чате (нужны права администратора).\n"
+            "  `chat: <chat_id>` — искать в другом чате (нужны права администратора).\n"
             "Примеры:\n"
             "/search keywords: meeting — поиск по тексту\n"
             "/search user: @alice — только сообщения от @alice\n"
