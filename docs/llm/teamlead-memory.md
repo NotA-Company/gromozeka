@@ -82,46 +82,19 @@ How to use this file:
 - **Tier hierarchy** (`ChatTier` enum, `chat_settings.py:43-61`): `BANNED(1) < FREE(2) < FREE_PERSONAL(3) < PAID(4) < FRIEND(5) < BOT_OWNER(6)`. `isBetterOrEqualThan()` uses `getId()` comparison.
 - **Common footgun**: setting `paid-tier` on a chat without a future `paid-tier-untill-ts` — the paid-tier check fails silently and falls back to `base-tier`.
 
-## Chat History Search (in progress)
+## Chat History Search — Step 1 (completed 2026-06-21)
 
-- Implementation plan: `docs/plans/chat-history-search-plan.md` (15-step plan, architect-reviewed 2026-06-20)
-- **Decisions made (all 5 open questions resolved)**:
-  - fastembed for local embeddings (optional dep, try/except ImportError guard)
-  - Backfill: REGENERATE_EMBEDDINGS chat setting trigger + CRON_JOB delayed-task in ChatSearchHandler (not a separate service in internal/services/)
-  - Permissions: all users (CommandPermission.DEFAULT), matching /web_search
-  - get_summary: 5 scopes — last_hours, last_days, last_messages, thread, date_range (from_date/until_date ISO-8601)
-  - numpy added to requirements for cosine similarity (already in requirements.txt per review)
-- **Architect review fixes applied (2026-06-20)**:
-  - **CRITICAL:** `AbstractModel.__init__` stores extraConfig as `self._config` — plan code snippets updated to use `self._config.get()` not `extraConfig.get()`
-  - **CRITICAL:** `LocalEmbeddingModel.__init__` signature corrected to match actual `AbstractModel.__init__` (provider first positional, modelId second, rest keyword-only after *)
-  - **CRITICAL:** OpenAI embedding API call fixed to use `self._client.embeddings.create()` (SDK method) instead of raw `self._client.post("/embeddings", ...)`
-  - **CRITICAL:** Added `updated_at TIMESTAMP NOT NULL` to `message_embeddings` schema (needed for tracking re-embeds)
-  - `message_embeddings.dimensions` is derived from `len(embedding)` in `saveMessageEmbedding()` — not passed as separate arg
-  - `ChatMessagesRepository` declares `__slots__ = ()` — new `_embeddingCache`/`_maxCachedChats` attrs must be added to __slots__ (SUPERSEDED 2026-06-20: embedding cache removed from DB layer entirely, see "Post-implementation refinements" below)
-  - Chat settings table now includes `ChatSettingsPage` column; EMBEDDING_MODEL uses STRING type (not MODEL) because existing MODEL picker doesn't filter by support_embeddings
-  - Backfill worker: CRON_JOB delayed-task handler in ChatSearchHandler (matching SandboxHandler pattern), NOT a separate `internal/services/embedding/` dir wired in main.py
-  - Regression: `MAX_MESSAGES_FOR_SEMANTIC_SEARCH` ChatSettingsPage resolved → `BOT_OWNER` (not `BOT_OWNER_SYSTEM`). Plan lines 320 and 352 now agree.
-  - Backfill worker chat discovery: query DB for chats with `REGENERATE_EMBEDDINGS = true` (new repository method or direct query on `chat_settings`), process N chats per CRON_JOB tick.
-  - New sections: §5.3 Concurrency analysis, §8.1 Error handling summary, step budget assessment
-  - `get_summary` LLM tool params updated: `from`/`until` → `from_date`/`until_date` (avoid reserved-word issues)
-  - `self._statsStorage` → `self.statsStorage` in generateEmbeddings docstring (matches actual attribute name)
-  - `getSearchHistoryConfig()` is optional convenience accessor — handler registration uses lighter `self.configManager.get("search-history", {}).get("enabled", False)` pattern (matching divination/sandbox/resender)
-- **Key codebase validations from exploration**:
-  - `AbstractModel.__init__` stores `extraConfig` as `self._config` (not `self.extraConfig`). Capability flags use `self._config.get("support_*", False)` inline, not dedicated attributes. Add `support_embeddings` to `getInfo()` dict alongside other `support_*` flags.
-  - `BasicOpenAIModel` has `self._client` (AsyncOpenAI) — use `self._client.embeddings.create()` for OpenAI embeddings API
-  - `LLMManager.providerTypes` is a local variable in `_initProviders()` — add `"local-embeddings"` entry there. No `getModelsSupporting*()` methods exist yet.
-  - `ChatMessagesRepository` uses `self.manager.getProvider(chatId=..., readonly=...)` pattern — no direct `self.provider`. `upsert()` confirmed with `(table, values, conflictColumns, updateExpressions)`.
-  - Latest migration: `migration_016_add_stat_tables.py`. Next: `migration_017_*`. Pattern: class inherits `BaseMigration`, `version: int`, `up()`/`down()` with `batchExecute([ParametrizedQuery(...)])`, module-level `getMigration()`.
-  - Save point in `MessagePreprocessorHandler`: line 81, `await self.saveChatMessage(ensuredMessage, messageCategory=...)`. Handler has `self.db`, `self.llmService`, `self.configManager`.
-  - Handler registration: before LLMMessageHandler (line 539 of manager.py). Pattern: `if self.configManager.getXConfig().get("enabled", False): self.handlers.append((XHandler(...), HandlerParallelism.PARALLEL))`
-  - LLM tool registration: `self.llmService.registerTool(name, description, [LLMFunctionParameter(name=..., description=..., type=LLMParameterType.X, required=...)], handler=self._llmToolMethod)` in `__init__`
-  - `@commandHandlerV2(commands=("x",), shortDescription=..., helpMessage=..., visibility={CommandPermission.X}, availableFor={CommandPermission.X}, category=CommandCategory.X, helpOrder=CommandHandlerOrder.X)`
-  - `SummarizationHandler._doSummarization()` (line 119) calls `self.db.chatMessages.getChatMessagesSince()` + `self.llmService.generateText()` — reusable for get_summary tool
-  - `MessageId` wraps `int|str` — embeddings table uses `TEXT` column, call `.asStr()` before SQL binding
-  - Use `asyncio.create_task()` for fire-and-forget (not `ensure_future`) — matches codebase convention
-  - BLOB serialization: use `array.array('f', vec).tobytes()` (standard lib, no numpy dependency for storage)
-  - `ChatMessagesRepository.__slots__ = ()` in current code — any new instance attributes must be added to __slots__
-  - `SandboxHandler` uses CRON_JOB delayed-task pattern for periodic work (not a separate service singleton) — follow this pattern for embedding backfill
+- Implementation plan: `docs/plans/chat-history-search-plan.md`
+- Step 2 plan: `docs/plans/chat-history-search-step2.md` — adds `/users` command + `search_messages`, `list_users`, `get_thread` LLM tools
+- Embedding model: `intfloat/multilingual-e5-large` (1024d) via `local-embeddings` provider (fastembed)
+- Default model name: `"local-embedding"` in `bot-defaults.toml`
+- `fastembed==0.8.0` pinned in `requirements.direct.txt`
+- Key repos: `ChatEmbeddingsRepository` (embedding CRUD), `ChatSearchRepository` (search dispatcher), `ChatUsersRepository.getChatUsers` (activity filters)
+- Backfill: `_dtCronJob` in `ChatSearchHandler` — round-robin per-chat, reads `REGENERATE_EMBEDDINGS` boolean, no flag reset
+- Shared helper: `embedAndSaveMessage` in `internal/bot/common/embedding_utils.py` — takes `EnsuredMessage`, resolves `LLMService` via `getInstance()`
+- Config cached: `_searchEnabled`, `_reindexBatchSize` in handler `__init__`
+- `DO_EXIT` registration is OPTIONAL — not required by `QueueService`
+- See "Anti-Patterns Learned" below for the full list of 20 mistakes made and fixed during Step 1
 
 ## Chat History Search — Implementation Decisions (2026-06-20)
 
@@ -144,6 +117,60 @@ How to use this file:
   - `BackfillWorker` deleted; backfill is now a CRON_JOB handler (`_dtCronJob`) directly in `ChatSearchHandler` — round-robin per-chat, no flag reset.
   - Semantic search wired into `/search`: keywords → `generateEmbeddings` → `queryEmbedding` passed to `searchChatMessages` (falls back to filter-only on failure).
   - `fastembed==0.8.0` / `numpy==2.4.6` in requirements.
+
+## Chat History Search — Anti-Patterns Learned (2026-06-21)
+
+These mistakes were made during Step 1 implementation and fixed. Don't repeat them.
+
+### Architecture & Layering
+
+1. **Don't put caching in repositories.** The DB layer is for data access only. Caches (TTLDict, CacheService) belong in handlers. The embedding cache was initially inside `ChatMessagesRepository` and had to be removed entirely.
+
+2. **Don't create separate classes for features that fit in existing handlers.** `BackfillWorker` was a standalone class with lazy imports — user rejected it. A CRON_JOB handler directly in `ChatSearchHandler` is simpler and doesn't need a new file.
+
+3. **Don't put code that needs `internal/` types into `lib/`.** The summarization module used `llmService: Any` because `lib/` can't import `internal/`. It was moved to `internal/bot/common/`, then deleted entirely. If a module needs types from `internal/`, it belongs in `internal/`.
+
+4. **Extend existing methods, don't create near-duplicates.** `listChatUsers` was a separate method alongside `getChatUsers`. Merged: `getChatUsers` now accepts optional `minMessages`, `lastActiveDays`, `limit`.
+
+5. **One domain per repository.** Embedding methods were scattered across `ChatMessagesRepository`. They were split into `ChatEmbeddingsRepository` (embedding CRUD) and `ChatSearchRepository` (search dispatcher). Each repo owns one domain.
+
+### Repository Design
+
+6. **Always return TypedDicts from repository methods.** Never return raw `dict` or `tuple` — too hard to track what fields exist. Every method that queries the DB should return a TypedDict (`ChatMessageDict`, `MessageEmbeddingDict`, `ThreadResultDict`, etc.).
+
+7. **All repo methods that return the same entity should return the same TypedDict with ALL fields.** `getMessageEmbedding` and `getMessagesWithoutEmbeddings` initially returned different subsets of fields. Both now return full `MessageEmbeddingDict` (one has NULL embedding, the other has the vector).
+
+8. **Use `dbUtils.sqlToTypedDict` for row conversion.** Don't build dicts manually in repository methods. The project has standard converters — use them. Only handle special cases (BLOB → list[float]) manually before passing to the converter.
+
+### Config & State
+
+9. **Cache config values in `__init__`, don't re-read on every invocation.** `configManager.getSearchHistoryConfig()` was called on every message and every CRON_JOB tick. Cache `_searchEnabled`, `_reindexBatchSize` etc. once.
+
+10. **Don't add config options without a real use case.** `on-save` toggle was added but served no purpose: "If embeddings are enabled + enabled for chat, then they are saved on save." Removed.
+
+11. **Model resolution: if a chat setting has a default, don't add a server-wide fallback.** `EMBEDDING_MODEL` now has a default in `bot-defaults.toml` (`"local-embedding"`), so the `[search-history.embeddings].model` server-wide fallback was redundant. Two-tier, not three-tier.
+
+### Feature Design
+
+12. **If you build semantic search infrastructure, wire it in.** Embeddings were generated and stored but `/search` only used filter-only mode. The entire point of the feature is semantic search — the query embedding path must be wired.
+
+13. **Filters must apply before result truncation.** The keyword filter was applied client-side AFTER the SQL LIMIT, silently dropping matching results outside the limit window. Always filter first, then truncate.
+
+14. **Backfill should use `REGENERATE_EMBEDDINGS` for chat discovery, not `EMBEDDINGS_ENABLED`.** The regeneration trigger is a one-shot flag — backfill processes chats that have it set, not all chats with embeddings enabled.
+
+15. **Don't list all rows to find one.** `_resolveUserId` called `listChatUsers(limit=None)` to find one user by username. Use targeted queries: `getChatUserByUsername(chatId, username)`.
+
+### Code Quality
+
+16. **Extract duplicated logic into shared helpers.** `_dtCronJob` and `_embedMessage` had identical embed+save code. Extracted to `embedAndSaveMessage` in `internal/bot/common/embedding_utils.py`.
+
+17. **No redundant guard checks.** `supportsEmbedding` was checked in both `abstract.py` (public method) and `basic_openai_provider.py` (private method). The provider check is redundant — the public method already guards.
+
+18. **No lazy imports inside methods.** AGENTS.md forbids this. Initial `BackfillWorker` import was lazy — removed when the worker was deleted.
+
+19. **Parser must handle documented syntax.** `/search` DSL uses `key: value` with space. The initial token-by-token parser broke on this. Parser must consume multi-token values until the next known key.
+
+20. **Keywords are optional if other filters exist.** The parser required keywords even when `user:` or `days:` were provided. Check that at least one argument is given, not that keywords specifically is present.
 
 ## Teamlead Workflow Lessons
 
