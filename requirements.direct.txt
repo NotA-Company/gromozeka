@@ -1,9 +1,9 @@
 # Runtime
 aiodocker==0.27.0
 aiosqlite==0.22.1
-boto3==1.43.32
+boto3==1.43.34
 fastembed==0.8.0
-html-to-markdown==3.6.13
+html-to-markdown==3.6.19
 httpx[http2]==0.28.1
 httpx-socks[asyncio]==0.11.0
 numpy==2.4.6
@@ -29,6 +29,6 @@ flake8-pyproject==1.2.4
 pyright==1.1.410
 
 # Testing
-pytest==9.1.0
+pytest==9.1.1
 pytest-asyncio==1.4.0
 pytest-cov==7.1.0
