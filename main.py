@@ -21,9 +21,9 @@ from internal.database import Database
 from internal.database.stats_storage import DatabaseStatsStorage
 from internal.services.llm import LLMService
 from internal.services.proxy import ProxyService
+from internal.services.queue_service import QueueService
 from lib.ai.manager import LLMManager
 from lib.logging_utils import initLogging
-from lib.proxy import ProxyHelper
 from lib.rate_limiter import RateLimiterManager
 from lib.stats import StatsStorage
 
@@ -37,16 +37,17 @@ logger = logging.getLogger(__name__)
 class GromozekBot:
     """Main bot orchestrator that coordinates all components."""
 
-    def __init__(self, configManager: ConfigManager):
-        """Initialize bot with all components."""
-        # Initialize configuration
+    def __init__(self, configManager: ConfigManager, loop: asyncio.AbstractEventLoop):
+        """Initialize bot with all components.
+
+        Args:
+            configManager: The application configuration manager.
+            loop: The shared asyncio event loop for background tasks and polling.
+        """
         self.configManager = configManager
+        self._loop = loop
 
-        # Store and register global proxy config for all services
-        ProxyHelper.getInstance().setGlobalProxyConfig(self.configManager.getProxyConfig())
-
-        # Initialize proxy lifecycle service (handles start/stop of proxy processes)
-        ProxyService.getInstance().initialize(self.configManager.getProxyConfig())
+        self._schedulerTask: Optional[asyncio.Task] = None
 
         # Initialize logging with config
         initLogging(self.configManager.getLoggingConfig())
@@ -55,6 +56,18 @@ class GromozekBot:
         self.database = Database(
             self.configManager.getDatabaseConfig(),  # pyright: ignore[reportArgumentType]
         )
+
+        # Start the delayed task scheduler as a background task on the shared loop.
+        # This MUST happen before ProxyService.initialize() so that CRON_JOB
+        # handlers registered by ProxyService are processed once the scheduler
+        # loop starts running.
+        self._schedulerTask = loop.create_task(
+            QueueService.getInstance().startDelayedScheduler(self.database),
+            name="delayed-scheduler",
+        )
+
+        # Initialize proxy lifecycle management
+        ProxyService.getInstance().initialize(self.configManager.getProxyConfig(), loop=loop)
 
         # Initialize stats storage for LLM usage tracking
         llmStatsStorage: Optional[StatsStorage] = None
@@ -75,7 +88,7 @@ class GromozekBot:
 
         # Initialize rate limiter manager
         self.rateLimiterManager = RateLimiterManager.getInstance()
-        asyncio.run(self.rateLimiterManager.loadConfig(self.configManager.getRateLimiterConfig()))
+        loop.run_until_complete(self.rateLimiterManager.loadConfig(self.configManager.getRateLimiterConfig()))
 
         # Initialize bot application
         botConfig = self.configManager.getBotConfig()
@@ -100,29 +113,55 @@ class GromozekBot:
     async def _shutdown(self) -> None:
         """Gracefully shut down resources in correct order.
 
-        Closes LLM manager providers (proxy HTTP clients, etc.) before
-        closing database connections. Each step runs even if the previous
-        one raises, to maximize resource cleanup.
+        Stops the scheduler first so DO_EXIT handlers (including proxy
+        stop commands) complete before closing HTTP and DB connections.
+        Each step runs even if the previous one raises, to maximize
+        resource cleanup.
         """
         try:
+            queueService = QueueService.getInstance()
+            logger.info("Step 2.1: Stopping Delayed Tasks Scheduler...")
+            await queueService.beginShutdown()
+            logger.info("Step 2.2: Waiting for delayed scheduler task...")
+            if self._schedulerTask is not None:
+                await self._schedulerTask
+        except Exception:
+            logger.exception("Error during scheduler shutdown")
+
+        logger.info("Step 2.3: Destroying rate limiters...")
+        await RateLimiterManager.getInstance().destroy()
+        logger.info("Rate limiters destroyed...")
+
+        try:
+            logger.info("Step 2.4: Closing LLM manager...")
             await self.llmManager.aclose()
+            logger.info("LLM manager closed...")
         except Exception:
             logger.exception("Error closing LLM manager during shutdown")
 
         try:
+            logger.info("Step 2.5: Closing database...")
             await self.database.manager.closeAll()
+            logger.info("Database closed...")
         except Exception:
             logger.exception("Error closing database during shutdown")
 
-    def run(self):
-        """Start the bot."""
+    def run(self, loop: Optional[asyncio.AbstractEventLoop] = None):
+        """Start the bot.
+
+        Args:
+            loop: The shared asyncio event loop.
+        """
+
+        if loop is None:
+            loop = self._loop
         try:
-            self.botApp.run()
+            self.botApp.run(loop)
         except Exception as e:
             logger.exception(e)
             raise
         finally:
-            asyncio.run(self._shutdown())
+            loop.run_until_complete(self._shutdown())
 
 
 def parse_arguments():
@@ -269,9 +308,15 @@ def main():
         if args.daemon:
             daemonize(args.pid_file)
 
-        # Initialize bot with custom config path and directories
-        bot = GromozekBot(configManager)
-        bot.run()
+        # Create the single shared event loop for the application lifecycle
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            # Initialize bot with shared loop
+            bot = GromozekBot(configManager, loop)
+            bot.run(loop)
+        finally:
+            loop.close()
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
     except Exception as e:

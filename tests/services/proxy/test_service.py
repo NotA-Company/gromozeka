@@ -46,11 +46,13 @@ class TestProxyService:
             },
         )
 
-        with patch("internal.services.proxy.service.asyncio.run") as mockRun:
+        with patch("asyncio.get_event_loop") as mockGetLoop:
+            mockLoop = MagicMock()
+            mockGetLoop.return_value = mockLoop
             svc.initialize(proxyConfigDict)
 
         assert "global" in svc._activeLifecycles
-        mockRun.assert_called_once()  # start() called via asyncio.run()
+        mockLoop.run_until_complete.assert_called_once()  # start() called via loop.run_until_complete()
 
     def test_resolveProxyDelegates(self):
         """resolveProxy() returns same result as ProxyConfig.fromServiceConfig()."""
@@ -178,11 +180,13 @@ class TestProxyService:
             },
         )
 
-        with patch("internal.services.proxy.service.asyncio.run") as mockRun:
+        with patch("asyncio.get_event_loop") as mockGetLoop:
+            mockLoop = MagicMock()
+            mockGetLoop.return_value = mockLoop
             svc.initialize(proxyConfigDict)
 
         assert len(svc._activeLifecycles) == 0
-        mockRun.assert_not_called()  # No asyncio.run() because lifecycle wasn't created
+        mockLoop.run_until_complete.assert_not_called()  # No lifecycle created
 
     def test_resolveProxyDisabledNoLifecycle(self):
         """Service with use-proxy=false and lifecycle creates no ProxyLifecycle."""

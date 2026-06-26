@@ -15,7 +15,7 @@ from typing import Dict, Optional
 
 from internal.services.proxy.lifecycle import ProxyLifecycle
 from internal.services.queue_service import DelayedTask, DelayedTaskFunction, QueueService
-from lib.proxy import ProxyConfig, ProxyConfigDict, ProxyType
+from lib.proxy import ProxyConfig, ProxyConfigDict, ProxyHelper, ProxyType
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ class ProxyService:
         """Whether :meth:`initialize` has completed successfully.
         Prevents double-initialization."""
 
-    def initialize(self, proxyConfigDict: ProxyConfigDict) -> None:
+    def initialize(self, proxyConfigDict: ProxyConfigDict, loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
         """Initialise the proxy service with the global proxy configuration.
 
         Idempotent — subsequent calls after the first successful
@@ -86,8 +86,8 @@ class ProxyService:
         section is present, and registers CRON_JOB and DO_EXIT handlers
         with QueueService.
 
-        The global proxy start command is executed immediately via
-        asyncio.run() because GromozekBot.__init__ runs synchronously.
+        The global proxy start command is executed immediately on the
+        shared event loop because GromozekBot.__init__ runs synchronously.
         Per-service proxy lifecycles are started lazily on the first
         CRON_JOB tick.
 
@@ -98,6 +98,9 @@ class ProxyService:
         if self._initialized:
             logger.debug("ProxyService already initialized; skipping.")
             return
+
+        # Store and register global proxy config for all services
+        ProxyHelper.getInstance().setGlobalProxyConfig(proxyConfigDict)
 
         queueService = QueueService.getInstance()
 
@@ -118,9 +121,14 @@ class ProxyService:
         lifecycle = ProxyLifecycle("global", proxyConfig.lifecycle, proxyConfig)
         self._activeLifecycles["global"] = lifecycle
 
-        # Start the global proxy immediately (sync context)
+        # Start the global proxy on the shared event loop.
+        # The subprocess transport must live on the same loop as the
+        # cron-tick health checks and restarts so the child watcher
+        # can reap the process on exit.
+        if loop is None:
+            loop = asyncio.get_event_loop()
         try:
-            asyncio.run(lifecycle.start())
+            loop.run_until_complete(lifecycle.start())
         except Exception as e:
             logger.error("Failed to start global proxy: %s", e)
 

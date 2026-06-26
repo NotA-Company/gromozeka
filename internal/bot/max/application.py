@@ -45,7 +45,6 @@ class MaxBotApplication:
         database: Database instance for data persistence
         handlerManager: Handler manager for routing updates to appropriate handlers
         queueService: Queue service for managing delayed tasks
-        _schedulerTask: Async task for the delayed message scheduler
         maxBot: Max bot client instance for API communication
         _tasks: Set of active async tasks managed by the application
         maxTasks: Maximum number of concurrent tasks allowed (default: 128)
@@ -73,7 +72,6 @@ class MaxBotApplication:
             configManager=configManager, database=database, botProvider=BotProvider.MAX
         )
         self.queueService = QueueService.getInstance()
-        self._schedulerTask: Optional[asyncio.Task] = None
         self.maxBot: Optional[libMax.MaxBotClient] = None
 
         self._tasks: MutableSet[asyncio.Task] = set[asyncio.Task]()
@@ -97,7 +95,6 @@ class MaxBotApplication:
             raise RuntimeError("Client is not initialized")
 
         await self.handlerManager.initialize(self.maxBot)
-        self._schedulerTask = asyncio.create_task(self.queueService.startDelayedScheduler(self.database))
 
         # TODO: set commands
 
@@ -111,9 +108,6 @@ class MaxBotApplication:
         Shutdown steps:
         1. Wait for all active tasks to complete
         2. Stop the handler manager
-        3. Stop the delayed tasks scheduler
-        4. Wait for the scheduler task to finish
-        5. Destroy all rate limiters
 
         Args:
             *args: Additional positional arguments (unused, for compatibility)
@@ -131,26 +125,23 @@ class MaxBotApplication:
 
         logger.info("Step 1: Stopping HandlerManager...")
         await self.handlerManager.shutdown()
-        logger.info("Step 2: Stopping Delayed Tasks Scheduler...")
-        await self.queueService.beginShutdown()
-
-        logger.info("Step 3: Waiting for delayed scheduler task...")
-        if self._schedulerTask is not None:
-            await self._schedulerTask
 
         # Destroy rate limiters
         # TODO: should we move it into doExit handler?
-        logger.info("Step 4: Destroying rate limiters...")
+        logger.info("Step 2: Destroying rate limiters...")
         manager = RateLimiterManager.getInstance()
         await manager.destroy()
         logger.info("Rate limiters destroyed...")
 
-    def run(self):
+    def run(self, loop: asyncio.AbstractEventLoop):
         """Start the Max Messenger bot application.
 
         This is the main entry point for running the Max bot. It validates the
         bot token, initializes the random number generator, and starts the
-        async polling loop.
+        async polling loop on the shared event loop.
+
+        Args:
+            loop: The shared asyncio event loop.
 
         Raises:
             SystemExit: If the bot token is not configured or is invalid
@@ -163,8 +154,8 @@ class MaxBotApplication:
 
         logger.info("Starting Gromozeka Max bot, dood!")
 
-        # Start the bot
-        asyncio.run(self._runPolling())
+        # Start the bot on the shared event loop
+        loop.run_until_complete(self._runPolling())
 
     async def maxHandler(self, update: maxModels.Update) -> None:
         """Handle incoming Max Messenger updates and route them to appropriate handlers.

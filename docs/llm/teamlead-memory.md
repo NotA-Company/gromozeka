@@ -74,11 +74,18 @@ How to use this file:
 - `_dtOnExit` wraps shutdown in try/except with logging.
 - If feature is disabled, method returns early BEFORE handler registration.
 
-### ProxyService Startup Context Challenge
-- `GromozekBot.__init__` runs synchronously. There are two options for proxy start:
-  - **Option A (design doc preferred for global proxy):** Use `asyncio.run()` for initial start command (matching `main.py:74` rateLimiterManager pattern).
-  - **Option B (design doc preferred for per-service):** Defer to first CRON_JOB tick (~60s delay).
-- Implementation should use Option A for global proxy start (to match the existing `asyncio.run()` pattern in main.py).
+### Startup & Event Loop (2026-06-27 refactor)
+- Single shared event loop created in `main()` via `asyncio.new_event_loop()` + `asyncio.set_event_loop()`.
+- Passed through `GromozekBot(loop)` → `botApp.run(loop)`. Telegram uses `run_polling(close_loop=False)` (PTB reuses loop from `asyncio.get_event_loop()`). Max uses `loop.run_until_complete(self._runPolling())`.
+- `startDelayedScheduler` runs as `loop.create_task()` in `GromozekBot.__init__` BEFORE `ProxyService.initialize()`.
+- Task stored as `self._schedulerTask`. Awaited in `_shutdown()` after `beginShutdown()` — ensures DO_EXIT handlers (proxy stop commands) complete.
+- Global proxy start uses `asyncio.get_event_loop().run_until_complete()` — no throwaway loops.
+
+### `initialize()` Simplified
+- `ProxyService.initialize(proxyConfigDict: ProxyConfigDict)` — receives only the proxy config dict.
+- `QueueService` obtained via `QueueService.getInstance()` internally — not passed as parameter.
+- No `_queueService` or `_configManager` stored as instance attributes.
+- No `Any` types anywhere — `Dict[str, object]` for `serviceConfig` in `resolveProxy()`. `QueueService`, `ConfigManager`, `ProxyConfigDict` imported directly.
 
 ## Proxy Module Conventions
 
