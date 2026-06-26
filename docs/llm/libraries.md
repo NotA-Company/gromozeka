@@ -718,14 +718,22 @@ from lib.proxy import ProxyConfig, ProxyHelper, ProxyType, ProxyKwargs
 | Type | Purpose |
 |---|---|
 | `ProxyType` | `StrEnum("http", "socks5", "none")` — supported proxy protocol types |
+| `HealthCheckType` | `StrEnum("none", "url", "command")` — health check mechanism for proxy lifecycle |
 | `ProxyKwargs(TypedDict)` | Keyword arguments for `httpx.AsyncClient` — either `proxy: str` or `transport: AsyncProxyTransport` |
+| `ProxyLifecycleConfigDict(TypedDict)` | Optional lifecycle configuration with 7 fields: `startCommand`, `stopCommand`, `restartCommand`, `healthCheckType`, `healthCheckUrl`, `healthCheckCommand`, `healthCheckInterval` |
 
 **Classes:**
 
 | Class | Purpose |
 |---|---|
-| `ProxyConfig` | Immutable proxy configuration (`__slots__`). Created via `fromServiceConfig()` or `fromDict()`. Methods: `getCombined()` (merge with global), `getProxyURL(maskPassword=False)` (build URL), `toKwargs()` (httpx kwargs). |
+| `ProxyConfig` | Immutable proxy configuration (`__slots__`). Created via `fromServiceConfig()` or `fromDict()`. Methods: `getCombined()` (merge with global), `getProxyURL(maskPassword=False)` (build URL), `toKwargs()` (httpx kwargs). Has optional `lifecycle` field of type `ProxyLifecycleConfigDict`. |
 | `ProxyHelper` | Singleton storing the global proxy config. `setGlobalProxyConfig()` called once from `main.py`; `getGlobalProxyConfig()` used internally by `ProxyConfig.getCombined()`. |
+
+**Helper functions:**
+
+| Function | Purpose |
+|---|---|
+| `_kebabToCamelCase(s)` | Converts TOML kebab-case keys to Python camelCase field names (used by `ProxyConfig.fromDict()` for lifecycle config parsing) |
 
 **Usage pattern in service constructors:**
 ```python
@@ -761,4 +769,4 @@ async with httpx.AsyncClient(**proxyKwargs, timeout=30) as client:
 ---
 
 *This guide is auto-maintained and should be updated whenever library APIs change*
-*Last updated: 2026-06-20*
+*Last updated: 2026-06-26*

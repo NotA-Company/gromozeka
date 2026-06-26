@@ -27,7 +27,6 @@ import logging
 from enum import StrEnum
 from typing import Any, Dict, List, Optional
 
-from internal.bot.models.enums import LLMMessageFormat
 import lib.utils as libUtils
 from internal.bot.common.embedding_utils import embedAndSaveMessage
 from internal.bot.common.models import UpdateObjectType
@@ -45,6 +44,7 @@ from internal.bot.models import (
     MessageRecipient,
     commandHandlerV2,
 )
+from internal.bot.models.enums import LLMMessageFormat
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import ChatMessageDict, ChatUserDict, MessageCategory
@@ -508,10 +508,10 @@ class ChatSearchHandler(BaseBotHandler):
         for r in results:
             eMsg = await EnsuredMessage.fromDBChatMessage(r, self.db)
             retMsg = json.loads(await eMsg.formatForLLM(self.db, format=LLMMessageFormat.JSON, useSingleMedia=False))
-            if 'text' in retMsg and len(retMsg['text']) > SEARCH_TOOL_MAX_MESSAGE_LENGTH:
+            if "text" in retMsg and len(retMsg["text"]) > SEARCH_TOOL_MAX_MESSAGE_LENGTH:
                 messageText = messageText[: SEARCH_TOOL_MAX_MESSAGE_LENGTH - 1] + "…"
-            retMsg['score'] = r.get("score", 0.0),
-            
+            retMsg["score"] = r.get("score", 0.0)
+
         return {"done": True, "results": formatted, "count": len(formatted)}
 
     ###

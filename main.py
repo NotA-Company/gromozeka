@@ -20,6 +20,7 @@ from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.stats_storage import DatabaseStatsStorage
 from internal.services.llm import LLMService
+from internal.services.proxy import ProxyService
 from lib.ai.manager import LLMManager
 from lib.logging_utils import initLogging
 from lib.proxy import ProxyHelper
@@ -43,6 +44,9 @@ class GromozekBot:
 
         # Store and register global proxy config for all services
         ProxyHelper.getInstance().setGlobalProxyConfig(self.configManager.getProxyConfig())
+
+        # Initialize proxy lifecycle service (handles start/stop of proxy processes)
+        ProxyService.getInstance().initialize(self.configManager.getProxyConfig())
 
         # Initialize logging with config
         initLogging(self.configManager.getLoggingConfig())

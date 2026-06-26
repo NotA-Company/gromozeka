@@ -358,6 +358,25 @@ def resetLlmServiceSingleton():
 
 
 @pytest.fixture(autouse=True)
+def resetProxyServiceSingleton() -> Generator[None, None, None]:
+    """Reset ProxyService singleton between tests to prevent state leakage.
+
+    Resets the singleton ``_instance`` to ``None`` before and after each
+    test so that tests do not share ProxyService state.
+
+    Yields:
+        None: Fixture runs before and after each test
+    """
+    from internal.services.proxy.service import ProxyService
+
+    ProxyService._instance = None
+
+    yield
+
+    ProxyService._instance = None
+
+
+@pytest.fixture(autouse=True)
 def resetProxyHelperSingleton() -> Generator[None, None, None]:
     """
     Reset ProxyHelper singleton state between tests.

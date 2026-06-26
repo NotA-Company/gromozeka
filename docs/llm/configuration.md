@@ -496,6 +496,35 @@ password = ""
 
 **When `enabled` is omitted from the `[service.proxy]` sub-section**, `ProxyConfig.fromServiceConfig()` produces a config with `enabled=False`, which `getCombined()` treats as "inherit from global." The per-service override fields (`type`, `address`, etc.) are ignored. Always include `enabled = true` when you intend to override the global proxy for a specific service.
 
+#### `[proxy.lifecycle]`
+
+Optional sub-section for managing the proxy process lifecycle (start, health-check, restart, stop). Omit the entire section to disable lifecycle management. Defaults live in [`configs/00-defaults/proxy.toml`](../../configs/00-defaults/proxy.toml).
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `start-command` | list[str] | `[]` | Command and arguments to start the proxy process. Executed via `asyncio.create_subprocess_exec` on startup. |
+| `stop-command` | list[str] | `[]` | Command to stop the proxy process. Executed on shutdown and before restart (if no `restart-command`). |
+| `restart-command` | list[str] | `[]` | Command to restart the proxy. Optional — if omitted, restart = stop + start sequentially. |
+| `health-check-type` | `"none"` \| `"url"` \| `"command"` | `"none"` | Health check mechanism. `"none"`: no monitoring. `"url"`: HTTP GET through the proxy; 2xx = pass. `"command"`: run command; exit 0 = pass. |
+| `health-check-url` | str | `""` | URL to probe when `health-check-type = "url"`. |
+| `health-check-command` | list[str] | `[]` | Command to run when `health-check-type = "command"`. |
+| `health-check-interval` | int | `5` | Health check interval in minutes. The CRON_JOB fires every ~60s; the check runs every Nth tick (gated by modulo counter). |
+
+**Example:**
+```toml
+[proxy]
+enabled = true
+type = "socks5"
+address = "socks5://localhost:1080"
+
+[proxy.lifecycle]
+start-command = ["ssh", "-D", "1080", "-N", "proxy-host"]
+stop-command = ["pkill", "-f", "ssh -D 1080"]
+health-check-type = "url"
+health-check-url = "http://httpbin.org/ip"
+health-check-interval = 5
+```
+
 **Services that support proxy:** Telegram bot, Max Messenger bot, all OpenAI-compatible LLM providers, OpenRouter `listRemoteModels()`, image downloads, Yandex Search (including web-fetch), OpenWeatherMap, Geocode Maps, sqlink database providers.
 
 **Restart required:** Proxy config is loaded at startup. Changing it requires a bot restart.
@@ -694,4 +723,4 @@ apiKey: str = myConfig.get("api-key", "")
 ---
 
 *This guide is auto-maintained and should be updated whenever configuration sections change*
-*Last updated: 2026-06-20*
+*Last updated: 2026-06-26*

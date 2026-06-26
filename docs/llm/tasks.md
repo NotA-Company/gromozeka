@@ -454,6 +454,9 @@ ls -1 internal/database/migrations/versions/ | grep "migration_" | sort -V | tai
 | `ConfigManager.get()` returns nested dicts | `configManager.get("sandbox")` returns a nested dict, not a flat namespace | Use `.get("key", {})` to navigate nested sections; **never** use dotted keys like `configManager.get("sandbox.bootstrap.starter-packages")` |
 | Embedding model resolution is single-tier | Both `ChatSearchHandler._dtCronJob` (backfill) and `MessagePreprocessorHandler`'s embedding dispatch resolve the model from the chat's `EMBEDDING_MODEL` setting only (default `"local-embedding"` from `bot-defaults.toml` `[bot.defaults].embedding-model`). Empty / unresolvable / unsupported model is a silent no-op for that chat on that tick. | The previous two-tier chain (chat setting → hard-coded fallback) and the `BackfillWorker._resolveEmbeddingModelName` helper are gone — the model comes from the chat settings, and a missing model is a no-op rather than a fallback. The server-wide `[search-history.embeddings].model` and `[search-history.embeddings].on-save` config keys were removed — the per-chat default already provides the model name, and the dispatch is now unconditional whenever `[search-history].enabled` (cached in `_searchEnabled` at construction time) and `EMBEDDINGS_ENABLED` are both on. |
 | `/search` argument parser DSL | `_parseSearchArgs` in `chat_search.py` parses a `key: value` DSL: known keys (`keywords`, `user`, `days`, `category`, `thread`) are matched by `startswith(key + ":")`, a value spans multiple tokens until the next known key, bare words merge into `keywords`, first occurrence wins for non-`keywords` keys, multiple `keywords:` occurrences concatenate | Use the documented `key: value` (with space) form; remember the `keywords` key is special — its values merge rather than first-wins |
+| Fire-and-forget subprocesses must use `DEVNULL` | Subprocesses launched via `asyncio.create_subprocess_exec` that are intentionally not awaited (fire-and-forget) must redirect stdout/stderr to `subprocess.DEVNULL`. Using `PIPE` causes pipe-buffer deadlock when the buffer fills and no coroutine drains it. | Always pass `stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL` for fire-and-forget subprocesses |
+| Timed-out subprocesses must be explicitly killed | When a subprocess launched with `asyncio.wait_for()` times out, the `TimeoutError` does not kill the child process. Without explicit `process.kill()`, the process becomes a zombie. | In the `except asyncio.TimeoutError` block, call `process.kill()` then `await process.wait()` |
+| `asyncio.run()` for sync-context startup | `GromozekBot.__init__` runs synchronously, but proxy start commands are async. Use `asyncio.run(lifecycle.start())` to bridge sync→async, matching the existing pattern in `main.py` for `rateLimiterManager`. | Use `asyncio.run()` for one-shot async calls from sync init; do not store a separate event loop |
 
 ---
 
@@ -617,4 +620,4 @@ if result.status == ModelResultStatus.FINAL:
 ---
 
 *This guide is auto-maintained and should be updated whenever new patterns or gotchas are discovered*
-*Last updated: 2026-05-23*
+*Last updated: 2026-06-26*

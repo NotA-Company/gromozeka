@@ -16,9 +16,9 @@ from internal.bot.models import BotProvider, EnsuredMessage
 from internal.bot.models.ensured_message import ChatType, MessageRecipient, MessageSender
 from internal.config.manager import ConfigManager
 from internal.database import Database
+from internal.services.proxy import ProxyService
 from internal.services.queue_service.service import QueueService
 from lib import utils
-from lib.proxy import ProxyConfig
 
 # from lib import utils
 from lib.rate_limiter import RateLimiterManager
@@ -290,7 +290,7 @@ class MaxBotApplication:
 
         # --- Proxy support ---
         botConfig = self.configManager.getBotConfig()
-        proxyConfig = ProxyConfig.fromServiceConfig(botConfig)
+        proxyConfig = ProxyService.getInstance().resolveProxy(botConfig, "max-bot")
         maskedUrl = proxyConfig.getProxyURL(maskPassword=True)
         if maskedUrl:
             logger.info("Proxy enabled for Max bot: %s", maskedUrl)

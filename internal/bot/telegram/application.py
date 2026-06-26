@@ -25,9 +25,10 @@ from internal.bot.models.ensured_message import MessageRecipient
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.models import MessageId
+from internal.services.proxy import ProxyService
 from internal.services.queue_service import QueueService
 from lib import utils
-from lib.proxy import ProxyConfig, ProxyType
+from lib.proxy import ProxyType
 from lib.rate_limiter import RateLimiterManager
 
 logger = logging.getLogger(__name__)
@@ -354,7 +355,7 @@ class TelegramBotApplication:
         # so the match block can switch on the resolved proxyType; getProxyURL()
         # and toKwargs() call getCombined() internally as well, so when we pass
         # the already-combined config to them the second getCombined() is a no-op.
-        proxyConfig = ProxyConfig.fromServiceConfig(botConfig).getCombined()
+        proxyConfig = ProxyService.getInstance().resolveProxy(botConfig, "telegram-bot").getCombined()
 
         appBuilder = (
             Application.builder()

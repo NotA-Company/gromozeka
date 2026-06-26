@@ -235,6 +235,7 @@ vanishingly rare in the Gromozeka codebase (see :ref:`tasks.md §4.2 <tasks-impo
 | [`LLMService`](../../internal/services/llm/service.py:37) | `from internal.services.llm import LLMService` | `LLMService.getInstance()` |
 | [`StorageService`](../../internal/services/storage/service.py:24) | `from internal.services.storage import StorageService` | `StorageService.getInstance()` |
 | [`RateLimiterManager`](../../lib/rate_limiter/manager.py:12) | `from lib.rate_limiter import RateLimiterManager` | `RateLimiterManager.getInstance()` |
+| [`ProxyService`](../../internal/services/proxy/service.py:23) | `from internal.services.proxy import ProxyService` | `ProxyService.getInstance()` |
 
 ### 4.4 Critical File Paths (with approximate line counts)
 
@@ -271,6 +272,8 @@ vanishingly rare in the Gromozeka codebase (see :ref:`tasks.md §4.2 <tasks-impo
 | [`internal/services/cache/service.py`](../../internal/services/cache/service.py) | `CacheService` singleton |
 | [`internal/services/llm/service.py`](../../internal/services/llm/service.py) | `LLMService` singleton |
 | [`internal/services/queue_service/service.py`](../../internal/services/queue_service/service.py) | `QueueService` singleton |
+| [`internal/services/proxy/service.py`](../../internal/services/proxy/service.py) | `ProxyService` singleton — proxy lifecycle management |
+| [`internal/services/proxy/lifecycle.py`](../../internal/services/proxy/lifecycle.py) | `ProxyLifecycle` — per-config proxy process manager |
 | [`internal/services/storage/service.py`](../../internal/services/storage/service.py) | `StorageService` singleton |
 
 ### 4.6 `lib/` Directory
@@ -290,7 +293,8 @@ vanishingly rare in the Gromozeka codebase (see :ref:`tasks.md §4.2 <tasks-impo
 | [`lib/markdown/parser.py`](../../lib/markdown/parser.py) | Markdown → MarkdownV2 parser |
 | [`lib/max_bot/client.py`](../../lib/max_bot/client.py) | Max Messenger HTTP client |
 | [`lib/openweathermap/client.py`](../../lib/openweathermap/client.py) | OpenWeatherMap API client |
-| [`lib/proxy/__init__.py`](../../lib/proxy/__init__.py) | Proxy resolution package — `ProxyConfig` class, `ProxyHelper` singleton, `ProxyType` StrEnum, `ProxyKwargs` TypedDict |
+| [`lib/proxy/__init__.py`](../../lib/proxy/__init__.py) | Proxy resolution package — `ProxyConfig` class, `ProxyHelper` singleton, `ProxyType`/`HealthCheckType` StrEnums, `ProxyKwargs`/`ProxyLifecycleConfigDict` TypedDicts |
+| [`internal/services/proxy/`](../../internal/services/proxy/) | `ProxyService` singleton (lifecycle orchestration) + `ProxyLifecycle` (per-config process manager) |
 | [`lib/yandex_search/`](../../lib/yandex_search/) | Yandex Search API client |
 | [`lib/geocode_maps/client.py`](../../lib/geocode_maps/client.py) | Geocode Maps API client |
 | [`lib/stats/`](../../lib/stats/) | Statistics collection library (`StatsStorage`, `NullStatsStorage`, `GLOBAL_CONSUMER_ID`) |
@@ -319,4 +323,4 @@ vanishingly rare in the Gromozeka codebase (see :ref:`tasks.md §4.2 <tasks-impo
 ---
 
 *This guide is auto-maintained and should be updated whenever significant architectural changes are made*
-*Last updated: 2026-06-20*
+*Last updated: 2026-06-26*

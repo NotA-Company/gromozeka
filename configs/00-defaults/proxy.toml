@@ -21,3 +21,38 @@ address = ""
 # Use ${ENV_VAR} substitution — never commit credentials.
 user = ""
 password = ""
+
+# --- Lifecycle management (optional) ---
+# Omit this entire section to disable lifecycle management.
+# When present, proxy lifecycle commands are executed at startup/shutdown,
+# and health checks run periodically.
+#
+# [proxy.lifecycle]
+# # Command to start the proxy process. Executed on application startup.
+# # Array of strings (passed to asyncio.create_subprocess_exec).
+# start-command = []
+#
+# # Command to stop the proxy process. Executed on application shutdown
+# # and before restart (if no restart-command is provided).
+# stop-command = []
+#
+# # Command to restart the proxy process. Optional.
+# # If omitted, restart = stop-command + start-command sequentially.
+# restart-command = []
+#
+# # Health check type: "none", "url", or "command".
+# # "none" (default): no health monitoring, no CRON_JOB overhead.
+# # "url": HTTP GET through the proxy to health-check-url; 2xx = pass.
+# # "command": run health-check-command; exit 0 = pass.
+# health-check-type = "none"
+#
+# # URL to probe when health-check-type = "url".
+# health-check-url = ""
+#
+# # Command to run when health-check-type = "command".
+# health-check-command = []
+#
+# # Health check interval in minutes. The CRON_JOB fires every ~60s;
+# # the health check runs every Nth tick (gated by modulo counter).
+# # Default: 5 (every 5 minutes).
+# health-check-interval = 5

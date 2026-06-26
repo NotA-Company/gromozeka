@@ -27,23 +27,58 @@ How to use this file:
 - **Sandbox list_libraries + packages removal (2026-06-14):** Added `sandbox_list_libraries` LLM tool (wraps `SandboxManager.listRuntimeLibraries(RuntimeName.PYTHON)`, returns `{done, packages: [{name, version}]}`). Removed `packages` parameter from `run_python` LLM tool (security: no auto-install; LLM should discover via `list_libraries` and ask admin to `/sandbox install` missing ones). Fixed pre-existing `errorMessage`→`error` key inconsistency in `_llmToolRunSandboxCode` to match all other sandbox LLM tools. Design doc updated from "four" to "five" tools.
 - [`memories/test-reorganization.md`](memories/test-reorganization.md) — archived durable notes from the test layout migration. Read it when moving tests or changing test layout conventions.
 
-## Proxy Lifecycle Management — Design (2026-06-26)
+## Proxy Lifecycle Management — Implementation (2026-06-26)
 
+### Design Document
 - Design document: `docs/plans/proxy-lifecycle-design.md`. Read it before implementing.
-- User's key decisions:
-  - Lifecycle commands are part of `[proxy.lifecycle]` sub-section (not separate top-level config).
-  - Commands: `start-command`, `stop-command`, `restart-command`. All fire-and-forget via `asyncio.create_subprocess_exec`. No PID tracking, no SIGTERM.
-  - Health check: `health-check-type = "none" | "url" | "command"`. Interval in minutes, gated via modulo on CRON_JOB ticks (~60s each).
-  - No `restart-on-failure` param (presence of health check IS the signal). No `max-restarts` (unlimited retries).
-  - Restart: `restart-command` if present, else stop+start sequentially.
-  - Shutdown: DO_EXIT → `stop-command`.
-- Architecture:
+
+### Architecture & Key Decisions
+- Lifecycle commands are part of `[proxy.lifecycle]` sub-section (not separate top-level config).
+- Commands: `start-command`, `stop-command`, `restart-command`. All fire-and-forget via `asyncio.create_subprocess_exec`. No PID tracking, no SIGTERM.
+- Health check: `health-check-type = "none" | "url" | "command"`. Interval in minutes, gated via modulo on CRON_JOB ticks (~60s each).
+- No `restart-on-failure` param (presence of health check IS the signal). No `max-restarts` (unlimited retries).
+- Restart: `restart-command` if present, else stop+start sequentially.
+- Shutdown: DO_EXIT → `stop-command`.
+- Code locations:
   - `lib/proxy/__init__.py`: new types only — `HealthCheckType(StrEnum)`, `ProxyLifecycleConfigDict(TypedDict)`. `ProxyConfig` gains optional `lifecycle` field.
-  - `internal/services/proxy/service.py`: `ProxyService` (singleton) — centralized proxy resolution + lifecycle wiring. `initialize(queueService, configManager)`, `resolveProxy(serviceConfig) -> ProxyConfig`.
+  - `internal/services/proxy/service.py`: `ProxyService` (singleton) — centralized proxy resolution + lifecycle wiring. `initialize(queueService, configManager)`, `resolveProxy(serviceConfig, serviceLabel) -> ProxyConfig`.
   - `internal/services/proxy/lifecycle.py`: `ProxyLifecycle` (non-singleton, one per proxy config) — `start()`, `stop()`, `restart()`, `healthCheck()`, `onCronTick()`, `onExit()`.
 - Call-site migration: consumers in `internal/` switch from `ProxyConfig.fromServiceConfig()` to `ProxyService.getInstance().resolveProxy()`. Consumers in `lib/` unchanged.
 - Review fix 1: start command is fire-and-forget, NOT awaited (Section 5.1).
 - Review fix 2: `ProxyLifecycle` stores `proxyConfig` for URL health checks through the proxy.
+
+### Verified Call Sites (all confirmed 2026-06-26, migrated to `ProxyService.getInstance().resolveProxy()`)
+- `internal/bot/telegram/application.py` — `ProxyService.getInstance().resolveProxy(botConfig, "telegram-bot")`
+- `internal/bot/max/application.py` — `ProxyService.getInstance().resolveProxy(botConfig, "max-bot")`
+- `internal/bot/common/handlers/weather.py` — `ProxyService.getInstance().resolveProxy(openWeatherMapConfig, "openweathermap")` + `resolveProxy(geocodeMapsConfig, "geocode-maps")`
+- `internal/bot/common/handlers/yandex_search.py` — `ProxyService.getInstance().resolveProxy(ysConfig, "yandex-search")`
+
+### Gotchas
+- `_started` flag prevents double-start; `_initialized` flag on `ProxyService` prevents double `initialize()`.
+- `started` property on `ProxyLifecycle` is public read-only.
+- Per-service lifecycles deferred to first CRON_JOB tick (~60s). Global starts immediately via `asyncio.run()`.
+- Fire-and-forget subprocesses must use `DEVNULL`, not `PIPE`.
+- Timed-out subprocesses must be explicitly killed (`process.kill()`) to avoid zombie leaks.
+- Kill-switch bypass fixed: `initialize()` and `resolveProxy()` now check `proxyConfig.enabled` before creating `ProxyLifecycle`. Without this, uncommenting `[proxy.lifecycle]` in the default config (where `enabled=false`) would start the proxy process anyway.
+- Singleton reset fixture: `resetProxyServiceSingleton` (autouse in `tests/conftest.py`).
+- 40 proxy tests total: 11 in lib, 29 in lifecycle, 2 new regression tests for kill-switch bypass.
+
+### SandboxHandler Analogue Pattern
+- `sandbox.py` is the closest existing analogue for CRON_JOB/DO_EXIT lifecycle management.
+- Registration in `__init__` (after config-gated early return if disabled):
+  ```python
+  self.queueService.registerDelayedTaskHandler(function=DelayedTaskFunction.CRON_JOB, handler=self._dtCronJob)
+  self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, self._dtOnExit)
+  ```
+- `_dtCronJob` uses `_recoveryDone` flag for one-time startup, `_lastCronRun`/time.time() delta for gating.
+- `_dtOnExit` wraps shutdown in try/except with logging.
+- If feature is disabled, method returns early BEFORE handler registration.
+
+### ProxyService Startup Context Challenge
+- `GromozekBot.__init__` runs synchronously. There are two options for proxy start:
+  - **Option A (design doc preferred for global proxy):** Use `asyncio.run()` for initial start command (matching `main.py:74` rateLimiterManager pattern).
+  - **Option B (design doc preferred for per-service):** Defer to first CRON_JOB tick (~60s delay).
+- Implementation should use Option A for global proxy start (to match the existing `asyncio.run()` pattern in main.py).
 
 ## Proxy Module Conventions
 

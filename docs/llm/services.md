@@ -278,7 +278,54 @@ openweathermap = "<limiter-name>"
 
 ---
 
-## 6. Service Singleton Pattern
+## 6. ProxyService
+
+**File:** [`internal/services/proxy/service.py:23`](../../internal/services/proxy/service.py:23)
+**Import:** `from internal.services.proxy import ProxyService`
+
+```python
+proxyService = ProxyService.getInstance()
+
+# Initialize (called once from main.py after setGlobalProxyConfig)
+proxyService.initialize(queueService, configManager)
+
+# Resolve proxy for a service (replaces direct ProxyConfig.fromServiceConfig)
+proxyConfig = proxyService.resolveProxy(serviceConfig, "my-service")
+```
+
+**Key methods:**
+
+| Method | Returns | Purpose |
+|---|---|---|
+| `initialize(queueService, configManager)` | `None` | Idempotent init. Reads global proxy config, creates `ProxyLifecycle` for global proxy if lifecycle section present, registers CRON_JOB/DO_EXIT handlers. Global proxy start command runs immediately via `asyncio.run()`. |
+| `resolveProxy(serviceConfig, serviceLabel)` | `ProxyConfig` | Wraps `ProxyConfig.fromServiceConfig()`. Creates a `ProxyLifecycle` if the service config has a `proxy.lifecycle` sub-section. Deduplicates by `serviceLabel`. |
+
+**`ProxyLifecycle`** (non-singleton, one per proxy config):
+
+| Method | Returns | Purpose |
+|---|---|---|
+| `start()` | `None` | Execute the `start-command` via `asyncio.create_subprocess_exec` (fire-and-forget). Sets `_started` flag. |
+| `stop()` | `None` | Execute the `stop-command`. |
+| `restart()` | `None` | Execute `restart-command` if present, else `stop()` + `start()` sequentially. |
+| `healthCheck()` | `bool` | Run health check (URL GET or command). Returns `True` if healthy. |
+| `onCronTick()` | `None` | Called by CRON_JOB handler. Runs health check at configured interval; triggers restart on failure. |
+| `onExit()` | `None` | Called by DO_EXIT handler. Stops the proxy process gracefully. |
+| `started` | `bool` | Read-only property. `True` if the proxy process has been started. |
+
+**Singleton reset in tests:**
+```python
+@pytest.fixture(autouse=True)
+def resetProxyServiceSingleton():
+    """Reset ProxyService singleton for clean test state"""
+    from internal.services.proxy import ProxyService
+    ProxyService._instance = None
+    yield
+    ProxyService._instance = None
+```
+
+---
+
+## 7. Service Singleton Pattern
 
 All services use this pattern. When MODIFYING a service, preserve the singleton structure
 
@@ -342,4 +389,4 @@ class MyService:
 ---
 
 *This guide is auto-maintained and should be updated whenever service integration patterns change*  
-*Last updated: 2026-05-23*
+*Last updated: 2026-06-26*

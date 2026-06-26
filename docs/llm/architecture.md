@@ -468,13 +468,14 @@ Services MUST be initialized in this order:
 2. `DatabaseManager` / `Database` — second, services need DB
 3. `LLMManager` — third, LLMService needs it
 4. `RateLimiterManager.getInstance().loadConfig(...)` — fourth
-5. `BotApplication` init — which triggers:
+5. `ProxyHelper.setGlobalProxyConfig()` + `ProxyService.getInstance().initialize(queueService, configManager)` — fifth. Starts global proxy lifecycle immediately via `asyncio.run()`. Registers CRON_JOB/DO_EXIT handlers for health checks and graceful shutdown.
+6. `BotApplication` init — which triggers:
    - `HandlersManager.__init__()`:
      - `CacheService.getInstance()` + `cache.injectDatabase(db)`
      - `StorageService.getInstance()` + `storage.injectConfig(configManager)`
      - `QueueService.getInstance()`
      - All handler constructors (which get `CacheService`, `QueueService`, etc.)
-6. `HandlersManager.injectBot(bot)` — injects `TheBot` into all handlers
+7. `HandlersManager.injectBot(bot)` — injects `TheBot` into all handlers
 
 ### 2.3 What Breaks if You Modify These Files
 
@@ -614,4 +615,4 @@ When creating or modifying database migrations, ALWAYS:
 ---
 
 *This guide is auto-maintained and should be updated whenever significant architectural changes are made*
-*Last updated: 2026-05-09*
+*Last updated: 2026-06-26*

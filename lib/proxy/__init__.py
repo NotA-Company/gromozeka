@@ -10,7 +10,7 @@ This module lives in ``lib/`` and has **no** imports from ``internal/``.
 import logging
 from enum import StrEnum
 from threading import Lock
-from typing import Any, Dict, Optional, TypedDict
+from typing import Any, Dict, Optional, TypedDict, cast
 from urllib.parse import quote, urlparse, urlunparse
 
 try:
@@ -35,6 +35,17 @@ class ProxyType(StrEnum):
     """SOCKS5 proxy (requires httpx-socks[asyncio] package)."""
 
 
+class HealthCheckType(StrEnum):
+    """Health check mechanism for proxy lifecycle management."""
+
+    NONE = "none"
+    """No health monitoring."""
+    URL = "url"
+    """HTTP GET through the proxy to a configurable URL; 2xx = pass."""
+    COMMAND = "command"
+    """Run a shell command; exit 0 = pass."""
+
+
 class ProxyConfigDict(TypedDict, total=False):
     """Resolved proxy configuration for a single service.
 
@@ -57,6 +68,36 @@ class ProxyConfigDict(TypedDict, total=False):
     password: str
 
 
+class ProxyLifecycleConfigDict(TypedDict, total=False):
+    """Lifecycle configuration for a managed proxy process.
+
+    All fields are optional. Omitting the entire section disables lifecycle
+    management. When present, the proxy process is started at application
+    startup, health-checked periodically, and stopped at shutdown.
+
+    Attributes:
+        startCommand: Command and arguments to start the proxy process.
+            Executed via asyncio.create_subprocess_exec on startup.
+        stopCommand: Command and arguments to stop the proxy process.
+            Executed on shutdown and as part of restart.
+        restartCommand: Command and arguments to restart the proxy.
+            If present, used instead of stop+start on health-check failure.
+        healthCheckType: Type of health check — NONE, URL, or COMMAND.
+            Defaults to NONE (no monitoring).
+        healthCheckUrl: URL to probe when healthCheckType is URL.
+        healthCheckCommand: Command to run when healthCheckType is COMMAND.
+        healthCheckInterval: Minutes between health checks. Defaults to 5.
+    """
+
+    startCommand: list[str]
+    stopCommand: list[str]
+    restartCommand: list[str]
+    healthCheckType: HealthCheckType
+    healthCheckUrl: str
+    healthCheckCommand: list[str]
+    healthCheckInterval: int
+
+
 class ProxyKwargs(TypedDict, total=False):
     """Keyword arguments for httpx.AsyncClient proxy configuration.
 
@@ -71,6 +112,23 @@ class ProxyKwargs(TypedDict, total=False):
     transport: "AsyncProxyTransport"
     """SOCKS5 transport instance from httpx_socks.AsyncProxyTransport.
     Passed to httpx.AsyncClient(transport=...)."""
+
+
+def _kebabToCamelCase(key: str) -> str:
+    """Convert a kebab-case string to camelCase.
+
+    Used by :meth:`ProxyConfig.fromDict` to convert TOML kebab-case keys
+    (e.g. ``\"health-check-type\"``) to Python camelCase attribute names
+    (e.g. ``\"healthCheckType\"``).
+
+    Args:
+        key: A kebab-case string.
+
+    Returns:
+        The camelCase equivalent.
+    """
+    parts = key.split("-")
+    return parts[0] + "".join(p.capitalize() for p in parts[1:])
 
 
 class ProxyConfig:
@@ -94,9 +152,13 @@ class ProxyConfig:
         password: Optional proxy authentication password. None means
             "inherit from global config in getCombined()"; an empty string
             or non-None value overrides the global.
+        lifecycle: Optional lifecycle configuration for proxy process
+            management. When present, the proxy process is started at
+            application startup, health-checked periodically, and stopped
+            at shutdown.  Defaults to None (no lifecycle management).
     """
 
-    __slots__ = ("type", "address", "user", "password", "enabled")
+    __slots__ = ("type", "address", "user", "password", "enabled", "lifecycle")
 
     def __init__(
         self,
@@ -105,6 +167,7 @@ class ProxyConfig:
         user: Optional[str] = None,
         password: Optional[str] = None,
         enabled: bool = True,
+        lifecycle: Optional[ProxyLifecycleConfigDict] = None,
     ) -> None:
         """Initialise a proxy configuration.
 
@@ -124,6 +187,10 @@ class ProxyConfig:
                 string or non-None value overrides the global.
             enabled: Whether this proxy configuration is enabled.
                 Defaults to True.
+            lifecycle: Optional lifecycle configuration for proxy process
+                management. When present, commands are run at startup/
+                shutdown and health checks are performed periodically.
+                Defaults to None.
         """
         self.enabled = enabled
         """If this proxy config is enabled."""
@@ -141,6 +208,8 @@ class ProxyConfig:
         """Proxy user for BASIC auth, can be empty"""
         self.password = password
         """Proxy password for BASIC auth, can be empty"""
+        self.lifecycle = lifecycle
+        """Optional lifecycle configuration for proxy process management."""
 
     @classmethod
     def fromDict(cls, data: ProxyConfigDict, *, useProxy: Optional[bool] = None) -> "ProxyConfig":
@@ -148,9 +217,12 @@ class ProxyConfig:
 
         Args:
             data: Raw config dict with optional ``type``, ``address``,
-                ``user``, ``password``, ``enabled`` keys. Missing keys
-                default to None (or False for enabled). ProxyConfig.__init__
-                converts None address to empty string.
+                ``user``, ``password``, ``enabled``, ``lifecycle`` keys.
+                Missing keys default to None (or False for enabled).
+                The ``lifecycle`` sub-dict keys are expected in kebab-case
+                (e.g. ``\"health-check-type\"``) and are automatically
+                converted to camelCase. ProxyConfig.__init__ converts None
+                address to empty string.
             useProxy: Controls proxy behaviour for this config:
                 - ``False``: Force proxy to NONE type (disabled) and mark
                   config as ``enabled=True`` (so getCombined does not fall
@@ -175,12 +247,27 @@ class ProxyConfig:
             enabled = True
         # if useProxy is None:
         #   treat it as global config
+        rawLifecycle = data.get("lifecycle")
+        lifecycle: Optional[ProxyLifecycleConfigDict] = None
+        if rawLifecycle is not None and isinstance(rawLifecycle, dict):
+            converted: dict[str, Any] = {_kebabToCamelCase(k): v for k, v in rawLifecycle.items()}
+            if "healthCheckType" in converted and isinstance(converted["healthCheckType"], str):
+                try:
+                    converted["healthCheckType"] = HealthCheckType(converted["healthCheckType"])
+                except ValueError:
+                    logger.warning(
+                        "Invalid health-check-type %r; expected none, url, or command. Defaulting to NONE.",
+                        converted["healthCheckType"],
+                    )
+                    converted["healthCheckType"] = HealthCheckType.NONE
+            lifecycle = cast(ProxyLifecycleConfigDict, converted)
         return ProxyConfig(
             proxyType=proxyType,
             address=data.get("address"),
             user=data.get("user"),
             password=data.get("password"),
             enabled=enabled,
+            lifecycle=lifecycle,
         )
 
     def copy(self) -> "ProxyConfig":
@@ -188,7 +275,7 @@ class ProxyConfig:
 
         Returns:
             A new ProxyConfig with the same type, address, user, password,
-            and enabled values.
+            enabled, and lifecycle values.
         """
         return ProxyConfig(
             proxyType=self.type,
@@ -196,6 +283,7 @@ class ProxyConfig:
             user=self.user,
             password=self.password,
             enabled=self.enabled,
+            lifecycle=cast(ProxyLifecycleConfigDict, dict(self.lifecycle)) if self.lifecycle is not None else None,
         )
 
     def __repr__(self) -> str:
@@ -203,12 +291,14 @@ class ProxyConfig:
 
         Returns:
             A string like ``ProxyConfig(proxyType=..., address=..., ...,
-            enabled=...)`` suitable for debugging.
+            enabled=..., lifecycle=...)`` suitable for debugging.
         """
+        lifecycleSummary = "present" if self.lifecycle is not None else "None"
         return (
             f"{type(self).__name__}(proxyType={self.type!r}, "
             f"address={self.address!r}, user={self.user!r}, "
-            f"password={'REDACTED' if self.password else self.password!r}, enabled={self.enabled!r})"
+            f"password={'REDACTED' if self.password else self.password!r}, "
+            f"enabled={self.enabled!r}, lifecycle={lifecycleSummary})"
         )
 
     def __str__(self) -> str:
@@ -311,6 +401,7 @@ class ProxyConfig:
             address=self.address or globalProxyConfig.address,
             user=self.user if self.user is not None else globalProxyConfig.user,
             password=self.password if self.password is not None else globalProxyConfig.password,
+            lifecycle=self.lifecycle if self.lifecycle is not None else globalProxyConfig.lifecycle,
         )
 
     def getProxyURL(self, *, maskPassword: bool = False) -> Optional[str]:

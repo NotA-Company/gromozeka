@@ -5,7 +5,7 @@ from typing import Generator
 
 import pytest
 
-from lib.proxy import ProxyConfig, ProxyConfigDict, ProxyHelper, ProxyType
+from lib.proxy import HealthCheckType, ProxyConfig, ProxyConfigDict, ProxyHelper, ProxyType
 
 
 @pytest.fixture
@@ -755,6 +755,163 @@ class TestProxyConfigGetCombined:
         combined = serviceConfig.getCombined()
         assert combined.type == ProxyType.NONE
         assert combined.address == ""
+
+
+class TestProxyLifecycleConfig:
+    """Tests for proxy lifecycle configuration types and merge logic."""
+
+    def test_fromDictWithLifecycle(self) -> None:
+        """fromDict() converts kebab-case lifecycle keys to camelCase and casts healthCheckType to enum."""
+        data: ProxyConfigDict = {
+            "enabled": True,
+            "type": ProxyType.SOCKS5,
+            "address": "socks5://127.0.0.1:1080",
+            "lifecycle": {
+                "start-command": ["ssh", "-D", "1080"],
+                "stop-command": ["pkill", "-f", "ssh"],
+                "health-check-type": "url",
+                "health-check-url": "https://example.com",
+                "health-check-interval": 10,
+            },
+        }
+        config = ProxyConfig.fromDict(data)
+        assert config.lifecycle is not None
+        assert config.lifecycle["startCommand"] == ["ssh", "-D", "1080"]
+        assert config.lifecycle["stopCommand"] == ["pkill", "-f", "ssh"]
+        assert config.lifecycle["healthCheckType"] is HealthCheckType.URL
+        assert config.lifecycle["healthCheckUrl"] == "https://example.com"
+        assert config.lifecycle["healthCheckInterval"] == 10
+
+    def test_fromDictLifecycleNotDict(self) -> None:
+        """fromDict() silently ignores a non-dict lifecycle value."""
+        data: ProxyConfigDict = {
+            "enabled": True,
+            "type": ProxyType.HTTP,
+            "address": "http://proxy:8080",
+            "lifecycle": "not-a-dict",  # type: ignore[typeddict-item]
+        }
+        config = ProxyConfig.fromDict(data)  # type: ignore[arg-type]
+        assert config.lifecycle is None
+
+    def test_fromDictEmptyLifecycle(self) -> None:
+        """fromDict() preserves an empty lifecycle dict as {}."""
+        data: ProxyConfigDict = {
+            "enabled": True,
+            "type": ProxyType.HTTP,
+            "address": "http://proxy:8080",
+            "lifecycle": {},
+        }
+        config = ProxyConfig.fromDict(data)
+        assert config.lifecycle == {}
+
+    def test_fromDictInvalidHealthCheckType(self) -> None:
+        """fromDict() falls back to NONE for an unrecognized health-check-type."""
+        data: ProxyConfigDict = {
+            "enabled": True,
+            "type": ProxyType.HTTP,
+            "address": "http://proxy:8080",
+            "lifecycle": {"health-check-type": "invalid_value"},
+        }
+        config = ProxyConfig.fromDict(data)
+        assert config.lifecycle is not None
+        assert config.lifecycle["healthCheckType"] is HealthCheckType.NONE
+
+    def test_copyPreservesLifecycle(self) -> None:
+        """copy() creates a shallow copy of the lifecycle dict."""
+        original = ProxyConfig(
+            proxyType=ProxyType.SOCKS5,
+            address="socks5://127.0.0.1:1080",
+            lifecycle={
+                "startCommand": ["ssh"],
+                "healthCheckType": HealthCheckType.COMMAND,
+                "healthCheckCommand": ["nc", "-z", "127.0.0.1", "1080"],
+                "healthCheckInterval": 5,
+            },
+        )
+        copied = original.copy()
+        assert copied.lifecycle is not None
+        assert copied.lifecycle is not original.lifecycle  # different dict object
+        assert copied.lifecycle["startCommand"] == ["ssh"]
+        assert copied.lifecycle["healthCheckType"] is HealthCheckType.COMMAND
+
+    def test_getCombinedMasterKillSwitchNoLifecycle(self, resetProxyHelper: ProxyHelper) -> None:
+        """When global proxy is disabled, getCombined() returns NONE with no lifecycle."""
+        resetProxyHelper.setGlobalProxyConfig({"enabled": False, "type": ProxyType.HTTP, "address": "http://p:8080"})
+        service = ProxyConfig(proxyType=ProxyType.SOCKS5, address="socks5://127.0.0.1:1080", enabled=True)
+        combined = service.getCombined()
+        assert combined.type == ProxyType.NONE
+        assert combined.lifecycle is None
+
+    def test_getCombinedServiceDisabledInheritsGlobalLifecycle(self, resetProxyHelper: ProxyHelper) -> None:
+        """When service proxy is disabled, getCombined() inherits global lifecycle."""
+        resetProxyHelper.setGlobalProxyConfig(
+            {
+                "enabled": True,
+                "type": ProxyType.HTTP,
+                "address": "http://p:8080",
+                "lifecycle": {
+                    "start-command": ["global-start"],
+                    "health-check-type": "command",
+                    "health-check-command": ["nc"],
+                },
+            }
+        )
+        service = ProxyConfig(proxyType=ProxyType.SOCKS5, address="socks5://127.0.0.1:1080", enabled=False)
+        combined = service.getCombined()
+        assert combined.lifecycle is not None
+        assert combined.lifecycle["startCommand"] == ["global-start"]
+
+    def test_getCombinedServiceLifecycleOverridesGlobal(self, resetProxyHelper: ProxyHelper) -> None:
+        """When both enabled and service has lifecycle, service lifecycle wins."""
+        resetProxyHelper.setGlobalProxyConfig(
+            {
+                "enabled": True,
+                "type": ProxyType.HTTP,
+                "address": "http://p:8080",
+                "lifecycle": {"start-command": ["global-start"]},
+            }
+        )
+        service = ProxyConfig(
+            proxyType=ProxyType.SOCKS5,
+            address="socks5://127.0.0.1:1080",
+            enabled=True,
+            lifecycle={"startCommand": ["service-start"]},
+        )
+        combined = service.getCombined()
+        assert combined.lifecycle is not None
+        assert combined.lifecycle["startCommand"] == ["service-start"]
+
+    def test_getCombinedServiceNoLifecycleInheritsGlobal(self, resetProxyHelper: ProxyHelper) -> None:
+        """When both enabled and service has no lifecycle, global lifecycle is inherited."""
+        resetProxyHelper.setGlobalProxyConfig(
+            {
+                "enabled": True,
+                "type": ProxyType.HTTP,
+                "address": "http://p:8080",
+                "lifecycle": {"start-command": ["global-start"]},
+            }
+        )
+        service = ProxyConfig(
+            proxyType=ProxyType.SOCKS5,
+            address="socks5://127.0.0.1:1080",
+            enabled=True,
+            lifecycle=None,
+        )
+        combined = service.getCombined()
+        assert combined.lifecycle is not None
+        assert combined.lifecycle["startCommand"] == ["global-start"]
+
+    def test_reprWithLifecycle(self) -> None:
+        """__repr__() shows lifecycle=present when lifecycle is set."""
+        config = ProxyConfig(proxyType=ProxyType.HTTP, address="http://p:8080", lifecycle={})
+        r = repr(config)
+        assert "lifecycle=present" in r
+
+    def test_reprWithoutLifecycle(self) -> None:
+        """__repr__() shows lifecycle=None when lifecycle is not set."""
+        config = ProxyConfig(proxyType=ProxyType.HTTP, address="http://p:8080")
+        r = repr(config)
+        assert "lifecycle=None" in r
 
 
 if __name__ == "__main__":

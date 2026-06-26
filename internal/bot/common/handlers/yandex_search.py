@@ -48,13 +48,13 @@ from internal.database.models import (
     MessageCategory,
 )
 from internal.services.llm import LLMService
+from internal.services.proxy import ProxyService
 from lib.ai import (
     LLMFunctionParameter,
     LLMParameterType,
 )
 from lib.ai.models import ModelMessage, ModelResultStatus
 from lib.cache import JsonKeyGenerator, JsonValueConverter, StringKeyGenerator, StringValueConverter
-from lib.proxy import ProxyConfig
 from lib.yandex_search import SearchRequestKeyGenerator, YandexSearchClient
 
 from .base import BaseBotHandler
@@ -110,7 +110,7 @@ class YandexSearchHandler(BaseBotHandler):
             raise RuntimeError("YandexSearch integration is not enabled, can not load YandexSearchHandler")
 
         # Resolve proxy for Yandex Search and web-fetch
-        self._proxyConfig = ProxyConfig.fromServiceConfig(ysConfig)
+        self._proxyConfig = ProxyService.getInstance().resolveProxy(ysConfig, "yandex-search")
         maskedUrl = self._proxyConfig.getProxyURL(maskPassword=True)
         if maskedUrl:
             logger.info(f"Proxy enabled for Yandex Search: {maskedUrl}")

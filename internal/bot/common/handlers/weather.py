@@ -29,6 +29,7 @@ from internal.database.models import (
     MessageCategory,
 )
 from internal.services.llm import LLMService
+from internal.services.proxy import ProxyService
 from lib.ai import (
     LLMFunctionParameter,
     LLMParameterType,
@@ -36,7 +37,6 @@ from lib.ai import (
 from lib.cache import JsonKeyGenerator, JsonValueConverter, StringKeyGenerator
 from lib.geocode_maps import GeocodeMapsClient, SearchResult
 from lib.openweathermap import OpenWeatherMapClient, WeatherData
-from lib.proxy import ProxyConfig
 
 from .base import BaseBotHandler
 
@@ -75,7 +75,7 @@ class WeatherHandler(BaseBotHandler):
             raise RuntimeError("OpenWeatherMap integration is not enabled, can not load WeatherHandler")
 
         # Resolve proxy for OpenWeatherMap
-        weatherProxyConfig = ProxyConfig.fromServiceConfig(openWeatherMapConfig)
+        weatherProxyConfig = ProxyService.getInstance().resolveProxy(openWeatherMapConfig, "openweathermap")
         maskedProxyUrl = weatherProxyConfig.getProxyURL(maskPassword=True)
         if maskedProxyUrl:
             logger.info(f"Proxy enabled for OpenWeatherMap: {maskedProxyUrl}")
@@ -107,7 +107,7 @@ class WeatherHandler(BaseBotHandler):
         # logger.debug(f"geocoderConfig: {utils.jsonDumps(geocodeMapsConfig, indent=2)}")
         if geocodeMapsConfig.get("enabled"):
             # Resolve proxy for Geocode Maps
-            geocodeProxyConfig = ProxyConfig.fromServiceConfig(geocodeMapsConfig)
+            geocodeProxyConfig = ProxyService.getInstance().resolveProxy(geocodeMapsConfig, "geocode-maps")
             maskedProxyUrl = geocodeProxyConfig.getProxyURL(maskPassword=True)
             if maskedProxyUrl:
                 logger.info(f"Proxy enabled for Geocode Maps: {maskedProxyUrl}")
