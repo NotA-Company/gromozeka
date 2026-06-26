@@ -22,10 +22,12 @@ config (see `HandlersManager.__init__` in `manager.py`).
 
 import asyncio
 import datetime
+import json
 import logging
 from enum import StrEnum
 from typing import Any, Dict, List, Optional
 
+from internal.bot.models.enums import LLMMessageFormat
 import lib.utils as libUtils
 from internal.bot.common.embedding_utils import embedAndSaveMessage
 from internal.bot.common.models import UpdateObjectType
@@ -45,9 +47,10 @@ from internal.bot.models import (
 )
 from internal.config.manager import ConfigManager
 from internal.database import Database
-from internal.database.models import ChatMessageDict, MessageCategory
+from internal.database.models import ChatMessageDict, ChatUserDict, MessageCategory
 from internal.models import MessageId
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
+from lib.ai import LLMFunctionParameter, LLMParameterType
 
 from .base import BaseBotHandler
 
@@ -65,6 +68,10 @@ Matches the TOML default in `configs/00-defaults/search-history.toml`."""
 BACKFILL_DEFAULT_BATCH_SIZE: int = 50
 """Default per-tick batch size for the backfill CRON_JOB when
 ``[search-history.embeddings].reindex-batch-size`` is unset."""
+
+SEARCH_TOOL_MAX_MESSAGE_LENGTH: int = 512
+"""Max chars per message text in LLM tool search results. Longer texts
+are truncated with ``…`` to avoid blowing up the LLM context window."""
 
 BACKFILL_INTER_MESSAGE_DELAY_SECS: float = 0.1
 """Pause inserted between consecutive embedding API calls within a
@@ -183,6 +190,81 @@ class ChatSearchHandler(BaseBotHandler):
         # service's own built-in handler — registering an extra no-op
         # subscriber here would be redundant.
         self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.CRON_JOB, self._dtCronJob)
+
+        # Register LLM tool: semantic search over chat history.
+        self.llmService.registerTool(
+            name="search_messages",
+            description="Semantic search over chat history. Returns messages matching the query with relevance scores.",
+            parameters=[
+                LLMFunctionParameter(
+                    name="query", description="Search query text", type=LLMParameterType.STRING, required=True
+                ),
+                LLMFunctionParameter(
+                    name="limit",
+                    description="Maximum results to return (default 5, max 100)",
+                    type=LLMParameterType.NUMBER,
+                    required=False,
+                ),
+                LLMFunctionParameter(
+                    name="max_age_days",
+                    description="Only messages newer than this many days",
+                    type=LLMParameterType.NUMBER,
+                    required=False,
+                ),
+                LLMFunctionParameter(
+                    name="user_name",
+                    description="Filter by username (with or without @)",
+                    type=LLMParameterType.STRING,
+                    required=False,
+                ),
+                LLMFunctionParameter(
+                    name="thread_message_id",
+                    description="Restrict to thread rooted at this message ID",
+                    type=LLMParameterType.STRING,
+                    required=False,
+                ),
+            ],
+            handler=self._llmToolSearchMessages,
+        )
+
+        # Register LLM tool: list users with activity stats.
+        self.llmService.registerTool(
+            name="list_users",
+            description="List chat participants with activity statistics (message count and last active time).",
+            parameters=[
+                LLMFunctionParameter(
+                    name="limit",
+                    description="Maximum users to return (default 20)",
+                    type=LLMParameterType.NUMBER,
+                    required=False,
+                ),
+                LLMFunctionParameter(
+                    name="min_messages",
+                    description="Only users with at least this many messages",
+                    type=LLMParameterType.NUMBER,
+                    required=False,
+                ),
+            ],
+            handler=self._llmToolListUsers,
+        )
+
+        # Register LLM tool: get conversation thread for a message.
+        self.llmService.registerTool(
+            name="get_thread",
+            description=(
+                "Retrieve the full conversation thread for a specific message by its ID. "
+                "Returns root message, target message, and all replies in chronological order."
+            ),
+            parameters=[
+                LLMFunctionParameter(
+                    name="message_id",
+                    description="Message ID to get thread for",
+                    type=LLMParameterType.STRING,
+                    required=True,
+                ),
+            ],
+            handler=self._llmToolGetThread,
+        )
 
     ###
     # Backfill CRON_JOB
@@ -310,6 +392,376 @@ class ChatSearchHandler(BaseBotHandler):
                 chatId,
                 elapsedTime.total_seconds(),
             )
+
+    ###
+    # LLM tool: semantic search over chat history
+    ###
+
+    async def _llmToolSearchMessages(
+        self,
+        extraData: Optional[Dict[str, Any]],
+        query: str,
+        limit: int = 5,
+        max_age_days: Optional[int] = None,
+        user_name: Optional[str] = None,
+        thread_message_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """LLM tool: semantic search over chat history.
+
+        Called by the LLM when it needs to find messages matching a
+        natural-language query. Returns structured results as a dict
+        so the LLM service can serialise them back into the model
+        context. All errors are folded into the return dict — this
+        method never raises.
+
+        Args:
+            extraData: Context dict with ``ensuredMessage`` key.
+            query: Search query text.
+            limit: Max results (default 5).
+            max_age_days: Only messages newer than this many days.
+            user_name: Filter by username (with or without @).
+            thread_message_id: Restrict to thread rooted at this message ID.
+            **kwargs: Additional keyword arguments (ignored).
+
+        Returns:
+            ``{"done": True, "results": [...], "count": N}`` on success,
+            or ``{"done": False, "error": "..."}`` on failure.
+        """
+        # Gate 1: validate chat context.
+        if extraData is None or "ensuredMessage" not in extraData:
+            return {"done": False, "error": "Missing chat context"}
+        ensuredMessage = extraData["ensuredMessage"]
+        chatId = ensuredMessage.recipient.id
+
+        # Clamp limit to prevent abuse (Issue 4).
+        effectiveLimit = int(limit) if limit is not None else 5
+        limit = max(1, min(effectiveLimit, 100))
+
+        # Gate 2: check per-chat settings (wrapped in try/except — see Issue 1).
+        try:
+            chatSettings = await self.getChatSettings(chatId=chatId)
+        except Exception:
+            logger.exception("search_messages: failed to load chat settings for chat %d", chatId)
+            return {"done": False, "error": "Не удалось получить настройки чата"}
+        if not chatSettings[ChatSettingsKey.ALLOW_TOOLS_COMMANDS].toBool():
+            return {"done": False, "error": "Инструменты поиска отключены в этом чате"}
+        if not chatSettings[ChatSettingsKey.EMBEDDINGS_ENABLED].toBool():
+            return {"done": False, "error": "Семантический поиск не включён в этом чате"}
+
+        # Gate 2b: rate-limit before embedding generation.
+        try:
+            await self.llmService.rateLimit(chatId, chatSettings)
+        except Exception:
+            logger.exception("search_messages: rate-limit check failed")
+            return {"done": False, "error": "Превышен лимит запросов"}
+
+        # Gate 3: resolve optional user filter.
+        userId: Optional[int] = None
+        if user_name:
+            userId = await self._resolveUserId(chatId=chatId, username=user_name)
+
+        # Gate 4: resolve optional thread filter.
+        threadMessageId: Optional[MessageId] = None
+        if thread_message_id is not None:
+            try:
+                threadMessageId = MessageId(thread_message_id)
+            except (ValueError, TypeError):
+                pass  # invalid value — skip thread filter
+
+        # Gate 5: generate query embedding.
+        embeddingModelName = chatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr()
+        if not embeddingModelName:
+            return {"done": False, "error": "Модель эмбеддингов не настроена"}
+        model = self.llmService.getLLMManager().getModel(embeddingModelName)
+        if model is None or not model.supportsEmbedding:
+            return {"done": False, "error": "Модель эмбеддингов недоступна"}
+        try:
+            queryEmbedding = await model.generateEmbeddings(query)
+        except Exception as e:
+            logger.exception(f"search_messages: failed to generate query embedding: {e}")
+            return {"done": False, "error": "Не удалось создать поисковый вектор"}
+
+        # Gate 6: resolve per-chat message cap.
+        maxMessages: Optional[int] = None
+        if ChatSettingsKey.MAX_MESSAGES_FOR_SEMANTIC_SEARCH in chatSettings:
+            maxMessages = chatSettings[ChatSettingsKey.MAX_MESSAGES_FOR_SEMANTIC_SEARCH].toInt() or None
+
+        # Execute search.
+        try:
+            results = await self.db.chatSearch.searchChatMessages(
+                chatId=chatId,
+                queryEmbedding=queryEmbedding,
+                limit=limit,
+                userFilter=userId,
+                maxAgeDays=max_age_days,
+                rootMessageId=threadMessageId,
+                modelName=embeddingModelName,
+                maxMessages=maxMessages,
+            )
+        except Exception:
+            logger.exception("search_messages: search failed")
+            return {"done": False, "error": "Ошибка при поиске сообщений"}
+
+        # Format results with truncation (Issue 5).
+        formatted: List[Dict[str, Any]] = []
+        for r in results:
+            eMsg = await EnsuredMessage.fromDBChatMessage(r, self.db)
+            retMsg = json.loads(await eMsg.formatForLLM(self.db, format=LLMMessageFormat.JSON, useSingleMedia=False))
+            if 'text' in retMsg and len(retMsg['text']) > SEARCH_TOOL_MAX_MESSAGE_LENGTH:
+                messageText = messageText[: SEARCH_TOOL_MAX_MESSAGE_LENGTH - 1] + "…"
+            retMsg['score'] = r.get("score", 0.0),
+            
+        return {"done": True, "results": formatted, "count": len(formatted)}
+
+    ###
+    # LLM tool: list chat participants
+    ###
+
+    async def _llmToolListUsers(
+        self,
+        extraData: Optional[Dict[str, Any]],
+        limit: int = 20,
+        min_messages: Optional[int] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """LLM tool: list chat participants with activity statistics.
+
+        Thin wrapper over :meth:`_listUsersInternal`.
+
+        Args:
+            extraData: Context dict with ``ensuredMessage`` key.
+            limit: Maximum users to return (default 20).
+            min_messages: Only users with at least this many messages.
+            **kwargs: Additional keyword arguments (ignored).
+
+        Returns:
+            Dict with ``done`` (bool), ``users`` (list of user dicts),
+            ``count`` (int), and optionally ``error`` (str).
+        """
+        # Gate 1: validate chat context.
+        if extraData is None or "ensuredMessage" not in extraData:
+            return {"done": False, "error": "Missing chat context"}
+        chatId = extraData["ensuredMessage"].recipient.id
+
+        # Gate 2: check per-chat settings.
+        try:
+            chatSettings = await self.getChatSettings(chatId=chatId)
+        except Exception:
+            logger.exception("list_users: failed to load chat settings")
+            return {"done": False, "error": "Не удалось получить настройки чата"}
+        if not chatSettings[ChatSettingsKey.ALLOW_TOOLS_COMMANDS].toBool():
+            return {"done": False, "error": "Инструменты списка участников отключены в этом чате"}
+
+        # Clamp limit to prevent abuse.
+        effectiveLimit = int(limit) if limit is not None else 20
+        limit = max(1, min(effectiveLimit, 200))
+        # Coerce min_messages to int — LLM NUMBER can arrive as float.
+        minMessages: Optional[int] = int(min_messages) if min_messages is not None else None
+
+        # Execute.
+        try:
+            users = await self._listUsersInternal(chatId=chatId, limit=limit, minMessages=minMessages)
+        except Exception:
+            logger.exception("list_users: failed to list users")
+            return {"done": False, "error": "Не удалось получить список участников"}
+
+        formatted: List[Dict[str, Any]] = []
+        for u in users:
+            updatedAt = u.get("updated_at")
+            if isinstance(updatedAt, datetime.datetime):
+                lastActive = updatedAt.isoformat()
+            elif updatedAt is None:
+                lastActive = ""
+            else:
+                lastActive = str(updatedAt)
+            formatted.append(
+                {
+                    "user_id": u.get("user_id", 0),
+                    "username": u.get("username", ""),
+                    "full_name": u.get("full_name", ""),
+                    "messages_count": u.get("messages_count", 0),
+                    "last_active": lastActive,
+                }
+            )
+        return {"done": True, "users": formatted, "count": len(formatted)}
+
+    ###
+    # LLM tool: get conversation thread
+    ###
+
+    async def _formatMessageDict(self, msg: ChatMessageDict) -> Dict[str, Any]:
+        """Convert a ChatMessageDict row to a JSON-safe dict for LLM tool output.
+        TODO: Fix docstring
+        Args:
+            msg: A ``ChatMessageDict`` row from the repository.
+
+        Returns:
+            JSON-safe dict with ``message_id``, ``message_text``,
+            ``username``, ``full_name``, ``date``, ``reply_id``,
+            and ``thread_id``.
+        """
+        eMessage = await EnsuredMessage.fromDBChatMessage(msg, self.db)
+        return json.loads(await eMessage.formatForLLM(self.db, format=LLMMessageFormat.JSON, useSingleMedia=False))
+
+    async def _llmToolGetThread(
+        self,
+        extraData: Optional[Dict[str, Any]],
+        message_id: str,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """LLM tool: retrieve the full conversation thread for a message.
+
+        Calls :meth:`ChatMessagesRepository.getMessageThread`.
+
+        Args:
+            extraData: Context dict with ``ensuredMessage`` key.
+            message_id: Message ID to get the thread for.
+            **kwargs: Additional keyword arguments (ignored).
+
+        Returns:
+            Dict with ``done`` (bool), ``root_message`` (optional dict),
+            ``target_message`` (dict or None), ``thread_messages`` (list),
+            and optionally ``error`` (str).
+        """
+        # Gate 1: validate chat context.
+        if extraData is None or "ensuredMessage" not in extraData:
+            return {"done": False, "error": "Missing chat context"}
+        chatId = extraData["ensuredMessage"].recipient.id
+
+        # Gate 2: check per-chat settings.
+        try:
+            chatSettings = await self.getChatSettings(chatId=chatId)
+        except Exception:
+            logger.exception("get_thread: failed to load chat settings")
+            return {"done": False, "error": "Не удалось получить настройки чата"}
+        if not chatSettings[ChatSettingsKey.ALLOW_TOOLS_COMMANDS].toBool():
+            return {"done": False, "error": "Инструменты работы с тредами отключены в этом чате"}
+
+        # Gate 3: validate message ID.
+        try:
+            msgId = MessageId(message_id)
+        except (ValueError, TypeError):
+            return {"done": False, "error": "Неверный идентификатор сообщения"}
+
+        # Gate 4: fetch the thread.
+        try:
+            thread = await self.db.chatMessages.getMessageThread(chatId=chatId, messageId=msgId)
+        except Exception:
+            logger.exception("get_thread: failed to get thread for message %s", message_id)
+            return {"done": False, "error": "Не удалось получить тред"}
+        if thread is None:
+            return {"done": False, "error": "Сообщение не найдено в этом чате"}
+
+        rootMsg = thread.get("root_message")
+        return {
+            "done": True,
+            "root_message": await self._formatMessageDict(rootMsg) if rootMsg is not None else None,
+            "target_message": await self._formatMessageDict(thread["target_message"]),
+            "thread_messages": [await self._formatMessageDict(m) for m in thread.get("thread_messages", [])],
+        }
+
+    ###
+    # /users command
+    ###
+
+    @commandHandlerV2(
+        commands=("users",),
+        shortDescription="[limit=N] [min_messages=N] [last_active=N] - List chat users with activity stats",
+        helpMessage=(
+            " [limit=N] [min_messages=N] [last_active=N]: Список участников чата"
+            " с количеством сообщений и информацией об активности.\n"
+            "  `limit=N` — максимальное число пользователей (по умолчанию 50);\n"
+            "  `min_messages=N` — показывать только пользователей с N+ сообщениями;\n"
+            "  `last_active=N` — показывать только активных за последние N дней.\n"
+            "Примеры: `/users`, `/users limit=20`, `/users min_messages=100 last_active=7`."
+        ),
+        visibility={CommandPermission.BOT_OWNER},
+        availableFor={CommandPermission.DEFAULT},
+        helpOrder=CommandHandlerOrder.NORMAL,
+        category=CommandCategory.TOOLS,
+    )
+    async def users_command(
+        self,
+        ensuredMessage: EnsuredMessage,
+        command: str,
+        args: str,
+        updateObj: UpdateObjectType,
+        typingManager: Optional[TypingManager],
+    ) -> None:
+        """Handle the ``/users`` slash command.
+
+        Lists chat members with their message counts and activity
+        information. Supports filtering by minimum message count,
+        recency of activity, and result limit via the argument syntax
+        ``key=value``.
+
+        Args:
+            ensuredMessage: The originating user message.
+            command: The command name (``"users"``).
+            args: Raw argument string after the command.
+            updateObj: Raw update object from the platform (unused).
+            typingManager: Optional typing indicator manager.
+        """
+        # Parse optional key=value arguments.
+        limit: int = 50
+        minMessages: Optional[int] = None
+        lastActiveDays: Optional[int] = None
+        for token in args.split():
+            token = token.strip()
+            if token.startswith("limit="):
+                try:
+                    limit = int(token[len("limit=") :])
+                except (ValueError, TypeError):
+                    pass  # non-numeric — use default
+            elif token.startswith("min_messages="):
+                try:
+                    minMessages = int(token[len("min_messages=") :])
+                except (ValueError, TypeError):
+                    pass
+            elif token.startswith("last_active="):
+                try:
+                    lastActiveDays = int(token[len("last_active=") :])
+                except (ValueError, TypeError):
+                    pass
+
+        limit = max(1, min(limit, 200))  # reasonable cap
+
+        chatUsers = await self._listUsersInternal(
+            chatId=ensuredMessage.recipient.id,
+            limit=limit,
+            minMessages=minMessages,
+            lastActiveDays=lastActiveDays,
+        )
+
+        if not chatUsers:
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="Участники не найдены.",
+                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                typingManager=typingManager,
+            )
+            return
+
+        # Build the formatted user list.
+        chatName = str(ensuredMessage.recipient.id)
+        lines: List[str] = []
+        for idx, u in enumerate(chatUsers, start=1):
+            username = u.get("username") or ""
+            fullName = u.get("full_name") or ""
+            msgCount = u.get("messages_count") or 0
+            updatedAt = u.get("updated_at")
+            relativeTime = self._relativeTime(updatedAt) if isinstance(updatedAt, datetime.datetime) else "?"
+            displayName = f" @{username}" if username else ""
+            lines.append(f"{idx}. {displayName} — {fullName} — {msgCount:,} сообщ. (посл. активность {relativeTime})")
+
+        replyText = f"👥 Участники в «{chatName}» ({len(chatUsers)}):\n\n" + "\n".join(lines)
+        await self.sendMessage(
+            ensuredMessage,
+            messageText=replyText,
+            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+            typingManager=typingManager,
+        )
 
     ###
     # /search command
@@ -814,6 +1266,65 @@ class ChatSearchHandler(BaseBotHandler):
         if userId is None:
             return None
         return int(userId)
+
+    async def _listUsersInternal(
+        self,
+        chatId: int,
+        limit: Optional[int] = None,
+        minMessages: Optional[int] = None,
+        lastActiveDays: Optional[int] = None,
+    ) -> List[ChatUserDict]:
+        """Return raw user list for the given chat.
+
+        Shared between ``/users`` (formats as Markdown) and ``list_users``
+        LLM tool (returns as JSON dict).
+
+        Args:
+            chatId: Chat to list users for.
+            limit: Max users to return (``None`` = no cap).
+            minMessages: Only users with at least this many messages.
+            lastActiveDays: Only users active within this many days.
+
+        Returns:
+            List of ``ChatUserDict`` ordered by ``updated_at DESC``.
+            Empty list on error.
+        """
+        return await self.db.chatUsers.getChatUsers(
+            chatId=chatId,
+            limit=limit,
+            minMessages=minMessages,
+            lastActiveDays=lastActiveDays,
+        )
+
+    @staticmethod
+    def _relativeTime(dt: datetime.datetime) -> str:
+        """Format a datetime as a human-readable relative time string.
+
+        Args:
+            dt: The datetime to format (must be timezone-aware or naive UTC).
+
+        Returns:
+            Short relative string such as ``"<1m ago"``, ``"5m ago"``,
+            ``"1h ago"``, ``"yesterday"``, ``"5d ago"``, ``">1w ago"``.
+        """
+        diff = libUtils.now() - dt
+        totalSeconds = int(diff.total_seconds())
+        if totalSeconds < 0:
+            return "now"
+        if totalSeconds < 60:
+            return "<1m ago"
+        minutes = totalSeconds // 60
+        if minutes < 60:
+            return f"{minutes}m ago"
+        hours = minutes // 60
+        if hours < 24:
+            return f"{hours}h ago"
+        days = hours // 24
+        if days == 1:
+            return "yesterday"
+        if days <= 7:
+            return f"{days}d ago"
+        return ">1w ago"
 
     @staticmethod
     def _formatRawResults(results: List[ChatMessageDict]) -> str:

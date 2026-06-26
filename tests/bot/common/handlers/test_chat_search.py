@@ -41,7 +41,7 @@ from internal.bot.models import (
     MessageRecipient,
     MessageSender,
 )
-from internal.database.models import MessageCategory
+from internal.database.models import ChatMessageDict, MessageCategory
 from internal.models import MessageId
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
 
@@ -56,6 +56,8 @@ HandlerMocks = Dict[str, Any]
 def _makeChatSettings(
     *,
     embeddingModel: str = "",
+    allowTools: bool = True,
+    embeddingsEnabled: bool = True,
 ) -> ChatSettingsDict:
     """Build a chat-settings dict pre-populated with every key the handler reads.
 
@@ -65,6 +67,8 @@ def _makeChatSettings(
             and skips the semantic-search path). Tests that exercise
             semantic search override this with a non-empty model name
             and stub the LLM manager to return a model mock for it.
+        allowTools: Value for ``ALLOW_TOOLS_COMMANDS`` (default ``True``).
+        embeddingsEnabled: Value for ``EMBEDDINGS_ENABLED`` (default ``True``).
 
     Returns:
         Mapping of every relevant :class:`ChatSettingsKey` to a
@@ -74,6 +78,8 @@ def _makeChatSettings(
         ChatSettingsKey.REGENERATE_EMBEDDINGS: ChatSettingsValue("true"),
         ChatSettingsKey.EMBEDDING_MODEL: ChatSettingsValue(embeddingModel),
         ChatSettingsKey.LLM_RATELIMITER: ChatSettingsValue(""),
+        ChatSettingsKey.ALLOW_TOOLS_COMMANDS: ChatSettingsValue("true" if allowTools else "false"),
+        ChatSettingsKey.EMBEDDINGS_ENABLED: ChatSettingsValue("true" if embeddingsEnabled else "false"),
     }
 
 
@@ -1316,3 +1322,814 @@ class TestDtCronJob:
         )
         secondGetArgs = mocks["db"].chatEmbeddings.getMessagesWithoutEmbeddings.call_args.args
         assert secondGetArgs[0] == 200
+
+
+# ---------------------------------------------------------------------------
+# 4. LLM tool: search_messages tests
+# ---------------------------------------------------------------------------
+
+
+class TestSearchMessagesLLMTool:
+    """Tests for :meth:`ChatSearchHandler._llmToolSearchMessages`."""
+
+    @pytest.fixture
+    def handler(self) -> ChatSearchHandler:
+        """Create a handler with mocked dependencies for LLM tool tests."""
+        h = ChatSearchHandler(
+            configManager=_makeConfigManager(),
+            database=_makeDatabase(),
+            botProvider=BotProvider.TELEGRAM,
+        )
+        h.db = Mock()
+        h.llmService = Mock()
+        cast(Any, h).llmService.rateLimit = AsyncMock(return_value=None)
+        h.sendMessage = AsyncMock()
+        h.getChatSettings = AsyncMock()
+        return h
+
+    @pytest.fixture
+    def ensMessage(self) -> EnsuredMessage:
+        """Create a test ensured message in a group chat."""
+        return _makeEnsuredMessage(chatId=-1001234567890)
+
+    @pytest.fixture
+    def extraData(self, ensMessage: EnsuredMessage) -> Dict[str, Any]:
+        """Create extraData dict with the ensured message."""
+        return {"ensuredMessage": ensMessage}
+
+    @pytest.fixture
+    def chatSettings(self) -> ChatSettingsDict:
+        """Chat settings with tools, embeddings, and model configured."""
+        return _makeChatSettings(embeddingModel="text-embedding-3-small")
+
+    @pytest.fixture
+    def mockModel(self) -> Mock:
+        """A mock embedding model that supports embeddings."""
+        m = Mock()
+        m.supportsEmbedding = True
+        m.generateEmbeddings = AsyncMock(return_value=[0.1, 0.2, 0.3])
+        return m
+
+    def _stubModel(self, handler: ChatSearchHandler, model: Mock) -> Mock:
+        """Wire a mock embedding model into the handler's LLM service.
+
+        Args:
+            handler: Handler under test.
+            model: Mock model instance.
+
+        Returns:
+            The mock manager.
+        """
+        mockManager = Mock()
+        mockManager.getModel = Mock(return_value=model)
+        cast(Any, handler).llmService.getLLMManager = Mock(return_value=mockManager)
+        return mockManager
+
+    async def test_search_messages_missing_extraData(self, handler: ChatSearchHandler) -> None:
+        """extraData is None → returns error dict."""
+        result = await handler._llmToolSearchMessages(extraData=None, query="test")
+        assert result["done"] is False
+        assert "Missing chat context" in result.get("error", "")
+
+    async def test_search_messages_missing_ensuredMessage(self, handler: ChatSearchHandler) -> None:
+        """extraData has no ensuredMessage → returns error dict."""
+        result = await handler._llmToolSearchMessages(extraData={}, query="test")
+        assert result["done"] is False
+        assert "Missing chat context" in result.get("error", "")
+
+    async def test_search_messages_tools_disabled(self, handler: ChatSearchHandler, extraData: Dict[str, Any]) -> None:
+        """ALLOW_TOOLS_COMMANDS=False → returns error dict."""
+        cs = _makeChatSettings(allowTools=False, embeddingModel="text-embedding-3-small")
+        handler.getChatSettings = AsyncMock(return_value=cs)
+        result = await handler._llmToolSearchMessages(extraData=extraData, query="test")
+        assert result["done"] is False
+        assert "отключены" in result.get("error", "").lower()
+
+    async def test_search_messages_embeddings_disabled(
+        self, handler: ChatSearchHandler, extraData: Dict[str, Any]
+    ) -> None:
+        """EMBEDDINGS_ENABLED=False → returns error dict."""
+        cs = _makeChatSettings(embeddingsEnabled=False, embeddingModel="text-embedding-3-small")
+        handler.getChatSettings = AsyncMock(return_value=cs)
+        result = await handler._llmToolSearchMessages(extraData=extraData, query="test")
+        assert result["done"] is False
+        assert "семантический поиск" in result.get("error", "").lower()
+
+    async def test_search_messages_no_model(
+        self, handler: ChatSearchHandler, extraData: Dict[str, Any], chatSettings: ChatSettingsDict
+    ) -> None:
+        """EMBEDDING_MODEL is empty → returns error dict."""
+        cs = _makeChatSettings(embeddingModel="")
+        handler.getChatSettings = AsyncMock(return_value=cs)
+        result = await handler._llmToolSearchMessages(extraData=extraData, query="test")
+        assert result["done"] is False
+        assert "не настроена" in result.get("error", "").lower()
+
+    async def test_search_messages_success(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+        chatSettings: ChatSettingsDict,
+        mockModel: Mock,
+    ) -> None:
+        """Full happy path: returns results dict with done=True."""
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        self._stubModel(handler, mockModel)
+        rows = [
+            {
+                "chat_id": -1001234567890,
+                "message_id": MessageId(1),
+                "message_text": "hello world",
+                "date": datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc),
+                "user_id": 7,
+                "username": "alice",
+                "full_name": "Alice",
+                "message_category": MessageCategory.USER,
+                "score": 0.95,
+            }
+        ]
+        cast(Any, handler).db.chatSearch = Mock()
+        cast(Any, handler).db.chatSearch.searchChatMessages = AsyncMock(return_value=rows)
+
+        result = await handler._llmToolSearchMessages(extraData=extraData, query="hello")
+
+        assert result["done"] is True
+        assert result["count"] == 1
+        assert result["results"][0]["message_text"] == "hello world"
+        mockModel.generateEmbeddings.assert_awaited_once()
+
+    async def test_search_messages_with_user_filter(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+        chatSettings: ChatSettingsDict,
+        mockModel: Mock,
+    ) -> None:
+        """user_name resolves to userId and is passed to searchChatMessages."""
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        self._stubModel(handler, mockModel)
+        cast(Any, handler).db.chatUsers = Mock()
+        cast(Any, handler).db.chatUsers.getChatUserByUsername = AsyncMock(return_value={"user_id": 42})
+        cast(Any, handler).db.chatSearch = Mock()
+        cast(Any, handler).db.chatSearch.searchChatMessages = AsyncMock(return_value=[])
+
+        await handler._llmToolSearchMessages(extraData=extraData, query="test", user_name="@bob")
+
+        callKwargs = cast(Any, handler).db.chatSearch.searchChatMessages.call_args.kwargs
+        assert callKwargs["userFilter"] == 42
+
+    async def test_search_messages_embedding_failure(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+        chatSettings: ChatSettingsDict,
+    ) -> None:
+        """generateEmbeddings raises → returns error dict."""
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        badModel = Mock()
+        badModel.supportsEmbedding = True
+        badModel.generateEmbeddings = AsyncMock(side_effect=RuntimeError("API down"))
+        self._stubModel(handler, badModel)
+
+        result = await handler._llmToolSearchMessages(extraData=extraData, query="hello")
+
+        assert result["done"] is False
+        assert "вектор" in result.get("error", "").lower()
+
+
+# ---------------------------------------------------------------------------
+# 5. LLM tool: list_users tests
+# ---------------------------------------------------------------------------
+
+
+class TestListUsersLLMTool:
+    """Tests for :meth:`ChatSearchHandler._llmToolListUsers`."""
+
+    @pytest.fixture
+    def handler(self) -> ChatSearchHandler:
+        """Create a handler with mocked dependencies."""
+        h = ChatSearchHandler(
+            configManager=_makeConfigManager(),
+            database=_makeDatabase(),
+            botProvider=BotProvider.TELEGRAM,
+        )
+        h.db = Mock()
+        h.llmService = Mock()
+        h.sendMessage = AsyncMock()
+        h.getChatSettings = AsyncMock()
+        cast(Any, h).db.chatUsers = Mock()
+        return h
+
+    @pytest.fixture
+    def ensMessage(self) -> EnsuredMessage:
+        """Create a test ensured message in a group chat."""
+        return _makeEnsuredMessage(chatId=-1001234567890)
+
+    @pytest.fixture
+    def extraData(self, ensMessage: EnsuredMessage) -> Dict[str, Any]:
+        """Create extraData dict with the ensured message."""
+        return {"ensuredMessage": ensMessage}
+
+    @pytest.fixture
+    def chatSettings(self) -> ChatSettingsDict:
+        """Chat settings with tools enabled."""
+        return _makeChatSettings()
+
+    @pytest.fixture
+    def sampleUsers(self) -> List[Dict[str, Any]]:
+        """Sample user dicts matching ChatUserDict shape."""
+        now = datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc)
+        return [
+            {
+                "chat_id": -1001234567890,
+                "user_id": 1,
+                "username": "alice",
+                "full_name": "Alice",
+                "timezone": None,
+                "messages_count": 150,
+                "metadata": "",
+                "created_at": now,
+                "updated_at": now,
+            },
+            {
+                "chat_id": -1001234567890,
+                "user_id": 2,
+                "username": "bob",
+                "full_name": "Bob",
+                "timezone": None,
+                "messages_count": 75,
+                "metadata": "",
+                "created_at": now,
+                "updated_at": now,
+            },
+        ]
+
+    async def test_list_users_missing_extraData(self, handler: ChatSearchHandler) -> None:
+        """extraData is None → returns error dict."""
+        result = await handler._llmToolListUsers(extraData=None)
+        assert result["done"] is False
+        assert "Missing chat context" in result.get("error", "")
+
+    async def test_list_users_tools_disabled(self, handler: ChatSearchHandler, extraData: Dict[str, Any]) -> None:
+        """ALLOW_TOOLS_COMMANDS=False → returns error dict."""
+        cs = _makeChatSettings(allowTools=False)
+        handler.getChatSettings = AsyncMock(return_value=cs)
+        result = await handler._llmToolListUsers(extraData=extraData)
+        assert result["done"] is False
+        assert "отключены" in result.get("error", "").lower()
+
+    async def test_list_users_success(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+        chatSettings: ChatSettingsDict,
+        sampleUsers: List[Dict[str, Any]],
+    ) -> None:
+        """Returns users list with proper format."""
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        cast(Any, handler).db.chatUsers.getChatUsers = AsyncMock(return_value=sampleUsers)
+
+        result = await handler._llmToolListUsers(extraData=extraData)
+
+        assert result["done"] is True
+        assert result["count"] == 2
+        assert result["users"][0]["user_id"] == 1
+        assert result["users"][0]["username"] == "alice"
+        assert result["users"][0]["messages_count"] == 150
+        assert "last_active" in result["users"][0]
+        assert result["users"][1]["user_id"] == 2
+
+    async def test_list_users_empty(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+        chatSettings: ChatSettingsDict,
+    ) -> None:
+        """Empty user list → done=True, users=[], count=0."""
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        cast(Any, handler).db.chatUsers.getChatUsers = AsyncMock(return_value=[])
+
+        result = await handler._llmToolListUsers(extraData=extraData)
+
+        assert result["done"] is True
+        assert result["users"] == []
+        assert result["count"] == 0
+
+    async def test_list_users_handles_getChatSettings_error(
+        self, handler: ChatSearchHandler, extraData: Dict[str, Any]
+    ) -> None:
+        """getChatSettings raises → returns error dict."""
+        handler.getChatSettings = AsyncMock(side_effect=RuntimeError("DB down"))
+        result = await handler._llmToolListUsers(extraData=extraData)
+        assert result["done"] is False
+        assert "настройки" in result.get("error", "")
+
+    async def test_list_users_forwards_params(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+        chatSettings: ChatSettingsDict,
+    ) -> None:
+        """limit and min_messages are forwarded to getChatUsers."""
+        mockUsers = [
+            {
+                "user_id": 1,
+                "username": "@test",
+                "full_name": "Test",
+                "messages_count": 50,
+                "updated_at": datetime.datetime(2026, 6, 20, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            }
+        ]
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        cast(Any, handler).db.chatUsers.getChatUsers = AsyncMock(return_value=mockUsers)
+
+        result = await handler._llmToolListUsers(extraData=extraData, limit=7, min_messages=3)
+
+        assert result["done"] is True
+        calledKwargs = cast(Any, handler).db.chatUsers.getChatUsers.call_args.kwargs
+        assert calledKwargs["limit"] == 7
+        assert calledKwargs["minMessages"] == 3
+
+    async def test_list_users_updated_at_none(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+        chatSettings: ChatSettingsDict,
+    ) -> None:
+        """updated_at is None → last_active is '' not 'None'."""
+        mockUsers = [
+            {
+                "user_id": 1,
+                "username": "alice",
+                "full_name": "Alice",
+                "messages_count": 10,
+                "updated_at": None,
+            }
+        ]
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        cast(Any, handler).db.chatUsers.getChatUsers = AsyncMock(return_value=mockUsers)
+
+        result = await handler._llmToolListUsers(extraData=extraData)
+
+        assert result["done"] is True
+        assert result["users"][0]["last_active"] == ""
+
+    async def test_list_users_repo_raises(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+        chatSettings: ChatSettingsDict,
+    ) -> None:
+        """Repository exception → error dict."""
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        cast(Any, handler).db.chatUsers.getChatUsers = AsyncMock(side_effect=RuntimeError("DB down"))
+
+        result = await handler._llmToolListUsers(extraData=extraData)
+
+        assert result["done"] is False
+        assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# 6. LLM tool: get_thread tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetThreadLLMTool:
+    """Tests for :meth:`ChatSearchHandler._llmToolGetThread`."""
+
+    @pytest.fixture
+    def handler(self) -> ChatSearchHandler:
+        """Create a handler with mocked dependencies."""
+        h = ChatSearchHandler(
+            configManager=_makeConfigManager(),
+            database=_makeDatabase(),
+            botProvider=BotProvider.TELEGRAM,
+        )
+        h.db = Mock()
+        h.llmService = Mock()
+        cast(Any, h).llmService.rateLimit = AsyncMock(return_value=None)
+        h.sendMessage = AsyncMock()
+        h.getChatSettings = AsyncMock()
+        cast(Any, h).db.chatMessages = Mock()
+        # Default: getMessageThread returns None (message not found).
+        # Individual tests override for success cases.
+        cast(Any, h).db.chatMessages.getMessageThread = AsyncMock(return_value=None)
+        return h
+
+    @pytest.fixture
+    def ensMessage(self) -> EnsuredMessage:
+        """Create a test ensured message in a group chat."""
+        return _makeEnsuredMessage(chatId=-1001234567890)
+
+    @pytest.fixture
+    def extraData(self, ensMessage: EnsuredMessage) -> Dict[str, Any]:
+        """Create extraData dict with the ensured message."""
+        return {"ensuredMessage": ensMessage}
+
+    @pytest.fixture
+    def chatSettings(self) -> ChatSettingsDict:
+        """Chat settings with tools enabled."""
+        return _makeChatSettings()
+
+    @pytest.fixture
+    def sampleMessage(self) -> ChatMessageDict:
+        """A sample chat message dict for building thread fixtures."""
+        return {
+            "chat_id": -1001234567890,
+            "message_id": MessageId(10),
+            "date": datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            "user_id": 1,
+            "reply_id": None,
+            "thread_id": 0,
+            "root_message_id": None,
+            "message_text": "Root message",
+            "message_type": "text",
+            "message_category": MessageCategory.USER,
+            "quote_text": None,
+            "media_id": None,
+            "created_at": datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            "metadata": "",
+            "markup": "",
+            "media_group_id": None,
+            "username": "alice",
+            "full_name": "Alice",
+        }
+
+    async def test_get_thread_missing_extraData(self, handler: ChatSearchHandler) -> None:
+        """extraData is None → returns error dict."""
+        result = await handler._llmToolGetThread(extraData=None, message_id="10")
+        assert result["done"] is False
+        assert "Missing chat context" in result.get("error", "")
+
+    async def test_get_thread_tools_disabled(self, handler: ChatSearchHandler, extraData: Dict[str, Any]) -> None:
+        """ALLOW_TOOLS_COMMANDS=False → returns error dict."""
+        cs = _makeChatSettings(allowTools=False)
+        handler.getChatSettings = AsyncMock(return_value=cs)
+        result = await handler._llmToolGetThread(extraData=extraData, message_id="10")
+        assert result["done"] is False
+        assert "отключены" in result.get("error", "").lower()
+
+    async def test_get_thread_invalid_message_id(
+        self, handler: ChatSearchHandler, extraData: Dict[str, Any], chatSettings: ChatSettingsDict
+    ) -> None:
+        """Invalid message_id value (None) → returns error dict."""
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        # Pass None — MessageId(None) raises ValueError/TypeError and is
+        # caught by Gate 3's except block, returning "неверный".
+        result = await cast(Any, handler)._llmToolGetThread(extraData=extraData, message_id=None)
+        assert result["done"] is False
+        assert "неверный" in result.get("error", "").lower()
+
+    async def test_get_thread_not_found(
+        self, handler: ChatSearchHandler, extraData: Dict[str, Any], chatSettings: ChatSettingsDict
+    ) -> None:
+        """getMessageThread returns None → returns error dict."""
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        cast(Any, handler).db.chatMessages.getMessageThread = AsyncMock(return_value=None)
+        result = await handler._llmToolGetThread(extraData=extraData, message_id="9999")
+        assert result["done"] is False
+        assert "не найдено" in result.get("error", "").lower()
+
+    async def test_get_thread_success(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+        chatSettings: ChatSettingsDict,
+        sampleMessage: ChatMessageDict,
+    ) -> None:
+        """Returns thread with root/target/messages properly formatted."""
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        rootMsg = dict(sampleMessage)
+        rootMsg["message_id"] = MessageId(5)
+        rootMsg["message_text"] = "Thread root"
+        targetMsg = dict(sampleMessage)
+        targetMsg["message_id"] = MessageId(10)
+        targetMsg["message_text"] = "Reply message"
+        targetMsg["root_message_id"] = MessageId(5)
+        targetMsg["reply_id"] = MessageId(5)
+        replyMsg = dict(sampleMessage)
+        replyMsg["message_id"] = MessageId(11)
+        replyMsg["message_text"] = "Another reply"
+        replyMsg["root_message_id"] = MessageId(5)
+        replyMsg["reply_id"] = MessageId(10)
+
+        threadResult = {
+            "root_message": rootMsg,
+            "target_message": targetMsg,
+            "thread_messages": [rootMsg, targetMsg, replyMsg],
+        }
+        cast(Any, handler).db.chatMessages.getMessageThread = AsyncMock(return_value=threadResult)
+
+        result = await handler._llmToolGetThread(extraData=extraData, message_id="10")
+
+        assert result["done"] is True
+        assert result["root_message"] is not None
+        assert result["root_message"]["message_id"] == "5"
+        assert result["root_message"]["message_text"] == "Thread root"
+        assert result["target_message"]["message_id"] == "10"
+        assert result["target_message"]["message_text"] == "Reply message"
+        assert len(result["thread_messages"]) == 3
+        assert result["thread_messages"][1]["message_id"] == "10"
+
+    async def test_get_thread_root_message_none(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+        chatSettings: ChatSettingsDict,
+        sampleMessage: ChatMessageDict,
+    ) -> None:
+        """Target is a root message (no root_message_id) → root_message is None."""
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        targetMsg = dict(sampleMessage)
+        targetMsg["message_id"] = MessageId(10)
+        targetMsg["message_text"] = "I am the root"
+
+        threadResult = {
+            "root_message": None,
+            "target_message": targetMsg,
+            "thread_messages": [targetMsg],
+        }
+        cast(Any, handler).db.chatMessages.getMessageThread = AsyncMock(return_value=threadResult)
+
+        result = await handler._llmToolGetThread(extraData=extraData, message_id="10")
+
+        assert result["done"] is True
+        assert result["root_message"] is None
+        assert result["target_message"]["message_id"] == "10"
+        assert len(result["thread_messages"]) == 1
+
+    async def test_get_thread_getMessageThread_raises(
+        self, handler: ChatSearchHandler, extraData: Dict[str, Any], chatSettings: ChatSettingsDict
+    ) -> None:
+        """getMessageThread raises → returns error dict."""
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        cast(Any, handler).db.chatMessages.getMessageThread = AsyncMock(side_effect=RuntimeError("DB error"))
+        result = await handler._llmToolGetThread(extraData=extraData, message_id="10")
+        assert result["done"] is False
+        assert "тред" in result.get("error", "").lower()
+
+    async def test_get_thread_getChatSettings_raises(
+        self, handler: ChatSearchHandler, extraData: Dict[str, Any]
+    ) -> None:
+        """getChatSettings raises → returns error dict."""
+        handler.getChatSettings = AsyncMock(side_effect=RuntimeError("Settings error"))
+        result = await handler._llmToolGetThread(extraData=extraData, message_id="10")
+        assert result["done"] is False
+        assert "настройки" in result.get("error", "")
+
+    async def test_get_thread_handles_chat_context_error(self, handler: ChatSearchHandler) -> None:
+        """extraData has no ensuredMessage → returns error dict."""
+        result = await handler._llmToolGetThread(extraData={}, message_id="10")
+        assert result["done"] is False
+        assert "Missing chat context" in result.get("error", "")
+
+
+# ---------------------------------------------------------------------------
+# 7. User command tests
+# ---------------------------------------------------------------------------
+
+
+class TestUsersCommand:
+    """Tests for :meth:`ChatSearchHandler.users_command`."""
+
+    @pytest.fixture
+    def handler(self) -> ChatSearchHandler:
+        """Create a handler with mocked dependencies."""
+        h = ChatSearchHandler(
+            configManager=_makeConfigManager(),
+            database=_makeDatabase(),
+            botProvider=BotProvider.TELEGRAM,
+        )
+        h.db = Mock()
+        h.llmService = Mock()
+        h.sendMessage = AsyncMock()
+        h.getChatSettings = AsyncMock()
+        cast(Any, h).db.chatUsers = Mock()
+        return h
+
+    @pytest.fixture
+    def ensMessage(self) -> EnsuredMessage:
+        """Create a test ensured message in a group chat."""
+        return _makeEnsuredMessage(chatId=-1001234567890)
+
+    @pytest.fixture
+    def sampleUsers(self) -> List[Dict[str, Any]]:
+        """Sample user dicts matching ChatUserDict shape."""
+        now = datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc)
+        return [
+            {
+                "chat_id": -1001234567890,
+                "user_id": 1,
+                "username": "alice",
+                "full_name": "Alice",
+                "timezone": None,
+                "messages_count": 150,
+                "metadata": "",
+                "created_at": now,
+                "updated_at": now,
+            },
+            {
+                "chat_id": -1001234567890,
+                "user_id": 2,
+                "username": "bob",
+                "full_name": "Bob",
+                "timezone": None,
+                "messages_count": 75,
+                "metadata": "",
+                "created_at": now,
+                "updated_at": now,
+            },
+        ]
+
+    def _callUsers(self, handler: ChatSearchHandler, ensuredMessage: EnsuredMessage, args: str = "") -> Any:
+        """Invoke ``users_command`` past pyright's unbound-signature view.
+
+        Args:
+            handler: Handler under test.
+            ensuredMessage: Originating user message.
+            args: Raw arguments string after ``/users``.
+
+        Returns:
+            Whatever the underlying coroutine returns (always ``None``).
+        """
+        return cast(Any, handler).users_command(
+            ensuredMessage,
+            "users",
+            args,
+            updateObj=Mock(),
+            typingManager=None,
+        )
+
+    async def test_users_command_no_args(
+        self,
+        handler: ChatSearchHandler,
+        ensMessage: EnsuredMessage,
+        sampleUsers: List[Dict[str, Any]],
+    ) -> None:
+        """/users with no args returns formatted user list."""
+        cast(Any, handler).db.chatUsers.getChatUsers = AsyncMock(return_value=sampleUsers)
+
+        await self._callUsers(handler, ensMessage)
+
+        cast(Any, handler).sendMessage.assert_awaited_once()
+        sentKwargs = cast(Any, handler).sendMessage.call_args.kwargs
+        sentText: str = sentKwargs.get("messageText", "")
+        assert "Участники" in sentText
+        assert "alice" in sentText
+        assert "Bob" in sentText
+        assert "150" in sentText  # messages_count
+        assert sentKwargs.get("messageCategory") == MessageCategory.BOT_COMMAND_REPLY
+
+    async def test_users_command_empty(
+        self,
+        handler: ChatSearchHandler,
+        ensMessage: EnsuredMessage,
+    ) -> None:
+        """No users in chat → sends 'Участники не найдены.'"""
+        cast(Any, handler).db.chatUsers.getChatUsers = AsyncMock(return_value=[])
+
+        await self._callUsers(handler, ensMessage)
+
+        cast(Any, handler).sendMessage.assert_awaited_once()
+        sentText: str = cast(Any, handler).sendMessage.call_args.kwargs.get("messageText", "")
+        assert "не найдены" in sentText
+
+    async def test_users_command_with_limit(
+        self,
+        handler: ChatSearchHandler,
+        ensMessage: EnsuredMessage,
+        sampleUsers: List[Dict[str, Any]],
+    ) -> None:
+        """/users limit=10 passes limit to _listUsersInternal."""
+        cast(Any, handler).db.chatUsers.getChatUsers = AsyncMock(return_value=sampleUsers)
+
+        await self._callUsers(handler, ensMessage, "limit=10")
+
+        callKwargs = cast(Any, handler).db.chatUsers.getChatUsers.call_args.kwargs
+        assert callKwargs["limit"] == 10
+
+    async def test_users_command_with_min_messages(
+        self,
+        handler: ChatSearchHandler,
+        ensMessage: EnsuredMessage,
+        sampleUsers: List[Dict[str, Any]],
+    ) -> None:
+        """/users min_messages=100 passes minMessages filter."""
+        cast(Any, handler).db.chatUsers.getChatUsers = AsyncMock(return_value=sampleUsers)
+
+        await self._callUsers(handler, ensMessage, "min_messages=100")
+
+        callKwargs = cast(Any, handler).db.chatUsers.getChatUsers.call_args.kwargs
+        assert callKwargs["minMessages"] == 100
+
+    async def test_users_command_with_last_active(
+        self,
+        handler: ChatSearchHandler,
+        ensMessage: EnsuredMessage,
+        sampleUsers: List[Dict[str, Any]],
+    ) -> None:
+        """/users last_active=7 passes lastActiveDays filter."""
+        cast(Any, handler).db.chatUsers.getChatUsers = AsyncMock(return_value=sampleUsers)
+
+        await self._callUsers(handler, ensMessage, "last_active=7")
+
+        callKwargs = cast(Any, handler).db.chatUsers.getChatUsers.call_args.kwargs
+        assert callKwargs["lastActiveDays"] == 7
+
+    async def test_users_command_invalid_args(
+        self,
+        handler: ChatSearchHandler,
+        ensMessage: EnsuredMessage,
+        sampleUsers: List[Dict[str, Any]],
+    ) -> None:
+        """/users limit=abc uses default limit (50)."""
+        cast(Any, handler).db.chatUsers.getChatUsers = AsyncMock(return_value=sampleUsers)
+
+        await self._callUsers(handler, ensMessage, "limit=abc")
+
+        callKwargs = cast(Any, handler).db.chatUsers.getChatUsers.call_args.kwargs
+        assert callKwargs["limit"] == 50
+
+    async def test_users_command_with_all_args(
+        self,
+        handler: ChatSearchHandler,
+        ensMessage: EnsuredMessage,
+        sampleUsers: List[Dict[str, Any]],
+    ) -> None:
+        """/users with all args passes all filters to _listUsersInternal."""
+        cast(Any, handler).db.chatUsers.getChatUsers = AsyncMock(return_value=sampleUsers)
+
+        await self._callUsers(handler, ensMessage, "limit=5 min_messages=10 last_active=30")
+
+        callKwargs = cast(Any, handler).db.chatUsers.getChatUsers.call_args.kwargs
+        assert callKwargs["limit"] == 5
+        assert callKwargs["minMessages"] == 10
+        assert callKwargs["lastActiveDays"] == 30
+
+
+# ---------------------------------------------------------------------------
+# 8. _formatMessageDict tests
+# ---------------------------------------------------------------------------
+
+
+class TestFormatMessageDict:
+    """Tests for :meth:`ChatSearchHandler._formatMessageDict`."""
+
+    def test_format_message_dict_basic(self) -> None:
+        """A fully populated ChatMessageDict is correctly formatted."""
+        now = datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc)
+        msg: ChatMessageDict = {
+            "chat_id": -1001234567890,
+            "message_id": MessageId(42),
+            "date": now,
+            "user_id": 7,
+            "reply_id": MessageId(10),
+            "thread_id": 0,
+            "root_message_id": MessageId(10),
+            "message_text": "Hello world",
+            "message_type": "text",
+            "message_category": MessageCategory.USER,
+            "quote_text": None,
+            "media_id": None,
+            "created_at": now,
+            "metadata": "",
+            "markup": "",
+            "media_group_id": None,
+            "username": "alice",
+            "full_name": "Alice",
+        }
+        result = ChatSearchHandler._formatMessageDict(msg)
+        assert result["message_id"] == "42"
+        assert result["message_text"] == "Hello world"
+        assert result["username"] == "alice"
+        assert result["full_name"] == "Alice"
+        assert result["date"] == "2026-05-05T12:00:00+00:00"
+        assert result["reply_id"] == "10"
+        assert result["thread_id"] == 0
+
+    def test_format_message_dict_none_reply_id(self) -> None:
+        """reply_id=None → serialized as None (not 'None' string)."""
+        now = datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc)
+        msg: ChatMessageDict = {
+            "chat_id": -1001234567890,
+            "message_id": MessageId(1),
+            "date": now,
+            "user_id": 1,
+            "reply_id": None,
+            "thread_id": 0,
+            "root_message_id": None,
+            "message_text": "test",
+            "message_type": "text",
+            "message_category": MessageCategory.USER,
+            "quote_text": None,
+            "media_id": None,
+            "created_at": now,
+            "metadata": "",
+            "markup": "",
+            "media_group_id": None,
+            "username": "",
+            "full_name": "",
+        }
+        result = ChatSearchHandler._formatMessageDict(msg)
+        assert result["reply_id"] is None

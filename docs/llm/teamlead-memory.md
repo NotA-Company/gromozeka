@@ -82,14 +82,14 @@ How to use this file:
 - **Tier hierarchy** (`ChatTier` enum, `chat_settings.py:43-61`): `BANNED(1) < FREE(2) < FREE_PERSONAL(3) < PAID(4) < FRIEND(5) < BOT_OWNER(6)`. `isBetterOrEqualThan()` uses `getId()` comparison.
 - **Common footgun**: setting `paid-tier` on a chat without a future `paid-tier-untill-ts` — the paid-tier check fails silently and falls back to `base-tier`.
 
-## Chat History Search — Step 1 (completed 2026-06-21)
+## Chat History Search — Steps 1 & 2 (completed 2026-06-21 / 2026-06-25)
 
 - Implementation plan: `docs/plans/chat-history-search-plan.md`
-- Step 2 plan: `docs/plans/chat-history-search-step2.md` — adds `/users` command + `search_messages`, `list_users`, `get_thread` LLM tools
+- Step 2 plan: `docs/plans/chat-history-search-step2.md` — adds `/users` command + `search_messages`, `list_users`, `get_thread` LLM tools (all now implemented)
 - Embedding model: `intfloat/multilingual-e5-large` (1024d) via `local-embeddings` provider (fastembed)
 - Default model name: `"local-embedding"` in `bot-defaults.toml`
 - `fastembed==0.8.0` pinned in `requirements.direct.txt`
-- Key repos: `ChatEmbeddingsRepository` (embedding CRUD), `ChatSearchRepository` (search dispatcher), `ChatUsersRepository.getChatUsers` (activity filters)
+- Key repos: `ChatEmbeddingsRepository` (embedding CRUD), `ChatSearchRepository` (search dispatcher), `ChatUsersRepository.getChatUsers` (activity filters), `ChatMessagesRepository.getMessageThread` (thread retrieval)
 - Backfill: `_dtCronJob` in `ChatSearchHandler` — round-robin per-chat, reads `REGENERATE_EMBEDDINGS` boolean, no flag reset
 - Shared helper: `embedAndSaveMessage` in `internal/bot/common/embedding_utils.py` — takes `EnsuredMessage`, resolves `LLMService` via `getInstance()`
 - Config cached: `_searchEnabled`, `_reindexBatchSize` in handler `__init__`
@@ -134,6 +134,39 @@ How to use this file:
   - `BackfillWorker` deleted; backfill is now a CRON_JOB handler (`_dtCronJob`) directly in `ChatSearchHandler` — round-robin per-chat, no flag reset.
   - Semantic search wired into `/search`: keywords → `generateEmbeddings` → `queryEmbedding` passed to `searchChatMessages` (falls back to filter-only on failure).
   - `fastembed==0.8.0` / `numpy==2.4.6` in requirements.
+
+## Chat History Search — Step 2 Implementation (2026-06-25)
+
+Four items from `docs/plans/chat-history-search-step2.md` implemented:
+
+| Item | Type | File |
+|------|------|------|
+| `/users` command | User command | `chat_search.py` |
+| `search_messages` | LLM tool | `chat_search.py` |
+| `list_users` | LLM tool | `chat_search.py` |
+| `get_thread` | LLM tool | `chat_search.py` |
+
+### Key Implementation Details
+
+- **`minMessages` on `getChatUsers`**: The repo method (`chat_users.py`) was extended with `minMessages: Optional[int] = None` parameter plus `AND (:minMessages IS NULL OR messages_count >= :minMessages)` WHERE clause. Follows the existing `seenSince` pattern.
+- **`_listUsersInternal` shared helper**: Both `/users` command and `list_users` LLM tool call the same private method that delegates to `getChatUsers()`. `/users` formats as Markdown; `list_users` returns JSON dict.
+- **`_formatMessageDict` static helper**: Converts `ChatMessageDict` rows to JSON-safe dicts. Handles `None` `reply_id` correctly (returns `None`, not `"None"`). Used by `get_thread` LLM tool.
+- **`_relativeTime` static method**: Formats a `datetime` to short relative strings (`<1m ago`, `5m ago`, `1h ago`, `yesterday`, `5d ago`, `>1w ago`).
+- **LLM tool registrations in `__init__`**: All 3 tools (`search_messages`, `list_users`, `get_thread`) registered after `CRON_JOB` registration, using `self.llmService.registerTool(name, description, [LLMFunctionParameter(...)], handler=self._llmTool*)`.
+- **Imports**: `from lib.ai import LLMFunctionParameter, LLMParameterType` added to `chat_search.py`.
+- **Tests**: 31 new tests across 5 classes in `test_chat_search.py` (103 total for the file). `_makeChatSettings` helper extended with `allowTools` and `embeddingsEnabled` params.
+
+### Step 2 Gotchas & Lessons
+
+- **LLM tool `int(limit)` guard**: `limit: int` params can arrive as `None` (LLM passes `null`) or `float` (NUMBER type). Always guard: `effectiveLimit = int(limit) if limit is not None else DEFAULT`. Same in `/users` command where user input parsing yields arbitrary ints.
+- **LLM tool `rateLimit` must be wrapped in try/except**: `LLMService.rateLimit()` can raise `RuntimeError`/`ValueError`. The LLM tool dispatcher does NOT catch exceptions, so an uncaught raise aborts the entire LLM generation. All LLM tool handlers that call `rateLimit` must wrap it.
+- **Don't duplicate `_resolveUserId`**: The existing `_resolveUserId(chatId=, username=)` helper already strips `@`, calls `getChatUserByUsername`, handles try/except, and returns `Optional[int]`. No need to re-implement inline.
+- **`last_active` None handling**: When `updated_at` is `None` in a `ChatUserDict`, `.get("updated_at", "")` returns `None` (default only for missing keys), and `str(None)` produces `"None"`. Must check `is None` explicitly before `str()`.
+- **`MessageRecipient` has no `name` field**: Only `id` and `chatType` slots. The `/users` command uses `str(recipient.id)` as chat name.
+- **`getChatUserByUsername` can raise**: Even though it catches DB errors internally, it's an awaitable from a different module — always wrap in try/except in LLM tool handlers that must never raise.
+- **Clamp limits on both ends**: User commands and LLM tools must clamp with `max(1, min(limit, CAP))`. Missing lower bound lets negative/zero values through to `applyPagination`.
+- **Truncate message_text in LLM tool output**: `_formatMessageDict` must truncate to `SEARCH_TOOL_MAX_MESSAGE_LENGTH` (500) to prevent context-window blowup. Same pattern in both `search_messages` and `get_thread`.
+- **Gate-2 review step-budget**: The `code-reviewer` agent can hit the 60-step limit on large reviews. For cross-cutting whole-work reviews, keep the brief focused on integration concerns only (skip per-file details already covered by Gate 1). If it hits the limit, extract findings from the partial output and dispatch fixes.
 
 ## Chat History Search — Anti-Patterns Learned (2026-06-21)
 

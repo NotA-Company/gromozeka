@@ -203,6 +203,7 @@ class ChatUsersRepository(BaseRepository):
         self,
         chatId: int,
         limit: Optional[int] = None,
+        minMessages: Optional[int] = None,
         lastActiveDays: Optional[int] = None,
         seenSince: Optional[datetime.datetime] = None,
         *,
@@ -219,6 +220,8 @@ class ChatUsersRepository(BaseRepository):
         Args:
             chatId: Chat to list users from.
             limit: Max users to return. `None` means no cap.
+            minMessages: Only users with at least this many messages
+                (filters by ``messages_count``).
             lastActiveDays: Only return users active in the last N days
                 (i.e. `updated_at > now - N days`).
             seenSince: Absolute datetime cutoff on `updated_at`.
@@ -230,6 +233,7 @@ class ChatUsersRepository(BaseRepository):
         """
         logger.debug(
             f"Getting users for chat {chatId}: limit={limit}, "
+            f"minMessages={minMessages}, "
             f"lastActiveDays={lastActiveDays}, seenSince={seenSince}, dataSource={dataSource}"
         )
         try:
@@ -244,6 +248,7 @@ class ChatUsersRepository(BaseRepository):
                 WHERE
                     chat_id = :chatId
                     AND (:seenSince IS NULL OR updated_at > :seenSince)
+                    AND (:minMessages IS NULL OR messages_count >= :minMessages)
                 ORDER BY updated_at DESC
             """
             if limit is not None:
@@ -254,6 +259,7 @@ class ChatUsersRepository(BaseRepository):
                 {
                     "chatId": chatId,
                     "limit": limit,
+                    "minMessages": minMessages,
                     "seenSince": seenSince,
                 },
             )
