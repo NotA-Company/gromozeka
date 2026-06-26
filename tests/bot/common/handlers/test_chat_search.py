@@ -1435,16 +1435,27 @@ class TestSearchMessagesLLMTool:
         """Full happy path: returns results dict with done=True."""
         handler.getChatSettings = AsyncMock(return_value=chatSettings)
         self._stubModel(handler, mockModel)
+        now = datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc)
         rows = [
             {
                 "chat_id": -1001234567890,
                 "message_id": MessageId(1),
-                "message_text": "hello world",
-                "date": datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc),
+                "date": now,
                 "user_id": 7,
+                "reply_id": None,
+                "thread_id": 0,
+                "root_message_id": None,
+                "message_text": "hello world",
+                "message_type": "text",
+                "message_category": MessageCategory.USER,
+                "quote_text": None,
+                "media_id": None,
+                "created_at": now,
+                "metadata": "",
+                "markup": "",
+                "media_group_id": None,
                 "username": "alice",
                 "full_name": "Alice",
-                "message_category": MessageCategory.USER,
                 "score": 0.95,
             }
         ]
@@ -1455,7 +1466,8 @@ class TestSearchMessagesLLMTool:
 
         assert result["done"] is True
         assert result["count"] == 1
-        assert result["results"][0]["message_text"] == "hello world"
+        assert result["results"][0]["text"] == "hello world"
+        assert result["results"][0]["score"] == 0.95
         mockModel.generateEmbeddings.assert_awaited_once()
 
     async def test_search_messages_with_user_filter(
@@ -1825,12 +1837,12 @@ class TestGetThreadLLMTool:
 
         assert result["done"] is True
         assert result["root_message"] is not None
-        assert result["root_message"]["message_id"] == "5"
-        assert result["root_message"]["message_text"] == "Thread root"
-        assert result["target_message"]["message_id"] == "10"
-        assert result["target_message"]["message_text"] == "Reply message"
+        assert result["root_message"]["messageId"] == 5
+        assert result["root_message"]["text"] == "Thread root"
+        assert result["target_message"]["messageId"] == 10
+        assert result["target_message"]["text"] == "Reply message"
         assert len(result["thread_messages"]) == 3
-        assert result["thread_messages"][1]["message_id"] == "10"
+        assert result["thread_messages"][1]["messageId"] == 10
 
     async def test_get_thread_root_message_none(
         self,
@@ -1856,7 +1868,7 @@ class TestGetThreadLLMTool:
 
         assert result["done"] is True
         assert result["root_message"] is None
-        assert result["target_message"]["message_id"] == "10"
+        assert result["target_message"]["messageId"] == 10
         assert len(result["thread_messages"]) == 1
 
     async def test_get_thread_getMessageThread_raises(
@@ -2076,7 +2088,24 @@ class TestUsersCommand:
 class TestFormatMessageDict:
     """Tests for :meth:`ChatSearchHandler._formatMessageDict`."""
 
-    def test_format_message_dict_basic(self) -> None:
+    @pytest.fixture
+    def handler(self) -> ChatSearchHandler:
+        """Create a handler with a mocked database for ``_formatMessageDict`` tests.
+
+        The handler's ``db`` is a plain ``Mock`` — ``_formatMessageDict`` calls
+        ``EnsuredMessage.fromDBChatMessage`` which needs ``self.db`` as a
+        parameter, but the test message dicts have ``media_group_id=None`` and
+        ``media_id=None`` so no DB methods are actually awaited.
+        """
+        h = ChatSearchHandler(
+            configManager=_makeConfigManager(),
+            database=_makeDatabase(),
+            botProvider=BotProvider.TELEGRAM,
+        )
+        h.db = Mock()
+        return h
+
+    async def test_format_message_dict_basic(self, handler: ChatSearchHandler) -> None:
         """A fully populated ChatMessageDict is correctly formatted."""
         now = datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc)
         msg: ChatMessageDict = {
@@ -2099,16 +2128,16 @@ class TestFormatMessageDict:
             "username": "alice",
             "full_name": "Alice",
         }
-        result = ChatSearchHandler._formatMessageDict(msg)
-        assert result["message_id"] == "42"
-        assert result["message_text"] == "Hello world"
-        assert result["username"] == "alice"
-        assert result["full_name"] == "Alice"
+        result = await handler._formatMessageDict(msg)
+        assert result["messageId"] == 42
+        assert result["text"] == "Hello world"
+        assert result["login"] == "alice"
+        assert result["name"] == "Alice"
         assert result["date"] == "2026-05-05T12:00:00+00:00"
-        assert result["reply_id"] == "10"
-        assert result["thread_id"] == 0
+        assert result["replyId"] == 10
+        # Note: no thread_id key in production output
 
-    def test_format_message_dict_none_reply_id(self) -> None:
+    async def test_format_message_dict_none_reply_id(self, handler: ChatSearchHandler) -> None:
         """reply_id=None → serialized as None (not 'None' string)."""
         now = datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc)
         msg: ChatMessageDict = {
@@ -2131,5 +2160,5 @@ class TestFormatMessageDict:
             "username": "",
             "full_name": "",
         }
-        result = ChatSearchHandler._formatMessageDict(msg)
-        assert result["reply_id"] is None
+        result = await handler._formatMessageDict(msg)
+        assert "replyId" not in result

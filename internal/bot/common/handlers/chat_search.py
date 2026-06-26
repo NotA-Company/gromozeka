@@ -509,8 +509,9 @@ class ChatSearchHandler(BaseBotHandler):
             eMsg = await EnsuredMessage.fromDBChatMessage(r, self.db)
             retMsg = json.loads(await eMsg.formatForLLM(self.db, format=LLMMessageFormat.JSON, useSingleMedia=False))
             if "text" in retMsg and len(retMsg["text"]) > SEARCH_TOOL_MAX_MESSAGE_LENGTH:
-                messageText = messageText[: SEARCH_TOOL_MAX_MESSAGE_LENGTH - 1] + "…"
+                retMsg["text"] = retMsg["text"][: SEARCH_TOOL_MAX_MESSAGE_LENGTH - 1] + "…"
             retMsg["score"] = r.get("score", 0.0)
+            formatted.append(retMsg)
 
         return {"done": True, "results": formatted, "count": len(formatted)}
 

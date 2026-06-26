@@ -46,28 +46,6 @@ class HealthCheckType(StrEnum):
     """Run a shell command; exit 0 = pass."""
 
 
-class ProxyConfigDict(TypedDict, total=False):
-    """Resolved proxy configuration for a single service.
-
-    Attributes:
-        enabled: Whether this proxy config is enabled. True means "use this
-            config"; False means "inherit from global" in getCombined().
-        type: Proxy protocol type — NONE, HTTP or SOCKS5. Defaults to NONE.
-        address: Full proxy URL including scheme and port
-            (e.g., "http://proxy:8080", "socks5://proxy:1080").
-        user: Username for proxy authentication. None means "inherit from
-            global"; empty string means "no auth, override global."
-        password: Password for proxy authentication. None means "inherit
-            from global"; empty string means "no auth, override global."
-    """
-
-    enabled: bool
-    type: ProxyType
-    address: str
-    user: str
-    password: str
-
-
 class ProxyLifecycleConfigDict(TypedDict, total=False):
     """Lifecycle configuration for a managed proxy process.
 
@@ -96,6 +74,31 @@ class ProxyLifecycleConfigDict(TypedDict, total=False):
     healthCheckUrl: str
     healthCheckCommand: list[str]
     healthCheckInterval: int
+
+
+class ProxyConfigDict(TypedDict, total=False):
+    """Resolved proxy configuration for a single service.
+
+    Attributes:
+        enabled: Whether this proxy config is enabled. True means "use this
+            config"; False means "inherit from global" in getCombined().
+        type: Proxy protocol type — NONE, HTTP or SOCKS5. Defaults to NONE.
+        address: Full proxy URL including scheme and port
+            (e.g., "http://proxy:8080", "socks5://proxy:1080").
+        user: Username for proxy authentication. None means "inherit from
+            global"; empty string means "no auth, override global."
+        password: Password for proxy authentication. None means "inherit
+            from global"; empty string means "no auth, override global."
+        lifecycle: Optional lifecycle configuration for proxy process
+            management. Omitted when no lifecycle is configured.
+    """
+
+    enabled: bool
+    type: ProxyType
+    address: str
+    user: str
+    password: str
+    lifecycle: ProxyLifecycleConfigDict
 
 
 class ProxyKwargs(TypedDict, total=False):

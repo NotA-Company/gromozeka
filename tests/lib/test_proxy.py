@@ -766,7 +766,7 @@ class TestProxyLifecycleConfig:
             "enabled": True,
             "type": ProxyType.SOCKS5,
             "address": "socks5://127.0.0.1:1080",
-            "lifecycle": {
+            "lifecycle": {  # type: ignore[typeddict-item]
                 "start-command": ["ssh", "-D", "1080"],
                 "stop-command": ["pkill", "-f", "ssh"],
                 "health-check-type": "url",
@@ -776,11 +776,23 @@ class TestProxyLifecycleConfig:
         }
         config = ProxyConfig.fromDict(data)
         assert config.lifecycle is not None
-        assert config.lifecycle["startCommand"] == ["ssh", "-D", "1080"]
-        assert config.lifecycle["stopCommand"] == ["pkill", "-f", "ssh"]
-        assert config.lifecycle["healthCheckType"] is HealthCheckType.URL
-        assert config.lifecycle["healthCheckUrl"] == "https://example.com"
-        assert config.lifecycle["healthCheckInterval"] == 10
+        assert config.lifecycle["startCommand"] == [  # type: ignore[reportTypedDictNotRequiredAccess]
+            "ssh",
+            "-D",
+            "1080",
+        ]
+        assert config.lifecycle["stopCommand"] == [  # type: ignore[reportTypedDictNotRequiredAccess]
+            "pkill",
+            "-f",
+            "ssh",
+        ]
+        assert (
+            config.lifecycle["healthCheckType"] is HealthCheckType.URL  # type: ignore[reportTypedDictNotRequiredAccess]
+        )
+        assert (
+            config.lifecycle["healthCheckUrl"] == "https://example.com"  # type: ignore[reportTypedDictNotRequiredAccess]  # noqa: E501
+        )
+        assert config.lifecycle["healthCheckInterval"] == 10  # type: ignore[reportTypedDictNotRequiredAccess]
 
     def test_fromDictLifecycleNotDict(self) -> None:
         """fromDict() silently ignores a non-dict lifecycle value."""
@@ -810,11 +822,13 @@ class TestProxyLifecycleConfig:
             "enabled": True,
             "type": ProxyType.HTTP,
             "address": "http://proxy:8080",
-            "lifecycle": {"health-check-type": "invalid_value"},
+            "lifecycle": {"health-check-type": "invalid_value"},  # type: ignore[typeddict-item]
         }
         config = ProxyConfig.fromDict(data)
         assert config.lifecycle is not None
-        assert config.lifecycle["healthCheckType"] is HealthCheckType.NONE
+        assert (
+            config.lifecycle["healthCheckType"] is HealthCheckType.NONE  # type: ignore[reportTypedDictNotRequiredAccess]  # noqa: E501
+        )
 
     def test_copyPreservesLifecycle(self) -> None:
         """copy() creates a shallow copy of the lifecycle dict."""
@@ -831,8 +845,10 @@ class TestProxyLifecycleConfig:
         copied = original.copy()
         assert copied.lifecycle is not None
         assert copied.lifecycle is not original.lifecycle  # different dict object
-        assert copied.lifecycle["startCommand"] == ["ssh"]
-        assert copied.lifecycle["healthCheckType"] is HealthCheckType.COMMAND
+        assert copied.lifecycle["startCommand"] == ["ssh"]  # type: ignore[reportTypedDictNotRequiredAccess]
+        assert (
+            copied.lifecycle["healthCheckType"] is HealthCheckType.COMMAND  # type: ignore[reportTypedDictNotRequiredAccess]  # noqa: E501
+        )
 
     def test_getCombinedMasterKillSwitchNoLifecycle(self, resetProxyHelper: ProxyHelper) -> None:
         """When global proxy is disabled, getCombined() returns NONE with no lifecycle."""
@@ -849,7 +865,7 @@ class TestProxyLifecycleConfig:
                 "enabled": True,
                 "type": ProxyType.HTTP,
                 "address": "http://p:8080",
-                "lifecycle": {
+                "lifecycle": {  # type: ignore[typeddict-item]
                     "start-command": ["global-start"],
                     "health-check-type": "command",
                     "health-check-command": ["nc"],
@@ -859,7 +875,7 @@ class TestProxyLifecycleConfig:
         service = ProxyConfig(proxyType=ProxyType.SOCKS5, address="socks5://127.0.0.1:1080", enabled=False)
         combined = service.getCombined()
         assert combined.lifecycle is not None
-        assert combined.lifecycle["startCommand"] == ["global-start"]
+        assert combined.lifecycle["startCommand"] == ["global-start"]  # type: ignore[reportTypedDictNotRequiredAccess]
 
     def test_getCombinedServiceLifecycleOverridesGlobal(self, resetProxyHelper: ProxyHelper) -> None:
         """When both enabled and service has lifecycle, service lifecycle wins."""
@@ -868,7 +884,7 @@ class TestProxyLifecycleConfig:
                 "enabled": True,
                 "type": ProxyType.HTTP,
                 "address": "http://p:8080",
-                "lifecycle": {"start-command": ["global-start"]},
+                "lifecycle": {"start-command": ["global-start"]},  # type: ignore[typeddict-item]
             }
         )
         service = ProxyConfig(
@@ -879,7 +895,7 @@ class TestProxyLifecycleConfig:
         )
         combined = service.getCombined()
         assert combined.lifecycle is not None
-        assert combined.lifecycle["startCommand"] == ["service-start"]
+        assert combined.lifecycle["startCommand"] == ["service-start"]  # type: ignore[reportTypedDictNotRequiredAccess]
 
     def test_getCombinedServiceNoLifecycleInheritsGlobal(self, resetProxyHelper: ProxyHelper) -> None:
         """When both enabled and service has no lifecycle, global lifecycle is inherited."""
@@ -888,7 +904,7 @@ class TestProxyLifecycleConfig:
                 "enabled": True,
                 "type": ProxyType.HTTP,
                 "address": "http://p:8080",
-                "lifecycle": {"start-command": ["global-start"]},
+                "lifecycle": {"start-command": ["global-start"]},  # type: ignore[typeddict-item]
             }
         )
         service = ProxyConfig(
@@ -899,7 +915,7 @@ class TestProxyLifecycleConfig:
         )
         combined = service.getCombined()
         assert combined.lifecycle is not None
-        assert combined.lifecycle["startCommand"] == ["global-start"]
+        assert combined.lifecycle["startCommand"] == ["global-start"]  # type: ignore[reportTypedDictNotRequiredAccess]
 
     def test_reprWithLifecycle(self) -> None:
         """__repr__() shows lifecycle=present when lifecycle is set."""
