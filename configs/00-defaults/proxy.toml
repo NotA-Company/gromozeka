@@ -56,3 +56,30 @@ password = ""
 # # the health check runs every Nth tick (gated by modulo counter).
 # # Default: 5 (every 5 minutes).
 # health-check-interval = 5
+
+#
+# # --- Example: SSH SOCKS5 tunnel ---
+# # Uncomment and adjust for your jumpbox:
+# #
+# # [proxy]
+# # enabled = true
+# # type = "socks5"
+# # address = "socks5://127.0.0.1:1080"
+# #
+# # [proxy.lifecycle]
+# # start-command = ["ssh", "-D", "1080", "-N", "-q", "-o", "ServerAliveInterval=60", "user@jumpbox.example.com"]
+# # stop-command = ["pkill", "-f", "ssh.*-D.*1080"]
+# # # Optional: use a single restart command instead of stop+start.
+# # # restart-command = ["your-restart-script.sh"]
+# # health-check-type = "command"
+# # health-check-command = ["nc", "-z", "127.0.0.1", "1080"]
+# # # Alternative: URL-based health check through the proxy.
+# # # health-check-type = "url"
+# # # health-check-url = "https://api.example.com/health"
+# # health-check-interval = 5
+# #
+# # The bot will:
+# #   - Start the tunnel on boot.
+# #   - Check it every 5 minutes (command or URL).
+# #   - Restart on failure (stop+start, or restart-command if set).
+# #   - Kill it on shutdown.
