@@ -2162,3 +2162,87 @@ class TestFormatMessageDict:
         }
         result = await handler._formatMessageDict(msg)
         assert "replyId" not in result
+
+
+class TestResolveUserId:
+    """Tests for :meth:`ChatSearchHandler._resolveUserId`."""
+
+    @pytest.fixture
+    def handler(self) -> ChatSearchHandler:
+        """Create a handler with mocked dependencies for resolve-user tests."""
+        h = ChatSearchHandler(
+            configManager=_makeConfigManager(),
+            database=_makeDatabase(),
+            botProvider=BotProvider.TELEGRAM,
+        )
+        h.db = Mock()
+        h.llmService = Mock()
+        h.sendMessage = AsyncMock()
+        h.getChatSettings = AsyncMock()
+        return h
+
+    async def test_resolve_with_at_prefix(self, handler: ChatSearchHandler) -> None:
+        """Username with @ is normalised to @username for DB lookup."""
+        cast(Any, handler).db.chatUsers = Mock()
+        cast(Any, handler).db.chatUsers.getChatUserByUsername = AsyncMock(return_value={"user_id": 123})
+
+        result = await handler._resolveUserId(chatId=-100123, username="@testuser")
+
+        assert result == 123
+        cast(Any, handler).db.chatUsers.getChatUserByUsername.assert_called_once_with(
+            chatId=-100123, username="@testuser"
+        )
+
+    async def test_resolve_without_at_prefix(self, handler: ChatSearchHandler) -> None:
+        """Username without @ has @ prepended for DB lookup."""
+        cast(Any, handler).db.chatUsers = Mock()
+        cast(Any, handler).db.chatUsers.getChatUserByUsername = AsyncMock(return_value={"user_id": 456})
+
+        result = await handler._resolveUserId(chatId=-100123, username="testuser")
+
+        assert result == 456
+        cast(Any, handler).db.chatUsers.getChatUserByUsername.assert_called_once_with(
+            chatId=-100123, username="@testuser"
+        )
+
+    async def test_resolve_empty_after_strip(self, handler: ChatSearchHandler) -> None:
+        """Username that becomes empty after stripping @ returns None without DB query."""
+        cast(Any, handler).db.chatUsers = Mock()
+
+        result = await handler._resolveUserId(chatId=-100123, username="@")
+
+        assert result is None
+        cast(Any, handler).db.chatUsers.getChatUserByUsername.assert_not_called()
+
+    async def test_resolve_none(self, handler: ChatSearchHandler) -> None:
+        """None username returns None without DB query."""
+        cast(Any, handler).db.chatUsers = Mock()
+
+        result = await handler._resolveUserId(chatId=-100123, username=None)
+
+        assert result is None
+        cast(Any, handler).db.chatUsers.getChatUserByUsername.assert_not_called()
+
+    async def test_resolve_no_match(self, handler: ChatSearchHandler) -> None:
+        """No DB match returns None."""
+        cast(Any, handler).db.chatUsers = Mock()
+        cast(Any, handler).db.chatUsers.getChatUserByUsername = AsyncMock(return_value=None)
+
+        result = await handler._resolveUserId(chatId=-100123, username="nobody")
+
+        assert result is None
+        cast(Any, handler).db.chatUsers.getChatUserByUsername.assert_called_once_with(
+            chatId=-100123, username="@nobody"
+        )
+
+    async def test_resolve_missing_user_id(self, handler: ChatSearchHandler) -> None:
+        """DB row without user_id returns None."""
+        cast(Any, handler).db.chatUsers = Mock()
+        cast(Any, handler).db.chatUsers.getChatUserByUsername = AsyncMock(return_value={"username": "@testuser"})
+
+        result = await handler._resolveUserId(chatId=-100123, username="testuser")
+
+        assert result is None
+        cast(Any, handler).db.chatUsers.getChatUserByUsername.assert_called_once_with(
+            chatId=-100123, username="@testuser"
+        )

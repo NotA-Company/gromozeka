@@ -1237,8 +1237,10 @@ class ChatSearchHandler(BaseBotHandler):
         case-insensitive comparison goes through
         ``provider.getCaseInsensitiveComparison`` so it stays
         portable across SQLite, PostgreSQL, and MySQL. The leading
-        ``@`` is stripped before the query; both ``"@alice"`` and
-        ``"alice"`` resolve to the same row.
+        ``@`` is stripped from the input for normalisation, then
+        always prepended before the query (the ``chat_users`` table
+        stores usernames with the ``@`` prefix); both ``"@alice"``
+        and ``"alice"`` resolve to the same row.
 
         Args:
             chatId: Chat the user belongs to.
@@ -1254,6 +1256,8 @@ class ChatSearchHandler(BaseBotHandler):
         clean = username.lstrip("@").strip()
         if not clean:
             return None
+        # DB stores usernames with @ prefix. Normalise to that format.
+        clean = f"@{clean}"
         try:
             user = await self.db.chatUsers.getChatUserByUsername(chatId=chatId, username=clean)
         except Exception as e:

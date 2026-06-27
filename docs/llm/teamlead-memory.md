@@ -219,6 +219,8 @@ Four items from `docs/plans/chat-history-search-step2.md` implemented:
 
 ### Step 2 Gotchas & Lessons
 
+- **`_resolveUserId` must prepend `@` before DB lookup**: The `chat_users` table ALWAYS stores usernames with `@` prefix (confirmed by `updateChatUser` docstring, all three `MessageSender` factories, and `saveChatMessage`). `getChatUserByUsername` does exact case-insensitive match with no prefix handling. But `_resolveUserId` strips `@` with `lstrip("@")` before querying — `LOWER("@cthulho") != LOWER("cthulho")`. Fix: after stripping `@` for normalisation, always prepend `@` before the DB call: `clean = f"@{clean}"`. Regression test `test_resolve_without_at_prefix` encodes this.
+
 - **LLM tool `int(limit)` guard**: `limit: int` params can arrive as `None` (LLM passes `null`) or `float` (NUMBER type). Always guard: `effectiveLimit = int(limit) if limit is not None else DEFAULT`. Same in `/users` command where user input parsing yields arbitrary ints.
 - **LLM tool `rateLimit` must be wrapped in try/except**: `LLMService.rateLimit()` can raise `RuntimeError`/`ValueError`. The LLM tool dispatcher does NOT catch exceptions, so an uncaught raise aborts the entire LLM generation. All LLM tool handlers that call `rateLimit` must wrap it.
 - **Don't duplicate `_resolveUserId`**: The existing `_resolveUserId(chatId=, username=)` helper already strips `@`, calls `getChatUserByUsername`, handles try/except, and returns `Optional[int]`. No need to re-implement inline.
