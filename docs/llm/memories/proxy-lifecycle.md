@@ -13,7 +13,7 @@ Read when touching `internal/services/proxy/`, `lib/proxy/` lifecycle fields,
 
 | Class | Location | Role |
 |---|---|---|
-| `ProxyService` | `internal/services/proxy/service.py` | Singleton. Orchestrates all proxy lifecycles. `initialize(queueService, configManager)`, `resolveProxy(serviceConfig, serviceLabel)`. |
+| `ProxyService` | `internal/services/proxy/service.py` | Singleton. Orchestrates all proxy lifecycles. `initialize(proxyConfigDict)`, `resolveProxy(serviceConfig, serviceLabel)`. |
 | `ProxyLifecycle` | `internal/services/proxy/lifecycle.py` | Non-singleton. One per proxy config. Manages start/stop/restart/health-check for a single proxy process. |
 | `HealthCheckType` | `lib/proxy/__init__.py` | `StrEnum` — `NONE`, `URL`, `COMMAND`. |
 | `ProxyLifecycleConfigDict` | `lib/proxy/__init__.py` | `TypedDict` with 7 optional lifecycle fields. |
@@ -32,6 +32,47 @@ from internal.services.proxy import ProxyService
 proxyConfig = ProxyService.getInstance().resolveProxy(serviceConfig, "my-service")
 ```
 Consumers in `lib/` remain unchanged (they can't import `internal/`).
+
+## `initialize()` Simplified
+
+- `ProxyService.initialize(proxyConfigDict: ProxyConfigDict)` — receives only the proxy config dict (the `[proxy]` section from config).
+- `QueueService` is obtained via `QueueService.getInstance()` internally — not passed as a parameter.
+- No `_queueService` or `_configManager` stored as instance attributes.
+- No `Any` types anywhere — `Dict[str, object]` for `serviceConfig` in `resolveProxy()`. `QueueService`, `ConfigManager`, `ProxyConfigDict` imported directly.
+
+## Call Sites
+
+Four verified call sites (all migrated to `ProxyService.getInstance().resolveProxy()`, confirmed 2026-06-26):
+
+| Call Site | Service Label |
+|---|---|
+| `internal/bot/telegram/application.py` | `"telegram-bot"` |
+| `internal/bot/max/application.py` | `"max-bot"` |
+| `internal/bot/common/handlers/weather.py` | `"openweathermap"` + `"geocode-maps"` |
+| `internal/bot/common/handlers/yandex_search.py` | `"yandex-search"` |
+
+## SandboxHandler Analogue Pattern
+
+`sandbox.py` is the closest existing analogue for CRON_JOB/DO_EXIT lifecycle management. The proxy lifecycle follows the same pattern:
+
+- Registration happens in `__init__` (after config-gated early return if disabled):
+  ```python
+  self.queueService.registerDelayedTaskHandler(function=DelayedTaskFunction.CRON_JOB, handler=self._dtCronJob)
+  self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, self._dtOnExit)
+  ```
+- `_dtCronJob` uses `_recoveryDone` flag for one-time startup gating, `_lastCronRun`/`time.time()` delta for health-check interval gating.
+- `_dtOnExit` wraps shutdown in try/except with logging.
+- If feature is disabled (config-gated), the method returns early BEFORE handler registration — no handlers are registered when the proxy is disabled.
+
+## Startup & Event Loop (2026-06-27 refactor)
+
+- Single shared event loop created in `main()` via `asyncio.new_event_loop()` + `asyncio.set_event_loop()`.
+- Loop passed through `GromozekBot(loop)` → `botApp.run(loop)`:
+  - Telegram: `run_polling(close_loop=False)` — PTB reuses loop from `asyncio.get_event_loop()`.
+  - Max: `loop.run_until_complete(self._runPolling())`.
+- `startDelayedScheduler` runs as `loop.create_task()` in `GromozekBot.__init__` BEFORE `ProxyService.initialize()`.
+- The scheduler task is stored as `self._schedulerTask`. Awaited in `_shutdown()` after `beginShutdown()` — ensures DO_EXIT handlers (including proxy stop commands) complete before exit.
+- Global proxy start uses `asyncio.get_event_loop().run_until_complete()` — no throwaway `asyncio.run()` loops.
 
 ## Gotchas
 
@@ -67,6 +108,12 @@ def resetProxyServiceSingleton():
 - Python uses camelCase (`startCommand`, `healthCheckType`).
 - `_kebabToCamelCase()` helper in `lib/proxy/__init__.py` handles conversion in `ProxyConfig.fromDict()`.
 
+### Kill-Switch Bypass Fix
+
+Without this fix, uncommenting `[proxy.lifecycle]` in the default config (where `enabled=false` by default) would start the proxy process anyway.
+- `initialize()` and `resolveProxy()` now check `proxyConfig.enabled` before creating a `ProxyLifecycle` instance.
+- Two regression tests added to verify the fix (part of the 29 lifecycle tests).
+
 ## Files
 
 | File | Purpose |
@@ -76,5 +123,6 @@ def resetProxyServiceSingleton():
 | `internal/services/proxy/lifecycle.py` | `ProxyLifecycle` class (281 lines) |
 | `internal/services/proxy/service.py` | `ProxyService` class (210 lines) |
 | `configs/00-defaults/proxy.toml` | Commented-out `[proxy.lifecycle]` section |
-| `tests/services/proxy/test_lifecycle.py` | 29 unit tests |
-| `tests/services/proxy/test_service.py` | 9 integration tests |
+| `tests/services/proxy/test_lifecycle.py` | 29 unit tests (includes 2 kill-switch regression tests) |
+| `tests/services/proxy/test_service.py` | 11 integration tests |
+| **Total** | **40 proxy tests** |
