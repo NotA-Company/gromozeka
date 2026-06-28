@@ -68,6 +68,15 @@ class GromozekBot:
             name="delayed-scheduler",
         )
 
+        # Initialize proxy lifecycle management AFTER the scheduler task has
+        # started (loop.run_until_complete above drives the event loop, which
+        # runs the scheduler coroutine created earlier). This ensures
+        # QueueService._doExitHandler registers before ProxyService._dtOnExit,
+        # so on shutdown the queue drains background tasks (needing the proxy)
+        # before proxy processes are stopped.
+        # In the same time it MUST be initialized BEFORE LLMManager as it uses proxy.
+        ProxyService.getInstance().initialize(self.configManager.getProxyConfig(), loop=loop)
+
         # Initialize stats storage for LLM usage tracking
         llmStatsStorage: Optional[StatsStorage] = None
         statsConfig = self.configManager.getStatsConfig()
@@ -88,14 +97,6 @@ class GromozekBot:
         # Initialize rate limiter manager
         self.rateLimiterManager = RateLimiterManager.getInstance()
         loop.run_until_complete(self.rateLimiterManager.loadConfig(self.configManager.getRateLimiterConfig()))
-
-        # Initialize proxy lifecycle management AFTER the scheduler task has
-        # started (loop.run_until_complete above drives the event loop, which
-        # runs the scheduler coroutine created earlier). This ensures
-        # QueueService._doExitHandler registers before ProxyService._dtOnExit,
-        # so on shutdown the queue drains background tasks (needing the proxy)
-        # before proxy processes are stopped.
-        ProxyService.getInstance().initialize(self.configManager.getProxyConfig(), loop=loop)
 
         # Initialize bot application
         botConfig = self.configManager.getBotConfig()
