@@ -1470,7 +1470,7 @@ class TestSearchMessagesLLMTool:
         handler.getChatSettings = AsyncMock(return_value=cs)
         result = await handler._llmToolSearchMessages(extraData=extraData, query="test")
         assert result["done"] is False
-        assert "отключены" in result.get("error", "").lower()
+        assert "tools disabled" in result.get("error", "").lower()
 
     async def test_search_messages_embeddings_disabled(
         self, handler: ChatSearchHandler, extraData: Dict[str, Any]
@@ -1480,7 +1480,7 @@ class TestSearchMessagesLLMTool:
         handler.getChatSettings = AsyncMock(return_value=cs)
         result = await handler._llmToolSearchMessages(extraData=extraData, query="test")
         assert result["done"] is False
-        assert "семантический поиск" in result.get("error", "").lower()
+        assert "semantic search" in result.get("error", "").lower()
 
     async def test_search_messages_no_model(
         self, handler: ChatSearchHandler, extraData: Dict[str, Any], chatSettings: ChatSettingsDict
@@ -1490,7 +1490,7 @@ class TestSearchMessagesLLMTool:
         handler.getChatSettings = AsyncMock(return_value=cs)
         result = await handler._llmToolSearchMessages(extraData=extraData, query="test")
         assert result["done"] is False
-        assert "не настроена" in result.get("error", "").lower()
+        assert "not configured" in result.get("error", "").lower()
 
     async def test_search_messages_success(
         self,
@@ -1573,7 +1573,7 @@ class TestSearchMessagesLLMTool:
         result = await handler._llmToolSearchMessages(extraData=extraData, query="hello")
 
         assert result["done"] is False
-        assert "вектор" in result.get("error", "").lower()
+        assert "embedding" in result.get("error", "").lower()
 
 
 # ---------------------------------------------------------------------------

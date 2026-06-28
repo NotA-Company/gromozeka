@@ -197,7 +197,9 @@ class ChatSearchHandler(BaseBotHandler):
             description="Semantic search over chat history. Returns messages matching the query with relevance scores.",
             parameters=[
                 LLMFunctionParameter(
-                    name="query", description="Search query text", type=LLMParameterType.STRING, required=True
+                    name="query",
+                    description="Search query text",
+                    type=LLMParameterType.STRING,
                 ),
                 LLMFunctionParameter(
                     name="limit",
@@ -406,7 +408,7 @@ class ChatSearchHandler(BaseBotHandler):
     async def _llmToolSearchMessages(
         self,
         extraData: Optional[Dict[str, Any]],
-        query: str,
+        query: str = "",
         limit: int = 5,
         max_age_days: Optional[int] = None,
         user_name: Optional[str] = None,
@@ -449,18 +451,18 @@ class ChatSearchHandler(BaseBotHandler):
             chatSettings = await self.getChatSettings(chatId=chatId)
         except Exception:
             logger.exception("search_messages: failed to load chat settings for chat %d", chatId)
-            return {"done": False, "error": "Не удалось получить настройки чата"}
+            return {"done": False, "error": "Unable to get chat settings"}
         if not chatSettings[ChatSettingsKey.ALLOW_TOOLS_COMMANDS].toBool():
-            return {"done": False, "error": "Инструменты поиска отключены в этом чате"}
+            return {"done": False, "error": "Tools disabled for this chat"}
         if not chatSettings[ChatSettingsKey.EMBEDDINGS_ENABLED].toBool():
-            return {"done": False, "error": "Семантический поиск не включён в этом чате"}
+            return {"done": False, "error": "Semantic search disabled for this chat"}
 
         # Gate 2b: rate-limit before embedding generation.
         try:
             await self.llmService.rateLimit(chatId, chatSettings)
         except Exception:
             logger.exception("search_messages: rate-limit check failed")
-            return {"done": False, "error": "Превышен лимит запросов"}
+            return {"done": False, "error": "Rate limit reached"}
 
         # Gate 3: resolve optional user filter.
         userId: Optional[int] = None
@@ -478,15 +480,17 @@ class ChatSearchHandler(BaseBotHandler):
         # Gate 5: generate query embedding.
         embeddingModelName = chatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr()
         if not embeddingModelName:
-            return {"done": False, "error": "Модель эмбеддингов не настроена"}
+            return {"done": False, "error": "Embeddings model is not configured properly"}
         model = self.llmService.getLLMManager().getModel(embeddingModelName)
         if model is None or not model.supportsEmbedding:
             return {"done": False, "error": "Модель эмбеддингов недоступна"}
-        try:
-            queryEmbedding = await model.generateEmbeddings(query)
-        except Exception as e:
-            logger.exception(f"search_messages: failed to generate query embedding: {e}")
-            return {"done": False, "error": "Не удалось создать поисковый вектор"}
+        queryEmbedding: Optional[list[float]] = None
+        if query:
+            try:
+                queryEmbedding = await model.generateEmbeddings(query)
+            except Exception as e:
+                logger.exception(f"search_messages: failed to generate query embedding: {e}")
+                return {"done": False, "error": "Unable to generate query embedding"}
 
         # Gate 6: resolve per-chat message cap.
         maxMessages: Optional[int] = None
@@ -507,9 +511,10 @@ class ChatSearchHandler(BaseBotHandler):
                 modelName=embeddingModelName,
                 maxMessages=maxMessages,
             )
-        except Exception:
-            logger.exception("search_messages: search failed")
-            return {"done": False, "error": "Ошибка при поиске сообщений"}
+        except Exception as e:
+            logger.error("search_messages: search failed")
+            logger.exception(e)
+            return {"done": False, "error": "Error during history search"}
 
         # Format results in parallel using the same pattern as
         # ``_llmToolGetThread`` does for thread messages, with
@@ -522,7 +527,7 @@ class ChatSearchHandler(BaseBotHandler):
             )
         except Exception:
             logger.exception("search_messages: formatting failed")
-            return {"done": False, "error": "Ошибка при форматировании результатов"}
+            return {"done": False, "error": "Error during formatting result"}
 
         formatted: List[Dict[str, Any]] = []
         for r, retMsg in zip(results, rawFormatted):
