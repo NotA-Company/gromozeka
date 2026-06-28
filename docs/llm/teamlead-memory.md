@@ -150,7 +150,7 @@ How to use this file:
 - Default model name: `"local-embedding"` in `bot-defaults.toml`
 - `fastembed==0.8.0` pinned in `requirements.direct.txt`
 - Key repos: `ChatEmbeddingsRepository` (embedding CRUD), `ChatSearchRepository` (search dispatcher), `ChatUsersRepository.getChatUsers` (activity filters), `ChatMessagesRepository.getMessageThread` (thread retrieval)
-- Backfill: `_dtCronJob` in `ChatSearchHandler` — round-robin per-chat, reads `REGENERATE_EMBEDDINGS` boolean, no flag reset
+- Backfill: `_dtCronJob` in `ChatSearchHandler` — round-robin per-chat, discovers via `EMBEDDINGS_ENABLED`, gates per-chat by `REGENERATE_EMBEDDINGS`, no auto-reset (manual only)
 - Shared helper: `embedAndSaveMessage` in `internal/bot/common/embedding_utils.py` — takes `EnsuredMessage`, resolves `LLMService` via `getInstance()`
 - Config cached: `_searchEnabled`, `_reindexBatchSize` in handler `__init__`
 - `DO_EXIT` registration is OPTIONAL — not required by `QueueService`
@@ -162,7 +162,7 @@ How to use this file:
 
 - **`MAX_MESSAGES_FOR_SEMANTIC_SEARCH` wired**: Previously dead config — setting existed but was never passed to `searchChatMessages`, causing silent failures on large chats (>32k messages). Now read from `targetChatSettings[ChatSettingsKey.MAX_MESSAGES_FOR_SEMANTIC_SEARCH].toInt() or None` and passed as `maxMessages=`.
 - **`_searchEnabled` removed from `_dtCronJob`**: Dead code — the handler is only constructed when `[search-history].enabled=true`. Removed the field assignment from `__init__` too.
-- **`REGENERATE_EMBEDDINGS` self-resets**: When `_dtCronJob` drains a chat's backlog, calls `self.db.chatSettings.setChatSetting(chatId, REGENERATE_EMBEDDINGS, "false", updatedBy=0)`. Uses DB repo directly (no user context in cron jobs — `self.setChatSetting` requires `MessageSender`).
+- **`REGENERATE_EMBEDDINGS` self-reset attempted then reverted (2026-06-28)**: Self-reset was implemented briefly but reverted per user decision — the flag must be manually reset via `/settings`. The cron job's docstring now explicitly states "no self-resetting". The auto-reset code was removed from `_dtCronJob`.
 - **Rate-limit gate moved**: `self.llmService.rateLimit()` now inside `if keywords:` block only — filter-only `/search` queries don't consume LLM budget.
 - **`embedAndSaveMessage` signature preserved**: The function MUST accept `EnsuredMessage` — the user needs access to attachment data for embedding content. The signature remains `(ensuredMessage: EnsuredMessage, modelName: str, db: Database) -> bool`. The background-task race condition (review recommendation #6) is accepted: the risk of a downstream handler mutating `ensuredMessage.messageText` before the task reads it is theoretical and low. Do NOT change this signature in the future without explicit approval.
 - **`saveMessageEmbedding` exception propagation**: Removed try/except — exceptions propagate to `embedAndSaveMessage` which already has its own error boundary.
@@ -176,7 +176,7 @@ How to use this file:
 ## Chat History Search — Implementation Decisions (2026-06-20)
 
 - **`MAX_MESSAGES_FOR_SEMANTIC_SEARCH` page**: `BOT_OWNER` (resolved from plan inconsistency).
-- **Backfill chat discovery**: Query DB directly for chats with `REGENERATE_EMBEDDINGS = true`. Add a repository method or direct query. Process N chats per CRON_JOB tick with configurable batch size.
+- **Backfill chat discovery**: Query DB for chats with `EMBEDDINGS_ENABLED = true` (which defaults to false, so enabled chats always have a DB row), then gate per-chat by checking `REGENERATE_EMBEDDINGS` (which defaults to true, so it's rarely persisted and can't be queried directly). Process N chats per CRON_JOB tick with configurable batch size.
 - **Plan gaps fixed**: `ChatSettingsPage.BOT_OWNER` reconciled; backfill discovery specified.
 - **Two-tier embedding model resolution** (chat setting → hardcoded fallback): `MessagePreprocessorHandler._embedMessage` and `ChatSearchHandler._dtCronJob`. The per-chat `EMBEDDING_MODEL` default is now set in `bot-defaults.toml` to `"local-embedding"`, so the chat-settings default provides the value. The `[search-history.embeddings].model` server-wide default was removed (redundant with chat settings default).
 - **Parser merge semantics in `_parseSearchArgs`**: bare words merge with `keywords:`, first occurrence wins for other keys, values span tokens until next known key.
@@ -269,7 +269,7 @@ These mistakes were made during Step 1 implementation and fixed. Don't repeat th
 
 13. **Filters must apply before result truncation.** The keyword filter was applied client-side AFTER the SQL LIMIT, silently dropping matching results outside the limit window. Always filter first, then truncate.
 
-14. **Backfill should use `REGENERATE_EMBEDDINGS` for chat discovery, not `EMBEDDINGS_ENABLED`.** The regeneration trigger is a one-shot flag — backfill processes chats that have it set, not all chats with embeddings enabled.
+14. **Backfill discovery uses `EMBEDDINGS_ENABLED`, not `REGENERATE_EMBEDDINGS`.** (Corrected 2026-06-28). `REGENERATE_EMBEDDINGS` defaults to true so it's rarely in the DB and `listChatsBySetting` would miss most chats. Instead, query `EMBEDDINGS_ENABLED` (which defaults to false, so enabled chats always have a DB row), then filter per-chat by checking `REGENERATE_EMBEDDINGS` after discovery.
 
 15. **Don't list all rows to find one.** `_resolveUserId` called `listChatUsers(limit=None)` to find one user by username. Use targeted queries: `getChatUserByUsername(chatId, username)`.
 
@@ -290,6 +290,32 @@ These mistakes were made during Step 1 implementation and fixed. Don't repeat th
 - Production code accesses `chatSettings[KEY].toBool()` via direct subscript, never `.get()` with a default. Test mocks that return sparse `ChatSettingsDict` cause `KeyError` for any key the production path reads.
 - `_makeChatSettings()` helpers must include every `ChatSettingsKey` that the production path accesses. When adding a new gate check in production (e.g., `REGENERATE_EMBEDDINGS`), the test helper must be updated to include it.
 - `test_cron_no_enabled_chats` had a second-order bug: the assertion used a stale key (`REGENERATE_EMBEDDINGS`) that didn't match the current production query (`EMBEDDINGS_ENABLED`). When production queries change, test assertions must follow.
+
+## Chat History Search — Review Fixes Round 2 (2026-06-28, updated same day)
+
+Five review findings addressed, then two further user decisions applied:
+
+| # | Finding | File | Fix | Status |
+|---|---------|------|-----|--------|
+| 1 | SQL parameter limit (>999 IN params) | `repos/chat_search.py` | Batch IDs in groups of 500 with dynamic per-batch count accounting for non-mid params | **Kept** |
+| 2 | Unbounded filter-only search load | `handlers/chat_search.py` | Initially: `dbLimit` conditional. Then: dropped client-side keywords entirely, always pass `limit=self._maxResults` | **Simplified** |
+| 3 | REGENERATE_EMBEDDINGS self-reset | `handlers/chat_search.py` | Initially implemented, then **reverted** per user decision — manual reset only | **Reverted** |
+| 4 | _dtCronJob docstring drift | `handlers/chat_search.py` | Updated docstrings to match two-step discovery | **Kept** |
+| 5 | Empty EMBEDDING_MODEL dispatched | `message_preprocessor.py` | Added `if embeddingModelName:` guard | **Kept** |
+
+### User Decisions (2026-06-28)
+
+- **No auto-reset of REGENERATE_EMBEDDINGS**: The flag must be manually reset via `/settings`. Docstrings and config descriptions updated accordingly.
+- **Drop client-side keyword matching**: Vector search (via `queryEmbedding`) is sufficient. Removed the post-search substring filter that required `limit=None`. Now always pass `limit=self._maxResults`.
+- **Fix recommendations #7-#9**: `_loadEmbeddingsFromDb` type annotation fixed (`tuple[List[List[float]], List[MessageId]]`), `_formatMessageDict` docstring completed, `_llmToolGetThread` uses `asyncio.gather`.
+
+### Key Lessons
+
+- **Self-reset placement bug** (historical): The initial fix placed the reset AFTER `if not pendingMessagesList: return`, making it unreachable. Lesson: place cleanup logic BEFORE early-return guards. (Moot after revert but the pattern is general.)
+- **Dynamic batch size**: The `_MESSAGE_ID_FILTER_BATCH_SIZE = 500` constant must account for non-mid params. Use `perBatchCount = min(BATCH_SIZE, 990 - baseParamCount)` to stay under SQLite's 999 limit.
+- **Stale anti-patterns in memory**: Anti-pattern #14 was written when the plan said "discover by REGENERATE_EMBEDDINGS". The implementation switched to EMBEDDINGS_ENABLED because the former defaults to true and is rarely in the DB. When implementation contradicts a recorded "lesson", update the lesson.
+- **Gate 2 step budget**: The whole-work review agent hit its 60-step limit. Keep Gate 2 briefs tightly scoped to cross-cutting concerns only.
+- **Accidental `git checkout`**: A software-developer ran `git checkout HEAD --` on a file it wasn't supposed to touch, wiping pre-existing working-tree changes. When briefs touch multiple files, be explicit about which files to NOT touch.
 
 ## Teamlead Workflow Lessons
 

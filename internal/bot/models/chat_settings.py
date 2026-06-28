@@ -1028,26 +1028,26 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
     # Embedding / search settings
     ChatSettingsKey.EMBEDDING_MODEL: {
         "type": ChatSettingsType.STRING,
-        "short": "Embedding model",
-        "long": "Model used for message embeddings and semantic search.",
+        "short": "Модель эмбеддингов",
+        "long": "Модель, используемая для эмбеддингов для семантического поиска.",
         "page": ChatSettingsPage.BOT_OWNER,
     },
     ChatSettingsKey.EMBEDDINGS_ENABLED: {
         "type": ChatSettingsType.BOOL,
-        "short": "Embeddings enabled",
-        "long": "Enable embedding generation and semantic search for this chat.",
+        "short": "Включить эмбеддинги",
+        "long": "Включить эмбеддинги для семантического поиска по истории чата.",
         "page": ChatSettingsPage.BOT_OWNER,
     },
     ChatSettingsKey.REGENERATE_EMBEDDINGS: {
         "type": ChatSettingsType.BOOL,
         "short": "Regenerate embeddings",
-        "long": "Trigger re-embedding of all messages. Self-resets after completion.",
+        "long": "Перегенерировать отсутствующие или неверные эмбеддинги.",
         "page": ChatSettingsPage.BOT_OWNER,
     },
     ChatSettingsKey.MAX_MESSAGES_FOR_SEMANTIC_SEARCH: {
         "type": ChatSettingsType.INT,
-        "short": "Max messages for search",
-        "long": "Max recent messages to load for semantic search ranking.",
+        "short": "Максимальное количество сообщений для поиска",
+        "long": "Сколько последних сообщений будут использоваться для поиска.",
         "page": ChatSettingsPage.BOT_OWNER,
     },
     # Tier-related

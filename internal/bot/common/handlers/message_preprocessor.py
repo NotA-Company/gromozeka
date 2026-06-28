@@ -122,16 +122,19 @@ class MessagePreprocessorHandler(BaseBotHandler):
                 chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
                 if chatSettings[ChatSettingsKey.EMBEDDINGS_ENABLED].toBool():
                     embeddingModelName = chatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr()
-                    if ensuredMessage.messageText and ensuredMessage.messageText.strip():
-                        await self.queueService.addBackgroundTask(
-                            asyncio.create_task(
-                                embedAndSaveMessage(
-                                    ensuredMessage=ensuredMessage,
-                                    modelName=embeddingModelName,
-                                    db=self.db,
+                    if embeddingModelName:
+                        if ensuredMessage.messageText and ensuredMessage.messageText.strip():
+                            await self.queueService.addBackgroundTask(
+                                asyncio.create_task(
+                                    embedAndSaveMessage(
+                                        ensuredMessage=ensuredMessage,
+                                        modelName=embeddingModelName,
+                                        db=self.db,
+                                    )
                                 )
                             )
-                        )
+                    else:
+                        logger.error(f"Embedding model not set for chat {ensuredMessage.recipient.id}")
             except Exception as e:
                 # Never let embedding dispatch fail the message pipeline.
                 logger.exception("Failed to dispatch embedding for chat %s: %s", ensuredMessage.recipient.id, e)

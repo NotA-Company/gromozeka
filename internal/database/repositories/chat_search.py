@@ -40,6 +40,12 @@ from .base import BaseRepository
 
 logger = logging.getLogger(__name__)
 
+#: Number of message ID filter parameters per SQL batch.
+#: Kept well below SQLite's ``SQLITE_MAX_VARIABLE_NUMBER`` (999 on older
+#: builds, 32766 on 3.32+).  The per-batch count is also dynamically
+#: reduced to account for non-``mid`` params (static filters, categories).
+_MESSAGE_ID_FILTER_BATCH_SIZE: int = 1024
+
 
 class ChatSearchRepository(BaseRepository):
     """Unified chat-message search across ``chat_messages`` and ``message_embeddings``.
@@ -387,7 +393,7 @@ class ChatSearchRepository(BaseRepository):
         chatId: int,
         modelName: Optional[str],
         maxMessages: Optional[int],
-    ) -> tuple:
+    ) -> tuple[List[List[float]], List[MessageId]]:
         """Load all embeddings for ``chatId`` filtered by ``modelName``.
 
         Args:
@@ -400,11 +406,10 @@ class ChatSearchRepository(BaseRepository):
                 cap.
 
         Returns:
-            Tuple ``(embeddingList, messageIds)`` where ``embeddingList``
-            is a list of ``list[float]`` vectors and ``messageIds`` is
-            a list of :class:`MessageId` aligned 1:1 with
-            ``embeddingList``. Both are empty on failure or when
-            ``modelName`` is ``None``.
+            ``(embeddingList, messageIds)`` where ``embeddingList`` is a
+            list of ``list[float]`` vectors and ``messageIds`` is a list
+            of :class:`MessageId` aligned 1:1 with ``embeddingList``.
+            Both are empty on failure or when ``modelName`` is ``None``.
         """
         if modelName is None:
             return [], []
@@ -457,6 +462,10 @@ class ChatSearchRepository(BaseRepository):
         Returns the subset of ``candidateMessageIds`` that satisfy all
         supplied filters. An empty input produces an empty result
         without a round-trip to the DB.
+
+        Note:
+            Results are returned in unspecified order (deduplicated via
+            set); callers must not rely on ordering.
         """
         if not candidateMessageIds:
             return []
@@ -465,39 +474,54 @@ class ChatSearchRepository(BaseRepository):
         if maxAgeDays is not None:
             cutoffTs = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=maxAgeDays)
 
-        params: dict = {
+        # Build static filter params once (reused by every batch)
+        baseParams: dict = {
             "chatId": chatId,
             "userFilter": userFilter,
             "rootMessageId": rootMessageId.asStr() if rootMessageId is not None else None,
             "cutoffTs": cutoffTs,
-            "categoryFilter": None if categoryFilter is None else True,
         }
-        placeholders: list = []
-        for i, mid in enumerate(candidateMessageIds):
-            key = f":mid{i}"
-            placeholders.append(key)
-            params[f"mid{i}"] = mid.asStr()
-        if categoryFilter is not None:
-            for i, category in enumerate(categoryFilter):
-                params[f"categoryFilter{i}"] = str(category)
+        if categoryFilter:
+            for i, cat in enumerate(categoryFilter):
+                baseParams[f"categoryFilter{i}"] = cat
+            categoryPlaceholders = ", ".join(f":categoryFilter{i}" for i in range(len(categoryFilter)))
+        else:
+            categoryPlaceholders = ""
 
-        categoryClause = ""
-        if categoryFilter is not None:
-            categoryPlaceholders = [f":categoryFilter{i}" for i in range(len(categoryFilter))]
-            categoryClause = f"OR c.message_category IN ({', '.join(categoryPlaceholders)})"
+        # Compute safe per-batch ID count, leaving room for static + category params
+        baseParamCount: int = len(baseParams.keys())
+        perBatchCount: int = min(_MESSAGE_ID_FILTER_BATCH_SIZE, 32766 - baseParamCount)
 
-        query = f"""
-            SELECT c.message_id FROM chat_messages c
-            WHERE
-                c.chat_id = :chatId
-                AND c.message_id IN ({", ".join(placeholders)})
-                AND (:userFilter    IS NULL OR c.user_id = :userFilter)
-                AND (:rootMessageId IS NULL OR c.root_message_id = :rootMessageId)
-                AND (:cutoffTs      IS NULL OR c.date > :cutoffTs)
-                AND (:categoryFilter IS NULL {categoryClause})
-        """
-        rows = await sqlProvider.executeFetchAll(query, params)
-        return [MessageId(row["message_id"]) for row in rows]
+        resultSet: set = set()
+        for batchStart in range(0, len(candidateMessageIds), perBatchCount):
+            batchIds = candidateMessageIds[batchStart : batchStart + perBatchCount]
+
+            params: dict = dict(baseParams)
+            placeholders: list = []
+            for i, mid in enumerate(batchIds):
+                key = f":mid{i}"
+                placeholders.append(key)
+                params[f"mid{i}"] = mid.asStr()
+
+            midPlaceholders: str = ", ".join(placeholders)
+
+            query: str = f"""
+                SELECT c.message_id
+                FROM chat_messages c
+                WHERE c.chat_id = :chatId
+                  AND c.message_id IN ({midPlaceholders})
+                  AND (:userFilter IS NULL OR c.user_id = :userFilter)
+                  AND (:rootMessageId IS NULL OR c.root_message_id = :rootMessageId)
+                  AND (:cutoffTs IS NULL OR c.date > :cutoffTs)
+            """
+            if categoryFilter:
+                query += f" AND (:categoryFilter0 IS NULL OR c.message_category IN ({categoryPlaceholders}))"
+
+            rows = await sqlProvider.executeFetchAll(query, params)
+            for row in rows:
+                resultSet.add(MessageId(row["message_id"]))
+
+        return list(resultSet)
 
     async def _fetchSearchResultRows(
         self,

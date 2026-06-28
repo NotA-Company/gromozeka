@@ -13,7 +13,7 @@ Commands:
 
 CRON_JOB:
     - `_dtCronJob` - embed a small batch of pending messages for one
-      chat with `REGENERATE_EMBEDDINGS=true` (round-robin across chats).
+      chat (round-robin across chats with embeddings enabled).
 
 The handler follows the conditional-registration pattern: it is only
 loaded when ``[search-history].enabled = true`` in the merged TOML
@@ -276,31 +276,33 @@ class ChatSearchHandler(BaseBotHandler):
         Runs every 60 seconds (the ``CRON_JOB`` cadence in
         :class:`QueueService`). Per tick:
 
-        1. List chats with ``REGENERATE_EMBEDDINGS=true`` via the
+        1. List chats with ``EMBEDDINGS_ENABLED=true`` via the
            cross-source-aggregating ``ChatSettingsRepository.listChatsBySetting``
            helper. ``value`` is filtered through
            :meth:`ChatSettingsValue.toBool` so ``"true"``/``"1"`` (any
-           case) match. The ``EMBEDDINGS_ENABLED`` flag is *not* used as
-           the backfill trigger: a chat that flips embeddings on for new
-           messages has no need for a backfill pass over its history.
-         2. Round-robin: pick the next chat in stable order, advance
-            ``_backfillIndex``.
-         3. Resolve the chat's embedding model from its ``EMBEDDING_MODEL``
-            setting. Bail out if the model is missing, unknown, or does
-            not support embeddings.
-         4. Fetch up to ``[search-history.embeddings].reindex-batch-size``
-            (default ``BACKFILL_DEFAULT_BATCH_SIZE``) messages without
-            embeddings and embed them one by one, with a small inter-call
-            sleep to keep the asyncio loop responsive.
-         5. Per-message errors are caught and logged — one bad row never
-            aborts the batch.
-
-        No re-entrancy guard, no inter-pass backoff, and no
-        self-resetting of ``REGENERATE_EMBEDDINGS``: the per-tick batch
-        is small (default 50 messages) and the next minute's tick will
-        pick up where this one left off, so a long pass just walks a
-        longer backlog. The previous ``BackfillWorker``-style throttling
-        was dropped with that class.
+           case) match. (``REGENERATE_EMBEDDINGS`` defaults to ``true``
+           so it is rarely persisted to the DB; ``EMBEDDINGS_ENABLED``
+           defaults to ``false`` so any chat that explicitly enabled it
+           always has a DB row — see the inline comment at the query
+           site.)
+        2. Skip chats where ``REGENERATE_EMBEDDINGS`` is explicitly set
+           to ``"false"`` — because the setting defaults to true, a chat
+           that never touched it is automatically opted in for the
+           backfill pass.
+         3. Round-robin: pick the next chat in stable order, advance
+             ``_backfillIndex``.
+         4. Resolve the chat's embedding model from its ``EMBEDDING_MODEL``
+             setting. Bail out if the model is missing, unknown, or does
+             not support embeddings.
+         5. Fetch up to ``[search-history.embeddings].reindex-batch-size``
+             (default ``BACKFILL_DEFAULT_BATCH_SIZE``) messages without
+             embeddings and embed them one by one, with a small inter-call
+             sleep to keep the asyncio loop responsive.
+          6. Per-message errors are caught and logged — one bad row never
+              aborts the batch.
+          7. No self-resetting of ``REGENERATE_EMBEDDINGS``: the per-tick
+             batch is small and the next minute's tick will pick up where
+             this one left off.
 
         Args:
             task: The CRON_JOB delayed task firing this handler. Ignored.
@@ -387,7 +389,7 @@ class ChatSearchHandler(BaseBotHandler):
         if embedded > 0:
             elapsedTime = libUtils.now() - startTime
             logger.info(
-                "Backfill: embedded %d messages in chat %d (elapsed %f.2 seconds)",
+                "Backfill: embedded %d messages in chat %d (elapsed %.2f seconds)",
                 embedded,
                 chatId,
                 elapsedTime.total_seconds(),
@@ -592,8 +594,11 @@ class ChatSearchHandler(BaseBotHandler):
     ###
 
     async def _formatMessageDict(self, msg: ChatMessageDict) -> Dict[str, Any]:
-        """Convert a ChatMessageDict row to a JSON-safe dict for LLM tool output.
-        TODO: Fix docstring
+        """Convert a ``ChatMessageDict`` row to a JSON-safe dict for LLM tool output.
+
+        Uses :meth:`EnsuredMessage.formatForLLM` with JSON format so the
+        result is directly serialisable back into the model context.
+
         Args:
             msg: A ``ChatMessageDict`` row from the repository.
 
@@ -655,11 +660,17 @@ class ChatSearchHandler(BaseBotHandler):
             return {"done": False, "error": "Сообщение не найдено в этом чате"}
 
         rootMsg = thread.get("root_message")
+        threadMessages: List[ChatMessageDict] = thread.get("thread_messages", [])
+        rootFormatted = await self._formatMessageDict(rootMsg) if rootMsg is not None else None
+        targetFormatted = await self._formatMessageDict(thread["target_message"])
+        # Format remaining thread messages in parallel since they are
+        # independent of each other.
+        formattedThreadMessages = await asyncio.gather(*[self._formatMessageDict(m) for m in threadMessages])
         return {
             "done": True,
-            "root_message": await self._formatMessageDict(rootMsg) if rootMsg is not None else None,
-            "target_message": await self._formatMessageDict(thread["target_message"]),
-            "thread_messages": [await self._formatMessageDict(m) for m in thread.get("thread_messages", [])],
+            "root_message": rootFormatted,
+            "target_message": targetFormatted,
+            "thread_messages": list(formattedThreadMessages),
         }
 
     ###
@@ -802,10 +813,9 @@ class ChatSearchHandler(BaseBotHandler):
         Parses the argument string into a dict, validates that at
         least one of ``keywords``/``user``/``days``/``thread`` is
         provided, resolves an optional ``chat:`` target (numeric id), enforces that the sender is an admin of
-        the target chat, runs the filter-only search through the
-        chat-message repository with `limit=None` (no SQL `LIMIT` —
-        see rationale inline), applies a client-side keyword filter
-        (only when ``keywords`` is present), truncates the matches
+        the target chat, runs the search through the
+        chat-message repository (filter-only or semantic, with
+        ``limit=_maxResults``), truncates the matches
         to `_maxResults`, and finally returns the matching messages
         rendered as a raw, human-readable list. No LLM summary is
         produced.
@@ -857,10 +867,9 @@ class ChatSearchHandler(BaseBotHandler):
                 return
             targetChatId = resolvedChatId
 
-        # Build the SQL filter args. The repository has no native keyword
-        # operator, so the keyword substring filter is applied
-        # client-side below; semantic ranking (when available) only
-        # refines the *order* of the SQL-filtered result set.
+        # Build the SQL filter args. The repository handles keyword
+        # matching via vector search (semantic ranking) in the DB,
+        # so no client-side substring filter is needed.
         days = self._defaultDays
         if parsed["days"] is not None:
             try:
@@ -925,25 +934,6 @@ class ChatSearchHandler(BaseBotHandler):
                         queryEmbedding = None
 
         try:
-            # `limit=None` is intentional: the SQL search API has no
-            # native keyword operator, so the keyword filter has to run
-            # client-side. If we capped the SQL at `_maxResults` (the
-            # default 10), the keyword filter would see only the 10
-            # most-recent matches-by-date and silently drop any older
-            # matches. By asking for the full result set here and
-            # truncating to `_maxResults` *after* the keyword filter
-            # below, we guarantee the user still gets a hit whenever
-            # at least one matching message exists in the search
-            # window. (See `searchChatMessages`'s `limit` docstring.)
-            #
-            # When keywords were provided *and* we managed to embed
-            # them above, `queryEmbedding` switches the search into
-            # semantic-ranking mode (cosine similarity on
-            # `message_embeddings`). The keyword substring filter is
-            # still applied client-side below — semantic ranking
-            # refines the *order* of an already-filtered set, it does
-            # not replace keyword matching.
-            #
             # `maxMessages` caps the number of recent embeddings loaded
             # for the similarity pass (reads from
             # MAX_MESSAGES_FOR_SEMANTIC_SEARCH chat setting); it is
@@ -957,7 +947,7 @@ class ChatSearchHandler(BaseBotHandler):
                 maxAgeDays=days,
                 rootMessageId=rootMessageId,
                 modelName=embeddingModelName,
-                limit=None,
+                limit=self._maxResults,
                 maxMessages=maxMessages,
             )
         except Exception as e:
@@ -971,19 +961,8 @@ class ChatSearchHandler(BaseBotHandler):
             )
             return
 
-        # Apply keyword filter client-side. Substring match (case-insensitive)
-        # on message_text. The API limitation is documented in the plan.
-        # Skipped entirely when the user did not provide `keywords:` —
-        # a filter-only search (`/search user: @alice days: 7`) must
-        # not silently drop rows just because they don't contain a
-        # particular substring.
-        if keywords:
-            keywordLower = keywords.lower()
-            results = [r for r in results if keywordLower in (r.get("message_text") or "").lower()]
         # Cap to `_maxResults` so the response never carries an
-        # unbounded result set, even when the chat contains a huge
-        # number of keyword hits. The truncation happens *after* the
-        # keyword filter, so the most-recent matching messages win.
+        # unbounded result set.
         results = results[: self._maxResults]
 
         if not results:

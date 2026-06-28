@@ -442,80 +442,82 @@ class TestSearchCommand:
         assert "должен быть числом" in sentText
 
     async def test_search_keyword_matches_outside_max_results_window(self) -> None:
-        """``/search`` finds matches that fall outside the SQL pagination window.
+        """``/search`` passes ``limit=_maxResults`` to the DB.
 
-        Regression: ``search_command`` previously asked the DB for
-        ``_maxResults`` (default 10) rows and then filtered by keyword
-        client-side. If the keyword only appeared in messages older than
-        the ``_maxResults``-th most-recent message, the user saw "no
-        results" even though matches existed in the search window. The
-        fix asks the DB for the full result set (``limit=None``) and
-        truncates to ``_maxResults`` *after* the keyword filter, so the
-        most recent keyword-bearing messages always win.
+        The DB handles keyword matching (via vector search / semantic
+        ranking), so the handler always passes ``limit=self._maxResults``
+        rather than requesting the full result set and filtering
+        client-side.
         """
         handler, mocks = _makeHandler()  # _maxResults defaults to 10
-        # 10 "noise" messages (most recent by date), none containing "meeting".
-        noise = [_sampleRow(messageId=i, text=f"daily chatter {i}", daysAgo=i // 2) for i in range(10)]
-        # 2 keyword-bearing messages, both older than the 10 most-recent
-        # messages. Under the buggy code, ``searchChatMessages(limit=10)``
-        # would return only the noise and the client-side filter would
-        # drop every row → "no results". The fix returns all 12 rows
-        # (limit=None), the filter keeps the 2 matches, and the reply
-        # reports them.
+        # DB returns only the 2 matches — vector search handles ranking.
         matches = [
             _sampleRow(messageId=20, text="meeting notes day 1", daysAgo=6),
             _sampleRow(messageId=21, text="meeting recap day 2", daysAgo=7),
         ]
-        mocks["db"].chatSearch.searchChatMessages = AsyncMock(return_value=noise + matches)
+        mocks["db"].chatSearch.searchChatMessages = AsyncMock(return_value=matches)
         em = _makeEnsuredMessage()
 
         await _callSearch(handler, em, "keywords: meeting")
 
-        # The DB call must request the full result set (no SQL LIMIT) so
-        # the client-side keyword filter sees every candidate.
+        # The DB call always uses ``limit=self._maxResults``.
         callKwargs = mocks["db"].chatSearch.searchChatMessages.call_args.kwargs
-        assert callKwargs["limit"] is None
+        assert callKwargs["limit"] == 10
 
-        # Reply shows the 2 keyword matches, not the noise.
+        # Reply shows the 2 keyword matches.
         mocks["sendMessage"].assert_awaited_once()
         sentKwargs = mocks["sendMessage"].call_args.kwargs
         sentText: str = sentKwargs.get("messageText", "")
         assert "Найдено 2 сообщений" in sentText
-        # The reply must not claim "no results" — the bug surfaced here.
         assert "не найдены" not in sentText
-        # The reply is a plain command reply (raw, no summary).
         assert sentKwargs.get("messageCategory") == MessageCategory.BOT_COMMAND_REPLY
 
     async def test_search_truncates_to_max_results_after_keyword_filter(self) -> None:
-        """``/search`` caps the keyword-filtered results at ``_maxResults``.
+        """``/search`` caps the results at ``_maxResults``.
 
-        Even when the DB returns many keyword matches, the handler must
-        truncate to ``_maxResults`` (default 10) *after* the keyword
-        filter so the response never carries an unbounded slice. This
-        is the post-fix counterpart to
-        :meth:`test_search_keyword_matches_outside_max_results_window`
-        — the keyword filter must run before the truncation, not
-        after.
+        The DB returns up to ``_maxResults`` rows. The handler also
+        truncates to ``_maxResults`` as a safety cap in case the DB
+        returns more (e.g., when no embedding was generated).
         """
         handler, mocks = _makeHandler()  # _maxResults defaults to 10
-        # 15 keyword matches — 5 more than _maxResults. The mock returns
-        # them already sorted by date DESC (newest first), so the
-        # handler should keep the first 10 and drop the last 5.
+        # 15 keyword matches — the handler should keep only 10.
         allMatches = [_sampleRow(messageId=i, text=f"meeting {i}", daysAgo=i) for i in range(15)]
         mocks["db"].chatSearch.searchChatMessages = AsyncMock(return_value=allMatches)
         em = _makeEnsuredMessage()
 
         await _callSearch(handler, em, "keywords: meeting")
 
-        # The DB call still asks for the full result set; truncation
-        # happens in the handler, not in SQL.
+        # The DB call uses ``limit=self._maxResults``.
         callKwargs = mocks["db"].chatSearch.searchChatMessages.call_args.kwargs
-        assert callKwargs["limit"] is None
+        assert callKwargs["limit"] == 10
 
-        # The reply counts exactly 10 matches, not 15 — the cap is
-        # applied after the keyword filter.
+        # The reply counts exactly 10 matches, not 15.
         sentText: str = mocks["sendMessage"].call_args.kwargs.get("messageText", "")
         assert "Найдено 10 сообщений" in sentText
+
+    async def test_search_filter_only_uses_db_limit(self) -> None:
+        """``/search days: 365`` (no keywords) passes ``limit=_maxResults`` to the DB.
+
+        Regression: When the user searches without keywords (filter-only),
+        the handler must pass ``limit=self._maxResults`` to
+        ``searchChatMessages`` so the SQL query is bounded. The previous
+        code passed ``limit=None`` for every path, which could return an
+        unbounded result set for filter-only queries.
+        """
+        handler, mocks = _makeHandler()
+        manyRows = [_sampleRow(messageId=i, text=f"meeting {i}", daysAgo=i) for i in range(50)]
+        mocks["db"].chatSearch.searchChatMessages = AsyncMock(return_value=manyRows)
+        em = _makeEnsuredMessage()
+
+        await _callSearch(handler, em, "days: 365")
+
+        # The DB call must have limit=_maxResults (bounded), not None.
+        callKwargs = mocks["db"].chatSearch.searchChatMessages.call_args.kwargs
+        assert callKwargs["limit"] == SEARCH_DEFAULT_MAX_RESULTS
+
+        # Reply shows at most _maxResults results, not all 50.
+        sentText: str = mocks["sendMessage"].call_args.kwargs.get("messageText", "")
+        assert f"Найдено {SEARCH_DEFAULT_MAX_RESULTS} сообщений" in sentText
 
     @pytest.mark.parametrize(
         ("category", "expected"),
@@ -1322,6 +1324,73 @@ class TestDtCronJob:
         )
         secondGetArgs = mocks["db"].chatEmbeddings.getMessagesWithoutEmbeddings.call_args.args
         assert secondGetArgs[0] == 200
+
+    async def test_cron_early_return_on_empty_backlog(self) -> None:
+        """Backfill CRON_JOB returns early when no pending messages exist.
+
+        The handler no longer performs any self-reset of
+        ``REGENERATE_EMBEDDINGS`` — the per-tick batch is small and
+        the next minute's tick will pick up where this one left off.
+        """
+        cs = _makeChatSettings(embeddingModel="text-embedding-3-small")
+        handler, mocks = _makeHandler(chatSettings=cs)
+        mocks["db"].chatSettings.listChatsBySetting = AsyncMock(return_value={100: "true"})
+        mockModel = Mock()
+        mockModel.supportsEmbedding = True
+        mockModel.generateEmbeddings = AsyncMock(return_value=[0.1])
+        cast(Any, handler).llmService.getLLMManager = Mock(return_value=Mock(getModel=Mock(return_value=mockModel)))
+        # Empty backlog — no pending messages to embed.
+        mocks["db"].chatEmbeddings.getMessagesWithoutEmbeddings = AsyncMock(return_value=[])
+        # Set up setChatSetting on the mock so we can assert it was NOT called.
+        mocks["db"].chatSettings.setChatSetting = AsyncMock()
+
+        await handler._dtCronJob(
+            DelayedTask(
+                taskId=f"cron-{id(self)}",
+                delayedUntil=0.0,
+                function=DelayedTaskFunction.CRON_JOB,
+                kwargs={},
+            )
+        )
+
+        # The handler returns early on empty backlog — no self-reset.
+        mocks["db"].chatSettings.setChatSetting.assert_not_called()
+
+    async def test_cron_self_reset_does_not_fire_on_full_batch(self) -> None:
+        """``REGENERATE_EMBEDDINGS`` is NOT reset when the backlog has a full batch.
+
+        When the repo returns exactly ``_reindexBatchSize`` messages,
+        the backlog is not yet drained — there may be more messages
+        beyond this batch. The self-reset must NOT fire so the next
+        tick continues backfilling.
+        """
+        cs = _makeChatSettings(embeddingModel="text-embedding-3-small")
+        handler, mocks = _makeHandler(chatSettings=cs)
+        mocks["db"].chatSettings.listChatsBySetting = AsyncMock(return_value={100: "true"})
+        mockModel = Mock()
+        mockModel.supportsEmbedding = True
+        mockModel.generateEmbeddings = AsyncMock(return_value=[0.1])
+        cast(Any, handler).llmService.getLLMManager = Mock(return_value=Mock(getModel=Mock(return_value=mockModel)))
+        # Exactly _reindexBatchSize messages — backlog not yet drained.
+        fullBatch = [self._makePendingMessage(messageId=MessageId(i)) for i in range(BACKFILL_DEFAULT_BATCH_SIZE)]
+        mocks["db"].chatEmbeddings.getMessagesWithoutEmbeddings = AsyncMock(return_value=fullBatch)
+        # Stub saveMessageEmbedding so the embedding loop runs cleanly.
+        saveMock = AsyncMock()
+        cast(Any, mocks["db"]).chatEmbeddings.saveMessageEmbedding = saveMock
+        # Set up setChatSetting so we can assert it was NOT called.
+        mocks["db"].chatSettings.setChatSetting = AsyncMock()
+
+        await handler._dtCronJob(
+            DelayedTask(
+                taskId=f"cron-{id(self)}",
+                delayedUntil=0.0,
+                function=DelayedTaskFunction.CRON_JOB,
+                kwargs={},
+            )
+        )
+
+        # The self-reset must NOT fire when the batch is full.
+        mocks["db"].chatSettings.setChatSetting.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

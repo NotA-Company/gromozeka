@@ -26,15 +26,21 @@ embeddings for ranking.
 Uses the shared ``testDatabase`` fixture from ``tests/conftest.py`` so
 each test gets a fresh in-memory SQLite database with all migrations
 applied — no mocks.
+
+Regression tests for the ``_filterMessageIds`` batching boundary logic
+live in :class:`TestFilterMessageIdsBatching`.
 """
 
 # pyright: reportTypedDictNotRequiredAccess=false
 
 import datetime
+from unittest.mock import patch
 
 from internal.database import Database
 from internal.database.manager import DatabaseManagerConfig
 from internal.database.models import MessageCategory
+from internal.database.providers.base import BaseSQLProvider
+from internal.database.repositories.chat_search import _MESSAGE_ID_FILTER_BATCH_SIZE
 from internal.models import MessageId
 
 
@@ -156,3 +162,125 @@ class TestSearchChatMessages:
 
         assert len(results) == 2
         assert {r["message_category"] for r in results} == {MessageCategory.BOT}
+
+
+class TestFilterMessageIdsBatching:
+    """Regression tests for ``_filterMessageIds`` batching boundary.
+
+    Verifies that ``_filterMessageIds`` correctly batches candidate IDs
+    across multiple SQL queries when the count exceeds
+    ``_MESSAGE_ID_FILTER_BATCH_SIZE``, and that results are correctly
+    accumulated (deduplicated via set) across batches.
+    """
+
+    @staticmethod
+    async def _seedUser(db: Database, chatId: int, userId: int) -> None:
+        """Insert a chat_users row so JOINs to chat_messages succeed."""
+        await db.chatUsers.updateChatUser(
+            chatId=chatId,
+            userId=userId,
+            username=f"user{userId}",
+            fullName=f"User {userId}",
+        )
+
+    async def test_batching_with_over_500_candidates(self, testDatabase: Database) -> None:
+        """``_filterMessageIds`` batches candidate IDs across multiple queries.
+
+        Seeds ``_MESSAGE_ID_FILTER_BATCH_SIZE * 2 - 1`` messages —
+        enough that more than one batch is needed (default batch size is
+        500). Wraps ``executeFetchAll`` to count queries and verifies at
+        least 2 batches were issued.
+
+        This test would FAIL if the batching loop were removed (callCount
+        would be 1) or if ``_MESSAGE_ID_FILTER_BATCH_SIZE`` were raised
+        above 999 (asserted explicitly below).
+        """
+        # Sanity check: batch size must stay below SQLITE_MAX_VARIABLE_NUMBER.
+        assert _MESSAGE_ID_FILTER_BATCH_SIZE <= 32766, (
+            f"_MESSAGE_ID_FILTER_BATCH_SIZE={_MESSAGE_ID_FILTER_BATCH_SIZE} "
+            f"exceeds SQLITE_MAX_VARIABLE_NUMBER limit"
+        )
+
+        chatId = 1
+        userId = 100
+
+        # Seed enough messages so every candidate ID exists in the DB
+        # (candidate range is 1 .. _MESSAGE_ID_FILTER_BATCH_SIZE * 2 - 1).
+        await self._seedUser(testDatabase, chatId=chatId, userId=userId)
+        for i in range(1, _MESSAGE_ID_FILTER_BATCH_SIZE * 2):
+            await testDatabase.chatMessages.saveChatMessage(
+                date=datetime.datetime.now(datetime.timezone.utc),
+                chatId=chatId,
+                userId=userId,
+                messageId=MessageId(i),
+                messageText=str(i),
+                messageCategory=MessageCategory.UNSPECIFIED,
+            )
+
+        sqlProvider = await testDatabase.manager.getProvider(chatId=chatId, readonly=True)
+        candidateIds = [MessageId(i) for i in range(1, _MESSAGE_ID_FILTER_BATCH_SIZE * 2)]
+
+        # Spy on executeFetchAll at the base-class level to count SQL calls
+        # (required because SQLite3Provider uses __slots__ and rejects
+        # instance attribute assignment).
+        originalMethod = BaseSQLProvider.executeFetchAll
+        callCount = 0
+
+        async def countingSideEffect(query, params=None):
+            nonlocal callCount
+            callCount += 1
+            return await originalMethod(sqlProvider, query, params)
+
+        with patch.object(BaseSQLProvider, "executeFetchAll", side_effect=countingSideEffect):
+            result = await testDatabase.chatSearch._filterMessageIds(
+                sqlProvider=sqlProvider,
+                chatId=chatId,
+                candidateMessageIds=candidateIds,
+                userFilter=None,
+                categoryFilter=None,
+                maxAgeDays=None,
+                rootMessageId=None,
+            )
+
+        assert len(result) == _MESSAGE_ID_FILTER_BATCH_SIZE * 2 - 1
+        assert {mid.asInt() for mid in result} == set(range(1, _MESSAGE_ID_FILTER_BATCH_SIZE * 2))
+        # 610 candidates / 500 per batch = at least 2 SQL queries.
+        assert callCount >= 2, (
+            f"Expected at least 2 SQL queries for {_MESSAGE_ID_FILTER_BATCH_SIZE * 2} candidates, "
+            f"got {callCount} — batching may not be working"
+        )
+
+    async def test_batching_with_category_filter(self, testDatabase: Database) -> None:
+        """Batch size is reduced when category filters consume param slots."""
+        chatId = 1
+        userId = 100
+
+        # Seed one user and 25 messages (some with BOT, some with USER category).
+        await self._seedUser(testDatabase, chatId=chatId, userId=userId)
+        for i in range(1, 26):
+            category = MessageCategory.BOT if i % 2 == 0 else MessageCategory.USER
+            await testDatabase.chatMessages.saveChatMessage(
+                date=datetime.datetime.now(datetime.timezone.utc),
+                chatId=chatId,
+                userId=userId,
+                messageId=MessageId(i),
+                messageText=str(i),
+                messageCategory=category,
+            )
+
+        sqlProvider = await testDatabase.manager.getProvider(chatId=chatId, readonly=True)
+        candidateIds = [MessageId(i) for i in range(1, 26)]
+
+        # Filter to BOT category only — expects 12 of 25 messages.
+        result = await testDatabase.chatSearch._filterMessageIds(
+            sqlProvider=sqlProvider,
+            chatId=chatId,
+            candidateMessageIds=candidateIds,
+            userFilter=None,
+            categoryFilter=[MessageCategory.BOT],
+            maxAgeDays=None,
+            rootMessageId=None,
+        )
+
+        assert len(result) == 12
+        assert {mid.asInt() for mid in result} == {i for i in range(1, 26) if i % 2 == 0}

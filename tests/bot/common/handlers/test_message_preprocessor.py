@@ -300,11 +300,14 @@ class TestNewMessageHandlerDispatchGates:
         handler.queueService.addBackgroundTask.assert_not_called()  # type: ignore[attr-defined]
 
     async def testDispatchAllGatesPass(self, handler: MessagePreprocessorHandler) -> None:
-        """All gates pass and text is non-empty → ``addBackgroundTask`` called once.
+        """All gates pass (incl. non-empty model name) → ``addBackgroundTask`` called once.
 
         Args:
             handler: Preprocessor fixture.
         """
+        handler.getChatSettings = AsyncMock(  # type: ignore[method-assign]
+            return_value=_defaultChatSettings(embeddingModel="text-embedding-3-small")
+        )
         ensured = _makeEnsuredMessage(messageText="meaningful text")
 
         result = await handler.newMessageHandler(ensured, updateObj=Mock())
@@ -508,6 +511,9 @@ class TestEmbedMessage:
         Args:
             handler: Preprocessor fixture.
         """
+        handler.getChatSettings = AsyncMock(  # type: ignore[method-assign]
+            return_value=_defaultChatSettings(embeddingModel="text-embedding-3-small")
+        )
         handler.queueService.addBackgroundTask = AsyncMock(
             side_effect=RuntimeError("queue down")
         )  # type: ignore[method-assign]
