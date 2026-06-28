@@ -148,3 +148,108 @@ class TestGetChatUsersDefaultMode:
         )
 
         assert [u["user_id"] for u in users] == [100]
+
+
+class TestDictKeysIterationSafety:
+    """Regression: live ``dict_keys`` views must be materialised before iteration.
+
+    The old multi-source aggregation pattern used
+    ``self.manager._providers.keys()`` — a live view of the dict.  If
+    ``getProvider`` initialises a new provider during the ``await`` inside
+    the loop body, the underlying dict mutates and Python raises
+    ``RuntimeError: dictionary changed size during iteration``.  The fix
+    wraps the call with ``list(...)`` so the keys are snapshotted before
+    the first iteration step.
+
+    ``DatabaseManager`` uses ``__slots__`` so the monkey-patch must be
+    applied at the *class* level and restored in a ``finally`` block.
+    """
+
+    @staticmethod
+    def _installMutatingGetProvider(db: Database):
+        """Replace ``getProvider`` (class-level) with one that adds a dummy provider on every call.
+
+        Returns a ``(cleanup, fakeCount)`` pair.  The caller **must** invoke
+        ``cleanup()`` to restore the original method.
+        """
+        from internal.database.manager import DatabaseManager
+
+        original = DatabaseManager.getProvider
+        fakeCount = 0
+
+        async def getProviderThatMutates(managerSelf, *args, **kwargs):
+            nonlocal fakeCount
+            result = await original(managerSelf, *args, **kwargs)
+            fakeCount += 1
+            managerSelf._providers[f"extra_{fakeCount}"] = result
+            return result
+
+        DatabaseManager.getProvider = getProviderThatMutates  # type: ignore[method-assign]
+
+        def cleanup():
+            DatabaseManager.getProvider = original
+
+        return cleanup
+
+    async def test_getUserIdByUserName_dictKeysIterationSafe(self, testDatabase: Database) -> None:
+        """``getUserIdByUserName`` with ``dataSource=None`` must not raise RuntimeError.
+
+        Seeds a single user with the target username, then calls the method
+        with a mutating ``getProvider`` that simulates lazy provider
+        initialisation during the iteration.  Before the fix this raised
+        ``RuntimeError``; after the fix it completes normally.
+        """
+        # ``getUserIdByUserName`` queries ``chat_info.username``, not
+        # ``chat_users.username``, so seed both tables.
+        provider = await testDatabase.manager.getProvider(readonly=False)
+        await provider.execute(
+            """INSERT INTO chat_info (chat_id, username, type, created_at, updated_at)
+               VALUES (:chatId, :username, 'private', :now, :now)""",
+            {"chatId": 12345, "username": "botowner", "now": "2026-01-01T00:00:00"},
+        )
+        await testDatabase.chatUsers.updateChatUser(
+            chatId=12345,
+            userId=100,
+            username="botowner",
+            fullName="Bot Owner",
+        )
+
+        cleanup = self._installMutatingGetProvider(testDatabase)
+        try:
+            # This must not raise RuntimeError
+            userIds = await testDatabase.chatUsers.getUserIdByUserName("botowner")
+            assert 12345 in userIds
+        finally:
+            cleanup()
+
+    async def test_getUserChats_dictKeysIterationSafe(self, testDatabase: Database) -> None:
+        """``getUserChats`` with ``dataSource=None`` must not raise RuntimeError."""
+        # Create a chat_info row so the JOIN produces results
+        provider = await testDatabase.manager.getProvider(readonly=False)
+        await provider.execute(
+            """INSERT INTO chat_info (chat_id, username, type, created_at, updated_at)
+               VALUES (:chatId, :username, 'private', :now, :now)""",
+            {"chatId": 12345, "username": "botowner", "now": "2026-01-01T00:00:00"},
+        )
+        await testDatabase.chatUsers.updateChatUser(
+            chatId=12345,
+            userId=100,
+            username="botowner",
+            fullName="Bot Owner",
+        )
+
+        cleanup = self._installMutatingGetProvider(testDatabase)
+        try:
+            chats = await testDatabase.chatUsers.getUserChats(userId=100)
+            assert any(c["chat_id"] == 12345 for c in chats)
+        finally:
+            cleanup()
+
+    async def test_getAllGroupChats_dictKeysIterationSafe(self, testDatabase: Database) -> None:
+        """``getAllGroupChats`` with ``dataSource=None`` must not raise RuntimeError."""
+        cleanup = self._installMutatingGetProvider(testDatabase)
+        try:
+            chats = await testDatabase.chatUsers.getAllGroupChats()
+            assert isinstance(chats, list)
+        finally:
+            cleanup()

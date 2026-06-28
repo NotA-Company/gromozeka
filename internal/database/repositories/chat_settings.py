@@ -231,7 +231,7 @@ class ChatSettingsRepository(BaseRepository):
         allResults: Dict[int, str] = {}
         # Iterate over *configured* sources, not just the ones that have
         # been lazily initialised so far.
-        sourcesList = [dataSource] if dataSource else self.manager._providers.keys()
+        sourcesList = [dataSource] if dataSource else list(self.manager._providers.keys())
 
         for sourceName in sourcesList:
             try:

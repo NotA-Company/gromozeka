@@ -286,7 +286,7 @@ class ChatUsersRepository(BaseRepository):
         allResults: List[ChatInfoDict] = []
         seen: MutableSet[int] = set()  # Deduplicate by (userId, chatId)
 
-        sourcesList = [dataSource] if dataSource else self.manager._providers.keys()
+        sourcesList = [dataSource] if dataSource else list(self.manager._providers.keys())
 
         for sourceName in sourcesList:
             try:
@@ -331,7 +331,7 @@ class ChatUsersRepository(BaseRepository):
         allResults: List[ChatInfoDict] = []
         seen: MutableSet[int] = set()  # Deduplicate by chatId
 
-        sourcesList = [dataSource] if dataSource else self.manager._providers.keys()
+        sourcesList = [dataSource] if dataSource else list(self.manager._providers.keys())
         for sourceName in sourcesList:
             try:
                 sqlProvider = await self.manager.getProvider(dataSource=sourceName, readonly=True)
@@ -378,7 +378,7 @@ class ChatUsersRepository(BaseRepository):
         logger.debug(f"Aggregating userId for username {username} from sources, dood!")
         resultSet: MutableSet[int] = set[int]()
 
-        sourcesList = [dataSource] if dataSource else self.manager._providers.keys()
+        sourcesList = [dataSource] if dataSource else list(self.manager._providers.keys())
 
         for sourceName in sourcesList:
             try:

@@ -148,3 +148,53 @@ class TestListChatsBySetting:
         result = await testDatabase.chatSettings.listChatsBySetting(key="regenerate-embeddings")
 
         assert set(result.keys()) == {1}
+
+
+class TestDictKeysIterationSafety:
+    """Regression: live ``dict_keys`` views must be materialised before iteration.
+
+    ``ChatSettingsRepository.listChatsBySetting`` used to iterate over a
+    live ``_providers.keys()`` view.  If ``getProvider`` adds an entry to
+    ``_providers`` during the loop body's ``await``, Python raises
+    ``RuntimeError: dictionary changed size during iteration``.
+
+    ``DatabaseManager`` uses ``__slots__`` so the monkey-patch must be
+    applied at the *class* level and restored in a ``finally`` block.
+    """
+
+    @staticmethod
+    def _installMutatingGetProvider(db: Database):
+        """Replace ``getProvider`` (class-level) with one that adds a dummy provider on every call.
+
+        Returns a ``cleanup()`` callable.  The caller **must** invoke it to restore
+        the original method.
+        """
+        from internal.database.manager import DatabaseManager
+
+        original = DatabaseManager.getProvider
+        fakeCount = 0
+
+        async def getProviderThatMutates(managerSelf, *args, **kwargs):
+            nonlocal fakeCount
+            result = await original(managerSelf, *args, **kwargs)
+            fakeCount += 1
+            managerSelf._providers[f"extra_{fakeCount}"] = result
+            return result
+
+        DatabaseManager.getProvider = getProviderThatMutates  # type: ignore[method-assign]
+
+        def cleanup() -> None:
+            DatabaseManager.getProvider = original
+
+        return cleanup
+
+    async def test_listChatsBySetting_dictKeysIterationSafe(self, testDatabase: Database) -> None:
+        """``listChatsBySetting`` with ``dataSource=None`` must not raise RuntimeError."""
+        await TestListChatsBySetting._seedSetting(testDatabase, chatId=1, key="regenerate-embeddings", value="true")
+
+        cleanup = self._installMutatingGetProvider(testDatabase)
+        try:
+            result = await testDatabase.chatSettings.listChatsBySetting(key="regenerate-embeddings")
+            assert isinstance(result, dict)
+        finally:
+            cleanup()
