@@ -22,6 +22,11 @@ venv:
 	$(PIP) install --upgrade pip
 	@echo "Virtual environment created at $(VENV_PATH)"
 
+venv-alpine:
+	python3 -m venv --system-site-packages $(VENV_PATH)
+	$(PIP) install --upgrade pip
+	@echo "Virtual environment created at $(VENV_PATH)"
+
 # Install all dependencies
 install: venv
 	$(PIP) install -r requirements.txt
@@ -108,6 +113,7 @@ clean:
 help:
 	@echo "Available targets:"
 	@echo "  venv                        - Create virtual environment"
+	@echo "  venv-alpine                 - Create virtual environment for Alpine Linux (with --system-site-packages to have access to global py3-onnxruntime)"
 	@echo "  install                     - Install all dependencies (from frozen snapshot)"
 	@echo "  install-direct              - Install all dependencies (from direct dependencies file)"
 	@echo "  activate                    - Activate virtual environment"
@@ -124,4 +130,5 @@ help:
 	@echo "  help                        - Show this help message"
 
 # Default target
-.PHONY: install activate freeze-requirements list-outdated-requirements run lint format test test-failed coverage check clean help
+.PHONY: install activate freeze-requirements list-outdated-requirements run lint format test test-failed coverage check clean help venv-alpine
+

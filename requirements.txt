@@ -55,7 +55,6 @@ multidict==6.7.1
 mypy_extensions==1.1.0
 nodeenv==1.10.0
 numpy==2.5.0
-onnxruntime==1.27.0
 openai==2.44.0
 packaging==26.2
 pathspec==1.1.1
