@@ -149,6 +149,44 @@ Full audit and fix of `Any` type annotations in production code. 61 usages found
 - `ConfigManager.get(key, default=Any) -> Any` — generic config access
 - `Dict[str, Any]` — JSON-like dicts (~20 files, excluded from audit scope)
 
+## Vector Search — Design for Native Provider Support
+
+- Design document: [`docs/design/vector-search-native.md`](docs/design/vector-search-native.md) — produced 2026-06-28, reviewed and corrected through 5 review cycles.
+- **Current state**: embeddings loaded from DB into Python memory, cosine similarity via numpy in `ChatSearchRepository._semanticSearch()` at `internal/database/repositories/chat_search.py:266`.
+
+### Interface — BaseSQLProvider additions
+
+- `isVectorSearchSupported() -> bool` — concrete, default `False`.
+- `vectorSearch(*, table, vectorColumn, returnColumns: list[str], queryVector: bytes, k, filterClause, filterParams, distanceMetric: VectorDistanceMetric) -> list[VectorSearchResult]` — concrete, default `NotImplementedError`.
+- `listTables(likePattern: str = "%") -> list[str]` — concrete, default `NotImplementedError`. SQLite: `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE :pattern`.
+- `createVectorTable(tableName: str, columns: list[VectorColumnDef]) -> None` — concrete, default `NotImplementedError`.
+- `VectorSearchResult` TypedDict: `rowKey: dict[str, str]` (column-name-to-value, supports composite keys) + `distance: float`.
+- `VectorDistanceMetric` StrEnum: `COSINE`, `L2`.
+- `VectorColumnType` StrEnum: `TEXT`, `INTEGER`, `FLOAT`, `BLOB`, `VECTOR`.
+- `VectorColumnDef` TypedDict: `name: str`, `columnType: VectorColumnType`, `isPartitionKey: NotRequired[bool]`, `vectorDimension: NotRequired[int]`, `distanceMetric: NotRequired[VectorDistanceMetric]`. Uses `NotRequired[]` (NOT `total=False` — pyright rejects bracket access on total=False).
+- No config key — auto-detection at connect time. `pip uninstall sqlite-vec` to disable.
+
+### SQLite backend: sqlite-vec, vec0-first, dimension-aware
+
+- **Table naming**: `vec_message_embeddings_{dimension}` (e.g. `vec_message_embeddings_384`). Enables multiple dimensions to coexist.
+- **Schema**: `message_id TEXT`, `chat_id INTEGER PARTITION KEY`, `model TEXT PARTITION KEY`, `date TEXT` (ISO-8601), `embedding FLOAT[N] distance_metric=cosine`.
+- **Tables created lazily**: in `saveMessageEmbedding()` write path (`readonly=False`), NOT in search path (`readonly=True` would fail — SQLite PRAGMA query_only blocks DDL). If vec0 table missing during search → exception → numpy fallback.
+- **No migration backfill**: vec0 tables start empty, populated by CRON job + dual-write. Empty vec0 results → fall through to numpy (not return `[]`). Pre-existing embeddings populate via `REGENERATE_EMBEDDINGS` or model change.
+- **maxMessages cap**: pre-filter `date >= :minDate` in vec0 MATCH query (Option B). `minDate` computed from `chat_messages`. Fallback: post-filter if vec0 doesn't support WHERE on non-partition metadata columns.
+- **Dimension resolution**: `len(queryEmbedding)` — always available, no model introspection needed.
+- **Model change cleanup**: stateless, idempotent — on every CRON tick, `DELETE FROM {table} WHERE chat_id = :chatId AND model != :currentModel` across all vec0 tables discovered via `listTables("vec_message_embeddings_%")`. No in-memory tracking dict.
+- **Dual-write**: always DELETE first (by metadata columns or fallback to SELECT rowid → DELETE by rowid), then INSERT. Vec0 has no unique constraint on metadata columns. Write failures logged at `warning`, swallowed.
+
+### aiosqlite / sqlite-vec gotchas
+
+- Extension loading: `enable_load_extension(True)`, `load_extension(sqlite_vec.loadable_path())`, `enable_load_extension(False)`. No `run()`, no bare `SELECT load_extension('vec0')`.
+- `aiosqlite.execute()` returns async context manager — use `async with ... as cursor:`.
+- `SQLite3Provider.__slots__`: `_vectorSearchAvailable` must be in both `__slots__` AND `__init__`.
+- `BaseSQLProvider`: 17 total methods (10 abstract + 7 concrete).
+- Vec0 compatibility verifications needed: TIMESTAMP → TEXT, INSERT...SELECT...JOIN may not work, DELETE WHERE metadata may not work, WHERE on non-partition columns may not work — all have documented fallbacks.
+- BLOB format: `array.array("f", vec).tobytes()` is already sqlite-vec compatible.
+- Native path wrapped in try/except with numpy fallback. Empty vec0 results also fall through to numpy.
+
 ## Teamlead Workflow Lessons
 
 - The `code-reviewer` subagent may return empty results in some sessions. If it does twice, fall back to `general` agent for the review — use the same prompt structure, just route through `general`.
