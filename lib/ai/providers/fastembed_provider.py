@@ -347,13 +347,23 @@ class FastembedModel(AbstractModel):
     #: else in ``extraConfig`` is forwarded verbatim.
     _CONSUMED_EXTRA_KEYS = frozenset(
         {
+            # Capability flags consumed by AbstractModel / getInfo
             "support_text",
             "support_tools",
             "support_images",
             "support_structured_output",
             "support_embeddings",
+            # FastembedModel-consumed
             "embedding_dimensions",
             "tier",
+            # Standard model-config keys passed through by LLMManager._initModels
+            # (these are NOT fastembed constructor args and must be stripped)
+            "provider",
+            "model_id",
+            "model_version",
+            "temperature",
+            "context",
+            "enabled",
         }
     )
 

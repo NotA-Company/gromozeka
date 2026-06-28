@@ -271,7 +271,7 @@ class SummarizationHandler(BaseBotHandler):
 
                 mlRet: Optional[ModelRunResult] = None
                 try:
-                    logger.debug(f"LLM Request messages: {reqMessages}")
+                    logger.debug(f"LLM Request messages: {batchRequest}")
                     mlRet = await self.llmService.generateText(
                         batchRequest,
                         chatId=chatId,

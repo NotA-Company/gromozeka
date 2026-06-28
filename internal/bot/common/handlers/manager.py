@@ -527,7 +527,7 @@ class HandlersManager(CommandHandlerGetterInterface):
                 )
             )
 
-        # Chat search handler — /search command and get_summary LLM tool
+        # Chat search handler — /search command and search_messages, list_users, get_thread LLM tools
         if configManager.getSearchHistoryConfig().get("enabled", False):
             self.handlers.append(
                 (

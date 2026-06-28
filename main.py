@@ -58,16 +58,15 @@ class GromozekBot:
         )
 
         # Start the delayed task scheduler as a background task on the shared loop.
-        # This MUST happen before ProxyService.initialize() so that CRON_JOB
-        # handlers registered by ProxyService are processed once the scheduler
-        # loop starts running.
+        # This creates the coroutine so the scheduler registers its built-in
+        # DO_EXIT handler (_doExitHandler) before ProxyService does. On
+        # shutdown the handlers run in registration order — the queue drain
+        # runs first (proxy still available for HTTP/LLM calls), then proxy
+        # processes stop.
         self._schedulerTask = loop.create_task(
             QueueService.getInstance().startDelayedScheduler(self.database),
             name="delayed-scheduler",
         )
-
-        # Initialize proxy lifecycle management
-        ProxyService.getInstance().initialize(self.configManager.getProxyConfig(), loop=loop)
 
         # Initialize stats storage for LLM usage tracking
         llmStatsStorage: Optional[StatsStorage] = None
@@ -89,6 +88,14 @@ class GromozekBot:
         # Initialize rate limiter manager
         self.rateLimiterManager = RateLimiterManager.getInstance()
         loop.run_until_complete(self.rateLimiterManager.loadConfig(self.configManager.getRateLimiterConfig()))
+
+        # Initialize proxy lifecycle management AFTER the scheduler task has
+        # started (loop.run_until_complete above drives the event loop, which
+        # runs the scheduler coroutine created earlier). This ensures
+        # QueueService._doExitHandler registers before ProxyService._dtOnExit,
+        # so on shutdown the queue drains background tasks (needing the proxy)
+        # before proxy processes are stopped.
+        ProxyService.getInstance().initialize(self.configManager.getProxyConfig(), loop=loop)
 
         # Initialize bot application
         botConfig = self.configManager.getBotConfig()

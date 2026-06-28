@@ -19,6 +19,7 @@ Also covers generateEmbeddings:
 - supportsEmbedding property reads support_embeddings from extraConfig.
 """
 
+import asyncio
 from collections.abc import Sequence
 from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock, patch
@@ -624,7 +625,7 @@ class TestGenerateEmbeddings:
             None
         """
         model = _makeEmbeddingModel()
-        model._generateEmbeddings = AsyncMock(side_effect=[ValueError("transient"), [1.0, 2.0]])
+        model._generateEmbeddings = AsyncMock(side_effect=[asyncio.TimeoutError("transient"), [1.0, 2.0]])
         with patch("lib.ai.abstract.asyncio.sleep", new_callable=AsyncMock) as mockSleep:
             result = await model.generateEmbeddings("hello", attempts=2)
         assert result == [1.0, 2.0]
@@ -638,7 +639,7 @@ class TestGenerateEmbeddings:
             None
         """
         model = _makeEmbeddingModel()
-        model._generateEmbeddings = AsyncMock(side_effect=ValueError("fail"))
+        model._generateEmbeddings = AsyncMock(side_effect=asyncio.TimeoutError("fail"))
         with patch("lib.ai.abstract.asyncio.sleep", new_callable=AsyncMock):
             with pytest.raises(RuntimeError, match="after 3 attempts"):
                 await model.generateEmbeddings("hello")

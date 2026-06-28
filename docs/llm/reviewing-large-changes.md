@@ -156,6 +156,16 @@ Each batch is reviewed by dispatching one `code-reviewer` invocation. The brief 
 
 Independent batches (those whose file lists are disjoint and have no data dependency) can and should be reviewed **in parallel**. The `code-reviewer` agent is read-only (no `edit`, `write`, or `task` permissions), so parallel reviews cannot conflict.
 
+### 4.2.1 Real-World Example
+
+In a review of 78 files across 6 batches, all batches were dispatched in a single message with 6 parallel `Task` tool calls — each to a separate `code-reviewer` agent. Since the agent is read-only, there are no file conflicts. All 6 reviews completed independently and were collected by the orchestrator.
+
+Execution order:
+1. **Parallel:** Batches A1 (chat-search-repos, 15 files), A2 (chat-search-handler, 15 files), B (proxy-lifecycle, 17 files), C (fastembed-provider, 4 files), D (llm-abstraction, 7 files), E (shared-config-docs, 20 files) — all dispatched simultaneously.
+2. **Sequential after all per-batch reviews:** Integration pass (full 78-file diff).
+
+6 parallel reviews completed with zero critical issues found across the entire diff.
+
 Only sequence batches when one has a genuine data dependency on another:
 
 - Batch B references a class or function defined in Batch A.
@@ -255,41 +265,66 @@ One final `code-reviewer` pass on the **full diff** (all files since the base co
 
 After all reviews complete (per-batch + integration), the `teamlead` agent executes this workflow:
 
-### Step 1: Merge Reports
+### Step 1: Present Results to User
 
-Collect all review reports (per-batch + integration) into a single, prioritised issue list. Deduplicate issues that appear in multiple reports.
+Collect all review reports into a single consolidated view:
 
-### Step 2: Group by File
+- **CRITICAL and IMPORTANT issues** — presented as a table with file paths and one-line descriptions.
+- **RECOMMEND and NIT issues** — presented separately for user triage.
 
-Group findings by file path to minimise edit conflicts during fix dispatch. A single file with 5 issues should be fixed by one agent pass, not five.
+The user decides which RECOMMEND and NIT items to fix. Exception: obviously-needed fixes (typos, stale comments that contradict code, broken doc links, dead code) should be fixed without waiting for user approval — they are low-risk and unambiguous.
 
-### Step 3: Dispatch Fixes
+### Step 2: Fix Critical and Important Issues
 
-- **Parallel dispatch** for files that do not overlap: each file (or set of files) goes to a `software-developer` agent.
-- **Sequential dispatch** for files that do overlap: fix the foundational file first, then dependent files.
+All CRITICAL and IMPORTANT issues MUST be fixed before merge. No exceptions.
 
-### Step 4: Targeted Re-Review
+1. **Group findings by file** to minimise edit conflicts during fix dispatch.
+2. **Dispatch fixes** to `software-developer` agents:
+   - Parallel dispatch for files that do not overlap.
+   - Sequential dispatch for files that do overlap (fix the foundational file first).
+3. **Targeted re-review**: after fixes land, dispatch `code-reviewer` re-reviews on the fixed files only. The brief must include the specific issues addressed.
+4. **Quality gates**: run `make format lint && make test` after fixes.
 
-After fixes land, dispatch targeted `code-reviewer` re-reviews on the **fixed files only** (not the full batch). The brief for re-review should include:
+### Step 3: Process User-Approved Recommendations and Nits
 
-- The file paths that were changed.
-- The specific issues that were addressed.
-- A request to verify the fix and check for any regression.
+After the user triages the RECOMMEND and NIT lists:
 
-### Step 5: Quality Gates
+1. Fix all user-approved items (plus the auto-approved obvious fixes).
+2. Same fix → re-review → quality gates cycle as Step 2.
 
-Run:
-
-```bash
-make format lint
-make test
-```
-
-Fix any format, lint, or test failures that arise from the remediation.
-
-### Step 6: Final Integration Pass
+### Step 4: Final Integration Pass
 
 One more `code-reviewer` pass on the full post-fix diff (`git diff <base>..HEAD`) to catch fix-induced regressions. This is the final clearance gate before merge.
+
+### 6.1 Consolidated Results Format
+
+When presenting results to the user, use this format:
+
+```
+## Review of N files across M commits
+
+**Result: X Critical, Y Important, Z Recommendations, W Nitpicks.**
+
+### Critical & Important (must fix)
+| # | Issue | File |
+|---|---|---|
+| 1 | Description | path/to/file.py |
+| ... | ... | ... |
+
+### Recommendations (user decides)
+| # | Issue | File |
+|---|---|---|
+| 1 | Description | path/to/file.py |
+| ... | ... | ... |
+
+### Nitpicks (user decides)
+| # | Issue | File |
+|---|---|---|
+| 1 | Description | path/to/file.py |
+| ... | ... | ... |
+```
+
+The table format lets the user quickly scan and triage without reading full review reports.
 
 ---
 

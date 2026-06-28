@@ -259,7 +259,7 @@ vanishingly rare in the Gromozeka codebase (see :ref:`tasks.md §4.2 <tasks-impo
  | Path | Purpose |
 |---|---|
 | [`internal/bot/common/bot.py`](../../internal/bot/common/bot.py) | `TheBot` — platform-agnostic bot API |
-  | [`internal/bot/common/handlers/`](../../internal/bot/common/handlers/) | All 20+ handler implementations (incl. `DivinationHandler` for `/taro` & `/runes`, `SandboxHandler` for code execution, `ChatSearchHandler` for `/search` + `get_summary`, plus base/manager/module_loader, tests, examples, and 15+ functional handlers) |
+  | [`internal/bot/common/handlers/`](../../internal/bot/common/handlers/) | All 20+ handler implementations (incl. `DivinationHandler` for `/taro` & `/runes`, `SandboxHandler` for code execution, `ChatSearchHandler` for `/search` command and `search_messages`/`list_users`/`get_thread` LLM tools, plus base/manager/module_loader, tests, examples, and 15+ functional handlers) |
 | [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) | `BaseBotHandler` — handler base class |
 | [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) | `HandlersManager` — handler chain |
 | [`internal/bot/telegram/application.py`](../../internal/bot/telegram/application.py) | Telegram-specific bot application |

@@ -661,11 +661,19 @@ class ChatSearchHandler(BaseBotHandler):
 
         rootMsg = thread.get("root_message")
         threadMessages: List[ChatMessageDict] = thread.get("thread_messages", [])
-        rootFormatted = await self._formatMessageDict(rootMsg) if rootMsg is not None else None
-        targetFormatted = await self._formatMessageDict(thread["target_message"])
-        # Format remaining thread messages in parallel since they are
-        # independent of each other.
-        formattedThreadMessages = await asyncio.gather(*[self._formatMessageDict(m) for m in threadMessages])
+        targetMsg = thread.get("target_message")
+        if targetMsg is None:
+            return {"done": False, "error": "Целевое сообщение не найдено"}
+
+        try:
+            rootFormatted = await self._formatMessageDict(rootMsg) if rootMsg is not None else None
+            targetFormatted = await self._formatMessageDict(targetMsg)
+            # Format remaining thread messages in parallel since they are
+            # independent of each other.
+            formattedThreadMessages = await asyncio.gather(*[self._formatMessageDict(m) for m in threadMessages])
+        except Exception:
+            logger.exception("get_thread: failed to format thread messages")
+            return {"done": False, "error": "Не удалось отформатировать тред"}
         return {
             "done": True,
             "root_message": rootFormatted,
@@ -693,7 +701,7 @@ class ChatSearchHandler(BaseBotHandler):
         helpOrder=CommandHandlerOrder.NORMAL,
         category=CommandCategory.TOOLS,
     )
-    async def users_command(
+    async def usersCommand(
         self,
         ensuredMessage: EnsuredMessage,
         command: str,
@@ -800,7 +808,7 @@ class ChatSearchHandler(BaseBotHandler):
         helpOrder=CommandHandlerOrder.NORMAL,
         category=CommandCategory.TOOLS,
     )
-    async def search_command(
+    async def searchCommand(
         self,
         ensuredMessage: EnsuredMessage,
         command: str,
@@ -1310,12 +1318,12 @@ class ChatSearchHandler(BaseBotHandler):
             return f"{days}d ago"
         return ">1w ago"
 
-    @staticmethod
-    def _formatRawResults(results: List[ChatMessageDict]) -> str:
+    def _formatRawResults(self, results: List[ChatMessageDict]) -> str:
         """Format search hits as a human-readable list.
 
         Format: one line per result, ``[YYYY-MM-DD HH:MM] @username:
-        <truncated message>``.
+        <truncated message>``. On Telegram, group-chat results include a
+        deep-link to the original message.
 
         Args:
             results: Search hits from `searchChatMessages`.
@@ -1341,10 +1349,11 @@ class ChatSearchHandler(BaseBotHandler):
                 text = text[: maxLine - 1] + "…"
             # TODO: add Max link
             link = ""
-            if r["chat_id"] < 0:
-                link = f"(https://t.me/c/{0 - r['chat_id'] - 1000000000000}/{r['message_id']})"
-                if r["thread_id"]:
-                    link = f"(https://t.me/c/{0 - r['chat_id'] - 1000000000000}/{r['thread_id']}/{r['message_id']})"
+            if self.botProvider == BotProvider.TELEGRAM:
+                if r["chat_id"] < 0:
+                    link = f"(https://t.me/c/{0 - r['chat_id'] - 1000000000000}/{r['message_id']})"
+                    if r["thread_id"]:
+                        link = f"(https://t.me/c/{0 - r['chat_id'] - 1000000000000}/{r['thread_id']}/{r['message_id']})"
 
             lines.append(f"[{dateStr}]{link} @{username}: {text}")
         return "\n".join(lines)

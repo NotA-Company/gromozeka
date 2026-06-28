@@ -119,9 +119,12 @@ class ProxyService:
             return
 
         lifecycle = ProxyLifecycle("global", proxyConfig.lifecycle, proxyConfig)
-        self._activeLifecycles["global"] = lifecycle
 
-        # Start the global proxy on the shared event loop.
+        # Start the global proxy on the shared event loop before
+        # registering it in _activeLifecycles. This prevents the CRON_JOB
+        # handler (which may run concurrently if the loop is already
+        # processing tasks) from seeing an unstarted lifecycle and
+        # attempting a duplicate start.
         # The subprocess transport must live on the same loop as the
         # cron-tick health checks and restarts so the child watcher
         # can reap the process on exit.
@@ -129,6 +132,7 @@ class ProxyService:
             loop = asyncio.get_event_loop()
         try:
             loop.run_until_complete(lifecycle.start())
+            self._activeLifecycles["global"] = lifecycle
         except Exception as e:
             logger.error("Failed to start global proxy: %s", e)
 

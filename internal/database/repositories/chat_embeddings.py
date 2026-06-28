@@ -86,7 +86,7 @@ class ChatEmbeddingsRepository(BaseRepository):
                 value of the `EMBEDDING_MODEL` chat setting).
 
         Returns:
-            None
+            bool: True if the embedding was saved successfully, False on failure.
 
         Raises:
             Exception: If the database operation fails (caught and logged).

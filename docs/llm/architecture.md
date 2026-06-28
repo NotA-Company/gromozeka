@@ -468,7 +468,7 @@ Services MUST be initialized in this order:
 2. `DatabaseManager` / `Database` — second, services need DB
 3. `LLMManager` — third, LLMService needs it
 4. `RateLimiterManager.getInstance().loadConfig(...)` — fourth
-5. `ProxyHelper.setGlobalProxyConfig()` + `ProxyService.getInstance().initialize(queueService, configManager)` — fifth. Starts global proxy lifecycle immediately via `asyncio.run()`. Registers CRON_JOB/DO_EXIT handlers for health checks and graceful shutdown.
+5. `ProxyHelper.setGlobalProxyConfig()` + `ProxyService.getInstance().initialize(configManager.getProxyConfig(), loop=loop)` — fifth. Starts global proxy lifecycle immediately via the shared event loop (`loop.run_until_complete()`). Registers CRON_JOB/DO_EXIT handlers for health checks and graceful shutdown.
 6. `BotApplication` init — which triggers:
    - `HandlersManager.__init__()`:
      - `CacheService.getInstance()` + `cache.injectDatabase(db)`

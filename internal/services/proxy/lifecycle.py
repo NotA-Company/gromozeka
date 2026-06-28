@@ -34,6 +34,8 @@ class ProxyLifecycle:
             settings).
         proxyConfig: The resolved proxy configuration, used for URL health
             checks.
+        _starting: ``True`` while `start()` is in progress. Prevents
+            concurrent `start()` calls from launching duplicate processes.
     """
 
     def __init__(
@@ -62,6 +64,8 @@ class ProxyLifecycle:
         self._tickCounter = 0
         self._started = False
         """Whether the proxy process has been started. See :attr:`started`."""
+        self._starting = False
+        """Whether `start()` is currently executing. Guards against re-entrancy."""
 
         # Validate configuration
         self._validateConfig()
@@ -172,15 +176,24 @@ class ProxyLifecycle:
         The start command is launched via asyncio.create_subprocess_exec
         and not awaited — typical proxies (e.g., ssh -D ... -N) run
         indefinitely. No PID is tracked.
+
+        Uses a ``_starting`` re-entrancy guard to prevent concurrent calls
+        from launching duplicate proxy processes.
         """
-        startCommand = self.config.get("startCommand", [])
-        if not startCommand:
-            logger.debug("[%s] No start command configured; skipping.", self.label)
-            self._started = True
+        if self._started or self._starting:
             return
-        logger.info("[%s] Starting proxy process...", self.label)
-        await self._runCommand(startCommand, waitForCompletion=False)
-        self._started = True
+        self._starting = True
+        try:
+            startCommand = self.config.get("startCommand", [])
+            if not startCommand:
+                logger.debug("[%s] No start command configured; skipping.", self.label)
+                self._started = True
+                return
+            logger.info("[%s] Starting proxy process...", self.label)
+            await self._runCommand(startCommand, waitForCompletion=False)
+            self._started = True
+        finally:
+            self._starting = False
 
     async def stop(self) -> None:
         """Stop the proxy process.

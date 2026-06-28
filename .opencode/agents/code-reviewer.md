@@ -112,6 +112,7 @@ permission:
     "diff": allow
     "diff *": allow
     "pwd": allow
+    "sed -n": allow
   edit: deny
   write: deny
   task: deny

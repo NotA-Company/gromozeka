@@ -27,7 +27,7 @@ import array
 import datetime
 import logging
 from collections.abc import Sequence
-from typing import Any, List, Optional
+from typing import List, Optional
 
 import numpy as np
 
@@ -36,6 +36,7 @@ from internal.models import MessageId
 from .. import utils as dbUtils
 from ..manager import DatabaseManager
 from ..models import ChatMessageDict, MessageCategory
+from ..providers.base import BaseSQLProvider
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -225,13 +226,13 @@ class ChatSearchRepository(BaseRepository):
                 "categoryFilter": None if categoryFilter is None else True,
             }
             categoryPlaceholders: list = []
-            if categoryFilter is not None:
+            if categoryFilter:
                 for i, category in enumerate(categoryFilter):
                     categoryPlaceholders.append(f":categoryFilter{i}")
                     params[f"categoryFilter{i}"] = str(category)
 
             categoryClause = ""
-            if categoryFilter is not None:
+            if categoryFilter:
                 categoryClause = f"OR c.message_category IN ({', '.join(categoryPlaceholders)})"
 
             sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)
@@ -389,12 +390,21 @@ class ChatSearchRepository(BaseRepository):
 
     async def _loadEmbeddingsFromDb(
         self,
-        sqlProvider: Any,
+        sqlProvider: BaseSQLProvider,
         chatId: int,
         modelName: Optional[str],
         maxMessages: Optional[int],
     ) -> tuple[List[List[float]], List[MessageId]]:
         """Load all embeddings for ``chatId`` filtered by ``modelName``.
+
+        Results are ordered by the corresponding ``chat_messages.date``
+        descending (most recent first), then by ``message_id`` descending
+        as tiebreaker. A ``JOIN`` to ``chat_messages`` is used to obtain
+        the chronological sort key because ``message_embeddings.message_id``
+        is stored as ``TEXT`` (via ``MessageId.asStr()``), so sorting on
+        it directly would produce lexicographic (not chronological) order
+        — e.g. ``"9" > "10"`` — which would keep the wrong rows under
+        the ``maxMessages`` cap.
 
         Args:
             sqlProvider: SQL provider to use.
@@ -417,8 +427,10 @@ class ChatSearchRepository(BaseRepository):
         query = """
             SELECT me.message_id, me.embedding, me.dimensions
             FROM message_embeddings me
+            JOIN chat_messages c
+                ON c.chat_id = me.chat_id AND c.message_id = me.message_id
             WHERE me.chat_id = :chatId AND me.model = :modelName
-            ORDER BY me.message_id DESC
+            ORDER BY c.date DESC, me.message_id DESC
         """
         params: dict = {"chatId": chatId, "modelName": modelName}
         if maxMessages is not None:
@@ -448,7 +460,7 @@ class ChatSearchRepository(BaseRepository):
 
     async def _filterMessageIds(
         self,
-        sqlProvider: Any,
+        sqlProvider: BaseSQLProvider,
         chatId: int,
         candidateMessageIds: Sequence[MessageId],
         *,
@@ -525,7 +537,7 @@ class ChatSearchRepository(BaseRepository):
 
     async def _fetchSearchResultRows(
         self,
-        sqlProvider: Any,
+        sqlProvider: BaseSQLProvider,
         chatId: int,
         topIds: Sequence[MessageId],
         topScores: Sequence[float],

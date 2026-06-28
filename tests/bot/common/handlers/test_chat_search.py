@@ -4,7 +4,7 @@ Covers the three layers of the handler in isolation:
 
 * ``_parseSearchArgs`` — the ``key: value`` argument parser used by
   ``/search``.
-* ``search_command`` — the ``/search`` user command (rate-limit → DB
+* ``searchCommand`` — the ``/search`` user command (rate-limit → DB
   filter → client-side keyword filter → raw-formatted reply).
 * ``_dtCronJob`` — the embedding-backfill CRON_JOB (construction-time
   gate via ``[search-history].enabled``, ``REGENERATE_EMBEDDINGS`` chat
@@ -209,7 +209,7 @@ def _makeHandler(
 
 
 def _callSearch(handler: ChatSearchHandler, ensuredMessage: EnsuredMessage, args: str) -> Any:
-    """Invoke ``search_command`` past pyright's unbound-signature view.
+    """Invoke ``searchCommand`` past pyright's unbound-signature view.
 
     ``commandHandlerV2`` returns the wrapped function unchanged, so
     calling the bound method through ``cast(Any, ...)`` is safe.
@@ -222,7 +222,7 @@ def _callSearch(handler: ChatSearchHandler, ensuredMessage: EnsuredMessage, args
     Returns:
         Whatever the underlying coroutine returns (always ``None``).
     """
-    return cast(Any, handler).search_command(
+    return cast(Any, handler).searchCommand(
         ensuredMessage,
         "search",
         args,
@@ -329,7 +329,7 @@ class TestParseSearchArgs:
 
 
 class TestSearchCommand:
-    """Tests for :meth:`ChatSearchHandler.search_command`."""
+    """Tests for :meth:`ChatSearchHandler.searchCommand`."""
 
     async def test_search_empty_keywords_shows_help(self) -> None:
         """``/search`` (no args) sends the help text and skips the DB call.
@@ -1972,7 +1972,7 @@ class TestGetThreadLLMTool:
 
 
 class TestUsersCommand:
-    """Tests for :meth:`ChatSearchHandler.users_command`."""
+    """Tests for :meth:`ChatSearchHandler.usersCommand`."""
 
     @pytest.fixture
     def handler(self) -> ChatSearchHandler:
@@ -2024,7 +2024,7 @@ class TestUsersCommand:
         ]
 
     def _callUsers(self, handler: ChatSearchHandler, ensuredMessage: EnsuredMessage, args: str = "") -> Any:
-        """Invoke ``users_command`` past pyright's unbound-signature view.
+        """Invoke ``usersCommand`` past pyright's unbound-signature view.
 
         Args:
             handler: Handler under test.
@@ -2034,7 +2034,7 @@ class TestUsersCommand:
         Returns:
             Whatever the underlying coroutine returns (always ``None``).
         """
-        return cast(Any, handler).users_command(
+        return cast(Any, handler).usersCommand(
             ensuredMessage,
             "users",
             args,

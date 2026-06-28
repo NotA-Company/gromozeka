@@ -287,7 +287,7 @@ openweathermap = "<limiter-name>"
 proxyService = ProxyService.getInstance()
 
 # Initialize (called once from main.py after setGlobalProxyConfig)
-proxyService.initialize(queueService, configManager)
+proxyService.initialize(configManager.getProxyConfig(), loop=loop)
 
 # Resolve proxy for a service (replaces direct ProxyConfig.fromServiceConfig)
 proxyConfig = proxyService.resolveProxy(serviceConfig, "my-service")
@@ -297,7 +297,7 @@ proxyConfig = proxyService.resolveProxy(serviceConfig, "my-service")
 
 | Method | Returns | Purpose |
 |---|---|---|
-| `initialize(queueService, configManager)` | `None` | Idempotent init. Reads global proxy config, creates `ProxyLifecycle` for global proxy if lifecycle section present, registers CRON_JOB/DO_EXIT handlers. Global proxy start command runs immediately via `asyncio.run()`. |
+| `initialize(proxyConfig, loop)` | `None` | Idempotent init. Reads global proxy config, creates `ProxyLifecycle` for global proxy if lifecycle section present, registers CRON_JOB/DO_EXIT handlers. Global proxy start command runs immediately via the shared event loop (`loop.run_until_complete()`). |
 | `resolveProxy(serviceConfig, serviceLabel)` | `ProxyConfig` | Wraps `ProxyConfig.fromServiceConfig()`. Creates a `ProxyLifecycle` if the service config has a `proxy.lifecycle` sub-section. Deduplicates by `serviceLabel`. |
 
 **`ProxyLifecycle`** (non-singleton, one per proxy config):

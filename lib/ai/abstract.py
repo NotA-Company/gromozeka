@@ -547,6 +547,9 @@ class AbstractModel(ABC):
                     attempts=attempt,
                 )
                 return embedding
+            except (NotImplementedError, ValueError, TypeError) as e:
+                # Deterministic failures: never retry.
+                raise
             except Exception as e:
                 lastError = e
                 lastElapsed = time.time() - startTime
