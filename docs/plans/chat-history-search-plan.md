@@ -128,9 +128,9 @@ async def _generateEmbeddings(self, text: str) -> list[float]:
     return response.data[0].embedding
 ```
 
-**Local Embeddings Provider**: New provider type `local-embeddings` in `lib/ai/providers/local_embeddings_provider.py`. Wraps `fastembed` (ONNX-based, no PyTorch dependency).
+**FastEmbed Provider**: New provider type `fastembed` in `lib/ai/providers/fastembed_provider.py`. Wraps `fastembed` (ONNX-based, no PyTorch dependency).
 
-A single `LocalEmbeddingsProvider` instance hosts **multiple** embedding models
+A single `FastembedProvider` instance hosts **multiple** embedding models
 via the same `addModel()` pattern used by every other provider in `lib/ai/`
 (e.g. `BasicOpenAIProvider.addModel()` registers any number of OpenAI models
 under one provider). From outside `lib/ai`, the local models are
@@ -138,7 +138,7 @@ indistinguishable from any other embedding model — callers resolve them via
 `LLMManager.getModel("local-minilm")` and invoke `model.generateEmbeddings(text)`.
 
 ```python
-class LocalEmbeddingsProvider(AbstractLLMProvider):
+class FastembedProvider(AbstractLLMProvider):
     """Provider for local embedding models using fastembed.
 
     Hosts multiple local embedding models (e.g. all-MiniLM-L6-v2,
@@ -155,7 +155,7 @@ class LocalEmbeddingsProvider(AbstractLLMProvider):
         # ...
 
 
-class LocalEmbeddingModel(AbstractModel):
+class FastembedModel(AbstractModel):
     """Local embedding model wrapping a single fastembed TextEmbedding instance.
 
     Model-specific configuration is read from `extraConfig` (stored as
@@ -167,7 +167,7 @@ class LocalEmbeddingModel(AbstractModel):
 
     def __init__(
         self,
-        provider: "LocalEmbeddingsProvider",
+        provider: "FastembedProvider",
         modelId: str,
         *,
         modelVersion: str,
@@ -245,8 +245,8 @@ class LocalEmbeddingModel(AbstractModel):
 
 ### 2.5 Changes to `lib/ai/manager.py`
 
-- Add `"local-embeddings"` to `providerTypes` dict so the manager instantiates
-  `LocalEmbeddingsProvider` for providers of that type.
+- Add `"fastembed"` to `providerTypes` dict so the manager instantiates
+  `FastembedProvider` for providers of that type.
 - **No** `getModelsSupportingEmbedding()` helper. The chat setting
   `EMBEDDING_MODEL` (see §2.7) stores a specific model name, and the
   consumer just calls `LLMManager.getModel(chatSettingValue)` directly —
@@ -275,14 +275,14 @@ For local embeddings, one provider hosts many models — there is **no**
 per-provider `model =` shortcut:
 
 ```toml
-[llm.providers.local-embeddings]
-type = "local-embeddings"
+[llm.providers.fastembed]
+type = "fastembed"
 # No per-provider model default — models are registered individually below
 ```
 
 ```toml
 [llm.models.local-minilm]
-provider = "local-embeddings"
+provider = "fastembed"
 model_id = "all-MiniLM-L6-v2"
 enabled = true
 support_text = false
@@ -290,7 +290,7 @@ support_embeddings = true
 embedding_dimensions = 384
 
 [llm.models.local-mpnet]
-provider = "local-embeddings"
+provider = "fastembed"
 model_id = "all-mpnet-base-v2"
 enabled = true
 support_text = false
@@ -1118,8 +1118,8 @@ Steps 1-4 and 5-9 are independent of each other and can be parallelized.
 |---|---|---|---|
 | 1 | Add `supportsEmbedding` + `_generateEmbeddings` + `generateEmbeddings` (no fallback) to `AbstractModel` | `lib/ai/abstract.py`, `lib/ai/models.py` | — |
 | 2 | Implement OpenAI embedding in `BasicOpenAIProvider` | `lib/ai/providers/basic_openai_provider.py` | Step 1 |
-| 3 | Create `LocalEmbeddingsProvider` + `LocalEmbeddingModel` (multi-model, extraConfig-driven) with `fastembed` | `lib/ai/providers/local_embeddings_provider.py` | Step 1 |
-| 4 | Register `local-embeddings` provider type in `LLMManager` (no `getModelsSupportingEmbedding()` — removed) | `lib/ai/manager.py` | Steps 2, 3 |
+| 3 | Create `FastembedProvider` + `FastembedModel` (multi-model, extraConfig-driven) with `fastembed` | `lib/ai/providers/fastembed_provider.py` | Step 1 |
+| 4 | Register `fastembed` provider type in `LLMManager` (no `getModelsSupportingEmbedding()` — removed) | `lib/ai/manager.py` | Steps 2, 3 |
 | 5 | Add TypedDicts: `SearchResultDict`, `ThreadResultDict` | `internal/database/models.py` | — |
 | 6 | Migration `migration_017` — `message_embeddings` table | `internal/database/migrations/versions/migration_017_*.py` | — |
 | 7 | Repository methods: `saveMessageEmbedding`, `getMessageEmbedding`, `deleteChatEmbeddings`, `searchChatMessages` (with optional `queryEmbedding`, `rootMessageId`, and `TTLDict` cache), `listChatUsers`, `getMessageThread` (thin wrapper). **Note:** `ChatMessagesRepository` currently declares `__slots__ = ()`, so the new `_embeddingCache` instance attribute requires adding it to `__slots__` (e.g. `__slots__ = ("_embeddingCache", "_maxCachedChats")`) | `internal/database/repositories/chat_messages.py` | Steps 5, 6 |
@@ -1137,7 +1137,7 @@ Steps 1-4 and 5-9 are independent of each other and can be parallelized.
 | Failure mode | Handling |
 |---|---|
 | Embedding model unavailable (deleted from TOML, API down) | `LLMManager.getModel()` returns `None`; consumer falls back to `[search-history.embeddings].model`; if that also fails, fall back to hardcoded `"text-embedding-3-small"`. If all three resolve to `None`, log an error and skip embedding generation (on-save hook) or return "embedding model not configured" (search command/tool). |
-| `fastembed` not installed | `_FASTEMBED_AVAILABLE = False`; `LocalEmbeddingsProvider` skips initialization, logs a warning. Models under `[llm.providers.local-embeddings]` are not registered. If the chat's `EMBEDDING_MODEL` points at a local model, the fallback chain kicks in (server-wide default, then hardcoded). |
+| `fastembed` not installed | `_FASTEMBED_AVAILABLE = False`; `FastembedProvider` skips initialization, logs a warning. Models under `[llm.providers.fastembed]` are not registered. If the chat's `EMBEDDING_MODEL` points at a local model, the fallback chain kicks in (server-wide default, then hardcoded). |
 | `generateEmbeddings()` raises after all retries | On-save hook: the `asyncio.create_task` wrapper catches the exception, logs it, and returns — the message is saved without an embedding. On search: the `/search` command responds with a transient-error notice. |
 | TTLDict cache grows unbounded | Enforced by `_evictIfOverCapacity()` after every cache `set()`. The `cache-max-chats` config (default 20) caps the number of cached chats. TTL auto-eviction (default 300s) handles the common case. |
 | Backfill encounters a malformed embedding BLOB | The backfill worker wraps `np.frombuffer()` in a try/except; malformed rows are logged and skipped. A future improvement could add a `DELETE` + re-embed for corrupted rows. |
@@ -1226,9 +1226,9 @@ After implementation, update:
 | `docs/llm/architecture.md` | ADR for embedding support in `lib/ai/`, new handler, embedding cache + backfill worker |
 | `docs/llm/handlers.md` | Add `ChatSearchHandler` to handler list; note the new `EMBEDDINGS_ENABLED` / `REGENERATE_EMBEDDINGS` / `MAX_MESSAGES_FOR_SEMANTIC_SEARCH` chat settings read by `MessagePreprocessorHandler` and `ChatSearchHandler`; document the `asyncio.create_task` + `queueService.addBackgroundTask` hook pattern used by the embedding save path |
 | `docs/llm/database.md` | New `message_embeddings` table, new repository methods (`searchChatMessages` with optional `queryEmbedding` + `rootMessageId` + per-`chatId` TTLDict cache, `getMessageThread` as thin wrapper) |
-| `docs/llm/libraries.md` | Embedding support in `lib/ai/` (no model fallback, `support_embeddings` field), new `LocalEmbeddingsProvider` + `LocalEmbeddingModel` (multi-model, extraConfig-driven) |
+| `docs/llm/libraries.md` | Embedding support in `lib/ai/` (no model fallback, `support_embeddings` field), new `FastembedProvider` + `FastembedModel` (multi-model, extraConfig-driven) |
 | `docs/llm/services.md` | Embedding backfill as a CRON_JOB delayed-task handler in `ChatSearchHandler` (not a separate service singleton) |
-| `docs/llm/configuration.md` | New `[search-history]` config section (including `cache-ttl-seconds`, `cache-max-chats`, `on-save`); 4 new chat settings (`EMBEDDING_MODEL`, `EMBEDDINGS_ENABLED`, `REGENERATE_EMBEDDINGS`, `MAX_MESSAGES_FOR_SEMANTIC_SEARCH`) with defaults wired under `[bot.defaults]` in `bot-defaults.toml`; `support_text = false` / `support_embeddings = true` model flags; multi-model `[llm.models.*]` blocks under a single `[llm.providers.local-embeddings]` |
+| `docs/llm/configuration.md` | New `[search-history]` config section (including `cache-ttl-seconds`, `cache-max-chats`, `on-save`); 4 new chat settings (`EMBEDDING_MODEL`, `EMBEDDINGS_ENABLED`, `REGENERATE_EMBEDDINGS`, `MAX_MESSAGES_FOR_SEMANTIC_SEARCH`) with defaults wired under `[bot.defaults]` in `bot-defaults.toml`; `support_text = false` / `support_embeddings = true` model flags; multi-model `[llm.models.*]` blocks under a single `[llm.providers.fastembed]` |
 | `docs/llm/tasks.md` §4.1 (Chat Settings Registration — CRITICAL) | Reference this plan for the 4-site wiring pattern: enum entry → `_chatSettingsInfo` row (metadata only — no `default` field) → default in `[bot.defaults]` in `bot-defaults.toml` → consumer in `MessagePreprocessorHandler` / `ChatSearchHandler` / backfill worker / `searchChatMessages` |
 | `docs/database-schema.md` + `docs/database-schema-llm.md` | `message_embeddings` table with composite PK, `model` + `dimensions` columns, `updated_at` for re-embed tracking, and the rationale for the `model` column (stale-embedding detection for `REGENERATE_EMBEDDINGS`) |
 | `docs/llm/index.md` | Project map updates: new handler, new provider, new worker, new chat settings |

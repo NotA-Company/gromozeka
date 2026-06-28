@@ -4,7 +4,7 @@
 #   Prefixes for queries/documents: not necessary, 2024 year.
 # Approx 2.24 GB size
 # https://huggingface.co/jinaai/jina-embeddings-v3
-provider = "local-embeddings"
+provider = "fastembed"
 model_id = "jinaai/jina-embeddings-v3"
 model_version = "latest"
 temperature = 0.0
@@ -22,7 +22,7 @@ tier = "free"
 #   Prefixes for queries/documents: not necessary, 2019 year.
 # Approx 0.22 GB size
 # https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
-provider = "local-embeddings"
+provider = "fastembed"
 model_id = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 model_version = "latest"
 temperature = 0.0

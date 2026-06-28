@@ -15,5 +15,5 @@ folder_id = "${YC_FOLDER_ID}"
 #yc_profile = "profile-id"
 
 # Local embedding provider (fastembed-backed; multi-model).
-[models.providers.local-embeddings]
-type = "local-embeddings"
+[models.providers.fastembed]
+type = "fastembed"

@@ -1,8 +1,8 @@
-"""Local embeddings provider for fastembed-backed embedding models.
+"""Fastembed provider for fastembed-backed embedding models.
 
 This module provides a provider implementation for running embedding
 generation locally using the ``fastembed`` library (ONNX-based, no PyTorch
-dependency). A single :class:`LocalEmbeddingsProvider` instance hosts any
+dependency). A single :class:`FastembedProvider` instance hosts any
 number of embedding models (e.g. ``all-MiniLM-L6-v2``, ``all-mpnet-base-v2``)
 via the standard :meth:`AbstractLLMProvider.addModel` pattern.
 
@@ -13,14 +13,14 @@ embed call surfaces a clear error to the caller. Server-wide gating
 expected to keep the call site dormant when the dependency is missing.
 
 Classes:
-    LocalEmbeddingModel: Single embedding model wrapping one fastembed
+    FastembedModel: Single embedding model wrapping one fastembed
         ``TextEmbedding`` instance, exposed via the standard
         ``AbstractModel`` interface (``generateEmbeddings``).
-    LocalEmbeddingsProvider: Multi-model local provider. Mirrors
+    FastembedProvider: Multi-model FastEmbed provider. Mirrors
         ``BasicOpenAIProvider``'s "one provider, many models" pattern.
 
 Example:
-    >>> provider = LocalEmbeddingsProvider({})
+    >>> provider = FastembedProvider({})
     >>> provider.addModel(
     ...     name="local-minilm",
     ...     modelId="sentence-transformers/all-MiniLM-L6-v2",
@@ -70,8 +70,8 @@ def _embedSync(embedding: TextEmbedding, text: str) -> list:
     return list(embedding.embed([text]))
 
 
-class LocalEmbeddingsProvider(AbstractLLMProvider):
-    """Provider for local embedding models using fastembed.
+class FastembedProvider(AbstractLLMProvider):
+    """Provider for FastEmbed embedding models using fastembed.
 
     A single instance hosts any number of embedding models via the same
     :meth:`addModel` pattern used by :class:`BasicOpenAIProvider`. The
@@ -94,7 +94,7 @@ class LocalEmbeddingsProvider(AbstractLLMProvider):
     Attributes:
         config: Provider-level configuration (usually empty — the provider
             is purely structural; all knobs live on the model).
-        models: Dict of registered :class:`LocalEmbeddingModel` instances,
+        models: Dict of registered :class:`FastembedModel` instances,
             keyed by model name.
         _modelLocks: Per-model-id ``threading.Lock`` used to serialise
             fastembed model construction under the asyncio event loop.
@@ -104,7 +104,7 @@ class LocalEmbeddingsProvider(AbstractLLMProvider):
             by :class:`LLMManager`; the provider is simply not registered.
 
     Example:
-        >>> provider = LocalEmbeddingsProvider({})
+        >>> provider = FastembedProvider({})
         >>> provider.addModel(  # doctest: +SKIP
         ...     name="local-minilm",
         ...     modelId="sentence-transformers/all-MiniLM-L6-v2",
@@ -117,7 +117,7 @@ class LocalEmbeddingsProvider(AbstractLLMProvider):
     """
 
     def __init__(self, config: Dict[str, Any]) -> None:
-        """Initialize the local embeddings provider.
+        """Initialize the FastEmbed provider.
 
         Validates that ``fastembed`` is importable and that the provider
         config is a dict. The provider has no remote client to construct —
@@ -138,7 +138,7 @@ class LocalEmbeddingsProvider(AbstractLLMProvider):
         """
         if not _FASTEMBED_AVAILABLE:
             raise ImportError(
-                "fastembed package is required for the 'local-embeddings' provider, dood! "
+                "fastembed package is required for the 'fastembed' provider, dood! "
                 "Install it with `pip install fastembed` or remove the provider from config."
             )
         if not isinstance(config, dict):
@@ -164,7 +164,7 @@ class LocalEmbeddingsProvider(AbstractLLMProvider):
         statsStorage: StatsStorage,
         extraConfig: Optional[Dict[str, Any]] = None,
     ) -> AbstractModel:
-        """Register a new local embedding model with this provider.
+        """Register a new FastEmbed embedding model with this provider.
 
         Mirrors :meth:`BasicOpenAIProvider.addModel`: idempotent on name
         (returns the existing model if one is already registered), and
@@ -194,7 +194,7 @@ class LocalEmbeddingsProvider(AbstractLLMProvider):
                   ``TextEmbedding(...)`` as keyword arguments.
 
         Returns:
-            The registered :class:`LocalEmbeddingModel` instance.
+            The registered :class:`FastembedModel` instance.
 
         Raises:
             ValueError: If ``extraConfig`` does not declare
@@ -209,7 +209,7 @@ class LocalEmbeddingsProvider(AbstractLLMProvider):
         if not extraConfig.get("support_embeddings", False):
             raise ValueError(f"Model {name} ({modelId}) must declare support_embeddings=true, dood!")
 
-        model = LocalEmbeddingModel(
+        model = FastembedModel(
             provider=self,
             modelId=modelId,
             modelVersion=modelVersion,
@@ -252,11 +252,11 @@ class LocalEmbeddingsProvider(AbstractLLMProvider):
             return embedding
 
     async def embedOne(self, modelId: str, text: str, **kwargs: Any) -> Any:
-        """Embed a single text using the named local model.
+        """Embed a single text using the named FastEmbed model.
 
         Runs the (sync) fastembed call in a thread pool so the event loop
         stays responsive. Returns the raw numpy array — the caller
-        (``LocalEmbeddingModel._generateEmbeddings``) is responsible for
+        (``FastembedModel._generateEmbeddings``) is responsible for
         the ``tolist()`` conversion to plain ``list[float]``.
 
         Args:
@@ -283,9 +283,9 @@ class LocalEmbeddingsProvider(AbstractLLMProvider):
         return vectors[0]
 
     def detectDimensions(self, modelId: str, fastembedKwargs: Dict[str, Any]) -> int:
-        """Probe the local model for its native output dimensionality.
+        """Probe the FastEmbed model for its native output dimensionality.
 
-        Used by :class:`LocalEmbeddingModel` when the caller did not pass
+        Used by :class:`FastembedModel` when the caller did not pass
         an explicit ``embedding_dimensions`` in config. The probe runs a
         single short embed and reads ``len(result)`` from the resulting
         numpy array. The model is constructed once via
@@ -310,8 +310,8 @@ class LocalEmbeddingsProvider(AbstractLLMProvider):
         return int(len(vectors[0]))
 
 
-class LocalEmbeddingModel(AbstractModel):
-    """Local embedding model wrapping a single fastembed ``TextEmbedding`` instance.
+class FastembedModel(AbstractModel):
+    """FastEmbed embedding model wrapping a single fastembed ``TextEmbedding`` instance.
 
     The model advertises itself as embedding-only (``support_text`` should
     be ``False`` in config) so it is never picked for chat completion by
@@ -322,14 +322,14 @@ class LocalEmbeddingModel(AbstractModel):
     plus any unrelated provider keys) is passed through to fastembed.
 
     Attributes:
-        _provider: The :class:`LocalEmbeddingsProvider` that owns this model.
+        _provider: The :class:`FastembedProvider` that owns this model.
         _dimensions: Output dimensionality (from config or probed).
         _fastembedKwargs: Extra kwargs forwarded to ``TextEmbedding(...)``
             on first use.
 
     Example:
-        >>> provider = LocalEmbeddingsProvider({})
-        >>> model = LocalEmbeddingModel(  # doctest: +SKIP
+        >>> provider = FastembedProvider({})
+        >>> model = FastembedModel(  # doctest: +SKIP
         ...     provider=provider,
         ...     modelId="sentence-transformers/all-MiniLM-L6-v2",
         ...     modelVersion="latest",
@@ -342,7 +342,7 @@ class LocalEmbeddingModel(AbstractModel):
         384
     """
 
-    #: Keys consumed by AbstractModel / LocalEmbeddingModel and stripped
+    #: Keys consumed by AbstractModel / FastembedModel and stripped
     #: from the kwargs passed through to ``TextEmbedding(...)``. Anything
     #: else in ``extraConfig`` is forwarded verbatim.
     _CONSUMED_EXTRA_KEYS = frozenset(
@@ -359,7 +359,7 @@ class LocalEmbeddingModel(AbstractModel):
 
     def __init__(
         self,
-        provider: "LocalEmbeddingsProvider",
+        provider: "FastembedProvider",
         modelId: str,
         *,
         modelVersion: str,
@@ -368,10 +368,10 @@ class LocalEmbeddingModel(AbstractModel):
         statsStorage: StatsStorage,
         extraConfig: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Initialize the local embedding model.
+        """Initialize the FastEmbed embedding model.
 
         Args:
-            provider: The :class:`LocalEmbeddingsProvider` that owns this model.
+            provider: The :class:`FastembedProvider` that owns this model.
             modelId: Fastembed model identifier (e.g.
                 ``"sentence-transformers/all-MiniLM-L6-v2"``).
             modelVersion: Version string (fastembed models are versioned
@@ -427,7 +427,7 @@ class LocalEmbeddingModel(AbstractModel):
         return self._dimensions
 
     async def _generateEmbeddings(self, text: str) -> list[float]:
-        """Generate an embedding for ``text`` using the local fastembed model.
+        """Generate an embedding for ``text`` using the FastEmbed model.
 
         Runs the (sync) fastembed call in a thread pool via the provider
         so the event loop stays unblocked. The numpy array returned by
@@ -460,9 +460,9 @@ class LocalEmbeddingModel(AbstractModel):
         messages: Sequence[ModelMessage],  # noqa: ARG002 - required by AbstractModel
         tools: Optional[Sequence[LLMAbstractTool]] = None,  # noqa: ARG002 - required by AbstractModel
     ) -> ModelRunResult:
-        """Text generation is not supported by local embedding models.
+        """Text generation is not supported by FastEmbed embedding models.
 
-        Local embedding models are embedding-only: ``support_text = false``
+        FastEmbed embedding models are embedding-only: ``support_text = false``
         in the model config keeps them out of the chat-completion pool, but
         the call must still be answered because ``AbstractModel`` declares
         the method abstract. A descriptive :class:`NotImplementedError` is
@@ -484,9 +484,9 @@ class LocalEmbeddingModel(AbstractModel):
         self,
         messages: Sequence[ModelMessage],  # noqa: ARG002 - required by AbstractModel
     ) -> ModelRunResult:
-        """Image generation is not supported by local embedding models.
+        """Image generation is not supported by FastEmbed embedding models.
 
-        Local embedding models are embedding-only. Raises a descriptive
+        FastEmbed embedding models are embedding-only. Raises a descriptive
         :class:`NotImplementedError` for any caller that ignores the
         ``support_images = false`` flag in the model config.
 

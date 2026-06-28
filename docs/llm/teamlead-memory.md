@@ -146,8 +146,8 @@ How to use this file:
 
 - Implementation plan: `docs/plans/chat-history-search-plan.md`
 - Step 2 plan: `docs/plans/chat-history-search-step2.md` — adds `/users` command + `search_messages`, `list_users`, `get_thread` LLM tools (all now implemented)
-- Embedding model: `intfloat/multilingual-e5-large` (1024d) via `local-embeddings` provider (fastembed)
-- Default model name: `"local-embedding"` in `bot-defaults.toml`
+- Default embedding model: `local/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (384d) via `fastembed` provider, set as `embedding-model` in `bot-defaults.toml`
+- Alternative model: `local/jinaai/jina-embeddings-v3` (1024d, ~2.24 GB) in `fastembed-models.toml`
 - `fastembed==0.8.0` pinned in `requirements.direct.txt`
 - Key repos: `ChatEmbeddingsRepository` (embedding CRUD), `ChatSearchRepository` (search dispatcher), `ChatUsersRepository.getChatUsers` (activity filters), `ChatMessagesRepository.getMessageThread` (thread retrieval)
 - Backfill: `_dtCronJob` in `ChatSearchHandler` — round-robin per-chat, discovers via `EMBEDDINGS_ENABLED`, gates per-chat by `REGENERATE_EMBEDDINGS`, no auto-reset (manual only)
@@ -169,7 +169,7 @@ How to use this file:
 - **Zero-vector warning**: `logger.warning` in `chat_search.py` repo when `np.linalg.norm(queryVec) < 1e-8`.
 - **Help text**: `chat: <chat_id|@username>` → `chat: <chat_id>` (username resolution not implemented).
 - **`_backfillIndex` bounded**: `%= len(enabledChats)` after increment.
-- **Lambda → `_embedSync` helper** in `local_embeddings_provider.py`.
+- **Lambda → `_embedSync` helper** in `fastembed_provider.py`.
 - **`bytearray` added** to `convertToSQLite` return type.
 - **Test**: `test_cron_disabled_by_kill_switch` → `test_cron_proceeds_after_construction`.
 

@@ -8,7 +8,7 @@
 
 | Item | File |
 |------|------|
-| Embedding support in `lib/ai/` (`generateEmbeddings`, `LocalEmbeddingsProvider`, `fastembed`) | `lib/ai/abstract.py`, `lib/ai/providers/*`, `lib/ai/manager.py` |
+| Embedding support in `lib/ai/` (`generateEmbeddings`, `FastembedProvider`, `fastembed`) | `lib/ai/abstract.py`, `lib/ai/providers/*`, `lib/ai/manager.py` |
 | `message_embeddings` table (migration 017) | `internal/database/migrations/versions/migration_017_*.py` |
 | `ChatEmbeddingsRepository` (embedding CRUD) | `internal/database/repositories/chat_embeddings.py` |
 | `ChatSearchRepository` (search dispatcher) | `internal/database/repositories/chat_search.py` |

@@ -286,15 +286,15 @@ from lib.ai import ModelStructuredResult
 4. Register in `lib/ai/manager.py:40` — add to `providerTypes` dict: `{"my-provider": MyProvider}`
 5. Tests in `tests/lib/ai/providers/test_my_provider.py`
 
-**Local embeddings provider (`local-embeddings`):**
+**FastEmbed provider (`fastembed`):**
 
-[`LocalEmbeddingsProvider`](../../lib/ai/providers/local_embeddings_provider.py) hosts any number of `fastembed`-backed embedding models under the standard `addModel` pattern. Models are configured with `support_embeddings=true` (and `support_text=false` to keep them out of the chat-completion model pool). Output dimensionality can be set explicitly via `embedding_dimensions` in `extraConfig` (preferred — keeps startup fast) or detected via a one-shot probe on first use.
+[`FastembedProvider`](../../lib/ai/providers/fastembed_provider.py) hosts any number of `fastembed`-backed embedding models under the standard `addModel` pattern. Models are configured with `support_embeddings=true` (and `support_text=false` to keep them out of the chat-completion model pool). Output dimensionality can be set explicitly via `embedding_dimensions` in `extraConfig` (preferred — keeps startup fast) or detected via a one-shot probe on first use.
 
 | Aspect | Detail |
 |---|---|
-| Provider name | `local-embeddings` |
+| Provider name | `fastembed` |
 | Backend | `fastembed` (ONNX-based, no PyTorch). Optional dependency — `ImportError` raised at provider init when not installed |
-| Model class | `LocalEmbeddingModel` — extends `AbstractModel`; overrides `_generateEmbeddings` only |
+| Model class | `FastembedModel` — extends `AbstractModel`; overrides `_generateEmbeddings` only |
 | Extra-config keys | `support_embeddings` (required `true`), `support_text` (set `false`), `embedding_dimensions` (optional), plus any fastembed kwargs (`cache_dir`, `threads`, `max_length`, ...) |
 | Concurrency | `asyncio.to_thread` wraps the sync `TextEmbedding.embed` so the event loop stays unblocked; per-model `threading.Lock` serialises lazy model construction |
 | Text / image gen | `NotImplementedError` — local embeddings are embedding-only |
@@ -302,11 +302,11 @@ from lib.ai import ModelStructuredResult
 **Usage example:**
 
 ```toml
-[models.providers.local-embeddings]
-type = "local-embeddings"
+[models.providers.fastembed]
+type = "fastembed"
 
 [models.models."local-minilm"]
-provider = "local-embeddings"
+provider = "fastembed"
 model_id = "sentence-transformers/all-MiniLM-L6-v2"
 model_version = "latest"
 temperature = 0.0
@@ -325,7 +325,7 @@ vector: list[float] = await model.generateEmbeddings("hello world")
 
 The vector is a plain `list[float]` — same shape every embedding backend in the codebase returns, so the chat-search pipeline (`saveMessageEmbedding` / `searchChatMessages`) works unchanged across OpenAI, Yandex, and local providers.
 
-**Default model:** `local-embedding` (intfloat/multilingual-e5-large, 1024-dim, multilingual — supports 100+ languages including Russian) is registered in [`configs/00-defaults/local-embeddings-models.toml`](../../configs/00-defaults/local-embeddings-models.toml) and is the per-chat default for the `EMBEDDING_MODEL` chat setting via `embedding-model = "local-embedding"` under `[bot.defaults]` in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml). The model resolution chain in `ChatSearchHandler._dtCronJob` (backfill) and the `MessagePreprocessorHandler` embedding dispatch is single-tier: the per-chat `EMBEDDING_MODEL` setting provides the value, and an empty / unresolvable model is a silent no-op for that chat on that tick. The server-wide `[search-history.embeddings].model` and `[search-history.embeddings].on-save` config keys were removed — the per-chat default already provides the model name, and the on-save dispatch is now unconditional whenever `[search-history].enabled` and `EMBEDDINGS_ENABLED` are both on. See [`configuration.md`](configuration.md) for the full `[search-history]` reference.
+**Default model:** `local/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (384-dim, ~0.22 GB, ~50 languages, 512 token context) is the per-chat default for the `EMBEDDING_MODEL` chat setting via `embedding-model = "local/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"` under `[bot.defaults]` in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml). Both this model and the larger alternative `local/jinaai/jina-embeddings-v3` (1024-dim, ~2.24 GB, ~100 languages, 1024 token context) are registered in [`configs/00-defaults/fastembed-models.toml`](../../configs/00-defaults/fastembed-models.toml). The model resolution chain in `ChatSearchHandler._dtCronJob` (backfill) and the `MessagePreprocessorHandler` embedding dispatch is single-tier: the per-chat `EMBEDDING_MODEL` setting provides the value, and an empty / unresolvable model is a silent no-op for that chat on that tick. The server-wide `[search-history.embeddings].model` and `[search-history.embeddings].on-save` config keys were removed — the per-chat default already provides the model name, and the on-save dispatch is now unconditional whenever `[search-history].enabled` and `EMBEDDINGS_ENABLED` are both on. See [`configuration.md`](configuration.md) for the full `[search-history]` reference.
 
 **Proxy support:** `LLMManager.__init__()` accepts an optional `proxyConfig` keyword argument containing the global `[proxy]` config dict. This is passed through to `BasicOpenAIProvider.__init__()`, which creates a `ProxyConfig` via `ProxyConfig.fromServiceConfig()` and calls `ProxyConfig.toKwargs()` in `_initClient()` to configure a custom `httpx.AsyncClient` for the OpenAI SDK. Image download (`_generateImageViaImagesApi`) and OpenRouter `listRemoteModels()` also resolve proxy.
 
