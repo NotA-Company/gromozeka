@@ -25,10 +25,10 @@ from internal.bot.models.ensured_message import MessageRecipient
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.models import MessageId
+from internal.services.proxy import ProxyService
 from internal.services.queue_service import QueueService
 from lib import utils
-from lib.proxy import ProxyConfig, ProxyType
-from lib.rate_limiter import RateLimiterManager
+from lib.proxy import ProxyType
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,6 @@ class TelegramBotApplication:
             configManager=configManager, database=database, botProvider=BotProvider.TELEGRAM
         )
         self.queueService = QueueService.getInstance()
-        self._schedulerTask: Optional[asyncio.Task] = None
 
     async def messageHandler(self, update: telegram.Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle regular text messages."""
@@ -245,7 +244,6 @@ class TelegramBotApplication:
             raise RuntimeError("Application not initialized")
 
         await self.handlerManager.initialize(application.bot)
-        self._schedulerTask = asyncio.create_task(self.queueService.startDelayedScheduler(self.database))
 
         # Configure Commands
         DefaultCommands = []
@@ -325,22 +323,14 @@ class TelegramBotApplication:
         logger.info("Application shutting down...")
         logger.info("Step 1: Stopping HandlerManager...")
         await self.handlerManager.shutdown()
-        logger.info("Step 2: Stopping Delayed Tasks Scheduler...")
-        await self.queueService.beginShutdown()
 
-        logger.info("Step 3: Waiting for delayed scheduler task...")
-        if self._schedulerTask is not None:
-            await self._schedulerTask
+    def run(self, loop: asyncio.AbstractEventLoop):
+        """Start the Telegram bot application.
 
-        # Destroy rate limiters
-        # TODO: should we move it into doExit handler?
-        logger.info("Step 4: Destroying rate limiters...")
-        manager = RateLimiterManager.getInstance()
-        await manager.destroy()
-        logger.info("Rate limiters destroyed...")
-
-    def run(self):
-        """Start the Telegram bot application."""
+        Args:
+            loop: The shared asyncio event loop. Not used directly here;
+                PTB reuses the loop set by main() via asyncio.set_event_loop().
+        """
         if self.botToken in ["", "YOUR_BOT_TOKEN_HERE"]:
             logger.error("Please set your bot token in config.toml!")
             sys.exit(1)
@@ -354,7 +344,7 @@ class TelegramBotApplication:
         # so the match block can switch on the resolved proxyType; getProxyURL()
         # and toKwargs() call getCombined() internally as well, so when we pass
         # the already-combined config to them the second getCombined() is a no-op.
-        proxyConfig = ProxyConfig.fromServiceConfig(botConfig).getCombined()
+        proxyConfig = ProxyService.getInstance().resolveProxy(botConfig, "telegram-bot").getCombined()
 
         appBuilder = (
             Application.builder()
@@ -406,5 +396,10 @@ class TelegramBotApplication:
 
         logger.info("Starting Gromozeka Telegram bot, dood!")
 
-        # Start the bot
-        self.application.run_polling(allowed_updates=telegram.Update.ALL_TYPES)
+        # PTB's run_polling() calls asyncio.get_event_loop() internally,
+        # which returns the loop main() set. close_loop=False so main.py's
+        # finally block retains ownership of the loop lifecycle.
+        self.application.run_polling(
+            allowed_updates=telegram.Update.ALL_TYPES,
+            close_loop=False,
+        )

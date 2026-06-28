@@ -614,6 +614,27 @@ class YcAIModel(AbstractModel):
         except Exception as e:
             return self._handleSDKError(e, retType=ModelStructuredResult)
 
+    async def _generateEmbeddings(self, text: str) -> list[float]:
+        """Generate an embedding vector for the given text.
+
+        The Yandex Cloud AI Studio SDK does not currently expose an
+        embeddings endpoint, so embeddings are not supported for
+        ``YcAIModel`` instances. Concrete subclasses (e.g. the
+        YC-OpenAI adapter that inherits from ``BasicOpenAIModel``)
+        provide the real implementation; this method only exists to
+        satisfy the ``AbstractModel`` interface.
+
+        Args:
+            text: Input text to embed.
+
+        Returns:
+            Never returns; always raises ``NotImplementedError``.
+
+        Raises:
+            NotImplementedError: Always
+        """
+        raise NotImplementedError(f"Embeddings aren't supported by YC SDK model {self.modelId} yet")
+
     async def getExactTokensCount(self, data: Any) -> int:
         """Get exact token count using the YC SDK tokenizer if enabled.
 

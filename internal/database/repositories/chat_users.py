@@ -13,6 +13,8 @@ from typing import List, Optional
 
 from telegram import Chat
 
+import lib.utils as libUtils
+
 from .. import utils as dbUtils
 from ..manager import DatabaseManager
 from ..models import ChatInfoDict, ChatUserDict
@@ -200,38 +202,63 @@ class ChatUsersRepository(BaseRepository):
     async def getChatUsers(
         self,
         chatId: int,
-        limit: int = 10,
+        limit: Optional[int] = None,
+        minMessages: Optional[int] = None,
+        lastActiveDays: Optional[int] = None,
         seenSince: Optional[datetime.datetime] = None,
         *,
         dataSource: Optional[str] = None,
     ) -> List[ChatUserDict]:
-        """
-        Get the usernames of all users in a chat,
-        optionally filtered by when they last sent a message.
+        """List users in a chat, optionally filtered by activity.
+
+        `seenSince` and `lastActiveDays` both apply to `updated_at` and
+        are mutually exclusive in practice — if both are passed,
+        `lastActiveDays` wins (the relative window is more specific).
+        `limit` is applied as `LIMIT N` when set; pass `None` to return
+        every matching row.
 
         Args:
-            chatId: The chat ID to get users from
-            limit: Maximum number of users to return
-            seenSince: Optional datetime to filter users by last message time
-            dataSource: Optional data source identifier for multi-source database routing
+            chatId: Chat to list users from.
+            limit: Max users to return. `None` means no cap.
+            minMessages: Only users with at least this many messages
+                (filters by ``messages_count``).
+            lastActiveDays: Only return users active in the last N days
+                (i.e. `updated_at > now - N days`).
+            seenSince: Absolute datetime cutoff on `updated_at`.
+            dataSource: Optional explicit data source.
 
         Returns:
-            List of ChatUserDict objects representing users in the chat
+            List of `ChatUserDict`, ordered by `updated_at DESC`.
+            Empty list on error.
         """
+        logger.debug(
+            f"Getting users for chat {chatId}: limit={limit}, "
+            f"minMessages={minMessages}, "
+            f"lastActiveDays={lastActiveDays}, seenSince={seenSince}, dataSource={dataSource}"
+        )
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)
-            rows = await sqlProvider.executeFetchAll(
-                """
+            # Compute a single `cutoffTs` from whichever time filter was supplied.
+            # `lastActiveDays` takes precedence when both are passed.
+            if lastActiveDays is not None:
+                seenSince = libUtils.now() - datetime.timedelta(days=lastActiveDays)
+
+            query = """
                 SELECT * FROM chat_users
                 WHERE
                     chat_id = :chatId
                     AND (:seenSince IS NULL OR updated_at > :seenSince)
+                    AND (:minMessages IS NULL OR messages_count >= :minMessages)
                 ORDER BY updated_at DESC
-                LIMIT :limit
-            """,
+            """
+            if limit is not None:
+                query = sqlProvider.applyPagination(query=query, limit=int(limit))
+
+            rows = await sqlProvider.executeFetchAll(
+                query,
                 {
                     "chatId": chatId,
-                    "limit": limit,
+                    "minMessages": minMessages,
                     "seenSince": seenSince,
                 },
             )

@@ -109,6 +109,17 @@ class _TestModel(AbstractModel):
             resultText="https://example.com/image.png",
         )
 
+    async def _generateEmbeddings(self, text: str) -> list[float]:
+        """Return a placeholder embedding vector.
+
+        Args:
+            text: Input text (unused by the stub).
+
+        Returns:
+            Placeholder zero-vector of fixed length.
+        """
+        return [0.0] * 4
+
 
 def _makeModel(
     contextSize: int = 4096,

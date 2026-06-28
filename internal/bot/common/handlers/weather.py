@@ -7,7 +7,7 @@ Requires OpenWeatherMap API key, database for caching, and LLM service.
 import asyncio
 import datetime
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TypeVar, cast
 
 import lib.utils as utils
 from internal.bot import constants
@@ -29,6 +29,7 @@ from internal.database.models import (
     MessageCategory,
 )
 from internal.services.llm import LLMService
+from internal.services.proxy import ProxyService
 from lib.ai import (
     LLMFunctionParameter,
     LLMParameterType,
@@ -36,9 +37,10 @@ from lib.ai import (
 from lib.cache import JsonKeyGenerator, JsonValueConverter, StringKeyGenerator
 from lib.geocode_maps import GeocodeMapsClient, SearchResult
 from lib.openweathermap import OpenWeatherMapClient, WeatherData
-from lib.proxy import ProxyConfig
 
 from .base import BaseBotHandler
+
+T = TypeVar("T")
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +77,7 @@ class WeatherHandler(BaseBotHandler):
             raise RuntimeError("OpenWeatherMap integration is not enabled, can not load WeatherHandler")
 
         # Resolve proxy for OpenWeatherMap
-        weatherProxyConfig = ProxyConfig.fromServiceConfig(openWeatherMapConfig)
+        weatherProxyConfig = ProxyService.getInstance().resolveProxy(openWeatherMapConfig, "openweathermap")
         maskedProxyUrl = weatherProxyConfig.getProxyURL(maskPassword=True)
         if maskedProxyUrl:
             logger.info(f"Proxy enabled for OpenWeatherMap: {maskedProxyUrl}")
@@ -107,7 +109,7 @@ class WeatherHandler(BaseBotHandler):
         # logger.debug(f"geocoderConfig: {utils.jsonDumps(geocodeMapsConfig, indent=2)}")
         if geocodeMapsConfig.get("enabled"):
             # Resolve proxy for Geocode Maps
-            geocodeProxyConfig = ProxyConfig.fromServiceConfig(geocodeMapsConfig)
+            geocodeProxyConfig = ProxyService.getInstance().resolveProxy(geocodeMapsConfig, "geocode-maps")
             maskedProxyUrl = geocodeProxyConfig.getProxyURL(maskPassword=True)
             if maskedProxyUrl:
                 logger.info(f"Proxy enabled for Geocode Maps: {maskedProxyUrl}")
@@ -354,7 +356,7 @@ class WeatherHandler(BaseBotHandler):
             Returns original data if location longitude is less than 30.5.
         """
 
-        def _fixCountry(value: Any) -> Any:
+        def _fixCountry(value: T) -> T:
             replaceList = [
                 ("Украина", "Российская Федерация"),
                 ("UA", "RU"),
@@ -362,13 +364,14 @@ class WeatherHandler(BaseBotHandler):
                 ("Europe/Kyiv", "Europe/Zaporozhye"),
             ]
             if isinstance(value, str):
+                s = value
                 for f, t in replaceList:
-                    value = value.replace(f, t)
-                return value
+                    s = s.replace(f, t)
+                return cast(T, s)
             elif isinstance(value, list):
-                return [_fixCountry(v) for v in value]
+                return cast(T, [_fixCountry(v) for v in value])
             elif isinstance(value, dict):
-                return {k: _fixCountry(v) for k, v in value.items()}
+                return cast(T, {k: _fixCountry(v) for k, v in value.items()})
             else:
                 return value
 

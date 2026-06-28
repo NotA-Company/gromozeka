@@ -71,6 +71,7 @@ tests/
 ├── services/                                # Service tests
 │   ├── cache/
 │   ├── llm/
+│   ├── proxy/                               # ProxyService + ProxyLifecycle tests
 │   ├── queue_service/
 │   └── storage/
 └── verification/                            # Cross-cutting verification tests
@@ -103,6 +104,7 @@ From [`tests/conftest.py`](../../tests/conftest.py):
 | `mockCacheService` | function | `Mock` | Mocked `CacheService` |
 | `mockLlmManager` | function | `Mock` | Mocked `LLMManager` (use via `mockLlmService.getLLMManager`) |
 | `resetLlmServiceSingleton` | function (autouse) | `None` | Resets LLMService singleton |
+| `resetProxyServiceSingleton` | function (autouse) | `None` | Resets ProxyService singleton |
 | `sampleChatSettings` | function | `dict` | Sample chat settings |
 | `sampleUserData` | function | `dict` | Sample user data |
 | `sampleMessages` | function | `list` | Sample message list |
@@ -457,4 +459,4 @@ class TestMyFeature:
 ---
 
 *This guide is auto-maintained and should be updated whenever testing patterns change*  
-*Last updated: 2026-05-21*
+*Last updated: 2026-06-26*

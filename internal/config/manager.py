@@ -27,7 +27,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TypeVar, cast
 
 import tomli
 
@@ -52,7 +52,10 @@ def replaceMatchToEnv(match: re.Match[str]) -> str:
     return os.getenv(key, match.group(0))
 
 
-def substituteEnvVars(value: Any) -> Any:
+T = TypeVar("T")
+
+
+def substituteEnvVars(value: T) -> T:
     """Recursively substitute environment variable placeholders in configuration values.
 
     This function processes strings, dictionaries, and lists to replace placeholders
@@ -69,11 +72,11 @@ def substituteEnvVars(value: Any) -> Any:
         - For other types: returns the original value unchanged
     """
     if isinstance(value, str):
-        return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_-]*)\}", replaceMatchToEnv, value)
+        return cast(T, re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_-]*)\}", replaceMatchToEnv, value))
     elif isinstance(value, dict):
-        return {k: substituteEnvVars(v) for k, v in value.items()}
+        return cast(T, {k: substituteEnvVars(v) for k, v in value.items()})
     elif isinstance(value, list):
-        return [substituteEnvVars(item) for item in value]
+        return cast(T, [substituteEnvVars(item) for item in value])
     return value
 
 
@@ -525,3 +528,12 @@ class ConfigManager:
             False
         """
         return self.get("proxy", {})
+
+    def getSearchHistoryConfig(self) -> Dict[str, Any]:
+        """Get search history configuration.
+
+        Returns:
+            Search history config dict with ``enabled``, ``embeddings``, and
+            ``defaults`` keys.
+        """
+        return self.config.get("search-history", {})

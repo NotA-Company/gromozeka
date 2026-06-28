@@ -1,8 +1,16 @@
 """Repository for managing chat messages in the database.
 
-This module provides the ChatMessagesRepository class which handles all database
-operations related to chat messages, including saving, retrieving, and updating
-messages with their associated metadata.
+This module provides the ChatMessagesRepository class which handles database
+operations related to chat messages, including saving, retrieving, and
+updating messages with their associated metadata.
+
+The public chat-message search dispatcher (``searchChatMessages``) and
+both of its modes (filter-only SQL and semantic embedding) live in
+:class:`ChatSearchRepository` (``chat_search.py``). Embedding CRUD
+(``saveMessageEmbedding``, ``getMessageEmbedding``,
+``deleteChatEmbeddings``) and the backfill helper
+(``getMessagesWithoutEmbeddings``) live in
+:class:`ChatEmbeddingsRepository` (``chat_embeddings.py``).
 """
 
 import datetime
@@ -14,7 +22,7 @@ from internal.models import MessageId, MessageType
 
 from .. import utils as dbUtils
 from ..manager import DatabaseManager
-from ..models import ChatMessageDict, MessageCategory
+from ..models import ChatMessageDict, MessageCategory, ThreadResultDict
 from ..providers.base import ExcludedValue
 from .base import BaseRepository
 
@@ -26,16 +34,19 @@ class ChatMessagesRepository(BaseRepository):
 
     Provides methods to save, retrieve, and update chat messages with their
     associated metadata, including support for threaded conversations,
-    media groups, and message categorization.
+    media groups, and message categorization. Chat-message search
+    (filter-only and semantic) lives in :class:`ChatSearchRepository` and
+    is exposed via ``Database.chatSearch.searchChatMessages``. Embedding
+    CRUD lives in :class:`ChatEmbeddingsRepository`.
     """
 
     __slots__ = ()
 
-    def __init__(self, manager: DatabaseManager):
+    def __init__(self, manager: DatabaseManager) -> None:
         """Initialize the chat messages repository.
 
         Args:
-            manager: Database manager instance for provider access
+            manager: Database manager instance for provider access.
         """
         super().__init__(manager)
 
@@ -545,3 +556,62 @@ class ChatMessagesRepository(BaseRepository):
         except Exception as e:
             logger.error(f"Failed to update metadata for message {messageId} in chat {chatId}: {e}")
             return False
+
+    ###
+    # Thread retrieval (thin composition over existing methods)
+    ###
+    async def getMessageThread(
+        self,
+        chatId: int,
+        messageId: MessageId,
+        *,
+        dataSource: Optional[str] = None,
+    ) -> Optional[ThreadResultDict]:
+        """Get a message and its surrounding thread context.
+
+        Fetches the target message, walks to its thread root (if any), and
+        returns the root, the target, and every reply in the thread. The
+        implementation is a thin composition of existing repository methods
+        — no bespoke SQL.
+
+        Behaviour:
+        - If `messageId` does not exist in the chat, returns `None`.
+        - If the target message has no `root_message_id` (i.e. it is itself
+          a root), `root_message` is `None` and `thread_messages` contains
+          only the target message.
+        - Otherwise, the thread root is fetched via
+          `getChatMessageByMessageId(chatId, target.root_message_id)`, and
+          the full reply list (including the target) is fetched via
+          `getChatMessagesByRootId(chatId, target.root_message_id)`.
+
+        Args:
+            chatId: Chat identifier.
+            messageId: Message to get thread for.
+            dataSource: Optional explicit data source.
+
+        Returns:
+            ThreadResultDict with `root_message`, `target_message`, and
+            `thread_messages` (chronological order, includes the target).
+            Returns `None` if the target message does not exist.
+        """
+        target = await self.getChatMessageByMessageId(chatId=chatId, messageId=messageId, dataSource=dataSource)
+        if target is None:
+            return None
+
+        root: Optional[ChatMessageDict] = None
+        targetRootMessageId: Optional[MessageId] = target["root_message_id"]
+        if targetRootMessageId is not None:
+            rootMessageId = MessageId(targetRootMessageId)
+            root = await self.getChatMessageByMessageId(chatId=chatId, messageId=rootMessageId, dataSource=dataSource)
+            threadMessages = await self.getChatMessagesByRootId(
+                chatId=chatId, rootMessageId=rootMessageId, dataSource=dataSource
+            )
+        else:
+            # Target is itself a root — the "thread" is just this one message.
+            threadMessages = [target]
+
+        return {
+            "root_message": root,
+            "target_message": target,
+            "thread_messages": threadMessages,
+        }

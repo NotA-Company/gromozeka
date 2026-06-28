@@ -69,7 +69,7 @@ class MyService:
 
 ### ADR-002: Handler Chain Pattern
 
-**Decision:** Messages flow through an ordered list of `BaseBotHandler` subclasses via [`HandlersManager`](../../internal/bot/common/handlers/manager.py:892)
+**Decision:** Messages flow through an ordered list of `BaseBotHandler` subclasses via [`HandlersManager`](../../internal/bot/common/handlers/manager.py:332)
 
 **Why:** Separation of concerns — each handler does one thing. Easy to add new features without modifying existing handlers
 
@@ -85,12 +85,16 @@ class MyService:
 9. `HelpHandler` — PARALLEL — help command
 10. (Telegram only) `ReactOnUserMessageHandler` — PARALLEL
 11. (Telegram only) `TopicManagerHandler` — PARALLEL
-12. (if enabled) `DivinationHandler` — PARALLEL — tarot/runes divination
-13. (if enabled) `WeatherHandler`, `YandexSearchHandler`, `ResenderHandler` — PARALLEL
-14. (custom handlers via CustomHandlerLoader) — PARALLEL
-15. `LLMMessageHandler` — SEQUENTIAL — **MUST BE LAST**
+12. (if enabled) `WeatherHandler` — PARALLEL — weather forecasts
+13. (if enabled) `YandexSearchHandler` — PARALLEL — Yandex search
+14. (if enabled) `ResenderHandler` — PARALLEL — message forwarding
+15. (if enabled) `DivinationHandler` — PARALLEL — tarot/runes divination
+16. (if enabled) `SandboxHandler` — PARALLEL — sandboxed code execution
+17. (if enabled) `ChatSearchHandler` — PARALLEL — chat search /search command
+18. (custom handlers via `CustomHandlerLoader`) — PARALLEL by default (configurable per-handler)
+19. `LLMMessageHandler` — SEQUENTIAL — **MUST BE LAST**
 
-**Return values:** Handlers return [`HandlerResultStatus`](../../internal/bot/common/handlers/base.py:82):
+**Return values:** Handlers return [`HandlerResultStatus`](../../internal/bot/common/handlers/base.py:81):
 - `FINAL` — stop chain, success
 - `SKIPPED` — continue (most common)
 - `NEXT` — continue (processed but need more)
@@ -101,7 +105,7 @@ class MyService:
 
 ### ADR-003: Multi-Platform Abstraction (`TheBot`)
 
-**Decision:** [`TheBot`](../../internal/bot/common/bot.py:31) wraps both Telegram and Max Messenger APIs behind a unified interface
+**Decision:** [`TheBot`](../../internal/bot/common/bot.py:33) wraps both Telegram and Max Messenger APIs behind a unified interface
 
 **Why:** Handlers don't need to know which platform they're on
 
@@ -116,7 +120,7 @@ class MyService:
 **Why:** Allows read replicas, separate databases for different data types, cross-bot data reading
 
 **Architecture Principles:**
-- **Repository Pattern**: 12 specialized repositories handle specific data domains (chat_info, chat_messages, chat_settings, chat_users, chat_summarization, cache, spam, user_data, media_attachments, delayed_tasks, common)
+- **Repository Pattern**: 14 specialized repositories handle specific data domains (chat_info, chat_messages, chat_settings, chat_users, chat_summarization, cache, spam, user_data, media_attachments, delayed_tasks, common, chat_search, chat_embeddings, divinations)
 - **Simple Priority Routing**: `dataSource` param → `chatId` mapping → default source
 - **Readonly Protection**: Sources marked `readonly=True` reject write operations
 - **Cross-Bot Communication**: Can read from external bot databases via `dataSource` param
@@ -154,15 +158,18 @@ timeout = 10
 **Repository Structure:**
 - `ChatInfoRepository` — Chat metadata and information
 - `ChatMessagesRepository` — Message storage and retrieval
+- `ChatSearchRepository` — Chat search and history retrieval
+- `ChatEmbeddingsRepository` — Chat message embeddings for search
 - `ChatSettingsRepository` — Chat configuration settings
 - `ChatUsersRepository` — User-chat relationships
 - `ChatSummarizationRepository` — Chat summarization data
 - `CacheRepository` — Cache storage operations
+- `CommonFunctionsRepository` — Shared/common operations
+- `DelayedTasksRepository` — Scheduled task management
+- `DivinationsRepository` — Tarot/runes divination data
+- `MediaAttachmentsRepository` — Media file attachments
 - `SpamRepository` — Spam detection and messages
 - `UserDataRepository` — User-specific data
-- `MediaAttachmentsRepository` — Media file attachments
-- `DelayedTasksRepository` — Scheduled task management
-- `CommonRepository` — Shared/common operations
 - `BaseRepository` — Abstract base with common functionality
 
 **Implementation Details:**
@@ -175,7 +182,7 @@ timeout = 10
 
 ### ADR-005: LLM Provider Fallback
 
-**Decision:** [`LLMManager`](../../lib/ai/manager.py:17) supports multiple providers with automatic fallback
+**Decision:** [`LLMManager`](../../lib/ai/manager.py:49) supports multiple providers with automatic fallback
 
 **Why:** If primary LLM provider fails, automatically falls back to secondary
 
@@ -468,13 +475,14 @@ Services MUST be initialized in this order:
 2. `DatabaseManager` / `Database` — second, services need DB
 3. `LLMManager` — third, LLMService needs it
 4. `RateLimiterManager.getInstance().loadConfig(...)` — fourth
-5. `BotApplication` init — which triggers:
+5. `ProxyHelper.setGlobalProxyConfig()` + `ProxyService.getInstance().initialize(configManager.getProxyConfig(), loop=loop)` — fifth. Starts global proxy lifecycle immediately via the shared event loop (`loop.run_until_complete()`). Registers CRON_JOB/DO_EXIT handlers for health checks and graceful shutdown.
+6. `BotApplication` init — which triggers:
    - `HandlersManager.__init__()`:
      - `CacheService.getInstance()` + `cache.injectDatabase(db)`
      - `StorageService.getInstance()` + `storage.injectConfig(configManager)`
      - `QueueService.getInstance()`
      - All handler constructors (which get `CacheService`, `QueueService`, etc.)
-6. `HandlersManager.injectBot(bot)` — injects `TheBot` into all handlers
+7. `HandlersManager.injectBot(bot)` — injects `TheBot` into all handlers
 
 ### 2.3 What Breaks if You Modify These Files
 
@@ -614,4 +622,4 @@ When creating or modifying database migrations, ALWAYS:
 ---
 
 *This guide is auto-maintained and should be updated whenever significant architectural changes are made*
-*Last updated: 2026-05-09*
+*Last updated: 2026-06-28*

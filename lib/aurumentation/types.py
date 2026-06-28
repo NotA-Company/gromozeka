@@ -14,6 +14,8 @@ from typing import Any, Dict, List, NotRequired, Optional, Union
 
 from typing_extensions import TypedDict
 
+from lib.cache.interface import CacheInterface
+
 
 class CollectorInputDict(TypedDict):
     """TypedDict for collector input format.
@@ -38,7 +40,7 @@ class ScenarioInitKwargs(TypedDict, total=False):
     """
 
     apiKey: str
-    cache: Optional[Any]
+    cache: Optional[CacheInterface[str, Any]]
     geocodingTTL: int
     weatherTTL: int
 

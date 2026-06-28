@@ -155,6 +155,9 @@ Migrations are located in [`internal/database/migrations/versions/`](../internal
 | 13 | [`migration_013_remove_timestamp_defaults.py`](../internal/database/migrations/versions/migration_013_remove_timestamp_defaults.py:1) | Removes `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns |
 | 14 | [`migration_014_add_divinations_table.py`](../internal/database/migrations/versions/migration_014_add_divinations_table.py:1) | Creates [`divinations`](#divinations) table and `idx_divinations_user_created` index |
 | 15 | [`migration_015_add_divination_layouts_table.py`](../internal/database/migrations/versions/migration_015_add_divination_layouts_table.py:1) | Creates [`divination_layouts`](#divination_layouts) table and `idx_divination_layouts_system` index |
+| 16 | [`migration_016_add_stat_tables.py`](../internal/database/migrations/versions/migration_016_add_stat_tables.py:1) | Creates [`stat_events`](#stat_events) and [`stat_aggregates`](#stat_aggregates) tables |
+| 17 | [`migration_017_message_embeddings.py`](../internal/database/migrations/versions/migration_017_message_embeddings.py:1) | Creates [`message_embeddings`](#message_embeddings) table for semantic search |
+| 18 | [`migration_018_message_embeddings_index.py`](../internal/database/migrations/versions/migration_018_message_embeddings_index.py:1) | Adds secondary index on `message_embeddings` (chat_id, model) |
 
 ### Creating New Migrations
 
@@ -227,7 +230,7 @@ Stores all chat messages with detailed metadata.
 - References [`media_groups`](#media_groups) via `media_group_id`
 - Self-references via `reply_id` and `root_message_id`
 
-**TypedDict**: [`ChatMessageDict`](../internal/database/models.py:67)
+**TypedDict**: [`ChatMessageDict`](../internal/database/models.py:108)
 
 **Example Query**:
 ```python
@@ -263,7 +266,7 @@ Stores per-chat user information and statistics.
 - Referenced by [`chat_messages`](#chat_messages) via `(chat_id, user_id)`
 - Referenced by [`user_data`](#user_data) via `(chat_id, user_id)`
 
-**TypedDict**: [`ChatUserDict`](../internal/database/models.py:104)
+**TypedDict**: [`ChatUserDict`](../internal/database/models.py:163)
 
 **Example Query**:
 ```python
@@ -292,7 +295,7 @@ Stores chat metadata and configuration.
 | `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
-**TypedDict**: [`ChatInfoDict`](../internal/database/models.py:118)
+**TypedDict**: [`ChatInfoDict`](../internal/database/models.py:215)
 
 **Example Query**:
 ```python
@@ -323,7 +326,7 @@ Stores forum topic information for chats with topics enabled.
 **Relationships**:
 - References [`chat_info`](#chat_info) via `chat_id`
 
-**TypedDict**: [`ChatTopicInfoDict`](../internal/database/models.py:128)
+**TypedDict**: [`ChatTopicInfoDict`](../internal/database/models.py:234)
 
 ---
 
@@ -513,7 +516,7 @@ Stores information about media attachments (images, documents, etc.).
 **Relationships**:
 - Referenced by [`chat_messages`](#chat_messages) via `media_id`
 
-**TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:140)
+**TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:255)
 
 ---
 
@@ -567,7 +570,7 @@ Stores messages identified as spam for training and analysis.
 | `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
-**TypedDict**: [`SpamMessageDict`](../internal/database/models.py:165)
+**TypedDict**: [`SpamMessageDict`](../internal/database/models.py:303)
 
 ---
 
@@ -656,7 +659,7 @@ Caches chat message summaries to avoid regenerating them.
 **Indexes**:
 - `chat_summarization_cache_ctfl_index` on `(chat_id, topic_id, first_message_id, last_message_id, prompt)`
 
-**TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:176)
+**TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:326)
 
 **Cache Key Generation**: Implemented in the chatMessages repository
 
@@ -675,7 +678,7 @@ Generic key-value cache storage with namespace support.
 | `value` | TEXT | No | - | Cached value (JSON-serialized) |
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
-**TypedDict**: [`CacheStorageDict`](../internal/database/models.py:199)
+**TypedDict**: [`CacheStorageDict`](../internal/database/models.py:364)
 
 ---
 
@@ -697,12 +700,14 @@ Unified cache table for all cache types (replaces separate cache tables from mig
 - `idx_cache_namespace_key` on `(namespace, key)`
 - `idx_cache_updated_at` on `updated_at` (for TTL cleanup)
 
-**TypedDict**: [`CacheDict`](../internal/database/models.py:190)
+**TypedDict**: [`CacheDict`](../internal/database/models.py:351)
 
 **Available Namespaces**: See [`CacheType`](#cachetype) enum for all available cache namespaces including:
 - `WEATHER` - Weather API responses
 - `GEOCODING` - Geocoding API responses
 - `YANDEX_SEARCH` - Yandex Search API responses
+- `URL_CONTENT` - Cached URL content
+- `URL_CONTENT_CONDENSED` - Cached condensed URL content
 - `GM_SEARCH` - Geocode Maps search results
 - `GM_REVERSE` - Geocode Maps reverse geocoding
 - `GM_LOOKUP` - Geocode Maps location lookups
@@ -727,7 +732,7 @@ Stores tasks scheduled for delayed execution.
 | `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
-**TypedDict**: [`DelayedTaskDict`](../internal/database/models.py:155)
+**TypedDict**: [`DelayedTaskDict`](../internal/database/models.py:284)
 
 ---
 
@@ -826,6 +831,38 @@ await repo.saveLayout(
 
 ---
 
+## Chat Search Tables
+
+### message_embeddings
+
+Stores one float32 embedding vector per `(chat_id, message_id)` to enable semantic ranking of chat-history search results. Produced by the `MessagePreprocessorHandler` (real-time, post-`saveChatMessage`) and the `ChatSearchHandler._dtCronJob` backfill `CRON_JOB` (catches up un-embedded rows and `REGENERATE_EMBEDDINGS=true` triggers); consumed by `ChatMessagesRepository.searchChatMessages` for cosine-similarity ranking. See [`docs/llm/database.md`](llm/database.md) §5.5 for repository usage, and [`docs/llm/configuration.md`](llm/configuration.md) for `[search-history]` config. There is no separate `BackfillWorker` class — backfill duty lives in `ChatSearchHandler`.
+
+**Primary Key**: `(chat_id, message_id)`
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `chat_id` | INTEGER | No | - | Chat identifier (matches `chat_messages.chat_id`) |
+| `message_id` | TEXT | No | - | Message identifier (Telegram `int` → `MessageId.asStr()`; Max `str` verbatim) |
+| `embedding` | BLOB | No | - | `array.array('f', vec).tobytes()` — raw little-endian float32 vector |
+| `dimensions` | INTEGER | No | - | `len(embedding)`, derived in `saveMessageEmbedding` (not a separate arg) |
+| `model` | TEXT | No | - | Name of the model that produced the vector (matches the resolved `EMBEDDING_MODEL` chat setting: per-chat → hard-coded `"local-embedding"`) |
+| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
+| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
+
+**Indexes**:
+- `idx_message_embeddings_chat_model` on `(chat_id, model)` — speeds up `_loadEmbeddingsFromDb` (filters by both chat and model name). Created by `migration_018`.
+- The composite PK covers per-chat enumeration (`WHERE chat_id = ?`) via its leftmost prefix.
+
+**Cross-RDBMS portability:**
+- `BLOB` type is portable across SQLite, PostgreSQL (`BYTEA`), and MySQL (`BLOB`).
+- `dimensions` is stored per row so a chat that switches `EMBEDDING_MODEL` can detect stale rows without joining the LLM registry at SQL time.
+- No `AUTOINCREMENT` / `SERIAL` — composite natural key follows the project convention (see [`docs/sql-portability-guide.md`](sql-portability-guide.md)).
+- `created_at` / `updated_at` are set by application code (no DB default — matches `migration_013` rules).
+
+**Note**: Created by `migration_017`. Only populated when `[search-history] enabled = true`. The embedding dispatch in `MessagePreprocessorHandler.newMessageHandler` calls `db.chatEmbeddings.saveMessageEmbedding` for messages saved in chats with `EMBEDDINGS_ENABLED = true` (the dispatch runs whenever both `[search-history].enabled` and `EMBEDDINGS_ENABLED` are on — `_searchEnabled` is cached at construction time); the `ChatSearchHandler._dtCronJob` `CRON_JOB` handler closes the gap for messages that were saved before the feature was turned on or for chats that enabled the feature with no prior embeddings (round-robin, one chat per tick, batch `BACKFILL_DEFAULT_BATCH_SIZE` messages). There is no separate `BackfillWorker` class — backfill duty lives in `ChatSearchHandler`.
+
+---
+
 ## System Tables
 
 ### settings
@@ -853,7 +890,7 @@ Stores global system settings and migration version tracking.
 
 Categorizes messages by their source and purpose.
 
-**Defined in**: [`internal/database/models.py:23`](../internal/database/models.py:23)
+**Defined in**: [`internal/database/models.py:28`](../internal/database/models.py:28)
 
 | Value | Description |
 |-------|-------------|
@@ -868,6 +905,8 @@ Categorizes messages by their source and purpose.
 | `BOT_RESENDED` | Bot resent message |
 | `BOT_SPAM_NOTIFICATION` | Spam notification from bot |
 | `USER_SPAM` | Spam message from user |
+| `DELETED` | Message deleted |
+| `USER_CONFIG_ANSWER` | Answer to some config option |
 
 ---
 
@@ -875,7 +914,7 @@ Categorizes messages by their source and purpose.
 
 Tracks media processing status.
 
-**Defined in**: [`internal/database/models.py:12`](../internal/database/models.py:12)
+**Defined in**: [`internal/database/models.py:15`](../internal/database/models.py:15)
 
 | Value | Description |
 |-------|-------------|
@@ -890,7 +929,7 @@ Tracks media processing status.
 
 Indicates why a message was marked as spam.
 
-**Defined in**: [`internal/database/models.py:56`](../internal/database/models.py:56)
+**Defined in**: [`internal/database/models.py:95`](../internal/database/models.py:95)
 
 | Value | Description |
 |-------|-------------|
@@ -905,13 +944,15 @@ Indicates why a message was marked as spam.
 
 Defines available cache types for dynamic cache tables.
 
-**Defined in**: [`internal/database/models.py:208`](../internal/database/models.py:208)
+**Defined in**: [`internal/database/models.py:377`](../internal/database/models.py:377)
 
 | Value | Description |
 |-------|-------------|
 | `WEATHER` | Weather API cache |
 | `GEOCODING` | Geocoding API cache |
 | `YANDEX_SEARCH` | Yandex Search API cache |
+| `URL_CONTENT` | Cached content of URL |
+| `URL_CONTENT_CONDENSED` | Cached condensed content of URL |
 | `GM_SEARCH` | Geocode Maps search cache |
 | `GM_REVERSE` | Geocode Maps reverse geocoding cache |
 | `GM_LOOKUP` | Geocode Maps lookup cache |
@@ -924,16 +965,16 @@ All database queries return strongly-typed dictionaries defined in [`internal/da
 
 | TypedDict | Description | Definition |
 |-----------|-------------|------------|
-| [`ChatMessageDict`](../internal/database/models.py:67) | Chat message with user and media info | Lines 67-102 |
-| [`ChatUserDict`](../internal/database/models.py:104) | Chat user information | Lines 104-116 |
-| [`ChatInfoDict`](../internal/database/models.py:118) | Chat metadata | Lines 118-126 |
-| [`ChatTopicInfoDict`](../internal/database/models.py:128) | Forum topic information | Lines 128-138 |
-| [`MediaAttachmentDict`](../internal/database/models.py:140) | Media attachment details | Lines 140-153 |
-| [`DelayedTaskDict`](../internal/database/models.py:155) | Delayed task information | Lines 155-163 |
-| [`SpamMessageDict`](../internal/database/models.py:165) | Spam message details | Lines 165-174 |
-| [`ChatSummarizationCacheDict`](../internal/database/models.py:176) | Cached summary information | Lines 176-188 |
-| [`CacheDict`](../internal/database/models.py:190) | Generic cache entry | Lines 190-197 |
-| [`CacheStorageDict`](../internal/database/models.py:199) | Cache storage entry | Lines 199-206 |
+| [`ChatMessageDict`](../internal/database/models.py:108) | Chat message with user and media info | Lines 108-160 |
+| [`ChatUserDict`](../internal/database/models.py:163) | Chat user information | Lines 163-186 |
+| [`ChatInfoDict`](../internal/database/models.py:215) | Chat metadata | Lines 215-231 |
+| [`ChatTopicInfoDict`](../internal/database/models.py:234) | Forum topic information | Lines 234-252 |
+| [`MediaAttachmentDict`](../internal/database/models.py:255) | Media attachment details | Lines 255-281 |
+| [`DelayedTaskDict`](../internal/database/models.py:284) | Delayed task information | Lines 284-300 |
+| [`SpamMessageDict`](../internal/database/models.py:303) | Spam message details | Lines 303-323 |
+| [`ChatSummarizationCacheDict`](../internal/database/models.py:326) | Cached summary information | Lines 326-348 |
+| [`CacheDict`](../internal/database/models.py:351) | Generic cache entry | Lines 351-361 |
+| [`CacheStorageDict`](../internal/database/models.py:364) | Cache storage entry | Lines 364-374 |
 
 These TypedDict models provide:
 - **Type safety**: IDE autocomplete and type checking
@@ -944,13 +985,15 @@ These TypedDict models provide:
 
 ## Repository Pattern
 
-The database uses a repository pattern with 12 specialized repositories, each handling a specific domain:
+The database uses a repository pattern with 14 specialized repositories, each handling a specific domain:
 
 | Repository | File | Purpose |
 |---|---|---|
 | `cache` | [`cache.py`](../internal/database/repositories/cache.py) | Unified cache operations |
+| `chatEmbeddings` | [`chat_embeddings.py`](../internal/database/repositories/chat_embeddings.py) | Chat message embeddings for semantic search |
 | `chatInfo` | [`chat_info.py`](../internal/database/repositories/chat_info.py) | Chat metadata |
 | `chatMessages` | [`chat_messages.py`](../internal/database/repositories/chat_messages.py) | Chat message operations |
+| `chatSearch` | [`chat_search.py`](../internal/database/repositories/chat_search.py) | Chat history search with semantic ranking |
 | `chatSettings` | [`chat_settings.py`](../internal/database/repositories/chat_settings.py) | Per-chat configuration |
 | `chatSummarization` | [`chat_summarization.py`](../internal/database/repositories/chat_summarization.py) | Chat summarization |
 | `chatUsers` | [`chat_users.py`](../internal/database/repositories/chat_users.py) | User information and statistics |

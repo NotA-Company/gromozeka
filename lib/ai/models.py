@@ -53,12 +53,33 @@ logger = logging.getLogger(__name__)
 # __str__ rendering helpers for ModelRunResult
 # ---------------------------------------------------------------------------
 
-#: Sentinel returned by per-field renderers to signal that the field should be
-#: omitted from the printed output entirely.
-_OMIT: object = object()
+
+class _OmitSentinel:
+    """Sentinel for fields omitted from ``__str__`` output.
+
+    A dedicated type (not bare ``object()``) so ``_StrOrOmit = str | _OmitSentinel``
+    is a real union pyright can narrow against ``isinstance(x, str)`` /
+    ``x is _OMIT`` guards.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<OMIT>"
+
+    def __bool__(self) -> bool:
+        return False
 
 
-def _renderError(value: Optional[Exception]) -> Any:
+#: Singleton sentinel returned by per-field renderers to signal that the
+#: field should be omitted from the printed output entirely.
+_OMIT: _OmitSentinel = _OmitSentinel()
+
+#: Type alias for fields that return either a string or the _OMIT sentinel.
+_StrOrOmit = str | _OmitSentinel
+
+
+def _renderError(value: Optional[Exception]) -> _StrOrOmit:
     """Render an Exception field compactly: ``"<TypeName>: <message>"``.
 
     Args:
@@ -73,7 +94,7 @@ def _renderError(value: Optional[Exception]) -> Any:
     return f"{type(value).__name__}: {value}"
 
 
-def _renderMediaData(value: Optional[bytes]) -> Any:
+def _renderMediaData(value: Optional[bytes]) -> _StrOrOmit:
     """Render bytes media data as a length tag, never as raw bytes.
 
     Args:
@@ -87,7 +108,7 @@ def _renderMediaData(value: Optional[bytes]) -> Any:
     return f"<bytes len={len(value)}>"
 
 
-def _renderStatus(value: "ModelResultStatus") -> Any:
+def _renderStatus(value: "ModelResultStatus") -> str:
     """Render a ModelResultStatus as its symbolic name.
 
     Args:
@@ -389,7 +410,7 @@ class LLMToolCall:
         {"id": "call_123", "name": "get_weather", "parameters": {"location": "London"}}
     """
 
-    def __init__(self, id: Any, name: str, parameters: Dict[Any, Any]):
+    def __init__(self, id: str, name: str, parameters: Dict[str, Any]):
         """Initialize a tool call.
 
         Args:
@@ -440,7 +461,7 @@ class ModelMessage:
         content: str = "",
         contentKey: str = "content",
         toolCalls: List[LLMToolCall] = [],
-        toolCallId: Optional[Any] = None,
+        toolCallId: Optional[str] = None,
         weight: Optional[int] = None,
     ):
         """Initialize a model message.
@@ -851,12 +872,20 @@ class ModelRunResult:
         "elapsedTime",
     )
 
+    #: Callable signature for per-field string renderers. Accepts the raw field
+    #: value (any type from a `__slots__` attribute) and returns either a
+    #: formatted string or the ``_OMIT`` sentinel to drop the field from output.
+    #: The parameter type is intentionally loose (``...``) because each renderer
+    #: has a different concrete parameter type (e.g. ``Optional[Exception]``,
+    #: ``ModelResultStatus``).
+    _RendererCallable = Callable[..., _StrOrOmit]
+
     #: Per-field rendering overrides for __str__. Maps field name to a callable
     #: that takes the raw value and returns either the ``_OMIT`` sentinel (drop
-    #: the field from output) or any object whose repr() is what we want printed.
+    #: the field from output) or a ``str`` (already formatted for output).
     #: Fields absent from this dict use the default rule: omit when value is
     #: None, False, or an empty container; otherwise include ``repr(value)``.
-    _STR_RENDERERS: Dict[str, Callable[[Any], Any]] = {
+    _STR_RENDERERS: Dict[str, _RendererCallable] = {
         # Raw API response object: too large and too noisy for logs — always omit.
         "result": lambda v: _OMIT,
         "status": _renderStatus,
@@ -1012,13 +1041,8 @@ class ModelRunResult:
                     rendered = renderer(value)
                     if rendered is _OMIT:
                         continue
-                    # Strings are emitted as-is (already formatted by the
-                    # renderer); everything else goes through repr() so the
-                    # type is visible in the output.
-                    if isinstance(rendered, str):
-                        parts.append(f"{name}={rendered}")
-                    else:
-                        parts.append(f"{name}={rendered!r}")
+                    # Strings are emitted as-is (already formatted by the renderer).
+                    parts.append(f"{name}={rendered}")
                 else:
                     # Default rule: omit _OMIT, None, False, and empty containers.
                     if value is None or value is _OMIT:

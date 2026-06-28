@@ -1,0 +1,37 @@
+# Local embedding models (fastembed-backed).
+[models.models."local/jinaai/jina-embeddings-v3"]
+# Multi-task unimodal (text) embedding model, multi-lingual (~100), 1024 tokens truncation, and 8192 sequence length. 
+#   Prefixes for queries/documents: not necessary, 2024 year.
+# Approx 2.24 GB size
+# https://huggingface.co/jinaai/jina-embeddings-v3
+provider = "fastembed"
+model_id = "jinaai/jina-embeddings-v3"
+model_version = "latest"
+temperature = 0.0
+context = 1024
+support_tools = false
+support_text = false
+support_images = false
+support_structured_output = false
+support_embeddings = true
+embedding_dimensions = 1024
+tier = "free"
+
+[models.models."local/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"]
+# Text embeddings, Unimodal (text), Multilingual (~50 languages), 512 input tokens truncation, 
+#   Prefixes for queries/documents: not necessary, 2019 year.
+# Approx 0.22 GB size
+# https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+provider = "fastembed"
+model_id = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+model_version = "latest"
+temperature = 0.0
+context = 512
+support_tools = false
+support_text = false
+support_images = false
+support_structured_output = false
+support_embeddings = true
+embedding_dimensions = 384
+tier = "free"
+

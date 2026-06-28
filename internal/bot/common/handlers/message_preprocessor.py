@@ -8,14 +8,18 @@ the message processing pipeline, ensuring all messages are properly
 normalized and persisted before being passed to other handlers.
 """
 
+import asyncio
 import logging
 from typing import Optional
 
 import telegram
 
+from internal.bot.common.embedding_utils import embedAndSaveMessage
 from internal.bot.common.models import UpdateObjectType
 from internal.bot.models import BotProvider, EnsuredMessage, MessageRecipient, MessageSender
 from internal.bot.models.chat_settings import ChatSettingsKey
+from internal.config.manager import ConfigManager
+from internal.database import Database
 from internal.database.models import MessageCategory
 from internal.models import MessageId
 
@@ -36,7 +40,31 @@ class MessagePreprocessorHandler(BaseBotHandler):
         botProvider: The bot platform provider (Telegram or Max).
         db: Database manager instance for persistence operations.
         logger: Logger instance for this handler.
+        _searchEnabled: Cached value of ``[search-history].enabled`` at
+            handler construction time. Read once in :meth:`__init__` so
+            every message dispatch avoids a `ConfigManager` round-trip;
+            a config-flip requires a bot restart.
     """
+
+    def __init__(self, *, configManager: ConfigManager, database: Database, botProvider: BotProvider) -> None:
+        """Initialize the preprocessor and cache the ``[search-history].enabled`` flag.
+
+        The handler is a hot path — every incoming message flows through
+        :meth:`newMessageHandler`. Reading ``[search-history].enabled`` from
+        the config manager on every message would do a nested-dict lookup
+        per dispatch, so the boolean is captured once at construction
+        and stored on ``self._searchEnabled``. A future config flip
+        therefore requires a bot restart to take effect, which matches
+        the behaviour of every other feature gate in the bot (e.g.
+        :class:`ChatSearchHandler`).
+
+        Args:
+            configManager: Configuration manager providing bot settings.
+            database: Database wrapper for persistence operations.
+            botProvider: The bot platform provider (Telegram or Max).
+        """
+        super().__init__(configManager=configManager, database=database, botProvider=botProvider)
+        self._searchEnabled: bool = bool(self.configManager.getSearchHistoryConfig().get("enabled", False))
 
     async def newMessageHandler(
         self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
@@ -81,6 +109,35 @@ class MessagePreprocessorHandler(BaseBotHandler):
         if not await self.saveChatMessage(ensuredMessage, messageCategory=messageCategory):
             logger.error("Failed to save chat message")
             return HandlerResultStatus.ERROR
+
+        # After the message is durably saved, schedule a background embedding job
+        # if the search-history feature is enabled at the server level AND the chat
+        # opts in via the EMBEDDINGS_ENABLED per-chat setting. The dispatch is
+        # non-blocking: the task is created synchronously and only registered with
+        # the queue service, so the handler returns immediately. Any error inside
+        # the background task is caught and logged inside embedAndSaveMessage
+        # and never propagates here.
+        if self._searchEnabled:
+            try:
+                chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
+                if chatSettings[ChatSettingsKey.EMBEDDINGS_ENABLED].toBool():
+                    embeddingModelName = chatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr()
+                    if embeddingModelName:
+                        if ensuredMessage.messageText and ensuredMessage.messageText.strip():
+                            await self.queueService.addBackgroundTask(
+                                asyncio.create_task(
+                                    embedAndSaveMessage(
+                                        ensuredMessage=ensuredMessage,
+                                        modelName=embeddingModelName,
+                                        db=self.db,
+                                    )
+                                )
+                            )
+                    else:
+                        logger.error(f"Embedding model not set for chat {ensuredMessage.recipient.id}")
+            except Exception as e:
+                # Never let embedding dispatch fail the message pipeline.
+                logger.exception("Failed to dispatch embedding for chat %s: %s", ensuredMessage.recipient.id, e)
 
         return HandlerResultStatus.NEXT
 

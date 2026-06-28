@@ -18,10 +18,10 @@ tasks:
   - name: do-make-test
     cubes: 
       - name: do-make-check-test
-        image: docker.io/library/alpine:3.23
+        image: docker.io/library/alpine:3.24
         script:
-          - apk add --no-cache gcc git libmagic make musl-dev nodejs py3-pip python3 sqlite tzdata
-          - make venv
+          - apk add --no-cache gcc git libmagic make musl-dev nodejs py3-pip python3 sqlite tzdata py3-onnxruntime
+          - make venv-alpinr
           - make install
           - make check
           - make test 

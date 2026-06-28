@@ -8,11 +8,21 @@ Covers:
 - getInfo() includes support_structured_output with the configured value.
 - generateStructured with fallbackModels invokes fallback on error status.
 - generateStructured with fallbackModels sets isFallback=True on the fallback result.
+
+Also covers generateEmbeddings:
+- success path returns the inner vector.
+- transient failures retry up to ``attempts`` times.
+- all-fail surfaces a RuntimeError.
+- support_embeddings=False raises NotImplementedError.
+- empty text raises ValueError.
+- attempts<1 raises ValueError.
+- supportsEmbedding property reads support_embeddings from extraConfig.
 """
 
+import asyncio
 from collections.abc import Sequence
 from typing import Any, Dict, Optional
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -92,6 +102,17 @@ class _NoStructuredModel(AbstractModel):
         """
         return ModelRunResult(rawResult=None, status=ModelResultStatus.FINAL)
 
+    async def _generateEmbeddings(self, text: str) -> list[float]:
+        """Return a placeholder embedding vector.
+
+        Args:
+            text: Input text (unused by the stub).
+
+        Returns:
+            Placeholder zero-vector of fixed length.
+        """
+        return [0.0] * 4
+
 
 class _StructuredSupportedModel(_NoStructuredModel):
     """Model stub with support_structured_output=True.
@@ -151,6 +172,30 @@ def _makeStructuredModel(contextSize: int = 4096) -> _StructuredSupportedModel:
         contextSize=contextSize,
         statsStorage=NullStatsStorage(),
         extraConfig={"support_structured_output": True},
+    )
+
+
+def _makeEmbeddingModel(supportEmbeddings: bool = True) -> _NoStructuredModel:
+    """Create a model with the ``support_embeddings`` capability flag set.
+
+    Args:
+        supportEmbeddings: Value of the ``support_embeddings`` flag in
+            ``extraConfig`` (default True). When False, the public
+            ``generateEmbeddings`` rejects with NotImplementedError.
+
+    Returns:
+        _NoStructuredModel instance (the stub's ``_generateEmbeddings``
+        returns a fixed-length zero vector, which the tests override
+        with an ``AsyncMock`` when they need a custom return value).
+    """
+    return _NoStructuredModel(
+        provider=_makeProvider(),
+        modelId="emb-model",
+        modelVersion="1.0",
+        temperature=0.5,
+        contextSize=4096,
+        statsStorage=NullStatsStorage(),
+        extraConfig={"support_embeddings": supportEmbeddings},
     )
 
 
@@ -552,3 +597,90 @@ async def testGenerateStructuredWithFallbackModelsReturnsLastOnTotalFailure() ->
 
     assert result.status is ModelResultStatus.ERROR
     assert result.isFallback is True
+
+
+# ============================================================================
+# Tests: generateEmbeddings
+# ============================================================================
+
+
+class TestGenerateEmbeddings:
+    """Tests for generateEmbeddings method on AbstractModel."""
+
+    async def test_generateEmbeddings_success(self) -> None:
+        """Successful call returns embedding vector.
+
+        Returns:
+            None
+        """
+        model = _makeEmbeddingModel()
+        model._generateEmbeddings = AsyncMock(return_value=[1.0, 2.0])
+        result = await model.generateEmbeddings("hello")
+        assert result == [1.0, 2.0]
+
+    async def test_generateEmbeddings_retries(self) -> None:
+        """Retries on transient failure, succeeds on second attempt.
+
+        Returns:
+            None
+        """
+        model = _makeEmbeddingModel()
+        model._generateEmbeddings = AsyncMock(side_effect=[asyncio.TimeoutError("transient"), [1.0, 2.0]])
+        with patch("lib.ai.abstract.asyncio.sleep", new_callable=AsyncMock) as mockSleep:
+            result = await model.generateEmbeddings("hello", attempts=2)
+        assert result == [1.0, 2.0]
+        assert model._generateEmbeddings.await_count == 2
+        mockSleep.assert_awaited_once()
+
+    async def test_generateEmbeddings_all_fail(self) -> None:
+        """All attempts fail → raises RuntimeError.
+
+        Returns:
+            None
+        """
+        model = _makeEmbeddingModel()
+        model._generateEmbeddings = AsyncMock(side_effect=asyncio.TimeoutError("fail"))
+        with patch("lib.ai.abstract.asyncio.sleep", new_callable=AsyncMock):
+            with pytest.raises(RuntimeError, match="after 3 attempts"):
+                await model.generateEmbeddings("hello")
+
+    async def test_generateEmbeddings_not_supported(self) -> None:
+        """supportsEmbedding=False → raises NotImplementedError.
+
+        Returns:
+            None
+        """
+        model = _makeEmbeddingModel(supportEmbeddings=False)
+        with pytest.raises(NotImplementedError):
+            await model.generateEmbeddings("hello")
+
+    async def test_generateEmbeddings_empty_text(self) -> None:
+        """Empty text raises ValueError.
+
+        Returns:
+            None
+        """
+        model = _makeEmbeddingModel()
+        with pytest.raises(ValueError):
+            await model.generateEmbeddings("")
+
+    async def test_generateEmbeddings_bad_attempts(self) -> None:
+        """attempts <= 0 raises ValueError.
+
+        Returns:
+            None
+        """
+        model = _makeEmbeddingModel()
+        with pytest.raises(ValueError):
+            await model.generateEmbeddings("hello", attempts=0)
+
+    def test_supportsEmbedding_flag(self) -> None:
+        """supportsEmbedding property reads from config.
+
+        Returns:
+            None
+        """
+        modelTrue = _makeEmbeddingModel(supportEmbeddings=True)
+        assert modelTrue.supportsEmbedding is True
+        modelFalse = _makeEmbeddingModel(supportEmbeddings=False)
+        assert modelFalse.supportsEmbedding is False

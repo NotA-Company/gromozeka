@@ -31,15 +31,18 @@ Example:
 """
 
 import logging
-from typing import Any
+import types
+from typing import Optional
 
 from .manager import DatabaseManager, DatabaseManagerConfig
 from .migrations import MigrationManager
 from .providers import BaseSQLProvider
 from .repositories import (
     CacheRepository,
+    ChatEmbeddingsRepository,
     ChatInfoRepository,
     ChatMessagesRepository,
+    ChatSearchRepository,
     ChatSettingsRepository,
     ChatSummarizationRepository,
     ChatUsersRepository,
@@ -71,6 +74,11 @@ class Database:
         manager: Database manager handling connections and multi-source operations.
         common: Repository for common database functions and utilities.
         chatMessages: Repository for chat message storage and retrieval.
+        chatEmbeddings: Repository for message embeddings CRUD and the
+            backfill helper (``getMessagesWithoutEmbeddings``).
+        chatSearch: Unified chat-message search repository: filter-only
+            SQL path and semantic (embedding-based cosine-similarity)
+            path, including the public ``searchChatMessages`` dispatcher.
         chatUsers: Repository for chat user management and associations.
         chatSettings: Repository for chat-specific settings and configurations.
         chatInfo: Repository for chat metadata and information.
@@ -99,6 +107,8 @@ class Database:
         "manager",
         "common",
         "chatMessages",
+        "chatEmbeddings",
+        "chatSearch",
         "chatUsers",
         "chatSettings",
         "chatInfo",
@@ -120,6 +130,13 @@ class Database:
 
     chatMessages: ChatMessagesRepository
     """Repository for chat message storage and retrieval."""
+
+    chatEmbeddings: ChatEmbeddingsRepository
+    """Repository for message embeddings CRUD and the backfill helper (``getMessagesWithoutEmbeddings``)."""
+
+    chatSearch: ChatSearchRepository
+    """Unified chat-message search: filter-only SQL and semantic embedding paths,
+    with the public ``searchChatMessages`` dispatcher."""
 
     chatUsers: ChatUsersRepository
     """Repository for chat user management and associations."""
@@ -179,6 +196,8 @@ class Database:
         # Repositories with queries to DB
         self.common = CommonFunctionsRepository(self.manager)
         self.chatMessages = ChatMessagesRepository(self.manager)
+        self.chatEmbeddings = ChatEmbeddingsRepository(self.manager)
+        self.chatSearch = ChatSearchRepository(self.manager)
         self.chatUsers = ChatUsersRepository(self.manager)
         self.chatSettings = ChatSettingsRepository(self.manager)
         self.chatInfo = ChatInfoRepository(self.manager)
@@ -270,7 +289,12 @@ class Database:
         """
         return self
 
-    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+    async def __aexit__(
+        self,
+        exc_type: Optional[type[BaseException]],
+        exc: Optional[BaseException],
+        tb: Optional[types.TracebackType],
+    ) -> None:
         """Exit the async context manager and cleanup all database connections.
 
         This method is called when exiting the async context manager. It closes all
@@ -293,5 +317,7 @@ class Database:
         """
         await self.manager.closeAll()
         if exc_type is not None:
+            assert exc is not None
+            assert tb is not None
             logger.error(f"Exception in database context: {exc_type}", exc_info=(exc_type, exc, tb))
             raise
