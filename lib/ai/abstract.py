@@ -120,6 +120,10 @@ class AbstractModel(ABC):
 
         # Stats storage for recording LLM usage statistics
         self.statsStorage: StatsStorage = statsStorage
+        self._dimensions: Optional[int] = None
+        if extraConfig:
+            configDimensions = extraConfig.get("embedding_dimensions")
+            self._dimensions = int(configDimensions) if configDimensions else None
 
     @abstractmethod
     async def _generateText(
@@ -570,6 +574,24 @@ class AbstractModel(ABC):
         raise RuntimeError(
             f"Embedding generation failed for {self.modelId} after {attempts} attempts: {lastError}"
         ) from lastError
+
+    async def getDimensions(self, forceDetect: bool = False) -> int:
+        """Return the number of dimensions in the embedding vector.
+
+        Args:
+            forceDetect: Whether to force the dimensions to be detected.
+
+        Returns:
+            The number of dimensions in the embedding vector.
+        """
+        if not self.supportsEmbedding:
+            raise NotImplementedError(f"Embeddings aren't supported by {self.modelId}, dood!")
+
+        if forceDetect or self._dimensions is None:
+            vec = await self._generateEmbeddings("test")
+            self._dimensions = len(vec)
+
+        return self._dimensions
 
     async def _runWithFallback(
         self,

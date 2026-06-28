@@ -224,3 +224,84 @@ class TestEmbeddingAndSearch:
         assert differentModel[0]["user_id"] == 100
         assert differentModel[0]["username"] == "user100"
         assert differentModel[0]["full_name"] == "User 100"
+
+    async def test_deleteObsoleteModelEmbeddings_vec0ShadowTables(self, testDatabase: Database) -> None:
+        """deleteObsoleteModelEmbeddings does not fail on vec0 shadow tables.
+
+        Regression: ``listTables("vec_message_embeddings_%")`` matches
+        sqlite-vec internal shadow tables (``_info``, ``_chunks``,
+        ``_rowids``, ``_vector_chunks00``, ``_metadatachunks00``, etc.)
+        alongside the real vec0 virtual table. A DELETE on a shadow table
+        with a WHERE clause referencing ``chat_id`` (a partition key column
+        that exists on the real table but not on the shadow tables) raises
+        ``sqlite3.OperationalError: no such column: chat_id``.
+
+        The fix filters the ``listTables`` result to only real vec0 tables
+        (names matching ``vec_message_embeddings_{N}`` where *N* is a
+        positive integer). This test verifies that the method completes
+        successfully even when shadow tables exist.
+        """
+        from internal.database.providers.sqlite3 import _SQLITE_VEC_AVAILABLE
+
+        if not _SQLITE_VEC_AVAILABLE:
+            pytest.skip("sqlite-vec not installed")
+
+        chatId = 1
+        currentModel = "model-current"
+        oldModel = "model-old"
+        dimensions = 3
+
+        # 1. Save embeddings under the old model to lazily create the
+        #    vec0 table (and its shadow tables).
+        await testDatabase.chatEmbeddings.saveMessageEmbedding(
+            chatId=chatId,
+            messageId=MessageId(100),
+            embedding=[1.0, 0.0, 0.0],
+            model=oldModel,
+        )
+        await testDatabase.chatEmbeddings.saveMessageEmbedding(
+            chatId=chatId,
+            messageId=MessageId(101),
+            embedding=[0.0, 1.0, 0.0],
+            model=oldModel,
+        )
+        # Save one embedding under the current model — this row must survive.
+        await testDatabase.chatEmbeddings.saveMessageEmbedding(
+            chatId=chatId,
+            messageId=MessageId(200),
+            embedding=[0.0, 0.0, 1.0],
+            model=currentModel,
+        )
+
+        # Verify the provider reports vector search support (no-op without it).
+        sqlProvider = await testDatabase.manager.getProvider(chatId=chatId, readonly=False)
+        if not await sqlProvider.isVectorSearchSupported():
+            pytest.skip("sqlite-vec extension not loaded by provider")
+
+        # Verify vec0 tables (including shadow tables) exist.
+        vecTables = await sqlProvider.listTables("vec_message_embeddings_%")
+        assert vecTables, "Expected vec0 tables to exist after saveMessageEmbedding"
+        # The real table must be present.
+        expectedTable = f"vec_message_embeddings_{dimensions}"
+        assert expectedTable in vecTables, f"Expected {expectedTable} in vec0 tables"
+        # Shadow tables must also exist (this is the condition that triggers the bug).
+        shadowTables = [t for t in vecTables if t != expectedTable]
+        assert shadowTables, "Expected vec0 shadow tables to exist"
+
+        # 2. Call deleteObsoleteModelEmbeddings — must succeed without errors.
+        success = await testDatabase.chatEmbeddings.deleteObsoleteModelEmbeddings(
+            chatId=chatId,
+            currentModel=currentModel,
+            currentDimensions=dimensions,
+        )
+        assert success, "deleteObsoleteModelEmbeddings should return True"
+
+        # 3. Verify cleanup: old-model embeddings were deleted from
+        #    message_embeddings, current-model embedding survived.
+        old1 = await testDatabase.chatEmbeddings.getMessageEmbedding(chatId=chatId, messageId=MessageId(100))
+        old2 = await testDatabase.chatEmbeddings.getMessageEmbedding(chatId=chatId, messageId=MessageId(101))
+        current = await testDatabase.chatEmbeddings.getMessageEmbedding(chatId=chatId, messageId=MessageId(200))
+        assert old1 is None, "Old-model embedding for msg 100 should be deleted"
+        assert old2 is None, "Old-model embedding for msg 101 should be deleted"
+        assert current is not None, "Current-model embedding for msg 200 should survive"
+        assert current["model"] == currentModel

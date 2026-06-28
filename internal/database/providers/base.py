@@ -9,8 +9,8 @@ import logging
 import types
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
-from enum import Enum
-from typing import Any, Dict, List, Optional
+from enum import Enum, StrEnum
+from typing import Any, Dict, List, NotRequired, Optional, TypedDict
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +109,84 @@ class ParametrizedQuery:
         """Positional or named parameters bound to the query."""
         self.fetchType: FetchType = fetchType
         """Controls how many rows are returned after execution."""
+
+
+class VectorSearchResult(TypedDict):
+    """A single row from a native vector similarity search.
+
+    Attributes:
+        rowKey: Mapping of column name to string value for each
+            requested return column. For composite primary keys,
+            all key columns are present (e.g. ``{"chat_id": "42",
+            "message_id": "abc"}``). For single-column keys, the
+            dict has one entry.
+        distance: Raw distance/dissimilarity score from the database
+            engine. Lower is more similar for cosine distance. Callers
+            convert to similarity via ``1.0 - distance`` when the
+            metric is cosine.
+    """
+
+    rowKey: dict[str, Any]
+    """Column-name-to-value mapping for the requested return columns."""
+    distance: float
+    """Distance score (metric-dependent; lower = more similar for cosine)."""
+
+
+class VectorDistanceMetric(StrEnum):
+    """Distance metrics for native vector similarity search.
+
+    Each provider maps these to its native syntax. If a provider does
+    not support a particular metric, it raises ``ValueError``.
+    """
+
+    COSINE = "cosine"
+    """Cosine distance (1.0 - cosine_similarity). Range [0, 2]."""
+    L2 = "l2"
+    """Euclidean (L2) distance."""
+
+
+class VectorColumnType(StrEnum):
+    """Column types for vector table creation.
+
+    Providers map these to their native type names. The ``VECTOR`` type
+    is special — it creates a vector/embedding column with dimension
+    and distance metric parameters.
+    """
+
+    TEXT = "text"
+    """Variable-length text."""
+    INTEGER = "integer"
+    """Integer."""
+    FLOAT = "float"
+    """Floating-point number."""
+    BLOB = "blob"
+    """Binary data."""
+    VECTOR = "vector"
+    """Vector/embedding column. Requires ``vectorDimension`` and
+    optionally ``distanceMetric`` in the column definition."""
+
+
+class VectorColumnDef(TypedDict):
+    """Definition of a single column for :meth:`createVectorTable`.
+
+    Attributes:
+        name: Column name.
+        columnType: Logical column type from :class:`VectorColumnType`.
+        isPartitionKey: If ``True``, the column is a partition key
+            (vec0 ``PARTITION KEY`` syntax). Used to prune search space.
+            Default ``False``.
+        vectorDimension: For ``VECTOR`` columns, the embedding
+            dimension (e.g. 384, 1024). Required when ``columnType`` is
+            ``VECTOR``.
+        distanceMetric: For ``VECTOR`` columns, the distance metric.
+            Default depends on provider.
+    """
+
+    name: str
+    columnType: VectorColumnType
+    isPartitionKey: NotRequired[bool]
+    vectorDimension: NotRequired[int]
+    distanceMetric: NotRequired[VectorDistanceMetric]
 
 
 class BaseSQLProvider(ABC):
@@ -411,3 +489,114 @@ class BaseSQLProvider(ABC):
             NotImplementedError: Must be overridden by subclasses.
         """
         raise NotImplementedError
+
+    async def isVectorSearchSupported(self) -> bool:
+        """Check if this provider supports native vector similarity search.
+
+        Providers that load a vector extension (e.g. sqlite-vec, pgvector)
+        override this to return ``True`` after confirming the extension is
+        operational. The default returns ``False``.
+
+        Returns:
+            ``True`` if :meth:`vectorSearch` is available, ``False`` otherwise.
+        """
+        return False
+
+    async def vectorSearch(
+        self,
+        *,
+        table: str,
+        vectorColumn: str,
+        returnColumns: list[str],
+        queryVector: bytes,
+        k: int,
+        filterClause: str = "",
+        filterParams: Optional[dict[str, str | int | float | None]] = None,
+        distanceMetric: VectorDistanceMetric = VectorDistanceMetric.COSINE,
+    ) -> list[VectorSearchResult]:
+        """Perform a native KNN vector similarity search.
+
+        Executes a provider-specific nearest-neighbour query over the
+        ``vectorColumn`` in ``table``, returning the ``k`` closest rows.
+
+        The query vector must be pre-serialised to the provider's expected
+        binary format (e.g. ``array.array("f", floats).tobytes()`` for
+        sqlite-vec float32). This avoids an extra copy/conversion inside
+        the provider.
+
+        Args:
+            table: Table (or virtual table) name containing the vectors.
+            vectorColumn: Column holding the vector BLOB.
+            returnColumns: List of column names whose values populate
+                the :attr:`VectorSearchResult.rowKey` dict in results.
+            queryVector: The query vector as raw bytes in the format
+                expected by the provider.
+            k: Maximum number of nearest neighbours to return.
+            filterClause: Optional SQL WHERE fragment to pre-filter rows.
+                Must use ``:named`` placeholders referencing keys in
+                ``filterParams``. Example:
+                ``"chat_id = :chatId AND model = :modelName"``.
+                Empty string means no extra filter.
+            filterParams: Named parameters for ``filterClause``. ``None``
+                or empty dict when ``filterClause`` is empty.
+            distanceMetric: Distance metric to use for the similarity
+                comparison. Providers validate support at call time.
+
+        Returns:
+            List of :class:`VectorSearchResult` ordered by distance
+            ascending (most similar first). May contain fewer than ``k``
+            results if the table has fewer matching rows.
+
+        Raises:
+            NotImplementedError: When the provider does not support native
+                vector search (default implementation).
+            ValueError: When ``distanceMetric`` is not supported by this
+                provider.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support native vector search")
+
+    async def listTables(self, likePattern: str = "%") -> list[str]:
+        """List table names matching a LIKE pattern.
+
+        Each provider implements this with its native introspection query.
+        Used by the vector search subsystem to discover vec0 tables for
+        cleanup and to check whether a dimension-specific table exists.
+
+        Args:
+            likePattern: SQL LIKE pattern (e.g. ``"vec_message_embeddings_%"``).
+                The default ``"%"`` matches all tables.
+
+        Returns:
+            List of matching table names.
+
+        Raises:
+            NotImplementedError: If the provider does not support table
+                listing (default implementation).
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support table listing")
+
+    async def createVectorTable(
+        self,
+        tableName: str,
+        columns: list[VectorColumnDef],
+    ) -> None:
+        """Create a vector table/index for native similarity search.
+
+        Each provider maps the column definitions to its native DDL.
+        Providers without vector support raise ``NotImplementedError``.
+
+        Args:
+            tableName: Name for the new table (e.g. ``"vec_message_embeddings_384"``).
+            columns: Ordered list of column definitions. At least one
+                column must have ``columnType=VectorColumnType.VECTOR``.
+
+        Raises:
+            NotImplementedError: If the provider does not support vector
+                tables (default implementation).
+            ValueError: If no ``VECTOR`` column is present or required
+                fields are missing.
+
+        Returns:
+            None.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support vector table creation")

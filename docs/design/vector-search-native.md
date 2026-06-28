@@ -2,7 +2,7 @@
 
 **Task**: Add native vector similarity search to `BaseSQLProvider`, with SQLite (`sqlite-vec`) as the primary backend.
 **Date**: 2026-06-28
-**Status**: Design (not yet implemented)
+**Status**: Implemented (see `docs/llm/teamlead-memory.md` § "Vector Search — Native Implementation")
 
 ---
 

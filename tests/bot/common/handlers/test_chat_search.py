@@ -139,14 +139,22 @@ def _makeConfigManager(
 
 
 def _makeDatabase() -> Mock:
-    """Build a ``Database`` stub with a ``chatSearch`` repository placeholder.
+    """Build a ``Database`` stub with the repository placeholders the handler touches.
+
+    Wires ``chatSearch`` and ``chatEmbeddings.deleteObsoleteModelEmbeddings``
+    (the latter as an ``AsyncMock`` so the CRON-job cleanup path, which
+    delegates obsolete-embedding deletion to the repository, does not raise
+    when awaited). Tests that exercise the batch-fetch path reassign
+    ``chatEmbeddings.getMessagesWithoutEmbeddings`` as needed.
 
     Returns:
-        ``Mock`` whose ``chatSearch`` attribute is itself a ``Mock``.
-        Tests add the specific repository methods they need.
+        ``Mock`` whose ``chatSearch`` and ``chatEmbeddings`` attributes are
+        themselves ``Mock`` objects with the cleanup method pre-stubbed.
     """
     db = Mock()
     db.chatSearch = Mock()
+    db.chatEmbeddings = Mock()
+    db.chatEmbeddings.deleteObsoleteModelEmbeddings = AsyncMock(return_value=True)
     return db
 
 
@@ -1166,6 +1174,7 @@ class TestDtCronJob:
         mocks["db"].chatSettings.listChatsBySetting = AsyncMock(return_value={100: "true"})
         mockModel = Mock()
         mockModel.supportsEmbedding = True
+        mockModel.getDimensions = AsyncMock(return_value=None)
         mockModel.generateEmbeddings = AsyncMock(side_effect=lambda text: [0.1, 0.2, 0.3])
         mockManager = Mock(getModel=Mock(return_value=mockModel))
         cast(Any, handler).llmService.getLLMManager = Mock(return_value=mockManager)
@@ -1218,6 +1227,7 @@ class TestDtCronJob:
         mocks["db"].chatSettings.listChatsBySetting = AsyncMock(return_value={100: "true"})
         mockModel = Mock()
         mockModel.supportsEmbedding = True
+        mockModel.getDimensions = AsyncMock(return_value=None)
         # First call raises, second call succeeds.
         mockModel.generateEmbeddings = AsyncMock(side_effect=[RuntimeError("embedder down"), [0.4, 0.5, 0.6]])
         cast(Any, handler).llmService.getLLMManager = Mock(return_value=Mock(getModel=Mock(return_value=mockModel)))
@@ -1268,6 +1278,7 @@ class TestDtCronJob:
         mocks["db"].chatSettings.listChatsBySetting = AsyncMock(return_value={100: "true"})
         mockModel = Mock()
         mockModel.supportsEmbedding = True
+        mockModel.getDimensions = AsyncMock(return_value=None)
         mockModel.generateEmbeddings = AsyncMock(return_value=[0.1])
         cast(Any, handler).llmService.getLLMManager = Mock(return_value=Mock(getModel=Mock(return_value=mockModel)))
         mocks["db"].chatEmbeddings.getMessagesWithoutEmbeddings = AsyncMock(return_value=[])
@@ -1295,6 +1306,7 @@ class TestDtCronJob:
         mocks["db"].chatSettings.listChatsBySetting = AsyncMock(return_value={100: "true", 200: "true"})
         mockModel = Mock()
         mockModel.supportsEmbedding = True
+        mockModel.getDimensions = AsyncMock(return_value=None)
         mockModel.generateEmbeddings = AsyncMock(return_value=[0.1])
         cast(Any, handler).llmService.getLLMManager = Mock(return_value=Mock(getModel=Mock(return_value=mockModel)))
         # Empty batch — we just want to assert which chat was picked.
@@ -1335,6 +1347,7 @@ class TestDtCronJob:
         mocks["db"].chatSettings.listChatsBySetting = AsyncMock(return_value={100: "true"})
         mockModel = Mock()
         mockModel.supportsEmbedding = True
+        mockModel.getDimensions = AsyncMock(return_value=None)
         mockModel.generateEmbeddings = AsyncMock(return_value=[0.1])
         cast(Any, handler).llmService.getLLMManager = Mock(return_value=Mock(getModel=Mock(return_value=mockModel)))
         # Empty backlog — no pending messages to embed.
@@ -1367,6 +1380,7 @@ class TestDtCronJob:
         mocks["db"].chatSettings.listChatsBySetting = AsyncMock(return_value={100: "true"})
         mockModel = Mock()
         mockModel.supportsEmbedding = True
+        mockModel.getDimensions = AsyncMock(return_value=None)
         mockModel.generateEmbeddings = AsyncMock(return_value=[0.1])
         cast(Any, handler).llmService.getLLMManager = Mock(return_value=Mock(getModel=Mock(return_value=mockModel)))
         # Exactly _reindexBatchSize messages — backlog not yet drained.

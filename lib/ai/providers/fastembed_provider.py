@@ -223,9 +223,7 @@ class FastembedProvider(AbstractLLMProvider):
             extraConfig=extraConfig,
         )
         self.models[name] = model
-        logger.info(
-            f"Added {self.__class__.__name__} model {name} ({modelId}), " f"dims={model.embeddingDimensions}, dood!"
-        )
+        logger.info(f"Added {self.__class__.__name__} model {name} ({modelId}), " f"dims={model._dimensions}, dood!")
         return model
 
     def _getOrCreateEmbedding(self, modelId: str, fastembedKwargs: Dict[str, Any]) -> TextEmbedding:
@@ -285,39 +283,6 @@ class FastembedProvider(AbstractLLMProvider):
         if not vectors:
             raise ValueError(f"fastembed returned no vectors for model {modelId}")
         return vectors[0]
-
-    def detectDimensions(self, modelId: str, fastembedKwargs: Dict[str, Any]) -> int:
-        """Probe the FastEmbed model for its native output dimensionality.
-
-        Used by :class:`FastembedModel` when the caller did not pass
-        an explicit ``embedding_dimensions`` in config. The probe runs a
-        single short embed and reads ``len(result)`` from the resulting
-        numpy array. The model is constructed once via
-        :meth:`_getOrCreateEmbedding` so subsequent ``embedOne`` calls
-        reuse the cached instance — no double load.
-
-        **This method is synchronous and potentially slow** (model
-        download on first call). Callers should offload it to a thread
-        pool via :func:`asyncio.to_thread` when running under the event
-        loop. :class:`FastembedModel` does this automatically during the
-        lazy probe in :meth:`FastembedModel._generateEmbeddings`.
-
-        Args:
-            modelId: Fastembed model identifier.
-            fastembedKwargs: Extra kwargs forwarded to ``TextEmbedding(...)``.
-
-        Returns:
-            Native output dimensionality (e.g. 384 for
-            ``all-MiniLM-L6-v2``, 768 for ``all-mpnet-base-v2``).
-
-        Raises:
-            ValueError: If the probe embed returns an empty result.
-        """
-        embedding = self._getOrCreateEmbedding(modelId, fastembedKwargs)
-        vectors = list(embedding.embed(["dimension probe"]))
-        if not vectors:
-            raise ValueError(f"fastembed returned no vectors for dimension probe of {modelId}")
-        return len(vectors[0])
 
 
 class FastembedModel(AbstractModel):
@@ -437,28 +402,6 @@ class FastembedModel(AbstractModel):
             key: value for key, value in (extraConfig or {}).items() if key not in self._CONSUMED_EXTRA_KEYS
         }
 
-        # Dimensions: prefer explicit config, fall back to lazy probe on first embed.
-        configuredDims = (extraConfig or {}).get("embedding_dimensions")
-        if configuredDims is not None:
-            self._dimensions: Optional[int] = int(configuredDims)
-        else:
-            self._dimensions = None
-        self._dimensionsProbed: bool = False
-
-    @property
-    def embeddingDimensions(self) -> Optional[int]:
-        """Output dimensionality of this model (e.g. 384, 768).
-
-        When ``embedding_dimensions`` was provided in config the value is
-        known immediately. Otherwise it is **None** until the first call to
-        :meth:`_generateEmbeddings` triggers a lazy probe.
-
-        Returns:
-            Number of float components in the embedding vector, or None if
-            not yet probed.
-        """
-        return self._dimensions
-
     async def _generateEmbeddings(self, text: str) -> list[float]:
         """Generate an embedding for ``text`` using the FastEmbed model.
 
@@ -482,18 +425,6 @@ class FastembedModel(AbstractModel):
             Exception: Any exception raised by fastembed (load failure,
                 OOM, etc.) is re-raised unchanged.
         """
-        # Lazy dimension probe on first use. The sync detectDimensions
-        # call (which constructs TextEmbedding and runs one short embed)
-        # is offloaded to a thread pool so the event loop stays
-        # responsive during model download / ONNX initialisation.
-        if self._dimensions is None and not self._dimensionsProbed:
-            self._dimensionsProbed = True
-            self._dimensions = await asyncio.to_thread(
-                self._provider.detectDimensions,
-                self.modelId,
-                self._fastembedKwargs,
-            )
-
         vector = await self._provider.embedOne(
             modelId=self.modelId,
             text=text,

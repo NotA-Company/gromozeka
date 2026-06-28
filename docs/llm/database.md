@@ -406,6 +406,8 @@ await db.chatEmbeddings.deleteChatEmbeddings(chatId=chatId)
 
 **Search integration:** `searchChatMessages(queryEmbedding=None, ...)` runs in filter-only mode and returns rows in date order with `score=0.0`. When `queryEmbedding` is provided, results are ranked by cosine similarity to the query vector (0..1). Embeddings are re-loaded fresh from `message_embeddings` on every call — the repository no longer keeps a `TTLDict` of decoded float matrices (the previous `_embeddingCache` and its `[search-history.embeddings].cache-ttl-seconds` / `cache-max-chats` settings were removed). Caching decoded vectors belongs in the handler layer via `CacheService` and is intentionally not implemented at the repository level.
 
+**Native vector search (dual-write):** when `sqlite-vec` is loaded (`SQLite3Provider.isVectorSearchSupported()` is `True`), `saveMessageEmbedding()` also writes the embedding into the dimension-specific `vec_message_embeddings_{N}` vec0 virtual table (lazily created on first write for a dimension). `_semanticSearch()` tries native vector search first via `_nativeVectorSearch()` and falls back to the numpy path on exception or empty native results. No config key is needed — auto-detection happens at connect time; `pip uninstall sqlite-vec` disables native search. See §7 "Vector search types" for the provider interface and the vec0 schema. The vec0 tables are ephemeral; `message_embeddings` remains the authoritative store.
+
 ---
 
 ## 6. Adding Methods to `Database`
@@ -581,6 +583,39 @@ async def getLayout(self, systemId: str, layoutName: str) -> Optional[Divination
 | `getTextType(maxLength)` | Get appropriate TEXT type for schema migrations |
 | `upsert(table, values, conflictColumns, updateExpressions)` | Portable upsert operation |
 | `isReadOnly()` | Check if provider is in read-only mode |
+| `isVectorSearchSupported() -> bool` | Concrete (default `False`); providers with a loaded vector extension override to return `True` after confirming the extension is operational. Checked synchronously — the provider sets a private `_vectorSearchAvailable` flag during `connect()` (initialized to `False` in `__init__`). `SQLite3Provider` returns `True` when `sqlite-vec` loaded successfully. |
+| `vectorSearch(*, table, vectorColumn, returnColumns, queryVector: bytes, k, filterClause, filterParams, distanceMetric) -> list[VectorSearchResult]` | Native KNN vector similarity search. `queryVector` is raw bytes (caller pre-serialises, e.g. `array.array("f", vec).tobytes()`). `filterClause` is a raw SQL WHERE fragment with `:named` params (built by trusted repository code). Returns rows ordered by distance ascending. Default implementation raises `NotImplementedError`. |
+| `listTables(likePattern: str = "%") -> list[str]` | List table names matching a SQL LIKE pattern via native introspection. SQLite: `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE :pattern`. Default raises `NotImplementedError`. Used to discover `vec_message_embeddings_%` tables for model-change cleanup. |
+| `createVectorTable(tableName, columns: list[VectorColumnDef]) -> None` | Create a provider-native vector table/index. SQLite maps `VectorColumnDef` to vec0 DDL (`FLOAT[N] distance_metric=cosine`, `PARTITION KEY` suffix). `CREATE VIRTUAL TABLE IF NOT EXISTS` (idempotent). Default raises `NotImplementedError`. |
+
+### Vector search types (`internal/database/providers/base.py`)
+
+| Type | Kind | Purpose |
+|---|---|---|
+| `VectorSearchResult` | TypedDict | `rowKey: dict[str, str]` (column-name → stringified value, supports composite keys) + `distance: float` (raw metric value; cosine distance = `1.0 - similarity`). |
+| `VectorDistanceMetric` | StrEnum | `COSINE`, `L2`. Providers validate support at call time and raise `ValueError` for unsupported metrics. |
+| `VectorColumnType` | StrEnum | `TEXT`, `INTEGER`, `FLOAT`, `BLOB`, `VECTOR`. `VECTOR` requires `vectorDimension` and optionally `distanceMetric` in the column definition. |
+| `VectorColumnDef` | TypedDict | `name: str`, `columnType: VectorColumnType`, `isPartitionKey: NotRequired[bool]`, `vectorDimension: NotRequired[int]`, `distanceMetric: NotRequired[VectorDistanceMetric]`. Uses `NotRequired[]` (NOT `total=False` — pyright rejects bracket access on `total=False`). |
+
+### SQLite vector search — `sqlite-vec` + `vec0` virtual table
+
+`SQLite3Provider` loads the `sqlite-vec` extension during `connect()` via aiosqlite's async wrappers: `enable_load_extension(True)` → `load_extension(sqlite_vec.loadable_path())` → `enable_load_extension(False)`, wrapped in `try/finally` so extension loading is always disabled afterward. The optional dependency is guarded by a module-level `try/except ImportError` with an `_SQLITE_VEC_AVAILABLE` flag (see AGENTS.md "optional dependencies"). Success sets `_vectorSearchAvailable = True`; `isVectorSearchSupported()` returns it. Loading failures are logged at `debug` and swallowed — numpy fallback takes over transparently.
+
+The `vec0` virtual table uses **dimension-aware naming**: `vec_message_embeddings_{N}` where `N` is the embedding dimension (e.g. `vec_message_embeddings_384`, `vec_message_embeddings_1024`). This lets multiple dimension sizes coexist without conflict; the repository selects the correct table at runtime from `len(queryEmbedding)`. Tables are created lazily in the write path (`saveMessageEmbedding()` → `_upsertVecMessageEmbedding()` with `readonly=False`), never in the search path (`readonly=True` would block DDL). If a vec0 table is missing during search, `vectorSearch()` raises and the caller falls through to the numpy path.
+
+Schema (one table per dimension in use):
+
+```sql
+CREATE VIRTUAL TABLE vec_message_embeddings_384 USING vec0(
+    message_id TEXT,
+    chat_id INTEGER PARTITION KEY,
+    model TEXT PARTITION KEY,
+    date TEXT,                            -- ISO-8601 from chat_messages; enables maxMessages pre-filter
+    embedding FLOAT[384] distance_metric=cosine
+);
+```
+
+`chat_id` and `model` are `PARTITION KEY`s so `WHERE chat_id = X AND model = Y` prunes the search to exactly that partition. These vec0 tables are **ephemeral** — the authoritative embedding store is `message_embeddings`; vec0 tables are rebuilt from it on demand and carry no data the app cannot reconstruct. No migration creates them; `createVectorTable()` is called at runtime when a new dimension is first written.
 
 ---
 

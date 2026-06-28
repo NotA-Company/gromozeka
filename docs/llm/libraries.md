@@ -760,13 +760,22 @@ async with httpx.AsyncClient(**proxyKwargs, timeout=30) as client:
 
 ## See Also
 
+## 14. `sqlite-vec` — Native Vector Search Extension
+
+**Pinned dependency:** `sqlite-vec==0.1.9` (in `requirements.direct.txt` under `# Runtime`). Optional at runtime — the `SQLite3Provider` guards the import with a module-level `try/except ImportError` and an `_SQLITE_VEC_AVAILABLE` flag; if absent, `isVectorSearchSupported()` returns `False` and semantic search falls back to the numpy path.
+
+**Purpose:** provides the `vec0` virtual table module for native cosine-similarity KNN search inside the SQLite process, eliminating the transfer of all embedding BLOBs to Python on every search. Loaded by `SQLite3Provider.connect()` via aiosqlite's `enable_load_extension` / `load_extension` / `enable_load_extension(False)` (wrapped in `try/finally`).
+
+**Used by:** `internal/database/providers/sqlite3.py` (`SQLite3Provider`), `internal/database/repositories/chat_embeddings.py` (dual-write to `vec_message_embeddings_{N}`), `internal/database/repositories/chat_search.py` (`_nativeVectorSearch`). See [`database.md`](database.md) §7 "Vector search types" for the provider interface and the vec0 schema, and [`docs/design/vector-search-native.md`](../design/vector-search-native.md) for the design.
+
+**No config key** — auto-detected at connect time. To disable native search: `pip uninstall sqlite-vec`.
+
+---
+
+## See Also
+
 - [`index.md`](index.md) — Project overview, lib/ directory map
 - [`services.md`](services.md) — Higher-level service wrappers (CacheService, LLMService, etc.)
 - [`configuration.md`](configuration.md) — Configuring lib integrations via TOML
 - [`testing.md`](testing.md) — Golden data framework for API testing
 - [`tasks.md`](tasks.md) — Step-by-step: "add new API integration" decision tree
-
----
-
-*This guide is auto-maintained and should be updated whenever library APIs change*
-*Last updated: 2026-06-26*

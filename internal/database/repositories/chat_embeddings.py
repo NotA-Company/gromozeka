@@ -22,16 +22,22 @@ layer.
 """
 
 import array
-import datetime
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
+import lib.utils as libUtils
 from internal.models import MessageId
 
 from .. import utils as dbUtils
 from ..manager import DatabaseManager
 from ..models import ChatMessageDict, MessageEmbeddingDict
-from ..providers.base import ExcludedValue
+from ..providers.base import (
+    BaseSQLProvider,
+    ExcludedValue,
+    VectorColumnType,
+    VectorDistanceMetric,
+)
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -69,6 +75,8 @@ class ChatEmbeddingsRepository(BaseRepository):
         messageId: MessageId,
         embedding: List[float],
         model: str,
+        *,
+        date: Optional[str] = None,
     ) -> bool:
         """Save or update a message embedding.
 
@@ -78,12 +86,22 @@ class ChatEmbeddingsRepository(BaseRepository):
         (cross-RDBMS-portable raw bytes; same float32 representation on
         every supported backend).
 
+        When the provider supports native vector search, the row is also
+        written (dual-write) into the dimension-specific ``vec0`` virtual
+        table via :meth:`_upsertVecMessageEmbedding`. Vec0 write failures
+        are logged and swallowed — ``message_embeddings`` remains the
+        authoritative source.
+
         Args:
             chatId: Chat identifier.
             messageId: Message identifier.
             embedding: Float vector (any length, becomes `dimensions` column).
             model: Model name that produced the embedding (e.g. the resolved
                 value of the `EMBEDDING_MODEL` chat setting).
+            date: Optional ISO-8601 message date string, written to the
+                ``date`` column of the vec0 virtual table. When ``None``,
+                the current UTC timestamp is used. Passed by
+                ``embedAndSaveMessage`` from ``ensuredMessage.date``.
 
         Returns:
             bool: True if the embedding was saved successfully, False on failure.
@@ -92,7 +110,7 @@ class ChatEmbeddingsRepository(BaseRepository):
             Exception: If the database operation fails (caught and logged).
         """
         try:
-            now = datetime.datetime.now(datetime.timezone.utc)
+            now = libUtils.now()
             dimensions = len(embedding)
             blob = array.array("f", embedding).tobytes()
 
@@ -117,10 +135,132 @@ class ChatEmbeddingsRepository(BaseRepository):
                 },
             )
 
+            # Dual-write to vec0 virtual table for native vector search.
+            # Failures are logged and swallowed inside the helper — the
+            # authoritative row in ``message_embeddings`` was already written.
+            if await sqlProvider.isVectorSearchSupported():
+                try:
+                    actualDate = date if date is not None else now.isoformat()
+                    await self._upsertVecMessageEmbedding(
+                        sqlProvider=sqlProvider,
+                        chatId=chatId,
+                        messageId=messageId.asStr(),
+                        model=model,
+                        date=actualDate,
+                        embedding=blob,
+                        dimensions=dimensions,
+                    )
+                except Exception:
+                    logger.error(
+                        "Failed to write vec0 embedding for chat %s message %s",
+                        chatId,
+                        messageId,
+                        exc_info=True,
+                    )
+
             return True
         except Exception as e:
             logger.error(f"Failed to save embedding for message {messageId} in chat {chatId}: {e}")
             return False
+
+    async def _upsertVecMessageEmbedding(
+        self,
+        sqlProvider: BaseSQLProvider,
+        chatId: int,
+        messageId: str,
+        model: str,
+        date: str,
+        embedding: bytes,
+        dimensions: int,
+    ) -> None:
+        """Upsert a row into the dimension-specific vec0 table.
+
+        Lazily creates the vec0 virtual table on first use via
+        :meth:`BaseSQLProvider.createVectorTable`. Uses DELETE + INSERT
+        because vec0 does not support conventional UPSERT on metadata
+        columns.
+
+        Write failures are logged at warning level and swallowed — the
+        authoritative data remains in ``message_embeddings``.
+
+        Args:
+            sqlProvider: SQL provider abstraction (must be writable and
+                support vector search).
+            chatId: Chat ID.
+            messageId: Message ID as string.
+            model: Embedding model name.
+            date: ISO-8601 message date string.
+            embedding: Float32 embedding bytes.
+            dimensions: Embedding dimension (e.g. 384, 1024).
+
+        Returns:
+            None. Failures are swallowed.
+        """
+        tableName = f"vec_message_embeddings_{dimensions}"
+
+        # NOTE: Some salite-vec specific code. need to be reviewed in case of Postgres\MySQL DB used
+        try:
+            # Lazy table creation — check the catalog first to avoid
+            # re-issuing DDL on every write once the table exists.
+            existingTables = await sqlProvider.listTables(tableName)
+            if tableName not in existingTables:
+                await sqlProvider.createVectorTable(
+                    tableName,
+                    [
+                        {"name": "message_id", "columnType": VectorColumnType.TEXT},
+                        {"name": "chat_id", "columnType": VectorColumnType.INTEGER, "isPartitionKey": True},
+                        {"name": "model", "columnType": VectorColumnType.TEXT, "isPartitionKey": True},
+                        {"name": "date", "columnType": VectorColumnType.TEXT},
+                        {
+                            "name": "embedding",
+                            "columnType": VectorColumnType.VECTOR,
+                            "vectorDimension": dimensions,
+                            "distanceMetric": VectorDistanceMetric.COSINE,
+                        },
+                    ],
+                )
+
+            # vec0 DELETE-by-metadata is supported by sqlite-vec, but some
+            # builds restrict WHERE predicates to partition keys only. Try
+            # the metadata DELETE first; on failure, fall back to a
+            # rowid-based delete (SELECT rowid then DELETE by rowid).
+            try:
+                await sqlProvider.execute(
+                    f"DELETE FROM {tableName} "
+                    f"WHERE chat_id = :chatId AND message_id = :messageId AND model = :model",
+                    {"chatId": chatId, "messageId": messageId, "model": model},
+                )
+            except Exception:
+                row = await sqlProvider.executeFetchOne(
+                    f"SELECT rowid FROM {tableName} "
+                    f"WHERE chat_id = :chatId AND message_id = :messageId AND model = :model",
+                    {"chatId": chatId, "messageId": messageId, "model": model},
+                )
+                if row is not None:
+                    await sqlProvider.execute(
+                        f"DELETE FROM {tableName} WHERE rowid = :rowid",
+                        {"rowid": row["rowid"]},
+                    )
+
+            await sqlProvider.execute(
+                f"INSERT INTO {tableName} "
+                f"(message_id, chat_id, model, date, embedding) "
+                f"VALUES (:messageId, :chatId, :model, :date, :embedding)",
+                {
+                    "messageId": messageId,
+                    "chatId": chatId,
+                    "model": model,
+                    "date": date,
+                    "embedding": embedding,
+                },
+            )
+        except Exception:
+            logger.warning(
+                "Failed to upsert vec0 embedding for chat %s message %s",
+                chatId,
+                messageId,
+                exc_info=True,
+            )
 
     async def getMessageEmbedding(
         self,
@@ -193,6 +333,135 @@ class ChatEmbeddingsRepository(BaseRepository):
             )
         except Exception as e:
             logger.error(f"Failed to delete embeddings for chat {chatId}: {e}")
+
+    async def deleteObsoleteModelEmbeddings(
+        self,
+        chatId: int,
+        currentModel: str,
+        *,
+        currentDimensions: Optional[int] = None,
+    ) -> bool:
+        """Delete embeddings that belong to a different model than *currentModel*.
+
+        Called when the embedding model changes for a chat (detected by the
+        caller via in-memory tracking). Removes rows from:
+
+        1. ``message_embeddings`` — the authoritative table (so the backfill
+           worker discovers them as "without embeddings" and re-embeds them
+           under the new model).
+
+        2. All vec0 ``vec_message_embeddings_{N}`` virtual tables (when
+           native vector search is available) — so the vec0 mirror stays
+           consistent with ``message_embeddings``.
+
+        Stateless and idempotent: on the common path (model unchanged)
+        the DELETE matches zero rows. Callers should gate this with their
+        own change-detection logic to avoid unnecessary work.
+
+        Dimension awareness: when *currentDimensions* is provided, rows
+        are deleted when their ``model`` differs from *currentModel* **or**
+        their ``dimensions`` differ from *currentDimensions*. This covers
+        the case where a model is reconfigured to a different dimensionality
+        under the same ``model`` name (e.g. a 384-dim variant swapped for a
+        1024-dim variant of the same model) — without this, stale rows
+        with the same model name but the old dimensionality would survive
+        cleanup. When *currentDimensions* is ``None`` (e.g. OpenAI-style
+        models that don't expose ``embeddingDimensions`` until generation),
+        the DELETE falls back to the model-name-only predicate.
+
+        The vec0 cleanup mirrors this: when *currentDimensions* is known,
+        the dimension-matching vec0 table is skipped (its rows belong to
+        the current model and are not stale). Tables for other dimensions
+        are still cleaned because they belong to a previous model
+        configuration.
+
+        Args:
+            chatId: Chat identifier.
+            currentModel: The currently-active embedding model name.
+                Rows with any other model value are deleted.
+            currentDimensions: The currently-active embedding dimensionality.
+                When provided, rows whose ``dimensions`` column differs are
+                also deleted, and the matching vec0 table is preserved.
+                When ``None``, only the ``model`` column is consulted.
+
+        Returns:
+            bool: True if cleanup completed successfully, False on failure.
+            Failures are logged and swallowed — callers should consult the
+            return value to decide whether to update their own change-tracking
+            state (a failed cleanup should not be treated as complete, or
+            it will not be retried until the model changes again).
+        """
+        try:
+            sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
+
+            # 1. Delete from the authoritative message_embeddings table.
+            if currentDimensions is not None:
+                await sqlProvider.execute(
+                    "DELETE FROM message_embeddings "
+                    "WHERE chat_id = :chatId "
+                    "AND (model != :currentModel OR dimensions != :currentDimensions)",
+                    {
+                        "chatId": chatId,
+                        "currentModel": currentModel,
+                        "currentDimensions": currentDimensions,
+                    },
+                )
+            else:
+                # Fallback when dimensions are unknown (e.g. OpenAI models
+                # that don't expose embeddingDimensions before generation).
+                await sqlProvider.execute(
+                    "DELETE FROM message_embeddings WHERE chat_id = :chatId AND model != :currentModel",
+                    {"chatId": chatId, "currentModel": currentModel},
+                )
+
+            # 2. Delete from vec0 virtual tables (best-effort).
+            if await sqlProvider.isVectorSearchSupported():
+                try:
+                    vecTables = await sqlProvider.listTables("vec_message_embeddings_%")
+                    # Filter out vec0 shadow tables (vec_message_embeddings_384_info,
+                    # vec_message_embeddings_384_chunks, etc.) — sqlite-vec uses
+                    # internal shadow tables that also match the LIKE pattern and
+                    # appear in sqlite_master with type='table', but they don't have
+                    # our custom columns (chat_id, model, message_id, date).
+                    vecTables = [t for t in vecTables if re.match(r"^vec_message_embeddings_\d+$", t)]
+                    for table in vecTables:
+                        tableDim: Optional[int] = None
+                        if currentDimensions is not None:
+                            try:
+                                tableDim = int(table.rsplit("_", 1)[-1])
+                            except (ValueError, IndexError):
+                                # Defensive: skip tables with non-numeric suffixes
+                                # (shouldn't happen after the regex filter above).
+                                continue
+
+                        # If the table dimension matches the current dimension,
+                        # delete the rows that not belong to the current model for given chatId.
+                        if tableDim == currentDimensions or currentDimensions is None:
+                            await sqlProvider.execute(
+                                f"DELETE FROM {table} WHERE chat_id = :chatId AND model != :currentModel",
+                                {"chatId": chatId, "currentModel": currentModel},
+                            )
+                        # If the table dimension does not match the current dimension,
+                        # delete all rows from the table for given chatId.
+                        else:
+                            await sqlProvider.execute(
+                                f"DELETE FROM {table} WHERE chat_id = :chatId",
+                                {"chatId": chatId},
+                            )
+                except NotImplementedError:
+                    logger.debug(
+                        "Backfill: listTables not supported for chat %d; skipping vec0 model change cleanup",
+                        chatId,
+                    )
+            return True
+        except Exception:
+            logger.warning(
+                "Failed to delete obsolete embeddings for chat %d (current model %s)",
+                chatId,
+                currentModel,
+                exc_info=True,
+            )
+            return False
 
     async def getMessagesWithoutEmbeddings(
         self,

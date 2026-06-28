@@ -863,6 +863,34 @@ Stores one float32 embedding vector per `(chat_id, message_id)` to enable semant
 
 ---
 
+### vec_message_embeddings_N (virtual table)
+
+Ephemeral `vec0` virtual tables (one per embedding dimension in use, e.g. `vec_message_embeddings_384`, `vec_message_embeddings_1024`) that mirror `message_embeddings` rows for native cosine-similarity KNN search via the `sqlite-vec` extension. Created lazily at runtime by `SQLite3Provider.createVectorTable()` on the first write of a given dimension (in `ChatEmbeddingsRepository.saveMessageEmbedding`); no migration creates them. **Authoritative data lives in [`message_embeddings`](#message_embeddings)** — vec0 tables are rebuildable sidecar indexes and carry nothing the app cannot reconstruct.
+
+Not present when `sqlite-vec` is not installed; the numpy search path is used instead.
+
+```sql
+CREATE VIRTUAL TABLE vec_message_embeddings_384 USING vec0(
+    message_id TEXT,
+    chat_id INTEGER PARTITION KEY,
+    model TEXT PARTITION KEY,
+    date TEXT,                            -- ISO-8601 from chat_messages; enables maxMessages pre-filter
+    embedding FLOAT[384] distance_metric=cosine
+);
+```
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `message_id` | TEXT | No | Message identifier (matches `message_embeddings.message_id`) |
+| `chat_id` | INTEGER | No | Chat identifier; `PARTITION KEY` — `WHERE chat_id = ?` prunes the search |
+| `model` | TEXT | No | Embedding model name; `PARTITION KEY` — `WHERE model = ?` prunes the search |
+| `date` | TEXT | No | ISO-8601 timestamp from `chat_messages.date`; enables `maxMessages` pre-filter via `date >= :minDate` |
+| `embedding` | FLOAT[N] | No | float32 vector, `N` = embedding dimension (matches table-name suffix). `distance_metric=cosine` |
+
+**Lifecycle:** written by `saveMessageEmbedding()` (dual-write: `message_embeddings` + vec0). Stale rows from a previous embedding model are cleaned up statelessly by `ChatSearchHandler._dtCronJob`, which lists all `vec_message_embeddings_%` tables via `listTables()` and runs `DELETE FROM {table} WHERE chat_id = :chatId AND model != :currentModel` on each. No `AUTOINCREMENT`, no `DEFAULT CURRENT_TIMESTAMP` — vec0 is not a standard table and the standard portability rules do not apply to its DDL.
+
+---
+
 ## System Tables
 
 ### settings

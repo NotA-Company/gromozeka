@@ -455,6 +455,33 @@ CREATE TABLE message_embeddings (
 
 ---
 
+### vec_message_embeddings_N (virtual table)
+**Purpose**: Ephemeral `vec0` virtual tables (one per embedding dimension in use, e.g. `vec_message_embeddings_384`, `vec_message_embeddings_1024`) that mirror `message_embeddings` rows for native cosine-similarity KNN search via the `sqlite-vec` extension. **Authoritative data lives in [`message_embeddings`](#message_embeddings)** — these are rebuildable sidecar indexes.
+**Primary Key**: vec0 internal rowid (not a natural key)
+**Created by**: `SQLite3Provider.createVectorTable()` at runtime (lazily, on first write of a given dimension in `saveMessageEmbedding`). No migration creates them. Absent when `sqlite-vec` is not installed.
+
+```sql
+CREATE VIRTUAL TABLE vec_message_embeddings_384 USING vec0(
+    message_id TEXT,
+    chat_id INTEGER PARTITION KEY,
+    model TEXT PARTITION KEY,
+    date TEXT,                            -- ISO-8601 from chat_messages; enables maxMessages pre-filter
+    embedding FLOAT[384] distance_metric=cosine
+)
+```
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `message_id` | TEXT | Matches `message_embeddings.message_id` |
+| `chat_id` | INTEGER | `PARTITION KEY` — `WHERE chat_id = ?` prunes the search |
+| `model` | TEXT | `PARTITION KEY` — `WHERE model = ?` prunes the search |
+| `date` | TEXT | ISO-8601 from `chat_messages.date`; enables `maxMessages` pre-filter via `date >= :minDate` |
+| `embedding` | FLOAT[N] | float32 vector, `N` = dimension (matches table-name suffix); `distance_metric=cosine` |
+
+**Lifecycle**: dual-written by `ChatEmbeddingsRepository.saveMessageEmbedding()` alongside `message_embeddings`. Stale rows from a previous model are cleaned up statelessly by `ChatSearchHandler._dtCronJob` — it lists `vec_message_embeddings_%` via `provider.listTables()` and runs `DELETE FROM {table} WHERE chat_id = :chatId AND model != :currentModel` on each. Vec0 DDL is extension-specific; standard SQL portability rules (`AUTOINCREMENT`, `DEFAULT CURRENT_TIMESTAMP`, etc.) do not apply.
+
+---
+
 ### stat_events
 **Purpose**: Append-only event log for raw statistics events
 **Primary Key**: `event_id` (app-generated UUID)

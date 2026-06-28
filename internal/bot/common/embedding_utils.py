@@ -110,6 +110,7 @@ async def embedAndSaveMessage(
             messageId=messageId,
             embedding=embedding,
             model=modelName,
+            date=ensuredMessage.date.isoformat() if ensuredMessage.date is not None else None,
         )
     except Exception:
         logger.exception(

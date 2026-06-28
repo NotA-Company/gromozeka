@@ -12,6 +12,7 @@ packaging==26.2
 python-dateutil==2.9.0.post0
 python-magic==0.4.27
 python-telegram-bot==22.8
+sqlite-vec==0.1.9
 tomli==2.4.1
 yandex-ai-studio-sdk==0.21.0
 

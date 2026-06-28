@@ -182,6 +182,14 @@ class ChatSearchHandler(BaseBotHandler):
         # order rather than re-shuffling every minute.
         self._backfillIndex: int = 0
 
+        # In-memory tracking of the last embedding model seen per chat
+        # (``chatId -> modelKey``). ``modelKey`` is ``modelName`` alone
+        # when the model does not expose embedding dimensions, or
+        # ``"modelName:dimensions"`` when it does (e.g. ``FastembedModel``).
+        # Used by ``_dtCronJob`` to skip redundant cleanup on every tick —
+        # obsolete-embedding deletion only fires once per model switch.
+        self._embeddingModelTracker: Dict[int, str] = {}
+
         # Register backfill CRON_JOB. Multiple handlers can subscribe to
         # the same `DelayedTaskFunction` (they run in registration order
         # — see `QueueService.registerDelayedTaskHandler`), so the
@@ -291,20 +299,28 @@ class ChatSearchHandler(BaseBotHandler):
            to ``"false"`` — because the setting defaults to true, a chat
            that never touched it is automatically opted in for the
            backfill pass.
-         3. Round-robin: pick the next chat in stable order, advance
-             ``_backfillIndex``.
-         4. Resolve the chat's embedding model from its ``EMBEDDING_MODEL``
-             setting. Bail out if the model is missing, unknown, or does
-             not support embeddings.
-         5. Fetch up to ``[search-history.embeddings].reindex-batch-size``
-             (default ``BACKFILL_DEFAULT_BATCH_SIZE``) messages without
-             embeddings and embed them one by one, with a small inter-call
-             sleep to keep the asyncio loop responsive.
-          6. Per-message errors are caught and logged — one bad row never
-              aborts the batch.
-          7. No self-resetting of ``REGENERATE_EMBEDDINGS``: the per-tick
-             batch is small and the next minute's tick will pick up where
-             this one left off.
+        3. Round-robin: pick the next chat in stable order, advance
+           ``_backfillIndex``.
+        4. Resolve the chat's embedding model from its ``EMBEDDING_MODEL``
+           setting. Bail out if the model is missing, unknown, or does
+           not support embeddings.
+        5. **Clean up obsolete embeddings on model change**: Call
+           ``ChatEmbeddingsRepository.deleteObsoleteModelEmbeddings``
+           which removes rows from both ``message_embeddings`` and all
+           ``vec_message_embeddings_{N}`` tables where the stored model
+           differs from ``modelName``. Gated by an in-memory tracking
+           dict (``_embeddingModelTracker``) so cleanup only fires once
+           per model switch — subsequent ticks are no-ops until the
+           model changes again.
+        6. Fetch up to ``[search-history.embeddings].reindex-batch-size``
+           (default ``BACKFILL_DEFAULT_BATCH_SIZE``) messages without
+           embeddings and embed them one by one, with a small inter-call
+           sleep to keep the asyncio loop responsive.
+        7. Per-message errors are caught and logged — one bad row never
+           aborts the batch.
+        8. No self-resetting of ``REGENERATE_EMBEDDINGS``: the per-tick
+           batch is small and the next minute's tick will pick up where
+           this one left off.
 
         Args:
             task: The CRON_JOB delayed task firing this handler. Ignored.
@@ -354,6 +370,32 @@ class ChatSearchHandler(BaseBotHandler):
         model = self.llmService.getLLMManager().getModel(modelName)
         if model is None or not model.supportsEmbedding:
             return
+
+        # Delete obsolete embeddings (both message_embeddings and vec0)
+        # when the model changed since the last cleanup for this chat.
+        # Tracked per-chat via _embeddingModelTracker to avoid redundant
+        # work on every CRON tick — cleanup only fires on model switch.
+        # ``modelKey`` is ``modelName`` alone when the model does not
+        # expose embedding dimensions, or ``"modelName:dimensions"``
+        # when it does (e.g. ``FastembedModel.embeddingDimensions``).
+        currentDims = await model.getDimensions()
+        modelKey = modelName
+        if currentDims is not None:
+            modelKey = f"{modelName}:{currentDims}"
+        if self._embeddingModelTracker.get(chatId) != modelKey:
+            # Pass dimensions when available so the repository can
+            # correctly handle same-name/different-dimension switches
+            # (a model reconfigured from 384 to 1024 dims keeps the same
+            # ``model`` column value but its rows must still be deleted).
+            # Only update the tracker when cleanup succeeds — a failed
+            # cleanup is retried on the next tick rather than treated as
+            # complete.
+            if await self.db.chatEmbeddings.deleteObsoleteModelEmbeddings(
+                chatId=chatId,
+                currentModel=modelName,
+                currentDimensions=currentDims,
+            ):
+                self._embeddingModelTracker[chatId] = modelKey
 
         # Gate 4: fetch the batch. ``_reindexBatchSize`` is cached in
         # `__init__` so this read costs nothing per tick. ``modelName``
