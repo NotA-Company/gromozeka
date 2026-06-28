@@ -6,6 +6,7 @@ that all concrete providers must implement.
 """
 
 import logging
+import types
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from enum import Enum
@@ -178,7 +179,12 @@ class BaseSQLProvider(ABC):
         await self.connect()
         return self
 
-    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+    async def __aexit__(
+        self,
+        exc_type: Optional[type[BaseException]],
+        exc: Optional[BaseException],
+        tb: Optional[types.TracebackType],
+    ) -> None:
         """Exit the async context manager by calling :meth:`disconnect`.
 
         Logs and re-raises any exception that occurred inside the ``async with``
@@ -194,7 +200,9 @@ class BaseSQLProvider(ABC):
         """
         await self.disconnect()
         if exc_type is not None:
-            logger.error(exc_type, exc, tb)
+            assert exc is not None
+            assert tb is not None
+            logger.error(f"Exception in provider context: {exc_type}", exc_info=(exc_type, exc, tb))
             raise
 
     @abstractmethod

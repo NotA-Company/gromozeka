@@ -21,6 +21,7 @@ The module supports:
 import base64
 import json
 import logging
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -441,7 +442,7 @@ class BasicOpenAIModel(AbstractModel):
             logger.debug(f"ToolCalls: {outcome.retMessage.tool_calls}")
             toolCalls = [
                 LLMToolCall(
-                    id=tool.id,
+                    id=tool.id or str(uuid.uuid4()),
                     name=tool.function.name,
                     parameters=json.loads(tool.function.arguments),
                 )

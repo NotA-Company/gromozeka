@@ -40,6 +40,8 @@ from collections.abc import Sequence
 from threading import Lock
 from typing import Any, Dict, List, Optional
 
+import numpy as np
+
 from lib.stats import StatsStorage
 
 from ..abstract import AbstractLLMProvider, AbstractModel
@@ -253,7 +255,7 @@ class FastembedProvider(AbstractLLMProvider):
             self._embeddingModels[modelId] = embedding
             return embedding
 
-    async def embedOne(self, modelId: str, text: str, **kwargs: Any) -> Any:
+    async def embedOne(self, modelId: str, text: str, **kwargs: Any) -> "np.ndarray":
         """Embed a single text using the named FastEmbed model.
 
         Runs the (sync) fastembed call in a thread pool so the event loop

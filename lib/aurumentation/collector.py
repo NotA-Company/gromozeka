@@ -29,6 +29,13 @@ def substituteEnvVars(value: Any, loadDotenv: bool = True) -> Any:
 
     Returns:
         Value with environment variables substituted
+
+    Note:
+        When ``value`` is a dict containing ``"module"`` and ``"class"`` keys,
+        the function dynamically imports and instantiates the class, returning
+        the instance rather than the input dict. In this case the ``Any -> Any``
+        return type is intentionally broad — callers should be aware the return
+        may be an arbitrary object.
     """
     # First - load env variables from dotenv file if needed
     if loadDotenv:

@@ -120,7 +120,7 @@ class SpamHandler(BaseBotHandler):
 
         logger.info("Initialized Bayes spam filter, dood!")
 
-    def _makeSpamButtonSignature(self, message: EnsuredMessage, extra: Any = None) -> str:
+    def _makeSpamButtonSignature(self, message: EnsuredMessage, extra: bool = False) -> str:
         """
         Generate a cryptographic signature for spam button callbacks.
 
@@ -129,7 +129,7 @@ class SpamHandler(BaseBotHandler):
 
         Args:
             message (EnsuredMessage): The message to create signature for.
-            extra (Any, optional): Additional data to include in signature. Defaults to None.
+            extra (bool, optional): Additional data to include in signature. Defaults to False.
 
         Returns:
             str: Hexadecimal hash signature string.

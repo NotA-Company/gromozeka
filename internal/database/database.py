@@ -31,7 +31,8 @@ Example:
 """
 
 import logging
-from typing import Any
+import types
+from typing import Optional
 
 from .manager import DatabaseManager, DatabaseManagerConfig
 from .migrations import MigrationManager
@@ -288,7 +289,12 @@ class Database:
         """
         return self
 
-    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+    async def __aexit__(
+        self,
+        exc_type: Optional[type[BaseException]],
+        exc: Optional[BaseException],
+        tb: Optional[types.TracebackType],
+    ) -> None:
         """Exit the async context manager and cleanup all database connections.
 
         This method is called when exiting the async context manager. It closes all
@@ -311,5 +317,7 @@ class Database:
         """
         await self.manager.closeAll()
         if exc_type is not None:
+            assert exc is not None
+            assert tb is not None
             logger.error(f"Exception in database context: {exc_type}", exc_info=(exc_type, exc, tb))
             raise

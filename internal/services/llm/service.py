@@ -34,18 +34,17 @@ from .models import ExtraDataDict
 logger = logging.getLogger(__name__)
 
 
-LLMToolHandler: TypeAlias = Callable[..., Awaitable[Any]]
+LLMToolHandler: TypeAlias = Callable[..., Awaitable[Union[str, Dict[str, Any], None]]]
 """Type alias for async tool handler functions.
 
 Handlers are async callables that take tool parameters and extra data,
-and return a string result. The function signature is flexible: parameters
-are passed as keyword arguments matching the tool's schema.
+and return a string, a JSON-serializable dict, or None (serialized as \"null\").
+The function signature is flexible: parameters are passed as keyword arguments
+matching the tool's schema.
 
 Example:
-    LLMToolHandler my_tool = lambda param1, param2, **kwargs: "result"
-
-Attributes:
-    ExtraDataDict: Optional dictionary of extra data passed from the calling context
+    async def my_tool(param1: str, param2: int, **extra: Any) -> Union[str, Dict[str, Any], None]:
+        return f"processed {param1} with {param2}"
 """
 
 
@@ -154,7 +153,7 @@ class LLMService:
         mlRunResult: ModelRunResult,
         *,
         toolName: str,
-        parameters: Optional[Dict[Any, Any]],
+        parameters: Optional[Dict[str, Any]],
         toolCallId: Optional[str],
         prefixStr: str,
         suffixStr: str,
