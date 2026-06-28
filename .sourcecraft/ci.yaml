@@ -23,6 +23,7 @@ tasks:
           - apk add --no-cache gcc git libmagic make musl-dev nodejs py3-pip python3 sqlite tzdata py3-onnxruntime
           - make venv-alpine
           - make install
+          - ./venv/bin/pip install --ignore-installed packaging
           - make check
           - make test 
 
