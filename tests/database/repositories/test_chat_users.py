@@ -91,3 +91,60 @@ class TestGetChatUsersDefaultMode:
 
         # Only user 100 is "recent" enough.
         assert [u["user_id"] for u in users] == [100]
+
+    async def test_getChatUsers_default_minMessages(self, testDatabase: Database) -> None:
+        """``minMessages`` filters users by ``messages_count``.
+
+        Users with fewer messages than the threshold are excluded from
+        the result.
+        """
+        await self._seedUser(testDatabase, chatId=1, userId=100)
+        await self._seedUser(testDatabase, chatId=1, userId=200)
+
+        # Set distinct messages_count values.
+        provider = await testDatabase.manager.getProvider(chatId=1, readonly=False)
+        await provider.execute(
+            "UPDATE chat_users SET messages_count = :count WHERE chat_id = :chatId AND user_id = :userId",
+            {"count": 50, "chatId": 1, "userId": 100},
+        )
+        await provider.execute(
+            "UPDATE chat_users SET messages_count = :count WHERE chat_id = :chatId AND user_id = :userId",
+            {"count": 5, "chatId": 1, "userId": 200},
+        )
+
+        users = await testDatabase.chatUsers.getChatUsers(chatId=1, minMessages=10)
+
+        assert [u["user_id"] for u in users] == [100]
+
+    async def test_getChatUsers_default_lastActiveDaysWinsOverSeenSince(self, testDatabase: Database) -> None:
+        """When both ``lastActiveDays`` and ``seenSince`` are passed, ``lastActiveDays`` wins.
+
+        ``lastActiveDays`` overwrites ``seenSince`` in the repository so the
+        relative-day window takes precedence over the absolute datetime.
+        """
+        now = datetime.datetime.now(datetime.timezone.utc)
+
+        await self._seedUser(testDatabase, chatId=1, userId=100)
+        await self._seedUser(testDatabase, chatId=1, userId=200)
+
+        # User 100: updated_at = now - 3 days.  User 200: updated_at = now - 30 days.
+        provider = await testDatabase.manager.getProvider(chatId=1, readonly=False)
+        await provider.execute(
+            "UPDATE chat_users SET updated_at = :ts WHERE chat_id = :chatId AND user_id = :userId",
+            {"ts": now - datetime.timedelta(days=3), "chatId": 1, "userId": 100},
+        )
+        await provider.execute(
+            "UPDATE chat_users SET updated_at = :ts WHERE chat_id = :chatId AND user_id = :userId",
+            {"ts": now - datetime.timedelta(days=30), "chatId": 1, "userId": 200},
+        )
+
+        # Both lastActiveDays=7 (cutoff = now - 7) and seenSince (cutoff = now - 1)
+        # are passed.  If seenSince won, user 100 (now - 3) would be excluded.
+        # Since lastActiveDays wins, user 100 is included.
+        users = await testDatabase.chatUsers.getChatUsers(
+            chatId=1,
+            lastActiveDays=7,
+            seenSince=now - datetime.timedelta(days=1),
+        )
+
+        assert [u["user_id"] for u in users] == [100]

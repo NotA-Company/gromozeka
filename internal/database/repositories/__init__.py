@@ -12,8 +12,7 @@ Key Components:
     BaseRepository: Abstract base class defining the common interface and
         functionality for all repository implementations.
     CacheRepository: Handles cache-related database operations.
-    ChatEmbeddingsRepository: Manages message embeddings and the
-        semantic-search path.
+    ChatEmbeddingsRepository: Manages message embedding CRUD (save, get, delete, backfill).
     ChatInfoRepository: Manages chat metadata and information.
     ChatMessagesRepository: Handles message storage and retrieval.
     ChatSearchRepository: Unified chat-message search (filter-only SQL

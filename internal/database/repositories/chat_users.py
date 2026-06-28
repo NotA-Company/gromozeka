@@ -258,7 +258,6 @@ class ChatUsersRepository(BaseRepository):
                 query,
                 {
                     "chatId": chatId,
-                    "limit": limit,
                     "minMessages": minMessages,
                     "seenSince": seenSince,
                 },

@@ -328,9 +328,9 @@ The table format lets the user quickly scan and triage without reading full revi
 
 ---
 
-## 7. Appendix: Example -- Current Batch (20 commits, 77 files, master..HEAD)
+## 7. Appendix: Example Batch Walkthrough (N commits, M files, base..HEAD)
 
-This section demonstrates a concrete application of the methodology to a real diff: 20 commits, 77 files changed, 13,349 insertions, 172 deletions against `master`.
+This section demonstrates a concrete application of the methodology to an illustrative diff (the numbers here — N commits, M files, L insertions, D deletions — represent a real-world batch but will vary per actual changeset).
 
 ### 7.1 Pre-Review Characterization
 
@@ -338,69 +338,69 @@ The files were grouped into 5 feature domains:
 
 | Batch slug | Feature | Files | Risk Tags |
 |---|---|---|---|
-| A: `chat-history-search` | Chat history search: `/search` handler, embedding pipeline, vector search tools, migration 017, relevant repos, embedding utility files | ~22 files | DB-MIGRATION, NEW-HANDLER, EXTERNAL-DEP (fastembed) |
-| B: `proxy-lifecycle` | Proxy lifecycle: `ProxyService`, `ProxyLifecycle`, subprocess management, proxy config updates | ~7 files | SINGLETON-LIFECYCLE, EXTERNAL-DEP, PROCESS-MGMT |
-| C: `fastembed-provider` | FastEmbed LLM provider: provider class, abstract layer changes, model config | ~5 files | EXTERNAL-DEP |
-| D: `llm-abstraction` | LLM abstraction changes: `lib/ai/abstract.py`, basic OpenAI provider changes, YC SDK changes, test updates | ~6 files | (medium risk) |
-| E: `shared-config-docs` | Cross-cutting: config TOML files, `docs/llm/*` updates, plans, memory files, `tests/conftest.py`, `internal/database/models.py`, `requirements.direct.txt` | ~37 files | CONFIG-CHANGE (low risk, cross-cutting) |
+| A: `chat-history-search` | Chat history search: `/search` handler, embedding pipeline, vector search tools, migration 017, relevant repos, embedding utility files | ~N files | DB-MIGRATION, NEW-HANDLER, EXTERNAL-DEP (fastembed) |
+| B: `proxy-lifecycle` | Proxy lifecycle: `ProxyService`, `ProxyLifecycle`, subprocess management, proxy config updates | ~N files | SINGLETON-LIFECYCLE, EXTERNAL-DEP, PROCESS-MGMT |
+| C: `fastembed-provider` | FastEmbed LLM provider: provider class, abstract layer changes, model config | ~N files | EXTERNAL-DEP |
+| D: `llm-abstraction` | LLM abstraction changes: `lib/ai/abstract.py`, basic OpenAI provider changes, YC SDK changes, test updates | ~N files | (medium risk) |
+| E: `shared-config-docs` | Cross-cutting: config TOML files, `docs/llm/*` updates, plans, memory files, `tests/conftest.py`, `internal/database/models.py`, `requirements.direct.txt` | ~N files | CONFIG-CHANGE (low risk, cross-cutting) |
 
 ### 7.2 Batch Size Analysis
 
-**Batch A (~22 files)** is at the upper bound of the 15-20 range. If the `code-reviewer` struggles with this batch, it could be split into:
+**Batch A** is at the upper bound of the 15-20 range (illustrative count: ~22 files). If the `code-reviewer` struggles with this batch, it could be split into:
 
-- `chat-history-search-data` (migration 017 + repo changes + model changes: ~10 files)
-- `chat-history-search-handler` (handler + embedding pipeline + tools: ~12 files)
+- `chat-history-search-data` (migration + repo changes + model changes)
+- `chat-history-search-handler` (handler + embedding pipeline + tools)
 
-**Batch E (~37 files)** is far above the 24-file threshold. However, most of its files are low-risk (config defaults, markdown docs, memory files). If the reviewer returns empty or shallow results, split into:
+**Batch E** (illustrative count: ~37 files) is far above the 24-file threshold. However, most of its files are low-risk (config defaults, markdown docs, memory files). If the reviewer returns empty or shallow results, split into:
 
-- `shared-config` (TOML configs + conftest + models.py + requirements: ~10 files)
-- `shared-docs` (docs/llm/* + plans + memories: ~27 files)
+- `shared-config` (TOML configs + conftest + models.py + requirements)
+- `shared-docs` (docs/llm/* + plans + memories)
 
 ### 7.3 Dependency Mapping
 
 | Dependency | Affected batches |
 |---|---|
 | `internal/database/models.py` (new enums for search + proxy) | A, B, E |
-| `docs/llm/tasks.md` (gotcha table additions for search + proxy) | A, B, E |
-| `configs/**/*.toml` (new sections for search + proxy + fastembed) | A, B, C, E |
-| `lib/ai/abstract.py` (abstract provider changes for fastembed) | C, D |
-| `tests/conftest.py` (new fixtures for search tests) | A, E |
+| `docs/llm/tasks.md` (gotcha table additions) | A, B, E |
+| `configs/**/*.toml` (new sections) | A, B, C, E |
+| `lib/ai/abstract.py` (abstract provider changes) | C, D |
+| `tests/conftest.py` (new fixtures) | A, E |
 
 ### 7.4 Execution Order
 
 ```
          ┌──────────────────────────────────┐
-         │   B: proxy-lifecycle  (7 files)  │  ─┐
-         │   C: fastembed-provider (5)      │  ─┤  Parallel
-         │   D: llm-abstraction   (6 files) │  ─┘
+         │   B: proxy-lifecycle            │  ─┐
+         │   C: fastembed-provider         │  ─┤  Parallel
+         │   D: llm-abstraction             │  ─┘
          └──────────────────────────────────┘
                         │
                         ▼
          ┌─────────────────────────────────┐
-         │   A: chat-history-search (22)   │  May reference LLM
+         │   A: chat-history-search        │  May reference LLM
          └─────────────────────────────────┘  abstraction (Batch D)
                         │
                         ▼
          ┌─────────────────────────────────┐
-         │   E: shared-config-docs  (37)   │  Needs full picture
+         │   E: shared-config-docs         │  Needs full picture
          └─────────────────────────────────┘
 ```
 
 **Rationale:**
 
-1. **Parallel: Batch B, C, D** -- all independent. No file overlaps. Proxy lifecycle, FastEmbed provider, and LLM abstraction changes touch entirely different areas.
+1. **Parallel: Batch B, C, D** -- all independent. No file overlaps. Each batch touches entirely different areas.
 2. **Batch A after D** -- chat-history-search may reference the abstract LLM layer modified in Batch D (e.g., new provider methods used by the embedding pipeline). Review D first so A's reviewer sees the final shape of the interface.
 3. **Batch E last** -- shared config and docs benefit from knowing the full picture. Config key names, documentation cross-references, and memory file summaries should reflect all feature batches.
 
 ### 7.5 Remediation After Integration
 
-Given the volume (77 files across 5 batches), remediation will likely involve multiple files with overlapping edits. The teamlead should:
+Given the volume (M files across N batches — illustrative; actual counts vary per changeset), remediation will likely involve multiple files with overlapping edits. The teamlead should:
 
 1. Merge all [CRITICAL] and [IMPORTANT] findings from 5 per-batch reports + 1 integration report.
 2. Group by file path. Files modified by multiple batches (models.py, conftest.py, tasks.md) will have the most clustered issues.
 3. Dispatch fixes in parallel for non-overlapping files, sequentially for overlapping ones.
 4. Run `make format lint && make test` after all fixes land.
-5. One final integration pass to confirm the full 77-file diff is clean.
+5. One final integration pass to confirm the full diff is clean.
 
 ---
 

@@ -78,12 +78,14 @@ class FastembedProvider(AbstractLLMProvider):
     ``fastembed`` library is loaded once per process (the underlying ONNX
     runtime is process-global and ~50MB).
 
-    When ``embedding_dimensions`` is provided in ``extraConfig``, the
-    underlying ``TextEmbedding`` is constructed lazily on first call to
-    ``_generateEmbeddings``. When ``embedding_dimensions`` is omitted,
-    a one-shot dimension probe runs at init time, which constructs the
-    model eagerly. Prefer providing ``embedding_dimensions`` explicitly
-    to keep startup fast.
+    Model construction and dimension probing are always lazy — the
+    underlying ``TextEmbedding`` is built on the first call to
+    :meth:`embedOne` (or the first lazy probe in
+    :meth:`FastembedModel._generateEmbeddings`), offloaded to a thread
+    pool via :func:`asyncio.to_thread`. Providing
+    ``embedding_dimensions`` explicitly in ``extraConfig`` avoids the
+    one-shot probe embed and is slightly more efficient, but even when
+    omitted the event loop is never blocked.
 
     The provider has no remote endpoint — there is no client to initialise.
     Model-specific configuration is consumed from each model's
@@ -292,6 +294,12 @@ class FastembedProvider(AbstractLLMProvider):
         :meth:`_getOrCreateEmbedding` so subsequent ``embedOne`` calls
         reuse the cached instance — no double load.
 
+        **This method is synchronous and potentially slow** (model
+        download on first call). Callers should offload it to a thread
+        pool via :func:`asyncio.to_thread` when running under the event
+        loop. :class:`FastembedModel` does this automatically during the
+        lazy probe in :meth:`FastembedModel._generateEmbeddings`.
+
         Args:
             modelId: Fastembed model identifier.
             fastembedKwargs: Extra kwargs forwarded to ``TextEmbedding(...)``.
@@ -307,7 +315,7 @@ class FastembedProvider(AbstractLLMProvider):
         vectors = list(embedding.embed(["dimension probe"]))
         if not vectors:
             raise ValueError(f"fastembed returned no vectors for dimension probe of {modelId}")
-        return int(len(vectors[0]))
+        return len(vectors[0])
 
 
 class FastembedModel(AbstractModel):
@@ -321,9 +329,17 @@ class FastembedModel(AbstractModel):
     class (``support_text``, ``support_embeddings``, ``embedding_dimensions``,
     plus any unrelated provider keys) is passed through to fastembed.
 
+    When ``embedding_dimensions`` is provided in ``extraConfig``, the
+    output dimensionality is known at construction time. When it is
+    omitted, a lazy dimension probe runs on the first call to
+    :meth:`_generateEmbeddings`, offloaded to a thread pool via
+    :func:`asyncio.to_thread` so model download never blocks the event
+    loop.
+
     Attributes:
         _provider: The :class:`FastembedProvider` that owns this model.
-        _dimensions: Output dimensionality (from config or probed).
+        _dimensions: Output dimensionality (from config or lazily probed).
+        _dimensionsProbed: Whether the lazy probe has already run.
         _fastembedKwargs: Extra kwargs forwarded to ``TextEmbedding(...)``
             on first use.
 
@@ -397,7 +413,8 @@ class FastembedModel(AbstractModel):
                 - ``support_text`` (bool): should be ``False`` to keep
                   the model out of the chat-completion model pool.
                 - ``embedding_dimensions`` (int): explicit output
-                  dimensionality. If absent, probed from fastembed.
+                  dimensionality. If absent, probed lazily from
+                  fastembed on first embed call.
                 - Any other keys are forwarded to ``TextEmbedding(...)``
                   (e.g. ``cache_dir``, ``threads``, ``max_length``).
         """
@@ -418,21 +435,25 @@ class FastembedModel(AbstractModel):
             key: value for key, value in (extraConfig or {}).items() if key not in self._CONSUMED_EXTRA_KEYS
         }
 
-        # Dimensions: prefer explicit config, fall back to fastembed probe.
+        # Dimensions: prefer explicit config, fall back to lazy probe on first embed.
         configuredDims = (extraConfig or {}).get("embedding_dimensions")
         if configuredDims is not None:
-            self._dimensions: int = int(configuredDims)
+            self._dimensions: Optional[int] = int(configuredDims)
         else:
-            # Probe once at init time. fastembed.download_if_missing=True by
-            # default, so the first run downloads the model weights.
-            self._dimensions = self._provider.detectDimensions(self.modelId, self._fastembedKwargs)
+            self._dimensions = None
+        self._dimensionsProbed: bool = False
 
     @property
-    def embeddingDimensions(self) -> int:
+    def embeddingDimensions(self) -> Optional[int]:
         """Output dimensionality of this model (e.g. 384, 768).
 
+        When ``embedding_dimensions`` was provided in config the value is
+        known immediately. Otherwise it is **None** until the first call to
+        :meth:`_generateEmbeddings` triggers a lazy probe.
+
         Returns:
-            Number of float components in the embedding vector.
+            Number of float components in the embedding vector, or None if
+            not yet probed.
         """
         return self._dimensions
 
@@ -445,6 +466,10 @@ class FastembedModel(AbstractModel):
         platform / cross-provider uniformity — every embedding backend in
         the codebase returns the same shape.
 
+        When ``embedding_dimensions`` was omitted from config the first
+        call triggers a lazy dimension probe (also in a thread pool) so
+        model download / ONNX initialisation never blocks the event loop.
+
         Args:
             text: Input text to embed.
 
@@ -455,6 +480,18 @@ class FastembedModel(AbstractModel):
             Exception: Any exception raised by fastembed (load failure,
                 OOM, etc.) is re-raised unchanged.
         """
+        # Lazy dimension probe on first use. The sync detectDimensions
+        # call (which constructs TextEmbedding and runs one short embed)
+        # is offloaded to a thread pool so the event loop stays
+        # responsive during model download / ONNX initialisation.
+        if self._dimensions is None and not self._dimensionsProbed:
+            self._dimensionsProbed = True
+            self._dimensions = await asyncio.to_thread(
+                self._provider.detectDimensions,
+                self.modelId,
+                self._fastembedKwargs,
+            )
+
         vector = await self._provider.embedOne(
             modelId=self.modelId,
             text=text,
@@ -467,8 +504,8 @@ class FastembedModel(AbstractModel):
 
     async def _generateText(
         self,
-        messages: Sequence[ModelMessage],  # noqa: ARG002 - required by AbstractModel
-        tools: Optional[Sequence[LLMAbstractTool]] = None,  # noqa: ARG002 - required by AbstractModel
+        messages: Sequence[ModelMessage],
+        tools: Optional[Sequence[LLMAbstractTool]] = None,
     ) -> ModelRunResult:
         """Text generation is not supported by FastEmbed embedding models.
 
@@ -492,7 +529,7 @@ class FastembedModel(AbstractModel):
 
     async def _generateImage(
         self,
-        messages: Sequence[ModelMessage],  # noqa: ARG002 - required by AbstractModel
+        messages: Sequence[ModelMessage],
     ) -> ModelRunResult:
         """Image generation is not supported by FastEmbed embedding models.
 

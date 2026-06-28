@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import List, Optional
+from typing import Optional
 
 import httpx
 
@@ -103,7 +103,7 @@ class ProxyLifecycle:
             )
 
     async def _runCommand(
-        self, command: List[str], *, waitForCompletion: bool = False, timeout: int = 30
+        self, command: list[str], *, waitForCompletion: bool = False, timeout: int = 30
     ) -> Optional[int]:
         """Run a shell command via asyncio subprocess.
 
@@ -277,6 +277,9 @@ class ProxyLifecycle:
 
         if not healthy:
             logger.warning("[%s] Health check failed; restarting proxy.", self.label)
+            # No backoff is needed — health checks run every few minutes via CRON_JOB,
+            # so there is a natural delay between retries. If the proxy is permanently
+            # broken, the retry frequency is bounded by the cron interval.
             try:
                 await self.restart()
             except Exception as e:

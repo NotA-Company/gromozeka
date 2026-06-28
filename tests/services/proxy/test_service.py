@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -48,6 +48,9 @@ class TestProxyService:
 
         with patch("asyncio.get_event_loop") as mockGetLoop:
             mockLoop = MagicMock()
+            # run_until_complete receives a coroutine from lifecycle.start();
+            # we close it to suppress "coroutine was never awaited".
+            mockLoop.run_until_complete = Mock(side_effect=lambda coro: coro.close())
             mockGetLoop.return_value = mockLoop
             svc.initialize(proxyConfigDict)
 
@@ -206,9 +209,7 @@ class TestProxyService:
             },
         }
 
-        with patch("internal.services.proxy.service.asyncio.run") as mockRun:
-            result = svc.resolveProxy(serviceConfig, "disabled-svc")
+        result = svc.resolveProxy(serviceConfig, "disabled-svc")
 
         assert len(svc._activeLifecycles) == 0
-        mockRun.assert_not_called()
         assert result.type == "none"  # fromServiceConfig with useProxy=False returns NONE

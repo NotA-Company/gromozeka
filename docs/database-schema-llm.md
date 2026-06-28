@@ -439,7 +439,7 @@ CREATE TABLE message_embeddings (
 )
 ```
 
-**Indexes**: None — PK-only access; per-chat enumeration uses `WHERE chat_id = ?`.
+**Indexes**: `idx_message_embeddings_chat_model` on `(chat_id, model)` — speeds up `_loadEmbeddingsFromDb` (filters by both chat and model name). Created by `migration_018`. The PK leftmost prefix covers per-chat enumeration (`WHERE chat_id = ?`).
 
 **Repository methods** (`ChatEmbeddingsRepository`):
 - `saveMessageEmbedding(chatId, messageId, embedding, model)` — upsert vector; `dimensions` derived from `len(embedding)`.

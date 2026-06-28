@@ -599,7 +599,7 @@ class ChatMessagesRepository(BaseRepository):
             return None
 
         root: Optional[ChatMessageDict] = None
-        targetRootMessageId: Optional[MessageId] = target.get("root_message_id")
+        targetRootMessageId: Optional[MessageId] = target["root_message_id"]
         if targetRootMessageId is not None:
             rootMessageId = MessageId(targetRootMessageId)
             root = await self.getChatMessageByMessageId(chatId=chatId, messageId=rootMessageId, dataSource=dataSource)

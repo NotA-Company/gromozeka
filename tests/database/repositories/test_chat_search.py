@@ -36,26 +36,13 @@ live in :class:`TestFilterMessageIdsBatching`.
 import datetime
 from unittest.mock import patch
 
+import pytest
+
 from internal.database import Database
-from internal.database.manager import DatabaseManagerConfig
 from internal.database.models import MessageCategory
 from internal.database.providers.base import BaseSQLProvider
 from internal.database.repositories.chat_search import _MESSAGE_ID_FILTER_BATCH_SIZE
 from internal.models import MessageId
-
-
-def _buildConfig() -> DatabaseManagerConfig:
-    """Build a minimal in-memory SQLite DatabaseManagerConfig for tests."""
-    return {
-        "default": "default",
-        "chatMapping": {},
-        "providers": {
-            "default": {
-                "provider": "sqlite3",
-                "parameters": {"dbPath": ":memory:"},
-            }
-        },
-    }
 
 
 class TestSearchChatMessages:
@@ -163,6 +150,47 @@ class TestSearchChatMessages:
         assert len(results) == 2
         assert {r["message_category"] for r in results} == {MessageCategory.BOT}
 
+    async def test_semantic_mode_ranking(self, testDatabase: Database) -> None:
+        """Semantic mode (``queryEmbedding`` provided) ranks by cosine similarity.
+
+        Seeds two messages with known embeddings:
+        - Message 1: embedding ``[1.0, 0.0]``
+        - Message 2: embedding ``[0.0, 1.0]``
+
+        Query embedding ``[1.0, 0.0]`` should rank message 1 first with score
+        ≈ 1.0 (identical), then message 2 with score ≈ 0.0 (orthogonal).
+        """
+        chatId = 1
+        modelName = "test-model"
+
+        await self._seedUser(testDatabase, chatId=chatId, userId=100)
+        await self._seedUser(testDatabase, chatId=chatId, userId=200)
+        await self._seedMessage(testDatabase, chatId=chatId, userId=100, messageId=1, messageText="apple")
+        await self._seedMessage(testDatabase, chatId=chatId, userId=200, messageId=2, messageText="banana")
+
+        # Save embeddings for both messages.
+        await testDatabase.chatEmbeddings.saveMessageEmbedding(
+            chatId=chatId, messageId=MessageId(1), embedding=[1.0, 0.0], model=modelName
+        )
+        await testDatabase.chatEmbeddings.saveMessageEmbedding(
+            chatId=chatId, messageId=MessageId(2), embedding=[0.0, 1.0], model=modelName
+        )
+
+        results = await testDatabase.chatSearch.searchChatMessages(
+            chatId=chatId,
+            queryEmbedding=[1.0, 0.0],
+            modelName=modelName,
+            limit=10,
+        )
+
+        assert len(results) == 2
+        # Message 1 (embedding [1.0, 0.0]) is identical to the query → score ≈ 1.0.
+        assert results[0]["message_id"] == MessageId(1)
+        assert results[0]["score"] == pytest.approx(1.0, abs=1e-6)
+        # Message 2 (embedding [0.0, 1.0]) is orthogonal to the query → score ≈ 0.0.
+        assert results[1]["message_id"] == MessageId(2)
+        assert results[1]["score"] == pytest.approx(0.0, abs=1e-6)
+
 
 class TestFilterMessageIdsBatching:
     """Regression tests for ``_filterMessageIds`` batching boundary.
@@ -183,17 +211,17 @@ class TestFilterMessageIdsBatching:
             fullName=f"User {userId}",
         )
 
-    async def test_batching_with_over_500_candidates(self, testDatabase: Database) -> None:
+    async def test_batching_with_over_1000_candidates(self, testDatabase: Database) -> None:
         """``_filterMessageIds`` batches candidate IDs across multiple queries.
 
         Seeds ``_MESSAGE_ID_FILTER_BATCH_SIZE * 2 - 1`` messages —
         enough that more than one batch is needed (default batch size is
-        500). Wraps ``executeFetchAll`` to count queries and verifies at
+        1024). Wraps ``executeFetchAll`` to count queries and verifies at
         least 2 batches were issued.
 
         This test would FAIL if the batching loop were removed (callCount
         would be 1) or if ``_MESSAGE_ID_FILTER_BATCH_SIZE`` were raised
-        above 999 (asserted explicitly below).
+        above 32766 (asserted explicitly below).
         """
         # Sanity check: batch size must stay below SQLITE_MAX_VARIABLE_NUMBER.
         assert _MESSAGE_ID_FILTER_BATCH_SIZE <= 32766, (
@@ -244,7 +272,7 @@ class TestFilterMessageIdsBatching:
 
         assert len(result) == _MESSAGE_ID_FILTER_BATCH_SIZE * 2 - 1
         assert {mid.asInt() for mid in result} == set(range(1, _MESSAGE_ID_FILTER_BATCH_SIZE * 2))
-        # 610 candidates / 500 per batch = at least 2 SQL queries.
+        # ``_MESSAGE_ID_FILTER_BATCH_SIZE * 2 - 1`` candidates / 1024 per batch = at least 2 SQL queries.
         assert callCount >= 2, (
             f"Expected at least 2 SQL queries for {_MESSAGE_ID_FILTER_BATCH_SIZE * 2} candidates, "
             f"got {callCount} — batching may not be working"

@@ -197,11 +197,16 @@ class ProxyService:
                 except Exception as e:
                     logger.error("[%s] Failed to start proxy: %s", label, e)
 
-        for label, lifecycle in list(self._activeLifecycles.items()):
-            try:
-                await lifecycle.onCronTick()
-            except Exception as e:
-                logger.error("[%s] Error in proxy lifecycle cron tick: %s", label, e)
+        try:
+            results = await asyncio.gather(
+                *(lifecycle.onCronTick() for _, lifecycle in self._activeLifecycles.items()),
+                return_exceptions=True,
+            )
+            for name, result in zip(self._activeLifecycles.keys(), results):
+                if isinstance(result, Exception):
+                    logger.error("[%s] Error in proxy lifecycle cron tick: %s", name, result)
+        except Exception as e:
+            logger.error("Unexpected error in cron tick gather: %s", e)
 
     async def _dtOnExit(self, task: DelayedTask) -> None:
         """Handle DO_EXIT (application shutdown).

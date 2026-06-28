@@ -547,7 +547,7 @@ class AbstractModel(ABC):
                     attempts=attempt,
                 )
                 return embedding
-            except (NotImplementedError, ValueError, TypeError) as e:
+            except (NotImplementedError, ValueError, TypeError):
                 # Deterministic failures: never retry.
                 raise
             except Exception as e:
@@ -693,6 +693,8 @@ class AbstractModel(ABC):
                 - support_tools: Whether the model supports tools
                 - support_text: Whether the model supports text generation
                 - support_images: Whether the model supports image generation
+                - support_structured_output: Whether the model supports structured output
+                - support_embeddings: Whether the model supports text embeddings
                 - tier: Model tier (e.g., "bot_owner")
                 - extra: Additional configuration options
 
@@ -707,6 +709,8 @@ class AbstractModel(ABC):
                 'support_tools': True,
                 'support_text': True,
                 'support_images': False,
+                'support_structured_output': False,
+                'support_embeddings': False,
                 'tier': 'bot_owner',
                 'extra': {}
             }
@@ -872,6 +876,15 @@ class AbstractModel(ABC):
         """
         try:
             info = self.getInfo()
+            labels = {
+                "modelName": info.get("model_id", "unknown"),
+                "modelId": info.get("model_id", "unknown"),
+                "provider": info.get("provider", "unknown"),
+                "generationType": "embedding",
+                "status": "FINAL" if success else "ERROR",
+            }
+            if error is not None:
+                labels["error"] = type(error).__name__
             await self.statsStorage.record(
                 stats={
                     "generation_embeddings": 1,
@@ -881,13 +894,7 @@ class AbstractModel(ABC):
                     "elapsed_time": elapsed or 0,
                 },
                 consumerId=consumerId,
-                labels={
-                    "modelName": info.get("model_id", "unknown"),
-                    "modelId": info.get("model_id", "unknown"),
-                    "provider": info.get("provider", "unknown"),
-                    "generationType": "embedding",
-                    "status": "FINAL" if success else "ERROR",
-                },
+                labels=labels,
             )
         except Exception as e:
             logger.error("Failed to record embedding attempt stats")

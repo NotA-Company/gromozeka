@@ -845,7 +845,8 @@ Stores one float32 embedding vector per `(chat_id, message_id)` to enable semant
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Indexes**:
-- None. The composite PK is the only access pattern; per-chat enumeration uses `WHERE chat_id = ?`.
+- `idx_message_embeddings_chat_model` on `(chat_id, model)` — speeds up `_loadEmbeddingsFromDb` (filters by both chat and model name). Created by `migration_018`.
+- The composite PK covers per-chat enumeration (`WHERE chat_id = ?`) via its leftmost prefix.
 
 **Cross-RDBMS portability:**
 - `BLOB` type is portable across SQLite, PostgreSQL (`BYTEA`), and MySQL (`BLOB`).

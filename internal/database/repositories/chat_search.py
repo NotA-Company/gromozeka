@@ -42,9 +42,9 @@ from .base import BaseRepository
 logger = logging.getLogger(__name__)
 
 #: Number of message ID filter parameters per SQL batch.
-#: Kept well below SQLite's ``SQLITE_MAX_VARIABLE_NUMBER`` (999 on older
-#: builds, 32766 on 3.32+).  The per-batch count is also dynamically
-#: reduced to account for non-``mid`` params (static filters, categories).
+#: On modern SQLite (3.32+, shipped with Python 3.12), ``SQLITE_MAX_VARIABLE_NUMBER`` is 32766.
+#: The dynamic reduction (32766 - baseParamCount) handles older builds.
+#: 1024 is a safe default batch size that keeps queries under the limit.
 _MESSAGE_ID_FILTER_BATCH_SIZE: int = 1024
 
 

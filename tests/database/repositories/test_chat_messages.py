@@ -21,23 +21,8 @@ its tests now live in ``tests/database/repositories/test_chat_users.py``.
 import datetime
 
 from internal.database import Database
-from internal.database.manager import DatabaseManagerConfig
 from internal.database.models import MessageCategory
 from internal.models import MessageId
-
-
-def _buildConfig() -> DatabaseManagerConfig:
-    """Build a minimal in-memory SQLite DatabaseManagerConfig for tests."""
-    return {
-        "default": "default",
-        "chatMapping": {},
-        "providers": {
-            "default": {
-                "provider": "sqlite3",
-                "parameters": {"dbPath": ":memory:"},
-            }
-        },
-    }
 
 
 class TestMessageThread:
@@ -114,3 +99,104 @@ class TestMessageThread:
         # shows up in the reply list.
         assert len(result["thread_messages"]) == 1
         assert result["thread_messages"][0]["message_id"] == MessageId(2)
+
+    async def test_targetNotFound(self, testDatabase: Database) -> None:
+        """``getMessageThread`` returns ``None`` when the target message does not exist.
+
+        Only a user is seeded (so the chat exists), but no message with the
+        requested ``messageId`` — the method must return ``None`` rather than
+        raising or returning an empty dict.
+        """
+        await self._seedUser(testDatabase, chatId=1, userId=100)
+
+        result = await testDatabase.chatMessages.getMessageThread(chatId=1, messageId=MessageId(999))
+
+        assert result is None
+
+    async def test_targetIsRoot(self, testDatabase: Database) -> None:
+        """Target with no ``root_message_id`` → ``root_message`` is ``None``,
+        ``thread_messages`` contains only the target.
+
+        When the target message is itself a root (no parent thread), the
+        method should return ``root_message=None`` and
+        ``thread_messages=[target]``.
+        """
+        await self._seedMessage(testDatabase, chatId=1, userId=100, messageId=1, messageText="i am the root")
+
+        result = await testDatabase.chatMessages.getMessageThread(chatId=1, messageId=MessageId(1))
+
+        assert result is not None
+        assert result["target_message"]["message_id"] == MessageId(1)
+        assert result["root_message"] is None
+        assert len(result["thread_messages"]) == 1
+        assert result["thread_messages"][0]["message_id"] == MessageId(1)
+
+    async def test_multiReplyThread(self, testDatabase: Database) -> None:
+        """Multiple replies under the same root are all returned in ``thread_messages``.
+
+        Seeds a root message and two replies. The result must include:
+        - ``root_message`` with the root's data,
+        - ``target_message`` pointing to the requested reply,
+        - ``thread_messages`` containing all three messages (root, reply1, reply2)
+          in chronological order.
+        """
+        await self._seedMessage(testDatabase, chatId=1, userId=100, messageId=1, messageText="root")
+        await self._seedMessage(
+            testDatabase,
+            chatId=1,
+            userId=200,
+            messageId=2,
+            messageText="reply a",
+            replyId=1,
+            rootMessageId=1,
+        )
+        await self._seedMessage(
+            testDatabase,
+            chatId=1,
+            userId=200,
+            messageId=3,
+            messageText="reply b",
+            replyId=1,
+            rootMessageId=1,
+        )
+
+        result = await testDatabase.chatMessages.getMessageThread(chatId=1, messageId=MessageId(3))
+
+        assert result is not None
+        assert result["target_message"]["message_id"] == MessageId(3)
+        assert result["target_message"]["message_text"] == "reply b"
+        assert result["root_message"] is not None
+        assert result["root_message"]["message_id"] == MessageId(1)
+        # ``thread_messages`` includes replies under the root (including the
+        # target), but NOT the root itself (the root is in ``root_message``).
+        assert len(result["thread_messages"]) == 2
+        assert result["thread_messages"][0]["message_id"] == MessageId(2)
+        assert result["thread_messages"][1]["message_id"] == MessageId(3)
+
+    async def test_dataSourceParam(self, testDatabase: Database) -> None:
+        """``dataSource`` is forwarded correctly — calling with ``"default"`` works.
+
+        The ``dataSource`` parameter is plumbed through to the underlying
+        provider lookup. We verify by passing an explicit valid datasource
+        and asserting the thread result is identical to the no-datasource
+        call.
+        """
+        await self._seedMessage(testDatabase, chatId=1, userId=100, messageId=1, messageText="root")
+        await self._seedMessage(
+            testDatabase,
+            chatId=1,
+            userId=200,
+            messageId=2,
+            messageText="reply",
+            replyId=1,
+            rootMessageId=1,
+        )
+
+        result = await testDatabase.chatMessages.getMessageThread(
+            chatId=1, messageId=MessageId(2), dataSource="default"
+        )
+
+        assert result is not None
+        assert result["target_message"]["message_id"] == MessageId(2)
+        assert result["root_message"] is not None
+        assert result["root_message"]["message_id"] == MessageId(1)

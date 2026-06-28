@@ -25,7 +25,7 @@ import datetime
 import json
 import logging
 from enum import StrEnum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 import lib.utils as libUtils
 from internal.bot.common.embedding_utils import embedAndSaveMessage
@@ -322,12 +322,16 @@ class ChatSearchHandler(BaseBotHandler):
             logger.warning("Backfill: failed to list enabled chats: %s", e)
             return
 
-        enabledChats: List[int] = [chatId for chatId, value in chatMap.items() if ChatSettingsValue(value).toBool()]
+        enabledChats: List[int] = sorted(
+            [chatId for chatId, value in chatMap.items() if ChatSettingsValue(value).toBool()]
+        )
         if not enabledChats:
             return
 
-        # Round-robin pick. ``% len`` is safe because ``enabledChats`` is
-        # non-empty (checked above), so a zero-division never lands.
+        # Round-robin pick across ``enabledChats`` sorted by chat ID for
+        # stable ordering across CRON_JOB ticks. ``% len`` is safe because
+        # ``enabledChats`` is non-empty (checked above), so a zero-division
+        # never lands.
         chatId = enabledChats[self._backfillIndex % len(enabledChats)]
         self._backfillIndex += 1
         self._backfillIndex %= len(enabledChats)
@@ -487,6 +491,8 @@ class ChatSearchHandler(BaseBotHandler):
         # Gate 6: resolve per-chat message cap.
         maxMessages: Optional[int] = None
         if ChatSettingsKey.MAX_MESSAGES_FOR_SEMANTIC_SEARCH in chatSettings:
+            # toInt() returns 0 on parse failure; 0 or None -> unlimited.
+            # A value of 0 means "disabled/unlimited" per the config default.
             maxMessages = chatSettings[ChatSettingsKey.MAX_MESSAGES_FOR_SEMANTIC_SEARCH].toInt() or None
 
         # Execute search.
@@ -505,11 +511,25 @@ class ChatSearchHandler(BaseBotHandler):
             logger.exception("search_messages: search failed")
             return {"done": False, "error": "Ошибка при поиске сообщений"}
 
-        # Format results with truncation (Issue 5).
+        # Format results in parallel using the same pattern as
+        # ``_llmToolGetThread`` does for thread messages, with
+        # ``return_exceptions=True`` so a single bad row never aborts
+        # the batch.
+        try:
+            rawFormatted = await asyncio.gather(
+                *[self._formatMessageDict(r) for r in results],
+                return_exceptions=True,
+            )
+        except Exception:
+            logger.exception("search_messages: formatting failed")
+            return {"done": False, "error": "Ошибка при форматировании результатов"}
+
         formatted: List[Dict[str, Any]] = []
-        for r in results:
-            eMsg = await EnsuredMessage.fromDBChatMessage(r, self.db)
-            retMsg = json.loads(await eMsg.formatForLLM(self.db, format=LLMMessageFormat.JSON, useSingleMedia=False))
+        for r, retMsg in zip(results, rawFormatted):
+            if isinstance(retMsg, Exception):
+                logger.warning("search_messages: failed to format result: %s", retMsg)
+                continue
+            retMsg = cast(Dict[str, Any], retMsg)
             if "text" in retMsg and len(retMsg["text"]) > SEARCH_TOOL_MAX_MESSAGE_LENGTH:
                 retMsg["text"] = retMsg["text"][: SEARCH_TOOL_MAX_MESSAGE_LENGTH - 1] + "…"
             retMsg["score"] = r.get("score", 0.0)
@@ -929,6 +949,8 @@ class ChatSearchHandler(BaseBotHandler):
             # to load for semantic search. Prevents OOM / SQL
             # parameter-limit errors on large chats.
             if ChatSettingsKey.MAX_MESSAGES_FOR_SEMANTIC_SEARCH in targetChatSettings:
+                # toInt() returns 0 on parse failure; 0 or None -> unlimited.
+                # A value of 0 means "disabled/unlimited" per the config default.
                 maxMessages = targetChatSettings[ChatSettingsKey.MAX_MESSAGES_FOR_SEMANTIC_SEARCH].toInt() or None
 
             embeddingModelName = targetChatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr()

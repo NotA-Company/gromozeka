@@ -13,8 +13,6 @@ This module covers every gate independently, plus the three failure modes of
 ``embedAndSaveMessage`` and the never-crash guarantee of the dispatch block.
 """
 
-# pyright: reportAttributeAccessIssue=false, reportOptionalMemberAccess=false, reportCallIssue=false
-
 import datetime
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, patch

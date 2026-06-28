@@ -18,8 +18,6 @@ service, and message-sending methods are stubbed at the instance
 level so the tests never touch a real bot, LLM provider, or database.
 """
 
-# pyright: reportAttributeAccessIssue=false, reportOptionalMemberAccess=false, reportCallIssue=false
-
 import datetime
 from typing import Any, Dict, List, Optional, Tuple, cast
 from unittest.mock import AsyncMock, Mock
