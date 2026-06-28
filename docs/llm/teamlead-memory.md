@@ -111,6 +111,24 @@ See [`memories/chat-history-search.md`](memories/chat-history-search.md) — imp
   - **7 parallel fix groups dispatched**: no file overlaps → zero conflicts. All 2635+ tests green after each pass.
 - The `reviewing-large-changes.md` methodology was updated with these lessons (Section 4.2.1, Section 6 restructured, Section 6.1 added).
 
+## Any Type Audit (2026-06-28)
+
+- Full audit of all `Any` type annotations in production code (`lib/`, `internal/`, `main.py`).
+- 61 direct `Any` usages across 24 files. 36 GENUINE, 25 NARROWABLE.
+- Key NARROWABLE categories:
+  - **`__aexit__` signatures** (3 sites): should be `Optional[type[BaseException]]`, `Optional[BaseException]`, `Optional[types.TracebackType]`.
+  - **Circular-import workarounds** in `internal/services/llm/models.py` `ExtraDataDict`: `ensuredMessage: Any` and `typingManager: Any` — should use `TYPE_CHECKING` + string forward refs.
+  - **`LLMToolCall.id`** and **`ModelMessage.toolCallId`**: all callers pass `str`, should be `str` / `Optional[str]`.
+  - **`_STR_RENDERERS` dict** in `lib/ai/models.py`: value is `Callable[[Any], Any]`, input union is `Exception | bytes | ModelResultStatus | None`.
+  - **`CommandHandlerFuncUnbound/Bound`** in `internal/bot/models/command_handlers.py`: 3 `Any`s — self is `BaseBotHandler`, last param is `Optional[TypingManager]`.
+  - **`_makeSpamButtonSignature`** extra param: always `bool`.
+  - **`LLMToolHandler`** return: `Awaitable[Any]` should be `Awaitable[Union[str, Dict[str, Any]]]`.
+  - **`LLMToolCall.parameters`** (2 sites): `Dict[Any, Any]` should be `Dict[str, Any]` (keys are always strings).
+  - **Render helpers** (`_renderError`, `_renderMediaData`, `_renderStatus`): return `Any` but actually return `str | _OMIT` sentinel.
+  - **`substituteEnvVars`** (2 sites): identity-like, `TypeVar` candidates.
+- GENUINE patterns that should stay: `**kwargs: Any` passthrough (12+ sites), `rawResult: Any` for provider-agnostic LLM responses, `jsonDumps(data: Any)`, `convertToSQLite(data: Any)`, `ConfigManager.get(key, default=Any) -> Any`, `TTLDict.__init__` wrapping dict.
+- ~20 additional files import `Any` but only use it within `Dict[str, Any]` (JSON-like dicts) — these are accepted and excluded from the audit scope.
+
 ## Teamlead Workflow Lessons
 
 - The `code-reviewer` subagent may return empty results in some sessions. If it does twice, fall back to `general` agent for the review — use the same prompt structure, just route through `general`.
@@ -128,3 +146,17 @@ See [`memories/chat-history-search.md`](memories/chat-history-search.md) — imp
 - For multi-phase implementation from a design doc: exploration first to verify assumptions (code has drift), then implement foundation phase, review it, then wire consumers + config, review again, then docs, then whole-work review. Parallelize config changes with implementation phases when possible.
 - When subagents fail with `ProviderModelNotFoundError`, check the `model:` field in each agent's `.md` file and in `.opencode/opencode.json` -- the `standard` model may not be provisioned while `cheap`/`smart`/`smartest` are.
 - The `explore` subagent (model: `cheap`) and `code-reviewer` (model: `smart`) are reliable for read-only work; `software-developer` needs `standard` model to be functional.
+
+## Documentation Audit Lessons (2026-06-28)
+
+- **Three index.md files** in the repo: `docs/llm/index.md` (main agent entry), `docs/llm/memories/index.md` (archived memory index), `docs/other/yc-ai-sdk/index.md` (YC SDK reference). All three must be kept in sync with the file tree.
+- **Highest-drift docs** (age fastest, most claims become stale): `database-README.md`, `database-schema.md`, `database-schema-llm.md`, `developer-guide.md`. These contain migration counts, repository lists, line numbers, method signatures, enum values, and table counts — all of which drift with every code change.
+- **Medium-drift docs**: `docs/llm/architecture.md` (handler chain, ADR counts), `docs/llm/handlers.md` (handler list, registration order), `docs/llm/index.md` (line counts, test count, entry point lines).
+- **Low-drift docs**: `docs/llm/memories/` files, `sql-portability-guide.md`, `docs/llm/sandbox.md`, `docs/llm/tasks.md` (gotchas/anti-patterns are stable), `docs/llm/testing.md`.
+- **Common drift patterns across all docs**: (1) line number references rot within weeks, (2) counts (repository, migration, table, handler, test) always lag, (3) method names change in code but not in doc examples (e.g., `setUserData` → `addUserData`), (4) enum values grow but docs aren't updated, (5) DDL in docs can have phantom columns not in actual migrations.
+- **database-README.md** is the worst offender — it's a 732-line marketing-style doc full of hard counts, method signatures, and provider examples that are almost all stale. Consider whether it's worth maintaining at all vs. just linking to the more-focused schema docs.
+- **developer-guide.md** is human-oriented and partially redundant with `docs/llm/`; its handler list and repository list are frequently out of date.
+- **`docs/reports/`** directory doesn't exist but `database-README.md` links to it — a common pattern of referencing files that were never created or were moved.
+- **`docs/TODO.md`** was extensively referenced by `documentation-review-process.md` but didn't exist. All references have been removed from that document (2026-06-28 fix).
+- **`.roo/rules/`** directory doesn't exist but `docs/llm/index.md` used to reference it — the rules now live in `AGENTS.md`.
+- **When the same stale value appears in multiple docs** (e.g., 12 repos, manager.py:249, RateLimiterManager:12), fix ALL files at once — partial fixes create cross-file inconsistencies that confuse agents and users.

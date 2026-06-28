@@ -2,7 +2,6 @@
 
 Welcome to the Gromozeka bot's database documentation. This directory contains comprehensive documentation for the database schema and operations.
 
-> **Note**: SQL portability implementation is now complete! All 5 phases have been implemented, enabling cross-RDBMS compatibility with SQLite, MySQL, PostgreSQL, and SQLink providers. See [SQL Portability Implementation Status](reports/sql-portability-implementation-status.md) for details.
 
 ## 📚 Documentation Files
 
@@ -148,7 +147,7 @@ All database operations use TypedDict models:
 - **Type safety**: IDE autocomplete and type checking
 - **Documentation**: Clear field names and types
 - **Validation**: Runtime validation for data integrity
-- **Repository pattern**: Organized access through 12 specialized repositories
+- **Repository pattern**: Organized access through 14 specialized repositories
 
 Learn more: [TypedDict Models](database-schema.md#typeddict-models)
 
@@ -195,7 +194,7 @@ Perform an "insert or update" operation with provider-specific SQL syntax.
 from internal.database.providers.base import ExcludedValue
 
 # Insert or update a chat message
-db.chatMessages.saveChatMessage(
+await db.chatMessages.saveChatMessage(
     date=datetime.now(),
     chatId=-1001234567890,
     userId=123456789,
@@ -210,37 +209,34 @@ db.chatMessages.saveChatMessage(
 # - MySQL: INSERT ... ON DUPLICATE KEY UPDATE
 ```
 
-#### `getCurrentTimestamp()`
-Get the current timestamp in the provider's native format.
-
-```python
-# Provider-specific timestamp handling
-timestamp = provider.getCurrentTimestamp()
-# Returns: 'datetime("now")' for SQLite
-# Returns: 'NOW()' for MySQL
-# Returns: 'NOW()' for PostgreSQL
-```
-
 #### `getCaseInsensitiveComparison()`
-Get the SQL operator for case-insensitive string comparison.
+Generate a case-insensitive equality comparison SQL expression.
+
+The method returns a complete SQL expression fragment that compares a column
+against a bound parameter using case-insensitive semantics:
 
 ```python
-# Case-insensitive search
-operator = provider.getCaseInsensitiveComparison()
-# Returns: 'LIKE' for SQLite
-# Returns: 'LIKE' for MySQL
-# Returns: 'ILIKE' for PostgreSQL
+# Case-insensitive exact match search
+expr = provider.getCaseInsensitiveComparison("name_en", "searchName")
+# Returns: 'LOWER(name_en) = LOWER(:searchName)' for SQLite/PostgreSQL/SQLink
+# Returns: 'name_en COLLATE utf8mb4_general_ci = :searchName' for MySQL
 ```
+
+**Key details:**
+- Takes two arguments: `column` (column name) and `param` (parameter name, without the `:` prefix)
+- Returns a complete SQL expression, not just an operator — ready to embed in a WHERE clause
+- SQLite, PostgreSQL, and SQLink use `LOWER(column) = LOWER(:param)`
+- MySQL uses `column COLLATE utf8mb4_general_ci = :param`
 
 #### `getLikeComparison()`
-Get the SQL operator for case-insensitive LIKE pattern matching.
+Get a complete SQL LIKE expression for case-insensitive pattern matching. Takes a column name and a parameter name, and returns a full expression suitable for embedding in a WHERE clause.
 
 ```python
 # Case-insensitive fuzzy search
-operator = provider.getLikeComparison()
-# Returns: 'LOWER(column) LIKE LOWER(:param)' for SQLite
-# Returns: 'LOWER(column) LIKE LOWER(:param)' for MySQL
-# Returns: 'LOWER(column) LIKE LOWER(:param)' for PostgreSQL (or ILIKE)
+expression = provider.getLikeComparison('name', 'search')
+# Returns: "LOWER(name) LIKE LOWER(:search)" for SQLite
+# Returns: "LOWER(name) LIKE LOWER(:search)" for MySQL
+# Returns: "LOWER(name) LIKE LOWER(:search)" for PostgreSQL (or ILIKE)
 ```
 
 **Use cases:**
@@ -404,7 +400,7 @@ To switch between database providers:
 
 ### Repository Pattern Architecture
 
-The database system uses a repository pattern with 12 specialized repositories, each responsible for a specific domain of data operations:
+The database system uses a repository pattern with 14 specialized repositories, each responsible for a specific domain of data operations:
 
 #### Available Repositories
 
@@ -412,59 +408,81 @@ The database system uses a repository pattern with 12 specialized repositories, 
    - `saveChatMessage()` - Store new messages
    - `getChatMessageByMessageId()` - Fetch specific message
    - `getChatMessagesSince()` - Retrieve messages by date range
-   - `getChatMessages()` - Get messages with filtering
+   - `getChatMessagesByRootId()` - Get messages in a thread
+   - `getChatMessagesByUser()` - Get messages by user
+   - `getMessageThread()` - Fetch a message thread
 
 2. **[`chatUsers`](../internal/database/repositories/chat_users.py:1)** - User information management
-   - `saveChatUser()` - Store/update user data
+   - `updateChatUser()` - Store/update user data
    - `getChatUser()` - Retrieve user information
    - `getChatUsers()` - List users in a chat
+   - `getChatUserByUsername()` - Look up user by username
 
 3. **[`chatInfo`](../internal/database/repositories/chat_info.py:1)** - Chat metadata operations
-   - `saveChatInfo()` - Store chat information
+   - `updateChatInfo()` - Store chat information
    - `getChatInfo()` - Retrieve chat metadata
-   - `saveTopic()` - Store forum topics
+   - `updateChatTopicInfo()` - Store forum topic data
+   - `getChatTopics()` - List forum topics
 
 4. **[`chatSettings`](../internal/database/repositories/chat_settings.py:1)** - Configuration management
    - `getChatSettings()` - Get all settings for a chat
    - `getChatSetting()` - Get specific setting value
    - `setChatSetting()` - Update a setting
+   - `unsetChatSetting()` - Remove a setting
 
 5. **[`chatSummarization`](../internal/database/repositories/chat_summarization.py:1)** - Summary caching
-   - `getChatSummarizationCache()` - Retrieve cached summaries
-   - `setChatSummarizationCache()` - Store summary cache
+   - `addChatSummarization()` - Store a chat summary
+   - `getChatSummarization()` - Retrieve cached summaries
 
 6. **[`userData`](../internal/database/repositories/user_data.py:1)** - User key-value storage
-   - `setUserData()` - Store user-specific data
+   - `addUserData()` - Store user-specific data
    - `getUserData()` - Retrieve user data
-   - `deleteUserData()` - Remove user data
+   - `deleteUserData()` - Remove specific user data
+   - `clearUserData()` - Clear all data for a user in a chat
 
 7. **[`mediaAttachments`](../internal/database/repositories/media_attachments.py:1)** - Media file tracking
-   - `saveMediaAttachment()` - Store media metadata
+   - `addMediaAttachment()` - Store media metadata
+   - `updateMediaAttachment()` - Update media metadata
    - `getMediaAttachment()` - Retrieve media information
+   - `getMediaAttachmentsByGroupId()` - Get media by group ID
 
 8. **[`spam`](../internal/database/repositories/spam.py:1)** - Spam detection
-   - `saveSpamMessage()` - Track spam messages
-   - `saveHamMessage()` - Track legitimate messages
-   - `getBayesToken()` - Get token statistics
+   - `addSpamMessage()` - Track spam messages
+   - `addHamMessage()` - Track legitimate messages
+   - `getSpamMessages()` - Get recorded spam messages
 
 9. **[`delayedTasks`](../internal/database/repositories/delayed_tasks.py:1)** - Task scheduling
-   - `saveDelayedTask()` - Schedule a task
-   - `getDelayedTasks()` - Retrieve pending tasks
-   - `deleteDelayedTask()` - Remove completed tasks
+   - `addDelayedTask()` - Schedule a task
+   - `getPendingDelayedTasks()` - Retrieve pending tasks
+   - `updateDelayedTask()` - Mark a task as done
+   - `cleanupOldCompletedDelayedTasks()` - Remove old completed tasks
 
 10. **[`cache`](../internal/database/repositories/cache.py:1)** - Generic caching
-    - `setCache()` - Store cached data
-    - `getCache()` - Retrieve cached data
-    - `deleteCache()` - Remove cache entries
+    - `setCacheEntry()` - Store a cached value
+    - `getCacheEntry()` - Retrieve a cached value
+    - `clearCache()` - Remove cache entries by type
+    - `getCacheStorage()` - List storage namespaces
+    - `setCacheStorage()` - Set a storage namespace
 
 11. **[`common`](../internal/database/repositories/common.py:1)** - Common operations
     - `getSettings()` - Get global system settings
-    - `setSettings()` - Update system settings
+    - `getSetting()` - Get a specific setting
+    - `setSetting()` - Update a system setting
 
-12. **[`base`](../internal/database/repositories/base.py:1)** - Base repository class
-    - Provides common functionality for all repositories
-    - Handles database connection management
-    - Implements multi-source routing logic
+12. **[`chatSearch`](../internal/database/repositories/chat_search.py:1)** - Chat message search
+    - `searchChatMessages()` - Search messages (filter-only or semantic)
+
+13. **[`chatEmbeddings`](../internal/database/repositories/chat_embeddings.py:1)** - Message embedding vectors
+    - `saveMessageEmbedding()` - Store message embedding
+    - `getMessageEmbedding()` - Retrieve message embedding
+    - `deleteChatEmbeddings()` - Remove all embeddings for a chat
+    - `getMessagesWithoutEmbeddings()` - Find messages needing embeddings
+
+14. **[`divinations`](../internal/database/repositories/divinations.py:1)** - Divination readings and layouts
+    - `insertReading()` - Save a divination reading
+    - `getLayout()` - Retrieve a cached layout definition
+    - `saveLayout()` - Cache a layout definition
+    - `saveNegativeCache()` - Cache negative result (layout not found)
 
 #### Accessing Repositories
 
@@ -472,9 +490,9 @@ All repositories are accessed through the main `Database` instance:
 
 ```python
 # Access repositories via the db instance
-db.chatMessages.saveChatMessage(...)
-db.chatSettings.getChatSetting(...)
-db.userData.setUserData(...)
+await db.chatMessages.saveChatMessage(...)
+await db.chatSettings.getChatSetting(...)
+await db.userData.addUserData(...)
 ```
 
 Each repository is automatically initialized when the `Database` class is instantiated and provides type-safe access to its domain-specific operations.
@@ -504,7 +522,7 @@ from datetime import datetime
 from internal.database.models import MessageCategory, MessageType
 
 # Save a message using repository pattern
-db.chatMessages.saveChatMessage(
+await db.chatMessages.saveChatMessage(
     date=datetime.now(),
     chatId=-1001234567890,
     userId=123456789,
@@ -515,14 +533,14 @@ db.chatMessages.saveChatMessage(
 )
 
 # Retrieve recent messages
-messages = db.chatMessages.getChatMessagesSince(
+messages = await db.chatMessages.getChatMessagesSince(
     chatId=-1001234567890,
     sinceDateTime=datetime.now() - timedelta(hours=1),
     limit=50
 )
 
 # Get a specific message by ID
-message = db.chatMessages.getChatMessageByMessageId(
+message = await db.chatMessages.getChatMessageByMessageId(
     chatId=-1001234567890,
     messageId="12345"
 )
@@ -531,24 +549,24 @@ message = db.chatMessages.getChatMessageByMessageId(
 ### Multi-Source Routing
 ```python
 # Explicit source routing
-messages = db.chatMessages.getChatMessages(chatId=123, dataSource="archive")
+messages = await db.chatMessages.getChatMessagesSince(chatId=123, dataSource="archive")
 
 # Chat mapping routing (configured in config.toml)
-messages = db.chatMessages.getChatMessages(chatId=-1001234567890)  # Routes to mapped source
+messages = await db.chatMessages.getChatMessagesSince(chatId=-1001234567890)  # Routes to mapped source
 
 # Default routing
-messages = db.chatMessages.getChatMessages(chatId=456)  # Routes to default source
+messages = await db.chatMessages.getChatMessagesSince(chatId=456)  # Routes to default source
 ```
 
 ### Chat Settings Management
 ```python
 # Get all settings for a chat
-settings = db.chatSettings.getChatSettings(chatId=-1001234567890)
+settings = await db.chatSettings.getChatSettings(chatId=-1001234567890)
 # Returns Dict[str, tuple[str, int]] where tuple is (value, updated_by)
 model = settings.get('chat-model', ('gpt-4', 0))[0]  # Index [0] for value
 
 # Set a specific setting
-db.chatSettings.setChatSetting(
+await db.chatSettings.setChatSetting(
     chatId=-1001234567890,
     key='parse-images',
     value='true',
@@ -556,44 +574,46 @@ db.chatSettings.setChatSetting(
 )
 
 # Get a specific setting value
-settingValue = db.chatSettings.getChatSetting(
+settingValue = await db.chatSettings.getChatSetting(
     chatId=-1001234567890,
-    key='parse-images'
+    setting='parse-images'
 )
 ```
 
 ### User Data Operations
 ```python
 # Save user data
-db.userData.setUserData(
+await db.userData.addUserData(
     chatId=-1001234567890,
     userId=123456789,
     key='preference',
-    value='dark-mode'
+    data='dark-mode'
 )
 
 # Get user data
-userData = db.userData.getUserData(
+userData = await db.userData.getUserData(
     chatId=-1001234567890,
     userId=123456789,
-    key='preference'
 )
+preference = userData.get('preference', 'default')
 ```
 
 ### Cache Operations
 ```python
+from internal.database.models import CacheType
+
 # Set cache value
-db.cache.setCache(
-    cacheType='api_response',
+await db.cache.setCacheEntry(
     key='weather-123',
-    value='{"temp": 20}',
-    ttl=3600
+    data='{"temp": 20}',
+    cacheType=CacheType.WEATHER,
 )
 
 # Get cache value
-cachedData = db.cache.getCache(
-    cacheType='api_response',
-    key='weather-123'
+cachedData = await db.cache.getCacheEntry(
+    key='weather-123',
+    cacheType=CacheType.WEATHER,
+    ttl=3600
 )
 ```
 
@@ -602,20 +622,17 @@ cachedData = db.cache.getCache(
 #### Using Provider Methods
 ```python
 # Access the provider for the current data source
-provider = db.getProvider(dataSource="primary")
-
-# Get provider-specific timestamp
-timestamp = provider.getCurrentTimestamp()
-# Returns provider-specific timestamp function
+provider = await db.manager.getProvider(dataSource="primary")
 
 # Apply pagination
 query = "SELECT * FROM chat_messages WHERE chatId = ?"
 paginatedQuery = provider.applyPagination(query, limit=50, offset=100)
 # Returns provider-specific pagination syntax
 
-# Case-insensitive search
-operator = provider.getCaseInsensitiveComparison()
-# Returns 'LIKE' for SQLite/MySQL, 'ILIKE' for PostgreSQL
+# Case-insensitive exact match search
+expr = provider.getCaseInsensitiveComparison("name", "searchName")
+# Returns: 'LOWER(name) = LOWER(:searchName)' for SQLite/PostgreSQL/SQLink
+# Returns: 'name COLLATE utf8mb4_general_ci = :searchName' for MySQL
 ```
 
 #### Cross-Provider Upsert
@@ -623,7 +640,7 @@ operator = provider.getCaseInsensitiveComparison()
 from internal.database.providers.base import ExcludedValue
 
 # Upsert operation works the same across all providers
-db.chatMessages.saveChatMessage(
+await db.chatMessages.saveChatMessage(
     date=datetime.now(),
     chatId=-1001234567890,
     userId=123456789,
@@ -706,8 +723,8 @@ See: [Best Practices](database-schema.md#best-practices)
 - **Cache Tables**: 7+ (dynamic based on CacheType enum)
 - **Spam Detection Tables**: 4 (spam, ham, tokens, classes)
 - **Statistics Tables**: 2 (chat stats, user stats)
-- **Current Migration Version**: 15
-- **Total Repositories**: 12 specialized repositories
+- **Current Migration Version**: 18
+- **Total Repositories**: 14 specialized repositories
 
 ## 🤝 Contributing
 
@@ -727,6 +744,6 @@ This documentation is part of the Gromozeka bot project.
 
 ---
 
-**Last Updated**: 2026-05-02
-**Database Version**: 15
-**Documentation Version**: 2.2
+**Last Updated**: 2026-06-28
+**Database Version**: 18
+**Documentation Version**: 2.3

@@ -6,7 +6,7 @@
 **Database Class**: [`Database`](../internal/database/database.py:1)
 **Models**: [`internal/database/models.py`](../internal/database/models.py:1)
 **Repositories**: [`internal/database/repositories/`](../internal/database/repositories/)
-**Migrations**: 17 (up to `migration_017`)
+**Migrations**: 18 (up to `migration_018`)
 
 ---
 
@@ -67,7 +67,7 @@ CREATE TABLE chat_users (
 )
 ```
 
-**TypedDict**: [`ChatUserDict`](../internal/database/models.py:155)
+**TypedDict**: [`ChatUserDict`](../internal/database/models.py:163)
 
 ---
 
@@ -87,7 +87,7 @@ CREATE TABLE chat_info (
 )
 ```
 
-**TypedDict**: [`ChatInfoDict`](../internal/database/models.py:181)
+**TypedDict**: [`ChatInfoDict`](../internal/database/models.py:215)
 
 ---
 
@@ -109,7 +109,7 @@ CREATE TABLE chat_topics (
 )
 ```
 
-**TypedDict**: [`ChatTopicInfoDict`](../internal/database/models.py:200)
+**TypedDict**: [`ChatTopicInfoDict`](../internal/database/models.py:234)
 
 ---
 
@@ -175,7 +175,7 @@ CREATE TABLE media_attachments (
 )
 ```
 
-**TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:221)
+**TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:255)
 
 ---
 
@@ -216,7 +216,7 @@ CREATE TABLE spam_messages (
 )
 ```
 
-**TypedDict**: [`SpamMessageDict`](../internal/database/models.py:269)
+**TypedDict**: [`SpamMessageDict`](../internal/database/models.py:303)
 
 ---
 
@@ -335,7 +335,7 @@ CREATE TABLE chat_summarization_cache (
 )
 ```
 
-**TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:292)
+**TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:326)
 **Indexes**: `chat_summarization_cache_ctfl_index`
 
 ---
@@ -349,13 +349,12 @@ CREATE TABLE cache_storage (
     namespace TEXT NOT NULL,
     key TEXT NOT NULL,
     value TEXT NOT NULL,
-    created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
     PRIMARY KEY (namespace, key)
 )
 ```
 
-**TypedDict**: [`CacheStorageDict`](../internal/database/models.py:199)
+**TypedDict**: [`CacheStorageDict`](../internal/database/models.py:364)
 
 ---
 
@@ -527,7 +526,7 @@ CREATE TABLE delayed_tasks (
 )
 ```
 
-**TypedDict**: [`DelayedTaskDict`](../internal/database/models.py:155)
+**TypedDict**: [`DelayedTaskDict`](../internal/database/models.py:284)
 
 ---
 
@@ -551,7 +550,7 @@ CREATE TABLE settings (
 ## Enums
 
 ### MessageCategory
-**Location**: [`internal/database/models.py:23`](../internal/database/models.py:23)
+**Location**: [`internal/database/models.py:28`](../internal/database/models.py:28)
 
 ```python
 UNSPECIFIED = "unspecified"
@@ -572,7 +571,7 @@ USER_CONFIG_ANSWER = "user-config-answer"
 ---
 
 ### MediaStatus
-**Location**: [`internal/database/models.py:12`](../internal/database/models.py:12)
+**Location**: [`internal/database/models.py:15`](../internal/database/models.py:15)
 
 ```python
 NEW = "new"
@@ -584,7 +583,7 @@ FAILED = "failed"
 ---
 
 ### SpamReason
-**Location**: [`internal/database/models.py:56`](../internal/database/models.py:56)
+**Location**: [`internal/database/models.py:95`](../internal/database/models.py:95)
 
 ```python
 AUTO = "auto"
@@ -596,7 +595,7 @@ UNBAN = "unban"
 ---
 
 ### CacheType
-**Location**: [`internal/database/models.py:208`](../internal/database/models.py:208)
+**Location**: [`internal/database/models.py:377`](../internal/database/models.py:377)
 
 ```python
 WEATHER = "weather"

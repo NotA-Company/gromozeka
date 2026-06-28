@@ -44,6 +44,7 @@
 | [`sandbox.py`](../../internal/bot/common/handlers/sandbox.py) | `SandboxHandler` | Sandboxed Python code execution (if `sandbox.enabled` and `allow-sandbox` chat setting). Commands: `/run <code>` (alias: `/python`), `/sandbox files|read|status|install`. LLM tools: `run_python(code)`, `sandbox_list_files`, `sandbox_read_file`, `sandbox_send_file`, `sandbox_list_libraries`. Lifecycle: registers `CRON_JOB` (periodic GC) and `DO_EXIT` (graceful shutdown) delayed-task handlers; performs one-time `SandboxManager.recover()` on first cron tick to reconcile stale containers after restarts. |
 | [`chat_search.py`](../../internal/bot/common/handlers/chat_search.py) | `ChatSearchHandler` | Chat-history search (if `[search-history].enabled`). Commands: `/search [args]` (DSL of `keywords` / `user` / `days` / `category` / `thread` filters) — returns the matching messages as a raw, human-readable list (no LLM summary); `/users [limit=N] [min_messages=N] [last_active=N]` — lists chat participants with activity statistics. LLM tools: `search_messages(query, limit, max_age_days, user_name, thread_message_id)` — semantic search over chat history; `list_users(limit, min_messages)` — list participants with stats; `get_thread(message_id)` — retrieve full conversation thread. `newMessageHandler` is pass-through (`SKIPPED`); work runs via the command. Lifecycle: registers `CRON_JOB` (`_dtCronJob` — embedding backfill for chats with `EMBEDDINGS_ENABLED=true`, round-robin across enabled chats, default batch `BACKFILL_DEFAULT_BATCH_SIZE` messages) delayed-task handlers. There is no separate `BackfillWorker` class — backfill duty lives in this handler. |
 | [`llm_messages.py`](../../internal/bot/common/handlers/llm_messages.py) | `LLMMessageHandler` | **LAST** in chain; LLM responses |
+| [`example.py`](../../internal/bot/common/handlers/example.py) | `ExampleHandler` | Standalone reference example (not registered in handler chain) |
 | [`example_custom_handler.py`](../../internal/bot/common/handlers/example_custom_handler.py) | `ExampleCustomHandler` | Template for custom handlers |
 
 **`DivinationHandler` — reply behavior by invocation path:**
@@ -105,7 +106,7 @@ Use the skeleton from [Section 3](#3-handler-skeleton-template)
 
 ### Step 2: Register handler in `HandlersManager`
 
-**File:** [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py:249)
+**File:** [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py:366)
 
 See [Section 5](#5-registering-handlers-in-handlersmanager) for registration code
 
@@ -155,7 +156,7 @@ make test
 
 - [ ] Docstring on class and all methods
 - [ ] Type hints on all method arguments and returns
-- [ ] Added handler to `HandlersManager.__init__()` if it's a new built-in handler ([`manager.py:249`](../../internal/bot/common/handlers/manager.py:249))
+- [ ] Added handler to `HandlersManager.__init__()` if it's a new built-in handler ([`manager.py:428`](../../internal/bot/common/handlers/manager.py:428))
 - [ ] OR configured as custom handler via TOML if it's a plugin
 - [ ] Added tests in `tests/bot/` directory
 - [ ] Ran `make format lint` and `make test`
@@ -346,7 +347,7 @@ async def myCommandMethod(
 
 ## 5. Registering Handlers in HandlersManager
 
-**File:** [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py:249)
+**File:** [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py:428)
 
 ```python
 # At top of file, add import:
@@ -392,15 +393,20 @@ Full chain:
 9. `HelpHandler` — PARALLEL — help command
 10. (Telegram only) `ReactOnUserMessageHandler` — PARALLEL
 11. (Telegram only) `TopicManagerHandler` — PARALLEL
-12. (if enabled) `WeatherHandler`, `YandexSearchHandler`, `ResenderHandler`, `DivinationHandler`, `SandboxHandler`, `ChatSearchHandler` — PARALLEL
-13. (custom handlers) — PARALLEL
-14. `LLMMessageHandler` — SEQUENTIAL — **MUST BE LAST**
+12. (if enabled) `WeatherHandler` — PARALLEL — gated by `[openweathermap].enabled`
+13. (if enabled) `YandexSearchHandler` — PARALLEL — gated by `[yandex-search].enabled`
+14. (if enabled) `ResenderHandler` — PARALLEL — gated by `[resender].enabled`
+15. (if enabled) `DivinationHandler` — PARALLEL — gated by `[divination].enabled`
+16. (if enabled) `SandboxHandler` — PARALLEL — gated by `[sandbox].enabled`
+17. (if enabled) `ChatSearchHandler` — PARALLEL — gated by `[search-history].enabled`
+18. (custom handlers) — PARALLEL by default (configurable per-handler)
+19. `LLMMessageHandler` — SEQUENTIAL — **MUST BE LAST**
 
 ---
 
 ## 7. HandlerResultStatus Reference
 
-**File:** [`internal/bot/common/handlers/base.py:82`](../../internal/bot/common/handlers/base.py:82)
+**File:** [`internal/bot/common/handlers/base.py:81`](../../internal/bot/common/handlers/base.py:81)
 
 | Status | Meaning | Chain effect |
 |---|---|---|
@@ -431,4 +437,4 @@ Full chain:
 ---
 
 *This guide is auto-maintained and should be updated whenever significant handler changes are made*  
-*Last updated: 2026-06-20*
+*Last updated: 2026-06-28*

@@ -25,7 +25,7 @@
 # Vector search: 
 - [ ] Cache embeddings list (and track them)
 - [ ] Add summarisation support (thread, messages, from-to [message\timestamp], today, yesterday)
-- [ ] Add support for embeddings + Vector search on chat's database
+- [x] Add support for embeddings + Vector search on chat's database
 - [ ] Add support for collecting messages to knowledge database to answer if some user ask known question
 - [ ] Add support of periodic tasks (summarization for example)
 - [ ] Add cron for analyzing and remembering knowledge from messages

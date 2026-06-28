@@ -46,17 +46,17 @@ from lib.ai.models import (
 
 | Class | File | Purpose |
 |---|---|---|
-| [`LLMManager`](../../lib/ai/manager.py:17) | `lib/ai/manager.py` | Registry for providers and models |
-| [`AbstractModel`](../../lib/ai/abstract.py:19) | `lib/ai/abstract.py` | ABC for all LLM models |
+| [`LLMManager`](../../lib/ai/manager.py:49) | `lib/ai/manager.py` | Registry for providers and models |
+| [`AbstractModel`](../../lib/ai/abstract.py:47) | `lib/ai/abstract.py` | ABC for all LLM models |
 | [`AbstractLLMProvider`](../../lib/ai/abstract.py) | `lib/ai/abstract.py` | ABC for LLM providers |
 | [`ModelMessage`](../../lib/ai/models.py) | `lib/ai/models.py` | Standard text message for LLM |
 | [`ModelImageMessage`](../../lib/ai/models.py) | `lib/ai/models.py` | Message with embedded image |
 | [`ModelRunResult`](../../lib/ai/models.py) | `lib/ai/models.py` | LLM response container |
 | [`ModelStructuredResult`](../../lib/ai/models.py) | `lib/ai/models.py` | Structured-output result; adds `data: Optional[Dict]` |
 | [`ModelResultStatus`](../../lib/ai/models.py) | `lib/ai/models.py` | `FINAL`, `ERROR`, `TIMEOUT`, etc. |
-| [`LLMToolFunction`](../../lib/ai/models.py:64) | `lib/ai/models.py` | Tool/function definition for LLM |
-| [`LLMFunctionParameter`](../../lib/ai/models.py:37) | `lib/ai/models.py` | Tool parameter definition |
-| [`LLMParameterType`](../../lib/ai/models.py:27) | `lib/ai/models.py` | `STRING`, `NUMBER`, `BOOLEAN`, `ARRAY`, `OBJECT` |
+| [`LLMToolFunction`](../../lib/ai/models.py:243) | `lib/ai/models.py` | Tool/function definition for LLM |
+| [`LLMFunctionParameter`](../../lib/ai/models.py:175) | `lib/ai/models.py` | Tool parameter definition |
+| [`LLMParameterType`](../../lib/ai/models.py:151) | `lib/ai/models.py` | `STRING`, `NUMBER`, `BOOLEAN`, `ARRAY`, `OBJECT` |
 
 **Key methods on `AbstractModel`:**
 ```python
@@ -283,7 +283,7 @@ from lib.ai import ModelStructuredResult
 1. Create `lib/ai/providers/my_provider.py`
 2. Class: `MyProvider(AbstractLLMProvider)`
 3. Must implement: `_createModel(modelConfig) -> AbstractModel`
-4. Register in `lib/ai/manager.py:40` — add to `providerTypes` dict: `{"my-provider": MyProvider}`
+4. Register in `lib/ai/manager.py:118` — add to `providerTypes` dict: `{"my-provider": MyProvider}`
 5. Tests in `tests/lib/ai/providers/test_my_provider.py`
 
 **FastEmbed provider (`fastembed`):**
@@ -383,7 +383,7 @@ cache = DictCache[K, V](
 from lib.rate_limiter import RateLimiterManager, RateLimiterInterface, SlidingWindowRateLimiter
 ```
 
-**Interface methods** ([`RateLimiterInterface`](../../lib/rate_limiter/interface.py:5)):
+**Interface methods** ([`RateLimiterInterface`](../../lib/rate_limiter/interface.py:19)):
 ```python
 await limiter.initialize() -> None
 await limiter.destroy() -> None
@@ -556,7 +556,7 @@ await storage.record(
 )
 ```
 
-**DB-backed implementation:** [`DatabaseStatsStorage`](../../internal/database/stats_storage.py:1) in `internal/database/stats_storage.py` — backed by `stat_events` (append-only log) and `stat_aggregates` (period buckets). Created in `main.py` when `stats.enabled = true`.
+**DB-backed implementation:** [`DatabaseStatsStorage`](../../internal/database/stats_storage.py:39) in `internal/database/stats_storage.py` — backed by `stat_events` (append-only log) and `stat_aggregates` (period buckets). Created in `main.py` when `stats.enabled = true`.
 
 **Integration points:**
 - `LLMManager` receives `statsStorage` in constructor and propagates to all `AbstractModel` instances

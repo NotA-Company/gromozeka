@@ -134,8 +134,8 @@
    # Update AGENTS.md to remove archived references
    ```
 
-3. **Update central TODO tracking**
-   - Consolidate findings into `docs/TODO.md`
+3. **Track findings and action items**
+   - Consolidate findings into a prioritized list
    - Organize by priority (CRITICAL/HIGH/MEDIUM/LOW)
    - Include source references and metadata
    - Track completion status
@@ -305,7 +305,7 @@ When archiving documents:
 
 5. **Preserve critical information**
    - Migrate valuable content to active docs before archiving
-   - Extract TODOs and action items to `docs/TODO.md`
+   - Extract TODOs and action items to a consolidated list
    - Record architectural decisions in ADR format
 
 ---
@@ -339,7 +339,7 @@ When archiving documents:
 
 ### Consolidation Format
 
-Consolidated TODOs should be saved in `docs/TODO.md` using this structure:
+Consolidated TODOs should be tracked using this structure:
 
 ```markdown
 # Documentation TODOs
@@ -381,7 +381,7 @@ Generated from documentation review on YYYY-MM-DD
 
 ### Example from 2026-05-08 Review
 
-The review generated 64+ actionable items organized in `docs/TODO.md`:
+The review generated 64+ actionable items:
 
 ```markdown
 ## CRITICAL Priority
@@ -490,7 +490,7 @@ async def up(self, sqlProvider: BaseSQLProvider) -> None:
 **Rationale**:
 - Reports contained historical context already captured in code
 - Maintainers can refer to git history for PR details
-- Active TODOs extracted to `docs/TODO.md` before archiving
+- Active TODOs extracted and consolidated before archiving
 - Archive location and index allow research if needed
 
 **Lesson**: Maintain archival index with reasons for future reference.
@@ -499,7 +499,7 @@ async def up(self, sqlProvider: BaseSQLProvider) -> None:
 
 **Finding**: 67+ TODO items scattered across 15 parallel analysis tasks
 
-**Action**: Consolidated into single `docs/TODO.md` with:
+**Action**: Consolidated into a single prioritized list with:
 - Priority levels (CRITICAL/HIGH/MEDIUM/LOW)
 - Source references for each item
 - Effort estimates where available
@@ -571,7 +571,7 @@ make test
 3. **Track TODOs continuously**
    - When documenting new code, create TODOs for missing documentation
    - Tag TODOs with priority in comments
-   - Consolidate into `docs/TODO.md` during regular reviews
+   - Consolidate findings during regular reviews
 
 4. **Review cross-references regularly**
    - When renaming files, search for references: `git grep -w "OldName"`
@@ -583,7 +583,7 @@ make test
    - `docs/developer-guide.md`: Human-readable documentation
    - `docs/reports/`: ADRs, design discussions, temporary analysis
    - `docs/archive/`: Historical backup, read-only
-   - `docs/TODO.md`: Consolidated action items
+   - Consolidated action items (tracked per review)
 
 ### Automation Opportunities
 
@@ -742,7 +742,7 @@ git grep -w "old-file-name" docs/
 - [`AGENTS.md`](../AGENTS.md) — Project hard rules and conventions
 - [`docs/llm/index.md`](llm/index.md) — LLM agent guide index
 - [`update-project-docs` skill](../.agents/skills/update-project-docs/SKILL.md) — Post-change documentation workflow
-- [`docs/TODO.md`](TODO.md) — Consolidated action items from reviews
+- Consolidated action items from reviews (tracked per review cycle)
 
 ### Appendix C: Glossary
 

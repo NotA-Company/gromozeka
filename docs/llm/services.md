@@ -19,7 +19,7 @@
 
 ## 1. CacheService
 
-**File:** [`internal/services/cache/service.py:88`](../../internal/services/cache/service.py:88)  
+**File:** [`internal/services/cache/service.py:193`](../../internal/services/cache/service.py:193)  
 **Import:** `from internal.services.cache import CacheService`
 
 ```python
@@ -62,7 +62,7 @@ await cache.setChatUserData(chatId=chatId, userId=userId, key=key, value=value)
 
 ## 2. QueueService
 
-**File:** [`internal/services/queue_service/service.py:49`](../../internal/services/queue_service/service.py:49)  
+**File:** [`internal/services/queue_service/service.py:56`](../../internal/services/queue_service/service.py:56)  
 **Import:** `from internal.services.queue_service import QueueService, makeEmptyAsyncTask`
 
 ```python
@@ -95,7 +95,7 @@ emptyTask: asyncio.Task = makeEmptyAsyncTask()
 
 ## 3. LLMService
 
-**File:** [`internal/services/llm/service.py:37`](../../internal/services/llm/service.py:37)  
+**File:** [`internal/services/llm/service.py:52`](../../internal/services/llm/service.py:52)  
 **Import:** `from internal.services.llm import LLMService`
 
 ```python
@@ -249,7 +249,7 @@ keys: List[str] = storage.list(prefix="attachments/", limit=100)
 
 ## 5. RateLimiterManager
 
-**File:** [`lib/rate_limiter/manager.py:12`](../../lib/rate_limiter/manager.py:12)  
+**File:** [`lib/rate_limiter/manager.py:37`](../../lib/rate_limiter/manager.py:37)  
 **Import:** `from lib.rate_limiter import RateLimiterManager`
 
 ```python

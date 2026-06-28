@@ -241,10 +241,15 @@ Custom handlers are always placed in a fixed position in the chain:
 │ 7. MediaHandler                 │ PARALLEL
 │ 8. CommonHandler                │ PARALLEL
 │ 9. HelpHandler                  │ PARALLEL
-│ 10. [Platform-specific]         │ PARALLEL (Telegram-only)
-│ 11. [Config-gated built-ins]    │ PARALLEL (Weather, Yandex, Resender)
+│ 10. [Platform-specific]         │ PARALLEL (Telegram-only: ReactOnUserMessage, TopicManager)
+│ 11. WeatherHandler              │ PARALLEL (config-gated: OpenWeatherMap)
+│ 12. YandexSearchHandler         │ PARALLEL (config-gated)
+│ 13. ResenderHandler             │ PARALLEL (config-gated)
+│ 14. DivinationHandler           │ PARALLEL (config-gated)
+│ 15. SandboxHandler              │ PARALLEL (config-gated)
+│ 16. ChatSearchHandler           │ PARALLEL (config-gated)
 ├─────────────────────────────────┤
-│ 12+ Custom Handlers             │ ◄── inserted here, sorted by order
+│ 17+ Custom Handlers             │ ◄── inserted here, sorted by order
 ├─────────────────────────────────┤
 │ LAST. LLMMessageHandler         │ SEQUENTIAL - always last
 └─────────────────────────────────┘
@@ -461,7 +466,7 @@ order = 10
 | `internal/bot/common/handlers/module_loader.py` | **New file** — `CustomHandlerLoader` class and `CustomHandlerLoadError` exception |
 | `internal/bot/common/handlers/manager.py` | ~10 lines added in `__init__` between config-gated handlers and LLMMessageHandler |
 | `configs/00-defaults/custom-handlers.toml` | **New file** — default config with `enabled = false` |
-| `custom_handlers/` | **New directory** — convention for local handler modules (user-created) |
+| `modules/` | **New directory (configurable via `modules-dir`)** — convention for local handler modules (user-created) |
 
 ---
 

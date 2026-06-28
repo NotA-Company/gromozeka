@@ -21,6 +21,7 @@
 | Write or run tests, understand test fixtures | [`testing.md`](testing.md) |
 | Follow a step-by-step task workflow or avoid pitfalls | [`tasks.md`](tasks.md) |
 | Reuse durable cross-task memory and repo gotchas | [`teamlead-memory.md`](teamlead-memory.md) |
+| Review large diffs that exceed single-pass agent budget | [`reviewing-large-changes.md`](reviewing-large-changes.md) |
 | Reuse archived task-specific memories for completed subsystems | [`memories/index.md`](memories/index.md) |
 
 ---
@@ -33,7 +34,7 @@
 | Type | Multi-platform AI bot (Telegram + Max Messenger) |
 | Python | 3.12+ |
 | Architecture | Modular, async, singleton services |
-| Test count | 1185+ |
+| Test count | 2653+ |
 | Status | Production-ready, active development |
 
 ### Key Features
@@ -80,7 +81,7 @@ make test
 | Classes | PascalCase | `BaseBotHandler`, `CacheService` |
 | Constants | UPPER_CASE | `DEFAULT_THREAD_ID`, `MIGRATION_VERSION_KEY` |
 
-**Source:** [`.roo/rules/camelCase.md`](../../.roo/rules/camelCase.md)
+**Source:** [`AGENTS.md`](../../AGENTS.md)
 
 ### 3.2 Docstrings (MUST have)
 
@@ -102,7 +103,7 @@ def getChatSettings(self, chatId: Optional[int], *, returnDefault: bool = True) 
     """
 ```
 
-**Source:** [`.roo/rules/doctrings.md`](../../.roo/rules/doctrings.md)
+**Source:** [`AGENTS.md`](../../AGENTS.md)
 
 ### 3.3 Type Hints (MUST have)
 
@@ -196,7 +197,7 @@ For **optional dependencies** that may not be installed, use a module-level
 The ``_AVAILABLE`` flag is checked at usage sites rather than relying on a
 runtime ``ImportError`` during execution. Inline imports are **only** acceptable
 when a genuine cyclic dependency makes a top-level import impossible — this is
-vanishingly rare in the Gromozeka codebase (see :ref:`tasks.md §4.2 <tasks-import-placement>`).
+vanishingly rare in the Gromozeka codebase.
 
 ---
 
@@ -221,8 +222,8 @@ vanishingly rare in the Gromozeka codebase (see :ref:`tasks.md §4.2 <tasks-impo
 
 | File | Class/Function | Line | Purpose |
 |---|---|---|---|
-| [`main.py`](../../main.py:31) | [`GromozekBot`](../../main.py:31) | 31 | Top-level orchestrator |
-| [`main.py`](../../main.py:202) | [`main()`](../../main.py:202) | 202 | CLI entry point |
+| [`main.py`](../../main.py:37) | [`GromozekBot`](../../main.py:37) | 37 | Top-level orchestrator |
+| [`main.py`](../../main.py:297) | [`main()`](../../main.py:297) | 297 | CLI entry point |
 | [`internal/bot/telegram/application.py`](../../internal/bot/telegram/application.py) | `TelegramBotApplication` | — | Telegram runner |
 | [`internal/bot/max/application.py`](../../internal/bot/max/application.py) | `MaxBotApplication` | — | Max Messenger runner |
 
@@ -230,29 +231,31 @@ vanishingly rare in the Gromozeka codebase (see :ref:`tasks.md §4.2 <tasks-impo
 
 | Service | Import | `getInstance()` call |
 |---|---|---|
-| [`CacheService`](../../internal/services/cache/service.py:88) | `from internal.services.cache import CacheService` | `CacheService.getInstance()` |
-| [`QueueService`](../../internal/services/queue_service/service.py:49) | `from internal.services.queue_service import QueueService` | `QueueService.getInstance()` |
-| [`LLMService`](../../internal/services/llm/service.py:37) | `from internal.services.llm import LLMService` | `LLMService.getInstance()` |
+| [`CacheService`](../../internal/services/cache/service.py:193) | `from internal.services.cache import CacheService` | `CacheService.getInstance()` |
+| [`QueueService`](../../internal/services/queue_service/service.py:56) | `from internal.services.queue_service import QueueService` | `QueueService.getInstance()` |
+| [`LLMService`](../../internal/services/llm/service.py:52) | `from internal.services.llm import LLMService` | `LLMService.getInstance()` |
 | [`StorageService`](../../internal/services/storage/service.py:24) | `from internal.services.storage import StorageService` | `StorageService.getInstance()` |
-| [`RateLimiterManager`](../../lib/rate_limiter/manager.py:12) | `from lib.rate_limiter import RateLimiterManager` | `RateLimiterManager.getInstance()` |
+| [`RateLimiterManager`](../../lib/rate_limiter/manager.py:37) | `from lib.rate_limiter import RateLimiterManager` | `RateLimiterManager.getInstance()` |
 | [`ProxyService`](../../internal/services/proxy/service.py:23) | `from internal.services.proxy import ProxyService` | `ProxyService.getInstance()` |
+| [`SandboxManager`](../../lib/sandbox/manager.py:59) | `from lib.sandbox import SandboxManager` | `SandboxManager.getInstance()` |
+| [`ProxyHelper`](../../lib/proxy/__init__.py:469) | `from lib.proxy import ProxyHelper` | `ProxyHelper.getInstance()` |
 
 ### 4.4 Critical File Paths (with approximate line counts)
 
 | Path | Lines | Purpose |
 |---|---|---|
-| [`main.py`](../../main.py) | 241 | App entry, `GromozekBot`, daemon mode |
-| [`internal/bot/common/bot.py`](../../internal/bot/common/bot.py) | 1000 | `TheBot` – platform-agnostic bot ops |
+| [`main.py`](../../main.py) | 336 | App entry, `GromozekBot`, daemon mode |
+| [`internal/bot/common/bot.py`](../../internal/bot/common/bot.py) | 1076 | `TheBot` – platform-agnostic bot ops |
 | [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) | 1974 | `BaseBotHandler`, `HandlerResultStatus` |
-| [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) | 1148 | `HandlersManager` – handler chain |
-| [`internal/database/database.py`](../../internal/database/database.py) | 297 | `Database` – all DB operations with repository pattern |
-| [`internal/config/manager.py`](../../internal/config/manager.py) | 280 | `ConfigManager` – TOML loading |
-| [`internal/services/cache/service.py`](../../internal/services/cache/service.py) | 796 | `CacheService` singleton |
-| [`internal/services/llm/service.py`](../../internal/services/llm/service.py) | 531 | `LLMService` singleton |
-| [`internal/services/queue_service/service.py`](../../internal/services/queue_service/service.py) | 447 | `QueueService` singleton |
+| [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) | 1198 | `HandlersManager` – handler chain |
+| [`internal/database/database.py`](../../internal/database/database.py) | 315 | `Database` – all DB operations with repository pattern |
+| [`internal/config/manager.py`](../../internal/config/manager.py) | 536 | `ConfigManager` – TOML loading |
+| [`internal/services/cache/service.py`](../../internal/services/cache/service.py) | 1333 | `CacheService` singleton |
+| [`internal/services/llm/service.py`](../../internal/services/llm/service.py) | 982 | `LLMService` singleton |
+| [`internal/services/queue_service/service.py`](../../internal/services/queue_service/service.py) | 465 | `QueueService` singleton |
 | [`internal/services/storage/service.py`](../../internal/services/storage/service.py) | 304 | `StorageService` singleton |
-| [`lib/ai/abstract.py`](../../lib/ai/abstract.py) | 341 | `AbstractModel`, `AbstractLLMProvider` |
-| [`lib/ai/manager.py`](../../lib/ai/manager.py) | 162 | `LLMManager` – provider + model registry |
+| [`lib/ai/abstract.py`](../../lib/ai/abstract.py) | 1082 | `AbstractModel`, `AbstractLLMProvider` |
+| [`lib/ai/manager.py`](../../lib/ai/manager.py) | 267 | `LLMManager` – provider + model registry |
 
 ### 4.5 `internal/` Directory
 
@@ -266,7 +269,7 @@ vanishingly rare in the Gromozeka codebase (see :ref:`tasks.md §4.2 <tasks-impo
 | [`internal/bot/max/application.py`](../../internal/bot/max/application.py) | Max Messenger bot application |
 | [`internal/bot/models/`](../../internal/bot/models/) | Bot model types (EnsuredMessage, ChatSettings, etc.) |
 | [`internal/config/manager.py`](../../internal/config/manager.py) | `ConfigManager` — TOML config loading |
-| [`internal/database/database.py`](../../internal/database/database.py) | `Database` — all DB operations with repository pattern (297 lines) |
+| [`internal/database/database.py`](../../internal/database/database.py) | `Database` — all DB operations with repository pattern (323 lines) |
 | [`internal/database/migrations/`](../../internal/database/migrations/) | `MigrationManager`, `BaseMigration`, version files |
 | [`internal/models/`](../../internal/models/) | Shared types (`MessageId` class, `MessageType` enum) |
 | [`internal/services/cache/service.py`](../../internal/services/cache/service.py) | `CacheService` singleton |
@@ -318,9 +321,10 @@ vanishingly rare in the Gromozeka codebase (see :ref:`tasks.md §4.2 <tasks-impo
 - [`testing.md`](testing.md) — Test fixtures, pytest patterns, golden data framework
 - [`tasks.md`](tasks.md) — Step-by-step task workflows, anti-patterns
 - [`teamlead-memory.md`](teamlead-memory.md) — Durable cross-task memory, repo gotchas, workflow lessons
+- [`reviewing-large-changes.md`](reviewing-large-changes.md) — Methodology for reviewing diffs exceeding single-pass budget
 - [`memories/index.md`](memories/index.md) — Task-specific memory index for completed subsystems/features
 
 ---
 
 *This guide is auto-maintained and should be updated whenever significant architectural changes are made*
-*Last updated: 2026-06-26*
+*Last updated: 2026-06-28*

@@ -34,7 +34,7 @@ START
 │         ├── Caching? → Use self.cache.* methods
 │         └── External API? → Add new lib or reuse existing
 │             ↓
-│         Register handler in HandlersManager (manager.py:249)
+│         Register handler in HandlersManager (manager.py:428)
 │         Write tests in tests/bot/ (mirror layout: tests/bot/common/handlers/test_my_handler.py)
 │         Run: make format lint && make test
 │         DONE
@@ -154,7 +154,7 @@ START
 │         Must implement: _generateText(messages, tools) -> ModelRunResult
 │
 ├── Step 3: Register provider type in LLMManager
-│         File: lib/ai/manager.py:40
+│         File: lib/ai/manager.py:118
 │         Add to providerTypes dict: {"my-provider": MyProvider}
 │
 ├── Step 4: Add config example
