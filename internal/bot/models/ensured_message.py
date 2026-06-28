@@ -1139,7 +1139,7 @@ class EnsuredMessage:
             case LLMMessageFormat.TEXT:
                 ret = messageText
                 if self.mediaContent:
-                    ret = f"<media-description>{self.mediaContent}</media-description>\n\n{ret}"
+                    ret = f"<media-description>{mediaContent}</media-description>\n\n{ret}"
                 if self.isQuote and self.quoteText:
                     ret = f"<quote>{self.quoteText}</quote>\n\n{ret}"
                 return ret

@@ -19,6 +19,7 @@ recipe grows (e.g. telemetry, cache invalidation, retry policy).
 import logging
 from typing import TYPE_CHECKING
 
+from internal.bot.models import LLMMessageFormat
 from internal.models import MessageId
 
 if TYPE_CHECKING:
@@ -69,7 +70,7 @@ async def embedAndSaveMessage(
 
     chatId: int = ensuredMessage.recipient.id
     messageId: MessageId = ensuredMessage.messageId
-    messageText: str = ensuredMessage.messageText
+    messageText: str = await ensuredMessage.formatForLLM(db, format=LLMMessageFormat.TEXT, useSingleMedia=False)
 
     try:
         llmService = LLMService.getInstance()
