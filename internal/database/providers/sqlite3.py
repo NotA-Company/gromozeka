@@ -49,7 +49,7 @@ async def _loadSqliteVecExtension(
     Args:
         connection: Open aiosqlite connection.
         extensionPath: Filesystem path to the ``vec0`` shared library to
-            load. 
+            load.
 
     Returns:
         sqlite-vec version string on success, or ``None`` if loading
@@ -193,7 +193,7 @@ class SQLite3Provider(BaseSQLProvider):
 
             # Attempt to load sqlite-vec for native vector search.
             # self._vectorSearchAvailable = False
-        
+
             extensionSource: Optional[str] = None
             if _SQLITE_VEC_AVAILABLE:
                 # Package installed — use its bundled .so (version-matched, reliable).
@@ -218,7 +218,6 @@ class SQLite3Provider(BaseSQLProvider):
                     )
             else:
                 self._vectorSearchAvailable = False
-
 
             self._connection = connection
             logger.debug(
