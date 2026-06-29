@@ -48,7 +48,6 @@ from .models import (
     BotInfo,
     Chat,
     ChatAdmin,
-    ChatList,
     ChatMembersList,
     InlineKeyboardAttachment,
     InlineKeyboardAttachmentRequest,
