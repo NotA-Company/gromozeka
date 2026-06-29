@@ -6,7 +6,13 @@ is a TypedDict that provides optional extra data fields for tool handlers and
 callbacks during LLM interactions.
 """
 
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, TypedDict
+
+if TYPE_CHECKING:
+    from typing import Optional
+
+    from internal.bot.common.typing_manager import TypingManager
+    from internal.bot.models.ensured_message import EnsuredMessage
 
 
 class ExtraDataDict(TypedDict, total=False):
@@ -19,14 +25,12 @@ class ExtraDataDict(TypedDict, total=False):
     Attributes:
         ensuredMessage: Wrapped message object containing sender, recipient,
             and message metadata. Used by tool handlers that need to send
-            responses or access chat context. Type is `Any` because the actual
-            type is `EnsuredMessage` from `internal.bot.models.ensured_message`.
+            responses or access chat context.
         typingManager: Manager for typing indicators, allowing tool handlers
-            to show typing status during long operations. Type is `Any` because
-            the actual type is `TypingManager` from `internal.bot.common.typing_manager`.
+            to show typing status during long operations, or None.
     """
 
-    ensuredMessage: Any
-    """EnsuredMessage"""
-    typingManager: Any
-    """Optional[TypingManager]"""
+    ensuredMessage: "EnsuredMessage"
+    """EnsuredMessage message object from the bot."""
+    typingManager: "Optional[TypingManager]"
+    """Typing indicator manager, or None."""

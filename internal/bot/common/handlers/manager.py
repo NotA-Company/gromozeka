@@ -65,6 +65,7 @@ from internal.services.storage import StorageService
 from lib import utils
 
 from .base import BaseBotHandler, HandlerResultStatus
+from .chat_search import ChatSearchHandler
 from .common import CommonHandler
 from .configure import ConfigureCommandHandler
 from .dev_commands import DevCommandsHandler
@@ -522,6 +523,15 @@ class HandlersManager(CommandHandlerGetterInterface):
             self.handlers.append(
                 (
                     SandboxHandler(configManager=configManager, database=database, botProvider=botProvider),
+                    HandlerParallelism.PARALLEL,
+                )
+            )
+
+        # Chat search handler — /search command and search_messages, list_users, get_thread LLM tools
+        if configManager.getSearchHistoryConfig().get("enabled", False):
+            self.handlers.append(
+                (
+                    ChatSearchHandler(configManager=configManager, database=database, botProvider=botProvider),
                     HandlerParallelism.PARALLEL,
                 )
             )

@@ -8,6 +8,7 @@ the Max Messenger Bot API using httpx with proper authentication and error handl
 import asyncio
 import inspect
 import logging
+import types
 from collections.abc import Awaitable
 from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 from urllib.parse import urljoin
@@ -171,7 +172,7 @@ class MaxBotClient:
         self,
         exc_type: Optional[type[BaseException]],
         exc_val: Optional[BaseException],
-        exc_tb: Optional[Any],
+        exc_tb: Optional[types.TracebackType],
     ) -> None:
         """Async context manager exit point.
 

@@ -20,13 +20,16 @@ Example:
     >>> markdownv2 = parser.parse_to_markdownv2("# Hello World\\n\\nThis is **bold** text.")
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from .ast_nodes import MDDocument, MDHeader, MDNode, MDParagraph, MDText
 from .block_parser import BlockParser
 from .inline_parser import InlineParser
 from .renderer import HTMLRenderer, MarkdownRenderer, MarkdownV2Renderer
 from .tokenizer import Tokenizer
+
+_OptionValue = Union[bool, int, str, Dict[str, Any]]
+"""Type alias for valid MarkdownParser option values."""
 
 
 class MarkdownParser:
@@ -404,7 +407,7 @@ class MarkdownParser:
         """
         return self.parse_stats.copy()
 
-    def set_option(self, key: str, value: Any) -> None:
+    def set_option(self, key: str, value: _OptionValue) -> None:
         """
         Set a parser option.
 
@@ -444,7 +447,7 @@ class MarkdownParser:
             self._markdownv2_options[mdv2_key] = value
             self.markdownv2_renderer = MarkdownV2Renderer(self._markdownv2_options)
 
-    def get_option(self, key: str, default: Any = None) -> Any:
+    def get_option(self, key: str, default: Optional[_OptionValue] = None) -> Optional[_OptionValue]:
         """
         Get a parser option.
 

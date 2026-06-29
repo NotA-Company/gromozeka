@@ -7,7 +7,7 @@ used throughout the application for representing database entities and their str
 
 import datetime
 from enum import StrEnum
-from typing import Optional, TypedDict, Union
+from typing import NotRequired, Optional, TypedDict, Union
 
 from internal.models import MessageId
 
@@ -108,7 +108,10 @@ class SpamReason(StrEnum):
 class ChatMessageDict(TypedDict):
     """Dictionary representing a chat message with user information.
 
-    Combines data from chat_message and User tables.
+    Combines data from chat_message and User tables. ``score`` is
+    populated by :meth:`ChatSearchRepository.searchChatMessages` when the
+    result is ranked (semantic-search mode); it is absent from messages
+    produced by the other chat-message repository methods.
     """
 
     # From chat_message table
@@ -151,6 +154,11 @@ class ChatMessageDict(TypedDict):
     full_name: str
     """User full name."""
 
+    # Populated only by ChatSearchRepository (semantic-search mode)
+    score: NotRequired[float]
+    """Cosine similarity score (0.0 to 1.0). 0.0 in filter-only mode.
+    Absent on chat-message rows produced by the other repository methods."""
+
 
 class ChatUserDict(TypedDict):
     """Dictionary representing a user in a chat.
@@ -176,6 +184,32 @@ class ChatUserDict(TypedDict):
     """Record creation timestamp."""
     updated_at: datetime.datetime
     """Record last update timestamp."""
+
+
+class MessageEmbeddingDict(TypedDict):
+    """Embedding vector and its bookkeeping for a single message.
+
+    Returned by :meth:`ChatEmbeddingsRepository.getMessageEmbedding`.
+    The dict only carries the ``message_embeddings`` columns — there is
+    no JOIN against ``chat_messages`` anymore, so message text is not
+    included; callers that need the message text should fetch it from
+    :meth:`ChatMessagesRepository.getChatMessageByMessageId` (or use
+    the backfill helper :meth:`ChatEmbeddingsRepository.getMessagesWithoutEmbeddings`
+    which returns full :class:`ChatMessageDict` rows).
+    """
+
+    message_id: MessageId
+    """Message identifier."""
+    embedding: list[float]
+    """The raw float vector (decoded from the BLOB column)."""
+    dimensions: int
+    """Number of dimensions in the vector."""
+    model: str
+    """Model that produced the embedding."""
+    created_at: datetime.datetime
+    """Embedding row creation timestamp."""
+    updated_at: datetime.datetime
+    """Embedding row last-update timestamp."""
 
 
 class ChatInfoDict(TypedDict):
@@ -395,3 +429,20 @@ class DivinationLayoutDict(TypedDict):
 
     updated_at: datetime.datetime
     """Record last update timestamp."""
+
+
+class ThreadResultDict(TypedDict):
+    """Thread context for a single message.
+
+    Returned by `ChatMessagesRepository.getMessageThread`. The target is
+    always present; the root is only set when the target is itself a reply
+    in a thread (i.e. has a non-null `root_message_id`). `thread_messages`
+    always includes the target and is ordered chronologically (ascending).
+    """
+
+    root_message: Optional[ChatMessageDict]
+    """Root message of the thread, or None if the target is itself a root."""
+    target_message: ChatMessageDict
+    """The message the caller asked about."""
+    thread_messages: list[ChatMessageDict]
+    """All messages in the thread, including the target, in chronological order."""

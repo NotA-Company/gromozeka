@@ -30,11 +30,18 @@
 | `chatMessages` | `saveChatMessage(...)` | `None` | Save incoming/outgoing message |
 | `chatMessages` | `getChatMessageByMessageId(chatId, messageId)` | `Optional[ChatMessageDict]` | Get message by ID |
 | `chatMessages` | `getChatMessagesByRootId(chatId, rootMessageId, threadId)` | `List[ChatMessageDict]` | Get thread messages |
+| `chatMessages` | `getMessageThread(chatId, messageId, *, dataSource?)` | `Optional[ThreadResultDict]` | Get target + thread root + chronological thread messages |
 | `chatMessages` | `updateChatMessageCategory(chatId, messageId, category)` | `None` | Update message category |
 | `chatMessages` | `updateChatMessageMetadata(chatId, messageId, metadata)` | `None` | Update message metadata |
+| `chatMessages` | `searchChatMessages(chatId, queryEmbedding?, userFilter?, categoryFilter?, maxAgeDays?, rootMessageId?, limit?, dataSource?)` | `List[SearchResultDict]` | Combined filter + (optional) semantic search via cosine similarity over `message_embeddings`. When `queryEmbedding` is `None` results are returned in date order with `score=0.0` |
+| `chatEmbeddings` | `saveMessageEmbedding(chatId, messageId, embedding, model)` | `None` | Upsert a float32 vector blob for `(chat_id, message_id)`. `dimensions` is derived from `len(embedding)` |
+| `chatEmbeddings` | `getMessageEmbedding(chatId, messageId)` | `Optional[MessageEmbeddingDict]` | Fetch a single embedding as a `MessageEmbeddingDict` with `message_id`, `embedding`, `dimensions`, `model`, `created_at`, `updated_at` (no JOIN against `chat_messages` — `message_text` is not included) |
+| `chatEmbeddings` | `getMessagesWithoutEmbeddings(chatId, limit, modelName)` | `List[ChatMessageDict]` | Used by `ChatSearchHandler._dtCronJob` to find messages missing an embedding for `modelName`. Returns full `ChatMessageDict` rows (joined with `chat_users` for `username`/`full_name`); the embedding table is only used as a `NOT EXISTS` filter, not selected from |
+| `chatEmbeddings` | `deleteChatEmbeddings(chatId)` | `None` | Drop all `message_embeddings` rows for a chat (used when switching to an incompatible model) |
 | `chatUsers` | `getChatUser(chatId, userId)` | `Optional[ChatUserDict]` | Get user in chat |
 | `chatUsers` | `updateChatUser(chatId, userId, username, fullName)` | `None` | Upsert user in chat |
 | `chatUsers` | `updateUserMetadata(chatId, userId, metadata)` | `None` | Update user metadata |
+| `chatUsers` | `getChatUsers(chatId, limit?, minMessages?, lastActiveDays?, seenSince?, dataSource?)` | `List[ChatUserDict]` | List users in a chat. Default mode: order by `updated_at DESC` (most recently active first) with optional `seenSince` filter. Activity-filtered mode (any of `minMessages` / `lastActiveDays` set): order by `messages_count DESC` with both filters applied |
 | `chatUsers` | `getUserChats(userId)` | `List[ChatInfoDict]` | Get all chats for user |
 | `mediaAttachments` | `addMediaAttachment(...)` | `None` | Add media attachment record |
 | `mediaAttachments` | `getMediaAttachment(mediaId)` | `Optional[MediaAttachmentDict]` | Get media by unique ID |
@@ -44,6 +51,7 @@
 | `chatSettings` | `setChatSetting(chatId, key, value, *, updatedBy)` | `None` | Set a chat setting with audit trail |
 | `chatSettings` | `getChatSetting(chatId, setting)` | `Optional[str]` | Get single setting value |
 | `chatSettings` | `getChatSettings(chatId)` | `Dict[str, tuple[str, int]]` | Get all settings as (value, updated_by) |
+| `chatSettings` | `listChatsBySetting(key, *, dataSource?)` | `Dict[int, str]` (`chat_id` → stored value) | Aggregate all `(chat_id, value)` rows whose `key` setting is present, returned as a `chat_id → value` mapping. Callers filter the `value` via `ChatSettingsValue.toBool()` (case-insensitive). Used by `ChatSearchHandler._dtCronJob` to discover chats with `EMBEDDINGS_ENABLED=true` (the `REGENERATE_EMBEDDINGS` flag is checked per-chat after discovery as a gate, not as a discovery key, because it defaults to true and is rarely persisted to the DB). The `REGENERATE_EMBEDDINGS` flag must be manually reset via `/settings` — it does not self-reset. Iterates *configured* providers so not-yet-touched sources in multi-source mode are still queried |
 | `cache` | `clearOldCacheEntries(ttl)` | `None` | Cleanup stale cache |
 | `delayedTasks` | `cleanupOldCompletedDelayedTasks(ttl)` | `None` | Cleanup old tasks |
 | `divinations` | `insertReading(...)` | `None` | Persist a tarot/runes reading row in `divinations` |
@@ -297,6 +305,8 @@ def getMigration() -> Type[BaseMigration]:
 | `MediaAttachmentDict` | Media file record |
 | `DelayedTaskDict` | Delayed task record |
 | `CacheDict` | Cached data entry |
+| `SearchResultDict` | Row returned by `chatMessages.searchChatMessages` — message + user + score |
+| `ThreadResultDict` | Row returned by `chatMessages.getMessageThread` — root + target + chronological thread |
 
 ### Key Enums
 
@@ -310,6 +320,13 @@ def getMigration() -> Type[BaseMigration]:
 | `USER_COMMAND` | User command message |
 | `BOT_ERROR` | Bot error message |
 | `DELETED` | Deleted message |
+| `USER_CONFIG_ANSWER` | User reply to a config prompt |
+| `USER_SPAM` | Message classified as spam |
+| `BOT_SPAM_NOTIFICATION` | Bot notification about a spam action |
+| `BOT_RESENDED` | Message resended by the bot |
+| `BOT_SUMMARY` | LLM-generated summary output |
+| `CHANNEL` | Channel post |
+| `UNSPECIFIED` | Catch-all / unset |
 
 #### `MediaStatus`
 
@@ -323,6 +340,73 @@ def getMigration() -> Type[BaseMigration]:
 #### `SpamReason`
 
 Various spam classification reasons — used by `SpamHandler`
+
+---
+
+## 5.5 `message_embeddings` Table (Chat-History Search)
+
+Sidecar table created by `migration_017`. Stores one float32 embedding per `(chat_id, message_id)` so the `ChatSearchHandler` can rank search results by cosine similarity. Backs the `search-history` feature (`[search-history] enabled = true` in TOML).
+
+**Primary Key:** `(chat_id, message_id)` — same composite natural key as `chat_messages`, no `AUTOINCREMENT`.
+
+| Column | Type | Nullable | Description |
+|---|---|---|---|
+| `chat_id` | INTEGER | No | Chat identifier (matches `chat_messages.chat_id`) |
+| `message_id` | TEXT | No | Message identifier (Telegram `int` → stringified via `MessageId.asStr()`; Max `str` verbatim) |
+| `embedding` | BLOB | No | `array.array('f', vec).tobytes()` — raw float32 little-endian |
+| `dimensions` | INTEGER | No | `len(embedding)`, derived in `saveMessageEmbedding` (not a separate arg) |
+| `model` | TEXT | No | Name of the model that produced the vector (matches `EMBEDDING_MODEL` chat setting or the server default) |
+| `created_at` | TIMESTAMP | No | Set by application code (no DB default — matches `migration_013` rules) |
+| `updated_at` | TIMESTAMP | No | Set by application code |
+
+**Indexes:** None. Composite PK lookup is the only access pattern; per-chat enumeration uses `WHERE chat_id = ?`.
+
+**Portability notes:**
+- `BLOB` is portable across SQLite, PostgreSQL (`BYTEA`), and MySQL (`BLOB`).
+- `dimensions` is stored per row so a chat that switches `EMBEDDING_MODEL` can detect stale rows without joining the LLM registry at SQL time — the backfill `CRON_JOB` handler (`ChatSearchHandler._dtCronJob`) and `getMessagesWithoutEmbeddings` filter by `model` to skip already-current rows.
+- No `AUTOINCREMENT` / `SERIAL` — composite natural key follows the project convention.
+
+**In-memory cache (handler-layer concern):** `ChatMessagesRepository` does NOT keep a per-chat `TTLDict` of decoded float matrices; the previous `_embeddingCache` and the `[search-history.embeddings].cache-ttl-seconds` / `cache-max-chats` settings were removed. Semantic search re-loads embeddings from `message_embeddings` on every call. Caching decoded vectors belongs in the handler layer (via `CacheService`) and is intentionally not implemented at the repository level.
+
+**Repository methods:**
+
+```python
+# Save (or update) the embedding for a saved message. `dimensions`
+# is derived from len(embedding).
+await db.chatEmbeddings.saveMessageEmbedding(
+    chatId=chatId,
+    messageId=messageId,
+    embedding=embedding,  # list[float]
+    model=modelName,
+)
+
+# Fetch a single embedding as a MessageEmbeddingDict. No JOIN against
+# chat_messages is performed — `message_text` is not included. To also
+# read the message text, call getChatMessageByMessageId() separately.
+record: Optional[MessageEmbeddingDict] = await db.chatEmbeddings.getMessageEmbedding(
+    chatId=chatId,
+    messageId=messageId,
+)
+embedding: Optional[list[float]] = record["embedding"] if record else None
+
+# Backfill worker input: list of full ChatMessageDict entries for messages
+# in the chat that do not yet have a current embedding for `modelName`.
+# The embedding table is only used as a NOT EXISTS filter; each entry
+# carries message_id / message_text / username / full_name, etc.
+pairs: list[ChatMessageDict] = await db.chatEmbeddings.getMessagesWithoutEmbeddings(
+    chatId=chatId,
+    limit=batchSize,
+    modelName=modelName,
+)
+
+# Drop all embeddings for a chat (e.g. when switching to an
+# incompatible model that produces different dimensions).
+await db.chatEmbeddings.deleteChatEmbeddings(chatId=chatId)
+```
+
+**Search integration:** `searchChatMessages(queryEmbedding=None, ...)` runs in filter-only mode and returns rows in date order with `score=0.0`. When `queryEmbedding` is provided, results are ranked by cosine similarity to the query vector (0..1). Embeddings are re-loaded fresh from `message_embeddings` on every call — the repository no longer keeps a `TTLDict` of decoded float matrices (the previous `_embeddingCache` and its `[search-history.embeddings].cache-ttl-seconds` / `cache-max-chats` settings were removed). Caching decoded vectors belongs in the handler layer via `CacheService` and is intentionally not implemented at the repository level.
+
+**Native vector search (dual-write):** when `sqlite-vec` is loaded (`SQLite3Provider.isVectorSearchSupported()` is `True`), `saveMessageEmbedding()` also writes the embedding into the dimension-specific `vec_message_embeddings_{N}` vec0 virtual table (lazily created on first write for a dimension). `_semanticSearch()` tries native vector search first via `_nativeVectorSearch()` and falls back to the numpy path on exception or empty native results. No config key is needed — auto-detection happens at connect time; `pip uninstall sqlite-vec` disables native search. See §7 "Vector search types" for the provider interface and the vec0 schema. The vec0 tables are ephemeral; `message_embeddings` remains the authoritative store.
 
 ---
 
@@ -499,6 +583,39 @@ async def getLayout(self, systemId: str, layoutName: str) -> Optional[Divination
 | `getTextType(maxLength)` | Get appropriate TEXT type for schema migrations |
 | `upsert(table, values, conflictColumns, updateExpressions)` | Portable upsert operation |
 | `isReadOnly()` | Check if provider is in read-only mode |
+| `isVectorSearchSupported() -> bool` | Concrete (default `False`); providers with a loaded vector extension override to return `True` after confirming the extension is operational. Checked synchronously — the provider sets a private `_vectorSearchAvailable` flag during `connect()` (initialized to `False` in `__init__`). `SQLite3Provider` returns `True` when `sqlite-vec` loaded successfully. |
+| `vectorSearch(*, table, vectorColumn, returnColumns, queryVector: bytes, k, filterClause, filterParams, distanceMetric) -> list[VectorSearchResult]` | Native KNN vector similarity search. `queryVector` is raw bytes (caller pre-serialises, e.g. `array.array("f", vec).tobytes()`). `filterClause` is a raw SQL WHERE fragment with `:named` params (built by trusted repository code). Returns rows ordered by distance ascending. Default implementation raises `NotImplementedError`. |
+| `listTables(likePattern: str = "%") -> list[str]` | List table names matching a SQL LIKE pattern via native introspection. SQLite: `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE :pattern`. Default raises `NotImplementedError`. Used to discover `vec_message_embeddings_%` tables for model-change cleanup. |
+| `createVectorTable(tableName, columns: list[VectorColumnDef]) -> None` | Create a provider-native vector table/index. SQLite maps `VectorColumnDef` to vec0 DDL (`FLOAT[N] distance_metric=cosine`, `PARTITION KEY` suffix). `CREATE VIRTUAL TABLE IF NOT EXISTS` (idempotent). Default raises `NotImplementedError`. |
+
+### Vector search types (`internal/database/providers/base.py`)
+
+| Type | Kind | Purpose |
+|---|---|---|
+| `VectorSearchResult` | TypedDict | `rowKey: dict[str, str]` (column-name → stringified value, supports composite keys) + `distance: float` (raw metric value; cosine distance = `1.0 - similarity`). |
+| `VectorDistanceMetric` | StrEnum | `COSINE`, `L2`. Providers validate support at call time and raise `ValueError` for unsupported metrics. |
+| `VectorColumnType` | StrEnum | `TEXT`, `INTEGER`, `FLOAT`, `BLOB`, `VECTOR`. `VECTOR` requires `vectorDimension` and optionally `distanceMetric` in the column definition. |
+| `VectorColumnDef` | TypedDict | `name: str`, `columnType: VectorColumnType`, `isPartitionKey: NotRequired[bool]`, `vectorDimension: NotRequired[int]`, `distanceMetric: NotRequired[VectorDistanceMetric]`. Uses `NotRequired[]` (NOT `total=False` — pyright rejects bracket access on `total=False`). |
+
+### SQLite vector search — `sqlite-vec` + `vec0` virtual table
+
+`SQLite3Provider` loads the `sqlite-vec` extension during `connect()` via aiosqlite's async wrappers: `enable_load_extension(True)` → `load_extension(sqlite_vec.loadable_path())` → `enable_load_extension(False)`, wrapped in `try/finally` so extension loading is always disabled afterward. The optional dependency is guarded by a module-level `try/except ImportError` with an `_SQLITE_VEC_AVAILABLE` flag (see AGENTS.md "optional dependencies"). Success sets `_vectorSearchAvailable = True`; `isVectorSearchSupported()` returns it. Loading failures are logged at `debug` and swallowed — numpy fallback takes over transparently.
+
+The `vec0` virtual table uses **dimension-aware naming**: `vec_message_embeddings_{N}` where `N` is the embedding dimension (e.g. `vec_message_embeddings_384`, `vec_message_embeddings_1024`). This lets multiple dimension sizes coexist without conflict; the repository selects the correct table at runtime from `len(queryEmbedding)`. Tables are created lazily in the write path (`saveMessageEmbedding()` → `_upsertVecMessageEmbedding()` with `readonly=False`), never in the search path (`readonly=True` would block DDL). If a vec0 table is missing during search, `vectorSearch()` raises and the caller falls through to the numpy path.
+
+Schema (one table per dimension in use):
+
+```sql
+CREATE VIRTUAL TABLE vec_message_embeddings_384 USING vec0(
+    message_id TEXT,
+    chat_id INTEGER PARTITION KEY,
+    model TEXT PARTITION KEY,
+    date TEXT,                            -- ISO-8601 from chat_messages; enables maxMessages pre-filter
+    embedding FLOAT[384] distance_metric=cosine
+);
+```
+
+`chat_id` and `model` are `PARTITION KEY`s so `WHERE chat_id = X AND model = Y` prunes the search to exactly that partition. These vec0 tables are **ephemeral** — the authoritative embedding store is `message_embeddings`; vec0 tables are rebuilt from it on demand and carry no data the app cannot reconstruct. No migration creates them; `createVectorTable()` is called at runtime when a new dimension is first written.
 
 ---
 
@@ -579,13 +696,15 @@ success, value = sqlToCustomType("123", Union[int, str])
    - Validate that all historical migrations are accounted for
 
 **Known implemented migrations:**
-- `migration_001` to `migration_016` — Baseline migrations through latest schema updates
+- `migration_001` to `migration_018` — Baseline migrations through latest schema updates
 - `migration_010`: Adds `updated_by INTEGER NOT NULL` to `chat_settings` table (audit trail)
 - `migration_011` and `migration_012`: Additional schema improvements
 - `migration_013`: Removes `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns (explicit timestamp handling)
 - `migration_014`: Adds the [`divinations`](#divinations) table (composite PK `(chat_id, message_id)`) plus `idx_divinations_user_created` index for tarot/runes readings
 - `migration_015`: Adds the [`divination_layouts`](#divination_layouts) table (composite PK `(system_id, layout_id)`) plus `idx_divination_layouts_system` index for layout discovery cache
 - `migration_016`: Adds [`stat_events`](../../lib/stats/stats_storage.py) (append-only event log) and [`stat_aggregates`](../../lib/stats/stats_storage.py) (period buckets) tables for statistics collection
+- `migration_017`: Adds the [`message_embeddings`](#message_embeddings) table (composite PK `(chat_id, message_id)`) — stores float32 embedding BLOBs for semantic chat-history search via the `ChatSearchHandler`
+- `migration_018`: Adds `idx_message_embeddings_chat_model` index on `message_embeddings (chat_id, model)` — speeds up `_loadEmbeddingsFromDb` by letting SQLite seek directly to the active model's rows instead of scanning the full chat
 
 ---
 
@@ -602,4 +721,4 @@ success, value = sqlToCustomType("123", Union[int, str])
 ---
 
 *This guide is auto-maintained and should be updated whenever significant database changes are made*
-*Last updated: 2026-05-10*
+*Last updated: 2026-06-20*

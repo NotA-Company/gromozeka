@@ -46,17 +46,17 @@ from lib.ai.models import (
 
 | Class | File | Purpose |
 |---|---|---|
-| [`LLMManager`](../../lib/ai/manager.py:17) | `lib/ai/manager.py` | Registry for providers and models |
-| [`AbstractModel`](../../lib/ai/abstract.py:19) | `lib/ai/abstract.py` | ABC for all LLM models |
+| [`LLMManager`](../../lib/ai/manager.py:49) | `lib/ai/manager.py` | Registry for providers and models |
+| [`AbstractModel`](../../lib/ai/abstract.py:47) | `lib/ai/abstract.py` | ABC for all LLM models |
 | [`AbstractLLMProvider`](../../lib/ai/abstract.py) | `lib/ai/abstract.py` | ABC for LLM providers |
 | [`ModelMessage`](../../lib/ai/models.py) | `lib/ai/models.py` | Standard text message for LLM |
 | [`ModelImageMessage`](../../lib/ai/models.py) | `lib/ai/models.py` | Message with embedded image |
 | [`ModelRunResult`](../../lib/ai/models.py) | `lib/ai/models.py` | LLM response container |
 | [`ModelStructuredResult`](../../lib/ai/models.py) | `lib/ai/models.py` | Structured-output result; adds `data: Optional[Dict]` |
 | [`ModelResultStatus`](../../lib/ai/models.py) | `lib/ai/models.py` | `FINAL`, `ERROR`, `TIMEOUT`, etc. |
-| [`LLMToolFunction`](../../lib/ai/models.py:64) | `lib/ai/models.py` | Tool/function definition for LLM |
-| [`LLMFunctionParameter`](../../lib/ai/models.py:37) | `lib/ai/models.py` | Tool parameter definition |
-| [`LLMParameterType`](../../lib/ai/models.py:27) | `lib/ai/models.py` | `STRING`, `NUMBER`, `BOOLEAN`, `ARRAY`, `OBJECT` |
+| [`LLMToolFunction`](../../lib/ai/models.py:243) | `lib/ai/models.py` | Tool/function definition for LLM |
+| [`LLMFunctionParameter`](../../lib/ai/models.py:175) | `lib/ai/models.py` | Tool parameter definition |
+| [`LLMParameterType`](../../lib/ai/models.py:151) | `lib/ai/models.py` | `STRING`, `NUMBER`, `BOOLEAN`, `ARRAY`, `OBJECT` |
 
 **Key methods on `AbstractModel`:**
 ```python
@@ -283,8 +283,49 @@ from lib.ai import ModelStructuredResult
 1. Create `lib/ai/providers/my_provider.py`
 2. Class: `MyProvider(AbstractLLMProvider)`
 3. Must implement: `_createModel(modelConfig) -> AbstractModel`
-4. Register in `lib/ai/manager.py:40` — add to `providerTypes` dict: `{"my-provider": MyProvider}`
+4. Register in `lib/ai/manager.py:118` — add to `providerTypes` dict: `{"my-provider": MyProvider}`
 5. Tests in `tests/lib/ai/providers/test_my_provider.py`
+
+**FastEmbed provider (`fastembed`):**
+
+[`FastembedProvider`](../../lib/ai/providers/fastembed_provider.py) hosts any number of `fastembed`-backed embedding models under the standard `addModel` pattern. Models are configured with `support_embeddings=true` (and `support_text=false` to keep them out of the chat-completion model pool). Output dimensionality can be set explicitly via `embedding_dimensions` in `extraConfig` (preferred — keeps startup fast) or detected via a one-shot probe on first use.
+
+| Aspect | Detail |
+|---|---|
+| Provider name | `fastembed` |
+| Backend | `fastembed` (ONNX-based, no PyTorch). Optional dependency — `ImportError` raised at provider init when not installed |
+| Model class | `FastembedModel` — extends `AbstractModel`; overrides `_generateEmbeddings` only |
+| Extra-config keys | `support_embeddings` (required `true`), `support_text` (set `false`), `embedding_dimensions` (optional), plus any fastembed kwargs (`cache_dir`, `threads`, `max_length`, ...) |
+| Concurrency | `asyncio.to_thread` wraps the sync `TextEmbedding.embed` so the event loop stays unblocked; per-model `threading.Lock` serialises lazy model construction |
+| Text / image gen | `NotImplementedError` — local embeddings are embedding-only |
+
+**Usage example:**
+
+```toml
+[models.providers.fastembed]
+type = "fastembed"
+
+[models.models."local-minilm"]
+provider = "fastembed"
+model_id = "sentence-transformers/all-MiniLM-L6-v2"
+model_version = "latest"
+temperature = 0.0
+context = 0
+support_text = false
+support_embeddings = true
+embedding_dimensions = 384
+tier = "free"
+enabled = true
+```
+
+```python
+model = llmManager.getModel("local-minilm")
+vector: list[float] = await model.generateEmbeddings("hello world")
+```
+
+The vector is a plain `list[float]` — same shape every embedding backend in the codebase returns, so the chat-search pipeline (`saveMessageEmbedding` / `searchChatMessages`) works unchanged across OpenAI, Yandex, and local providers.
+
+**Default model:** `local/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (384-dim, ~0.22 GB, ~50 languages, 512 token context) is the per-chat default for the `EMBEDDING_MODEL` chat setting via `embedding-model = "local/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"` under `[bot.defaults]` in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml). Both this model and the larger alternative `local/jinaai/jina-embeddings-v3` (1024-dim, ~2.24 GB, ~100 languages, 1024 token context) are registered in [`configs/00-defaults/fastembed-models.toml`](../../configs/00-defaults/fastembed-models.toml). The model resolution chain in `ChatSearchHandler._dtCronJob` (backfill) and the `MessagePreprocessorHandler` embedding dispatch is single-tier: the per-chat `EMBEDDING_MODEL` setting provides the value, and an empty / unresolvable model is a silent no-op for that chat on that tick. The server-wide `[search-history.embeddings].model` and `[search-history.embeddings].on-save` config keys were removed — the per-chat default already provides the model name, and the on-save dispatch is now unconditional whenever `[search-history].enabled` and `EMBEDDINGS_ENABLED` are both on. See [`configuration.md`](configuration.md) for the full `[search-history]` reference.
 
 **Proxy support:** `LLMManager.__init__()` accepts an optional `proxyConfig` keyword argument containing the global `[proxy]` config dict. This is passed through to `BasicOpenAIProvider.__init__()`, which creates a `ProxyConfig` via `ProxyConfig.fromServiceConfig()` and calls `ProxyConfig.toKwargs()` in `_initClient()` to configure a custom `httpx.AsyncClient` for the OpenAI SDK. Image download (`_generateImageViaImagesApi`) and OpenRouter `listRemoteModels()` also resolve proxy.
 
@@ -342,7 +383,7 @@ cache = DictCache[K, V](
 from lib.rate_limiter import RateLimiterManager, RateLimiterInterface, SlidingWindowRateLimiter
 ```
 
-**Interface methods** ([`RateLimiterInterface`](../../lib/rate_limiter/interface.py:5)):
+**Interface methods** ([`RateLimiterInterface`](../../lib/rate_limiter/interface.py:19)):
 ```python
 await limiter.initialize() -> None
 await limiter.destroy() -> None
@@ -515,7 +556,7 @@ await storage.record(
 )
 ```
 
-**DB-backed implementation:** [`DatabaseStatsStorage`](../../internal/database/stats_storage.py:1) in `internal/database/stats_storage.py` — backed by `stat_events` (append-only log) and `stat_aggregates` (period buckets). Created in `main.py` when `stats.enabled = true`.
+**DB-backed implementation:** [`DatabaseStatsStorage`](../../internal/database/stats_storage.py:39) in `internal/database/stats_storage.py` — backed by `stat_events` (append-only log) and `stat_aggregates` (period buckets). Created in `main.py` when `stats.enabled = true`.
 
 **Integration points:**
 - `LLMManager` receives `statsStorage` in constructor and propagates to all `AbstractModel` instances
@@ -677,14 +718,22 @@ from lib.proxy import ProxyConfig, ProxyHelper, ProxyType, ProxyKwargs
 | Type | Purpose |
 |---|---|
 | `ProxyType` | `StrEnum("http", "socks5", "none")` — supported proxy protocol types |
+| `HealthCheckType` | `StrEnum("none", "url", "command")` — health check mechanism for proxy lifecycle |
 | `ProxyKwargs(TypedDict)` | Keyword arguments for `httpx.AsyncClient` — either `proxy: str` or `transport: AsyncProxyTransport` |
+| `ProxyLifecycleConfigDict(TypedDict)` | Optional lifecycle configuration with 7 fields: `startCommand`, `stopCommand`, `restartCommand`, `healthCheckType`, `healthCheckUrl`, `healthCheckCommand`, `healthCheckInterval` |
 
 **Classes:**
 
 | Class | Purpose |
 |---|---|
-| `ProxyConfig` | Immutable proxy configuration (`__slots__`). Created via `fromServiceConfig()` or `fromDict()`. Methods: `getCombined()` (merge with global), `getProxyURL(maskPassword=False)` (build URL), `toKwargs()` (httpx kwargs). |
+| `ProxyConfig` | Immutable proxy configuration (`__slots__`). Created via `fromServiceConfig()` or `fromDict()`. Methods: `getCombined()` (merge with global), `getProxyURL(maskPassword=False)` (build URL), `toKwargs()` (httpx kwargs). Has optional `lifecycle` field of type `ProxyLifecycleConfigDict`. |
 | `ProxyHelper` | Singleton storing the global proxy config. `setGlobalProxyConfig()` called once from `main.py`; `getGlobalProxyConfig()` used internally by `ProxyConfig.getCombined()`. |
+
+**Helper functions:**
+
+| Function | Purpose |
+|---|---|
+| `_kebabToCamelCase(s)` | Converts TOML kebab-case keys to Python camelCase field names (used by `ProxyConfig.fromDict()` for lifecycle config parsing) |
 
 **Usage pattern in service constructors:**
 ```python
@@ -711,13 +760,22 @@ async with httpx.AsyncClient(**proxyKwargs, timeout=30) as client:
 
 ## See Also
 
+## 14. `sqlite-vec` — Native Vector Search Extension
+
+**Pinned dependency:** `sqlite-vec==0.1.9` (in `requirements.direct.txt` under `# Runtime`). Optional at runtime — the `SQLite3Provider` guards the import with a module-level `try/except ImportError` and an `_SQLITE_VEC_AVAILABLE` flag; if absent, `isVectorSearchSupported()` returns `False` and semantic search falls back to the numpy path.
+
+**Purpose:** provides the `vec0` virtual table module for native cosine-similarity KNN search inside the SQLite process, eliminating the transfer of all embedding BLOBs to Python on every search. Loaded by `SQLite3Provider.connect()` via aiosqlite's `enable_load_extension` / `load_extension` / `enable_load_extension(False)` (wrapped in `try/finally`).
+
+**Used by:** `internal/database/providers/sqlite3.py` (`SQLite3Provider`), `internal/database/repositories/chat_embeddings.py` (dual-write to `vec_message_embeddings_{N}`), `internal/database/repositories/chat_search.py` (`_nativeVectorSearch`). See [`database.md`](database.md) §7 "Vector search types" for the provider interface and the vec0 schema, and [`docs/design/vector-search-native.md`](../design/vector-search-native.md) for the design.
+
+**No config key** — auto-detected at connect time. To disable native search: `pip uninstall sqlite-vec`.
+
+---
+
+## See Also
+
 - [`index.md`](index.md) — Project overview, lib/ directory map
 - [`services.md`](services.md) — Higher-level service wrappers (CacheService, LLMService, etc.)
 - [`configuration.md`](configuration.md) — Configuring lib integrations via TOML
 - [`testing.md`](testing.md) — Golden data framework for API testing
 - [`tasks.md`](tasks.md) — Step-by-step: "add new API integration" decision tree
-
----
-
-*This guide is auto-maintained and should be updated whenever library APIs change*
-*Last updated: 2026-05-23*

@@ -5,12 +5,14 @@ Covers:
 - ``runCommand`` timeout value placement.
 - ``installCommand`` base shape, ``--upgrade`` flag, and package ordering.
 - ``listCommand`` exact output.
+- ``validatePackageSpec`` acceptance and rejection of package specs.
 """
 
 import pytest
 
 from lib.sandbox.config import BasicRuntimeConfig, InstallContainerConfig
 from lib.sandbox.enums import RuntimeName
+from lib.sandbox.errors import InvalidPackageSpec
 from lib.sandbox.runtimes.python.runtime import PythonRuntime
 from lib.sandbox.types import ResourceLimits
 
@@ -181,3 +183,49 @@ class TestNameAttribute:
     def testInstanceNameMatchesClass(self, runtime: PythonRuntime) -> None:
         """Verify instance name matches the class attribute."""
         assert runtime.name == PythonRuntime.name
+
+
+# ---------------------------------------------------------------------------
+# validatePackageSpec
+# ---------------------------------------------------------------------------
+
+
+class TestValidatePackageSpec:
+    """Tests for :meth:`PythonRuntime.validatePackageSpec`.
+
+    Exercises the import path from ``packaging.requirements`` — a
+    regression guard against environments where the ``packaging`` library
+    is missing from the venv (e.g. Alpine CI with ``--system-site-packages``
+    where the system package shadows the PyPI install).
+    """
+
+    async def testValidSimpleName(self, runtime: PythonRuntime) -> None:
+        """Verify a plain package name passes validation."""
+        await runtime.validatePackageSpec("numpy")
+
+    async def testValidWithVersionPin(self, runtime: PythonRuntime) -> None:
+        """Verify a package name with a version pin passes validation."""
+        await runtime.validatePackageSpec("requests>=2.32.0")
+
+    async def testValidWithExtras(self, runtime: PythonRuntime) -> None:
+        """Verify a package name with extras passes validation."""
+        await runtime.validatePackageSpec("httpx[http2]")
+
+    async def testValidWithMultipleExtras(self, runtime: PythonRuntime) -> None:
+        """Verify a package name with multiple extras passes validation."""
+        await runtime.validatePackageSpec("httpx[http2,socks]")
+
+    async def testInvalidStartsWithDash(self, runtime: PythonRuntime) -> None:
+        """Verify a spec starting with '-' raises InvalidPackageSpec."""
+        with pytest.raises(InvalidPackageSpec):
+            await runtime.validatePackageSpec("--upgrade")
+
+    async def testInvalidEmpty(self, runtime: PythonRuntime) -> None:
+        """Verify an empty spec raises InvalidPackageSpec."""
+        with pytest.raises(InvalidPackageSpec):
+            await runtime.validatePackageSpec("")
+
+    async def testInvalidBareEquals(self, runtime: PythonRuntime) -> None:
+        """Verify a malformed spec raises InvalidPackageSpec."""
+        with pytest.raises(InvalidPackageSpec):
+            await runtime.validatePackageSpec("=1.0")

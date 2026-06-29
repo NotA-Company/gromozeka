@@ -32,6 +32,26 @@ class TestTTLDictBasic(unittest.TestCase):
         self.assertEqual(d["a"], 1)
         self.assertEqual(d["b"], 2)
 
+    def test_init_with_default_ttl_kwarg(self) -> None:
+        """Regression: ``TTLDict(defaultTtl=...)`` must set ``defaultTTL``.
+
+        Previously the kwarg was silently swallowed by the underlying
+        ``dict.__init__`` and stored as a string key (``{"defaultTtl": 300}``),
+        leaving ``defaultTTL`` as ``None`` so entries never expired. The
+        ``ChatMessagesRepository`` embedding cache relied on this kwarg, so
+        the cache-TTL config from TOML had no effect at runtime.
+        """
+        d = TTLDict[str, int](defaultTtl=300)
+        self.assertEqual(d.defaultTTL, 300)
+        # The buggy behaviour would have left a stray key in the dict.
+        self.assertNotIn("defaultTtl", d)
+
+    def test_init_with_default_ttl_none(self) -> None:
+        """``TTLDict(defaultTtl=None)`` is equivalent to omitting the kwarg."""
+        d = TTLDict[str, int](defaultTtl=None)
+        self.assertIsNone(d.defaultTTL)
+        self.assertEqual(len(d), 0)
+
 
 class TestTTLDictGetSetDel(unittest.TestCase):
     """Test TTLDict get, set, and del operations"""

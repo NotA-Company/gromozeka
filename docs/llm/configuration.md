@@ -396,6 +396,66 @@ Discovery-structure-template placeholders: `{description}` (from web search resu
 
 ---
 
+### `[search-history]`
+
+Chat-history semantic search configuration. Defaults live in [`configs/00-defaults/search-history.toml`](../../configs/00-defaults/search-history.toml). The `ChatSearchHandler` is registered conditionally on `enabled = true`; the per-chat `EMBEDDINGS_ENABLED` setting must also be on for messages in a given chat to be embedded and searched.
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `enabled` | bool | `false` | Master switch — operator must flip to register `ChatSearchHandler` and enable the `search_messages`, `list_users`, `get_thread` LLM tools |
+
+#### `[search-history.embeddings]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `reindex-batch-size` | int | `100` | Per-batch page size for the backfill `CRON_JOB` handler in `ChatSearchHandler._dtCronJob` (`getMessagesWithoutEmbeddings(limit=...)`) |
+
+The default `EMBEDDING_MODEL` is the per-chat chat-setting default wired under `[bot.defaults].embedding-model` in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml) (currently `"local/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"`). A previous server-wide `[search-history.embeddings].model` key was removed because the per-chat default already provides the value, and `ChatSearchHandler._dtCronJob` resolves the model from the chat's `EMBEDDING_MODEL` setting (with no model being a silent no-op for that chat on that tick). There is no in-memory embedding cache in the DB layer — that responsibility belongs to the handler layer (via `CacheService`) and is intentionally not implemented at the repository level (decoded embeddings are re-loaded from `message_embeddings` on every search).
+
+The `MessagePreprocessorHandler.newMessageHandler` always schedules a background embedding task after a successful `saveChatMessage` when both `[search-history].enabled` (cached in `_searchEnabled` at construction time) and the per-chat `EMBEDDINGS_ENABLED` setting are on — there is no per-config kill switch on the dispatch path. To stop embedding generation entirely, set `[search-history].enabled = false` and restart the bot, or clear `EMBEDDINGS_ENABLED` for individual chats.
+
+#### `[search-history.defaults]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `max-results` | int | `10` | Default `limit` passed to `chatMessages.searchChatMessages` by the `/search` command |
+| `default-days` | int | `30` | Default `maxAgeDays` for the `/search` command when `days:` is not specified |
+
+**Chat settings keys** (defined in [`internal/bot/models/chat_settings.py`](../../internal/bot/models/chat_settings.py); defaults under `[bot.defaults]` in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml)):
+
+| `ChatSettingsKey` enum | Setting key | Page | Type | Notes |
+|---|---|---|---|---|
+| `EMBEDDING_MODEL` | `embedding-model` | `BOT_OWNER` | `STRING` | Per-chat embedding model override. Resolved by `ChatSearchHandler._dtCronJob` (backfill) and the `MessagePreprocessorHandler` embedding dispatch from the per-chat `EMBEDDING_MODEL` setting (default `"local/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"` from `bot-defaults.toml`). `STRING` rather than `MODEL` because the existing `MODEL` picker does not filter on `support_embeddings` |
+| `EMBEDDINGS_ENABLED` | `embeddings-enabled` | `BOT_OWNER` | `BOOL` | Per-chat kill-switch. Required for `MessagePreprocessorHandler` to embed a message after save; the LLM tools (`search_messages`, `list_users`, `get_thread`) work regardless (they only read `chat_messages`, not `message_embeddings`) |
+| `REGENERATE_EMBEDDINGS` | `regenerate-embeddings` | `BOT_OWNER` | `BOOL` | One-shot trigger. Setting it to `"true"` makes `ChatSearchHandler._dtCronJob` re-walk all un-embedded (or model-mismatched) messages for the chat. The flag **must be manually reset** via `/settings` after re-embedding is complete — it does not self-reset. |
+| `MAX_MESSAGES_FOR_SEMANTIC_SEARCH` | `max-messages-for-semantic-search` | `BOT_OWNER` | `INT` | Cap on per-chat backfill volume. Read by `ChatSearchHandler._dtCronJob`; falls back to `100_000` on missing / unparsable / non-positive values |
+
+**Slash command** (category `CommandCategory.TOOLS`, permission `CommandPermission.DEFAULT`):
+- `/search [args]` — parse a small DSL of `key: value` filters, then return matching messages as a raw, human-readable list (no LLM summary). Arguments:
+  - `keywords: <text>` — substring filter on `message_text` (case-insensitive). The first known key wins; tokens without a key prefix are merged into `keywords`. Multiple `keywords:` occurrences are concatenated.
+  - `user: @username` — resolve against `chat_users.username` (case-insensitive) via `chatUsers.getChatUsers`.
+  - `days: N` — `maxAgeDays` window. Defaults to `[search-history.defaults].default-days`.
+  - `category: user|bot|system|channel` — filter by `MessageCategory` group (see `_CATEGORY_GROUPS` in `chat_search.py`).
+  - `thread: <message_id>` — restrict to a thread (`root_message_id`).
+  - `chat: <chat_id>` — search in another chat (requires admin privileges).
+  - Example: `/search keywords: meeting days: 7 user: @alice`.
+  - Example: `/search chat: -1001234567890 days: 3`.
+
+- `/users [limit=N] [min_messages=N] [last_active=N]` — list chat participants with activity statistics. Arguments:
+  - `limit: N` — max users to return. Defaults to the handler's default.
+  - `min_messages: N` — minimum message count for inclusion. Defaults to 1.
+  - `last_active: N` — only users active within last N days.
+  - Example: `/users`, `/users limit=20 min_messages=100`.
+
+**LLM tools** (always registered when `ChatSearchHandler` is constructed, gated only by the handler-level `[search-history].enabled` switch, each gated by the chat's `ALLOW_TOOLS_COMMANDS` setting):
+- `search_messages(query, limit?, max_age_days?, user_name?, thread_message_id?)` — semantic search over chat history. Uses embeddings to find messages similar to `query`. `limit` defaults to `[search-history.defaults].max-results` (10). `max_age_days` defaults to `[search-history.defaults].default-days` (30). `user_name` filters by username. `thread_message_id` restricts to a thread. Returns matching message texts with metadata.
+- `list_users(limit?, min_messages?)` — list chat participants with activity statistics. `limit` defaults to 50, `min_messages` defaults to 1. Returns username, display name, and message count per user.
+- `get_thread(message_id)` — retrieve full conversation thread for a given root message. Returns all messages in chronological order.
+
+**Per-chat backfill:** Even when a chat only just opted in to `EMBEDDINGS_ENABLED`, the `ChatSearchHandler._dtCronJob` `CRON_JOB` tick (every 60s) will close the gap for chats with `EMBEDDINGS_ENABLED = true` and no `message_embeddings` rows (greedy pass), plus any chat with `REGENERATE_EMBEDDINGS = true` (explicit trigger). Per-tick batch size is capped at `[search-history.embeddings].reindex-batch-size` (default 100 messages) with a small inter-message sleep (`BACKFILL_INTER_MESSAGE_DELAY_SECS = 0.1`) so a long pass does not monopolise the asyncio loop; the next tick picks up where the previous one stopped, so a backlog naturally walks down minute by minute. There is no separate `BackfillWorker` class — the backfill duty lives in `ChatSearchHandler`.
+
+---
+
 ### `[proxy]`
 
 Global proxy configuration for routing outbound HTTP traffic through an HTTP or SOCKS5 proxy. Defaults live in [`configs/00-defaults/proxy.toml`](../../configs/00-defaults/proxy.toml).
@@ -445,6 +505,35 @@ password = ""
 ```
 
 **When `enabled` is omitted from the `[service.proxy]` sub-section**, `ProxyConfig.fromServiceConfig()` produces a config with `enabled=False`, which `getCombined()` treats as "inherit from global." The per-service override fields (`type`, `address`, etc.) are ignored. Always include `enabled = true` when you intend to override the global proxy for a specific service.
+
+#### `[proxy.lifecycle]`
+
+Optional sub-section for managing the proxy process lifecycle (start, health-check, restart, stop). Omit the entire section to disable lifecycle management. Defaults live in [`configs/00-defaults/proxy.toml`](../../configs/00-defaults/proxy.toml).
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `start-command` | list[str] | `[]` | Command and arguments to start the proxy process. Executed via `asyncio.create_subprocess_exec` on startup. |
+| `stop-command` | list[str] | `[]` | Command to stop the proxy process. Executed on shutdown and before restart (if no `restart-command`). |
+| `restart-command` | list[str] | `[]` | Command to restart the proxy. Optional — if omitted, restart = stop + start sequentially. |
+| `health-check-type` | `"none"` \| `"url"` \| `"command"` | `"none"` | Health check mechanism. `"none"`: no monitoring. `"url"`: HTTP GET through the proxy; 2xx = pass. `"command"`: run command; exit 0 = pass. |
+| `health-check-url` | str | `""` | URL to probe when `health-check-type = "url"`. |
+| `health-check-command` | list[str] | `[]` | Command to run when `health-check-type = "command"`. |
+| `health-check-interval` | int | `5` | Health check interval in minutes. The CRON_JOB fires every ~60s; the check runs every Nth tick (gated by modulo counter). |
+
+**Example:**
+```toml
+[proxy]
+enabled = true
+type = "socks5"
+address = "socks5://localhost:1080"
+
+[proxy.lifecycle]
+start-command = ["ssh", "-D", "1080", "-N", "proxy-host"]
+stop-command = ["pkill", "-f", "ssh -D 1080"]
+health-check-type = "url"
+health-check-url = "http://httpbin.org/ip"
+health-check-interval = 5
+```
 
 **Services that support proxy:** Telegram bot, Max Messenger bot, all OpenAI-compatible LLM providers, OpenRouter `listRemoteModels()`, image downloads, Yandex Search (including web-fetch), OpenWeatherMap, Geocode Maps, sqlink database providers.
 
@@ -583,6 +672,7 @@ Used by `scripts/sandbox_bootstrap.py` — not by the library itself.
 | `getGeocodeMapsConfig()` | `Dict[str, Any]` | `[geocode-maps]` section |
 | `getStatsConfig()` | `Dict[str, Any]` | `[stats]` section |
 | `getProxyConfig()` | `Dict[str, Any]` | `[proxy]` section |
+| `getSearchHistoryConfig()` | `Dict[str, Any]` | `[search-history]` section (returns `{}` when missing) |
 
 ---
 
@@ -643,4 +733,4 @@ apiKey: str = myConfig.get("api-key", "")
 ---
 
 *This guide is auto-maintained and should be updated whenever configuration sections change*
-*Last updated: 2026-05-23*
+*Last updated: 2026-06-26*

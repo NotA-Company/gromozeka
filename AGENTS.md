@@ -37,6 +37,10 @@ These come from [`docs/llm/index.md`](docs/llm/index.md):
   and `Returns:` describing all params and return type.
 - **Type hints required** on all function/method params and returns; on
   locals when type isn't obvious.
+- **No `Any` type.** Never use `Any` except when a method genuinely accepts
+  any type (e.g., a generic container, a passthrough decorator). Always use
+  the concrete type. For singletons, import the class and use it directly
+  rather than typing parameters as `Any`.
 - Run Python via `./venv/bin/python3` — not `python` / `python3`.
 - **`requirements.txt` is a frozen/locked file.** Never add non-pinned dependency
   entries there. When adding a new direct dependency, add it to

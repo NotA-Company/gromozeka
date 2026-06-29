@@ -45,6 +45,10 @@ from .base import (
     QueryResult,
     QueryResultFetchAll,
     QueryResultFetchOne,
+    VectorColumnDef,
+    VectorColumnType,
+    VectorDistanceMetric,
+    VectorSearchResult,
 )
 from .sqlink import SQLinkProvider
 from .sqlite3 import SQLite3Provider
@@ -146,4 +150,8 @@ __all__ = [
     "ExcludedValue",
     "QueryResultFetchAll",
     "QueryResultFetchOne",
+    "VectorColumnDef",
+    "VectorColumnType",
+    "VectorDistanceMetric",
+    "VectorSearchResult",
 ]

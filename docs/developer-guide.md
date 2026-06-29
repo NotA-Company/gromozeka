@@ -133,7 +133,7 @@ The project is organized in a strict layered architecture where each layer only 
 | Pattern | Where Used | Purpose |
 |---|---|---|
 | Singleton | [`CacheService`](internal/services/cache/service.py:88), [`QueueService`](internal/services/queue_service/service.py), [`RateLimiterManager`](lib/rate_limiter/manager.py:12) | Shared state across handlers |
-| Abstract Base Class | [`AbstractModel`](lib/ai/abstract.py:19), [`AbstractLLMProvider`](lib/ai/abstract.py:257), [`CacheInterface`](lib/cache/interface.py:15), [`BaseMigration`](internal/database/migrations/base.py:9) | Type-safe extensibility |
+| Abstract Base Class | [`AbstractModel`](lib/ai/abstract.py:47), [`AbstractLLMProvider`](lib/ai/abstract.py:904), [`CacheInterface`](lib/cache/interface.py:15), [`BaseMigration`](internal/database/migrations/base.py:9) | Type-safe extensibility |
 | Chain of Responsibility | Handler pipeline in [`HandlersManager`](internal/bot/common/handlers/manager.py:177) | Sequential/parallel message processing |
 | Multi-source Router | [`Database`](internal/database/database.py) | Chat-to-database routing |
 | Decorator-based Discovery | `@commandHandlerV2` decorator, [`CommandHandlerMixin`](internal/bot/models) | Auto-discovery of bot commands |
@@ -155,7 +155,13 @@ gromozeka/
 │   ├── 00-defaults/                # Base default configs (loaded first)
 │   │   ├── 00-config.toml          # Core settings (bot, db, rate limiter, APIs)
 │   │   └── bot-defaults.toml       # Per-chat-type and global bot defaults
-│   └── common/                     # Common overrides
+│   ├── common/                     # Common environment overrides
+│   ├── local/                      # Local development overrides
+│   ├── local-telegram/             # Local Telegram-specific overrides
+│   ├── local-max/                  # Local Max-specific overrides
+│   ├── prod/                       # Production overrides
+│   ├── prod-telegram/              # Production Telegram-specific overrides
+│   └── prod-max/                   # Production Max-specific overrides
 
 ├── internal/                       # Application-specific internal code
 │   ├── bot/                        # Bot layer
@@ -226,7 +232,7 @@ gromozeka/
 │   │       ├── base.py             # BaseMigration abstract class
 │   │       ├── manager.py          # MigrationManager - auto-discovery + apply
 │   │       ├── create_migration.py # Script to scaffold new migrations
-│   │       └── versions/           # Migration files (migration_001 to migration_016)
+│   │       └── versions/           # Migration files (migration_001 to migration_018)
 │   │
 │   ├── services/                   # Service layer (singletons)
 │   │   ├── cache/                  # Cache service
@@ -252,6 +258,7 @@ gromozeka/
 │   │   └── providers/              # Concrete LLM provider implementations
 │   │       ├── basic_openai_provider.py
 │   │       ├── custom_openai_provider.py
+│   │       ├── fastembed_provider.py
 │   │       ├── openrouter_provider.py
 │   │       ├── yc_openai_provider.py
 │   │       └── yc_sdk_provider.py
@@ -550,7 +557,7 @@ The database layer provides SQL access via [`Database`](internal/database/databa
 
 ### Database
 
-[`Database`](internal/database/database.py) is the main interface to the database It supports multiple named database providers, with per-chat routing so different chats can use different databases The database uses a repository pattern with 12 specialized repositories for different data domains
+[`Database`](internal/database/database.py) is the main interface to the database It supports multiple named database providers, with per-chat routing so different chats can use different databases The database uses a repository pattern with 14 specialized repositories for different data domains
 
 ```python
 from internal.database import Database
@@ -576,7 +583,7 @@ db = Database(config={
 
 ### Repository Pattern
 
-The database layer uses a repository pattern with 12 specialized repositories Each repository handles a specific data domain and provides type-safe methods for data access
+The database layer uses a repository pattern with 14 specialized repositories Each repository handles a specific data domain and provides type-safe methods for data access
 
 | Repository | File | Purpose |
 |---|---|---|
@@ -588,6 +595,8 @@ The database layer uses a repository pattern with 12 specialized repositories Ea
 | [`ChatUsersRepository`](internal/database/repositories/chat_users.py) | `chat_users.py` | Per-chat user metadata operations |
 | [`CommonRepository`](internal/database/repositories/common.py) | `common.py` | Common database operations |
 | [`DelayedTasksRepository`](internal/database/repositories/delayed_tasks.py) | `delayed_tasks.py` | Background task queue operations |
+| [`ChatSearchRepository`](internal/database/repositories/chat_search.py) | `chat_search.py` | Message search and user listing operations |
+| [`ChatEmbeddingsRepository`](internal/database/repositories/chat_embeddings.py) | `chat_embeddings.py` | Message embedding operations |
 | [`DivinationRepository`](internal/database/repositories/divinations.py) | `divinations.py` | Tarot/runes readings and layout discovery operations |
 | [`MediaAttachmentsRepository`](internal/database/repositories/media_attachments.py) | `media_attachments.py` | Media metadata operations |
 | [`SpamRepository`](internal/database/repositories/spam.py) | `spam.py` | Spam detection operations |
@@ -645,7 +654,7 @@ The schema is defined and evolved through migrations. Key tables include:
 
 | Table | Purpose |
 |---|---|
-| `chats` | Chat metadata (id, type, title, etc.) |
+| `chat_info` | Chat metadata (id, type, title, etc.) |
 | `chat_settings` | Per-chat key-value bot settings |
 | `chat_users` | Per-chat user metadata, join counts, message counts |
 | `chat_messages` | Message history for LLM context |
@@ -684,7 +693,7 @@ class Migration(BaseMigration):
         await sqlProvider.execute("DROP TABLE IF EXISTS my_new_table")
 ```
 
-Migrations are applied automatically on [`Database`](internal/database/database.py) initialization The schema version is tracked in a `schema_migrations` table.
+Migrations are applied automatically on [`Database`](internal/database/database.py) initialization The schema version is tracked in the `settings` table using the `db-migration-version` and `db-migration-last-run` keys.
 
 ### How to Add a Migration
 
@@ -726,8 +735,10 @@ The handler system is the core of message processing All incoming messages go th
    - ConfigureCommandHandler, SummarizationHandler, UserDataHandler,
      DevCommandsHandler, MediaHandler, CommonHandler, HelpHandler
    - Platform-specific handlers (Telegram-only)
-   - Config-gated handlers: DivinationHandler (if divination.enabled),
-     WeatherHandler, YandexSearchHandler, ResenderHandler
+   - Config-gated handlers: WeatherHandler (if enabled),
+     YandexSearchHandler (if enabled), ResenderHandler (if enabled),
+     DivinationHandler (if divination.enabled), SandboxHandler (if sandbox.enabled),
+     ChatSearchHandler (if search-history.enabled)
    - Custom handlers via CustomHandlerLoader.loadAll() (if custom-handlers.enabled)
 3. LLMMessageHandler is registered last (always SEQUENTIAL)
 4. Messages flow through handlers in the specified order
@@ -755,10 +766,12 @@ Incoming Message
         ├── HelpHandler
         ├── ReactOnUserMessageHandler (Telegram only)
         ├── TopicManagerHandler (Telegram only)
-        ├── DivinationHandler (if enabled)
         ├── WeatherHandler (if enabled)
         ├── YandexSearchHandler (if enabled)
         ├── ResenderHandler (if enabled)
+        ├── DivinationHandler (if enabled)
+        ├── SandboxHandler (if enabled)
+        ├── ChatSearchHandler (if enabled)
         ├── [custom handlers via CustomHandlerLoader]
         │
         ▼
@@ -865,10 +878,12 @@ async def myCommandHandler(
 | `HelpHandler` | [`help_command.py`](internal/bot/common/handlers/help_command.py) | `/help` command |
 | `ReactOnUserMessageHandler` | [`react_on_user.py`](internal/bot/common/handlers/react_on_user.py) | User join/leave reactions |
 | `TopicManagerHandler` | [`topic_manager.py`](internal/bot/common/handlers/topic_manager.py) | Forum topic management |
-| `DivinationHandler` | [`divination.py`](internal/bot/common/handlers/divination.py) | `/taro` and `/runes` divination commands |
 | `WeatherHandler` | [`weather.py`](internal/bot/common/handlers/weather.py) | Weather query handler |
 | `YandexSearchHandler` | [`yandex_search.py`](internal/bot/common/handlers/yandex_search.py) | Web search handler |
 | `ResenderHandler` | [`resender.py`](internal/bot/common/handlers/resender.py) | Message forwarding |
+| `DivinationHandler` | [`divination.py`](internal/bot/common/handlers/divination.py) | `/taro` and `/runes` divination commands |
+| `SandboxHandler` | [`sandbox.py`](internal/bot/common/handlers/sandbox.py) | Sandboxed code execution (if sandbox.enabled) |
+| `ChatSearchHandler` | [`chat_search.py`](internal/bot/common/handlers/chat_search.py) | `/search` command and message search LLM tools (if search-history.enabled) |
 | `LLMMessageHandler` | [`llm_messages.py`](internal/bot/common/handlers/llm_messages.py) | Main AI conversation handler |
 
 ### How to Create a New Handler
@@ -1133,7 +1148,7 @@ await queueService.enqueue(
 
 ### LLMService
 
-[`LLMService`](internal/services/llm/service.py) wraps [`LLMManager`](lib/ai/manager.py:17) as a singleton service
+[`LLMService`](internal/services/llm/service.py) wraps [`LLMManager`](lib/ai/manager.py:49) as a singleton service
 
 ```python
 from internal.services.llm import LLMService
@@ -1173,10 +1188,12 @@ The AI system provides a provider-agnostic interface for interacting with multip
 
 | Class | File | Description |
 |---|---|---|
-| [`LLMManager`](lib/ai/manager.py:17) | `manager.py` | Top-level registry of providers and models |
-| [`AbstractLLMProvider`](lib/ai/abstract.py:257) | `abstract.py` | Base class for providers |
-| [`AbstractModel`](lib/ai/abstract.py:19) | `abstract.py` | Base class for individual models |
-| `CustomOpenAIProvider` | `providers/custom_openai_provider.py` | OpenAI-compatible API provider |
+| [`LLMManager`](lib/ai/manager.py:49) | `manager.py` | Top-level registry of providers and models |
+| [`AbstractLLMProvider`](lib/ai/abstract.py:904) | `abstract.py` | Base class for providers |
+| [`AbstractModel`](lib/ai/abstract.py:47) | `abstract.py` | Base class for individual models |
+| `BasicOpenAIProvider` | `providers/basic_openai_provider.py` | Base OpenAI-compatible API provider |
+| `CustomOpenAIProvider` | `providers/custom_openai_provider.py` | OpenAI-compatible API provider (extends BasicOpenAIProvider) |
+| `FastembedProvider` | `providers/fastembed_provider.py` | Fast embedding model provider |
 | `OpenrouterProvider` | `providers/openrouter_provider.py` | OpenRouter.ai provider |
 | `YcOpenaiProvider` | `providers/yc_openai_provider.py` | Yandex Cloud OpenAI-compatible |
 | `YcAIProvider` | `providers/yc_sdk_provider.py` | Yandex Cloud native SDK (supports structured output, tool calling, multiple auth methods) |
@@ -1221,7 +1238,7 @@ if result.status == ModelResultStatus.SUCCESS:
 
 **Adding a new LLM provider:**
 
-1. Create `lib/ai/providers/my_provider.py` implementing [`AbstractLLMProvider`](lib/ai/abstract.py:257) and the model class extending [`AbstractModel`](lib/ai/abstract.py:19)
+1. Create `lib/ai/providers/my_provider.py` implementing [`AbstractLLMProvider`](lib/ai/abstract.py:904) and the model class extending [`AbstractModel`](lib/ai/abstract.py:47)
 2. Register it in [`LLMManager._initProviders()`](lib/ai/manager.py:36) by adding it to `providerTypes`:
 
 ```python
@@ -2568,13 +2585,13 @@ from internal.database.migrations.base import BaseMigration
 
 
 class Migration(BaseMigration):
-    """Adds my_column to the chats table
+    """Adds my_column to the chat_info table
 
     This migration adds a new column to support the XYZ feature.
     """
 
     version: int = 13
-    description: str = "Add my_column to chats table"
+    description: str = "Add my_column to chat_info table"
 
     async def up(self, sqlProvider: BaseSQLProvider) -> None:
         """Apply migration: add my_column
@@ -2583,7 +2600,7 @@ class Migration(BaseMigration):
             sqlProvider: SQL provider for executing SQL
         """
         await sqlProvider.execute("""
-            ALTER TABLE chats
+            ALTER TABLE chat_info
             ADD COLUMN my_column TEXT DEFAULT NULL
         """)
 
@@ -2596,7 +2613,7 @@ class Migration(BaseMigration):
         Args:
             sqlProvider: SQL provider for executing SQL
         """
-        # SQLite 3.35+: await sqlProvider.execute("ALTER TABLE chats DROP COLUMN my_column")
+        # SQLite 3.35+: await sqlProvider.execute("ALTER TABLE chat_info DROP COLUMN my_column")
         pass
 ```
 
@@ -2652,9 +2669,9 @@ myValue: str = settings.get(ChatSettingsKey.MY_NEW_SETTING, "default_value")
 | Database | [`internal/database/database.py`](internal/database/database.py) → `Database` |
 | Database source config | [`internal/database/database.py`](internal/database/database.py) → `SourceConfig` |
 | Cache service | [`internal/services/cache/service.py:88`](internal/services/cache/service.py:88) → `CacheService` |
-| LLM manager | [`lib/ai/manager.py:17`](lib/ai/manager.py:17) → `LLMManager` |
-| LLM abstract model | [`lib/ai/abstract.py:19`](lib/ai/abstract.py:19) → `AbstractModel` |
-| LLM abstract provider | [`lib/ai/abstract.py:257`](lib/ai/abstract.py:257) → `AbstractLLMProvider` |
+| LLM manager | [`lib/ai/manager.py:49`](lib/ai/manager.py:49) → `LLMManager` |
+| LLM abstract model | [`lib/ai/abstract.py:47`](lib/ai/abstract.py:47) → `AbstractModel` |
+| LLM abstract provider | [`lib/ai/abstract.py:904`](lib/ai/abstract.py:904) → `AbstractLLMProvider` |
 | Rate limiter manager | [`lib/rate_limiter/manager.py:12`](lib/rate_limiter/manager.py:12) → `RateLimiterManager` |
 | Cache interface | [`lib/cache/interface.py:15`](lib/cache/interface.py:15) → `CacheInterface[K, V]` |
 | Migration base class | [`internal/database/migrations/base.py:9`](internal/database/migrations/base.py:9) → `BaseMigration` |

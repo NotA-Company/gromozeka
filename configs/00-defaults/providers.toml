@@ -13,3 +13,7 @@ type = "yc-sdk"
 folder_id = "${YC_FOLDER_ID}"
 # Optional: specify yc profile (uncomment if needed)
 #yc_profile = "profile-id"
+
+# Local embedding provider (fastembed-backed; multi-model).
+[models.providers.fastembed]
+type = "fastembed"

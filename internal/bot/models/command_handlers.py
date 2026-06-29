@@ -6,11 +6,17 @@ import inspect
 import logging
 from collections.abc import Awaitable
 from enum import Enum, IntEnum, auto
-from typing import Any, Callable, Optional, Sequence, Set
+from typing import TYPE_CHECKING, Callable, Optional, Sequence, Set, TypeVar
 
 from internal.bot.common.models import TypingAction, UpdateObjectType
 
 from .ensured_message import EnsuredMessage
+
+if TYPE_CHECKING:
+    from internal.bot.common.handlers.base import BaseBotHandler
+    from internal.bot.common.typing_manager import TypingManager
+
+_HandlerSelfT = TypeVar("_HandlerSelfT", bound="BaseBotHandler")
 
 logger = logging.getLogger(__name__)
 
@@ -84,8 +90,12 @@ class CommandHandlerOrder(IntEnum):
     """Last priority commands"""
 
 
-CommandHandlerFuncUnbound = Callable[[Any, EnsuredMessage, str, str, UpdateObjectType, Optional[Any]], Awaitable[None]]
-CommandHandlerFuncBound = Callable[[EnsuredMessage, str, str, UpdateObjectType, Optional[Any]], Awaitable[None]]
+CommandHandlerFuncUnbound = Callable[
+    [_HandlerSelfT, EnsuredMessage, str, str, UpdateObjectType, Optional["TypingManager"]], Awaitable[None]
+]
+CommandHandlerFuncBound = Callable[
+    [EnsuredMessage, str, str, UpdateObjectType, Optional["TypingManager"]], Awaitable[None]
+]
 # CommandHandlerFunc = CommandHandlerFuncBound | CommandHandlerFuncUnbound
 
 

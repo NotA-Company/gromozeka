@@ -1,0 +1,14 @@
+# Chat History Search Configuration
+# See docs/plans/chat-history-search-plan.md
+
+[search-history]
+enabled = false
+
+[search-history.embeddings]
+# Default embedding model is set per-chat via the `EMBEDDING_MODEL`
+# chat setting (see configs/00-defaults/bot-defaults.toml).
+reindex-batch-size = 100
+
+[search-history.defaults]
+max-results = 10
+default-days = 30

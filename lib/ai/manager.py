@@ -38,6 +38,7 @@ from lib.stats import NullStatsStorage, StatsStorage
 
 from .abstract import AbstractLLMProvider, AbstractModel
 from .providers.custom_openai_provider import CustomOpenAIProvider
+from .providers.fastembed_provider import FastembedProvider
 from .providers.openrouter_provider import OpenrouterProvider
 from .providers.yc_openai_provider import YcOpenaiProvider
 from .providers.yc_sdk_provider import YcAIProvider
@@ -103,6 +104,8 @@ class LLMManager:
         - openrouter: OpenRouter API
         - yc-sdk: Yandex Cloud SDK provider
         - custom-openai: Custom OpenAI-compatible endpoint
+        - fastembed: Local fastembed-backed embedding provider
+          (multi-model; ``fastembed`` is an optional dependency)
 
         Logs errors for failed provider initializations but continues with
         successfully initialized providers.
@@ -117,6 +120,7 @@ class LLMManager:
             "openrouter": OpenrouterProvider,
             "yc-sdk": YcAIProvider,
             "custom-openai": CustomOpenAIProvider,
+            "fastembed": FastembedProvider,
         }
 
         for provider_name, provider_config in providers_config.items():
