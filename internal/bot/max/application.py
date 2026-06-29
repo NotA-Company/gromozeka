@@ -286,7 +286,12 @@ class MaxBotApplication:
         if maskedUrl:
             logger.info("Proxy enabled for Max bot: %s", maskedUrl)
 
-        self.maxBot = libMax.MaxBotClient(self.botToken, proxyConfig=proxyConfig)
+        # --- TLS: trust Минцифры CA for platform-api2.max.ru ---
+        self.maxBot = libMax.MaxBotClient(
+            self.botToken,
+            proxyConfig=proxyConfig,
+            caBundlePath=botConfig.get("max-ca-bundle", ""),
+        )
 
         try:
             botInfo = await self.maxBot.getMyInfo()

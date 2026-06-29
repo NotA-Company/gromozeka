@@ -1375,10 +1375,15 @@ await client.sendMessage(
 **Constants** from [`lib/max_bot/constants.py`](lib/max_bot/constants.py):
 
 ```python
-API_BASE_URL = "https://botapi.max.ru/"
+# Max API v2 (platform-api2.max.ru). Old endpoints kept as comments only:
+#   - https://platform-api.max.ru  — original endpoint (deprecated)
+#   - https://botapi.max.ru        — legacy endpoint
+API_BASE_URL = "https://platform-api2.max.ru"
 DEFAULT_TIMEOUT = 30
-MAX_RETRIES = 3
+MAX_RETRIES = 5
 RETRY_BACKOFF_FACTOR = 1.0
+# platform-api2 enforces 30 rps (down from 100 on platform-api.max.ru)
+DEFAULT_RATE_LIMIT = 30
 ```
 
 ### 8.5 OpenWeatherMap Client (`lib/openweathermap/`)

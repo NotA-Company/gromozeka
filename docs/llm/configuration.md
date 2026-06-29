@@ -47,6 +47,8 @@
 | `spam-button-salt` | str | Salt for signing spam action buttons |
 | `max-tasks` | int | Global task queue limit (default: 1024) |
 | `max-tasks-per-chat` | int | Per-chat queue limit (default: 512) |
+| `use-proxy` | bool | Route bot platform traffic through the global proxy (requires `[proxy].enabled = true`) |
+| `max-ca-bundle` | str | Directory with additional PEM CA certs for the Max API (`platform-api2.max.ru`, Минцифры CA). Path relative to `application.root-dir` (typically `storage/`). Default: `"../certs/max"` resolves to `<repo-root>/certs/max/`. Set to `""` to use system CAs. Max mode only. |
 | `defaults` | dict | Default chat settings for all chats |
 | `private-defaults` | dict | Default settings for private chats |
 | `group-defaults` | dict | Default settings for group chats |

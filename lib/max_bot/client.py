@@ -8,6 +8,7 @@ the Max Messenger Bot API using httpx with proper authentication and error handl
 import asyncio
 import inspect
 import logging
+import ssl
 import types
 from collections.abc import Awaitable
 from typing import Any, Callable, Dict, List, Optional, Sequence, Union
@@ -68,6 +69,7 @@ from .models import (
     UploadType,
 )
 from .models.update import Update
+from .utils import buildMaxSslContext
 
 logger = logging.getLogger(__name__)
 
@@ -99,10 +101,11 @@ class MaxBotClient:
 
     Attributes:
         accessToken: The bot access token for API authentication
-        baseUrl: Base URL for the API (default: https://platform-api.max.ru)
+        baseUrl: Base URL for the API (default: https://platform-api2.max.ru)
         timeout: Request timeout in seconds (default: 30)
-        maxRetries: Maximum number of retry attempts (default: 3)
+        maxRetries: Maximum number of retry attempts (default: 5)
         retryBackoffFactor: Backoff factor for retry delays (default: 1.0)
+        caBundlePath: Optional path to CA certificate directory for custom TLS trust
     """
 
     __slots__ = (
@@ -116,6 +119,7 @@ class MaxBotClient:
         "_isPolling",
         "_myInfo",
         "_proxyConfig",
+        "_sslContext",
     )
 
     def __init__(
@@ -126,18 +130,23 @@ class MaxBotClient:
         maxRetries: int = MAX_RETRIES,
         retryBackoffFactor: float = RETRY_BACKOFF_FACTOR,
         proxyConfig: Optional[ProxyConfig] = None,
+        caBundlePath: Optional[str] = None,
     ) -> None:
         """Initialize the Max Bot client.
 
         Args:
             accessToken: Bot access token for API authentication
-            baseUrl: Base URL for the API (default: https://platform-api.max.ru)
+            baseUrl: Base URL for the API (default: https://platform-api2.max.ru)
             timeout: Request timeout in seconds (default: 30)
-            maxRetries: Maximum number of retry attempts (default: 3)
+            maxRetries: Maximum number of retry attempts (default: 5)
             retryBackoffFactor: Backoff factor for retry delays (default: 1.0)
             proxyConfig: Optional keyword arguments to spread into httpx.AsyncClient
                 for proxy support (e.g. {"proxy": "http://proxy:8080"} or
                 {"transport": AsyncProxyTransport(...)}). Defaults to None (no proxy).
+            caBundlePath: Path to a directory containing additional CA certificate
+                PEM files (e.g. Минцифры CA certs for platform-api2.max.ru).
+                Passed to ``buildMaxSslContext()``. When None or empty string,
+                httpx uses its default CA bundle.
 
         Raises:
             ConfigurationError: If accessToken is empty or invalid
@@ -157,6 +166,7 @@ class MaxBotClient:
         self._proxyConfig: ProxyConfig = (
             proxyConfig if proxyConfig is not None else ProxyConfig(proxyType=ProxyType.NONE)
         )
+        self._sslContext: Optional[ssl.SSLContext] = buildMaxSslContext(caBundlePath) if caBundlePath else None
 
         logger.debug(f"MaxBotClient initialized for {self.baseUrl}")
 
@@ -197,9 +207,10 @@ class MaxBotClient:
 
         if getNew or httpClient is None or httpClient.is_closed:
             httpClient = httpx.AsyncClient(
-                **self._proxyConfig.toKwargs(),
+                **self._proxyConfig.toKwargs(verify=self._sslContext),
                 base_url=self.baseUrl,
                 timeout=httpx.Timeout(self.timeout),
+                verify=self._sslContext if self._sslContext else True,
                 headers={
                     "User-Agent": f"Gromozeka/{VERSION}",
                 },
@@ -494,37 +505,6 @@ class MaxBotClient:
             return False
 
     # Phase 3: Basic Operations
-
-    # Chat Management Methods
-    async def getChats(self, count: int = 50, marker: Optional[int] = None) -> ChatList:
-        """Get list of chats where the bot participated.
-
-        Returns information about chats where the bot participated. The result includes
-        a list of chats and a marker for navigating to the next page.
-
-        Args:
-            count: Number of chats to request (1-100, default: 50)
-            marker: Pointer to the next page of data. Pass null for the first page
-
-        Returns:
-            Paginated list of chats
-
-        Raises:
-            AuthenticationError: If access token is invalid
-            NetworkError: If network request fails
-
-        Example:
-            >>> async with MaxBotClient("token") as client:
-            ...     chats = await client.getChats(count=20)
-            ...     for chat in chats.chats:
-            ...         print(f"Chat: {chat.title}")
-        """
-        params = {"count": count}
-        if marker is not None:
-            params["marker"] = marker
-
-        response = await self.get("/chats", params=params)
-        return ChatList.from_dict(response)
 
     async def getChat(self, chatId: int) -> Chat:
         """Get information about a chat by its ID.

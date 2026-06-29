@@ -8,6 +8,7 @@ This module lives in ``lib/`` and has **no** imports from ``internal/``.
 """
 
 import logging
+import ssl
 from enum import StrEnum
 from threading import Lock
 from typing import Any, Dict, Optional, TypedDict, cast
@@ -429,8 +430,14 @@ class ProxyConfig:
             password=(config.password or "") if not maskPassword else "REDACTED",
         )
 
-    def toKwargs(self) -> ProxyKwargs:
+    def toKwargs(self, *, verify: Optional["ssl.SSLContext"] = None) -> ProxyKwargs:
         """Convert this proxy config to httpx-compatible keyword arguments.
+
+        Args:
+            verify: Optional SSL context for custom CA trust (e.g. Минцифры CA
+                certs). When provided and the proxy type is SOCKS5, passed to
+                ``AsyncProxyTransport.from_url(url, verify=verify)``. Ignored
+                for HTTP proxies. Defaults to None (system CAs).
 
         Returns:
             A ProxyKwargs TypedDict with either ``proxy`` key (HTTP) or
@@ -461,6 +468,8 @@ class ProxyConfig:
                     "SOCKS5 proxy requires httpx-socks[asyncio] package. "
                     "Install with: pip install httpx-socks[asyncio]"
                 )
+            if verify is not None:
+                return ProxyKwargs(transport=AsyncProxyTransport.from_url(proxyUrl, verify=verify))
             return ProxyKwargs(transport=AsyncProxyTransport.from_url(proxyUrl))
 
         raise ValueError(f"Unsupported proxy type: {config.type!r}. Must be 'none', 'http' or 'socks5'.")

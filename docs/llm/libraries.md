@@ -424,8 +424,14 @@ from lib.max_bot import MaxBotClient, MAX_MESSAGE_LENGTH
 
 **Key class:** [`MaxBotClient`](../../lib/max_bot/client.py) — async HTTP client for Max Bot API
 
+**API endpoint:** [`API_BASE_URL`](../../lib/max_bot/constants.py) = `https://platform-api2.max.ru` (Max API v2; migrated from the deprecated `platform-api.max.ru` and legacy `botapi.max.ru`, both kept as comments only). Deadline: 2026-07-19.
+
+**TLS / Минцифры CA certs:** the v2 endpoint is signed by the Russian Ministry of Digital Development (Минцифры) root CA, which is not in the system bundle. `libMax.utils.buildMaxSslContext(caBundlePath)` loads the additional PEM files from the `[bot].max-ca-bundle` directory into an `ssl.SSLContext`. The path resolves relative to the current working directory at call time (same convention as every other project path); the default value is `"../certs/max"`, which — because `application.root-dir` is `"storage"` — resolves to `<repo-root>/certs/max/`. The `caBundlePath` is passed to `MaxBotClient(caBundlePath=...)`, which builds the SSL context internally via `buildMaxSslContext()` and forwards it to `httpx.AsyncClient(verify=...)` in `_getHttpClient`. When the key is empty/unset, httpx falls back to its default CA bundle. SOCKS5 proxy caveat: httpx ignores the top-level `verify=` when a custom `transport=` is supplied, so the SSL context is threaded into the transport via `ProxyConfig.toKwargs(verify=self._sslContext)` (which calls `AsyncProxyTransport.from_url(url, verify=sslContext)` for SOCKS5); the `"transport" not in clientKwargs` guard then skips the redundant client-level `verify=`.
+
 **Key constants:**
 - `MAX_MESSAGE_LENGTH` — max message length for Max platform
+- `DEFAULT_RATE_LIMIT` — `30` requests per second (down from `100` on the deprecated `platform-api.max.ru`; enforced server-side on platform-api2)
+- `MAX_RETRIES` — `5`
 
 **Key model submodules:**
 - [`lib/max_bot/models/message.py`](../../lib/max_bot/models/message.py) — Message models
@@ -439,6 +445,10 @@ from lib.max_bot import MaxBotClient, MAX_MESSAGE_LENGTH
 Animated stickers have stub URLs, not real images. Always check `url.startswith(...)` before processing
 
 **Proxy support:** `MaxBotClient.__init__()` accepts an optional `proxyKwargs` keyword argument (dict to spread into `httpx.AsyncClient`). When proxy is enabled for the bot, `MaxBotApplication._runPolling()` creates a `ProxyConfig` via `ProxyConfig.fromServiceConfig()` and passes the resulting kwargs from `ProxyConfig.toKwargs()`.
+
+**SSL support:** `MaxBotClient.__init__()` also accepts an optional `caBundlePath: Optional[str]` keyword argument. When provided, the client builds an `ssl.SSLContext` internally via `buildMaxSslContext(caBundlePath)` and forwards it to `httpx.AsyncClient(verify=...)`. For SOCKS5 proxies the context is threaded into the transport via `ProxyConfig.toKwargs(verify=self._sslContext)` (so `AsyncProxyTransport.from_url(url, verify=sslContext)` is used); the client-level `verify=` is then skipped via the `"transport" not in clientKwargs` guard. The `caBundlePath` value comes from the `max-ca-bundle` config key — see TLS note above.
+
+**Deprecated:** `MaxBotClient.getChats()` (`GET /chats`) is deprecated on platform-api2 — see the `getChats()` docstring. Prefer subscription-based chat discovery.
 
 ---
 

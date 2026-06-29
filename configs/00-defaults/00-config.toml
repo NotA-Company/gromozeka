@@ -30,6 +30,14 @@ use-proxy = false
 # user = "${BOT_PROXY_USER}"
 # password = "${BOT_PROXY_PASSWORD}"
 
+# --- Max API TLS ---
+# Path to directory containing additional CA certificates for Max Messenger
+# API (platform-api2.max.ru). Required because the new endpoint uses
+# certificates issued by the Russian Минцифры CA, which is not in standard
+# CA bundles. Path is relative to the application root directory.
+# Set to empty string to use system defaults (not recommended for Max mode).
+max-ca-bundle = "../certs/max"
+
 [database]
 default = "default"
 
