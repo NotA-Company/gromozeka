@@ -36,7 +36,10 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-async def _loadSqliteVecExtension(connection: aiosqlite.Connection) -> Optional[str]:
+async def _loadSqliteVecExtension(
+    connection: aiosqlite.Connection,
+    extensionPath: str,
+) -> Optional[str]:
     """Load sqlite-vec into an aiosqlite connection.
 
     Uses aiosqlite's built-in extension-loading API. Enables extension
@@ -45,6 +48,8 @@ async def _loadSqliteVecExtension(connection: aiosqlite.Connection) -> Optional[
 
     Args:
         connection: Open aiosqlite connection.
+        extensionPath: Filesystem path to the ``vec0`` shared library to
+            load. 
 
     Returns:
         sqlite-vec version string on success, or ``None`` if loading
@@ -58,7 +63,7 @@ async def _loadSqliteVecExtension(connection: aiosqlite.Connection) -> Optional[
     try:
         await connection.enable_load_extension(True)
         try:
-            await connection.load_extension(sqlite_vec.loadable_path())
+            await connection.load_extension(extensionPath)
             async with connection.execute("SELECT vec_version()") as cursor:
                 row = await cursor.fetchone()
                 if row is None:
@@ -92,6 +97,7 @@ class SQLite3Provider(BaseSQLProvider):
         "keepConnection",
         "_connection",
         "_connectLock",
+        "_vectorExtensionPath",
         "_vectorSearchAvailable",
     )
 
@@ -104,6 +110,7 @@ class SQLite3Provider(BaseSQLProvider):
         timeout: int = 30,
         enableForeignKeys: bool = True,
         keepConnection: Optional[bool] = None,
+        vectorExtensionPath: Optional[str] = None,
     ) -> None:
         """Initialise the SQLite3 provider, dood!
 
@@ -117,6 +124,13 @@ class SQLite3Provider(BaseSQLProvider):
                 If ``False``, do not connect on creation.
                 If ``None`` (default), treat as ``False`` except for in-memory
                 databases (``dbPath == ":memory:"``) where it's treated as ``True``.
+            vectorExtensionPath: Optional filesystem path to a prebuilt
+                ``sqlite-vec`` shared library (``vec0.so``/``vec0.dylib``).
+                Used as a fallback when the ``sqlite_vec`` pip package is not
+                importable (e.g. Alpine Linux with no musl wheel), allowing the
+                extension to be loaded from a source-built binary. When
+                ``None`` and the pip package is available, the package's
+                bundled ``loadable_path()`` is used.
         """
         super().__init__()
         self._vectorSearchAvailable: bool = False
@@ -142,6 +156,8 @@ class SQLite3Provider(BaseSQLProvider):
         self._connection: Optional[aiosqlite.Connection] = None
         self._connectLock: asyncio.Lock = asyncio.Lock()
         """Lock to prevent race conditions during connection creation."""
+        self._vectorExtensionPath: Optional[str] = vectorExtensionPath
+        """Filesystem path to a prebuilt sqlite-vec shared library, or ``None``."""
 
     async def connect(self) -> None:
         """Open the aiosqlite connection, dood!
@@ -176,14 +192,33 @@ class SQLite3Provider(BaseSQLProvider):
                 await connection.execute("PRAGMA foreign_keys = ON")
 
             # Attempt to load sqlite-vec for native vector search.
-            self._vectorSearchAvailable = False
+            # self._vectorSearchAvailable = False
+        
+            extensionSource: Optional[str] = None
             if _SQLITE_VEC_AVAILABLE:
-                version = await _loadSqliteVecExtension(connection)
+                # Package installed — use its bundled .so (version-matched, reliable).
+                extensionSource = sqlite_vec.loadable_path()
+            elif self._vectorExtensionPath is not None:
+                # No pip package, but a custom build path is configured (e.g. Alpine
+                # Linux where the extension was built from source). See
+                # ``vectorExtensionPath`` config key under
+                # ``[database.providers.<name>.parameters]``.
+                extensionSource = self._vectorExtensionPath
+
+            if extensionSource is not None:
+                version = await _loadSqliteVecExtension(connection, extensionSource)
                 if version is not None:
-                    logger.info("sqlite-vec %s loaded successfully", version)
                     self._vectorSearchAvailable = True
+                    logger.info("sqlite-vec %s loaded from %s", version, extensionSource)
                 else:
-                    logger.warning("sqlite-vec not available (extension loading failed)")
+                    self._vectorSearchAvailable = False
+                    logger.warning(
+                        "sqlite-vec extension failed to load from %s; native vector search disabled",
+                        extensionSource,
+                    )
+            else:
+                self._vectorSearchAvailable = False
+
 
             self._connection = connection
             logger.debug(
@@ -433,7 +468,11 @@ class SQLite3Provider(BaseSQLProvider):
             :meth:`connect`, ``False`` otherwise.
         """
         # We need to connect to try to load sqlite-vec lib
-        await self.connect()
+        if self._connection is None:
+            await self.connect()
+            if not self.keepConnection:
+                await self.disconnect()
+
         return self._vectorSearchAvailable
 
     async def vectorSearch(
