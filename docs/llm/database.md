@@ -59,6 +59,10 @@
 | `divinations` | `saveLayout(...)` | `bool` | Save/update layout definition in cache |
 | `divinations` | `saveNegativeCache(systemId, layoutId)` | `bool` | Save negative cache entry for non-existent layout |
 | `divinations` | `isNegativeCacheEntry(layoutDict)` | `bool` | Check if layout dict is a negative cache entry |
+| `webhookUpdates` | `addUpdate(updateId, updateType, rawJson)` | `bool` | Store a raw Max webhook payload (caller-generated UUID) in `webhook_updates` |
+| `webhookUpdates` | `getUnprocessedUpdates(limit=100)` | `List[WebhookUpdatesRow]` | Pending webhook payloads oldest-first; backs the receiver's GET /updates long-poll |
+| `webhookUpdates` | `markProcessed(updateIds)` | `None` | Atomically mark a batch of updates processed (single batch commit prevents duplicate delivery) |
+| `webhookUpdates` | `deleteProcessedOlderThan(ttlSeconds=3600)` | `bool` | Reap processed rows past the TTL; cutoff computed in Python for cross-RDBMS portability |
 
 ---
 
@@ -422,7 +426,8 @@ await db.chatEmbeddings.deleteChatEmbeddings(chatId=chatId)
 - `cache` — Cache operations
 - `delayedTasks` — Task operations
 - `divinations` — Tarot/runes reading persistence (`insertReading(...)`)
-- And 5 more specialized repositories
+- `webhookUpdates` — Max webhook payload storage and consumption (backs the webhook-receiver / GET /updates flow; see [`architecture.md`](architecture.md))
+- And 4 more specialized repositories
 
 **Adding methods to existing repository:**
 
@@ -696,7 +701,7 @@ success, value = sqlToCustomType("123", Union[int, str])
    - Validate that all historical migrations are accounted for
 
 **Known implemented migrations:**
-- `migration_001` to `migration_018` — Baseline migrations through latest schema updates
+- `migration_001` to `migration_019` — Baseline migrations through latest schema updates
 - `migration_010`: Adds `updated_by INTEGER NOT NULL` to `chat_settings` table (audit trail)
 - `migration_011` and `migration_012`: Additional schema improvements
 - `migration_013`: Removes `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns (explicit timestamp handling)
@@ -705,6 +710,7 @@ success, value = sqlToCustomType("123", Union[int, str])
 - `migration_016`: Adds [`stat_events`](../../lib/stats/stats_storage.py) (append-only event log) and [`stat_aggregates`](../../lib/stats/stats_storage.py) (period buckets) tables for statistics collection
 - `migration_017`: Adds the [`message_embeddings`](#message_embeddings) table (composite PK `(chat_id, message_id)`) — stores float32 embedding BLOBs for semantic chat-history search via the `ChatSearchHandler`
 - `migration_018`: Adds `idx_message_embeddings_chat_model` index on `message_embeddings (chat_id, model)` — speeds up `_loadEmbeddingsFromDb` by letting SQLite seek directly to the active model's rows instead of scanning the full chat
+- `migration_019`: Adds the [`webhook_updates`](../../docs/database-schema-llm.md#webhook_updates) table (`id TEXT PRIMARY KEY`) for Max webhook ingestion — raw webhook payloads are written here by the standalone webhook receiver and consumed via the `webhookUpdates` repository. Plus `idx_webhook_updates_unprocessed` on `(processed, received_at)` to back the unprocessed-rows query
 
 ---
 

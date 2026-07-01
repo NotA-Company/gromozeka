@@ -6,7 +6,7 @@
 **Database Class**: [`Database`](../internal/database/database.py:1)
 **Models**: [`internal/database/models.py`](../internal/database/models.py:1)
 **Repositories**: [`internal/database/repositories/`](../internal/database/repositories/)
-**Migrations**: 18 (up to `migration_018`)
+**Migrations**: 19 (up to `migration_019`)
 
 ---
 
@@ -554,6 +554,35 @@ CREATE TABLE delayed_tasks (
 ```
 
 **TypedDict**: [`DelayedTaskDict`](../internal/database/models.py:284)
+
+---
+
+### webhook_updates
+**Purpose**: Raw incoming Max Messenger webhook payloads awaiting consumption by the bot. Written by the standalone webhook receiver process (`internal/max_webhook_receiver/`) on every webhook POST; the bot's long-poll loop reads and marks rows processed.
+**Primary Key**: `id` (application-generated UUID)
+
+```sql
+CREATE TABLE webhook_updates (
+    id           TEXT      PRIMARY KEY NOT NULL,
+    received_at  TIMESTAMP NOT NULL,
+    update_type  TEXT      NOT NULL,
+    raw_json     TEXT      NOT NULL,
+    processed    INTEGER   NOT NULL DEFAULT 0,
+    processed_at TIMESTAMP
+)
+```
+
+**Indexes**: `idx_webhook_updates_unprocessed` on `(processed, received_at)` — backs `WHERE processed = 0 ORDER BY received_at ASC`
+
+**TypedDict**: [`WebhookUpdatesRow`](../internal/database/models.py:303)
+
+**Repository** (`WebhookUpdatesRepository`, accessed as `db.webhookUpdates`):
+- `addUpdate(updateId, updateType, rawJson) -> bool` — store a raw payload (caller generates the UUID; `received_at` set by the repo).
+- `getUnprocessedUpdates(limit=100) -> List[WebhookUpdatesRow]` — pending rows oldest-first; pagination via `provider.applyPagination`.
+- `markProcessed(updateIds) -> None` — atomic batch update (single `batchExecute`) so the whole batch commits together; prevents duplicate delivery.
+- `deleteProcessedOlderThan(ttlSeconds=3600) -> bool` — reap processed rows past the TTL; cutoff computed in Python for cross-RDBMS portability.
+
+**Note**: Created by `migration_019`. No `AUTOINCREMENT`/`SERIAL`, no `DEFAULT CURRENT_TIMESTAMP` — `id` is caller-generated and timestamps are application-set. Processed rows are reaped by the receiver's background cleanup task (default TTL 1h).
 
 ---
 
@@ -1197,6 +1226,7 @@ if cached:
 | `ChatTopicInfoDict` | `chat_topics` | None |
 | `MediaAttachmentDict` | `media_attachments` | None |
 | `DelayedTaskDict` | `delayed_tasks` | None |
+| `WebhookUpdatesRow` | `webhook_updates` | None |
 | `SpamMessageDict` | `spam_messages` | None |
 | `ChatSummarizationCacheDict` | `chat_summarization_cache` | None |
 | `CacheDict` | `cache` | None |

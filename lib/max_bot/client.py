@@ -113,6 +113,8 @@ class MaxBotClient:
         "timeout",
         "maxRetries",
         "retryBackoffFactor",
+        "_basePollingUrl",
+        "_localReceiverToken",
         "_httpClient",
         "_pollingTask",
         "_isPolling",
@@ -130,6 +132,8 @@ class MaxBotClient:
         retryBackoffFactor: float = RETRY_BACKOFF_FACTOR,
         proxyConfig: Optional[ProxyConfig] = None,
         caBundlePath: Optional[str] = None,
+        basePollingUrl: Optional[str] = None,
+        localReceiverToken: Optional[str] = None,
     ) -> None:
         """Initialize the Max Bot client.
 
@@ -146,6 +150,15 @@ class MaxBotClient:
                 PEM files (e.g. Минцифры CA certs for platform-api2.max.ru).
                 Passed to ``buildMaxSslContext()``. When None or empty string,
                 httpx uses its default CA bundle.
+            basePollingUrl: Optional base URL of a local webhook receiver. When set,
+                :meth:`getUpdates` polls this local receiver instead of the Max API.
+                Trailing slash is stripped. Defaults to None (poll the real API).
+            localReceiverToken: Optional bearer token for the local webhook
+                receiver's GET /updates endpoint. When set, sent as the
+                ``Authorization`` header on every local-receiver poll; used to
+                satisfy the receiver's optional ``get-updates-secret`` check.
+                When None, no ``Authorization`` header is sent to the local
+                receiver. Defaults to None.
 
         Raises:
             ConfigurationError: If accessToken is empty or invalid
@@ -166,6 +179,8 @@ class MaxBotClient:
             proxyConfig if proxyConfig is not None else ProxyConfig(proxyType=ProxyType.NONE)
         )
         self._sslContext: Optional[ssl.SSLContext] = buildMaxSslContext(caBundlePath) if caBundlePath else None
+        self._basePollingUrl: Optional[str] = basePollingUrl.rstrip("/") if basePollingUrl else None
+        self._localReceiverToken: Optional[str] = localReceiverToken
 
         logger.debug(f"MaxBotClient initialized for {self.baseUrl}")
 
@@ -205,15 +220,23 @@ class MaxBotClient:
         httpClient = self._httpClient
 
         if getNew or httpClient is None or httpClient.is_closed:
-            httpClient = httpx.AsyncClient(
-                **self._proxyConfig.toKwargs(verify=self._sslContext),
-                base_url=self.baseUrl,
-                timeout=httpx.Timeout(self.timeout),
-                verify=self._sslContext if self._sslContext else True,
-                headers={
-                    "User-Agent": f"Gromozeka/{VERSION}",
-                },
-            )
+            proxyKwargs = self._proxyConfig.toKwargs(verify=self._sslContext)
+            clientKwargs: Dict[str, Any] = {
+                **proxyKwargs,
+                "base_url": self.baseUrl,
+                "timeout": httpx.Timeout(self.timeout),
+                "headers": {"User-Agent": f"Gromozeka/{VERSION}"},
+            }
+            # Only thread verify= onto the client when no custom transport is
+            # present. For SOCKS5 proxies toKwargs() bakes the SSL context into
+            # the transport via AsyncProxyTransport.from_url(verify=...), and
+            # httpx silently ignores a top-level verify= when transport= is set.
+            # When no custom CA context is configured, defer to httpx defaults
+            # (do not pass verify=None, which would DISABLE verification).
+            if "transport" not in proxyKwargs and self._sslContext is not None:
+                clientKwargs["verify"] = self._sslContext
+
+            httpClient = httpx.AsyncClient(**clientKwargs)
             logger.debug("Created new HTTP client")
 
         httpClient.headers.update(
@@ -1211,10 +1234,66 @@ class MaxBotClient:
         if types is not None:
             params["types"] = ",".join(types)
 
-        response = await self.get("/updates", params=params)
+        # Route to local receiver if basePollingUrl is configured
+        if self._basePollingUrl:
+            response = await self._makeLocalRequest("/updates", params=params)
+        else:
+            response = await self.get("/updates", params=params)
         if EXTENDED_DEBUG and response.get("updates", []):
             logger.debug(f"Received updates: {utils.jsonDumps(response, indent=2)}")
         return UpdateList.from_dict(response)
+
+    async def _makeLocalRequest(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Make a GET request to the local webhook receiver.
+
+        Uses a separate httpx client configured for the local receiver URL,
+        bypassing the main API client's base URL, proxy, and TLS settings.
+
+        Args:
+            endpoint: Endpoint path (e.g., "/updates").
+            params: Query parameters.
+
+        Returns:
+            Parsed JSON response data.
+
+        Raises:
+            NetworkError: If the request fails.
+        """
+        basePollingUrl = self._basePollingUrl
+        if basePollingUrl is None:
+            raise NetworkError("_makeLocalRequest called without basePollingUrl configured")
+
+        url = basePollingUrl + "/" + endpoint.lstrip("/")
+        timeout = httpx.Timeout(self.timeout + 10)  # extra margin over long-poll timeout
+
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                # When a local receiver secret is configured, send it as the
+                # Authorization header to satisfy the receiver's optional
+                # ``get-updates-secret`` check. Otherwise send nothing so we do
+                # not leak the bot token to the receiver.
+                headers: Dict[str, str] = {}
+                if self._localReceiverToken:
+                    headers["Authorization"] = self._localReceiverToken
+                response = await client.get(url, params=params, headers=headers)
+
+                if response.status_code == 200:
+                    return response.json()
+
+                raise NetworkError(f"Local receiver returned {response.status_code}: {response.text}")
+        except httpx.ReadTimeout:
+            # Safety net: this fires only if the receiver crashes or hangs mid-poll.
+            # The normal empty-poll path returns HTTP 200 with
+            # {"updates": [], "marker": "..."} before the client's timeout expires
+            # (client timeout is self.timeout + 10 = 40s; receiver's max long-poll
+            # hold is 30s by default).
+            return {"updates": [], "marker": None}
+        except httpx.RequestError as e:
+            raise NetworkError(f"Failed to reach local receiver at {url}: {e}")
 
     async def startPolling(
         self,

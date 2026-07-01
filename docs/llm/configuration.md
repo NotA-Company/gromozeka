@@ -655,6 +655,39 @@ Used by `scripts/sandbox_bootstrap.py` — not by the library itself.
 
 ---
 
+### `[webhook-receiver]`
+
+Max Messenger webhook receiver configuration. Defaults live in [`configs/00-defaults/webhook-receiver.toml`](../../configs/00-defaults/webhook-receiver.toml). This section is read by **both** the standalone webhook receiver process ([`internal/max_webhook_receiver/`](../../internal/max_webhook_receiver/)) and the bot process (Max mode). See [`architecture.md`](architecture.md) ADR-013 for the two-process model.
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `enabled` | bool | `false` | Master switch for the **bot**. When `true`, the bot's `MaxBotClient` polls the local receiver's `GET /updates` (via `base-polling-url`) instead of long-polling `platform-api2.max.ru`. The receiver process always runs regardless of this flag. |
+| `register-webhook` | bool | `true` | Whether the **bot** registers the webhook subscription with Max on startup (`POST /subscriptions`). Set `false` to manage the subscription externally. |
+| `unregister-webhook` | bool | `true` | Whether the **bot** unregisters the webhook subscription on shutdown (`DELETE /subscriptions`). Independent of `register-webhook`; only applies when `enabled = true`. Set `false` to keep the webhook active across bot restarts. |
+| `webhook-url` | str | `""` | Public HTTPS URL (port 443, CA-trusted cert) that Max POSTs to. Required when `register-webhook = true`. |
+| `secret` | str | `"${MAX_WEBHOOK_SECRET}"` | Shared secret verifying webhook POSTs. Max sends it in the `X-Max-Bot-Api-Secret` header. Set via the `MAX_WEBHOOK_SECRET` env var — never commit the value. The receiver refuses to start when this is empty or an unresolved `${VAR}` placeholder. |
+| `webhook-update-types` | list[str] | `[]` | Update types to subscribe to. Empty list = all types. |
+| `base-polling-url` | str | `"http://127.0.0.1:8443"` | URL of the receiver's `GET /updates` endpoint. The bot polls this when `enabled = true`. Becomes `MaxBotClient.basePollingUrl` (trailing slash stripped). |
+| `mark-on-subsequent-poll` | bool | `true` | Delivery semantics for `GET /updates`. When `true` (deferred mode, at-least-once), fetched updates are NOT marked processed on read — they are acknowledged only when the bot passes the returned marker back on its next poll (`markProcessedBeforeMarker`), so a crash between polls re-delivers unacknowledged updates. When `false` (immediate mode, at-most-once), updates are marked processed on read (`markProcessed`); a crash after serving but before handling loses them. |
+| `listen-host` | str | `"127.0.0.1"` | Receiver HTTP listen address. Default localhost-only — use a reverse proxy for external TLS. |
+| `listen-port` | int | `8443` | Receiver HTTP listen port. |
+| `webhook-path` | str | `"/webhook"` | URL path for the webhook POST endpoint. Change if your reverse proxy routes to a different path. |
+| `get-updates-secret` | str | `""` | Optional secret for the `GET /updates` endpoint (checked against the `Authorization` header). Empty disables the check — relies on localhost binding. |
+| `enable-cleanup` | bool | `true` | Whether the receiver's background task periodically deletes processed updates past the TTL. Set `false` to keep all updates indefinitely (useful for debugging). |
+| `datasource` | str | `""` | Optional data source name (must match a `[database.providers]` entry) used by the receiver for all webhook DB operations. Empty uses the default database provider, so webhook data can live in a separate DB from the main bot. |
+| `tls-cert-file` | str | unset | Optional path to a TLS cert. When both this and `tls-key-file` are set, the receiver serves HTTPS directly (no reverse proxy needed). |
+| `tls-key-file` | str | unset | Optional path to a TLS key. See `tls-cert-file`. |
+
+**Deployment modes:**
+- **Reverse proxy (default)** — receiver binds `127.0.0.1:8443` plain HTTP; a reverse proxy (nginx/Caddy) terminates TLS and forwards to `<listen-host>:<listen-port>`.
+- **Direct TLS** — set `tls-cert-file` + `tls-key-file` and the receiver serves HTTPS itself.
+
+**Secrets discipline:** `secret` uses `${MAX_WEBHOOK_SECRET}` substitution. Document the env var name only — never paste the value. See [`docs/llm/tasks.md`](tasks.md) and root `AGENTS.md` for the project's secrets rules.
+
+**Restart required:** Config is loaded at startup. Changing it requires restarting the receiver process (and the bot, for the bot-side keys).
+
+---
+
 ## 3. ConfigManager Methods
 
 **File:** [`internal/config/manager.py:59`](../../internal/config/manager.py:59)

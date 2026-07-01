@@ -52,6 +52,7 @@ from .repositories import (
     MediaAttachmentsRepository,
     SpamRepository,
     UserDataRepository,
+    WebhookUpdatesRepository,
 )
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,7 @@ class Database:
         divinations: Repository for tarot/runes divination readings.
         divinationLayouts: Repository for divination layout definitions cache.
         cache: Repository for caching operations.
+        webhookUpdates: Repository for Max webhook payload storage and consumption.
         _migrationManager: Internal migration manager for schema versioning and updates.
 
     Example:
@@ -119,6 +121,7 @@ class Database:
         "delayedTasks",
         "divinations",
         "cache",
+        "webhookUpdates",
         "_migrationManager",
     )
 
@@ -168,6 +171,9 @@ class Database:
     cache: CacheRepository
     """Repository for caching operations."""
 
+    webhookUpdates: WebhookUpdatesRepository
+    """Repository for Max webhook payload storage and consumption."""
+
     _migrationManager: MigrationManager
     """Internal migration manager for schema versioning and updates."""
 
@@ -208,6 +214,7 @@ class Database:
         self.delayedTasks = DelayedTasksRepository(self.manager)
         self.divinations = DivinationsRepository(self.manager)
         self.cache = CacheRepository(self.manager)
+        self.webhookUpdates = WebhookUpdatesRepository(self.manager)
 
         self._migrationManager = MigrationManager()
         try:
