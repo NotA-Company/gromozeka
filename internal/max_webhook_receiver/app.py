@@ -75,15 +75,15 @@ async def handleWebhook(request: web.Request) -> web.Response:
 
     Verifies the shared secret with a constant-time comparison, parses the
     JSON body, stores the raw payload, and returns 200. A failed database
-    write is logged but still answered 200 so the Max API does not retry the
-    delivery for a transient local failure.
+    write returns 500 so the Max API retries the delivery, avoiding
+    permanent data loss.
 
     Args:
         request: Incoming aiohttp request carrying the raw webhook body.
 
     Returns:
-        JSON response: 403 on a bad secret, 400 on malformed JSON, 200
-        otherwise.
+        JSON response: 403 on a bad secret, 400 on malformed JSON, 500 on
+        a database write failure, 200 on success.
     """
     database: Database = request.app["database"]
     webhookSecret: str = request.app["webhookSecret"]
@@ -115,6 +115,7 @@ async def handleWebhook(request: web.Request) -> web.Response:
     )
     if not stored:
         logger.error("Failed to store webhook update (updateType=%s)", updateType)
+        return web.json_response({"error": "internal error"}, status=500)
 
     return web.json_response({"ok": True})
 
@@ -168,19 +169,27 @@ async def handleGetUpdates(request: web.Request) -> web.Response:
 
     limit = _clampIntParam(request.query.get("limit"), default=100, low=1, high=1000)
     timeout = _clampIntParam(request.query.get("timeout"), default=30, low=0, high=90)
-    marker = request.query.get("marker", "")
-    markerParam: Optional[str] = marker or None
+    marker = request.query.get("marker", "") or None
 
     # Deferred mode: acknowledge the previous batch once, up front. A crash
     # before this point leaves those rows unprocessed and they get re-delivered.
-    if markOnSubsequent and markerParam is not None:
-        await database.webhookUpdates.markProcessedBeforeMarker(markerParam, dataSource=dataSource)
+    if markOnSubsequent and marker is not None:
+        try:
+            await database.webhookUpdates.markProcessedBeforeMarker(marker, dataSource=dataSource)
+        except (ValueError, OverflowError, TypeError) as e:
+            # A malformed marker (e.g. bad timestamp portion) raises inside
+            # _parseMarker. Rather than 500-ing and leaving the bot stuck in
+            # an infinite retry loop with the same bad marker, log and treat
+            # this as a no-marker poll: the bot gets all unprocessed updates
+            # from the beginning, which is strictly better than wedging.
+            logger.warning("Bad marker %r from client, treating as no-marker: %s", marker, e)
+            marker = None
 
     deadline = time.monotonic() + timeout
     while True:
         rows = await database.webhookUpdates.getUnprocessedUpdates(
             limit=limit,
-            marker=markerParam,
+            marker=marker,
             dataSource=dataSource,
         )
         if rows:
@@ -200,7 +209,7 @@ async def handleGetUpdates(request: web.Request) -> web.Response:
             return web.json_response({"updates": updates, "marker": newMarker})
 
         if time.monotonic() >= deadline:
-            return web.json_response({"updates": [], "marker": marker})
+            return web.json_response({"updates": [], "marker": marker or ""})
 
         await asyncio.sleep(POLL_INTERVAL)
 

@@ -18,7 +18,7 @@ import datetime
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-import dateutil
+from dateutil import parser
 
 from .. import utils as dbUtils
 from ..manager import DatabaseManager
@@ -92,7 +92,7 @@ class WebhookUpdatesRepository(BaseRepository):
             UTC datetime and ``markerId`` is the id substring (possibly empty).
         """
         markerParts = marker.split("|", 1)
-        markerTs = dateutil.parser.parse(markerParts[0])
+        markerTs = parser.parse(markerParts[0])
         markerId = markerParts[1] if len(markerParts) > 1 else ""
         return markerTs, markerId
 
@@ -177,7 +177,7 @@ class WebhookUpdatesRepository(BaseRepository):
             query = """
                 SELECT id, received_at, update_type, raw_json, processed, processed_at
                 FROM webhook_updates
-                WHERE 
+                WHERE
             """
             params: Dict[str, Any] = {}
             if marker is not None:

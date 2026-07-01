@@ -311,11 +311,29 @@ class MaxBotApplication:
         self._webhookMode = webhookConfig.get("enabled", False)
         basePollingUrl: Optional[str] = None
         localReceiverToken: Optional[str] = None
+        webhookSecret: str = ""
 
         if self._webhookMode:
             basePollingUrl = webhookConfig.get("base-polling-url", "http://127.0.0.1:8443")
             localReceiverToken = webhookConfig.get("get-updates-secret", "") or None
+            webhookSecret = webhookConfig.get("secret", "")
             logger.info("Webhook mode enabled, polling receiver at %s", basePollingUrl)
+
+            # Validate that neither secret is an unresolved env var placeholder.
+            # This must fire whenever webhook mode is enabled — not just when
+            # register-webhook is true — because an unresolved placeholder in
+            # get-updates-secret would be sent verbatim as the Authorization
+            # header to the local receiver (which would reject it), and one in
+            # secret would be sent to the Max API during registration.
+            for secretName, secretValue in (
+                ("webhook-receiver.secret", webhookSecret),
+                ("webhook-receiver.get-updates-secret", localReceiverToken),
+            ):
+                if secretValue and secretValue.startswith("${") and secretValue.endswith("}"):
+                    raise RuntimeError(
+                        f"{secretName} is an unresolved env var placeholder. "
+                        f"Set the corresponding variable in your .env file."
+                    )
 
         # --- TLS: trust Минцифры CA for platform-api2.max.ru ---
         self.maxBot = libMax.MaxBotClient(
@@ -335,17 +353,13 @@ class MaxBotApplication:
             # Register webhook if configured
             if self._webhookMode and webhookConfig.get("register-webhook", True):
                 webhookUrl = webhookConfig.get("webhook-url", "")
-                webhookSecret = webhookConfig.get("secret", "")
                 webhookTypes = webhookConfig.get("webhook-update-types", None) or None
 
                 if not webhookUrl:
                     raise RuntimeError("webhook-receiver.webhook-url is required when register-webhook is true")
 
-                if webhookSecret.startswith("${") and webhookSecret.endswith("}"):
-                    raise RuntimeError(
-                        "webhook-receiver.secret is an unresolved env var placeholder. "
-                        "Set MAX_WEBHOOK_SECRET in your .env file."
-                    )
+                if not webhookSecret:
+                    raise RuntimeError("webhook-receiver.secret is empty — set MAX_WEBHOOK_SECRET in your .env file.")
 
                 await self.maxBot.setWebhook(
                     url=webhookUrl,

@@ -147,11 +147,22 @@ Plan: `docs/plans/max-webhook-support.md` (updated to local-API-proxy architectu
 - `tests/lib/max_bot/test_client_webhook.py` — 6 client routing tests
 - `tests/bot/max/test_webhook_mode.py` — 14 config gating tests (unregister-webhook split)
 
+**Post-review fixes applied (2026-07-01):**
+- `handleWebhook` now returns 500 (not 200) on DB write failure → Max retries the delivery; `logger.exception` corrected to `logger.error` (no active exception).
+- Bad marker handling: narrow `except (ValueError, OverflowError, TypeError)` around `_parseMarker`; bad marker treated as no-marker poll (prevents 500 infinite-retry wedge).
+- `getUpdates` type: `lastEventId: Optional[int]` → `Optional[Union[int, str]]` for compound string marker from local receiver.
+- `_makeLocalRequest`: catches `json.JSONDecodeError` around `response.json()`; persistent `_localHttpClient` (lazy-create, reuse across polls, closed in `aclose()`).
+- Secret validation moved to webhook-mode block: fires whenever `enabled=true`, not just on `register-webhook=true`. Empty secret rejected.
+- `unregister-webhook` code default aligned with config default: `True` → `False`.
+- `toKwargs` docstring cross-references `MaxBotClient._getHttpClient()` for SSL context routing.
+- `buildMaxSslContext`: GOST skip counter + louder warning (TLS may fail if chain requires skipped certs).
+- `from dateutil import parser` (was bare `import dateutil`) in `webhook_updates.py`.
+
 **Known limitations (design tradeoffs, not bugs):**
-- DB write failure returns 200 (swallow-and-log; no Max retry); duplicate delivery possible if markProcessed fails
+- DB write failure now returns 500 (Max retries); duplicate delivery still possible if `markProcessed` fails
 - No cross-process migration guard — safe for 019 (idempotent DDL) but needs guard for future non-idempotent migrations
-- Busy-polls SQLite every 0.5s during long-poll; new httpx client per poll cycle
-- `postStop` re-reads config for webhook URL; `_webhookMode` set before `setWebhook` succeeds
+- Busy-polls SQLite every 0.5s during long-poll
+- `_pollingLoop` marker advance on handler error defeats at-least-once in deferred mode (pre-existing, same as real Max API)
 - `types` query param ignored by GET /updates (filtering at Max→receiver subscription layer)
 - No deployment wiring (no `run.sh` / systemd config for receiver process)
 - Unsubstituted `${MAX_WEBHOOK_SECRET}` placeholder rejected by guards in both `__main__.py` and `application.py`
@@ -287,6 +298,17 @@ The design in [`docs/design/vector-search-native.md`](../design/vector-search-na
 - **`SQLite3Provider.__slots__`**: `_vectorSearchAvailable` must be declared in `__slots__` AND initialized in `__init__()` (to `False`), not only in `connect()`. Otherwise `isVectorSearchSupported()` called before `connect()` (early init / error paths) raises `AttributeError`.
 - **Known transitional limitation: partial vec0 mirror**: After rollout, pre-existing embeddings in `message_embeddings` are only dual-written to vec0 when re-generated (via `REGENERATE_EMBEDDINGS` chat setting or model change). Until then, vec0 may have fewer rows than `message_embeddings` for the same chat+model, and native results reflect only the dual-written subset. Resolution: enable `REGENERATE_EMBEDDINGS` for affected chats to trigger a full re-embedding pass (populates vec0 via dual-write). Documented in a code comment in `_semanticSearch()`. Note: changing the `EMBEDDING_MODEL` or its dimensions now triggers `deleteObsoleteModelEmbeddings()` on both `message_embeddings` AND vec0, so model switches cleanly re-embed from scratch — this limitation only applies to same-model initial rollout.
 - **maxMessages timestamp ties**: The native path uses a compound filter `(date > :minDate OR (date = :minDate AND message_id >= :minMessageId))` to match the numpy path's `ORDER BY c.date DESC, me.message_id DESC` + `LIMIT/OFFSET` semantics. Both `date` and `message_id` are captured from the cutoff query which joins `message_embeddings` to `chat_messages`.
+
+## Review-Fix Round Lessons (2026-07-01)
+
+From fixing review findings on the Max webhook support feature (branch `max-v2`):
+
+- **Single `software-developer` for many small fixes works**: 7 fixes across 6 files dispatched in one brief. Developer applied them all correctly AND fixed a pre-existing test failure as a bonus. Gate 1 review caught 2 issues the developer missed (`logger.exception` misuse, `except Exception` too broad) — the review gate is essential even for "trivial" fixes.
+- **`logger.exception` misuse pattern**: When wrapping a call that internally swallows exceptions and returns `False` (like `addUpdate` does), `logger.exception` in the caller has no active exception to attach a traceback to — degrades to plain `logger.error`. Always check whether the upstream call preserves the exception before using `exception()`.
+- **`except Exception` too broad for parse errors**: Narrowing to `except (ValueError, OverflowError, TypeError)` for `dateutil.parser.parse` prevents masking genuine DB/programming errors. Specific exception types > broad catches.
+- **Pre-existing bugs surface during review**: The `_pollingLoop` marker-advance-on-handler-error issue (marker advances even when a handler raises, defeating at-least-once in deferred mode) is pre-existing and not fixed — the real Max API has the same behavior. Flagged to user as known limitation rather than fixed.
+- **Config defaults must align code ↔ config files**: The `unregister-webhook` default was `True` in code but `false` in `00-defaults/webhook-receiver.toml`. Config overrode it in practice, but the inconsistency was confusing. Fixed to align both at `False`.
+- **Doc drift from review fixes is real**: 4 docs (`architecture.md`, `configuration.md`, `developer-guide.md`, `libraries.md`) had stale claims about default values and error behavior after the fix round. Updated via `update-project-docs` skill.
 
 ## Teamlead Workflow Lessons
 

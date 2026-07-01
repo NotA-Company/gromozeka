@@ -430,8 +430,19 @@ class ProxyConfig:
             password=(config.password or "") if not maskPassword else "REDACTED",
         )
 
-    def toKwargs(self, *, verify: Optional["ssl.SSLContext"] = None) -> ProxyKwargs:
+    def toKwargs(self, *, verify: Optional[ssl.SSLContext] = None) -> ProxyKwargs:
         """Convert this proxy config to httpx-compatible keyword arguments.
+
+        For SOCKS5 proxies the SSL context is threaded directly into the
+        transport via ``AsyncProxyTransport.from_url(url, verify=verify)``.
+        For HTTP proxies it is returned as ``ProxyKwargs(proxy=...)`` only —
+        the caller is responsible for applying ``verify=`` at the
+        ``httpx.AsyncClient`` level.
+
+        See also :meth:`MaxBotClient._getHttpClient` in
+        ``lib/max_bot/client.py``, which applies ``verify=`` at the client
+        level for HTTP proxies — the two must agree on how SSL context
+        reaches the transport.
 
         Args:
             verify: Optional SSL context for custom CA trust (e.g. Минцифры CA

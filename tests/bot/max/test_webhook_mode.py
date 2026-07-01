@@ -310,6 +310,28 @@ class TestMaxBotApplicationWebhookMode:
         with pytest.raises(RuntimeError, match="unresolved env var placeholder"):
             await app._runPolling()
 
+    async def testRegisterWebhookEmptySecretRaises(self, mockedDeps: Dict[str, Any]) -> None:
+        """An empty ``secret`` is rejected before setWebhook.
+
+        The placeholder guard catches an unresolved ``${VAR}``, but an empty
+        string slips past it and would be registered as the webhook secret with
+        Max, defeating the shared-secret check on the receiver.
+        """
+        configManager = makeConfigManager(
+            webhookConfig={
+                "enabled": True,
+                "register-webhook": True,
+                "webhook-url": "https://example.com/webhook",
+                "secret": "",
+            }
+        )
+        app = buildApp(configManager)
+
+        with pytest.raises(RuntimeError, match="secret is empty"):
+            await app._runPolling()
+
+        mockedDeps["maxBotClient"].setWebhook.assert_not_called()
+
         mockedDeps["maxBotClient"].setWebhook.assert_not_called()
 
     # ------------------------------------------------------------------
@@ -361,31 +383,6 @@ class TestMaxBotApplicationWebhookMode:
         await app.postStop()
 
         mockedDeps["maxBotClient"].deleteWebhook.assert_not_called()
-
-    async def testPostStopRegisterWebhookFalseStillUnregistersWhenUnregisterDefault(
-        self, mockedDeps: Dict[str, Any]
-    ) -> None:
-        """register-webhook and unregister-webhook are independent.
-
-        ``register-webhook = false`` alone no longer suppresses shutdown
-        unregistration: with ``unregister-webhook`` left at its default
-        (true), deleteWebhook is still called. This documents the split --
-        the old coupling where register-webhook gated both phases is gone.
-        """
-        configManager = makeConfigManager(
-            webhookConfig={
-                "enabled": True,
-                "register-webhook": False,
-                "webhook-url": "https://example.com/webhook",
-            }
-        )
-        app = buildApp(configManager)
-        app._webhookMode = True
-        app.maxBot = mockedDeps["maxBotClient"]
-
-        await app.postStop()
-
-        mockedDeps["maxBotClient"].deleteWebhook.assert_called_once_with("https://example.com/webhook")
 
     async def testPostStopWebhookModeDisabledSkipsDeleteWebhook(self, mockedDeps: Dict[str, Any]) -> None:
         """When webhook mode was never enabled, postStop skips deleteWebhook entirely."""

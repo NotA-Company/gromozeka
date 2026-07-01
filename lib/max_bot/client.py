@@ -7,6 +7,7 @@ the Max Messenger Bot API using httpx with proper authentication and error handl
 
 import asyncio
 import inspect
+import json
 import logging
 import ssl
 import types
@@ -116,6 +117,7 @@ class MaxBotClient:
         "_basePollingUrl",
         "_localReceiverToken",
         "_httpClient",
+        "_localHttpClient",
         "_pollingTask",
         "_isPolling",
         "_myInfo",
@@ -172,6 +174,7 @@ class MaxBotClient:
         self.maxRetries = maxRetries
         self.retryBackoffFactor = retryBackoffFactor
         self._httpClient: Optional[httpx.AsyncClient] = None
+        self._localHttpClient: Optional[httpx.AsyncClient] = None
         self._pollingTask: Optional[asyncio.Task] = None
         self._isPolling = False
         self._myInfo: Optional[BotInfo] = None
@@ -257,6 +260,9 @@ class MaxBotClient:
         if self._httpClient and not self._httpClient.is_closed:
             await self._httpClient.aclose()
             logger.debug("HTTP client closed")
+        if self._localHttpClient and not self._localHttpClient.is_closed:
+            await self._localHttpClient.aclose()
+            logger.debug("Local receiver HTTP client closed")
 
     def _buildUrl(self, endpoint: str) -> str:
         """Build full URL for API endpoint.
@@ -1158,7 +1164,7 @@ class MaxBotClient:
     # Updates Polling Methods
     async def getUpdates(
         self,
-        lastEventId: Optional[int] = None,
+        lastEventId: Optional[Union[int, str]] = None,
         limit: int = 100,
         timeout: int = 30,
         types: Optional[List[str]] = None,
@@ -1204,7 +1210,10 @@ class MaxBotClient:
 
         Args:
             lastEventId: If passed, bot will receive updates that haven't been received yet.
-                        If not passed, will receive all new updates
+                        If not passed, will receive all new updates. When polling the
+                        real Max API this is an int marker; when polling a local webhook
+                        receiver (``basePollingUrl`` set) it is a compound string marker
+                        of the form ``"{iso8601}|{rowId}"`` produced by the receiver.
             limit: Maximum number of updates to receive (1-1000, default: 100)
             timeout: Timeout in seconds for long polling (0-90, default: 30)
             types: List of update types the bot wants to receive
@@ -1250,8 +1259,12 @@ class MaxBotClient:
     ) -> Dict[str, Any]:
         """Make a GET request to the local webhook receiver.
 
-        Uses a separate httpx client configured for the local receiver URL,
-        bypassing the main API client's base URL, proxy, and TLS settings.
+        Uses a dedicated, reusable httpx client (``_localHttpClient``)
+        configured for the local receiver URL, bypassing the main API
+        client's base URL, proxy, and TLS settings. The client is created
+        lazily on first use and reused across polls so the polling loop
+        benefits from connection pooling instead of paying a fresh TCP/TLS
+        handshake on every poll. It is closed in :meth:`aclose`.
 
         Args:
             endpoint: Endpoint path (e.g., "/updates").
@@ -1261,7 +1274,8 @@ class MaxBotClient:
             Parsed JSON response data.
 
         Raises:
-            NetworkError: If the request fails.
+            NetworkError: If the request fails or the receiver returns a
+                non-JSON 200 body (e.g. a crash mid-response).
         """
         basePollingUrl = self._basePollingUrl
         if basePollingUrl is None:
@@ -1270,21 +1284,28 @@ class MaxBotClient:
         url = basePollingUrl + "/" + endpoint.lstrip("/")
         timeout = httpx.Timeout(self.timeout + 10)  # extra margin over long-poll timeout
 
+        # Lazily create a reusable client for connection pooling across polls.
+        if self._localHttpClient is None or self._localHttpClient.is_closed:
+            self._localHttpClient = httpx.AsyncClient(timeout=timeout)
+        client = self._localHttpClient
+
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                # When a local receiver secret is configured, send it as the
-                # Authorization header to satisfy the receiver's optional
-                # ``get-updates-secret`` check. Otherwise send nothing so we do
-                # not leak the bot token to the receiver.
-                headers: Dict[str, str] = {}
-                if self._localReceiverToken:
-                    headers["Authorization"] = self._localReceiverToken
-                response = await client.get(url, params=params, headers=headers)
+            # When a local receiver secret is configured, send it as the
+            # Authorization header to satisfy the receiver's optional
+            # ``get-updates-secret`` check. Otherwise send nothing so we do
+            # not leak the bot token to the receiver.
+            headers: Dict[str, str] = {}
+            if self._localReceiverToken:
+                headers["Authorization"] = self._localReceiverToken
+            response = await client.get(url, params=params, headers=headers, timeout=timeout)
 
-                if response.status_code == 200:
+            if response.status_code == 200:
+                try:
                     return response.json()
+                except (json.JSONDecodeError, ValueError) as e:
+                    raise NetworkError(f"Local receiver returned a non-JSON 200 body: {e}")
 
-                raise NetworkError(f"Local receiver returned {response.status_code}: {response.text}")
+            raise NetworkError(f"Local receiver returned {response.status_code}: {response.text}")
         except httpx.ReadTimeout:
             # Safety net: this fires only if the receiver crashes or hangs mid-poll.
             # The normal empty-poll path returns HTTP 200 with

@@ -182,14 +182,19 @@ class TestWebhookPostHandler:
             assert resp.status == 400
         mockDb.webhookUpdates.addUpdate.assert_not_awaited()
 
-    async def testDbWriteFailureReturns200(self) -> None:
-        """A failed ``addUpdate`` is swallowed so Max does not retry delivery."""
+    async def testDbWriteFailureReturns500(self) -> None:
+        """A failed ``addUpdate`` returns 500 so Max retries delivery.
+
+        Answering 200 on a DB write failure would permanently lose the update
+        (Max never retries a 200). The receiver must surface 500 so the
+        webhook is redelivered.
+        """
         mockDb = _makeMockDatabase()
         mockDb.webhookUpdates.addUpdate = AsyncMock(return_value=False)
         app = _buildApp(mockDb)
         async with TestClient(TestServer(app)) as client:
             resp = await client.post(WEBHOOK_PATH, headers={SECRET_HEADER: WEBHOOK_SECRET}, json={"update_type": "x"})
-            assert resp.status == 200
+            assert resp.status == 500
 
 
 class TestGetUpdatesHandler:
@@ -258,8 +263,7 @@ class TestGetUpdatesHandler:
             payload = await resp.json()
         mockDb.webhookUpdates.markProcessed.assert_awaited_once_with(["id-42"], dataSource=None)
         mockDb.webhookUpdates.markProcessedBeforeMarker.assert_not_awaited()
-        # Immediate mode returns marker: None and ignores any supplied marker.
-        assert payload["marker"] is None
+        assert payload["marker"] is not None
 
     async def testEmptyDbReturnsEmptyList(self) -> None:
         """With no rows and ``timeout=0`` the endpoint returns an empty list."""
@@ -272,6 +276,28 @@ class TestGetUpdatesHandler:
             payload = await resp.json()
             assert payload["updates"] == []
             # The empty-result path echoes the ``marker`` query param (default "").
+            assert payload["marker"] == ""
+
+    async def testEmptyPollReturnsCleansedMarkerOnBadMarker(self) -> None:
+        """A bad marker cleansed to None is echoed back as ``""``, not the raw value.
+
+        Regression: when ``markProcessedBeforeMarker`` raises on a malformed
+        marker, the handler resets ``markerParam`` to None and continues. The
+        empty-result path must echo the cleansed marker (empty string), not the
+        original bad query value — otherwise the bot re-sends the bad marker
+        forever and never recovers.
+        """
+        mockDb = _makeMockDatabase()
+        mockDb.webhookUpdates.markProcessedBeforeMarker = AsyncMock(side_effect=ValueError("bad marker"))
+        mockDb.webhookUpdates.getUnprocessedUpdates = AsyncMock(return_value=[])
+        app = _buildApp(mockDb)
+        badMarker = "not-a-real-marker"
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get(UPDATES_PATH, params={"marker": badMarker, "timeout": "0"})
+            assert resp.status == 200
+            payload = await resp.json()
+            assert payload["updates"] == []
+            # Cleansed to "" — NOT the raw bad marker.
             assert payload["marker"] == ""
 
     async def testLimitParamRespected(self) -> None:

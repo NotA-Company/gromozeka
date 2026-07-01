@@ -104,6 +104,7 @@ def buildMaxSslContext(caBundlePath: Optional[str] = None) -> Optional[ssl.SSLCo
 
     # Load each PEM file from the directory
     loaded = 0
+    skipped = 0
     for certFile in sorted(certDir.iterdir()):
         if certFile.suffix in (".pem", ".crt") and certFile.is_file():
             try:
@@ -111,6 +112,7 @@ def buildMaxSslContext(caBundlePath: Optional[str] = None) -> Optional[ssl.SSLCo
                 logger.info("Loaded CA certificate: %s", certFile.name)
                 loaded += 1
             except ssl.SSLError as e:
+                skipped += 1
                 logger.warning(
                     "Skipping unloadable CA certificate %s (likely GOST, not supported by this OpenSSL build): %s",
                     certFile.name,
@@ -123,6 +125,14 @@ def buildMaxSslContext(caBundlePath: Optional[str] = None) -> Optional[ssl.SSLCo
             certDir.resolve(),
         )
         return None
+
+    if skipped > 0:
+        logger.warning(
+            "Loaded %d CA cert(s) but %d were skipped (possibly GOST, not supported by "
+            "this OpenSSL build). TLS to platform-api2.max.ru may fail if the chain requires them.",
+            loaded,
+            skipped,
+        )
 
     logger.info("SSL context ready with %d additional CA certificate(s)", loaded)
     return ctx

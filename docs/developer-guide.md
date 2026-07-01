@@ -2117,8 +2117,8 @@ In Max webhook mode the deployment is **two processes**: the normal bot process 
 ```toml
 [webhook-receiver]
 enabled = true                       # bot polls the local receiver instead of the real Max API
-register-webhook = true              # bot registers the subscription with Max on startup
-unregister-webhook = true            # bot unregisters the subscription on shutdown (independent of register-webhook)
+register-webhook = true              # bot registers the subscription with Max on startup (default true)
+unregister-webhook = true            # bot unregisters the subscription on shutdown (default false; set true to clean up on exit)
 webhook-url = "https://bot.example.com/webhook"   # public HTTPS URL Max POSTs to
 secret = "${MAX_WEBHOOK_SECRET}"     # shared secret (env var — never commit the value)
 base-polling-url = "http://127.0.0.1:8443"        # where the bot polls
@@ -2142,7 +2142,7 @@ MAX_WEBHOOK_SECRET=some-long-random-secret
 
 The receiver binds `127.0.0.1:8443` by default and refuses to start when `secret` is empty or an unresolved `${VAR}` placeholder. Put it behind a reverse proxy (nginx/Caddy) that terminates TLS and forwards `POST /webhook` to the receiver; alternatively set `tls-cert-file` + `tls-key-file` to have the receiver serve HTTPS directly.
 
-**3. Start the bot** as usual. When `webhook-receiver.enabled = true`, the bot's `MaxBotClient` polls the receiver's `GET /updates` (via `base-polling-url`) instead of `platform-api2.max.ru`; on startup it calls Max's `POST /subscriptions` (when `register-webhook = true`), and on shutdown `DELETE /subscriptions` (when `unregister-webhook = true`, the default).
+**3. Start the bot** as usual. When `webhook-receiver.enabled = true`, the bot's `MaxBotClient` polls the receiver's `GET /updates` (via `base-polling-url`) instead of `platform-api2.max.ru`; on startup it calls Max's `POST /subscriptions` (when `register-webhook = true`, the default), and on shutdown `DELETE /subscriptions` (when `unregister-webhook = true`; defaults to `false`, so the subscription survives a restart unless you opt in).
 
 ```bash
 ./venv/bin/python3 main.py \
