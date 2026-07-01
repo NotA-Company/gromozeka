@@ -8,6 +8,7 @@ This module lives in ``lib/`` and has **no** imports from ``internal/``.
 """
 
 import logging
+import ssl
 from enum import StrEnum
 from threading import Lock
 from typing import Any, Dict, Optional, TypedDict, cast
@@ -429,8 +430,25 @@ class ProxyConfig:
             password=(config.password or "") if not maskPassword else "REDACTED",
         )
 
-    def toKwargs(self) -> ProxyKwargs:
+    def toKwargs(self, *, verify: Optional[ssl.SSLContext] = None) -> ProxyKwargs:
         """Convert this proxy config to httpx-compatible keyword arguments.
+
+        For SOCKS5 proxies the SSL context is threaded directly into the
+        transport via ``AsyncProxyTransport.from_url(url, verify=verify)``.
+        For HTTP proxies it is returned as ``ProxyKwargs(proxy=...)`` only —
+        the caller is responsible for applying ``verify=`` at the
+        ``httpx.AsyncClient`` level.
+
+        See also :meth:`MaxBotClient._getHttpClient` in
+        ``lib/max_bot/client.py``, which applies ``verify=`` at the client
+        level for HTTP proxies — the two must agree on how SSL context
+        reaches the transport.
+
+        Args:
+            verify: Optional SSL context for custom CA trust (e.g. Минцифры CA
+                certs). When provided and the proxy type is SOCKS5, passed to
+                ``AsyncProxyTransport.from_url(url, verify=verify)``. Ignored
+                for HTTP proxies. Defaults to None (system CAs).
 
         Returns:
             A ProxyKwargs TypedDict with either ``proxy`` key (HTTP) or
@@ -461,6 +479,8 @@ class ProxyConfig:
                     "SOCKS5 proxy requires httpx-socks[asyncio] package. "
                     "Install with: pip install httpx-socks[asyncio]"
                 )
+            if verify is not None:
+                return ProxyKwargs(transport=AsyncProxyTransport.from_url(proxyUrl, verify=verify))
             return ProxyKwargs(transport=AsyncProxyTransport.from_url(proxyUrl))
 
         raise ValueError(f"Unsupported proxy type: {config.type!r}. Must be 'none', 'http' or 'socks5'.")

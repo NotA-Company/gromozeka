@@ -63,7 +63,6 @@ from .callback import Callback, CallbackAnswer
 from .chat import (
     Chat,
     ChatAdmin,
-    ChatList,
     ChatMember,
     ChatMembersList,
     ChatPatch,
@@ -191,7 +190,6 @@ __all__ = [
     "ChatAdminPermission",
     "ChatType",
     "ChatStatus",
-    "ChatList",
     "ChatMembersList",
     "ChatPatch",
     "SenderAction",

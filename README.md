@@ -21,7 +21,7 @@ Gromozeka is a production-ready, multi-platform AI bot supporting Telegram and M
 - **Web search**: Yandex Search integration with caching and rate limiting
 - **Chat summarization**: Summarize conversations and topics
 - **Hierarchical TOML config**: Layered `--config-dir` overrides with `${VAR}` substitution
-- **SQLite with provider abstraction**: PostgreSQL and MySQL providers exist; 16 versioned migrations
+- **SQLite with provider abstraction**: PostgreSQL and MySQL providers exist; 19 versioned migrations
 - **Rate limiting**: Sliding window algorithm with multiple queues
 - **File storage**: Local filesystem or S3-compatible via `StorageService`
 - **Custom handler loading**: Dynamic handler loading via TOML config
@@ -62,6 +62,57 @@ Full config documentation: [docs/llm/configuration.md](docs/llm/configuration.md
 ./venv/bin/python3 main.py --config-dir configs/00-defaults --config-dir configs/local
 ./venv/bin/python3 main.py --print-config --config-dir configs/00-defaults --config-dir configs/local
 ```
+
+## Max Messenger Webhook Mode
+
+By default the bot long-polls the Max API (`platform-api2.max.ru`). For webhook
+mode, the deployment is **two processes**: a standalone webhook receiver that
+accepts Max's `POST /webhook` calls, plus the bot itself, which polls the
+receiver's local `GET /updates` instead of the real Max API.
+
+**1. Configure** `[webhook-receiver]` (defaults in
+[`configs/00-defaults/webhook-receiver.toml`](configs/00-defaults/webhook-receiver.toml)):
+
+```toml
+[bot]
+mode = "max"
+
+[webhook-receiver]
+enabled = true                                          # bot polls the local receiver
+register-webhook = true                                 # bot registers the subscription with Max
+webhook-url = "https://bot.example.com/webhook"         # public HTTPS URL (port 443, CA-trusted cert)
+secret = "${MAX_WEBHOOK_SECRET}"                        # shared secret (env var)
+base-polling-url = "http://127.0.0.1:8443"              # where the bot polls
+```
+
+Set the shared secret in your `.env` (never commit it):
+
+```bash
+MAX_WEBHOOK_SECRET=some-long-random-secret
+```
+
+**2. TLS.** Max requires a CA-trusted HTTPS certificate on port 443. Run a
+reverse proxy (nginx, Caddy, …) that terminates TLS and forwards `POST /webhook`
+to the receiver's `127.0.0.1:8443`; alternatively set `tls-cert-file` and
+`tls-key-file` under `[webhook-receiver]` so the receiver serves HTTPS directly.
+
+**3. Start both processes** (start the receiver first):
+
+```bash
+# Receiver process
+./venv/bin/python3 -m internal.max_webhook_receiver \
+    --config-dir configs/00-defaults --config-dir configs/local
+
+# Bot process
+./venv/bin/python3 main.py --config-dir configs/00-defaults --config-dir configs/local
+```
+
+The receiver refuses to start if `secret` is empty or an unresolved `${VAR}`.
+In production, run the two as separate systemd units sharing the same config
+and `.env` (so they share the SQLite database).
+
+Full details: [docs/llm/architecture.md](docs/llm/architecture.md) (ADR-013),
+[docs/llm/configuration.md](docs/llm/configuration.md) (`[webhook-receiver]`).
 
 ## Key Commands
 

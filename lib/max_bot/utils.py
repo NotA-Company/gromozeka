@@ -13,9 +13,14 @@ Note:
     This utility helps extract the linked message content into a standalone Message object.
 """
 
+import logging
+import ssl
+from pathlib import Path
 from typing import Optional
 
 from .models import Message
+
+logger = logging.getLogger(__name__)
 
 
 def messageLinkToMessage(baseMessage: Message) -> Optional[Message]:
@@ -56,3 +61,78 @@ def messageLinkToMessage(baseMessage: Message) -> Optional[Message]:
         body=baseMessage.link.message,
         api_kwargs=baseMessage.link.api_kwargs,
     )
+
+
+def buildMaxSslContext(caBundlePath: Optional[str] = None) -> Optional[ssl.SSLContext]:
+    """Build an SSL context that trusts both system CAs and custom CA certificates.
+
+    Loads the default system/certifi CA bundle, then loads any additional PEM
+    certificate files found in the specified directory. This is needed for
+    platform-api2.max.ru, which uses certificates issued by the Russian
+    Минцифры CA that are not in standard CA bundles.
+
+    Args:
+        caBundlePath: Path to a directory containing additional PEM certificate
+            files (.pem, .crt). If None or empty string, returns None (use
+            system defaults). Path is resolved relative to the current working
+            directory.
+
+    Returns:
+        An ssl.SSLContext with system CAs + custom CAs loaded, or None if
+        no custom CA path was provided.
+
+    Raises:
+        FileNotFoundError: If the specified directory does not exist.
+
+    Note:
+        Individual certificate files that cannot be loaded by this OpenSSL
+        build (e.g. GOST certificates on macOS / non-GOST OpenSSL) are
+        skipped with a warning rather than raising.
+    """
+    if not caBundlePath:
+        return None
+
+    certDir = Path(caBundlePath)
+    if not certDir.is_dir():
+        raise FileNotFoundError(
+            f"Max CA bundle directory not found: {certDir.resolve()}. "
+            f"Download certificates from https://www.gosuslugi.ru/crt"
+        )
+
+    # Start with system defaults (loads certifi or OS CA bundle)
+    ctx = ssl.create_default_context()
+
+    # Load each PEM file from the directory
+    loaded = 0
+    skipped = 0
+    for certFile in sorted(certDir.iterdir()):
+        if certFile.suffix in (".pem", ".crt") and certFile.is_file():
+            try:
+                ctx.load_verify_locations(cafile=str(certFile))
+                logger.info("Loaded CA certificate: %s", certFile.name)
+                loaded += 1
+            except ssl.SSLError as e:
+                skipped += 1
+                logger.warning(
+                    "Skipping unloadable CA certificate %s (likely GOST, not supported by this OpenSSL build): %s",
+                    certFile.name,
+                    e,
+                )
+
+    if loaded == 0:
+        logger.warning(
+            "No .pem/.crt files found in %s. TLS connections to platform-api2.max.ru may fail.",
+            certDir.resolve(),
+        )
+        return None
+
+    if skipped > 0:
+        logger.warning(
+            "Loaded %d CA cert(s) but %d were skipped (possibly GOST, not supported by "
+            "this OpenSSL build). TLS to platform-api2.max.ru may fail if the chain requires them.",
+            loaded,
+            skipped,
+        )
+
+    logger.info("SSL context ready with %d additional CA certificate(s)", loaded)
+    return ctx

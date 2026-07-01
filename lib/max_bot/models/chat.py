@@ -374,60 +374,6 @@ class ChatAdmin(BaseMaxBotModel):
         )
 
 
-class ChatList(BaseMaxBotModel):
-    """Paginated list of chats.
-
-    This model represents a paginated response containing a list of chats
-    and a marker for fetching the next page.
-
-    Attributes:
-        chats: List of chat objects.
-        marker: Pagination marker for fetching the next page of chats.
-            None if there are no more pages.
-    """
-
-    __slots__ = ("chats", "marker")
-
-    def __init__(
-        self,
-        *,
-        chats: List[Chat],
-        marker: Optional[int] = None,
-        api_kwargs: Optional[Dict[str, Any]] = None,
-    ):
-        """Initialize a ChatList instance.
-
-        Args:
-            chats: List of chat objects.
-            marker: Pagination marker for fetching the next page.
-            api_kwargs: Additional API keyword arguments not covered by the model.
-        """
-        super().__init__(api_kwargs=api_kwargs)
-        self.chats: List[Chat] = chats
-        """Список запрашиваемых чатов"""
-        self.marker: Optional[int] = marker
-        """Указатель на следующую страницу запрашиваемых чатов"""
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ChatList":
-        """Create ChatList instance from API response dictionary.
-
-        Args:
-            data: Dictionary containing chat list data from API response.
-
-        Returns:
-            ChatList: A new ChatList instance populated with data from the dictionary.
-        """
-        chats_data = data.get("chats", [])
-        chats = [Chat.from_dict(chat) for chat in chats_data]
-
-        return cls(
-            chats=chats,
-            marker=data.get("marker"),
-            api_kwargs=cls._getExtraKwargs(data),
-        )
-
-
 class ChatPatch(BaseMaxBotModel):
     """Chat patch model for updating chat information.
 

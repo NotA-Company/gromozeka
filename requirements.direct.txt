@@ -1,5 +1,6 @@
 # Runtime
 aiodocker==0.27.0
+aiohttp==3.14.1
 aiosqlite==0.22.1
 boto3==1.43.36
 fastembed==0.8.0

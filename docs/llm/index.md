@@ -40,6 +40,7 @@
 ### Key Features
 
 - Multi-platform bot support (Telegram and Max Messenger)
+- Max Messenger webhook mode: standalone aiohttp webhook-receiver process that buffers Max webhook POSTs in `webhook_updates` and serves them back to the bot via a local GET /updates endpoint (two-process local-API-proxy pattern; see [`architecture.md`](architecture.md) ADR-013)
 - Advanced LLM integration with multiple providers (YC SDK, OpenAI-compatible, OpenRouter)
 - Comprehensive API integrations (Weather, Search, Geocoding)
 - ML-powered spam detection with Bayes filter
@@ -278,6 +279,7 @@ vanishingly rare in the Gromozeka codebase.
 | [`internal/services/proxy/service.py`](../../internal/services/proxy/service.py) | `ProxyService` singleton — proxy lifecycle management |
 | [`internal/services/proxy/lifecycle.py`](../../internal/services/proxy/lifecycle.py) | `ProxyLifecycle` — per-config proxy process manager |
 | [`internal/services/storage/service.py`](../../internal/services/storage/service.py) | `StorageService` singleton |
+| [`internal/max_webhook_receiver/`](../../internal/max_webhook_receiver/) | Standalone Max webhook receiver process (`aiohttp.web`): accepts Max webhook POSTs, stores raw payloads in `webhook_updates`, serves them to the bot via GET /updates. Run with `./venv/bin/python3 -m internal.max_webhook_receiver`. See [`architecture.md`](architecture.md) ADR-013. |
 
 ### 4.6 `lib/` Directory
 

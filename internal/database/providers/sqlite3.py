@@ -27,7 +27,7 @@ from .base import (
 
 # Optional dependency for native vector search.
 try:
-    import sqlite_vec # pyright: ignore[reportMissingImports]
+    import sqlite_vec  # pyright: ignore[reportMissingImports]
 
     _SQLITE_VEC_AVAILABLE = True
 except ImportError:
