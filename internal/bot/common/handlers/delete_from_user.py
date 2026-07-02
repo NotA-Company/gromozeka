@@ -1,16 +1,16 @@
-"""Handler for adding reactions to user messages.
+"""Handler for deleting messages from specific authors.
 
-This module provides functionality to automatically add emoji reactions to messages
-from specific users in Telegram chats. It allows administrators to configure which
-emoji should be used for reactions based on message authors.
+This module provides functionality to automatically delete messages from specific
+users in Telegram chats. It allows administrators to configure a list of authors
+(by user ID or username) whose messages should be removed on arrival.
 
 Reference:
-    https://docs.python-telegram-bot.org/en/stable/telegram.bot.html#telegram.Bot.set_message_reaction
+    https://docs.python-telegram-bot.org/en/stable/telegram.bot.html#telegram.Bot.delete_message
 """
 
 import json
 import logging
-from typing import Dict, Optional
+from typing import List, Optional
 
 import telegram
 
@@ -37,12 +37,12 @@ from .base import BaseBotHandler, HandlerResultStatus
 logger = logging.getLogger(__name__)
 
 
-class ReactOnUserMessageHandler(BaseBotHandler):
-    """Handler for automatically adding reactions to messages from specific users.
+class DeleteFromUserMessageHandler(BaseBotHandler):
+    """Handler for automatically deleting messages from specific users.
 
-    This handler allows administrators to configure emoji reactions that will be
-    automatically added to messages from specific users in Telegram chats. It supports
-    both user IDs and usernames for matching message authors.
+    This handler allows administrators to configure a list of authors whose
+    messages will be automatically deleted in Telegram chats. Authors can be
+    identified by either user ID (int) or username (str, lowercase).
     """
 
     ###
@@ -63,13 +63,13 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             A MessageSender object containing the author's ID and username.
             Returns an empty MessageSender if the author cannot be determined.
         """
-        # We use MessageSender here to not invent new type
+        # We use MessageSender here to not invent a new type
         ret = MessageSender(0, "", "")
         if message.forward_origin:
-            # It's forward, check if author is in authorIDList or authorUsernameList
+            # It's forward, check if author is in authorList
             forwardOrigin = message.forward_origin
             if isinstance(forwardOrigin, telegram.MessageOriginUser):
-                ret.username = forwardOrigin.sender_user.name or forwardOrigin.sender_user.username or ""
+                ret.username = forwardOrigin.sender_user.name or ""
                 ret.name = forwardOrigin.sender_user.full_name
                 ret.id = forwardOrigin.sender_user.id
             elif isinstance(forwardOrigin, telegram.MessageOriginChat):
@@ -95,92 +95,95 @@ class ReactOnUserMessageHandler(BaseBotHandler):
 
         return ret
 
-    async def _getAuthorToEmojiMap(self, chatId: int) -> Dict[str | int, str]:
-        """Retrieve the author-to-emoji mapping for a specific chat.
+    async def _getAuthorList(self, chatId: int) -> List[int | str]:
+        """Retrieve the delete-author list for a specific chat.
 
-        This method fetches the chat settings and parses the JSON string that maps
-        user IDs and usernames to their corresponding emoji reactions.
+        This method fetches the chat settings and parses the JSON string that holds
+        a list of user IDs (int) and usernames (str) whose messages should be deleted.
 
         Args:
-            chatId: The ID of the chat to retrieve the mapping for.
+            chatId: The ID of the chat to retrieve the list for.
 
         Returns:
-            A dictionary mapping user IDs (int) or usernames (str) to emoji strings.
-            Returns an empty dictionary if the setting is not configured or invalid.
+            A list of user IDs (int) and/or usernames (str). Returns an empty list
+            if the setting is not configured or invalid. Entries of invalid types
+            (e.g. dict, list, None, bool, float) are filtered out and logged as a warning.
         """
         chatSettings = await self.getChatSettings(chatId)
-        authorToEmojiMapStr = chatSettings[ChatSettingsKey.REACTION_AUTHOR_TO_EMOJI_MAP].toStr()
+        authorListStr = chatSettings[ChatSettingsKey.DELETE_AUTHOR_LIST].toStr()
 
-        authorToEmojiMap = {}
-        if not authorToEmojiMapStr:
-            return authorToEmojiMap
+        authorList: List[int | str] = []
+        if not authorListStr:
+            return authorList
 
         try:
-            authorToEmojiMap = json.loads(authorToEmojiMapStr)
-            if not isinstance(authorToEmojiMap, dict):
-                raise ValueError(f"authorToEmojiMap for chat#{chatId} is not a dict: {authorToEmojiMap}")
-
+            parsed = json.loads(authorListStr)
+            if not isinstance(parsed, list):
+                raise ValueError(f"deleteAuthorList for chat#{chatId} is not a list: {parsed}")
+            authorList = [x for x in parsed if isinstance(x, (int, str)) and not isinstance(x, bool)]
+            if len(authorList) != len(parsed):
+                logger.warning(f"deleteAuthorList in chat#{chatId} contained invalid entries, filtered")
         except json.JSONDecodeError:
-            logger.error(f"authorToEmojiMap in chat#{chatId} " f"is not a valid JSON: {authorToEmojiMapStr}")
+            logger.error(f"deleteAuthorList in chat#{chatId} is not a valid JSON: {authorListStr}")
         except Exception as e:
-            logger.error(f"Error while parsing ReactionAuthorToEmojiMap: {e}")
+            logger.error(f"Error while parsing deleteAuthorList: {e}")
 
-        # TODO: Add type validation
-        return authorToEmojiMap
+        return authorList
 
     async def newMessageHandler(
         self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
     ) -> HandlerResultStatus:
-        """Handle new messages and add reactions based on author configuration.
+        """Handle new messages and delete them if the author is in the delete list.
 
         This method is called for each new message and checks if the message author
-        has a configured emoji reaction. If a reaction is configured, it adds the
-        reaction to the message.
+        is in the configured delete-author list. If so, the message is deleted.
 
         Args:
             ensuredMessage: The ensured message object containing message details.
             updateObj: The update object from the messaging platform.
 
         Returns:
-            HandlerResultStatus.NEXT if a reaction was successfully added,
-            HandlerResultStatus.SKIPPED if no reaction was needed or configured,
-            HandlerResultStatus.ERROR if an error occurred while adding the reaction.
+            HandlerResultStatus.FINAL if a message was successfully deleted,
+            HandlerResultStatus.SKIPPED if no deletion was needed or configured,
+            HandlerResultStatus.ERROR if an error occurred while deleting the message.
         """
         message = ensuredMessage.getBaseMessage()
 
         if self.botProvider != BotProvider.TELEGRAM or not isinstance(message, telegram.Message):
-            logger.error("ReactOnUserMessageHandler support Telegram only for now")
+            logger.warning("DeleteFromUserMessageHandler supports Telegram only for now")
             return HandlerResultStatus.SKIPPED
 
-        authorToEmojiMap = await self._getAuthorToEmojiMap(ensuredMessage.recipient.id)
+        authorList = await self._getAuthorList(ensuredMessage.recipient.id)
 
-        if not authorToEmojiMap:
-            # No users to react, no reaction needed
+        if not authorList:
+            # No users to delete, nothing to do
             return HandlerResultStatus.SKIPPED
 
+        authorSet = set(authorList)
         sender = self._getMessageAuthor(message)
-        emoji = authorToEmojiMap.get(sender.id, authorToEmojiMap.get(sender.username.lower(), None))
-        if emoji:
+
+        isTarget = (sender.id and sender.id in authorSet) or (sender.username and sender.username.lower() in authorSet)
+
+        if isTarget:
             try:
-                await message.set_reaction([emoji])
+                await self.deleteMessage(ensuredMessage)
             except Exception as e:
-                logger.error(f"Error while reacting to message: {e}")
+                logger.error(f"Error while deleting message: {e}")
                 return HandlerResultStatus.ERROR
-            return HandlerResultStatus.NEXT
+            return HandlerResultStatus.FINAL
 
         return HandlerResultStatus.SKIPPED
 
     @commandHandlerV2(
-        commands=("set_reaction",),
-        shortDescription="[<chatId>] <emoji> - Start reacting to author of replied message with given emoji",
-        helpMessage=" [<chatId>] <emoji> - Ставить указанные реакции под сообщениями автора сообщения,"
-        " на которое команда является ответом.",
+        commands=("set_delete_author",),
+        shortDescription="[<chatId>] - Start deleting messages from author of replied message",
+        helpMessage=" [<chatId>] - Удалять сообщения автора сообщения, на которое команда является ответом.",
         visibility={CommandPermission.PRIVATE},
         availableFor={CommandPermission.PRIVATE, CommandPermission.ADMIN},
         helpOrder=CommandHandlerOrder.NORMAL,
         category=CommandCategory.ADMIN,
     )
-    async def set_reaction_command(
+    async def set_delete_author_command(
         self,
         ensuredMessage: EnsuredMessage,
         command: str,
@@ -188,16 +191,16 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """Configure an emoji reaction for messages from a specific user.
+        """Add the author of a replied-to message to the delete list.
 
-        This command allows administrators to set an emoji that will be automatically
-        added to all future messages from the author of the replied-to message. The
-        command must be sent as a reply to a message from the target user.
+        This command allows administrators to add the author of the replied-to
+        message to the list of users whose messages will be automatically deleted.
+        The command must be sent as a reply to a message from the target user.
 
         Args:
             ensuredMessage: The ensured message object containing command details.
             command: The command name that was triggered.
-            args: Command arguments. Format: [<chatId>] <emoji>.
+            args: Command arguments. Format: [<chatId>].
             UpdateObj: The update object from the messaging platform.
             typingManager: Optional typing manager for showing typing status.
 
@@ -206,7 +209,7 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         """
         message = ensuredMessage.getBaseMessage()
         if self.botProvider != BotProvider.TELEGRAM or not isinstance(message, telegram.Message):
-            logger.error("ReactOnUserMessageHandler support Telegram only for now")
+            logger.error("DeleteFromUserMessageHandler supports Telegram only for now")
             await self.sendMessage(
                 ensuredMessage,
                 messageText="Команда не поддержана на данной платформе",
@@ -229,20 +232,6 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         targetChatId = utils.extractInt(argList)
         if targetChatId is None:
             targetChatId = ensuredMessage.recipient.id
-        else:
-            argList = argList[1:]
-
-        emoji = None
-        if argList:
-            emoji = argList[0]
-
-        if not emoji:
-            await self.sendMessage(
-                ensuredMessage,
-                messageText="Не указан эмодзи для реакции.",
-                messageCategory=MessageCategory.BOT_ERROR,
-            )
-            return
 
         targetChat = MessageRecipient(
             id=targetChatId,
@@ -257,25 +246,31 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             )
             return
 
-        authorToEmojiMap = await self._getAuthorToEmojiMap(targetChatId)
+        authorList = await self._getAuthorList(targetChatId)
         sender = self._getMessageAuthor(replyMessage)
 
-        if sender.id:
-            authorToEmojiMap[sender.id] = emoji
+        if sender.id == 0 and not sender.username:
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="Не удалось определить автора сообщения.",
+                messageCategory=MessageCategory.BOT_ERROR,
+                typingManager=typingManager,
+            )
+            return
+
+        if sender.id and sender.id not in authorList:
+            authorList.append(sender.id)
         if sender.username:
-            authorToEmojiMap[sender.username.lower()] = emoji
+            usernameLower = sender.username.lower()
+            if usernameLower not in authorList:
+                authorList.append(usernameLower)
 
         await self.setChatSetting(
             targetChatId,
-            ChatSettingsKey.REACTION_AUTHOR_TO_EMOJI_MAP,
-            ChatSettingsValue(utils.jsonDumps(authorToEmojiMap, sort_keys=False)),
+            ChatSettingsKey.DELETE_AUTHOR_LIST,
+            ChatSettingsValue(utils.jsonDumps(authorList, sort_keys=False)),
             user=ensuredMessage.sender,
         )
-
-        try:
-            await message.set_reaction([emoji])
-        except Exception as e:
-            logger.error(f"Error while setting reaction: {e}")
 
         await self.sendMessage(
             ensuredMessage,
@@ -284,16 +279,16 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         )
 
     @commandHandlerV2(
-        commands=("unset_reaction",),
-        shortDescription="[<chatId>] - Stop reacting to author of replied message",
-        helpMessage=" [<chatId>] - Перестать реакции под сообщениями автора сообщения,"
+        commands=("unset_delete_author",),
+        shortDescription="[<chatId>] - Stop deleting messages from author of replied message",
+        helpMessage=" [<chatId>] - Перестать удалять сообщения автора сообщения,"
         " на которое команда является ответом.",
         visibility={CommandPermission.PRIVATE},
         availableFor={CommandPermission.PRIVATE, CommandPermission.ADMIN},
         helpOrder=CommandHandlerOrder.NORMAL,
         category=CommandCategory.ADMIN,
     )
-    async def unset_reaction_command(
+    async def unset_delete_author_command(
         self,
         ensuredMessage: EnsuredMessage,
         command: str,
@@ -301,11 +296,11 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """Remove the configured emoji reaction for messages from a specific user.
+        """Remove the author of a replied-to message from the delete list.
 
-        This command allows administrators to remove the emoji reaction configuration
-        for the author of the replied-to message. The command must be sent as a reply
-        to a message from the target user.
+        This command allows administrators to remove the author of the replied-to
+        message from the list of users whose messages are automatically deleted.
+        The command must be sent as a reply to a message from the target user.
 
         Args:
             ensuredMessage: The ensured message object containing command details.
@@ -319,7 +314,7 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         """
         message = ensuredMessage.getBaseMessage()
         if self.botProvider != BotProvider.TELEGRAM or not isinstance(message, telegram.Message):
-            logger.error("ReactOnUserMessageHandler support Telegram only for now")
+            logger.warning("DeleteFromUserMessageHandler supports Telegram only for now")
             await self.sendMessage(
                 ensuredMessage,
                 messageText="Команда не поддержана на данной платформе",
@@ -356,29 +351,36 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             )
             return
 
-        authorToEmojiMap = await self._getAuthorToEmojiMap(targetChatId)
+        authorList = await self._getAuthorList(targetChatId)
         sender = self._getMessageAuthor(replyMessage)
-        emoji1 = authorToEmojiMap.pop(sender.id, None)
-        emoji2 = authorToEmojiMap.pop(sender.username.lower(), None)
 
-        emoji = emoji1 or emoji2
+        if sender.id == 0 and not sender.username:
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="Не удалось определить автора сообщения.",
+                messageCategory=MessageCategory.BOT_ERROR,
+                typingManager=typingManager,
+            )
+            return
+
+        removed = False
+        if sender.id and sender.id in authorList:
+            authorList.remove(sender.id)
+            removed = True
+        if sender.username:
+            usernameLower = sender.username.lower()
+            if usernameLower in authorList:
+                authorList.remove(usernameLower)
+                removed = True
 
         await self.setChatSetting(
             targetChatId,
-            ChatSettingsKey.REACTION_AUTHOR_TO_EMOJI_MAP,
-            ChatSettingsValue(utils.jsonDumps(authorToEmojiMap, sort_keys=False)),
+            ChatSettingsKey.DELETE_AUTHOR_LIST,
+            ChatSettingsValue(utils.jsonDumps(authorList, sort_keys=False)),
             user=ensuredMessage.sender,
         )
 
-        resp = ""
-        if emoji:
-            resp = f"Готово (Была реакция: {emoji})"
-            try:
-                await message.set_reaction([emoji])
-            except Exception as e:
-                logger.error(f"Error while setting reaction: {e}")
-        else:
-            resp = "Готово (Не было реакции)"
+        resp = "Готово" if removed else "Готово (Не было в списке на удаление)"
 
         await self.sendMessage(
             ensuredMessage,
@@ -387,15 +389,15 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         )
 
     @commandHandlerV2(
-        commands=("dump_reactions",),
-        shortDescription="[<chatId>] - Dump reactions settings",
-        helpMessage=" [<chatId>] - Вывести настройки реакций в указанном чате (сфрой JSON-дамп)",
+        commands=("dump_delete_authors",),
+        shortDescription="[<chatId>] - Dump delete authors settings",
+        helpMessage=" [<chatId>] - Вывести настройки удаления авторов в указанном чате (сырой JSON-дамп)",
         visibility={CommandPermission.PRIVATE},
         availableFor={CommandPermission.PRIVATE, CommandPermission.ADMIN},
         helpOrder=CommandHandlerOrder.NORMAL,
         category=CommandCategory.ADMIN,
     )
-    async def dump_reactions_command(
+    async def dump_delete_authors_command(
         self,
         ensuredMessage: EnsuredMessage,
         command: str,
@@ -403,11 +405,11 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """Display the current author-to-emoji mapping for a chat.
+        """Display the current delete-author list for a chat.
 
-        This command outputs the JSON configuration of which users have emoji reactions
-        configured in the specified chat. This is useful for reviewing and debugging
-        reaction settings.
+        This command outputs the JSON configuration of which users have message
+        deletion configured in the specified chat. This is useful for reviewing
+        and debugging delete settings.
 
         Args:
             ensuredMessage: The ensured message object containing command details.
@@ -421,12 +423,10 @@ class ReactOnUserMessageHandler(BaseBotHandler):
         """
         argList = args.split()
 
-        logger.debug(f"Args: {argList}")
         targetChatId = utils.extractInt(argList)
         if targetChatId is None:
             targetChatId = ensuredMessage.recipient.id
 
-        logger.debug(f"chatId: {targetChatId}")
         targetChat = MessageRecipient(
             id=targetChatId,
             chatType=ChatType.PRIVATE if targetChatId > 0 else ChatType.GROUP,
@@ -440,10 +440,10 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             )
             return
 
-        authorToEmojiMap = await self._getAuthorToEmojiMap(targetChatId)
+        authorList = await self._getAuthorList(targetChatId)
 
         await self.sendMessage(
             ensuredMessage,
-            messageText=f"```json\n{utils.jsonDumps(authorToEmojiMap, indent=2, sort_keys=False)}\n```\n",
+            messageText=f"```json\n{utils.jsonDumps(authorList, indent=2, sort_keys=False)}\n```\n",
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )

@@ -113,6 +113,10 @@ bayes-min-confedence-to-autolearn-ham = 0.9
 delete-join-messages = false
 delete-left-messages = false
 
+# JSON list of authors (user IDs / usernames) whose messages are auto-deleted.
+# Managed via /set_delete_author and /unset_delete_author commands.
+delete-author-list = ""
+
 # Bayes filter settings
 bayes-enabled = true
 bayes-min-confidence = 0.5

@@ -35,6 +35,7 @@
 | [`media.py`](../../internal/bot/common/handlers/media.py) | `MediaHandler` | Media message processing |
 | [`common.py`](../../internal/bot/common/handlers/common.py) | `CommonHandler` | Common bot commands |
 | [`help_command.py`](../../internal/bot/common/handlers/help_command.py) | `HelpHandler` | `/help` command |
+| [`delete_from_user.py`](../../internal/bot/common/handlers/delete_from_user.py) | `DeleteFromUserMessageHandler` | Telegram-only auto-delete of messages from configured authors (via `DELETE_AUTHOR_LIST` chat setting, a JSON array of user IDs and usernames). Commands: `/set_delete_author`, `/unset_delete_author`, `/dump_delete_authors`. `newMessageHandler` returns `FINAL` on successful deletion so downstream handlers (e.g. `ReactOnUserMessageHandler`, `LLMMessageHandler`) skip the deleted message; `SKIPPED` otherwise. Modeled on `ReactOnUserMessageHandler`. |
 | [`react_on_user.py`](../../internal/bot/common/handlers/react_on_user.py) | `ReactOnUserMessageHandler` | Telegram-only reactions |
 | [`topic_manager.py`](../../internal/bot/common/handlers/topic_manager.py) | `TopicManagerHandler` | Telegram forum topics |
 | [`weather.py`](../../internal/bot/common/handlers/weather.py) | `WeatherHandler` | Weather commands (if enabled). Proxy: resolves proxy separately for `OpenWeatherMapClient` and `GeocodeMapsClient` in `__init__()`, using the `[openweathermap]` and `[geocode-maps]` config sections respectively. |
@@ -391,16 +392,17 @@ Full chain:
 7. `MediaHandler` — PARALLEL — media processing
 8. `CommonHandler` — PARALLEL — standard commands
 9. `HelpHandler` — PARALLEL — help command
-10. (Telegram only) `ReactOnUserMessageHandler` — PARALLEL
-11. (Telegram only) `TopicManagerHandler` — PARALLEL
-12. (if enabled) `WeatherHandler` — PARALLEL — gated by `[openweathermap].enabled`
-13. (if enabled) `YandexSearchHandler` — PARALLEL — gated by `[yandex-search].enabled`
-14. (if enabled) `ResenderHandler` — PARALLEL — gated by `[resender].enabled`
-15. (if enabled) `DivinationHandler` — PARALLEL — gated by `[divination].enabled`
-16. (if enabled) `SandboxHandler` — PARALLEL — gated by `[sandbox].enabled`
-17. (if enabled) `ChatSearchHandler` — PARALLEL — gated by `[search-history].enabled`
-18. (custom handlers) — PARALLEL by default (configurable per-handler)
-19. `LLMMessageHandler` — SEQUENTIAL — **MUST BE LAST**
+10. (Telegram only) `DeleteFromUserMessageHandler` — PARALLEL — auto-deletes messages from authors in `DELETE_AUTHOR_LIST`; runs before `ReactOnUserMessageHandler` so the bot doesn't react to a message it's about to delete
+11. (Telegram only) `ReactOnUserMessageHandler` — PARALLEL
+12. (Telegram only) `TopicManagerHandler` — PARALLEL
+13. (if enabled) `WeatherHandler` — PARALLEL — gated by `[openweathermap].enabled`
+14. (if enabled) `YandexSearchHandler` — PARALLEL — gated by `[yandex-search].enabled`
+15. (if enabled) `ResenderHandler` — PARALLEL — gated by `[resender].enabled`
+16. (if enabled) `DivinationHandler` — PARALLEL — gated by `[divination].enabled`
+17. (if enabled) `SandboxHandler` — PARALLEL — gated by `[sandbox].enabled`
+18. (if enabled) `ChatSearchHandler` — PARALLEL — gated by `[search-history].enabled`
+19. (custom handlers) — PARALLEL by default (configurable per-handler)
+20. `LLMMessageHandler` — SEQUENTIAL — **MUST BE LAST**
 
 ---
 
@@ -437,4 +439,4 @@ Full chain:
 ---
 
 *This guide is auto-maintained and should be updated whenever significant handler changes are made*  
-*Last updated: 2026-06-28*
+*Last updated: 2026-07-02*
