@@ -1424,7 +1424,7 @@ class ChatSearchHandler(BaseBotHandler):
                     if r["thread_id"]:
                         link = f"(https://t.me/c/{0 - r['chat_id'] - 1000000000000}/{r['thread_id']}/{r['message_id']})"
 
-            lines.append(f"[{dateStr}]{link} @{username}: {text}")
+            lines.append(f"[{dateStr}]{link} `@{username}`: {text}")
         return "\n".join(lines)
 
     @staticmethod
