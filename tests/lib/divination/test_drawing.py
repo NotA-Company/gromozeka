@@ -1,4 +1,4 @@
-"""Tests for :func:`lib.divination.drawing.drawSymbols`, dood!"""
+"""Tests for :func:`lib.divination.drawing.drawSymbols`"""
 
 import random
 from typing import Set, Tuple
@@ -21,7 +21,7 @@ def _findLayout(layoutId: str) -> Layout:
     for layout in TAROT_LAYOUTS:
         if layout.id == layoutId:
             return layout
-    raise AssertionError(f"layout {layoutId!r} not found in TAROT_LAYOUTS, dood!")
+    raise AssertionError(f"layout {layoutId!r} not found in TAROT_LAYOUTS")
 
 
 def testReturnsExactNumberOfDraws() -> None:
@@ -37,7 +37,7 @@ def testReturnsExactNumberOfDraws() -> None:
 
 
 def testDrawsAreUnique() -> None:
-    """Every draw must reference a distinct symbol (no replacement), dood!"""
+    """Every draw must reference a distinct symbol (no replacement)"""
     layout: Layout = _findLayout("celtic_cross")
     draws: Tuple[DrawnSymbol, ...] = drawSymbols(
         TarotSystem.deck,
@@ -50,7 +50,7 @@ def testDrawsAreUnique() -> None:
 
 
 def testPositionsMatchLayout() -> None:
-    """Position labels and indices must mirror the layout, dood!"""
+    """Position labels and indices must mirror the layout"""
     layout: Layout = _findLayout("three_card")
     draws: Tuple[DrawnSymbol, ...] = drawSymbols(
         TarotSystem.deck,
@@ -95,7 +95,7 @@ def testSupportsReversedFalseAlwaysUpright() -> None:
 
 
 def testReversalProbabilityRoughlyHalf() -> None:
-    """Over many one-card draws ~50% should be reversed (±5%), dood!"""
+    """Over many one-card draws ~50% should be reversed (±5%)"""
     layout: Layout = _findLayout("one_card")
     rng: random.Random = random.Random(2026)
     iterations: int = 10000

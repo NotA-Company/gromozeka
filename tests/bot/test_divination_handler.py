@@ -1,4 +1,4 @@
-"""Tests for :class:`DivinationHandler`, dood!
+"""Tests for :class:`DivinationHandler`
 
 These tests exercise the divination handler in isolation by:
 
@@ -46,7 +46,7 @@ from lib.ai.models import ModelRunResult
 
 
 # A handful of typed aliases keep pyright (basic mode) quiet around mock
-# attribute access without sprinkling ``# type: ignore`` everywhere, dood!
+# attribute access without sprinkling ``# type: ignore`` everywhere
 HandlerMocks = Dict[str, Any]
 
 
@@ -298,7 +298,7 @@ async def test_taroCommandSuccess() -> None:
         * inserts a ``divinations`` row with no ``mediaId`` / ``rngSeed``;
         * sends exactly TWO ``sendMessage`` calls: first the photo alone (no
           caption / no ``messageText``), then the template-rendered text alone
-          (no ``photoData``), dood!
+          (no ``photoData``)
     """
     handler, mocks = _makeHandler()
     em = _makeEnsuredMessage()
@@ -525,7 +525,7 @@ async def test_noTruncation_fullInterpretationPassedToSendMessage() -> None:
     The handler must embed the complete LLM text in the reply template
     without slicing. ``sendMessage`` handles any platform-level overflow.
     On the slash-command-with-image path exactly TWO ``sendMessage`` calls
-    are made: first the photo alone, then the full-text reply, dood!
+    are made: first the photo alone, then the full-text reply
     """
     handler, mocks = _makeHandler()
     longText = "y" * 2000
@@ -589,7 +589,7 @@ async def test_llmToolWithImageSendsPhotoButNotText() -> None:
       any text reply using the JSON result).
     - The returned JSON contains ``done``, ``layout``, ``draws``, and
       ``interpretation``; it does NOT contain ``imageGenerated`` or
-      ``summary`` (removed by the user intentionally), dood!
+      ``summary`` (removed by the user intentionally)
     - The photo-send uses ``MessageCategory.BOT`` (Change C).
     """
     handler, mocks = _makeHandler()
@@ -637,7 +637,7 @@ async def test_llmToolWithoutImageSendsNothing() -> None:
     - ``sendMessage`` is never called.
     - The returned JSON contains ``done``, ``layout``, ``draws``, and
       ``interpretation``; it does NOT contain ``imageGenerated`` or
-      ``summary`` (removed by the user intentionally), dood!
+      ``summary`` (removed by the user intentionally)
     """
     handler, mocks = _makeHandler()
     em = _makeEnsuredMessage()
@@ -673,7 +673,7 @@ async def test_slashCommandPathSendsTextWithPhoto() -> None:
     Ensures the slash-command flow uses the reply template (not bare LLM
     text) and is not affected by the LLM-tool suppression logic. The image
     and the template-rendered text are sent as two distinct ``sendMessage``
-    calls: first photo-only, then text-only, dood!
+    calls: first photo-only, then text-only
     """
     handler, mocks = _makeHandler()
     em = _makeEnsuredMessage()
@@ -703,7 +703,7 @@ async def test_slashCommandUsesReplyTemplate() -> None:
 
     Patches the chat setting to a custom template and verifies the rendered
     result (not the raw LLM text) is delivered in the second ``sendMessage``
-    call (the text-only one). The first call carries the photo alone, dood!
+    call (the text-only one). The first call carries the photo alone
     """
     customTemplate: str = "LAYOUT={layoutName}|SYMBOLS={drawnSymbolsBlock}|INTERP={interpretation}"
     handler, mocks = _makeHandler(
@@ -736,7 +736,7 @@ async def test_toolPathJsonContainsBareInterpretation() -> None:
 
     The host LLM must receive the bare interpretation so it can incorporate
     it naturally into its own response — the template wrapper is for users
-    only, not for the LLM, dood!
+    only, not for the LLM
     """
     handler, mocks = _makeHandler()
     em = _makeEnsuredMessage()
@@ -776,7 +776,7 @@ async def test_slashCommandSendsTwoMessages_withImage() -> None:
       no ``photoData`` (text alone).
 
     Regression guard: any collapse back to a single call (photo+caption) or
-    any reduction to zero/one call on this path is a bug, dood!
+    any reduction to zero/one call on this path is a bug
 
     Scenario: image generation enabled and returns bytes.
     """
@@ -818,7 +818,7 @@ async def test_slashCommandSendsExactlyOneMessage_noImage() -> None:
     Regression guard: ensures that text-only replies also produce a single
     ``sendMessage`` call. The buggy staged version additionally fired a
     second ``sendMessage`` unconditionally after the ``else`` branch, which
-    would have sent a duplicate plain-text reply, dood!
+    would have sent a duplicate plain-text reply
 
     Scenario: image generation disabled in config.
     """
@@ -849,7 +849,7 @@ async def test_slashCommandSendsExactlyOneMessage_noImage() -> None:
 
 
 async def test_toolPathJsonIncludesRuneGlyphs() -> None:
-    """LLM-tool JSON for a runes reading must include non-empty ``glyph`` on every draw entry, dood!
+    """LLM-tool JSON for a runes reading must include non-empty ``glyph`` on every draw entry
 
     Each ``draws[i]["glyph"]`` must be a non-empty string containing a single
     character from the Runic Unicode block (U+16A0–U+16F8).
@@ -884,7 +884,7 @@ async def test_toolPathJsonIncludesRuneGlyphs() -> None:
 
 
 async def test_toolPathJsonTarotGlyphIsNull() -> None:
-    """LLM-tool JSON for a tarot reading must have ``glyph=null`` on every draw entry, dood!
+    """LLM-tool JSON for a tarot reading must have ``glyph=null`` on every draw entry
 
     Tarot cards have no single canonical glyph, so the field must be absent
     (serialised as JSON ``null``) — never a runic character.

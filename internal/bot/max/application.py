@@ -167,7 +167,7 @@ class MaxBotApplication:
 
         random.seed()
 
-        logger.info("Starting Gromozeka Max bot, dood!")
+        logger.info("Starting Gromozeka Max bot")
 
         # Start the bot on the shared event loop
         loop.run_until_complete(self._runPolling())

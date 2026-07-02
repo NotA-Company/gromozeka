@@ -7,7 +7,7 @@ from lib.markdown import markdown_to_html
 
 
 def test_inline_code_fence():
-    """Test inline code fence parsing, dood!"""
+    """Test inline code fence parsing"""
     text = "Test 1 ```test1 test2 test3```"
     html = markdown_to_html(text)
     # Should be inline code span
@@ -16,7 +16,7 @@ def test_inline_code_fence():
 
 
 def test_malformed_fence():
-    """Test malformed fence parsing, dood!"""
+    """Test malformed fence parsing"""
     text = "Test 2\n```test1 test2 test3```"
     html = markdown_to_html(text)
     # Should be fenced code block (malformed)
@@ -24,7 +24,7 @@ def test_malformed_fence():
 
 
 def test_proper_fence():
-    """Test proper fence parsing, dood!"""
+    """Test proper fence parsing"""
     text = "Test 3\n```\ntest1 test2 test3\n```"
     html = markdown_to_html(text)
     # Should be fenced code block
@@ -32,7 +32,7 @@ def test_proper_fence():
 
 
 def test_fence_with_lang():
-    """Test fence with language parsing, dood!"""
+    """Test fence with language parsing"""
     text = "Test 4\n```test0\ntest1 test2 test3\n```"
     html = markdown_to_html(text)
     # Should be fenced code block
@@ -40,7 +40,7 @@ def test_fence_with_lang():
 
 
 def test_inline_code_with_backticks():
-    """Test inline code with backticks, dood!"""
+    """Test inline code with backticks"""
     text = "Use `code` in your text"
     html = markdown_to_html(text)
     # Should be inline code span
@@ -49,7 +49,7 @@ def test_inline_code_with_backticks():
 
 
 def test_multiple_inline_code():
-    """Test multiple inline code spans, dood!"""
+    """Test multiple inline code spans"""
     text = "Use `code1` and `code2` here"
     html = markdown_to_html(text)
     # Should be inline code spans
@@ -58,7 +58,7 @@ def test_multiple_inline_code():
 
 
 def test_mixed_content():
-    """Test mixed inline and block code, dood!"""
+    """Test mixed inline and block code"""
     text = "Text with `inline` and\n```\nblock code\n```"
     html = markdown_to_html(text)
     # Should have both inline code and fenced code block
@@ -67,7 +67,7 @@ def test_mixed_content():
 
 
 def test_unclosed_fence():
-    """Test unclosed fence parsing, dood!"""
+    """Test unclosed fence parsing"""
     text = "```\ncode without closing"
     html = markdown_to_html(text)
     # Should be fenced code block (unclosed)
@@ -75,7 +75,7 @@ def test_unclosed_fence():
 
 
 def test_nested_backticks_in_fence():
-    """Test nested backticks in fence, dood!"""
+    """Test nested backticks in fence"""
     text = "```\ncode with ``` inside\n```"
     html = markdown_to_html(text)
     # Should be fenced code block
@@ -83,7 +83,7 @@ def test_nested_backticks_in_fence():
 
 
 def test_empty_fence():
-    """Test empty fence parsing, dood!"""
+    """Test empty fence parsing"""
     text = "```\n```"
     html = markdown_to_html(text)
     # Should be fenced code block (empty)

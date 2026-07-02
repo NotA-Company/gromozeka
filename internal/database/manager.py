@@ -70,13 +70,13 @@ class DatabaseManager:
 
         self.config = config.copy()
         if "providers" not in self.config:
-            raise ValueError("No providers found in configuration, dood")
+            raise ValueError("No providers found in configuration")
         if "default" not in self.config:
-            raise ValueError("No default source found in configuration, dood")
+            raise ValueError("No default source found in configuration")
         if self.config["default"] not in self.config["providers"]:
             raise ValueError(
                 f"Default source '{self.config['default']}' not found in configuration, "
-                "please check your configuration and try again, dood!"
+                "please check your configuration and try again"
             )
         if "chatMapping" not in self.config:
             # Do not raise error if no chat mappings provided.
@@ -131,7 +131,7 @@ class DatabaseManager:
             if dataSource not in self.config["providers"]:
                 logger.warning(
                     f"Explicit dataSource '{dataSource}' not found in configuration, "
-                    f"falling back to default source '{self.default}', dood!"
+                    f"falling back to default source '{self.default}'"
                 )
                 providerName = self.default
             else:
@@ -146,7 +146,7 @@ class DatabaseManager:
                 if mappedSource not in self.config["providers"]:
                     logger.warning(
                         f"Chat {chatId} mapped to non-existent source '{mappedSource}', "
-                        f"falling back to default source '{self.default}', dood!"
+                        f"falling back to default source '{self.default}'"
                     )
                     providerName = self.default
                 else:
@@ -180,7 +180,7 @@ class DatabaseManager:
 
         if not readonly and await sourceProvider.isReadOnly():
             raise ValueError(
-                f"Cannot perform write operation on readonly source '{providerName}', dood! "
+                f"Cannot perform write operation on readonly source '{providerName}' "
                 f"This source is configured as readonly."
             )
 

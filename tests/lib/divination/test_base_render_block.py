@@ -1,5 +1,5 @@
 """Tests for :meth:`BaseDivinationSystem.renderDrawnSymbolsBlock` and
-:meth:`BaseDivinationSystem.renderReplyTemplate`, dood!
+:meth:`BaseDivinationSystem.renderReplyTemplate`
 
 Covers:
 * Three-card tarot spread renders 3 numbered lines.
@@ -34,7 +34,7 @@ def _findTarotLayout(layoutId: str) -> Layout:
     for layout in TAROT_LAYOUTS:
         if layout.id == layoutId:
             return layout
-    raise AssertionError(f"Tarot layout {layoutId!r} not found, dood!")
+    raise AssertionError(f"Tarot layout {layoutId!r} not found")
 
 
 def _findRuneLayout(layoutId: str) -> Layout:
@@ -52,7 +52,7 @@ def _findRuneLayout(layoutId: str) -> Layout:
     for layout in RUNE_LAYOUTS:
         if layout.id == layoutId:
             return layout
-    raise AssertionError(f"Rune layout {layoutId!r} not found, dood!")
+    raise AssertionError(f"Rune layout {layoutId!r} not found")
 
 
 def _makeThreeCardReading(*, forceAllReversed: bool = False) -> Reading:
@@ -130,7 +130,7 @@ def _makeThreeRunesReading() -> Reading:
 
 
 def testThreeCardSpreadRendersThreeLines() -> None:
-    """Three-card reading must produce exactly 3 lines indexed 1, 2, 3, dood!"""
+    """Three-card reading must produce exactly 3 lines indexed 1, 2, 3"""
     reading: Reading = _makeThreeCardReading()
     block: str = TarotSystem.renderDrawnSymbolsBlock(reading, lang="ru")
 
@@ -153,7 +153,7 @@ def testThreeCardSpreadContainsLocalizedNames() -> None:
 
 
 def testReversedCardHasReversedSuffix() -> None:
-    """A reversed tarot card must render `` (перевёрнута)`` in its line, dood!"""
+    """A reversed tarot card must render `` (перевёрнута)`` in its line"""
     reading: Reading = _makeOneCardReadingMixedReversed()
     block: str = TarotSystem.renderDrawnSymbolsBlock(reading, lang="ru")
 
@@ -161,7 +161,7 @@ def testReversedCardHasReversedSuffix() -> None:
 
 
 def testAllReversedCardsHaveSuffix() -> None:
-    """Every reversed card in the reading must have the reversal suffix, dood!"""
+    """Every reversed card in the reading must have the reversal suffix"""
     reading: Reading = _makeThreeCardReading(forceAllReversed=True)
     block: str = TarotSystem.renderDrawnSymbolsBlock(reading, lang="ru")
 
@@ -172,7 +172,7 @@ def testAllReversedCardsHaveSuffix() -> None:
 
 
 def testNonReversedCardHasNoSuffix() -> None:
-    """Non-reversed draws must NOT produce the reversal suffix, dood!"""
+    """Non-reversed draws must NOT produce the reversal suffix"""
     layout: Layout = _findTarotLayout("three_card")
     draws: Tuple[DrawnSymbol, ...] = tuple(
         DrawnSymbol(symbol=d.symbol, reversed=False, position=d.position, positionIndex=d.positionIndex)
@@ -192,7 +192,7 @@ def testNonReversedCardHasNoSuffix() -> None:
 
 
 def testRunesReadingHasNoReversalSuffix() -> None:
-    """Rune readings must never render the reversal suffix, dood!
+    """Rune readings must never render the reversal suffix
 
     :attr:`RunesSystem.supportsReversed` is ``False``, so all draws have
     ``reversed=False`` and the branch is never taken.
@@ -204,7 +204,7 @@ def testRunesReadingHasNoReversalSuffix() -> None:
 
 
 def testLangFallbackToEnglish() -> None:
-    """An unknown language code must fall back to English names, dood!"""
+    """An unknown language code must fall back to English names"""
     reading: Reading = _makeThreeCardReading()
     block: str = TarotSystem.renderDrawnSymbolsBlock(reading, lang="zh")  # no Chinese translations
 
@@ -218,7 +218,7 @@ def testLangFallbackToEnglish() -> None:
 
 
 def testNewlineCountEqualsDrawsMinusOne() -> None:
-    """For N draws, the block must contain exactly N-1 newline characters, dood!"""
+    """For N draws, the block must contain exactly N-1 newline characters"""
     reading: Reading = _makeThreeCardReading()
     block: str = TarotSystem.renderDrawnSymbolsBlock(reading, lang="ru")
 
@@ -230,7 +230,7 @@ def testNewlineCountEqualsDrawsMinusOne() -> None:
 
 
 def testSingleDrawHasNoNewlines() -> None:
-    """A single-card reading produces a block with no newlines, dood!"""
+    """A single-card reading produces a block with no newlines"""
     layout: Layout = _findTarotLayout("one_card")
     draws: Tuple[DrawnSymbol, ...] = TarotSystem.draw(layout, rng=random.Random(0))
     reading: Reading = Reading(
@@ -253,7 +253,7 @@ def testSingleDrawHasNoNewlines() -> None:
 
 
 def testRenderReplyTemplateSubstitutesAllPlaceholders() -> None:
-    """All three placeholders must be substituted correctly, dood!"""
+    """All three placeholders must be substituted correctly"""
     template: str = "Расклад: {layoutName}\nКарты:\n{drawnSymbolsBlock}\n\n{interpretation}"
     result: str = TarotSystem.renderReplyTemplate(
         template,
@@ -266,7 +266,7 @@ def testRenderReplyTemplateSubstitutesAllPlaceholders() -> None:
 
 
 def testRenderReplyTemplateMissingPlaceholderRendersEmpty() -> None:
-    """Missing placeholders must silently become empty strings, dood!"""
+    """Missing placeholders must silently become empty strings"""
     template: str = "A={layoutName}|B={drawnSymbolsBlock}|C={interpretation}|D={unknown}"
     result: str = TarotSystem.renderReplyTemplate(
         template,
@@ -279,7 +279,7 @@ def testRenderReplyTemplateMissingPlaceholderRendersEmpty() -> None:
 
 
 def testRenderReplyTemplateIsStringResult() -> None:
-    """``renderReplyTemplate`` must return a ``str``, dood!"""
+    """``renderReplyTemplate`` must return a ``str``"""
     result = TarotSystem.renderReplyTemplate(
         "{layoutName} / {drawnSymbolsBlock} / {interpretation}",
         layoutName="L",
@@ -295,7 +295,7 @@ def testRenderReplyTemplateIsStringResult() -> None:
 
 
 def testRunesReadingPrependsGlyph() -> None:
-    """Each line in a runes block must contain the rune's glyph before its name, dood!
+    """Each line in a runes block must contain the rune's glyph before its name
 
     For example, Fehu must produce a substring like ``"ᚠ Феху"`` in the line.
     """
@@ -316,7 +316,7 @@ def testRunesReadingPrependsGlyph() -> None:
 
 
 def testTarotReadingHasNoGlyphPrefix() -> None:
-    """Tarot lines must NOT contain any Runic block character and must follow the plain format, dood!
+    """Tarot lines must NOT contain any Runic block character and must follow the plain format
 
     Confirms that tarot cards (which have ``glyph=None``) produce lines of the
     form ``"<n>. <position> — <name>"`` with no leading space before the name

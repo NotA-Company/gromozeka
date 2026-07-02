@@ -1,5 +1,5 @@
 """
-Comprehensive tests for NullStorageBackend, dood!
+Comprehensive tests for NullStorageBackend
 
 This module tests the NullStorageBackend to ensure it properly
 validates keys but performs no actual storage operations.
@@ -12,7 +12,7 @@ from internal.services.storage.exceptions import StorageKeyError
 
 
 class TestNullBackendInitialization:
-    """Test NullStorageBackend initialization, dood!"""
+    """Test NullStorageBackend initialization"""
 
     def testBackendCreation(self):
         """Test that backend can be created without parameters"""
@@ -21,7 +21,7 @@ class TestNullBackendInitialization:
 
 
 class TestNullBackendStore:
-    """Test NullStorageBackend store operation, dood!"""
+    """Test NullStorageBackend store operation"""
 
     def testStoreDoesNothing(self):
         """Test that store operation does nothing"""
@@ -65,7 +65,7 @@ class TestNullBackendStore:
 
 
 class TestNullBackendGet:
-    """Test NullStorageBackend get operation, dood!"""
+    """Test NullStorageBackend get operation"""
 
     def testGetAlwaysReturnsNone(self):
         """Test that get always returns None"""
@@ -101,7 +101,7 @@ class TestNullBackendGet:
 
 
 class TestNullBackendExists:
-    """Test NullStorageBackend exists operation, dood!"""
+    """Test NullStorageBackend exists operation"""
 
     def testExistsAlwaysReturnsFalse(self):
         """Test that exists always returns False"""
@@ -137,7 +137,7 @@ class TestNullBackendExists:
 
 
 class TestNullBackendDelete:
-    """Test NullStorageBackend delete operation, dood!"""
+    """Test NullStorageBackend delete operation"""
 
     def testDeleteAlwaysReturnsFalse(self):
         """Test that delete always returns False"""
@@ -173,7 +173,7 @@ class TestNullBackendDelete:
 
 
 class TestNullBackendList:
-    """Test NullStorageBackend list operation, dood!"""
+    """Test NullStorageBackend list operation"""
 
     def testListAlwaysReturnsEmptyList(self):
         """Test that list always returns empty list"""
@@ -216,7 +216,7 @@ class TestNullBackendList:
 
 
 class TestNullBackendNoSideEffects:
-    """Test that NullStorageBackend has no side effects, dood!"""
+    """Test that NullStorageBackend has no side effects"""
 
     def testNoStateChanges(self):
         """Test that operations don't change backend state"""
@@ -264,7 +264,7 @@ class TestNullBackendNoSideEffects:
 
 
 class TestNullBackendKeyValidation:
-    """Test that NullStorageBackend validates keys properly, dood!"""
+    """Test that NullStorageBackend validates keys properly"""
 
     def testValidKeysAccepted(self):
         """Test that valid keys are accepted"""
@@ -329,7 +329,7 @@ class TestNullBackendKeyValidation:
 
 
 class TestNullBackendUseCases:
-    """Test real-world use cases for NullStorageBackend, dood!"""
+    """Test real-world use cases for NullStorageBackend"""
 
     def testUnitTestingWithoutStorage(self):
         """Test using null backend for unit testing"""

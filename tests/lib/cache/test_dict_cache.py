@@ -568,7 +568,7 @@ class TestDictCacheErrorHandling:
             """A key generator that always raises an exception."""
 
             def generateKey(self, obj: Any) -> str:
-                raise Exception("Key generation failed, dood!")
+                raise Exception("Key generation failed")
 
         cache = DictCache[str, str](keyGenerator=FailingKeyGenerator())
 

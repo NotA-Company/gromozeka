@@ -342,6 +342,15 @@ From fixing review findings on the Max webhook support feature (branch `max-v2`)
 - **`.roo/rules/`** directory doesn't exist but `docs/llm/index.md` used to reference it — the rules now live in `AGENTS.md`.
 - **When the same stale value appears in multiple docs** (e.g., 12 repos, manager.py:249, RateLimiterManager:12), fix ALL files at once — partial fixes create cross-file inconsistencies that confuse agents and users.
 
+## Dedoodization (2026-07-02)
+
+- Repo-wide removal of "dood" from comments, docstrings, log messages, error messages — 1231 of 1294 occurrences removed across 90 `.py` files.
+- Script: `scripts/dedoodize.py` — line-based state machine with triple-quote tracking and bracket-depth awareness. Handles multi-line raise/logger/assert, standalone-dood docstring lines, assert condition-vs-message classification. Idempotent (re-run produces 0 changes). Excludes itself. Covers `lib/ext_modules/grabliarium` too.
+- Kept "dood" in: `print()`, `messageText=`/`helpMessage=`, argparse `description=`/`help=`, `__author__`, test fixture data, mock strings — 53 occurrences preserved.
+- Found and fixed 4 mid-sentence comma-loss cases in `collect.py` / `scenario_runner.py` where `, dood! ` was between clauses.
+- Tests: `make test` 2802 pass, 1 pre-existing failure (`test_forwardOriginAuthorMatching[originUser-matchByUsername]` — unrelated).
+- `scripts/dedoodize.py` is untracked; user should decide keep vs delete.
+
 ## DeleteFromUserMessageHandler (2026-07-02)
 
 - New handler at `internal/bot/common/handlers/delete_from_user.py`, modeled on `ReactOnUserMessageHandler`. Telegram-only, platform-gated. Registered BEFORE `ReactOnUserMessageHandler` in the chain (deletion before reaction). Returns `FINAL` after successful deletion to stop the chain — unlike `ReactOnUserMessageHandler` which returns `NEXT`.

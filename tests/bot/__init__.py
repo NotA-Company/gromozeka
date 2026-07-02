@@ -1,1 +1,1 @@
-"""Bot-related tests package, dood!"""
+"""Bot-related tests package"""

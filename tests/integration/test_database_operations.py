@@ -1,5 +1,5 @@
 """
-Integration tests for database operations, dood!
+Integration tests for database operations
 
 This module tests database operations including:
 - Transaction handling (commit, rollback, nested, concurrent)
@@ -30,7 +30,7 @@ from internal.models import MessageType
 
 @pytest.fixture
 async def inMemoryDb():
-    """Provide in-memory SQLite database for testing, dood!"""
+    """Provide in-memory SQLite database for testing"""
     config: DatabaseManagerConfig = {
         "default": "default",
         "chatMapping": {},
@@ -54,7 +54,7 @@ async def inMemoryDb():
 
 @pytest.fixture
 async def threadSafeDb(tmp_path):
-    """Provide file-based SQLite database for threading tests, dood!
+    """Provide file-based SQLite database for threading tests
 
     File-based databases support proper concurrent access across threads,
     unlike in-memory databases which are isolated per connection.
@@ -87,7 +87,7 @@ async def threadSafeDb(tmp_path):
 
 @pytest.fixture
 async def populatedDb(inMemoryDb):
-    """Provide database with sample data, dood!"""
+    """Provide database with sample data"""
     db = inMemoryDb
 
     # Add sample chat info
@@ -109,7 +109,7 @@ async def populatedDb(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testTransactionCommitOnSuccess(inMemoryDb):
-    """Test transaction commits on success, dood!"""
+    """Test transaction commits on success"""
     db = inMemoryDb
 
     # Add chat info and user in a transaction
@@ -128,7 +128,7 @@ async def testTransactionCommitOnSuccess(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testTransactionRollbackOnError(inMemoryDb):
-    """Test transaction rollback on error, dood!"""
+    """Test transaction rollback on error"""
     db = inMemoryDb
 
     # Add valid chat info
@@ -150,7 +150,7 @@ async def testTransactionRollbackOnError(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testNestedTransactions(inMemoryDb):
-    """Test nested transaction handling, dood!"""
+    """Test nested transaction handling"""
     db = inMemoryDb
 
     # SQLite doesn't support true nested transactions, but we can test
@@ -170,7 +170,7 @@ async def testNestedTransactions(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testConcurrentTransactions(inMemoryDb):
-    """Test concurrent transaction handling, dood!"""
+    """Test concurrent transaction handling"""
     db = inMemoryDb
 
     # Setup initial data
@@ -207,7 +207,7 @@ async def testConcurrentTransactions(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testForeignKeyConstraints(inMemoryDb):
-    """Test foreign key constraints, dood!"""
+    """Test foreign key constraints"""
     db = inMemoryDb
 
     # Setup chat and user
@@ -228,7 +228,7 @@ async def testForeignKeyConstraints(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testUniqueConstraints(inMemoryDb):
-    """Test unique constraints, dood!"""
+    """Test unique constraints"""
     db = inMemoryDb
 
     # Add chat info
@@ -248,7 +248,7 @@ async def testUniqueConstraints(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testNotNullConstraints(inMemoryDb):
-    """Test NOT NULL constraints, dood!"""
+    """Test NOT NULL constraints"""
     db = inMemoryDb
 
     # Try to add chat info without required fields
@@ -262,7 +262,7 @@ async def testNotNullConstraints(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testDataValidation(inMemoryDb):
-    """Test data validation in wrapper methods, dood!"""
+    """Test data validation in wrapper methods"""
     db = inMemoryDb
 
     # Setup
@@ -296,7 +296,7 @@ async def testDataValidation(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testMultipleReaders(threadSafeDb):
-    """Test multiple concurrent read operations, dood!
+    """Test multiple concurrent read operations
 
     Uses file-based database to support proper concurrent access across threads.
     """
@@ -324,7 +324,7 @@ async def testMultipleReaders(threadSafeDb):
 
 @pytest.mark.asyncio
 async def testMultipleWriters(threadSafeDb):
-    """Test multiple concurrent write operations, dood!
+    """Test multiple concurrent write operations
 
     Uses file-based database to support proper concurrent access across threads.
     """
@@ -361,7 +361,7 @@ async def testMultipleWriters(threadSafeDb):
 
 @pytest.mark.asyncio
 async def testReadWriteConflicts(threadSafeDb):
-    """Test read-write conflict handling, dood!
+    """Test read-write conflict handling
 
     Uses file-based database to support proper concurrent access across threads.
     """
@@ -398,7 +398,7 @@ async def testReadWriteConflicts(threadSafeDb):
 
 @pytest.mark.asyncio
 async def testDeadlockHandling(inMemoryDb):
-    """Test deadlock handling, dood!"""
+    """Test deadlock handling"""
     db = inMemoryDb
 
     # Setup
@@ -429,7 +429,7 @@ async def testDeadlockHandling(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testSchemaCreation(inMemoryDb):
-    """Test schema creation through migrations, dood!"""
+    """Test schema creation through migrations"""
     db = inMemoryDb
 
     # Verify all tables exist
@@ -465,7 +465,7 @@ async def testSchemaCreation(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testSchemaUpdates(inMemoryDb):
-    """Test schema updates through migrations, dood!"""
+    """Test schema updates through migrations"""
     db = inMemoryDb
 
     # Verify that migrations have run by checking for tables created in later migrations
@@ -486,7 +486,7 @@ async def testSchemaUpdates(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testDataMigration(inMemoryDb):
-    """Test data migration scenarios, dood!"""
+    """Test data migration scenarios"""
     db = inMemoryDb
 
     # Add data before "migration"
@@ -509,7 +509,7 @@ async def testDataMigration(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testJoinsAcrossTables(populatedDb):
-    """Test joins across multiple tables, dood!"""
+    """Test joins across multiple tables"""
     db = populatedDb
 
     # Add messages
@@ -527,7 +527,7 @@ async def testJoinsAcrossTables(populatedDb):
 
 @pytest.mark.asyncio
 async def testAggregations(populatedDb):
-    """Test aggregation queries, dood!"""
+    """Test aggregation queries"""
     db = populatedDb
 
     # Add multiple messages
@@ -549,7 +549,7 @@ async def testAggregations(populatedDb):
 
 @pytest.mark.asyncio
 async def testFilteringAndSorting(populatedDb):
-    """Test filtering and sorting in queries, dood!"""
+    """Test filtering and sorting in queries"""
     db = populatedDb
 
     # Add messages with different categories
@@ -587,7 +587,7 @@ async def testFilteringAndSorting(populatedDb):
 
 @pytest.mark.asyncio
 async def testPagination(populatedDb):
-    """Test pagination in queries, dood!"""
+    """Test pagination in queries"""
     db = populatedDb
 
     # Add many messages
@@ -622,7 +622,7 @@ async def testPagination(populatedDb):
 
 @pytest.mark.asyncio
 async def testChatMessagesCrud(populatedDb):
-    """Test CRUD operations for chat messages, dood!"""
+    """Test CRUD operations for chat messages"""
     db = populatedDb
 
     # CREATE
@@ -663,7 +663,7 @@ async def testChatMessagesCrud(populatedDb):
 
 @pytest.mark.asyncio
 async def testChatUsersCrud(inMemoryDb):
-    """Test CRUD operations for chat users, dood!"""
+    """Test CRUD operations for chat users"""
     db = inMemoryDb
 
     # Setup
@@ -709,7 +709,7 @@ async def testChatUsersCrud(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testChatSettingsCrud(inMemoryDb):
-    """Test CRUD operations for chat settings, dood!"""
+    """Test CRUD operations for chat settings"""
     db = inMemoryDb
 
     # Setup
@@ -764,7 +764,7 @@ async def testChatSettingsCrud(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testUserDataCrud(inMemoryDb):
-    """Test CRUD operations for user data, dood!"""
+    """Test CRUD operations for user data"""
     db = inMemoryDb
 
     # Setup
@@ -817,7 +817,7 @@ async def testUserDataCrud(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testDelayedTasksCrud(inMemoryDb):
-    """Test CRUD operations for delayed tasks, dood!"""
+    """Test CRUD operations for delayed tasks"""
     db = inMemoryDb
 
     # CREATE
@@ -852,7 +852,7 @@ async def testDelayedTasksCrud(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testSpamHamMessagesCrud(inMemoryDb):
-    """Test CRUD operations for spam/ham messages, dood!"""
+    """Test CRUD operations for spam/ham messages"""
     db = inMemoryDb
 
     # Setup
@@ -908,7 +908,7 @@ async def testSpamHamMessagesCrud(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testCacheOperationsCrud(inMemoryDb):
-    """Test CRUD operations for cache, dood!"""
+    """Test CRUD operations for cache"""
     db = inMemoryDb
 
     # CREATE weather cache
@@ -942,7 +942,7 @@ async def testCacheOperationsCrud(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testCacheStorageOperations(inMemoryDb):
-    """Test cache storage operations, dood!"""
+    """Test cache storage operations"""
     db = inMemoryDb
 
     # CREATE
@@ -977,7 +977,7 @@ async def testCacheStorageOperations(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testCompleteMessageWorkflow(populatedDb):
-    """Test complete message workflow with all related operations, dood!"""
+    """Test complete message workflow with all related operations"""
     db = populatedDb
 
     # 1. Save message with media
@@ -1019,7 +1019,7 @@ async def testCompleteMessageWorkflow(populatedDb):
 
 @pytest.mark.asyncio
 async def testConversationThreadWorkflow(populatedDb):
-    """Test conversation thread workflow, dood!"""
+    """Test conversation thread workflow"""
     db = populatedDb
 
     now = datetime.datetime.now(datetime.UTC)
@@ -1062,7 +1062,7 @@ async def testConversationThreadWorkflow(populatedDb):
 
 @pytest.mark.asyncio
 async def testSummarizationCacheWorkflow(populatedDb):
-    """Test summarization cache workflow, dood!"""
+    """Test summarization cache workflow"""
     db = populatedDb
 
     # Add messages
@@ -1106,7 +1106,7 @@ async def testSummarizationCacheWorkflow(populatedDb):
 
 @pytest.mark.asyncio
 async def testChatTopicsWorkflow(inMemoryDb):
-    """Test chat topics workflow, dood!"""
+    """Test chat topics workflow"""
     db = inMemoryDb
 
     # Setup forum chat
@@ -1133,7 +1133,7 @@ async def testChatTopicsWorkflow(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testGlobalSettingsWorkflow(inMemoryDb):
-    """Test global settings workflow, dood!"""
+    """Test global settings workflow"""
     db = inMemoryDb
 
     # Set settings
@@ -1161,7 +1161,7 @@ async def testGlobalSettingsWorkflow(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testUserChatRelationships(populatedDb):
-    """Test user-chat relationship queries, dood!"""
+    """Test user-chat relationship queries"""
     db = populatedDb
 
     # Add user to multiple chats
@@ -1190,7 +1190,7 @@ async def testUserChatRelationships(populatedDb):
 
 @pytest.mark.asyncio
 async def testErrorHandlingInvalidData(inMemoryDb):
-    """Test error handling with invalid data, dood!"""
+    """Test error handling with invalid data"""
     db = inMemoryDb
 
     # Try to get non-existent chat
@@ -1212,7 +1212,7 @@ async def testErrorHandlingInvalidData(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testRecoveryAfterError(inMemoryDb):
-    """Test database recovery after error, dood!"""
+    """Test database recovery after error"""
     db = inMemoryDb
 
     # Add valid data
@@ -1236,7 +1236,7 @@ async def testRecoveryAfterError(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testEmptyResultHandling(populatedDb):
-    """Test handling of empty results, dood!"""
+    """Test handling of empty results"""
     db = populatedDb
 
     # Get messages from empty time range

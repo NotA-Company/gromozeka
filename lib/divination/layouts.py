@@ -1,4 +1,4 @@
-"""Layout (spread) definitions for divination systems, dood!
+"""Layout (spread) definitions for divination systems
 
 A :class:`Layout` describes a single spread shape: how many symbols are drawn,
 the ordered position names, and a set of human-friendly aliases the user can
@@ -52,7 +52,7 @@ class Layout:
 
 
 def _normalize(s: str) -> str:
-    """Normalise a user-typed layout name for alias matching, dood!
+    """Normalise a user-typed layout name for alias matching
 
     Lowercases the input, trims whitespace, and collapses ``_`` / spaces to
     ``-`` so that ``"Three_Card"``, ``"three card"`` and ``"three-card"`` all
@@ -72,7 +72,7 @@ def resolveLayout(name: str, *, layouts: Sequence[Layout]) -> Optional[Layout]:
 
     Matches the normalised input against the normalised form of every alias
     *and* the layout's ``id`` for the layouts in ``layouts``. The first match
-    wins, dood!
+    wins
 
     Args:
         name: Raw user-supplied layout name.

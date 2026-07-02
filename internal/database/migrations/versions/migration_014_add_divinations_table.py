@@ -1,4 +1,4 @@
-"""Migration: add divinations table - v014, dood!"""
+"""Migration: add divinations table - v014"""
 
 from typing import Type
 
@@ -7,7 +7,7 @@ from ..base import BaseMigration
 
 
 class Migration014AddDivinationsTable(BaseMigration):
-    """Add divinations table for tarot/runes readings, dood!
+    """Add divinations table for tarot/runes readings
 
     The table uses a composite PK (chat_id, message_id) keyed off the
     originating /taro or /runes user-command message — same pattern as
@@ -22,7 +22,7 @@ class Migration014AddDivinationsTable(BaseMigration):
     description: str = "Add divinations table"
 
     async def up(self, sqlProvider: BaseSQLProvider) -> None:
-        """Create divinations table and supporting index, dood.
+        """Create divinations table and supporting index
 
         Args:
             sqlProvider: SQL provider abstraction; do NOT use raw sqlite3.
@@ -57,7 +57,7 @@ class Migration014AddDivinationsTable(BaseMigration):
         )
 
     async def down(self, sqlProvider: BaseSQLProvider) -> None:
-        """Drop divinations table and its index, dood.
+        """Drop divinations table and its index
 
         Args:
             sqlProvider: SQL provider abstraction.
@@ -74,7 +74,7 @@ class Migration014AddDivinationsTable(BaseMigration):
 
 
 def getMigration() -> Type[BaseMigration]:
-    """Return the migration class for this module, dood.
+    """Return the migration class for this module
 
     Returns:
         Type[BaseMigration]: The migration class for this module.

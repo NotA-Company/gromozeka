@@ -141,7 +141,7 @@ class SlidingWindowRateLimiter(RateLimiterInterface):
         logger.info(
             f"SlidingWindowRateLimiter initialized with "
             f"{self._config.maxRequests} requests per "
-            f"{self._config.windowSeconds} seconds, dood!"
+            f"{self._config.windowSeconds} seconds"
         )
 
     async def destroy(self) -> None:
@@ -153,7 +153,7 @@ class SlidingWindowRateLimiter(RateLimiterInterface):
         self._requestTimes.clear()
         self._locks.clear()
         self._initialized = False
-        logger.info("SlidingWindowRateLimiter destroyed, dood!")
+        logger.info("SlidingWindowRateLimiter destroyed")
 
     def _ensureQueue(self, queue: str) -> None:
         """
@@ -165,7 +165,7 @@ class SlidingWindowRateLimiter(RateLimiterInterface):
         if queue not in self._requestTimes:
             self._requestTimes[queue] = []
             self._locks[queue] = asyncio.Lock()
-            logger.debug(f"Auto-registered queue '{queue}', dood!")
+            logger.debug(f"Auto-registered queue '{queue}'")
 
     async def applyLimit(self, queue: str = "default") -> None:
         """
@@ -204,7 +204,7 @@ class SlidingWindowRateLimiter(RateLimiterInterface):
                 waitTime = self._config.windowSeconds - (currentTime - oldestRequest)
 
                 if waitTime > 0:
-                    logger.debug(f"Rate limit reached for queue '{queue}', " f"waiting {waitTime:.2f} seconds, dood!")
+                    logger.debug(f"Rate limit reached for queue '{queue}', " f"waiting {waitTime:.2f} seconds")
                     await asyncio.sleep(waitTime)
 
                     # Clean up old requests after waiting

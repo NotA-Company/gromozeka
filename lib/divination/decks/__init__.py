@@ -1,4 +1,4 @@
-"""Static deck data for divination systems, dood!
+"""Static deck data for divination systems
 
 Each module here exposes a single tuple of :class:`lib.divination.base.Symbol`
 objects. English is the source of truth for names, meanings and

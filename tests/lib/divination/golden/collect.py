@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Golden-data collector for the divination feature, dood!
+"""Golden-data collector for the divination feature
 
 This script drives :func:`lib.aurumentation.collector.collectGoldenData` over
 the scenarios defined in ``input/scenarios.json`` and writes the recorded HTTP
@@ -63,8 +63,7 @@ def checkRequiredEnv() -> bool:
     missing: List[str] = [name for name in REQUIRED_ENV_VARS if not os.getenv(name)]
     if missing:
         logger.error(
-            "Missing required environment variables: %s. "
-            "Set them in your shell or in a .env file at the repo root, dood!",
+            "Missing required environment variables: %s. " "Set them in your shell or in a .env file at the repo root",
             ", ".join(missing),
         )
         return False
@@ -105,7 +104,7 @@ async def runCollector(scenariosPath: Path, outputPath: Path, secrets: List[str]
         secrets: List of secret values to mask in the recordings.
     """
     if not scenariosPath.exists():
-        raise FileNotFoundError(f"Scenarios file not found: {scenariosPath}, dood!")
+        raise FileNotFoundError(f"Scenarios file not found: {scenariosPath}")
 
     with scenariosPath.open("r", encoding="utf-8") as fh:
         scenarios: List[ScenarioDict] = json.load(fh)
@@ -127,7 +126,7 @@ async def main() -> None:
     """Parse CLI arguments and drive :func:`runCollector`.
 
     Refuses to start when a required env var is missing so we never burn
-    quota on accidental runs, dood!
+    quota on accidental runs
     """
     parser: argparse.ArgumentParser = argparse.ArgumentParser(
         description=(
@@ -175,7 +174,7 @@ async def main() -> None:
     logger.info("Masking %d secret value(s) in recordings", len(secrets))
 
     await runCollector(scenariosPath, outputPath, secrets)
-    logger.info("Golden-data collection complete, dood! Output: %s", outputPath)
+    logger.info("Golden-data collection complete. Output: %s", outputPath)
 
 
 if __name__ == "__main__":

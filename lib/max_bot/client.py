@@ -78,7 +78,7 @@ EXTENDED_DEBUG: bool = True
 
 
 class MaxBotClient:
-    """Async client for Max Messenger Bot API with authentication and error handling, dood!
+    """Async client for Max Messenger Bot API with authentication and error handling
 
     Provides a clean, type-safe interface for interacting with the Max Messenger Bot API.
     Handles authentication, request/response processing, error handling, and retries.

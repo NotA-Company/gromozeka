@@ -1,4 +1,4 @@
-"""Golden-data replayer tests for the divination feature, dood!
+"""Golden-data replayer tests for the divination feature
 
 The tests in this module fall into two groups:
 
@@ -81,7 +81,7 @@ def _loadScenarios() -> List[Dict[str, Any]]:
 
 
 def test_scenariosFileIsValid() -> None:
-    """``scenarios.json`` is loadable and every entry has the required fields, dood!
+    """``scenarios.json`` is loadable and every entry has the required fields
 
     Verifies, for every scenario:
 
@@ -92,52 +92,50 @@ def test_scenariosFileIsValid() -> None:
     * ``module`` points at the runner module and ``class`` at the runner.
     * Names within the file are unique (so fixture filenames cannot clash).
     """
-    assert SCENARIOS_PATH.exists(), f"scenarios.json not found at {SCENARIOS_PATH}, dood!"
+    assert SCENARIOS_PATH.exists(), f"scenarios.json not found at {SCENARIOS_PATH}"
     scenarios: List[Dict[str, Any]] = _loadScenarios()
-    assert isinstance(scenarios, list), "scenarios.json must contain a JSON array, dood!"
-    assert len(scenarios) >= 1, "scenarios.json must define at least one scenario, dood!"
+    assert isinstance(scenarios, list), "scenarios.json must contain a JSON array"
+    assert len(scenarios) >= 1, "scenarios.json must define at least one scenario"
 
     seenNames: set[str] = set()
     for index, scenario in enumerate(scenarios):
         path: str = f"scenarios[{index}]"
         for key in REQUIRED_SCENARIO_KEYS:
-            assert key in scenario, f"{path}: missing required key '{key}', dood!"
+            assert key in scenario, f"{path}: missing required key '{key}'"
 
         name: str = scenario["name"]
-        assert name not in seenNames, f"{path}: duplicate name '{name}', dood!"
+        assert name not in seenNames, f"{path}: duplicate name '{name}'"
         seenNames.add(name)
 
         assert (
             scenario["module"] == "tests.lib.divination.golden.scenario_runner"
-        ), f"{path}: 'module' must point at tests.lib.divination.golden.scenario_runner, dood!"
-        assert (
-            scenario["class"] == "DivinationScenarioRunner"
-        ), f"{path}: 'class' must be DivinationScenarioRunner, dood!"
-        assert scenario["method"] == "runReading", f"{path}: 'method' must be runReading, dood!"
+        ), f"{path}: 'module' must point at tests.lib.divination.golden.scenario_runner"
+        assert scenario["class"] == "DivinationScenarioRunner", f"{path}: 'class' must be DivinationScenarioRunner"
+        assert scenario["method"] == "runReading", f"{path}: 'method' must be runReading"
 
         kwargs: Dict[str, Any] = scenario["kwargs"]
         for key in REQUIRED_KWARGS_KEYS:
-            assert key in kwargs, f"{path}: kwargs is missing '{key}', dood!"
+            assert key in kwargs, f"{path}: kwargs is missing '{key}'"
 
         systemId: str = kwargs["systemId"]
         assert (
             systemId in SYSTEM_CLASSES
-        ), f"{path}: unknown systemId '{systemId}'. Expected one of {sorted(SYSTEM_CLASSES)}, dood!"
+        ), f"{path}: unknown systemId '{systemId}'. Expected one of {sorted(SYSTEM_CLASSES)}"
 
         systemCls = resolveSystem(systemId)
         # Will raise ValueError if layoutId does not resolve.
         layout = resolveLayoutForSystem(systemCls, kwargs["layoutId"])
         assert layout.systemId == systemId, (
             f"{path}: layout '{kwargs['layoutId']}' belongs to system '{layout.systemId}',"
-            f" but scenario systemId is '{systemId}', dood!"
+            f" but scenario systemId is '{systemId}'"
         )
 
-        assert isinstance(kwargs["rngSeed"], int), f"{path}: rngSeed must be an int, dood!"
+        assert isinstance(kwargs["rngSeed"], int), f"{path}: rngSeed must be an int"
         assert (
             isinstance(kwargs["userName"], str) and kwargs["userName"]
-        ), f"{path}: userName must be a non-empty string, dood!"
-        assert isinstance(kwargs["question"], str), f"{path}: question must be a string, dood!"
-        assert isinstance(kwargs["lang"], str) and kwargs["lang"], f"{path}: lang must be a non-empty string, dood!"
+        ), f"{path}: userName must be a non-empty string"
+        assert isinstance(kwargs["question"], str), f"{path}: question must be a string"
+        assert isinstance(kwargs["lang"], str) and kwargs["lang"], f"{path}: lang must be a non-empty string"
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +149,7 @@ def _discoverFixtures() -> List[str]:
     Returns:
         Sorted list of absolute paths. Empty when no fixtures have been
         recorded yet — pytest will then emit zero parametrised cases for the
-        replayer test, which is the desired no-op behaviour, dood!
+        replayer test, which is the desired no-op behaviour
     """
     paths: List[str] = findGoldenDataFiles(GOLDEN_DATA_PATH)
     return sorted(paths)
@@ -174,7 +172,7 @@ def _scenarioByName(name: str) -> Dict[str, Any] | None:
 
 @pytest.mark.parametrize("fixturePath", _discoverFixtures())
 def test_replayerPromptBuildingMatches(fixturePath: str) -> None:
-    """Re-run prompt-building for ``fixturePath`` and assert byte-equality, dood!
+    """Re-run prompt-building for ``fixturePath`` and assert byte-equality
 
     For each recorded fixture this test:
 
@@ -192,7 +190,7 @@ def test_replayerPromptBuildingMatches(fixturePath: str) -> None:
     The recorded fixture stores the rendered messages inside
     ``metadata["expected_messages"]``. When the field is absent (older
     fixtures or an HTTP-only recording), this test only verifies that the
-    fixture file is well-formed JSON, dood!
+    fixture file is well-formed JSON
 
     Args:
         fixturePath: Absolute path to a fixture JSON file.
@@ -210,7 +208,7 @@ def test_replayerPromptBuildingMatches(fixturePath: str) -> None:
     assert scenario is not None, (
         f"Fixture '{Path(fixturePath).name}' has name '{name}' which is not present "
         "in input/scenarios.json. Either re-record after editing scenarios.json or "
-        "update the scenario list, dood!"
+        "update the scenario list"
     )
 
     # Re-run prompt building deterministically. We cannot use the fixture's
@@ -227,7 +225,7 @@ def test_replayerPromptBuildingMatches(fixturePath: str) -> None:
     kwargs: Dict[str, Any] = scenario["kwargs"]
 
     async def _buildOnly() -> Dict[str, Any]:
-        """Reproduce the deterministic portion of :meth:`runReading`, dood!
+        """Reproduce the deterministic portion of :meth:`runReading`
 
         Returns:
             Dict shaped like the runner's normal output but with
@@ -270,14 +268,14 @@ def test_replayerPromptBuildingMatches(fixturePath: str) -> None:
     expectedMessages = metadata.get("expected_messages")
     if expectedMessages is not None:
         assert rebuilt["messages"] == expectedMessages, (
-            f"Prompt-building output for '{name}' diverged from the recorded fixture, dood! "
+            f"Prompt-building output for '{name}' diverged from the recorded fixture "
             "Either revert the offending change or re-record the fixture."
         )
 
     expectedDraws = metadata.get("expected_draws")
     if expectedDraws is not None:
         assert rebuilt["draws"] == expectedDraws, (
-            f"Draw sequence for '{name}' diverged from the recorded fixture, dood! "
+            f"Draw sequence for '{name}' diverged from the recorded fixture "
             "Either revert the offending change or re-record the fixture."
         )
 

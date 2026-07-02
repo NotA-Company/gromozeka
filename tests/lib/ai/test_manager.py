@@ -329,7 +329,7 @@ def mockProviderClasses() -> Dict[str, type]:
 
 
 def testManagerInitializationWithEmptyConfig(emptyConfig):
-    """Test manager initializes with empty config, dood!"""
+    """Test manager initializes with empty config"""
     manager = LLMManager(emptyConfig)
 
     assert manager is not None
@@ -339,7 +339,7 @@ def testManagerInitializationWithEmptyConfig(emptyConfig):
 
 
 def testManagerInitializationWithSingleProvider(singleProviderConfig, mockProviderClasses):
-    """Test manager initializes with single provider, dood!"""
+    """Test manager initializes with single provider"""
     with patch.multiple(
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
@@ -355,7 +355,7 @@ def testManagerInitializationWithSingleProvider(singleProviderConfig, mockProvid
 
 
 def testManagerInitializationWithMultipleProviders(multiProviderConfig, mockProviderClasses):
-    """Test manager initializes with multiple providers, dood!"""
+    """Test manager initializes with multiple providers"""
     with patch.multiple(
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
@@ -372,7 +372,7 @@ def testManagerInitializationWithMultipleProviders(multiProviderConfig, mockProv
 
 
 def testManagerInitializationSkipsDisabledModels(configWithDisabledModel, mockProviderClasses):
-    """Test manager skips disabled models during initialization, dood!"""
+    """Test manager skips disabled models during initialization"""
     with patch.multiple(
         "lib.ai.manager",
         YcOpenaiProvider=mockProviderClasses["YcOpenaiProvider"],
@@ -392,7 +392,7 @@ def testManagerInitializationSkipsDisabledModels(configWithDisabledModel, mockPr
 
 
 def testProviderRegistrationSuccess(mockProviderClasses):
-    """Test successful provider registration, dood!"""
+    """Test successful provider registration"""
     config = {
         "providers": {
             "test-provider": {
@@ -416,7 +416,7 @@ def testProviderRegistrationSuccess(mockProviderClasses):
 
 
 def testProviderRegistrationMissingType(caplog):
-    """Test provider registration fails without type, dood!"""
+    """Test provider registration fails without type"""
     config = {
         "providers": {
             "bad-provider": {
@@ -434,7 +434,7 @@ def testProviderRegistrationMissingType(caplog):
 
 
 def testProviderRegistrationUnknownType(caplog):
-    """Test provider registration fails with unknown type, dood!"""
+    """Test provider registration fails with unknown type"""
     config = {
         "providers": {
             "bad-provider": {
@@ -453,7 +453,7 @@ def testProviderRegistrationUnknownType(caplog):
 
 
 def testProviderRegistrationWithException(caplog):
-    """Test provider registration handles exceptions, dood!"""
+    """Test provider registration handles exceptions"""
 
     class FailingProvider:
         def __init__(self, config):

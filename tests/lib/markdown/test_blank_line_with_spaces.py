@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test blank lines with spaces between list items, dood!
+Test blank lines with spaces between list items
 """
 
 from lib.markdown import markdown_to_html, markdownToMarkdownV2

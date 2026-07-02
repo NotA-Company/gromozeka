@@ -219,13 +219,17 @@ def _makeTelegramMessage(
 def _makeOriginUser(*, userId: int, username: str = "") -> MagicMock:
     """Build a mock :class:`telegram.MessageOriginUser`.
 
-    The handler reads ``sender_user.id`` and ``sender_user.username``
-    (empty-coalesced). Pass *userId=0* to keep the id falsy so only the
+    The handler reads ``sender_user.id`` and ``sender_user.name`` (the
+    python-telegram-bot ``User.name`` property, which returns
+    ``"@{username}"`` when a username is set, else the display name). The
+    username-branch of the match only fires for the ``@``-prefixed form, so
+    we mirror that here. Pass *userId=0* to keep the id falsy so only the
     username branch of the match is exercised.
 
     Args:
         userId: ``sender_user.id``.
-        username: ``sender_user.username`` (default empty).
+        username: ``sender_user.username`` (default empty). Mirrored into
+            ``sender_user.name`` as ``"@{username}"`` to match PTB semantics.
 
     Returns:
         ``MagicMock`` spec'd to ``telegram.MessageOriginUser``.
@@ -234,6 +238,7 @@ def _makeOriginUser(*, userId: int, username: str = "") -> MagicMock:
     origin.sender_user = MagicMock()
     origin.sender_user.id = userId
     origin.sender_user.username = username
+    origin.sender_user.name = f"@{username}" if username else ""
     return origin
 
 

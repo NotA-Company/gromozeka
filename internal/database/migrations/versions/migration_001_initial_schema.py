@@ -251,7 +251,7 @@ class Migration001InitialSchema(BaseMigration):
             ON chat_summarization_cache
                 (chat_id, topic_id, first_message_id, last_message_id, prompt)
         """),
-                # Bayes filter tables for spam detection, dood!
+                # Bayes filter tables for spam detection
                 # Token statistics for Bayes filter
                 ParametrizedQuery("""
             CREATE TABLE IF NOT EXISTS bayes_tokens (

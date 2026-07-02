@@ -356,7 +356,7 @@ class AbstractModel(ABC):
                 model (capability flag ``support_structured_output`` is False
                 or the provider has not implemented it).
         """
-        raise NotImplementedError(f"Structured output isn't implemented by {self.modelId}, dood!")
+        raise NotImplementedError(f"Structured output isn't implemented by {self.modelId}")
 
     async def generateStructured(
         self,
@@ -396,7 +396,7 @@ class AbstractModel(ABC):
                 output (capability flag ``support_structured_output`` is False).
         """
         if not self._config.get("support_structured_output", False):
-            raise NotImplementedError(f"Structured output isn't supported by {self.modelId}, dood!")
+            raise NotImplementedError(f"Structured output isn't supported by {self.modelId}")
 
         # If fallback models provided, use the fallback mechanism
         if fallbackModels:
@@ -487,7 +487,7 @@ class AbstractModel(ABC):
             NotImplementedError: If the model does not support embeddings.
             Exception: Provider-specific exceptions during generation.
         """
-        raise NotImplementedError(f"Embeddings aren't supported by {self.modelId}, dood!")
+        raise NotImplementedError(f"Embeddings aren't supported by {self.modelId}")
 
     async def generateEmbeddings(
         self,
@@ -529,12 +529,12 @@ class AbstractModel(ABC):
             RuntimeError: If all retry attempts fail.
         """
         if not self.supportsEmbedding:
-            raise NotImplementedError(f"Embeddings aren't supported by {self.modelId}, dood!")
+            raise NotImplementedError(f"Embeddings aren't supported by {self.modelId}")
 
         if not isinstance(text, str) or not text.strip():
-            raise ValueError("text must be a non-empty string, dood!")
+            raise ValueError("text must be a non-empty string")
         if not isinstance(attempts, int) or attempts < 1:
-            raise ValueError("attempts must be a positive integer, dood!")
+            raise ValueError("attempts must be a positive integer")
 
         lastError: Optional[Exception] = None
         lastElapsed: float = 0.0
@@ -585,7 +585,7 @@ class AbstractModel(ABC):
             The number of dimensions in the embedding vector.
         """
         if not self.supportsEmbedding:
-            raise NotImplementedError(f"Embeddings aren't supported by {self.modelId}, dood!")
+            raise NotImplementedError(f"Embeddings aren't supported by {self.modelId}")
 
         if forceDetect or self._dimensions is None:
             vec = await self._generateEmbeddings("test")

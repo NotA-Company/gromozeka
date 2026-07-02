@@ -1,4 +1,4 @@
-"""Tests for :class:`DivinationsRepository`, dood!
+"""Tests for :class:`DivinationsRepository`
 
 Verifies that divination readings round-trip through SQLite correctly:
 inserts succeed, duplicate composite primary keys are rejected (handled
@@ -19,7 +19,7 @@ from internal.database.manager import DatabaseManagerConfig
 
 @pytest.fixture
 async def divinationsDb() -> AsyncGenerator[Database, None]:
-    """Create an in-memory database with migrations applied, dood.
+    """Create an in-memory database with migrations applied
 
     Triggers provider initialization (and therefore migration 014) by
     invoking ``getProvider()`` once before yielding the Database instance.
@@ -49,7 +49,7 @@ async def divinationsDb() -> AsyncGenerator[Database, None]:
 
 
 def _buildSamplePayload(*, chatId: int = 100500, messageId: str = "msg-1") -> Dict[str, Any]:
-    """Build a fully populated insert payload, dood.
+    """Build a fully populated insert payload
 
     Args:
         chatId: Originating chat id (default ``100500``).
@@ -81,7 +81,7 @@ def _buildSamplePayload(*, chatId: int = 100500, messageId: str = "msg-1") -> Di
 
 
 async def test_insertReadingSuccess(divinationsDb: Database) -> None:
-    """Insert a fully populated row and verify every field round-trips, dood.
+    """Insert a fully populated row and verify every field round-trips
 
     Args:
         divinationsDb: In-memory Database fixture with migrations applied.
@@ -114,7 +114,7 @@ async def test_insertReadingSuccess(divinationsDb: Database) -> None:
 
 
 async def test_insertReadingDuplicatePrimaryKey(divinationsDb: Database) -> None:
-    """Inserting the same (chatId, messageId) twice returns False on conflict, dood.
+    """Inserting the same (chatId, messageId) twice returns False on conflict
 
     Args:
         divinationsDb: In-memory Database fixture with migrations applied.
@@ -142,7 +142,7 @@ async def test_insertReadingDuplicatePrimaryKey(divinationsDb: Database) -> None
 
 
 async def test_insertReadingWithNullableFieldsAsNone(divinationsDb: Database) -> None:
-    """``image_prompt`` stays None when explicitly passed as None, dood.
+    """``image_prompt`` stays None when explicitly passed as None
 
     Args:
         divinationsDb: In-memory Database fixture with migrations applied.
@@ -166,7 +166,7 @@ async def test_insertReadingWithNullableFieldsAsNone(divinationsDb: Database) ->
 
 
 async def test_insertReadingPersistsCreatedAt(divinationsDb: Database) -> None:
-    """``created_at`` is populated with a recent UTC timestamp, dood.
+    """``created_at`` is populated with a recent UTC timestamp
 
     Args:
         divinationsDb: In-memory Database fixture with migrations applied.
@@ -463,7 +463,7 @@ async def test_layoutCacheConsistency(divinationsDb: Database) -> None:
 
 
 async def test_insertReadingWithDrawsAsSequence(divinationsDb: Database) -> None:
-    """Verify Sequence[dict] drawsJson is serialized to JSON, dood.
+    """Verify Sequence[dict] drawsJson is serialized to JSON
 
     The insertReading() method accepts drawsJson as either a pre-serialized
     JSON string or a Sequence[dict] that should be explicitly serialized.

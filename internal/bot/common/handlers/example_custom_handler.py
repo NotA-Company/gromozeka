@@ -109,7 +109,7 @@ class ExampleCustomHandler(BaseBotHandler):
             database=database,
             botProvider=botProvider,
         )
-        logger.info("ExampleCustomHandler initialized, dood!")
+        logger.info("ExampleCustomHandler initialized")
 
     async def newMessageHandler(
         self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType

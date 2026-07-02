@@ -219,7 +219,7 @@ class Database:
         self._migrationManager = MigrationManager()
         try:
             self._migrationManager.loadMigrationsFromVersions()
-            logger.info("Loaded migrations, dood!")
+            logger.info("Loaded migrations")
         except Exception as e:
             logger.error(f"Migration auto-discovery failed: {e}")
             raise e
@@ -260,7 +260,7 @@ class Database:
         """
 
         if readOnly:
-            logger.debug(f"Skipping DB migration for readonly source {providerName}, dood")
+            logger.debug(f"Skipping DB migration for readonly source {providerName}")
             return
 
         # Create settings table (needed before migrations for version tracking)
@@ -277,7 +277,7 @@ class Database:
         # Run migrations for this source
         # Provider manages connections internally based on keepConnection setting
         await self._migrationManager.migrate(sqlProvider=sqlProvider)
-        logger.info(f"Database initialization complete for provider '{providerName}', dood!")
+        logger.info(f"Database initialization complete for provider '{providerName}'")
 
     async def __aenter__(self) -> "Database":
         """Enter the async context manager.

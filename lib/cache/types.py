@@ -1,14 +1,14 @@
 """
-Core type definitions and protocols for lib.cache, dood!
+Core type definitions and protocols for lib.cache
 
 This module contains the fundamental type definitions and protocols
 used throughout the cache library, providing type safety and
-extensibility for different cache implementations, dood!
+extensibility for different cache implementations
 """
 
 from typing import Protocol, TypeVar
 
-# Type variables for generic cache operations, dood!
+# Type variables for generic cache operations
 K = TypeVar("K")  # Key type - can be any hashable type
 V = TypeVar("V")  # Value type - can be any type
 T = TypeVar("T", contravariant=True)  # Generic object type for key generators
@@ -16,11 +16,11 @@ T = TypeVar("T", contravariant=True)  # Generic object type for key generators
 
 class KeyGenerator(Protocol[T]):
     """
-    Protocol for generating cache keys from objects, dood!
+    Protocol for generating cache keys from objects
 
     This protocol defines the interface for converting arbitrary objects
     into string cache keys. Different implementations can use various
-    strategies like hashing, serialization, or custom logic, dood!
+    strategies like hashing, serialization, or custom logic
 
     Type Parameters:
         T: The type of objects that can be converted to cache keys
@@ -37,7 +37,7 @@ class KeyGenerator(Protocol[T]):
 
     def generateKey(self, obj: T) -> str:
         """
-        Generate string cache key from object, dood!
+        Generate string cache key from object
 
         Args:
             obj: The object to convert to a cache key
@@ -54,13 +54,13 @@ class KeyGenerator(Protocol[T]):
 
 
 class ValueConverter(Protocol[V]):
-    """Protocol for converting objects to cache values and back, dood!
+    """Protocol for converting objects to cache values and back
 
     This protocol defines the interface for serializing objects into
     string representations suitable for storage in cache systems, and
     deserializing them back to their original form. Different implementations
     can use various strategies like JSON, pickle, or custom serialization
-    formats, dood!
+    formats
 
     Type Parameters:
         V: The type of objects that can be converted to cache values
@@ -81,11 +81,11 @@ class ValueConverter(Protocol[V]):
     """
 
     def encode(self, obj: V) -> str:
-        """Convert object to cache value, dood!
+        """Convert object to cache value
 
         Serializes the given object into a string representation suitable
         for storage in a cache system. The encoding must be reversible
-        through the decode method, dood!
+        through the decode method
 
         Args:
             obj: The object to convert to a cache value
@@ -101,11 +101,11 @@ class ValueConverter(Protocol[V]):
         ...
 
     def decode(self, value: str) -> V:
-        """Decode cache value to object, dood!
+        """Decode cache value to object
 
         Deserializes a string representation from cache back to its
         original object form. This must be the inverse operation of
-        the encode method, dood!
+        the encode method
 
         Args:
             value: The cache value to decode

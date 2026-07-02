@@ -1,4 +1,4 @@
-"""Boundary test: ``lib/divination`` must not pull in bot-side modules, dood!
+"""Boundary test: ``lib/divination`` must not pull in bot-side modules
 
 The divination library is intentionally decoupled from the bot's runtime —
 it talks to :mod:`lib.ai` only. This test asserts that importing
@@ -7,7 +7,7 @@ it talks to :mod:`lib.ai` only. This test asserts that importing
 
 The check runs in a freshly spawned Python subprocess so that prior tests in
 the same pytest session can't pollute ``sys.modules`` and mask a real leak
-(or, more commonly, manufacture a false positive), dood!
+(or, more commonly, manufacture a false positive)
 """
 
 import subprocess
@@ -20,7 +20,7 @@ def testLibDivinationDoesNotPullBotSideModules() -> None:
     Spawns a fresh Python interpreter, imports :mod:`lib.divination` there,
     and reports back any loaded modules whose names start with
     ``internal.services.llm`` or ``internal.bot``. A clean run yields an
-    empty list; anything else is a boundary violation, dood!
+    empty list; anything else is a boundary violation
 
     Returns:
         None.
@@ -39,4 +39,4 @@ def testLibDivinationDoesNotPullBotSideModules() -> None:
         check=True,
     )
     leaked: str = result.stdout.strip()
-    assert leaked == "[]", f"lib/divination leaked forbidden imports: {leaked}, dood!"
+    assert leaked == "[]", f"lib/divination leaked forbidden imports: {leaked}"

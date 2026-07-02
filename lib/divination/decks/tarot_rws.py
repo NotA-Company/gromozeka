@@ -1,4 +1,4 @@
-"""Rider–Waite–Smith (RWS) tarot deck — 78 cards, dood!
+"""Rider–Waite–Smith (RWS) tarot deck — 78 cards
 
 English is the source of truth for card names, meanings, and image-prompt
 fragments. Russian translations live in :mod:`lib.divination.localization`.

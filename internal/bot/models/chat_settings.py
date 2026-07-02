@@ -948,7 +948,7 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "long": ("Порог для блокировки пользователя при автоматической проверке на спам" "(0-100)"),
         "page": ChatSettingsPage.SPAM,
     },
-    # # Bayes filter settings, dood!
+    # # Bayes filter settings
     ChatSettingsKey.BAYES_ENABLED: {
         "type": ChatSettingsType.BOOL,
         "short": "Включить Bayes фильтр спама",

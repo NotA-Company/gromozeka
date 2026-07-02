@@ -234,9 +234,9 @@ class BayesTrainingExample:
             ValueError: If weight is not positive.
         """
         if not self.text or not self.text.strip():
-            raise ValueError("Training text cannot be empty, dood!")
+            raise ValueError("Training text cannot be empty")
         if self.weight <= 0:
-            raise ValueError("Training weight must be positive, dood!")
+            raise ValueError("Training weight must be positive")
 
 
 @dataclass

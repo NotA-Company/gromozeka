@@ -212,7 +212,7 @@ class TheBot:
         self, user: MessageSender, chat: Optional[MessageRecipient] = None, allowBotOwners: bool = True
     ) -> bool:
         """
-        Check if a user is an admin or bot owner, dood!
+        Check if a user is an admin or bot owner
 
         If chat is None, only checks bot owner status.
         If chat is provided, checks both bot owners and chat administrators.

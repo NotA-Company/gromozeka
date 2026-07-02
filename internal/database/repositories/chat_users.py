@@ -282,7 +282,7 @@ class ChatUsersRepository(BaseRepository):
         """
 
         # Multi-source aggregation
-        logger.debug(f"Aggregating getUserChats for user {userId} from sources, dood!")
+        logger.debug(f"Aggregating getUserChats for user {userId} from sources")
         allResults: List[ChatInfoDict] = []
         seen: MutableSet[int] = set()  # Deduplicate by (userId, chatId)
 
@@ -309,10 +309,10 @@ class ChatUsersRepository(BaseRepository):
                         seen.add(key)
                         allResults.append(chatInfo)
             except Exception as e:
-                logger.warning(f"Failed to get chats from source '{sourceName}': {e}, dood!")
+                logger.warning(f"Failed to get chats from source '{sourceName}': {e}")
                 continue
 
-        logger.debug(f"Aggregated {len(allResults)} unique chats for user {userId}, dood!")
+        logger.debug(f"Aggregated {len(allResults)} unique chats for user {userId}")
         return allResults
 
     async def getAllGroupChats(self, *, dataSource: Optional[str] = None) -> List[ChatInfoDict]:
@@ -327,7 +327,7 @@ class ChatUsersRepository(BaseRepository):
             List of ChatInfoDict
         """
         # Multi-source aggregation
-        logger.debug("Aggregating getAllGroupChats from sources, dood!")
+        logger.debug("Aggregating getAllGroupChats from sources")
         allResults: List[ChatInfoDict] = []
         seen: MutableSet[int] = set()  # Deduplicate by chatId
 
@@ -353,10 +353,10 @@ class ChatUsersRepository(BaseRepository):
                         seen.add(chatId)
                         allResults.append(chatInfo)
             except Exception as e:
-                logger.warning(f"Failed to get group chats from source '{sourceName}': {e}, dood!")
+                logger.warning(f"Failed to get group chats from source '{sourceName}': {e}")
                 continue
 
-        logger.debug(f"Aggregated {len(allResults)} unique group chats, dood!")
+        logger.debug(f"Aggregated {len(allResults)} unique group chats")
         return allResults
 
     async def getUserIdByUserName(self, username: str, *, dataSource: Optional[str] = None) -> List[int]:
@@ -375,7 +375,7 @@ class ChatUsersRepository(BaseRepository):
         """
 
         # Multi-source aggregation
-        logger.debug(f"Aggregating userId for username {username} from sources, dood!")
+        logger.debug(f"Aggregating userId for username {username} from sources")
         resultSet: MutableSet[int] = set[int]()
 
         sourcesList = [dataSource] if dataSource else list(self.manager._providers.keys())
@@ -396,8 +396,8 @@ class ChatUsersRepository(BaseRepository):
                 for row in rows:
                     resultSet.add(dict(row)["chat_id"])
             except Exception as e:
-                logger.warning(f"Failed to get info from source '{sourceName}': {e}, dood!")
+                logger.warning(f"Failed to get info from source '{sourceName}': {e}")
                 continue
 
-        logger.debug(f"Aggregated {len(resultSet)} unique user_id's for user {username}, dood!")
+        logger.debug(f"Aggregated {len(resultSet)} unique user_id's for user {username}")
         return list(resultSet)

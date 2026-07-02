@@ -1,4 +1,4 @@
-"""Scenario runner used by the divination golden-data collector, dood!
+"""Scenario runner used by the divination golden-data collector
 
 This module wires together :mod:`lib.divination` and :mod:`lib.ai` so that a
 single object exposed through :class:`DivinationScenarioRunner` covers the
@@ -9,7 +9,7 @@ The runner is intentionally configured to match
 :mod:`lib.aurumentation`'s rigid scenario shape
 (``module / class / method / init_kwargs / kwargs``) so the standard
 :func:`lib.aurumentation.collector.collectGoldenData` can drive it without
-custom collector code, dood!
+custom collector code
 
 Layout used by ``scenarios.json`` per scenario:
 
@@ -83,13 +83,13 @@ def loadBotDefaults() -> Dict[str, Any]:
         KeyError: When the file does not contain a ``[bot.defaults]`` section.
     """
     if not BOT_DEFAULTS_PATH.exists():
-        raise FileNotFoundError(f"bot-defaults.toml not found at {BOT_DEFAULTS_PATH}, dood!")
+        raise FileNotFoundError(f"bot-defaults.toml not found at {BOT_DEFAULTS_PATH}")
     with BOT_DEFAULTS_PATH.open("rb") as fh:
         data: Dict[str, Any] = tomllib.load(fh)
     bot: Dict[str, Any] = data.get("bot", {})
     defaults: Dict[str, Any] = bot.get("defaults", {})
     if not defaults:
-        raise KeyError("bot-defaults.toml is missing the [bot.defaults] table, dood!")
+        raise KeyError("bot-defaults.toml is missing the [bot.defaults] table")
     return defaults
 
 
@@ -113,7 +113,7 @@ def getDefaultTemplates() -> Dict[str, str]:
     )
     for key in requiredKeys:
         if key not in defaults:
-            raise KeyError(f"bot-defaults.toml [bot.defaults] is missing '{key}', dood!")
+            raise KeyError(f"bot-defaults.toml [bot.defaults] is missing '{key}'")
     return {
         "tarotSystemPrompt": str(defaults["tarot-system-prompt"]),
         "runesSystemPrompt": str(defaults["runes-system-prompt"]),
@@ -135,7 +135,7 @@ def resolveSystem(systemId: str) -> type[BaseDivinationSystem]:
         ValueError: When ``systemId`` is not a recognised system.
     """
     if systemId not in SYSTEM_CLASSES:
-        raise ValueError(f"Unknown systemId '{systemId}', dood! expected one of {sorted(SYSTEM_CLASSES)}.")
+        raise ValueError(f"Unknown systemId '{systemId}'. Expected one of {sorted(SYSTEM_CLASSES)}.")
     return SYSTEM_CLASSES[systemId]
 
 
@@ -163,7 +163,7 @@ def resolveLayoutForSystem(systemCls: type[BaseDivinationSystem], layoutId: str)
     if fallback is not None:
         return fallback
     available: str = ", ".join(layout.id for layout in systemCls.availableLayouts())
-    raise ValueError(f"Unknown layoutId '{layoutId}' for system '{systemCls.systemId}', dood! Available: {available}.")
+    raise ValueError(f"Unknown layoutId '{layoutId}' for system '{systemCls.systemId}'. Available: {available}.")
 
 
 def buildReading(
@@ -227,8 +227,7 @@ class DivinationScenarioRunner:
     scenario's ``init_kwargs`` straight into ``__init__`` and then awaits
     :meth:`runReading` with the scenario's ``kwargs``. The runner spins up a
     one-model :class:`AbstractLLMProvider` from the provided config so the
-    LLM round-trip flows through the same code path the bot uses at runtime,
-    dood!
+    LLM round-trip flows through the same code path the bot uses at runtime
     """
 
     def __init__(
@@ -263,7 +262,7 @@ class DivinationScenarioRunner:
             ValueError: When ``providerType`` is unknown.
         """
         if providerType not in PROVIDER_TYPES:
-            raise ValueError(f"Unknown providerType '{providerType}', dood! expected one of {sorted(PROVIDER_TYPES)}.")
+            raise ValueError(f"Unknown providerType '{providerType}'. Expected one of {sorted(PROVIDER_TYPES)}.")
         providerCls: type[AbstractLLMProvider] = PROVIDER_TYPES[providerType]
         # Providers expect plain ``dict`` (mutated internally), so make a copy.
         self.provider: AbstractLLMProvider = providerCls(dict(providerConfig))
@@ -292,7 +291,7 @@ class DivinationScenarioRunner:
             return self.templates["tarotSystemPrompt"]
         if systemId == "runes":
             return self.templates["runesSystemPrompt"]
-        raise ValueError(f"Unknown systemId '{systemId}', dood!")
+        raise ValueError(f"Unknown systemId '{systemId}'")
 
     async def runReading(
         self,
@@ -340,7 +339,7 @@ class DivinationScenarioRunner:
 
         model: Optional[AbstractModel] = self.provider.getModel(self.modelName)
         if model is None:
-            raise RuntimeError(f"Model '{self.modelName}' was not registered, dood!")
+            raise RuntimeError(f"Model '{self.modelName}' was not registered")
 
         result = await model.generateText(messages)
 

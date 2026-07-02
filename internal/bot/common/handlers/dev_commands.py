@@ -1,4 +1,4 @@
-"""Development and debugging command handlers for the Telegram bot, dood!
+"""Development and debugging command handlers for the Telegram bot
 
 This module contains command handlers specifically designed for development,
 debugging, and administrative purposes. These commands are typically restricted
@@ -12,7 +12,7 @@ The module provides handlers for:
 - Various test suites for debugging and development
 
 All commands in this module require elevated permissions and are not available
-to regular users, dood!
+to regular users
 """
 
 import asyncio
@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 
 
 class DevCommandsHandler(BaseBotHandler):
-    """Development and administrative command handlers for bot maintenance, dood!
+    """Development and administrative command handlers for bot maintenance
 
     This class provides command handlers for development, debugging, and
     administrative tasks. All commands are restricted to bot owners and
@@ -67,7 +67,7 @@ class DevCommandsHandler(BaseBotHandler):
     - Debugging message entities and system state
 
     Inherits from BaseBotHandler to access core bot functionality including
-    message sending, database operations, and permission checking, dood!
+    message sending, database operations, and permission checking
     """
 
     ###
@@ -91,7 +91,7 @@ class DevCommandsHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """Handle the /echo command for testing bot responsiveness, dood!
+        """Handle the /echo command for testing bot responsiveness
 
         This command echoes back the provided message text, serving as a simple
         test to verify the bot is alive and responding correctly. It's useful
@@ -113,7 +113,7 @@ class DevCommandsHandler(BaseBotHandler):
         Note:
             - Sends error if no message text is provided
             - Message is sent with BOT_COMMAND_REPLY category on success
-            - Error messages are sent with BOT_ERROR category, dood!
+            - Error messages are sent with BOT_ERROR category
         """
 
         if args:
@@ -145,7 +145,7 @@ class DevCommandsHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """Handle /models command to list all available LLM models, dood!
+        """Handle /models command to list all available LLM models
 
         Retrieves and displays information about all LLM models known to the bot,
         including their configurations, capabilities, and provider details. This
@@ -177,7 +177,7 @@ class DevCommandsHandler(BaseBotHandler):
         Note:
             - Restricted to bot owners only
             - Sends models in batches of 4 to avoid message size limits
-            - Uses 0.5 second delay between batches, dood!
+            - Uses 0.5 second delay between batches
         """
         modelsPerMessage = 4
 
@@ -238,7 +238,7 @@ class DevCommandsHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """Handle the /settings command to display chat configuration, dood!
+        """Handle the /settings command to display chat configuration
 
         Retrieves and displays all settings for a specified chat, including default
         values and custom overrides. This command is useful for debugging configuration
@@ -269,7 +269,7 @@ class DevCommandsHandler(BaseBotHandler):
             - Restricted to bot owners only
             - If chatId is not provided, uses current chat
             - skip-default flag hides settings that are using default values
-            - Sends error message if chat is not found, dood!
+            - Sends error message if chat is not found
         """
 
         argList = args.split()
@@ -334,7 +334,7 @@ class DevCommandsHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """Handle /set and /unset commands for managing chat settings, dood!
+        """Handle /set and /unset commands for managing chat settings
 
         Allows bot owners to modify or reset chat-specific settings. The /set
         command assigns a new value to a setting key, while /unset resets it
@@ -362,7 +362,7 @@ class DevCommandsHandler(BaseBotHandler):
         Note:
             - Restricted to bot owners only
             - Changes are persisted to the database immediately
-            - Invalid keys result in an error message, dood!
+            - Invalid keys result in an error message
         """
 
         isSet = command.lower().startswith("set")
@@ -447,7 +447,7 @@ class DevCommandsHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """Handle /test command to run various diagnostic test suites, dood!
+        """Handle /test command to run various diagnostic test suites
 
         Provides access to various test suites for debugging and development purposes.
         Each test suite performs specific diagnostic operations and returns results
@@ -484,7 +484,7 @@ class DevCommandsHandler(BaseBotHandler):
         Note:
             - Restricted to bot owners only
             - dumpEntities and dumpNativeEntities require replying to a message
-            - Some test suites may have delays between messages, dood!
+            - Some test suites may have delays between messages
         """
 
         if not args:
@@ -716,7 +716,7 @@ class DevCommandsHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """Clear cache to force reload from database, dood!
+        """Clear cache to force reload from database
 
         Clears all temporary cache namespaces (CHAT_USERS and CHATS) to force
         the bot to reload values from the database. This is useful after manual
@@ -738,7 +738,7 @@ class DevCommandsHandler(BaseBotHandler):
         Note:
             - Restricted to bot owners only
             - Does not clear User and ChatPersistent namespaces
-            - Use /test dumpCache to verify cache state after clearing, dood!
+            - Use /test dumpCache to verify cache state after clearing
         """
         # Dump only temporary caches, do not touch User and ChatPersistent ones
         self.cache.clearNamespace(CacheNamespace.CHAT_USERS)
@@ -767,7 +767,7 @@ class DevCommandsHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """Get list of admins of given chat, dood!
+        """Get list of admins of given chat
 
         Retrieves and displays the list of administrators for a specified chat.
         This command is useful for debugging permission issues and verifying
@@ -791,7 +791,7 @@ class DevCommandsHandler(BaseBotHandler):
             - Restricted to bot owners only
             - If chatId is not provided, uses current chat
             - Admin list is cached and may be refreshed by this command
-            - Results are displayed in JSON format, dood!
+            - Results are displayed in JSON format
         """
         targetChatId: Optional[int] = None
         if args:
@@ -836,7 +836,7 @@ class DevCommandsHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """Replay an LLM conversation from an attached JSON file for debugging, dood!
+        """Replay an LLM conversation from an attached JSON file for debugging
 
         Reads a JSON log entry from an attached document, reconstructs the
         message list using :py:func:`reconstructMessages`, and runs it through
@@ -865,7 +865,7 @@ class DevCommandsHandler(BaseBotHandler):
             - Invalid JSON: parse error message
             - Missing 'request' field: log entry error
             - LLM API error: exception type and message
-            - Non-FINAL status: intermediate status report, dood!
+            - Non-FINAL status: intermediate status report
         """
 
         # 0. Get chat settings
@@ -1090,7 +1090,7 @@ class DevCommandsHandler(BaseBotHandler):
         UpdateObj: UpdateObjectType,
         typingManager: Optional[TypingManager],
     ) -> None:
-        """Shutdown the bot gracefully, dood!
+        """Shutdown the bot gracefully
 
         Logs out from the bot platform and terminates the bot process.
         This command is used for controlled shutdown during maintenance
@@ -1113,7 +1113,7 @@ class DevCommandsHandler(BaseBotHandler):
             - Restricted to bot owners only
             - Sends goodbye message before shutting down
             - Logs out from Telegram if available
-            - Terminates the process with exit code 0, dood!
+            - Terminates the process with exit code 0
         """
 
         await self.sendMessage(

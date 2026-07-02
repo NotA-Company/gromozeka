@@ -7,7 +7,7 @@ from lib.markdown import markdown_to_html, markdownToMarkdownV2, normalize_markd
 
 
 def test_inline_code_fence_fix():
-    """Test 1 - Inline code fence, dood!"""
+    """Test 1 - Inline code fence"""
     text = "Test 1 ```test1 test2 test3```"
     normalized = normalize_markdown(text)
     markdownv2 = markdownToMarkdownV2(text)
@@ -19,7 +19,7 @@ def test_inline_code_fence_fix():
 
 
 def test_malformed_fence_fix():
-    """Test 2 - Malformed fence, dood!"""
+    """Test 2 - Malformed fence"""
     text = "Test 2\n```test1 test2 test3```"
     normalized = normalize_markdown(text)
     markdownv2 = markdownToMarkdownV2(text)
@@ -31,7 +31,7 @@ def test_malformed_fence_fix():
 
 
 def test_proper_fence_fix():
-    """Test 3 - Proper fence, dood!"""
+    """Test 3 - Proper fence"""
     text = "Test 3\n```\ntest1 test2 test3\n```"
     normalized = normalize_markdown(text)
     markdownv2 = markdownToMarkdownV2(text)
@@ -43,7 +43,7 @@ def test_proper_fence_fix():
 
 
 def test_fence_with_lang_fix():
-    """Test 4 - Fence with lang, dood!"""
+    """Test 4 - Fence with lang"""
     text = "Test 4\n```test0\ntest1 test2 test3\n```"
     normalized = normalize_markdown(text)
     markdownv2 = markdownToMarkdownV2(text)
@@ -55,7 +55,7 @@ def test_fence_with_lang_fix():
 
 
 def test_unclosed_fence_fix():
-    """Test unclosed fence, dood!"""
+    """Test unclosed fence"""
     text = "```\ncode content\nmore content"
     normalized = normalize_markdown(text)
     markdownv2 = markdownToMarkdownV2(text)
@@ -67,7 +67,7 @@ def test_unclosed_fence_fix():
 
 
 def test_multiple_fences_fix():
-    """Test multiple fences, dood!"""
+    """Test multiple fences"""
     text = "```\ncode1\n```\n\n```\ncode2\n```"
     normalized = normalize_markdown(text)
     markdownv2 = markdownToMarkdownV2(text)
@@ -80,7 +80,7 @@ def test_multiple_fences_fix():
 
 
 def test_nested_backticks_fix():
-    """Test nested backticks, dood!"""
+    """Test nested backticks"""
     text = "```\ncode with ``` inside\n```"
     normalized = normalize_markdown(text)
     markdownv2 = markdownToMarkdownV2(text)
@@ -92,7 +92,7 @@ def test_nested_backticks_fix():
 
 
 def test_mixed_fence_types_fix():
-    """Test mixed fence types, dood!"""
+    """Test mixed fence types"""
     text = "```\ncode\n~~~"
     normalized = normalize_markdown(text)
     markdownv2 = markdownToMarkdownV2(text)

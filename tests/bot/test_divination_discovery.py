@@ -1,4 +1,4 @@
-"""Tests for divination layout discovery, dood!
+"""Tests for divination layout discovery
 
 This test suite verifies the layout discovery functionality for the
 divination handler, including layout ID generation, discovery workflow,

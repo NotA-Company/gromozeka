@@ -1,8 +1,8 @@
 """
-lib.cache - Generic cache library for Gromozeka, dood!
+lib.cache - Generic cache library for Gromozeka
 
 This library provides a generic, reusable caching infrastructure that can be
-used across different domains while maintaining type safety and flexibility, dood!
+used across different domains while maintaining type safety and flexibility
 
 Core Components:
 - CacheInterface: Abstract base class for all cache implementations
@@ -24,7 +24,7 @@ Example Usage:
     >>> await cache.set("user:123", {"name": "Prinny", "level": 99})
     >>> userData = await cache.get("user:123")
     >>> if userData:
-    ...     print(f"Found user: {userData['name']}, dood!")
+    ...     print(f"Found user: {userData['name']}")
 """
 
 # Export cache implementations

@@ -78,7 +78,7 @@ class StorageService:
         if not hasattr(self, "initialized"):
             self.backend: AbstractStorageBackend | None = None
             self.initialized = False
-            logger.info("StorageService created, awaiting configuration, dood!")
+            logger.info("StorageService created, awaiting configuration")
 
     @classmethod
     def getInstance(cls) -> "StorageService":
@@ -132,7 +132,7 @@ class StorageService:
             # Create appropriate backend based on type
             if storageType == "null":
                 self.backend = NullStorageBackend()
-                logger.info("Initialized NullStorageBackend, dood!")
+                logger.info("Initialized NullStorageBackend")
 
             elif storageType == "fs":
                 fsConfig = config.get("fs")
@@ -144,7 +144,7 @@ class StorageService:
                     raise StorageConfigError("Filesystem base-dir is not specified")
 
                 self.backend = FSStorageBackend(baseDir)
-                logger.info(f"Initialized FSStorageBackend with base-dir: {baseDir}, dood!")
+                logger.info(f"Initialized FSStorageBackend with base-dir: {baseDir}")
 
             elif storageType == "s3":
                 s3Config = config.get("s3")
@@ -169,14 +169,14 @@ class StorageService:
                 )
                 logger.info(
                     f"Initialized S3StorageBackend with bucket: {self.backend.bucket}, "
-                    f"prefix: {self.backend.prefix}, dood!"
+                    f"prefix: {self.backend.prefix}"
                 )
 
             else:
                 raise StorageConfigError(f"Unknown storage type: {storageType}")
 
             self.initialized = True
-            logger.info(f"StorageService initialized with {storageType} backend, dood!")
+            logger.info(f"StorageService initialized with {storageType} backend")
 
         except StorageConfigError:
             raise
@@ -191,7 +191,7 @@ class StorageService:
             StorageConfigError: If service is not initialized
         """
         if not self.initialized or self.backend is None:
-            raise StorageConfigError("StorageService is not initialized. Call injectConfig() first, dood!")
+            raise StorageConfigError("StorageService is not initialized. Call injectConfig() first")
 
     def store(self, key: str, data: bytes) -> None:
         """
@@ -209,7 +209,7 @@ class StorageService:
         self._ensureInitialized()
         assert self.backend is not None  # For type checker
         self.backend.store(key, data)
-        logger.debug(f"Stored object with key: {key}, dood!")
+        logger.debug(f"Stored object with key: {key}")
 
     def get(self, key: str) -> bytes | None:
         """
@@ -230,9 +230,9 @@ class StorageService:
         assert self.backend is not None  # For type checker
         data = self.backend.get(key)
         if data is not None:
-            logger.debug(f"Retrieved object with key: {key}, dood!")
+            logger.debug(f"Retrieved object with key: {key}")
         else:
-            logger.warning(f"Object not found with key: {key}, dood!")
+            logger.warning(f"Object not found with key: {key}")
         return data
 
     def exists(self, key: str) -> bool:
@@ -253,7 +253,7 @@ class StorageService:
         self._ensureInitialized()
         assert self.backend is not None  # For type checker
         exists = self.backend.exists(key)
-        logger.debug(f"Existence check for key {key}: {exists}, dood!")
+        logger.debug(f"Existence check for key {key}: {exists}")
         return exists
 
     def delete(self, key: str) -> bool:
@@ -275,9 +275,9 @@ class StorageService:
         assert self.backend is not None  # For type checker
         deleted = self.backend.delete(key)
         if deleted:
-            logger.debug(f"Deleted object with key: {key}, dood!")
+            logger.debug(f"Deleted object with key: {key}")
         else:
-            logger.warning(f"Object not found for deletion with key: {key}, dood!")
+            logger.warning(f"Object not found for deletion with key: {key}")
         return deleted
 
     def list(self, prefix: str = "", limit: int | None = None) -> list[str]:
@@ -299,5 +299,5 @@ class StorageService:
         self._ensureInitialized()
         assert self.backend is not None  # For type checker
         keys = self.backend.list(prefix=prefix, limit=limit)
-        logger.debug(f"Listed {len(keys)} objects with prefix: '{prefix}', dood!")
+        logger.debug(f"Listed {len(keys)} objects with prefix: '{prefix}'")
         return keys

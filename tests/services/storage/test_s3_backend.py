@@ -1,5 +1,5 @@
 """
-Comprehensive tests for S3StorageBackend with mocks, dood!
+Comprehensive tests for S3StorageBackend with mocks
 
 This module tests the S3StorageBackend using mocked boto3 calls
 to ensure proper S3 integration without making real API calls.
@@ -16,7 +16,7 @@ from internal.services.storage.exceptions import StorageBackendError, StorageKey
 
 @pytest.fixture
 def mockS3Client():
-    """Create a mock boto3 S3 client, dood!"""
+    """Create a mock boto3 S3 client"""
     client = Mock()
     client.put_object = Mock(return_value={})
     client.get_object = Mock()
@@ -28,7 +28,7 @@ def mockS3Client():
 
 @pytest.fixture
 def s3Backend(mockS3Client):
-    """Create S3StorageBackend with mocked boto3 client, dood!"""
+    """Create S3StorageBackend with mocked boto3 client"""
     with patch("internal.services.storage.backends.s3.boto3.client", return_value=mockS3Client):
         backend = S3StorageBackend(
             endpoint="https://s3.amazonaws.com",
@@ -44,7 +44,7 @@ def s3Backend(mockS3Client):
 
 @pytest.fixture
 def s3BackendNoPrefix(mockS3Client):
-    """Create S3StorageBackend without prefix, dood!"""
+    """Create S3StorageBackend without prefix"""
     with patch("internal.services.storage.backends.s3.boto3.client", return_value=mockS3Client):
         backend = S3StorageBackend(
             endpoint="https://s3.amazonaws.com",
@@ -59,7 +59,7 @@ def s3BackendNoPrefix(mockS3Client):
 
 
 class TestS3BackendInitialization:
-    """Test S3StorageBackend initialization, dood!"""
+    """Test S3StorageBackend initialization"""
 
     def testBackendCreation(self):
         """Test that backend can be created with required parameters"""
@@ -135,7 +135,7 @@ class TestS3BackendInitialization:
 
 
 class TestS3BackendStore:
-    """Test S3StorageBackend store operation, dood!"""
+    """Test S3StorageBackend store operation"""
 
     def testStoreSimpleData(self, s3Backend, mockS3Client):
         """Test storing simple data"""
@@ -203,7 +203,7 @@ class TestS3BackendStore:
 
 
 class TestS3BackendGet:
-    """Test S3StorageBackend get operation, dood!"""
+    """Test S3StorageBackend get operation"""
 
     def testGetExistingObject(self, s3Backend, mockS3Client):
         """Test getting existing object"""
@@ -268,7 +268,7 @@ class TestS3BackendGet:
 
 
 class TestS3BackendExists:
-    """Test S3StorageBackend exists operation, dood!"""
+    """Test S3StorageBackend exists operation"""
 
     def testExistsForExistingObject(self, s3Backend, mockS3Client):
         """Test exists returns True for existing object"""
@@ -317,7 +317,7 @@ class TestS3BackendExists:
 
 
 class TestS3BackendDelete:
-    """Test S3StorageBackend delete operation, dood!"""
+    """Test S3StorageBackend delete operation"""
 
     def testDeleteExistingObject(self, s3Backend, mockS3Client):
         """Test deleting existing object"""
@@ -372,7 +372,7 @@ class TestS3BackendDelete:
 
 
 class TestS3BackendList:
-    """Test S3StorageBackend list operation, dood!"""
+    """Test S3StorageBackend list operation"""
 
     def testListEmptyBucket(self, s3Backend, mockS3Client):
         """Test listing empty bucket"""
@@ -448,7 +448,7 @@ class TestS3BackendList:
 
 
 class TestS3BackendKeyHandling:
-    """Test S3 key handling with prefix, dood!"""
+    """Test S3 key handling with prefix"""
 
     def testGetS3KeyWithPrefix(self, s3Backend):
         """Test _getS3Key with prefix"""
@@ -475,7 +475,7 @@ class TestS3BackendKeyHandling:
 
 
 class TestS3BackendRealWorldScenarios:
-    """Test real-world scenarios, dood!"""
+    """Test real-world scenarios"""
 
     def testStoreAndRetrieveCycle(self, s3Backend, mockS3Client):
         """Test complete store and retrieve cycle"""

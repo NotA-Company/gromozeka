@@ -1,5 +1,5 @@
 """
-Comprehensive tests for FSStorageBackend, dood!
+Comprehensive tests for FSStorageBackend
 
 This module tests the FSStorageBackend to ensure it properly
 stores and retrieves files from the filesystem.
@@ -17,7 +17,7 @@ from internal.services.storage.exceptions import StorageBackendError, StorageKey
 
 @pytest.fixture
 def tempDir():
-    """Create a temporary directory for testing, dood!"""
+    """Create a temporary directory for testing"""
     tmpDir = tempfile.mkdtemp()
     yield tmpDir
     # Cleanup
@@ -28,12 +28,12 @@ def tempDir():
 
 @pytest.fixture
 def fsBackend(tempDir):
-    """Create FSStorageBackend with temporary directory, dood!"""
+    """Create FSStorageBackend with temporary directory"""
     return FSStorageBackend(tempDir)
 
 
 class TestFSBackendInitialization:
-    """Test FSStorageBackend initialization, dood!"""
+    """Test FSStorageBackend initialization"""
 
     def testBackendCreation(self, tempDir):
         """Test that backend can be created with base directory"""
@@ -82,7 +82,7 @@ class TestFSBackendInitialization:
 
 
 class TestFSBackendStore:
-    """Test FSStorageBackend store operation, dood!"""
+    """Test FSStorageBackend store operation"""
 
     def testStoreSimpleData(self, fsBackend, tempDir):
         """Test storing simple data"""
@@ -160,7 +160,7 @@ class TestFSBackendStore:
 
 
 class TestFSBackendGet:
-    """Test FSStorageBackend get operation, dood!"""
+    """Test FSStorageBackend get operation"""
 
     def testGetExistingFile(self, fsBackend):
         """Test getting existing file"""
@@ -214,7 +214,7 @@ class TestFSBackendGet:
 
 
 class TestFSBackendExists:
-    """Test FSStorageBackend exists operation, dood!"""
+    """Test FSStorageBackend exists operation"""
 
     def testExistsForExistingFile(self, fsBackend):
         """Test exists returns True for existing file"""
@@ -252,7 +252,7 @@ class TestFSBackendExists:
 
 
 class TestFSBackendDelete:
-    """Test FSStorageBackend delete operation, dood!"""
+    """Test FSStorageBackend delete operation"""
 
     def testDeleteExistingFile(self, fsBackend, tempDir):
         """Test deleting existing file"""
@@ -299,7 +299,7 @@ class TestFSBackendDelete:
 
 
 class TestFSBackendList:
-    """Test FSStorageBackend list operation, dood!"""
+    """Test FSStorageBackend list operation"""
 
     def testListEmptyDirectory(self, fsBackend):
         """Test listing empty directory"""
@@ -364,7 +364,7 @@ class TestFSBackendList:
 
 
 class TestFSBackendEdgeCases:
-    """Test edge cases and error handling, dood!"""
+    """Test edge cases and error handling"""
 
     def testConcurrentStoreOperations(self, fsBackend):
         """Test concurrent store operations"""
@@ -435,7 +435,7 @@ class TestFSBackendEdgeCases:
 
 
 class TestFSBackendAtomicOperations:
-    """Test atomic file operations, dood!"""
+    """Test atomic file operations"""
 
     def testAtomicWrite(self, fsBackend, tempDir):
         """Test that write is atomic (uses temp file)"""
@@ -461,7 +461,7 @@ class TestFSBackendAtomicOperations:
 
 
 class TestFSBackendRealWorldScenarios:
-    """Test real-world scenarios, dood!"""
+    """Test real-world scenarios"""
 
     def testImageStorage(self, fsBackend):
         """Test storing image-like data"""
