@@ -15,3 +15,10 @@ messageSuffix = """
 
 Конец пересланного сообщения ({{date}})"""
 lastMessageDate = "2026-01-01 00:00:00"
+
+# Optional: forward the resent message to additional chats (best-effort).
+# Each entry is a separate forward target. Forward failures are logged and
+# do not block the primary resend or cursor advancement.
+# forwardTo = [
+#     { chatId = -456, threadId = 0, notify = true },
+# ]

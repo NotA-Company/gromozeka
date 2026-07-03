@@ -239,7 +239,7 @@ timeout = 10
 **Solution:** Wait a configurable delay after the last media item is received before considering a media group complete.
 
 **Architecture Choice:**
-- **Per-Job Configuration**: Each `ResendJob` has its own `mediaGroupDelaySecs` parameter (default: 5.0 seconds)
+- **Per-Job Configuration**: Each `ResendJob` has its own `mediaGroupDelaySecs` parameter (default: 10.0 seconds)
 - **Database Method**: `getMediaGroupLastUpdatedAt()` returns `MAX(created_at)` from `media_groups` table
 - **Processing Logic**: `_dtCronJob` checks media group age before processing using `utils.getAgeInSecs()`
 
@@ -255,7 +255,7 @@ timeout = 10
 id = "telegram-to-max"
 sourceChatId = -1001234567890
 targetChatId = 9876543210
-mediaGroupDelaySecs = 5.0  # Optional, defaults to 5.0
+mediaGroupDelaySecs = 10.0  # Optional, defaults to 10.0
 ```
 
 **Edge Cases Handled:**

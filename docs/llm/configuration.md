@@ -314,17 +314,45 @@ prefix = "objects/"
 
 ### `[resender]`
 
-| Key | Type | Purpose |
-|---|---|---|
-| `enabled` | bool | Enable resender handler |
+Defaults live in [`configs/00-defaults/resender.toml`](../../configs/00-defaults/resender.toml). The handler is disabled by default and registered conditionally on `enabled = true`.
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `enabled` | bool | `false` | Enable resender handler |
+
+**Job keys** (`[[resender.jobs]]` entries; see `ResendJob` in [`internal/bot/common/handlers/resender.py`](../../internal/bot/common/handlers/resender.py)):
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `id` | str | _(required)_ | Unique job identifier; used in the `resender:{id}:lastMessageDate` settings key |
+| `dataSource` | str | _(required)_ | Name of the data source to read messages from |
+| `sourceChatId` | int | _(required)_ | Source chat ID to resend messages from |
+| `sourceTheadId` | int | `None` | Optional source thread ID to filter messages from |
+| `targetChatId` | int | _(required)_ | Target chat ID to resend messages to |
+| `forwardTo` | array of dicts | `[]` (empty) | List of additional chats to natively forward the resent message to. Each entry is a dict with keys: `chatId` (int, required), `threadId` (int, optional), `notify` (bool, optional). Forwarding is best-effort — failures are logged but don't block the main resend. |
+| `messageTypes` | array of str | _(required)_ | Sequence of message categories to resend (e.g. `["user"]`) |
+| `messagePrefix` | str | `""` | Optional prefix prepended to resent messages (supports template placeholders) |
+| `messageSuffix` | str | `""` | Optional suffix appended to resent messages (supports template placeholders) |
+| `lastMessageDate` | str/datetime | `None` | Cursor — timestamp of the last processed message (ISO string or `datetime`) |
+| `notification` | bool | `None` | Notification override for the resent message (`None` = platform default) |
+| `mediaGroupDelaySecs` | float | `10.0` | Delay used to coalesce media-group messages before resending |
 
 **Resender jobs config:**
 ```toml
 [[resender.jobs]]
 id = "telegram-to-max"
+dataSource = "telegram-ro"
 sourceChatId = -1001234567890
 targetChatId = 9876543210
-mediaGroupDelaySecs = 5.0  # Optional, defaults to 5.0
+messageTypes = ["user"]
+mediaGroupDelaySecs = 10.0  # Optional, defaults to 10.0
+
+# Optional: forward the resent message to additional chats (best-effort).
+# Each entry is a separate forward target. Forward failures are logged and
+# do not block the primary resend or cursor advancement.
+# forwardTo = [
+#     { chatId = -456, threadId = 0, notify = true },
+# ]
 ```
 
 ### `[geocode-maps]`

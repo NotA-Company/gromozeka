@@ -17,7 +17,7 @@ import datetime
 import json
 import logging
 from collections.abc import MutableSet, Sequence
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, NotRequired, Optional, Tuple, TypedDict
 
 import lib.utils as utils
 from internal.bot.models import (
@@ -35,6 +35,26 @@ from .base import BaseBotHandler
 logger = logging.getLogger(__name__)
 
 
+class ForwardTarget(TypedDict):
+    """Target chat for forwarding a resent message.
+
+    When a `ResendJob` has `forwardTo` configured, each entry in that list
+    matches this shape and describes an additional chat to forward the
+    resent message to.
+
+    Fields:
+        chatId: Target chat/channel ID to forward to. Always required.
+        threadId: Thread ID in the target chat (for forum topics). Key absent
+            means no specific thread.
+        notify: Notification override. Key absent means platform default,
+            True = notify, False = silent.
+    """
+
+    chatId: int
+    threadId: NotRequired[int]
+    notify: NotRequired[bool]
+
+
 class ResendJob:
     """
     Configuration class for defining message resend jobs.
@@ -50,6 +70,7 @@ class ResendJob:
         "sourceChatId",
         "sourceTheadId",
         "targetChatId",
+        "forwardTo",
         "messageTypes",
         "messagePrefix",
         "messageSuffix",
@@ -66,6 +87,7 @@ class ResendJob:
         dataSource: str,
         sourceChatId: int,
         targetChatId: int,
+        forwardTo: Optional[List[ForwardTarget]] = None,
         sourceTheadId: Optional[int] = None,
         messageTypes: Sequence[MessageCategory | str],
         messagePrefix: str = "",
@@ -82,6 +104,8 @@ class ResendJob:
             dataSource: Name of the data source to read messages from
             sourceChatId: Source chat ID to resend messages from
             targetChatId: Target chat ID to resend messages to
+            forwardTo: Optional list of {chatId, threadId?, notify?} dicts (see
+                ForwardTarget) for additional chats to forward resent messages to
             sourceTheadId: Optional source thread ID to filter messages from
             messageTypes: Sequence of message categories to resend
             messagePrefix: Optional prefix to add to resent messages
@@ -100,6 +124,13 @@ class ResendJob:
         """source thread id for resend messages from"""
         self.targetChatId = targetChatId
         """target chat id for resend messages to"""
+        self.forwardTo = forwardTo if forwardTo is not None else []
+        """
+        optional list of additional chats to forward resent messages to.
+        Each entry is a [`ForwardTarget`](internal/bot/common/handlers/resender.py)
+        describing the destination chat, thread, and notification override.
+        None or empty means no forwarding.
+        """
         self.messageTypes: List[MessageCategory] = []
         for messageType in messageTypes:
             self.messageTypes.append(MessageCategory(messageType))
@@ -412,7 +443,7 @@ class ResenderHandler(BaseBotHandler):
                                 messagePrefix = messagePrefix.replace("{{" + k + "}}", v)
                                 messageSuffix = messageSuffix.replace("{{" + k + "}}", v)
 
-                            await self.sendMessage(
+                            sentMessages = await self.sendMessage(
                                 None,
                                 messageText=messagePrefix + messageText + messageSuffix,
                                 messageCategory=MessageCategory.BOT_RESENDED,
@@ -420,6 +451,27 @@ class ResenderHandler(BaseBotHandler):
                                 notify=job.notification,
                                 attachmentList=attachmentList,
                             )
+
+                            # Best-effort: forward the resent message(s) to each configured target.
+                            # Forward failures are swallowed per-target so one bad destination does
+                            # not skip the rest, and they never block lastMessageDate advancement.
+                            messageIds = [m.messageId for m in sentMessages]
+                            if job.forwardTo and self._bot is not None and messageIds:
+                                for target in job.forwardTo:
+                                    try:
+                                        await self._bot.forwardMessages(
+                                            fromChatId=job.targetChatId,
+                                            messageIds=messageIds,
+                                            toChatId=target["chatId"],
+                                            threadId=target.get("threadId"),
+                                            notify=target.get("notify"),
+                                        )
+                                    except Exception:
+                                        # Swallow silently — TheBot.forwardMessages already logs the
+                                        # full traceback via logger.exception() before re-raising.
+                                        pass
+                                    # Brief pause between forward targets to avoid rate-limit issues.
+                                    await asyncio.sleep(0.1)
 
                             await asyncio.sleep(messageSendDelay)
                             messageSendDelay = min(messageSendDelay * 2, 10)

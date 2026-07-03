@@ -906,6 +906,85 @@ class TheBot:
         logger.error(f"Can not delete {messageIds} in platform {self.botProvider}")
         return False
 
+    async def forwardMessages(
+        self,
+        fromChatId: int,
+        messageIds: List[MessageId],
+        toChatId: int,
+        *,
+        threadId: Optional[int] = None,
+        notify: Optional[bool] = None,
+    ) -> List[MessageId]:
+        """Forward (copy) messages from one chat into another.
+
+        Telegram wraps PTB's ``copy_messages`` (handles single messages and
+        media groups alike in one call); Max has no bulk-forward API, so each
+        source id is forwarded individually via its own ``sendMessage`` call
+        with a ``forwardFrom`` link. The returned IDs identify the newly
+        created messages in the destination chat.
+
+        Args:
+            fromChatId: ID of the chat to copy messages from.
+            messageIds: IDs of the source messages (a single message as a
+                one-element list, or all IDs of a media group). An empty list
+                short-circuits and returns ``[]``.
+            toChatId: ID of the chat to copy messages into.
+            threadId: Optional Telegram forum thread ID (ignored on Max).
+            notify: Whether to send a notification for the copied messages.
+                ``None`` uses the platform default.
+
+        Returns:
+            List of MessageIds of the newly created messages in the destination
+            chat — one entry per source message on both platforms (Telegram
+            returns them from a single ``copy_messages`` call, Max from one
+            ``sendMessage`` call per id). Returns an empty list when
+            ``messageIds`` is empty.
+
+        Raises:
+            RuntimeError: If the configured bot provider is neither Telegram nor
+                Max, or the matching bot client is not configured.
+        """
+        if not messageIds:
+            return []
+
+        if self.botProvider == BotProvider.TELEGRAM and self.tgBot is not None:
+            forwardKwargs = {
+                "chat_id": toChatId,
+                "from_chat_id": fromChatId,
+                "message_ids": [m.asInt() for m in messageIds],
+            }
+            if threadId is not None:
+                forwardKwargs["message_thread_id"] = threadId
+            if notify is not None:
+                forwardKwargs["disable_notification"] = not notify
+            try:
+                result = await self.tgBot.copy_messages(**forwardKwargs)
+            except Exception:
+                logger.exception(f"Failed to forward messages {messageIds} from chat {fromChatId} to chat {toChatId}")
+                raise
+            # copy_messages returns tuple[telegram.MessageId, ...]; extract the
+            # int id and wrap in our MessageId.
+            return [MessageId(mid.message_id) for mid in result]
+
+        if self.botProvider == BotProvider.MAX and self.maxBot is not None:
+            # Max has no bulk-forward API, so each source id is forwarded
+            # individually via its own forwardFrom link.
+            results: List[MessageId] = []
+            for messageId in messageIds:
+                try:
+                    result = await self.maxBot.sendMessage(
+                        chatId=toChatId,
+                        forwardFrom=messageId.asStr(),
+                        notify=notify,
+                    )
+                except Exception:
+                    logger.exception(f"Failed to forward message {messageId} from chat {fromChatId} to chat {toChatId}")
+                    raise
+                results.append(MessageId(result.message.body.mid))
+            return results
+
+        raise RuntimeError(f"Unexpected bot provider: {self.botProvider}")
+
     async def sendChatAction(self, ensuredMessage: EnsuredMessage, typingAction: TypingAction) -> bool:
         """Send chat action (typing indicator) to show bot activity.
 
