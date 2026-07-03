@@ -345,7 +345,7 @@ class OpenrouterProvider(BasicOpenAIProvider):
             ```
         """
         if not self._client:
-            raise RuntimeError("OpenRouter client not initialized, dood!")
+            raise RuntimeError("OpenRouter client not initialized")
 
         return OpenrouterModel(
             provider=self,

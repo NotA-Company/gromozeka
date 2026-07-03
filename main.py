@@ -222,7 +222,7 @@ def parse_arguments():
 
 
 def daemonize(pid_file: str):
-    """Fork the process to run in background, dood!
+    """Fork the process to run in background
 
     Uses the double fork pattern to create a proper daemon process.
     For detailed explanation, see: docs/reports/double-fork-daemon-pattern.md
@@ -256,7 +256,7 @@ def daemonize(pid_file: str):
     try:
         with open(pid_file, "w") as f:
             f.write(str(os.getpid()))
-        logger.info(f"Daemon started with PID {os.getpid()}, dood!")
+        logger.info(f"Daemon started with PID {os.getpid()}")
     except Exception as e:
         logger.error(f"Failed to write PID file: {e}")
 
@@ -273,7 +273,7 @@ def daemonize(pid_file: str):
 
 
 def prettyPrintConfig(config_manager: ConfigManager):
-    """Pretty-print the loaded configuration and exit, dood!"""
+    """Pretty-print the loaded configuration and exit"""
     print("=== Gromozeka Configuration ===")
     print()
 

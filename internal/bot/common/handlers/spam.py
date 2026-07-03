@@ -118,7 +118,7 @@ class SpamHandler(BaseBotHandler):
         )
         self.bayesFilter = NaiveBayesFilter(bayesStorage, bayesConfig)
 
-        logger.info("Initialized Bayes spam filter, dood!")
+        logger.info("Initialized Bayes spam filter")
 
     def _makeSpamButtonSignature(self, message: EnsuredMessage, extra: bool = False) -> str:
         """
@@ -526,7 +526,7 @@ class SpamHandler(BaseBotHandler):
                 )
                 return
 
-        # Learn from spam message using Bayes filter, dood!
+        # Learn from spam message using Bayes filter
         doBayesLearn = chatSettings[ChatSettingsKey.BAYES_AUTO_LEARN].toBool()
         minConfidence = chatSettings[ChatSettingsKey.BAYES_MIN_CONFEDENCE_TO_AUTOLEARN_SPAM].toFloat()
         doBayesLearn = doBayesLearn and confidence >= minConfidence
@@ -537,11 +537,10 @@ class SpamHandler(BaseBotHandler):
             try:
                 await self.bayesFilter.learnSpam(messageText=ensuredMessage.messageText, chatId=chatId)
                 logger.debug(
-                    "Bayes filter learned spam message: "
-                    f"{ensuredMessage.recipient.id}:{ensuredMessage.messageId}, dood!"
+                    "Bayes filter learned spam message: " f"{ensuredMessage.recipient.id}:{ensuredMessage.messageId}"
                 )
             except Exception as e:
-                logger.error(f"Failed to learn spam message in Bayes filter: {e}, dood!")
+                logger.error(f"Failed to learn spam message in Bayes filter: {e}")
 
         if ensuredMessage.messageText:
             await self.db.spam.addSpamMessage(
@@ -591,11 +590,9 @@ class SpamHandler(BaseBotHandler):
                     if msg["message_text"] and doBayesLearn:
                         try:
                             await self.bayesFilter.learnSpam(messageText=msg["message_text"], chatId=msg["chat_id"])
-                            logger.debug(
-                                f"Bayes filter learned spam message: {msg['chat_id']}{msg['message_id']}, dood!"
-                            )
+                            logger.debug(f"Bayes filter learned spam message: {msg['chat_id']}{msg['message_id']}")
                         except Exception as e:
-                            logger.error(f"Failed to learn spam message in Bayes filter: {e}, dood!")
+                            logger.error(f"Failed to learn spam message in Bayes filter: {e}")
                     # And add message to spam-base
                     if msg["message_text"]:
                         await self.db.spam.addSpamMessage(
@@ -645,10 +642,10 @@ class SpamHandler(BaseBotHandler):
 
         try:
             await self.bayesFilter.learnHam(messageText=message.messageText, chatId=message.recipient.id)
-            logger.debug(f"Bayes filter learned ham message: {message.recipient.id}:{message.messageId}, dood!")
+            logger.debug(f"Bayes filter learned ham message: {message.recipient.id}:{message.messageId}")
             return True
         except Exception as e:
-            logger.error(f"Failed to learn ham message in Bayes filter: {e}, dood!")
+            logger.error(f"Failed to learn ham message in Bayes filter: {e}")
             return False
 
     async def getBayesFilterStats(self, chatId: Optional[int] = None) -> Dict[str, Any]:
@@ -686,7 +683,7 @@ class SpamHandler(BaseBotHandler):
                 "chat_id": chatId,
             }
         except Exception as e:
-            logger.error(f"Failed to get Bayes filter stats: {e}, dood!")
+            logger.error(f"Failed to get Bayes filter stats: {e}")
             return {}
 
     async def resetBayesFilter(self, chat_id: Optional[int] = None) -> bool:
@@ -709,10 +706,10 @@ class SpamHandler(BaseBotHandler):
             success = await self.bayesFilter.reset(chat_id)
             if success:
                 scope = f"chat {chat_id}" if chat_id else "global"
-                logger.info(f"Successfully reset Bayes filter for {scope}, dood!")
+                logger.info(f"Successfully reset Bayes filter for {scope}")
             return success
         except Exception as e:
-            logger.error(f"Failed to reset Bayes filter: {e}, dood!")
+            logger.error(f"Failed to reset Bayes filter: {e}")
             return False
 
     async def trainBayesFromHistory(self, chatId: int, limit: int = 1000) -> Dict[str, int]:
@@ -777,11 +774,11 @@ class SpamHandler(BaseBotHandler):
                     else:
                         stats["failed"] += 1
 
-            logger.info(f"Bayes training completed for chat {chatId}: {stats}, dood!")
+            logger.info(f"Bayes training completed for chat {chatId}: {stats}")
             return stats
 
         except Exception as e:
-            logger.error(f"Failed to train Bayes filter from history: {e}, dood!")
+            logger.error(f"Failed to train Bayes filter from history: {e}")
             stats["failed"] += 1
             return stats
 
@@ -822,11 +819,11 @@ class SpamHandler(BaseBotHandler):
                     else:
                         stats["failed"] += 1
 
-            logger.info(f"Bayes SPAM training completed for chat {chatId}: {stats}, dood!")
+            logger.info(f"Bayes SPAM training completed for chat {chatId}: {stats}")
             return stats
 
         except Exception as e:
-            logger.error(f"Failed to train Bayes filter from SpamDB: {e}, dood!")
+            logger.error(f"Failed to train Bayes filter from SpamDB: {e}")
             stats["failed"] += 1
             return stats
 

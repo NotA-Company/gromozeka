@@ -1,4 +1,4 @@
-"""Tarot divination system using the Rider–Waite–Smith deck, dood!
+"""Tarot divination system using the Rider–Waite–Smith deck
 
 This module wires the abstract :class:`BaseDivinationSystem` to the concrete
 RWS deck and the predefined tarot layouts. Tarot cards in this library can

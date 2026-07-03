@@ -56,7 +56,7 @@ def discoverMigrations() -> List[Type[BaseMigration]]:
         if migrationClass:
             migrations.append(migrationClass)
 
-    logger.info(f"Discovered {len(migrations)} migrations, dood!")
+    logger.info(f"Discovered {len(migrations)} migrations")
     return migrations
 
 
@@ -85,7 +85,7 @@ def _importMigrationModule(filename: str) -> Optional[Type[BaseMigration]]:
 
         # Check if getMigration function exists
         if not hasattr(module, "getMigration"):
-            logger.warning(f"Migration {filename} missing getMigration() function, dood!")
+            logger.warning(f"Migration {filename} missing getMigration() function")
             return None
 
         # Get the migration class
@@ -93,19 +93,19 @@ def _importMigrationModule(filename: str) -> Optional[Type[BaseMigration]]:
 
         # Validate it's a proper migration class
         if not issubclass(migrationClass, BaseMigration):
-            logger.error(f"Migration {filename} getMigration() didn't return BaseMigration subclass, dood!")
+            logger.error(f"Migration {filename} getMigration() didn't return BaseMigration subclass")
             return None
 
         # Validate version number
         if not hasattr(migrationClass, "version") or not isinstance(migrationClass.version, int):
-            logger.error(f"Migration {filename} missing valid version attribute, dood!")
+            logger.error(f"Migration {filename} missing valid version attribute")
             return None
 
-        logger.debug(f"Loaded migration {migrationClass.version}: {migrationClass.description}, dood!")
+        logger.debug(f"Loaded migration {migrationClass.version}: {migrationClass.description}")
         return migrationClass
 
     except Exception as e:
-        logger.error(f"Failed to import migration {filename}: {e}, dood!")
+        logger.error(f"Failed to import migration {filename}: {e}")
         logger.exception(e)
         return None
 

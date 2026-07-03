@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test to debug list parsing with blank lines, dood!
+Test to debug list parsing with blank lines
 """
 
 from lib.markdown.block_parser import BlockParser

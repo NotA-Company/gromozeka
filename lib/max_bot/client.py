@@ -7,7 +7,9 @@ the Max Messenger Bot API using httpx with proper authentication and error handl
 
 import asyncio
 import inspect
+import json
 import logging
+import ssl
 import types
 from collections.abc import Awaitable
 from typing import Any, Callable, Dict, List, Optional, Sequence, Union
@@ -47,7 +49,6 @@ from .models import (
     BotInfo,
     Chat,
     ChatAdmin,
-    ChatList,
     ChatMembersList,
     InlineKeyboardAttachment,
     InlineKeyboardAttachmentRequest,
@@ -68,6 +69,7 @@ from .models import (
     UploadType,
 )
 from .models.update import Update
+from .utils import buildMaxSslContext
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +78,7 @@ EXTENDED_DEBUG: bool = True
 
 
 class MaxBotClient:
-    """Async client for Max Messenger Bot API with authentication and error handling, dood!
+    """Async client for Max Messenger Bot API with authentication and error handling
 
     Provides a clean, type-safe interface for interacting with the Max Messenger Bot API.
     Handles authentication, request/response processing, error handling, and retries.
@@ -99,10 +101,11 @@ class MaxBotClient:
 
     Attributes:
         accessToken: The bot access token for API authentication
-        baseUrl: Base URL for the API (default: https://platform-api.max.ru)
+        baseUrl: Base URL for the API (default: https://platform-api2.max.ru)
         timeout: Request timeout in seconds (default: 30)
-        maxRetries: Maximum number of retry attempts (default: 3)
+        maxRetries: Maximum number of retry attempts (default: 5)
         retryBackoffFactor: Backoff factor for retry delays (default: 1.0)
+        caBundlePath: Optional path to CA certificate directory for custom TLS trust
     """
 
     __slots__ = (
@@ -111,11 +114,15 @@ class MaxBotClient:
         "timeout",
         "maxRetries",
         "retryBackoffFactor",
+        "_basePollingUrl",
+        "_localReceiverToken",
         "_httpClient",
+        "_localHttpClient",
         "_pollingTask",
         "_isPolling",
         "_myInfo",
         "_proxyConfig",
+        "_sslContext",
     )
 
     def __init__(
@@ -126,18 +133,34 @@ class MaxBotClient:
         maxRetries: int = MAX_RETRIES,
         retryBackoffFactor: float = RETRY_BACKOFF_FACTOR,
         proxyConfig: Optional[ProxyConfig] = None,
+        caBundlePath: Optional[str] = None,
+        basePollingUrl: Optional[str] = None,
+        localReceiverToken: Optional[str] = None,
     ) -> None:
         """Initialize the Max Bot client.
 
         Args:
             accessToken: Bot access token for API authentication
-            baseUrl: Base URL for the API (default: https://platform-api.max.ru)
+            baseUrl: Base URL for the API (default: https://platform-api2.max.ru)
             timeout: Request timeout in seconds (default: 30)
-            maxRetries: Maximum number of retry attempts (default: 3)
+            maxRetries: Maximum number of retry attempts (default: 5)
             retryBackoffFactor: Backoff factor for retry delays (default: 1.0)
             proxyConfig: Optional keyword arguments to spread into httpx.AsyncClient
                 for proxy support (e.g. {"proxy": "http://proxy:8080"} or
                 {"transport": AsyncProxyTransport(...)}). Defaults to None (no proxy).
+            caBundlePath: Path to a directory containing additional CA certificate
+                PEM files (e.g. Минцифры CA certs for platform-api2.max.ru).
+                Passed to ``buildMaxSslContext()``. When None or empty string,
+                httpx uses its default CA bundle.
+            basePollingUrl: Optional base URL of a local webhook receiver. When set,
+                :meth:`getUpdates` polls this local receiver instead of the Max API.
+                Trailing slash is stripped. Defaults to None (poll the real API).
+            localReceiverToken: Optional bearer token for the local webhook
+                receiver's GET /updates endpoint. When set, sent as the
+                ``Authorization`` header on every local-receiver poll; used to
+                satisfy the receiver's optional ``get-updates-secret`` check.
+                When None, no ``Authorization`` header is sent to the local
+                receiver. Defaults to None.
 
         Raises:
             ConfigurationError: If accessToken is empty or invalid
@@ -151,12 +174,16 @@ class MaxBotClient:
         self.maxRetries = maxRetries
         self.retryBackoffFactor = retryBackoffFactor
         self._httpClient: Optional[httpx.AsyncClient] = None
+        self._localHttpClient: Optional[httpx.AsyncClient] = None
         self._pollingTask: Optional[asyncio.Task] = None
         self._isPolling = False
         self._myInfo: Optional[BotInfo] = None
         self._proxyConfig: ProxyConfig = (
             proxyConfig if proxyConfig is not None else ProxyConfig(proxyType=ProxyType.NONE)
         )
+        self._sslContext: Optional[ssl.SSLContext] = buildMaxSslContext(caBundlePath) if caBundlePath else None
+        self._basePollingUrl: Optional[str] = basePollingUrl.rstrip("/") if basePollingUrl else None
+        self._localReceiverToken: Optional[str] = localReceiverToken
 
         logger.debug(f"MaxBotClient initialized for {self.baseUrl}")
 
@@ -196,14 +223,23 @@ class MaxBotClient:
         httpClient = self._httpClient
 
         if getNew or httpClient is None or httpClient.is_closed:
-            httpClient = httpx.AsyncClient(
-                **self._proxyConfig.toKwargs(),
-                base_url=self.baseUrl,
-                timeout=httpx.Timeout(self.timeout),
-                headers={
-                    "User-Agent": f"Gromozeka/{VERSION}",
-                },
-            )
+            proxyKwargs = self._proxyConfig.toKwargs(verify=self._sslContext)
+            clientKwargs: Dict[str, Any] = {
+                **proxyKwargs,
+                "base_url": self.baseUrl,
+                "timeout": httpx.Timeout(self.timeout),
+                "headers": {"User-Agent": f"Gromozeka/{VERSION}"},
+            }
+            # Only thread verify= onto the client when no custom transport is
+            # present. For SOCKS5 proxies toKwargs() bakes the SSL context into
+            # the transport via AsyncProxyTransport.from_url(verify=...), and
+            # httpx silently ignores a top-level verify= when transport= is set.
+            # When no custom CA context is configured, defer to httpx defaults
+            # (do not pass verify=None, which would DISABLE verification).
+            if "transport" not in proxyKwargs and self._sslContext is not None:
+                clientKwargs["verify"] = self._sslContext
+
+            httpClient = httpx.AsyncClient(**clientKwargs)
             logger.debug("Created new HTTP client")
 
         httpClient.headers.update(
@@ -224,6 +260,9 @@ class MaxBotClient:
         if self._httpClient and not self._httpClient.is_closed:
             await self._httpClient.aclose()
             logger.debug("HTTP client closed")
+        if self._localHttpClient and not self._localHttpClient.is_closed:
+            await self._localHttpClient.aclose()
+            logger.debug("Local receiver HTTP client closed")
 
     def _buildUrl(self, endpoint: str) -> str:
         """Build full URL for API endpoint.
@@ -494,37 +533,6 @@ class MaxBotClient:
             return False
 
     # Phase 3: Basic Operations
-
-    # Chat Management Methods
-    async def getChats(self, count: int = 50, marker: Optional[int] = None) -> ChatList:
-        """Get list of chats where the bot participated.
-
-        Returns information about chats where the bot participated. The result includes
-        a list of chats and a marker for navigating to the next page.
-
-        Args:
-            count: Number of chats to request (1-100, default: 50)
-            marker: Pointer to the next page of data. Pass null for the first page
-
-        Returns:
-            Paginated list of chats
-
-        Raises:
-            AuthenticationError: If access token is invalid
-            NetworkError: If network request fails
-
-        Example:
-            >>> async with MaxBotClient("token") as client:
-            ...     chats = await client.getChats(count=20)
-            ...     for chat in chats.chats:
-            ...         print(f"Chat: {chat.title}")
-        """
-        params = {"count": count}
-        if marker is not None:
-            params["marker"] = marker
-
-        response = await self.get("/chats", params=params)
-        return ChatList.from_dict(response)
 
     async def getChat(self, chatId: int) -> Chat:
         """Get information about a chat by its ID.
@@ -1156,7 +1164,7 @@ class MaxBotClient:
     # Updates Polling Methods
     async def getUpdates(
         self,
-        lastEventId: Optional[int] = None,
+        lastEventId: Optional[Union[int, str]] = None,
         limit: int = 100,
         timeout: int = 30,
         types: Optional[List[str]] = None,
@@ -1202,7 +1210,10 @@ class MaxBotClient:
 
         Args:
             lastEventId: If passed, bot will receive updates that haven't been received yet.
-                        If not passed, will receive all new updates
+                        If not passed, will receive all new updates. When polling the
+                        real Max API this is an int marker; when polling a local webhook
+                        receiver (``basePollingUrl`` set) it is a compound string marker
+                        of the form ``"{iso8601}|{rowId}"`` produced by the receiver.
             limit: Maximum number of updates to receive (1-1000, default: 100)
             timeout: Timeout in seconds for long polling (0-90, default: 30)
             types: List of update types the bot wants to receive
@@ -1232,10 +1243,78 @@ class MaxBotClient:
         if types is not None:
             params["types"] = ",".join(types)
 
-        response = await self.get("/updates", params=params)
+        # Route to local receiver if basePollingUrl is configured
+        if self._basePollingUrl:
+            response = await self._makeLocalRequest("/updates", params=params)
+        else:
+            response = await self.get("/updates", params=params)
         if EXTENDED_DEBUG and response.get("updates", []):
             logger.debug(f"Received updates: {utils.jsonDumps(response, indent=2)}")
         return UpdateList.from_dict(response)
+
+    async def _makeLocalRequest(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Make a GET request to the local webhook receiver.
+
+        Uses a dedicated, reusable httpx client (``_localHttpClient``)
+        configured for the local receiver URL, bypassing the main API
+        client's base URL, proxy, and TLS settings. The client is created
+        lazily on first use and reused across polls so the polling loop
+        benefits from connection pooling instead of paying a fresh TCP/TLS
+        handshake on every poll. It is closed in :meth:`aclose`.
+
+        Args:
+            endpoint: Endpoint path (e.g., "/updates").
+            params: Query parameters.
+
+        Returns:
+            Parsed JSON response data.
+
+        Raises:
+            NetworkError: If the request fails or the receiver returns a
+                non-JSON 200 body (e.g. a crash mid-response).
+        """
+        basePollingUrl = self._basePollingUrl
+        if basePollingUrl is None:
+            raise NetworkError("_makeLocalRequest called without basePollingUrl configured")
+
+        url = basePollingUrl + "/" + endpoint.lstrip("/")
+        timeout = httpx.Timeout(self.timeout + 10)  # extra margin over long-poll timeout
+
+        # Lazily create a reusable client for connection pooling across polls.
+        if self._localHttpClient is None or self._localHttpClient.is_closed:
+            self._localHttpClient = httpx.AsyncClient(timeout=timeout)
+        client = self._localHttpClient
+
+        try:
+            # When a local receiver secret is configured, send it as the
+            # Authorization header to satisfy the receiver's optional
+            # ``get-updates-secret`` check. Otherwise send nothing so we do
+            # not leak the bot token to the receiver.
+            headers: Dict[str, str] = {}
+            if self._localReceiverToken:
+                headers["Authorization"] = self._localReceiverToken
+            response = await client.get(url, params=params, headers=headers, timeout=timeout)
+
+            if response.status_code == 200:
+                try:
+                    return response.json()
+                except (json.JSONDecodeError, ValueError) as e:
+                    raise NetworkError(f"Local receiver returned a non-JSON 200 body: {e}")
+
+            raise NetworkError(f"Local receiver returned {response.status_code}: {response.text}")
+        except httpx.ReadTimeout:
+            # Safety net: this fires only if the receiver crashes or hangs mid-poll.
+            # The normal empty-poll path returns HTTP 200 with
+            # {"updates": [], "marker": "..."} before the client's timeout expires
+            # (client timeout is self.timeout + 10 = 40s; receiver's max long-poll
+            # hold is 30s by default).
+            return {"updates": [], "marker": None}
+        except httpx.RequestError as e:
+            raise NetworkError(f"Failed to reach local receiver at {url}: {e}")
 
     async def startPolling(
         self,

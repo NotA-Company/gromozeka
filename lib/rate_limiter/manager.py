@@ -121,7 +121,7 @@ class RateLimiterManager:
             self._queueMappings: Dict[str, str] = {}
             self._defaultLimiter: Optional[str] = None
             self.initialized = True
-            logger.info("RateLimiterManager initialized, dood!")
+            logger.info("RateLimiterManager initialized")
 
     @classmethod
     def getInstance(cls) -> "RateLimiterManager":
@@ -175,13 +175,13 @@ class RateLimiterManager:
             defaultLimiter = SlidingWindowRateLimiter(maxRequests=10, windowSeconds=60)
             await defaultLimiter.initialize()
             self.registerRateLimiter("default", defaultLimiter)
-            logger.debug("Default rate limiter not found, using SlidingWindowRateLimiter as default, dood!")
+            logger.debug("Default rate limiter not found, using SlidingWindowRateLimiter as default")
         self.setDefaultLimiter("default")
 
         for queueName, limiterName in config.get("queues", {}).items():
             self.bindQueue(queueName, limiterName)
 
-        logger.debug("Loaded rate limiter configuration, dood!")
+        logger.debug("Loaded rate limiter configuration")
 
     def registerRateLimiter(self, name: str, limiter: RateLimiterInterface) -> None:
         """
@@ -209,9 +209,9 @@ class RateLimiterManager:
         # Set as default if it's the first one
         if self._defaultLimiter is None:
             self._defaultLimiter = name
-            logger.info(f"Set '{name}' as default rate limiter, dood!")
+            logger.info(f"Set '{name}' as default rate limiter")
 
-        logger.info(f"Registered rate limiter {type(limiter).__name__} with name '{name}', dood!")
+        logger.info(f"Registered rate limiter {type(limiter).__name__} with name '{name}'")
 
     def setDefaultLimiter(self, name: str) -> None:
         """
@@ -230,7 +230,7 @@ class RateLimiterManager:
             raise ValueError(f"Rate limiter '{name}' is not registered")
 
         self._defaultLimiter = name
-        logger.info(f"Set '{name}' as default rate limiter, dood!")
+        logger.info(f"Set '{name}' as default rate limiter")
 
     def bindQueue(self, queue: str, limiterName: str) -> None:
         """
@@ -251,7 +251,7 @@ class RateLimiterManager:
             raise ValueError(f"Rate limiter '{limiterName}' is not registered")
 
         self._queueMappings[queue] = limiterName
-        logger.info(f"Bound queue '{queue}' to rate limiter '{limiterName}', dood!")
+        logger.info(f"Bound queue '{queue}' to rate limiter '{limiterName}'")
 
     def _getLimiterForQueue(self, queue: str) -> RateLimiterInterface:
         """
@@ -267,7 +267,7 @@ class RateLimiterManager:
             RuntimeError: If no rate limiters are registered
         """
         if not self._rateLimiters:
-            raise RuntimeError("No rate limiters registered, dood!")
+            raise RuntimeError("No rate limiters registered")
 
         # Check if queue has explicit mapping
         if queue in self._queueMappings:
@@ -276,7 +276,7 @@ class RateLimiterManager:
 
         # Use default limiter
         if self._defaultLimiter is None:
-            raise RuntimeError("No default rate limiter set, dood!")
+            raise RuntimeError("No default rate limiter set")
 
         return self._rateLimiters[self._defaultLimiter]
 
@@ -389,13 +389,13 @@ class RateLimiterManager:
         Example:
             >>> await manager.destroy()
         """
-        logger.info("Destroying all rate limiters, dood!")
+        logger.info("Destroying all rate limiters")
 
         # Destroy each rate limiter
         for name, limiter in self._rateLimiters.items():
             try:
                 await limiter.destroy()
-                logger.info(f"Destroyed rate limiter '{name}', dood!")
+                logger.info(f"Destroyed rate limiter '{name}'")
             except Exception as e:
                 logger.error(f"Error destroying rate limiter '{name}': {e}")
 
@@ -404,4 +404,4 @@ class RateLimiterManager:
         self._queueMappings.clear()
         self._defaultLimiter = None
 
-        logger.info("RateLimiterManager cleanup complete, dood!")
+        logger.info("RateLimiterManager cleanup complete")

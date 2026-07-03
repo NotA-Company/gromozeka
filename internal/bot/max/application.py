@@ -73,6 +73,7 @@ class MaxBotApplication:
         )
         self.queueService = QueueService.getInstance()
         self.maxBot: Optional[libMax.MaxBotClient] = None
+        self._webhookMode: bool = False
 
         self._tasks: MutableSet[asyncio.Task] = set[asyncio.Task]()
         self.maxTasks = 128
@@ -106,6 +107,7 @@ class MaxBotApplication:
         application exits.
 
         Shutdown steps:
+        0. Unregister webhook from Max (if webhook mode was active)
         1. Wait for all active tasks to complete
         2. Stop the handler manager
 
@@ -118,6 +120,19 @@ class MaxBotApplication:
         """
 
         logger.info("Application shutting down...")
+
+        # Unregister webhook if configured
+        if self._webhookMode and self.maxBot is not None:
+            webhookConfig = self.configManager.config.get("webhook-receiver", {})
+            if webhookConfig.get("unregister-webhook", True):
+                try:
+                    webhookUrl = webhookConfig.get("webhook-url", "")
+                    if webhookUrl:
+                        await self.maxBot.deleteWebhook(webhookUrl)
+                        logger.info("Webhook unregistered from Max")
+                except Exception as e:
+                    logger.warning("Failed to unregister webhook: %s", e)
+
         logger.info("Step 0: Awaiting for all tasks to complete...")
         while len(self._tasks) > 0:
             await asyncio.sleep(1)
@@ -152,7 +167,7 @@ class MaxBotApplication:
 
         random.seed()
 
-        logger.info("Starting Gromozeka Max bot, dood!")
+        logger.info("Starting Gromozeka Max bot")
 
         # Start the bot on the shared event loop
         loop.run_until_complete(self._runPolling())
@@ -268,6 +283,11 @@ class MaxBotApplication:
         performs post-initialization setup, and starts the long polling loop
         to receive updates from Max Messenger.
 
+        Webhook mode: when ``webhook-receiver.enabled`` is true, configures the
+        MaxBotClient to poll the local receiver's GET /updates endpoint instead
+        of the real Max API, and optionally registers the webhook subscription
+        with Max via POST /subscriptions.
+
         The polling loop runs indefinitely until interrupted, at which point
         it performs cleanup through the postStop method.
 
@@ -286,13 +306,68 @@ class MaxBotApplication:
         if maskedUrl:
             logger.info("Proxy enabled for Max bot: %s", maskedUrl)
 
-        self.maxBot = libMax.MaxBotClient(self.botToken, proxyConfig=proxyConfig)
+        # --- Webhook receiver config ---
+        webhookConfig = self.configManager.config.get("webhook-receiver", {})
+        self._webhookMode = webhookConfig.get("enabled", False)
+        basePollingUrl: Optional[str] = None
+        localReceiverToken: Optional[str] = None
+        webhookSecret: str = ""
+
+        if self._webhookMode:
+            basePollingUrl = webhookConfig.get("base-polling-url", "http://127.0.0.1:8443")
+            localReceiverToken = webhookConfig.get("get-updates-secret", "") or None
+            webhookSecret = webhookConfig.get("secret", "")
+            logger.info("Webhook mode enabled, polling receiver at %s", basePollingUrl)
+
+            # Validate that neither secret is an unresolved env var placeholder.
+            # This must fire whenever webhook mode is enabled — not just when
+            # register-webhook is true — because an unresolved placeholder in
+            # get-updates-secret would be sent verbatim as the Authorization
+            # header to the local receiver (which would reject it), and one in
+            # secret would be sent to the Max API during registration.
+            for secretName, secretValue in (
+                ("webhook-receiver.secret", webhookSecret),
+                ("webhook-receiver.get-updates-secret", localReceiverToken),
+            ):
+                if secretValue and secretValue.startswith("${") and secretValue.endswith("}"):
+                    raise RuntimeError(
+                        f"{secretName} is an unresolved env var placeholder. "
+                        f"Set the corresponding variable in your .env file."
+                    )
+
+        # --- TLS: trust Минцифры CA for platform-api2.max.ru ---
+        self.maxBot = libMax.MaxBotClient(
+            self.botToken,
+            proxyConfig=proxyConfig,
+            caBundlePath=botConfig.get("max-ca-bundle", ""),
+            basePollingUrl=basePollingUrl,
+            localReceiverToken=localReceiverToken,
+        )
 
         try:
             botInfo = await self.maxBot.getMyInfo()
             logger.debug(botInfo)
 
             await self.postInit()
+
+            # Register webhook if configured
+            if self._webhookMode and webhookConfig.get("register-webhook", True):
+                webhookUrl = webhookConfig.get("webhook-url", "")
+                webhookTypes = webhookConfig.get("webhook-update-types", None) or None
+
+                if not webhookUrl:
+                    raise RuntimeError("webhook-receiver.webhook-url is required when register-webhook is true")
+
+                if not webhookSecret:
+                    raise RuntimeError("webhook-receiver.secret is empty — set MAX_WEBHOOK_SECRET in your .env file.")
+
+                await self.maxBot.setWebhook(
+                    url=webhookUrl,
+                    types=webhookTypes,
+                    secret=webhookSecret,
+                )
+                logger.info("Webhook registered with Max: %s", webhookUrl)
+
             logger.info("Start MAX polling....")
             await self.maxBot.startPolling(
                 handler=self.maxHandler,

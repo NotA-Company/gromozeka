@@ -73,6 +73,100 @@ See [`memories/proxy-lifecycle.md`](memories/proxy-lifecycle.md) — architectur
 - No magic numbers — extract numeric constants to module-level `UPPER_CASE` variables with a comment explaining the value (e.g., `MAX_SANDBOX_READ_FILE_BYTES = 65536  # 64 KB`).
 - When handling `FileContent.content` (or any `bytes | str` union), decode only if bytes: `if isinstance(data, bytes): text = data.decode(...) else: text = data`. Don't encode str to bytes and back — it's wasteful.
 
+## Max Bot API
+
+- **Current API endpoint**: `https://platform-api2.max.ru` — defined at `lib/max_bot/constants.py` as `API_BASE_URL`. Migrated from the deprecated `platform-api.max.ru` per `docs/plans/max-api-migration.md`. The legacy endpoints (`platform-api.max.ru`, `botapi.max.ru`) are kept as comments only.
+- **Deadline**: 2026-07-19 — all requests must use `platform-api2.max.ru` and trust the Минцифры (Russian Ministry of Digital Development) root CA certificate. Migration implemented June 2026.
+- **Auth**: Raw access token sent as `Authorization` header (no `Bearer` prefix, no query param). This is already correct for the new API — the deprecated query-param auth never applied to this client.
+- **TLS/SSL**: Custom SSL context built by `libMax.utils.buildMaxSslContext(caBundlePath)` from the `[bot].max-ca-bundle` config key. Default is `"../certs/max"` — relative to `application.root-dir` (`"storage"`), resolves to `<repo-root>/certs/max/`. The directory holds the Russian Минцифры root/intermediate PEM certs (5 files: 3 RSA + 2 GOST). The raw `caBundlePath` config value is passed directly to `MaxBotClient(caBundlePath=...)`, which builds the `ssl.SSLContext` internally via `buildMaxSslContext()`. `_getHttpClient()` conditionally passes `verify=` to `httpx.AsyncClient` only when no SOCKS5 transport is present AND a custom CA context exists (`if "transport" not in proxyKwargs and self._sslContext is not None`). When the key is empty/unset, no `verify=` is passed — httpx falls back to its default CA bundle. **SOCKS5 proxy caveat**: httpx ignores the top-level `verify=` when a custom `transport=` is supplied, so for SOCKS5 proxies (`ProxyType.SOCKS5`) the SSL context is threaded into the transport via `ProxyConfig.toKwargs(verify=self._sslContext)` (which calls `AsyncProxyTransport.from_url(url, verify=sslContext)`); the client-level `verify=` is skipped via the `"transport" not in clientKwargs` guard.
+- **Polling**: Long-poll via `GET /updates` with timeout=30s, limit=100. Implemented in `MaxBotClient._pollingLoop()` (client.py:1301-1370). Called from `MaxBotApplication._runPolling()` (application.py:264-311). Continuous loop with no fixed interval — on update receipt or timeout, immediately polls again.
+- **Webhook methods exist** in client (`setWebhook`, `deleteWebhook`, `getWebhookInfo`). `setWebhook`/`deleteWebhook` are now used by `MaxBotApplication` when `webhook-receiver.enabled = true` and `register-webhook`/`unregister-webhook` are enabled. Application uses long-polling by default; webhook mode polls local receiver's GET /updates.
+- **Only 4 of 16** Max update types are handled: `message_created`, `message_callback`, `user_added`, `user_removed`. Rest logged as "Unsupported Update."
+- **Max docs source**: `https://dev.max.ru/docs-api` — fetched 2026-06-29. Webhook events stored in project memory (id `52755987-4a03-4464-abf7-717df512f59e`).
+  - Subscription: `POST /subscriptions` with `url`, `update_types`, `secret`. Secret sent back as `X-Max-Bot-Api-Secret` header.
+  - TLS validation required for webhook endpoint (CN/SAN match, full chain, CA-trusted or Минцифры cert).
+  - Rate limit: 30 rps on platform-api2.
+  - `GET /chats` deprecated as of June 2026 — use `POST /subscriptions` instead.
+  - Минцифры certificate: two PEM files from `https://www.gosuslugi.ru/crt` — `russian_trusted_root_ca_pem.crt` and `russian_trusted_sub_ca_pem.crt`.
+  - No official Python SDK — `lib/max_bot/` is hand-rolled and must be updated.
+
+### Max API Migration — IMPLEMENTED (2026-06-29)
+
+Plan: `docs/plans/max-api-migration.md`. The endpoint migration + certificate trust has been fully implemented, reviewed, and tested (2710 tests pass).
+
+**Files changed:**
+- `lib/max_bot/constants.py` — `API_BASE_URL` → `platform-api2.max.ru`, `DEFAULT_RATE_LIMIT` 100→30
+- `lib/max_bot/utils.py` — `buildMaxSslContext(caBundlePath)` loads PEM certs from directory into `ssl.SSLContext` (additive to system CAs), with try/except for GOST certs on non-GOST platforms
+- `lib/max_bot/client.py` — optional `caBundlePath` param on `MaxBotClient.__init__` (builds SSL context internally via `buildMaxSslContext()`), conditional `verify=` in `_getHttpClient`, SSL context threaded into SOCKS5 transport via `ProxyConfig.toKwargs(verify=...)`, `getChats()` deprecation notice
+- `internal/bot/max/application.py` — SSL context built from `[bot].max-ca-bundle` config and passed to `MaxBotClient` (raw config value, no intermediate resolution function)
+- `configs/00-defaults/00-config.toml` — `max-ca-bundle = "../certs/max"` under `[bot]` (relative to `application.root-dir` which is `"storage"` → resolves to `<repo-root>/certs/max/`)
+- `certs/max/` — 5 Минцифры CA PEM files (3 RSA + 2 GOST)
+- `tests/lib/max_bot/test_client.py` — 14 tests (constants, SSL context loading, GOST skip, SOCKS5+SSL, caBundlePath pass-through)
+- `tests/bot/max/test_application.py` — 3 tests (path resolution relative to cwd, absolute pass-through, empty returns empty) — **DELETED** 2026-07-01: `_resolveCaBundlePath` was removed; tests were stale
+- `docs/llm/configuration.md` — max-ca-bundle in bot config table
+- `docs/llm/libraries.md` — Max bot section updated with new API, SSL, deprecation
+- `docs/developer-guide.md` — endpoint, rate limit, retries updated
+
+**Bugs found and fixed during implementation:**
+1. **GOST cert crash**: `russian_trusted_root_ca_gost_2025.pem` and `russian_trusted_sub_ca_gost_2025.pem` crash `ssl.SSLError` on macOS (no GOST engine). Fixed with try/except per-cert load.
+2. **Relative path + cwd change** (final fix): `ConfigManager.__init__` does `os.chdir(rootDir)` to `storage/`. To keep path behavior consistent across the whole project, `max-ca-bundle` is now `"../certs/max"` — relative to `application.root-dir`, resolves to `<repo-root>/certs/max/`. The raw config value is passed directly to `MaxBotClient`; path resolution happens inside `buildMaxSslContext()` in `lib/max_bot/utils.py`. The initially-attempted `_STARTUP_CWD` special-case was reverted as confusing (it made `max-ca-bundle` behave differently from all other paths).
+3. **SOCKS5 + verify drop**: httpx ignores top-level `verify=` when a custom `transport=` is supplied. Fixed by threading the SSL context into the transport via `ProxyConfig.toKwargs(verify=self._sslContext)` (which calls `AsyncProxyTransport.from_url(proxyUrl, verify=sslContext)` for SOCKS5) and guarding the client-level `verify=` with `"transport" not in clientKwargs`.
+
+### Max Webhook Support — IMPLEMENTED (2026-07-01)
+
+Plan: `docs/plans/max-webhook-support.md` (updated to local-API-proxy architecture). Two-process design: standalone aiohttp.web receiver (`internal/max_webhook_receiver/`) accepts POST /webhook from Max, stores in `webhook_updates` table, serves GET /updates in Max API format. Bot's `MaxBotClient` gets `basePollingUrl` override — polls receiver's local GET /updates instead of `platform-api2.max.ru`. Bot's polling loop unchanged.
+
+**Key architecture decisions:**
+- `basePollingUrl` (not `baseUrl`) — overrides only `/updates` endpoint, not all API calls
+- `_makeLocalRequest()` — separate httpx client, no proxy/TLS, fresh per poll
+- `localReceiverToken` — optional auth for GET /updates (separate from bot token; bot token never leaked to receiver)
+- Webhook registration (`POST /subscriptions`) owned by bot, configurable via `register-webhook`; shutdown unregistration (`DELETE /subscriptions`) gated by separate `unregister-webhook` key (independent of registration)
+- `_webhookMode` flag on `MaxBotApplication` — gating, no new polling method
+- **Separate datasource support**: `webhook-receiver.datasource` config routes webhook storage to a different DB provider; `WebhookUpdatesRepository` methods accept `dataSource` param (like `DelayedTasksRepository`)
+- **Cleanup toggle**: `webhook-receiver.enable-cleanup` (default true) controls periodic deletion of old processed rows
+- **Deferred processing** (`mark-on-subsequent-poll`, default true): at-least-once delivery — updates are NOT marked on first read. Bot passes compound marker `{received_at}|{id}` back on next poll to acknowledge. `markProcessedBeforeMarker` marks all rows at/below the marker. Immediate mode (`false`) preserves old at-most-once behavior. Marker filtering in `getUnprocessedUpdates` uses compound tiebreaker: `received_at > :markerTs OR (received_at = :markerTs AND id > :markerId)`. Marker timestamps round-trip through `datetime` for cross-DB string-format consistency.
+
+**Files created (7):**
+- `configs/00-defaults/webhook-receiver.toml` — 16 config keys under `[webhook-receiver]`
+- `internal/database/migrations/versions/migration_019_add_webhook_updates_table.py`
+- `internal/database/repositories/webhook_updates.py` — `WebhookUpdatesRepository` (addUpdate, getUnprocessedUpdates with marker filtering, markProcessed with batchExecute atomicity, markProcessedBeforeMarker, deleteProcessedOlderThan)
+- `internal/max_webhook_receiver/__init__.py`, `__main__.py`, `app.py` — aiohttp.web server with handleWebhook, handleGetUpdates (deferred/immediate modes), cleanupTask
+- (Plus `WebhookUpdatesRow` TypedDict in `internal/database/models.py`)
+
+**Files modified (6):**
+- `requirements.direct.txt` — `aiohttp==3.14.1` promoted from transitive to direct
+- `lib/max_bot/client.py` — `_basePollingUrl` + `_localReceiverToken` in __slots__/__init__, `_makeLocalRequest()`, `getUpdates()` branch, `_getHttpClient()` conditional `verify=` fix
+- `internal/bot/max/application.py` — webhook config reading, `basePollingUrl`/`localReceiverToken` pass-through, `setWebhook`/`deleteWebhook` lifecycle, placeholder-secret guard
+- `internal/database/repositories/__init__.py` — export
+- `internal/database/database.py` — wiring (5 locations: import, __slots__, annotation, docstring, init)
+
+**Tests (5 files, 51 tests, all pass):**
+- `tests/database/repositories/test_webhook_updates.py` — 14 CRUD + marker tests
+- `tests/max_webhook_receiver/test_app.py` — 19 endpoint tests (deferred/immediate modes, datasource, cleanup)
+- `tests/max_webhook_receiver/test_main.py` — 3 secret-guard tests
+- `tests/lib/max_bot/test_client_webhook.py` — 6 client routing tests
+- `tests/bot/max/test_webhook_mode.py` — 14 config gating tests (unregister-webhook split)
+
+**Post-review fixes applied (2026-07-01):**
+- `handleWebhook` now returns 500 (not 200) on DB write failure → Max retries the delivery; `logger.exception` corrected to `logger.error` (no active exception).
+- Bad marker handling: narrow `except (ValueError, OverflowError, TypeError)` around `_parseMarker`; bad marker treated as no-marker poll (prevents 500 infinite-retry wedge).
+- `getUpdates` type: `lastEventId: Optional[int]` → `Optional[Union[int, str]]` for compound string marker from local receiver.
+- `_makeLocalRequest`: catches `json.JSONDecodeError` around `response.json()`; persistent `_localHttpClient` (lazy-create, reuse across polls, closed in `aclose()`).
+- Secret validation moved to webhook-mode block: fires whenever `enabled=true`, not just on `register-webhook=true`. Empty secret rejected.
+- `unregister-webhook` code default aligned with config default: `True` → `False`.
+- `toKwargs` docstring cross-references `MaxBotClient._getHttpClient()` for SSL context routing.
+- `buildMaxSslContext`: GOST skip counter + louder warning (TLS may fail if chain requires skipped certs).
+- `from dateutil import parser` (was bare `import dateutil`) in `webhook_updates.py`.
+
+**Known limitations (design tradeoffs, not bugs):**
+- DB write failure now returns 500 (Max retries); duplicate delivery still possible if `markProcessed` fails
+- No cross-process migration guard — safe for 019 (idempotent DDL) but needs guard for future non-idempotent migrations
+- Busy-polls SQLite every 0.5s during long-poll
+- `_pollingLoop` marker advance on handler error defeats at-least-once in deferred mode (pre-existing, same as real Max API)
+- `types` query param ignored by GET /updates (filtering at Max→receiver subscription layer)
+- No deployment wiring (no `run.sh` / systemd config for receiver process)
+- Unsubstituted `${MAX_WEBHOOK_SECRET}` placeholder rejected by guards in both `__main__.py` and `application.py`
+
 ## Config & Tier System
 
 - **Config merge order for prod-telegram**: `00-defaults` → `common` → `prod` → `prod-telegram`. Deep-recursive merge in `ConfigManager._mergeConfigs()`: nested dicts merge recursively, scalars overwrite. Files within a dir sorted alphabetically.
@@ -205,6 +299,17 @@ The design in [`docs/design/vector-search-native.md`](../design/vector-search-na
 - **Known transitional limitation: partial vec0 mirror**: After rollout, pre-existing embeddings in `message_embeddings` are only dual-written to vec0 when re-generated (via `REGENERATE_EMBEDDINGS` chat setting or model change). Until then, vec0 may have fewer rows than `message_embeddings` for the same chat+model, and native results reflect only the dual-written subset. Resolution: enable `REGENERATE_EMBEDDINGS` for affected chats to trigger a full re-embedding pass (populates vec0 via dual-write). Documented in a code comment in `_semanticSearch()`. Note: changing the `EMBEDDING_MODEL` or its dimensions now triggers `deleteObsoleteModelEmbeddings()` on both `message_embeddings` AND vec0, so model switches cleanly re-embed from scratch — this limitation only applies to same-model initial rollout.
 - **maxMessages timestamp ties**: The native path uses a compound filter `(date > :minDate OR (date = :minDate AND message_id >= :minMessageId))` to match the numpy path's `ORDER BY c.date DESC, me.message_id DESC` + `LIMIT/OFFSET` semantics. Both `date` and `message_id` are captured from the cutoff query which joins `message_embeddings` to `chat_messages`.
 
+## Review-Fix Round Lessons (2026-07-01)
+
+From fixing review findings on the Max webhook support feature (branch `max-v2`):
+
+- **Single `software-developer` for many small fixes works**: 7 fixes across 6 files dispatched in one brief. Developer applied them all correctly AND fixed a pre-existing test failure as a bonus. Gate 1 review caught 2 issues the developer missed (`logger.exception` misuse, `except Exception` too broad) — the review gate is essential even for "trivial" fixes.
+- **`logger.exception` misuse pattern**: When wrapping a call that internally swallows exceptions and returns `False` (like `addUpdate` does), `logger.exception` in the caller has no active exception to attach a traceback to — degrades to plain `logger.error`. Always check whether the upstream call preserves the exception before using `exception()`.
+- **`except Exception` too broad for parse errors**: Narrowing to `except (ValueError, OverflowError, TypeError)` for `dateutil.parser.parse` prevents masking genuine DB/programming errors. Specific exception types > broad catches.
+- **Pre-existing bugs surface during review**: The `_pollingLoop` marker-advance-on-handler-error issue (marker advances even when a handler raises, defeating at-least-once in deferred mode) is pre-existing and not fixed — the real Max API has the same behavior. Flagged to user as known limitation rather than fixed.
+- **Config defaults must align code ↔ config files**: The `unregister-webhook` default was `True` in code but `false` in `00-defaults/webhook-receiver.toml`. Config overrode it in practice, but the inconsistency was confusing. Fixed to align both at `False`.
+- **Doc drift from review fixes is real**: 4 docs (`architecture.md`, `configuration.md`, `developer-guide.md`, `libraries.md`) had stale claims about default values and error behavior after the fix round. Updated via `update-project-docs` skill.
+
 ## Teamlead Workflow Lessons
 
 - The `code-reviewer` subagent may return empty results in some sessions. If it does twice, fall back to `general` agent for the review — use the same prompt structure, just route through `general`.
@@ -236,3 +341,37 @@ The design in [`docs/design/vector-search-native.md`](../design/vector-search-na
 - **`docs/TODO.md`** was extensively referenced by `documentation-review-process.md` but didn't exist. All references have been removed from that document (2026-06-28 fix).
 - **`.roo/rules/`** directory doesn't exist but `docs/llm/index.md` used to reference it — the rules now live in `AGENTS.md`.
 - **When the same stale value appears in multiple docs** (e.g., 12 repos, manager.py:249, RateLimiterManager:12), fix ALL files at once — partial fixes create cross-file inconsistencies that confuse agents and users.
+
+## Dedoodization (2026-07-02)
+
+- Repo-wide removal of "dood" from comments, docstrings, log messages, error messages — 1231 of 1294 occurrences removed across 90 `.py` files.
+- Script: `scripts/dedoodize.py` — line-based state machine with triple-quote tracking and bracket-depth awareness. Handles multi-line raise/logger/assert, standalone-dood docstring lines, assert condition-vs-message classification. Idempotent (re-run produces 0 changes). Excludes itself. Covers `lib/ext_modules/grabliarium` too.
+- Kept "dood" in: `print()`, `messageText=`/`helpMessage=`, argparse `description=`/`help=`, `__author__`, test fixture data, mock strings — 53 occurrences preserved.
+- Found and fixed 4 mid-sentence comma-loss cases in `collect.py` / `scenario_runner.py` where `, dood! ` was between clauses.
+- Tests: `make test` 2802 pass, 1 pre-existing failure (`test_forwardOriginAuthorMatching[originUser-matchByUsername]` — unrelated).
+- `scripts/dedoodize.py` is untracked; user should decide keep vs delete.
+
+## DeleteFromUserMessageHandler (2026-07-02)
+
+- New handler at `internal/bot/common/handlers/delete_from_user.py`, modeled on `ReactOnUserMessageHandler`. Telegram-only, platform-gated. Registered BEFORE `ReactOnUserMessageHandler` in the chain (deletion before reaction). Returns `FINAL` after successful deletion to stop the chain — unlike `ReactOnUserMessageHandler` which returns `NEXT`.
+- Uses `ChatSettingsKey.DELETE_AUTHOR_LIST` (JSON array of `int | str` — user IDs and lowercased usernames). Commands: `set_delete_author`, `unset_delete_author`, `dump_delete_authors`.
+- `_getAuthorList` type validation: `isinstance(x, (int, str)) and not isinstance(x, bool)` — explicitly excludes `bool` (a subclass of `int`). Logs warning if entries filtered.
+
+## Telegram Author Extraction Gotcha
+
+- `_getMessageAuthor` is duplicated verbatim between `react_on_user.py` and `delete_from_user.py`. No shared utility yet. If a third handler copies it, extract to `internal/bot/common/handlers/_author_utils.py`.
+- `MessageSender.fromTelegramUser` reads `user.name` (not `user.username`). In production, PTB's `User.name` returns `@username` when a username is set. Tests mocking `from_user.name` should use `"@TestUser"` to match real behavior.
+- `MessageSender.fromTelegramChat` prefixes username with `@` itself (`f"@{chat.username}"`). Mock `sender_chat.username` without `@`.
+
+## Resender Module (2026-07-03)
+
+- **Core file**: `internal/bot/common/handlers/resender.py` (456 lines). Cron-based handler (fires every 60s via `QueueService.CRON_JOB`). Reads messages from source chat's DB, reconstructs text/media, sends as new bot-authored messages to `targetChatId`. Zero tests.
+- **Config**: `configs/00-defaults/resender.toml` — `enabled = false` by default, one example job. No override in `configs/common/` or `configs/local/` — disabled everywhere.
+- **Registration**: `manager.py:516-522`, gated on `resender.enabled`. `HandlerParallelism.PARALLEL`. 3rd of 6 config-gated handlers.
+- **Flow**: `_dtCronJob` → `resendCronJob` → for each job: `getChatMessagesSince(sourceChatId, since=lastMessageDate)` → reconstruct text via `FormatEntity.parseText` → prefix/suffix template substitution → `self.sendMessage(None, text=..., chatId=targetChatId)` with `replyToMessage=None` → update `lastMessageDate` in settings table (key: `resender:{job.id}:lastMessageDate`).
+- **`sendMessage` returns `List[EnsuredMessage]`** with `messageId` — currently discarded by the resender.
+- **Media groups**: waits for completion via `mediaGroupDelaySecs` (default 10s), retrieves binary data from `StorageService` via `local_url` key (not re-downloaded from platform), sends via `send_media_group`.
+- **Error handling**: resend failure → error notification sent to target chat, `lastMessageDate` NOT advanced (retry next tick). Backoff: `messageSendDelay` doubles from 0.25s to max 10s between successful sends.
+- **`ResendJob.__slots__`**: `id`, `dataSource`, `sourceChatId`, `sourceTheadId` (typo — should be `sourceThreadId`), `targetChatId`, `messageTypes`, `messagePrefix`, `messageSuffix`, `lastMessageDate`, `notification`, `mediaGroupDelaySecs`, `_lock`.
+- **No native forward API** (`copyMessage`/`forwardMessage`/`copyMessages`) exists anywhere in the codebase. Max's `MaxBotClient.sendMessage()` accepts `forwardFrom: Optional[str]` but no call site passes it.
+- **Forward feature** (implemented 2026-07-03, plan: `docs/plans/resender-forward-feature.md`): `ForwardTarget` TypedDict with `chatId: int`, `threadId: NotRequired[int]`, `notify: NotRequired[bool]`. `ResendJob.forwardTo: Optional[List[ForwardTarget]]` (defaults to `[]`). Forward loop in `resendCronJob` iterates targets with `await asyncio.sleep(0.1)` between them, calls `TheBot.forwardMessages(fromChatId, messageIds, toChatId, *, threadId, notify)`. Telegram: `tgBot.copy_messages()`. Max: loops over all `messageIds`, calls `sendMessage(forwardFrom=)` per message. Failures swallowed per-target (bot.py logs traceback), don't block `lastMessageDate` advancement. 13 tests in `tests/bot/common/handlers/test_resender.py`. Config: `docs/llm/configuration.md` resender section, `configs/00-defaults/resender.toml` commented example.

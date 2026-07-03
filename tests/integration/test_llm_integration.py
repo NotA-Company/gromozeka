@@ -1,5 +1,5 @@
 """
-Integration tests for LLM integration, dood!
+Integration tests for LLM integration
 
 This module tests complete LLM workflows including:
 - Tool registration and execution
@@ -37,7 +37,7 @@ from lib.ai.models import (
 
 @pytest.fixture
 def mockModel():
-    """Create mock LLM model, dood!"""
+    """Create mock LLM model"""
     model = Mock(spec=AbstractModel)
     model.modelId = "test-model"
     model.modelVersion = "1.0"
@@ -49,7 +49,7 @@ def mockModel():
 
 @pytest.fixture
 def mockFallbackModel():
-    """Create mock fallback LLM model, dood!"""
+    """Create mock fallback LLM model"""
     model = Mock(spec=AbstractModel)
     model.modelId = "fallback-model"
     model.modelVersion = "1.0"
@@ -61,7 +61,7 @@ def mockFallbackModel():
 
 @pytest.fixture
 def llmService(mockLlmManager):
-    """Create fresh LLM service instance, dood!"""
+    """Create fresh LLM service instance"""
     # Reset singleton for testing
     LLMService._instance = None
     service = LLMService.getInstance()
@@ -72,7 +72,7 @@ def llmService(mockLlmManager):
 
 @pytest.fixture
 def mockChatSettings():
-    """Create mock chat settings, dood!"""
+    """Create mock chat settings"""
     from unittest.mock import Mock
 
     settings = Mock(spec=ChatSettingsDict)
@@ -82,7 +82,7 @@ def mockChatSettings():
 
 @pytest.fixture
 def mockLlmManager():
-    """Create mock LLM manager, dood!"""
+    """Create mock LLM manager"""
     manager = Mock(spec=LLMManager)
     manager.listModels.return_value = ["test-model", "fallback-model"]
     return manager
@@ -90,10 +90,10 @@ def mockLlmManager():
 
 @pytest.mark.asyncio
 class TestLlmServiceIntegration:
-    """Test LLM Service integration, dood!"""
+    """Test LLM Service integration"""
 
     async def testToolRegistrationAndRetrieval(self, llmService):
-        """Test tool registration and retrieval workflow, dood!"""
+        """Test tool registration and retrieval workflow"""
 
         async def testToolHandler(extraData: Optional[Dict[str, Any]], arg1: str) -> str:
             return f"Result: {arg1}"
@@ -124,7 +124,7 @@ class TestLlmServiceIntegration:
     async def testSimpleTextGeneration(
         self, llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager
     ):
-        """Test simple text generation without tools, dood!"""
+        """Test simple text generation without tools"""
         mockModel.generateText = AsyncMock(
             return_value=ModelRunResult(
                 rawResult={"response": "Hello, world!"},
@@ -152,7 +152,7 @@ class TestLlmServiceIntegration:
         mockModel.generateText.assert_called_once()
 
     async def testToolCallExecution(self, llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager):
-        """Test tool call execution workflow, dood!"""
+        """Test tool call execution workflow"""
 
         async def getWeatherTool(extraData: Optional[Dict[str, Any]], city: str) -> str:
             return f"Weather in {city}: Sunny, 25°C"
@@ -215,7 +215,7 @@ class TestLlmServiceIntegration:
     async def testMultiTurnConversationWithTools(
         self, llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager
     ):
-        """Test multi-turn conversation with multiple tool calls, dood!"""
+        """Test multi-turn conversation with multiple tool calls"""
 
         async def calculateTool(extraData: Optional[Dict[str, Any]], expression: str) -> str:
             # Simple calculator
@@ -282,7 +282,7 @@ class TestLlmServiceIntegration:
         assert mockModel.generateText.call_count == 3
 
     async def testCallbackInvocation(self, llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager):
-        """Test callback invocation during tool calls, dood!"""
+        """Test callback invocation during tool calls"""
         callbackInvoked = {"count": 0, "results": []}
 
         async def testCallback(result: ModelRunResult, extraData: Optional[Dict[str, Any]]):
@@ -340,7 +340,7 @@ class TestLlmServiceIntegration:
         assert callbackInvoked["results"][0].status == ModelResultStatus.TOOL_CALLS
 
     async def testToolExecutionError(self, llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager):
-        """Test error handling in tool execution, dood!"""
+        """Test error handling in tool execution"""
 
         async def errorTool(extraData: Optional[Dict[str, Any]], arg: str) -> str:
             raise ValueError("Tool execution failed")
@@ -384,10 +384,10 @@ class TestLlmServiceIntegration:
 
 @pytest.mark.asyncio
 class TestAiProviderIntegration:
-    """Test AI Provider integration, dood!"""
+    """Test AI Provider integration"""
 
     async def testProviderInitialization(self):
-        """Test provider initialization from config, dood!"""
+        """Test provider initialization from config"""
         config = {
             "providers": {
                 "test-provider": {
@@ -420,7 +420,7 @@ class TestAiProviderIntegration:
             mockProviderInstance.addModel.assert_called_once()
 
     async def testModelSelection(self):
-        """Test model selection via LLM manager, dood!"""
+        """Test model selection via LLM manager"""
         config = {
             "providers": {
                 "test-provider": {
@@ -468,7 +468,7 @@ class TestAiProviderIntegration:
             assert manager.getModel("non-existent") is None
 
     async def testFallbackMechanism(self, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager):
-        """Test fallback to secondary provider on error, dood!"""
+        """Test fallback to secondary provider on error"""
         # Primary model fails
         mockModel.generateText = AsyncMock(side_effect=Exception("Primary model failed"))
 
@@ -502,10 +502,10 @@ class TestAiProviderIntegration:
 
 @pytest.mark.asyncio
 class TestLlmHandlerIntegration:
-    """Test LLM Handler integration, dood!"""
+    """Test LLM Handler integration"""
 
     async def testMessageContextBuilding(self):
-        """Test message context building for LLM, dood!"""
+        """Test message context building for LLM"""
         messages = [
             ModelMessage(role="system", content="You are a helpful assistant"),
             ModelMessage(role="user", content="Hello"),
@@ -528,7 +528,7 @@ class TestLlmHandlerIntegration:
     async def testLlmResponseGeneration(
         self, llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager
     ):
-        """Test LLM response generation workflow, dood!"""
+        """Test LLM response generation workflow"""
         mockModel.generateText = AsyncMock(
             return_value=ModelRunResult(
                 rawResult={},
@@ -559,7 +559,7 @@ class TestLlmHandlerIntegration:
     async def testToolUsageInConversations(
         self, llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager
     ):
-        """Test tool usage in conversations, dood!"""
+        """Test tool usage in conversations"""
 
         async def searchTool(extraData: Optional[Dict[str, Any]], query: str) -> str:
             return f"Search results for: {query}"
@@ -614,7 +614,7 @@ class TestLlmHandlerIntegration:
         assert "Python testing" in result.resultText
 
     async def testResponseFormatting(self):
-        """Test response formatting from LLM, dood!"""
+        """Test response formatting from LLM"""
         result = ModelRunResult(
             rawResult={"response": "Test response"},
             status=ModelResultStatus.FINAL,
@@ -631,12 +631,12 @@ class TestLlmHandlerIntegration:
 
 @pytest.mark.asyncio
 class TestCompleteLlmWorkflows:
-    """Test complete LLM workflows, dood!"""
+    """Test complete LLM workflows"""
 
     async def testSimpleTextGenerationWorkflow(
         self, llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager
     ):
-        """Test simple text generation workflow, dood!"""
+        """Test simple text generation workflow"""
         mockModel.generateText = AsyncMock(
             return_value=ModelRunResult(
                 rawResult={},
@@ -665,7 +665,7 @@ class TestCompleteLlmWorkflows:
     async def testToolAssistedResponseWorkflow(
         self, llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager
     ):
-        """Test tool-assisted response workflow, dood!"""
+        """Test tool-assisted response workflow"""
 
         async def getCurrentTimeTool(extraData: Optional[Dict[str, Any]]) -> str:
             return "2025-10-28 17:00:00"
@@ -712,7 +712,7 @@ class TestCompleteLlmWorkflows:
     async def testMultiTurnConversationWithToolsWorkflow(
         self, llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager
     ):
-        """Test multi-turn conversation with tools workflow, dood!"""
+        """Test multi-turn conversation with tools workflow"""
 
         async def addNumbersTool(extraData: Optional[Dict[str, Any]], a: int, b: int) -> str:
             return str(a + b)
@@ -795,7 +795,7 @@ class TestCompleteLlmWorkflows:
     async def testErrorRecoveryWorkflow(
         self, llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager
     ):
-        """Test error recovery workflow, dood!"""
+        """Test error recovery workflow"""
         # Primary model fails
         mockModel.generateText = AsyncMock(side_effect=Exception("Primary model error"))
 
@@ -824,7 +824,7 @@ class TestCompleteLlmWorkflows:
             )
 
     async def testConcurrentToolCalls(self, llmService, mockModel, mockFallbackModel, mockChatSettings, mockLlmManager):
-        """Test concurrent tool calls in single turn, dood!"""
+        """Test concurrent tool calls in single turn"""
 
         async def tool1(extraData: Optional[Dict[str, Any]], arg: str) -> str:
             await asyncio.sleep(0.01)

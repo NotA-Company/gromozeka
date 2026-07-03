@@ -232,7 +232,7 @@ gromozeka/
 │   │       ├── base.py             # BaseMigration abstract class
 │   │       ├── manager.py          # MigrationManager - auto-discovery + apply
 │   │       ├── create_migration.py # Script to scaffold new migrations
-│   │       └── versions/           # Migration files (migration_001 to migration_018)
+│   │       └── versions/           # Migration files (migration_001 to migration_019)
 │   │
 │   ├── services/                   # Service layer (singletons)
 │   │   ├── cache/                  # Cache service
@@ -557,7 +557,7 @@ The database layer provides SQL access via [`Database`](internal/database/databa
 
 ### Database
 
-[`Database`](internal/database/database.py) is the main interface to the database It supports multiple named database providers, with per-chat routing so different chats can use different databases The database uses a repository pattern with 14 specialized repositories for different data domains
+[`Database`](internal/database/database.py) is the main interface to the database It supports multiple named database providers, with per-chat routing so different chats can use different databases The database uses a repository pattern with 15 specialized repositories for different data domains
 
 ```python
 from internal.database import Database
@@ -583,7 +583,7 @@ db = Database(config={
 
 ### Repository Pattern
 
-The database layer uses a repository pattern with 14 specialized repositories Each repository handles a specific data domain and provides type-safe methods for data access
+The database layer uses a repository pattern with 15 specialized repositories Each repository handles a specific data domain and provides type-safe methods for data access
 
 | Repository | File | Purpose |
 |---|---|---|
@@ -601,6 +601,7 @@ The database layer uses a repository pattern with 14 specialized repositories Ea
 | [`MediaAttachmentsRepository`](internal/database/repositories/media_attachments.py) | `media_attachments.py` | Media metadata operations |
 | [`SpamRepository`](internal/database/repositories/spam.py) | `spam.py` | Spam detection operations |
 | [`UserDataRepository`](internal/database/repositories/user_data.py) | `user_data.py` | User data operations |
+| [`WebhookUpdatesRepository`](internal/database/repositories/webhook_updates.py) | `webhook_updates.py` | Max webhook payload storage and consumption |
 
 ### Multi-Source Routing
 
@@ -1375,10 +1376,15 @@ await client.sendMessage(
 **Constants** from [`lib/max_bot/constants.py`](lib/max_bot/constants.py):
 
 ```python
-API_BASE_URL = "https://botapi.max.ru/"
+# Max API v2 (platform-api2.max.ru). Old endpoints kept as comments only:
+#   - https://platform-api.max.ru  — original endpoint (deprecated)
+#   - https://botapi.max.ru        — legacy endpoint
+API_BASE_URL = "https://platform-api2.max.ru"
 DEFAULT_TIMEOUT = 30
-MAX_RETRIES = 3
+MAX_RETRIES = 5
 RETRY_BACKOFF_FACTOR = 1.0
+# platform-api2 enforces 30 rps (down from 100 on platform-api.max.ru)
+DEFAULT_RATE_LIMIT = 30
 ```
 
 ### 8.5 OpenWeatherMap Client (`lib/openweathermap/`)
@@ -2101,6 +2107,51 @@ token = "${TELEGRAM_BOT_TOKEN}"
 [models.providers.openrouter]
 api-key = "${OPENROUTER_API_KEY}"
 ```
+
+### Max Messenger Webhook Receiver (Two-Process Mode)
+
+In Max webhook mode the deployment is **two processes**: the normal bot process plus a standalone aiohttp webhook receiver (`internal/max_webhook_receiver/`) that accepts Max's webhook POSTs and serves them back to the bot via a local `GET /updates` endpoint. See [`docs/llm/architecture.md`](llm/architecture.md) ADR-013.
+
+**1. Configure** the receiver + bot under `[webhook-receiver]` (defaults live in `configs/00-defaults/webhook-receiver.toml`):
+
+```toml
+[webhook-receiver]
+enabled = true                       # bot polls the local receiver instead of the real Max API
+register-webhook = true              # bot registers the subscription with Max on startup (default true)
+unregister-webhook = true            # bot unregisters the subscription on shutdown (default false; set true to clean up on exit)
+webhook-url = "https://bot.example.com/webhook"   # public HTTPS URL Max POSTs to
+secret = "${MAX_WEBHOOK_SECRET}"     # shared secret (env var — never commit the value)
+base-polling-url = "http://127.0.0.1:8443"        # where the bot polls
+```
+
+Set `MAX_WEBHOOK_SECRET` in your `.env`:
+
+```bash
+# .env
+MAX_WEBHOOK_SECRET=some-long-random-secret
+```
+
+**2. Start the receiver process** (it must be reachable before the bot registers the webhook):
+
+```bash
+./venv/bin/python3 -m internal.max_webhook_receiver \
+    --config-dir configs/00-defaults \
+    --config-dir configs/local \
+    --dotenv-file .env
+```
+
+The receiver binds `127.0.0.1:8443` by default and refuses to start when `secret` is empty or an unresolved `${VAR}` placeholder. Put it behind a reverse proxy (nginx/Caddy) that terminates TLS and forwards `POST /webhook` to the receiver; alternatively set `tls-cert-file` + `tls-key-file` to have the receiver serve HTTPS directly.
+
+**3. Start the bot** as usual. When `webhook-receiver.enabled = true`, the bot's `MaxBotClient` polls the receiver's `GET /updates` (via `base-polling-url`) instead of `platform-api2.max.ru`; on startup it calls Max's `POST /subscriptions` (when `register-webhook = true`, the default), and on shutdown `DELETE /subscriptions` (when `unregister-webhook = true`; defaults to `false`, so the subscription survives a restart unless you opt in).
+
+```bash
+./venv/bin/python3 main.py \
+    --config-dir configs/00-defaults \
+    --config-dir configs/local \
+    --dotenv-file .env
+```
+
+**Systemd**: run the two processes as separate units (e.g. `gromozeka.service` for the bot and `gromozeka-webhook.service` for the receiver), both pointing at the same config dirs / `.env` so they share the `[webhook-receiver]` section and the SQLite database.
 
 ---
 

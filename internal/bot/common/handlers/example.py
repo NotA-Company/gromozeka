@@ -95,7 +95,7 @@ class ExampleHandler(BaseBotHandler):
             handler=self._llmToolExample,
         )
 
-        logger.info("Initialized Example Handler, dood!")
+        logger.info("Initialized Example Handler")
 
     ###
     # Example handlers for QueueSrvice and LLM-Tool

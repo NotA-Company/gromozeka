@@ -1,0 +1,87 @@
+# Max Messenger webhook receiver configuration.
+# Used by both the standalone webhook receiver process and the bot process.
+# The receiver stores incoming webhook events and serves them to the bot
+# via a local GET /updates endpoint that speaks the Max API protocol.
+
+[webhook-receiver]
+# Master switch.  When true, the bot polls the local webhook receiver's
+# GET /updates endpoint instead of long-polling the real Max API.
+# The webhook receiver process always runs regardless of this flag.
+enabled = false
+
+# --- Webhook subscription (bot manages with Max API) ---
+
+# Whether the bot should register the webhook with Max on startup.
+# Set to false if the webhook is managed externally (e.g., registered
+# manually or by a deployment script).
+register-webhook = true
+
+# Whether the bot should unregister the webhook on shutdown.
+# Set to false to keep the webhook active after bot stops (e.g., if you
+# restart the bot frequently and don't want Max to stop sending updates).
+# Independent of register-webhook; only applies when webhook-receiver.enabled = true.
+unregister-webhook = false
+
+# Public HTTPS URL that Max will POST updates to.
+# This must be a valid HTTPS URL on port 443 with a CA-trusted certificate.
+# Required when register-webhook = true.
+# Example: "https://bot.example.com/webhook"
+webhook-url = ""
+
+# Shared secret for verifying webhook requests from Max.
+# Set via environment variable -- never commit the actual value.
+# Max sends this in the X-Max-Bot-Api-Secret header on every webhook POST.
+secret = "${MAX_WEBHOOK_SECRET}"
+
+# List of update types the bot wants to receive via webhook.
+# Empty list = all types (default).
+# Example: ["message_created", "message_callback"]
+webhook-update-types = []
+
+# --- Polling (bot polls the receiver, not the real Max API) ---
+
+# URL of the webhook receiver's local GET /updates endpoint.
+# The bot polls this instead of platform-api2.max.ru when enabled = true.
+base-polling-url = "http://127.0.0.1:8443"
+
+# When true, updates are marked as processed only on the NEXT poll
+# after the bot acknowledges receipt by passing the marker back.
+# This provides at-least-once delivery: if the bot crashes between
+# polls, unacknowledged updates are re-delivered on the next poll.
+# When false, updates are marked immediately on read (at-most-once).
+mark-on-subsequent-poll = true
+
+# --- Receiver process settings (only used by the receiver, not the bot) ---
+
+# Listen address for the webhook receiver HTTP server.
+# Default: 127.0.0.1 (localhost only -- use a reverse proxy for external TLS).
+listen-host = "127.0.0.1"
+
+# Listen port for the webhook receiver HTTP server.
+listen-port = 8443
+
+# URL path for the webhook POST endpoint from Max.
+# Change this if your reverse proxy routes to a different path.
+webhook-path = "/webhook"
+
+# Optional secret for the GET /updates endpoint.
+# If set, the receiver checks the Authorization header on GET /updates.
+# If empty (default), no auth check -- relies on localhost binding for security.
+get-updates-secret = ""
+
+# Whether to periodically delete old processed webhook updates.
+# Set to false to keep all updates indefinitely (useful for debugging).
+enable-cleanup = true
+
+# Optional: datasource name for the webhook database.
+# Must match a provider name in [database.providers].
+# When empty (default), uses the default database provider.
+# Example: set to "webhook-db" and define [database.providers.webhook-db]
+# with its own dbPath to store webhook data separately from the main DB.
+datasource = ""
+
+# Optional: path to TLS certificate and key for direct HTTPS serving.
+# If both are set, the receiver serves HTTPS directly (no reverse proxy needed).
+# If omitted, the receiver serves plain HTTP (reverse proxy expected).
+# tls-cert-file = "/path/to/cert.pem"
+# tls-key-file = "/path/to/key.pem"

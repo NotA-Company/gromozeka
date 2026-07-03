@@ -9,7 +9,7 @@ from lib.markdown import MarkdownParser
 
 
 def test_ignore_indented_code_blocks():
-    """Test that 4-space indented code blocks are ignored by default, dood!"""
+    """Test that 4-space indented code blocks are ignored by default"""
 
     # Test markdown with 4-space indented code block
     markdown_text = """This is a paragraph.
@@ -63,7 +63,7 @@ Another paragraph after the indented text."""
 
 
 def test_fenced_code_still_works():
-    """Test that fenced code blocks still work regardless of the option, dood!"""
+    """Test that fenced code blocks still work regardless of the option"""
 
     markdown_text = """This is a paragraph.
 

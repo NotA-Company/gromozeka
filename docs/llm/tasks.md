@@ -443,7 +443,7 @@ ls -1 internal/database/migrations/versions/ | grep "migration_" | sort -V | tai
 | `condenseThread` default is `True` | Context is condensed by default | Pass `condenseThread=False` if you need full history |
 | `getChatSettings()` returns tuples | Returns `Dict[str, tuple[str, int]]` — value + updated_by | Use `settings[key][0]` to get just the value |
 | `setChatSetting` requires `updatedBy` | `updatedBy` is keyword-only, required argument | Always pass `updatedBy=userId` when calling |
-| `mediaGroupDelaySecs` default is 5.0 | Time-based Telegram media group detection | Adjust per job if source chat uploads slowly |
+| `mediaGroupDelaySecs` default is 10.0 | Time-based Telegram media group detection | Adjust per job if source chat uploads slowly |
 | `MessageSender.name` (NOT `displayName`) | The sender's display name lives on `.name`, not `.displayName` | Use `ensuredMessage.messageSender.name` |
 | `MediaStatus` / `MessageType` are enums | They are NOT plain strings — use the enum members | `MediaStatus.DONE`, `MessageType.IMAGE` (don't pass `"done"` / `"image"`) |
 | `LLMService.registerTool` is flat-args | No nested config object — pass tool name, schema, callback, etc. as kwargs | See existing handler registration sites for examples |

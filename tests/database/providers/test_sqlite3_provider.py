@@ -1,5 +1,5 @@
 """
-Tests for SQLite3 provider implementation, dood!
+Tests for SQLite3 provider implementation
 
 This module tests the SQLite3Provider class including:
 - Connection management

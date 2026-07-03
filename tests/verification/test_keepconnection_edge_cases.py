@@ -1,5 +1,5 @@
 """
-Edge case tests for keepConnection parameter, dood!
+Edge case tests for keepConnection parameter
 
 This module tests various edge cases and scenarios for the keepConnection
 parameter to ensure it works correctly across different database types and
@@ -18,11 +18,11 @@ from internal.database.providers.sqlite3 import SQLite3Provider
 
 
 class TestKeepConnectionEdgeCases:
-    """Test edge cases for keepConnection parameter, dood!"""
+    """Test edge cases for keepConnection parameter"""
 
     @pytest.mark.asyncio
     async def test_keep_connection_true_with_file_db(self):
-        """Test keepConnection=True with file-based database, dood!"""
+        """Test keepConnection=True with file-based database"""
         with tempfile.TemporaryDirectory() as tmp_dir:
             db_path = Path(tmp_dir) / "test.db"
 
@@ -60,7 +60,7 @@ class TestKeepConnectionEdgeCases:
 
     @pytest.mark.asyncio
     async def test_keep_connection_false_with_memory_db(self):
-        """Test keepConnection=False with in-memory database (explicit override), dood!
+        """Test keepConnection=False with in-memory database (explicit override)
 
         NOTE: This test demonstrates that keepConnection=False with in-memory databases
         causes data loss between operations because the connection is closed and the
@@ -104,7 +104,7 @@ class TestKeepConnectionEdgeCases:
 
     @pytest.mark.asyncio
     async def test_keep_connection_none_with_memory_db(self):
-        """Test keepConnection=None with in-memory database (auto-detect), dood!"""
+        """Test keepConnection=None with in-memory database (auto-detect)"""
         config: DatabaseManagerConfig = {
             "default": "default",
             "chatMapping": {},
@@ -138,7 +138,7 @@ class TestKeepConnectionEdgeCases:
 
     @pytest.mark.asyncio
     async def test_keep_connection_none_with_file_db(self):
-        """Test keepConnection=None with file-based database (auto-detect), dood!"""
+        """Test keepConnection=None with file-based database (auto-detect)"""
         with tempfile.TemporaryDirectory() as tmp_dir:
             db_path = Path(tmp_dir) / "test.db"
 
@@ -174,7 +174,7 @@ class TestKeepConnectionEdgeCases:
 
     @pytest.mark.asyncio
     async def test_concurrent_operations_with_keep_connection_true(self):
-        """Test concurrent operations with keepConnection=True, dood!"""
+        """Test concurrent operations with keepConnection=True"""
         with tempfile.TemporaryDirectory() as tmp_dir:
             db_path = Path(tmp_dir) / "test.db"
 
@@ -216,7 +216,7 @@ class TestKeepConnectionEdgeCases:
 
     @pytest.mark.asyncio
     async def test_connection_leak_prevention(self):
-        """Test that connections don't leak with keepConnection=False, dood!"""
+        """Test that connections don't leak with keepConnection=False"""
         with tempfile.TemporaryDirectory() as tmp_dir:
             db_path = Path(tmp_dir) / "test.db"
 
@@ -249,7 +249,7 @@ class TestKeepConnectionEdgeCases:
 
     @pytest.mark.asyncio
     async def test_provider_direct_instantiation_keep_connection(self):
-        """Test provider instantiation with different keepConnection values, dood!"""
+        """Test provider instantiation with different keepConnection values"""
         # Test with keepConnection=True
         provider1 = SQLite3Provider(":memory:", keepConnection=True)
         assert provider1.keepConnection is True
@@ -273,7 +273,7 @@ class TestKeepConnectionEdgeCases:
 
     @pytest.mark.asyncio
     async def test_cursor_context_manager_keep_connection_override(self):
-        """Test cursor context manager with keepConnection override, dood!"""
+        """Test cursor context manager with keepConnection override"""
         provider = SQLite3Provider(":memory:", keepConnection=False)
 
         # Use cursor with keepConnection=True override
@@ -288,7 +288,7 @@ class TestKeepConnectionEdgeCases:
 
     @pytest.mark.asyncio
     async def test_memory_db_data_persistence_with_keep_connection(self):
-        """Test that in-memory DB data persists with keepConnection=True, dood!"""
+        """Test that in-memory DB data persists with keepConnection=True"""
         config: DatabaseManagerConfig = {
             "default": "default",
             "chatMapping": {},
@@ -316,7 +316,7 @@ class TestKeepConnectionEdgeCases:
 
     @pytest.mark.asyncio
     async def test_memory_db_data_loss_without_keep_connection(self):
-        """Test that in-memory DB data is lost without keepConnection, dood!"""
+        """Test that in-memory DB data is lost without keepConnection"""
         config: DatabaseManagerConfig = {
             "default": "default",
             "chatMapping": {},

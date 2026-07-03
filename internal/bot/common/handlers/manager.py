@@ -68,6 +68,7 @@ from .base import BaseBotHandler, HandlerResultStatus
 from .chat_search import ChatSearchHandler
 from .common import CommonHandler
 from .configure import ConfigureCommandHandler
+from .delete_from_user import DeleteFromUserMessageHandler
 from .dev_commands import DevCommandsHandler
 from .divination import DivinationHandler
 from .help_command import CommandHandlerGetterInterface, HelpHandler
@@ -477,6 +478,13 @@ class HandlersManager(CommandHandlerGetterInterface):
         if self.botProvider == BotProvider.TELEGRAM:
             self.handlers.extend(
                 [
+                    # Deletion must run before reaction — no point reacting to a message we're about to delete
+                    (
+                        DeleteFromUserMessageHandler(
+                            configManager=configManager, database=database, botProvider=botProvider
+                        ),
+                        HandlerParallelism.PARALLEL,
+                    ),
                     (
                         ReactOnUserMessageHandler(
                             configManager=configManager, database=database, botProvider=botProvider

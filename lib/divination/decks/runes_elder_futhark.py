@@ -1,4 +1,4 @@
-"""Elder Futhark rune set — 24 runes in standard order, dood!
+"""Elder Futhark rune set — 24 runes in standard order
 
 The Elder Futhark is split into three *aetts* of eight runes each: Freyr's
 aett (1–8), Hagal's aett (9–16) and Tyr's aett (17–24). English is the source

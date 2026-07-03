@@ -1,4 +1,4 @@
-"""Tests for :mod:`lib.divination.localization`, dood!"""
+"""Tests for :mod:`lib.divination.localization`"""
 
 from typing import Set
 
@@ -12,7 +12,7 @@ def testEverySymbolNameHasRussian() -> None:
     """Every Symbol.name from both decks must have a non-empty ``"ru"`` entry."""
     for symbol in TAROT_RWS_DECK + RUNES_ELDER_FUTHARK_DECK:
         translations = SYMBOL_NAMES.get(symbol.name)
-        assert translations is not None, f"missing localisation for {symbol.name!r}, dood!"
+        assert translations is not None, f"missing localisation for {symbol.name!r}"
         assert "ru" in translations
         assert translations["ru"].strip() != ""
 
@@ -29,7 +29,7 @@ def testEveryPositionHasRussian() -> None:
 
 
 def testEveryLayoutEnglishNameHasRussian() -> None:
-    """Every ``Layout.nameEn`` must have a non-empty ``"ru"`` entry, dood!"""
+    """Every ``Layout.nameEn`` must have a non-empty ``"ru"`` entry"""
     for layout in TAROT_LAYOUTS + RUNE_LAYOUTS:
         translations = LAYOUT_NAMES.get(layout.nameEn)
         assert translations is not None, f"missing layout name localisation for {layout.nameEn!r}"
@@ -50,7 +50,7 @@ def testTrReturnsRussianWhenAvailable() -> None:
 
 
 def testNoEmptyTranslations() -> None:
-    """No localisation table may contain blank ``"ru"`` values, dood!"""
+    """No localisation table may contain blank ``"ru"`` values"""
     for table in (SYMBOL_NAMES, POSITION_NAMES, LAYOUT_NAMES):
         for englishKey, perLang in table.items():
             for langCode, value in perLang.items():

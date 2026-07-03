@@ -424,8 +424,14 @@ from lib.max_bot import MaxBotClient, MAX_MESSAGE_LENGTH
 
 **Key class:** [`MaxBotClient`](../../lib/max_bot/client.py) — async HTTP client for Max Bot API
 
+**API endpoint:** [`API_BASE_URL`](../../lib/max_bot/constants.py) = `https://platform-api2.max.ru` (Max API v2; migrated from the deprecated `platform-api.max.ru` and legacy `botapi.max.ru`, both kept as comments only). Deadline: 2026-07-19.
+
+**TLS / Минцифры CA certs:** the v2 endpoint is signed by the Russian Ministry of Digital Development (Минцифры) root CA, which is not in the system bundle. `libMax.utils.buildMaxSslContext(caBundlePath)` loads the additional PEM files from the `[bot].max-ca-bundle` directory into an `ssl.SSLContext`. The path resolves relative to the current working directory at call time (same convention as every other project path); the default value is `"../certs/max"`, which — because `application.root-dir` is `"storage"` — resolves to `<repo-root>/certs/max/`. The `caBundlePath` is passed to `MaxBotClient(caBundlePath=...)`, which builds the SSL context internally via `buildMaxSslContext()` and forwards it to `httpx.AsyncClient(verify=...)` in `_getHttpClient`. When the key is empty/unset, httpx falls back to its default CA bundle. SOCKS5 proxy caveat: httpx ignores the top-level `verify=` when a custom `transport=` is supplied, so the SSL context is threaded into the transport via `ProxyConfig.toKwargs(verify=self._sslContext)` (which calls `AsyncProxyTransport.from_url(url, verify=sslContext)` for SOCKS5); the `"transport" not in clientKwargs` guard then skips the redundant client-level `verify=`.
+
 **Key constants:**
 - `MAX_MESSAGE_LENGTH` — max message length for Max platform
+- `DEFAULT_RATE_LIMIT` — `30` requests per second (down from `100` on the deprecated `platform-api.max.ru`; enforced server-side on platform-api2)
+- `MAX_RETRIES` — `5`
 
 **Key model submodules:**
 - [`lib/max_bot/models/message.py`](../../lib/max_bot/models/message.py) — Message models
@@ -439,6 +445,12 @@ from lib.max_bot import MaxBotClient, MAX_MESSAGE_LENGTH
 Animated stickers have stub URLs, not real images. Always check `url.startswith(...)` before processing
 
 **Proxy support:** `MaxBotClient.__init__()` accepts an optional `proxyKwargs` keyword argument (dict to spread into `httpx.AsyncClient`). When proxy is enabled for the bot, `MaxBotApplication._runPolling()` creates a `ProxyConfig` via `ProxyConfig.fromServiceConfig()` and passes the resulting kwargs from `ProxyConfig.toKwargs()`.
+
+**SSL support:** `MaxBotClient.__init__()` also accepts an optional `caBundlePath: Optional[str]` keyword argument. When provided, the client builds an `ssl.SSLContext` internally via `buildMaxSslContext(caBundlePath)` and forwards it to `httpx.AsyncClient(verify=...)`. For SOCKS5 proxies the context is threaded into the transport via `ProxyConfig.toKwargs(verify=self._sslContext)` (so `AsyncProxyTransport.from_url(url, verify=sslContext)` is used); the client-level `verify=` is then skipped via the `"transport" not in clientKwargs` guard. The `caBundlePath` value comes from the `max-ca-bundle` config key — see TLS note above. When `buildMaxSslContext()` cannot load a cert (typically the GOST certs on a non-GOST OpenSSL build) it is skipped with a warning; if any are skipped a summary warning is logged (`Loaded N CA cert(s) but M were skipped ... TLS to platform-api2.max.ru may fail if the chain requires them`) so operators can tell a skipped-cert failure from a missing-bundle failure.
+
+**Webhook-mode polling:** when `basePollingUrl` is set (Max webhook receiver mode — see [`architecture.md`](architecture.md) ADR-013), `getUpdates()` does not hit `platform-api2.max.ru`; instead it routes through `_makeLocalRequest()` to the receiver's `GET /updates`. Three consequences of that routing: (1) the `lastEventId` marker is widened to `Optional[Union[int, str]]` — the real API uses an int marker, but the local receiver returns a compound string marker `"{received_at}|{rowId}"` that the bot echoes back on its next poll (and returns `null` in immediate/at-most-once mode); (2) a dedicated, reusable `httpx.AsyncClient` (`_localHttpClient`, created lazily on first poll and closed in `aclose()`) handles the local polls so connection pooling is reused across the polling loop, bypassing the main client's base URL / proxy / TLS settings; (3) a non-JSON 200 body from the receiver (e.g. a crash mid-response) is caught and re-raised as `NetworkError` rather than letting `json.JSONDecodeError` escape the polling loop.
+
+**Deprecated:** `MaxBotClient.getChats()` (`GET /chats`) is deprecated on platform-api2 — see the `getChats()` docstring. Prefer subscription-based chat discovery.
 
 ---
 
@@ -769,6 +781,18 @@ async with httpx.AsyncClient(**proxyKwargs, timeout=30) as client:
 **Used by:** `internal/database/providers/sqlite3.py` (`SQLite3Provider`), `internal/database/repositories/chat_embeddings.py` (dual-write to `vec_message_embeddings_{N}`), `internal/database/repositories/chat_search.py` (`_nativeVectorSearch`). See [`database.md`](database.md) §7 "Vector search types" for the provider interface and the vec0 schema, and [`docs/design/vector-search-native.md`](../design/vector-search-native.md) for the design.
 
 **No config key** — auto-detected at connect time. To disable native search: `pip uninstall sqlite-vec`.
+
+---
+
+## 15. `aiohttp` — HTTP Server for the Webhook Receiver
+
+**Pinned dependency:** `aiohttp==3.14.1` (in `requirements.direct.txt` under `# Runtime`). Promoted from a transitive dependency (pulled in via `aiodocker`) to a direct one because the Max webhook receiver imports it directly.
+
+**Purpose:** provides the `aiohttp.web` server that the standalone Max webhook receiver process runs on. The receiver is **not** a library — it lives under `internal/`, not `lib/` — but its only web-framework dependency is `aiohttp`.
+
+**Used by:** [`internal/max_webhook_receiver/`](../../internal/max_webhook_receiver/) — `__main__.py` (`web.run_app`) and `app.py` (`createApp`, `handleWebhook`, `handleGetUpdates`). See [`architecture.md`](architecture.md) ADR-013 and [`configuration.md`](configuration.md) §`[webhook-receiver]`.
+
+**No config key of its own** — the receiver's listen address, port, and TLS are configured under `[webhook-receiver]` (see [`configuration.md`](configuration.md)).
 
 ---
 

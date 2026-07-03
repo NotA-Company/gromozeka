@@ -1,4 +1,4 @@
-"""Core types for the divination library, dood!
+"""Core types for the divination library
 
 This module defines the building blocks shared by every divination system:
 
@@ -7,7 +7,7 @@ This module defines the building blocks shared by every divination system:
 * :class:`Reading` — the full result of one reading.
 * :class:`BaseDivinationSystem` — abstract base class systems implement.
 
-Only one cross-tree import is allowed in the divination library, dood!
+Only one cross-tree import is allowed in the divination library
 ``from lib.ai import ModelMessage`` for prompt assembly. Everything else
 stays inside :mod:`lib.divination`.
 """
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class Symbol:
-    """A single symbol in a deck (tarot card or rune), dood!
+    """A single symbol in a deck (tarot card or rune)
 
     Attributes:
         id: Stable machine identifier (e.g. ``"major_00_fool"``,
@@ -80,7 +80,7 @@ class DrawnSymbol:
 
 @dataclass(frozen=True, slots=True)
 class Reading:
-    """A complete reading result, dood!
+    """A complete reading result
 
     Attributes:
         systemId: Identifier of the divination system used (``"tarot"`` /
@@ -103,7 +103,7 @@ class Reading:
 
 
 class _SafeFormatDict(defaultdict):
-    """A ``defaultdict``-style mapping for :func:`str.format_map`, dood!
+    """A ``defaultdict``-style mapping for :func:`str.format_map`
 
     Returns an empty string for any key that has not been explicitly set. Used
     by :func:`_safeFormat` so prompt templates with optional placeholders (or
@@ -115,7 +115,7 @@ class _SafeFormatDict(defaultdict):
         """Return an empty string for any unknown placeholder.
 
         Logs a warning so operators notice typos in their configured
-        templates instead of silently producing empty sections, dood.
+        templates instead of silently producing empty sections
 
         Args:
             key: Placeholder name that was not provided.
@@ -123,12 +123,12 @@ class _SafeFormatDict(defaultdict):
         Returns:
             Empty string.
         """
-        logger.warning("Divination template placeholder '{%s}' not provided — substituting empty string, dood!", key)
+        logger.warning("Divination template placeholder '{%s}' not provided — substituting empty string", key)
         return ""
 
 
 def _safeFormat(template: str, **kwargs: Any) -> str:
-    """Format ``template`` while tolerating missing placeholders, dood!
+    """Format ``template`` while tolerating missing placeholders
 
     Uses :class:`string.Formatter` with a defaulting mapping so unknown keys
     become empty strings rather than raising ``KeyError``. This lets operators
@@ -149,7 +149,7 @@ def _safeFormat(template: str, **kwargs: Any) -> str:
 
 
 class BaseDivinationSystem(abc.ABC):
-    """Abstract base class for divination systems (tarot, runes, …), dood!
+    """Abstract base class for divination systems (tarot, runes, …)
 
     Subclasses are expected to set :attr:`systemId`, :attr:`deckId`,
     :attr:`supportsReversed` and :attr:`deck` as class variables, and override
@@ -231,7 +231,7 @@ class BaseDivinationSystem(abc.ABC):
         userPromptTemplate: str,
         lang: str = "ru",
     ) -> List[ModelMessage]:
-        """Build LLM input messages for the reading's interpretation, dood!
+        """Build LLM input messages for the reading's interpretation
 
         Returns a two-message conversation: one ``"system"`` message holding
         the operator-supplied system prompt verbatim, followed by one
@@ -311,7 +311,7 @@ class BaseDivinationSystem(abc.ABC):
 
     @classmethod
     def renderDrawnSymbolsBlock(cls, reading: Reading, *, lang: str = "ru") -> str:
-        """Render a localized, numbered list of drawn symbols, dood!
+        """Render a localized, numbered list of drawn symbols
 
         Each line has the shape
         ``"<n>. <localized position> — [<glyph> ]<localized name>[ (перевёрнута)]"``
@@ -360,7 +360,7 @@ class BaseDivinationSystem(abc.ABC):
 
         Calls the private :func:`_safeFormat` so unknown or omitted
         placeholders silently become empty strings — operators can trim
-        the template without breaking rendering, dood!
+        the template without breaking rendering
 
         Supported placeholders in ``template``:
 
@@ -408,7 +408,7 @@ class BaseDivinationSystem(abc.ABC):
         * ``{styleHint}`` — caller-provided style hint. When the caller does
           not pass one, the placeholder is substituted with an empty string
           so templates that do or do not reference ``{styleHint}`` both
-          render fine, dood!
+          render fine
 
         Args:
             reading: The :class:`Reading` whose image to describe.

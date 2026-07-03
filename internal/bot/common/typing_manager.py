@@ -126,7 +126,7 @@ class TypingManager:
         return self.startTime + self.maxTimeout <= time.time()
 
     def addTimeout(self, seconds: int) -> None:
-        """Extend the maximum typing timeout by the given number of seconds, dood.
+        """Extend the maximum typing timeout by the given number of seconds
 
         Use this from handlers that perform long-running operations (image
         generation, large media uploads, summarization passes) so the typing

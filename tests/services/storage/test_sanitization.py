@@ -1,5 +1,5 @@
 """
-Comprehensive tests for storage key sanitization, dood!
+Comprehensive tests for storage key sanitization
 
 This module tests the sanitizeKey() function to ensure it properly
 sanitizes storage keys and prevents path traversal attacks.
@@ -12,7 +12,7 @@ from internal.services.storage.utils import sanitizeKey
 
 
 class TestSanitizeKeyValidKeys:
-    """Test that valid keys pass through unchanged, dood!"""
+    """Test that valid keys pass through unchanged"""
 
     def testSimpleAlphanumericKey(self):
         """Test simple alphanumeric key passes through unchanged"""
@@ -58,7 +58,7 @@ class TestSanitizeKeyValidKeys:
 
 
 class TestSanitizeKeyPathTraversal:
-    """Test that path traversal attempts are sanitized, dood!"""
+    """Test that path traversal attempts are sanitized"""
 
     def testDoubleDotRemoval(self):
         """Test that double dots are removed"""
@@ -107,7 +107,7 @@ class TestSanitizeKeyPathTraversal:
 
 
 class TestSanitizeKeyInvalidCharacters:
-    """Test that invalid characters are removed, dood!"""
+    """Test that invalid characters are removed"""
 
     def testNullByteRemoval(self):
         """Test that null bytes are removed"""
@@ -159,7 +159,7 @@ class TestSanitizeKeyInvalidCharacters:
 
 
 class TestSanitizeKeyLeadingTrailingCharacters:
-    """Test that dangerous leading/trailing characters are stripped, dood!"""
+    """Test that dangerous leading/trailing characters are stripped"""
 
     def testLeadingDotsStripped(self):
         """Test that leading dots are stripped"""
@@ -211,7 +211,7 @@ class TestSanitizeKeyLeadingTrailingCharacters:
 
 
 class TestSanitizeKeyEdgeCases:
-    """Test edge cases and boundary conditions, dood!"""
+    """Test edge cases and boundary conditions"""
 
     def testEmptyStringRaisesError(self):
         """Test that empty string raises StorageKeyError"""
@@ -271,7 +271,7 @@ class TestSanitizeKeyEdgeCases:
 
 
 class TestSanitizeKeyRealWorldScenarios:
-    """Test real-world scenarios and common use cases, dood!"""
+    """Test real-world scenarios and common use cases"""
 
     def testFilenameWithExtension(self):
         """Test typical filename with extension"""
@@ -344,7 +344,7 @@ class TestSanitizeKeyRealWorldScenarios:
 
 
 class TestSanitizeKeyConsistency:
-    """Test that sanitization is consistent and idempotent, dood!"""
+    """Test that sanitization is consistent and idempotent"""
 
     def testIdempotence(self):
         """Test that sanitizing twice produces same result"""

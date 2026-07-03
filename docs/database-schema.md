@@ -35,6 +35,8 @@ This document provides comprehensive documentation for the Gromozeka bot's datab
 - [Divination Tables](#divination-tables)
   - [divinations](#divinations)
   - [divination_layouts](#divination_layouts)
+- [Webhook Tables](#webhook-tables)
+  - [webhook_updates](#webhook_updates)
 - [System Tables](#system-tables)
   - [settings](#settings)
 - [Enums](#enums)
@@ -158,6 +160,7 @@ Migrations are located in [`internal/database/migrations/versions/`](../internal
 | 16 | [`migration_016_add_stat_tables.py`](../internal/database/migrations/versions/migration_016_add_stat_tables.py:1) | Creates [`stat_events`](#stat_events) and [`stat_aggregates`](#stat_aggregates) tables |
 | 17 | [`migration_017_message_embeddings.py`](../internal/database/migrations/versions/migration_017_message_embeddings.py:1) | Creates [`message_embeddings`](#message_embeddings) table for semantic search |
 | 18 | [`migration_018_message_embeddings_index.py`](../internal/database/migrations/versions/migration_018_message_embeddings_index.py:1) | Adds secondary index on `message_embeddings` (chat_id, model) |
+| 19 | [`migration_019_add_webhook_updates_table.py`](../internal/database/migrations/versions/migration_019_add_webhook_updates_table.py:1) | Creates [`webhook_updates`](#webhook_updates) table for Max webhook ingestion |
 
 ### Creating New Migrations
 
@@ -891,6 +894,32 @@ CREATE VIRTUAL TABLE vec_message_embeddings_384 USING vec0(
 
 ---
 
+## Webhook Tables
+
+### webhook_updates
+
+Stores raw incoming Max Messenger webhook payloads awaiting consumption by the bot. Written by the standalone webhook receiver process (`internal/max_webhook_receiver/`) on every webhook POST; the bot's normal long-poll loop reads and marks rows processed. See [`docs/llm/architecture.md`](llm/architecture.md) for the two-process webhook model.
+
+**Primary Key**: `id` (application-generated UUID)
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | TEXT | No | - | Application-generated UUID identifying the update (no `AUTOINCREMENT`) |
+| `received_at` | TIMESTAMP | No | - | When the webhook payload was received and stored (set by application code) |
+| `update_type` | TEXT | No | - | Coarse `update_type` tag extracted from the Max payload, used for routing |
+| `raw_json` | TEXT | No | - | Full webhook request body serialized as a JSON string |
+| `processed` | INTEGER | No | 0 | Whether the update has been consumed (0 = pending, 1 = processed) |
+| `processed_at` | TIMESTAMP | Yes | NULL | When the update was marked processed, or NULL if still pending |
+
+**Indexes**:
+- `idx_webhook_updates_unprocessed` on `(processed, received_at)` — backs the unprocessed-updates query (`WHERE processed = 0 ORDER BY received_at ASC`)
+
+**TypedDict**: [`WebhookUpdatesRow`](../internal/database/models.py:303)
+
+**Note**: Created by `migration_019`. No `AUTOINCREMENT`/`SERIAL` and no `DEFAULT CURRENT_TIMESTAMP` — `id` is a caller-generated UUID and both timestamps are set by application code, mirroring the repo-wide portability rules. Processed rows are reaped by the receiver's background cleanup task (default TTL 1 hour). The bot only writes to this table when webhook mode is on; the receiver process always writes here regardless of the bot's `enabled` flag.
+
+---
+
 ## System Tables
 
 ### settings
@@ -1000,6 +1029,7 @@ All database queries return strongly-typed dictionaries defined in [`internal/da
 | [`MediaAttachmentDict`](../internal/database/models.py:255) | Media attachment details | Lines 255-281 |
 | [`DelayedTaskDict`](../internal/database/models.py:284) | Delayed task information | Lines 284-300 |
 | [`SpamMessageDict`](../internal/database/models.py:303) | Spam message details | Lines 303-323 |
+| [`WebhookUpdatesRow`](../internal/database/models.py:303) | Max webhook payload awaiting consumption | - |
 | [`ChatSummarizationCacheDict`](../internal/database/models.py:326) | Cached summary information | Lines 326-348 |
 | [`CacheDict`](../internal/database/models.py:351) | Generic cache entry | Lines 351-361 |
 | [`CacheStorageDict`](../internal/database/models.py:364) | Cache storage entry | Lines 364-374 |
@@ -1013,7 +1043,7 @@ These TypedDict models provide:
 
 ## Repository Pattern
 
-The database uses a repository pattern with 14 specialized repositories, each handling a specific domain:
+The database uses a repository pattern with 15 specialized repositories, each handling a specific domain:
 
 | Repository | File | Purpose |
 |---|---|---|
@@ -1031,6 +1061,7 @@ The database uses a repository pattern with 14 specialized repositories, each ha
 | `mediaAttachments` | [`media_attachments.py`](../internal/database/repositories/media_attachments.py) | Media attachment management |
 | `spam` | [`spam.py`](../internal/database/repositories/spam.py) | Spam detection and ham classification |
 | `userData` | [`user_data.py`](../internal/database/repositories/user_data.py) | User key-value data |
+| `webhookUpdates` | [`webhook_updates.py`](../internal/database/repositories/webhook_updates.py) | Max webhook payload storage and consumption |
 
 ### Accessing Repositories
 

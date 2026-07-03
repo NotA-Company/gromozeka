@@ -27,7 +27,7 @@ from .base import (
 
 # Optional dependency for native vector search.
 try:
-    import sqlite_vec
+    import sqlite_vec  # pyright: ignore[reportMissingImports]
 
     _SQLITE_VEC_AVAILABLE = True
 except ImportError:
@@ -77,7 +77,7 @@ async def _loadSqliteVecExtension(
 
 
 class SQLite3Provider(BaseSQLProvider):
-    """SQL provider backed by a local SQLite3 database file, dood!
+    """SQL provider backed by a local SQLite3 database file
 
     Uses :mod:`aiosqlite` for a fully non-blocking async interface.
 
@@ -112,7 +112,7 @@ class SQLite3Provider(BaseSQLProvider):
         keepConnection: Optional[bool] = None,
         vectorExtensionPath: Optional[str] = None,
     ) -> None:
-        """Initialise the SQLite3 provider, dood!
+        """Initialise the SQLite3 provider
 
         Args:
             dbPath: Filesystem path to the SQLite3 database file.
@@ -160,7 +160,7 @@ class SQLite3Provider(BaseSQLProvider):
         """Filesystem path to a prebuilt sqlite-vec shared library, or ``None``."""
 
     async def connect(self) -> None:
-        """Open the aiosqlite connection, dood!
+        """Open the aiosqlite connection
 
         Applies ``PRAGMA query_only`` when :attr:`readOnly` is set, and
         ``PRAGMA journal_mode = WAL`` when :attr:`useWal` is set.
@@ -225,14 +225,14 @@ class SQLite3Provider(BaseSQLProvider):
             )
 
     async def disconnect(self) -> None:
-        """Close the aiosqlite connection, dood!"""
+        """Close the aiosqlite connection"""
         if self._connection is not None:
             await self._connection.close()
             self._connection = None
             logger.debug(f"Disconnected from SQLite3 database at {self.dbPath}")
 
     async def isReadOnly(self) -> bool:
-        """Return if this provider is in read only mode or not, dood!
+        """Return if this provider is in read only mode or not
 
         Returns:
             ``True`` if the provider is in read-only mode, ``False`` otherwise.
@@ -242,7 +242,7 @@ class SQLite3Provider(BaseSQLProvider):
 
     @asynccontextmanager
     async def cursor(self, *, keepConnection: Optional[bool] = None) -> AsyncGenerator[aiosqlite.Cursor, None]:
-        """Async context manager that yields a database cursor, dood!
+        """Async context manager that yields a database cursor
 
         Automatically commits on success or rolls back on any exception.
         Opens the connection if it is not already open, and closes it again
@@ -290,7 +290,7 @@ class SQLite3Provider(BaseSQLProvider):
                 await self.disconnect()
 
     async def _makeQueryResult(self, cursor: aiosqlite.Cursor, fetchType: FetchType) -> QueryResult:
-        """Convert a cursor's pending rows into the appropriate result type, dood!
+        """Convert a cursor's pending rows into the appropriate result type
 
         Args:
             cursor: An executed :class:`aiosqlite.Cursor`.
@@ -316,7 +316,7 @@ class SQLite3Provider(BaseSQLProvider):
         raise ValueError(f"Unknown fetch type: {fetchType}")
 
     async def _execute(self, query: ParametrizedQuery) -> QueryResult:
-        """Execute a single parametrized query, dood!
+        """Execute a single parametrized query
 
         Args:
             query: The :class:`ParametrizedQuery` to run.
@@ -329,7 +329,7 @@ class SQLite3Provider(BaseSQLProvider):
             return await self._makeQueryResult(cursor, query.fetchType)
 
     async def batchExecute(self, queries: Sequence[ParametrizedQuery]) -> Sequence[QueryResult]:
-        """Execute multiple queries in a single database transaction, dood!
+        """Execute multiple queries in a single database transaction
 
         All queries share one cursor and one commit/rollback cycle, so either
         all succeed or all are rolled back together.
@@ -349,7 +349,7 @@ class SQLite3Provider(BaseSQLProvider):
         return ret
 
     def applyPagination(self, query: str, limit: Optional[int], offset: int = 0) -> str:
-        """Apply SQLite-specific pagination to query, dood!
+        """Apply SQLite-specific pagination to query
 
         Args:
             query: The base SQL query.
@@ -367,7 +367,7 @@ class SQLite3Provider(BaseSQLProvider):
         return f"{query} LIMIT {limit}{offsetStr}"
 
     def getTextType(self, maxLength: Optional[int] = None) -> str:
-        """Get SQLite-specific TEXT type, dood!
+        """Get SQLite-specific TEXT type
 
         Args:
             maxLength: Optional maximum length for the text field (ignored in SQLite).
@@ -378,7 +378,7 @@ class SQLite3Provider(BaseSQLProvider):
         return "TEXT"
 
     def getCaseInsensitiveComparison(self, column: str, param: str) -> str:
-        """Get SQLite-specific case-insensitive comparison, dood!
+        """Get SQLite-specific case-insensitive comparison
 
         Args:
             column: The column name to compare.
@@ -390,7 +390,7 @@ class SQLite3Provider(BaseSQLProvider):
         return f"LOWER({column}) = LOWER(:{param})"
 
     def getLikeComparison(self, column: str, param: str) -> str:
-        """Get SQLite-specific case-insensitive LIKE comparison, dood!
+        """Get SQLite-specific case-insensitive LIKE comparison
 
         Args:
             column: The column name to compare.
@@ -408,7 +408,7 @@ class SQLite3Provider(BaseSQLProvider):
         conflictColumns: List[str],
         updateExpressions: Optional[Dict[str, Any]] = None,
     ) -> bool:
-        """Execute SQLite-specific upsert operation, dood!
+        """Execute SQLite-specific upsert operation
 
         Args:
             table: Table name.

@@ -1,5 +1,5 @@
 """
-Comprehensive tests for StorageService, dood!
+Comprehensive tests for StorageService
 
 This module tests the StorageService singleton to ensure proper
 initialization, configuration, and operation delegation to backends.
@@ -17,7 +17,7 @@ from internal.services.storage.service import StorageService
 
 @pytest.fixture(autouse=True)
 def resetStorageServiceSingleton():
-    """Reset StorageService singleton before each test, dood!"""
+    """Reset StorageService singleton before each test"""
     StorageService._instance = None
     yield
     StorageService._instance = None
@@ -25,14 +25,14 @@ def resetStorageServiceSingleton():
 
 @pytest.fixture
 def mockConfigManager():
-    """Create a mock ConfigManager, dood!"""
+    """Create a mock ConfigManager"""
     mock = Mock()
     mock.getStorageConfig = Mock()
     return mock
 
 
 class TestStorageServiceSingleton:
-    """Test StorageService singleton behavior, dood!"""
+    """Test StorageService singleton behavior"""
 
     def testGetInstanceReturnsSameInstance(self):
         """Test that getInstance returns same instance"""
@@ -55,7 +55,7 @@ class TestStorageServiceSingleton:
 
 
 class TestStorageServiceInitialization:
-    """Test StorageService initialization, dood!"""
+    """Test StorageService initialization"""
 
     def testInitialState(self):
         """Test that service initializes with correct state"""
@@ -75,7 +75,7 @@ class TestStorageServiceInitialization:
 
 
 class TestStorageServiceInjectConfigNull:
-    """Test StorageService configuration with null backend, dood!"""
+    """Test StorageService configuration with null backend"""
 
     def testInjectConfigNull(self, mockConfigManager):
         """Test injecting config for null backend"""
@@ -99,7 +99,7 @@ class TestStorageServiceInjectConfigNull:
 
 
 class TestStorageServiceInjectConfigFS:
-    """Test StorageService configuration with filesystem backend, dood!"""
+    """Test StorageService configuration with filesystem backend"""
 
     def testInjectConfigFS(self, mockConfigManager, tmp_path):
         """Test injecting config for filesystem backend"""
@@ -130,7 +130,7 @@ class TestStorageServiceInjectConfigFS:
 
 
 class TestStorageServiceInjectConfigS3:
-    """Test StorageService configuration with S3 backend, dood!"""
+    """Test StorageService configuration with S3 backend"""
 
     def testInjectConfigS3(self, mockConfigManager):
         """Test injecting config for S3 backend"""
@@ -213,7 +213,7 @@ class TestStorageServiceInjectConfigS3:
 
 
 class TestStorageServiceInjectConfigErrors:
-    """Test StorageService configuration error handling, dood!"""
+    """Test StorageService configuration error handling"""
 
     def testInjectConfigMissingConfig(self, mockConfigManager):
         """Test that missing config raises error"""
@@ -251,7 +251,7 @@ class TestStorageServiceInjectConfigErrors:
 
 
 class TestStorageServiceOperations:
-    """Test StorageService operations, dood!"""
+    """Test StorageService operations"""
 
     @pytest.fixture
     def configuredService(self, mockConfigManager):
@@ -312,7 +312,7 @@ class TestStorageServiceOperations:
 
 
 class TestStorageServiceUninitializedErrors:
-    """Test that operations fail when service is not initialized, dood!"""
+    """Test that operations fail when service is not initialized"""
 
     def testStoreWithoutInitRaisesError(self):
         """Test that store without init raises error"""
@@ -351,7 +351,7 @@ class TestStorageServiceUninitializedErrors:
 
 
 class TestStorageServiceErrorPropagation:
-    """Test that backend errors are properly propagated, dood!"""
+    """Test that backend errors are properly propagated"""
 
     @pytest.fixture
     def configuredService(self, mockConfigManager):
@@ -392,7 +392,7 @@ class TestStorageServiceErrorPropagation:
 
 
 class TestStorageServiceRealWorldScenarios:
-    """Test real-world usage scenarios, dood!"""
+    """Test real-world usage scenarios"""
 
     def testCompleteWorkflow(self, mockConfigManager, tmp_path):
         """Test complete workflow from config to operations"""

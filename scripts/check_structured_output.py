@@ -1,5 +1,5 @@
 #!/usr/bin/env ./venv/bin/python3
-"""Iterate configured LLM models and probe structured-output support, dood.
+"""Iterate configured LLM models and probe structured-output support
 
 Loads the project configuration the same way ``main.py`` does, initialises
 ``LLMManager``, then calls ``generateStructured`` on each text-capable model
@@ -146,7 +146,7 @@ CLS_DRY_RUN = "DRY-RUN"
 
 @dataclasses.dataclass
 class ProbeResult:
-    """One row of the summary table, dood.
+    """One row of the summary table
 
     Attributes:
         provider: Provider name (e.g. ``openrouter``, ``yc-openai``).

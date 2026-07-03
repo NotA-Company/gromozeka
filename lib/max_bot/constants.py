@@ -12,8 +12,10 @@ from typing import Final
 VERSION: Final[str] = "0.0.1"
 
 # API Configuration
-API_BASE_URL: Final[str] = "https://platform-api.max.ru"
-# API_BASE_URL: Final[str] = "https://botapi.max.ru"
+# Old endpoints (deprecated, will stop working after 2026-07-19):
+#   - https://platform-api.max.ru  — original endpoint
+#   - https://botapi.max.ru        — legacy endpoint
+API_BASE_URL: Final[str] = "https://platform-api2.max.ru"
 API_VERSION: Final[str] = "0.0.1"
 DEFAULT_TIMEOUT: Final[int] = 30
 MAX_RETRIES: Final[int] = 5
@@ -35,7 +37,8 @@ MAX_BUTTONS_PER_ROW: Final[int] = 5
 MAX_ROWS_PER_KEYBOARD: Final[int] = 10
 
 # Rate Limiting
-DEFAULT_RATE_LIMIT: Final[int] = 100  # requests per second
+# NOTE: platform-api2.max.ru enforces 30 rps (down from 100 on platform-api.max.ru)
+DEFAULT_RATE_LIMIT: Final[int] = 30  # requests per second
 RATE_LIMIT_WINDOW: Final[int] = 1  # second
 
 # Authentication

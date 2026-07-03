@@ -69,7 +69,7 @@ def _makeResult(
     error: Optional[Exception] = None,
     resultText: str = "",
 ) -> ModelStructuredResult:
-    """Build a ``ModelStructuredResult`` for testing, dood.
+    """Build a ``ModelStructuredResult`` for testing
 
     Args:
         status: The result status enum value.

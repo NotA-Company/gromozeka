@@ -1,9 +1,9 @@
 """
-Abstract cache interface for lib.cache, dood!
+Abstract cache interface for lib.cache
 
 This module defines the generic CacheInterface that all cache implementations
 must follow. It provides a consistent API for different cache backends
-while maintaining type safety through Python generics, dood!
+while maintaining type safety through Python generics
 """
 
 from abc import ABC, abstractmethod
@@ -14,11 +14,11 @@ from .types import K, V
 
 class CacheInterface(ABC, Generic[K, V]):
     """
-    Generic cache interface for any key-value storage, dood!
+    Generic cache interface for any key-value storage
 
     This abstract base class defines the contract that all cache implementations
     must follow. It provides a type-safe interface for basic cache operations
-    including get, set, clear, and statistics retrieval, dood!
+    including get, set, clear, and statistics retrieval
 
     Type Parameters:
         K: The key type (any hashable type)
@@ -42,11 +42,10 @@ class CacheInterface(ABC, Generic[K, V]):
     @abstractmethod
     async def get(self, key: K, ttl: Optional[int] = None) -> Optional[V]:
         """
-        Get cached value by key, dood!
+        Get cached value by key
 
         Retrieves a value from the cache if it exists and hasn't expired.
-        Returns None if the key is not found or the cached value has expired,
-        dood!
+        Returns None if the key is not found or the cached value has expired
 
         Args:
             key: The cache key to retrieve
@@ -59,9 +58,9 @@ class CacheInterface(ABC, Generic[K, V]):
 
         Example:
             >>> cache = DictCache[str, str](StringKeyGenerator())
-            >>> await cache.set("greeting", "Hello, dood!")
+            >>> await cache.set("greeting", "Hello")
             >>> result = await cache.get("greeting")
-            >>> print(result)  # "Hello, dood!"
+            >>> print(result)  # "Hello"
             >>>
             >>> # Get with custom TTL check
             >>> result = await cache.get("greeting", ttl=60)
@@ -71,11 +70,11 @@ class CacheInterface(ABC, Generic[K, V]):
     @abstractmethod
     async def set(self, key: K, value: V) -> bool:
         """
-        Store value in cache, dood!
+        Store value in cache
 
         Stores a value in the cache with the current timestamp for TTL
         calculation. The value will be available until it expires based
-        on the cache's default TTL or is manually removed, dood!
+        on the cache's default TTL or is manually removed
 
         Args:
             key: The cache key to store the value under
@@ -94,10 +93,10 @@ class CacheInterface(ABC, Generic[K, V]):
     @abstractmethod
     async def clear(self) -> None:
         """
-        Clear all cached data, dood!
+        Clear all cached data
 
         Removes all entries from the cache, resetting it to an empty state.
-        This operation is synchronous and should complete immediately, dood!
+        This operation is synchronous and should complete immediately
 
         Example:
             >>> cache = DictCache[str, str](StringKeyGenerator())
@@ -112,12 +111,12 @@ class CacheInterface(ABC, Generic[K, V]):
     @abstractmethod
     def getStats(self) -> Dict[str, Any]:
         """
-        Get cache statistics, dood!
+        Get cache statistics
 
         Returns implementation-specific statistics about the cache state
         and performance. The exact keys and values depend on the cache
         implementation, but common metrics include entry count, size limits,
-        and configuration values, dood!
+        and configuration values
 
         Returns:
             Dict[str, Any]: Dictionary containing cache statistics

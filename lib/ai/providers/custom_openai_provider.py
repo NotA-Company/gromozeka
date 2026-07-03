@@ -120,7 +120,7 @@ class CustomOpenAIProvider(BasicOpenAIProvider):
         """
         super().__init__(config)
         if "base_url" not in config:
-            raise ValueError("Base URL not provided, dood!")
+            raise ValueError("Base URL not provided")
 
     def _getBaseUrl(self) -> str:
         """Get the custom OpenAI-compatible API base URL.
@@ -186,7 +186,7 @@ class CustomOpenAIProvider(BasicOpenAIProvider):
             ```
         """
         if not self._client:
-            raise RuntimeError("OpenAI client not initialized, dood!")
+            raise RuntimeError("OpenAI client not initialized")
 
         return BasicOpenAIModel(
             provider=self,

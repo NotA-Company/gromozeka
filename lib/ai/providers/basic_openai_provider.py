@@ -302,7 +302,7 @@ class BasicOpenAIModel(AbstractModel):
                 ``_generateText`` / ``_generateStructured``).
         """
         if not self._client:
-            raise RuntimeError("OpenAI client not initialized, dood!")
+            raise RuntimeError("OpenAI client not initialized")
 
         try:
             response: ChatCompletion = await self._client.chat.completions.create(**params)
@@ -404,7 +404,7 @@ class BasicOpenAIModel(AbstractModel):
             Exception: For other API-related errors.
         """
         if not self._config.get("support_text", True):
-            raise NotImplementedError(f"Text generation isn't supported by {self.modelId}, dood!")
+            raise NotImplementedError(f"Text generation isn't supported by {self.modelId}")
 
         # --- build params (text-specific) ---
         kwargs: Dict[str, Any] = {}
@@ -630,7 +630,7 @@ class BasicOpenAIModel(AbstractModel):
         """
 
         if not self._config.get("support_images", False):
-            raise NotImplementedError(f"Image generation isn't supported by {self.modelId}, dood")
+            raise NotImplementedError(f"Image generation isn't supported by {self.modelId}")
 
         # --- build params (image-specific) ---
         params: Dict[str, Any] = {
@@ -899,7 +899,7 @@ class BasicOpenAIModel(AbstractModel):
             Exception: For API-level errors (rate limits, server errors, etc.).
         """
         if not self._client:
-            raise RuntimeError("OpenAI client not initialized, dood!")
+            raise RuntimeError("OpenAI client not initialized")
 
         params: Dict[str, Any] = {
             "model": self._getModelId(),
@@ -968,7 +968,7 @@ class BasicOpenAIProvider(AbstractLLMProvider):
         Raises:
             NotImplementedError: If not implemented by a subclass.
         """
-        raise NotImplementedError("Subclasses must implement _get_base_url, dood!")
+        raise NotImplementedError("Subclasses must implement _get_base_url")
 
     def _getApiKey(self) -> str:
         """Get the API key from configuration.
@@ -984,7 +984,7 @@ class BasicOpenAIProvider(AbstractLLMProvider):
         """
         apiKey = self.config.get("api_key")
         if not apiKey:
-            raise ValueError("api_key is required for OpenAI-compatible provider, dood!")
+            raise ValueError("api_key is required for OpenAI-compatible provider")
         return apiKey
 
     def _getClientParams(self) -> Dict[str, Any]:
@@ -1032,10 +1032,10 @@ class BasicOpenAIProvider(AbstractLLMProvider):
 
             self._client = openai.AsyncOpenAI(**client_params)
 
-            logger.info(f"{self.__class__.__name__} initialized, dood!")
+            logger.info(f"{self.__class__.__name__} initialized")
 
         except ImportError:
-            logger.error("openai package not available, dood!")
+            logger.error("openai package not available")
             raise
         except Exception as e:
             logger.error(f"Failed to initialize OpenAI client: {e}")
@@ -1071,7 +1071,7 @@ class BasicOpenAIProvider(AbstractLLMProvider):
         Raises:
             NotImplementedError: If not implemented by a subclass.
         """
-        raise NotImplementedError("Subclasses must implement _create_model_instance, dood!")
+        raise NotImplementedError("Subclasses must implement _create_model_instance")
 
     async def listRemoteModels(self) -> Dict[str, Dict[str, Any]]:
         """List models available from the OpenAI-compatible API.
@@ -1142,11 +1142,11 @@ class BasicOpenAIProvider(AbstractLLMProvider):
             Exception: If model creation fails for any other reason.
         """
         if name in self.models:
-            logger.warning(f"Model {name} already exists in {self.__class__.__name__}, dood!")
+            logger.warning(f"Model {name} already exists in {self.__class__.__name__}")
             return self.models[name]
 
         if not self._client:
-            raise RuntimeError("OpenAI client not initialized, dood!")
+            raise RuntimeError("OpenAI client not initialized")
 
         try:
             model = self._createModelInstance(
@@ -1160,7 +1160,7 @@ class BasicOpenAIProvider(AbstractLLMProvider):
             )
 
             self.models[name] = model
-            logger.info(f"Added {self.__class__.__name__} model {name} ({modelId}), dood!")
+            logger.info(f"Added {self.__class__.__name__} model {name} ({modelId})")
             return model
 
         except Exception as e:

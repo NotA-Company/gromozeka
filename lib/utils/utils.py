@@ -229,7 +229,7 @@ def unpackDict(
 
 def dumpTelegramMessage(message: "Message") -> str:
     """
-    Dump a Telegram Message object to string using original __repr__, dood!
+    Dump a Telegram Message object to string using original __repr__
 
     When reply_to_message is present, replaces it with a compact representation
     showing only: message_id, user_id, chat_id, and first 10 chars of text (if any).

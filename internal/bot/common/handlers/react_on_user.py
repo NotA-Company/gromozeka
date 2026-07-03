@@ -69,13 +69,16 @@ class ReactOnUserMessageHandler(BaseBotHandler):
             # It's forward, check if author is in authorIDList or authorUsernameList
             forwardOrigin = message.forward_origin
             if isinstance(forwardOrigin, telegram.MessageOriginUser):
-                ret.username = forwardOrigin.sender_user.username or ""
+                ret.username = forwardOrigin.sender_user.name or forwardOrigin.sender_user.username or ""
+                ret.name = forwardOrigin.sender_user.full_name
                 ret.id = forwardOrigin.sender_user.id
             elif isinstance(forwardOrigin, telegram.MessageOriginChat):
-                ret.username = forwardOrigin.sender_chat.username or ""
+                ret.username = f"@{forwardOrigin.sender_chat.username}" if forwardOrigin.sender_chat.username else ""
+                ret.name = forwardOrigin.sender_chat.effective_name or ""
                 ret.id = forwardOrigin.sender_chat.id
             elif isinstance(forwardOrigin, telegram.MessageOriginChannel):
-                ret.username = forwardOrigin.chat.username or ""
+                ret.username = f"@{forwardOrigin.chat.username}" if forwardOrigin.chat.username else ""
+                ret.name = forwardOrigin.chat.effective_name or ""
                 ret.id = forwardOrigin.chat.id
             elif isinstance(forwardOrigin, telegram.MessageOriginHiddenUser):
                 ret.username = forwardOrigin.sender_user_name  # Better than nothing

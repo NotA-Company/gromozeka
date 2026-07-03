@@ -1,4 +1,4 @@
-"""Single RNG entry-point for divination draws, dood!
+"""Single RNG entry-point for divination draws
 
 Concentrating the drawing logic in one tiny function makes it trivial to
 swap the algorithm later (ritualistic shuffle-then-pop, weighted draws,

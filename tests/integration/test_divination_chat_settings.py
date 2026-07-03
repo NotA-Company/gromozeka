@@ -1,4 +1,4 @@
-"""Tests for divination-related chat settings, dood!
+"""Tests for divination-related chat settings
 
 Verifies that the four divination chat-settings keys
 (``TAROT_SYSTEM_PROMPT``, ``RUNES_SYSTEM_PROMPT``,
@@ -47,7 +47,7 @@ def _repoRoot() -> Path:
 
 @pytest.fixture
 def defaultsConfigManager() -> Generator[ConfigManager, None, None]:
-    """Build a real ``ConfigManager`` over ``configs/00-defaults`` only, dood!
+    """Build a real ``ConfigManager`` over ``configs/00-defaults`` only
 
     Uses a non-existent ``configPath`` so only the directory-based merge runs;
     the bot-token validity check inside ``ConfigManager._loadConfig`` is
@@ -67,7 +67,7 @@ def defaultsConfigManager() -> Generator[ConfigManager, None, None]:
     """
     repoRoot: Path = _repoRoot()
     configsDir: Path = repoRoot / "configs" / "00-defaults"
-    assert configsDir.is_dir(), f"Expected default configs at {configsDir}, dood!"
+    assert configsDir.is_dir(), f"Expected default configs at {configsDir}"
 
     originalCwd: str = os.getcwd()
     with tempfile.TemporaryDirectory() as tmpDir:
@@ -113,7 +113,7 @@ def testDivinationKeyHasInfoEntry(key: ChatSettingsKey) -> None:
         None
     """
     info = getChatSettingsInfo()
-    assert key in info, f"Missing _chatSettingsInfo entry for {key}, dood!"
+    assert key in info, f"Missing _chatSettingsInfo entry for {key}"
 
     entry = info[key]
     assert entry["type"] is ChatSettingsType.STRING
@@ -123,7 +123,7 @@ def testDivinationKeyHasInfoEntry(key: ChatSettingsKey) -> None:
 
 
 def testDivinationKeyPagesMatchSpec() -> None:
-    """System prompts live on LLM_BASE; templates live on BOT_OWNER_SYSTEM, dood!
+    """System prompts live on LLM_BASE; templates live on BOT_OWNER_SYSTEM
 
     Returns:
         None
@@ -151,16 +151,16 @@ def testDefaultsContainDivinationPrompts(defaultsConfigManager: ConfigManager) -
     rawDefaults: Dict[str, str] = botConfig.get("defaults", {})
 
     for key in DIVINATION_KEYS:
-        assert key.value in rawDefaults, f"Missing default for {key.value} in bot.defaults, dood!"
+        assert key.value in rawDefaults, f"Missing default for {key.value} in bot.defaults"
         rawValue: str = rawDefaults[key.value]
-        assert isinstance(rawValue, str) and rawValue.strip(), f"Empty default for {key.value}, dood!"
+        assert isinstance(rawValue, str) and rawValue.strip(), f"Empty default for {key.value}"
 
     # Mirror HandlersManager: build the ChatSettingsValue dict the same way.
     materialised: Dict[ChatSettingsKey, ChatSettingsValue] = {
         ChatSettingsKey(k): ChatSettingsValue(v) for k, v in rawDefaults.items() if k in ChatSettingsKey
     }
     for key in DIVINATION_KEYS:
-        assert key in materialised, f"{key} dropped during ChatSettingsKey filtering, dood!"
+        assert key in materialised, f"{key} dropped during ChatSettingsKey filtering"
         assert isinstance(materialised[key], ChatSettingsValue)
         assert materialised[key].toStr().strip()
 
@@ -177,7 +177,7 @@ def testUserPromptTemplateContainsAllPlaceholders(defaultsConfigManager: ConfigM
     botConfig = defaultsConfigManager.getBotConfig()
     template: str = botConfig.get("defaults", {}).get(ChatSettingsKey.DIVINATION_USER_PROMPT_TEMPLATE.value, "")
     for placeholder in ("{userName}", "{question}", "{layoutName}", "{positionsBlock}", "{cardsBlock}"):
-        assert placeholder in template, f"Placeholder {placeholder} missing from user-prompt template, dood!"
+        assert placeholder in template, f"Placeholder {placeholder} missing from user-prompt template"
 
 
 def testImagePromptTemplateContainsAllPlaceholders(defaultsConfigManager: ConfigManager) -> None:
@@ -192,7 +192,7 @@ def testImagePromptTemplateContainsAllPlaceholders(defaultsConfigManager: Config
     botConfig = defaultsConfigManager.getBotConfig()
     template: str = botConfig.get("defaults", {}).get(ChatSettingsKey.DIVINATION_IMAGE_PROMPT_TEMPLATE.value, "")
     for placeholder in ("{layoutName}", "{spreadDescription}", "{styleHint}"):
-        assert placeholder in template, f"Placeholder {placeholder} missing from image-prompt template, dood!"
+        assert placeholder in template, f"Placeholder {placeholder} missing from image-prompt template"
 
 
 def testDivinationFeatureFlagsLoaded(defaultsConfigManager: ConfigManager) -> None:
@@ -205,10 +205,10 @@ def testDivinationFeatureFlagsLoaded(defaultsConfigManager: ConfigManager) -> No
         None
     """
     divination = defaultsConfigManager.get("divination", {})
-    assert divination, "Missing [divination] section, dood!"
+    assert divination, "Missing [divination] section"
     assert divination.get("enabled") is False
     assert divination.get("tarot-enabled") is True
     assert divination.get("runes-enabled") is True
     assert divination.get("image-generation") is True
     assert divination.get("tools-enabled") is True
-    # allow-reversed config keys were removed (dead config); nothing more to assert here, dood.
+    # allow-reversed config keys were removed (dead config); nothing more to assert here

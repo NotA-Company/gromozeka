@@ -120,7 +120,7 @@ class MyService:
 **Why:** Allows read replicas, separate databases for different data types, cross-bot data reading
 
 **Architecture Principles:**
-- **Repository Pattern**: 14 specialized repositories handle specific data domains (chat_info, chat_messages, chat_settings, chat_users, chat_summarization, cache, spam, user_data, media_attachments, delayed_tasks, common, chat_search, chat_embeddings, divinations)
+- **Repository Pattern**: 15 specialized repositories handle specific data domains (chat_info, chat_messages, chat_settings, chat_users, chat_summarization, cache, spam, user_data, media_attachments, delayed_tasks, common, chat_search, chat_embeddings, divinations, webhook_updates)
 - **Simple Priority Routing**: `dataSource` param → `chatId` mapping → default source
 - **Readonly Protection**: Sources marked `readonly=True` reject write operations
 - **Cross-Bot Communication**: Can read from external bot databases via `dataSource` param
@@ -170,6 +170,7 @@ timeout = 10
 - `MediaAttachmentsRepository` — Media file attachments
 - `SpamRepository` — Spam detection and messages
 - `UserDataRepository` — User-specific data
+- `WebhookUpdatesRepository` — Max webhook payload storage and consumption (backed by `migration_019`)
 - `BaseRepository` — Abstract base with common functionality
 
 **Implementation Details:**
@@ -238,7 +239,7 @@ timeout = 10
 **Solution:** Wait a configurable delay after the last media item is received before considering a media group complete.
 
 **Architecture Choice:**
-- **Per-Job Configuration**: Each `ResendJob` has its own `mediaGroupDelaySecs` parameter (default: 5.0 seconds)
+- **Per-Job Configuration**: Each `ResendJob` has its own `mediaGroupDelaySecs` parameter (default: 10.0 seconds)
 - **Database Method**: `getMediaGroupLastUpdatedAt()` returns `MAX(created_at)` from `media_groups` table
 - **Processing Logic**: `_dtCronJob` checks media group age before processing using `utils.getAgeInSecs()`
 
@@ -254,7 +255,7 @@ timeout = 10
 id = "telegram-to-max"
 sourceChatId = -1001234567890
 targetChatId = 9876543210
-mediaGroupDelaySecs = 5.0  # Optional, defaults to 5.0
+mediaGroupDelaySecs = 10.0  # Optional, defaults to 10.0
 ```
 
 **Edge Cases Handled:**
@@ -434,6 +435,50 @@ await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
 
 ---
 
+### ADR-013: Max Webhook Receiver (Two-Process Local API Proxy)
+
+**Decision:** Max Messenger webhook ingestion runs as a separate standalone aiohttp process ([`internal/max_webhook_receiver/`](../../internal/max_webhook_receiver/)) that accepts webhook POSTs from the Max API, stores raw payloads in the local `webhook_updates` table, and serves them back to the bot via a GET /updates endpoint that speaks the Max API protocol.
+
+**Why:** Max's webhook model pushes updates to an HTTPS URL the operator controls. Rather than threading a second ingestion path into the bot process, a thin local receiver decouples the public HTTPS endpoint from the bot: it persists payloads durably, then the bot's existing long-poll loop consumes them unchanged.
+
+**Two-process data flow:**
+
+```
+   Max API ──POST /webhook──▶  webhook receiver process
+   (platform-api2.max.ru)      (internal/max_webhook_receiver/, aiohttp.web)
+                                       │
+                                       │ addUpdate() / db.webhookUpdates
+                                       ▼
+                               ┌──────────────────┐
+                               │ webhook_updates  │  (shared SQLite)
+                               └──────────────────┘
+                                       ▲
+                                       │ getUnprocessedUpdates() / markProcessed()
+                                       │
+   bot process (MaxBotApplication) ────┘
+       MaxBotClient._pollingLoop()
+       basePollingUrl = http://127.0.0.1:8443
+       polls GET /updates  (Max API protocol: {"updates": [...], "marker": ...})
+```
+
+**Components:**
+- **Receiver process** — `internal/max_webhook_receiver/__main__.py` (`python -m internal.max_webhook_receiver`). aiohttp.web app (`app.py`) with two routes: `POST <webhook-path>` (verifies `X-Max-Bot-Api-Secret`, stores raw body) and `GET /updates` (long-polls `webhook_updates`, marks rows processed, returns Max-shaped `{"updates": [...], "marker": ...}`). The webhook handler returns **500 on a DB write failure so the Max API retries the delivery** rather than silently acknowledging a transient loss (full status map: 403 bad secret, 400 malformed JSON, 500 DB write failure, 200 success). A background cleanup task reaps processed rows past a 1h TTL.
+- **`webhook_updates` table** (`migration_019`) — durable buffer between the two processes. The receiver only writes; the bot (via the receiver's GET /updates handler) reads and marks processed. See [`database.md`](database.md) and [`docs/database-schema.md`](../../docs/database-schema.md).
+- **`MaxBotClient.basePollingUrl`** ([`lib/max_bot/client.py`](../../lib/max_bot/client.py)) — when set, the client's existing `_pollingLoop()` routes getUpdates to the local receiver's `GET /updates` instead of `platform-api2.max.ru`. Trailing slash is stripped at construction. Authenticated via `Authorization` header when the receiver's `get-updates-secret` is set.
+- **Webhook subscription** — managed by the bot process. When `webhook-receiver.register-webhook = true` (the default), the bot calls Max's `POST /subscriptions` on startup; when `webhook-receiver.unregister-webhook = true`, it calls `DELETE /subscriptions` on shutdown. The two keys default independently — `register-webhook` defaults to `true`, `unregister-webhook` defaults to `false` — so a bot restart does not tear down the Max subscription unless unregistering is explicitly opted in.
+
+**Key invariants:**
+- The bot never writes to `webhook_updates` directly in webhook mode — the receiver is the sole writer. The bot's poll loop hits the receiver's `GET /updates`, which internally calls `db.webhookUpdates.getUnprocessedUpdates()` / `markProcessed()` on the shared database.
+- **Delivery semantics** are controlled by `webhook-receiver.mark-on-subsequent-poll` (default `true` = deferred/at-least-once): `GET /updates` does NOT mark rows on read; instead it returns a compound marker `"{received_at}|{id}"` for the last served row, and rows are acknowledged via `markProcessedBeforeMarker()` only when the bot passes that marker back on its next poll. A bot crash between polls leaves the rows unprocessed → re-delivered. When `false` (immediate/at-most-once), rows are marked processed on read via `markProcessed()` and the response carries `marker: null` (there is nothing to acknowledge on the next poll); a crash after serving loses them. A malformed marker passed back by a client is caught narrowly (`ValueError`/`OverflowError`/`TypeError` raised inside `_parseMarker`) and treated as a no-marker poll rather than 500-ing — this prevents the bot from wedging in an infinite retry loop against the same bad marker.
+- `webhook-receiver.enabled = false` keeps the bot on normal long-polling to the real Max API; the receiver process still runs and still writes any webhook POSTs it receives, but the bot ignores them. This is the safe default.
+- The receiver refuses to start when `webhook-receiver.secret` is empty or an unresolved `${VAR}` placeholder (it would otherwise be a publicly-known secret). The bot mirrors this guard in webhook mode: whenever `webhook-receiver.enabled = true` it rejects unresolved `${VAR}` placeholders in both `secret` and `get-updates-secret` at startup (an unresolved placeholder would otherwise be sent verbatim as a credential — to the Max API for `secret`, or as the `Authorization` header to the local receiver for `get-updates-secret`), and additionally requires `secret` to be non-empty when `register-webhook = true`.
+
+**Local API proxy pattern:** the receiver's `GET /updates` re-shapes stored rows into the Max API `UpdateList` response, so the bot's polling code path is identical whether it points at the receiver or the real platform API. Only the base URL differs. This keeps the webhook feature a config flip rather than a parallel code path.
+
+**Config:** `[webhook-receiver]` in [`configs/00-defaults/webhook-receiver.toml`](../../configs/00-defaults/webhook-receiver.toml). See [`configuration.md`](configuration.md) §`[webhook-receiver]`.
+
+---
+
 ## 2. Dependency Map
 
 ### 2.1 Component Dependency Graph
@@ -462,9 +507,23 @@ GromozekBot (main.py)
                 ├── Database (via self.db)
                 ├── LLMManager (via self.llmService.getLLMManager())
                 ├── ConfigManager (via self.configManager)
-                └── TheBot (internal/bot/common/bot.py) [injected]
-                    ├── CacheService.getInstance()
-                    └── Platform API (Telegram ExtBot or MaxBotClient)
+            └── TheBot (internal/bot/common/bot.py) [injected]
+                ├── CacheService.getInstance()
+                └── Platform API (Telegram ExtBot or MaxBotClient)
+                        (Max webhook mode: MaxBotClient polls the local
+                         webhook receiver's GET /updates via basePollingUrl
+                         instead of platform-api2.max.ru — see ADR-013)
+```
+
+**Separate process — Max webhook receiver** (only when webhook mode is deployed; see ADR-013):
+
+```
+python -m internal.max_webhook_receiver  (aiohttp.web)
+├── ConfigManager (internal/config/manager.py)
+├── Database (internal/database/database.py)  [shared SQLite with the bot]
+│   └── webhookUpdates repository  →  webhook_updates table (migration_019)
+├── POST <webhook-path>  ← Max API webhook POSTs
+└── GET /updates          → MaxBotClient._pollingLoop() via basePollingUrl
 ```
 
 ### 2.2 Service Initialization Order (Critical)

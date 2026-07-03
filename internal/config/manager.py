@@ -155,11 +155,11 @@ class ConfigManager:
         dirPath = Path(directory)
 
         if not dirPath.exists():
-            logger.warning(f"Config directory {directory} does not exist, skipping, dood!")
+            logger.warning(f"Config directory {directory} does not exist, skipping")
             return tomlFiles
 
         if not dirPath.is_dir():
-            logger.warning(f"Config path {directory} is not a directory, skipping, dood!")
+            logger.warning(f"Config path {directory} is not a directory, skipping")
             return tomlFiles
 
         try:
@@ -247,7 +247,7 @@ class ConfigManager:
 
             # Load and merge configs from directories
             if self.configDirs:
-                logger.info(f"Scanning {len(self.configDirs)} config directories for .toml files, dood!")
+                logger.info(f"Scanning {len(self.configDirs)} config directories for .toml files")
 
                 for configDir in self.configDirs:
                     tomlFiles = self._findTomlFilesRecursive(configDir)
@@ -268,7 +268,7 @@ class ConfigManager:
                 logger.error("Bot token not found in configuration!")
                 sys.exit(1)
 
-            logger.info("Configuration loaded and merged successfully, dood!")
+            logger.info("Configuration loaded and merged successfully")
             return config
 
         except Exception as e:

@@ -408,6 +408,8 @@ class ChatSettingsKey(StrEnum):
     # Reaction settings
     REACTION_AUTHOR_TO_EMOJI_MAP = "reaction-author-to-emoji-map"
     """JSON mapping user IDs/usernames to reaction emojis."""
+    DELETE_AUTHOR_LIST = "delete-author-list"
+    """JSON list of authors (user IDs/usernames) whose messages are auto-deleted."""
     # Message management
     DELETE_JOIN_MESSAGES = "delete-join-messages"
     """Whether to delete user join messages."""
@@ -946,7 +948,7 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "long": ("Порог для блокировки пользователя при автоматической проверке на спам" "(0-100)"),
         "page": ChatSettingsPage.SPAM,
     },
-    # # Bayes filter settings, dood!
+    # # Bayes filter settings
     ChatSettingsKey.BAYES_ENABLED: {
         "type": ChatSettingsType.BOOL,
         "short": "Включить Bayes фильтр спама",
@@ -1010,6 +1012,12 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "type": ChatSettingsType.STRING,
         "short": "JSON-маппинг автора сообщения к реакции",
         "long": ("Используй команды `/set_reaction`|`/unset_reaction` для управления этой настройкой."),
+        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
+    },
+    ChatSettingsKey.DELETE_AUTHOR_LIST: {
+        "type": ChatSettingsType.STRING,
+        "short": "JSON-список авторов, чьи сообщения удаляются",
+        "long": ("Используй команды `/set_delete_author`|`/unset_delete_author` для управления этой настройкой."),
         "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
     },
     #

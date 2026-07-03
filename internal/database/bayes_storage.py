@@ -48,7 +48,7 @@ class DatabaseBayesStorage(BayesStorageInterface):
         """
         self.db = db
         self.dataSource = dataSource
-        logger.info("Initialized DatabaseBayesStorage, dood!")
+        logger.info("Initialized DatabaseBayesStorage")
 
     async def getTokenStats(self, tokens: Iterable[str], chatId: Optional[int] = None) -> Dict[str, TokenStats]:
         """
@@ -93,7 +93,7 @@ class DatabaseBayesStorage(BayesStorageInterface):
                 )
             return ret
         except Exception as e:
-            logger.error(f"Failed to get token stats for '{tokens}': {e}, dood!")
+            logger.error(f"Failed to get token stats for '{tokens}': {e}")
             return {}
 
     async def getClassStats(self, is_spam: bool, chat_id: Optional[int] = None) -> ClassStats:
@@ -122,7 +122,7 @@ class DatabaseBayesStorage(BayesStorageInterface):
                 return ClassStats(message_count=row["message_count"], token_count=row["token_count"])
             return ClassStats(message_count=0, token_count=0)
         except Exception as e:
-            logger.error(f"Failed to get class stats for is_spam={is_spam}: {e}, dood!")
+            logger.error(f"Failed to get class stats for is_spam={is_spam}: {e}")
             return ClassStats(message_count=0, token_count=0)
 
     async def updateTokenStats(
@@ -168,7 +168,7 @@ class DatabaseBayesStorage(BayesStorageInterface):
             )
             return True
         except Exception as e:
-            logger.error(f"Failed to update token stats for '{token}': {e}, dood!")
+            logger.error(f"Failed to update token stats for '{token}': {e}")
             return False
 
     async def updateClassStats(
@@ -208,7 +208,7 @@ class DatabaseBayesStorage(BayesStorageInterface):
             )
             return True
         except Exception as e:
-            logger.error(f"Failed to update class stats for is_spam={isSpam}: {e}, dood!")
+            logger.error(f"Failed to update class stats for is_spam={isSpam}: {e}")
             return False
 
     async def getAllTokens(self, chatId: Optional[int] = None) -> List[str]:
@@ -233,7 +233,7 @@ class DatabaseBayesStorage(BayesStorageInterface):
             )
             return [row["token"] for row in rows]
         except Exception as e:
-            logger.error(f"Failed to get all tokens: {e}, dood!")
+            logger.error(f"Failed to get all tokens: {e}")
             return []
 
     async def getVocabularySize(self, chatId: Optional[int] = None) -> int:
@@ -257,7 +257,7 @@ class DatabaseBayesStorage(BayesStorageInterface):
             )
             return row["vocab_size"] if row else 0
         except Exception as e:
-            logger.error(f"Failed to get vocabulary size: {e}, dood!")
+            logger.error(f"Failed to get vocabulary size: {e}")
             return 0
 
     async def getModelStats(self, chatId: Optional[int] = None) -> BayesModelStats:
@@ -304,7 +304,7 @@ class DatabaseBayesStorage(BayesStorageInterface):
                 chat_id=chatId,
             )
         except Exception as e:
-            logger.error(f"Failed to get model stats: {e}, dood!")
+            logger.error(f"Failed to get model stats: {e}")
             return BayesModelStats(
                 total_spam_messages=0, total_ham_messages=0, total_tokens=0, vocabulary_size=0, chat_id=chatId
             )
@@ -329,7 +329,7 @@ class DatabaseBayesStorage(BayesStorageInterface):
                         ParametrizedQuery("DELETE FROM bayes_classes WHERE chat_id IS NULL"),
                     ]
                 )
-                logger.info("Cleared global Bayes statistics, dood!")
+                logger.info("Cleared global Bayes statistics")
             else:
                 # Clear specific chat
                 await sqlProvider.batchExecute(
@@ -338,10 +338,10 @@ class DatabaseBayesStorage(BayesStorageInterface):
                         ParametrizedQuery("DELETE FROM bayes_classes WHERE chat_id = :chatId", {"chatId": chatId}),
                     ]
                 )
-                logger.info(f"Cleared Bayes statistics for chat {chatId}, dood!")
+                logger.info(f"Cleared Bayes statistics for chat {chatId}")
             return True
         except Exception as e:
-            logger.error(f"Failed to clear stats: {e}, dood!")
+            logger.error(f"Failed to clear stats: {e}")
             return False
 
     async def batchUpdateTokens(self, tokenUpdates: List[Dict[str, Any]], chatId: Optional[int] = None) -> bool:
@@ -389,10 +389,10 @@ class DatabaseBayesStorage(BayesStorageInterface):
                     },
                 )
 
-            logger.debug(f"Batch updated {len(tokenUpdates)} tokens, dood!")
+            logger.debug(f"Batch updated {len(tokenUpdates)} tokens")
             return True
         except Exception as e:
-            logger.error(f"Failed to batch update tokens: {e}, dood!")
+            logger.error(f"Failed to batch update tokens: {e}")
             return False
 
     async def getTopSpamTokens(self, limit: int = 10, chatId: Optional[int] = None) -> List[TokenStats]:
@@ -434,7 +434,7 @@ class DatabaseBayesStorage(BayesStorageInterface):
                 )
             return results
         except Exception as e:
-            logger.error(f"Failed to get top spam tokens: {e}, dood!")
+            logger.error(f"Failed to get top spam tokens: {e}")
             return []
 
     async def getTopHamTokens(self, limit: int = 10, chatId: Optional[int] = None) -> List[TokenStats]:
@@ -476,7 +476,7 @@ class DatabaseBayesStorage(BayesStorageInterface):
                 )
             return results
         except Exception as e:
-            logger.error(f"Failed to get top ham tokens: {e}, dood!")
+            logger.error(f"Failed to get top ham tokens: {e}")
             return []
 
     async def cleanupRareTokens(self, minCount: int = 2, chatId: Optional[int] = None) -> None:
@@ -500,6 +500,6 @@ class DatabaseBayesStorage(BayesStorageInterface):
                 """,
                 {"min_count": minCount, "chat_id": chatId},
             )
-            logger.info(f"Removed rare tokens (min_count={minCount}), dood!")
+            logger.info(f"Removed rare tokens (min_count={minCount})")
         except Exception as e:
-            logger.error(f"Failed to cleanup rare tokens: {e}, dood!")
+            logger.error(f"Failed to cleanup rare tokens: {e}")

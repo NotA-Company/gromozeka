@@ -394,7 +394,7 @@ class TelegramBotApplication:
         # Setup handlers
         self.setupHandlers()
 
-        logger.info("Starting Gromozeka Telegram bot, dood!")
+        logger.info("Starting Gromozeka Telegram bot")
 
         # PTB's run_polling() calls asyncio.get_event_loop() internally,
         # which returns the loop main() set. close_loop=False so main.py's

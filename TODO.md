@@ -30,6 +30,7 @@
 - [ ] Add support of periodic tasks (summarization for example)
 - [ ] Add cron for analyzing and remembering knowledge from messages
 - [ ] Think, how to add summarization of chat to context of random answers
+- [ ] better description + find users by full name
 
 # Also:
 - [ ] Add coverage badge?

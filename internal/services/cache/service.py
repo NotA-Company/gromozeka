@@ -295,7 +295,7 @@ class CacheService:
             QueueService.getInstance().registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, self._doExitHandler)
             self.initialized = True
             """Flag indicating whether the service has been initialized."""
-            logger.info("CacheService initialized, dood!")
+            logger.info("CacheService initialized")
 
     @classmethod
     def getInstance(cls) -> "CacheService":
@@ -370,7 +370,7 @@ class CacheService:
         self.database = database
         # Load persisted data on injection
         await self.loadFromDatabase()
-        logger.info("Database injected into CacheService, dood!")
+        logger.info("Database injected into CacheService")
 
     async def _doExitHandler(self, task: DelayedTask) -> None:
         """Handle delayed exit task.
@@ -385,7 +385,7 @@ class CacheService:
         if self.database:
             await self.persistAll()
         else:
-            logger.error("doExit: database wrapper not injected, dood!")
+            logger.error("doExit: database wrapper not injected")
 
     # ## Convenience methods
 
@@ -412,7 +412,7 @@ class CacheService:
         self.chats.set(key, chatCache)
 
         # TODO: Should we persist it in DB to ensure it won't be wanished from cache?
-        logger.debug(f"Updated default chat settings for {key}, dood!")
+        logger.debug(f"Updated default chat settings for {key}")
 
     def getDefaultChatSettings(self, key: Optional[str]) -> Dict["ChatSettingsKey", "ChatSettingsValue"]:
         """Get default chat settings for a given key from the cache.
@@ -466,7 +466,7 @@ class CacheService:
                 }
                 chatCache["settings"] = settings
                 self.chats.set(chatId, chatCache)
-                logger.debug(f"Loaded chat settings for {chatId} from DB, dood!")
+                logger.debug(f"Loaded chat settings for {chatId} from DB")
 
         return chatCache.get("settings", {})
 
@@ -514,7 +514,7 @@ class CacheService:
         else:
             logger.error(f"No dbWrapper found, can't save chatSettings for {chatId}")
 
-        logger.debug(f"Updated chat settings for {chatId}, dood!")
+        logger.debug(f"Updated chat settings for {chatId}")
 
     async def unsetChatSetting(self, chatId: int, key: "ChatSettingsKey") -> None:
         """Unset specified chat setting for a specific chat.
@@ -551,7 +551,7 @@ class CacheService:
             else:
                 logger.error(f"No dbWrapper found, can't unset chatSettings for {chatId}")
 
-        logger.debug(f"Unset chat setting {key} for {chatId}, dood!")
+        logger.debug(f"Unset chat setting {key} for {chatId}")
 
     # Cached chat settings
     def getCachedChatSettings(
@@ -612,7 +612,7 @@ class CacheService:
         chatCache["cachedSettings"] = settings
         self.chats.set(chatId, chatCache)
 
-        logger.debug(f"cache chat settings for {chatId}, dood!")
+        logger.debug(f"cache chat settings for {chatId}")
 
     def clearCachedChatSettings(self, chatId: int) -> None:
         """Clear cached chat settings for a specific chat.
@@ -628,7 +628,7 @@ class CacheService:
         if "cachedSettings" in chatCache:
             del chatCache["cachedSettings"]
             self.chats.set(chatId, chatCache)
-        logger.debug(f"Cleared cached chat settings for {chatId}, dood!")
+        logger.debug(f"Cleared cached chat settings for {chatId}")
 
     # # Chat Info
 
@@ -690,7 +690,7 @@ class CacheService:
             )
         else:
             logger.error(f"No dbWrapper found, can't save chat info for {chatId}")
-        logger.debug(f"Updated chat info for {chatId}, dood!")
+        logger.debug(f"Updated chat info for {chatId}")
 
     # # Chat Topics Info
 
@@ -717,7 +717,7 @@ class CacheService:
                 for topicInfo in chatTopics:
                     chatCache["topicInfo"][topicInfo["topic_id"]] = topicInfo
                 self.chats.set(chatId, chatCache)
-                logger.debug(f"Loaded topics info for {chatId} from DB, found {len(chatTopics)} topics, dood!")
+                logger.debug(f"Loaded topics info for {chatId} from DB, found {len(chatTopics)} topics")
             else:
                 logger.error(f"No dbWrapper found, can't load topics info for {chatId}")
                 return {}
@@ -780,7 +780,7 @@ class CacheService:
             )
         else:
             logger.error(f"No dbWrapper found, can't save topic info for {chatId}:{topicId}")
-        logger.debug(f"Updated topic info for {chatId}:{topicId}, dood!")
+        logger.debug(f"Updated topic info for {chatId}:{topicId}")
 
     # Chat admin list
     def getChatAdmins(self, chatId: int, ttl: Optional[int] = 300) -> Optional[Dict[int, Tuple[str, str]]]:
@@ -834,7 +834,7 @@ class CacheService:
         }
         chatCache["admins"] = adminsDict
         self.chats.set(chatId, chatCache)
-        logger.debug(f"Updated chat admins list for {chatId}, dood!")
+        logger.debug(f"Updated chat admins list for {chatId}")
 
     # ## ChatUser UserData
     def _getChatUserKey(self, chatId: int, userId: int) -> str:
@@ -879,7 +879,7 @@ class CacheService:
                 }
                 userCache["data"] = userData
                 self.chatUsers.set(userKey, userCache)
-                logger.debug(f"Loaded user data for {userKey} from DB, dood!")
+                logger.debug(f"Loaded user data for {userKey} from DB")
             else:
                 logger.error(f"No dbWrapper found, can't load user data for {userKey}")
                 userCache["data"] = {}
@@ -930,7 +930,7 @@ class CacheService:
         else:
             logger.error(f"No dbWrapper found, can't save user data for {userKey} ({key}->{value})")
 
-        logger.debug(f"Updated user data for {userKey}, key={key}, dood!")
+        logger.debug(f"Updated user data for {userKey}, key={key}")
 
     async def unsetChatUserData(self, chatId: int, userId: int, key: str) -> None:
         """Unset user data for a specific chat.
@@ -967,7 +967,7 @@ class CacheService:
             await self.database.userData.deleteUserData(userId=userId, chatId=chatId, key=key)
         else:
             logger.error(f"No dbWrapper found, can't delete user data for {userKey} ({key})")
-        logger.debug(f"Unset user data for {userKey}, key={key}, dood!")
+        logger.debug(f"Unset user data for {userKey}, key={key}")
 
     async def clearChatUserData(self, chatId: int, userId: int) -> None:
         """Clear all user data for a specific chat.
@@ -1000,7 +1000,7 @@ class CacheService:
 
         userCache.pop("data", None)
         self.chatUsers.set(userKey, userCache)
-        logger.debug(f"Cleared user data for {userKey}, dood!")
+        logger.debug(f"Cleared user data for {userKey}")
 
     # ## User State
 
@@ -1045,7 +1045,7 @@ class CacheService:
         userState[stateKey] = value
         self.users.set(userId, userState)
         self.dirtyKeys[CacheNamespace.USERS].add(userId)
-        logger.debug(f"Updated user state for {userId}, key={stateKey}, dood!")
+        logger.debug(f"Updated user state for {userId}, key={stateKey}")
 
     def clearUserState(self, userId: int, stateKey: Optional[UserActiveActionEnum] = None) -> None:
         """Clear user state from cache.
@@ -1070,7 +1070,7 @@ class CacheService:
         stateList = [stateKey] if stateKey else [k for k in UserActiveActionEnum]
         for k in stateList:
             userState.pop(k, None)
-            logger.debug(f"Cleared user state for #{userId}, key={stateKey}, dood!")
+            logger.debug(f"Cleared user state for #{userId}, key={stateKey}")
 
         self.users.set(userId, userState)
         self.dirtyKeys[CacheNamespace.USERS].add(userId)
@@ -1107,7 +1107,7 @@ class CacheService:
 
         self.chatPersistent.set(chatId, chatPCache)
         self.dirtyKeys[CacheNamespace.CHAT_PERSISTENT].add(chatId)
-        logger.debug(f"Updated spamWarningMessage {messageId} for {chatId}, dood!")
+        logger.debug(f"Updated spamWarningMessage {messageId} for {chatId}")
 
     def removeSpamWarningMessageInfo(self, chatId: int, messageId: MessageId) -> None:
         """Remove spam warning message info from persistent cache.
@@ -1125,7 +1125,7 @@ class CacheService:
 
         self.chatPersistent.set(chatId, chatPCache)
         self.dirtyKeys[CacheNamespace.CHAT_PERSISTENT].add(chatId)
-        logger.debug(f"Removed spamWarningMessage {messageId} for {chatId}, dood!")
+        logger.debug(f"Removed spamWarningMessage {messageId} for {chatId}")
 
     # Common methods
     def clearNamespace(self, namespace: CacheNamespace) -> None:
@@ -1145,7 +1145,7 @@ class CacheService:
         # Mark all keys dirty for deleteing them on save
         self.dirtyKeys[namespace].update(self._caches[namespace].keys())
         self._caches[namespace].clear()
-        logger.info(f"Cleared namespace {namespace.value}, dood!")
+        logger.info(f"Cleared namespace {namespace.value}")
 
     async def persistAll(self) -> None:
         """Persist all dirty entries to database.
@@ -1166,7 +1166,7 @@ class CacheService:
             - Logs statistics about the operation
         """
         if not self.database:
-            logger.error("Cannot persist: no database wrapper, dood!")
+            logger.error("Cannot persist: no database wrapper")
             return
 
         totalPersisted = 0
@@ -1199,7 +1199,7 @@ class CacheService:
             # Clear dirty markers
             dirtyKeys.clear()
 
-        logger.info(f"Persisted {totalPersisted} and dropped {totalDropped} cache entries, dood!")
+        logger.info(f"Persisted {totalPersisted} and dropped {totalDropped} cache entries")
 
     async def loadFromDatabase(self) -> None:
         """Load persisted cache from database on startup.
@@ -1219,7 +1219,7 @@ class CacheService:
             - Logs errors for invalid entries
         """
         if not self.database:
-            logger.warning("Cannot load: no database wrapper, dood!")
+            logger.warning("Cannot load: no database wrapper")
             return
 
         try:
@@ -1253,13 +1253,13 @@ class CacheService:
                         break
 
                 if namespace is None:
-                    logger.error(f"Unknown namespace: {namespaceStr} in stored data {item}, dood!")
+                    logger.error(f"Unknown namespace: {namespaceStr} in stored data {item}")
                     ignoredCount += 1
                     continue
 
                 # Skip MEMORY_ONLY namespaces
                 if namespace.getPersistenceLevel() == CachePersistenceLevel.MEMORY_ONLY:
-                    logger.warning(f"Skipping MEMORY_ONLY namespace: {namespaceStr} (stored data is {item}), dood!")
+                    logger.warning(f"Skipping MEMORY_ONLY namespace: {namespaceStr} (stored data is {item})")
                     ignoredCount += 1
                     continue
 
@@ -1272,10 +1272,10 @@ class CacheService:
                 cache.set(key, value, ensureTypes=True)  # pyright: ignore[reportArgumentType]
                 loadedCount += 1
 
-            logger.info(f"Loaded {loadedCount} and ignored {ignoredCount} cache entries from database, dood!")
+            logger.info(f"Loaded {loadedCount} and ignored {ignoredCount} cache entries from database")
 
         except Exception as e:
-            logger.error(f"Error loading cache from database: {e}, dood!")
+            logger.error(f"Error loading cache from database: {e}")
             logger.exception(e)
 
     async def _persistCacheEntry(self, namespace: CacheNamespace, key: str, value: Dict[str, Any]) -> None:
@@ -1304,7 +1304,7 @@ class CacheService:
                 value=serialized,
             )
         except Exception as e:
-            logger.error(f"Error persisting cache entry {namespace.value}:{key}: {e}, dood!")
+            logger.error(f"Error persisting cache entry {namespace.value}:{key}: {e}")
 
     def getStats(self) -> Dict[str, Any]:
         """Get cache statistics.

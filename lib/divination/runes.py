@@ -1,4 +1,4 @@
-"""Elder Futhark runic divination system, dood!
+"""Elder Futhark runic divination system
 
 Reversals are not used for runes in this library: runic readings interpret
 each rune in its upright meaning regardless of orientation.

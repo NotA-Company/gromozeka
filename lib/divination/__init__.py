@@ -1,4 +1,4 @@
-"""Divination library — tarot and runes spreads for the Gromozeka bot, dood!
+"""Divination library — tarot and runes spreads for the Gromozeka bot
 
 This package is intentionally pure: it contains deck data, layout definitions,
 drawing logic, prompt assembly, and Russian localisation, but it knows nothing

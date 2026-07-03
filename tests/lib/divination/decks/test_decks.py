@@ -8,7 +8,7 @@ from lib.divination.decks.tarot_rws import TAROT_RWS_DECK
 
 
 def testTarotDeckHas78UniqueIds() -> None:
-    """The RWS deck must contain exactly 78 cards with unique ids, dood!"""
+    """The RWS deck must contain exactly 78 cards with unique ids"""
     assert len(TAROT_RWS_DECK) == 78
     ids: Set[str] = {symbol.id for symbol in TAROT_RWS_DECK}
     assert len(ids) == 78
@@ -36,7 +36,7 @@ def testTarotNamesAreUnique() -> None:
 
 
 def testTarotReversedMeaningsArePresent() -> None:
-    """Every RWS card must carry a non-empty reversed meaning, dood!"""
+    """Every RWS card must carry a non-empty reversed meaning"""
     for symbol in TAROT_RWS_DECK:
         assert symbol.meaningReversed is not None
         assert symbol.meaningReversed.strip() != ""
@@ -90,14 +90,14 @@ def testRuneAettAndNumbersAreContinuous() -> None:
 
 
 def testRuneGlyphsArePresent() -> None:
-    """All 24 runes must carry a non-None, non-empty ``glyph`` field, dood!"""
+    """All 24 runes must carry a non-None, non-empty ``glyph`` field"""
     for rune in RUNES_ELDER_FUTHARK_DECK:
         assert rune.glyph is not None, f"Rune {rune.name!r} has no glyph"
         assert rune.glyph != "", f"Rune {rune.name!r} has an empty glyph"
 
 
 def testRuneGlyphsAreSingleRunicCharacter() -> None:
-    """Each rune glyph must be a single character in the Runic Unicode block (U+16A0–U+16F8), dood!"""
+    """Each rune glyph must be a single character in the Runic Unicode block (U+16A0–U+16F8)"""
     for rune in RUNES_ELDER_FUTHARK_DECK:
         assert rune.glyph is not None
         assert len(rune.glyph) == 1, f"Rune {rune.name!r} glyph {rune.glyph!r} is not a single character"
@@ -108,13 +108,13 @@ def testRuneGlyphsAreSingleRunicCharacter() -> None:
 
 
 def testRuneGlyphsAreUnique() -> None:
-    """The 24 runes must all have distinct glyphs — no duplicates, dood!"""
+    """The 24 runes must all have distinct glyphs — no duplicates"""
     glyphs: list[str] = [rune.glyph for rune in RUNES_ELDER_FUTHARK_DECK if rune.glyph is not None]
     assert len(glyphs) == 24
     assert len(set(glyphs)) == 24, f"Duplicate glyphs found: {Counter(glyphs).most_common()}"
 
 
 def testTarotGlyphsAreNone() -> None:
-    """All 78 tarot cards must have ``glyph=None`` (no canonical single character), dood!"""
+    """All 78 tarot cards must have ``glyph=None`` (no canonical single character)"""
     for card in TAROT_RWS_DECK:
         assert card.glyph is None, f"Tarot card {card.name!r} unexpectedly has glyph {card.glyph!r}"

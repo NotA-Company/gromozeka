@@ -1,5 +1,5 @@
 """Static localisation tables for divination symbol names, layout names and
-positions, dood!
+positions
 
 English is the source of truth in :mod:`lib.divination`; this module pairs
 each English string with localised forms keyed by language code. Only
@@ -158,7 +158,7 @@ POSITION_NAMES: Dict[str, Dict[str, str]] = {
     "Family": {"ru": "Семья"},
     "Hopes": {"ru": "Надежды"},
 }
-"""Localisation table for layout position names used in v1 layouts, dood!"""
+"""Localisation table for layout position names used in v1 layouts"""
 
 
 LAYOUT_NAMES: Dict[str, Dict[str, str]] = {
@@ -176,7 +176,7 @@ LAYOUT_NAMES: Dict[str, Dict[str, str]] = {
 
 
 def tr(table: Mapping[str, Mapping[str, str]], enKey: str, lang: str) -> str:
-    """Translate ``enKey`` to ``lang`` using ``table``, dood!
+    """Translate ``enKey`` to ``lang`` using ``table``
 
     Falls back to ``enKey`` if either the key is missing entirely or the key
     is present but has no entry for ``lang``. This way callers can ask for

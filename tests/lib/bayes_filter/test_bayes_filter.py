@@ -467,7 +467,7 @@ async def test_bayes_filter() -> None:
         config = BayesConfig(perChatStats=True, alpha=1.0, minTokenCount=1, debugLogging=True)  # Lower for testing
         bayes_filter = NaiveBayesFilter(storage, config)
 
-        logger.info("=== Testing Bayes Filter, dood! ===")
+        logger.info("=== Testing Bayes Filter ===")
 
         # Test 1: Classification without training (should return neutral)
         logger.info("Test 1: Classification without training")
@@ -573,7 +573,7 @@ async def test_bayes_filter() -> None:
         removed = await bayes_filter.cleanup_rare_tokens(min_count=2, chat_id=12345)
         logger.info(f"Removed {removed} rare tokens")
 
-        logger.info("=== All tests passed! Bayes filter is working correctly, dood! ===")
+        logger.info("=== All tests passed! Bayes filter is working correctly ===")
 
     finally:
         # Cleanup
@@ -597,7 +597,7 @@ async def test_tokenizer() -> None:
     Raises:
         AssertionError: If any test assertion fails.
     """
-    logger.info("=== Testing Tokenizer, dood! ===")
+    logger.info("=== Testing Tokenizer ===")
 
     # Test basic tokenization
     tokenizer = MessageTokenizer()
@@ -617,7 +617,7 @@ async def test_tokenizer() -> None:
     indicators = tokenizer.estimate_spam_indicators(testText)
     logger.info(f"Spam indicators: {indicators}")
 
-    logger.info("=== Tokenizer tests passed, dood! ===")
+    logger.info("=== Tokenizer tests passed ===")
 
 
 # ============================================================================

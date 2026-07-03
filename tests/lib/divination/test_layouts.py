@@ -1,4 +1,4 @@
-"""Tests for :mod:`lib.divination.layouts`, dood!"""
+"""Tests for :mod:`lib.divination.layouts`"""
 
 from typing import Optional
 
@@ -12,7 +12,7 @@ def testNumSymbolsMatchesPositions() -> None:
 
 
 def testResolveByCanonicalId() -> None:
-    """A layout must be reachable by its exact ``id``, dood!"""
+    """A layout must be reachable by its exact ``id``"""
     resolved: Optional[Layout] = resolveLayout("three_card", layouts=TAROT_LAYOUTS)
     assert resolved is not None
     assert resolved.id == "three_card"
@@ -27,7 +27,7 @@ def testResolveCaseAndSeparatorInsensitive() -> None:
 
 
 def testResolveByAlias() -> None:
-    """Aliases are matched the same way as the canonical id, dood!"""
+    """Aliases are matched the same way as the canonical id"""
     resolved: Optional[Layout] = resolveLayout("celtic-cross", layouts=TAROT_LAYOUTS)
     assert resolved is not None and resolved.id == "celtic_cross"
     resolved = resolveLayout("Кельтский Крест", layouts=TAROT_LAYOUTS)
@@ -43,7 +43,7 @@ def testResolveUnknownReturnsNone() -> None:
 
 
 def testTarotAndRuneLayoutsDoNotShareIds() -> None:
-    """Layout ids must be unique across the two systems, dood!"""
+    """Layout ids must be unique across the two systems"""
     tarotIds: set[str] = {layout.id for layout in TAROT_LAYOUTS}
     runeIds: set[str] = {layout.id for layout in RUNE_LAYOUTS}
     assert tarotIds.isdisjoint(runeIds)

@@ -1,4 +1,4 @@
-"""Tests for :class:`lib.divination.tarot.TarotSystem`, dood!"""
+"""Tests for :class:`lib.divination.tarot.TarotSystem`"""
 
 import random
 from typing import List, Tuple
@@ -22,7 +22,7 @@ def _findLayout(layoutId: str) -> Layout:
     for layout in TAROT_LAYOUTS:
         if layout.id == layoutId:
             return layout
-    raise AssertionError(f"layout {layoutId!r} not found, dood!")
+    raise AssertionError(f"layout {layoutId!r} not found")
 
 
 def testDeckIntegrity() -> None:

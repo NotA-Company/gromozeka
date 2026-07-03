@@ -1,4 +1,4 @@
-"""Golden data testing scaffolding for the divination feature, dood!
+"""Golden data testing scaffolding for the divination feature
 
 This package mirrors the layout of :mod:`tests.lib.openweathermap.golden` and
 :mod:`tests.lib.ai.golden`. Recorded fixtures live under ``data/``, scenario

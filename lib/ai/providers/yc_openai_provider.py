@@ -145,7 +145,7 @@ class YcOpenaiModel(BasicOpenAIModel):
             'gpt://b1g.../yandexgpt/latest'
         """
         if not self._folderId:
-            raise ValueError("folder_id is required for YC OpenAI provider, dood!")
+            raise ValueError("folder_id is required for YC OpenAI provider")
 
         return f"gpt://{self._folderId}/{self.modelId}/{self.modelVersion}"
 
@@ -252,7 +252,7 @@ class YcOpenaiProvider(BasicOpenAIProvider):
         """
         self._folderId = str(config.get("folder_id", ""))
         if not self._folderId:
-            raise ValueError("folder_id is required for YC OpenAI provider, dood!")
+            raise ValueError("folder_id is required for YC OpenAI provider")
 
         super().__init__(config)
 
@@ -333,7 +333,7 @@ class YcOpenaiProvider(BasicOpenAIProvider):
             True
         """
         if not self._client:
-            raise ValueError("YC OpenAI client not initialized, dood!")
+            raise ValueError("YC OpenAI client not initialized")
 
         return YcOpenaiModel(
             provider=self,

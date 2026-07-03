@@ -142,11 +142,11 @@ class FastembedProvider(AbstractLLMProvider):
         """
         if not _FASTEMBED_AVAILABLE:
             raise ImportError(
-                "fastembed package is required for the 'fastembed' provider, dood! "
+                "fastembed package is required for the 'fastembed' provider "
                 "Install it with `pip install fastembed` or remove the provider from config."
             )
         if not isinstance(config, dict):
-            raise TypeError("config must be a dict, dood!")
+            raise TypeError("config must be a dict")
 
         super().__init__(config)
         # Per-model-id lazy construction cache. Keyed by modelId.
@@ -155,7 +155,7 @@ class FastembedProvider(AbstractLLMProvider):
         # for the same model id don't both download/load the model.
         self._modelLocks: Dict[str, Lock] = {}
         self._locksGuard: Lock = Lock()
-        logger.info(f"{self.__class__.__name__} initialized, dood!")
+        logger.info(f"{self.__class__.__name__} initialized")
 
     def addModel(
         self,
@@ -205,13 +205,13 @@ class FastembedProvider(AbstractLLMProvider):
                 ``support_embeddings=true``.
         """
         if name in self.models:
-            logger.warning(f"Model {name} already exists in {self.__class__.__name__}, dood!")
+            logger.warning(f"Model {name} already exists in {self.__class__.__name__}")
             return self.models[name]
 
         if extraConfig is None:
             extraConfig = {}
         if not extraConfig.get("support_embeddings", False):
-            raise ValueError(f"Model {name} ({modelId}) must declare support_embeddings=true, dood!")
+            raise ValueError(f"Model {name} ({modelId}) must declare support_embeddings=true")
 
         model = FastembedModel(
             provider=self,
@@ -223,7 +223,7 @@ class FastembedProvider(AbstractLLMProvider):
             extraConfig=extraConfig,
         )
         self.models[name] = model
-        logger.info(f"Added {self.__class__.__name__} model {name} ({modelId}), " f"dims={model._dimensions}, dood!")
+        logger.info(f"Added {self.__class__.__name__} model {name} ({modelId}), " f"dims={model._dimensions}")
         return model
 
     def _getOrCreateEmbedding(self, modelId: str, fastembedKwargs: Dict[str, Any]) -> TextEmbedding:
@@ -248,7 +248,7 @@ class FastembedProvider(AbstractLLMProvider):
             cached = self._embeddingModels.get(modelId)
             if cached is not None:
                 return cached
-            logger.info(f"Loading fastembed model {modelId}, dood!")
+            logger.info(f"Loading fastembed model {modelId}")
             embedding = TextEmbedding(model_name=modelId, **fastembedKwargs)
             self._embeddingModels[modelId] = embedding
             return embedding
@@ -458,7 +458,7 @@ class FastembedModel(AbstractModel):
         Raises:
             NotImplementedError: Always — this model only generates embeddings.
         """
-        raise NotImplementedError(f"Text generation isn't supported by embedding model {self.modelId}, dood!")
+        raise NotImplementedError(f"Text generation isn't supported by embedding model {self.modelId}")
 
     async def _generateImage(
         self,
@@ -479,4 +479,4 @@ class FastembedModel(AbstractModel):
         Raises:
             NotImplementedError: Always — this model only generates embeddings.
         """
-        raise NotImplementedError(f"Image generation isn't supported by embedding model {self.modelId}, dood!")
+        raise NotImplementedError(f"Image generation isn't supported by embedding model {self.modelId}")

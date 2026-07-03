@@ -1,9 +1,9 @@
 """
-Base handler module for Gromozeka Telegram bot, dood!
+Base handler module for Gromozeka Telegram bot
 
 This module provides the foundational [`BaseBotHandler`](internal/bot/handlers/base.py:66) class that all bot handlers
 inherit from. It includes core functionality for message handling, chat settings management,
-user data management, media processing, and database operations, dood!
+user data management, media processing, and database operations
 
 The module defines:
 - [`HandlerResultStatus`](internal/bot/handlers/base.py:56): Enum for handler processing results
@@ -80,7 +80,7 @@ __all__ = ["HandlerResultStatus", "BaseBotHandler"]
 
 class HandlerResultStatus(Enum):
     """
-    Enum representing the result status of handler processing, dood!
+    Enum representing the result status of handler processing
 
     This enum is used to control the flow of message processing through
     multiple handlers in the handler chain.
@@ -108,7 +108,7 @@ class HandlerResultStatus(Enum):
 
 class BaseBotHandler(CommandHandlerMixin):
     """
-    Base handler class providing core functionality for all bot handlers, dood!
+    Base handler class providing core functionality for all bot handlers
 
     This class serves as the foundation for all specialized bot handlers, providing
     common functionality for message handling, chat management, user data storage,
@@ -138,7 +138,7 @@ class BaseBotHandler(CommandHandlerMixin):
         botProvider: BotProvider,
     ):
         """
-        Initialize the base handler with required services, dood!
+        Initialize the base handler with required services
 
         Args:
             configManager: Configuration manager providing bot settings
@@ -164,7 +164,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
     def getCommandHandlersV2(self) -> Sequence[CommandHandlerInfoV2]:
         """
-        Get all command handlers auto-discovered via decorators, dood!
+        Get all command handlers auto-discovered via decorators
 
         Returns:
             Sequence of [`CommandHandlerInfo`](internal/bot/models/command_handlers.py) objects containing
@@ -197,7 +197,7 @@ class BaseBotHandler(CommandHandlerMixin):
         chatTier: Optional[ChatTier] = None,
     ) -> ChatSettingsDict:
         """
-        Get merged chat settings with tier-aware filtering and optional default fallback, dood!
+        Get merged chat settings with tier-aware filtering and optional default fallback
 
         Retrieves per-chat settings from cache and merges them with global defaults and
         tier-specific defaults when ``returnDefault`` is True. Settings that require a
@@ -309,7 +309,7 @@ class BaseBotHandler(CommandHandlerMixin):
         self, chatId: int, key: ChatSettingsKey, value: ChatSettingsValue, *, user: MessageSender
     ) -> None:
         """
-        Set a specific chat setting, dood!
+        Set a specific chat setting
 
         Updates the setting in cache, which will be persisted to database.
 
@@ -328,7 +328,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
     async def unsetChatSetting(self, chatId: int, key: ChatSettingsKey) -> None:
         """
-        Remove a specific chat setting, reverting to default, dood!
+        Remove a specific chat setting, reverting to default
 
         Args:
             chatId: Telegram chat ID
@@ -362,7 +362,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
     async def _updateEMessageUserData(self, ensuredMessage: EnsuredMessage) -> None:
         """
-        Update an [`EnsuredMessage`](internal/bot/models/ensured_message.py) with current user data, dood!
+        Update an [`EnsuredMessage`](internal/bot/models/ensured_message.py) with current user data
 
         Internal helper method to inject user data into message objects.
 
@@ -375,7 +375,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
     async def checkEMMentionsMe(self, ensuredMessage: EnsuredMessage) -> MentionCheckResult:
         """
-        Check if a message mentions the bot, dood!
+        Check if a message mentions the bot
 
         Checks for bot username mention or custom nicknames configured in chat settings.
 
@@ -402,7 +402,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
     async def getBotId(self) -> int:
         """
-        Get the bot's ID from the bot instance, dood!
+        Get the bot's ID from the bot instance
 
         Returns:
             The bot's ID as an integer
@@ -416,7 +416,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
     async def getBotUserName(self) -> Optional[str]:
         """
-        Get the bot's username from the bot instance, dood!
+        Get the bot's username from the bot instance
 
         Returns:
             The bot's username as a string, or None if not available
@@ -430,7 +430,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
     def isBotOwner(self, user: MessageSender) -> bool:
         """
-        Check if a user is a bot owner, dood!
+        Check if a user is a bot owner
 
         Args:
             user: The user to check
@@ -449,7 +449,7 @@ class BaseBotHandler(CommandHandlerMixin):
         self, user: MessageSender, chat: Optional[MessageRecipient] = None, allowBotOwners: bool = True
     ) -> bool:
         """
-        Check if a user is an admin or bot owner, dood!
+        Check if a user is an admin or bot owner
 
         If chat is None, only checks bot owner status.
         If chat is provided, checks both bot owners and chat administrators.
@@ -477,7 +477,7 @@ class BaseBotHandler(CommandHandlerMixin):
         useMarkdown: bool = True,
     ) -> bool:
         """
-        Edit an existing message in a chat, dood!
+        Edit an existing message in a chat
 
         Args:
             messageId: The ID of the message to edit
@@ -526,7 +526,7 @@ class BaseBotHandler(CommandHandlerMixin):
         toolsHistory: Optional[Sequence[ModelMessage]] = None,
     ) -> List[EnsuredMessage]:
         """
-        Send a message to a chat with optional media and formatting, dood!
+        Send a message to a chat with optional media and formatting
 
         This method handles sending messages with various options including text,
         photos, attachments, inline keyboards, and MarkdownV2 formatting. It also
@@ -662,7 +662,7 @@ class BaseBotHandler(CommandHandlerMixin):
         condenseThread: bool = True,
     ) -> Sequence[ModelMessage]:
         """
-        Get the conversation thread for a message formatted for LLM processing, dood!
+        Get the conversation thread for a message formatted for LLM processing
 
         Retrieves the message thread (conversation history) for a given message,
         formats it according to chat settings, and optionally condenses it to fit
@@ -847,7 +847,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
     async def getChatInfo(self, chatId: int) -> Optional[ChatInfoDict]:
         """
-        Get chat information from cache or database, dood!
+        Get chat information from cache or database
 
         Args:
             chatId: Telegram chat ID
@@ -956,7 +956,7 @@ class BaseBotHandler(CommandHandlerMixin):
         force: bool = False,
     ) -> None:
         """
-        Update forum topic information in cache and database, dood!
+        Update forum topic information in cache and database
 
         Only updates if topic info has changed or force is True.
         Uses cache to avoid unnecessary database writes.
@@ -993,7 +993,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
     async def saveChatMessage(self, message: EnsuredMessage, messageCategory: MessageCategory) -> bool:
         """
-        Save a chat message to the database with full context, dood!
+        Save a chat message to the database with full context
 
         Handles message threading, reply chains, chat/topic info updates,
         and user information updates. Automatically determines root message
@@ -1054,7 +1054,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
     def parseUserMetadata(self, userInfo: Optional[ChatUserDict]) -> UserMetadataDict:
         """
-        Parse user metadata from database record, dood!
+        Parse user metadata from database record
 
         Args:
             userInfo: User info dictionary from database as [`ChatUserDict`](internal/database/models.py)
@@ -1074,7 +1074,7 @@ class BaseBotHandler(CommandHandlerMixin):
         self, chatId: int, userId: int, metadata: UserMetadataDict, isUpdate: bool = False
     ) -> None:
         """
-        Set or update user metadata in database, dood!
+        Set or update user metadata in database
 
         Args:
             chatId: Telegram chat ID
@@ -1100,7 +1100,7 @@ class BaseBotHandler(CommandHandlerMixin):
         repeatInterval: int = 4,
     ) -> TypingManager:
         """
-        Start continuous typing action, dood!
+        Start continuous typing action
 
         Creates and configures a TypingManager that sends typing actions at regular
         intervals until stopped. This is useful for long-running operations to show
@@ -1153,7 +1153,7 @@ class BaseBotHandler(CommandHandlerMixin):
         addChatType: bool = True,
     ) -> str:
         """
-        Get chat title for the given chat info, dood!
+        Get chat title for the given chat info
 
         Args:
             chatInfo: Chat info object
@@ -1190,7 +1190,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
     async def getUserChats(self, userId: int) -> List[ChatInfoDict]:
         """
-        Get all chats for a given user, excluding chats they have left, dood!
+        Get all chats for a given user, excluding chats they have left
 
         Retrieves all chats where the user is a member, filtering out chats
         where the user has left based on their metadata.
@@ -1228,7 +1228,7 @@ class BaseBotHandler(CommandHandlerMixin):
         messages: List[ModelMessage],
     ) -> bool:
         """
-        Parse image content using LLM to generate description, dood!
+        Parse image content using LLM to generate description
 
         Internal method that sends image to configured LLM model for analysis.
         Updates database with generated description or failure status.
@@ -1280,7 +1280,7 @@ class BaseBotHandler(CommandHandlerMixin):
         self, ensuredMessage: EnsuredMessage, prompt: Optional[str] = None
     ) -> MediaProcessingInfo:
         """
-        Process a sticker attachment from message, dood!
+        Process a sticker attachment from message
 
         Extracts sticker metadata (dimensions, emoji, animation status)
         and processes it through the media pipeline.
@@ -1333,7 +1333,7 @@ class BaseBotHandler(CommandHandlerMixin):
         self, ensuredMessage: EnsuredMessage, prompt: Optional[str] = None
     ) -> MediaProcessingInfo:
         """
-        Process a photo attachment from message, dood!
+        Process a photo attachment from message
 
         Selects optimal photo size based on chat settings and processes
         through the media pipeline. May use smaller size for LLM to reduce costs.
@@ -1378,7 +1378,7 @@ class BaseBotHandler(CommandHandlerMixin):
         prompt: Optional[str] = None,
     ) -> MediaProcessingInfo:
         """
-        Process Telegram media attachments (images, videos, stickers, etc.), dood!
+        Process Telegram media attachments (images, videos, stickers, etc.)
 
         Extracts media information from Telegram's _BaseMedium objects and initiates
         asynchronous processing through the internal media pipeline. This method is
@@ -1416,7 +1416,7 @@ class BaseBotHandler(CommandHandlerMixin):
         self, ensuredMessage: EnsuredMessage, prompt: Optional[str] = None
     ) -> Optional[MediaProcessingInfo]:
         """
-        Process Telegram media attachments from a message, dood!
+        Process Telegram media attachments from a message
 
         Detects and processes various media types (images, stickers, videos, audio, etc.)
         from Telegram messages. Routes to appropriate processing methods based on
@@ -1513,7 +1513,7 @@ class BaseBotHandler(CommandHandlerMixin):
         self, ensuredMessage: EnsuredMessage, prompt: Optional[str] = None
     ) -> List[MediaProcessingInfo]:
         """
-        Process Max messenger media attachments from a message, dood!
+        Process Max messenger media attachments from a message
 
         Extracts and processes various attachment types (images, stickers, videos,
         audio, files) from Max messenger messages. Handles special cases like
@@ -1884,7 +1884,7 @@ class BaseBotHandler(CommandHandlerMixin):
         updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
         """
-        Handle new message events, dood!
+        Handle new message events
 
         Base implementation that returns SKIPPED. Subclasses should override
         to implement custom message handling logic.
@@ -1907,7 +1907,7 @@ class BaseBotHandler(CommandHandlerMixin):
         updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
         """
-        Handle new chat member event, dood!
+        Handle new chat member event
 
         Base implementation that returns SKIPPED. Subclasses can override
         to implement custom behavior when a new member joins a chat.
@@ -1932,7 +1932,7 @@ class BaseBotHandler(CommandHandlerMixin):
         updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
         """
-        Handle left chat member event, dood!
+        Handle left chat member event
 
         Base implementation that returns SKIPPED. Subclasses can override
         to implement custom behavior when a new member joins a chat.
@@ -1957,7 +1957,7 @@ class BaseBotHandler(CommandHandlerMixin):
         updateObj: UpdateObjectType,
     ) -> HandlerResultStatus:
         """
-        Handle callback query events (inline button presses), dood!
+        Handle callback query events (inline button presses)
 
         Base implementation that returns SKIPPED. Subclasses should override
         to implement custom callback handling logic.

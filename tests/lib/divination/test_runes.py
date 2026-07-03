@@ -1,4 +1,4 @@
-"""Tests for :class:`lib.divination.runes.RunesSystem`, dood!"""
+"""Tests for :class:`lib.divination.runes.RunesSystem`"""
 
 import random
 from typing import List
@@ -22,7 +22,7 @@ def _findLayout(layoutId: str) -> Layout:
     for layout in RUNE_LAYOUTS:
         if layout.id == layoutId:
             return layout
-    raise AssertionError(f"layout {layoutId!r} not found, dood!")
+    raise AssertionError(f"layout {layoutId!r} not found")
 
 
 def testDeckIntegrity() -> None:
@@ -35,7 +35,7 @@ def testDeckIntegrity() -> None:
 
 
 def testRunesHaveNoReversedMeaning() -> None:
-    """Runes must not carry reversed meanings in this library, dood!"""
+    """Runes must not carry reversed meanings in this library"""
     for rune in RUNES_ELDER_FUTHARK_DECK:
         assert rune.meaningReversed is None
 
@@ -58,7 +58,7 @@ def testDrawNeverProducesReversed() -> None:
 
 
 def testBuildInterpretationMessagesRendersPlaceholders() -> None:
-    """Rune readings render the same placeholders tarot does, dood!"""
+    """Rune readings render the same placeholders tarot does"""
     layout: Layout = _findLayout("three_runes")
     draws = RunesSystem.draw(layout, rng=random.Random(7))
     reading: Reading = Reading(

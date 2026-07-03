@@ -1,5 +1,5 @@
 """
-Integration tests for Storage Service, dood!
+Integration tests for Storage Service
 
 This module provides end-to-end integration tests for the storage service
 with real filesystem backend and ConfigManager integration.
@@ -16,7 +16,7 @@ from internal.services.storage.service import StorageService
 
 @pytest.fixture(autouse=True)
 def resetStorageServiceSingleton():
-    """Reset StorageService singleton before each test, dood!"""
+    """Reset StorageService singleton before each test"""
     StorageService._instance = None
     yield
     StorageService._instance = None
@@ -24,7 +24,7 @@ def resetStorageServiceSingleton():
 
 @pytest.fixture
 def tempDir():
-    """Create a temporary directory for testing, dood!"""
+    """Create a temporary directory for testing"""
     tmpDir = tempfile.mkdtemp()
     yield tmpDir
     import shutil
@@ -34,14 +34,14 @@ def tempDir():
 
 @pytest.fixture
 def mockConfigManager(tempDir):
-    """Create a mock ConfigManager with filesystem config, dood!"""
+    """Create a mock ConfigManager with filesystem config"""
     mock = Mock()
     mock.getStorageConfig = Mock(return_value={"type": "fs", "fs": {"base-dir": tempDir}})
     return mock
 
 
 class TestStorageServiceIntegration:
-    """Integration tests for StorageService with real backend, dood!"""
+    """Integration tests for StorageService with real backend"""
 
     def testCompleteStoreRetrieveCycle(self, mockConfigManager):
         """Test complete store and retrieve cycle"""
@@ -208,7 +208,7 @@ class TestStorageServiceIntegration:
 
 
 class TestStorageServicePersistence:
-    """Test persistence across service instances, dood!"""
+    """Test persistence across service instances"""
 
     def testPersistenceAcrossInstances(self, mockConfigManager, tempDir):
         """Test that data persists across service instances"""
@@ -238,7 +238,7 @@ class TestStorageServicePersistence:
 
 
 class TestStorageServiceErrorHandling:
-    """Test error handling in integration scenarios, dood!"""
+    """Test error handling in integration scenarios"""
 
     def testGetNonExistentFile(self, mockConfigManager):
         """Test getting non-existent file returns None"""
@@ -274,7 +274,7 @@ class TestStorageServiceErrorHandling:
 
 
 class TestStorageServiceKeySanitization:
-    """Test key sanitization in integration scenarios, dood!"""
+    """Test key sanitization in integration scenarios"""
 
     def testPathTraversalPrevention(self, mockConfigManager, tempDir):
         """Test that path traversal is prevented"""
