@@ -1,4 +1,5 @@
 # Our TODO list
+- [ ] Search for tool_name in [] or {} + optional ``` end return some error if yes (to enforce proper tool call)
 - [ ] Subagent with conversation history
 - [ ] Better random-message handling
 - [ ] Better compaction (drop tools result, more settings, drop userdata, use subagent for compaction)

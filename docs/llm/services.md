@@ -139,6 +139,39 @@ llmService.registerTool(
 )
 ```
 
+**`generateTextViaLLM` — tool-execution loop:**
+
+The multi-turn variant of `generateText` that executes tool calls requested by the LLM until a final text response is produced. Resolves primary/fallback models, condenses context, detects tool calls (including text-embedded ones), executes them, and feeds results back. Supports an optional streaming `callback` for intermediate results.
+
+```python
+result: ModelRunResult = await llmService.generateTextViaLLM(
+    messages,                    # Sequence[ModelMessage]
+    chatId=chatId,
+    chatSettings=chatSettings,
+    modelKey=ChatSettingsKey.CHAT_MODEL,
+    fallbackModelKey=ChatSettingsKey.FALLBACK_MODEL,
+    useTools=True,               # all tools; see per-tool dict form below
+    extraData=extraData,         # passed to tool handlers and callback
+    callback=processIntermediateMessages,  # optional async callback
+)
+```
+
+**`useTools` parameter — per-tool enable/disable** (type `UseToolsType`, re-exported from [`internal.services.llm`](../../internal/services/llm/__init__.py)):
+
+- `True` — enable **all** registered tools.
+- `False` — disable all tools (default).
+- `dict[str, bool]` — enable/disable individual tools by name. The special `"default"` key controls every tool not explicitly listed (defaults to `False` when absent). Unknown tool names are logged as warnings (`logger.warning`) and ignored.
+
+```python
+# Enable only the sandbox tools; disable everything else:
+useTools={"default": False, "run_python": True, "sandbox_list_files": True}
+
+# Enable all tools except one:
+useTools={"default": True, "sandbox_send_file": False}
+```
+
+Resolution happens in the private `_resolveTools(useTools)` method, which returns the filtered `List[LLMToolFunction]` sent to the model. The execution guard also uses this filtered set: if the LLM requests a dict-disabled tool, the loop returns an error listing only the **actually available** tool names (not the full registry), so the model is not tempted to retry a disabled tool.
+
 **Generate structured (JSON-Schema) output:**
 ```python
 result: ModelStructuredResult = await llmService.generateStructured(

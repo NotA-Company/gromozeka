@@ -51,7 +51,7 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import MessageCategory
-from internal.services.llm import ExtraDataDict, LLMService
+from internal.services.llm import ExtraDataDict, LLMService, UseToolsType
 from lib.ai import (
     ModelMessage,
     ModelResultStatus,
@@ -98,7 +98,7 @@ class LLMMessageHandler(BaseBotHandler):
         *,
         chatSettings: ChatSettingsDict,
         typingManager: TypingManager,
-        useTools: bool = False,
+        useTools: UseToolsType = False,
         sendIntermediateMessages: bool = True,
         keepFirstN: int = 0,
         keepLastN: int = 1,
@@ -115,7 +115,11 @@ class LLMMessageHandler(BaseBotHandler):
             ensuredMessage (EnsuredMessage): The message being responded to.
             chatSettings (ChatSettingsDict): Chat-specific settings for LLM configuration.
             typingManager (TypingManager): Manager for sending typing indicators.
-            useTools (bool, optional): Whether to enable tool usage for the LLM. Defaults to False.
+            useTools (bool | dict[str, bool], optional): Controls tool calling
+                for the LLM. ``True`` enables all registered tools, ``False``
+                (default) disables all, and a dict enables/disables tools
+                per-name with the ``"default"`` key as the fallback for
+                unspecified tools (defaults to ``False`` when absent).
             sendIntermediateMessages (bool, optional): Whether to send streaming intermediate
                 responses. Defaults to True.
             keepFirstN (int, optional): Number of first messages to keep in context. Defaults to 0.

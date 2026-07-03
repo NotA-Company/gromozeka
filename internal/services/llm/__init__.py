@@ -7,6 +7,6 @@ LLM operations.
 """
 
 from .models import ExtraDataDict
-from .service import LLMService, LLMToolHandler
+from .service import LLMService, LLMToolHandler, UseToolsType
 
-__all__ = ["LLMService", "LLMToolHandler", "ExtraDataDict"]
+__all__ = ["LLMService", "LLMToolHandler", "UseToolsType", "ExtraDataDict"]
