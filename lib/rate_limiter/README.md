@@ -151,6 +151,7 @@ Singleton manager for multiple rate limiters with queue mapping.
 - `listRateLimiters()` - List registered limiters
 - `getQueueMappings()` - Get queue-to-limiter mappings
 - `getDefaultLimiter()` - Get default limiter name
+- `dumpAllStats() -> List[RateLimiterStatsEntry]` - Return per-queue statistics for every limiter (one `RateLimiterStatsEntry` TypedDict per queue with `limiter`/`queue`/`requestsInWindow`/`maxRequests`/`windowSeconds`/`utilizationPercent`; does NOT log — caller logs the results). Per-queue error isolation; used as a shutdown diagnostic by `HandlersManager._dumpAllState()`, which is called exactly once from `shutdown()`.
 - `async destroy()` - Clean up all limiters
 
 **Example:**

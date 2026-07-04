@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from internal.bot.common.handlers.divination import DivinationHandler
+from internal.bot.constants import ToolName
 from internal.bot.models import (
     BotProvider,
     ChatSettingsKey,
@@ -307,9 +308,16 @@ class TestLayoutDiscovery:
         generateTextMock.assert_called_once()
         generateStructuredMock.assert_called_once()
 
-        # Verify first call had tools=True
+        # Verify first call enabled the discovery tools (web search + url fetch).
+        # ``useTools`` is now a per-tool dict (see ToolName / _resolveTools),
+        # not a boolean — the discovery flow opts in to WEB_SEARCH and
+        # GET_URL_CONTENT specifically rather than enabling every tool.
         firstCall = generateTextMock.call_args
-        assert firstCall.kwargs.get("useTools") is True
+        expectedTools = {
+            ToolName.WEB_SEARCH: True,
+            ToolName.GET_URL_CONTENT: True,
+        }
+        assert firstCall.kwargs.get("useTools") == expectedTools
 
     async def testDiscoverLayoutFailureNegativeCache(self, mockDivinationHandler):
         """Test that failed discoveries are cached as negative."""

@@ -385,6 +385,17 @@ if self.configManager.getOpenWeatherMapConfig().get("enabled", False):
     )
 ```
 
+### Shutdown state dump
+
+Shutdown diagnostics are emitted by `HandlersManager._dumpAllState()` — a parameterless method with a **single call site**: `shutdown()` awaits it directly after `_shutdownEvent.set()` and **before** per-chat queues are drained (so pending-message counts are still populated). Because there is exactly one caller, there is no DO_EXIT registration and no `_stateDumped` idempotency guard.
+
+`_dumpAllState()` does two things inline (no separate `_dumpChatStates` helper):
+
+1. **Per-chat queue state** — snapshots `chatStates.values()` under `stateLock` (avoids `RuntimeError` from concurrent modification), then inspects each chat's queue under its own per-chat lock. Empty queues are skipped. For each non-empty queue it logs `chat_id=%d.%s pending_messages=%d` — the `%s` is `threadId`, so a `None` thread renders as the literal string `None`. Per-chat errors are isolated via try/except + `logger.warning(..., exc_info=True)`.
+2. **Rate limiter state** — calls `RateLimiterManager.getInstance().dumpAllStats()` (see [services.md §5](services.md#5-ratelimitermanager)), which **returns** a `List[RateLimiterStatsEntry]` (one entry per queue across all limiters; the method itself does not log). Each returned entry is logged at INFO via `logger.info(utils.jsonDumps(entry, indent=2))`.
+
+To add new shutdown diagnostics, extend `_dumpAllState()` (or add another step to `shutdown()`). There is no hook registry for this — the DO_EXIT delayed-task mechanism (`queueService.registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, ...)`) is used by other subsystems (`SandboxHandler`, `ProxyService`, `_dtOnExit`) but is not involved in the state dump.
+
 ---
 
 ## 6. Handler Chain Order

@@ -8,7 +8,7 @@ queue mapping, and error handling scenarios.
 
 import asyncio
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from lib.rate_limiter.interface import RateLimiterInterface
 from lib.rate_limiter.manager import RateLimiterManager
@@ -703,6 +703,134 @@ class TestRateLimiterManagerEdgeCases(unittest.IsolatedAsyncioTestCase):
         manager1.registerRateLimiter("test", limiter)
 
         self.assertIn("test", manager2.listRateLimiters())
+
+
+class TestRateLimiterManagerDumpAllStats(unittest.IsolatedAsyncioTestCase):
+    """Test suite for RateLimiterManager.dumpAllStats.
+
+    Verifies that dumpAllStats iterates every registered limiter and queue,
+    returns per-queue statistics as a list of dicts, isolates per-queue
+    failures, and handles empty registries/queues without error.
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Reset the singleton manager to a clean state before each test."""
+        self.manager = RateLimiterManager.getInstance()
+        await self.manager.destroy()
+
+    async def asyncTearDown(self) -> None:
+        """Destroy the manager after each test to avoid singleton state leaks."""
+        await self.manager.destroy()
+
+    async def testDumpAllStatsMultipleLimitersMultipleQueues(self) -> None:
+        """dumpAllStats returns stats dicts for every queue of every limiter.
+
+        Sets up two limiters with multiple queues each, calls dumpAllStats,
+        and verifies that the returned list contains one dict per queue with
+        the correct limiter name, queue name, and stat values.
+        """
+        limiter1 = MockRateLimiter()
+        limiter1.stats = {
+            "q1": {
+                "requestsInWindow": 5,
+                "maxRequests": 10,
+                "windowSeconds": 60,
+                "resetTime": 0,
+                "utilizationPercent": 50.0,
+            },
+            "q2": {
+                "requestsInWindow": 3,
+                "maxRequests": 10,
+                "windowSeconds": 60,
+                "resetTime": 0,
+                "utilizationPercent": 30.0,
+            },
+        }
+        limiter2 = MockRateLimiter()
+        limiter2.stats = {
+            "q3": {
+                "requestsInWindow": 2,
+                "maxRequests": 20,
+                "windowSeconds": 60,
+                "resetTime": 0,
+                "utilizationPercent": 10.0,
+            },
+        }
+        self.manager.registerRateLimiter("limiter1", limiter1)
+        self.manager.registerRateLimiter("limiter2", limiter2)
+
+        results = self.manager.dumpAllStats()
+
+        self.assertEqual(len(results), 3)
+
+        pairs = [(r["limiter"], r["queue"]) for r in results]
+        self.assertIn(("limiter1", "q1"), pairs)
+        self.assertIn(("limiter1", "q2"), pairs)
+        self.assertIn(("limiter2", "q3"), pairs)
+
+        # Verify stat values for limiter1/q1
+        q1Entry = next(r for r in results if r["limiter"] == "limiter1" and r["queue"] == "q1")
+        self.assertEqual(q1Entry["requestsInWindow"], 5)
+        self.assertEqual(q1Entry["maxRequests"], 10)
+        self.assertEqual(q1Entry["windowSeconds"], 60)
+        self.assertEqual(q1Entry["utilizationPercent"], 50.0)
+
+    async def testDumpAllStatsEmptyRegistry(self) -> None:
+        """dumpAllStats on an empty registry returns an empty list without crashing.
+
+        With no rate limiters registered, dumpAllStats must return an empty
+        list and complete without error.
+        """
+        results = self.manager.dumpAllStats()
+        self.assertEqual(results, [])
+
+    async def testDumpAllStatsGetStatsFailure(self) -> None:
+        """A getStats failure is isolated per-queue.
+
+        When a limiter's getStats raises, dumpAllStats logs a warning for that
+        queue and continues dumping the remaining limiters/queues, which must
+        still appear in the returned list.
+        """
+        badLimiter = MockRateLimiter()
+        badLimiter.stats = {"badQ": {"requestsInWindow": 1}}
+        badLimiter.getStats = Mock(side_effect=RuntimeError("stats boom"))
+
+        goodLimiter = MockRateLimiter()
+        goodLimiter.stats = {
+            "goodQ": {
+                "requestsInWindow": 1,
+                "maxRequests": 10,
+                "windowSeconds": 60,
+                "resetTime": 0,
+                "utilizationPercent": 10.0,
+            }
+        }
+
+        self.manager.registerRateLimiter("bad", badLimiter)
+        self.manager.registerRateLimiter("good", goodLimiter)
+
+        with patch("lib.rate_limiter.manager.logger") as mockLogger:
+            results = self.manager.dumpAllStats()
+
+        # Warning emitted for the failing queue
+        mockLogger.warning.assert_called()
+
+        # The failing queue is absent, the good queue is present
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["limiter"], "good")
+        self.assertEqual(results[0]["queue"], "goodQ")
+
+    async def testDumpAllStatsEmptyQueues(self) -> None:
+        """A limiter whose listQueues returns empty yields no result entries.
+
+        A registered limiter with no queues must not produce any entries in
+        the returned list.
+        """
+        limiter = MockRateLimiter()  # stats empty -> listQueues() == []
+        self.manager.registerRateLimiter("empty", limiter)
+
+        results = self.manager.dumpAllStats()
+        self.assertEqual(results, [])
 
 
 if __name__ == "__main__":

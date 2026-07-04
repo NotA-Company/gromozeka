@@ -312,6 +312,8 @@ yandex-search = "<limiter-name>"
 openweathermap = "<limiter-name>"
 ```
 
+**Diagnostics:** `manager.dumpAllStats()` iterates every registered limiter and queue, **returning** a `List[RateLimiterStatsEntry]` (one entry per queue with keys `limiter`, `queue`, `requestsInWindow`, `maxRequests`, `windowSeconds`, `utilizationPercent`). It does not log the results itself — the caller logs them. Failures are isolated per queue (a single bad queue is logged as a warning and skipped). `HandlersManager._dumpAllState()` calls this during shutdown and logs each returned entry at INFO via `utils.jsonDumps(entry, indent=2)` (see [handlers.md §5](handlers.md#shutdown-state-dump)).
+
 ---
 
 ## 6. ProxyService
