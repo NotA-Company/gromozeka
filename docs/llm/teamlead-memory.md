@@ -115,6 +115,28 @@ From fixing review findings on the Max webhook support feature (branch `max-v2`)
 - When subagents fail with `ProviderModelNotFoundError`, check the `model:` field in each agent's `.md` file and in `.opencode/opencode.json` -- the `standard` model may not be provisioned while `cheap`/`smart`/`smartest` are.
 - The `explore` subagent (model: `cheap`) and `code-reviewer` (model: `smart`) are reliable for read-only work; `software-developer` needs `standard` model to be functional.
 
+## User Memory Refinement Feature (2026-07-04, planning)
+
+Plan v1 written: `docs/plans/memory-refine-plan-v1.md` (supersedes `docs/plans/memory-refine-plan-v0.md`). NOT yet implemented. Key decisions + codebase facts:
+
+- **Storage: `chat_users.metadata` column (already exists).** `migration_003` added it; re-asserted in `migration_013`. `TEXT DEFAULT '' NOT NULL`, composite PK `(chat_id, user_id)`. NO new migration needed for this feature.
+- **Metadata read/write helpers on `BaseBotHandler`:** `parseUserMetadata(userInfo) -> UserMetadataDict` (`base.py:1055`, uses stdlib `json.loads`), `setUserMetadata(chatId, userId, metadata, isUpdate=False)` (`base.py:1073`, `isUpdate=True` = read-then-merge). Repo: `ChatUsersRepository.updateUserMetadata(chatId, userId, metadata: str)` (`chat_users.py:126`, partial UPDATE).
+- **`UserMetadataDict`** (`internal/bot/models/user_metadata.py`) is `total=False` with boolean flags (`isSpammer`, `notSpammer`, `dropMessages`, `leftChat`). Feature adds `memoryRefinement: Dict[str(threadId), {summary, lastProcessedMessageId, lastProcessedMessageDate}]`.
+- **Counters in-memory only** (lost on restart; refinement re-fires after threshold). A SINGLE GLOBAL `asyncio.Lock` (`_refineLock`) on `UserDataHandler` serializes ALL refinement — cron does `if self._refineLock.locked(): return` then `async with self._refineLock:` processes the whole due batch sequentially (bounded by `MAX_REFINES_PER_TICK`). Prevents flooding the LLM provider when a run takes >60s (subsequent ticks early-return). No per-entry locks, no `createTask`.
+- **Per-chat enable:** `ChatSettingsKey.MEMORY_REFINEMENT_ENABLED` (boolean, default False, True for friend tier via `[bot.tier-defaults.friend]` in `configs/common/01-bot-defaults.toml`). Guards both counting and refinement. Separate from the global `[user-memory].enabled` kill switch. Uses `add-chat-setting` four-site convention.
+- **Three persisted fields per thread** in `chat_users.metadata.memoryRefinement[str(threadId)]`: `summary`, `lastProcessedMessageId`+`lastProcessedMessageDate` (message cursor for `getChatMessagesSince`), and `lastRefinedTS` (unix ts of last refinement RUN — drives the 6h time threshold). Message-date and refined-ts diverge when there's lag between newest message and run.
+- **Dual prompt:** `[user-memory].system-prompt` (how) + `[user-memory].user-prompt-template` (what, interpolates `{existingSummary}`/`{messages}`).
+- **`newMessageHandler` returns `HandlerResultStatus.NEXT`** (not SKIPPED) after counting — project philosophy: NEXT = did work. (Verify NEXT is the real member name at impl time.)
+- **Cron channel:** `QueueService` `CRON_JOB` delayed task, self-reschedules every 60s. Register via `self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.CRON_JOB, self._dtCronJob)` in handler `__init__` (see `chat_search.py:201`).
+- **LLM call:** `LLMService.generateTextViaLLM(messages, *, chatId=None to skip rate-limit, chatSettings, modelKey, fallbackModelKey, useTools, extraData, ...)`. `extraData["ensuredMessage"]` is the first positional arg to every tool handler. `useTools` accepts `dict[toolName, bool]`.
+- **`add_user_data` tool** (`user_data.py:_llmToolSetUserData`) reads `extraData["ensuredMessage"].recipient.id` + `.sender.id` — background cron call must synthesize a minimal EnsuredMessage.
+- **`getChatMessagesSince(chatId, sinceDateTime, tillDateTime, threadId, limit, messageCategory, *, dataSource)`** (`chat_messages.py:208`) has NO `userId` filter — feature adds one (additive: `AND (:userId IS NULL OR c.user_id = :userId)`).
+- **Context injection:** `userData` attached per-message at `manager.py:1015` (`_processMessageRec`) and `base.py:372` (`_updateEMessageUserData`); serialized in `EnsuredMessage.formatForLLM` JSON branch (`ensured_message.py:1131`); described in `chat-prompt-suffix` (`configs/00-defaults/bot-defaults.toml`). Feature adds a sibling `userSummary` field.
+- **Model keys:** new `ChatSettingsKey.MEMORY_REFINE_MODEL` / `MEMORY_REFINE_FALLBACK_MODEL` + `_chatSettingsInfo` entries (model on `SUMMARY_MODEL`/`SUMMARY_FALLBACK_MODEL` at `chat_settings.py:617-622`) + TOML defaults under `[bot.defaults]`.
+- **New tool:** `ToolName.DELETE_USER_DATA` (mirror of `ADD_USER_DATA`, calls `cache.unsetChatUserData`). No `get` tool (userData already injected).
+- **Thresholds (config-overridable):** count=5, time=6h, minMessagesToRefine=5, maxMessagesPerRun=128, maxRefinesPerTick=3.
+- **Cron home:** extend `UserDataHandler` (cron + increment + refinement all in `user_data.py`). Increment at top of `newMessageHandler` before any gates.
+
 ## Docs Archive Layout (2026-07-04)
 
 - `docs/plans/` now holds ONLY active/retained design refs. After the 2026-07-04 cleanup it contains a single file: `python-sandboxing-v1.md` (retained design ref for `lib/sandbox/`; status line updated to "implemented").

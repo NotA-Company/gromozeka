@@ -1,0 +1,269 @@
+# User Memory Refinement — Plan v1
+
+**Status:** Design — ready for implementation.
+**Supersedes:** `docs/plans/memory-refine-plan-v0.md`.
+**Owner handler:** `internal/bot/common/handlers/user_data.py` (`UserDataHandler`).
+
+## 1. Goal
+
+Give the bot a rolling, per-(chat, user, thread) memory refined in the background by an LLM, so future replies carry short-term context about each user without re-reading their whole history. Two deliverables:
+
+1. Tighten the existing `add_user_data` LLM-tool description so the model persists only durable facts.
+2. Add a background refinement loop: when a user has accumulated enough new messages (or enough time has passed), run an LLM call over the recent messages plus the user's existing summary to (a) extract durable facts into `user_data` via tools and (b) produce a new short summary that replaces the old one.
+
+## 2. Decisions (from discussion)
+
+| Decision | Choice |
+|---|---|
+| Summary storage | `chat_users.metadata` column (already exists), keyed per-thread |
+| Counters | `newMessagesCount` per (chatId, userId, threadId), in-memory only (lost on restart; refinement re-fires after threshold). A single GLOBAL `asyncio.Lock` on `UserDataHandler` serializes all refinement — prevents flooding the LLM provider when a run takes >60s. |
+| New LLM tools | Add `delete_user_data` only (no `get` — userData is already injected into context) |
+| Cron home | Extend `UserDataHandler` (cron + increment + refinement all in `user_data.py`). |
+| Counter increment | Top of `UserDataHandler.newMessageHandler`, before any gates |
+| Model config | Dedicated `MEMORY_REFINE_MODEL` + `MEMORY_REFINE_FALLBACK_MODEL` keys |
+| Per-chat enable | New `ChatSettingsKey.MEMORY_REFINEMENT_ENABLED` (default False, True for friend tier via `[bot.tier-defaults.friend]`). Guards both counting and refinement. Separate from the global `[user-memory].enabled` kill switch. |
+| Thresholds | `countThreshold = 5`, `timeThreshold = 6h`, `messageCap = 128` (all config-overridable) |
+| Refine prompt | Split into system prompt (how to work) + user-prompt template (what to do, with data interpolated). |
+
+## 3. Storage design
+
+No new migration. The `chat_users.metadata TEXT DEFAULT '' NOT NULL` column already exists (`migration_003_add_metadata_to_chat_users.py`, re-asserted in `migration_013_remove_timestamp_defaults.py`). Read/write helpers exist on `BaseBotHandler`:
+
+- `parseUserMetadata(userInfo: Optional[ChatUserDict]) -> UserMetadataDict` (`internal/bot/common/handlers/base.py`, ~line 1055)
+- `setUserMetadata(chatId, userId, metadata, isUpdate=False)` (`internal/bot/common/handlers/base.py`, ~line 1073) — `isUpdate=True` does read-then-merge.
+
+Repository: `ChatUsersRepository.updateUserMetadata(chatId, userId, metadata: str)` (`internal/database/repositories/chat_users.py`, ~line 126) — partial-column UPDATE touching only `metadata` + `updated_at`.
+
+Extend `UserMetadataDict` (`internal/bot/models/user_metadata.py`) with a per-thread memory sub-dict:
+
+```python
+class UserMemoryThreadDict(TypedDict, total=False):
+    summary: str
+    """Rolling short summary/bio of the user in this thread."""
+    lastProcessedMessageId: str   # MessageId.asStr() — logging/debug only
+    lastProcessedMessageDate: str # ISO datetime — the MESSAGE cursor for getChatMessagesSince (not the refinement-run time)
+    lastRefinedTS: int           # unix timestamp of the last refinement RUN (drives the time threshold)
+
+class UserMetadataDict(TypedDict, total=False):
+    isSpammer: bool
+    notSpammer: bool
+    dropMessages: bool
+    leftChat: bool
+    memoryRefinement: Dict[str, UserMemoryThreadDict]  # keyed by str(threadId); "0" for main
+```
+
+Note: `lastProcessedMessageDate` (cursor for `getChatMessagesSince`) and `lastRefinedTS` (drives the 6h time threshold) are distinct — they diverge when there is lag between the newest ingested message and the refinement run.
+
+Thread key is `str(threadId)` (DEFAULT_THREAD_ID = 0 → "0") — JSON object keys are strings, so this is the natural shape.
+
+Write path: read current metadata via `parseUserMetadata`, merge updated `memoryRefinement[str(threadId)]`, write back via `setUserMetadata(..., isUpdate=True)`.
+
+## 4. In-memory accounting
+
+Handler-instance counter dict on `UserDataHandler`, plus a single global lock:
+
+```python
+_accounting: Dict[Tuple[int, int, int], int]  # key = (chatId, userId, threadId) -> newMessagesCount
+_refineLock: asyncio.Lock  # single global lock; serializes ALL refinement runs
+```
+
+`_accounting` holds only the in-memory `newMessagesCount` per key (lost on restart; refinement re-fires after the next threshold crossing). `_refineLock` is a single `asyncio.Lock` created in `__init__`; the cron checks `if self._refineLock.locked(): return` at the top and otherwise runs the entire due batch under `async with self._refineLock:`. This serializes all refinement across the whole bot, so a slow LLM call (>60s) blocks the next tick's refinement rather than spawning a concurrent one — preventing provider flooding.
+
+Increment site: `UserDataHandler.newMessageHandler`, at the very top, BEFORE the `chatType != PRIVATE` early-return and BEFORE the wizard-state check, so every user message in every chat type counts. The increment is guarded by the per-chat `ChatSettingsKey.MEMORY_REFINEMENT_ENABLED` setting (no counting when disabled). Because the handler now does work (counting) for every message, it returns `HandlerResultStatus.NEXT` (project philosophy: NEXT = did work, SKIPPED = did nothing) instead of `SKIPPED` for non-wizard messages. The wizard path still returns `FINAL`.
+
+## 5. Cron job
+
+Register in `UserDataHandler.__init__`, mirroring `ChatSearchHandler`:
+
+```python
+self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.CRON_JOB, self._dtCronJob)
+```
+
+`_dtCronJob` runs every tick (the `CRON_JOB` delayed task self-reschedules every 60s in `QueueService`). Flow:
+
+1. Early-return if the global `[user-memory].enabled` flag is off.
+2. `if self._refineLock.locked(): return` — another refinement batch is still running (a single LLM call can exceed the 60s tick); bail this tick.
+3. `async with self._refineLock:` — acquire the single global lock for the whole batch.
+4. Inside the lock, build the due list by scanning `_accounting`:
+   - skip entries whose per-chat `ChatSettingsKey.MEMORY_REFINEMENT_ENABLED` is off (runtime-disable safe);
+   - `elapsed = now - lastRefinedTS` (from `memoryRefinement[threadId].lastRefinedTS`); absence means 'never refined' → due;
+   - due if `newMessagesCount >= MEMORY_COUNT_THRESHOLD` OR `elapsed >= MEMORY_TIME_THRESHOLD_SECONDS`.
+5. Process due entries SEQUENTIALLY (await each, do not `createTask` — the global lock already serializes everything), bounded by `MEMORY_MAX_REFINES_PER_TICK` (pick oldest-due / highest-count first). For each: `await self._runRefinement(chatId, userId, threadId)`; on success or failure (try/except + `logger.exception` per entry) reset that entry's `newMessagesCount = 0`.
+
+Because the whole batch holds the global lock, subsequent ticks that arrive while a batch is running simply early-return at step 2.
+
+## 6. Refinement call (`_runRefinement`)
+
+1. `chatSettings = await self.cache.getChatSettings(chatId)`.
+2. Load user metadata; `entry = memoryRefinement.get(str(threadId))` → existing summary + `lastProcessedMessageDate`.
+3. `sinceDateTime = parse(entry.lastProcessedMessageDate)` or `None` (first run).
+4. `messages = await self.db.chatMessages.getChatMessagesSince(chatId, sinceDateTime, threadId=threadId, limit=MEMORY_MAX_MESSAGES_PER_RUN, userId=userId)` — requires the new `userId` param (section 7).
+5. If `len(messages) < MEMORY_MIN_MESSAGES_TO_REFINE`, bail.
+6. Render messages for the LLM (reuse `EnsuredMessage`/`formatForLLM` or a lightweight text render). Include sender `full_name`/`username`.
+7. Synthesize a minimal `EnsuredMessage` for `extraData` so the `add_user_data`/`delete_user_data` tools can resolve chatId/userId (they read `extraData["ensuredMessage"].recipient.id` and `.sender.id`). Only those two fields are strictly read; fill whatever the constructor requires. Add an internal `_makeSyntheticEnsuredMessage(chatId, userId, threadId)` helper if construction is non-trivial.
+8. Build two prompts from config: `[user-memory].system-prompt` (how to do the work — biases toward durable facts, instructs to call `add_user_data`/`delete_user_data` and to return a new short summary as plain text) and `[user-memory].user-prompt-template` (what to do — interpolates the existing summary and the rendered messages, e.g. `Existing summary: {existingSummary}` / `Recent messages: {messages}`). Both have sensible defaults in config.
+9. Call:
+   ```python
+   result = await self.llmService.generateTextViaLLM(
+       messages=[...],
+       chatId=None,  # skip rate-limiting for background call
+       chatSettings=chatSettings,
+       modelKey=ChatSettingsKey.MEMORY_REFINE_MODEL,
+       fallbackModelKey=ChatSettingsKey.MEMORY_REFINE_FALLBACK_MODEL,
+       useTools={
+           ToolName.ADD_USER_DATA: True,
+           ToolName.DELETE_USER_DATA: True,
+           ToolName.SEARCH_MESSAGES: True,
+           ToolName.GET_CURRENT_DATETIME: True,
+       },
+       extraData={"ensuredMessage": synthEnsuredMessage},
+       keepLastN=1,
+   )
+   ```
+10. `newSummary = result.resultText` (the model's final text answer).
+11. Persist: take the newest processed message (first in the DESC-ordered list); set `memoryRefinement[str(threadId)] = {summary, lastProcessedMessageId, lastProcessedMessageDate, lastRefinedTS: int(now)}`; write via `setUserMetadata(..., isUpdate=True)`.
+12. Reset accounting: `self._accounting[(chatId, userId, threadId)] = 0`. The global `_refineLock` is held by the cron caller (`_dtCronJob`), not acquired here — it releases when the cron's `async with` block exits.
+
+Wrap `_runRefinement` in try/except + `logger.exception`; never raise out of it (the cron caller resets the counter and continues to the next entry regardless).
+
+## 7. `getChatMessagesSince` — add `userId` filter
+
+`internal/database/repositories/chat_messages.py`, `getChatMessagesSince` (~line 208). Add optional `userId: Optional[int] = None` param and `AND (:userId IS NULL OR c.user_id = :userId)` to the WHERE clause; add `{"userId": userId}` to params. Purely additive; existing callers unaffected.
+
+## 8. `delete_user_data` LLM tool
+
+Register in `UserDataHandler.__init__` alongside `ADD_USER_DATA`. Mirror `_llmToolSetUserData`; call `self.cache.unsetChatUserData(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id, key=key)`. Parameters: `key: str` (required). Description: remove a stale/incorrect persistent fact by key.
+
+## 9. `add_user_data` tool description rewrite
+
+Bias toward durable facts; explicitly discourage transient/contextual notes. Suggested text:
+
+> Remember **durable, long-lived** facts about the user who sent the last message — things that will still be true weeks from now. Use it for: real name, birthday, profession, stable preferences (language, formatting, communication style), long-term goals, important relationships.
+> Do NOT use it for: transient states (current mood, what they're doing today), one-off requests, conversation-specific context, things likely to change soon. When in doubt, skip.
+
+## 10. Summary injection into LLM context
+
+Today `userData` is attached per-message and serialized as a `userData` JSON field in `EnsuredMessage.formatForLLM` (`internal/bot/models/ensured_message.py`, ~line 1131), described in `chat-prompt-suffix`. Add a sibling field:
+
+1. `internal/bot/models/ensured_message.py` — add `userSummary: Optional[str]` attribute on `EnsuredMessage`; include it in the JSON branch of `formatForLLM` next to `userData`, gated by the same `if v` truthiness filter.
+2. Populate `userSummary` at the two existing `getChatUserData` attachment points:
+   - `internal/bot/common/handlers/manager.py` `_processMessageRec` (~line 1015)
+   - `internal/bot/common/handlers/base.py` `_updateEMessageUserData` (~line 372)
+   Read the summary from `chat_users.metadata.memoryRefinement[str(threadId)].summary`.
+3. `configs/00-defaults/bot-defaults.toml` `chat-prompt-suffix` — add a line:
+   > `userSummary` - Краткое резюме/био о пользователе (при наличии).
+
+## 11. Config
+
+New file `configs/00-defaults/user-memory.toml`:
+
+```toml
+[user-memory]
+enabled = false  # feature-flagged off by default
+
+[user-memory.thresholds]
+message-count = 5
+time-seconds = 21600        # 6 hours
+min-messages-to-refine = 5
+max-messages-per-run = 128
+max-refines-per-tick = 3
+
+[user-memory]
+system-prompt = """..."""          # how to do the work (default provided)
+user-prompt-template = """..."""   # what to do; interpolates {existingSummary}, {messages}
+```
+
+New model keys under `[bot.defaults]` in `configs/00-defaults/bot-defaults.toml`:
+
+```toml
+memory-refine-model          = "openrouter/free"
+memory-refine-fallback-model = "aliceai-llm-flash"
+```
+
+New `ChatSettingsKey` members (`internal/bot/models/chat_settings.py`):
+
+```python
+MEMORY_REFINE_MODEL = "memory-refine-model"
+MEMORY_REFINE_FALLBACK_MODEL = "memory-refine-fallback-model"
+```
+
+### Per-chat enable setting
+
+Add a per-chat boolean chat setting (follows the `add-chat-setting` four-site convention):
+
+```python
+MEMORY_REFINEMENT_ENABLED = "memory-refinement-enabled"
+```
+
+- `_chatSettingsInfo` entry (model on other boolean settings like `ALLOW_SANDBOX`).
+- Default `false` under `[bot.defaults]` in `configs/00-defaults/bot-defaults.toml`:
+  ```toml
+  memory-refinement-enabled = false
+  ```
+- Enabled for the friend tier in `configs/common/01-bot-defaults.toml` under `[bot.tier-defaults.friend]`:
+  ```toml
+  memory-refinement-enabled = true
+  ```
+- Read at runtime via `chatSettings[ChatSettingsKey.MEMORY_REFINEMENT_ENABLED].toBool()`. Guards both the increment in `newMessageHandler` and the refinement in `_runRefinement` (runtime-disable safe).
+
+Follow the `add-chat-setting` skill convention — all four sites must change together: `ChatSettingsKey` enum value, `_chatSettingsInfo` TypedDict entry (model the entries on the existing `SUMMARY_MODEL` / `SUMMARY_FALLBACK_MODEL` entries at `internal/bot/models/chat_settings.py:617-628`), the TOML default under `[bot.defaults]`, and the consumer code in `UserDataHandler._runRefinement`. The boolean `MEMORY_REFINEMENT_ENABLED` key follows the same convention.
+
+## 12. Constants (module-level in `user_data.py`)
+
+```python
+MEMORY_COUNT_THRESHOLD = 5                       # newMessagesCount to trigger refinement
+MEMORY_TIME_THRESHOLD_SECONDS = 6 * 60 * 60      # 6 hours
+MEMORY_MIN_MESSAGES_TO_REFINE = 5                # don't refine on fewer messages
+MEMORY_MAX_MESSAGES_PER_RUN = 128                # cap on messages fed to the LLM
+MEMORY_MAX_REFINES_PER_TICK = 3                  # bound LLM calls per 60s cron tick
+DEFAULT_THREAD_ID_STR = "0"                      # str(DEFAULT_THREAD_ID) — JSON object key
+```
+
+## 13. File-by-file change list
+
+| File | Change |
+|---|---|
+| `internal/bot/models/user_metadata.py` | Add `UserMemoryThreadDict` + `memoryRefinement` field to `UserMetadataDict`. |
+| `internal/bot/models/ensured_message.py` | Add `userSummary` attr; include in `formatForLLM` JSON branch. |
+| `internal/bot/models/chat_settings.py` | Add `MEMORY_REFINE_MODEL`, `MEMORY_REFINE_FALLBACK_MODEL` to `ChatSettingsKey` AND matching entries to `_chatSettingsInfo` (model on `SUMMARY_MODEL`/`SUMMARY_FALLBACK_MODEL` at ~lines 617-628) AND add `MEMORY_REFINEMENT_ENABLED` (boolean) with its `_chatSettingsInfo` entry. |
+| `internal/bot/constants.py` | Add `DELETE_USER_DATA` to `ToolName`. |
+| `internal/database/repositories/chat_messages.py` | Add `userId` param to `getChatMessagesSince`. |
+| `internal/bot/common/handlers/user_data.py` | Rewrite `ADD_USER_DATA` description; register `DELETE_USER_DATA` tool; add `_accounting`; increment in `newMessageHandler`; register `_dtCronJob`; add `_runRefinement`. |
+| `internal/bot/common/handlers/manager.py` | Attach `userSummary` alongside `userData` in `_processMessageRec`. |
+| `internal/bot/common/handlers/base.py` | Attach `userSummary` in `_updateEMessageUserData`. |
+| `configs/00-defaults/user-memory.toml` | New file: `[user-memory]` section. |
+| `configs/00-defaults/bot-defaults.toml` | Add `memory-refine-model`/`memory-refine-fallback-model` to `[bot.defaults]`; add `memory-refinement-enabled = false` default; add `userSummary` line to `chat-prompt-suffix`. |
+| `configs/common/01-bot-defaults.toml` | Add `memory-refinement-enabled = true` under `[bot.tier-defaults.friend]`. |
+
+## 14. Testing plan
+
+- `tests/database/...`: extend `getChatMessagesSince` tests with the `userId` filter (other users' records excluded).
+- `tests/bot/handlers/test_user_data.py`:
+  - `delete_user_data` tool removes a key.
+  - `newMessageHandler` increments accounting for every message (private + group, wizard-active or not).
+  - `_dtCronJob` fires refinement when count threshold met; does not fire below threshold; early-returns when the global `_refineLock` is already held; respects `enabled = false`.
+  - `_runRefinement` writes summary + cursor to `chat_users.metadata.memoryRefinement[threadId]`.
+  - `_runRefinement` bails when `len(messages) < MEMORY_MIN_MESSAGES_TO_REFINE`.
+- `tests/bot/models/test_ensured_message.py`: `formatForLLM` includes `userSummary` when set, omits when falsy.
+- Golden test for the refine LLM call under `tests/lib/.../golden/` (do not hit real APIs).
+
+## 15. Sequencing / phases
+
+Each phase = one `software-developer` brief + Gate 1 review:
+
+1. **Storage + types**: extend `UserMetadataDict`, add `ChatSettingsKey`s, add `DELETE_USER_DATA` to `ToolName`.
+2. **Repo**: add `userId` to `getChatMessagesSince` + tests.
+3. **Handler core**: rewrite `ADD_USER_DATA` description; register `DELETE_USER_DATA` tool + handler; add `_accounting` + increment in `newMessageHandler`; config flag + constants.
+4. **Cron + refinement**: register `_dtCronJob`; implement `_runRefinement`; EnsuredMessage synthesis helper.
+5. **Context injection**: `userSummary` attr + `formatForLLM` + the two attachment points + `chat-prompt-suffix` line.
+6. **Config files**: `user-memory.toml`, model keys in `bot-defaults.toml`.
+7. **Tests** for all of the above.
+8. **Docs**: `update-project-docs` skill pass.
+9. **Whole-work review** (Gate 2).
+
+## 16. Risks / open items
+
+- **EnsuredMessage synthesis**: the constructor may require more fields than `recipient`/`sender`/`messageId`. Verify in phase 4; add `_makeSyntheticEnsuredMessage(...)` helper if heavy. Verify `HandlerResultStatus.NEXT` is the correct 'did work, continue' value during phase 3 (confirmed during planning: `NEXT` exists — members are FINAL, SKIPPED, NEXT, ERROR, FATAL).
+- **Cost**: refinement fires per active (chat,user,thread). With `MEMORY_MAX_REFINES_PER_TICK=3` and 60s ticks, upper bound is 3 LLM calls/min — bounded but watch the bill. Config-overridable.
+- **Private chats**: use `DEFAULT_THREAD_ID = 0` → key `"0"`. No special-casing.
+- **Refine prompt wording**: left as a config string with a sensible default; review/tune during phase 4.
