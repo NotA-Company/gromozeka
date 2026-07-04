@@ -69,6 +69,8 @@ CREATE TABLE chat_users (
 
 **TypedDict**: [`ChatUserDict`](../internal/database/models.py:163)
 
+**`metadata` JSON convention**: the column holds a JSON object (`internal/bot/models/user_metadata.py` → `UserMetadataDict`, `total=False`) with boolean flags (`isSpammer`, `notSpammer`, `dropMessages`, `leftChat`) plus an optional `memoryRefinement: Dict[str(threadId), UserMemoryThreadDict]` sub-dict. Each per-thread entry carries `summary`, `lastProcessedMessageId`, `lastProcessedMessageDate` (cursor for `getChatMessagesSince`). The `lastRefinedTS` is NO LONGER persisted — it is tracked in-memory on `UserDataHandler._lastRefinedTS` (lost on restart; absent → 0). The nested sub-dict must be written via read-modify-write through `chatUsers.updateUserMetadata()` directly — `setUserMetadata(isUpdate=True)` does a shallow top-level merge and would wipe sibling threads (see [`docs/llm/tasks.md`](llm/tasks.md) §3).
+
 ---
 
 ### chat_info

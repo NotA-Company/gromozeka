@@ -154,6 +154,9 @@ base-tier = "free"
 paid-tier = "free"
 paid-tier-untill-ts = 0
 
+# If userMemory need to be refined\updated
+memory-refinement-enabled       = false
+
 # Per-char ratelimiters for LLM usage and Tools-usage
 llm-ratelimiter                 = "chat-default"
 
@@ -167,6 +170,9 @@ image-generation-model          = "aliceai-image-art"
 # image-generation-model          = "yandex-art"
 image-generation-fallback-model = "openrouter/gemini-2.5-flash-image"
 condensing-model                = "openrouter/free"
+memory-refine-model             = "openrouter/free"
+memory-refine-fallback-model    = "aliceai-llm-flash"
+
 
 summary-prompt     = """
 Суммаризируй переписку. Укажи:
@@ -198,6 +204,7 @@ chat-prompt-suffix = """
 * `quote` - Цитата из другого сообщения (если есть).
 * `mediaDescription` - Описание изображения (при наличии).
 * `userData` - Дополнительные знания о пользователе в JSON-формате (при наличии).
+* `userSummary` - Краткое резюме/био о пользователе (при наличии).
 
 Отвечай простым текстом, без JSON-обёртки. Можно использовать Markdown.
 """
@@ -322,3 +329,29 @@ divination-parse-structure-prompt = """
 
 Ответь ТОЛЬКО валидным JSON'ом, без вводных слов и пояснений — только JSON.
 """
+
+# Memory-refinement prompts (per-chat overridable via chat settings).
+# Placeholders for the user-prompt template:
+#   {existingUserData}, {existingSummary}, {messages}
+memory-refine-system-prompt = """
+You are a memory-refinement assistant. Your job is to maintain a concise, durable memory about a specific user in a chat.
+
+You will receive: the user's existing persistent knowledge (key/value facts), their current short summary, and their recent messages.
+
+Act as follows:
+1. Use the `add_user_data` tool to record NEW durable, long-lived facts about the user (real name, birthday, profession, stable preferences, long-term goals, important relationships). Only persist facts that will still be true weeks from now.
+2. Use the `delete_user_data` tool to remove facts that are now stale, incorrect, or contradicted by the recent messages.
+3. Do NOT record transient states, one-off requests, or conversation-specific context.
+4. Finally, produce an UPDATED short summary/bio of the user (a few sentences) reflecting everything you now know. Output ONLY the new summary text, nothing else."""
+
+memory-refine-user-prompt-template = """
+Existing persistent knowledge:
+{existingUserData}
+
+Existing summary:
+{existingSummary}
+
+Recent messages from the user:
+{messages}
+
+Analyze the above. Update persistent knowledge using the tools if needed, then output the updated short summary."""

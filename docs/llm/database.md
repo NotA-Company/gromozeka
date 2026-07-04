@@ -31,6 +31,7 @@
 | `chatMessages` | `getChatMessageByMessageId(chatId, messageId)` | `Optional[ChatMessageDict]` | Get message by ID |
 | `chatMessages` | `getChatMessagesByRootId(chatId, rootMessageId, threadId)` | `List[ChatMessageDict]` | Get thread messages |
 | `chatMessages` | `getMessageThread(chatId, messageId, *, dataSource?)` | `Optional[ThreadResultDict]` | Get target + thread root + chronological thread messages |
+| `chatMessages` | `getChatMessagesSince(chatId, sinceDateTime?, tillDateTime?, threadId?, limit?, messageCategory?, userId?, *, dataSource?)` | `List[ChatMessageDict]` | Messages newer than `sinceDateTime` (ordered date DESC). The additive `userId` filter (`AND (:userId IS NULL OR c.user_id = :userId)`) scopes results to one sender — used by the memory-refinement cron to fetch a user's recent messages |
 | `chatMessages` | `updateChatMessageCategory(chatId, messageId, category)` | `None` | Update message category |
 | `chatMessages` | `updateChatMessageMetadata(chatId, messageId, metadata)` | `None` | Update message metadata |
 | `chatMessages` | `searchChatMessages(chatId, queryEmbedding?, userFilter?, categoryFilter?, maxAgeDays?, rootMessageId?, limit?, dataSource?)` | `List[SearchResultDict]` | Combined filter + (optional) semantic search via cosine similarity over `message_embeddings`. When `queryEmbedding` is `None` results are returned in date order with `score=0.0` |
@@ -40,7 +41,7 @@
 | `chatEmbeddings` | `deleteChatEmbeddings(chatId)` | `None` | Drop all `message_embeddings` rows for a chat (used when switching to an incompatible model) |
 | `chatUsers` | `getChatUser(chatId, userId)` | `Optional[ChatUserDict]` | Get user in chat |
 | `chatUsers` | `updateChatUser(chatId, userId, username, fullName)` | `None` | Upsert user in chat |
-| `chatUsers` | `updateUserMetadata(chatId, userId, metadata)` | `None` | Update user metadata |
+| `chatUsers` | `updateUserMetadata(chatId, userId, metadata)` | `None` | Update user metadata (JSON string). The `metadata` column carries an optional `memoryRefinement` sub-dict — write nested sub-dicts via read-modify-write through this method directly, NOT `setUserMetadata(isUpdate=True)` (see [`tasks.md`](tasks.md) §3 shallow-merge gotcha) |
 | `chatUsers` | `getChatUsers(chatId, limit?, minMessages?, lastActiveDays?, seenSince?, dataSource?)` | `List[ChatUserDict]` | List users in a chat. Default mode: order by `updated_at DESC` (most recently active first) with optional `seenSince` filter. Activity-filtered mode (any of `minMessages` / `lastActiveDays` set): order by `messages_count DESC` with both filters applied |
 | `chatUsers` | `getUserChats(userId)` | `List[ChatInfoDict]` | Get all chats for user |
 | `mediaAttachments` | `addMediaAttachment(...)` | `None` | Add media attachment record |

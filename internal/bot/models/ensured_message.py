@@ -379,6 +379,7 @@ class EnsuredMessage:
         mediaGroupId: Identifier for media group if message contains grouped media
         mediaList: List of media content objects associated with the message
         userData: Additional user data associated with the message
+        userSummary: Rolling per-(chat, user, thread) memory summary associated with the message
         formatEntities: Text formatting entities for the message
         metadata: Additional metadata including condensed thread information
     """
@@ -402,6 +403,7 @@ class EnsuredMessage:
         "mediaPrompt",
         "mediaId",
         "userData",
+        "userSummary",
         "_mentionCheckResult",
         "formatEntities",
         "metadata",
@@ -489,6 +491,8 @@ class EnsuredMessage:
 
         self.userData: Optional[Dict[str, Any]] = None
         """User data if any"""
+        self.userSummary: Optional[str] = None
+        """Rolling per-(chat, user, thread) memory summary, if any"""
         self._mentionCheckResult: Optional[MentionCheckResult] = None
         """Cached mention check result"""
 
@@ -1129,6 +1133,7 @@ class EnsuredMessage:
                         "quote": self.quoteText if self.isQuote else None,
                         "mediaDescription": mediaContent,
                         "userData": self.userData,
+                        "userSummary": self.userSummary,
                     }.items()
                     if v
                 }

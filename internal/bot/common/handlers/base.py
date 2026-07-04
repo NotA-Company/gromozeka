@@ -62,6 +62,7 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import ChatInfoDict, ChatUserDict, MediaStatus, MessageCategory
+from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
 from internal.services.cache import CacheService
 from internal.services.llm import LLMService
@@ -372,6 +373,15 @@ class BaseBotHandler(CommandHandlerMixin):
         ensuredMessage.setUserData(
             await self.cache.getChatUserData(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
         )
+        # Attach the rolling memory summary only when refinement is enabled for this chat,
+        # so chats with the feature off pay no extra DB cost.
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
+        if chatSettings[ChatSettingsKey.MEMORY_REFINEMENT_ENABLED].toBool():
+            ensuredMessage.userSummary = await self.getUserMemorySummary(
+                chatId=ensuredMessage.recipient.id,
+                userId=ensuredMessage.sender.id,
+                threadId=ensuredMessage.threadId or DEFAULT_THREAD_ID,
+            )
 
     async def checkEMMentionsMe(self, ensuredMessage: EnsuredMessage) -> MentionCheckResult:
         """
@@ -1088,6 +1098,33 @@ class BaseBotHandler(CommandHandlerMixin):
 
         metadataStr = utils.jsonDumps(metadata)
         await self.db.chatUsers.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadataStr)
+
+    async def getUserMemorySummary(self, chatId: int, userId: int, threadId: int) -> Optional[str]:
+        """
+        Read the per-thread rolling memory summary for a user.
+
+        Looks up the user's metadata blob in ``chat_users.metadata`` and extracts the
+        ``summary`` field stored under ``memoryRefinement[<threadId>]`` by the
+        background refinement loop. Returns ``None`` when the user, the metadata
+        section, the thread entry, or the summary itself is absent.
+
+        Args:
+            chatId: Chat id the user belongs to.
+            userId: User id to read the summary for.
+            threadId: Thread id (use ``DEFAULT_THREAD_ID`` for non-threaded chats).
+
+        Returns:
+            The rolling summary text, or ``None`` if no summary is stored.
+        """
+        userInfo = await self.db.chatUsers.getChatUser(chatId=chatId, userId=userId)
+        if userInfo is None:
+            return None
+        metadata = self.parseUserMetadata(userInfo)
+        refinement = metadata.get("memoryRefinement", {})
+        entry = refinement.get(str(threadId))
+        if not entry:
+            return None
+        return entry.get("summary") or None
 
     async def startTyping(
         self,

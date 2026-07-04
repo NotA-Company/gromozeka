@@ -5,7 +5,36 @@ user metadata throughout the bot system. User metadata includes flags
 for spam detection, message handling preferences, and user state tracking.
 """
 
-from typing import TypedDict
+from typing import Dict, TypedDict
+
+
+class UserMemoryThreadDict(TypedDict, total=False):
+    """TypedDict representing per-thread memory refinement state for a user.
+
+    Stored as a nested dict inside ``UserMetadataDict.memoryRefinement``,
+    keyed by ``str(threadId)`` (``"0"`` for the main thread). All fields are
+    optional (``total=False``) since a freshly-created entry may only carry a
+    subset of them.
+
+    Note: the ``lastRefinedTS`` (unix timestamp of the last refinement run) is
+    NO LONGER persisted here — it is tracked in-memory on the handler
+    (``UserDataHandler._lastRefinedTS``) so the persisted entry stays limited
+    to the durable summary + message cursors.
+
+    Attributes:
+        summary: Rolling short summary/bio of the user in this thread.
+        lastProcessedMessageId: MessageId.asStr() of the newest message ingested by the
+            last refinement (logging/debug only).
+        lastProcessedMessageDate: ISO datetime of the newest message ingested by the last
+            refinement — the cursor for getChatMessagesSince.
+    """
+
+    summary: str
+    """Rolling short summary/bio of the user in this thread."""
+    lastProcessedMessageId: str
+    """MessageId.asStr() of the newest message ingested by the last refinement (logging/debug only)."""
+    lastProcessedMessageDate: str
+    """ISO datetime of the newest message ingested by the last refinement — the cursor for getChatMessagesSince."""
 
 
 class UserMetadataDict(TypedDict, total=False):
@@ -24,6 +53,7 @@ class UserMetadataDict(TypedDict, total=False):
             from this user. When True, messages are dropped without processing.
         leftChat: Flag indicating whether the user has left the chat. Used to track user presence
             and potentially skip processing for users who are no longer active.
+        memoryRefinement: Per-thread memory refinement state, keyed by str(threadId); "0" for main thread.
     """
 
     isSpammer: bool
@@ -34,3 +64,5 @@ class UserMetadataDict(TypedDict, total=False):
     """Flag indicating whether the bot should automatically delete all new messages from this user."""
     leftChat: bool
     """Flag indicating whether the user has left the chat."""
+    memoryRefinement: Dict[str, UserMemoryThreadDict]
+    """Per-thread memory refinement state, keyed by str(threadId); "0" for main thread."""

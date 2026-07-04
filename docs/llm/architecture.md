@@ -479,6 +479,32 @@ await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
 
 ---
 
+### ADR-014: Background User-Memory Refinement (Cron + Global Lock + Context Injection)
+
+**Decision:** A rolling per-`(chat, user, thread)` memory summary is refined in the background by an LLM on a 60s `CRON_JOB` owned by `UserDataHandler`, and injected into normal chat context as a new `EnsuredMessage.userSummary` field.
+
+**Why:** Lets future replies carry short-term context about each user without re-reading their whole history or putting durable facts into every message's `userData`. The work is asynchronous and bounded so it never blocks the hot reply path or floods the LLM provider.
+
+**Components** (see [`docs/llm/memories/user-memory-refinement.md`](memories/user-memory-refinement.md) for the durable implementation summary):
+
+- **Counter** — `UserDataHandler._accounting: Dict[(chatId, userId, threadId), int]`, in-memory only (lost on restart; refinement re-fires after the next threshold crossing). Incremented at the very top of `newMessageHandler`, gated by the per-chat `MEMORY_REFINEMENT_ENABLED` setting, before any other gate.
+- **Cron** — `UserDataHandler._dtCronJob(task)` registered on `DelayedTaskFunction.CRON_JOB` (runs every 60s alongside other handlers' cron ticks — multiple handlers may subscribe to the same function).
+- **Global lock** — a single `asyncio.Lock` (`_refineLock`) serializes the whole scan+dispatch. If a previous batch is still running (a single LLM call can exceed 60s), the tick early-returns (`if self._refineLock.locked(): return`) instead of spawning a concurrent run. This prevents provider flooding; there is no per-entry locking and no `createTask`.
+- **Refinement run** — `_runRefinement` fetches recent messages via `chatMessages.getChatMessagesSince` (additive `userId` filter), renders them, and calls `LLMService.generateTextViaLLM` with `chatId=None` (skips rate-limiting for the background call) and a per-tool dict enabling `ADD_USER_DATA`/`DELETE_USER_DATA`/`SEARCH_MESSAGES`/`GET_CURRENT_DATETIME`. A synthetic minimal `EnsuredMessage` is built so the `add_user_data`/`delete_user_data` tools can resolve `chatId`/`userId` from `extraData["ensuredMessage"]`.
+- **Persistence** — the resulting summary + cursors land in `chat_users.metadata.memoryRefinement[str(threadId)]` (`{summary, lastProcessedMessageId, lastProcessedMessageDate}`). Written via **direct read-modify-write through `chatUsers.updateUserMetadata()`** — NOT `setUserMetadata(isUpdate=True)`, which shallow-merges at the top level and would wipe sibling threads' summaries (see [`tasks.md`](tasks.md) §3 gotcha). The `lastRefinedTS` (drives the 6h time threshold) is tracked **in-memory** on `UserDataHandler._lastRefinedTS` (lost on restart; absent → 0 → due).
+- **Context injection** — `BaseBotHandler.getUserMemorySummary(chatId, userId, threadId)` reads the summary; `HandlersManager._processMessageRec` and `BaseBotHandler._updateEMessageUserData` attach it as `EnsuredMessage.userSummary` (gated). `formatForLLM` omits it from JSON when `None` → byte-identical default output.
+
+**Load-bearing invariants:**
+- The global lock is the concurrency boundary for refinement. Never add per-entry locks or fire-and-forget tasks — a slow run must block the next tick, not pile up concurrent calls.
+- Nested `memoryRefinement` writes must read-modify-write the whole metadata dict. Never pass a partial `{"memoryRefinement": {<threadId>: ...}}` through `setUserMetadata(isUpdate=True)`.
+- The dispatch loop uses a **credit-consumed** counter reset (`_accounting[key] = max(0, _accounting.get(key,0) - preCount)`), NOT an unconditional zeroing. This preserves increments from messages that arrived during the (possibly multi-second) LLM call. Never revert to `= 0`.
+- The due list is sorted `key=lambda x: (-x[2], -x[1])` where `x[2]` is elapsed seconds and `x[1]` is new-message count: **largest elapsed first** (oldest-due / never-refined / stale get priority), highest count as tiebreaker. A pre-filter skips never-refined users (`isNeverRefined = not entry or "summary" not in entry`, i.e. DB-entry presence — NOT the timestamp) with fewer than `min-messages-to-refine` new messages so they don't crowd the front of the due list every tick. Never revert to ascending or count-only — stale and never-refined users must win priority.
+- `_runRefinement` sets `_lastRefinedTS[key] = int(time.time())` on the `< min-messages` bail path, so idle (e.g. post-restart, previously-refined) users aren't re-scanned and re-bailed on every 60s tick. The count threshold still fires independently once messages accumulate. Never remove this — without it the cron hot-loops over idle due-by-time users.
+
+**Config:** `[user-memory]` in [`configs/00-defaults/user-memory.toml`](../../configs/00-defaults/user-memory.toml) (global kill switch + thresholds; read ONCE in `__init__` and cached as instance attributes); per-chat `MEMORY_REFINEMENT_ENABLED` / `MEMORY_REFINE_MODEL` / `MEMORY_REFINE_FALLBACK_MODEL` / `MEMORY_REFINE_SYSTEM_PROMPT` / `MEMORY_REFINE_USER_PROMPT_TEMPLATE` chat settings under `[bot.defaults]`. See [`configuration.md`](configuration.md) §`[user-memory]`.
+
+---
+
 ## 2. Dependency Map
 
 ### 2.1 Component Dependency Graph

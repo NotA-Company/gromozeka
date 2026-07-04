@@ -58,6 +58,7 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import MessageCategory
+from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
 from internal.services.cache import CacheService
 from internal.services.queue_service import DelayedTask, DelayedTaskFunction, QueueService
@@ -1015,6 +1016,18 @@ class HandlersManager(CommandHandlerGetterInterface):
             ensuredMessage.setUserData(
                 await self.cache.getChatUserData(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
             )
+            # Attach the rolling memory summary only when refinement is enabled for this chat,
+            # so chats with the feature off pay no extra DB cost. HandlersManager is not a
+            # BaseBotHandler subclass, so route the reads through the first registered handler
+            # (same pattern as self.handlers[0][0].getBotUserName() above).
+            handlerObj = self.handlers[0][0]
+            chatSettings = await handlerObj.getChatSettings(ensuredMessage.recipient.id)
+            if chatSettings[ChatSettingsKey.MEMORY_REFINEMENT_ENABLED].toBool():
+                ensuredMessage.userSummary = await handlerObj.getUserMemorySummary(
+                    chatId=ensuredMessage.recipient.id,
+                    userId=ensuredMessage.sender.id,
+                    threadId=ensuredMessage.threadId or DEFAULT_THREAD_ID,
+                )
 
             commandRet = await asyncio.wait_for(
                 self.handleCommand(ensuredMessage, updateObj),

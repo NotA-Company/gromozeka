@@ -6,8 +6,13 @@ and LLM tool integration for AI-assisted data management. All data is scoped to
 specific chat and user combinations.
 """
 
+import asyncio
+import datetime
 import logging
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Dict, List, Optional, Tuple
+
+from dateutil import parser as dateutilParser
 
 import lib.utils as utils
 from internal.bot.common.models import CallbackButton, UpdateObjectType
@@ -17,28 +22,53 @@ from internal.bot.models import (
     BotProvider,
     ButtonDataKey,
     ButtonUserDataConfigAction,
+    ChatSettingsKey,
     ChatType,
     CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
     EnsuredMessage,
+    LLMMessageFormat,
+    MessageRecipient,
     MessageSender,
     commandHandlerV2,
 )
+from internal.bot.models.user_metadata import UserMemoryThreadDict
 from internal.config.manager import ConfigManager
 from internal.database import Database
-from internal.database.models import MessageCategory
+from internal.database.models import ChatMessageDict, MessageCategory
+from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
 from internal.services.cache import UserActiveActionEnum
 from internal.services.llm import LLMService
+from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
 from lib.ai import (
     LLMFunctionParameter,
     LLMParameterType,
+    ModelMessage,
 )
 
 from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)
+
+# Memory-refinement tuning constants.
+# Refinement fires when ``newMessagesCount >= MEMORY_COUNT_THRESHOLD`` OR
+# ``elapsed since lastRefinedTS >= MEMORY_TIME_THRESHOLD_SECONDS``.
+MEMORY_COUNT_THRESHOLD = 5
+"""Per-(chat, user, thread) new-message count that triggers a refinement run."""
+
+MEMORY_TIME_THRESHOLD_SECONDS = 6 * 60 * 60
+"""Max seconds since the last refinement run before another is forced (6 hours)."""
+
+MEMORY_MIN_MESSAGES_TO_REFINE = 5
+"""Don't refine if fewer than this many new messages are available."""
+
+MEMORY_MAX_MESSAGES_PER_RUN = 128
+"""Cap on messages fed to a single refinement LLM call."""
+
+MEMORY_MAX_REFINES_PER_TICK = 3
+"""Upper bound on refinement LLM calls per 60s cron tick."""
 
 
 class UserDataHandler(BaseBotHandler):
@@ -63,18 +93,62 @@ class UserDataHandler(BaseBotHandler):
 
         self.llmService = LLMService.getInstance()
 
+        # In-memory per-(chatId, userId, threadId) new-message counter used by the
+        # memory-refinement cron to decide when a user's rolling summary is due.
+        # Lost on restart; refinement re-fires after the next threshold crossing.
+        self._accounting: Dict[Tuple[int, int, int], int] = {}
+
+        # In-memory per-(chatId, userId, threadId) refinement-timestamp tracker.
+        # Replaces the old persisted ``lastRefinedTS`` field so the DB entry only
+        # carries durable data (summary + message cursors). Lost on restart: an
+        # absent key is treated as 0 (i.e. never refined this session → due by
+        # time), which preserves the previous effective behaviour.
+        self._lastRefinedTS: Dict[Tuple[int, int, int], int] = {}
+
+        # Lock for self._accounting and self._lastRefinedTS manipulation
+        self._accountingLock = asyncio.Lock()
+
+        # Single global lock serializing ALL refinement runs so a slow LLM call
+        # (>60s) blocks the next tick instead of spawning a concurrent one and
+        # flooding the provider. See docs/plans/memory-refine-plan-v1.md §4/§5.
+        self._refineLock = asyncio.Lock()
+
+        # Cache the [user-memory] config ONCE at construction so the cron hot
+        # path and _runRefinement never touch configManager. Thresholds fall
+        # back to the module constants (which mirror the TOML defaults) when the
+        # section is absent or partially specified.
+        userMemoryConfig = configManager.get("user-memory", {})
+        self._memoryRefineEnabled: bool = userMemoryConfig.get("enabled", False)
+        """Global kill switch for the memory-refinement subsystem."""
+        thresholds = userMemoryConfig.get("thresholds", {})
+        self._memoryCountThreshold: int = thresholds.get("message-count", MEMORY_COUNT_THRESHOLD)
+        """Per-(chat, user, thread) new-message count that triggers a refinement run."""
+        self._memoryTimeThresholdSeconds: int = thresholds.get("time-seconds", MEMORY_TIME_THRESHOLD_SECONDS)
+        """Max seconds since the last refinement run before another is forced."""
+        self._memoryMinMessagesToRefine: int = thresholds.get("min-messages-to-refine", MEMORY_MIN_MESSAGES_TO_REFINE)
+        """Don't refine if fewer than this many new messages are available."""
+        self._memoryMaxMessagesPerRun: int = thresholds.get("max-messages-per-run", MEMORY_MAX_MESSAGES_PER_RUN)
+        """Cap on messages fed to a single refinement LLM call."""
+        self._memoryMaxRefinesPerTick: int = thresholds.get("max-refines-per-tick", MEMORY_MAX_REFINES_PER_TICK)
+        """Upper bound on refinement LLM calls per 60s cron tick."""
+
+        # Register the memory-refinement CRON_JOB. Multiple handlers can
+        # subscribe to the same `DelayedTaskFunction.CRON_JOB` (they run in
+        # registration order), so the existing cleanup tick and the
+        # `ChatSearchHandler` backfill keep running unaffected.
+        self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.CRON_JOB, self._dtCronJob)
+
         self.llmService.registerTool(
             name=ToolName.ADD_USER_DATA,
             description=(
-                "Remember some data/knowledge about user who, sent last message. "
-                "Use it in following cases:\n"
-                "1. User asked to learn/remember something about him/her.\n"
-                "2. You learned new information about user "
-                "(e.g., real name, birth dare, what he like, etc).\n"
-                "3. You want to remember something relating to user.\n"
-                "4. When you needs to store information related to the user "
-                "to improve interaction quality (e.g., remembering formatting preferences, "
-                "command usage frequency, communication style).\n"
+                "Remember **durable, long-lived** facts about the user who sent the last message — "
+                "things that will still be true weeks from now. "
+                "Use it for: real name, birthday, profession, stable preferences "
+                "(language, formatting, communication style), long-term goals, important relationships.\n"
+                "\n"
+                "Do NOT use it for: transient states (current mood, what they are doing today), "
+                "one-off requests, conversation-specific context, things likely to change soon. "
+                "When in doubt, skip.\n"
                 "\n"
                 "Will return new data for given key."
             ),
@@ -95,11 +169,34 @@ class UserDataHandler(BaseBotHandler):
             handler=self._llmToolSetUserData,
         )
 
+        self.llmService.registerTool(
+            name=ToolName.DELETE_USER_DATA,
+            description=(
+                "Delete a previously-remembered fact about the user who sent the last message, by key. "
+                "Use it to remove stale, incorrect, or no-longer-relevant persistent knowledge."
+            ),
+            parameters=[
+                LLMFunctionParameter(
+                    name="key",
+                    description="Key of the data to delete",
+                    type=LLMParameterType.STRING,
+                    required=True,
+                ),
+            ],
+            handler=self._llmToolDeleteUserData,
+        )
+
     ###
     # LLM Tool-Calling handlers
     ###
 
-    async def _llmToolSetUserData(self, extraData: Optional[Dict[str, Any]], key: str, data: str, **kwargs) -> str:
+    async def _llmToolSetUserData(
+        self,
+        extraData: Optional[Dict[str, Any]],
+        key: str,
+        data: str,
+        **kwargs,
+    ) -> Dict[str, Any]:
         """
         LLM tool handler for storing user data.
 
@@ -110,7 +207,7 @@ class UserDataHandler(BaseBotHandler):
             **kwargs: Additional arguments (ignored).
 
         Returns:
-            str: JSON with operation status, key, and data value.
+            Dict[str, Any]: ``{"done": bool, "key": str, "data": str}``.
 
         Raises:
             RuntimeError: If extraData is invalid or missing ensuredMessage.
@@ -130,7 +227,380 @@ class UserDataHandler(BaseBotHandler):
             value=data,
         )
 
-        return utils.jsonDumps({"done": True, "key": key, "data": data})
+        return {"done": True, "key": key, "data": data}
+
+    async def _llmToolDeleteUserData(
+        self,
+        extraData: Optional[Dict[str, Any]],
+        key: str,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """
+        LLM tool handler for deleting user data.
+
+        Args:
+            extraData (Optional[Dict[str, Any]]): Context with ensuredMessage object.
+            key (str): Storage key to remove.
+            **kwargs: Additional arguments (ignored).
+
+        Returns:
+            Dict[str, Any]: ``{"done": bool, "key": str}``.
+
+        Raises:
+            RuntimeError: If extraData is invalid or missing ensuredMessage.
+        """
+        if extraData is None:
+            raise RuntimeError("extraData should be provided")
+        if "ensuredMessage" not in extraData:
+            raise RuntimeError("extraData['ensuredMessage'] should be provided")
+        ensuredMessage = extraData["ensuredMessage"]
+        if not isinstance(ensuredMessage, EnsuredMessage):
+            raise RuntimeError("ensuredMessage should be instance of EnsuredMessage")
+
+        await self.cache.unsetChatUserData(
+            chatId=ensuredMessage.recipient.id,
+            userId=ensuredMessage.sender.id,
+            key=key,
+        )
+
+        return {"done": True, "key": key}
+
+    ###
+    # Memory refinement (background CRON_JOB)
+    ###
+    #
+    # Flow (see docs/plans/memory-refine-plan-v1.md §5/§6):
+    #   newMessageHandler increments _accounting  ->  _dtCronJob (every 60s)
+    #   scans the counter, builds a due list, runs _runRefinement for each
+    #   under a single global _refineLock  ->  _runRefinement fetches recent
+    #   messages, asks the LLM to update persistent facts (via the tools
+    #   above) and emit a new short summary, then persists summary + cursors
+    #   to chat_users.metadata.memoryRefinement[threadId].
+
+    async def _dtCronJob(self, task: DelayedTask) -> None:
+        """Periodic entry point for memory refinement. Runs every 60s via the CRON_JOB delayed task.
+
+        All ``[user-memory]`` config is read ONCE in ``__init__`` and cached as
+        instance attributes, so this method performs no ``configManager`` reads.
+        Early-returns when the global kill switch is off, or when a previous batch
+        is still running (a single LLM call can exceed the 60s tick). Otherwise
+        acquires ``_refineLock`` and, under it, scans ``_accounting`` to build a
+        due list (per-chat-enabled + count/time thresholds, skipping never-refined
+        users below ``min-messages-to-refine`` so they don't crowd the due list),
+        then runs up to ``max-refines-per-tick`` refinements sequentially. The
+        whole scan+dispatch happens inside the lock so two ticks can never overlap
+        their work (closing the TOCTOU window between the ``locked()`` bail and
+        lock acquisition).
+
+        Args:
+            task (DelayedTask): The delayed-task payload (unused).
+        """
+        if not self._memoryRefineEnabled:
+            return  # global kill switch off
+
+        # Bail this tick if a previous batch is still running (a single LLM call
+        # can exceed the 60s cadence). The lock serializes everything so the
+        # provider is never flooded with concurrent refinement calls.
+        if self._refineLock.locked():
+            return
+
+        now = time.time()
+        # Whole scan + dispatch under the lock: there is no `await` between the
+        # `locked()` bail above and the acquisition here, so from asyncio's
+        # point of view acquisition is instantaneous and no second tick can
+        # slip past the bail check while this one is mid-scan.
+        async with self._refineLock:
+            # Snapshot keys to avoid mutation-during-iteration (_accounting may be
+            # touched by newMessageHandler on the live event loop).
+            candidates = list(self._accounting.items())
+            due: List[Tuple[Tuple[int, int, int], int, float]] = []
+            for (chatId, userId, threadId), newMessagesCount in candidates:
+                # Guard the ENTIRE per-candidate body so a transient DB error
+                # (chat settings OR memory-entry read) skips just this one
+                # candidate instead of aborting the whole scan.
+                try:
+                    # Per-chat enable gate (runtime-disable safe).
+                    chatSettings = await self.getChatSettings(chatId)
+                    if not chatSettings[ChatSettingsKey.MEMORY_REFINEMENT_ENABLED].toBool():
+                        continue
+
+                    # Time-since-last-refinement, read from the in-memory tracker
+                    # (absent → 0 → elapsed ≈ now, i.e. treated as never refined
+                    # this session). A DB entry without a "summary" key marks a
+                    # user as never-refined at all.
+                    entry = await self._readMemoryEntry(chatId, userId, threadId)
+                    lastRefinedTS = self._lastRefinedTS.get((chatId, userId, threadId), 0)
+                    elapsed = now - lastRefinedTS
+                    isNeverRefined = "summary" not in entry
+
+                    # Never-refined users with too few new messages would be
+                    # due-by-time but no-op in _runRefinement (which enforces
+                    # min-messages). Skip them so they don't sort first as
+                    # oldest-due and crowd out legit-due entries every tick. The
+                    # counter is deliberately NOT reset here, so they enter the
+                    # due list normally once they accumulate enough new messages.
+                    if isNeverRefined and newMessagesCount < self._memoryMinMessagesToRefine:
+                        continue
+
+                    dueByCount = newMessagesCount >= self._memoryCountThreshold
+                    dueByTime = elapsed >= self._memoryTimeThresholdSeconds
+                    if dueByCount or dueByTime:
+                        due.append(
+                            (
+                                (chatId, userId, threadId),
+                                newMessagesCount,
+                                elapsed,
+                            )
+                        )
+                except Exception:
+                    logger.exception(
+                        "Memory refinement: scan failed for chatId=%s userId=%s threadId=%s",
+                        chatId,
+                        userId,
+                        threadId,
+                    )
+                    continue
+
+            if not due:
+                return
+
+            # Oldest-due / highest-count first; bound the number of LLM calls per tick.
+            # Largest elapsed (most overdue / never-refined) first, then highest new-message
+            # count as tiebreaker. Descending via negation (elapsed is always a finite float).
+            due.sort(key=lambda x: (-x[2], -x[1]))
+            for dueEntry in due[: self._memoryMaxRefinesPerTick]:
+                key = dueEntry[0]
+                preCount = dueEntry[1]
+                chatId, userId, threadId = key
+                try:
+                    await self._runRefinement(chatId, userId, threadId)
+                except Exception:
+                    logger.exception(
+                        "Memory refinement failed for chatId=%s userId=%s threadId=%s",
+                        chatId,
+                        userId,
+                        threadId,
+                    )
+                finally:
+                    # Credit-consumed: subtract the messages we attempted to
+                    # process, preserving any increments that arrived during the
+                    # (possibly slow) LLM call. Clamped at 0 so a malformed count
+                    # never goes negative. Replaces the unconditional zeroing
+                    # that wiped legitimate new arrivals mid-call.
+                    async with self._accountingLock:
+                        newVal =  max(0, self._accounting.get(key, 0) - preCount)
+                        if newVal > 0:
+                            self._accounting[key] = newVal
+                        else:
+                            # If zero - drop it to not iterate next time
+                            self._accounting.pop(key, None)
+                        
+                        # If by some reason, there is no _lastRefinedTS for this key, set to current time
+                        if key not in self._lastRefinedTS:
+                            self._lastRefinedTS[(chatId, userId, threadId)] = int(time.time())
+
+    async def _readMemoryEntry(self, chatId: int, userId: int, threadId: int) -> UserMemoryThreadDict:
+        """Read the per-thread memory-refinement entry from chat_users.metadata.
+
+        Args:
+            chatId (int): Chat id.
+            userId (int): User id.
+            threadId (int): Thread id.
+
+        Returns:
+            Optional[UserMemoryThreadDict]: The entry dict, or None if absent.
+        """
+        userInfo = await self.db.chatUsers.getChatUser(chatId=chatId, userId=userId)
+        metadata = self.parseUserMetadata(userInfo)
+        refinement = metadata.get("memoryRefinement", {})
+        return refinement.get(str(threadId), {})
+
+    async def _runRefinement(self, chatId: int, userId: int, threadId: int) -> None:
+        """Run one memory-refinement LLM pass for a (chat, user, thread).
+
+        Fetches recent messages since the last processed date, asks the LLM to update persistent
+        facts (via add_user_data / delete_user_data tools) and produce a new short summary, then
+        persists the summary + cursors to chat_users.metadata.memoryRefinement[threadId].
+
+        All ``[user-memory]`` thresholds are read ONCE in ``__init__`` and cached
+        as instance attributes; the prompts are read from chat settings (per-chat
+        overrides of the TOML defaults).
+
+        Args:
+            chatId (int): Chat id.
+            userId (int): User id.
+            threadId (int): Thread id.
+        """
+        chatSettings = await self.getChatSettings(chatId)
+        if not chatSettings[ChatSettingsKey.MEMORY_REFINEMENT_ENABLED].toBool():
+            return  # runtime-disabled since the due list was built
+
+        systemPrompt = chatSettings[ChatSettingsKey.MEMORY_REFINE_SYSTEM_PROMPT].toStr()
+        userPromptTemplate = chatSettings[ChatSettingsKey.MEMORY_REFINE_USER_PROMPT_TEMPLATE].toStr()
+
+        entry = await self._readMemoryEntry(chatId, userId, threadId)
+        existingSummary = entry.get("summary", "")
+        sinceDateTimeStr = entry.get("lastProcessedMessageDate")
+        sinceDateTime: Optional[datetime.datetime] = None
+        if sinceDateTimeStr:
+            try:
+                sinceDateTime = dateutilParser.parse(sinceDateTimeStr)
+            except (ValueError, OverflowError, TypeError):
+                logger.warning("Unparseable lastProcessedMessageDate %r; refining from scratch", sinceDateTimeStr)
+                sinceDateTime = None
+
+        messages = await self.db.chatMessages.getChatMessagesSince(
+            chatId=chatId,
+            sinceDateTime=sinceDateTime,
+            threadId=threadId,
+            limit=self._memoryMaxMessagesPerRun,
+            userId=userId,
+        )
+        if len(messages) < self._memoryMinMessagesToRefine:
+            # Nothing new worth refining — reset the in-memory time threshold so this
+            # idle (e.g. post-restart, previously-refined) user isn't re-scanned and
+            # re-bailed on every 60s tick until enough new messages accumulate. The
+            # count threshold still fires independently once messages pile up.
+            async with self._accountingLock:
+                self._lastRefinedTS[(chatId, userId, threadId)] = int(time.time())
+            return  # not enough new data to refine
+
+        # Render messages for the LLM (same pattern as SummarizationHandler._doSummarization).
+        rendered = await self._renderMessagesForLLM(messages)
+
+        # Existing persistent knowledge (key/value facts from the user_data table).
+        existingUserData = await self.cache.getChatUserData(chatId=chatId, userId=userId)
+
+        # Synthesize a minimal EnsuredMessage so the add/delete user-data tools
+        # can resolve chatId/userId (they read recipient.id / sender.id).
+        synthEnsuredMessage = self._makeSyntheticEnsuredMessage(chatId=chatId, userId=userId, threadId=threadId)
+
+        userPrompt = userPromptTemplate.format(
+            existingUserData=utils.jsonDumps(existingUserData, indent=2) if existingUserData else "(none)",
+            existingSummary=existingSummary or "(none)",
+            messages=rendered,
+        )
+
+        result = await self.llmService.generateTextViaLLM(
+            messages=[
+                ModelMessage(role="system", content=systemPrompt),
+                ModelMessage(role="user", content=userPrompt),
+            ],
+            chatId=None,  # skip rate-limiting for the background call
+            chatSettings=chatSettings,
+            modelKey=ChatSettingsKey.MEMORY_REFINE_MODEL,
+            fallbackModelKey=ChatSettingsKey.MEMORY_REFINE_FALLBACK_MODEL,
+            useTools={
+                ToolName.ADD_USER_DATA: True,
+                ToolName.DELETE_USER_DATA: True,
+                ToolName.SEARCH_MESSAGES: True,
+                ToolName.GET_CURRENT_DATETIME: True,
+            },
+            extraData={"ensuredMessage": synthEnsuredMessage, "typingManager": None},
+        )
+        newSummary = (result.resultText or "").strip()
+        if not newSummary:
+            logger.warning("Memory refinement produced empty summary for chatId=%s userId=%s", chatId, userId)
+            return
+
+        # Newest processed message is the FIRST entry in the DESC-ordered list.
+        newest = messages[0]
+        await self._persistMemoryEntry(
+            chatId=chatId,
+            userId=userId,
+            threadId=threadId,
+            summary=newSummary,
+            lastProcessedMessageId=newest["message_id"].asStr(),
+            lastProcessedMessageDate=newest["date"].isoformat(),
+        )
+        # Record the refinement timestamp in-memory only (not persisted to DB).
+        async with self._accountingLock:
+            self._lastRefinedTS[(chatId, userId, threadId)] = int(time.time())
+
+    async def _persistMemoryEntry(
+        self,
+        *,
+        chatId: int,
+        userId: int,
+        threadId: int,
+        summary: str,
+        lastProcessedMessageId: str,
+        lastProcessedMessageDate: str,
+    ) -> None:
+        """Persist an updated per-thread memory entry via read-modify-write of chat_users.metadata.
+
+        CRITICAL: ``setUserMetadata(isUpdate=True)`` does a SHALLOW top-level merge
+        (``{**old, **new}``), so passing a partial ``memoryRefinement`` would wipe every
+        other thread's summary. Instead we read the full metadata, mutate only the single
+        ``memoryRefinement[str(threadId)]`` entry, and write the whole merged dict back
+        directly via the repository — bypassing ``setUserMetadata`` entirely.
+
+        Args:
+            chatId (int): Chat id.
+            userId (int): User id.
+            threadId (int): Thread id.
+            summary (str): New short summary.
+            lastProcessedMessageId (str): MessageId.asStr() of the newest ingested message.
+            lastProcessedMessageDate (str): ISO datetime of the newest ingested message.
+        """
+        userInfo = await self.db.chatUsers.getChatUser(chatId=chatId, userId=userId)
+        metadata = self.parseUserMetadata(userInfo)
+        refinement = metadata.get("memoryRefinement", {})
+        refinement[str(threadId)] = {
+            "summary": summary,
+            "lastProcessedMessageId": lastProcessedMessageId,
+            "lastProcessedMessageDate": lastProcessedMessageDate,
+        }
+        metadata["memoryRefinement"] = refinement
+        await self.db.chatUsers.updateUserMetadata(chatId=chatId, userId=userId, metadata=utils.jsonDumps(metadata))
+
+    async def _renderMessagesForLLM(self, messages: List[ChatMessageDict]) -> str:
+        """Render a list of ChatMessageDict into a single text block for the refinement prompt.
+
+        Reuses the canonical renderer from ``SummarizationHandler._doSummarization``:
+        ``EnsuredMessage.fromDBChatMessage`` + ``formatForLLM(JSON, stripAtsign=True)``,
+        so the prompt shape stays consistent with normal chat context.
+
+        Args:
+            messages (List[ChatMessageDict]): Messages (newest-first, as returned by
+                ``getChatMessagesSince``).
+
+        Returns:
+            str: Rendered messages joined by newlines, oldest-first (chronological).
+        """
+        renderedParts: List[str] = []
+        # reversed() → oldest-first for natural reading order (matches SummarizationHandler).
+        for msg in reversed(messages):
+            eMsg = await EnsuredMessage.fromDBChatMessage(msg, self.db)
+            renderedParts.append(await eMsg.formatForLLM(self.db, format=LLMMessageFormat.JSON, stripAtsign=True))
+        return "\n".join(renderedParts)
+
+    def _makeSyntheticEnsuredMessage(self, *, chatId: int, userId: int, threadId: int) -> EnsuredMessage:
+        """Build a minimal EnsuredMessage for background LLM tool calls (add/delete user-data).
+
+        Only ``recipient.id`` and ``sender.id`` are read by the two tool handlers, so the other
+        fields are minimal placeholders. ``threadId`` is set on the message for completeness
+        though the tools do not currently read it.
+
+        Args:
+            chatId (int): Chat id (becomes recipient.id).
+            userId (int): User id (becomes sender.id).
+            threadId (int): Thread id (set on the synthetic message; unused by the tools).
+
+        Returns:
+            EnsuredMessage: Synthetic message with recipient.id=chatId, sender.id=userId.
+        """
+        ensuredMessage = EnsuredMessage(
+            sender=MessageSender(id=userId, name="", username=""),
+            recipient=MessageRecipient(
+                id=chatId,
+                chatType=ChatType.PRIVATE if chatId > 0 else ChatType.GROUP,
+            ),
+            messageId=0,
+            date=utils.now(),
+        )
+        ensuredMessage.threadId = threadId or DEFAULT_THREAD_ID
+        return ensuredMessage
 
     ###
     # Handling user-data configuration wizard
@@ -142,21 +612,34 @@ class UserDataHandler(BaseBotHandler):
         """
         Handle messages for user data configuration wizard in private chats.
 
+        Always increments the memory-refinement counter for the message's
+        (chatId, userId, threadId) when refinement is enabled for the chat,
+        regardless of chat type or wizard state, before any early-return.
+
         Args:
             ensuredMessage (EnsuredMessage): Ensured message object.
             updateObj (UpdateObjectType): Telegram update object.
 
         Returns:
-            HandlerResultStatus: FINAL if handled, SKIPPED otherwise.
+            HandlerResultStatus: FINAL if the wizard handled the message,
+            NEXT otherwise (the increment is work done for every message).
         """
 
+        # Memory-refinement accounting: count this message if refinement is enabled for this chat.
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
+        if chatSettings[ChatSettingsKey.MEMORY_REFINEMENT_ENABLED].toBool():
+            threadId = ensuredMessage.threadId or DEFAULT_THREAD_ID
+            key = (ensuredMessage.recipient.id, ensuredMessage.sender.id, threadId)
+            async with self._accountingLock:
+                self._accounting[key] = self._accounting.get(key, 0) + 1
+
         if ensuredMessage.recipient.chatType != ChatType.PRIVATE:
-            return HandlerResultStatus.SKIPPED
+            return HandlerResultStatus.NEXT
 
         user = ensuredMessage.sender
         userDataConfig = self.cache.getUserState(userId=user.id, stateKey=UserActiveActionEnum.UserDataConfig)
         if userDataConfig is None:
-            return HandlerResultStatus.SKIPPED
+            return HandlerResultStatus.NEXT
 
         await self.db.chatMessages.updateChatMessageCategory(
             chatId=ensuredMessage.recipient.id,
