@@ -285,12 +285,30 @@ class UserDataHandler(BaseBotHandler):
         Early-returns when the global kill switch is off, or when a previous batch
         is still running (a single LLM call can exceed the 60s tick). Otherwise
         acquires ``_refineLock`` and, under it, scans ``_accounting`` to build a
-        due list (per-chat-enabled + count/time thresholds, skipping never-refined
-        users below ``min-messages-to-refine`` so they don't crowd the due list),
-        then runs up to ``max-refines-per-tick`` refinements sequentially. The
-        whole scan+dispatch happens inside the lock so two ticks can never overlap
+        due list (per-chat-enabled + count/time thresholds), then runs up to
+        ``max-refines-per-tick`` refinements sequentially. The whole
+        scan+dispatch happens inside the lock so two ticks can never overlap
         their work (closing the TOCTOU window between the ``locked()`` bail and
         lock acquisition).
+
+        Due-list selection is an online top-K scan: a bounded ``due`` list of
+        size <= ``_memoryMaxRefinesPerTick`` is maintained during the iteration,
+        keeping the entries with the SMALLEST ``lastRefinedTS`` (oldest-due /
+        never-refined, which carry TS=0). When the list is full and a new
+        candidate has a smaller ``lastRefinedTS`` than the current max in the
+        list, that max is evicted and replaced by the candidate, and the running
+        max is recomputed. Never-refined users (TS=0) are deliberately NOT
+        skipped: they are refined from their lifetime chat history on the first
+        due tick; if too few lifetime messages exist, ``_runRefinement`` bails
+        once and advances the in-memory ``_lastRefinedTS`` so the candidate is
+        not retried until the count or time threshold fires again.
+
+        Each candidate is processed in its own try/except so a transient error
+        (chat settings or memory-entry read) skips just that one instead of
+        aborting the whole scan. After each refinement attempt the per-key
+        ``_accounting`` counter is decremented by the number of messages
+        attempted (credit-consumed), clamped at 0 and dropped when it reaches 0
+        so empty keys are not re-iterated.
 
         Args:
             task (DelayedTask): The delayed-task payload (unused).
@@ -313,7 +331,15 @@ class UserDataHandler(BaseBotHandler):
             # Snapshot keys to avoid mutation-during-iteration (_accounting may be
             # touched by newMessageHandler on the live event loop).
             candidates = list(self._accounting.items())
-            due: List[Tuple[Tuple[int, int, int], int, float]] = []
+            due: List[Tuple[Tuple[int, int, int], int, int]] = []
+            maxDueTS = 0
+            maxDueLen = self._memoryMaxRefinesPerTick
+            # We need at most `maxDueLen` items with the smallest `_lastRefinedTS`.
+            # Keep a running maximum of the largest lastRefinedTS in the bounded
+            # due list so a new candidate can be compared in O(1); when the list
+            # is full, skip the candidate if its `_lastRefinedTS` >= `maxDueTS`,
+            # otherwise evict the entry with the largest `_lastRefinedTS` and
+            # recompute `maxDueTS`.
             for (chatId, userId, threadId), newMessagesCount in candidates:
                 # Guard the ENTIRE per-candidate body so a transient DB error
                 # (chat settings OR memory-entry read) skips just this one
@@ -324,34 +350,43 @@ class UserDataHandler(BaseBotHandler):
                     if not chatSettings[ChatSettingsKey.MEMORY_REFINEMENT_ENABLED].toBool():
                         continue
 
-                    # Time-since-last-refinement, read from the in-memory tracker
-                    # (absent → 0 → elapsed ≈ now, i.e. treated as never refined
-                    # this session). A DB entry without a "summary" key marks a
-                    # user as never-refined at all.
-                    entry = await self._readMemoryEntry(chatId, userId, threadId)
                     lastRefinedTS = self._lastRefinedTS.get((chatId, userId, threadId), 0)
-                    elapsed = now - lastRefinedTS
-                    isNeverRefined = "summary" not in entry
-
-                    # Never-refined users with too few new messages would be
-                    # due-by-time but no-op in _runRefinement (which enforces
-                    # min-messages). Skip them so they don't sort first as
-                    # oldest-due and crowd out legit-due entries every tick. The
-                    # counter is deliberately NOT reset here, so they enter the
-                    # due list normally once they accumulate enough new messages.
-                    if isNeverRefined and newMessagesCount < self._memoryMinMessagesToRefine:
+                    if (len(due) >= maxDueLen) and (lastRefinedTS >= maxDueTS):
+                        # If due list is full and our lastRefinedTS >= maxDueTS
+                        #  then we definitely don't match this batch
                         continue
 
-                    dueByCount = newMessagesCount >= self._memoryCountThreshold
-                    dueByTime = elapsed >= self._memoryTimeThresholdSeconds
-                    if dueByCount or dueByTime:
-                        due.append(
-                            (
-                                (chatId, userId, threadId),
-                                newMessagesCount,
-                                elapsed,
-                            )
+                    elapsed = now - lastRefinedTS
+
+                    if (newMessagesCount >= self._memoryCountThreshold) or (
+                        elapsed >= self._memoryTimeThresholdSeconds
+                    ):
+                        newDueElem = (
+                            (chatId, userId, threadId),
+                            newMessagesCount,
+                            lastRefinedTS,
                         )
+                        # If `due` is full, replace one with maximum lastRefinedTS
+                        if len(due) >= maxDueLen:
+                            maxI = None
+                            for i, elem in enumerate(due):
+                                if elem[2] == maxDueTS:
+                                    maxI = i
+                                    break
+
+                            if maxI is None:
+                                logger.error(
+                                    "Memory refinement: due list %s has no element with [2] == %s", due, maxDueTS
+                                )
+                                continue
+                            due[maxI] = newDueElem
+                            # recalculate maxDueTS
+                            maxDueTS = lastRefinedTS
+                            for elem in due:
+                                maxDueTS = max(maxDueTS, elem[2])
+                        else:
+                            due.append(newDueElem)
+                            maxDueTS = max(maxDueTS, lastRefinedTS)
                 except Exception:
                     logger.exception(
                         "Memory refinement: scan failed for chatId=%s userId=%s threadId=%s",
@@ -364,11 +399,7 @@ class UserDataHandler(BaseBotHandler):
             if not due:
                 return
 
-            # Oldest-due / highest-count first; bound the number of LLM calls per tick.
-            # Largest elapsed (most overdue / never-refined) first, then highest new-message
-            # count as tiebreaker. Descending via negation (elapsed is always a finite float).
-            due.sort(key=lambda x: (-x[2], -x[1]))
-            for dueEntry in due[: self._memoryMaxRefinesPerTick]:
+            for dueEntry in due:
                 key = dueEntry[0]
                 preCount = dueEntry[1]
                 chatId, userId, threadId = key
@@ -388,13 +419,13 @@ class UserDataHandler(BaseBotHandler):
                     # never goes negative. Replaces the unconditional zeroing
                     # that wiped legitimate new arrivals mid-call.
                     async with self._accountingLock:
-                        newVal =  max(0, self._accounting.get(key, 0) - preCount)
+                        newVal = max(0, self._accounting.get(key, 0) - preCount)
                         if newVal > 0:
                             self._accounting[key] = newVal
                         else:
                             # If zero - drop it to not iterate next time
                             self._accounting.pop(key, None)
-                        
+
                         # If by some reason, there is no _lastRefinedTS for this key, set to current time
                         if key not in self._lastRefinedTS:
                             self._lastRefinedTS[(chatId, userId, threadId)] = int(time.time())
@@ -435,9 +466,6 @@ class UserDataHandler(BaseBotHandler):
         if not chatSettings[ChatSettingsKey.MEMORY_REFINEMENT_ENABLED].toBool():
             return  # runtime-disabled since the due list was built
 
-        systemPrompt = chatSettings[ChatSettingsKey.MEMORY_REFINE_SYSTEM_PROMPT].toStr()
-        userPromptTemplate = chatSettings[ChatSettingsKey.MEMORY_REFINE_USER_PROMPT_TEMPLATE].toStr()
-
         entry = await self._readMemoryEntry(chatId, userId, threadId)
         existingSummary = entry.get("summary", "")
         sinceDateTimeStr = entry.get("lastProcessedMessageDate")
@@ -474,6 +502,9 @@ class UserDataHandler(BaseBotHandler):
         # Synthesize a minimal EnsuredMessage so the add/delete user-data tools
         # can resolve chatId/userId (they read recipient.id / sender.id).
         synthEnsuredMessage = self._makeSyntheticEnsuredMessage(chatId=chatId, userId=userId, threadId=threadId)
+
+        systemPrompt = chatSettings[ChatSettingsKey.MEMORY_REFINE_SYSTEM_PROMPT].toStr()
+        userPromptTemplate = chatSettings[ChatSettingsKey.MEMORY_REFINE_USER_PROMPT_TEMPLATE].toStr()
 
         userPrompt = userPromptTemplate.format(
             existingUserData=utils.jsonDumps(existingUserData, indent=2) if existingUserData else "(none)",

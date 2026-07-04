@@ -17,7 +17,7 @@ How to use this file:
 - Prefers parallel batching for independent subtasks (e.g., 6 files at once).
 - Docstring improvement passes should follow one-file-per-task pattern with gate reviews between batches.
 - Responses must be in English.
-- **`.opencode/memory.jsonl` is OpenCode's own session memory store.** It is auto-appended/modified by OpenCode on every task and is expected to show as modified in `git status` during any session. NEVER read, edit, stage, or commit it — and do NOT flag it as a stray/unrelated change. Always exclude it from doc/cleanup commits.
+- **`.opencode/memory.jsonl` is OpenCode's own session memory store.** It is auto-appended/modified by OpenCode on every task and is expected to show as modified in `git status` during any session. NEVER read, edit, stage it — and do NOT flag it as a stray/unrelated change. Always exclude it from doc/cleanup commits.
 
 ## Task-Specific Memory Files
 

@@ -18,8 +18,10 @@ Phase 7b — the CRON refinement loop (``_dtCronJob`` / ``_runRefinement``) with
 * ``(H)`` ``_dtCronJob`` dispatches refinement for a due (count-threshold) entry,
   resets its counter, and persists the summary + cursors.
 * ``(I)`` ``_runRefinement`` bails when fewer than ``min-messages`` are available.
-* ``(J)`` ``_dtCronJob`` skips never-refined users below ``min-messages`` without
-  resetting their counter (Phase 4 Gate-1 fix).
+* ``(J)`` ``_dtCronJob`` dispatches a never-refined (TS=0) user due-by-time even
+  when its new-message counter is below ``min-messages``; ``_runRefinement``
+  then pulls lifetime history, bails on too few messages, and advances the
+  in-memory ``_lastRefinedTS`` so the user is not retried every tick.
 * ``(K)`` ``_dtCronJob`` uses the credit-consumed counter reset: increments that
   arrive during the (slow) LLM call are preserved, not zeroed (follow-up #1).
 
@@ -546,8 +548,12 @@ class TestCronJobAndRefinement:
         await handler._dtCronJob(task=_makeDelayedTask())  # type: ignore[attr-defined]
 
         mockGenerate.assert_awaited_once()
-        # The dispatch loop resets the counter in its `finally` block.
-        assert handler._accounting[(chatId, userId, threadId)] == 0  # type: ignore[attr-defined]
+        # The dispatch loop's `finally` runs the credit-consumed reset:
+        # ``max(0, current - preCount)``. With preCount == current (5), the
+        # result is 0 and the key is DROPPED (``pop``-on-zero keeps the dict
+        # free of empty entries so they aren't re-iterated). ``.get(..., 0)``
+        # covers both the popped-key and set-to-0 shapes.
+        assert handler._accounting.get((chatId, userId, threadId), 0) == 0  # type: ignore[attr-defined]
 
         userInfo = await testDatabase.chatUsers.getChatUser(chatId=chatId, userId=userId)
         metadata = handler.parseUserMetadata(userInfo)
@@ -599,14 +605,36 @@ class TestCronJobAndRefinement:
         metadata = handler.parseUserMetadata(userInfo)
         assert metadata.get("memoryRefinement", {}).get(str(threadId)) is None
 
-    async def test_dtCronJobSkipsNeverRefinedBelowMinMessages(self, testDatabase: Database) -> None:
-        """Never-refined user below ``min-messages`` → skipped, counter preserved.
+    async def test_dtCronJobDispatchesNeverRefinedUserWhoBailsOnTooFewLifetimeMessages(
+        self, testDatabase: Database
+    ) -> None:
+        """Never-refined user with too few lifetime messages → dispatched, bails once, TS advances.
 
-        A never-refined user (no DB memory entry / no ``summary`` key) with
-        ``newMessagesCount`` below ``min-messages-to-refine`` is due-by-time but
-        would no-op in ``_runRefinement``. The scan loop skips it entirely
-        (Phase 4 Gate-1 fix), so no LLM call fires and the counter is
-        deliberately NOT reset — letting it accumulate toward the real threshold.
+        Post-refactor behaviour: the scan loop no longer pre-skips never-refined
+        users whose *new-message* counter is below ``min-messages``. That skip
+        was over-conservative — refinement of a never-refined user actually pulls
+        *lifetime* history via ``getChatMessagesSince(sinceDateTime=None)``, so a
+        user with plenty of pre-existing chat history but few messages since the
+        feature was enabled was wrongly blocked from ever getting an initial
+        summary.
+
+        A never-refined user (``_lastRefinedTS`` absent → TS=0) is therefore
+        due-by-time (``elapsed = now - 0`` far exceeds the 6h threshold) and
+        enters the due list. ``_runRefinement`` then fetches the lifetime
+        messages; if fewer than ``min-messages`` (5) exist it bails — BUT
+        advances the in-memory ``_lastRefinedTS`` to ``now`` so the user is not
+        re-scanned and re-bailed on every 60s tick (the count threshold still
+        fires independently once messages pile up). The dispatch ``finally``
+        then runs the credit-consumed counter reset, consuming the pre-count
+        (3) and dropping the now-zero key.
+
+        Setup: never-refined user, counter = 3 (< count threshold 5), only 2
+        lifetime messages (< ``min-messages`` 5). After the tick the LLM mock
+        must NOT have been called (bail happens before the LLM call), the
+        counter must be consumed to 0 (key popped, since 3 − 3 = 0),
+        ``_lastRefinedTS[key]`` must be a recent int (bail-path reset), and no
+        memory entry must be persisted (bail returns before
+        ``_persistMemoryEntry``).
 
         Args:
             testDatabase: Fresh in-memory database fixture.
@@ -618,15 +646,34 @@ class TestCronJobAndRefinement:
 
         chatId, userId, threadId = 340, 11, DEFAULT_THREAD_ID
         await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user11", "Carol")
-        await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=3)
+        # Fewer than min-messages (5) LIFETIME messages → _runRefinement bails.
+        # count (2) is deliberately distinct from the counter value (3) below so
+        # the two magnitudes can't be confused in a failure trace.
+        await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=2)
 
-        handler._accounting[(chatId, userId, threadId)] = 3  # type: ignore[attr-defined]
+        key = (chatId, userId, threadId)
+        handler._accounting[key] = 3  # type: ignore[attr-defined]
 
         await handler._dtCronJob(task=_makeDelayedTask())  # type: ignore[attr-defined]
 
+        # Bail path returns before the LLM call.
         mockGenerate.assert_not_called()
-        # Skip path preserves the counter (reset only happens in the dispatch loop).
-        assert handler._accounting[(chatId, userId, threadId)] == 3  # type: ignore[attr-defined]
+        # Credit-consumed reset in the dispatch `finally`: preCount (3) is
+        # subtracted from the current count (3); the resulting 0 DROPS the key
+        # (``pop`` keeps the dict free of empty entries so they aren't
+        # re-iterated). ``.get(..., 0)`` covers both the popped-key and
+        # set-to-0 shapes — the counter is fully consumed, NOT preserved at 3.
+        assert handler._accounting.get(key, 0) == 0  # type: ignore[attr-defined]
+        # The bail path advances the in-memory TS so the user is not retried
+        # every 60s tick: the time threshold won't fire again until 6h elapse,
+        # and only the count threshold can re-arm refinement earlier.
+        lastRefined = handler._lastRefinedTS.get(key)  # type: ignore[attr-defined]
+        assert isinstance(lastRefined, int)
+        assert abs(int(time.time()) - lastRefined) < 10
+        # No memory entry persisted — the bail returns before _persistMemoryEntry.
+        userInfo = await testDatabase.chatUsers.getChatUser(chatId=chatId, userId=userId)
+        metadata = handler.parseUserMetadata(userInfo)
+        assert metadata.get("memoryRefinement", {}).get(str(threadId)) is None
 
     async def test_counterResetPreservesIncrementsDuringLlmCall(self, testDatabase: Database) -> None:
         """Credit-consumed counter reset: increments during the LLM call survive.
