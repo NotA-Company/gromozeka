@@ -140,3 +140,15 @@ The `use-proxy` key and optional `proxy` sub-table must be inside `parameters` b
 - S3 storage backend (`boto3` -- separate proxy story)
 - Aurumentation test infra (not production)
 - `requests` library -- not used in production code
+
+## Detailed ProxyConfig Semantics
+
+Resolution and validation rules that are easy to get wrong when reading or extending `ProxyConfig`:
+
+- **Master kill-switch:** When `globalProxyConfig.enabled` is `False`, `getCombined()` returns a ProxyConfig with `type=ProxyType.NONE` unconditionally -- no proxy for any service, and per-service overrides are ignored entirely.
+- **Service kill-switch:** When `self.enabled` is `False` on a service-level config, `getCombined()` returns a **copy** of the global config -- the service inherits every field from global (proxy type, address, credentials, lifecycle) rather than contributing its own values.
+- **Field-level merge:** For `user` and `password`, a `None` value means "inherit from global"; an empty string (`""`) or any non-None value **overrides** the global. This is distinct from `address`/`type`, where falsiness (`""`/`None`) triggers the global fallback rather than an explicit override.
+- **`fromDict(useProxy=None)` semantics:** When `useProxy` is left as `None`, `fromDict` treats the input dict as a **global** config -- it reads `enabled` directly from the `data` dict rather than forcing it. Pass `useProxy=True`/`False` to treat the dict as a per-service override where `enabled` has the kill-switch meaning described above.
+- **Address validation deferred to `_buildProxyUrl`:** `ProxyConfig.__init__` does **not** validate the address. Validation happens lazily inside `_buildProxyUrl`, which is only reached via `getProxyURL()`/`toKwargs()`. This allows intermediate, disabled configs such as `ProxyConfig(type=HTTP, address="", enabled=False)` to be constructed without crashing -- useful for defaults and test fixtures.
+- **Telegram bot resolves `getCombined()` explicitly:** `internal/bot/telegram/application.py` calls `getCombined()` up front because it needs the resolved `proxyType` to dispatch on (HTTP vs SOCKS5 vs NONE) before building the PTB request object. Any subsequent `getProxyURL()`/`toKwargs()` calls on the resulting config are no-ops because the config is already combined.
+- **`fromServiceConfig` rename:** The per-service factory is named `fromServiceConfig` (not `fromServiceDict`). It was renamed during the kill-switch fix; older commits/reviews may still reference the `fromServiceDict` name.
