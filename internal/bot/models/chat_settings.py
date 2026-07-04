@@ -860,7 +860,7 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
             "в изолированной среде (sandbox) в этом чате. \n"
             "Команды /run и /sandbox станут доступны."
         ),
-        "page": ChatSettingsPage.BOT_OWNER,
+        "page": ChatSettingsPage.FRIEND,
     },
     ChatSettingsKey.DELETE_DENIED_COMMANDS: {
         "type": ChatSettingsType.BOOL,
@@ -1052,11 +1052,11 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "type": ChatSettingsType.BOOL,
         "short": "Включить эмбеддинги",
         "long": "Включить эмбеддинги для семантического поиска по истории чата.",
-        "page": ChatSettingsPage.BOT_OWNER,
+        "page": ChatSettingsPage.FRIEND,
     },
     ChatSettingsKey.REGENERATE_EMBEDDINGS: {
         "type": ChatSettingsType.BOOL,
-        "short": "Regenerate embeddings",
+        "short": "Перестаривать неверные эмбеддинги",
         "long": "Перегенерировать отсутствующие или неверные эмбеддинги.",
         "page": ChatSettingsPage.BOT_OWNER,
     },
