@@ -375,3 +375,31 @@ From fixing review findings on the Max webhook support feature (branch `max-v2`)
 - **`ResendJob.__slots__`**: `id`, `dataSource`, `sourceChatId`, `sourceTheadId` (typo — should be `sourceThreadId`), `targetChatId`, `messageTypes`, `messagePrefix`, `messageSuffix`, `lastMessageDate`, `notification`, `mediaGroupDelaySecs`, `_lock`.
 - **No native forward API** (`copyMessage`/`forwardMessage`/`copyMessages`) exists anywhere in the codebase. Max's `MaxBotClient.sendMessage()` accepts `forwardFrom: Optional[str]` but no call site passes it.
 - **Forward feature** (implemented 2026-07-03, plan: `docs/plans/resender-forward-feature.md`): `ForwardTarget` TypedDict with `chatId: int`, `threadId: NotRequired[int]`, `notify: NotRequired[bool]`. `ResendJob.forwardTo: Optional[List[ForwardTarget]]` (defaults to `[]`). Forward loop in `resendCronJob` iterates targets with `await asyncio.sleep(0.1)` between them, calls `TheBot.forwardMessages(fromChatId, messageIds, toChatId, *, threadId, notify)`. Telegram: `tgBot.copy_messages()`. Max: loops over all `messageIds`, calls `sendMessage(forwardFrom=)` per message. Failures swallowed per-target (bot.py logs traceback), don't block `lastMessageDate` advancement. 13 tests in `tests/bot/common/handlers/test_resender.py`. Config: `docs/llm/configuration.md` resender section, `configs/00-defaults/resender.toml` commented example.
+
+## LLM `useTools` Per-Tool Filtering (2026-07-04)
+
+- `LLMService.generateTextViaLLM` / `LLMMessageHandler._generateTextViaLLM` `useTools` param extended from `bool` to `bool | dict[str, bool]`.
+- **`UseToolsType`** type alias: defined in `internal/services/llm/service.py`, re-exported from `internal/services/llm/__init__.py` (and imported into `llm_messages.py`).
+- **`ToolName` StrEnum** lives in [`internal/bot/constants.py`](../../internal/bot/constants.py) — one member per registered LLM tool (19 members, e.g. `RUN_PYTHON`, `WEB_SEARCH`, `SEARCH_MESSAGES`). Each member's value matches the `name=` passed to `registerTool`. This is the **first** StrEnum in that module (which previously held only scalar constants).
+- **`TOOLS_DEFAULT_DICT_KEY = "default"`** module-level constant in `internal/bot/constants.py` — the reserved sentinel key in the `useTools` dict used by `_resolveTools` for fallback tool enablement.
+- **Constructing dicts**: use `ToolName.XXX` members as keys (not raw strings) — they serialize correctly because `ToolName` is a `StrEnum`, but the enum form is type-safe and greppable. Use `TOOLS_DEFAULT_DICT_KEY` (not the literal `"default"`) for the fallback key. Raw strings also work but are discouraged.
+- **Dict semantics**: `TOOLS_DEFAULT_DICT_KEY` ("default") key is the fallback for unspecified tools (defaults to `False` when absent). Unknown tool names → `logger.warning`, silently ignored.
+- **Resolver**: private `_resolveTools(useTools) -> List[LLMToolFunction]` returns the filtered list sent to the model. All 19 `registerTool(name=...)` call sites across the handler tree now use `ToolName.XXX` instead of raw string literals.
+- **Execution guard**: the tool-execution loop checks against `filteredToolNames` (the resolved subset), NOT the full `toolsHandlers` registry. A dict-disabled tool request now returns an error listing only the actually-available tools, so the LLM isn't tempted to retry a disabled tool. Error wording changed: "not found" → "not available", and the available list is now `sorted(filteredToolNames)` (was `list(registry.keys())`).
+- **Tests**: `tests/services/llm/test_use_tools.py` (20 tests).
+- **Note**: the default `useTools` in `LLMMessageHandler._sendLLMChatMessage` still flows from `ChatSettingsKey.USE_TOOLS.toBool()` — i.e. only `True`/`False`. Callers that want dict-level filtering must construct the dict explicitly (no chat setting drives the dict form yet).
+
+## `internal/bot/constants.py`
+
+- Historical home of scalar bot constants (emojis, Telegram limits, processing timeouts, weather/geocoder coefficients).
+- Now also hosts the `ToolName` StrEnum (19 members, one per registered LLM tool) and the `TOOLS_DEFAULT_DICT_KEY = "default"` sentinel constant — both added to support type-safe per-tool filtering in the `useTools` dict (see "LLM `useTools` Per-Tool Filtering" above).
+- `ToolName` is the **first** StrEnum in this module; when adding a new LLM tool, add a member here AND a matching `registerTool(name=ToolName.YOUR_TOOL, ...)` call site.
+
+## Bot Answer Probability (2026-07-04)
+
+- New `ChatSettingsKey.BOT_ANSWER_PROBABILITY = "bot-answer-probability"` — FLOAT (0-1), page `BOT_OWNER`, default `0.05` (5% chance of responding to other bots).
+- Gate in `LLMMessageHandler.newMessageHandler()` (llm_messages.py, ~line 396): placed after initial channel/type/auto-forward checks, BEFORE handleReply/handleMention/handleRandomMessage. Even explicit replies/mentions from bot accounts are throttled — intentional to prevent bot-to-bot reply loops.
+- Detection: `senderUsername.lower().endswith("bot")` heuristic (not platform `is_bot` flag). Known limitation: false positives on users like `@robotfan`, `@turbot`; false negatives on bots without "bot" suffix. Follow-up: add `isBot: bool` to `MessageSender`.
+- **`chatSettings` is NOT pre-fetched in `newMessageHandler`** — it's fetched inside the gate (only for bot-suffixed senders, non-bot messages pay zero cost). Subsequent fetches by `handleReply`/`handleMention`/`handleRandomMessage` hit the in-memory cache, so no double-DB-hit.
+- Uses `randomRoll = random.random()` pattern (captured once, reused in both comparison and log — avoids double-call bug).
+- 10 tests in `tests/bot/common/handlers/test_llm_messages.py`: prob=0 always skip, prob=1 never skip, roll>prob skip, roll≤prob pass, non-bot not gated, empty username not gated, mixed-case detected, exact boundary (roll==prob passes), negative prob (treated as 0), prob>1.0 (always passes).

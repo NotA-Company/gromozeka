@@ -18,6 +18,7 @@ from typing import Any, Dict, Optional
 import lib.utils as utils
 from internal.bot.common.models import UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
+from internal.bot.constants import ToolName
 from internal.bot.models import (
     BotProvider,
     ChatType,
@@ -72,7 +73,7 @@ class CommonHandler(BaseBotHandler):
         self.llmService = LLMService.getInstance()
 
         self.llmService.registerTool(
-            name="get_current_datetime",
+            name=ToolName.GET_CURRENT_DATETIME,
             description="Get current date and time",
             parameters=[],
             handler=self._llmToolGetCurrentDateTime,

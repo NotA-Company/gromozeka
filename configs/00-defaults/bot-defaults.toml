@@ -140,6 +140,11 @@ random-answer-probability = 0.01
 # In case of random answer - answer to chat admin messages?
 random-answer-to-admin = true
 
+# Probability (0-1) that the bot will respond to messages from users
+# whose username ends with "bot" (heuristic; platform is_bot flag not used).
+# Default 0.05 = 5% chance of response, to prevent bot-to-bot flooding.
+bot-answer-probability = 0.05
+
 tools-used-prefix        = "🛠"
 fallback-happened-prefix = "🤖"
 intermediate-message-prefix = "✍️"

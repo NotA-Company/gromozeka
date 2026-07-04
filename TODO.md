@@ -1,9 +1,10 @@
 # Our TODO list
+- [ ] Yandex AI Studio does not support webp images. Add config value + convert
+- [ ] Search for tool_name in [] or {} + optional ``` end return some error if yes (to enforce proper tool call)
 - [ ] Subagent with conversation history
 - [ ] Better random-message handling
 - [ ] Better compaction (drop tools result, more settings, drop userdata, use subagent for compaction)
 - [ ] Topic-level configs
-- [ ] Tool for last messages, last discussion messages, user messages
 - [ ] Support random-message sending function
 - [ ] Spam module refactoring
 - [ ] Do cache service refactoring
@@ -23,7 +24,8 @@
 - [ ] Some proper framework/mock for telegram (like: we have some amount of users, some of them are admins, one is bot owner. We have some amount of chats)
 - [ ] Meta wizard to guide through all commands
 # Vector search: 
-- [ ] Cache embeddings list (and track them)
+- [-] Cache embeddings list (and track them)
+- [x] Tool for last messages, last discussion messages, user messages
 - [ ] Add summarisation support (thread, messages, from-to [message\timestamp], today, yesterday)
 - [x] Add support for embeddings + Vector search on chat's database
 - [ ] Add support for collecting messages to knowledge database to answer if some user ask known question

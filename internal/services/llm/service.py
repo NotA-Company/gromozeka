@@ -11,8 +11,9 @@ import re
 import uuid
 from collections.abc import Awaitable, Callable, MutableSequence, Sequence
 from threading import RLock
-from typing import Any, Dict, List, Optional, Tuple, TypeAlias, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, TypeAlias, Union
 
+from internal.bot.constants import TOOLS_DEFAULT_DICT_KEY
 from internal.bot.models.chat_settings import ChatSettingsDict, ChatSettingsKey
 from lib import utils
 from lib.ai.abstract import AbstractModel
@@ -45,6 +46,18 @@ matching the tool's schema.
 Example:
     async def my_tool(param1: str, param2: int, **extra: Any) -> Union[str, Dict[str, Any], None]:
         return f"processed {param1} with {param2}"
+"""
+
+UseToolsType: TypeAlias = Union[bool, Dict[str, bool]]
+"""Type alias for the useTools parameter in generateTextViaLLM.
+
+Accepts:
+- ``True``: all registered tools are enabled.
+- ``False``: no tools are enabled.
+- ``dict[str, bool]``: per-tool enable/disable map. The :data:`TOOLS_DEFAULT_DICT_KEY`
+  key (``"default"``) controls all tools not explicitly listed (defaults to
+  ``False`` if absent). Unknown keys (tool names not in the registry) are
+  logged as warnings and ignored.
 """
 
 
@@ -147,6 +160,43 @@ class LLMService:
             function=handler,
         )
         logger.info(f"Tool {name} registered")
+
+    def _resolveTools(self, useTools: UseToolsType) -> List[LLMToolFunction]:
+        """Resolve the useTools parameter into the list of tools to send to the LLM.
+
+        Converts the ``useTools`` parameter (bool or dict) into the concrete list
+        of :class:`LLMToolFunction` objects that should be offered to the LLM.
+        When a dict is supplied, the :data:`TOOLS_DEFAULT_DICT_KEY` key controls every
+        tool not explicitly listed (defaulting to ``False`` when absent). Tool
+        names in the dict that are not present in :attr:`toolsHandlers` are
+        logged as warnings and silently ignored.
+
+        Args:
+            useTools: Boolean or dict controlling tool enablement. ``True``
+                enables all registered tools, ``False`` disables all, and a
+                dict enables/disables tools per-name with
+                :data:`TOOLS_DEFAULT_DICT_KEY` as the fallback for unspecified
+                tools.
+
+        Returns:
+            The filtered list of LLMToolFunction objects to send to the LLM.
+        """
+        if isinstance(useTools, dict):
+            defaultEnabled = useTools.get(TOOLS_DEFAULT_DICT_KEY, False)
+            filteredTools: List[LLMToolFunction] = []
+            for toolName, tool in self.toolsHandlers.items():
+                if useTools.get(toolName, defaultEnabled):
+                    filteredTools.append(tool)
+
+            knownNames: Set[str] = set(self.toolsHandlers.keys())
+            for key in useTools:
+                if key != TOOLS_DEFAULT_DICT_KEY and key not in knownNames:
+                    logger.warning(f"Unknown tool name '{key}' in useTools dict, ignoring")
+
+            return filteredTools
+        elif useTools:
+            return list(self.toolsHandlers.values())
+        return []
 
     def _tryApplyToolCallMatch(
         self,
@@ -368,7 +418,7 @@ class LLMService:
         chatSettings: ChatSettingsDict,
         modelKey: Optional[Union[AbstractModel, ChatSettingsKey]],
         fallbackModelKey: Optional[Union[AbstractModel, ChatSettingsKey]],
-        useTools: bool = False,
+        useTools: UseToolsType = False,
         callId: Optional[str] = None,
         callback: Optional[Callable[[ModelRunResult, ExtraDataDict], Awaitable[None]]] = None,
         extraData: ExtraDataDict,
@@ -399,7 +449,12 @@ class LLMService:
                 or None to fall back to ChatSettingsKey.CHAT_MODEL
             fallbackModelKey: Fallback model selector - same semantics as modelKey,
                 defaults to ChatSettingsKey.FALLBACK_MODEL when None
-            useTools: Whether to enable tool calling functionality
+            useTools: Controls tool calling. ``True`` enables all registered
+                tools, ``False`` disables all, and a ``dict[str, bool]`` enables
+                or disables individual tools by name. The :data:`TOOLS_DEFAULT_DICT_KEY`
+                key (``"default"``) controls any tool not explicitly listed
+                (defaults to ``False`` when absent); unknown tool names are
+                logged as warnings.
             callId: Optional unique identifier for this LLM call (auto-generated if None)
             callback: Optional async callback invoked when tool calls are made,
                 receives the ModelRunResult and extraData
@@ -451,7 +506,8 @@ class LLMService:
 
         ret: Optional[ModelRunResult] = None
         toolsUsed = False
-        tools: Sequence[LLMToolFunction] = list(self.toolsHandlers.values()) if useTools else []
+        tools: Sequence[LLMToolFunction] = self._resolveTools(useTools)
+        filteredToolNames: Set[str] = {tool.name for tool in tools}
         _keepLastN = keepLastN
 
         _messages: Sequence[ModelMessage] = messages
@@ -506,14 +562,16 @@ class LLMService:
                 for toolCall in ret.toolCalls:
                     toolRet = ""
                     # Check if tool is available
-                    if toolCall.name in self.toolsHandlers:
+                    if toolCall.name in filteredToolNames:
                         toolRet = await self.toolsHandlers[toolCall.name].call(extraData, **toolCall.parameters)
                     else:
-                        # If wrong tool called, return error about it
+                        # If wrong tool called, return error about it.
+                        # Report only the actually-available (filtered) names so the LLM
+                        # doesn't get told a disabled tool is available and retry it.
                         toolRet = {
                             "done": False,
-                            "error": f"Tool {toolCall.name} not found, available tools are "
-                            + str(list(self.toolsHandlers.keys())),
+                            "error": f"Tool {toolCall.name} not available, available tools are "
+                            + str(sorted(filteredToolNames)),
                         }
 
                     # Content of ModelMessage should be string, so if tool result is not string,

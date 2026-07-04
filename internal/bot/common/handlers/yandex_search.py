@@ -31,6 +31,7 @@ import lib.yandex_search as ys
 import lib.yandex_search.xml_parser as ys_xml
 from internal.bot.common.models import UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
+from internal.bot.constants import ToolName
 from internal.bot.models import (
     BotProvider,
     CommandCategory,
@@ -135,7 +136,7 @@ class YandexSearchHandler(BaseBotHandler):
         self.llmService = LLMService.getInstance()
 
         self.llmService.registerTool(
-            name="web_search",
+            name=ToolName.WEB_SEARCH,
             description=(
                 "Search information in Web. "
                 "Return list of result URLs with brief description of what found"
@@ -178,7 +179,7 @@ class YandexSearchHandler(BaseBotHandler):
         )
 
         self.llmService.registerTool(
-            name="get_url_content",
+            name=ToolName.GET_URL_CONTENT,
             description="Get the content of a URL",
             parameters=[
                 LLMFunctionParameter(

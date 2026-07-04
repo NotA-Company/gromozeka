@@ -20,6 +20,7 @@ import lib.divination.localization as divinationLocalization
 import lib.utils as utils
 from internal.bot.common.models import TypingAction, UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
+from internal.bot.constants import ToolName
 from internal.bot.models import (
     BotProvider,
     ChatSettingsKey,
@@ -200,7 +201,7 @@ class DivinationHandler(BaseBotHandler):
                 )
             )
             self.llmService.registerTool(
-                name="do_tarot_reading",
+                name=ToolName.DO_TAROT_READING,
                 description=(
                     "Perform a tarot reading using the Rider-Waite-Smith deck for the user. "
                     "Use this when the user asks for a tarot reading or to draw cards."
@@ -246,7 +247,7 @@ class DivinationHandler(BaseBotHandler):
                 )
             )
             self.llmService.registerTool(
-                name="do_runes_reading",
+                name=ToolName.DO_RUNES_READING,
                 description=(
                     "Perform an Elder Futhark runic reading for the user. "
                     "Use this when the user asks for a runic reading, fortune, divination, or to cast runes."
@@ -1036,7 +1037,11 @@ class DivinationHandler(BaseBotHandler):
                 chatSettings=chatSettings,
                 modelKey=ChatSettingsKey.CHAT_MODEL,
                 fallbackModelKey=ChatSettingsKey.FALLBACK_MODEL,
-                useTools=True,  # Enable tools for web search
+                useTools={
+                    # We need we search and web fetch for searching for needed divination layout
+                    ToolName.WEB_SEARCH: True,
+                    ToolName.GET_URL_CONTENT: True,
+                },
                 extraData={
                     "ensuredMessage": ensuredMessage,
                     "typingManager": typingManager,

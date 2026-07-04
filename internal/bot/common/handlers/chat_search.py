@@ -31,6 +31,7 @@ import lib.utils as libUtils
 from internal.bot.common.embedding_utils import embedAndSaveMessage
 from internal.bot.common.models import UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
+from internal.bot.constants import ToolName
 from internal.bot.models import (
     BotProvider,
     ChatSettingsDict,
@@ -201,7 +202,7 @@ class ChatSearchHandler(BaseBotHandler):
 
         # Register LLM tool: semantic search over chat history.
         self.llmService.registerTool(
-            name="search_messages",
+            name=ToolName.SEARCH_MESSAGES,
             description="Semantic search over chat history. Returns messages matching the query with relevance scores.",
             parameters=[
                 LLMFunctionParameter(
@@ -239,7 +240,7 @@ class ChatSearchHandler(BaseBotHandler):
 
         # Register LLM tool: list users with activity stats.
         self.llmService.registerTool(
-            name="list_users",
+            name=ToolName.LIST_USERS,
             description="List chat participants with activity statistics (message count and last active time).",
             parameters=[
                 LLMFunctionParameter(
@@ -260,7 +261,7 @@ class ChatSearchHandler(BaseBotHandler):
 
         # Register LLM tool: get conversation thread for a message.
         self.llmService.registerTool(
-            name="get_thread",
+            name=ToolName.GET_THREAD,
             description=(
                 "Retrieve the full conversation thread for a specific message by its ID. "
                 "Returns root message, target message, and all replies in chronological order."

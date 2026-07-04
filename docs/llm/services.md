@@ -125,19 +125,55 @@ condensed = await llmService.condenseContext(
     condensingSystemPrompt=condensingSystemPrompt,
 )
 
-# Register LLM tool
+# Register LLM tool — always use ToolName.XXX (never raw string)
 llmService.registerTool(
-    name="search",
-    function=LLMToolFunction(
-        name="search",
-        description="Search the web",
-        parameters=[
-            LLMFunctionParameter("query", "Search query", LLMParameterType.STRING, required=True)
-        ],
-    ),
-    handler=mySearchHandler,  # async def mySearchHandler(**kwargs) -> str
+    name=ToolName.EXAMPLE,
+    description="Search the web",
+    parameters=[
+        LLMFunctionParameter("query", "Search query", LLMParameterType.STRING, required=True),
+    ],
+    handler=mySearchHandler,  # async def mySearchHandler(param1, ...) -> dict
 )
 ```
+
+**Rule:** Always use a `ToolName` member (from `internal.bot.constants`) for the `name=` argument. See the [add-handler skill](../../.agents/skills/add-handler/SKILL.md) Step 5 for the full registration workflow.
+
+**`generateTextViaLLM` — tool-execution loop:**
+
+The multi-turn variant of `generateText` that executes tool calls requested by the LLM until a final text response is produced. Resolves primary/fallback models, condenses context, detects tool calls (including text-embedded ones), executes them, and feeds results back. Supports an optional streaming `callback` for intermediate results.
+
+```python
+result: ModelRunResult = await llmService.generateTextViaLLM(
+    messages,                    # Sequence[ModelMessage]
+    chatId=chatId,
+    chatSettings=chatSettings,
+    modelKey=ChatSettingsKey.CHAT_MODEL,
+    fallbackModelKey=ChatSettingsKey.FALLBACK_MODEL,
+    useTools=True,               # all tools; see per-tool dict form below
+    extraData=extraData,         # passed to tool handlers and callback
+    callback=processIntermediateMessages,  # optional async callback
+)
+```
+
+**`useTools` parameter — per-tool enable/disable** (type `UseToolsType`, re-exported from [`internal.services.llm`](../../internal/services/llm/__init__.py)):
+
+- `True` — enable **all** registered tools.
+- `False` — disable all tools (default).
+- `dict[str, bool]` — enable/disable individual tools by name. The special key defined by `TOOLS_DEFAULT_DICT_KEY` (from [`internal.bot.constants`](../../internal/bot/constants.py)) controls every tool not explicitly listed (defaults to `False` when absent). Unknown tool names are logged as warnings (`logger.warning`) and ignored.
+
+**Tool names** should be specified via members of the `ToolName` StrEnum ([`internal.bot.constants.ToolName`](../../internal/bot/constants.py)) — one member per registered tool (e.g. `ToolName.RUN_PYTHON`, `ToolName.WEB_SEARCH`). Because `ToolName` is a `StrEnum`, members serialize to the exact string `registerTool(name=...)` expects, so raw string literals (e.g. `"run_python"`) also work; the enum is recommended for type safety and greppability.
+
+```python
+from internal.bot.constants import TOOLS_DEFAULT_DICT_KEY, ToolName
+
+# Enable only the sandbox tools; disable everything else:
+useTools={TOOLS_DEFAULT_DICT_KEY: False, ToolName.RUN_PYTHON: True, ToolName.SANDBOX_LIST_FILES: True}
+
+# Enable all tools except one:
+useTools={TOOLS_DEFAULT_DICT_KEY: True, ToolName.SANDBOX_SEND_FILE: False}
+```
+
+Resolution happens in the private `_resolveTools(useTools)` method, which returns the filtered `List[LLMToolFunction]` sent to the model. The execution guard also uses this filtered set: if the LLM requests a dict-disabled tool, the loop returns an error listing only the **actually available** tool names (not the full registry), so the model is not tempted to retry a disabled tool.
 
 **Generate structured (JSON-Schema) output:**
 ```python

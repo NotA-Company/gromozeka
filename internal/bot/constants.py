@@ -16,7 +16,65 @@ These constants provide centralized configuration for bot behavior and
 ensure consistency across all bot handlers and services.
 """
 
+from enum import StrEnum
+
 import telegram.constants
+
+
+class ToolName(StrEnum):
+    """Names of all registered LLM tools.
+
+    Each member's value matches the string passed to ``registerTool(name=...)``.
+    Using these constants instead of raw string literals enables type-safe
+    per-tool filtering via the ``useTools: dict[str, bool]`` parameter.
+
+    When adding a new LLM tool, add a member here AND a matching
+    ``registerTool(name=ToolName.YOUR_TOOL, ...)`` call site in the handler's
+    ``__init__``. See the add-handler skill for the full registration workflow.
+    """
+
+    # Weather
+    GET_WEATHER_BY_CITY = "get_weather_by_city"
+    GET_WEATHER_BY_ADDRESS = "get_weather_by_address"
+    GET_WEATHER_BY_COORDS = "get_weather_by_coords"
+
+    # Media
+    GENERATE_AND_SEND_IMAGE = "generate_and_send_image"
+
+    # Yandex Search
+    WEB_SEARCH = "web_search"
+    GET_URL_CONTENT = "get_url_content"
+
+    # Chat Search
+    SEARCH_MESSAGES = "search_messages"
+    LIST_USERS = "list_users"
+    GET_THREAD = "get_thread"
+
+    # Sandbox
+    RUN_PYTHON = "run_python"
+    SANDBOX_LIST_FILES = "sandbox_list_files"
+    SANDBOX_READ_FILE = "sandbox_read_file"
+    SANDBOX_SEND_FILE = "sandbox_send_file"
+    SANDBOX_LIST_LIBRARIES = "sandbox_list_libraries"
+
+    # User Data
+    ADD_USER_DATA = "add_user_data"
+
+    # Common
+    GET_CURRENT_DATETIME = "get_current_datetime"
+
+    # Example
+    EXAMPLE = "example"
+
+    # Divination
+    DO_TAROT_READING = "do_tarot_reading"
+    DO_RUNES_READING = "do_runes_reading"
+
+
+# Reserved key in useTools dict for fallback tool enablement
+TOOLS_DEFAULT_DICT_KEY: str = "default"
+"""Reserved key in the ``useTools`` dict used by ``_resolveTools`` for fallback tool
+enablement when no explicit per-tool entry exists."""
 
 # Emoji constants
 DUNNO_EMOJI: str = "🤷‍♂️"

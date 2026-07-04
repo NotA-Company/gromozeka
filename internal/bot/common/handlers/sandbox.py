@@ -23,6 +23,7 @@ import magic
 
 from internal.bot.common.models import UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
+from internal.bot.constants import ToolName
 from internal.bot.models import (
     BotProvider,
     ChatSettingsKey,
@@ -95,7 +96,7 @@ class SandboxHandler(BaseBotHandler):
         self._recoveryDone = False
         # Register LLM tool for sandboxed code execution
         self.llmService.registerTool(
-            name="run_python",
+            name=ToolName.RUN_PYTHON,
             description=(
                 "Execute Python code in a sandboxed environment and return stdout/stderr output "
                 "and list of files in work dir. "
@@ -118,7 +119,7 @@ class SandboxHandler(BaseBotHandler):
 
         # Register sandbox file-management LLM tools
         self.llmService.registerTool(
-            name="sandbox_list_files",
+            name=ToolName.SANDBOX_LIST_FILES,
             description="List files in the sandbox workspace (same environment where run_python executes code)",
             parameters=[
                 LLMFunctionParameter(
@@ -138,7 +139,7 @@ class SandboxHandler(BaseBotHandler):
             handler=self._llmToolSandboxListFiles,
         )
         self.llmService.registerTool(
-            name="sandbox_read_file",
+            name=ToolName.SANDBOX_READ_FILE,
             description=(
                 "Read content of a file from the sandbox workspace " "(same environment where run_python executes code)"
             ),
@@ -166,7 +167,7 @@ class SandboxHandler(BaseBotHandler):
             handler=self._llmToolSandboxReadFile,
         )
         self.llmService.registerTool(
-            name="sandbox_send_file",
+            name=ToolName.SANDBOX_SEND_FILE,
             description=(
                 "Send a file from the sandbox workspace to the user "
                 "(same environment where run_python executes code). "
@@ -193,7 +194,7 @@ class SandboxHandler(BaseBotHandler):
 
         # Register sandbox library listing LLM tool
         self.llmService.registerTool(
-            name="sandbox_list_libraries",
+            name=ToolName.SANDBOX_LIST_LIBRARIES,
             description=(
                 "List installed Python libraries available in the sandbox environment. "
                 "Use this to discover what packages are installed before running code. "

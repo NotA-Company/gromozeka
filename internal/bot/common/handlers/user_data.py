@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 import lib.utils as utils
 from internal.bot.common.models import CallbackButton, UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
+from internal.bot.constants import ToolName
 from internal.bot.models import (
     BotProvider,
     ButtonDataKey,
@@ -63,7 +64,7 @@ class UserDataHandler(BaseBotHandler):
         self.llmService = LLMService.getInstance()
 
         self.llmService.registerTool(
-            name="add_user_data",
+            name=ToolName.ADD_USER_DATA,
             description=(
                 "Remember some data/knowledge about user who, sent last message. "
                 "Use it in following cases:\n"

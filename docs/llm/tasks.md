@@ -175,7 +175,38 @@ START
 
 ---
 
-### 1.5 "I need to fix a bug in a handler"
+### 1.5 "I need to add a new LLM tool"
+
+```
+START
+├── Add a member to `ToolName` StrEnum in `internal/bot/constants.py`
+│   └── Value must match the string passed to `registerTool(name=...)`
+├── In your handler's ``__init__``, call:
+│   self.llmService.registerTool(
+│       name=ToolName.YOUR_TOOL,
+│       description="What the tool does",
+│       parameters=[LLMFunctionParameter(...)],
+│       handler=self._llmToolYourTool,
+│   )
+│   Names: use ``ToolName.XXX`` (enum member), NOT a raw string literal.
+│   Handler method: prefix with ``_llmTool`` (e.g. ``_llmToolRunSandboxCode``).
+│   Gate registration behind the feature's ``enabled`` flag.
+├── Implement the tool handler:
+│   async def _llmTool*(self, extraData, param1, ..., **kwargs):
+│       return {"done": True, ...}  # dict, not JSON string; NEVER raise
+├── Run: make format lint && make test
+└── DONE
+```
+
+**Reference docs:**
+- [`teamlead-memory.md`](teamlead-memory.md) — ToolName StrEnum details and dict semantics
+- [`services.md`](services.md) — `registerTool` examples
+- [`AGENTS.md`](../../AGENTS.md) — LLM tool handler naming and signature conventions
+- Example handlers: [`weather.py`](../../internal/bot/common/handlers/weather.py), [`sandbox.py`](../../internal/bot/common/handlers/sandbox.py), [`chat_search.py`](../../internal/bot/common/handlers/chat_search.py)
+
+---
+
+### 1.6 "I need to fix a bug in a handler"
 
 > **Rule:** For any bug fix — production code, test code, config, or docs — write a
 > regression test that FAILS before the fix and PASSES after. Include edge-case
@@ -213,7 +244,7 @@ START
 
 ---
 
-### 1.6 "I need to modify a service"
+### 1.7 "I need to modify a service"
 
 ```
 START
@@ -243,7 +274,7 @@ START
 
 ---
 
-### 1.7 "I need to debug or replay an LLM conversation"
+### 1.8 "I need to debug or replay an LLM conversation"
 
 Two complementary tools exist for replaying LLM interactions outside the normal chat flow:
 
@@ -446,7 +477,7 @@ ls -1 internal/database/migrations/versions/ | grep "migration_" | sort -V | tai
 | `mediaGroupDelaySecs` default is 10.0 | Time-based Telegram media group detection | Adjust per job if source chat uploads slowly |
 | `MessageSender.name` (NOT `displayName`) | The sender's display name lives on `.name`, not `.displayName` | Use `ensuredMessage.messageSender.name` |
 | `MediaStatus` / `MessageType` are enums | They are NOT plain strings — use the enum members | `MediaStatus.DONE`, `MessageType.IMAGE` (don't pass `"done"` / `"image"`) |
-| `LLMService.registerTool` is flat-args | No nested config object — pass tool name, schema, callback, etc. as kwargs | See existing handler registration sites for examples |
+| `LLMService.registerTool` is flat-args | No nested config object — pass tool name, schema, callback, etc. as kwargs | See existing handler registration sites for examples; use `ToolName.XXX` (from `internal.bot.constants`) for the `name=` kwarg, not a raw string literal |
 | `getCaseInsensitiveComparison()` for exact matches | Provider method for case-insensitive exact match | Use for username/email lookups, chat settings keys |
 | Schema requirements for structured output | OpenAI strict mode: all properties required, `additionalProperties: false`, no root `oneOf`/`anyOf` | See tasks.md §4.2 for complete rules and example |
 | `sqlToCustomType()` handles `Optional[T]` | Returns `(True, None)` for `Optional[...]` when data is `None` | Properly unwraps Union types and handles `None` values for nullable columns |

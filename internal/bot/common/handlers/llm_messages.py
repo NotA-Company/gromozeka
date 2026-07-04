@@ -51,7 +51,7 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import MessageCategory
-from internal.services.llm import ExtraDataDict, LLMService
+from internal.services.llm import ExtraDataDict, LLMService, UseToolsType
 from lib.ai import (
     ModelMessage,
     ModelResultStatus,
@@ -98,7 +98,7 @@ class LLMMessageHandler(BaseBotHandler):
         *,
         chatSettings: ChatSettingsDict,
         typingManager: TypingManager,
-        useTools: bool = False,
+        useTools: UseToolsType = False,
         sendIntermediateMessages: bool = True,
         keepFirstN: int = 0,
         keepLastN: int = 1,
@@ -115,7 +115,12 @@ class LLMMessageHandler(BaseBotHandler):
             ensuredMessage (EnsuredMessage): The message being responded to.
             chatSettings (ChatSettingsDict): Chat-specific settings for LLM configuration.
             typingManager (TypingManager): Manager for sending typing indicators.
-            useTools (bool, optional): Whether to enable tool usage for the LLM. Defaults to False.
+            useTools (bool | dict[str, bool], optional): Controls tool calling
+                for the LLM. ``True`` enables all registered tools, ``False``
+                (default) disables all, and a dict enables/disables tools
+                per-name with the :data:`TOOLS_DEFAULT_DICT_KEY` key
+                (``"default"``) as the fallback for unspecified tools (defaults
+                to ``False`` when absent).
             sendIntermediateMessages (bool, optional): Whether to send streaming intermediate
                 responses. Defaults to True.
             keepFirstN (int, optional): Number of first messages to keep in context. Defaults to 0.
@@ -227,11 +232,12 @@ class LLMMessageHandler(BaseBotHandler):
         mlRet: Optional[ModelRunResult] = None
 
         try:
+            useTools = chatSettings[ChatSettingsKey.USE_TOOLS].toBool()
             mlRet = await self._generateTextViaLLM(
                 messages=messagesHistory,
                 ensuredMessage=ensuredMessage,
                 chatSettings=chatSettings,
-                useTools=chatSettings[ChatSettingsKey.USE_TOOLS].toBool(),
+                useTools=useTools,
                 typingManager=typingManager,
                 keepFirstN=keepFirstN,
                 keepLastN=keepLastN,
@@ -386,6 +392,35 @@ class LLMMessageHandler(BaseBotHandler):
                 # TODO: Think about handleRandomMessage here
                 # return HandlerResultStatus.FINAL
                 return HandlerResultStatus.NEXT
+
+        # Bot answer probability gate: probabilistically skip messages from other bots.
+        # If the sender's username ends with "bot", only respond with the configured
+        # probability (0.0 = never answer bots, 1.0 = always answer).
+        # Note: this gate runs before handleReply/handleMention — even explicit
+        # replies or mentions from bot accounts are subject to the probability throttle.
+        # This is intentional: it prevents bot-to-bot reply loops (including
+        # explicit replies between two bots that would otherwise escalate).
+        senderUsername = ensuredMessage.sender.username
+        if senderUsername and senderUsername.lower().endswith("bot"):
+            chatSettings = await self.getChatSettings(chatId=chat.id)
+            botAnswerProbability = chatSettings[ChatSettingsKey.BOT_ANSWER_PROBABILITY].toFloat()
+            if botAnswerProbability <= 0.0:
+                logger.debug(
+                    "Bot answer probability is 0, ignoring message from bot user %s in chat %s",
+                    senderUsername,
+                    chat.id,
+                )
+                return HandlerResultStatus.SKIPPED
+            randomRoll = random.random()
+            if randomRoll > botAnswerProbability:
+                logger.debug(
+                    "Skipping bot message from %s in chat %s (roll %.2f > probability %.2f)",
+                    senderUsername,
+                    chat.id,
+                    randomRoll,
+                    botAnswerProbability,
+                )
+                return HandlerResultStatus.SKIPPED
 
         # Check if message is a reply to our message
         # TODO: Move to separate handler?
@@ -840,7 +875,7 @@ class LLMMessageHandler(BaseBotHandler):
                     f"IM:\n```\n{mRet}\n```",
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                 )
-                # Add more timeout + pint typing manager
+                # Add more timeout + ping typing manager
             except Exception as e:
                 logger.error(f"Failed to send intermediate message: {e}")
 
