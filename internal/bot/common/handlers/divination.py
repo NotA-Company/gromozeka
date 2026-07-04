@@ -1038,7 +1038,7 @@ class DivinationHandler(BaseBotHandler):
                 modelKey=ChatSettingsKey.CHAT_MODEL,
                 fallbackModelKey=ChatSettingsKey.FALLBACK_MODEL,
                 useTools={
-                    # We need we search and web fetch for searching for needed divination layout 
+                    # We need we search and web fetch for searching for needed divination layout
                     ToolName.WEB_SEARCH: True,
                     ToolName.GET_URL_CONTENT: True,
                 },

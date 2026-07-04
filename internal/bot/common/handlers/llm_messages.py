@@ -163,8 +163,6 @@ class LLMMessageHandler(BaseBotHandler):
                 except Exception as e:
                     logger.error(f"Failed to send intermediate message: {e}")
 
-        
-
         ret = await self.llmService.generateTextViaLLM(
             messages,
             chatId=ensuredMessage.recipient.id,
@@ -394,6 +392,35 @@ class LLMMessageHandler(BaseBotHandler):
                 # TODO: Think about handleRandomMessage here
                 # return HandlerResultStatus.FINAL
                 return HandlerResultStatus.NEXT
+
+        # Bot answer probability gate: probabilistically skip messages from other bots.
+        # If the sender's username ends with "bot", only respond with the configured
+        # probability (0.0 = never answer bots, 1.0 = always answer).
+        # Note: this gate runs before handleReply/handleMention — even explicit
+        # replies or mentions from bot accounts are subject to the probability throttle.
+        # This is intentional: it prevents bot-to-bot reply loops (including
+        # explicit replies between two bots that would otherwise escalate).
+        senderUsername = ensuredMessage.sender.username
+        if senderUsername and senderUsername.lower().endswith("bot"):
+            chatSettings = await self.getChatSettings(chatId=chat.id)
+            botAnswerProbability = chatSettings[ChatSettingsKey.BOT_ANSWER_PROBABILITY].toFloat()
+            if botAnswerProbability <= 0.0:
+                logger.debug(
+                    "Bot answer probability is 0, ignoring message from bot user %s in chat %s",
+                    senderUsername,
+                    chat.id,
+                )
+                return HandlerResultStatus.SKIPPED
+            randomRoll = random.random()
+            if randomRoll > botAnswerProbability:
+                logger.debug(
+                    "Skipping bot message from %s in chat %s (roll %.2f > probability %.2f)",
+                    senderUsername,
+                    chat.id,
+                    randomRoll,
+                    botAnswerProbability,
+                )
+                return HandlerResultStatus.SKIPPED
 
         # Check if message is a reply to our message
         # TODO: Move to separate handler?

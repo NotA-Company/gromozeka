@@ -377,6 +377,8 @@ class ChatSettingsKey(StrEnum):
     """Probability (0-1) of random responses to messages."""
     RANDOM_ANSWER_TO_ADMIN = "random-answer-to-admin"
     """Whether random responses include admin messages."""
+    BOT_ANSWER_PROBABILITY = "bot-answer-probability"
+    """Probability (0-1) that the bot will respond to other bots' messages. 0 = never."""
     # Spam-related settings
     ALLOW_USER_SPAM_COMMAND = "allow-user-spam-command"
     """Whether non-admins can use /spam command."""
@@ -885,6 +887,12 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "short": "Вероятность случайного ответа",
         "long": "(0-1) Вероятность, что бот решит ответить на произвольное сообщение в чате",
         "page": ChatSettingsPage.STANDART,
+    },
+    ChatSettingsKey.BOT_ANSWER_PROBABILITY: {
+        "type": ChatSettingsType.FLOAT,
+        "short": "Вероятность ответа другим ботам",
+        "long": "(0-1) Вероятность, что бот ответит на сообщение от другого бота. 0 = никогда не отвечать.",
+        "page": ChatSettingsPage.BOT_OWNER,
     },
     ChatSettingsKey.RANDOM_ANSWER_TO_ADMIN: {
         "type": ChatSettingsType.BOOL,
