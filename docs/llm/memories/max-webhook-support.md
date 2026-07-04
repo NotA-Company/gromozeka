@@ -4,7 +4,7 @@ Durable notes from the Max Messenger webhook receiver implementation. Read this 
 
 ## Architecture
 
-Plan: `docs/plans/max-webhook-support.md` (updated to local-API-proxy architecture). Two-process design: standalone aiohttp.web receiver (`internal/max_webhook_receiver/`) accepts POST /webhook from Max, stores in `webhook_updates` table, serves GET /updates in Max API format. Bot's `MaxBotClient` gets `basePollingUrl` override — polls receiver's local GET /updates instead of `platform-api2.max.ru`. Bot's polling loop unchanged.
+Plan: `docs/archive/plans/max-webhook-support.md` (updated to local-API-proxy architecture). Two-process design: standalone aiohttp.web receiver (`internal/max_webhook_receiver/`) accepts POST /webhook from Max, stores in `webhook_updates` table, serves GET /updates in Max API format. Bot's `MaxBotClient` gets `basePollingUrl` override — polls receiver's local GET /updates instead of `platform-api2.max.ru`. Bot's polling loop unchanged.
 
 ### Key architecture decisions:
 - `basePollingUrl` (not `baseUrl`) — overrides only `/updates` endpoint, not all API calls

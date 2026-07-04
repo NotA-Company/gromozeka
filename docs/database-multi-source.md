@@ -1,7 +1,7 @@
 # Multi-Source Database Configuration Guide
 
-> **Status:** ✅ OPERATIONAL — This is a current/reference-style documentation retained in `docs/plans/` for easy access
-> **Note:** Multi-source database architecture is implemented and operational using the provider abstraction pattern. This guide is kept in `plans/` as it serves as operational reference documentation rather than a forward-looking implementation plan.
+> **Status:** ✅ OPERATIONAL — This is a current/reference-style documentation retained at `docs/` root for easy access
+> **Note:** Multi-source database architecture is implemented and operational using the provider abstraction pattern. This guide is kept at `docs/` root as it serves as operational reference documentation rather than a forward-looking implementation plan.
 
 **Version:** 1.0
 **Date:** 2025-11-30
@@ -849,7 +849,7 @@ config = {"providers": {"primary": {"parameters": {"dbPath": "bot.db"}}}}
 
 ## See Also
 
-- [Multi-Source Database Architecture Design](design/multi-source-database-architecture-v2.md)
+- [Multi-Source Database Architecture Design](archive/design/multi-source-database-architecture-v2.md)
 - [Database Implementation](../internal/database/database.py)
 - [DatabaseManager Implementation](../internal/database/manager.py)
 - [Configuration Examples](../docs/examples/)

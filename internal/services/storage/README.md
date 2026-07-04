@@ -458,7 +458,7 @@ Potential features for future versions:
 
 ## Related Documentation
 
-- Design Document: docs/design/storage-service-design-v1.md
+- Design Document: docs/archive/design/storage-service-design-v1.md
 - Usage Examples: docs/examples/storage-service-usage.md
 - ConfigManager: internal/config/manager.py
 

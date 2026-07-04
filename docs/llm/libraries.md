@@ -625,7 +625,7 @@ runtimes (Python), metadata store (filesystem), and lock registry.
 
 - **Coding patterns & constraints:** [`sandbox.md`](sandbox.md)
 - **Design:** [`docs/plans/python-sandboxing-v1.md`](../plans/python-sandboxing-v1.md)
-- **Integration:** [`docs/plans/python-sandboxing-v1-integration.md`](../plans/python-sandboxing-v1-integration.md)
+- **Integration:** [`docs/archive/plans/python-sandboxing-v1-integration.md`](../archive/plans/python-sandboxing-v1-integration.md) (archived)
 
 Key modules:
 

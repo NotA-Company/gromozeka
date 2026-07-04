@@ -4,7 +4,7 @@ Durable notes from the Max Messenger API endpoint migration and TLS/certificate 
 
 ## Max Bot API
 
-- **Current API endpoint**: `https://platform-api2.max.ru` — defined at `lib/max_bot/constants.py` as `API_BASE_URL`. Migrated from the deprecated `platform-api.max.ru` per `docs/plans/max-api-migration.md`. The legacy endpoints (`platform-api.max.ru`, `botapi.max.ru`) are kept as comments only.
+- **Current API endpoint**: `https://platform-api2.max.ru` — defined at `lib/max_bot/constants.py` as `API_BASE_URL`. Migrated from the deprecated `platform-api.max.ru` per `docs/archive/plans/max-api-migration.md`. The legacy endpoints (`platform-api.max.ru`, `botapi.max.ru`) are kept as comments only.
 - **Deadline**: 2026-07-19 — all requests must use `platform-api2.max.ru` and trust the Минцифры (Russian Ministry of Digital Development) root CA certificate. Migration implemented June 2026.
 - **Auth**: Raw access token sent as `Authorization` header (no `Bearer` prefix, no query param). This is already correct for the new API — the deprecated query-param auth never applied to this client.
 - **TLS/SSL**: Custom SSL context built by `libMax.utils.buildMaxSslContext(caBundlePath)` from the `[bot].max-ca-bundle` config key. Default is `"../certs/max"` — relative to `application.root-dir` (`"storage"`), resolves to `<repo-root>/certs/max/`. The directory holds the Russian Минцифры root/intermediate PEM certs (5 files: 3 RSA + 2 GOST). The raw `caBundlePath` config value is passed directly to `MaxBotClient(caBundlePath=...)`, which builds the `ssl.SSLContext` internally via `buildMaxSslContext()`. `_getHttpClient()` conditionally passes `verify=` to `httpx.AsyncClient` only when no SOCKS5 transport is present AND a custom CA context exists (`if "transport" not in proxyKwargs and self._sslContext is not None`). When the key is empty/unset, no `verify=` is passed — httpx falls back to its default CA bundle. **SOCKS5 proxy caveat**: httpx ignores the top-level `verify=` when a custom `transport=` is supplied, so for SOCKS5 proxies (`ProxyType.SOCKS5`) the SSL context is threaded into the transport via `ProxyConfig.toKwargs(verify=self._sslContext)` (which calls `AsyncProxyTransport.from_url(url, verify=sslContext)`); the client-level `verify=` is skipped via the `"transport" not in clientKwargs` guard.
@@ -21,7 +21,7 @@ Durable notes from the Max Messenger API endpoint migration and TLS/certificate 
 
 ## Implementation Summary (2026-06-29)
 
-Plan: `docs/plans/max-api-migration.md`. The endpoint migration + certificate trust has been fully implemented, reviewed, and tested (2710 tests pass).
+Plan: `docs/archive/plans/max-api-migration.md`. The endpoint migration + certificate trust has been fully implemented, reviewed, and tested (2710 tests pass).
 
 ### Files changed:
 - `lib/max_bot/constants.py` — `API_BASE_URL` → `platform-api2.max.ru`, `DEFAULT_RATE_LIMIT` 100→30

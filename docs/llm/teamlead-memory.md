@@ -17,6 +17,7 @@ How to use this file:
 - Prefers parallel batching for independent subtasks (e.g., 6 files at once).
 - Docstring improvement passes should follow one-file-per-task pattern with gate reviews between batches.
 - Responses must be in English.
+- **`.opencode/memory.jsonl` is OpenCode's own session memory store.** It is auto-appended/modified by OpenCode on every task and is expected to show as modified in `git status` during any session. NEVER read, edit, stage, or commit it — and do NOT flag it as a stray/unrelated change. Always exclude it from doc/cleanup commits.
 
 ## Task-Specific Memory Files
 
@@ -113,6 +114,22 @@ From fixing review findings on the Max webhook support feature (branch `max-v2`)
 - For multi-phase implementation from a design doc: exploration first to verify assumptions (code has drift), then implement foundation phase, review it, then wire consumers + config, review again, then docs, then whole-work review. Parallelize config changes with implementation phases when possible.
 - When subagents fail with `ProviderModelNotFoundError`, check the `model:` field in each agent's `.md` file and in `.opencode/opencode.json` -- the `standard` model may not be provisioned while `cheap`/`smart`/`smartest` are.
 - The `explore` subagent (model: `cheap`) and `code-reviewer` (model: `smart`) are reliable for read-only work; `software-developer` needs `standard` model to be functional.
+
+## Docs Archive Layout (2026-07-04)
+
+- `docs/plans/` now holds ONLY active/retained design refs. After the 2026-07-04 cleanup it contains a single file: `python-sandboxing-v1.md` (retained design ref for `lib/sandbox/`; status line updated to "implemented").
+- `docs/design/` holds 2 retained docs: `markdown-specification.md` (living grammar spec) and `vector-search-native.md` (forward-looking pgvector/MySQL/SQLink contract; SQLite path implemented).
+- `docs/database-multi-source.md` (at docs/ root, NOT in plans/) is the relocated operational reference for the multi-source DB architecture (was `docs/plans/database-multi-source-configuration.md`).
+- `docs/archive/plans/README.md` and `docs/archive/design/README.md` are the authoritative indexes of archived docs with one-line descriptions. Update them when archiving new docs.
+- Frozen historical session/review snapshots live under `docs/archive/llm-sessions/` and `docs/archive/review/` (relocated from `docs/llm-sessions/` and `docs/review/` on 2026-07-04). They retain old `docs/plans/...`-style internal paths intentionally — they are snapshots, not active cross-references. Do not rewrite their content.
+
+## Docs Reorg Lessons (2026-07-04)
+
+- When bulk-moving docs with `git mv`, sibling-relative links INSIDE the moved files are the easy-to-miss gap. A dev reported "fixed relative links" but Gate 1 review caught 3 unfixed sibling links in a retained doc pointing to a moved companion. Always grep the moved files' OWN content for sibling refs after relocation.
+- Source-tree READMEs (`lib/*/README.md`, `internal/services/*/README.md`) and code-doc comments (`*.py` docstrings, migration module docstrings) also reference design/plan docs — these are easy to miss because they're outside `docs/`. Grep `lib/` and `internal/` for `docs/plans/` and `docs/design/` paths, not just `docs/`.
+- `configs/00-defaults/*.toml` files carry doc-path references in comments (e.g. `# See docs/plans/chat-history-search-plan.md`). These need repointing too.
+- A status-line-only edit can create an internal contradiction if the doc has a separate `Scope:` line making similar claims — reconcile ALL status/scope/phase headers, not just the one flagged.
+- For docs-only reorgs: `make lint` is the only needed gate (no `make test`); black/isort are no-ops on .md and comment-only .py edits.
 
 ## Documentation Audit Lessons (2026-06-28)
 

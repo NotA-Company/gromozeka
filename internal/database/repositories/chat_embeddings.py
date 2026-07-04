@@ -474,7 +474,7 @@ class ChatEmbeddingsRepository(BaseRepository):
         """Return pending messages (without embeddings) as full dicts.
 
         Used by the embedding backfill worker (§11 of
-        ``docs/plans/chat-history-search-plan.md``) to discover which rows in
+        ``docs/archive/plans/chat-history-search-plan.md``) to discover which rows in
         ``chat_messages`` still need a vector generated. Returns
         :class:`ChatMessageDict` rows (joined with ``chat_users`` for
         ``username``/``full_name``) so the consumer can read

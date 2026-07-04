@@ -13,8 +13,8 @@ How to use this file:
 
 ## Overview
 
-- **Implementation plan**: `docs/plans/chat-history-search-plan.md`
-- **Step 2 plan**: `docs/plans/chat-history-search-step2.md` — adds `/users` command +
+- **Implementation plan**: `docs/archive/plans/chat-history-search-plan.md`
+- **Step 2 plan**: `docs/archive/plans/chat-history-search-step2.md` — adds `/users` command +
   `search_messages`, `list_users`, `get_thread` LLM tools
 - **Default embedding model**:
   `local/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (384d, ~0.22 GB, ~50

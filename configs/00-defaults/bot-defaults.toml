@@ -124,7 +124,7 @@ bayes-auto-learn = true
 # Should we use trigrams for Bayes filter? (Usefull only in case of lots of learned messages)
 bayes-use-trigrams = false
 
-# Embedding / semantic search (see docs/plans/chat-history-search-plan.md §2.7)
+# Embedding / semantic search (see docs/archive/plans/chat-history-search-plan.md §2.7)
 embeddings-enabled = false
 regenerate-embeddings = true
 max-messages-for-semantic-search = 100000

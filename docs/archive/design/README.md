@@ -21,6 +21,15 @@ This directory contains **historical design documents** and Architecture Decisio
 | [`geocode-maps-client-design-v0.md`](geocode-maps-client-design-v0.md) | 🟡 Reference-able | Implementation likely followed this design; verify against [`lib/geocode_maps/`](../../../lib/geocode_maps/) for actual current implementation |
 | [`golden-data-testing-system-v0.md`](golden-data-testing-system-v0.md) | 🔴 Historical | Early golden-data testing design — see [`docs/llm/testing.md`](../../llm/testing.md) for current testing guidance |
 | [`golden-data-testing-system-v1.md`](golden-data-testing-system-v1.md) | 🟡 Partially Historical | v1 design — may partially reflect current golden testing setup in `tests/lib/ai/golden/` |
+| [`golden-data-testing-system-v2.md`](golden-data-testing-system-v2.md) | 🟢 Implemented | Implemented in [`lib/aurumentation/`](../../../lib/aurumentation/); v0/v1 already archived |
+| [`rate-limiter-library-design-v1.md`](rate-limiter-library-design-v1.md) | 🟢 Implemented | Implemented in [`lib/rate_limiter/`](../../../lib/rate_limiter/) with API drift; doc self-labels historical |
+| [`geocode-maps-client-design-v1.md`](geocode-maps-client-design-v1.md) | 🟢 Implemented | Implemented in [`lib/geocode_maps/`](../../../lib/geocode_maps/); v0 already archived |
+| [`lib-cache-design-v0.md`](lib-cache-design-v0.md) | 🟢 Implemented | Implemented in [`lib/cache/`](../../../lib/cache/) (incl. ValueConverter additions noted in doc) |
+| [`yc-openai-images-api-design-v1.md`](yc-openai-images-api-design-v1.md) | 🟢 Implemented | Implemented in [`lib/ai/providers/basic_openai_provider.py`](../../../lib/ai/providers/basic_openai_provider.py); "Proposed" label was stale |
+| [`max-bot-client-design-v0.md`](max-bot-client-design-v0.md) | 🟢 Implemented | Implemented in [`lib/max_bot/`](../../../lib/max_bot/); base URL since migrated to `platform-api2.max.ru` |
+| [`ai-aurumentation-design.md`](ai-aurumentation-design.md) | 🟢 Implemented | Implemented in [`lib/aurumentation/`](../../../lib/aurumentation/); redundant with golden-data-v2 |
+| [`yandex-search-client-design-v1.md`](yandex-search-client-design-v1.md) | 🟢 Implemented | ADR for already-built [`lib/yandex_search/`](../../../lib/yandex_search/); since refactored via `lib.cache`/`rate_limiter` |
+| [`storage-service-design-v1.md`](storage-service-design-v1.md) | 🟢 Implemented | Implemented in [`internal/services/storage/`](../../../internal/services/storage/); carries own implementation notes |
 
 ## Common Staleness Patterns
 
@@ -79,5 +88,5 @@ For current architecture, design patterns, and ADRs:
 
 ---
 
-*Last updated: 2026-05-08*
+*Last updated: 2026-07-04*
 *Design archive maintained for historical context only*

@@ -109,6 +109,7 @@ permission:
     "wc": allow
     "wc *": allow
     "echo *": allow
+    "cat *": allow
     "diff": allow
     "diff *": allow
     "pwd": allow

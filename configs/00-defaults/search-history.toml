@@ -1,5 +1,5 @@
 # Chat History Search Configuration
-# See docs/plans/chat-history-search-plan.md
+# See docs/archive/plans/chat-history-search-plan.md
 
 [search-history]
 enabled = false

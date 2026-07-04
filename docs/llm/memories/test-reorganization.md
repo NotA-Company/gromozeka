@@ -10,7 +10,7 @@ How to use this file:
 ## Summary
 
 - **Status:** COMPLETED. ~74 test files moved from collocated locations into `tests/` with source-structure mirroring. Final: **2342 passed, 11 skipped** (skipped = Docker sandbox tests without daemon).
-- **Plan document:** [`docs/plans/test-reorganization.md`](../../../docs/plans/test-reorganization.md) — full mapping tables, phases, risks.
+- **Plan document:** [`docs/archive/plans/test-reorganization.md`](../../../docs/archive/plans/test-reorganization.md) — full mapping tables, phases, risks.
 
 ## Conventions Established
 

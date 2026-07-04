@@ -1,6 +1,6 @@
 # lib/stats — Statistics Collection Library (v3)
 
-> **Status:** Draft plan — incorporates review feedback from `docs/review/lib-stats-v2-review.md`
+> **Status:** Draft plan — incorporates review feedback from `docs/archive/review/lib-stats-v2-review.md`
 >
 > **Changes from v2 (review-driven):**
 > 1. Single data source (`stats`) — enables future transactional upsert + mark-processed
