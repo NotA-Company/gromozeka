@@ -13,6 +13,7 @@ import lib.utils as utils
 from internal.bot import constants
 from internal.bot.common.models import UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
+from internal.bot.constants import ToolName
 from internal.bot.models import (
     BotProvider,
     CommandCategory,
@@ -149,7 +150,7 @@ class WeatherHandler(BaseBotHandler):
         if self.geocodeMapsClient is None:
             # No Geocode Maps client, use simpler geocoder
             self.llmService.registerTool(
-                name="get_weather_by_city",
+                name=ToolName.GET_WEATHER_BY_CITY,
                 description=(
                     "Get weather and forecast for given city. Return JSON of current weather "
                     "and weather forecast for next following days. "
@@ -174,7 +175,7 @@ class WeatherHandler(BaseBotHandler):
         else:
             # Geocode Maps client activated - we can geocode any address
             self.llmService.registerTool(
-                name="get_weather_by_address",
+                name=ToolName.GET_WEATHER_BY_ADDRESS,
                 description=(
                     "Get weather and forecast for given address or city. Return JSON of current weather "
                     "and weather forecast for next following days. "
@@ -192,7 +193,7 @@ class WeatherHandler(BaseBotHandler):
             )
 
         self.llmService.registerTool(
-            name="get_weather_by_coords",
+            name=ToolName.GET_WEATHER_BY_COORDS,
             description=(
                 "Get weather and forecast for given location. Return JSON of current weather "
                 "and weather forecast for next following days. "

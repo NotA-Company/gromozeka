@@ -311,6 +311,14 @@ vanishingly rare in the Gromozeka codebase.
 
 ---
 
+## 5. LLM Tool Registration
+
+The `ToolName` StrEnum in [`internal/bot/constants.py`](../../internal/bot/constants.py) is the canonical registry of all registered LLM tool names. When adding a new tool that the LLM can call, you **must** add a member there (its value is the string the model sees) and use `ToolName.YOUR_TOOL` in the matching `registerTool(name=...)` call site in the handler's `__init__`. Raw string literals for `name=` are discouraged.
+
+See [`teamlead-memory.md`](teamlead-memory.md) for the full pattern (`_llmTool*` method naming, handler signature, dict return semantics) and the [add-handler skill](../../.agents/skills/add-handler/SKILL.md) Step 5 for the end-to-end registration workflow.
+
+---
+
 ## See Also
 
 - [`architecture.md`](architecture.md) — ADRs, component dependencies, design patterns

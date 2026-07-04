@@ -1,7 +1,7 @@
 """Tests for useTools parameter resolution in LLMService.
 
 Covers :meth:`LLMService._resolveTools`, which converts the ``useTools``
-parameter (bool or dict with ``"default"`` semantics) into the concrete list
+parameter (bool or dict with ``TOOLS_DEFAULT_DICT_KEY`` semantics) into the concrete list
 of :class:`LLMToolFunction` objects sent to the LLM. Also covers the
 execution guard in :meth:`LLMService.generateTextViaLLM` which rejects tool
 calls for tools that were filtered out via the dict.
@@ -13,6 +13,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from internal.bot.constants import TOOLS_DEFAULT_DICT_KEY, ToolName
 from internal.services.llm.service import LLMService
 from lib.ai.abstract import AbstractModel
 from lib.ai.manager import LLMManager
@@ -105,7 +106,7 @@ def testResolveToolsDoesNotMutateRegistry(llmService: LLMService) -> None:
     """Resolving tools never mutates the underlying toolsHandlers dict."""
     _registerThreeTools(llmService)
     before = set(llmService.toolsHandlers.keys())
-    llmService._resolveTools({"tool_a": True, "default": False})
+    llmService._resolveTools({"tool_a": True, TOOLS_DEFAULT_DICT_KEY: False})
     assert set(llmService.toolsHandlers.keys()) == before
 
 
@@ -117,14 +118,14 @@ def testResolveToolsDoesNotMutateRegistry(llmService: LLMService) -> None:
 def testResolveToolsDictDefaultTrueEnablesUnspecified(llmService: LLMService) -> None:
     """Dict with default=True enables all tools not explicitly listed."""
     _registerThreeTools(llmService)
-    tools = llmService._resolveTools({"default": True, "tool_b": False})
+    tools = llmService._resolveTools({TOOLS_DEFAULT_DICT_KEY: True, "tool_b": False})
     assert {tool.name for tool in tools} == {"tool_a", "tool_c"}
 
 
 def testResolveToolsDictDefaultFalseDisablesUnspecified(llmService: LLMService) -> None:
     """Dict with default=False disables all tools not explicitly listed."""
     _registerThreeTools(llmService)
-    tools = llmService._resolveTools({"default": False, "tool_a": True, "tool_c": True})
+    tools = llmService._resolveTools({TOOLS_DEFAULT_DICT_KEY: False, "tool_a": True, "tool_c": True})
     assert {tool.name for tool in tools} == {"tool_a", "tool_c"}
 
 
@@ -138,14 +139,14 @@ def testResolveToolsDictMissingDefaultTreatedAsFalse(llmService: LLMService) -> 
 def testResolveToolsDictExplicitTrueOverridesDefaultFalse(llmService: LLMService) -> None:
     """An explicit True on a tool overrides a default=False."""
     _registerThreeTools(llmService)
-    tools = llmService._resolveTools({"default": False, "tool_b": True})
+    tools = llmService._resolveTools({TOOLS_DEFAULT_DICT_KEY: False, "tool_b": True})
     assert {tool.name for tool in tools} == {"tool_b"}
 
 
 def testResolveToolsDictExplicitFalseOverridesDefaultTrue(llmService: LLMService) -> None:
     """An explicit False on a tool overrides a default=True."""
     _registerThreeTools(llmService)
-    tools = llmService._resolveTools({"default": True, "tool_b": False})
+    tools = llmService._resolveTools({TOOLS_DEFAULT_DICT_KEY: True, "tool_b": False})
     assert {tool.name for tool in tools} == {"tool_a", "tool_c"}
 
 
@@ -177,14 +178,14 @@ def testResolveToolsEmptyDictReturnsEmpty(llmService: LLMService) -> None:
 def testResolveToolsEmptyDictWithDefaultTrueReturnsAll(llmService: LLMService) -> None:
     """Dict with only default=True enables all registered tools."""
     _registerThreeTools(llmService)
-    tools = llmService._resolveTools({"default": True})
+    tools = llmService._resolveTools({TOOLS_DEFAULT_DICT_KEY: True})
     assert {tool.name for tool in tools} == {"tool_a", "tool_b", "tool_c"}
 
 
 def testResolveToolsEmptyDictWithDefaultFalseReturnsEmpty(llmService: LLMService) -> None:
     """Dict with only default=False returns an empty list."""
     _registerThreeTools(llmService)
-    assert llmService._resolveTools({"default": False}) == []
+    assert llmService._resolveTools({TOOLS_DEFAULT_DICT_KEY: False}) == []
 
 
 # ============================================================================
@@ -214,8 +215,8 @@ def testResolveToolsDefaultKeyNeverWarnedAsUnknown(llmService: LLMService, caplo
     """The 'default' key is special and must never trigger an unknown-key warning."""
     _registerThreeTools(llmService)
     with caplog.at_level(logging.WARNING, logger="internal.services.llm.service"):
-        llmService._resolveTools({"default": True})
-    assert "Unknown tool name 'default'" not in caplog.text
+        llmService._resolveTools({TOOLS_DEFAULT_DICT_KEY: True})
+    assert f"Unknown tool name '{TOOLS_DEFAULT_DICT_KEY}'" not in caplog.text
 
 
 def testResolveToolsKnownKeyNeverWarned(llmService: LLMService, caplog: pytest.LogCaptureFixture) -> None:
@@ -224,6 +225,29 @@ def testResolveToolsKnownKeyNeverWarned(llmService: LLMService, caplog: pytest.L
     with caplog.at_level(logging.WARNING, logger="internal.services.llm.service"):
         llmService._resolveTools({"tool_a": True, "tool_b": False})
     assert "Unknown tool name" not in caplog.text
+
+
+# ============================================================================
+# Dict mode: ToolName enum members as keys
+# ============================================================================
+
+
+def testResolveToolsDictWithToolNameMemberKey(llmService: LLMService) -> None:
+    """A :class:`ToolName` enum member works as a dict key in ``useTools``.
+
+    Registers a tool whose name matches ``ToolName.WEB_SEARCH``, then enables
+    only that tool via the dict using the enum member as the key (alongside a
+    mock tool referenced by raw string). Both key styles must resolve
+    identically since ``ToolName`` is a :class:`StrEnum`.
+    """
+    llmService.registerTool(ToolName.WEB_SEARCH, "web search tool", [], _placeholderHandler)
+    _registerThreeTools(llmService)
+    tools = llmService._resolveTools({ToolName.WEB_SEARCH: True, TOOLS_DEFAULT_DICT_KEY: False})
+    assert {tool.name for tool in tools} == {ToolName.WEB_SEARCH}
+
+    # Raw-string key must also match a ToolName-registered tool (StrEnum eq).
+    toolsRawKey = llmService._resolveTools({"web_search": True, TOOLS_DEFAULT_DICT_KEY: False})
+    assert {tool.name for tool in toolsRawKey} == {ToolName.WEB_SEARCH}
 
 
 # ============================================================================
@@ -279,7 +303,7 @@ async def testDisabledToolCallRejectedByGuard(llmService: LLMService) -> None:
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockModel,
-        useTools={"tool_a": True, "default": False},
+        useTools={"tool_a": True, TOOLS_DEFAULT_DICT_KEY: False},
         extraData={},
     )
 

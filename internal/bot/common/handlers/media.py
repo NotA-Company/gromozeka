@@ -23,6 +23,7 @@ import lib.utils as utils
 from internal.bot import constants
 from internal.bot.common.models import TypingAction, UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
+from internal.bot.constants import ToolName
 from internal.bot.models import (
     BotProvider,
     ChatSettingsKey,
@@ -96,7 +97,7 @@ class MediaHandler(BaseBotHandler):
         self.llmService = LLMService.getInstance()
 
         self.llmService.registerTool(
-            name="generate_and_send_image",
+            name=ToolName.GENERATE_AND_SEND_IMAGE,
             description=(
                 "Generate and send an image. ALWAYS use it if user ask to " "generate/paint/draw an image/picture/photo"
             ),

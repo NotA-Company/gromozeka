@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable, MutableSequence, Sequence
 from threading import RLock
 from typing import Any, Dict, List, Optional, Set, Tuple, TypeAlias, Union
 
+from internal.bot.constants import TOOLS_DEFAULT_DICT_KEY
 from internal.bot.models.chat_settings import ChatSettingsDict, ChatSettingsKey
 from lib import utils
 from lib.ai.abstract import AbstractModel
@@ -53,10 +54,10 @@ UseToolsType: TypeAlias = Union[bool, Dict[str, bool]]
 Accepts:
 - ``True``: all registered tools are enabled.
 - ``False``: no tools are enabled.
-- ``dict[str, bool]``: per-tool enable/disable map. The ``"default"`` key
-  controls all tools not explicitly listed (defaults to ``False`` if absent).
-  Unknown keys (tool names not in the registry) are logged as warnings and
-  ignored.
+- ``dict[str, bool]``: per-tool enable/disable map. The :data:`TOOLS_DEFAULT_DICT_KEY`
+  key (``"default"``) controls all tools not explicitly listed (defaults to
+  ``False`` if absent). Unknown keys (tool names not in the registry) are
+  logged as warnings and ignored.
 """
 
 
@@ -165,7 +166,7 @@ class LLMService:
 
         Converts the ``useTools`` parameter (bool or dict) into the concrete list
         of :class:`LLMToolFunction` objects that should be offered to the LLM.
-        When a dict is supplied, the special ``"default"`` key controls every
+        When a dict is supplied, the :data:`TOOLS_DEFAULT_DICT_KEY` key controls every
         tool not explicitly listed (defaulting to ``False`` when absent). Tool
         names in the dict that are not present in :attr:`toolsHandlers` are
         logged as warnings and silently ignored.
@@ -173,14 +174,15 @@ class LLMService:
         Args:
             useTools: Boolean or dict controlling tool enablement. ``True``
                 enables all registered tools, ``False`` disables all, and a
-                dict enables/disables tools per-name with ``"default"`` as the
-                fallback for unspecified tools.
+                dict enables/disables tools per-name with
+                :data:`TOOLS_DEFAULT_DICT_KEY` as the fallback for unspecified
+                tools.
 
         Returns:
             The filtered list of LLMToolFunction objects to send to the LLM.
         """
         if isinstance(useTools, dict):
-            defaultEnabled = useTools.get("default", False)
+            defaultEnabled = useTools.get(TOOLS_DEFAULT_DICT_KEY, False)
             filteredTools: List[LLMToolFunction] = []
             for toolName, tool in self.toolsHandlers.items():
                 if useTools.get(toolName, defaultEnabled):
@@ -188,7 +190,7 @@ class LLMService:
 
             knownNames: Set[str] = set(self.toolsHandlers.keys())
             for key in useTools:
-                if key != "default" and key not in knownNames:
+                if key != TOOLS_DEFAULT_DICT_KEY and key not in knownNames:
                     logger.warning(f"Unknown tool name '{key}' in useTools dict, ignoring")
 
             return filteredTools
@@ -449,9 +451,10 @@ class LLMService:
                 defaults to ChatSettingsKey.FALLBACK_MODEL when None
             useTools: Controls tool calling. ``True`` enables all registered
                 tools, ``False`` disables all, and a ``dict[str, bool]`` enables
-                or disables individual tools by name. The ``"default"`` key
-                controls any tool not explicitly listed (defaults to ``False``
-                when absent); unknown tool names are logged as warnings.
+                or disables individual tools by name. The :data:`TOOLS_DEFAULT_DICT_KEY`
+                key (``"default"``) controls any tool not explicitly listed
+                (defaults to ``False`` when absent); unknown tool names are
+                logged as warnings.
             callId: Optional unique identifier for this LLM call (auto-generated if None)
             callback: Optional async callback invoked when tool calls are made,
                 receives the ModelRunResult and extraData

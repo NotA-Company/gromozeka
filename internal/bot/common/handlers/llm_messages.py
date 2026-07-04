@@ -118,8 +118,9 @@ class LLMMessageHandler(BaseBotHandler):
             useTools (bool | dict[str, bool], optional): Controls tool calling
                 for the LLM. ``True`` enables all registered tools, ``False``
                 (default) disables all, and a dict enables/disables tools
-                per-name with the ``"default"`` key as the fallback for
-                unspecified tools (defaults to ``False`` when absent).
+                per-name with the :data:`TOOLS_DEFAULT_DICT_KEY` key
+                (``"default"``) as the fallback for unspecified tools (defaults
+                to ``False`` when absent).
             sendIntermediateMessages (bool, optional): Whether to send streaming intermediate
                 responses. Defaults to True.
             keepFirstN (int, optional): Number of first messages to keep in context. Defaults to 0.
@@ -161,6 +162,8 @@ class LLMMessageHandler(BaseBotHandler):
                     await typingManager.sendTypingAction()
                 except Exception as e:
                     logger.error(f"Failed to send intermediate message: {e}")
+
+        
 
         ret = await self.llmService.generateTextViaLLM(
             messages,
@@ -231,11 +234,12 @@ class LLMMessageHandler(BaseBotHandler):
         mlRet: Optional[ModelRunResult] = None
 
         try:
+            useTools = chatSettings[ChatSettingsKey.USE_TOOLS].toBool()
             mlRet = await self._generateTextViaLLM(
                 messages=messagesHistory,
                 ensuredMessage=ensuredMessage,
                 chatSettings=chatSettings,
-                useTools=chatSettings[ChatSettingsKey.USE_TOOLS].toBool(),
+                useTools=useTools,
                 typingManager=typingManager,
                 keepFirstN=keepFirstN,
                 keepLastN=keepLastN,
@@ -844,7 +848,7 @@ class LLMMessageHandler(BaseBotHandler):
                     f"IM:\n```\n{mRet}\n```",
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                 )
-                # Add more timeout + pint typing manager
+                # Add more timeout + ping typing manager
             except Exception as e:
                 logger.error(f"Failed to send intermediate message: {e}")
 

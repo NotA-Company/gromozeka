@@ -44,7 +44,7 @@
 | [`divination.py`](../../internal/bot/common/handlers/divination.py) | `DivinationHandler` | `/taro` & `/runes` readings (if `divination.enabled`) — includes layout discovery via LLM + web search |
 | [`sandbox.py`](../../internal/bot/common/handlers/sandbox.py) | `SandboxHandler` | Sandboxed Python code execution (if `sandbox.enabled` and `allow-sandbox` chat setting). Commands: `/run <code>` (alias: `/python`), `/sandbox files|read|status|install`. LLM tools: `run_python(code)`, `sandbox_list_files`, `sandbox_read_file`, `sandbox_send_file`, `sandbox_list_libraries`. Lifecycle: registers `CRON_JOB` (periodic GC) and `DO_EXIT` (graceful shutdown) delayed-task handlers; performs one-time `SandboxManager.recover()` on first cron tick to reconcile stale containers after restarts. |
 | [`chat_search.py`](../../internal/bot/common/handlers/chat_search.py) | `ChatSearchHandler` | Chat-history search (if `[search-history].enabled`). Commands: `/search [args]` (DSL of `keywords` / `user` / `days` / `category` / `thread` filters) — returns the matching messages as a raw, human-readable list (no LLM summary); `/users [limit=N] [min_messages=N] [last_active=N]` — lists chat participants with activity statistics. LLM tools: `search_messages(query, limit, max_age_days, user_name, thread_message_id)` — semantic search over chat history; `list_users(limit, min_messages)` — list participants with stats; `get_thread(message_id)` — retrieve full conversation thread. `newMessageHandler` is pass-through (`SKIPPED`); work runs via the command. Lifecycle: registers `CRON_JOB` (`_dtCronJob` — embedding backfill for chats with `EMBEDDINGS_ENABLED=true`, round-robin across enabled chats, default batch `BACKFILL_DEFAULT_BATCH_SIZE` messages) delayed-task handlers. There is no separate `BackfillWorker` class — backfill duty lives in this handler. |
-| [`llm_messages.py`](../../internal/bot/common/handlers/llm_messages.py) | `LLMMessageHandler` | **LAST** in chain; LLM responses. Wraps `LLMService.generateTextViaLLM` via `_generateTextViaLLM`, forwarding a `useTools` value (`bool \| dict[str, bool]`, type alias `UseToolsType`) that supports per-tool enable/disable with a `"default"` fallback (see [`services.md`](services.md)). Default `useTools` comes from the `USE_TOOLS` chat setting (`.toBool()` — callers wanting dict-level control must bypass the setting and pass a dict explicitly). |
+| [`llm_messages.py`](../../internal/bot/common/handlers/llm_messages.py) | `LLMMessageHandler` | **LAST** in chain; LLM responses. Wraps `LLMService.generateTextViaLLM` via `_generateTextViaLLM`, forwarding a `useTools` value (`bool \| dict[str, bool]`, type alias `UseToolsType`) that supports per-tool enable/disable with a `TOOLS_DEFAULT_DICT_KEY` fallback (see [`services.md`](services.md)). When constructing the dict form, use members of the `ToolName` StrEnum from [`internal.bot.constants`](../../internal/bot/constants.py) as keys (raw strings also work since `ToolName` is a `StrEnum`). Default `useTools` comes from the `USE_TOOLS` chat setting (`.toBool()` — callers wanting dict-level control must bypass the setting and pass a dict explicitly). |
 | [`example.py`](../../internal/bot/common/handlers/example.py) | `ExampleHandler` | Standalone reference example (not registered in handler chain) |
 | [`example_custom_handler.py`](../../internal/bot/common/handlers/example_custom_handler.py) | `ExampleCustomHandler` | Template for custom handlers |
 
@@ -140,13 +140,24 @@ async def newMessageHandler(
     return HandlerResultStatus.FINAL
 ```
 
-### Step 5: Write tests
+### Step 5: Register LLM tools (if handler provides them)
+
+If your handler registers tools for the LLM to call:
+
+1. Add a member to the `ToolName` StrEnum in [`internal/bot/constants.py`](../../internal/bot/constants.py).
+2. In your handler's `__init__`, call `self.llmService.registerTool(name=ToolName.YOUR_TOOL, ...)`.
+3. Gate registration on your feature's `enabled` config flag.
+4. Name the handler method with the `_llmTool*` prefix.
+
+Full details in the [add-handler skill](../../.agents/skills/add-handler/SKILL.md) (Step 5), [`AGENTS.md`](../../AGENTS.md) (tool handler conventions), and [`teamlead-memory.md`](../../docs/llm/teamlead-memory.md) (ToolName StrEnum details).
+
+### Step 6: Write tests
 
 **Path:** `tests/bot/test_my_handler.py`
 
 See [`testing.md`](testing.md) for test patterns
 
-### Step 6: Run quality checks
+### Step 7: Run quality checks
 
 ```bash
 make format lint
@@ -160,6 +171,7 @@ make test
 - [ ] Added handler to `HandlersManager.__init__()` if it's a new built-in handler ([`manager.py:428`](../../internal/bot/common/handlers/manager.py:428))
 - [ ] OR configured as custom handler via TOML if it's a plugin
 - [ ] Added tests in `tests/bot/` directory
+- [ ] If handler registers LLM tools: `ToolName` member added, `registerTool(name=ToolName.XXX, ...)` used, gated on feature flag.
 - [ ] Ran `make format lint` and `make test`
 
 ---

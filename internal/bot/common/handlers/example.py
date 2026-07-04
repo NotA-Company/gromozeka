@@ -19,6 +19,7 @@ from typing import Any, Dict, Optional
 import lib.utils as utils
 from internal.bot.common.models import UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
+from internal.bot.constants import ToolName
 from internal.bot.models import (
     BotProvider,
     CommandCategory,
@@ -82,7 +83,7 @@ class ExampleHandler(BaseBotHandler):
 
         self.llmService: LLMService = LLMService.getInstance()
         self.llmService.registerTool(
-            name="example",
+            name=ToolName.EXAMPLE,
             description="Example Tool for LLM, always call it to show that you can call tools",
             parameters=[
                 LLMFunctionParameter(

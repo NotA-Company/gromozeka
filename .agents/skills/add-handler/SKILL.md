@@ -142,7 +142,57 @@ For Telegram-style slash commands, define decorated methods on the handler per t
 
 Copy the decorator shape from an existing handler (e.g. [`internal/bot/common/handlers/common.py`](../../../internal/bot/common/handlers/common.py) or [`divination.py`](../../../internal/bot/common/handlers/divination.py)) rather than rolling your own.
 
-## Step 5 — Send messages the platform-agnostic way
+## Step 5 — LLM tool registration (if the handler provides tools)
+
+If your handler registers LLM tools for the model to call, follow this pattern:
+
+### 5a — Add a `ToolName` member
+
+In [`internal/bot/constants.py`](../../../internal/bot/constants.py), add a member to the `ToolName` StrEnum:
+
+```python
+class ToolName(StrEnum):
+    ...
+    YOUR_TOOL = "your_tool"
+```
+
+The value must match the string passed to `registerTool(name=...)`.
+
+### 5b — Import dependencies
+
+In your handler file:
+
+```python
+from internal.bot.constants import ToolName
+from lib.ai import LLMFunctionParameter, LLMParameterType
+```
+
+### 5c — Register the tool
+
+In the handler's `__init__`, after `super().__init__(...)`:
+
+```python
+if self.configManager.get("my_feature", {}).get("enabled", False):
+    self.llmService.registerTool(
+        name=ToolName.YOUR_TOOL,
+        description="What your tool does for the LLM.",
+        parameters=[
+            LLMFunctionParameter("param", "Description", LLMParameterType.STRING, required=True),
+        ],
+        handler=self._llmToolYourTool,
+    )
+```
+
+Key rules:
+- Use `ToolName.YOUR_TOOL` (from the enum), NOT a raw string literal.
+- Gate registration on the feature's `enabled` flag so tools aren't registered when the handler is disabled.
+- Name the handler method `_llmTool*` (e.g., `_llmToolRunSandboxCode`, `_llmToolSearchMessages`) — the prefix makes the method's role obvious without reading the registration.
+- The handler signature: `async def _llmTool*(self, extraData: Optional[Dict[str, Any]], param1, ..., **kwargs: Any) -> Dict[str, Any]`. Return a dict with `{"done": bool, ...}` — the LLM service handles JSON serialization. NEVER raise. Get chat context from `extraData["ensuredMessage"]`.
+- Do NOT return JSON strings — return dicts directly. The LLM service serializes to JSON.
+
+The `_llmTool*` naming convention and handler signature are enforced by the existing patterns in the codebase; see the registered tools in [`weather.py`](../../../internal/bot/common/handlers/weather.py), [`sandbox.py`](../../../internal/bot/common/handlers/sandbox.py), or [`chat_search.py`](../../../internal/bot/common/handlers/chat_search.py) for concrete examples.
+
+## Step 6 — Send messages the platform-agnostic way
 
 ❌ **Never** call `tgBot.send_message(...)` or `maxBot.sendMessage(...)` directly — that couples the handler to a single platform.
 
@@ -158,7 +208,7 @@ await self.sendMessage(
 
 Also remember: message IDs are `MessageId` instances wrapping `int | str` (Telegram = int, Max = str). Never assume plain `int` — use `.asInt()` for Telegram API calls, `.asStr()` for Max/SQL.
 
-## Step 6 — Register the handler
+## Step 7 — Register the handler
 
 Edit [`internal/bot/common/handlers/manager.py`](../../../internal/bot/common/handlers/manager.py) around line 432 (`self.handlers: List[HandlerTuple] = [...]`).
 
@@ -181,7 +231,7 @@ Parallelism choice:
 - `HandlerParallelism.SEQUENTIAL` — must finish before the next message in the chat is processed. Use only when ordering matters (preprocessing, spam, message persistence, LLM replies).
 - `HandlerParallelism.PARALLEL` — can overlap with other parallel handlers on the same chat. Default for most new handlers.
 
-## Step 7 — Tests
+## Step 8 — Tests
 
 Create `tests/bot/test_<handler_name>.py` (the test tree mirrors the production tree loosely).
 
@@ -193,7 +243,7 @@ Key rules from [`docs/llm/testing.md`](../../../docs/llm/testing.md) and [`docs/
 - The `resetLlmServiceSingleton` autouse fixture already clears `LLMService`. For `CacheService`, `QueueService`, `StorageService`, `RateLimiterManager` — if your handler pokes them in a stateful way, reset `_instance = None` in a fixture.
 - API-touching logic should exercise golden data under `tests/fixtures/`, not live APIs.
 
-## Step 8 — Documentation
+## Step 9 — Documentation
 
 Update [`docs/llm/handlers.md`](../../../docs/llm/handlers.md) with your handler's entry: purpose, commands it owns (if any), parallelism, any conditional-registration predicate.
 
@@ -201,7 +251,7 @@ Update [`docs/llm/index.md`](../../../docs/llm/index.md) §4.5 **only** if the a
 
 If the handler uses a new config section, load the `update-project-docs` skill for the full matrix — you'll also touch `docs/llm/configuration.md` and `configs/00-defaults/*.toml`.
 
-## Step 9 — Quality gates
+## Step 10 — Quality gates
 
 Load the `run-quality-gates` skill. Short form:
 
@@ -222,6 +272,7 @@ make test
 - [ ] No assumption that `messageId` is plain `int` — use `MessageId` class with `.asInt()`/`.asStr()` as needed.
 - [ ] Registered in `HandlersManager` at the right position; `LLMMessageHandler` remains last.
 - [ ] Config-gated handlers check their `enabled` flag via `configManager`.
+- [ ] If handler registers LLM tools: added `ToolName` member in `internal/bot/constants.py`, used `ToolName.YOUR_TOOL` in `registerTool(name=...)`, gated on feature flag, method named `_llmTool*`.
 - [ ] Tests in `tests/bot/` using real `EnsuredMessage` instances and shared fixtures.
 - [ ] `docs/llm/handlers.md` updated.
 - [ ] `make format lint && make test` green.
