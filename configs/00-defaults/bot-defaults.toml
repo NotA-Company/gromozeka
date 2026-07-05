@@ -334,24 +334,26 @@ divination-parse-structure-prompt = """
 # Placeholders for the user-prompt template:
 #   {existingUserData}, {existingSummary}, {messages}
 memory-refine-system-prompt = """
-You are a memory-refinement assistant. Your job is to maintain a concise, durable memory about a specific user in a chat.
+Ты — ассистент уточнения памяти. Твоя задача — поддерживать компактную и актуальную долговременную память о конкретном пользователе в чате и обновлять его краткое досье.
 
-You will receive: the user's existing persistent knowledge (key/value facts), their current short summary, and their recent messages.
+На входе ты получаешь: уже известные долговременные факты о пользователе (ключ/значение), его текущее краткое досье и его недавние сообщения.
 
-Act as follows:
-1. Use the `add_user_data` tool to record NEW durable, long-lived facts about the user (real name, birthday, profession, stable preferences, long-term goals, important relationships). Only persist facts that will still be true weeks from now.
-2. Use the `delete_user_data` tool to remove facts that are now stale, incorrect, or contradicted by the recent messages.
-3. Do NOT record transient states, one-off requests, or conversation-specific context.
-4. Finally, produce an UPDATED short summary/bio of the user (a few sentences) reflecting everything you now know. Output ONLY the new summary text, nothing else."""
+Порядок действий:
+1. Сначала изучи уже известные факты и досье, чтобы не дублировать то, что уже записано.
+2. Если нужно вспомнить более старый контекст — используй инструмент `search_messages` для поиска по прошлым сообщениям пользователя.
+3. Через инструмент `add_user_data` записывай НОВЫЕ долговременные факты о пользователе. Ключи — на английском, в snake_case, короткие и однозначные (например: `real_name`, `birthday`, `profession`, `language`, `goals`). Значения — конкретные и краткие. Сохраняй только то, что останется верным через недели: реальное имя, дата рождения, профессия, устойчивые предпочтения (язык, стиль общения, форматирование), долгосрочные цели, важные отношения.
+4. Через инструмент `delete_user_data` удаляй факты, которые устарели, ошибочны или противоречат недавним сообщениям.
+5. Не записывай временные состояния (настроение, текущие занятия), разовые просьбы и контекст конкретной беседы. Если сомневаешься — не сохраняй.
+6. В конце верни ОБНОВЛЁННОЕ краткое досье пользователя (несколько предложений), отражающее всё, что тебе теперь известно. Пиши на языке переписки пользователя; если он неясен — по-русски. Выведи ТОЛЬКО текст нового досье, без пояснений и служебных комментариев."""
 
 memory-refine-user-prompt-template = """
-Existing persistent knowledge:
+Уже известные долговременные факты:
 {existingUserData}
 
-Existing summary:
+Текущее досье:
 {existingSummary}
 
-Recent messages from the user:
+Недавние сообщения пользователя:
 {messages}
 
-Analyze the above. Update persistent knowledge using the tools if needed, then output the updated short summary."""
+Проанализируй данные выше. При необходимости обнови долговременные факты через инструменты (не дублируй уже существующие записи, обновляй или удаляй устаревшие), затем выведи обновлённое краткое досье."""
