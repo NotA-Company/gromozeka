@@ -130,6 +130,24 @@ Background per-`(chat, user, thread)` memory refinement, owned by `UserDataHandl
 - **`configs/common/` is gitignored** — the friend-tier `memory-refinement-enabled = true` is a local-deployment overlay (same model as `allow-sandbox`), NOT version-controlled. See "Configs Tracking Gotcha" above.
 - **Single global `asyncio.Lock`** serializes all refinement; a slow LLM call blocks the next 60s tick rather than flooding the provider. No per-entry locks, no `createTask`.
 
+## Review-Fix Round: Memory Refinement + Chat Users Cache (2026-07-05)
+
+Post-review fixes for the memory-refinement + chat-users-cache branch. User decisions on review findings:
+- **Accepted risks** (memory summarization, nothing breaks): (1) `_dtCronJob` subtracts `preCount` from accounting regardless of messages actually ingested by `_runRefinement` (capped at 128); (2) cursor advances to `messages[0]` (newest) so bursts >128 permanently skip overflow. **Mitigation: add warning log** when `len(messages) >= _memoryMaxMessagesPerRun`.
+- **Fix**: metadata RMW race — add a lock in `CacheService` covering the full read-modify-write window, held by both `_persistMemoryEntry` and `setUserMetadata(isUpdate=True)`.
+- **Document** (no code change): failed refinement zeroes accounting (backoff-by-accident); spam `_getUserInfoFreshIfMessagesLessThan` monotonicity depends on `messages_count` only-incrementing; `getChatUser` returns shallow copy.
+- **Lock add**: `_lastRefinedTS` read at `user_data.py:353` should take `_accountingLock` for consistency with the comment at line 108.
+- **Exploration confirmed (Q2)**: `CacheService.updateUserMetadata` is the SOLE production write path for `chat_users.metadata`. The repo method `ChatUsersRepository.updateUserMetadata` (`internal/database/repositories/chat_users.py:126-162`) has exactly one production caller (the cache). All 6 handler `setUserMetadata(isUpdate=True)` callsites (spam.py x4, message_preprocessor.py x2) + the 1 `_persistMemoryEntry` direct caller route through `cache.updateUserMetadata`. No `_chatUsersLock` existed prior to this fix. The `chat_messages.py:154` raw SQL bypass only touches `messages_count`, not `metadata` — irrelevant to the race.
+
+**Line-number drift from the review report (authoritative current numbers):**
+- `chat_settings.py` is at `internal/bot/models/chat_settings.py` (NOT `internal/bot/common/`).
+- "реобновления" @ line **888** (under `MEMORY_REFINE_MODEL`); "при фонового обновления" @ line **901** (under `MEMORY_REFINE_SYSTEM_PROMPT`).
+- `_runRefinement` fetch-cap (`limit=self._memoryMaxMessagesPerRun`) @ `user_data.py:488`; cursor advance (`newest = messages[0]`) @ `user_data.py:542-550`. (Review said 519-535 — that's the LLM call, mislocated.)
+- `_persistMemoryEntry` RMW @ `user_data.py:555-596` (confirmed). `setUserMetadata` @ `base.py:1083-1106` (confirmed).
+- `spam.py` `_getUserInfoFreshIfMessagesLessThan` @ **202-243** (not 199-241).
+- `_dtCronJob` finally subtract (`preCount`) @ `user_data.py:422` (block 415-431).
+- No `len(messages) >= _memoryMaxMessagesPerRun` comparison exists today — must be added for the warning log.
+
 ## Chat Users Cache (2026-07-05, IMPLEMENTED)
 
 Write-through `chat_users` cache in `CacheService`, eliminating 2–5 redundant `chat_users` reads per inbound message. Canonical doc: [`architecture.md`](architecture.md) ADR-015; plan: [`docs/plans/user-info-cache-plan-v1.md`](../plans/user-info-cache-plan-v1.md). Reusable cross-task facts:
@@ -140,6 +158,8 @@ Write-through `chat_users` cache in `CacheService`, eliminating 2–5 redundant 
 - **Skip-when-unchanged optimization** in `updateChatUser`: a no-op call (same `username`/`full_name`) skips the DB upsert, so `updated_at` no longer refreshes on such calls.
 - **Nested-write invariant:** `updateUserMetadata` does NO merge — nested writers (`_persistMemoryEntry`) must read full metadata → mutate one nested key → write full dict back. A shallow `{**old, **new}` would wipe sibling threads. Same hazard ADR-014 documents for `setUserMetadata(isUpdate=True)`.
 - **Coupling note:** every `metadata` writer MUST route through the cache. A future raw `db.chatUsers.updateUserMetadata(...)` bypass would silently desync the cache and corrupt subsequent `setUserMetadata(isUpdate=True)` merges. Do not add such bypasses for `metadata` (the `messages_count` increment is the sole accepted bypass, and it does not touch `metadata`).
+- **Metadata RMW lock (added 2026-07-05 fix round):** `CacheService._chatUsersMetadataLock` (single process-global `asyncio.Lock`) serializes the full read-modify-write window of `chat_users.metadata`. Exposed via `chatUserMetadataLock()` async context manager (`@contextlib.asynccontextmanager`, `-> AsyncIterator[None]`). Both RMW callers MUST hold it across the entire window: `BaseBotHandler.setUserMetadata(isUpdate=True)` and `UserDataHandler._persistMemoryEntry`. The `isUpdate=False` full-replace path and plain `getUserMetadata` reads do NOT take it. Lock ordering: `_refineLock` (outer) → `chatUserMetadataLock` (inner) — no reverse path exists. Verification (Q2 from review): `CacheService.updateUserMetadata` is the SOLE production write path for `chat_users.metadata` (the repo method has exactly one production caller); all 6 `setUserMetadata(isUpdate=True)` handler callsites + `_persistMemoryEntry` route through it. The `chat_messages.py:154` raw SQL bypass only touches `messages_count`, not `metadata`.
+- **Accepted risks (memory refinement, documented 2026-07-05):** (1) `_dtCronJob` subtracts `preCount` from accounting regardless of messages actually ingested; (2) `_runRefinement` cursor advances to `messages[0]` (newest) so bursts > `_memoryMaxMessagesPerRun` (128) permanently skip overflow. Both accepted because it's memory summarization — nothing breaks. Mitigation: `logger.warning` fires when `len(messages) >= _memoryMaxMessagesPerRun` (overflow detection).
 
 ## Docs Archive Layout (2026-07-04)
 

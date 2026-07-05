@@ -6,7 +6,7 @@ Durable implementation notes for the background per-`(chat, user, thread)` memor
 
 - Every incoming message increments an in-memory `UserDataHandler._accounting[(chatId, userId, threadId)]` counter (gated by the per-chat `MEMORY_REFINEMENT_ENABLED` setting), at the very top of `newMessageHandler`, before any other gate.
 - A 60s `CRON_JOB` (`_dtCronJob`) scans the counter; when a user crosses the count threshold (`5`) OR the time threshold (6h since the in-memory `_lastRefinedTS`), it runs `_runRefinement`. All `[user-memory]` config is read ONCE in `__init__` and cached as instance attributes (`_memoryRefineEnabled`, `_memoryCountThreshold`, `_memoryTimeThresholdSeconds`, `_memoryMinMessagesToRefine`, `_memoryMaxMessagesPerRun`, `_memoryMaxRefinesPerTick`); the cron hot path and `_runRefinement` perform NO `configManager.get(...)` calls.
-- `_runRefinement` fetches the user's recent messages via `getChatMessagesSince` (new `userId` filter), renders them, and calls `LLMService.generateTextViaLLM` with `chatId=None` (skips rate-limiting) and a per-tool dict: `ADD_USER_DATA`, `DELETE_USER_DATA`, `SEARCH_MESSAGES`, `GET_CURRENT_DATETIME`. The resulting summary text replaces the old one.
+- `_runRefinement` fetches the user's recent messages via `getChatMessagesSince` (new `userId` filter), renders them, and calls `LLMService.generateTextViaLLM` with `chatId=None` (skips rate-limiting) and a per-tool dict: `ADD_USER_DATA`, `DELETE_USER_DATA`, `SEARCH_MESSAGES`, `GET_CURRENT_DATETIME`. The resulting summary text replaces the old one. If the fetch hits the `max-messages-per-run` cap (default 128), older overflow messages are silently skipped and a `logger.warning` is emitted (accepted risk: a burst >128 permanently loses the tail for that run — see [`../../plans/memory-refine-plan-v1.md`](../../plans/memory-refine-plan-v1.md) §16).
 - The summary is injected into normal chat context as `EnsuredMessage.userSummary` (omitted from JSON when `None` → byte-identical default output).
 
 ## Storage convention (NO migration)
@@ -22,18 +22,21 @@ Durable implementation notes for the background per-`(chat, user, thread)` memor
 The refinement write path (`user_data.py` `_persistMemoryEntry`) bypasses `setUserMetadata` entirely and does read-modify-write through `CacheService` (see ADR-015 — all single-row `chat_users` reads/writes route through the cache layer, not `self.db.chatUsers.*` directly):
 
 ```python
-metadata = await self.cache.getUserMetadata(chatId=chatId, userId=userId)
-refinement = metadata.get("memoryRefinement", {})
-refinement[str(threadId)] = {  # mutate only this thread's entry
-    "summary": summary,
-    "lastProcessedMessageId": lastProcessedMessageId,
-    "lastProcessedMessageDate": lastProcessedMessageDate,
-}
-metadata["memoryRefinement"] = refinement
-await self.cache.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadata)
+async with self.cache.chatUserMetadataLock():
+    metadata = await self.cache.getUserMetadata(chatId=chatId, userId=userId)
+    refinement = metadata.get("memoryRefinement", {})
+    refinement[str(threadId)] = {  # mutate only this thread's entry
+        "summary": summary,
+        "lastProcessedMessageId": lastProcessedMessageId,
+        "lastProcessedMessageDate": lastProcessedMessageDate,
+    }
+    metadata["memoryRefinement"] = refinement
+    await self.cache.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadata)
 # lastRefinedTS is tracked in-memory only, NOT in the persisted dict:
 self._lastRefinedTS[(chatId, userId, threadId)] = int(time.time())
 ```
+
+The `chatUserMetadataLock()` context manager (a single process-global `asyncio.Lock` on `CacheService`, `_chatUsersMetadataLock`) serializes the full RMW so concurrent metadata writers (`setUserMetadata(isUpdate=True)` is the other one) cannot lose updates. Lock ordering inside the refinement flow: `_refineLock` (outer) → `chatUserMetadataLock` (inner) — see [`../architecture.md`](../architecture.md) ADR-014 / ADR-015.
 
 **Cache routing (2026-07-05, no behavior change):** `_readMemoryEntry`, `_persistMemoryEntry`, and `getUserMemorySummary` now read/write via `CacheService.getUserMetadata` / `updateUserMetadata` instead of `self.db.chatUsers.*`. The nested-write invariant above is preserved — `updateUserMetadata` does a full-dict replace with NO merge, so the explicit full-read + nested-mutate + full-write pattern is unchanged. See [`../architecture.md`](../architecture.md) ADR-015.
 

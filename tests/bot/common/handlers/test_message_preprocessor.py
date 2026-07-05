@@ -13,8 +13,9 @@ This module covers every gate independently, plus the three failure modes of
 ``embedAndSaveMessage`` and the never-crash guarantee of the dispatch block.
 """
 
+import contextlib
 import datetime
-from typing import Any, cast
+from typing import Any, AsyncIterator, cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -532,15 +533,23 @@ def _wireCacheForChatMember(handler: MessagePreprocessorHandler) -> Mock:
     child mocks are not awaitable. The join/leave handlers await
     ``cache.updateChatUser`` / ``cache.getUserMetadata`` /
     ``cache.updateUserMetadata``, so those three must be ``AsyncMock``s for the
-    handlers to run at all. Returns the wired cache so the caller can assert
-    on the recorded calls.
+    handlers to run at all. ``setUserMetadata(isUpdate=True)`` also acquires
+    ``cache.chatUserMetadataLock()`` (an async context manager), so that is wired
+    to a no-op stand-in. Returns the wired cache so the caller can assert on the
+    recorded calls.
 
     Args:
         handler: Preprocessor fixture.
 
     Returns:
-        The handler's cache mock with the three async methods installed.
+        The handler's cache mock with the async methods installed.
     """
+
+    @contextlib.asynccontextmanager
+    async def _noopMetadataLock() -> AsyncIterator[None]:
+        """No-op async CM stand-in for ``CacheService.chatUserMetadataLock``."""
+        yield
+
     cache = cast(Any, handler.cache)
     cache.updateChatUser = AsyncMock(return_value=None)
     # Non-empty baseline with a sibling key the merge must preserve. If
@@ -550,6 +559,7 @@ def _wireCacheForChatMember(handler: MessagePreprocessorHandler) -> Mock:
     # tests fail — which is the whole point.
     cache.getUserMetadata = AsyncMock(return_value={"memoryRefinement": {"0": {"summary": "pre-existing"}}})
     cache.updateUserMetadata = AsyncMock(return_value=None)
+    cache.chatUserMetadataLock = _noopMetadataLock
     return cache
 
 

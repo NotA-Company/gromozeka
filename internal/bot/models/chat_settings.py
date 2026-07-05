@@ -885,7 +885,7 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
     ChatSettingsKey.MEMORY_REFINE_MODEL: {
         "type": ChatSettingsType.MODEL,
         "short": "LLM-Модель для обновления памяти",
-        "long": "Какую LLM модель использовать для реобновления памяти о пользователе",
+        "long": "Какую LLM модель использовать для обновления памяти о пользователе",
         "page": ChatSettingsPage.FRIEND,
     },
     ChatSettingsKey.MEMORY_REFINE_FALLBACK_MODEL: {
@@ -898,7 +898,7 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "type": ChatSettingsType.STRING,
         "short": "Системный промпт для обновления памяти",
         "long": (
-            "Системный промпт, задающий роль и правила модели при фонового обновления "
+            "Системный промпт, задающий роль и правила модели при фоновом обновлении "
             "(актуализации) памяти о пользователе."
         ),
         "page": ChatSettingsPage.FRIEND,

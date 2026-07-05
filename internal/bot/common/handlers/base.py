@@ -1093,17 +1093,21 @@ class BaseBotHandler(CommandHandlerMixin):
             isUpdate: If True, merge with existing metadata; if False, replace completely
 
         Note:
-            When ``isUpdate=True`` the merge is a SHALLOW top-level ``{**old, **new}`` —
-            this is intentional for the spam-flag/leftChat use cases (flat boolean flags).
-            For NESTED sub-dicts (e.g. ``memoryRefinement``) do NOT use this method;
-            perform an explicit full-read + nested-mutate + full-write via
-            ``cache.getUserMetadata`` / ``cache.updateUserMetadata`` (see
-            ``UserDataHandler._persistMemoryEntry``).
+            When ``isUpdate=True``, the read-merge-write is serialized via
+            ``cache.chatUserMetadataLock()`` to avoid lost-update races with
+            concurrent metadata writers, and the merge is a SHALLOW top-level
+            ``{**old, **new}`` — this is intentional for the spam-flag/leftChat
+            use cases (flat boolean flags). For NESTED sub-dicts (e.g.
+            ``memoryRefinement``) do NOT use this method; perform an explicit
+            full-read + nested-mutate + full-write via ``cache.getUserMetadata`` /
+            ``cache.updateUserMetadata`` (see ``UserDataHandler._persistMemoryEntry``).
         """
-        if isUpdate:
-            existing = await self.cache.getUserMetadata(chatId=chatId, userId=userId)
-            metadata = {**existing, **metadata}
-        await self.cache.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadata)
+        async with self.cache.chatUserMetadataLock():
+            if isUpdate:
+                existing = await self.cache.getUserMetadata(chatId=chatId, userId=userId)
+                metadata = {**existing, **metadata}
+
+            await self.cache.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadata)
 
     async def getUserMemorySummary(self, chatId: int, userId: int, threadId: int) -> Optional[str]:
         """

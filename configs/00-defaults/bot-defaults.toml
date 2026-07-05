@@ -154,7 +154,7 @@ base-tier = "free"
 paid-tier = "free"
 paid-tier-untill-ts = 0
 
-# If userMemory need to be refined\updated
+# Whether user memory refinement is enabled
 memory-refinement-enabled       = false
 
 # Per-char ratelimiters for LLM usage and Tools-usage

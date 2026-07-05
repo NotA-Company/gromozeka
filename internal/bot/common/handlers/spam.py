@@ -217,6 +217,11 @@ class SpamHandler(BaseBotHandler):
         value below the threshold might have drifted up past it, so only that case pays
         for a refresh.
 
+        Note: this monotonicity assumption depends on the single increment site in
+        ``ChatMessagesRepository.saveChatMessage`` (~line 154). A future change that
+        DECREMENTS ``messages_count`` would silently break this optimization (cached
+        at-or-above values would no longer be safe to trust).
+
         Caveat: callers whose gate is a STRICT ``>`` (rather than ``>=``) must pass
         ``threshold + 1`` so the boundary case (cached value exactly equal to the gate
         operand) still triggers a refresh. ``markAsSpam`` does this by passing

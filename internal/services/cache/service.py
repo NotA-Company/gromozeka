@@ -23,12 +23,14 @@ Example:
     >>> settings = await cache.getChatSettings(123)
 """
 
+import asyncio
+import contextlib
 import json
 import logging
 import time
 from collections import OrderedDict
 from threading import RLock
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Type
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Optional, Tuple, Type
 
 import internal.database.utils as dbUtils
 from internal.bot.models.user_metadata import UserMetadataDict
@@ -291,6 +293,13 @@ class CacheService:
                 CacheNamespace.USERS: set(),
             }
             """Dictionary tracking keys that have been modified and need persistence."""
+
+            # Async lock serializing the full read-modify-write window of
+            # ``chat_users.metadata``. ``getUserMetadata`` + ``updateUserMetadata``
+            # individually are safe, but a caller that reads, mutates, then writes
+            # back can lose updates to a concurrent writer doing the same. Holders
+            # of ``chatUserMetadataLock()`` across that whole window are protected.
+            self._chatUsersMetadataLock = asyncio.Lock()
 
             # Register on shutdown handler
             QueueService.getInstance().registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, self._doExitHandler)
@@ -1023,6 +1032,10 @@ class CacheService:
         the cached count is below a threshold) over an unconditional ``refresh=True``;
         the latter is available when an unconditional refresh is genuinely required.
 
+        Note: the returned dict is a SHALLOW copy — safe today because ``metadata`` is
+        stored as a JSON string, but callers must NOT mutate nested structures if
+        non-string nested fields are added to ``ChatUserDict`` in the future.
+
         Args:
             chatId (int): Chat id.
             userId (int): User id.
@@ -1082,6 +1095,29 @@ class CacheService:
             cached["updated_at"] = dbUtils.getCurrentTimestamp()
             self.chatUsers.set(userKey, userCache)
         # else: Cold path - do nothing, getChatUser will fetch from DB
+
+    @contextlib.asynccontextmanager
+    async def chatUserMetadataLock(self) -> AsyncIterator[None]:
+        """Async context manager serializing chat_users.metadata read-modify-write windows.
+
+        Callers that do read-modify-write of ``chat_users.metadata`` (e.g.
+        ``setUserMetadata(isUpdate=True)`` and ``UserDataHandler._persistMemoryEntry``)
+        MUST hold this lock across the full RMW to avoid lost-update races between
+        concurrent writers. Plain reads (``getUserMetadata``) and full-replace writes
+        (``updateUserMetadata`` with no preceding read) do NOT need it.
+
+        The lock is intentionally process-global rather than per-(chat, user); metadata
+        writes are infrequent (spam-flag flips, per-thread refinement every >=5 messages
+        or 6h), so cross-user contention is negligible.
+
+        Args:
+            (none)
+
+        Yields:
+            None
+        """
+        async with self._chatUsersMetadataLock:
+            yield
 
     async def getUserMetadata(self, chatId: int, userId: int) -> UserMetadataDict:
         """Return the parsed metadata dict for (chatId, userId).

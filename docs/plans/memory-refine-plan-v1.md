@@ -325,6 +325,7 @@ Each phase = one `software-developer` brief + Gate 1 review:
 - **Cost**: refinement fires per active (chat,user,thread). With `MEMORY_MAX_REFINES_PER_TICK=3` and 60s ticks, upper bound is 3 LLM calls/min — bounded but watch the bill. Config-overridable.
 - **Private chats**: use `DEFAULT_THREAD_ID = 0` → key `"0"`. No special-casing.
 - **Refine prompt wording**: left as a config string with a sensible default; review/tune during phase 4.
+- **`max-messages-per-run` overflow (accepted risk)**: `getChatMessagesSince` is called with `limit = max-messages-per-run` (default 128). A burst larger than the cap means older messages beyond the cap are never fetched for that run and are permanently skipped (the cursor advances to the newest of the returned slice). Since refinement re-summarises recent context rather than being a durable log, this is accepted; `_runRefinement` emits a `logger.warning` when `len(messages) >= max-messages-per-run` so the overflow is observable. Tunable via `[user-memory.thresholds].max-messages-per-run`.
 
 ## 17. Architect review corrections
 

@@ -105,7 +105,15 @@ class UserDataHandler(BaseBotHandler):
         # time), which preserves the previous effective behaviour.
         self._lastRefinedTS: Dict[Tuple[int, int, int], int] = {}
 
-        # Lock for self._accounting and self._lastRefinedTS manipulation
+        # Lock guarding self._accounting and self._lastRefinedTS reads/writes.
+        # _accounting is mutated under this lock in newMessageHandler (increment)
+        # and _dtCronJob (credit-consumed subtract/drop); _lastRefinedTS is written
+        # under it in _dtCronJob's finally block and _runRefinement, and read under
+        # it in the _dtCronJob due-list scan, so the scan never observes a
+        # half-updated timestamp. The scan-loop snapshot
+        # ``list(self._accounting.items())`` is intentionally taken without the
+        # lock — ``dict.items()`` is atomic w.r.t. ``await`` on a single event
+        # loop.
         self._accountingLock = asyncio.Lock()
 
         # Single global lock serializing ALL refinement runs so a slow LLM call
@@ -161,7 +169,7 @@ class UserDataHandler(BaseBotHandler):
                 ),
                 LLMFunctionParameter(
                     name="data",
-                    description="Data/knowledbe you want to remember",
+                    description="Data/knowledge you want to remember",
                     type=LLMParameterType.STRING,
                     required=True,
                 ),
@@ -310,6 +318,13 @@ class UserDataHandler(BaseBotHandler):
         attempted (credit-consumed), clamped at 0 and dropped when it reaches 0
         so empty keys are not re-iterated.
 
+        Known limitation (accepted risk): when ``_runRefinement`` raises, the
+        ``finally`` block still subtracts ``preCount`` and may drop the key. This
+        acts as accidental backoff during a provider outage, but means every
+        active user pays the cost simultaneously on recovery (their counters are
+        all zeroed, so they must re-cross the count/time threshold to be refined
+        again). See docs/plans/memory-refine-plan-v1.md.
+
         Args:
             task (DelayedTask): The delayed-task payload (unused).
         """
@@ -350,7 +365,9 @@ class UserDataHandler(BaseBotHandler):
                     if not chatSettings[ChatSettingsKey.MEMORY_REFINEMENT_ENABLED].toBool():
                         continue
 
-                    lastRefinedTS = self._lastRefinedTS.get((chatId, userId, threadId), 0)
+                    lastRefinedTS = 0
+                    async with self._accountingLock:
+                        lastRefinedTS = self._lastRefinedTS.get((chatId, userId, threadId), 0)
                     if (len(due) >= maxDueLen) and (lastRefinedTS >= maxDueTS):
                         # If due list is full and our lastRefinedTS >= maxDueTS
                         #  then we definitely don't match this batch
@@ -413,6 +430,15 @@ class UserDataHandler(BaseBotHandler):
                         threadId,
                     )
                 finally:
+                    if preCount >= self._memoryMaxMessagesPerRun:
+                        logger.warning(
+                            "Refinement fetch hit the per-run cap (%d messages) for chatId=%s userId=%s threadId=%s; "
+                            "older overflow messages will be skipped. See docs/plans/memory-refine-plan-v1.md.",
+                            self._memoryMaxMessagesPerRun,
+                            chatId,
+                            userId,
+                            threadId,
+                        )
                     # Credit-consumed: subtract the messages we attempted to
                     # process, preserving any increments that arrived during the
                     # (possibly slow) LLM call. Clamped at 0 so a malformed count
@@ -426,7 +452,7 @@ class UserDataHandler(BaseBotHandler):
                             # If zero - drop it to not iterate next time
                             self._accounting.pop(key, None)
 
-                        # If by some reason, there is no _lastRefinedTS for this key, set to current time
+                        # If for some reason, there is no _lastRefinedTS for this key, set to current time
                         if key not in self._lastRefinedTS:
                             self._lastRefinedTS[(chatId, userId, threadId)] = int(time.time())
 
@@ -577,6 +603,13 @@ class UserDataHandler(BaseBotHandler):
         separately in ``_runRefinement`` after this method returns and MUST NOT be
         added to the persisted dict.
 
+        The full read-modify-write is serialized via ``cache.chatUserMetadataLock()``
+        to avoid lost-update races with concurrent metadata writers (e.g.
+        ``setUserMetadata(isUpdate=True)``). The caller ``_runRefinement`` already
+        holds ``_refineLock``; the lock ordering is ``_refineLock`` (outer) →
+        ``chatUserMetadataLock`` (inner), so this method must NOT be called from a
+        context that already holds ``chatUserMetadataLock``.
+
         Args:
             chatId (int): Chat id.
             userId (int): User id.
@@ -585,15 +618,16 @@ class UserDataHandler(BaseBotHandler):
             lastProcessedMessageId (str): MessageId.asStr() of the newest ingested message.
             lastProcessedMessageDate (str): ISO datetime of the newest ingested message.
         """
-        metadata = await self.cache.getUserMetadata(chatId=chatId, userId=userId)
-        refinement = metadata.get("memoryRefinement", {})
-        refinement[str(threadId)] = {
-            "summary": summary,
-            "lastProcessedMessageId": lastProcessedMessageId,
-            "lastProcessedMessageDate": lastProcessedMessageDate,
-        }
-        metadata["memoryRefinement"] = refinement
-        await self.cache.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadata)
+        async with self.cache.chatUserMetadataLock():
+            metadata = await self.cache.getUserMetadata(chatId=chatId, userId=userId)
+            refinement = metadata.get("memoryRefinement", {})
+            refinement[str(threadId)] = {
+                "summary": summary,
+                "lastProcessedMessageId": lastProcessedMessageId,
+                "lastProcessedMessageDate": lastProcessedMessageDate,
+            }
+            metadata["memoryRefinement"] = refinement
+            await self.cache.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadata)
 
     async def _renderMessagesForLLM(self, messages: List[ChatMessageDict]) -> str:
         """Render a list of ChatMessageDict into a single text block for the refinement prompt.
