@@ -172,6 +172,23 @@ User simplified memory-summary attachment to `EnsuredMessage`:
 - **Tests**: `TestGetUserMemorySummary` deleted from `tests/bot/common/handlers/test_base.py`; 4 extraction cases relocated to `tests/bot/models/test_ensured_message.py::TestApplyUserMetadata` (drives `applyUserMetadata` directly, no DB fixture needed — simpler than the old DB-backed suite; adds an explicit empty-string-summary case). 2 regression tests in `test_user_info_cache_regression.py` re-pointed at `cache.getUserMetadata`.
 - **Canonical docs updated**: `memories/user-memory-refinement.md`, `architecture.md` ADR-014 (context-injection bullet), `handlers.md`. Two historical plan docs got addendum-only correction notes (bodies preserved as snapshots).
 
+## Empty TRUNCATED_FINAL LLM Bug (2026-07-05)
+
+Recurring production failure: OpenAI-compatible API returns `finish_reason="length"` with empty `message.content` (suspected reasoning-token budget exhaustion on Qwen3-class models — failing logs show `outputTokens=32768` matching `max_tokens`). Empty content flows unchecked through every layer → `send_message(text="")` → `telegram.BadRequest: Message text is empty`. Plan: [`docs/plans/llm-empty-truncated-final-handling-v1.md`](../plans/llm-empty-truncated-final-handling-v1.md) (Options A–E, A+B recommended next).
+
+**Durable code-path facts (verified 2026-07-05, line numbers approximate — re-locate by symbol):**
+- `lib/ai/models.py` `ModelResultStatus`: NO bare `TRUNCATED`, NO `SUCCESS`. "Success" is named `FINAL = 3`. `TRUNCATED_FINAL = 2`.
+- `lib/ai/models.py` `ERROR_STATUSES` frozenset does NOT include `TRUNCATED_FINAL` or `PARTIAL` → both treated as success by `_runWithFallback` (`lib/ai/abstract.py`).
+- `lib/ai/providers/basic_openai_provider.py::_executeChatCompletion`: `finish_reason="length"` → `TRUNCATED_FINAL`; `resText = retMessage.content if retMessage.content else ""`. The STRUCTURED path (`_generateStructured`) has `if not outcome.resText: raise ValueError(...)` — the TEXT path (`_generateText`) does NOT. Central inconsistency.
+- `lib/ai/abstract.py::printJSONLog` skips empty results (`if not result.resultText: return`) — so file JSON log also misses this case.
+- `internal/services/llm/service.py::generateTextViaLLM`: only special-cases `FINAL` and `TOOL_CALLS`; `TRUNCATED_FINAL` falls through to `break`.
+- `internal/bot/common/handlers/llm_messages.py`: `lmRetText = mlRet.resultText.strip()` → no guard before `sendMessage`.
+- `internal/bot/common/bot.py::_sendTelegramMessage`: guard rejects `None` text only, NOT empty string `""`.
+- `"Message text is empty"` string does NOT exist in repo — it's python-telegram-bot's `BadRequest` message text.
+- YC SDK provider (`lib/ai/providers/yc_sdk_provider.py:487`) returns `result.alternatives[0].text` with no emptiness check — same hazard.
+
+**Item 1 IMPLEMENTED (2026-07-05):** observability-only WARNING dump added in `BasicOpenAIModel._executeChatCompletion`. Trigger: `not resText.strip() and status in (TRUNCATED_FINAL, CONTENT_FILTER, UNKNOWN)`. Dumps: finishReason, status, resText, token counts, `completion_tokens_details` (exposes `reasoning_tokens` — the diagnostic for the budget-exhaustion hypothesis), `prompt_tokens_details`, full `response.model_dump_json(indent=2)`. All vendor-object serialization wrapped in try/except with `str()` fallback so the observability probe can never mask the original outcome. No behavior change — empty TRUNCATED_FINAL still flows downstream; fix is Options A+B in the plan.
+
 ## Docs Archive Layout (2026-07-04)
 
 - `docs/plans/` now holds ONLY active/retained design refs. After the 2026-07-04 cleanup it contains a single file: `python-sandboxing-v1.md` (retained design ref for `lib/sandbox/`; status line updated to "implemented").

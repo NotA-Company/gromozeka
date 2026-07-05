@@ -361,6 +361,67 @@ class BasicOpenAIModel(AbstractModel):
         retMessage = response.choices[0].message
         resText = retMessage.content if retMessage.content else ""
 
+        # Anomalous-empty-content diagnostics. Fires only when the API call
+        # succeeded but produced no usable text (empty or whitespace-only) on a
+        # status that should have content (TRUNCATED_FINAL / CONTENT_FILTER /
+        # UNKNOWN). The recurring empty-TRUNCATED_FINAL bug — model burns its
+        # whole max_tokens budget on hidden reasoning tokens and emits nothing —
+        # is otherwise invisible because ModelRunResult.__str__ omits the raw
+        # response. Whitespace-only is included because the downstream bot reply
+        # path strips before sending, so " " / "\n" hit BadRequest: Message text
+        # is empty all the same. Observability only: status, resText, and the
+        # returned outcome are not modified.
+        if (
+            status
+            in (
+                ModelResultStatus.TRUNCATED_FINAL,
+                ModelResultStatus.CONTENT_FILTER,
+                ModelResultStatus.UNKNOWN,
+            )
+            and not resText.strip()
+        ):
+            usage = response.usage
+            completionTokensDetails = getattr(usage, "completion_tokens_details", None) if usage is not None else None
+            promptTokensDetails = getattr(usage, "prompt_tokens_details", None) if usage is not None else None
+            # pydantic models expose model_dump(); fall back to str() for non-pydantic vendors
+            # or if the serializer itself raises (so a vendor subclass can't mask the
+            # successful API outcome we are trying to observe).
+            if completionTokensDetails is None:
+                completionTokensDetailsDump = "None"
+            elif hasattr(completionTokensDetails, "model_dump"):
+                try:
+                    completionTokensDetailsDump = repr(completionTokensDetails.model_dump())
+                except Exception:
+                    completionTokensDetailsDump = str(completionTokensDetails)
+            else:
+                completionTokensDetailsDump = str(completionTokensDetails)
+            if promptTokensDetails is None:
+                promptTokensDetailsDump = "None"
+            elif hasattr(promptTokensDetails, "model_dump"):
+                try:
+                    promptTokensDetailsDump = repr(promptTokensDetails.model_dump())
+                except Exception:
+                    promptTokensDetailsDump = str(promptTokensDetails)
+            else:
+                promptTokensDetailsDump = str(promptTokensDetails)
+            try:
+                responseDump = response.model_dump_json(indent=2)
+            except Exception:
+                responseDump = str(response)
+            logger.warning(
+                f"Anomalous empty LLM response from {self.provider}/{self.modelId}: "
+                f"model returned status {status.name} with empty content.\n"
+                f"  finishReason: {finishReason!r}\n"
+                f"  status: {status.name}\n"
+                f"  resText: {resText!r}\n"
+                f"  inputTokens: {inputTokens}\n"
+                f"  outputTokens: {outputTokens}\n"
+                f"  totalTokens: {totalTokens}\n"
+                f"  completion_tokens_details: {completionTokensDetailsDump}\n"
+                f"  prompt_tokens_details: {promptTokensDetailsDump}\n"
+                f"  full response:\n{responseDump}"
+            )
+
         return _OpenAICallOutcome(
             response=response,
             status=status,
