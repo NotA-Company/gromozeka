@@ -529,7 +529,7 @@ class UserDataHandler(BaseBotHandler):
 
         logger.debug(
             f"Refining memory for {chatId}:{userId}, thread:{threadId} "
-            f"with {len(messages)} messages ({messages[0]['message_id']}..{messages[-1]['message_id']}). "
+            f"with {len(messages)} messages ({messages[-1]['message_id']}..{messages[0]['message_id']}). "
             f"Previous summary: {existingSummary}"
         )
         newSummary = ""
@@ -566,68 +566,26 @@ class UserDataHandler(BaseBotHandler):
 
         # Newest processed message is the FIRST entry in the DESC-ordered list.
         newest = messages[0]
-        await self._persistMemoryEntry(
-            chatId=chatId,
-            userId=userId,
-            threadId=threadId,
-            summary=newSummary,
-            lastProcessedMessageId=newest["message_id"].asStr(),
-            lastProcessedMessageDate=newest["date"].isoformat(),
-        )
+        async with self.cache.chatUserMetadataLock():
+            metadata = await self.cache.getUserMetadata(chatId=chatId, userId=userId)
+
+            memoryRefinement = metadata.get("memoryRefinement", {})
+            memoryRefinement.update(
+                {
+                    str(threadId): {
+                        "summary": newSummary,
+                        "lastProcessedMessageId": newest["message_id"].asStr(),
+                        "lastProcessedMessageDate": newest["date"].isoformat(),
+                    }
+                }
+            )
+            metadata["memoryRefinement"] = memoryRefinement
+
+            await self.cache.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadata)
+
         # Record the refinement timestamp in-memory only (not persisted to DB).
         async with self._accountingLock:
             self._lastRefinedTS[(chatId, userId, threadId)] = int(time.time())
-
-    async def _persistMemoryEntry(
-        self,
-        *,
-        chatId: int,
-        userId: int,
-        threadId: int,
-        summary: str,
-        lastProcessedMessageId: str,
-        lastProcessedMessageDate: str,
-    ) -> None:
-        """Persist an updated per-thread memory entry via read-modify-write of chat_users.metadata.
-
-        CRITICAL: neither ``setUserMetadata(isUpdate=True)`` (shallow top-level merge
-        ``{**old, **new}``) nor ``cache.updateUserMetadata`` (full-dict replace, NO merge)
-        can accept a partial ``memoryRefinement`` — both would wipe every other thread's
-        summary. Instead we read the full metadata via ``cache.getUserMetadata``, mutate
-        only the single ``memoryRefinement[str(threadId)]`` entry, and write the whole
-        merged dict back via ``cache.updateUserMetadata`` — bypassing ``setUserMetadata``
-        entirely.
-
-        The persisted entry contains ONLY ``summary``/``lastProcessedMessageId``/
-        ``lastProcessedMessageDate``. The in-memory-only ``lastRefinedTS`` is set
-        separately in ``_runRefinement`` after this method returns and MUST NOT be
-        added to the persisted dict.
-
-        The full read-modify-write is serialized via ``cache.chatUserMetadataLock()``
-        to avoid lost-update races with concurrent metadata writers (e.g.
-        ``setUserMetadata(isUpdate=True)``). The caller ``_runRefinement`` already
-        holds ``_refineLock``; the lock ordering is ``_refineLock`` (outer) →
-        ``chatUserMetadataLock`` (inner), so this method must NOT be called from a
-        context that already holds ``chatUserMetadataLock``.
-
-        Args:
-            chatId (int): Chat id.
-            userId (int): User id.
-            threadId (int): Thread id.
-            summary (str): New short summary.
-            lastProcessedMessageId (str): MessageId.asStr() of the newest ingested message.
-            lastProcessedMessageDate (str): ISO datetime of the newest ingested message.
-        """
-        async with self.cache.chatUserMetadataLock():
-            metadata = await self.cache.getUserMetadata(chatId=chatId, userId=userId)
-            refinement = metadata.get("memoryRefinement", {})
-            refinement[str(threadId)] = {
-                "summary": summary,
-                "lastProcessedMessageId": lastProcessedMessageId,
-                "lastProcessedMessageDate": lastProcessedMessageDate,
-            }
-            metadata["memoryRefinement"] = refinement
-            await self.cache.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadata)
 
     async def _renderMessagesForLLM(self, messages: List[ChatMessageDict]) -> str:
         """Render a list of ChatMessageDict into a single text block for the refinement prompt.
