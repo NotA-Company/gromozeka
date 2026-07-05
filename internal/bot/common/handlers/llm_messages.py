@@ -233,6 +233,20 @@ class LLMMessageHandler(BaseBotHandler):
 
         try:
             useTools = chatSettings[ChatSettingsKey.USE_TOOLS].toBool()
+            useSandbox = chatSettings[ChatSettingsKey.ALLOW_SANDBOX].toBool()
+            if useTools and not all([useSandbox]):
+                # Disable tools if they are disabled for given chatId
+                useTools = {constants.TOOLS_DEFAULT_DICT_KEY: True}
+                if not useSandbox:
+                    useTools.update(
+                        {
+                            constants.ToolName.RUN_PYTHON: False,
+                            constants.ToolName.SANDBOX_LIST_FILES: False,
+                            constants.ToolName.SANDBOX_LIST_LIBRARIES: False,
+                            constants.ToolName.SANDBOX_READ_FILE: False,
+                            constants.ToolName.SANDBOX_SEND_FILE: False,
+                        }
+                    )
             mlRet = await self._generateTextViaLLM(
                 messages=messagesHistory,
                 ensuredMessage=ensuredMessage,
