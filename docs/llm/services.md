@@ -47,9 +47,21 @@ cache.setChatAdmins(chatId, admins)
 userData = await cache.getChatUserData(chatId=chatId, userId=userId)
 await cache.setChatUserData(chatId=chatId, userId=userId, key=key, value=value)
 
+# chat_users row + metadata (async, write-through; see ADR-015)
+userInfo: Optional[ChatUserDict] = await cache.getChatUser(chatId=chatId, userId=userId)
+userInfo = await cache.getChatUser(chatId=chatId, userId=userId, refresh=True)  # accurate messages_count
+await cache.updateChatUser(chatId=chatId, userId=userId, username="@user", fullName="Name")
+metadata: UserMetadataDict = await cache.getUserMetadata(chatId=chatId, userId=userId)
+await cache.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadata)  # full-dict replace, NO merge
+cache.invalidateChatUser(chatId=chatId, userId=userId)  # sync; pops userInfo only, preserves data
+
 # Default chat settings are handled by config/database, not CacheService
 # Use config files in configs/ for defaults, or set per-chat via setChatSetting()
 ```
+
+**`chat_users` row cache (ADR-015):** the `CHAT_USERS` namespace (keyed `f"{chatId}:{userId}"`, `MEMORY_ONLY`) holds both the `user_data` blob (`data` field) and the `chat_users` row (`userInfo` field, lazily loaded). `getChatUser` is an LRU read with DB fallback on miss; `updateChatUser`/`updateUserMetadata` are write-through. Single-row `(chatId, userId)` reads/writes in handlers MUST go through `self.cache.*` — not `self.db.chatUsers.*` — so the cache stays consistent.
+
+**`messages_count` is best-effort stale** on a cached row: the column is incremented by a raw SQL `UPDATE` inside `ChatMessagesRepository.saveChatMessage` (`internal/database/repositories/chat_messages.py:154`), bypassing this cache. Pass `refresh=True` to `getChatUser` when an accurate count is required (e.g. the spam threshold gate). `updateChatUser` skips the DB upsert when `username`/`full_name` are unchanged, so `updated_at` no longer refreshes on a no-op call. `updateUserMetadata` performs a **full-dict replace with NO merge** — callers writing a nested sub-dict (e.g. `memoryRefinement`) must read-modify-write the whole metadata dict. See [`architecture.md`](architecture.md) ADR-015 for the full decision and the nested-write safety invariant.
 
 **Key types from** [`internal/services/cache/types.py`](../../internal/services/cache/types.py):
 - `HCChatCacheDict` — per-chat cache

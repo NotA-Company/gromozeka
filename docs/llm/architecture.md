@@ -506,6 +506,38 @@ await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
 
 ---
 
+### ADR-015: Write-Through `chat_users` Cache in `CacheService`
+
+**Decision:** `CacheService` gained a write-through cache for the single-row `chat_users` lookup. The existing `CacheNamespace.CHAT_USERS` namespace (keyed `f"{chatId}:{userId}"`, `MEMORY_ONLY`) was reused; its value TypedDict `HCChatUserCacheDict` ([`internal/services/cache/types.py:130`](../../internal/services/cache/types.py:130)) was extended with a second lazily-loaded field `userInfo: NotRequired[Optional[ChatUserDict]]` alongside the existing `data` (the `user_data` blob). Every single-row `(chatId, userId)` read and username/fullName/metadata write in the handler layer now routes through `CacheService` instead of `self.db.chatUsers.*`. Aggregate/by-username queries (`getChatUserByUsername`, `getChatUsers`, `getUserChats`, `getAllGroupChats`, `getUserIdByUserName`) are untouched.
+
+**Why:** On every inbound message the bot read the `chat_users` row for the sender 2–5 times (memory-summary reads during LLM history reconstruction, spam `checkSpam`, per-message `updateChatUser` upsert, internal metadata-read inside `setUserMetadata`). The cache eliminates the redundant reads on the warm path. It mirrors the established `user_data` cache pattern (`getChatUserData`/`setChatUserData`): `MEMORY_ONLY` namespace, durability from explicit write-through inside the setter methods.
+
+**New `CacheService` methods** ([`internal/services/cache/service.py:1008`](../../internal/services/cache/service.py:1008)):
+
+- `async getChatUser(chatId, userId, *, refresh=False) -> Optional[ChatUserDict]` — LRU read, DB fallback on miss/`refresh`. Returns a **defensive shallow copy** (`dict(cachedRow)`) so callers cannot mutate the cached row. `userInfo: None` is the "loaded, row absent" sentinel; "key absent" means "not yet loaded" (so an absent row is not re-queried every call).
+- `async updateChatUser(chatId, userId, username, fullName) -> None` — write-through upsert with **skip-when-unchanged** (if the cached row's `username`/`full_name` already equal the supplied values, the DB upsert is skipped entirely).
+- `async getUserMetadata(chatId, userId) -> UserMetadataDict` — parses the cached row's `metadata` column via `json.loads` (empty/None → `{}`). Returns a freshly-parsed dict (no aliasing).
+- `async updateUserMetadata(chatId, userId, metadata) -> None` — write-through **full-dict replace** (serializes via `utils.jsonDumps`, writes via `db.chatUsers.updateUserMetadata`, then updates the cached row's `metadata`/`updated_at` in place). Performs **NO merge**.
+- `def invalidateChatUser(chatId, userId) -> None` — sync; pops **only** the `userInfo` key (preserves the `data` user_data blob). Escape hatch for out-of-band mutations; no callers today.
+
+**Refactored call sites:** `internal/bot/common/handlers/{base,spam,message_preprocessor,user_data}.py` route single-row reads/writes through `self.cache.*`.
+
+**`messages_count` staleness trade-off (load-bearing):** the `messages_count` column is incremented by a raw SQL `UPDATE ... SET messages_count = messages_count + 1` inside `ChatMessagesRepository.saveChatMessage` ([`internal/database/repositories/chat_messages.py:154`](../../internal/database/repositories/chat_messages.py:154)), which bypasses `ChatUsersRepository` and therefore this cache. A cached row's `messages_count` drifts. The two correctness-critical readers that gate on `messages_count` vs `AUTO_SPAM_MAX_MESSAGES` — `SpamHandler.checkSpam` ([`spam.py:258`](../../internal/bot/common/handlers/spam.py:258)) and `markAsSpam` ([`spam.py:526`](../../internal/bot/common/handlers/spam.py:526)) — pass `refresh=True` to re-fetch an accurate count. Read-heavy paths (memory summary, metadata) consume the warm cache and do not need an accurate count.
+
+**Skip-when-unchanged optimization & `updated_at` semantics shift:** because `updateChatUser` is a no-op when `username`/`full_name` are unchanged, `updated_at` no longer refreshes on such calls. Accepted trade-off; callers must not assume `updated_at` moves on every `updateChatUser` invocation. (`saveChatMessage`'s raw increment still bumps `updated_at` independently on every message.)
+
+**Nested-write safety invariant:** `updateUserMetadata` does NO merge. Callers writing a nested sub-dict (e.g. `memoryRefinement[str(threadId)]`) must read the FULL metadata via `getUserMetadata`, mutate the single nested key, and write the FULL metadata back via `updateUserMetadata`. A blind shallow top-level merge (`{**old, **new}`) would wipe sibling keys — the memory-refinement write path (`user_data.py` `_persistMemoryEntry`) keeps its explicit full-read + nested-mutate + full-write pattern. This invariant is documented in both `setUserMetadata` and `updateUserMetadata` docstrings; see also ADR-014 and [`tasks.md`](tasks.md) §3.
+
+**Coupling note — every metadata writer must route through the cache:** `setUserMetadata(isUpdate=True)` and `_persistMemoryEntry` now read/merge against the cached row. A future contributor adding a raw `db.chatUsers.updateUserMetadata(...)` call that bypasses the cache (the way `chat_messages.py:154` bypasses it for `messages_count`) would silently desync the cache and corrupt subsequent `setUserMetadata(isUpdate=True)` merges. Do not add such bypasses for `metadata`.
+
+**Lazy field independence:** a cached entry may carry `data` without `userInfo`, or vice versa. Both are `NotRequired`; presence-of-key is the "loaded" sentinel. `CHAT_USERS` is `MEMORY_ONLY`, so `persistAll`/`loadFromDatabase` ignore it — cold cache at startup, warmed lazily on first `getChatUser`. The new methods do not touch `self.dirtyKeys` (that set is never flushed for `MEMORY_ONLY` namespaces).
+
+**Write-through ordering:** all setters write the DB first and update the cache only on success, so a DB failure leaves the cache untouched (no cache-DB divergence).
+
+**Tests:** [`tests/services/cache/test_user_info.py`](../../tests/services/cache/test_user_info.py) (cache unit tests), [`tests/bot/common/handlers/test_user_info_cache_regression.py`](../../tests/bot/common/handlers/test_user_info_cache_regression.py) (regression: a warm-message produces 0 `chat_users` DB reads/writes). Plan of record: [`docs/plans/user-info-cache-plan-v1.md`](../plans/user-info-cache-plan-v1.md).
+
+---
+
 ## 2. Dependency Map
 
 ### 2.1 Component Dependency Graph

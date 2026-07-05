@@ -66,9 +66,8 @@ def mockDb() -> Mock:
     """Build a Database stub with the repositories the handler exercises.
 
     Returns:
-        Mock: A ``Database`` whose ``chatMessages``, ``chatEmbeddings`` and
-        ``chatUsers`` are mocks with ``saveMessageEmbedding`` pre-configured
-        as an ``AsyncMock``.
+        Mock: A ``Database`` whose ``chatMessages`` and ``chatEmbeddings``
+        are mocks with their save methods pre-configured as ``AsyncMock``s.
     """
     from internal.database import Database
 
@@ -77,8 +76,6 @@ def mockDb() -> Mock:
     db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
     db.chatEmbeddings = Mock()
     db.chatEmbeddings.saveMessageEmbedding = AsyncMock(return_value=None)
-    db.chatUsers = Mock()
-    db.chatUsers.updateChatUser = AsyncMock(return_value=None)
     return db
 
 
@@ -520,3 +517,118 @@ class TestEmbedMessage:
         result = await handler.newMessageHandler(ensured, updateObj=Mock())
 
         assert result is HandlerResultStatus.NEXT
+
+
+# ---------------------------------------------------------------------------
+# Tests: chat-member handlers (join / leave) route through the cache
+# ---------------------------------------------------------------------------
+
+
+def _wireCacheForChatMember(handler: MessagePreprocessorHandler) -> Mock:
+    """Install awaitable cache mocks for the chat-member handler paths.
+
+    The ``handler`` fixture wires ``handler.cache`` to a bare ``Mock()`` (via
+    ``patch.object(CacheService, "getInstance", ...)``), whose auto-created
+    child mocks are not awaitable. The join/leave handlers await
+    ``cache.updateChatUser`` / ``cache.getUserMetadata`` /
+    ``cache.updateUserMetadata``, so those three must be ``AsyncMock``s for the
+    handlers to run at all. Returns the wired cache so the caller can assert
+    on the recorded calls.
+
+    Args:
+        handler: Preprocessor fixture.
+
+    Returns:
+        The handler's cache mock with the three async methods installed.
+    """
+    cache = cast(Any, handler.cache)
+    cache.updateChatUser = AsyncMock(return_value=None)
+    # Non-empty baseline with a sibling key the merge must preserve. If
+    # ``setUserMetadata(isUpdate=True)`` regresses and drops the
+    # ``{**existing, **metadata}`` shallow merge, ``memoryRefinement`` is
+    # absent from the recorded metadata and the assertions in the join/leave
+    # tests fail — which is the whole point.
+    cache.getUserMetadata = AsyncMock(return_value={"memoryRefinement": {"0": {"summary": "pre-existing"}}})
+    cache.updateUserMetadata = AsyncMock(return_value=None)
+    return cache
+
+
+class TestChatMemberHandlers:
+    """Tests for ``newChatMemberHandler`` / ``leftChatMemberHandler``.
+
+    Both handlers were refactored (Phase 3 of the write-through ``chat_users``
+    cache) to route their ``chat_users`` write through
+    ``self.cache.updateChatUser`` instead of the raw ``db.chatUsers.updateChatUser``
+    repo call. These tests pin the cache routing down so a future refactor
+    cannot silently revert to the raw repo.
+    """
+
+    async def test_newChatMemberHandler_routesUpdateChatUserThroughCache(
+        self, handler: MessagePreprocessorHandler
+    ) -> None:
+        """``newChatMemberHandler`` writes via ``cache.updateChatUser`` with the member's args.
+
+        Drives the handler with ``messageId=None`` so the delete-message branch
+        (which needs ``self._bot``) is skipped; the result is ``NEXT``. Asserts
+        the cache's ``updateChatUser`` was awaited once with the exact
+        ``(chatId, userId, username, fullName)`` of the joining member, and that
+        the follow-up ``setUserMetadata(isUpdate=True)`` also routed its write
+        through ``cache.updateUserMetadata``.
+
+        Args:
+            handler: Preprocessor fixture.
+        """
+        cache = _wireCacheForChatMember(handler)
+        targetChat = MessageRecipient(id=100, chatType=ChatType.GROUP)
+        newMember = MessageSender(id=7, name="Alice", username="alice")
+
+        result = await handler.newChatMemberHandler(
+            targetChat=targetChat,
+            messageId=None,
+            newMember=newMember,
+            updateObj=Mock(),
+        )
+
+        assert result is HandlerResultStatus.NEXT
+        cache.updateChatUser.assert_awaited_once_with(chatId=100, userId=7, username="alice", fullName="Alice")
+        # setUserMetadata(isUpdate=True) reads ``getUserMetadata`` then writes the
+        # shallow-merged ``{**existing, **{"leftChat": False}}`` via
+        # ``updateUserMetadata``. The pre-existing ``memoryRefinement`` sibling
+        # must survive the merge — this assertion proves the merge happened.
+        cache.updateUserMetadata.assert_awaited_once_with(
+            chatId=100,
+            userId=7,
+            metadata={"memoryRefinement": {"0": {"summary": "pre-existing"}}, "leftChat": False},
+        )
+
+    async def test_leftChatMemberHandler_routesUpdateChatUserThroughCache(
+        self, handler: MessagePreprocessorHandler
+    ) -> None:
+        """``leftChatMemberHandler`` writes via ``cache.updateChatUser`` with the member's args.
+
+        Same shape as the join test but for the leave path; the metadata flag
+        written is ``{"leftChat": True}`` rather than ``{"leftChat": False}``.
+
+        Args:
+            handler: Preprocessor fixture.
+        """
+        cache = _wireCacheForChatMember(handler)
+        targetChat = MessageRecipient(id=200, chatType=ChatType.GROUP)
+        leftMember = MessageSender(id=9, name="Bob", username="bob")
+
+        result = await handler.leftChatMemberHandler(
+            targetChat=targetChat,
+            messageId=None,
+            leftMember=leftMember,
+            updateObj=Mock(),
+        )
+
+        assert result is HandlerResultStatus.NEXT
+        cache.updateChatUser.assert_awaited_once_with(chatId=200, userId=9, username="bob", fullName="Bob")
+        # Same shallow-merge proof as the join test: ``memoryRefinement`` must
+        # survive the ``{**existing, **{"leftChat": True}}`` merge.
+        cache.updateUserMetadata.assert_awaited_once_with(
+            chatId=200,
+            userId=9,
+            metadata={"memoryRefinement": {"0": {"summary": "pre-existing"}}, "leftChat": True},
+        )

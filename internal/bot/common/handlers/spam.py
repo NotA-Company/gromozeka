@@ -250,7 +250,12 @@ class SpamHandler(BaseBotHandler):
 
         chatSettings = await self.getChatSettings(chatId)
 
-        userInfo: Optional[ChatUserDict] = await self.db.chatUsers.getChatUser(chatId=chatId, userId=sender.id)
+        # refresh=True: userInfo["messages_count"] (read below) is compared against
+        # AUTO_SPAM_MAX_MESSAGES to gate the spam heuristic. messages_count is
+        # incremented by a raw SQL UPDATE in ChatMessagesRepository.saveChatMessage
+        # that bypasses the cache, so a warm cache value drifts low and would let
+        # the spam heuristic fire on an established user (false ban).
+        userInfo: Optional[ChatUserDict] = await self.cache.getChatUser(chatId=chatId, userId=sender.id, refresh=True)
         if not userInfo:
             # self.db.updateChatUser(chatId=chatId, userId=sender.id, username=sender.username, fullName=sender.name)
             logger.debug(f"userInfo for {ensuredMessage} is null, assume it's first user message")
@@ -515,7 +520,10 @@ class SpamHandler(BaseBotHandler):
         canMarkOldUsers = chatSettings[ChatSettingsKey.ALLOW_MARK_SPAM_OLD_USERS].toBool()
         if reason != SpamReason.ADMIN or not canMarkOldUsers:
             # Check if we are trying to ban old chat member and it is not from Admin
-            userInfo = await self.db.chatUsers.getChatUser(chatId=chatId, userId=userId)
+            # refresh=True: userInfo["messages_count"] (read below) gates the
+            # "protect established users from being marked as spam" branch. A stale
+            # cached value would drift low and let an established user be banned.
+            userInfo = await self.cache.getChatUser(chatId=chatId, userId=userId, refresh=True)
             maxSpamMessages = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
             if maxSpamMessages != 0 and userInfo and userInfo["messages_count"] > maxSpamMessages:
                 logger.warning(f"Tried to mark old user {ensuredMessage.sender} as SPAM")
@@ -989,7 +997,7 @@ class SpamHandler(BaseBotHandler):
                     confidence=1.0,
                 )
 
-            hamUserDB: Optional[ChatUserDict] = await self.db.chatUsers.getChatUser(chatId=chat.id, userId=hamUserId)
+            hamUserDB: Optional[ChatUserDict] = await self.cache.getChatUser(chatId=chat.id, userId=hamUserId)
             if hamUserDB is not None:
                 await self.setUserMetadata(
                     chatId=hamUserDB["chat_id"],
@@ -1593,7 +1601,7 @@ class SpamHandler(BaseBotHandler):
         if user is None and ensuredMessage.replyId is not None:
             repliedMessage = ensuredMessage.getEnsuredRepliedToMessage()
             if repliedMessage is not None:
-                user = await self.db.chatUsers.getChatUser(
+                user = await self.cache.getChatUser(
                     chatId=ensuredMessage.recipient.id,
                     userId=repliedMessage.sender.id,
                 )
@@ -1711,9 +1719,7 @@ class SpamHandler(BaseBotHandler):
         )
 
         if repliedMessage is not None:
-            user = await self.db.chatUsers.getChatUser(
-                chatId=ensuredMessage.recipient.id, userId=repliedMessage.sender.id
-            )
+            user = await self.cache.getChatUser(chatId=ensuredMessage.recipient.id, userId=repliedMessage.sender.id)
             if user is None:
                 logger.error(f"User {repliedMessage.sender} not found in chat {ensuredMessage.recipient}")
             else:

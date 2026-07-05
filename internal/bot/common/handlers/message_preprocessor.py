@@ -166,7 +166,7 @@ class MessagePreprocessorHandler(BaseBotHandler):
         Raises:
             Exception: If database operations or message deletion fails.
         """
-        await self.db.chatUsers.updateChatUser(
+        await self.cache.updateChatUser(
             chatId=targetChat.id,
             userId=newMember.id,
             username=newMember.username,
@@ -214,7 +214,7 @@ class MessagePreprocessorHandler(BaseBotHandler):
         Raises:
             Exception: If database operations or message deletion fails.
         """
-        await self.db.chatUsers.updateChatUser(
+        await self.cache.updateChatUser(
             chatId=targetChat.id,
             userId=leftMember.id,
             username=leftMember.username,

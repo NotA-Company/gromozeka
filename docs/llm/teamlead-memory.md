@@ -130,6 +130,17 @@ Background per-`(chat, user, thread)` memory refinement, owned by `UserDataHandl
 - **`configs/common/` is gitignored** — the friend-tier `memory-refinement-enabled = true` is a local-deployment overlay (same model as `allow-sandbox`), NOT version-controlled. See "Configs Tracking Gotcha" above.
 - **Single global `asyncio.Lock`** serializes all refinement; a slow LLM call blocks the next 60s tick rather than flooding the provider. No per-entry locks, no `createTask`.
 
+## Chat Users Cache (2026-07-05, IMPLEMENTED)
+
+Write-through `chat_users` cache in `CacheService`, eliminating 2–5 redundant `chat_users` reads per inbound message. Canonical doc: [`architecture.md`](architecture.md) ADR-015; plan: [`docs/plans/user-info-cache-plan-v1.md`](../plans/user-info-cache-plan-v1.md). Reusable cross-task facts:
+
+- **Reused `CacheNamespace.CHAT_USERS`** (keyed `f"{chatId}:{userId}"`, `MEMORY_ONLY`); extended `HCChatUserCacheDict` with a second lazily-loaded field `userInfo: NotRequired[Optional[ChatUserDict]]` alongside the existing `data` (`user_data` blob). No new namespace. Lazy-field independence: `data` and `userInfo` load independently; `userInfo: None` = "loaded, row absent"; key absent = "not yet loaded".
+- **5 new `CacheService` methods** (`internal/services/cache/service.py:1008`): `getChatUser(refresh=False)` (returns defensive shallow copy), `updateChatUser` (write-through upsert, skip-when-unchanged), `getUserMetadata` (parsed metadata), `updateUserMetadata` (full-dict replace, NO merge), `invalidateChatUser` (sync; pops only `userInfo`, preserves `data`). All single-row `(chatId, userId)` handler reads/writes route through `self.cache.*`, not `self.db.chatUsers.*`. Aggregate/by-username queries (`getChatUserByUsername`, `getChatUsers`, `getUserChats`, `getAllGroupChats`, `getUserIdByUserName`) are NOT cached.
+- **`messages_count` is stale on a cached row** — incremented by raw SQL in `ChatMessagesRepository.saveChatMessage` (`chat_messages.py:154`), bypassing the cache. Callers needing an accurate count pass `refresh=True`. The two correctness-critical readers (`spam.py` `checkSpam` ~258, `markAsSpam` ~526, gating on `AUTO_SPAM_MAX_MESSAGES`) already do.
+- **Skip-when-unchanged optimization** in `updateChatUser`: a no-op call (same `username`/`full_name`) skips the DB upsert, so `updated_at` no longer refreshes on such calls.
+- **Nested-write invariant:** `updateUserMetadata` does NO merge — nested writers (`_persistMemoryEntry`) must read full metadata → mutate one nested key → write full dict back. A shallow `{**old, **new}` would wipe sibling threads. Same hazard ADR-014 documents for `setUserMetadata(isUpdate=True)`.
+- **Coupling note:** every `metadata` writer MUST route through the cache. A future raw `db.chatUsers.updateUserMetadata(...)` bypass would silently desync the cache and corrupt subsequent `setUserMetadata(isUpdate=True)` merges. Do not add such bypasses for `metadata` (the `messages_count` increment is the sole accepted bypass, and it does not touch `metadata`).
+
 ## Docs Archive Layout (2026-07-04)
 
 - `docs/plans/` now holds ONLY active/retained design refs. After the 2026-07-04 cleanup it contains a single file: `python-sandboxing-v1.md` (retained design ref for `lib/sandbox/`; status line updated to "implemented").

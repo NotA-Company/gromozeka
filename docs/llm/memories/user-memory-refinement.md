@@ -19,11 +19,10 @@ Durable implementation notes for the background per-`(chat, user, thread)` memor
 
 `BaseBotHandler.setUserMetadata(chatId, userId, metadata, isUpdate=True)` does a **one-level shallow merge** (`{**oldMetadata, **newMetadata}`). Passing a partial `{"memoryRefinement": {<threadId>: ...}}` **replaces the entire `memoryRefinement` sub-dict**, wiping every other thread's summary.
 
-The refinement write path (`user_data.py` `_persistMemoryEntry`) bypasses `setUserMetadata` entirely and does read-modify-write directly through the repository:
+The refinement write path (`user_data.py` `_persistMemoryEntry`) bypasses `setUserMetadata` entirely and does read-modify-write through `CacheService` (see ADR-015 — all single-row `chat_users` reads/writes route through the cache layer, not `self.db.chatUsers.*` directly):
 
 ```python
-userInfo = await self.db.chatUsers.getChatUser(chatId=chatId, userId=userId)
-metadata = self.parseUserMetadata(userInfo)
+metadata = await self.cache.getUserMetadata(chatId=chatId, userId=userId)
 refinement = metadata.get("memoryRefinement", {})
 refinement[str(threadId)] = {  # mutate only this thread's entry
     "summary": summary,
@@ -31,10 +30,12 @@ refinement[str(threadId)] = {  # mutate only this thread's entry
     "lastProcessedMessageDate": lastProcessedMessageDate,
 }
 metadata["memoryRefinement"] = refinement
-await self.db.chatUsers.updateUserMetadata(chatId=chatId, userId=userId, metadata=utils.jsonDumps(metadata))
+await self.cache.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadata)
 # lastRefinedTS is tracked in-memory only, NOT in the persisted dict:
 self._lastRefinedTS[(chatId, userId, threadId)] = int(time.time())
 ```
+
+**Cache routing (2026-07-05, no behavior change):** `_readMemoryEntry`, `_persistMemoryEntry`, and `getUserMemorySummary` now read/write via `CacheService.getUserMetadata` / `updateUserMetadata` instead of `self.db.chatUsers.*`. The nested-write invariant above is preserved — `updateUserMetadata` does a full-dict replace with NO merge, so the explicit full-read + nested-mutate + full-write pattern is unchanged. See [`../architecture.md`](../architecture.md) ADR-015.
 
 This is also recorded as a reusable gotcha in [`tasks.md`](../tasks.md) §3.
 

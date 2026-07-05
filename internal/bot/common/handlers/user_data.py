@@ -433,16 +433,20 @@ class UserDataHandler(BaseBotHandler):
     async def _readMemoryEntry(self, chatId: int, userId: int, threadId: int) -> UserMemoryThreadDict:
         """Read the per-thread memory-refinement entry from chat_users.metadata.
 
+        Reads the parsed metadata via ``cache.getUserMetadata`` (which reads the
+        cached chat_users row on hit and falls back to DB on miss), then looks up
+        ``memoryRefinement[str(threadId)]``. Returns an empty dict when the entry
+        is absent so callers can uniformly call ``.get(...)`` on the result.
+
         Args:
             chatId (int): Chat id.
             userId (int): User id.
             threadId (int): Thread id.
 
         Returns:
-            Optional[UserMemoryThreadDict]: The entry dict, or None if absent.
+            UserMemoryThreadDict: The per-thread entry dict, or ``{}`` if absent.
         """
-        userInfo = await self.db.chatUsers.getChatUser(chatId=chatId, userId=userId)
-        metadata = self.parseUserMetadata(userInfo)
+        metadata = await self.cache.getUserMetadata(chatId=chatId, userId=userId)
         refinement = metadata.get("memoryRefinement", {})
         return refinement.get(str(threadId), {})
 
@@ -560,11 +564,18 @@ class UserDataHandler(BaseBotHandler):
     ) -> None:
         """Persist an updated per-thread memory entry via read-modify-write of chat_users.metadata.
 
-        CRITICAL: ``setUserMetadata(isUpdate=True)`` does a SHALLOW top-level merge
-        (``{**old, **new}``), so passing a partial ``memoryRefinement`` would wipe every
-        other thread's summary. Instead we read the full metadata, mutate only the single
-        ``memoryRefinement[str(threadId)]`` entry, and write the whole merged dict back
-        directly via the repository — bypassing ``setUserMetadata`` entirely.
+        CRITICAL: neither ``setUserMetadata(isUpdate=True)`` (shallow top-level merge
+        ``{**old, **new}``) nor ``cache.updateUserMetadata`` (full-dict replace, NO merge)
+        can accept a partial ``memoryRefinement`` — both would wipe every other thread's
+        summary. Instead we read the full metadata via ``cache.getUserMetadata``, mutate
+        only the single ``memoryRefinement[str(threadId)]`` entry, and write the whole
+        merged dict back via ``cache.updateUserMetadata`` — bypassing ``setUserMetadata``
+        entirely.
+
+        The persisted entry contains ONLY ``summary``/``lastProcessedMessageId``/
+        ``lastProcessedMessageDate``. The in-memory-only ``lastRefinedTS`` is set
+        separately in ``_runRefinement`` after this method returns and MUST NOT be
+        added to the persisted dict.
 
         Args:
             chatId (int): Chat id.
@@ -574,8 +585,7 @@ class UserDataHandler(BaseBotHandler):
             lastProcessedMessageId (str): MessageId.asStr() of the newest ingested message.
             lastProcessedMessageDate (str): ISO datetime of the newest ingested message.
         """
-        userInfo = await self.db.chatUsers.getChatUser(chatId=chatId, userId=userId)
-        metadata = self.parseUserMetadata(userInfo)
+        metadata = await self.cache.getUserMetadata(chatId=chatId, userId=userId)
         refinement = metadata.get("memoryRefinement", {})
         refinement[str(threadId)] = {
             "summary": summary,
@@ -583,7 +593,7 @@ class UserDataHandler(BaseBotHandler):
             "lastProcessedMessageDate": lastProcessedMessageDate,
         }
         metadata["memoryRefinement"] = refinement
-        await self.db.chatUsers.updateUserMetadata(chatId=chatId, userId=userId, metadata=utils.jsonDumps(metadata))
+        await self.cache.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadata)
 
     async def _renderMessagesForLLM(self, messages: List[ChatMessageDict]) -> str:
         """Render a list of ChatMessageDict into a single text block for the refinement prompt.

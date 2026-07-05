@@ -899,7 +899,7 @@ class BaseBotHandler(CommandHandlerMixin):
             if message.recipient.chatType != ChatType.PRIVATE:
                 admins = await self._bot.getChatAdmins(chat=message.recipient)
                 for adminId, adminInfo in admins.items():
-                    await self.db.chatUsers.updateChatUser(
+                    await self.cache.updateChatUser(
                         chatId=chatId,
                         userId=adminId,
                         username=adminInfo[0],
@@ -1035,7 +1035,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
         await self.updateChatInfo(message)
 
-        await self.db.chatUsers.updateChatUser(
+        await self.cache.updateChatUser(
             chatId=chat.id,
             userId=sender.id,
             username=sender.username,
@@ -1091,22 +1091,29 @@ class BaseBotHandler(CommandHandlerMixin):
             userId: Telegram user ID
             metadata: Metadata dictionary as [`UserMetadataDict`](internal/bot/models/user_metadata.py)
             isUpdate: If True, merge with existing metadata; if False, replace completely
+
+        Note:
+            When ``isUpdate=True`` the merge is a SHALLOW top-level ``{**old, **new}`` —
+            this is intentional for the spam-flag/leftChat use cases (flat boolean flags).
+            For NESTED sub-dicts (e.g. ``memoryRefinement``) do NOT use this method;
+            perform an explicit full-read + nested-mutate + full-write via
+            ``cache.getUserMetadata`` / ``cache.updateUserMetadata`` (see
+            ``UserDataHandler._persistMemoryEntry``).
         """
         if isUpdate:
-            userInfo = await self.db.chatUsers.getChatUser(chatId=chatId, userId=userId)
-            metadata = {**self.parseUserMetadata(userInfo), **metadata}
-
-        metadataStr = utils.jsonDumps(metadata)
-        await self.db.chatUsers.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadataStr)
+            existing = await self.cache.getUserMetadata(chatId=chatId, userId=userId)
+            metadata = {**existing, **metadata}
+        await self.cache.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadata)
 
     async def getUserMemorySummary(self, chatId: int, userId: int, threadId: int) -> Optional[str]:
         """
         Read the per-thread rolling memory summary for a user.
 
-        Looks up the user's metadata blob in ``chat_users.metadata`` and extracts the
-        ``summary`` field stored under ``memoryRefinement[<threadId>]`` by the
-        background refinement loop. Returns ``None`` when the user, the metadata
-        section, the thread entry, or the summary itself is absent.
+        Looks up the user's metadata blob in ``chat_users.metadata`` (read via
+        ``cache.getUserMetadata``) and extracts the ``summary`` field stored under
+        ``memoryRefinement[<threadId>]`` by the background refinement loop. Returns
+        ``None`` when the user, the metadata section, the thread entry, or the summary
+        itself is absent.
 
         Args:
             chatId: Chat id the user belongs to.
@@ -1116,15 +1123,10 @@ class BaseBotHandler(CommandHandlerMixin):
         Returns:
             The rolling summary text, or ``None`` if no summary is stored.
         """
-        userInfo = await self.db.chatUsers.getChatUser(chatId=chatId, userId=userId)
-        if userInfo is None:
-            return None
-        metadata = self.parseUserMetadata(userInfo)
+        metadata = await self.cache.getUserMetadata(chatId=chatId, userId=userId)
         refinement = metadata.get("memoryRefinement", {})
-        entry = refinement.get(str(threadId))
-        if not entry:
-            return None
-        return entry.get("summary") or None
+        entry = refinement.get(str(threadId), {})
+        return entry.get("summary")
 
     async def startTyping(
         self,
@@ -1241,9 +1243,7 @@ class BaseBotHandler(CommandHandlerMixin):
         userChats = await self.db.chatUsers.getUserChats(userId)
         ret: List[ChatInfoDict] = []
         for chatInfo in userChats:
-            userInfo: Optional[ChatUserDict] = await self.db.chatUsers.getChatUser(
-                chatId=chatInfo["chat_id"], userId=userId
-            )
+            userInfo: Optional[ChatUserDict] = await self.cache.getChatUser(chatId=chatInfo["chat_id"], userId=userId)
             if userInfo is None:
                 logger.warning(f"User {userId} not found in chat {chatInfo['chat_id']}")
                 continue

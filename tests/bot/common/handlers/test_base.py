@@ -12,9 +12,12 @@ Covers behaviour area (E):
 mixin-bound and not instantiated directly. It is exercised here through its
 concrete subclass :class:`UserDataHandler`, constructed against a real in-memory
 database (``testDatabase`` fixture) with the ``CacheService`` singleton reset
-per test by the local autouse fixture. The method only reads
-``db.chatUsers.getChatUser`` + ``parseUserMetadata``, so it never touches the
-cache; the cache reset exists purely for constructor hygiene.
+per test by the local autouse fixture. Since Phase 2 of the write-through
+chat_users cache, the method reads via ``cache.getUserMetadata`` (which itself
+reads through ``cache.getChatUser`` → the chat_users row). The autouse singleton
+reset above plus ``cache.injectDatabase(testDatabase)`` in ``_makeHandler`` bind
+the handler's ``self.cache`` to a fresh :class:`CacheService` wired to the test
+DB, so the cache miss falls through to SQLite and the assertions stay real.
 """
 
 import json
