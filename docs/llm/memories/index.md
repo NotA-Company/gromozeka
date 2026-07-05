@@ -25,4 +25,5 @@ Use these files as companions to [`../teamlead-memory.md`](../teamlead-memory.md
 - [`shutdown-state-dump.md`](shutdown-state-dump.md) — durable notes for the shutdown diagnostics: per-chat queue state dump, rate limiter statistics.
 - [`test-reorganization.md`](test-reorganization.md) — durable notes for the test layout migration (collocated -> `tests/` mirror), conventions, and post-reorg doc audit.
 - [`use-tools-filtering.md`](use-tools-filtering.md) — durable notes for per-tool LLM filtering: `ToolName` StrEnum, `UseToolsType`, execution guard.
+- [`user-memory-refinement.md`](user-memory-refinement.md) — durable notes for the background per-(chat, user, thread) memory-refinement subsystem: cron + global lock, `chat_users.metadata.memoryRefinement` storage convention, the `setUserMetadata` shallow-merge gotcha, context injection via `EnsuredMessage.userSummary`.
 - [`vector-search.md`](vector-search.md) — durable notes for native vector search: `sqlite-vec` integration, `vec0` tables, dual-write, dimension-aware design.

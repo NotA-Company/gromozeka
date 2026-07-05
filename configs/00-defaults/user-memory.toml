@@ -1,0 +1,16 @@
+# User Memory Refinement Configuration
+# Background per-(chat, user, thread) rolling memory refined by an LLM.
+# See docs/plans/memory-refine-plan-v1.md
+
+[user-memory]
+# Global kill switch for the memory-refinement subsystem.
+# Per-chat enable is controlled by the `memory-refinement-enabled` chat
+# setting (default false, true for the friend tier).
+enabled = false
+
+[user-memory.thresholds]
+message-count = 5              # newMessagesCount threshold to trigger refinement
+time-seconds = 21600           # 6 hours — elapsed since lastRefinedTS threshold
+min-messages-to-refine = 5     # bail if fewer new messages than this
+max-messages-per-run = 128     # cap on messages fed to one refinement LLM call
+max-refines-per-tick = 3       # bound on LLM calls per 60s cron tick

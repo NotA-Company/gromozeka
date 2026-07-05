@@ -199,6 +199,54 @@ class SpamHandler(BaseBotHandler):
         """
         self.cache.removeSpamWarningMessageInfo(chatId=chatId, messageId=messageId)
 
+    async def _getUserInfoFreshIfMessagesLessThan(
+        self, chatId: int, userId: int, messagesCountThreshold: int
+    ) -> Optional[ChatUserDict]:
+        """Return the cached chat_users row, re-fetching from DB only when stale-low.
+
+        Reads the cached userInfo via ``cache.getChatUser``. If the cached row's
+        ``messages_count`` is already at or above *messagesCountThreshold*, the cached
+        value is returned as-is (no DB round-trip). If it is strictly below the
+        threshold, the row is re-fetched via ``cache.getChatUser(refresh=True)`` so an
+        accurate count is used for the gate decision.
+
+        Rationale: ``messages_count`` is monotonically non-decreasing (incremented by a
+        raw SQL UPDATE in ``ChatMessagesRepository.saveChatMessage`` that bypasses the
+        cache). A cached value that is already at-or-above the threshold can only stay
+        there or grow, so it remains valid for any ``>=`` / ``>`` gate. Only a cached
+        value below the threshold might have drifted up past it, so only that case pays
+        for a refresh.
+
+        Note: this monotonicity assumption depends on the single increment site in
+        ``ChatMessagesRepository.saveChatMessage`` (~line 154). A future change that
+        DECREMENTS ``messages_count`` would silently break this optimization (cached
+        at-or-above values would no longer be safe to trust).
+
+        Caveat: callers whose gate is a STRICT ``>`` (rather than ``>=``) must pass
+        ``threshold + 1`` so the boundary case (cached value exactly equal to the gate
+        operand) still triggers a refresh. ``markAsSpam`` does this by passing
+        ``maxSpamMessages + 1``; ``checkSpam`` (a ``>=`` gate) passes ``maxCheckMessages``
+        unchanged.
+
+        Args:
+            chatId (int): Chat id.
+            userId (int): User id.
+            messagesCountThreshold (int): Refresh from DB only when the cached row's
+                ``messages_count`` is strictly less than this value.
+
+        Returns:
+            Optional[ChatUserDict]: The cached-or-refreshed row (a defensive shallow
+            copy), or None when no row exists / the cache is cold (in which case no
+            refresh is attempted).
+        """
+        userInfo: Optional[ChatUserDict] = await self.cache.getChatUser(chatId=chatId, userId=userId)
+        if not userInfo:
+            return userInfo
+        if userInfo["messages_count"] < messagesCountThreshold:
+            userInfo = await self.cache.getChatUser(chatId=chatId, userId=userId, refresh=True)
+
+        return userInfo
+
     async def checkSpam(self, ensuredMessage: EnsuredMessage) -> bool:
         """
         Perform comprehensive spam check on a message.
@@ -250,7 +298,20 @@ class SpamHandler(BaseBotHandler):
 
         chatSettings = await self.getChatSettings(chatId)
 
-        userInfo: Optional[ChatUserDict] = await self.db.chatUsers.getChatUser(chatId=chatId, userId=sender.id)
+        # Conditional refresh: userInfo["messages_count"] (read below) is compared
+        # against AUTO_SPAM_MAX_MESSAGES to gate the spam heuristic via a `>=` check.
+        # messages_count is incremented by a raw SQL UPDATE in
+        # ChatMessagesRepository.saveChatMessage that bypasses the cache, so a warm
+        # cached value drifts low. _getUserInfoFreshIfMessagesLessThan re-fetches only
+        # when the cached count is below the threshold; an at-or-above cached value is
+        # monotonic and stays valid, avoiding a per-message DB hit on established users
+        # (which would otherwise drift low and fire the heuristic → false ban).
+        maxCheckMessages = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
+        userInfo: Optional[ChatUserDict] = await self._getUserInfoFreshIfMessagesLessThan(
+            chatId=chatId,
+            userId=sender.id,
+            messagesCountThreshold=maxCheckMessages,
+        )
         if not userInfo:
             # self.db.updateChatUser(chatId=chatId, userId=sender.id, username=sender.username, fullName=sender.name)
             logger.debug(f"userInfo for {ensuredMessage} is null, assume it's first user message")
@@ -273,7 +334,6 @@ class SpamHandler(BaseBotHandler):
             return True
 
         userMessages = userInfo["messages_count"]
-        maxCheckMessages = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
         if not userMetadata.get("isSpammer", False) and maxCheckMessages != 0 and userMessages >= maxCheckMessages:
             # User has more message than limit, assume it isn't spammer
             await self.markAsHam(message=ensuredMessage)
@@ -515,8 +575,19 @@ class SpamHandler(BaseBotHandler):
         canMarkOldUsers = chatSettings[ChatSettingsKey.ALLOW_MARK_SPAM_OLD_USERS].toBool()
         if reason != SpamReason.ADMIN or not canMarkOldUsers:
             # Check if we are trying to ban old chat member and it is not from Admin
-            userInfo = await self.db.chatUsers.getChatUser(chatId=chatId, userId=userId)
+            # Conditional refresh: userInfo["messages_count"] (read below) gates the
+            # "protect established users from being marked as spam" branch via a STRICT
+            # `>` check (userInfo["messages_count"] > maxSpamMessages). messages_count
+            # is incremented by a raw SQL UPDATE in ChatMessagesRepository.saveChatMessage
+            # that bypasses the cache, so a warm cached value drifts low. Because the
+            # gate is strict `>`, passing maxSpamMessages+1 (not maxSpamMessages) closes
+            # the boundary window: a cached count exactly equal to maxSpamMessages now
+            # triggers a refresh (cached < maxSpamMessages+1), so an established user
+            # who crossed the threshold isn't falsely banned.
             maxSpamMessages = chatSettings[ChatSettingsKey.AUTO_SPAM_MAX_MESSAGES].toInt()
+            userInfo = await self._getUserInfoFreshIfMessagesLessThan(
+                chatId=chatId, userId=userId, messagesCountThreshold=maxSpamMessages + 1
+            )
             if maxSpamMessages != 0 and userInfo and userInfo["messages_count"] > maxSpamMessages:
                 logger.warning(f"Tried to mark old user {ensuredMessage.sender} as SPAM")
                 await self.sendMessage(
@@ -989,7 +1060,7 @@ class SpamHandler(BaseBotHandler):
                     confidence=1.0,
                 )
 
-            hamUserDB: Optional[ChatUserDict] = await self.db.chatUsers.getChatUser(chatId=chat.id, userId=hamUserId)
+            hamUserDB: Optional[ChatUserDict] = await self.cache.getChatUser(chatId=chat.id, userId=hamUserId)
             if hamUserDB is not None:
                 await self.setUserMetadata(
                     chatId=hamUserDB["chat_id"],
@@ -1593,7 +1664,7 @@ class SpamHandler(BaseBotHandler):
         if user is None and ensuredMessage.replyId is not None:
             repliedMessage = ensuredMessage.getEnsuredRepliedToMessage()
             if repliedMessage is not None:
-                user = await self.db.chatUsers.getChatUser(
+                user = await self.cache.getChatUser(
                     chatId=ensuredMessage.recipient.id,
                     userId=repliedMessage.sender.id,
                 )
@@ -1711,9 +1782,7 @@ class SpamHandler(BaseBotHandler):
         )
 
         if repliedMessage is not None:
-            user = await self.db.chatUsers.getChatUser(
-                chatId=ensuredMessage.recipient.id, userId=repliedMessage.sender.id
-            )
+            user = await self.cache.getChatUser(chatId=ensuredMessage.recipient.id, userId=repliedMessage.sender.id)
             if user is None:
                 logger.error(f"User {repliedMessage.sender} not found in chat {ensuredMessage.recipient}")
             else:

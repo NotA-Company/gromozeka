@@ -17,7 +17,7 @@ How to use this file:
 - Prefers parallel batching for independent subtasks (e.g., 6 files at once).
 - Docstring improvement passes should follow one-file-per-task pattern with gate reviews between batches.
 - Responses must be in English.
-- **`.opencode/memory.jsonl` is OpenCode's own session memory store.** It is auto-appended/modified by OpenCode on every task and is expected to show as modified in `git status` during any session. NEVER read, edit, stage, or commit it — and do NOT flag it as a stray/unrelated change. Always exclude it from doc/cleanup commits.
+- **`.opencode/memory.jsonl` is OpenCode's own session memory store.** It is auto-appended/modified by OpenCode on every task and is expected to show as modified in `git status` during any session. NEVER read, edit, stage it — and do NOT flag it as a stray/unrelated change. Always exclude it from doc/cleanup commits.
 
 ## Task-Specific Memory Files
 
@@ -114,6 +114,63 @@ From fixing review findings on the Max webhook support feature (branch `max-v2`)
 - For multi-phase implementation from a design doc: exploration first to verify assumptions (code has drift), then implement foundation phase, review it, then wire consumers + config, review again, then docs, then whole-work review. Parallelize config changes with implementation phases when possible.
 - When subagents fail with `ProviderModelNotFoundError`, check the `model:` field in each agent's `.md` file and in `.opencode/opencode.json` -- the `standard` model may not be provisioned while `cheap`/`smart`/`smartest` are.
 - The `explore` subagent (model: `cheap`) and `code-reviewer` (model: `smart`) are reliable for read-only work; `software-developer` needs `standard` model to be functional.
+
+## Configs Tracking Gotcha (2026-07-04)
+
+- **`configs/common/` is gitignored.** `.gitignore` line 4 is `/configs/*` with only `!/configs/00-defaults` whitelisted. So `configs/common/01-bot-defaults.toml` (and any other non-`00-defaults` config dir) is a **local deployment overlay, NOT version-controlled**.
+- **All tier-defaults live only in the gitignored overlay.** `[bot.tier-defaults.banned]`/`free`/`free-personal`/`friend` (including the friend-tier `allow-sandbox = true`) exist ONLY in `configs/common/01-bot-defaults.toml`. The tracked `configs/00-defaults/bot-defaults.toml` has only an empty `[bot.tier-defaults.free]`.
+- **Implication:** any tier-default that must ship with the code (e.g. friend-tier `memory-refinement-enabled = true`) will NOT propagate via git under the current model — it's a per-deployment manual overlay step, same as `allow-sandbox`. This is by design (configs are deployment-specific). Verify with `git check-ignore -v <path>` and `git ls-files configs/`.
+- Only `configs/00-defaults/*` is tracked. New tracked config files go there.
+
+## User Memory Refinement Feature (2026-07-04, IMPLEMENTED)
+
+Background per-`(chat, user, thread)` memory refinement, owned by `UserDataHandler`. Implemented from `docs/plans/memory-refine-plan-v1.md` (status line updated to IMPLEMENTED). Full durable implementation notes live in [`memories/user-memory-refinement.md`](memories/user-memory-refinement.md); canonical docs: [`handlers.md`](handlers.md) `UserDataHandler` row, [`configuration.md`](configuration.md) §`[user-memory]`, [`architecture.md`](architecture.md) ADR-014. Reusable cross-task facts to remember:
+
+- **Nested `chat_users.metadata` writes:** `setUserMetadata(isUpdate=True)` shallow-merges at the top level — a partial `{"memoryRefinement": {<threadId>: ...}}` wipes every other thread's summary. Write nested sub-dicts via direct read-modify-write through `chatUsers.updateUserMetadata()`. Recorded as a reusable gotcha in [`tasks.md`](tasks.md) §3.
+- **`configs/common/` is gitignored** — the friend-tier `memory-refinement-enabled = true` is a local-deployment overlay (same model as `allow-sandbox`), NOT version-controlled. See "Configs Tracking Gotcha" above.
+- **Single global `asyncio.Lock`** serializes all refinement; a slow LLM call blocks the next 60s tick rather than flooding the provider. No per-entry locks, no `createTask`.
+
+## Review-Fix Round: Memory Refinement + Chat Users Cache (2026-07-05)
+
+Post-review fixes for the memory-refinement + chat-users-cache branch. User decisions on review findings:
+- **Accepted risks** (memory summarization, nothing breaks): (1) `_dtCronJob` subtracts `preCount` from accounting regardless of messages actually ingested by `_runRefinement` (capped at 128); (2) cursor advances to `messages[0]` (newest) so bursts >128 permanently skip overflow. **Mitigation: add warning log** when `len(messages) >= _memoryMaxMessagesPerRun`.
+- **Fix**: metadata RMW race — add a lock in `CacheService` covering the full read-modify-write window, held by both `_persistMemoryEntry` and `setUserMetadata(isUpdate=True)`.
+- **Document** (no code change): failed refinement zeroes accounting (backoff-by-accident); spam `_getUserInfoFreshIfMessagesLessThan` monotonicity depends on `messages_count` only-incrementing; `getChatUser` returns shallow copy.
+- **Lock add**: `_lastRefinedTS` read at `user_data.py:353` should take `_accountingLock` for consistency with the comment at line 108.
+- **Exploration confirmed (Q2)**: `CacheService.updateUserMetadata` is the SOLE production write path for `chat_users.metadata`. The repo method `ChatUsersRepository.updateUserMetadata` (`internal/database/repositories/chat_users.py:126-162`) has exactly one production caller (the cache). All 6 handler `setUserMetadata(isUpdate=True)` callsites (spam.py x4, message_preprocessor.py x2) + the 1 `_persistMemoryEntry` direct caller route through `cache.updateUserMetadata`. No `_chatUsersLock` existed prior to this fix. The `chat_messages.py:154` raw SQL bypass only touches `messages_count`, not `metadata` — irrelevant to the race.
+
+**Line-number drift from the review report (authoritative current numbers):**
+- `chat_settings.py` is at `internal/bot/models/chat_settings.py` (NOT `internal/bot/common/`).
+- "реобновления" @ line **888** (under `MEMORY_REFINE_MODEL`); "при фонового обновления" @ line **901** (under `MEMORY_REFINE_SYSTEM_PROMPT`).
+- `_runRefinement` fetch-cap (`limit=self._memoryMaxMessagesPerRun`) @ `user_data.py:488`; cursor advance (`newest = messages[0]`) @ `user_data.py:542-550`. (Review said 519-535 — that's the LLM call, mislocated.)
+- `_persistMemoryEntry` RMW @ `user_data.py:555-596` (confirmed; line numbers drift with edits — verify before relying). `setUserMetadata` @ `base.py:~1077-1104` (drifted up ~6 lines after `getUserMemorySummary` deletion).
+- `spam.py` `_getUserInfoFreshIfMessagesLessThan` @ **202-243** (not 199-241).
+- `_dtCronJob` finally subtract (`preCount`) @ `user_data.py:422` (block 415-431).
+- No `len(messages) >= _memoryMaxMessagesPerRun` comparison exists today — must be added for the warning log.
+
+## Chat Users Cache (2026-07-05, IMPLEMENTED)
+
+Write-through `chat_users` cache in `CacheService`, eliminating 2–5 redundant `chat_users` reads per inbound message. Canonical doc: [`architecture.md`](architecture.md) ADR-015; plan: [`docs/plans/user-info-cache-plan-v1.md`](../plans/user-info-cache-plan-v1.md). Reusable cross-task facts:
+
+- **Reused `CacheNamespace.CHAT_USERS`** (keyed `f"{chatId}:{userId}"`, `MEMORY_ONLY`); extended `HCChatUserCacheDict` with a second lazily-loaded field `userInfo: NotRequired[ChatUserDict]` (non-Optional; presence-of-key = "loaded") alongside the existing `data` (`user_data` blob). No new namespace. Lazy-field independence: `data` and `userInfo` load independently. An absent DB row is NOT memoized — `getChatUser` returns `None` and leaves the cache cold, so the next call re-queries the DB (an absent row indicates a problem upstream; not worth caching).
+- **5 new `CacheService` methods** (`internal/services/cache/service.py`): `getChatUser(refresh=False)` (returns defensive shallow copy; absent row not cached), `updateChatUser` (write-through upsert, skip-when-unchanged; cold path leaves cache cold — no warming re-read), `getUserMetadata` (parsed metadata), `updateUserMetadata` (full-dict replace, NO merge), `invalidateChatUser` (sync; pops only `userInfo`, preserves `data`). All single-row `(chatId, userId)` handler reads/writes route through `self.cache.*`, not `self.db.chatUsers.*`. Aggregate/by-username queries (`getChatUserByUsername`, `getChatUsers`, `getUserChats`, `getAllGroupChats`, `getUserIdByUserName`) are NOT cached.
+- **`messages_count` is stale on a cached row** — incremented by raw SQL in `ChatMessagesRepository.saveChatMessage` (`chat_messages.py:154`), bypassing the cache. Callers needing an accurate count SHOULD use the conditional-refresh helper `SpamHandler._getUserInfoFreshIfMessagesLessThan(chatId, userId, threshold)`, which re-fetches only when the cached count is strictly below the threshold (monotonic value at/above the threshold stays valid). The two correctness-critical spam readers (gating on `AUTO_SPAM_MAX_MESSAGES`) use it: `checkSpam` (`>=` gate) passes the threshold unchanged; `markAsSpam` (strict `>` gate) passes `threshold + 1` so the boundary case (`cached == maxSpamMessages`) still refreshes, closing the false-ban window.
+- **Skip-when-unchanged optimization** in `updateChatUser`: a no-op call (same `username`/`full_name`) skips the DB upsert, so `updated_at` no longer refreshes on such calls.
+- **Nested-write invariant:** `updateUserMetadata` does NO merge — nested writers (`_persistMemoryEntry`) must read full metadata → mutate one nested key → write full dict back. A shallow `{**old, **new}` would wipe sibling threads. Same hazard ADR-014 documents for `setUserMetadata(isUpdate=True)`.
+- **Coupling note:** every `metadata` writer MUST route through the cache. A future raw `db.chatUsers.updateUserMetadata(...)` bypass would silently desync the cache and corrupt subsequent `setUserMetadata(isUpdate=True)` merges. Do not add such bypasses for `metadata` (the `messages_count` increment is the sole accepted bypass, and it does not touch `metadata`).
+- **Metadata RMW lock (added 2026-07-05, widened same day):** `CacheService._chatUsersMetadataLock` (single process-global `asyncio.Lock`) serializes `chat_users.metadata` access. Exposed via `chatUserMetadataLock()` async context manager (`@contextlib.asynccontextmanager`, `-> AsyncIterator[None]`). **Holders:** `BaseBotHandler.setUserMetadata` (BOTH `isUpdate=True` read-merge-write AND `isUpdate=False` full-replace — the `async with` wraps the entire method body; serializing the full-replace prevents it from being clobbered by a concurrent RMW) and `UserDataHandler._persistMemoryEntry`. **Non-holders:** plain `getUserMetadata` reads and bare `cache.updateUserMetadata(...)` calls with no preceding read. Lock ordering: `_refineLock` (outer) → `chatUserMetadataLock` (inner) — no reverse path exists (`setUserMetadata` never takes `_refineLock`). Verification (Q2 from review): `CacheService.updateUserMetadata` is the SOLE production write path for `chat_users.metadata` (the repo method has exactly one production caller); all handler metadata writes route through it. The `chat_messages.py:154` raw SQL bypass only touches `messages_count`, not `metadata`. NOTE: an earlier version of this note claimed `isUpdate=False` did NOT take the lock — that was superseded when the user widened the lock to wrap both branches; do not "optimize" the full-replace path back out of the lock.
+- **Accepted risks (memory refinement, documented 2026-07-05):** (1) `_dtCronJob` subtracts `preCount` from accounting regardless of messages actually ingested; (2) `_runRefinement` cursor advances to `messages[0]` (newest) so bursts > `_memoryMaxMessagesPerRun` (128) permanently skip overflow. Both accepted because it's memory summarization — nothing breaks. Mitigation: `logger.warning` fires when `len(messages) >= _memoryMaxMessagesPerRun` (overflow detection).
+
+## Settings-Summary Refactor: applyUserMetadata (2026-07-05)
+
+User simplified memory-summary attachment to `EnsuredMessage`:
+- **Deleted** `BaseBotHandler.getUserMemorySummary` (folded into `EnsuredMessage`).
+- **New method** `EnsuredMessage.applyUserMetadata(metadata)` (renamed from `setUserMetadata` to avoid collision with the DB-writer `BaseBotHandler.setUserMetadata`). It's a PURE READER: reads `memoryRefinement[str(self.threadId or DEFAULT_THREAD_ID)].summary` → `self.userSummary`; does NOT persist metadata. Two call sites: `base.py` `_updateEMessageUserData` and `manager.py` `_processMessageRec`, both now do `ensuredMessage.applyUserMetadata(await self.cache.getUserMetadata(...))`.
+- **Removed the `MEMORY_REFINEMENT_ENABLED` injection gate** (intentional simplification — the write side still gates, so absence-of-summary-in-metadata is the gate; a stale summary for a since-disabled chat now still injects, accepted). Documented in the method docstring + ADR-014.
+- **Naming disambiguation**: `EnsuredMessage.applyUserMetadata` (pure reader) vs `BaseBotHandler.setUserMetadata` (DB writer). The `applyUserMetadata` docstring cross-references this explicitly.
+- **Lock widening (same session)**: the user ALSO restructured `BaseBotHandler.setUserMetadata` so `async with self.cache.chatUserMetadataLock():` wraps the ENTIRE method body (both `isUpdate=True` and `isUpdate=False`). See the updated "Metadata RMW lock" note under "Chat Users Cache" above. Docstring Note + test (`test_setUserMetadata_fullReplace_alsoAcquiresMetadataLock`, `enterCount == 1`) reconciled.
+- **Tests**: `TestGetUserMemorySummary` deleted from `tests/bot/common/handlers/test_base.py`; 4 extraction cases relocated to `tests/bot/models/test_ensured_message.py::TestApplyUserMetadata` (drives `applyUserMetadata` directly, no DB fixture needed — simpler than the old DB-backed suite; adds an explicit empty-string-summary case). 2 regression tests in `test_user_info_cache_regression.py` re-pointed at `cache.getUserMetadata`.
+- **Canonical docs updated**: `memories/user-memory-refinement.md`, `architecture.md` ADR-014 (context-injection bullet), `handlers.md`. Two historical plan docs got addendum-only correction notes (bodies preserved as snapshots).
 
 ## Docs Archive Layout (2026-07-04)
 

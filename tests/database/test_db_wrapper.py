@@ -401,6 +401,53 @@ class TestChatMessageOperations:
         assert userMessages[0]["message_category"] == MessageCategory.USER
 
     @pytest.mark.asyncio
+    async def testGetChatMessagesSinceWithUserId(self, inMemoryDb, sampleChatId, sampleUserId):
+        """Test retrieving messages filtered by sender userId, and backward compat without it.
+
+        Covers the Phase 2 user-memory-refinement ``userId`` filter: with the
+        filter only that sender's messages are returned, without it all messages
+        are returned (backward compat), and a userId with no messages yields an
+        empty list.
+        """
+        otherUserId = sampleUserId + 1  # distinct second user in the same chat
+        nonExistentUserId = sampleUserId + 999999  # no messages authored by this id
+
+        # Both senders need a chat_users row for the INNER JOIN in getChatMessagesSince
+        await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "userA", "User A")
+        await inMemoryDb.chatUsers.updateChatUser(sampleChatId, otherUserId, "userB", "User B")
+
+        baseTime = datetime.datetime(2024, 1, 1, 12, 0, 0)
+        # Interleave messages from both users
+        for i in range(3):
+            await inMemoryDb.chatMessages.saveChatMessage(
+                date=baseTime + datetime.timedelta(minutes=i),
+                chatId=sampleChatId,
+                userId=sampleUserId,
+                messageId=900 + i,
+                messageText=f"User A message {i}",
+            )
+            await inMemoryDb.chatMessages.saveChatMessage(
+                date=baseTime + datetime.timedelta(minutes=i),
+                chatId=sampleChatId,
+                userId=otherUserId,
+                messageId=1000 + i,
+                messageText=f"User B message {i}",
+            )
+
+        # Case 1: filter by userA -> only userA's messages, all of them
+        userAMessages = await inMemoryDb.chatMessages.getChatMessagesSince(sampleChatId, userId=sampleUserId)
+        assert len(userAMessages) == 3
+        assert all(msg["user_id"] == sampleUserId for msg in userAMessages)
+
+        # Case 2: no userId filter -> backward compatible, all messages returned
+        allMessages = await inMemoryDb.chatMessages.getChatMessagesSince(sampleChatId)
+        assert len(allMessages) == 6
+
+        # Case 3: userId with no messages -> empty list
+        emptyMessages = await inMemoryDb.chatMessages.getChatMessagesSince(sampleChatId, userId=nonExistentUserId)
+        assert emptyMessages == []
+
+    @pytest.mark.asyncio
     async def testGetChatMessagesByRootId(self, inMemoryDb, sampleChatId, sampleUserId):
         """Test retrieving messages by root message ID."""
         await inMemoryDb.chatUsers.updateChatUser(sampleChatId, sampleUserId, "testuser", "Test User")

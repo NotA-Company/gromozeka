@@ -306,6 +306,16 @@ class ChatSettingsKey(StrEnum):
     """Backup LLM model for image generation when primary fails."""
     CONDENSING_MODEL = "condensing-model"
     """LLM model for condensing large context."""
+    MEMORY_REFINEMENT_ENABLED = "memory-refinement-enabled"
+    """Whether background per-user memory refinement is enabled for this chat."""
+    MEMORY_REFINE_MODEL = "memory-refine-model"
+    """LLM model for refining per-user memory summaries."""
+    MEMORY_REFINE_FALLBACK_MODEL = "memory-refine-fallback-model"
+    """Backup LLM model for user memory refinement when primary fails."""
+    MEMORY_REFINE_SYSTEM_PROMPT = "memory-refine-system-prompt"
+    """System prompt defining the memory-refinement model's role and rules."""
+    MEMORY_REFINE_USER_PROMPT_TEMPLATE = "memory-refine-user-prompt-template"
+    """Template for the user message fed to the memory-refinement LLM call."""
     # Prompts for different actions
     SUMMARY_PROMPT = "summary-prompt"
     """System prompt for message summarization."""
@@ -860,6 +870,43 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
             "в изолированной среде (sandbox) в этом чате. \n"
             "Команды /run и /sandbox станут доступны."
         ),
+        "page": ChatSettingsPage.FRIEND,
+    },
+    ChatSettingsKey.MEMORY_REFINEMENT_ENABLED: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Обновление памяти о пользователе",
+        "long": (
+            "Включить фоновую обработку памяти о пользователе в этом чате. "
+            "Бот будет периодически обновлять краткое резюме о каждом пользователе "
+            "на основе последних сообщений."
+        ),
+        "page": ChatSettingsPage.FRIEND,
+    },
+    ChatSettingsKey.MEMORY_REFINE_MODEL: {
+        "type": ChatSettingsType.MODEL,
+        "short": "LLM-Модель для обновления памяти",
+        "long": "Какую LLM модель использовать для обновления памяти о пользователе",
+        "page": ChatSettingsPage.FRIEND,
+    },
+    ChatSettingsKey.MEMORY_REFINE_FALLBACK_MODEL: {
+        "type": ChatSettingsType.MODEL,
+        "short": "Запасная LLM-Модель для обновления памяти пользователя",
+        "long": "Какую LLM модель использовать для обновления памяти о пользователе если основная не справилась",
+        "page": ChatSettingsPage.FRIEND,
+    },
+    ChatSettingsKey.MEMORY_REFINE_SYSTEM_PROMPT: {
+        "type": ChatSettingsType.STRING,
+        "short": "Системный промпт для обновления памяти",
+        "long": (
+            "Системный промпт, задающий роль и правила модели при фоновом обновлении "
+            "(актуализации) памяти о пользователе."
+        ),
+        "page": ChatSettingsPage.FRIEND,
+    },
+    ChatSettingsKey.MEMORY_REFINE_USER_PROMPT_TEMPLATE: {
+        "type": ChatSettingsType.STRING,
+        "short": "Шаблон пользовательского сообщения для обновления памяти",
+        "long": ("Шаблон, в который подставляются {existingUserData}, {existingSummary}, {messages}."),
         "page": ChatSettingsPage.FRIEND,
     },
     ChatSettingsKey.DELETE_DENIED_COMMANDS: {
