@@ -1,6 +1,6 @@
 """Tests for :class:`LLMMessageHandler`.
 
-Two feature areas are covered, each in its own class:
+Three feature areas are covered, each in its own class:
 
 * :class:`TestBotAnswerProbabilityGate` — the ``BOT_ANSWER_PROBABILITY`` gate
   in ``newMessageHandler``. When a message arrives from a sender whose username
@@ -22,6 +22,13 @@ Two feature areas are covered, each in its own class:
   (``LLMReplyOutcome.SKIPPED_BY_MODEL``). These tests drive the real
   ``handleRandomMessage`` / ``handleReply`` / ``handleMention`` /
   ``_sendLLMChatMessage`` code paths with only leaf dependencies mocked.
+
+* :class:`TestMediaDescriptionExtraction` — the ``<media-description>`` tag
+  extraction block in ``_sendLLMChatMessage``. Pins both the corrected
+  extraction behaviour (trailing/leading text preserved) and the intentional
+  limitations (JSON-format skip, pure-middle-tag gate, single-tag handling, and
+  the tag-only→empty-text-sentinel interaction). Tests call
+  ``_sendLLMChatMessage`` directly.
 """
 
 import contextlib
@@ -451,6 +458,26 @@ def _modelRunResult(resultText: str) -> ModelRunResult:
     return ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText=resultText)
 
 
+def _imageRunResult() -> ModelRunResult:
+    """Build a :class:`ModelRunResult` simulating a successful image generation.
+
+    The image-gen branch in ``_sendLLMChatMessage`` requires
+    ``status == ModelResultStatus.FINAL`` and ``mediaData is not None`` to send
+    the photo and return ``SENT``. This helper satisfies both.
+
+    Returns:
+        A ``ModelRunResult`` with ``FINAL`` status, non-empty ``mediaData``,
+        and ``isFallback`` False (so the ``FALLBACK_HAPPENED_PREFIX`` read
+        inside the image branch is not exercised).
+    """
+    return ModelRunResult(
+        rawResult={},
+        status=ModelResultStatus.FINAL,
+        resultText="",
+        mediaData=b"fake_image",
+    )
+
+
 def _typingCtxManager() -> AsyncMock:
     """Build a double usable as ``async with await startTyping(...) as tm``.
 
@@ -799,3 +826,286 @@ class TestRandomAnswerPromptAndSkipSentinel:
 
         assert result is True
         liveHandler.sendMessage.assert_awaited_once()  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Tests: <media-description> extraction in _sendLLMChatMessage
+# ---------------------------------------------------------------------------
+
+
+class TestMediaDescriptionExtraction:
+    """Pin the ``<media-description>`` tag extraction in ``_sendLLMChatMessage``.
+
+    Covers the extraction block (lines ~345-355 of
+    ``internal/bot/common/handlers/llm_messages.py``) that splits an LLM
+    response into an image prompt (inside the tag) and the surrounding message
+    text. The block is gated on ``LLM_MESSAGE_FORMAT != JSON`` and on the
+    trimmed text starting with ``<media-description>`` or ending with
+    ``</media-description>`` (pure-middle tags are intentionally excluded).
+
+    All tests call ``_sendLLMChatMessage`` directly (not via the public
+    ``handle*`` methods) so only the extraction + image-gen + send logic is
+    exercised. Positive tests assert on BOTH ``generateImage`` (the prompt) and
+    ``sendMessage`` (the ``messageText`` kwarg). Negative tests assert
+    ``generateImage`` was never awaited.
+
+    Important ordering note: the ``<skip>``/empty-text abstention sentinel runs
+    BEFORE the image-gen branch, but is gated on ``imagePrompt is None``. So a
+    tag-only response (no surrounding text) leaves ``lmRetText == ""`` yet does
+    NOT trip the sentinel — the image request takes precedence and is generated.
+    See :meth:`testTagOnlyGeneratesImage`.
+    """
+
+    async def testTagAtStartAndTrailingTextExtracts(self, liveHandler: LLMMessageHandler) -> None:
+        """Tag at start + trailing text → image from tag, message from trailing.
+
+        ``<media-description>foo</media-description>bar`` → ``generateImage``
+        called with ``"foo"``, ``sendMessage`` called with ``messageText="bar"``.
+
+        This is the original bug regression: before the fix, the regex without
+        the ``$`` anchor produced ``messageText=""`` (trailing text silently
+        discarded). With the fix, group(3) captures ``"bar"``.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult("<media-description>foo</media-description>bar")
+        )
+        liveHandler.llmService.generateImage = AsyncMock(return_value=_imageRunResult())  # type: ignore[method-assign]
+        em = _liveEnsuredMessage()
+        messagesHistory = [ModelMessage(role="user", content="test")]
+        typingManager = AsyncMock()
+
+        outcome = await liveHandler._sendLLMChatMessage(em, messagesHistory, typingManager=typingManager)
+
+        assert outcome == LLMReplyOutcome.SENT
+        liveHandler.llmService.generateImage.assert_awaited_once()  # type: ignore[attr-defined]
+        assert liveHandler.llmService.generateImage.call_args.args[0] == "foo"  # type: ignore[attr-defined]
+        liveHandler.sendMessage.assert_awaited_once()  # type: ignore[attr-defined]
+        assert liveHandler.sendMessage.call_args.kwargs["messageText"] == "bar"  # type: ignore[attr-defined]
+
+    async def testLeadingTextAndTagAtEndExtracts(self, liveHandler: LLMMessageHandler) -> None:
+        """Leading text + tag at end → image from tag, message from leading text.
+
+        ``baz<media-description>foo</media-description>`` → ``generateImage``
+        called with ``"foo"``, ``sendMessage`` called with ``messageText="baz"``.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult("baz<media-description>foo</media-description>")
+        )
+        liveHandler.llmService.generateImage = AsyncMock(return_value=_imageRunResult())  # type: ignore[method-assign]
+        em = _liveEnsuredMessage()
+        messagesHistory = [ModelMessage(role="user", content="test")]
+        typingManager = AsyncMock()
+
+        outcome = await liveHandler._sendLLMChatMessage(em, messagesHistory, typingManager=typingManager)
+
+        assert outcome == LLMReplyOutcome.SENT
+        liveHandler.llmService.generateImage.assert_awaited_once()  # type: ignore[attr-defined]
+        assert liveHandler.llmService.generateImage.call_args.args[0] == "foo"  # type: ignore[attr-defined]
+        liveHandler.sendMessage.assert_awaited_once()  # type: ignore[attr-defined]
+        assert liveHandler.sendMessage.call_args.kwargs["messageText"] == "baz"  # type: ignore[attr-defined]
+
+    async def testTagOnlyGeneratesImage(self, liveHandler: LLMMessageHandler) -> None:
+        """Tag-only response (no surrounding text) → image generated and sent.
+
+        ``<media-description>foo</media-description>`` → extraction sets
+        ``imagePrompt="foo"`` and ``lmRetText=""``. The abstention sentinel
+        (``lmRetText in ("<skip>", "")``) is gated on ``imagePrompt is None``,
+        so it does NOT fire here: a tag-only request is an image request, not
+        an abstention. ``generateImage`` is awaited with ``"foo"``, the photo
+        is sent via ``sendMessage``, and the outcome is ``SENT``.
+
+        This pins the corrected interaction: the sentinel is skipped whenever
+        the model produced an image request, even when the caption text is
+        empty — the image IS the response. (Before the fix, the sentinel fired
+        on the empty caption and silently dropped the requested image.)
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult("<media-description>foo</media-description>")
+        )
+        liveHandler.llmService.generateImage = AsyncMock(return_value=_imageRunResult())  # type: ignore[method-assign]
+        em = _liveEnsuredMessage()
+        messagesHistory = [ModelMessage(role="user", content="test")]
+        typingManager = AsyncMock()
+
+        outcome = await liveHandler._sendLLMChatMessage(em, messagesHistory, typingManager=typingManager)
+
+        assert outcome == LLMReplyOutcome.SENT
+        liveHandler.llmService.generateImage.assert_awaited_once()  # type: ignore[attr-defined]
+        assert liveHandler.llmService.generateImage.call_args.args[0] == "foo"  # type: ignore[attr-defined]
+        liveHandler.sendMessage.assert_awaited_once()  # type: ignore[attr-defined]
+        assert liveHandler.sendMessage.call_args.kwargs["messageText"] == ""  # type: ignore[attr-defined]
+
+    async def testBacktickAndWhitespaceWrappedExtracts(self, liveHandler: LLMMessageHandler) -> None:
+        """Backtick/whitespace-wrapped tag → strips wrapper, extracts content.
+
+        Input ``"`  <media-description>foo</media-description>bar  `"`` → the
+        ``.strip().strip("`").strip()`` chain removes the wrapper, then the
+        regex extracts ``imagePrompt="foo"`` and ``messageText="bar"``.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult("`  <media-description>foo</media-description>bar  `")
+        )
+        liveHandler.llmService.generateImage = AsyncMock(return_value=_imageRunResult())  # type: ignore[method-assign]
+        em = _liveEnsuredMessage()
+        messagesHistory = [ModelMessage(role="user", content="test")]
+        typingManager = AsyncMock()
+
+        outcome = await liveHandler._sendLLMChatMessage(em, messagesHistory, typingManager=typingManager)
+
+        assert outcome == LLMReplyOutcome.SENT
+        liveHandler.llmService.generateImage.assert_awaited_once()  # type: ignore[attr-defined]
+        assert liveHandler.llmService.generateImage.call_args.args[0] == "foo"  # type: ignore[attr-defined]
+        liveHandler.sendMessage.assert_awaited_once()  # type: ignore[attr-defined]
+        assert liveHandler.sendMessage.call_args.kwargs["messageText"] == "bar"  # type: ignore[attr-defined]
+
+    async def testMultilineContentExtractsWithDotall(self, liveHandler: LLMMessageHandler) -> None:
+        """Multi-line content inside the tag is captured (DOTALL flag).
+
+        ``<media-description>line1\\nline2</media-description>text`` → the
+        regex uses ``re.DOTALL`` so ``.`` matches newlines, yielding
+        ``imagePrompt="line1\\nline2"`` and ``messageText="text"``.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult("<media-description>line1\nline2</media-description>text")
+        )
+        liveHandler.llmService.generateImage = AsyncMock(return_value=_imageRunResult())  # type: ignore[method-assign]
+        em = _liveEnsuredMessage()
+        messagesHistory = [ModelMessage(role="user", content="test")]
+        typingManager = AsyncMock()
+
+        outcome = await liveHandler._sendLLMChatMessage(em, messagesHistory, typingManager=typingManager)
+
+        assert outcome == LLMReplyOutcome.SENT
+        liveHandler.llmService.generateImage.assert_awaited_once()  # type: ignore[attr-defined]
+        assert liveHandler.llmService.generateImage.call_args.args[0] == "line1\nline2"  # type: ignore[attr-defined]
+        liveHandler.sendMessage.assert_awaited_once()  # type: ignore[attr-defined]
+        assert liveHandler.sendMessage.call_args.kwargs["messageText"] == "text"  # type: ignore[attr-defined]
+
+    async def testTagInMiddleDoesNotExtract(self, liveHandler: LLMMessageHandler) -> None:
+        """Tag in the middle (text on both sides) → no extraction (intentional).
+
+        ``text<media-description>foo</media-description>text`` → the gate
+        (``startswith OR endswith``) is False, so no extraction runs. The full
+        original text is sent as the message and ``generateImage`` is never
+        called. This is INTENTIONAL: pure-middle tags are excluded by design.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        fullText = "text<media-description>foo</media-description>text"
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult(fullText)
+        )
+        liveHandler.llmService.generateImage = AsyncMock(return_value=_imageRunResult())  # type: ignore[method-assign]
+        em = _liveEnsuredMessage()
+        messagesHistory = [ModelMessage(role="user", content="test")]
+        typingManager = AsyncMock()
+
+        outcome = await liveHandler._sendLLMChatMessage(em, messagesHistory, typingManager=typingManager)
+
+        assert outcome == LLMReplyOutcome.SENT
+        liveHandler.llmService.generateImage.assert_not_awaited()  # type: ignore[attr-defined]
+        liveHandler.sendMessage.assert_awaited_once()  # type: ignore[attr-defined]
+        assert liveHandler.sendMessage.call_args.kwargs["messageText"] == fullText  # type: ignore[attr-defined]
+
+    async def testJsonFormatModeDoesNotExtract(self, liveHandler: LLMMessageHandler) -> None:
+        """``LLM_MESSAGE_FORMAT = JSON`` → entire extraction block skipped.
+
+        Even with a tag at the start, ``generateImage`` is never called because
+        the extraction block is gated on ``llmMessageFormat != JSON``. The full
+        text is sent as-is. This is INTENTIONAL.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        fullText = "<media-description>foo</media-description>bar"
+        liveHandler.getChatSettings = AsyncMock(  # type: ignore[method-assign]
+            return_value=_fullChatSettings(llmMessageFormat="json")
+        )
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult(fullText)
+        )
+        liveHandler.llmService.generateImage = AsyncMock(return_value=_imageRunResult())  # type: ignore[method-assign]
+        em = _liveEnsuredMessage()
+        messagesHistory = [ModelMessage(role="user", content="test")]
+        typingManager = AsyncMock()
+
+        outcome = await liveHandler._sendLLMChatMessage(em, messagesHistory, typingManager=typingManager)
+
+        assert outcome == LLMReplyOutcome.SENT
+        liveHandler.llmService.generateImage.assert_not_awaited()  # type: ignore[attr-defined]
+        liveHandler.sendMessage.assert_awaited_once()  # type: ignore[attr-defined]
+        assert liveHandler.sendMessage.call_args.kwargs["messageText"] == fullText  # type: ignore[attr-defined]
+
+    async def testNoTagPresentDoesNotExtract(self, liveHandler: LLMMessageHandler) -> None:
+        """Plain text with no tag → no extraction, message sent as-is.
+
+        ``hello world`` → no extraction, ``generateImage`` never called,
+        ``sendMessage`` called with ``messageText="hello world"``.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult("hello world")
+        )
+        liveHandler.llmService.generateImage = AsyncMock(return_value=_imageRunResult())  # type: ignore[method-assign]
+        em = _liveEnsuredMessage()
+        messagesHistory = [ModelMessage(role="user", content="test")]
+        typingManager = AsyncMock()
+
+        outcome = await liveHandler._sendLLMChatMessage(em, messagesHistory, typingManager=typingManager)
+
+        assert outcome == LLMReplyOutcome.SENT
+        liveHandler.llmService.generateImage.assert_not_awaited()  # type: ignore[attr-defined]
+        liveHandler.sendMessage.assert_awaited_once()  # type: ignore[attr-defined]
+        assert liveHandler.sendMessage.call_args.kwargs["messageText"] == "hello world"  # type: ignore[attr-defined]
+
+    async def testTwoTagsExtractsOnlyFirst(self, liveHandler: LLMMessageHandler) -> None:
+        """Two tags with first at start → only the first is extracted (intentional).
+
+        ``<media-description>foo</media-description>middle<media-description>bar</media-description>``
+        → the gate passes (``startswith``). The non-greedy ``group(2)`` stops at
+        the FIRST ``</media-description>``, so ``imagePrompt="foo"``. The
+        remaining text ``"middle<media-description>bar</media-description>"``
+        (second tag survives as literal text) is sent as the message. Only ONE
+        tag is handled per message — INTENTIONAL per the user.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult(
+                "<media-description>foo</media-description>middle<media-description>bar</media-description>"
+            )
+        )
+        liveHandler.llmService.generateImage = AsyncMock(return_value=_imageRunResult())  # type: ignore[method-assign]
+        em = _liveEnsuredMessage()
+        messagesHistory = [ModelMessage(role="user", content="test")]
+        typingManager = AsyncMock()
+
+        outcome = await liveHandler._sendLLMChatMessage(em, messagesHistory, typingManager=typingManager)
+
+        assert outcome == LLMReplyOutcome.SENT
+        liveHandler.llmService.generateImage.assert_awaited_once()  # type: ignore[attr-defined]
+        assert liveHandler.llmService.generateImage.call_args.args[0] == "foo"  # type: ignore[attr-defined]
+        liveHandler.sendMessage.assert_awaited_once()  # type: ignore[attr-defined]
+        assert (
+            liveHandler.sendMessage.call_args.kwargs["messageText"]  # type: ignore[attr-defined]
+            == "middle<media-description>bar</media-description>"
+        )

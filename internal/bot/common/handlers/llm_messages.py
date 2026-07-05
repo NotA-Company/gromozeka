@@ -342,15 +342,22 @@ class LLMMessageHandler(BaseBotHandler):
                     logger.debug("It wasn't JSON...")
                     logger.exception(e)
 
-            if lmRetText.strip().strip("`").strip().startswith("<media-description>"):
-                # Extract content in <media-description> tag to imagePrompt variable and strip from lmRetText
-                lmRetText = lmRetText.strip().strip("`").strip()
-                match = re.search(r"^<media-description>(.*?)</media-description>(.*?)", lmRetText, re.DOTALL)
+            trimmedText = lmRetText.strip().strip("`").strip()
+            if trimmedText.startswith("<media-description>") or trimmedText.endswith("</media-description>"):
+                # Extract content in <media-description> tag to imagePrompt variable and strip from lmRetText.
+                match = re.search(r"^(.*?)<media-description>(.*?)</media-description>(.*?)$", lmRetText, re.DOTALL)
                 if match:
-                    imagePrompt = match.group(1).strip()
-                    lmRetText = match.group(2).strip()
+                    imagePrompt = match.group(2).strip()
+                    lmRetText = match.group(1).strip() + match.group(3).strip()
                     logger.debug(
                         f"Found <media-description> in answer, generating image ('{imagePrompt}' + '{lmRetText}')"
+                    )
+                else:
+                    # Gate matched (e.g. stray trailing </media-description> without a valid open tag) but
+                    # the open+close pair wasn't found; leave imagePrompt=None and send text as-is.
+                    logger.debug(
+                        f"<media-description> gate matched but no valid open+close tag pair found; "
+                        f"sending text as-is: '{lmRetText}'"
                     )
 
         # TODO: Treat JSON format as well
@@ -365,8 +372,15 @@ class LLMMessageHandler(BaseBotHandler):
         # string won't match == "<skip>". Accepted v1 limitation (plan §3 non-goals
         # defer JSON-shape <skip> recognition). Only the random-answer prompt asks for
         # <skip>, but detecting it globally is safe — see plan §9 risk #2.
-        if lmRetText.strip().strip("`").strip() in ("<skip>", ""):
-            logger.debug("Model abstained (<skip>), not sending a reply")
+        # Gated on `imagePrompt is None`: a tag-only <media-description> request leaves
+        # lmRetText empty but sets imagePrompt, and that is NOT abstention — the image
+        # IS the response, so the sentinel must not fire in that case.
+        # The "" clause handles a model returning bare empty text (no image request,
+        # imagePrompt is None): e.g. reasoning-budget exhaustion producing an empty
+        # finish_reason="length" completion. Treating it as SKIPPED_BY_MODEL avoids a
+        # downstream "message text is empty" failure; intentional, not a bug.
+        if imagePrompt is None and lmRetText.strip().strip("`").strip() in ("<skip>", ""):
+            logger.debug("Model abstained (<skip>) or returned empty, not sending a reply")
             return LLMReplyOutcome.SKIPPED_BY_MODEL
 
         if imagePrompt is not None:
