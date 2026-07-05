@@ -56,6 +56,31 @@
 
 **IMPORTANT:** `bot_owners` can be username OR int ID — both are valid. Handle both types in owner checks
 
+#### `[bot.defaults]` LLM base prompts (`random-answer-prompt`, `chat-prompt`, `chat-prompt-suffix`)
+
+Core LLM system-prompt settings applied to `LLMMessageHandler` paths. Defined in [`internal/bot/models/chat_settings.py`](../../internal/bot/models/chat_settings.py); defaults under `[bot.defaults]` in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml).
+
+| `ChatSettingsKey` enum | Setting key | Type | Page | Notes |
+|---|---|---|---|---|
+| `CHAT_PROMPT` | `chat-prompt` | STRING | `LLM_BASE` | Base system prompt ("bot personality"). Used by all three LLM handler paths (`handleReply`, `handleMention`, `handleRandomMessage`). |
+| `CHAT_PROMPT_SUFFIX` | `chat-prompt-suffix` | STRING | `BOT_OWNER_SYSTEM` | Suffix appended to `chat-prompt` on every LLM path. Describes structured fields (`userSummary`, etc.) — do not change outside testing. |
+| `RANDOM_ANSWER_PROMPT` | `random-answer-prompt` | STRING | `LLM_BASE` | Extra system-prompt fragment appended **only inside `handleRandomMessage`** (both thread and non-thread assembly paths). Tells the model it is overhearing a chat rather than being addressed, and defines the `<skip>` abstention sentinel (see below). Never appended in `handleReply` / `handleMention`. |
+
+The default `random-answer-prompt` is a Russian triple-string (full text in [`bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml)); its key lines:
+- States the bot is **not** being addressed directly — it is one participant in an ongoing chat and merely saw the latest message in the feed.
+- Rules: no clarifying questions, no greeting/farewell without cause, join in only with something natural and brief, otherwise return exactly `<skip>`.
+
+##### `<skip>` abstention sentinel convention
+
+When the model decides it has nothing to add, it returns exactly `<skip>` (optionally surrounded by whitespace and/or backticks). Detection runs inside [`_sendLLMChatMessage`](../../internal/bot/common/handlers/llm_messages.py) — **after** `<media-description>` extraction, **before** the image-generation branch (so `<skip>` never triggers image generation). The JSON-unwrap that precedes it runs **only in TEXT-format chats** (a heuristic for models that emit JSON despite being asked for text), so a JSON-wrapped `{"text": "<skip>"}` abstains **only in TEXT-format chats**; in explicit JSON-format chats the raw JSON string won't match `== "<skip>"` and this path cannot abstain — an accepted v1 limitation (plan §3 non-goals defer JSON-shape `<skip>` recognition):
+
+```python
+if lmRetText.strip().strip("`").strip() == "<skip>":
+    return LLMReplyOutcome.SKIPPED_BY_MODEL
+```
+
+On `SKIPPED_BY_MODEL`, `handleRandomMessage` returns `False` → `newMessageHandler` falls through to `HandlerResultStatus.NEXT` (nothing is sent). Only `random-answer-prompt` asks for `<skip>`, but the check is global in `_sendLLMChatMessage`; see [`handlers.md`](handlers.md) "Random-answer context & model abstention" for the full `LLMReplyOutcome` plumbing.
+
 ### `[database]`
 
 | Key | Type | Purpose |

@@ -27,6 +27,7 @@ import random
 import re
 from collections import deque
 from collections.abc import Sequence
+from enum import StrEnum
 from typing import Optional
 
 import telegram
@@ -61,6 +62,40 @@ from lib.ai import (
 from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)
+
+
+class LLMReplyOutcome(StrEnum):
+    """Outcome of an LLM-driven reply attempt.
+
+    Used as the return type of :meth:`LLMMessageHandler._sendLLMChatMessage` so
+    callers can distinguish a model abstention (``SKIPPED_BY_MODEL``) from a real
+    send failure (``ERROR``).
+
+    Attributes:
+        SENT: Message was generated and sent successfully.
+        SKIPPED_BY_MODEL: Model returned the ``<skip>`` sentinel; no message
+            was sent. Expected only from ``handleRandomMessage`` (the sole path
+            that appends the random-answer prompt requesting ``<skip>``), but
+            detected globally inside ``_sendLLMChatMessage`` so any ``<skip>``
+            output abstains.
+        ERROR: Generation or send failed; an error notification has already
+            been logged.
+    """
+
+    SENT = "sent"
+    """Message was generated and sent successfully."""
+
+    SKIPPED_BY_MODEL = "skipped_by_model"
+    """Model returned the ``<skip>`` sentinel; no message was sent.
+
+    Expected only from ``handleRandomMessage`` (the only path that appends the
+    random-answer prompt requesting ``<skip>``), but detected globally inside
+    ``_sendLLMChatMessage`` so any model ``<skip>`` output abstains — see plan
+    §9 risk #2.
+    """
+
+    ERROR = "error"
+    """Generation or send failed; an error notification has already been logged."""
 
 
 class LLMMessageHandler(BaseBotHandler):
@@ -192,7 +227,7 @@ class LLMMessageHandler(BaseBotHandler):
         keepFirstN: int = 0,
         keepLastN: int = 1,
         maxTokensCoeff: float = 0.8,
-    ) -> bool:
+    ) -> LLMReplyOutcome:
         """Send a chat message to the LLM and handle the response.
 
         This method orchestrates the complete flow of sending a message to the LLM,
@@ -219,7 +254,11 @@ class LLMMessageHandler(BaseBotHandler):
             maxTokensCoeff (float, optional): Coefficient for calculating max tokens. Defaults to 0.8.
 
         Returns:
-            bool: True if message was sent successfully, False otherwise.
+            LLMReplyOutcome: ``SENT`` if the message was generated and sent
+                successfully, ``SKIPPED_BY_MODEL`` if the model returned the
+                ``<skip>`` abstention sentinel (so no message was sent), or
+                ``ERROR`` if generation or sending failed (an error
+                notification has already been logged/emitted by this method).
         """
         # For logging purposes
         messageHistoryStr = ""
@@ -267,7 +306,7 @@ class LLMMessageHandler(BaseBotHandler):
                 messageCategory=MessageCategory.BOT_ERROR,
                 typingManager=typingManager if stopTypingOnSend else None,
             )
-            return False
+            return LLMReplyOutcome.ERROR
 
         addPrefix = ""
         if mlRet.isFallback:
@@ -317,6 +356,19 @@ class LLMMessageHandler(BaseBotHandler):
         # TODO: Treat JSON format as well
 
         # TODO: Add separate method for generating+sending photo
+
+        # Abstention sentinel: model declined to participate. Checked BEFORE the
+        # image-gen branch (so <skip> never triggers image generation). The JSON-unwrap
+        # above runs ONLY in TEXT format (heuristic for models that emit JSON despite
+        # being asked for text), so a JSON-wrapped {"text": "<skip>"} abstains in
+        # TEXT-format chats but NOT in explicit JSON-format chats — there the raw JSON
+        # string won't match == "<skip>". Accepted v1 limitation (plan §3 non-goals
+        # defer JSON-shape <skip> recognition). Only the random-answer prompt asks for
+        # <skip>, but detecting it globally is safe — see plan §9 risk #2.
+        if lmRetText.strip().strip("`").strip() in ("<skip>", ""):
+            logger.debug("Model abstained (<skip>), not sending a reply")
+            return LLMReplyOutcome.SKIPPED_BY_MODEL
+
         if imagePrompt is not None:
             typingManager.action = TypingAction.UPLOAD_PHOTO
             await typingManager.sendTypingAction()
@@ -334,7 +386,7 @@ class LLMMessageHandler(BaseBotHandler):
                 imgAddPrefix = ""
                 if imgMLRet.isFallback:
                     imgAddPrefix = chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr()
-                return (
+                sendSucceeded = (
                     await self.sendMessage(
                         ensuredMessage,
                         photoData=imgMLRet.mediaData,
@@ -346,11 +398,12 @@ class LLMMessageHandler(BaseBotHandler):
                     )
                     is not None
                 )
+                return LLMReplyOutcome.SENT if sendSucceeded else LLMReplyOutcome.ERROR
 
             # Something went wrong, log and fallback to ordinary message
             logger.error(f"Failed to generate Image by prompt '{imagePrompt}': {imgMLRet}")
 
-        return (
+        sendSucceeded = (
             await self.sendMessage(
                 ensuredMessage,
                 messageText=lmRetText,
@@ -361,6 +414,7 @@ class LLMMessageHandler(BaseBotHandler):
             )
             is not None
         )
+        return LLMReplyOutcome.SENT if sendSucceeded else LLMReplyOutcome.ERROR
 
     ###
     # Handling messages
@@ -523,13 +577,16 @@ class LLMMessageHandler(BaseBotHandler):
                     await ensuredMessage.toModelMessage(self.db, format=llmMessageFormat, role="user"),
                 ]
 
-            if not await self._sendLLMChatMessage(
-                ensuredMessage,
-                reqMessages,
-                typingManager=typingManager,
-                keepFirstN=0,
-                keepLastN=2,  # Last message + message it is reply to
-                maxTokensCoeff=0.8,
+            if (
+                await self._sendLLMChatMessage(
+                    ensuredMessage,
+                    reqMessages,
+                    typingManager=typingManager,
+                    keepFirstN=0,
+                    keepLastN=2,  # Last message + message it is reply to
+                    maxTokensCoeff=0.8,
+                )
+                != LLMReplyOutcome.SENT
             ):
                 logger.error("Failed to send LLM reply")
 
@@ -665,7 +722,10 @@ class LLMMessageHandler(BaseBotHandler):
                 ),
             )
 
-            if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, typingManager=typingManager):
+            if (
+                await self._sendLLMChatMessage(ensuredMessage, reqMessages, typingManager=typingManager)
+                != LLMReplyOutcome.SENT
+            ):
                 logger.error("Failed to send LLM reply")
                 return False
 
@@ -741,6 +801,20 @@ class LLMMessageHandler(BaseBotHandler):
                 storedMessages = await self.getThreadByMessageForLLM(ensuredMessage=ensuredMessage)
                 # In case of condensing, keep message, last message is answer to
                 keepLastMessagesN += 1
+                # Append the random-answer context fragment to the leading system message.
+                # `getThreadByMessageForLLM` returns a fresh list whose first element is the
+                # system message by construction; we rebind locally (the list is not shared)
+                # rather than mutate, since the declared type is Sequence[ModelMessage].
+                if storedMessages and storedMessages[0].role == "system":
+                    storedMessages = [
+                        ModelMessage(
+                            role="system",
+                            content=storedMessages[0].content
+                            + "\n"
+                            + chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROMPT].toStr(),
+                        ),
+                        *storedMessages[1:],
+                    ]
 
             if not storedMessages:
                 # Not a thread, get last messages for context
@@ -749,7 +823,9 @@ class LLMMessageHandler(BaseBotHandler):
                         role="system",
                         content=chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr()
                         + "\n"
-                        + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
+                        + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr()
+                        + "\n"
+                        + chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROMPT].toStr(),
                     ),
                 ]
                 # We need to use deque as we add messages to begin of queue (to not reverse db result)
@@ -819,15 +895,19 @@ class LLMMessageHandler(BaseBotHandler):
                     storedMessages.extend(contextMessages)
                 storedMessages.extend(await ensuredMessage.toModelMessageList(self.db, format=llmMessageFormat))
 
-            if not await self._sendLLMChatMessage(
+            outcome = await self._sendLLMChatMessage(
                 ensuredMessage,
                 storedMessages,
                 typingManager=typingManager,
                 keepFirstN=keepFirstMessagesN,
                 keepLastN=keepLastMessagesN,
                 maxTokensCoeff=maxTokensCoeff,
-            ):
+            )
+            if outcome == LLMReplyOutcome.ERROR:
                 logger.error("Failed to send LLM reply")
+                return False
+            if outcome == LLMReplyOutcome.SKIPPED_BY_MODEL:
+                logger.debug("Model declined to participate in the discussion")
                 return False
 
             return True

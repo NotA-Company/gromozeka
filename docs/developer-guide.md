@@ -413,6 +413,7 @@ chat-model = "openrouter/mistral-7b-instruct:free"
 fallback-model = "openrouter/gemma-3-12b-it:free"
 summary-model = "openrouter/gemma-3-12b-it:free"
 chat-prompt = "You are a helpful assistant..."
+random-answer-prompt = """..."""   # Appended only in handleRandomMessage; defines the <skip> abstention sentinel
 ```
 
 #### `[bot.private-defaults]`, `[bot.group-defaults]`, `[bot.channel-defaults]`

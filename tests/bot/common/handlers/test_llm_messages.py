@@ -1,26 +1,38 @@
-"""Tests for the bot-answer probability gate in :class:`LLMMessageHandler`.
+"""Tests for :class:`LLMMessageHandler`.
 
-When a message arrives from a sender whose username ends with ``"bot"`` (i.e.
-likely another bot), ``newMessageHandler`` consults the per-chat
-``BOT_ANSWER_PROBABILITY`` setting and probabilistically skips the message:
+Two feature areas are covered, each in its own class:
 
-* ``0.0`` — never answer bots (always ``SKIPPED``),
-* ``1.0`` — always answer bots (never skipped),
-* anything in between — answer with that probability.
+* :class:`TestBotAnswerProbabilityGate` — the ``BOT_ANSWER_PROBABILITY`` gate
+  in ``newMessageHandler``. When a message arrives from a sender whose username
+  ends with ``"bot"`` (likely another bot), the handler consults the per-chat
+  ``BOT_ANSWER_PROBABILITY`` setting and probabilistically skips the message:
 
-This module exercises the gate in isolation: the downstream handlers
-(``handleReply`` / ``handleMention`` / ``handleRandomMessage``) are stubbed so
-the gate is the only logic under test. ``BotProvider.MAX`` is used so the
-Telegram-only ``is_automatic_forward`` branch is skipped (the gate itself is
-provider-agnostic).
+  * ``0.0`` — never answer bots (always ``SKIPPED``),
+  * ``1.0`` — always answer bots (never skipped),
+  * anything in between — answer with that probability.
+
+  The downstream handlers (``handleReply`` / ``handleMention`` /
+  ``handleRandomMessage``) are stubbed so the gate is the only logic under test.
+  ``BotProvider.MAX`` is used so the Telegram-only ``is_automatic_forward``
+  branch is skipped.
+
+* :class:`TestRandomAnswerPromptAndSkipSentinel` — the random-answer-context
+  feature: the ``RANDOM_ANSWER_PROMPT`` system-message fragment (appended only
+  inside ``handleRandomMessage``) and the ``<skip>`` abstention sentinel
+  (``LLMReplyOutcome.SKIPPED_BY_MODEL``). These tests drive the real
+  ``handleRandomMessage`` / ``handleReply`` / ``handleMention`` /
+  ``_sendLLMChatMessage`` code paths with only leaf dependencies mocked.
 """
 
+import contextlib
+import datetime
+from collections.abc import Awaitable, Callable, Sequence
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from internal.bot.common.handlers.base import HandlerResultStatus
-from internal.bot.common.handlers.llm_messages import LLMMessageHandler
+from internal.bot.common.handlers.llm_messages import LLMMessageHandler, LLMReplyOutcome
 from internal.bot.models import (
     BotProvider,
     ChatSettingsDict,
@@ -28,6 +40,7 @@ from internal.bot.models import (
     ChatSettingsValue,
     ChatType,
     EnsuredMessage,
+    MentionCheckResult,
     MessageRecipient,
     MessageSender,
 )
@@ -35,6 +48,7 @@ from internal.models import MessageId
 from internal.services.cache.service import CacheService
 from internal.services.queue_service.service import QueueService
 from internal.services.storage.service import StorageService
+from lib.ai import ModelMessage, ModelResultStatus, ModelRunResult
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -322,3 +336,466 @@ class TestBotAnswerProbabilityGate:
 
         assert result is HandlerResultStatus.NEXT
         handler.handleReply.assert_awaited_once()  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Random-answer context + <skip> abstainment
+#
+# The fixtures/helpers above target the probability gate only. The tests below
+# exercise the real handleRandomMessage / handleReply / handleMention /
+# _sendLLMChatMessage code paths: the three handlers are left LIVE and only
+# leaf dependencies (getChatSettings, startTyping, sendMessage, isAdmin,
+# llmService.generateTextViaLLM / generateImage, db.chatMessages) are mocked.
+# ---------------------------------------------------------------------------
+
+#: Distinctive substring embedded in the test RANDOM_ANSWER_PROMPT value so
+#: assertions can confirm the fragment was (or was not) appended to the system
+#: message. Carries a slice of the real Russian default for realism.
+RANDOM_PROMPT_MARKER: str = "СЕЙЧАС К ТЕБЕ НЕ ОБРАЩАЮТСЯ [TEST-RANDOM-MARKER]"
+
+
+def _fullChatSettings(
+    *,
+    randomAnswerProbability: float = 1.0,
+    llmMessageFormat: str = "text",
+) -> ChatSettingsDict:
+    """Build a chat-settings dict covering every key the non-condensing paths read.
+
+    A sparse dict raises ``KeyError`` because production code indexes
+    ``chatSettings[KEY]`` directly (see the "Chat Settings Must Be Complete
+    Dicts" note). This helper covers every ``ChatSettingsKey`` read on the
+    non-condensing paths exercised by the tests below
+    (``handleRandomMessage``'s non-condensing branch, ``handleReply``,
+    ``handleMention``, ``_sendLLMChatMessage``). The condensing branch
+    (``CHAT_MODEL``, ``CONDENSING_MODEL``, ``CONDENSING_PROMPT``,
+    ``CONDENSING_SYSTEM_PROMPT``) is intentionally omitted because no test
+    here triggers it.
+
+    Args:
+        randomAnswerProbability: Value for ``RANDOM_ANSWER_PROBABILITY`` (the
+            random-roll threshold). Defaults to ``1.0`` (always answer).
+        llmMessageFormat: Value for ``LLM_MESSAGE_FORMAT``. Defaults to
+            ``"text"`` so the JSON-unwrap branch in ``_sendLLMChatMessage``
+            runs (needed by the JSON-wrapped ``<skip>`` test).
+
+    Returns:
+        A complete :class:`ChatSettingsDict` with deterministic test values.
+    """
+    return {
+        ChatSettingsKey.RANDOM_ANSWER_PROBABILITY: ChatSettingsValue(str(randomAnswerProbability)),
+        ChatSettingsKey.RANDOM_ANSWER_TO_ADMIN: ChatSettingsValue("true"),
+        ChatSettingsKey.RANDOM_ANSWER_PROMPT: ChatSettingsValue(RANDOM_PROMPT_MARKER),
+        ChatSettingsKey.CHAT_PROMPT: ChatSettingsValue("CHAT_PROMPT_BASE"),
+        ChatSettingsKey.CHAT_PROMPT_SUFFIX: ChatSettingsValue("CHAT_PROMPT_SUFFIX_BASE"),
+        ChatSettingsKey.LLM_MESSAGE_FORMAT: ChatSettingsValue(llmMessageFormat),
+        ChatSettingsKey.USE_TOOLS: ChatSettingsValue("false"),
+        ChatSettingsKey.ALLOW_SANDBOX: ChatSettingsValue("false"),
+        ChatSettingsKey.FALLBACK_HAPPENED_PREFIX: ChatSettingsValue(""),
+        ChatSettingsKey.TOOLS_USED_PREFIX: ChatSettingsValue(""),
+        ChatSettingsKey.INTERMEDIATE_MESSAGE_PREFIX: ChatSettingsValue(""),
+        ChatSettingsKey.ALLOW_REPLY: ChatSettingsValue("true"),
+        ChatSettingsKey.ALLOW_MENTION: ChatSettingsValue("true"),
+        ChatSettingsKey.BOT_NICKNAMES: ChatSettingsValue(""),
+        ChatSettingsKey.BOT_ANSWER_PROBABILITY: ChatSettingsValue("1.0"),
+    }
+
+
+def _liveEnsuredMessage(
+    *,
+    chatId: int = -100,
+    senderId: int = 7,
+    senderName: str = "Alice",
+    isReply: bool = False,
+) -> EnsuredMessage:
+    """Build a real :class:`EnsuredMessage` for live-handler tests.
+
+    Unlike ``_makeEnsuredMessage`` (which returns a spec mock for the gate
+    tests), this returns a fully constructed :class:`EnsuredMessage` so the
+    real ``handle*`` methods can read ``recipient`` / ``sender`` / ``messageId``
+    / ``replyId`` / ``threadId`` / ``metadata``. Per-test code mocks the few
+    methods that would otherwise touch the DB (``toModelMessageList``,
+    ``updateMediaContent``, ``toModelMessage``, ``getEnsuredRepliedToMessage``).
+
+    Args:
+        chatId: Recipient chat id (negative → group).
+        senderId: Sender user id.
+        senderName: Sender display name.
+        isReply: If True, mark the message as a reply (sets ``replyId``).
+
+    Returns:
+        A constructed :class:`EnsuredMessage`.
+    """
+    em = EnsuredMessage(
+        sender=MessageSender(id=senderId, name=senderName, username="@alice"),
+        recipient=MessageRecipient(id=chatId, chatType=ChatType.GROUP),
+        messageId=42,
+        date=datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc),
+        messageText="hello world",
+    )
+    if isReply:
+        em.isReply = True
+        em.replyId = MessageId(55)
+    return em
+
+
+def _modelRunResult(resultText: str) -> ModelRunResult:
+    """Build a :class:`ModelRunResult` with ``FINAL`` status and given text.
+
+    Args:
+        resultText: The ``resultText`` the mocked LLM "returned".
+
+    Returns:
+        A ``ModelRunResult`` with ``isFallback``/``isToolsUsed`` False and no
+        tool-usage history (the paths under test do not exercise those branches).
+    """
+    return ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText=resultText)
+
+
+def _typingCtxManager() -> AsyncMock:
+    """Build a double usable as ``async with await startTyping(...) as tm``.
+
+    The ``handle*`` methods open a typing context. The returned object is an
+    ``AsyncMock`` whose ``__aenter__`` yields a typing-manager ``AsyncMock``.
+
+    Returns:
+        An async-context-manager mock.
+    """
+    typingManager = AsyncMock()
+    ctx = AsyncMock()
+    ctx.__aenter__ = AsyncMock(return_value=typingManager)
+    ctx.__aexit__ = AsyncMock(return_value=None)
+    return ctx
+
+
+def _captureGenerate(
+    resultText: str,
+) -> tuple[Callable[..., Awaitable[ModelRunResult]], dict[str, Sequence[ModelMessage]]]:
+    """Build a generateTextViaLLM double that captures its messages arg.
+
+    Args:
+        resultText: The ``resultText`` the double returns.
+
+    Returns:
+        A ``(generate, captured)`` pair. After the handler runs, ``captured``
+        holds key ``"messages"`` → the ``Sequence[ModelMessage]`` passed to the
+        LLM as the first positional argument.
+    """
+    captured: dict[str, Sequence[ModelMessage]] = {}
+
+    async def generate(messages: Sequence[ModelMessage], *args: object, **kwargs: object) -> ModelRunResult:
+        captured["messages"] = messages
+        return _modelRunResult(resultText)
+
+    return generate, captured
+
+
+@pytest.fixture
+def liveHandler(mockConfig: Mock) -> LLMMessageHandler:
+    """Construct an :class:`LLMMessageHandler` with leaf deps mocked, handlers LIVE.
+
+    Unlike the ``handler`` fixture (which stubs ``handleReply`` /
+    ``handleMention`` / ``handleRandomMessage`` to exercise only the gate), this
+    fixture leaves the three handlers un-stubbed so tests can drive the real
+    prompt-assembly and ``<skip>``-sentinel code. Only leaf dependencies are
+    mocked: ``getChatSettings``, ``startTyping``, ``sendMessage``, ``isAdmin``,
+    ``llmService.generateImage``, and the ``db.chatMessages`` repository.
+
+    Per-test code overrides ``llmService.generateTextViaLLM`` and, where
+    needed, ``getThreadByMessageForLLM`` / ``getBotId`` / ``checkEMMentionsMe``.
+
+    Args:
+        mockConfig: Shared ``ConfigManager`` spec mock fixture.
+
+    Returns:
+        A handler wired for live-path testing.
+    """
+    # Plain Mock (not spec=Database) is deliberate: ``chatMessages`` is an
+    # instance attribute set in ``Database.__init__``, so ``Mock(spec=Database)``
+    # rejects accessing it, and ``handleRandomMessage`` reads
+    # ``db.chatMessages.getChatMessagesSince``.
+    mockDb = Mock()
+    mockDb.chatMessages.getChatMessagesSince = AsyncMock(return_value=[])
+    with (
+        patch.object(CacheService, "getInstance", return_value=Mock()),
+        patch.object(QueueService, "getInstance", return_value=Mock()),
+        patch.object(StorageService, "getInstance", return_value=Mock()),
+    ):
+        h = LLMMessageHandler(  # type: ignore[call-arg]
+            configManager=mockConfig,
+            database=mockDb,
+            botProvider=BotProvider.MAX,
+        )
+    h.getChatSettings = AsyncMock(return_value=_fullChatSettings())  # type: ignore[method-assign]
+    h.startTyping = AsyncMock(return_value=_typingCtxManager())  # type: ignore[method-assign]
+    h.isAdmin = AsyncMock(return_value=False)  # type: ignore[method-assign]
+    h.sendMessage = AsyncMock(return_value=[Mock()])  # type: ignore[method-assign]
+    h.llmService.generateImage = AsyncMock()  # type: ignore[method-assign]
+    return h
+
+
+def _wireRandomPath(
+    handler: LLMMessageHandler,
+    *,
+    isReply: bool = False,
+    threadSystem: str = "BASE SYSTEM",
+) -> tuple[EnsuredMessage, contextlib.ExitStack]:
+    """Mock the handleRandomMessage-specific leaves and return an :class:`EnsuredMessage`.
+
+    ``EnsuredMessage`` uses ``__slots__``, so its methods cannot be overridden
+    on an instance. The ``toModelMessageList`` method is therefore patched at
+    class level inside an :class:`contextlib.ExitStack`; the caller must keep the
+    stack entered (``with stack:``) for the duration of the handler call.
+
+    Args:
+        handler: The live handler fixture.
+        isReply: If True, set ``replyId`` and mock ``getThreadByMessageForLLM``
+            so the thread assembly path runs.
+        threadSystem: Content of the leading system message returned by the
+            mocked ``getThreadByMessageForLLM`` (thread path only).
+
+    Returns:
+        A ``(em, stack)`` pair: the :class:`EnsuredMessage` ready for the
+        random-answer path, and an entered :class:`contextlib.ExitStack` that
+        restores the patched methods on exit.
+    """
+    em = _liveEnsuredMessage(isReply=isReply)
+    stack = contextlib.ExitStack()
+    stack.enter_context(patch.object(EnsuredMessage, "toModelMessageList", AsyncMock(return_value=[])))
+    if isReply:
+        handler.getThreadByMessageForLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=[ModelMessage(role="system", content=threadSystem)]
+        )
+    return em, stack
+
+
+def _wireReplyPath(
+    handler: LLMMessageHandler, *, threadSystem: str = "BASE SYSTEM"
+) -> tuple[EnsuredMessage, contextlib.ExitStack]:
+    """Mock the handleReply-specific leaves and return a reply :class:`EnsuredMessage`.
+
+    ``updateMediaContent`` and ``getEnsuredRepliedToMessage`` are patched at
+    class level (see :func:`_wireRandomPath` for the ``__slots__`` rationale).
+
+    Args:
+        handler: The live handler fixture.
+        threadSystem: Content of the leading system message returned by the
+            mocked ``getThreadByMessageForLLM``.
+
+    Returns:
+        A ``(em, stack)`` pair: the reply :class:`EnsuredMessage` (configured so
+        ``isReplyToMyMessage`` is True) and an entered
+        :class:`contextlib.ExitStack`.
+    """
+    em = _liveEnsuredMessage(isReply=True)
+    replied = _liveEnsuredMessage(senderId=999, senderName="Bot")
+    stack = contextlib.ExitStack()
+    stack.enter_context(patch.object(EnsuredMessage, "getEnsuredRepliedToMessage", Mock(return_value=replied)))
+    stack.enter_context(patch.object(EnsuredMessage, "updateMediaContent", AsyncMock(return_value=None)))
+    handler.getThreadByMessageForLLM = AsyncMock(  # type: ignore[method-assign]
+        return_value=[ModelMessage(role="system", content=threadSystem)]
+    )
+    handler.getBotId = AsyncMock(return_value=999)  # type: ignore[method-assign]
+    return em, stack
+
+
+def _wireMentionPath(handler: LLMMessageHandler) -> tuple[EnsuredMessage, contextlib.ExitStack]:
+    """Mock the handleMention-specific leaves and return an :class:`EnsuredMessage`.
+
+    ``toModelMessage`` is patched at class level (see :func:`_wireRandomPath`
+    for the ``__slots__`` rationale).
+
+    Args:
+        handler: The live handler fixture.
+
+    Returns:
+        A ``(em, stack)`` pair: the :class:`EnsuredMessage` that
+        ``checkEMMentionsMe`` reports as mentioning the bot, and an entered
+        :class:`contextlib.ExitStack`.
+    """
+    em = _liveEnsuredMessage()
+    handler.checkEMMentionsMe = AsyncMock(  # type: ignore[method-assign]
+        return_value=MentionCheckResult(byName=(0, 4), restText="hello there")
+    )
+    stack = contextlib.ExitStack()
+    stack.enter_context(
+        patch.object(
+            EnsuredMessage, "toModelMessage", AsyncMock(return_value=ModelMessage(role="user", content="hello there"))
+        )
+    )
+    return em, stack
+
+
+# ---------------------------------------------------------------------------
+# Tests: RANDOM_ANSWER_PROMPT wiring + <skip> sentinel
+# ---------------------------------------------------------------------------
+
+
+class TestRandomAnswerPromptAndSkipSentinel:
+    """Pin the RANDOM_ANSWER_PROMPT wiring and the ``<skip>`` abstention sentinel.
+
+    Covers the four behaviours introduced by the random-answer-context feature:
+
+    * ``RANDOM_ANSWER_PROMPT`` is appended to the system message inside
+      ``handleRandomMessage`` (both thread and non-thread assembly paths) and is
+      NOT appended inside ``handleReply`` / ``handleMention``.
+    * ``_sendLLMChatMessage`` returns ``LLMReplyOutcome.SKIPPED_BY_MODEL`` when
+      the model returns the ``<skip>`` sentinel (plain or JSON-wrapped), sends
+      nothing, and never triggers image generation.
+    * The return-type change from ``bool`` to ``LLMReplyOutcome`` does not
+      break the ``handleReply`` / ``handleMention`` / ``handleRandomMessage``
+      call sites on a normal answer.
+    """
+
+    async def testRandomAnswerPromptAppendedToSystemMessageNonThreadPath(self, liveHandler: LLMMessageHandler) -> None:
+        """Non-thread random answer: system message includes the prompt fragment.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        generate, captured = _captureGenerate("Привет!")
+        liveHandler.llmService.generateTextViaLLM = generate  # type: ignore[method-assign]
+        em, stack = _wireRandomPath(liveHandler, isReply=False)
+
+        with stack, patch("random.random", return_value=0.0):
+            result = await liveHandler.handleRandomMessage(em, Mock())
+
+        assert result is True
+        messages = captured["messages"]
+        assert RANDOM_PROMPT_MARKER in messages[0].content
+
+    async def testRandomAnswerPromptAppendedToSystemMessageThreadPath(self, liveHandler: LLMMessageHandler) -> None:
+        """Thread random answer: prompt is appended to the thread's system message.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        generate, captured = _captureGenerate("ok")
+        liveHandler.llmService.generateTextViaLLM = generate  # type: ignore[method-assign]
+        em, stack = _wireRandomPath(liveHandler, isReply=True, threadSystem="BASE SYSTEM")
+
+        with stack, patch("random.random", return_value=0.0):
+            result = await liveHandler.handleRandomMessage(em, Mock())
+
+        assert result is True
+        messages = captured["messages"]
+        assert "BASE SYSTEM" in messages[0].content
+        assert RANDOM_PROMPT_MARKER in messages[0].content
+
+    async def testRandomAnswerPromptNotAppendedToReply(self, liveHandler: LLMMessageHandler) -> None:
+        """handleReply must NOT receive the random-answer fragment.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        generate, captured = _captureGenerate("hi")
+        liveHandler.llmService.generateTextViaLLM = generate  # type: ignore[method-assign]
+        em, stack = _wireReplyPath(liveHandler, threadSystem="BASE SYSTEM")
+
+        with stack:
+            result = await liveHandler.handleReply(em, Mock())
+
+        assert result is True
+        messages = captured["messages"]
+        assert RANDOM_PROMPT_MARKER not in messages[0].content
+
+    async def testRandomAnswerPromptNotAppendedToMention(self, liveHandler: LLMMessageHandler) -> None:
+        """handleMention must NOT receive the random-answer fragment.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        generate, captured = _captureGenerate("hi")
+        liveHandler.llmService.generateTextViaLLM = generate  # type: ignore[method-assign]
+        em, stack = _wireMentionPath(liveHandler)
+
+        with stack:
+            result = await liveHandler.handleMention(em, Mock())
+
+        assert result is True
+        messages = captured["messages"]
+        assert RANDOM_PROMPT_MARKER not in messages[0].content
+
+    async def testSkipMarkerReturnsSkippedByModelAndNoMessageSent(self, liveHandler: LLMMessageHandler) -> None:
+        """Plain ``<skip>`` → ``SKIPPED_BY_MODEL`` and ``sendMessage`` untouched.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult("<skip>")
+        )
+        em = _liveEnsuredMessage()
+        messagesHistory = [ModelMessage(role="system", content="sys")]
+        typingManager = AsyncMock()
+
+        outcome = await liveHandler._sendLLMChatMessage(em, messagesHistory, typingManager=typingManager)
+
+        assert outcome == LLMReplyOutcome.SKIPPED_BY_MODEL
+        liveHandler.sendMessage.assert_not_awaited()  # type: ignore[attr-defined]
+        liveHandler.llmService.generateImage.assert_not_awaited()  # type: ignore[attr-defined]
+
+    async def testSkipMarkerAfterJsonUnwrap(self, liveHandler: LLMMessageHandler) -> None:
+        """JSON-wrapped ``{"text": "<skip>"}`` abstains after the unwrap branch.
+
+        Requires ``LLM_MESSAGE_FORMAT != JSON`` so the JSON-unwrap branch runs;
+        the ``liveHandler`` fixture defaults it to ``"text"``.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult('`{"text": "<skip>"}`')
+        )
+        em = _liveEnsuredMessage()
+        messagesHistory = [ModelMessage(role="system", content="sys")]
+        typingManager = AsyncMock()
+
+        outcome = await liveHandler._sendLLMChatMessage(em, messagesHistory, typingManager=typingManager)
+
+        assert outcome == LLMReplyOutcome.SKIPPED_BY_MODEL
+        liveHandler.sendMessage.assert_not_awaited()  # type: ignore[attr-defined]
+        liveHandler.llmService.generateImage.assert_not_awaited()  # type: ignore[attr-defined]
+
+    async def testNormalRandomAnswerStillWorks(self, liveHandler: LLMMessageHandler) -> None:
+        """A normal random answer is sent and ``handleRandomMessage`` returns True.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult("Привет!")
+        )
+        em, stack = _wireRandomPath(liveHandler, isReply=False)
+
+        with stack, patch("random.random", return_value=0.0):
+            result = await liveHandler.handleRandomMessage(em, Mock())
+
+        assert result is True
+        liveHandler.sendMessage.assert_awaited_once()  # type: ignore[attr-defined]
+
+    @pytest.mark.parametrize("path", ["reply", "mention"])
+    async def testExplicitAddressPathsStillSendOnNormalAnswer(self, liveHandler: LLMMessageHandler, path: str) -> None:
+        """handleReply/handleMention still send on a normal answer (return-type guard).
+
+        The ``_sendLLMChatMessage`` return type changed from ``bool`` to
+        ``LLMReplyOutcome``; both explicit-address paths must still treat a
+        normal answer as success and return ``True``.
+
+        Args:
+            liveHandler: Live handler fixture.
+            path: ``"reply"`` or ``"mention"``.
+        """
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult("sure")
+        )
+        if path == "reply":
+            em, stack = _wireReplyPath(liveHandler)
+            with stack:
+                result = await liveHandler.handleReply(em, Mock())
+        else:
+            em, stack = _wireMentionPath(liveHandler)
+            with stack:
+                result = await liveHandler.handleMention(em, Mock())
+
+        assert result is True
+        liveHandler.sendMessage.assert_awaited_once()  # type: ignore[attr-defined]

@@ -44,7 +44,7 @@
 | [`divination.py`](../../internal/bot/common/handlers/divination.py) | `DivinationHandler` | `/taro` & `/runes` readings (if `divination.enabled`) — includes layout discovery via LLM + web search |
 | [`sandbox.py`](../../internal/bot/common/handlers/sandbox.py) | `SandboxHandler` | Sandboxed Python code execution (if `sandbox.enabled` and `allow-sandbox` chat setting). Commands: `/run <code>` (alias: `/python`), `/sandbox files|read|status|install`. LLM tools: `run_python(code)`, `sandbox_list_files`, `sandbox_read_file`, `sandbox_send_file`, `sandbox_list_libraries`. Lifecycle: registers `CRON_JOB` (periodic GC) and `DO_EXIT` (graceful shutdown) delayed-task handlers; performs one-time `SandboxManager.recover()` on first cron tick to reconcile stale containers after restarts. |
 | [`chat_search.py`](../../internal/bot/common/handlers/chat_search.py) | `ChatSearchHandler` | Chat-history search (if `[search-history].enabled`). Commands: `/search [args]` (DSL of `keywords` / `user` / `days` / `category` / `thread` filters) — returns the matching messages as a raw, human-readable list (no LLM summary); `/users [limit=N] [min_messages=N] [last_active=N]` — lists chat participants with activity statistics. LLM tools: `search_messages(query, limit, max_age_days, user_name, thread_message_id)` — semantic search over chat history; `list_users(limit, min_messages)` — list participants with stats; `get_thread(message_id)` — retrieve full conversation thread. `newMessageHandler` is pass-through (`SKIPPED`); work runs via the command. Lifecycle: registers `CRON_JOB` (`_dtCronJob` — embedding backfill for chats with `EMBEDDINGS_ENABLED=true`, round-robin across enabled chats, default batch `BACKFILL_DEFAULT_BATCH_SIZE` messages) delayed-task handlers. There is no separate `BackfillWorker` class — backfill duty lives in this handler. |
-| [`llm_messages.py`](../../internal/bot/common/handlers/llm_messages.py) | `LLMMessageHandler` | **LAST** in chain; LLM responses. Wraps `LLMService.generateTextViaLLM` via `_generateTextViaLLM`, forwarding a `useTools` value (`bool \| dict[str, bool]`, type alias `UseToolsType`) that supports per-tool enable/disable with a `TOOLS_DEFAULT_DICT_KEY` fallback (see [`services.md`](services.md)). When constructing the dict form, use members of the `ToolName` StrEnum from [`internal.bot.constants`](../../internal/bot/constants.py) as keys (raw strings also work since `ToolName` is a `StrEnum`). Default `useTools` comes from the `USE_TOOLS` chat setting (`.toBool()` — callers wanting dict-level control must bypass the setting and pass a dict explicitly). **`newMessageHandler` gating order** (each gate can short-circuit with `SKIPPED`/`FINAL`): (1) **bot-sender probability gate** — if the sender's username ends with `bot`, the message is skipped unless a `random.random()` roll passes the `BOT_ANSWER_PROBABILITY` chat setting (default `0.05`); `0.0` = never answer bots. This gate runs **before** reply/mention, so even explicit replies or mentions from bot accounts are throttled — intentional, to prevent bot-to-bot reply loops; (2) `handleReply` (reply to a bot message); (3) `handleMention` (bot mentioned); (4) `handleRandomMessage` (`RANDOM_ANSWER_PROBABILITY`). |
+| [`llm_messages.py`](../../internal/bot/common/handlers/llm_messages.py) | `LLMMessageHandler` | **LAST** in chain; LLM responses. Wraps `LLMService.generateTextViaLLM` via `_generateTextViaLLM`, forwarding a `useTools` value (`bool \| dict[str, bool]`, type alias `UseToolsType`) that supports per-tool enable/disable with a `TOOLS_DEFAULT_DICT_KEY` fallback (see [`services.md`](services.md)). When constructing the dict form, use members of the `ToolName` StrEnum from [`internal.bot.constants`](../../internal/bot/constants.py) as keys (raw strings also work since `ToolName` is a `StrEnum`). Default `useTools` comes from the `USE_TOOLS` chat setting (`.toBool()` — callers wanting dict-level control must bypass the setting and pass a dict explicitly). **`newMessageHandler` gating order** (each gate can short-circuit with `SKIPPED`/`FINAL`): (1) **bot-sender probability gate** — if the sender's username ends with `bot`, the message is skipped unless a `random.random()` roll passes the `BOT_ANSWER_PROBABILITY` chat setting (default `0.05`); `0.0` = never answer bots. This gate runs **before** reply/mention, so even explicit replies or mentions from bot accounts are throttled — intentional, to prevent bot-to-bot reply loops; (2) `handleReply` (reply to a bot message); (3) `handleMention` (bot mentioned); (4) `handleRandomMessage` (`RANDOM_ANSWER_PROBABILITY`). `_sendLLMChatMessage` returns `LLMReplyOutcome` (`SENT` / `SKIPPED_BY_MODEL` / `ERROR`), not `bool` — callers compare `== LLMReplyOutcome.SENT`, never truthiness. `handleRandomMessage` additionally appends `RANDOM_ANSWER_PROMPT` to the system message (both thread and non-thread paths) and abstains on `SKIPPED_BY_MODEL` (see "Random-answer context & model abstention" below). |
 | [`example.py`](../../internal/bot/common/handlers/example.py) | `ExampleHandler` | Standalone reference example (not registered in handler chain) |
 | [`example_custom_handler.py`](../../internal/bot/common/handlers/example_custom_handler.py) | `ExampleCustomHandler` | Template for custom handlers |
 
@@ -92,6 +92,40 @@ Developer/debug commands available only to `BOT_OWNER` users.
   5. Streams intermediate results back to chat via callback
   6. Reports final summary: model, status, token counts, tool calls, elapsed time
 - **Related scripts:** `scripts/run_llm_debug_query.py` (CLI-based replay without tools), `scripts/convert_readable_to_llm_log.py` (YAML-to-JSON conversion)
+
+### Random-answer context & model abstention (`LLMMessageHandler`)
+
+`handleRandomMessage` (the `RANDOM_ANSWER_PROBABILITY` gate) is structurally different from `handleReply` / `handleMention`: the bot is joining an ongoing chat, not being directly addressed. Two pieces let the model behave accordingly:
+
+1. **`RANDOM_ANSWER_PROMPT` suffix.** In **both** system-message assembly paths inside `handleRandomMessage` the `RANDOM_ANSWER_PROMPT` chat setting (TOML key `random-answer-prompt`, page `LLM_BASE`; default in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml)) is appended to the existing `CHAT_PROMPT` + `CHAT_PROMPT_SUFFIX` system message:
+   - **Thread path** — after `getThreadByMessageForLLM(...)` returns, the leading system `ModelMessage` is rebuilt with the fragment appended (the returned list is fresh and not shared, so it is rebuilt rather than mutated).
+   - **Non-thread path** — the inline `ModelMessage(role="system", ...)` is constructed with `CHAT_PROMPT + CHAT_PROMPT_SUFFIX + RANDOM_ANSWER_PROMPT` in one content string.
+
+   `handleReply` and `handleMention` **never** append this fragment — they are explicit addresses and the bot always answers.
+
+2. **`<skip>` abstention sentinel.** The `random-answer-prompt` default tells the model: if it has nothing natural to add, return exactly `<skip>` (optionally surrounded by whitespace / backticks). Detection lives in `_sendLLMChatMessage`, **after** JSON-unwrap + `<media-description>` extraction and **before** the image-generation branch:
+   ```python
+   if lmRetText.strip().strip("`").strip() == "<skip>":
+       logger.debug("Model abstained (<skip>), not sending a reply")
+       return LLMReplyOutcome.SKIPPED_BY_MODEL
+   ```
+   Placing it after JSON-unwrap means a JSON-wrapped `{"text": "<skip>"}` also abstains; placing it before the image branch means `<skip>` never triggers image generation. Only `random-answer-prompt` requests `<skip>`, but detection is global in `_sendLLMChatMessage` (any `<skip>` output abstains) — see plan §9 risk #2.
+
+#### `LLMReplyOutcome` return type
+
+`_sendLLMChatMessage` returns [`LLMReplyOutcome`](../../internal/bot/common/handlers/llm_messages.py) (a `StrEnum`), not `bool`:
+
+| Member | Meaning |
+|---|---|
+| `SENT` | Message was generated and sent successfully. |
+| `SKIPPED_BY_MODEL` | Model returned the `<skip>` sentinel; nothing was sent. |
+| `ERROR` | Generation or send failed; the error notification has already been logged. |
+
+Call sites:
+- `handleRandomMessage` treats `SKIPPED_BY_MODEL` and `ERROR` identically — returns `False`, so `newMessageHandler` falls through to `HandlerResultStatus.NEXT` (as far as the rest of the chain is concerned, the bot didn't handle the message; `NEXT` rather than `SKIPPED` because the random path did run, it just chose to do nothing).
+- `handleReply` / `handleMention` compare `!= LLMReplyOutcome.SENT` to preserve their previous error-swallow / return-`False` semantics respectively. Those paths never trigger abstention (the prompt isn't appended there), so `SKIPPED_BY_MODEL` is unreachable from them in practice.
+
+**Callers must compare `== LLMReplyOutcome.SENT` explicitly — never use truthiness.** All three members are truthy strings.
 
 ---
 

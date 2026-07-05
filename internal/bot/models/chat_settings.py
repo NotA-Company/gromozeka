@@ -325,6 +325,8 @@ class ChatSettingsKey(StrEnum):
     """Main system prompt defining bot personality."""
     CHAT_PROMPT_SUFFIX = "chat-prompt-suffix"
     """Additional suffix appended to chat system prompt."""
+    RANDOM_ANSWER_PROMPT = "random-answer-prompt"
+    """Extra system-prompt fragment appended only in handleRandomMessage; defines the <skip> abstention sentinel."""
     CONDENSING_SYSTEM_PROMPT = "condensing-system-prompt"
     """System prompt defining the condensing model's identity and rules."""
     CONDENSING_PROMPT = "condensing-prompt"
@@ -690,6 +692,13 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "short": "Суффикс системного промпт для чата",
         "long": "Не стоит это изменять кроме как для тестовых целей.",
         "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
+    },
+    ChatSettingsKey.RANDOM_ANSWER_PROMPT: {
+        "type": ChatSettingsType.STRING,
+        "short": "Дополнительный промпт для случайных ответов",
+        "long": "Фрагмент системного промпта, добавляемый только в handleRandomMessage. "
+        "Объясняет модели, что к ней не обращаются напрямую, и задаёт sentinel <skip> для воздержания от ответа.",
+        "page": ChatSettingsPage.LLM_BASE,
     },
     ChatSettingsKey.CONDENSING_SYSTEM_PROMPT: {
         "type": ChatSettingsType.STRING,
