@@ -33,7 +33,6 @@ from internal.bot.models import (
     MessageSender,
     commandHandlerV2,
 )
-from internal.bot.models.user_metadata import UserMemoryThreadDict
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import ChatMessageDict, MessageCategory
@@ -41,12 +40,14 @@ from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
 from internal.services.cache import UserActiveActionEnum
 from internal.services.llm import LLMService
+from internal.services.llm.models import ExtraDataDict
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
 from lib.ai import (
     LLMFunctionParameter,
     LLMParameterType,
     ModelMessage,
 )
+from lib.ai.models import ModelRunResult
 
 from .base import BaseBotHandler, HandlerResultStatus
 
@@ -456,26 +457,6 @@ class UserDataHandler(BaseBotHandler):
                         if key not in self._lastRefinedTS:
                             self._lastRefinedTS[(chatId, userId, threadId)] = int(time.time())
 
-    async def _readMemoryEntry(self, chatId: int, userId: int, threadId: int) -> UserMemoryThreadDict:
-        """Read the per-thread memory-refinement entry from chat_users.metadata.
-
-        Reads the parsed metadata via ``cache.getUserMetadata`` (which reads the
-        cached chat_users row on hit and falls back to DB on miss), then looks up
-        ``memoryRefinement[str(threadId)]``. Returns an empty dict when the entry
-        is absent so callers can uniformly call ``.get(...)`` on the result.
-
-        Args:
-            chatId (int): Chat id.
-            userId (int): User id.
-            threadId (int): Thread id.
-
-        Returns:
-            UserMemoryThreadDict: The per-thread entry dict, or ``{}`` if absent.
-        """
-        metadata = await self.cache.getUserMetadata(chatId=chatId, userId=userId)
-        refinement = metadata.get("memoryRefinement", {})
-        return refinement.get(str(threadId), {})
-
     async def _runRefinement(self, chatId: int, userId: int, threadId: int) -> None:
         """Run one memory-refinement LLM pass for a (chat, user, thread).
 
@@ -496,9 +477,10 @@ class UserDataHandler(BaseBotHandler):
         if not chatSettings[ChatSettingsKey.MEMORY_REFINEMENT_ENABLED].toBool():
             return  # runtime-disabled since the due list was built
 
-        entry = await self._readMemoryEntry(chatId, userId, threadId)
-        existingSummary = entry.get("summary", "")
-        sinceDateTimeStr = entry.get("lastProcessedMessageDate")
+        userMetadata = await self.cache.getUserMetadata(chatId=chatId, userId=userId)
+        memoryRefinement = userMetadata.get("memoryRefinement", {}).get(str(threadId or DEFAULT_THREAD_ID), {})
+        existingSummary = memoryRefinement.get("summary", "")
+        sinceDateTimeStr = memoryRefinement.get("lastProcessedMessageDate")
         sinceDateTime: Optional[datetime.datetime] = None
         if sinceDateTimeStr:
             try:
@@ -542,24 +524,42 @@ class UserDataHandler(BaseBotHandler):
             messages=rendered,
         )
 
-        result = await self.llmService.generateTextViaLLM(
-            messages=[
-                ModelMessage(role="system", content=systemPrompt),
-                ModelMessage(role="user", content=userPrompt),
-            ],
-            chatId=None,  # skip rate-limiting for the background call
-            chatSettings=chatSettings,
-            modelKey=ChatSettingsKey.MEMORY_REFINE_MODEL,
-            fallbackModelKey=ChatSettingsKey.MEMORY_REFINE_FALLBACK_MODEL,
-            useTools={
-                ToolName.ADD_USER_DATA: True,
-                ToolName.DELETE_USER_DATA: True,
-                ToolName.SEARCH_MESSAGES: True,
-                ToolName.GET_CURRENT_DATETIME: True,
-            },
-            extraData={"ensuredMessage": synthEnsuredMessage, "typingManager": None},
+        async def intermediateCallback(res: ModelRunResult, extraData: ExtraDataDict) -> None:
+            logger.debug(f"IM# Refining memory of {chatId}:{userId}, thread:{threadId}. Result: {res}")
+
+        logger.debug(
+            f"Refining memory for {chatId}:{userId}, thread:{threadId} "
+            f"with {len(messages)} messages ({messages[0]['message_id']}..{messages[-1]['message_id']}). "
+            f"Previous summary: {existingSummary}"
         )
-        newSummary = (result.resultText or "").strip()
+        newSummary = ""
+        try:
+            result = await self.llmService.generateTextViaLLM(
+                messages=[
+                    ModelMessage(role="system", content=systemPrompt),
+                    ModelMessage(role="user", content=userPrompt),
+                ],
+                chatId=None,  # skip rate-limiting for the background call
+                chatSettings=chatSettings,
+                callback=intermediateCallback,
+                modelKey=ChatSettingsKey.MEMORY_REFINE_MODEL,
+                fallbackModelKey=ChatSettingsKey.MEMORY_REFINE_FALLBACK_MODEL,
+                useTools={
+                    ToolName.ADD_USER_DATA: True,
+                    ToolName.DELETE_USER_DATA: True,
+                    ToolName.SEARCH_MESSAGES: True,
+                    ToolName.GET_CURRENT_DATETIME: True,
+                },
+                extraData={"ensuredMessage": synthEnsuredMessage, "typingManager": None},
+            )
+
+            logger.debug(f"Result of refining memory for {chatId}:{userId}, thread:{threadId}: {result}")
+            newSummary = (result.resultText or "").strip()
+        except Exception as e:
+            logger.error(f"Error during refininm gemory of {chatId}:{userId}##{threadId}: {e}")
+            logger.exception(e)
+            return
+
         if not newSummary:
             logger.warning("Memory refinement produced empty summary for chatId=%s userId=%s", chatId, userId)
             return
