@@ -499,10 +499,13 @@ class TestAtomicWriteJson:
         assert loaded == {"version": 2}
 
     def testExceptionCleansUpTempFile(self, tmp_path: Path) -> None:
-        """If json.dump fails, the temp file is cleaned up.
+        """If json.dump fails, the temp file is cleaned up and its handle closed.
 
         Uses a circular reference which json.dump cannot serialise even
-        with default=str.
+        with default=str. Regression: before the fix, the open file handle
+        was leaked on failure (only the on-disk path was unlinked), surfacing
+        as ``ResourceWarning: Implicitly cleaning up _TemporaryFileWrapper``
+        on GC.
 
         Args:
             tmp_path: pytest-provided temporary directory.
@@ -510,19 +513,36 @@ class TestAtomicWriteJson:
         Returns:
             None
         """
+        import gc
+        import warnings
+
         circular: list[object] = []
         circular.append(circular)
         payload: dict = {"bad": circular}
 
         targetFile = tmp_path / "fail.json"
-        with pytest.raises(ValueError):
-            atomicWriteJson(targetFile, payload, tmpDir=tmp_path)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with pytest.raises(ValueError):
+                atomicWriteJson(targetFile, payload, tmpDir=tmp_path)
+            # Force GC so any leaked file handle surfaces as a ResourceWarning
+            # inside the catch_warnings block.
+            gc.collect()
 
         # Target file should not exist.
         assert not targetFile.exists()
         # No temp files should remain.
         tmpFiles = list(tmp_path.glob(".tmp-*.json"))
         assert len(tmpFiles) == 0
+        # Regression assertion: the open file handle must have been closed in
+        # the failure path, not just the on-disk file unlinked.
+        cleanupWarnings = [
+            w for w in caught if issubclass(w.category, ResourceWarning) and "Implicitly cleaning up" in str(w.message)
+        ]
+        assert not cleanupWarnings, (
+            "atomicWriteJson leaked the open temp file handle on failure: "
+            f"{[str(w.message) for w in cleanupWarnings]}"
+        )
 
 
 # ============================================================================

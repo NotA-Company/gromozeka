@@ -22,7 +22,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from internal.database import Database
 from internal.database.models import WebhookUpdatesRow
-from internal.max_webhook_receiver.app import SECRET_HEADER, createApp
+from internal.max_webhook_receiver.app import DATA_SOURCE_KEY, ENABLE_CLEANUP_KEY, SECRET_HEADER, createApp
 
 WEBHOOK_SECRET = "test-secret"
 """Shared secret used for the ``X-Max-Bot-Api-Secret`` header in POST tests."""
@@ -378,7 +378,7 @@ class TestDataSourceForwarding:
         """Omitting datasource stores None so the default provider is used."""
         mockDb = _makeMockDatabase()
         app = _buildApp(mockDb)
-        assert app["dataSource"] is None
+        assert app[DATA_SOURCE_KEY] is None
 
 
 class TestEnableCleanup:
@@ -394,10 +394,10 @@ class TestEnableCleanup:
         """createApp stores the enableCleanup flag (default True) in the app."""
         mockDb = _makeMockDatabase()
         appEnabled = _buildApp(mockDb)
-        assert appEnabled["enableCleanup"] is True
+        assert appEnabled[ENABLE_CLEANUP_KEY] is True
 
         appDisabled = _buildApp(mockDb, enableCleanup=False)
-        assert appDisabled["enableCleanup"] is False
+        assert appDisabled[ENABLE_CLEANUP_KEY] is False
 
     async def testCleanupTask_disabledSkipsDelete(self) -> None:
         """With enableCleanup=False, deleteProcessedOlderThan is never called."""

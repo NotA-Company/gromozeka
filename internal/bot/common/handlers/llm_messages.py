@@ -345,7 +345,10 @@ class LLMMessageHandler(BaseBotHandler):
             trimmedText = lmRetText.strip().strip("`").strip()
             if trimmedText.startswith("<media-description>") or trimmedText.endswith("</media-description>"):
                 # Extract content in <media-description> tag to imagePrompt variable and strip from lmRetText.
-                match = re.search(r"^(.*?)<media-description>(.*?)</media-description>(.*?)$", lmRetText, re.DOTALL)
+                # The regex runs against trimmedText (not lmRetText) so surrounding
+                # whitespace/backtick wrappers are not captured into group(1)/group(3)
+                # and the resulting messageText stays wrapper-free.
+                match = re.search(r"^(.*?)<media-description>(.*?)</media-description>(.*?)$", trimmedText, re.DOTALL)
                 if match:
                     imagePrompt = match.group(2).strip()
                     lmRetText = match.group(1).strip() + match.group(3).strip()

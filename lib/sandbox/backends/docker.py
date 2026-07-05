@@ -93,12 +93,30 @@ class DockerBackend(SandboxBackend):
                 self._client = None
 
         url = os.environ.get("DOCKER_HOST", self._config.baseUrl)
+        client: aiodocker.Docker | None = None
         try:
-            self._client = aiodocker.Docker(url=url)
-            await self._client.version()
+            client = aiodocker.Docker(url=url)
+            await client.version()
+            self._client = client
             logger.info("Connected to Docker at %s", url)
             return self._client
         except Exception as exc:
+            # ``aiodocker.Docker()`` opens an aiohttp ClientSession in its
+            # constructor. If ``version()`` then fails (e.g. the daemon is
+            # unreachable), that session is left dangling — close the
+            # partially-constructed client explicitly so the connector and
+            # session are released before we discard the reference.
+            if client is not None:
+                try:
+                    if hasattr(client, "session") and client.session is not None:
+                        if client.session.connector is not None:
+                            await client.session.connector.close()  # type: ignore[reportAttributeAccessIssue]
+                except Exception:
+                    pass
+                try:
+                    await client.close()
+                except Exception:
+                    pass
             self._client = None
             raise DockerUnavailable(f"Docker daemon unreachable at {url}: {exc}") from exc
 

@@ -437,6 +437,57 @@ class TestDockerBackendIntegration:
 
 
 # ============================================================================
+# Regression tests for partially-constructed client leak (no Docker required)
+# ============================================================================
+
+
+class TestGetClientClientSessionLeak:
+    """Regression tests for the aiohttp ClientSession leak in _getClient.
+
+    ``aiodocker.Docker()`` opens an aiohttp ``ClientSession`` in its
+    constructor. If ``version()`` then fails, the partially-constructed client
+    must be explicitly closed — otherwise the session is orphaned and Python
+    emits ``ResourceWarning: Unclosed client session`` on GC. This was a real
+    production leak: every failed Docker connection attempt (e.g. in
+    environments without Docker) leaked a session.
+    """
+
+    @pytest.mark.asyncio
+    async def testFailedGetClientClosesPartiallyConstructedClient(self) -> None:
+        """Forcing version() to fail must still close the constructed Docker client.
+
+        Replaces ``aiodocker.Docker`` with a mock whose ``version`` raises, then
+        asserts ``close()`` is awaited on the partially-constructed instance
+        before ``DockerUnavailable`` propagates. Before the fix, the except
+        branch discarded the reference without closing, leaking the underlying
+        aiohttp ``ClientSession``.
+
+        Returns:
+            None
+        """
+        mockClient = AsyncMock()
+        mockClient.version = AsyncMock(side_effect=RuntimeError("daemon unreachable"))
+        mockClient.close = AsyncMock()
+        mockClient.session = MagicMock()
+        mockClient.session.connector = MagicMock()
+        mockClient.session.connector.close = AsyncMock()
+
+        backend = DockerBackend(DockerBackendConfig(baseUrl="http://nonexistent:2375"))
+
+        with patch("lib.sandbox.backends.docker.aiodocker.Docker", return_value=mockClient):
+            with pytest.raises(DockerUnavailable):
+                await backend._getClient()
+
+        # The partially-constructed client MUST be closed so its aiohttp
+        # ClientSession is not orphaned. Both the connector and the client
+        # itself should be closed (mirroring the success-path close()).
+        mockClient.session.connector.close.assert_awaited_once()
+        mockClient.close.assert_awaited_once()
+        # And _client must be left None so a subsequent call retries cleanly.
+        assert backend._client is None
+
+
+# ============================================================================
 # Regression tests for container leak fix (no Docker required)
 # ============================================================================
 

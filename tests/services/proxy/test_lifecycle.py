@@ -123,11 +123,36 @@ class TestProxyLifecycle:
         """stop() logs warning on timeout and returns without exception."""
         lifecycle = ProxyLifecycle("test", self._makeConfig(), self._makeProxyConfig())
 
+        def _consumeAndTimeout(awaitable: Any, *args: Any, **kwargs: Any) -> None:
+            """Patch side-effect for asyncio.wait_for that closes the awaited coroutine.
+
+            The real ``asyncio.wait_for`` consumes its awaitable before raising
+            ``TimeoutError``. A bare ``side_effect=asyncio.TimeoutError`` skips
+            consumption, so ``process.communicate()`` returns a coroutine that
+            is never awaited — Python emits a ``RuntimeWarning`` on GC. This
+            helper closes that coroutine before raising so the test exercises
+            the timeout path without leaking an un-awaited coroutine.
+
+            Args:
+                awaitable: The awaitable passed to ``asyncio.wait_for`` (here,
+                    the coroutine returned by ``process.communicate()``).
+                *args: Extra positional args from ``wait_for`` (ignored).
+                **kwargs: Extra keyword args from ``wait_for`` (e.g. ``timeout``;
+                    ignored).
+
+            Raises:
+                asyncio.TimeoutError: Always, mimicking a timed-out wait_for.
+            """
+            close = getattr(awaitable, "close", None)
+            if close is not None:
+                close()
+            raise asyncio.TimeoutError
+
         with (
             patch("internal.services.proxy.lifecycle.asyncio.create_subprocess_exec") as mockCreate,
             patch(
                 "internal.services.proxy.lifecycle.asyncio.wait_for",
-                side_effect=asyncio.TimeoutError,
+                side_effect=_consumeAndTimeout,
             ),
         ):
             mockProcess = AsyncMock()
