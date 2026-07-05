@@ -504,3 +504,77 @@ Refinements adopted from the architect review (§14.C / §14.D):
 - **No `dirtyKeys` touching**: the new methods do not add to
   `self.dirtyKeys[CacheNamespace.CHAT_USERS]`; that set is never flushed because
   `CHAT_USERS` is `MEMORY_ONLY` (§14.D.5).
+
+---
+
+## §16 Post-review simplification
+
+**Status: SUPERSEDES §3 / §14 / §15 for the current contract.** Those earlier
+sections are retained verbatim as the historical design rationale; the
+simplifications below are the authoritative description of what shipped after the
+post-implementation review. Canonical reference: [`architecture.md`](../llm/architecture.md)
+ADR-015.
+
+### (a) `userInfo` dropped Optional + None-sentinel removed
+
+`HCChatUserCacheDict.userInfo` is now `NotRequired[ChatUserDict]` (non-Optional).
+The previous "cache `None` to mean loaded-but-absent" sentinel scheme (§14.D /
+§15) was removed: an absent DB row is no longer memoized. `getChatUser` returns
+`None` for a missing row and leaves the cache cold (no `userInfo` key set), so
+the next call re-queries the DB. Rationale: an absent `(chatId, userId)` row
+indicates something went wrong upstream (e.g. a message arrived before the row
+was seeded) and is not worth caching — the row is expected to appear shortly, and
+memoizing its absence would mask that. Presence-of-key is the sole "loaded"
+sentinel. This also keeps the field non-Optional and the cache entry shape
+simpler.
+
+### (b) `updateChatUser` cold path no longer warms
+
+The cold path of `updateChatUser` (cache miss on `userInfo`) now performs the DB
+upsert and returns WITHOUT warming the cache. The previous behaviour performed a
+re-read after the upsert to warm `userInfo` (§14.D). Rationale: the row may never
+be read again, and the next `getChatUser` lazy-loads it if ever needed, so the
+warming re-read is a wasted query on the write path. Warm-path behaviour is
+unchanged: on a cache hit with a changed value the cached row is mutated in place;
+on `if not ok: return` (DB failure) the cache is untouched.
+
+### (c) Spam micro-optimisation: `_getUserInfoFreshIfMessagesLessThan`
+
+The two spam gates (`checkSpam`, `markAsSpam`) no longer call
+`cache.getChatUser(..., refresh=True)` unconditionally. They route through the
+new helper `SpamHandler._getUserInfoFreshIfMessagesLessThan(chatId, userId,
+messagesCountThreshold)`, which:
+
+1. Reads the cached row via `cache.getChatUser(...)`.
+2. If the cached `messages_count` is **strictly less than** the threshold,
+   re-fetches via `cache.getChatUser(..., refresh=True)`; otherwise returns the
+   cached row as-is.
+
+Rationale: `messages_count` is monotonically non-decreasing (incremented by the
+raw SQL UPDATE in `ChatMessagesRepository.saveChatMessage` that bypasses the
+cache). A cached value at or above the threshold can only stay there or grow, so
+it remains valid for any `>=` / `>` gate; only a cached value below the threshold
+might have drifted up past it. The micro-optimization avoids a per-message DB hit
+for established users (who dominate the message volume) while preserving
+correctness for the gating decision.
+
+The two call sites pass different thresholds matching their gate direction:
+
+- **`checkSpam`** uses a `>=` gate (`userMessages >= maxCheckMessages`) and
+  passes `maxCheckMessages` unchanged. Boundary (`cached == maxCheckMessages`)
+  does NOT refresh — correct, because `>=` already trusts an at-threshold value.
+- **`markAsSpam`** uses a STRICT `>` gate (`userInfo["messages_count"] >
+  maxSpamMessages`) and passes `maxSpamMessages + 1`. Boundary
+  (`cached == maxSpamMessages`) DOES refresh (since `maxSpamMessages <
+  maxSpamMessages + 1`), closing the window where a stale-low cached value would
+  let an established user be falsely banned.
+
+Covered by `tests/bot/common/handlers/test_spam_microopt.py` (4 cases:
+at-or-above-threshold no-refresh, below-threshold refresh, cold-cache
+no-refresh, strict-`<` boundary + `markAsSpam` `+1` form).
+
+### (d) Canonical reference
+
+The full Decision / Why / trade-offs live in [`architecture.md`](../llm/architecture.md)
+ADR-015 (updated to this contract). This plan retains the historical §3 / §14 /
+§15 content unchanged; where they conflict with §16, §16 wins.

@@ -28,7 +28,7 @@ import logging
 import time
 from collections import OrderedDict
 from threading import RLock
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Type, cast
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Type
 
 import internal.database.utils as dbUtils
 from internal.bot.models.user_metadata import UserMetadataDict
@@ -1008,21 +1008,27 @@ class CacheService:
     async def getChatUser(self, chatId: int, userId: int, *, refresh: bool = False) -> Optional[ChatUserDict]:
         """Return the chat_users row for (chatId, userId), read-aside from the CHAT_USERS cache.
 
-        On cache miss or ``refresh=True``, falls back to ``db.chatUsers.getChatUser``,
-        stores the result (including None, which means "loaded, row absent") under the
-        cached entry's ``userInfo`` key, and returns a shallow copy. ``refresh=True``
-        always re-fetches from DB and overwrites the cached value.
+        On a cache hit (and ``refresh=False``) the cached row is returned as a defensive
+        shallow copy — no DB access. On a cache miss OR ``refresh=True``, the row is read
+        from ``db.chatUsers.getChatUser``: if found, it is stored under the cached entry's
+        ``userInfo`` key and a shallow copy is returned; if the row is ABSENT, ``None`` is
+        returned WITHOUT caching the absence (an absent row indicates something went wrong
+        upstream and is not worth memoizing — the next call re-queries the DB).
 
         Note: the cached row's ``messages_count`` is best-effort stale — the column is
         incremented by a raw SQL UPDATE inside
-        ``ChatMessagesRepository.saveChatMessage`` which bypasses this cache. Pass
-        ``refresh=True`` when an accurate count is required.
+        ``ChatMessagesRepository.saveChatMessage`` which bypasses this cache. Callers
+        needing an accurate count should prefer the conditional-refresh pattern (see
+        ``SpamHandler._getUserInfoFreshIfMessagesLessThan``, which refreshes only when
+        the cached count is below a threshold) over an unconditional ``refresh=True``;
+        the latter is available when an unconditional refresh is genuinely required.
 
         Args:
             chatId (int): Chat id.
             userId (int): User id.
             refresh (bool): If True, bypass the cache read and re-fetch from DB
-                (the fresh row is written back into the cache).
+                (a found row is written back into the cache; an absent row returns
+                None without evicting a previously-cached row).
 
         Returns:
             Optional[ChatUserDict]: A shallow copy of the cached row, or None if the
@@ -1034,20 +1040,23 @@ class CacheService:
             if not self.database:
                 return None
             row = await self.database.chatUsers.getChatUser(chatId=chatId, userId=userId)
+            if row is None:
+                return None
             userCache["userInfo"] = row
             self.chatUsers.set(userKey, userCache)
-            return row
-        cached = userCache["userInfo"]
-        return cached
+
+        return userCache["userInfo"].copy()
 
     async def updateChatUser(self, chatId: int, userId: int, username: str, fullName: str) -> None:
         """Write-through upsert of username/fullName with a skip-when-unchanged optimisation.
 
         If the cached row's username and full_name already equal the supplied values,
         skip the DB upsert entirely (and do not bump updated_at). Otherwise upsert via
-        ``db.chatUsers.updateChatUser`` and update the cached row in place. On cache
-        miss (userInfo key absent or None), perform the upsert unconditionally (the
-        row may not exist yet), then warm the cache by re-reading the row from DB.
+        ``db.chatUsers.updateChatUser`` and, on success, update the cached row in place
+        (username/full_name/updated_at). On cache miss (userInfo key absent) the upsert
+        still runs, but the cache is intentionally LEFT COLD — no re-read. Rationale: the
+        row may never be read again, and the next ``getChatUser`` lazy-loads it if needed,
+        so a warming re-read would be a wasted query on the write path.
 
         Args:
             chatId (int): Chat id.
@@ -1072,11 +1081,7 @@ class CacheService:
             cached["full_name"] = fullName
             cached["updated_at"] = dbUtils.getCurrentTimestamp()
             self.chatUsers.set(userKey, userCache)
-        else:
-            # Cold path: upsert doesn't return the row, so re-read to warm the cache.
-            row = await self.database.chatUsers.getChatUser(chatId=chatId, userId=userId)
-            userCache["userInfo"] = row
-            self.chatUsers.set(userKey, userCache)
+        # else: Cold path - do nothing, getChatUser will fetch from DB
 
     async def getUserMetadata(self, chatId: int, userId: int) -> UserMetadataDict:
         """Return the parsed metadata dict for (chatId, userId).
@@ -1113,7 +1118,7 @@ class CacheService:
         metadata writer MUST route through this method; a raw-DB bypass would silently
         desync the cache and corrupt subsequent merges.
 
-        On cold userInfo (key absent or None), the cache is left untouched — the next
+        On cold userInfo (key absent), the cache is left untouched — the next
         ``getChatUser`` lazy-loads the freshly-written row.
 
         Args:

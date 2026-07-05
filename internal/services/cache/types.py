@@ -138,14 +138,14 @@ class HCChatUserCacheDict(TypedDict):
         data: Dictionary containing user-specific data. Keys are string
             identifiers and values can be strings, lists of strings, or
             dictionaries with arbitrary data.
-        userInfo: The chat_users row for this (chatId, userId). None means
-            loaded-and-absent; key absent means not-yet-loaded (lazy on first
-            ``CacheService.getChatUser`` call).
+        userInfo: The chat_users row for this (chatId, userId).
     """
 
     data: NotRequired[UserDataType]
+    """Dictionary containing user-specific data/knowledge."""
 
-    userInfo: NotRequired[Optional[ChatUserDict]]
+    userInfo: NotRequired[ChatUserDict]
+    """Chat User info row for this (chatId, userId)."""
 
 
 class UserActiveActionEnum(StrEnum):

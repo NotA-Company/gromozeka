@@ -14,11 +14,12 @@ setting instance attributes that ``patch.object`` requires.
 Test areas:
 
 * cold miss / warm hit / refresh semantics of ``getChatUser`` (incl. the
-  ``None`` sentinel for "loaded, row absent")
+  absent-row-does-not-cache behaviour: an absent row returns None and leaves
+  the cache cold so the next call re-queries the DB)
 * defensive-copy invariant (``getChatUser`` returns a shallow copy)
 * skip-when-unchanged optimisation + in-place cache mutation of
   ``updateChatUser``
-* cold-path warm-via-re-read of ``updateChatUser``
+* cold-path of ``updateChatUser`` leaves the cache cold (no re-read warming)
 * parse round-trip of ``getUserMetadata`` / ``updateUserMetadata``
 * cold-write posture of ``updateUserMetadata`` (cache left cold)
 * nested-write safety (option (i) dumb primitives do not reintroduce the
@@ -174,10 +175,14 @@ async def test_getChatUser_refreshReFetchesEvenWhenWarm(testDatabase: Database, 
     assert row["username"] == "bob"
 
 
-async def test_getChatUser_absentRowReturnsNoneAndCachesSentinel(
+async def test_getChatUser_absentRowReturnsNoneAndDoesNotCache(
     testDatabase: Database, cacheService: CacheService
 ) -> None:
-    """A non-existent row returns None, caches None, and does not re-fetch.
+    """A non-existent row returns None and leaves the cache cold (absence not memoized).
+
+    An absent row indicates something went wrong upstream and is not worth memoizing:
+    the cache is left cold so the next call re-queries the DB. This replaces the old
+    None-sentinel contract that cached the absence to suppress repeat queries.
 
     Args:
         testDatabase: Real in-memory database.
@@ -186,15 +191,15 @@ async def test_getChatUser_absentRowReturnsNoneAndCachesSentinel(
     row = await cacheService.getChatUser(chatId=1, userId=999)
     assert row is None
 
+    # Cache left cold: no userInfo key set on the cached entry.
     userKey = cacheService._getChatUserKey(1, 999)
     cachedEntry = cacheService.chatUsers.get(userKey, {})
-    assert "userInfo" in cachedEntry
-    assert cachedEntry["userInfo"] is None
+    assert "userInfo" not in cachedEntry
 
-    # Second call must not re-query the DB.
+    # Second call re-queries the DB (absence is not memoized).
     with patch.object(ChatUsersRepository, "getChatUser", new=AsyncMock(return_value=None)) as spy:
         row2 = await cacheService.getChatUser(chatId=1, userId=999)
-        spy.assert_not_called()
+        spy.assert_called_once()
     assert row2 is None
 
 
@@ -246,8 +251,13 @@ async def test_updateChatUser_warmChangedMutatesCacheInPlace(
     assert row["updated_at"] >= originalUpdatedAt
 
 
-async def test_updateChatUser_coldUpsertsThenWarmsViaReRead(testDatabase: Database, cacheService: CacheService) -> None:
-    """Cold path performs the upsert then re-reads to warm the cache.
+async def test_updateChatUser_coldUpsertsAndLeavesCacheCold(testDatabase: Database, cacheService: CacheService) -> None:
+    """Cold path performs the upsert but intentionally leaves the cache cold (no re-read).
+
+    The row may never be read again, so a warming re-read would be a wasted query on
+    the write path; the next ``getChatUser`` lazy-loads if ever needed. Asserts the DB
+    upsert fires exactly once AND ``getChatUser`` is NOT called by the setter AND no
+    ``userInfo`` is populated.
 
     Args:
         testDatabase: Real in-memory database.
@@ -262,14 +272,18 @@ async def test_updateChatUser_coldUpsertsThenWarmsViaReRead(testDatabase: Databa
     ):
         await cacheService.updateChatUser(chatId=1, userId=2, username="alice", fullName="Alice")
         upsertSpy.assert_called_once()
-        getSpy.assert_called_once()  # re-read to warm
+        getSpy.assert_not_called()  # cold path does NOT re-read to warm
 
-    # Cache now warm.
+    # Cache still cold.
     userKey = cacheService._getChatUserKey(1, 2)
     cachedEntry = cacheService.chatUsers.get(userKey, {})
-    assert "userInfo" in cachedEntry
-    assert cachedEntry["userInfo"] is not None
-    assert cachedEntry["userInfo"]["username"] == "alice"
+    assert "userInfo" not in cachedEntry
+
+    # But the row landed in the DB, so a subsequent getChatUser lazy-loads it.
+    row = await cacheService.getChatUser(chatId=1, userId=2)
+    assert row is not None
+    assert row["username"] == "alice"
+    assert row["full_name"] == "Alice"
 
 
 async def test_updateChatUser_leavesCacheUntouchedOnDbFailure(
