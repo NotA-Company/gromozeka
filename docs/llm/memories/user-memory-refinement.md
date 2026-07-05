@@ -38,7 +38,7 @@ self._lastRefinedTS[(chatId, userId, threadId)] = int(time.time())
 
 The `chatUserMetadataLock()` context manager (a single process-global `asyncio.Lock` on `CacheService`, `_chatUsersMetadataLock`) serializes the full RMW so concurrent metadata writers (`setUserMetadata(isUpdate=True)` is the other one) cannot lose updates. Lock ordering inside the refinement flow: `_refineLock` (outer) → `chatUserMetadataLock` (inner) — see [`../architecture.md`](../architecture.md) ADR-014 / ADR-015.
 
-**Cache routing (2026-07-05, no behavior change):** `_readMemoryEntry`, `_persistMemoryEntry`, and `getUserMemorySummary` now read/write via `CacheService.getUserMetadata` / `updateUserMetadata` instead of `self.db.chatUsers.*`. The nested-write invariant above is preserved — `updateUserMetadata` does a full-dict replace with NO merge, so the explicit full-read + nested-mutate + full-write pattern is unchanged. See [`../architecture.md`](../architecture.md) ADR-015.
+**Cache routing (2026-07-05, no behavior change):** `_readMemoryEntry` and `_persistMemoryEntry` now read/write via `CacheService.getUserMetadata` / `updateUserMetadata` instead of `self.db.chatUsers.*`. (The former `BaseBotHandler.getUserMemorySummary` reader was folded into `EnsuredMessage.applyUserMetadata` — see "Context injection sites" below.) The nested-write invariant above is preserved — `updateUserMetadata` does a full-dict replace with NO merge, so the explicit full-read + nested-mutate + full-write pattern is unchanged. See [`../architecture.md`](../architecture.md) ADR-015.
 
 This is also recorded as a reusable gotcha in [`tasks.md`](../tasks.md) §3.
 
@@ -53,8 +53,8 @@ This is also recorded as a reusable gotcha in [`tasks.md`](../tasks.md) §3.
 
 ## Context injection sites
 
-- `BaseBotHandler.getUserMemorySummary(chatId, userId, threadId)` — reads `parseUserMetadata(...).get("memoryRefinement", {}).get(str(threadId), {}).get("summary")`.
-- `BaseBotHandler._updateEMessageUserData` (`base.py`) and `HandlersManager._processMessageRec` (`manager.py`, via `self.handlers[0][0]`) attach it as `ensuredMessage.userSummary`, gated on the per-chat setting.
+- `EnsuredMessage.applyUserMetadata(metadata)` — reads `metadata.get("memoryRefinement", {}).get(str(threadId or DEFAULT_THREAD_ID), {}).get("summary")` and, when non-empty, assigns it to `self.userSummary`. Pure reader of the passed-in dict; does NOT persist `metadata`.
+- `BaseBotHandler._updateEMessageUserData` (`base.py`) and `HandlersManager._processMessageRec` (`manager.py`) fetch the full `UserMetadataDict` via `cache.getUserMetadata(...)` and pass it to `ensuredMessage.applyUserMetadata(...)`. Intentionally NOT gated on the per-chat `MEMORY_REFINEMENT_ENABLED` setting at injection — the write side (`UserDataHandler._persistMemoryEntry`) only persists summaries when the feature is on, so absence of a summary in metadata is the gate. A stale summary for a since-disabled chat will still be injected; this is accepted as the intended simplification.
 - `EnsuredMessage.formatForLLM` emits `"userSummary"` in the JSON branch; the dict comprehension drops falsy values, so a `None` summary is omitted → byte-identical output for chats with the feature off.
 - The `chat-prompt-suffix` in `configs/00-defaults/bot-defaults.toml` documents the new `userSummary` field to the chat model.
 
@@ -86,5 +86,4 @@ The `add_user_data` / `delete_user_data` tool handlers read `extraData["ensuredM
 
 - `tests/database/test_db_wrapper.py` — `testGetChatMessagesSinceWithUserId` (the new `userId` filter).
 - `tests/bot/common/handlers/test_user_data.py` — delete tool, increment/NEXT, threadId normalization, cron early-returns (disabled / lock-held), dispatch + counter reset + cursor persistence + in-memory `lastRefinedTS`, bail-on-too-few, never-refined dispatch + bail-on-too-few-lifetime-messages (post-refactor: never-refined users are refined from lifetime history, not pre-skipped), credit-consumed counter reset (increments during LLM call preserved).
-- `tests/bot/models/test_ensured_message.py` — `userSummary` omit-when-None (byte-identity) + include-when-set.
-- `tests/bot/common/handlers/test_base.py` — `getUserMemorySummary` across 4 cases.
+- `tests/bot/models/test_ensured_message.py` — `userSummary` omit-when-None (byte-identity) + include-when-set (`TestFormatForLLMUserSummary`), and the relocated 4 extraction cases driving `EnsuredMessage.applyUserMetadata` directly (`TestApplyUserMetadata`).

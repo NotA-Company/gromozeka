@@ -39,6 +39,7 @@ from lib.ai.models import ModelMessage
 from .enums import LLMMessageFormat
 from .media import MediaProcessingInfo
 from .text_formatter import FormatEntity, OutputFormat
+from .user_metadata import UserMetadataDict
 
 logger = logging.getLogger(__name__)
 
@@ -912,6 +913,39 @@ class EnsuredMessage:
             userData: Dictionary containing additional user-specific data
         """
         self.userData = userData.copy()
+
+    def applyUserMetadata(self, metadata: UserMetadataDict) -> None:
+        """Extract the per-thread memory-refinement summary from user metadata and attach it.
+
+        Reads ``self.threadId`` (falling back to ``dbUtils.DEFAULT_THREAD_ID`` when it is
+        ``None`` or falsy) to select the ``memoryRefinement[str(threadId)]`` entry; when
+        its ``summary`` is non-empty, assigns it to ``self.userSummary``. When no entry
+        exists for the thread or its ``summary`` is empty/missing, ``userSummary`` is left
+        at its current value (``None`` by default).
+
+        Intentionally NOT gated on the ``MEMORY_REFINEMENT_ENABLED`` chat setting: the
+        write side (``UserDataHandler._persistMemoryEntry``) only persists summaries when
+        the feature is on, so absence of a summary in metadata is the gate. A stale
+        summary for a since-disabled chat will still be injected; this is accepted as the
+        intended simplification.
+
+        Does NOT persist ``metadata`` — this method only reads from it. To persist
+        metadata, use :meth:`BaseBotHandler.setUserMetadata` (a different method that
+        writes through to the DB via ``CacheService``).
+
+        Args:
+            metadata: User metadata dict (see :class:`UserMetadataDict`); the
+                ``memoryRefinement[str(threadId)].summary`` sub-field is the only part
+                read.
+
+        Returns:
+            None
+        """
+        # threadId may be 0 (main thread); `or` is safe because both None and 0 collapse to DEFAULT_THREAD_ID (== 0).
+        threadIdStr = str(self.threadId or dbUtils.DEFAULT_THREAD_ID)
+        summary = metadata.get("memoryRefinement", {}).get(threadIdStr, {}).get("summary")
+        if summary:
+            self.userSummary = summary
 
     def getBaseMessage(self) -> telegram.Message | maxModels.Message:
         """

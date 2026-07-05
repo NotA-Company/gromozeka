@@ -1,22 +1,28 @@
-"""Tests for :meth:`EnsuredMessage.formatForLLM` ``userSummary`` handling.
+"""Tests for :class:`EnsuredMessage` ``userSummary`` handling.
 
-Covers behaviour area (D) of the memory-refinements test plan:
+Two concerns:
 
-* When ``userSummary`` is ``None`` (the default), the JSON output must omit the
-  ``userSummary`` key entirely — both as a parsed-key absence and as a raw
-  substring absence, so a pre-feature ``EnsuredMessage`` and a post-feature one
-  with no summary produce byte-identical JSON (no trailing comma, no empty
-  field).
-* When ``userSummary`` is set, the key must appear with the exact value.
+* :meth:`EnsuredMessage.formatForLLM` JSON serialisation of ``userSummary``
+  (behaviour area (D) of the memory-refinements test plan) — when ``userSummary``
+  is ``None`` (the default), the JSON output must omit the ``userSummary`` key
+  entirely, both as a parsed-key absence and as a raw substring absence, so a
+  pre-feature ``EnsuredMessage`` and a post-feature one with no summary produce
+  byte-identical JSON (no trailing comma, no empty field); when ``userSummary``
+  is set, the key must appear with the exact value.
+* :meth:`EnsuredMessage.applyUserMetadata` summary extraction (relocated from
+  the old ``BaseBotHandler.getUserMemorySummary``) — no entry / current-thread /
+  sibling-thread / empty-summary cases, asserting on ``ensuredMessage.userSummary``.
 
 ``formatForLLM`` is async and accepts a ``db`` argument, but with no media
 attached (``mediaId is None`` and empty ``mediaList``) its
 ``updateMediaContent`` early-returns without ever touching ``db``. The real
 ``testDatabase`` fixture is passed for full type-correctness; it is never read.
+The ``applyUserMetadata`` tests are pure (no DB / cache) and take no fixture.
 """
 
 import datetime
 import json
+from typing import cast
 
 from internal.bot.models import (
     ChatType,
@@ -24,6 +30,7 @@ from internal.bot.models import (
     LLMMessageFormat,
     MessageRecipient,
     MessageSender,
+    UserMetadataDict,
 )
 from internal.database import Database
 from internal.database.utils import DEFAULT_THREAD_ID
@@ -110,3 +117,103 @@ class TestFormatForLLMUserSummary:
 
         assert "userSummary" not in outputEmpty
         assert outputEmpty == outputNone
+
+
+class TestApplyUserMetadata:
+    """Tests for :meth:`EnsuredMessage.applyUserMetadata` summary extraction.
+
+    Drives four cases (empty metadata / current-thread / sibling-thread isolation
+    / empty-string-summary), extending the old ``BaseBotHandler.getUserMemorySummary``
+    coverage with an explicit empty-string-summary case for the ``if summary:``
+    truthiness guard, through :meth:`EnsuredMessage.applyUserMetadata` directly and
+    asserting on ``ensuredMessage.userSummary``. No DB or cache is involved — the
+    method is a pure reader of the passed-in metadata dict, so no fixture is required.
+    """
+
+    async def test_emptyMetadata_userSummaryStaysNone(self) -> None:
+        """No ``memoryRefinement`` section -> ``userSummary`` stays at its ``None`` default.
+
+        ``metadata.get("memoryRefinement", {})`` resolves to an empty dict, so
+        no thread entry is found and the assignment is skipped.
+        """
+        ensuredMessage = _makeEnsuredMessage()
+        assert ensuredMessage.userSummary is None
+
+        ensuredMessage.applyUserMetadata(cast(UserMetadataDict, {}))
+
+        assert ensuredMessage.userSummary is None
+
+    async def test_summaryForCurrentThread_isAttached(self) -> None:
+        """A ``memoryRefinement[str(threadId)].summary`` is assigned to ``userSummary``.
+
+        The message's ``threadId`` is ``DEFAULT_THREAD_ID`` (0), matching the
+        ``"0"`` key in the metadata, so the summary is attached verbatim.
+        """
+        ensuredMessage = _makeEnsuredMessage()  # threadId = DEFAULT_THREAD_ID (0)
+        metadata = cast(
+            UserMetadataDict,
+            {
+                "memoryRefinement": {
+                    "0": {
+                        "summary": "Likes chess and Python",
+                        "lastProcessedMessageId": "1",
+                        "lastProcessedMessageDate": "2026-05-05T12:00:00+00:00",
+                    }
+                }
+            },
+        )
+
+        ensuredMessage.applyUserMetadata(metadata)
+
+        assert ensuredMessage.userSummary == "Likes chess and Python"
+
+    async def test_summaryForDifferentThread_userSummaryStaysNone(self) -> None:
+        """A summary under a sibling thread is ignored (thread isolation).
+
+        The message's ``threadId`` is ``5`` but the metadata only carries a
+        summary for thread ``0``; ``userSummary`` must stay ``None`` rather than
+        fall back to another thread's summary.
+        """
+        ensuredMessage = _makeEnsuredMessage()
+        ensuredMessage.threadId = 5
+        metadata = cast(
+            UserMetadataDict,
+            {
+                "memoryRefinement": {
+                    "0": {
+                        "summary": "bio text",
+                        "lastProcessedMessageId": "1",
+                        "lastProcessedMessageDate": "2026-05-05T12:00:00+00:00",
+                    }
+                }
+            },
+        )
+
+        ensuredMessage.applyUserMetadata(metadata)
+
+        assert ensuredMessage.userSummary is None
+
+    async def test_emptySummary_userSummaryStaysNone(self) -> None:
+        """An empty-string ``summary`` is treated as absent (truthiness filter).
+
+        ``applyUserMetadata`` guards the assignment with ``if summary:``, so a
+        falsy summary (empty string) leaves ``userSummary`` at its ``None``
+        default.
+        """
+        ensuredMessage = _makeEnsuredMessage()
+        metadata = cast(
+            UserMetadataDict,
+            {
+                "memoryRefinement": {
+                    "0": {
+                        "summary": "",
+                        "lastProcessedMessageId": "1",
+                        "lastProcessedMessageDate": "2026-05-05T12:00:00+00:00",
+                    }
+                }
+            },
+        )
+
+        ensuredMessage.applyUserMetadata(metadata)
+
+        assert ensuredMessage.userSummary is None

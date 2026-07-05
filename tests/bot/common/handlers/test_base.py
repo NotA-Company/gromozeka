@@ -1,30 +1,21 @@
-"""Tests for :meth:`BaseBotHandler.getUserMemorySummary` (memory-refinement phase 7a).
+"""Tests for the ``cache.chatUserMetadataLock()`` contract of :meth:`BaseBotHandler.setUserMetadata`.
 
-Covers behaviour area (E):
+Covers behaviour area (F): the ``isUpdate=True`` read-merge-write path must acquire
+``cache.chatUserMetadataLock()`` exactly once around its read-merge-write, while the
+full-replace path must not. Removing that wrapper reintroduces a lost-update race, and
+these tests fail if the wrapper is dropped.
 
-* No ``chat_users`` row → ``None``.
-* Row exists but ``metadata`` is empty → ``None``.
-* Row carries a ``memoryRefinement["<threadId>"].summary`` → returns that
-  summary text.
-* Row carries a summary for thread ``0`` but thread ``5`` is queried → ``None``.
-
-``getUserMemorySummary`` lives on :class:`BaseBotHandler`, which is abstract /
-mixin-bound and not instantiated directly. It is exercised here through its
-concrete subclass :class:`UserDataHandler`, constructed against a real in-memory
-database (``testDatabase`` fixture) with the ``CacheService`` singleton reset
-per test by the local autouse fixture. Since Phase 2 of the write-through
-chat_users cache, the method reads via ``cache.getUserMetadata`` (which itself
-reads through ``cache.getChatUser`` → the chat_users row). The autouse singleton
-reset above plus ``cache.injectDatabase(testDatabase)`` in ``_makeHandler`` bind
-the handler's ``self.cache`` to a fresh :class:`CacheService` wired to the test
-DB, so the cache miss falls through to SQLite and the assertions stay real.
-
-This module also covers (F) the ``setUserMetadata`` lock contract: the
-``isUpdate=True`` path must acquire ``cache.chatUserMetadataLock()`` exactly
-once around its read-merge-write, while the full-replace path must not.
+:meth:`BaseBotHandler.setUserMetadata` lives on :class:`BaseBotHandler`, which is
+abstract / mixin-bound and not instantiated directly. It is exercised here through its
+concrete subclass :class:`UserDataHandler`, constructed against a real in-memory database
+(``testDatabase`` fixture) with the ``CacheService`` singleton reset per test by the local
+autouse fixture. For the ``isUpdate=True`` path the handler reads via
+``cache.getUserMetadata``; the autouse singleton reset plus
+``cache.injectDatabase(testDatabase)`` in ``_makeHandler`` bind the handler's ``self.cache``
+to a fresh :class:`CacheService`, and the cache is then swapped for a mock per-test so the
+lock acquisition can be spied on.
 """
 
-import json
 import types
 from typing import Generator, Optional, cast
 from unittest.mock import AsyncMock, Mock
@@ -68,7 +59,7 @@ def _makeConfigManager() -> Mock:
     ``UserDataHandler.__init__`` reads ``get("user-memory", {})`` to cache the
     refinement config; returning ``{}`` leaves the feature disabled and makes
     thresholds fall back to module constants. These tests only exercise the
-    inherited ``getUserMemorySummary`` helper, so the cached values are unused.
+    inherited ``setUserMetadata`` helper, so the cached values are unused.
 
     Returns:
         ``Mock`` exposing ``getBotConfig()`` returning a token/owners dict and
@@ -89,7 +80,7 @@ async def _makeHandler(testDatabase: Database) -> UserDataHandler:
 
     Returns:
         A :class:`UserDataHandler` whose ``db`` is *testDatabase*, used as the
-        host for the inherited ``getUserMemorySummary`` helper.
+        host for the inherited ``setUserMetadata`` helper.
     """
     CacheService._instance = None
     cache = CacheService.getInstance()
@@ -149,93 +140,6 @@ class _CountingMetadataLock:
 
 
 # ---------------------------------------------------------------------------
-# (E) getUserMemorySummary
-# ---------------------------------------------------------------------------
-
-
-class TestGetUserMemorySummary:
-    """Tests for :meth:`BaseBotHandler.getUserMemorySummary`."""
-
-    async def test_returnsNoneWhenNoChatUserRow(self, testDatabase: Database) -> None:
-        """A missing ``chat_users`` row → ``None``.
-
-        Args:
-            testDatabase: Fresh in-memory database fixture.
-        """
-        handler = await _makeHandler(testDatabase)
-
-        result = await handler.getUserMemorySummary(chatId=100, userId=7, threadId=0)
-
-        assert result is None
-
-    async def test_returnsNoneWhenMetadataEmpty(self, testDatabase: Database) -> None:
-        """An existing row with empty metadata → ``None``.
-
-        ``parseUserMetadata`` treats a falsy ``metadata`` string as ``{}``, so
-        there is no ``memoryRefinement`` section to read.
-
-        Args:
-            testDatabase: Fresh in-memory database fixture.
-        """
-        handler = await _makeHandler(testDatabase)
-        await _ensureChatUser(testDatabase, chatId=100, userId=7)
-        await testDatabase.chatUsers.updateUserMetadata(chatId=100, userId=7, metadata="")
-
-        result = await handler.getUserMemorySummary(chatId=100, userId=7, threadId=0)
-
-        assert result is None
-
-    async def test_returnsSummaryWhenPresent(self, testDatabase: Database) -> None:
-        """A stored ``memoryRefinement["0"].summary`` is returned verbatim.
-
-        Args:
-            testDatabase: Fresh in-memory database fixture.
-        """
-        handler = await _makeHandler(testDatabase)
-        await _ensureChatUser(testDatabase, chatId=100, userId=7)
-        metadata = {
-            "memoryRefinement": {
-                "0": {
-                    "summary": "bio text",
-                    "lastProcessedMessageId": "1",
-                    "lastProcessedMessageDate": "2026-05-05T12:00:00+00:00",
-                }
-            }
-        }
-        await testDatabase.chatUsers.updateUserMetadata(chatId=100, userId=7, metadata=json.dumps(metadata))
-
-        result = await handler.getUserMemorySummary(chatId=100, userId=7, threadId=0)
-
-        assert result == "bio text"
-
-    async def test_returnsNoneWhenThreadAbsent(self, testDatabase: Database) -> None:
-        """Querying a thread id with no entry → ``None`` (sibling threads untouched).
-
-        Thread ``0`` has a summary but thread ``5`` is queried; the method must
-        return ``None`` rather than falling back to another thread's summary.
-
-        Args:
-            testDatabase: Fresh in-memory database fixture.
-        """
-        handler = await _makeHandler(testDatabase)
-        await _ensureChatUser(testDatabase, chatId=100, userId=7)
-        metadata = {
-            "memoryRefinement": {
-                "0": {
-                    "summary": "bio text",
-                    "lastProcessedMessageId": "1",
-                    "lastProcessedMessageDate": "2026-05-05T12:00:00+00:00",
-                }
-            }
-        }
-        await testDatabase.chatUsers.updateUserMetadata(chatId=100, userId=7, metadata=json.dumps(metadata))
-
-        result = await handler.getUserMemorySummary(chatId=100, userId=7, threadId=5)
-
-        assert result is None
-
-
-# ---------------------------------------------------------------------------
 # (F) setUserMetadata lock contract
 # ---------------------------------------------------------------------------
 
@@ -287,13 +191,13 @@ class TestSetUserMetadataLockContract:
             metadata={"existingKey": "existingVal", "newKey": "newVal"},
         )
 
-    async def test_setUserMetadata_fullReplace_doesNotAcquireMetadataLock(self, testDatabase: Database) -> None:
-        """``isUpdate=False`` does NOT acquire ``chatUserMetadataLock``.
+    async def test_setUserMetadata_fullReplace_alsoAcquiresMetadataLock(self, testDatabase: Database) -> None:
+        """``isUpdate=False`` also acquires ``chatUserMetadataLock`` exactly once.
 
         The full-replace path writes ``metadata`` verbatim with no prior read,
-        so it has no read-merge-write window to serialize and must not take the
-        lock. Pins the contract that only the ``isUpdate=True`` path is
-        serialized.
+        but it still runs inside ``chatUserMetadataLock()`` so it cannot be
+        clobbered by a concurrent read-merge-write from another handler. Pins
+        the contract that BOTH ``isUpdate`` paths are serialized.
 
         Args:
             testDatabase: Fresh in-memory database fixture (used to build the
@@ -315,26 +219,6 @@ class TestSetUserMetadataLockContract:
             isUpdate=False,
         )
 
-        assert countingLock.enterCount == 0
+        assert countingLock.enterCount == 1
         mockCache.getUserMetadata.assert_not_called()
         mockCache.updateUserMetadata.assert_awaited_once_with(chatId=100, userId=7, metadata={"newKey": "newVal"})
-
-
-async def _ensureChatUser(testDatabase: Database, *, chatId: int, userId: int) -> None:
-    """Create (or refresh) a ``chat_users`` row so ``updateUserMetadata`` targets it.
-
-    ``updateUserMetadata`` issues a plain ``UPDATE`` (not an upsert), so the row
-    must exist beforehand. ``updateChatUser`` performs the upsert that creates
-    it.
-
-    Args:
-        testDatabase: Database to write to.
-        chatId: Chat id of the row to ensure.
-        userId: User id of the row to ensure.
-    """
-    await testDatabase.chatUsers.updateChatUser(
-        chatId=chatId,
-        userId=userId,
-        username=f"@user{userId}",
-        fullName="Alice",
-    )

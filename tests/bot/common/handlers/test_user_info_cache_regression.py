@@ -4,12 +4,12 @@ Proves the cache actually eliminates redundant ``chat_users`` DB reads/writes on
 the message hot path — the headline claim of the feature. The cache-layer unit
 tests in ``tests/services/cache/test_user_info.py`` already cover the five
 ``CacheService`` methods in isolation; these tests drive the same claims through
-real handler methods (``saveChatMessage`` + ``getUserMemorySummary``) wired to a
+real handler methods (``saveChatMessage`` + ``cache.getUserMetadata``) wired to a
 real in-memory database, so they would break if a handler were ever rewired
 back to the raw ``db.chatUsers`` repo.
 
 Test level: **handler-method**. We call ``handler.saveChatMessage(...)`` and
-``handler.getUserMemorySummary(...)`` directly rather than driving a full
+``handler.cache.getUserMetadata(...)`` directly rather than driving a full
 ``newMessageHandler`` pipeline (which would need a live ``_bot`` for media
 processing, chat-info refresh, etc.). ``updateChatInfo`` — the one
 ``saveChatMessage`` dependency that touches ``self._bot`` — is stubbed at the
@@ -207,9 +207,9 @@ class TestWarmCacheZeroDbReads:
         level (``AsyncMock(wraps=original)`` so the real DB still works). Drives
         ``handler.saveChatMessage`` (which calls ``cache.updateChatUser`` with
         the sender's matching username/fullName → skip-when-unchanged) followed
-        by ``handler.getUserMemorySummary`` (which calls
-        ``cache.getUserMetadata`` → ``cache.getChatUser`` → warm hit). Both
-        spies must record **zero** calls — the headline regression claim.
+        by ``handler.cache.getUserMetadata`` (which routes through
+        ``cache.getChatUser`` → warm hit). Both spies must record **zero** calls
+        — the headline regression claim.
 
         Args:
             testDatabase: Fresh in-memory database fixture.
@@ -229,14 +229,15 @@ class TestWarmCacheZeroDbReads:
             saved = await handler.saveChatMessage(message, messageCategory=MessageCategory.USER)
             assert saved is True
 
-            summary = await handler.getUserMemorySummary(chatId=_CHAT_ID, userId=_USER_ID, threadId=DEFAULT_THREAD_ID)
+            # getUserMetadata routes through cache.getChatUser; the summary
+            # extraction itself now lives in EnsuredMessage.applyUserMetadata
+            # and is covered separately in tests/bot/models/test_ensured_message.py.
+            _ = await handler.cache.getUserMetadata(chatId=_CHAT_ID, userId=_USER_ID)
 
         # Skip-when-unchanged: no DB write.
         assert updateSpy.call_count == 0
         # Warm hit: no DB read.
         assert getSpy.call_count == 0
-        # getUserMemorySummary returns None when no memoryRefinement entry exists.
-        assert summary is None
 
 
 # ---------------------------------------------------------------------------
@@ -282,13 +283,13 @@ class TestChangedUsernameTriggersDbWrite:
 class TestColdCacheTriggersDbRead:
     """Proves a cache miss falls through to the DB rather than returning stale data."""
 
-    async def test_coldCache_getUserMemorySummary_triggersChatUsersDbRead(self, testDatabase: Database) -> None:
-        """A cold cache read for ``getUserMemorySummary`` hits the DB.
+    async def test_coldCache_getUserMetadata_triggersChatUsersDbRead(self, testDatabase: Database) -> None:
+        """A cold cache read for ``cache.getUserMetadata`` hits the DB.
 
         Seeds the row directly via the repo (cache stays cold), then calls
-        ``getUserMemorySummary`` — which routes through
-        ``cache.getUserMetadata`` → ``cache.getChatUser``. On a cold cache the
-        miss must fall through to ``ChatUsersRepository.getChatUser``.
+        ``cache.getUserMetadata`` — which routes through ``cache.getChatUser``.
+        On a cold cache the miss must fall through to
+        ``ChatUsersRepository.getChatUser``.
 
         Args:
             testDatabase: Fresh in-memory database fixture.
@@ -299,8 +300,8 @@ class TestColdCacheTriggersDbRead:
 
         originalGet = testDatabase.chatUsers.getChatUser
         with patch.object(ChatUsersRepository, "getChatUser", new=AsyncMock(wraps=originalGet)) as getSpy:
-            await handler.getUserMemorySummary(chatId=_CHAT_ID, userId=_USER_ID, threadId=DEFAULT_THREAD_ID)
+            await handler.cache.getUserMetadata(chatId=_CHAT_ID, userId=_USER_ID)
 
-        # Single getUserMemorySummary call → single cache miss → single
+        # Single getUserMetadata call → single cache miss → single
         # db.chatUsers.getChatUser read. A double-read regression must fail here.
         assert getSpy.call_count == 1

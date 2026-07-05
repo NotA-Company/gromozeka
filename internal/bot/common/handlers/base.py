@@ -62,7 +62,6 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import ChatInfoDict, ChatUserDict, MediaStatus, MessageCategory
-from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
 from internal.services.cache import CacheService
 from internal.services.llm import LLMService
@@ -373,15 +372,10 @@ class BaseBotHandler(CommandHandlerMixin):
         ensuredMessage.setUserData(
             await self.cache.getChatUserData(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
         )
-        # Attach the rolling memory summary only when refinement is enabled for this chat,
-        # so chats with the feature off pay no extra DB cost.
-        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
-        if chatSettings[ChatSettingsKey.MEMORY_REFINEMENT_ENABLED].toBool():
-            ensuredMessage.userSummary = await self.getUserMemorySummary(
-                chatId=ensuredMessage.recipient.id,
-                userId=ensuredMessage.sender.id,
-                threadId=ensuredMessage.threadId or DEFAULT_THREAD_ID,
-            )
+
+        ensuredMessage.applyUserMetadata(
+            await self.cache.getUserMetadata(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
+        )
 
     async def checkEMMentionsMe(self, ensuredMessage: EnsuredMessage) -> MentionCheckResult:
         """
@@ -1093,12 +1087,12 @@ class BaseBotHandler(CommandHandlerMixin):
             isUpdate: If True, merge with existing metadata; if False, replace completely
 
         Note:
-            When ``isUpdate=True``, the read-merge-write is serialized via
-            ``cache.chatUserMetadataLock()`` to avoid lost-update races with
-            concurrent metadata writers, and the merge is a SHALLOW top-level
-            ``{**old, **new}`` — this is intentional for the spam-flag/leftChat
-            use cases (flat boolean flags). For NESTED sub-dicts (e.g.
-            ``memoryRefinement``) do NOT use this method; perform an explicit
+            Both the ``isUpdate=True`` read-merge-write and the ``isUpdate=False``
+            full-replace run inside ``cache.chatUserMetadataLock()`` so neither can
+            interleave with a concurrent metadata writer. The ``isUpdate=True`` merge
+            is a SHALLOW top-level ``{**old, **new}`` — intentional for the
+            spam-flag/leftChat use cases (flat boolean flags). For NESTED sub-dicts
+            (e.g. ``memoryRefinement``) do NOT use this method; perform an explicit
             full-read + nested-mutate + full-write via ``cache.getUserMetadata`` /
             ``cache.updateUserMetadata`` (see ``UserDataHandler._persistMemoryEntry``).
         """
@@ -1108,29 +1102,6 @@ class BaseBotHandler(CommandHandlerMixin):
                 metadata = {**existing, **metadata}
 
             await self.cache.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadata)
-
-    async def getUserMemorySummary(self, chatId: int, userId: int, threadId: int) -> Optional[str]:
-        """
-        Read the per-thread rolling memory summary for a user.
-
-        Looks up the user's metadata blob in ``chat_users.metadata`` (read via
-        ``cache.getUserMetadata``) and extracts the ``summary`` field stored under
-        ``memoryRefinement[<threadId>]`` by the background refinement loop. Returns
-        ``None`` when the user, the metadata section, the thread entry, or the summary
-        itself is absent.
-
-        Args:
-            chatId: Chat id the user belongs to.
-            userId: User id to read the summary for.
-            threadId: Thread id (use ``DEFAULT_THREAD_ID`` for non-threaded chats).
-
-        Returns:
-            The rolling summary text, or ``None`` if no summary is stored.
-        """
-        metadata = await self.cache.getUserMetadata(chatId=chatId, userId=userId)
-        refinement = metadata.get("memoryRefinement", {})
-        entry = refinement.get(str(threadId), {})
-        return entry.get("summary")
 
     async def startTyping(
         self,

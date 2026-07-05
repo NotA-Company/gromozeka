@@ -204,6 +204,8 @@ async def setUserMetadata(self, chatId, userId, metadata, isUpdate=False):
 
 ### 4.4 `getUserMemorySummary` refactor (`base.py:1102`)
 
+> **Status note (2026-07-05):** the `getUserMemorySummary` method documented in this section was later folded into `EnsuredMessage.applyUserMetadata(metadata)` — a pure reader that extracts `memoryRefinement[str(threadId)].summary` into `self.userSummary` from the `UserMetadataDict` passed to it. The two call sites (`BaseBotHandler._updateEMessageUserData`, `HandlersManager._processMessageRec`) now fetch the full metadata via `cache.getUserMetadata` and pass it to `ensuredMessage.applyUserMetadata(...)`. The `MEMORY_REFINEMENT_ENABLED` injection gate was removed at the same time (the write side still gates). This section is retained for provenance; see [`docs/llm/memories/user-memory-refinement.md`](../llm/memories/user-memory-refinement.md) "Context injection sites" for the current shape.
+
 ```python
 async def getUserMemorySummary(self, chatId, userId, threadId) -> Optional[str]:
     metadata = await self.cache.getUserMetadata(chatId=chatId, userId=userId)
