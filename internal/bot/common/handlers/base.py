@@ -373,6 +373,10 @@ class BaseBotHandler(CommandHandlerMixin):
             await self.cache.getChatUserData(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
         )
 
+        ensuredMessage.applyUserMetadata(
+            await self.cache.getUserMetadata(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
+        )
+
     async def checkEMMentionsMe(self, ensuredMessage: EnsuredMessage) -> MentionCheckResult:
         """
         Check if a message mentions the bot
@@ -889,7 +893,7 @@ class BaseBotHandler(CommandHandlerMixin):
             if message.recipient.chatType != ChatType.PRIVATE:
                 admins = await self._bot.getChatAdmins(chat=message.recipient)
                 for adminId, adminInfo in admins.items():
-                    await self.db.chatUsers.updateChatUser(
+                    await self.cache.updateChatUser(
                         chatId=chatId,
                         userId=adminId,
                         username=adminInfo[0],
@@ -1025,7 +1029,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
         await self.updateChatInfo(message)
 
-        await self.db.chatUsers.updateChatUser(
+        await self.cache.updateChatUser(
             chatId=chat.id,
             userId=sender.id,
             username=sender.username,
@@ -1081,13 +1085,23 @@ class BaseBotHandler(CommandHandlerMixin):
             userId: Telegram user ID
             metadata: Metadata dictionary as [`UserMetadataDict`](internal/bot/models/user_metadata.py)
             isUpdate: If True, merge with existing metadata; if False, replace completely
-        """
-        if isUpdate:
-            userInfo = await self.db.chatUsers.getChatUser(chatId=chatId, userId=userId)
-            metadata = {**self.parseUserMetadata(userInfo), **metadata}
 
-        metadataStr = utils.jsonDumps(metadata)
-        await self.db.chatUsers.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadataStr)
+        Note:
+            Both the ``isUpdate=True`` read-merge-write and the ``isUpdate=False``
+            full-replace run inside ``cache.chatUserMetadataLock()`` so neither can
+            interleave with a concurrent metadata writer. The ``isUpdate=True`` merge
+            is a SHALLOW top-level ``{**old, **new}`` — intentional for the
+            spam-flag/leftChat use cases (flat boolean flags). For NESTED sub-dicts
+            (e.g. ``memoryRefinement``) do NOT use this method; perform an explicit
+            full-read + nested-mutate + full-write via ``cache.getUserMetadata`` /
+            ``cache.updateUserMetadata`` (see ``UserDataHandler._persistMemoryEntry``).
+        """
+        async with self.cache.chatUserMetadataLock():
+            if isUpdate:
+                existing = await self.cache.getUserMetadata(chatId=chatId, userId=userId)
+                metadata = {**existing, **metadata}
+
+            await self.cache.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadata)
 
     async def startTyping(
         self,
@@ -1204,9 +1218,7 @@ class BaseBotHandler(CommandHandlerMixin):
         userChats = await self.db.chatUsers.getUserChats(userId)
         ret: List[ChatInfoDict] = []
         for chatInfo in userChats:
-            userInfo: Optional[ChatUserDict] = await self.db.chatUsers.getChatUser(
-                chatId=chatInfo["chat_id"], userId=userId
-            )
+            userInfo: Optional[ChatUserDict] = await self.cache.getChatUser(chatId=chatInfo["chat_id"], userId=userId)
             if userInfo is None:
                 logger.warning(f"User {userId} not found in chat {chatInfo['chat_id']}")
                 continue

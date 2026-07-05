@@ -243,7 +243,7 @@ pytest lib/geocode_maps/test_models.py -v
 ## Design Documentation
 
 For detailed design decisions and architecture, see:
-- [`docs/design/geocode-maps-client-design-v1.md`](docs/design/geocode-maps-client-design-v1.md)
+- [`docs/archive/design/geocode-maps-client-design-v1.md`](docs/archive/design/geocode-maps-client-design-v1.md)
 - [`docs/other/geocode-maps/Geocode-Maps-API.md`](docs/other/geocode-maps/Geocode-Maps-API.md)
 
 ## License

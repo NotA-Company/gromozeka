@@ -25,13 +25,33 @@ Example:
 
 import logging
 from threading import RLock
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TypedDict
 
 from .interface import RateLimiterInterface
 from .sliding_window import SlidingWindowRateLimiter
 from .types import RateLimiterManagerConfig
 
 logger = logging.getLogger(__name__)
+
+
+class RateLimiterStatsEntry(TypedDict):
+    """A single rate-limiter queue statistics snapshot.
+
+    Attributes:
+        limiter: Name of the rate limiter backend.
+        queue: Name of the queue within the limiter.
+        requestsInWindow: Number of requests recorded in the current window.
+        maxRequests: Maximum allowed requests per window.
+        windowSeconds: Size of the sliding window in seconds.
+        utilizationPercent: Current utilization as a percentage of maxRequests.
+    """
+
+    limiter: str
+    queue: str
+    requestsInWindow: int
+    maxRequests: int
+    windowSeconds: int
+    utilizationPercent: float
 
 
 class RateLimiterManager:
@@ -373,6 +393,36 @@ class RateLimiterManager:
             'api'
         """
         return self._defaultLimiter
+
+    def dumpAllStats(self) -> List[RateLimiterStatsEntry]:
+        """Return current rate limiter state across all limiters and queues.
+
+        Iterates every registered rate limiter and every queue it manages,
+        collecting per-queue statistics.  Failures in individual queue lookups
+        are logged as warnings and skipped so the rest of the dump proceeds.
+
+        Returns:
+            List of ``RateLimiterStatsEntry`` dicts, each carrying the limiter
+            name, queue name, and current utilization snapshot.
+        """
+        results: List[RateLimiterStatsEntry] = []
+        for limiterName, limiter in self._rateLimiters.items():
+            for queueName in limiter.listQueues():
+                try:
+                    stats = limiter.getStats(queueName)
+                    results.append(
+                        RateLimiterStatsEntry(
+                            limiter=limiterName,
+                            queue=queueName,
+                            requestsInWindow=stats["requestsInWindow"],
+                            maxRequests=stats["maxRequests"],
+                            windowSeconds=stats["windowSeconds"],
+                            utilizationPercent=stats["utilizationPercent"],
+                        )
+                    )
+                except Exception:
+                    logger.warning("rate_limiter=%s queue=%s getStats failed", limiterName, queueName, exc_info=True)
+        return results
 
     async def destroy(self) -> None:
         """

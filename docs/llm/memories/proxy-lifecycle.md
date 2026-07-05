@@ -7,7 +7,7 @@ Read when touching `internal/services/proxy/`, `lib/proxy/` lifecycle fields,
 ## Architecture
 
 ### Design Document
-- `docs/plans/proxy-lifecycle-design.md` — canonical design. 4 phases implemented.
+- `docs/archive/plans/proxy-lifecycle-design.md` — canonical design. 4 phases implemented.
 
 ### Key Classes
 

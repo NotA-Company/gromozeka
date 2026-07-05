@@ -23,15 +23,18 @@ Example:
     >>> settings = await cache.getChatSettings(123)
 """
 
+import asyncio
+import contextlib
 import json
 import logging
 import time
 from collections import OrderedDict
 from threading import RLock
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Type
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Optional, Tuple, Type
 
 import internal.database.utils as dbUtils
-from internal.database.models import ChatInfoDict, ChatTopicInfoDict
+from internal.bot.models.user_metadata import UserMetadataDict
+from internal.database.models import ChatInfoDict, ChatTopicInfoDict, ChatUserDict
 from internal.models import MessageId
 from internal.services.queue_service.service import QueueService
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
@@ -290,6 +293,13 @@ class CacheService:
                 CacheNamespace.USERS: set(),
             }
             """Dictionary tracking keys that have been modified and need persistence."""
+
+            # Async lock serializing the full read-modify-write window of
+            # ``chat_users.metadata``. ``getUserMetadata`` + ``updateUserMetadata``
+            # individually are safe, but a caller that reads, mutates, then writes
+            # back can lose updates to a concurrent writer doing the same. Holders
+            # of ``chatUserMetadataLock()`` across that whole window are protected.
+            self._chatUsersMetadataLock = asyncio.Lock()
 
             # Register on shutdown handler
             QueueService.getInstance().registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, self._doExitHandler)
@@ -1001,6 +1011,188 @@ class CacheService:
         userCache.pop("data", None)
         self.chatUsers.set(userKey, userCache)
         logger.debug(f"Cleared user data for {userKey}")
+
+    # ## ChatUser UserInfo (chat_users row)
+
+    async def getChatUser(self, chatId: int, userId: int, *, refresh: bool = False) -> Optional[ChatUserDict]:
+        """Return the chat_users row for (chatId, userId), read-aside from the CHAT_USERS cache.
+
+        On a cache hit (and ``refresh=False``) the cached row is returned as a defensive
+        shallow copy — no DB access. On a cache miss OR ``refresh=True``, the row is read
+        from ``db.chatUsers.getChatUser``: if found, it is stored under the cached entry's
+        ``userInfo`` key and a shallow copy is returned; if the row is ABSENT, ``None`` is
+        returned WITHOUT caching the absence (an absent row indicates something went wrong
+        upstream and is not worth memoizing — the next call re-queries the DB).
+
+        Note: the cached row's ``messages_count`` is best-effort stale — the column is
+        incremented by a raw SQL UPDATE inside
+        ``ChatMessagesRepository.saveChatMessage`` which bypasses this cache. Callers
+        needing an accurate count should prefer the conditional-refresh pattern (see
+        ``SpamHandler._getUserInfoFreshIfMessagesLessThan``, which refreshes only when
+        the cached count is below a threshold) over an unconditional ``refresh=True``;
+        the latter is available when an unconditional refresh is genuinely required.
+
+        Note: the returned dict is a SHALLOW copy — safe today because ``metadata`` is
+        stored as a JSON string, but callers must NOT mutate nested structures if
+        non-string nested fields are added to ``ChatUserDict`` in the future.
+
+        Args:
+            chatId (int): Chat id.
+            userId (int): User id.
+            refresh (bool): If True, bypass the cache read and re-fetch from DB
+                (a found row is written back into the cache; an absent row returns
+                None without evicting a previously-cached row).
+
+        Returns:
+            Optional[ChatUserDict]: A shallow copy of the cached row, or None if the
+            row does not exist. Returns None if no database is attached.
+        """
+        userKey = self._getChatUserKey(chatId, userId)
+        userCache = self.chatUsers.get(userKey, {})
+        if refresh or "userInfo" not in userCache:
+            if not self.database:
+                return None
+            row = await self.database.chatUsers.getChatUser(chatId=chatId, userId=userId)
+            if row is None:
+                return None
+            userCache["userInfo"] = row
+            self.chatUsers.set(userKey, userCache)
+
+        return userCache["userInfo"].copy()
+
+    async def updateChatUser(self, chatId: int, userId: int, username: str, fullName: str) -> None:
+        """Write-through upsert of username/fullName with a skip-when-unchanged optimisation.
+
+        If the cached row's username and full_name already equal the supplied values,
+        skip the DB upsert entirely (and do not bump updated_at). Otherwise upsert via
+        ``db.chatUsers.updateChatUser`` and, on success, update the cached row in place
+        (username/full_name/updated_at). On cache miss (userInfo key absent) the upsert
+        still runs, but the cache is intentionally LEFT COLD — no re-read. Rationale: the
+        row may never be read again, and the next ``getChatUser`` lazy-loads it if needed,
+        so a warming re-read would be a wasted query on the write path.
+
+        Args:
+            chatId (int): Chat id.
+            userId (int): User id.
+            username (str): New username.
+            fullName (str): New full name.
+        """
+        if not self.database:
+            return
+        userKey = self._getChatUserKey(chatId, userId)
+        userCache = self.chatUsers.get(userKey, {})
+        cached = userCache.get("userInfo")
+        if cached is not None and cached["username"] == username and cached["full_name"] == fullName:
+            return  # no-op: unchanged
+        ok = await self.database.chatUsers.updateChatUser(
+            chatId=chatId, userId=userId, username=username, fullName=fullName
+        )
+        if not ok:
+            return
+        if cached is not None:
+            cached["username"] = username
+            cached["full_name"] = fullName
+            cached["updated_at"] = dbUtils.getCurrentTimestamp()
+            self.chatUsers.set(userKey, userCache)
+        # else: Cold path - do nothing, getChatUser will fetch from DB
+
+    @contextlib.asynccontextmanager
+    async def chatUserMetadataLock(self) -> AsyncIterator[None]:
+        """Async context manager serializing chat_users.metadata read-modify-write windows.
+
+        Callers that do read-modify-write of ``chat_users.metadata`` (e.g.
+        ``setUserMetadata(isUpdate=True)`` and ``UserDataHandler._persistMemoryEntry``)
+        MUST hold this lock across the full RMW to avoid lost-update races between
+        concurrent writers. Plain reads (``getUserMetadata``) and full-replace writes
+        (``updateUserMetadata`` with no preceding read) do NOT need it.
+
+        The lock is intentionally process-global rather than per-(chat, user); metadata
+        writes are infrequent (spam-flag flips, per-thread refinement every >=5 messages
+        or 6h), so cross-user contention is negligible.
+
+        Args:
+            (none)
+
+        Yields:
+            None
+        """
+        async with self._chatUsersMetadataLock:
+            yield
+
+    async def getUserMetadata(self, chatId: int, userId: int) -> UserMetadataDict:
+        """Return the parsed metadata dict for (chatId, userId).
+
+        Reads the cached chat_users row via ``getChatUser`` and parses its ``metadata``
+        column with stdlib ``json.loads``. Empty/None/absent row -> ``{}``. The returned
+        dict is freshly constructed by ``json.loads`` on every call (no aliasing with
+        the cached row).
+
+        Args:
+            chatId (int): Chat id.
+            userId (int): User id.
+
+        Returns:
+            UserMetadataDict: Parsed metadata dict (empty if absent).
+        """
+        userInfo = await self.getChatUser(chatId=chatId, userId=userId)
+        if userInfo is None:
+            return {}
+        metadataStr = userInfo["metadata"]
+        return json.loads(metadataStr) if metadataStr else {}
+
+    async def updateUserMetadata(self, chatId: int, userId: int, metadata: UserMetadataDict) -> None:
+        """Write-through replace of the FULL metadata dict for (chatId, userId).
+
+        Serializes via ``utils.jsonDumps``, writes via ``db.chatUsers.updateUserMetadata``,
+        then updates the cached row's ``metadata`` and ``updated_at`` in place. Performs
+        NO merge — callers compose their own merge policy by reading ``getUserMetadata``
+        first and mutating.
+
+        CRITICAL for nested sub-dicts (e.g. ``memoryRefinement``): callers must read the
+        FULL metadata, mutate the single nested key, and write the FULL metadata back.
+        A shallow top-level merge (``{**old, **new}``) would wipe sibling keys. Every
+        metadata writer MUST route through this method; a raw-DB bypass would silently
+        desync the cache and corrupt subsequent merges.
+
+        On cold userInfo (key absent), the cache is left untouched — the next
+        ``getChatUser`` lazy-loads the freshly-written row.
+
+        Args:
+            chatId (int): Chat id.
+            userId (int): User id.
+            metadata (UserMetadataDict): Full metadata dict to persist.
+        """
+        if not self.database:
+            return
+        metadataStr = utils.jsonDumps(metadata)
+        ok = await self.database.chatUsers.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadataStr)
+        if not ok:
+            return
+        userKey = self._getChatUserKey(chatId, userId)
+        userCache = self.chatUsers.get(userKey, {})
+        cached = userCache.get("userInfo")
+        if cached is not None:
+            cached["metadata"] = metadataStr
+            cached["updated_at"] = dbUtils.getCurrentTimestamp()
+            self.chatUsers.set(userKey, userCache)
+        # else: cold — leave absent; next getChatUser lazy-loads the fresh row.
+
+    def invalidateChatUser(self, chatId: int, userId: int) -> None:
+        """Drop ONLY the cached chat_users row (userInfo) for (chatId, userId).
+
+        The cache entry's other fields (e.g. the ``data`` user_data blob) are
+        preserved. Escape hatch for callers that know the row was mutated
+        out-of-band; the next ``getChatUser`` re-fetches from DB.
+
+        Args:
+            chatId (int): Chat id.
+            userId (int): User id.
+        """
+        userKey = self._getChatUserKey(chatId, userId)
+        userCache = self.chatUsers.get(userKey, {})
+        if "userInfo" in userCache:
+            del userCache["userInfo"]
+            self.chatUsers.set(userKey, userCache)
 
     # ## User State
 

@@ -59,6 +59,7 @@ class ToolName(StrEnum):
 
     # User Data
     ADD_USER_DATA = "add_user_data"
+    DELETE_USER_DATA = "delete_user_data"
 
     # Common
     GET_CURRENT_DATETIME = "get_current_datetime"

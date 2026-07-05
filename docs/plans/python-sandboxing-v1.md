@@ -1,9 +1,9 @@
 # Sandboxed Code Execution — Design v1
 
-Status: **proposed design, no code yet**
-Supersedes: [`python-sandboxing-v0.gpt.md`](python-sandboxing-v0.gpt.md), [`python-sandboxing-v0.gemini.md`](python-sandboxing-v0.gemini.md)
-Companion: [`python-sandboxing-v1-integration.md`](python-sandboxing-v1-integration.md) (Gromozeka-specific wiring)
-Scope: design-only. Implementation will be staged separately.
+Status: **implemented** — `lib/sandbox/` package is live; this doc is the retained design reference.
+Supersedes: [`python-sandboxing-v0.gpt.md`](../archive/plans/python-sandboxing-v0.gpt.md), [`python-sandboxing-v0.gemini.md`](../archive/plans/python-sandboxing-v0.gemini.md)
+Companion: [`python-sandboxing-v1-integration.md`](../archive/plans/python-sandboxing-v1-integration.md) (Gromozeka-specific wiring)
+Scope: retained design reference for the implemented lib/sandbox/ package.
 
 This document covers the **standalone, language- and bot-agnostic sandbox library** living under [`lib/sandbox/`](../../lib/). Gromozeka integration (adapter service, handlers, config wiring) is split out into the companion doc.
 
@@ -112,7 +112,7 @@ lib/
     tests/                       # collocated per AGENTS.md tests rule
 ```
 
-The Gromozeka-specific adapter lives outside this tree — see the [integration doc](python-sandboxing-v1-integration.md).
+The Gromozeka-specific adapter lives outside this tree — see the [integration doc](../archive/plans/python-sandboxing-v1-integration.md).
 
 ---
 
@@ -782,7 +782,7 @@ Runs once at startup:
 
 ## 13. Configuration
 
-Loaded by `SandboxManager` from a typed `SandboxConfig` dataclass. The Gromozeka adapter (see [integration doc](python-sandboxing-v1-integration.md)) is responsible for populating it from `ConfigManager`.
+Loaded by `SandboxManager` from a typed `SandboxConfig` dataclass. The Gromozeka adapter (see [integration doc](../archive/plans/python-sandboxing-v1-integration.md)) is responsible for populating it from `ConfigManager`.
 
 ```python
 @dataclass(slots=True)
@@ -1108,7 +1108,7 @@ Per [`docs/llm/testing.md`](../llm/testing.md). Tests live at `tests/lib/sandbox
 
 ### M5 — Gromozeka integration
 
-See [`python-sandboxing-v1-integration.md`](python-sandboxing-v1-integration.md).
+See [`python-sandboxing-v1-integration.md`](../archive/plans/python-sandboxing-v1-integration.md).
 
 ### M6 — Future (deliberately out of scope)
 

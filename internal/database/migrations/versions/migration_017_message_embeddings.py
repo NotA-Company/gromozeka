@@ -9,7 +9,7 @@ model name and dimensionality used to produce it.
 The `model` and `dimensions` columns are stored per row so a chat that
 switches its `EMBEDDING_MODEL` chat setting can detect stale rows
 without joining against the LLM registry at SQL time. See
-`docs/plans/chat-history-search-plan.md` §3.1 for the design rationale.
+`docs/archive/plans/chat-history-search-plan.md` §3.1 for the design rationale.
 
 Schema notes (cross-RDBMS portability):
 - Composite PK (chat_id, message_id) — natural key, no AUTOINCREMENT/SERIAL.

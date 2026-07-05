@@ -30,7 +30,7 @@
 | [`spam.py`](../../internal/bot/common/handlers/spam.py) | `SpamHandler` | Spam detection (runs after preprocessor) |
 | [`configure.py`](../../internal/bot/common/handlers/configure.py) | `ConfigureCommandHandler` | Chat settings configuration |
 | [`summarization.py`](../../internal/bot/common/handlers/summarization.py) | `SummarizationHandler` | Chat summarization |
-| [`user_data.py`](../../internal/bot/common/handlers/user_data.py) | `UserDataHandler` | User data management |
+| [`user_data.py`](../../internal/bot/common/handlers/user_data.py) | `UserDataHandler` | User data management + background memory refinement. Registers `ADD_USER_DATA` and `DELETE_USER_DATA` LLM tools (both read `extraData["ensuredMessage"].recipient.id`/`.sender.id`). `newMessageHandler` increments an in-memory per-`(chatId, userId, threadId)` counter (gated by the `MEMORY_REFINEMENT_ENABLED` chat setting) at the very top — before any gates — and returns `NEXT`. Registers a `CRON_JOB` (`_dtCronJob`, every 60s) that, under a single global `asyncio.Lock` (`_refineLock`), scans the counter and runs up to `max-refines-per-tick` refinements sequentially; a slow LLM call makes subsequent ticks early-return rather than flood the provider. `_runRefinement` fetches the user's recent messages via `getChatMessagesSince` (new `userId` filter), calls `LLMService.generateTextViaLLM` with the four tools (`ADD_USER_DATA`/`DELETE_USER_DATA`/`SEARCH_MESSAGES`/`GET_CURRENT_DATETIME`), and persists the resulting summary to `chat_users.metadata.memoryRefinement[str(threadId)]` via direct `updateUserMetadata` read-modify-write (NOT `setUserMetadata` — shallow-merge gotcha). The summary is injected into chat context as `EnsuredMessage.userSummary` (via `EnsuredMessage.applyUserMetadata`). See [`architecture.md`](architecture.md) ADR-014 and [`docs/llm/memories/user-memory-refinement.md`](../../docs/llm/memories/user-memory-refinement.md). |
 | [`dev_commands.py`](../../internal/bot/common/handlers/dev_commands.py) | `DevCommandsHandler` | Developer/debug commands |
 | [`media.py`](../../internal/bot/common/handlers/media.py) | `MediaHandler` | Media message processing |
 | [`common.py`](../../internal/bot/common/handlers/common.py) | `CommonHandler` | Common bot commands |
@@ -384,6 +384,17 @@ if self.configManager.getOpenWeatherMapConfig().get("enabled", False):
         (WeatherHandler(configManager=configManager, database=database, botProvider=botProvider), HandlerParallelism.PARALLEL)
     )
 ```
+
+### Shutdown state dump
+
+Shutdown diagnostics are emitted by `HandlersManager._dumpAllState()` — a parameterless method with a **single call site**: `shutdown()` awaits it directly after `_shutdownEvent.set()` and **before** per-chat queues are drained (so pending-message counts are still populated). Because there is exactly one caller, there is no DO_EXIT registration and no `_stateDumped` idempotency guard.
+
+`_dumpAllState()` does two things inline (no separate `_dumpChatStates` helper):
+
+1. **Per-chat queue state** — snapshots `chatStates.values()` under `stateLock` (avoids `RuntimeError` from concurrent modification), then inspects each chat's queue under its own per-chat lock. Empty queues are skipped. For each non-empty queue it logs `chat_id=%d.%s pending_messages=%d` — the `%s` is `threadId`, so a `None` thread renders as the literal string `None`. Per-chat errors are isolated via try/except + `logger.warning(..., exc_info=True)`.
+2. **Rate limiter state** — calls `RateLimiterManager.getInstance().dumpAllStats()` (see [services.md §5](services.md#5-ratelimitermanager)), which **returns** a `List[RateLimiterStatsEntry]` (one entry per queue across all limiters; the method itself does not log). Each returned entry is logged at INFO via `logger.info(utils.jsonDumps(entry, indent=2))`.
+
+To add new shutdown diagnostics, extend `_dumpAllState()` (or add another step to `shutdown()`). There is no hook registry for this — the DO_EXIT delayed-task mechanism (`queueService.registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, ...)`) is used by other subsystems (`SandboxHandler`, `ProxyService`, `_dtOnExit`) but is not involved in the state dump.
 
 ---
 

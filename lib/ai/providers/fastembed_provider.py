@@ -92,12 +92,18 @@ class FastembedProvider(AbstractLLMProvider):
     The provider has no remote endpoint — there is no client to initialise.
     Model-specific configuration is consumed from each model's
     ``extraConfig`` (stored as ``self._config`` on the model) so a single
-    provider can host models with different dimensions / cache directories
-    / thread counts.
+    provider can host models with different dimensions / thread counts.
+    A provider-level ``cache_dir`` (read from the provider config) is
+    applied to every hosted model unless the model overrides it in its own
+    ``extraConfig``.
 
     Attributes:
-        config: Provider-level configuration (usually empty — the provider
-            is purely structural; all knobs live on the model).
+        config: Provider-level configuration. May carry a ``cache_dir``
+            key (string path) used as the default download/cache location
+            for every hosted model.
+        cacheDir: Provider-wide default cache directory forwarded to
+            ``TextEmbedding(...)`` for every model that doesn't specify its
+            own ``cache_dir``. ``None`` means "use fastembed's default".
         models: Dict of registered :class:`FastembedModel` instances,
             keyed by model name.
         _modelLocks: Per-model-id ``threading.Lock`` used to serialise
@@ -129,11 +135,13 @@ class FastembedProvider(AbstractLLMProvider):
         :meth:`embedOne` on the first call for a given model id.
 
         Args:
-            config: Provider-level configuration. The provider is purely
-                structural, so this is typically empty (``{}``); all
-                model-specific knobs (``embedding_dimensions``,
-                ``cache_dir``, etc.) flow through each model's
-                ``extraConfig``.
+            config: Provider-level configuration. Recognised keys:
+
+                - ``cache_dir`` (str, optional): default directory where
+                  fastembed stores downloaded models. Applied to every
+                  hosted model unless the model overrides it via its own
+                  ``extraConfig.cache_dir``. When omitted, fastembed's
+                  built-in default (``~/.cache/fastembed``) is used.
 
         Raises:
             ImportError: If the ``fastembed`` package is not installed in
@@ -155,7 +163,9 @@ class FastembedProvider(AbstractLLMProvider):
         # for the same model id don't both download/load the model.
         self._modelLocks: Dict[str, Lock] = {}
         self._locksGuard: Lock = Lock()
-        logger.info(f"{self.__class__.__name__} initialized")
+        # Provider-wide default cache dir; None = fastembed default.
+        self.cacheDir: Optional[str] = config.get("cache_dir")
+        logger.info(f"{self.__class__.__name__} initialized (cache_dir={self.cacheDir!r})")
 
     def addModel(
         self,
@@ -195,7 +205,9 @@ class FastembedProvider(AbstractLLMProvider):
                   dimensionality. If absent, detected from fastembed.
                 - Any other keys (e.g. ``cache_dir``, ``threads``,
                   ``max_length``) are passed through to
-                  ``TextEmbedding(...)`` as keyword arguments.
+                  ``TextEmbedding(...)`` as keyword arguments. A
+                  model-level ``cache_dir`` overrides the provider-wide
+                  default (see :attr:`FastembedProvider.cacheDir`).
 
         Returns:
             The registered :class:`FastembedModel` instance.
@@ -383,7 +395,9 @@ class FastembedModel(AbstractModel):
                   dimensionality. If absent, probed lazily from
                   fastembed on first embed call.
                 - Any other keys are forwarded to ``TextEmbedding(...)``
-                  (e.g. ``cache_dir``, ``threads``, ``max_length``).
+                  (e.g. ``cache_dir``, ``threads``, ``max_length``). A
+                  model-level ``cache_dir`` overrides the provider-wide
+                  default (see :attr:`FastembedProvider.cacheDir`).
         """
         super().__init__(
             provider,
@@ -401,6 +415,10 @@ class FastembedModel(AbstractModel):
         self._fastembedKwargs: Dict[str, Any] = {
             key: value for key, value in (extraConfig or {}).items() if key not in self._CONSUMED_EXTRA_KEYS
         }
+        # Apply provider-wide cache_dir as a default; a model-level
+        # cache_dir in extraConfig takes precedence and is left as-is.
+        if "cache_dir" not in self._fastembedKwargs and provider.cacheDir is not None:
+            self._fastembedKwargs["cache_dir"] = provider.cacheDir
 
     async def _generateEmbeddings(self, text: str) -> list[float]:
         """Generate an embedding for ``text`` using the FastEmbed model.

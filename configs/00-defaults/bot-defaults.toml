@@ -124,7 +124,7 @@ bayes-auto-learn = true
 # Should we use trigrams for Bayes filter? (Usefull only in case of lots of learned messages)
 bayes-use-trigrams = false
 
-# Embedding / semantic search (see docs/plans/chat-history-search-plan.md §2.7)
+# Embedding / semantic search (see docs/archive/plans/chat-history-search-plan.md §2.7)
 embeddings-enabled = false
 regenerate-embeddings = true
 max-messages-for-semantic-search = 100000
@@ -154,6 +154,9 @@ base-tier = "free"
 paid-tier = "free"
 paid-tier-untill-ts = 0
 
+# Whether user memory refinement is enabled
+memory-refinement-enabled       = false
+
 # Per-char ratelimiters for LLM usage and Tools-usage
 llm-ratelimiter                 = "chat-default"
 
@@ -167,6 +170,9 @@ image-generation-model          = "aliceai-image-art"
 # image-generation-model          = "yandex-art"
 image-generation-fallback-model = "openrouter/gemini-2.5-flash-image"
 condensing-model                = "openrouter/free"
+memory-refine-model             = "openrouter/free"
+memory-refine-fallback-model    = "aliceai-llm-flash"
+
 
 summary-prompt     = """
 Суммаризируй переписку. Укажи:
@@ -198,6 +204,7 @@ chat-prompt-suffix = """
 * `quote` - Цитата из другого сообщения (если есть).
 * `mediaDescription` - Описание изображения (при наличии).
 * `userData` - Дополнительные знания о пользователе в JSON-формате (при наличии).
+* `userSummary` - Краткое резюме/био о пользователе (при наличии).
 
 Отвечай простым текстом, без JSON-обёртки. Можно использовать Markdown.
 """
@@ -322,3 +329,31 @@ divination-parse-structure-prompt = """
 
 Ответь ТОЛЬКО валидным JSON'ом, без вводных слов и пояснений — только JSON.
 """
+
+# Memory-refinement prompts (per-chat overridable via chat settings).
+# Placeholders for the user-prompt template:
+#   {existingUserData}, {existingSummary}, {messages}
+memory-refine-system-prompt = """
+Ты — ассистент уточнения памяти. Твоя задача — поддерживать компактную и актуальную долговременную память о конкретном пользователе в чате и обновлять его краткое досье.
+
+На входе ты получаешь: уже известные долговременные факты о пользователе (ключ/значение), его текущее краткое досье и его недавние сообщения.
+
+Порядок действий:
+1. Сначала изучи уже известные факты и досье, чтобы не дублировать то, что уже записано.
+2. Если нужно вспомнить более старый контекст — используй инструмент `search_messages` для поиска по прошлым сообщениям пользователя.
+3. Через инструмент `add_user_data` записывай НОВЫЕ долговременные факты о пользователе. Ключи — на английском, в snake_case, короткие и однозначные (например: `real_name`, `birthday`, `profession`, `language`, `goals`). Значения — конкретные и краткие. Сохраняй только то, что останется верным через недели: реальное имя, дата рождения, профессия, устойчивые предпочтения (язык, стиль общения, форматирование), долгосрочные цели, важные отношения.
+4. Через инструмент `delete_user_data` удаляй факты, которые устарели, ошибочны или противоречат недавним сообщениям.
+5. Не записывай временные состояния (настроение, текущие занятия), разовые просьбы и контекст конкретной беседы. Если сомневаешься — не сохраняй.
+6. В конце верни ОБНОВЛЁННОЕ краткое досье пользователя (несколько предложений), отражающее всё, что тебе теперь известно. Пиши на языке переписки пользователя; если он неясен — по-русски. Выведи ТОЛЬКО текст нового досье, без пояснений и служебных комментариев."""
+
+memory-refine-user-prompt-template = """
+Уже известные долговременные факты:
+{existingUserData}
+
+Текущее досье:
+{existingSummary}
+
+Недавние сообщения пользователя:
+{messages}
+
+Проанализируй данные выше. При необходимости обнови долговременные факты через инструменты (не дублируй уже существующие записи, обновляй или удаляй устаревшие), затем выведи обновлённое краткое досье."""

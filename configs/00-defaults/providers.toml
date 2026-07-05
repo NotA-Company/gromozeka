@@ -17,3 +17,7 @@ folder_id = "${YC_FOLDER_ID}"
 # Local embedding provider (fastembed-backed; multi-model).
 [models.providers.fastembed]
 type = "fastembed"
+# Directory where fastembed stores downloaded ONNX models. Applied to every
+# hosted model unless the model overrides it via its own `cache_dir` key.
+# When commented out, fastembed's built-in default (~/.cache/fastembed) is used.
+#cache_dir = "/var/lib/gromozeka/fastembed-cache"

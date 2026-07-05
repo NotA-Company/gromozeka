@@ -716,6 +716,45 @@ Max Messenger webhook receiver configuration. Defaults live in [`configs/00-defa
 
 ---
 
+### `[user-memory]`
+
+Background per-`(chat, user, thread)` memory refinement. Defaults live in [`configs/00-defaults/user-memory.toml`](../../configs/00-defaults/user-memory.toml). The feature is a background cron-driven LLM subsystem owned by `UserDataHandler` (see [`handlers.md`](handlers.md) `UserDataHandler` row and [`architecture.md`](architecture.md) ADR-014).
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `enabled` | bool | `false` | Global kill switch. When `false`, the refinement cron early-returns regardless of per-chat settings. Per-chat enable is a separate gate — the `memory-refinement-enabled` chat setting (see `[bot.defaults]` below). |
+
+#### `[user-memory.thresholds]`
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `message-count` | int | `5` | Per-`(chat, user, thread)` new-message count that triggers a refinement run |
+| `time-seconds` | int | `21600` | Max seconds since the last refinement run (in-memory `_lastRefinedTS`) before another is forced (6 hours) |
+| `min-messages-to-refine` | int | `5` | Bail if fewer new messages are available (prevents refining tiny bursts) |
+| `max-messages-per-run` | int | `128` | Cap on messages fed to a single refinement LLM call |
+| `max-refines-per-tick` | int | `3` | Upper bound on refinement LLM calls per 60s cron tick |
+
+#### Refinement prompts (chat settings)
+
+The refinement prompts are **per-chat settings** (not `[user-memory.prompts]` config — that section was removed). Defaults live under `[bot.defaults]` in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml) and can be overridden per chat:
+
+| `ChatSettingsKey` enum | Setting key | Type | Page | Purpose |
+|---|---|---|---|---|
+| `MEMORY_REFINE_SYSTEM_PROMPT` | `memory-refine-system-prompt` | STRING | `FRIEND` | System instruction for the refinement LLM call |
+| `MEMORY_REFINE_USER_PROMPT_TEMPLATE` | `memory-refine-user-prompt-template` | STRING | `FRIEND` | User message template. Placeholders: `{existingUserData}`, `{existingSummary}`, `{messages}` |
+
+**Related `[bot.defaults]` keys** (in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml)) — all five are `ChatSettingsKey` defaults wired via the four-site convention:
+
+| `ChatSettingsKey` enum | Setting key | Type | Page | Purpose |
+|---|---|---|---|---|
+| `MEMORY_REFINEMENT_ENABLED` | `memory-refinement-enabled` | BOOL | `FRIEND` | Per-chat gate. Default `false`. Enabled for the friend tier via the local config overlay (`configs/common/` is gitignored — same model as `allow-sandbox`; see [`teamlead-memory.md`](teamlead-memory.md) "Configs Tracking Gotcha") |
+| `MEMORY_REFINE_MODEL` | `memory-refine-model` | MODEL | `FRIEND` | Primary LLM for refinement runs (default `"openrouter/free"`) |
+| `MEMORY_REFINE_FALLBACK_MODEL` | `memory-refine-fallback-model` | MODEL | `FRIEND` | Fallback when the primary fails (default `"aliceai-llm-flash"`) |
+| `MEMORY_REFINE_SYSTEM_PROMPT` | `memory-refine-system-prompt` | STRING | `FRIEND` | System prompt for the refinement call (default in `bot-defaults.toml`) |
+| `MEMORY_REFINE_USER_PROMPT_TEMPLATE` | `memory-refine-user-prompt-template` | STRING | `FRIEND` | User-prompt template with `{existingUserData}`/`{existingSummary}`/`{messages}` placeholders |
+
+---
+
 ## 3. ConfigManager Methods
 
 **File:** [`internal/config/manager.py:59`](../../internal/config/manager.py:59)

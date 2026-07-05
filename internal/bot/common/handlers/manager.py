@@ -63,6 +63,7 @@ from internal.services.cache import CacheService
 from internal.services.queue_service import DelayedTask, DelayedTaskFunction, QueueService
 from internal.services.storage import StorageService
 from lib import utils
+from lib.rate_limiter.manager import RateLimiterManager
 
 from .base import BaseBotHandler, HandlerResultStatus
 from .chat_search import ChatSearchHandler
@@ -677,16 +678,53 @@ class HandlersManager(CommandHandlerGetterInterface):
     async def shutdown(self) -> None:
         """Shutdown the HandlersManager.
 
-        This method will await for all running tasks and drop queues.
+        Dumps queue and rate limiter state (so the diagnostics are captured
+        while per-chat queues are still populated), signals shutdown to all
+        chat queues, awaits in-flight handler tasks, and drops queues.
+
+        Returns:
+            None
         """
         logger.info("Shutting down HandlersManager...")
         self._shutdownEvent.set()
+
+        # Dump state before draining queues
+        await self._dumpAllState()
+
         logger.info("Awaiting for queue handlers...")
         for chatState in self.chatStates.values():
             async with chatState.lock:
                 chatState.shutdownEvent.set()
 
         await asyncio.gather(*self.handlerTasks)
+
+    async def _dumpAllState(self) -> None:
+        """Dump queue state and rate limiter state at shutdown.
+
+        Called from ``shutdown()`` while per-chat queues are still
+        populated, so the diagnostics capture pending message counts
+        in addition to rate-limiter statistics.
+
+        Returns:
+            None
+        """
+
+        async with self.stateLock:
+            chatStates = list(self.chatStates.values())
+        for chatState in chatStates:
+            try:
+                async with chatState.lock:
+                    queueSize = len(chatState.queue)
+                if queueSize == 0:
+                    continue
+                logger.info("chat_id=%d.%s pending_messages=%d", chatState.chatId, chatState.threadId, queueSize)
+            except Exception:
+                logger.warning("chat_id=%s state dump failed", getattr(chatState, "chatId", "?"), exc_info=True)
+
+        manager = RateLimiterManager.getInstance()
+        statsList = manager.dumpAllStats()
+        for entry in statsList:
+            logger.info(utils.jsonDumps(entry, indent=2))
 
     async def runAsync(self, func: Coroutine, timeout: Optional[float] = None) -> asyncio.Task:
         """Run background tasks with optional timeout.
@@ -976,6 +1014,9 @@ class HandlersManager(CommandHandlerGetterInterface):
             previousRec = await chatState.getPreviousMessage(messageRec)
             ensuredMessage.setUserData(
                 await self.cache.getChatUserData(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
+            )
+            ensuredMessage.applyUserMetadata(
+                await self.cache.getUserMetadata(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
             )
 
             commandRet = await asyncio.wait_for(

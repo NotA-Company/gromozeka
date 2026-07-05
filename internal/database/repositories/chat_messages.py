@@ -213,13 +213,14 @@ class ChatMessagesRepository(BaseRepository):
         threadId: Optional[int] = None,
         limit: Optional[int] = None,
         messageCategory: Optional[Sequence[MessageCategory]] = None,
+        userId: Optional[int] = None,
         *,
         dataSource: Optional[str] = None,
     ) -> List[ChatMessageDict]:
         """Get chat messages from a specific chat newer than the given date.
 
         Retrieves chat messages with optional filtering by date range, thread,
-        message category, and limit. Results are ordered by date descending.
+        message category, sender, and limit. Results are ordered by date descending.
 
         Args:
             chatId (int): Chat identifier
@@ -228,6 +229,8 @@ class ChatMessagesRepository(BaseRepository):
             threadId (Optional[int]): Optional thread identifier for filtering
             limit (Optional[int]): Optional maximum number of messages to return
             messageCategory (Optional[Sequence[MessageCategory]]): Optional list of message categories to filter
+            userId (Optional[int]): Optional sender user identifier; when set, only messages
+                authored by this user are returned (None disables the filter)
             dataSource (Optional[str]): Optional data source name for explicit routing
 
         Returns:
@@ -239,7 +242,7 @@ class ChatMessagesRepository(BaseRepository):
         logger.debug(
             f"Getting chat messages for chat {chatId}:{threadId} "
             f"date: [{sinceDateTime},{tillDateTime}], limit: {limit}, "
-            f"messageCategory: {messageCategory}, dataSource: {dataSource}"
+            f"messageCategory: {messageCategory}, userId: {userId}, dataSource: {dataSource}"
         )
         try:
             params = {
@@ -248,6 +251,7 @@ class ChatMessagesRepository(BaseRepository):
                 "tillDateTime": tillDateTime,
                 "threadId": threadId,
                 "messageCategory": None if messageCategory is None else True,
+                "userId": userId,
             }
 
             placeholders = []
@@ -266,6 +270,7 @@ class ChatMessagesRepository(BaseRepository):
                     AND (:tillDateTime    IS NULL OR c.date < :tillDateTime)
                     AND (:threadId        IS NULL OR c.thread_id = :threadId)
                     AND (:messageCategory IS NULL OR message_category IN ({", ".join(placeholders)}))
+                    AND (:userId          IS NULL OR c.user_id = :userId)
                 ORDER BY c.date DESC, c.message_id DESC
             """
             if limit is not None:

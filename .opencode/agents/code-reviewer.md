@@ -109,10 +109,12 @@ permission:
     "wc": allow
     "wc *": allow
     "echo *": allow
+    "cat *": allow
     "diff": allow
     "diff *": allow
+    "awk *": allow
     "pwd": allow
-    "sed -n": allow
+    "sed -n *": allow
   edit: deny
   write: deny
   task: deny
