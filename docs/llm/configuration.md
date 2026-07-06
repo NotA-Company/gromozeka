@@ -759,6 +759,38 @@ Background per-`(chat, user, thread)` memory refinement. Defaults live in [`conf
 | `max-messages-per-run` | int | `128` | Cap on messages fed to a single refinement LLM call |
 | `max-refines-per-tick` | int | `3` | Upper bound on refinement LLM calls per 60s cron tick |
 
+#### `[user-memory.json-logging]`
+
+Optional JSONL log of every successful memory-refinement run, mirroring the LLM-interaction logger (`AbstractModel.printJSONLog`). Read ONCE in `UserDataHandler.__init__` into `_refineLogEnabled` / `_refineLogFile` / `_refineLogAddDateSuffix` (same cache-once pattern as the other `[user-memory]` keys). The writer is a best-effort synchronous append guarded by `if self._refineLogEnabled:` so the default (off) does zero work on the hot path.
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `enabled` | bool | `false` | Kill switch for the per-run JSONL refinement log |
+| `file` | str | `"logs/user-memory-refinement-json.log"` | Target JSONL file path |
+| `add-date-suffix` | bool | `true` | Append a `.<YYYY-MM-DD>` (UTC) suffix to the filename (one file per day) |
+
+**Logged fields** (one JSONL line per successful run, written via `utils.jsonDumps` = `json.dumps(ensure_ascii=False, default=str, sort_keys=True)`):
+
+| Field | Type | Source |
+|---|---|---|
+| `date` | str | UTC ISO timestamp of the log write |
+| `chatId` | int | Refined scope chat id |
+| `threadId` | int | Refined scope thread id (`0` = main thread) |
+| `userId` | int | Refined scope user id |
+| `login` | str | User's `username` from `chat_users` (JOIN'd into the fetched messages; may be `""`) |
+| `messagesCount` | int | Messages analyzed this run (≤ `max-messages-per-run`, default 128) |
+| `firstMessageId` | str | Oldest analyzed message id (`MessageId.asStr()`) |
+| `lastMessageId` | str | Newest analyzed message id (the cursor the refinement advances to) |
+| `summary` | str | The new summary (stripped LLM output — the exact value persisted to `chat_users.metadata`) |
+| `model` | str | Model id that served the request (`memory-refine-model`, or `memory-refine-fallback-model` when `result.isFallback`) |
+| `elapsedTime` | float\|null | Seconds the LLM call took |
+
+**Behavior notes:**
+
+- **Success-path-only.** The hook sits in `_runRefinement` ([`internal/bot/common/handlers/user_data.py`](../../internal/bot/common/handlers/user_data.py)) AFTER the LLM returns and `newSummary` is bound, BEFORE the empty-summary early-return guard. An exception during the LLM call re-raises before the hook, so failed runs are NOT logged (mirrors `printJSONLog`).
+- **Empty summaries ARE logged** (as `""`) — the hook runs before the `if not newSummary: return` guard, by design.
+- **IO-failure tolerant.** The write is wrapped in `try/except OSError` with `logger.debug` on failure — a logging failure never breaks the refinement pipeline. This intentionally diverges from `printJSONLog`, which has no error handling.
+
 #### Refinement prompts (chat settings)
 
 The refinement prompts are **per-chat settings** (not `[user-memory.prompts]` config — that section was removed). Defaults live under `[bot.defaults]` in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml) and can be overridden per chat:

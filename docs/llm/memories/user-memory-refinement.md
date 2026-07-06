@@ -64,6 +64,32 @@ This is also recorded as a reusable gotcha in [`tasks.md`](../tasks.md) §3.
 - `configs/00-defaults/bot-defaults.toml` (tracked): `memory-refine-model` (`"openrouter/free"`), `memory-refine-fallback-model` (`"aliceai-llm-flash"`), `memory-refinement-enabled = false`, `memory-refine-system-prompt`, `memory-refine-user-prompt-template` — all under `[bot.defaults]`.
 - **`configs/common/` is gitignored** — the friend-tier `memory-refinement-enabled = true` lives in the local overlay (`configs/common/01-bot-defaults.toml` under `[bot.tier-defaults.friend]`), same model as `allow-sandbox`. It will NOT propagate via git; it's a per-deployment manual overlay step. See [`teamlead-memory.md`](../teamlead-memory.md) "Configs Tracking Gotcha".
 
+## JSONL refinement log (optional, 2026-07-06)
+
+Configurable JSONL logging of every successful refinement run, mirroring the LLM-interaction logger (`AbstractModel.printJSONLog`). Config: `[user-memory.json-logging]` sub-table (3 keys: `enabled`/`file`/`add-date-suffix`, defaults `false`/`"logs/user-memory-refinement-json.log"`/`true`) in `configs/00-defaults/user-memory.toml`. Read ONCE in `UserDataHandler.__init__` into `_refineLogEnabled` / `_refineLogFile` / `_refineLogAddDateSuffix` (same cache-once pattern as the other `[user-memory]` keys); see [`configuration.md`](../configuration.md) §`[user-memory.json-logging]`.
+
+**Hook placement** (`_runRefinement`, `internal/bot/common/handlers/user_data.py`): AFTER the LLM returns and `newSummary` is bound, BEFORE the empty-summary early-return guard. Consequences:
+
+- **Success path:** logged, then persisted.
+- **Empty summary:** logged (empty string), then early-returns without persisting. (Intentional — the user decided to log empty summaries too.)
+- **Exception during the LLM call:** NOT logged — the exception re-raises (caught by the outer `try/except` which logs and returns) before the hook runs. Success-path-only by design, mirroring `printJSONLog`.
+
+The hook is guarded by `if self._refineLogEnabled:` so no work happens when disabled (the default).
+
+**11 logged fields** (one JSONL line per successful run, `utils.jsonDumps` = `json.dumps(ensure_ascii=False, default=str, sort_keys=True)`):
+
+- `date` — UTC ISO timestamp of the log write.
+- `chatId`, `threadId`, `userId` — int identifiers of the refined scope.
+- `login` — the user's `username` (`messages[0]["username"]`, JOIN'd from `chat_users`; may be `""`).
+- `messagesCount` — `len(messages)` (≤ `_memoryMaxMessagesPerRun`, default 128).
+- `firstMessageId` — `messages[-1]["message_id"].asStr()` (oldest, DESC order).
+- `lastMessageId` — `messages[0]["message_id"].asStr()` (newest — the cursor advanced to).
+- `summary` — `newSummary` (stripped LLM output; the exact value persisted to `chat_users.metadata`).
+- `model` — resolved via `_resolveRefineModel(chatSettings, result)`: `MEMORY_REFINE_FALLBACK_MODEL` when `result.isFallback`, else `MEMORY_REFINE_MODEL`. Defensive `.get(KEY)` (returns `""` if unset) so the hook call site — which is outside any try/except — can never raise `KeyError`.
+- `elapsedTime` — `result.elapsedTime` (seconds the LLM call took).
+
+**File write** — `_writeRefinementJsonLog`: bare `open(file, "a")` + `utils.jsonDumps(data) + "\n"` (append mode). Wrapped in `try/except OSError` with `logger.debug` on failure — refinement must not break over a log write. **This intentionally diverges from `printJSONLog`, which has no error handling.** Date-suffix, when enabled, appends `.<YYYY-MM-DD>` (UTC) to the filename. No shared JSONL-writer utility was extracted — `_writeRefinementJsonLog` is handler-local.
+
 ## Chat settings (four-site convention)
 
 All five are `page = ChatSettingsPage.FRIEND` in `_chatSettingsInfo` (`internal/bot/models/chat_settings.py`):

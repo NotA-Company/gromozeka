@@ -141,6 +141,18 @@ class UserDataHandler(BaseBotHandler):
         self._memoryMaxRefinesPerTick: int = thresholds.get("max-refines-per-tick", MEMORY_MAX_REFINES_PER_TICK)
         """Upper bound on refinement LLM calls per 60s cron tick."""
 
+        # JSONL refinement log config (mirrors [models.json-logging]). Read once
+        # at construction; the writer guards on `_refineLogEnabled` and is a
+        # best-effort synchronous append so a logging failure never breaks the
+        # refinement pipeline. See `_writeRefinementJsonLog`.
+        refineLogConfig = userMemoryConfig.get("json-logging", {})
+        self._refineLogEnabled: bool = bool(refineLogConfig.get("enabled", False))
+        """Kill switch for the per-run JSONL refinement log."""
+        self._refineLogFile: str = refineLogConfig.get("file", "")
+        """Target JSONL file path (a UTC date suffix may be appended)."""
+        self._refineLogAddDateSuffix: bool = bool(refineLogConfig.get("add-date-suffix", True))
+        """Whether to append a ``.YYYY-MM-DD`` (UTC) suffix to the log file."""
+
         # Register the memory-refinement CRON_JOB. Multiple handlers can
         # subscribe to the same `DelayedTaskFunction.CRON_JOB` (they run in
         # registration order), so the existing cleanup tick and the
@@ -560,6 +572,24 @@ class UserDataHandler(BaseBotHandler):
             logger.exception(e)
             return
 
+        # Best-effort JSONL log of this refinement run. Placed AFTER `newSummary`
+        # is bound and BEFORE the empty-summary early-return so empty summaries
+        # are logged too (success-path-only: an exception above returns before
+        # reaching here). Mirrors AbstractModel.printJSONLog. Guarded so the
+        # model resolution + method call are both skipped when logging is off
+        # (the default), avoiding wasted dict-lookup work on the hot path.
+        if self._refineLogEnabled:
+            self._writeRefinementJsonLog(
+                chatId=chatId,
+                userId=userId,
+                threadId=threadId,
+                login=messages[0]["username"],
+                messagesCount=len(messages),
+                firstMessageId=messages[-1]["message_id"].asStr(),
+                lastMessageId=messages[0]["message_id"].asStr(),
+                summary=newSummary,
+            )
+
         if not newSummary:
             logger.warning("Memory refinement produced empty summary for chatId=%s userId=%s", chatId, userId)
             return
@@ -586,6 +616,67 @@ class UserDataHandler(BaseBotHandler):
         # Record the refinement timestamp in-memory only (not persisted to DB).
         async with self._accountingLock:
             self._lastRefinedTS[(chatId, userId, threadId)] = int(time.time())
+
+    def _writeRefinementJsonLog(
+        self,
+        *,
+        chatId: int,
+        userId: int,
+        threadId: int,
+        login: str,
+        messagesCount: int,
+        firstMessageId: str,
+        lastMessageId: str,
+        summary: str,
+    ) -> None:
+        """Append a single JSONL line describing one memory-refinement run.
+
+        Mirrors ``AbstractModel.printJSONLog`` (``lib/ai/abstract.py``). Writes
+        are synchronous and best-effort: an IO error is logged at debug level
+        and swallowed so a logging failure can never break the refinement
+        pipeline (slightly safer than ``printJSONLog``, which has no try/except).
+
+        Args:
+            chatId: Chat the refined user belongs to.
+            userId: User whose memory was refined.
+            threadId: Thread scope (0 = main thread).
+            login: The user's username (may be empty string if none set).
+            messagesCount: Number of messages analyzed in this run.
+            firstMessageId: Oldest analyzed message id (serialized via
+                ``MessageId.asStr()``).
+            lastMessageId: Newest analyzed message id (serialized via
+                ``MessageId.asStr()``).
+            summary: The freshly produced (stripped) summary string. May be empty.
+
+        Returns:
+            None.
+        """
+        if not self._refineLogEnabled:
+            return
+
+        now = datetime.datetime.now(tz=datetime.timezone.utc)
+
+        filename = self._refineLogFile
+        if self._refineLogAddDateSuffix:
+            filename = filename + "." + now.strftime("%Y-%m-%d")
+
+        data = {
+            "date": now.isoformat(),
+            "chatId": chatId,
+            "threadId": threadId,
+            "userId": userId,
+            "login": login,
+            "messagesCount": messagesCount,
+            "firstMessageId": firstMessageId,
+            "lastMessageId": lastMessageId,
+            "summary": summary,
+        }
+
+        try:
+            with open(filename, "a") as f:
+                f.write(utils.jsonDumps(data, sort_keys=False) + "\n")
+        except OSError as e:
+            logger.debug("Failed to write refinement JSONL log to %s: %s", filename, e)
 
     async def _renderMessagesForLLM(self, messages: List[ChatMessageDict]) -> str:
         """Render a list of ChatMessageDict into a single text block for the refinement prompt.

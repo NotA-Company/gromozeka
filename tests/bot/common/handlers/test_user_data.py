@@ -35,8 +35,10 @@ the other handler tests under ``tests/bot/common/handlers/``.
 """
 
 import datetime
+import json
 import time
-from typing import Generator, Optional
+from pathlib import Path
+from typing import Any, Dict, Generator, List, Optional
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -184,7 +186,12 @@ def _makeEnsuredMessage(
     return ensuredMessage
 
 
-def _chatSettings(*, memoryRefinementEnabled: bool) -> ChatSettingsDict:
+def _chatSettings(
+    *,
+    memoryRefinementEnabled: bool,
+    refineModel: Optional[str] = None,
+    refineFallbackModel: Optional[str] = None,
+) -> ChatSettingsDict:
     """Build a chat-settings dict carrying the keys the refinement path reads.
 
     Includes ``MEMORY_REFINEMENT_ENABLED`` (the boolean toggle read by
@@ -193,22 +200,44 @@ def _chatSettings(*, memoryRefinementEnabled: bool) -> ChatSettingsDict:
     now read by ``_runRefinement``. The user-prompt template MUST contain the
     three ``.format()`` placeholders so the template render doesn't raise.
 
+    When *refineModel* is provided, the ``MEMORY_REFINE_MODEL`` setting is
+    populated so tests asserting the JSONL-log ``model`` field can pin it.
+    When *refineFallbackModel* is provided, ``MEMORY_REFINE_FALLBACK_MODEL`` is
+    populated likewise (used by the ``isFallback=True`` test to assert the
+    fallback branch of ``_resolveRefineModel``).
+
     Args:
         memoryRefinementEnabled: Value for the refinement toggle.
+        refineModel: Optional value for ``MEMORY_REFINE_MODEL`` (the primary
+            refinement model id). When ``None`` the key is omitted and
+            ``_resolveRefineModel`` returns ``""``.
+        refineFallbackModel: Optional value for ``MEMORY_REFINE_FALLBACK_MODEL``
+            (the fallback model id). When ``None`` the key is omitted.
 
     Returns:
-        Mapping with the refinement toggle + prompt keys.
+        Mapping with the refinement toggle + prompt keys (+ optional model(s)).
     """
-    return {
+    settings: ChatSettingsDict = {
         ChatSettingsKey.MEMORY_REFINEMENT_ENABLED: ChatSettingsValue("true" if memoryRefinementEnabled else "false"),
         ChatSettingsKey.MEMORY_REFINE_SYSTEM_PROMPT: ChatSettingsValue("system prompt placeholder"),
         ChatSettingsKey.MEMORY_REFINE_USER_PROMPT_TEMPLATE: ChatSettingsValue(
             "{existingUserData}\n{existingSummary}\n{messages}"
         ),
     }
+    if refineModel is not None:
+        settings[ChatSettingsKey.MEMORY_REFINE_MODEL] = ChatSettingsValue(refineModel)
+    if refineFallbackModel is not None:
+        settings[ChatSettingsKey.MEMORY_REFINE_FALLBACK_MODEL] = ChatSettingsValue(refineFallbackModel)
+    return settings
 
 
-def _stubGetChatSettings(handler: UserDataHandler, *, memoryRefinementEnabled: bool) -> AsyncMock:
+def _stubGetChatSettings(
+    handler: UserDataHandler,
+    *,
+    memoryRefinementEnabled: bool,
+    refineModel: Optional[str] = None,
+    refineFallbackModel: Optional[str] = None,
+) -> AsyncMock:
     """Override ``handler.getChatSettings`` with an ``AsyncMock``.
 
     Mirrors the instance-level stubbing pattern used by the other handler tests
@@ -220,11 +249,23 @@ def _stubGetChatSettings(handler: UserDataHandler, *, memoryRefinementEnabled: b
         handler: Handler under test.
         memoryRefinementEnabled: Value to return for
             ``MEMORY_REFINEMENT_ENABLED``.
+        refineModel: Optional value for ``MEMORY_REFINE_MODEL`` forwarded to
+            :func:`_chatSettings` (used by the JSONL-log tests to assert the
+            resolved model id).
+        refineFallbackModel: Optional value for ``MEMORY_REFINE_FALLBACK_MODEL``
+            forwarded to :func:`_chatSettings` (used by the ``isFallback=True``
+            test).
 
     Returns:
         The installed ``AsyncMock`` (for call assertions).
     """
-    getChatSettingsMock = AsyncMock(return_value=_chatSettings(memoryRefinementEnabled=memoryRefinementEnabled))
+    getChatSettingsMock = AsyncMock(
+        return_value=_chatSettings(
+            memoryRefinementEnabled=memoryRefinementEnabled,
+            refineModel=refineModel,
+            refineFallbackModel=refineFallbackModel,
+        )
+    )
     handler.getChatSettings = getChatSettingsMock  # type: ignore[method-assign]
     return getChatSettingsMock
 
@@ -359,7 +400,7 @@ class TestNewMessageHandlerAccounting:
 # ---------------------------------------------------------------------------
 
 
-def _makeUserMemoryConfigManager(*, enabled: bool) -> Mock:
+def _makeUserMemoryConfigManager(*, enabled: bool, jsonLogging: Optional[dict] = None) -> Mock:
     """Build a ``ConfigManager`` stub returning a ``user-memory`` config dict.
 
     Unlike :func:`_makeConfigManager` (which leaves ``user-memory`` absent so
@@ -371,6 +412,9 @@ def _makeUserMemoryConfigManager(*, enabled: bool) -> Mock:
 
     Args:
         enabled: Value for the ``[user-memory].enabled`` global kill switch.
+        jsonLogging: Optional value for the ``[user-memory.json-logging]``
+            sub-table. When ``None`` (default) the sub-table is omitted so the
+            handler reads the disabled-by-default refinement-log config.
 
     Returns:
         ``Mock`` exposing ``getBotConfig()`` and a ``get(key, default)``
@@ -378,6 +422,10 @@ def _makeUserMemoryConfigManager(*, enabled: bool) -> Mock:
     """
     cm = Mock()
     cm.getBotConfig = Mock(return_value={"token": "test_token", "owners": [123456]})
+
+    userMemoryConfig: dict = {"enabled": enabled}
+    if jsonLogging is not None:
+        userMemoryConfig["json-logging"] = jsonLogging
 
     def _get(key: str, default: object = None) -> object:
         """Side-effect for ``cm.get``.
@@ -391,7 +439,7 @@ def _makeUserMemoryConfigManager(*, enabled: bool) -> Mock:
             otherwise *default*.
         """
         if key == "user-memory":
-            return {"enabled": enabled}
+            return userMemoryConfig
         return default
 
     cm.get = Mock(side_effect=_get)
@@ -725,3 +773,290 @@ class TestCronJobAndRefinement:
         mockGenerate.assert_awaited_once()
         # 8 total (5 pre-seeded + 3 during call) − 5 consumed = 3 preserved.
         assert handler._accounting[(chatId, userId, threadId)] == 3  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# JSONL refinement logging
+# ---------------------------------------------------------------------------
+
+
+class TestRefinementJsonLog:
+    """Tests for the per-run JSONL refinement log (``_writeRefinementJsonLog``).
+
+    Mirrors the established ``AbstractModel.printJSONLog`` shape: a guarded,
+    synchronous append of one JSON object per line. The hook fires from
+    ``_runRefinement`` after the LLM call succeeds and before the empty-summary
+    early-return, so both populated and empty summaries are logged.
+
+    Each test drives a real ``_runRefinement`` against the in-memory database
+    with ``generateTextViaLLM`` mocked, then reads back the JSONL file written
+    under the pytest ``tmp_path`` fixture (never the real ``logs/`` dir).
+    """
+
+    async def test_refinementJsonLogDisabledByDefault(self, testDatabase: Database, tmp_path: Path) -> None:
+        """No ``json-logging`` sub-table → no log file is written.
+
+        Exercises the true omitted-default path: the handler's
+        ``userMemoryConfig.get("json-logging", {})`` returns ``{}``, so
+        ``_refineLogEnabled`` is False. Runs a full refinement and asserts no
+        ``refine.jsonl*`` file was created.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: Per-test temporary directory.
+        """
+        handler = await _makeHandler(
+            testDatabase,
+            configManager=_makeUserMemoryConfigManager(enabled=True, jsonLogging=None),
+        )
+        _stubGetChatSettings(handler, memoryRefinementEnabled=True)
+        handler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="Refined summary text")
+        )
+
+        chatId, userId, threadId = 361, 13, DEFAULT_THREAD_ID
+        await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user13", "Erin")
+        await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
+
+        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+
+        # No dated-suffix variant either — glob covers refine.jsonl and refine.jsonl.YYYY-MM-DD.
+        assert list(tmp_path.glob("refine.jsonl*")) == []
+
+    async def test_refinementJsonLogDisabledWhenExplicitlyConfigured(
+        self, testDatabase: Database, tmp_path: Path
+    ) -> None:
+        """``json-logging.enabled = false`` → no log file is written.
+
+        Constructs the handler with refinement enabled but the json-logging
+        sub-table explicitly disabling the log, runs a full refinement, and
+        asserts no ``refine.jsonl*`` file was created.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: Per-test temporary directory for the (unused) log file.
+        """
+        refineLogFile = str(tmp_path / "refine.jsonl")
+        handler = await _makeHandler(
+            testDatabase,
+            configManager=_makeUserMemoryConfigManager(
+                enabled=True,
+                jsonLogging={"enabled": False, "file": refineLogFile, "add-date-suffix": False},
+            ),
+        )
+        _stubGetChatSettings(handler, memoryRefinementEnabled=True)
+        handler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="Refined summary text")
+        )
+
+        chatId, userId, threadId = 360, 13, DEFAULT_THREAD_ID
+        await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user13", "Erin")
+        await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
+
+        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+
+        # No dated-suffix variant either — glob covers refine.jsonl and refine.jsonl.YYYY-MM-DD.
+        assert list(tmp_path.glob("refine.jsonl*")) == []
+
+    async def test_refinementJsonLogWritesAllFields(self, testDatabase: Database, tmp_path: Path) -> None:
+        """Successful refinement → exactly one JSONL line with all 11 fields.
+
+        Seeds 5 messages (ids 1000..1004, newest=1004), runs ``_runRefinement``
+        with a mocked non-fallback result, and asserts the written JSONL line
+        carries every field with the expected value, including the resolved
+        primary model id and the LLM elapsed time.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: Per-test temporary directory for the JSONL log file.
+        """
+        refineLogFile = str(tmp_path / "refine.jsonl")
+        handler = await _makeHandler(
+            testDatabase,
+            configManager=_makeUserMemoryConfigManager(
+                enabled=True,
+                jsonLogging={"enabled": True, "file": refineLogFile, "add-date-suffix": False},
+            ),
+        )
+        refineModel = "test-refine-model"
+        _stubGetChatSettings(handler, memoryRefinementEnabled=True, refineModel=refineModel)
+        handler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=ModelRunResult(
+                rawResult={},
+                status=ModelResultStatus.FINAL,
+                resultText="Refined summary text",
+                elapsedTime=1.5,
+            )
+        )
+
+        chatId, userId, threadId = 370, 14, DEFAULT_THREAD_ID
+        login = "@user14"
+        await testDatabase.chatUsers.updateChatUser(chatId, userId, login, "Frank")
+        await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
+
+        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+
+        entries = _readRefineLog(tmp_path / "refine.jsonl")
+        assert len(entries) == 1
+        entry = entries[0]
+        assert entry["chatId"] == chatId
+        assert entry["userId"] == userId
+        assert entry["threadId"] == threadId
+        assert entry["login"] == login
+        assert entry["messagesCount"] == 5
+        # messages are DESC by date then message_id → [0]=newest=1004, [-1]=oldest=1000.
+        assert entry["firstMessageId"] == "1000"
+        assert entry["lastMessageId"] == "1004"
+        assert entry["summary"] == "Refined summary text"
+        # ``date`` is present and ISO-parseable.
+        datetime.datetime.fromisoformat(entry["date"])
+
+    async def test_refinementJsonLogWritesEmptySummary(self, testDatabase: Database, tmp_path: Path) -> None:
+        """Empty summary → JSONL line is still written with ``summary == ""``.
+
+        The hook is placed before the empty-summary early-return, so an empty
+        result must still be logged. Mocks ``generateTextViaLLM`` to return
+        ``resultText=""`` and asserts the entry exists with an empty summary
+        and that no memory entry is persisted (the early-return path).
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: Per-test temporary directory for the JSONL log file.
+        """
+        refineLogFile = str(tmp_path / "refine.jsonl")
+        handler = await _makeHandler(
+            testDatabase,
+            configManager=_makeUserMemoryConfigManager(
+                enabled=True,
+                jsonLogging={"enabled": True, "file": refineLogFile, "add-date-suffix": False},
+            ),
+        )
+        _stubGetChatSettings(handler, memoryRefinementEnabled=True, refineModel="test-refine-model")
+        handler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="")
+        )
+
+        chatId, userId, threadId = 380, 15, DEFAULT_THREAD_ID
+        await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user15", "Grace")
+        await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
+
+        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+
+        entries = _readRefineLog(tmp_path / "refine.jsonl")
+        assert len(entries) == 1
+        assert entries[0]["summary"] == ""
+        assert entries[0]["chatId"] == chatId
+        assert entries[0]["userId"] == userId
+        # Empty summary → early-return path → no memory entry persisted.
+        userInfo = await testDatabase.chatUsers.getChatUser(chatId=chatId, userId=userId)
+        metadata = handler.parseUserMetadata(userInfo)
+        assert metadata.get("memoryRefinement", {}).get(str(threadId)) is None
+
+    async def test_refinementJsonLogUsesFallbackModelWhenIsFallback(
+        self, testDatabase: Database, tmp_path: Path
+    ) -> None:
+        """``result.isFallback == True`` → fallback model id is logged, not the primary.
+
+        ``_resolveRefineModel`` branches on ``result.isFallback``: when True it
+        resolves ``MEMORY_REFINE_FALLBACK_MODEL``, otherwise
+        ``MEMORY_REFINE_MODEL``. All other tests use the default
+        ``isFallback=False``; this test sets both model settings to distinct
+        values, marks the mocked result as a fallback via ``setFallback(True)``,
+        and asserts the JSONL ``model`` field equals the fallback id.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: Per-test temporary directory for the JSONL log file.
+        """
+        refineLogFile = str(tmp_path / "refine.jsonl")
+        handler = await _makeHandler(
+            testDatabase,
+            configManager=_makeUserMemoryConfigManager(
+                enabled=True,
+                jsonLogging={"enabled": True, "file": refineLogFile, "add-date-suffix": False},
+            ),
+        )
+        primaryModel = "test-refine-model"
+        fallbackModel = "test-fallback-model"
+        _stubGetChatSettings(
+            handler,
+            memoryRefinementEnabled=True,
+            refineModel=primaryModel,
+            refineFallbackModel=fallbackModel,
+        )
+        fallbackResult = ModelRunResult(
+            rawResult={},
+            status=ModelResultStatus.FINAL,
+            resultText="Refined summary text",
+        )
+        fallbackResult.setFallback(True)
+        handler.llmService.generateTextViaLLM = AsyncMock(return_value=fallbackResult)  # type: ignore[method-assign]
+
+        chatId, userId, threadId = 390, 16, DEFAULT_THREAD_ID
+        await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user16", "Heidi")
+        await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
+
+        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+
+        entries = _readRefineLog(tmp_path / "refine.jsonl")
+        assert len(entries) == 1
+
+    async def test_refinementJsonLogWithDateSuffix(self, testDatabase: Database, tmp_path: Path) -> None:
+        """``add-date-suffix = true`` → dated file ``refine.jsonl.YYYY-MM-DD`` is written.
+
+        All other tests pass ``add-date-suffix: False``. This test enables the
+        suffix, runs a refinement, and asserts exactly one file matching
+        ``refine.jsonl.*`` exists with today's UTC date as the suffix, and that
+        the file contains a valid JSONL line with the expected fields. The
+        expected suffix is computed the same way the writer computes it
+        (``datetime.datetime.now(tz=datetime.timezone.utc)``) to avoid
+        timezone flakiness.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: Per-test temporary directory for the JSONL log file.
+        """
+        refineLogFile = str(tmp_path / "refine.jsonl")
+        handler = await _makeHandler(
+            testDatabase,
+            configManager=_makeUserMemoryConfigManager(
+                enabled=True,
+                jsonLogging={"enabled": True, "file": refineLogFile, "add-date-suffix": True},
+            ),
+        )
+        refineModel = "test-refine-model"
+        _stubGetChatSettings(handler, memoryRefinementEnabled=True, refineModel=refineModel)
+        handler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="Refined summary text")
+        )
+
+        chatId, userId, threadId = 400, 17, DEFAULT_THREAD_ID
+        await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user17", "Ivan")
+        await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
+
+        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+
+        # The suffix uses UTC, same as the writer — compute it identically here.
+        expectedSuffix = datetime.datetime.now(tz=datetime.timezone.utc).strftime("%Y-%m-%d")
+        datedFiles = list(tmp_path.glob("refine.jsonl.*"))
+        assert len(datedFiles) == 1
+        assert datedFiles[0].name == f"refine.jsonl.{expectedSuffix}"
+
+        entries = _readRefineLog(datedFiles[0])
+        assert len(entries) == 1
+        assert entries[0]["chatId"] == chatId
+        assert entries[0]["userId"] == userId
+        assert entries[0]["summary"] == "Refined summary text"
+
+
+def _readRefineLog(path: Path) -> List[Dict[str, Any]]:
+    """Read a JSONL refinement log and return one parsed dict per non-empty line.
+
+    Args:
+        path: Path to the JSONL file written by ``_writeRefinementJsonLog``.
+
+    Returns:
+        List of ``json.loads``-parsed dicts, one per non-empty line.
+    """
+    lines = [line for line in path.read_text().splitlines() if line.strip()]
+    return [json.loads(line) for line in lines]
