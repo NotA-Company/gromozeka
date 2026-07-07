@@ -41,6 +41,15 @@ unifies them into a single **`user_memories`** store with the following goals:
 5. **Clean retirement of the old systems.** `add_user_data` / `delete_user_data`
    tools are removed; the rolling-bio JSON blob stops being written. The old
    `user_data` **table** is kept for rollback safety (not dropped).
+6. **Vector regeneration on embedding-model drift.** When a chat's
+   `EMBEDDING_MODEL` changes, stale `user_memories` rows (whose
+   `embedding_model` / `embedding_dimensions` no longer match) are
+   re-embedded by a background tick. Mirrors the chat-history regeneration
+   path (`chat_search.py` backfill) one-to-one. See §5.6.
+7. **Admin UI.** The existing `/knowledge_config` wizard is repointed at
+   `user_memories` so a user can browse, filter (by topic/type/tag), and
+   delete their own memories interactively. Private-only, paging added.
+   See §11.6.
 
 ### Non-code deliverable shape
 
@@ -50,8 +59,8 @@ The implementing agent will touch, at minimum:
 - 1 new model module (`MemoryType`) + 1 `TypedDict` (`UserMemoryDict`)
 - 1 new repository (`internal/database/repositories/user_memories.py`)
 - 1 new helper (`internal/bot/common/memory_embedding_utils.py`)
-- 2 new `ToolName` entries + 3 tool handlers + retire 2 old ones
-- 2 new chat settings (4 sites each — §11)
+- 3 new `ToolName` entries + 3 tool handlers + retire 2 old ones
+- 4 new chat settings (4 sites each — §11)
 - 1 new injection helper + edits at 3 system-message construction sites
 - 1 rewrite of the refinement body (`_runRefinement`)
 - Tests mirroring each of the above under `tests/`
@@ -66,23 +75,17 @@ Explicitly deferred to later work:
 - **Cross-chat user memories.** All v1 memories are scoped to
   `(chat_id, user_id[, thread_id])`. A global "user profile" that follows a
   user across chats is out of scope.
-- **Vector regeneration on embedding-model drift.** If a chat's
-  `EMBEDDING_MODEL` changes, existing `user_memory_embeddings` rows are stale.
-  v1 relevant-mode silently returns `[]` and falls back to latest-mode. A
-  regeneration worker is future work (mirrors the same open issue on
-  `message_embeddings`).
 - **PostgreSQL / MySQL vec0 portability.** The vec0 virtual-table DDL and
   partition-key syntax are sqlite-vec-specific (see the TODO at
   `internal/database/repositories/chat_embeddings.py:201`). v1 is SQLite-only;
   PG/MySQL porting is tracked in §15.
-- **GUI / admin tooling for memories.** No new bot commands to list/delete
-  memories interactively; `delete_memory` is LLM-only in v1.
 - **Dropping the `user_data` table.** Kept for rollback. A future migration
   can drop it once confidence is high.
-- **Numpy fallback for `searchMemories`.** v1 returns `[]` when vec0 is
-  unavailable (chat-history search has a numpy fallback at
-  `internal/database/repositories/chat_search.py:266-436`; we do not port it
-  for memories in v1).
+- **Numpy fallback for `searchMemories`.** There is no BLOB embedding table
+  to fall back from (§5.1 dropped it by design — vec0 is the sole embedding
+  store); v1 returns `[]` when vec0 is unavailable. (Chat-history search has
+  a numpy fallback at `internal/database/repositories/chat_search.py:266-436`;
+  we do not port one for memories in v1.)
 
 ## 3. Background — current state (the two systems being unified)
 
@@ -276,7 +279,7 @@ is folded to `duplicate` from its perspective to avoid mid-turn curation).
 
 **Class shape:** mirror `migration_017_message_embeddings.py:26-91` exactly —
 class `Migration020UserMemories(BaseMigration)` with `version: int = 20`,
-`description: str = "Add user_memories + user_memory_embeddings tables"`,
+`description: str = "Add user_memories table"`,
 `async def up(self, sqlProvider)`, `async def down(self, sqlProvider)`,
 `def getMigration() -> Type[BaseMigration]`. DDL via
 `sqlProvider.batchExecute([ParametrizedQuery(sql), ...])`.
@@ -294,6 +297,8 @@ CREATE TABLE IF NOT EXISTS user_memories (
     tags       TEXT      NOT NULL DEFAULT '[]',  -- JSON array of strings
     permanent  INTEGER   NOT NULL DEFAULT 0,    -- boolean 0/1
     source     TEXT      NOT NULL DEFAULT 'refinement', -- refinement|chat|migration|user
+    embedding_model      TEXT,               -- NULL = not yet embedded; set on first embed
+    embedding_dimensions INTEGER,           -- NULL = not yet embedded; vector dimension count
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
     PRIMARY KEY (chat_id, user_id, memory_id)
@@ -305,24 +310,22 @@ CREATE INDEX IF NOT EXISTS idx_user_memories_chat_user_permanent
     ON user_memories (chat_id, user_id, permanent, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_user_memories_type
     ON user_memories (chat_id, user_id, type);
-
-CREATE TABLE IF NOT EXISTS user_memory_embeddings (
-    chat_id    INTEGER   NOT NULL,
-    user_id    INTEGER   NOT NULL,
-    memory_id  TEXT      NOT NULL,
-    embedding  BLOB      NOT NULL,
-    dimensions INTEGER   NOT NULL,
-    model      TEXT      NOT NULL,
-    created_at TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP NOT NULL,
-    PRIMARY KEY (chat_id, user_id, memory_id)
-);
 ```
+
+> AMENDMENT (user review, change #4): The original draft created a second
+> table `user_memory_embeddings (chat_id, user_id, memory_id, embedding BLOB,
+> dimensions, model, created_at, updated_at, PRIMARY KEY (chat_id, user_id,
+> memory_id))` as a numpy-fallback substrate. **Dropped.** Since v1 has no
+> numpy fallback (§2) and re-embedding from `user_memories.content` is always
+> possible (that is exactly what the regeneration worker in §5.6 does), the
+> BLOB table is redundant. `user_memories.content` is the source of truth;
+> the lazy vec0 table (§5.2) is the derived, rebuildable embedding cache; and
+> `embedding_model` / `embedding_dimensions` (added to `user_memories` per
+> change #2) track provenance on the authoritative row itself.
 
 **`down()`:**
 
 ```sql
-DROP TABLE IF EXISTS user_memory_embeddings;
 DROP TABLE IF EXISTS user_memories;
 -- NOTE: do NOT touch user_data (kept for rollback safety).
 ```
@@ -359,19 +362,31 @@ Creation sequence (copy `_upsertVecMessageEmbedding :202-221`):
 `listTables(tableName)` → if absent, `createVectorTable(...)`.
 
 Upsert sequence (vec0 has no real UPSERT on metadata columns — copy
-`:227-256`): try `DELETE ... WHERE chat_id=:c AND user_id=:u AND memory_id=:m
-AND model=:model`; on failure fall back to rowid-based delete; then
+`:227-256`): try `DELETE ... WHERE chat_id=:c AND user_id=:u AND
+memory_id=:m`; on failure fall back to rowid-based delete; then
 `INSERT INTO {table} (memory_id, chat_id, user_id, thread_id, permanent,
 type, embedding) VALUES (...)`. Write failures are **logged at WARNING and
-swallowed** — the authoritative row is in `user_memory_embeddings`.
+swallowed** — re-embedding from `user_memories.content` is always possible
+(that is exactly what the regeneration worker in §5.6 does), so a lost vec0
+row is recoverable, not catastrophic.
 
-`[DESIGN CHOICE]` — `model` is stored in the BLOB table but **not** as a vec0
-partition key (unlike `message_embeddings`, which partitions on `model`).
-Memory volume per chat is tiny relative to messages, so a single vec0 table
-per dimension without a model partition is simpler and still correct; the
-`model` is checked post-search by joining back to `user_memory_embeddings`.
-If a profiler later shows cross-model contamination hurting results, add
-`model` as a partition key + a vec0 `model` column.
+`[DESIGN CHOICE]` — vec0 is the **sole** embedding store for memories; there
+is no BLOB `user_memory_embeddings` table (dropped per change #4 in the
+review — §5.1). `embedding_model` and `embedding_dimensions` live on the
+authoritative `user_memories` row (set when an embedding is written; NULL =
+not yet embedded), and the model is **not** a vec0 partition key (unlike
+`message_embeddings`, which partitions on `model`). Memory volume per chat is
+tiny relative to messages, so a single vec0 table per dimension without a
+model partition is simpler and still correct; stale-model rows are surfaced
+by the `getMemoriesWithoutEmbeddings` query (§5.6) and re-embedded. If a
+profiler later shows cross-model contamination hurting results, add `model`
+as a vec0 partition key + column.
+
+> AMENDMENT (user review, change #4): The original draft stored embeddings in
+> a separate `user_memory_embeddings` BLOB table as a numpy-fallback
+> substrate. Since v1 explicitly has no numpy fallback (§2) and re-embedding
+> from content is always possible, the BLOB table is dropped entirely; vec0
+> is the sole store, and model/dimensions tracking moves onto `user_memories`.
 
 ### 5.3 `MemoryType` StrEnum
 
@@ -438,41 +453,84 @@ the repository — mirrors `MessageEmbeddingDict` living in
 module's public names.
 
 ```python
+import datetime
+from typing import List, NotRequired, Optional, TypedDict
+
+
 class UserMemoryDict(TypedDict):
     """Row shape returned by UserMemoriesRepository read methods.
 
+    Keys are snake_case to match DB column names (repo convention — see
+    ``ChatMessageDict`` / ``MessageEmbeddingDict`` in
+    ``internal/database/models.py:108-212``: ``chat_id``, ``created_at``,
+    ``message_id``, …). Repository METHOD parameters stay camelCase per
+    AGENTS.md; only the dict keys mirror the columns so the universal
+    converter ``dbUtils.sqlToTypedDict`` can map them directly. This matches
+    how ``chat_search.py`` works (camelCase params, snake_case dict keys).
+
     Attributes:
-        chatId: Chat the memory belongs to.
-        userId: User the memory is about.
-        threadId: Thread scope, or None for permanent (cross-thread) memories.
-        memoryId: App-generated ULID; unique within (chatId, userId).
-        type: MemoryType string value.
-        content: Free-text memory body.
+        chat_id: Chat the memory belongs to.
+        user_id: User the memory is about.
+        thread_id: Thread scope. None for cross-thread permanent memories
+            (e.g. user_data-migrated facts); set to the originating thread
+            for thread-specific permanent bio memories (§5.5).
+        memory_id: App-generated ULID; unique within (chat_id, user_id).
+        type: MemoryType string value (bio|preference|fact|event|relationship).
+        content: Free-text memory body (source of truth for re-embedding).
         tags: Decoded list of tag strings (stored as JSON TEXT in the row).
         permanent: True if the memory is always injected (§9).
         source: Provenance — refinement | chat | migration | user.
-        createdAt: ISO-8601 creation timestamp.
-        updatedAt: ISO-8601 last-update timestamp.
+        embedding_model: Name of the model that produced the stored vec0
+            embedding, or None when the memory has not been embedded yet.
+        embedding_dimensions: Dimension count of the stored embedding, or
+            None when not yet embedded.
+        created_at: Creation timestamp (parsed from ISO string by the
+            universal converter — ``utils.py:230-237``).
+        updated_at: Last-update timestamp.
+        score: Cosine similarity (0.0–1.0) when returned by semantic
+            searchMemories; 0.0 in filter-only mode; absent on rows from
+            non-search repo methods. Mirrors ``ChatMessageDict.score`` at
+            ``internal/database/models.py:157-160`` EXACTLY (same name,
+            same type, same semantics). Do NOT use the name ``similarity``.
     """
 
-    chatId: int
-    userId: int
-    threadId: Optional[int]
-    memoryId: str
+    chat_id: int
+    user_id: int
+    thread_id: Optional[int]
+    memory_id: str
     type: str
     content: str
     tags: List[str]
     permanent: bool
     source: str
-    createdAt: str
-    updatedAt: str
+    embedding_model: Optional[str]
+    embedding_dimensions: Optional[int]
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
+    score: NotRequired[float]
 ```
 
-Row-decoding helper (`_rowToDict(row) -> UserMemoryDict`) handles:
-`tags` JSON-decode (`json.loads(row["tags"])`, default `[]`),
-`permanent` int→bool (`bool(row["permanent"])`),
-column-name snake_case→camelCase mapping (the DB row uses `snake_case`; the
-dict uses the project's `camelCase` convention for field names).
+Row-decoding uses the **universal converter**
+`dbUtils.sqlToTypedDict(row, UserMemoryDict)` at
+`internal/database/utils.py:319-374` (import as
+`from internal.database import utils as dbUtils`, seen at
+`chat_embeddings.py:32`). It handles snake_case column → TypedDict key
+mapping, int→bool, JSON TEXT→list, ISO str→datetime, and nested containers.
+There is **no custom `_rowToDict` helper** — all repo read methods return
+`[dbUtils.sqlToTypedDict(row, UserMemoryDict) for row in rows]` (mirror
+`chat_embeddings.py:547`, `chat_search.py:254/624`). For semantic-search
+results, set `rowDict["score"] = ...` AFTER conversion (mirror
+`chat_search.py:626`).
+
+> AMENDMENT (user review, corrections A/B/C + changes #5/#6/#10): (A) keys
+> are now snake_case matching DB columns, not camelCase — the repo convention
+> for TypedDicts that map to rows (``ChatMessageDict`` etc.). AGENTS.md's
+> camelCase rule governs Python *identifiers*, not dict string keys that map
+> to columns. (B) the similarity field is named ``score`` (matching
+> ``ChatMessageDict.score``), never ``similarity``. (C) the converter is
+> ``dbUtils.sqlToTypedDict`` (there is no ``convertFromSQLite``; that was a
+> misremembering of ``convertToSQLite``, the Python→SQL direction). Plus
+> ``created_at``/``updated_at`` are ``datetime.datetime`` not ``str`` (#5).
 
 ### 5.5 Backfill / migration of existing data
 
@@ -493,12 +551,15 @@ for row in SELECT user_id, chat_id, key, data, created_at, updated_at FROM user_
     INSERT INTO user_memories (
         chat_id, user_id, thread_id=NULL, memory_id, type='fact',
         content, tags='[]', permanent=1, source='migration',
+        embedding_model=NULL, embedding_dimensions=NULL,
         created_at=row.created_at, updated_at=row.updated_at
     )
 ```
 
 - `permanent=1`, `type='fact'`, `source='migration'`, `tags=[]`,
-  `thread_id=NULL`.
+  `thread_id=NULL` (cross-thread — `user_data` has no thread concept),
+  `embedding_model=NULL`, `embedding_dimensions=NULL` (not yet embedded;
+  the regeneration worker in §5.6 backfills them on first tick).
 - `content` shape `"{key}: {data}"` keeps the original key discoverable in
   free-text search and is human-readable. `[DESIGN CHOICE]` — alternative
   would be to map known keys to `MemoryType` members, but `user_data` keys
@@ -522,25 +583,142 @@ for row in SELECT chat_id, user_id, metadata FROM chat_users
         summary = (entry or {}).get("summary")
         if not summary:
             continue
+        threadId = int(threadIdStr)   # rolling-bio JSON keys are str(threadId)
         memoryId = ULID()
         INSERT INTO user_memories (
-            chat_id, user_id, thread_id=NULL,    # [DESIGN CHOICE] bio is permanent → cross-thread
+            chat_id, user_id, thread_id=threadId,   # [DESIGN CHOICE] bio keeps its thread scope
             memory_id, type='bio', content=summary,
             tags='["migrated_bio"]', permanent=1, source='migration',
+            embedding_model=NULL, embedding_dimensions=NULL,
             created_at=now, updated_at=now
         )
 ```
 
-`[DESIGN CHOICE]` — **bio is permanent and cross-thread (`thread_id=NULL`)**
-because the rolling bio is a high-level user summary, not thread-specific
-chatter. The alternative (one bio per thread) fragments the always-in block
-and contradicts D1's "one source of truth". The tag `"migrated_bio"` marks
-the row as migration-sourced for later curation.
+`[DESIGN CHOICE]` — **bio is permanent and thread-scoped
+(`thread_id=<original thread>`)**, preserving the rolling-bio JSON's
+per-thread organisation. The current rolling bio is written and retrieved
+per-thread (`metadata.memoryRefinement[str(threadId)]` under
+`chatUserMetadataLock` at `user_data.py:472-618`), so keeping bio
+thread-scoped is consistent with how it was consumed. By contrast the
+`user_data`-migrated facts stay cross-thread (`thread_id IS NULL`, since
+`user_data` has no thread concept). Consequence for `getPermanentMemories`
+(§6): it must return BOTH cross-thread permanent AND this-thread permanent —
+`WHERE permanent=1 AND (thread_id IS NULL OR thread_id = :threadId)`. The
+tag `"migrated_bio"` marks the row as migration-sourced for later curation.
+
+> AMENDMENT (user review, change #7): The original draft made bio
+> cross-thread (`thread_id=NULL`). Reverted: the rolling bio is intrinsically
+> per-thread (stored and read under `str(threadId)`), so thread-scoping the
+> migrated bio is the faithful mapping. The "one source of truth" rationale
+> in D1 still holds — there is still one permanent bio per (chat, user,
+> thread); a multi-thread user simply has one bio row per thread, all of type
+> `bio`, all permanent.
 
 > The rolling-bio JSON is **not** deleted from `chat_users.metadata` by the
 > migration — the refinement rewrite (§10) stops writing it, and stale reads
 > are masked by the `userSummary` deprecation (§9). A cleanup pass is future
 > work.
+
+### 5.6 Embedding model-drift regeneration
+
+Mirrors the chat-history regeneration mechanism
+(`ChatSearchHandler._dtCronJob` at
+`internal/bot/common/handlers/chat_search.py:284-445`) one-to-one, adapted
+for memories. Because there is no BLOB table (§5.1), the model/dimensions
+tracking lives on `user_memories` itself (`embedding_model` /
+`embedding_dimensions`, NULL = not yet embedded) — this **simplifies** stale
+detection to a single-table query (no vec0 JOIN needed).
+
+**Chat settings (4-site each — §11.5):**
+
+- `MEMORY_EMBEDDINGS_ENABLED` (BOOL) — discovery: which chats to scan for
+  regeneration (mirror `EMBEDDINGS_ENABLED` at `chat_settings.py:435-436`,
+  info `:1107-1112`, default `bot-defaults.toml:128`).
+- `MEMORY_REGENERATE_EMBEDDINGS` (BOOL, default `true`) — per-chat gate
+  (mirror `REGENERATE_EMBEDDINGS` at `chat_settings.py:439-440`, info
+  `:1118-1124`, default `bot-defaults.toml:131`).
+- Reuses the existing `EMBEDDING_MODEL` setting (`chat_settings.py:433-434`,
+  default `bot-defaults.toml:130`) — do NOT add a memory-specific model (same
+  precedent as chat-history search).
+
+**Repository methods (added to §6):**
+
+- `getMemoriesWithoutEmbeddings(chatId, userId, currentModel,
+  currentDimensions, *, limit) -> List[UserMemoryDict]` — memories analog
+  of `getMessagesWithoutEmbeddings` (`chat_embeddings.py:516-532`). SIMPLER
+  than the chat-history version (no vec0 JOIN): model/dimensions are on the
+  `user_memories` row, so the stale-detection query is a single SELECT:
+
+  ```sql
+  SELECT chat_id, user_id, thread_id, memory_id, type, content, tags,
+         permanent, source, embedding_model, embedding_dimensions,
+         created_at, updated_at
+    FROM user_memories
+   WHERE chat_id = :chatId AND user_id = :userId
+     AND (embedding_model IS NULL
+          OR embedding_model != :currentModel
+          OR embedding_dimensions != :currentDimensions)
+   ORDER BY updated_at DESC
+  ```
+  with `provider.applyPagination(query, limit, offset=0)`. A NULL
+  `embedding_model` (never-embedded memory) surfaces here too, so this query
+  also serves the **initial backfill** — same single-path trick the
+  chat-history cron uses (`chat_search.py:394-413`).
+
+- `deleteObsoleteMemoryEmbeddings(chatId, userId, currentModel,
+  currentDimensions) -> int` — memories analog of
+  `deleteObsoleteModelEmbeddings` (`chat_embeddings.py:337-464`). Since
+  vec0 has no `model` column in this design (§5.2), the implementation is
+  "delete vec0 rows whose `memory_id` maps to a stale-model memory":
+  1. `SELECT memory_id FROM user_memories WHERE chat_id=:c AND user_id=:u
+     AND (embedding_model IS NULL OR embedding_model != :cm OR
+     embedding_dimensions != :cd)` — collect stale `memory_id`s.
+  2. For every `vec_user_memories_{N}` table found via
+     `provider.listTables("vec_user_memories_%")`, `DELETE FROM {table}
+     WHERE memory_id IN (...)`.
+  Never raises; returns the count of deleted vec0 rows.
+
+**Regeneration loop (added to `UserDataHandler._dtCronJob`, every 60s):**
+mirrors `chat_search._dtCronJob`'s embedding section
+(`internal/bot/common/handlers/chat_search.py:284-445`). Per tick:
+
+1. Discover chats round-robin (chats where `MEMORY_EMBEDDINGS_ENABLED` is
+   true — reuse the existing discovery loop shape at `chat_search.py:354`).
+2. Gate: if `MEMORY_REGENERATE_EMBEDDINGS` is false for the picked chat
+   (mirror `chat_search.py:364-366`), skip.
+3. Resolve `currentModel = chatSettings[EMBEDDING_MODEL].toStr()` and
+   `currentDimensions` from the model registry via
+   `LLMService.getLLMManager().getModel(currentModel)` (mirror
+   `chat_search.py:368-373`).
+4. `await db.userMemories.deleteObsoleteMemoryEmbeddings(chatId, userId,
+   currentModel, currentDimensions)` (mirror `chat_search.py:394-398`).
+5. `stale = await db.userMemories.getMemoriesWithoutEmbeddings(chatId,
+   userId, currentModel, currentDimensions, limit=BACKFILL_DEFAULT_BATCH_SIZE)`
+   (mirror `chat_search.py:409-413`).
+6. For each `mem in stale`: `await embedAndSaveMemory(chatId, userId,
+   mem["memory_id"], mem["content"], currentModel, self.db)` (which writes
+   vec0 AND sets `embedding_model`/`embedding_dimensions` on the row);
+   `await asyncio.sleep(BACKFILL_INTER_MESSAGE_DELAY_SECS)` between rows
+   (mirror `chat_search.py:430-434`, constant `BACKFILL_INTER_MESSAGE_DELAY_SECS
+   = 0.1` at `chat_search.py:77`).
+7. Batch cap `BACKFILL_DEFAULT_BATCH_SIZE = 50` (constant at
+   `chat_search.py:69`); the cron revisits the chat on subsequent ticks
+   until caught up.
+
+`[DESIGN CHOICE]` — reusing `UserDataHandler._dtCronJob` (the existing 60s
+tick at `user_data.py:301-470` that already drives refinement accounting)
+rather than a new cron. The regeneration section is independent of the
+refinement body (it does not call the LLM for text generation, only for
+embeddings via `model.generateEmbeddings`) and is cheap to gate behind
+`MEMORY_EMBEDDINGS_ENABLED` / `MEMORY_REGENERATE_EMBEDDINGS`. The two
+operations share the tick but not the lock — regeneration is read/embed/write
+on `user_memories`, refinement is LLM-tool-driven; they do not contend.
+
+> AMENDMENT (user review, change #2): Promoted from a Non-Goal to a Goal.
+> The chat-history regeneration path (`chat_search._dtCronJob`) is the
+> verified template; this subsection adapts it for memories. The
+> model/dimensions columns move onto `user_memories` (no BLOB table) which
+> simplifies stale detection to a single-table query.
 
 ## 6. Repository layer (`UserMemoriesRepository`)
 
@@ -557,8 +735,9 @@ see `chat_embeddings.py`).
 
 ### 6.1 Method signatures
 
-All methods `async`. All SQL uses `:named` placeholders. All decode via
-`_rowToDict`.
+All methods `async`. All SQL uses `:named` placeholders. All read methods
+decode via `dbUtils.sqlToTypedDict(row, UserMemoryDict)` (§5.4 — no custom
+`_rowToDict` helper).
 
 ```python
 async def addMemory(
@@ -585,13 +764,25 @@ async def deleteMemoriesByQuery(
     threadId: Optional[int], type: Optional[str] = None,
     olderThanDays: Optional[int] = None,
 ) -> int:
-    """DELETE memories matching the scope + filters (used by delete_memory tool + cleanup)."""
+    """DELETE EPHEMERAL memories matching the scope + filters.
+
+    Always adds ``AND permanent = 0`` — bulk query-delete is ephemeral-only;
+    a query-based bulk delete must never silently remove a permanent memory.
+    Explicit by-id ``deleteMemory`` is unrestricted (intentional explicit
+    action can target a permanent memory) — see §8.4 for the distinction.
+    """
 
 async def getPermanentMemories(
-    self, chatId: int, userId: int, *,
+    self, chatId: int, userId: int, threadId: int, *,
     limit: int = PERMANENT_INJECTION_CAP,
 ) -> List[UserMemoryDict]:
-    """Return permanent (thread_id IS NULL) memories, newest-updated-first, capped."""
+    """Return permanent memories, newest-updated-first, capped.
+
+    Returns BOTH cross-thread permanent (``thread_id IS NULL``) AND
+    this-thread permanent (``thread_id = :threadId``) — bio memories are
+    thread-scoped per §5.5, so a thread's permanent block must include the
+    thread's own bio alongside cross-thread facts.
+    """
 
 async def getLatestMemories(
     self, chatId: int, userId: int, threadId: int, *,
@@ -600,34 +791,75 @@ async def getLatestMemories(
     """Return newest-updated memories scoped to (chatId, userId, threadId), capped."""
 
 async def searchMemories(
-    self, chatId: int, userId: int, queryEmbedding: bytes, *,
+    self, chatId: int, userId: int, *,
+    queryEmbedding: Optional[bytes] = None,
     threadId: Optional[int] = None, permanent: Optional[bool] = None,
     type: Optional[str] = None, tags: Optional[List[str]] = None,
     limit: int = EPHEMERAL_RETRIEVAL_LIMIT,
     modelName: Optional[str] = None, dimensions: Optional[int] = None,
 ) -> List[UserMemoryDict]:
-    """Native vec0 search over vec_user_memories_{dim}, JOIN back to user_memories.
-    Returns [] when vector search is unsupported or the vec0 table is absent."""
+    """Unified memory search. Two modes (mirror ``ChatSearchRepository.searchChatMessages`` at ``chat_search.py:167-189``):
 
-async def findSimilarMemories(
-    self, chatId: int, userId: int, queryEmbedding: bytes, *,
-    threadId: Optional[int] = None, limit: int = 3,
-    modelName: Optional[str] = None, dimensions: Optional[int] = None,
-) -> List[Tuple[UserMemoryDict, float]]:
-    """Top-N similar memories with similarity score (1.0 - cosine_distance).
-    Drives the add_memory dedup state machine (§8)."""
+    - ``queryEmbedding is None`` → filter-only scan (WHERE on type/tags/permanent/
+      thread_id); every result row gets ``score = 0.0`` after conversion. Lets
+      the refinement LLM call ``search_memories`` with only ``type`` (e.g. "all
+      preference memories") without an embedding.
+    - ``queryEmbedding is not None`` → native vec0 search over
+      ``vec_user_memories_{dim}``, JOIN back to ``user_memories``;
+      ``score = 1.0 - cosine_distance``.
+
+    Returns ``[]`` (never raises) when vec0 search is requested but unsupported
+    or the vec0 table is absent. Every returned row has ``score`` set (mirror
+    ``chat_search.py:626``). The merged method replaces the former
+    ``findSimilarMemories`` (the dedup caller in §8.3 now reads
+    ``results[0]["score"]``).
+    """
+
+async def getMemoriesWithoutEmbeddings(
+    self, chatId: int, userId: int, currentModel: str, currentDimensions: int, *,
+    limit: int = BACKFILL_DEFAULT_BATCH_SIZE,
+) -> List[UserMemoryDict]:
+    """Return memories whose embedding_model/embedding_dimensions are stale or absent.
+
+    Memories analog of ``getMessagesWithoutEmbeddings``
+    (``chat_embeddings.py:516-532``). SIMPLER (no vec0 JOIN): the model/
+    dimensions live on the ``user_memories`` row, so this is a single SELECT
+    with a stale predicate on (embedding_model, embedding_dimensions). A NULL
+    ``embedding_model`` (never-embedded memory) surfaces here too, so the same
+    query serves the initial backfill. Drives the regeneration worker (§5.6).
+    """
+
+async def deleteObsoleteMemoryEmbeddings(
+    self, chatId: int, userId: int, currentModel: str, currentDimensions: int,
+) -> int:
+    """Delete vec0 rows for memories whose embedding_model/embedding_dimensions differ.
+
+    Memories analog of ``deleteObsoleteModelEmbeddings``
+    (``chat_embeddings.py:337-464``). Since vec0 has no ``model`` column in
+    this design (§5.2), this selects stale memory_ids from ``user_memories``
+    then deletes them from every ``vec_user_memories_{N}`` table found via
+    ``listTables``. Never raises. Returns the count of deleted vec0 rows.
+    """
 
 async def saveMemoryEmbedding(
     self, chatId: int, userId: int, memoryId: str, *,
     embedding: List[float], model: str, dimensions: int,
 ) -> bool:
-    """Persist BLOB to user_memory_embeddings + lazy-upsert vec_user_memories_{dim}.
-    Never raises (mirrors ChatEmbeddingsRepository.saveMessageEmbedding)."""
+    """Persist the embedding: lazy-upsert vec_user_memories_{dim} AND set embedding_model/embedding_dimensions on the user_memories row.
+
+    No BLOB write (the BLOB table was dropped — §5.1); vec0 is the sole
+    embedding store. Never raises (mirrors
+    ``ChatEmbeddingsRepository.saveMessageEmbedding``).
+    """
 
 async def deleteMemoryEmbedding(
     self, chatId: int, userId: int, memoryId: str,
 ) -> bool:
-    """DELETE from user_memory_embeddings + best-effort DELETE from vec0. Never raises."""
+    """Best-effort DELETE from vec_user_memories_{dim}. Never raises.
+
+    No BLOB delete (the BLOB table was dropped — §5.1); vec0 is the sole
+    embedding store.
+    """
 ```
 
 ### 6.2 SQL sketches
@@ -643,38 +875,48 @@ VALUES (:chatId, :userId, :threadId, :memoryId, :type, :content, :tags, :permane
 ```
 
 **getPermanentMemories** — `WHERE chat_id=:c AND user_id=:u AND permanent=1
-AND thread_id IS NULL ORDER BY updated_at DESC` with
-`provider.applyPagination(query, limit, offset=0)` (AGENTS.md: "never
-append `LIMIT … OFFSET …` yourself"). The `thread_id IS NULL` predicate is
-redundant under the invariant "permanent ⟹ thread_id IS NULL" but makes
-the scope explicit and defends against a future non-NULL permanent row.
+AND (thread_id IS NULL OR thread_id = :threadId) ORDER BY updated_at DESC`
+with `provider.applyPagination(query, limit, offset=0)` (AGENTS.md: "never
+append `LIMIT … OFFSET …` yourself"). The `OR thread_id = :threadId` clause
+pulls in this-thread permanent bio memories (§5.5) alongside cross-thread
+permanent facts; `getPermanentMemories` now takes a `threadId` param to drive
+this (caller in §9.1 passes the active thread).
 
-**searchMemories** — mirror `_nativeVectorSearch`
-(`chat_search.py:638-823`). Two-step:
+**searchMemories** — two modes (mirror
+`ChatSearchRepository.searchChatMessages` at `chat_search.py:167-189`):
 
-1. Build vec0 filter: always `chat_id = :chatId AND user_id = :userId`;
-   append `AND permanent = :perm` / `AND type = :type` when those filters
-   are set. (For permanent-scope search pass `thread_id IS NULL` via the
-   post-filter, since vec0 `thread_id` is an INTEGER column that also holds
-   NULLs — filter at the JOIN step, not in vec0.)
-2. `vectorSearch(table=f"vec_user_memories_{dim}", vectorColumn="embedding",
-   returnColumns=["memory_id"], queryVector=queryEmbeddingBytes, k=limit *
-   MEMORY_SEARCH_TOPK_MULTIPLIER, filterClause=..., filterParams=...,
-   distanceMetric=COSINE)`.
-3. JOIN `vecResults` back to `user_memories` on `memory_id` (single
-   `SELECT ... WHERE chat_id=:c AND user_id=:u AND memory_id IN (...)`),
-   apply remaining post-filters (`tags` membership via Python set
-   intersection — JSON-in-SQL is non-portable), convert
-   `1.0 - distance` → similarity, re-rank desc, trim to `limit`.
+- **Filter-only mode** (`queryEmbedding is None`): a plain `SELECT … FROM
+  user_memories WHERE chat_id=:c AND user_id=:u` plus any of
+  `AND permanent = :perm` / `AND type = :type` / `AND thread_id = :threadId`
+  when set, `ORDER BY updated_at DESC`, `provider.applyPagination(query,
+  limit, 0)`. Decode via `dbUtils.sqlToTypedDict`; set `rowDict["score"] =
+  0.0` on every result AFTER conversion (mirror `chat_search.py:626`). Lets
+  the LLM call `search_memories` with only `type` (e.g. "all preference
+  memories") without an embedding. `tags` membership is applied in Python
+  (set intersection — JSON-in-SQL is non-portable).
+- **Semantic mode** (`queryEmbedding is not None`): mirror
+  `_nativeVectorSearch` (`chat_search.py:638-823`). Three-step:
+  1. Build vec0 filter: always `chat_id = :chatId AND user_id = :userId`;
+     append `AND permanent = :perm` / `AND type = :type` when set. (For
+     permanent-scope search pass `thread_id IS NULL` via the post-filter,
+     since vec0 `thread_id` is an INTEGER column that also holds NULLs —
+     filter at the JOIN step, not in vec0.)
+  2. `vectorSearch(table=f"vec_user_memories_{dim}", vectorColumn="embedding",
+     returnColumns=["memory_id"], queryVector=queryEmbeddingBytes, k=limit *
+     MEMORY_SEARCH_TOPK_MULTIPLIER, filterClause=..., filterParams=...,
+     distanceMetric=COSINE)`.
+  3. JOIN `vecResults` back to `user_memories` on `memory_id` (single
+     `SELECT ... WHERE chat_id=:c AND user_id=:u AND memory_id IN (...)`),
+     apply remaining post-filters (`tags` via Python set intersection),
+     convert `1.0 - distance` → score, re-rank desc, trim to `limit`.
+     `rowDict["score"]` is set AFTER `dbUtils.sqlToTypedDict` conversion
+     (mirror `chat_search.py:626`).
 
-**findSimilarMemories** — `searchMemories(..., limit=limit,
-returnScore=True)` shape, but returns `(dict, score)` tuples. The dedup
-caller in §8 only inspects `results[0]` score against the two thresholds.
-
-**searchMemories guard:** if `not await
-provider.isVectorSearchSupported()` or the vec0 table is absent (check via
-`listTables`), return `[]`. Do **not** raise; the caller falls back to
-`getLatestMemories` (§9).
+**searchMemories guard:** if `queryEmbedding is not None` AND (`not await
+provider.isVectorSearchSupported()` or the vec0 table is absent — check via
+`listTables`), return `[]`. Do **not** raise. Filter-only mode (no embedding)
+never hits this guard — it reads `user_memories` directly. The caller
+(§9.1) falls back to `getLatestMemories` when semantic search returns `[]`.
 
 ### 6.3 Wire `db.userMemories` into the `Database` registry
 
@@ -701,11 +943,13 @@ and `chatSearch` are wired — verified at `database.py:108-126, 137-175,
 """Shared embedding generation + persistence for user memories.
 
 Single recipe shared by the add_memory LLM tool (chat-time and refinement-time)
-and the migration backfill hooks (if a future worker re-embeds stale rows):
+and the regeneration worker (§5.6 — re-embeds stale-model rows):
 
 1. Resolve the model via LLMService.getLLMManager().getModel(modelName).
 2. Generate the vector via model.generateEmbeddings(text).
-3. Persist via db.userMemories.saveMemoryEmbedding(...).
+3. Persist via db.userMemories.saveMemoryEmbedding(...) — which lazy-upserts
+   the vec0 table AND sets embedding_model/embedding_dimensions on the
+   user_memories row. No BLOB table (§5.1); vec0 is the sole embedding store.
 
 Never raises — every failure path returns False so a transient embedding
 outage can never break a chat turn or a refinement run. Mirrors
@@ -763,7 +1007,7 @@ async def deleteMemoryEmbedding(
     memoryId: str,
     db: "Database",
 ) -> bool:
-    """Delete a memory's embedding (BLOB + best-effort vec0 row). Never raises.
+    """Delete a memory's embedding (vec0-only; no BLOB table per §5.1). Never raises.
 
     Args:
         chatId: Chat the memory belongs to.
@@ -890,18 +1134,19 @@ content, type, tags=None, permanent=False, **kwargs)`):
 2. memoryId = ULID()
 3. Dedup pre-filter:
      embed = await model.generateEmbeddings(content)  # never raises; on failure skip dedup
-     similar = await db.userMemories.findSimilarMemories(
-         chatId, userId, embed, threadId=threadId, limit=1,
+     results = await db.userMemories.searchMemories(
+         chatId, userId, queryEmbedding=embed, threadId=threadId, limit=1,
          modelName=modelName, dimensions=dimensions)
-     if similar and similar[0][1] >= MEMORY_DEDUP_DUPLICATE_THRESHOLD:
-         return {"done": True, "action": "duplicate", "existing": similar[0][0]}
+     topScore = results[0]["score"] if results else 0.0   # score set by searchMemories (§6)
+     if topScore >= MEMORY_DEDUP_DUPLICATE_THRESHOLD:
+         return {"done": True, "action": "duplicate", "existing": results[0]}
      # Grey zone: behaviour depends on call-time context (see D5):
      isRefinement = extraData.get("isRefinement", False)   # set by _runRefinement
-     if similar and similar[0][1] > MEMORY_DEDUP_SIMILAR_THRESHOLD:
+     if topScore > MEMORY_DEDUP_SIMILAR_THRESHOLD:
          if isRefinement:
-             return {"done": True, "action": "similar_exists", "existing": similar[0][0]}
+             return {"done": True, "action": "similar_exists", "existing": results[0]}
          # chat-time: treat grey zone as duplicate to avoid mid-turn curation
-         return {"done": True, "action": "duplicate", "existing": similar[0][0]}
+         return {"done": True, "action": "duplicate", "existing": results[0]}
 4. Insert + embed:
      await db.userMemories.addMemory(chatId, userId, memoryId, type=type, content=content,
                                      tags=tags or [], permanent=permanent, threadId=threadId,
@@ -942,12 +1187,18 @@ Exactly one of `memory_id` / `query` must be provided (else
      return {"done": True, "deleted": 1 if ok else 0}
 3. If query:
      embed = await model.generateEmbeddings(query)
-     hits = await db.userMemories.findSimilarMemories(chatId, userId, embed, limit=5, ...)
-     toDelete = [h for h, score in hits if score >= MEMORY_DEDUP_SIMILAR_THRESHOLD]
+     hits = await db.userMemories.searchMemories(
+         chatId, userId, queryEmbedding=embed, limit=5, ...)
+     toDelete = [m for m in hits if m["score"] >= MEMORY_DEDUP_SIMILAR_THRESHOLD]
+     # NOTE: searchMemories can return permanent memories too. Explicit by-id
+     # deleteMemory below is UNRESTRICTED — a permanent memory MAY be deleted
+     # here, because this is an explicit, query-driven action reviewed by the
+     # refinement LLM. Bulk deleteMemoriesByQuery is the path that is
+     # permanent-guarded (§6, always AND permanent = 0).
      n = 0
      for m in toDelete:
-         if await db.userMemories.deleteMemory(chatId, userId, m["memoryId"]):
-             await deleteMemoryEmbedding(chatId, userId, m["memoryId"], self.db)
+         if await db.userMemories.deleteMemory(chatId, userId, m["memory_id"]):
+             await deleteMemoryEmbedding(chatId, userId, m["memory_id"], self.db)
              n += 1
      return {"done": True, "deleted": n}
 ```
@@ -969,7 +1220,7 @@ Chat-time availability follows `ADD_MEMORY` (see §8.3): on when
 
 ```
 search_memories(
-    query: str,
+    query: str,           # OPTIONAL — when absent, filter-only mode (no embedding)
     limit: int = 5,
     type: str,            # optional
     tags: Array[str],     # optional
@@ -981,11 +1232,16 @@ search_memories(
 
 ```
 1. Resolve chatId/userId from extraData["ensuredMessage"].
-2. embed = await model.generateEmbeddings(query)
+2. If query is provided:
+     embed = await model.generateEmbeddings(query)   # best-effort; None on failure
+   else:
+     embed = None    # filter-only mode — lets the LLM ask "all preference memories" with no embedding
 3. results = await db.userMemories.searchMemories(
-       chatId, userId, embed, threadId=ensuredMessage.threadId or DEFAULT_THREAD_ID,
+       chatId, userId, queryEmbedding=embed,
+       threadId=ensuredMessage.threadId or DEFAULT_THREAD_ID,
        permanent=permanent, type=type, tags=tags, limit=limit, modelName=..., dimensions=...)
-   # NOTE: searchMemories returns [] when vec0 unsupported — caller (LLM) sees an empty result.
+   # NOTE: when queryEmbedding is None, searchMemories runs a filter-only scan
+   # (score=0.0 on every row); when provided but vec0 is unsupported/absent, returns [].
 4. return {"done": True, "results": results, "count": len(results)}
 ```
 
@@ -1039,7 +1295,7 @@ if not chatSettings[ChatSettingsKey.MEMORY_INJECTION_ENABLED].toBool():
     return None
 
 permanent = await self.db.userMemories.getPermanentMemories(
-    chatId, userId, limit=PERMANENT_INJECTION_CAP)
+    chatId, userId, threadId, limit=PERMANENT_INJECTION_CAP)
 
 mode = chatSettings[ChatSettingsKey.MEMORY_RETRIEVAL_MODE].toStr()  # "latest" | "relevant"
 ephemeral: List[UserMemoryDict] = []
@@ -1333,6 +1589,118 @@ scope here.
 `MEMORY_REFINEMENT_ENABLED`, `MEMORY_REFINE_MODEL`,
 `MEMORY_REFINE_FALLBACK_MODEL` — unchanged.
 
+### 11.5 Embedding model-drift regeneration settings
+
+Two new settings (4-site each) that gate the regeneration worker in §5.6.
+They mirror `EMBEDDINGS_ENABLED` / `REGENERATE_EMBEDDINGS` (chat-history
+search) exactly for shape. The target model reuses the existing
+`EMBEDDING_MODEL` setting (`chat_settings.py:433-434`, default
+`bot-defaults.toml:130`) — do NOT add a memory-specific model.
+
+**`MEMORY_EMBEDDINGS_ENABLED` (BOOL)** — discovery: which chats the cron
+scans for memory regeneration.
+
+| Site | File:line | Entry |
+|------|-----------|-------|
+| 1. enum | `chat_settings.py` (next to `MEMORY_INJECTION_ENABLED`) | `MEMORY_EMBEDDINGS_ENABLED = "memory-embeddings-enabled"` + docstring |
+| 2. info | `chat_settings.py` (next to the above info entry) | `{type: BOOL, short: "...", long: "...", page: ChatSettingsPage.FRIEND}` |
+| 3. default | `configs/00-defaults/bot-defaults.toml` | `memory-embeddings-enabled = false` |
+| 4. consumer | `UserDataHandler._dtCronJob` regeneration loop (§5.6) | `chatSettings[ChatSettingsKey.MEMORY_EMBEDDINGS_ENABLED].toBool()` |
+
+Mirror `EMBEDDINGS_ENABLED` for the shape (`chat_settings.py:435-436` enum,
+`:1107-1112` info, `bot-defaults.toml:128` default, `chat_search.py:498`
+consumer).
+
+**`MEMORY_REGENERATE_EMBEDDINGS` (BOOL, default `true`)** — per-chat gate
+once `MEMORY_EMBEDDINGS_ENABLED` is on. Default `true` (when discovery
+flags a chat, regeneration is on by default — matches the chat-history
+`REGENERATE_EMBEDDINGS` default).
+
+| Site | File:line | Entry |
+|------|-----------|-------|
+| 1. enum | `chat_settings.py` (next to `MEMORY_EMBEDDINGS_ENABLED`) | `MEMORY_REGENERATE_EMBEDDINGS = "memory-regenerate-embeddings"` + docstring |
+| 2. info | `chat_settings.py` | `{type: BOOL, short: "...", long: "...", page: ChatSettingsPage.FRIEND}` |
+| 3. default | `configs/00-defaults/bot-defaults.toml` | `memory-regenerate-embeddings = true` |
+| 4. consumer | `UserDataHandler._dtCronJob` regeneration loop (§5.6) | `chatSettings[ChatSettingsKey.MEMORY_REGENERATE_EMBEDDINGS].toBool()` |
+
+Mirror `REGENERATE_EMBEDDINGS` (`chat_settings.py:439-440` enum,
+`:1118-1124` info, `bot-defaults.toml:131` default).
+
+> AMENDMENT (user review, change #2): These two settings + the §5.6 cron
+> turn embedding-model-drift regeneration from a Non-Goal into a shipped
+> feature, mirroring the chat-history precedent one-to-one.
+
+### 11.6 Admin UI — extending `/knowledge_config`
+
+Repoints the existing `/knowledge_config` wizard at `user_memories` (the
+`user_data` key-value store it currently edits is being retired — §12) and
+adds browse/filter/delete for the calling user's own memories. **Private-only,
+unchanged** (`visibility={CommandPermission.PRIVATE}`). The wizard only ever
+shows the calling user's OWN memories (`userId = user.id`).
+
+**Current `/knowledge_config` state (verified, do not re-explore):**
+
+- Command: `@commandHandlerV2(commands=("knowledge_config",))` decorates
+  `knowledge_config_command` at `internal/bot/common/handlers/user_data.py:1357-1400`.
+  No tier gate.
+- Wizard dispatcher: `_handleUserDataConfiguration(data, *, messageId,
+  messageChatId, user)` at `user_data.py:1216-1279`, matches on
+  `ButtonUserDataConfigAction` (`internal/bot/models/enums.py:155-187`:
+  Init / Cancel / ChatSelected / ClearChatData / DeleteKey / KeySelected /
+  SetValue).
+- Callback router: `callbackHandler` at `user_data.py:1281-1311`.
+- Step handlers: `_handleConfigAction_Init` (chat picker) `:785-837`,
+  `_handleConfigAction_ChatSelected` (key list) `:839-941`,
+  `_handleConfigAction_KeySelected` `:1053-1144`, `_handleConfigAction_SetValue`
+  `:1146-1214`, `_handleConfigAction_DeleteKey` `:996-1051`,
+  `_handleConfigAction_ClearChatData` `:943-994`. All render via
+  `self.editMessage(..., inlineKeyboard=keyboard)`. **No pagination today.**
+- CRUD routes through `self.cache.getChatUserData` / `setChatUserData` /
+  `unsetChatUserData` / `clearChatUserData` (cache service `:865/:900/:945/:982`),
+  flat `key→value`, NO topic/category concept.
+- Related: `/get_my_data` at `:1317-1355` (dumps as JSON code block).
+
+**Extension spec:**
+
+1. **Repoint the wizard at `user_memories`** (via `self.db.userMemories`)
+   instead of `self.cache` user-data methods. The flat key→value model
+   becomes the typed memory model (`content` / `type` / `tags` / `permanent`
+   / `thread_id`).
+2. **Add a topic/type filter step** = filter by `MemoryType`
+   (bio/preference/fact/event/relationship). New flow: **chat picker →
+   topic/type picker → list memories of that type (paginated) → per-memory
+   view → delete**.
+3. **New `ButtonUserDataConfigAction` entries** (extend the enum at
+   `internal/bot/models/enums.py:155-187`) for the new wizard steps:
+   - `TopicSelected` — user picked a `MemoryType` (or "All types").
+   - `MemorySelected` — user picked a specific memory_id from the list.
+   - `DeleteMemory` — confirm + delete the selected memory
+     (`db.userMemories.deleteMemory`, unrestricted by-id — §8.4).
+   - `NextPage` / `PrevPage` — pagination controls (see below).
+   - `TagFilter` — enter/choose a freeform tag to filter by (secondary
+     dimension, see below).
+4. **Add pagination** — the current wizard has none, but a user may have
+   many memories of one type. Sub-task: mirror whatever pagination pattern
+   exists elsewhere in the bot if one exists; if no precedent, simple
+   offset-based prev/next inline buttons carrying `(offset, type, tag)` in
+   the callback payload. Flag the chosen pattern in the PR.
+5. **Freeform-tag filter as a secondary dimension** — D4 has freeform tags;
+   the wizard supports filtering by a chosen tag (enter or pick from the
+   user's existing tags) in addition to the type filter.
+6. **Per-memory view** renders: `content`, `tags`, `permanent` flag,
+   `source`, `updated_at`, `thread_id` (or "cross-thread" when NULL).
+7. **Keep `/get_my_data` working** by repointing it at `user_memories` too
+   (dump as JSON code block, or a readable list of `[type] content #tags`
+   lines).
+8. **Access** — private-only (unchanged); the wizard only ever shows the
+   calling user's OWN memories (`userId = user.id`).
+
+> AMENDMENT (user review, change #3): Promoted from a Non-Goal ("GUI / admin
+> tooling for memories") to a Goal. The `/knowledge_config` wizard already
+> exists and is the natural home for interactive memory management; repointing
+> it at `user_memories` (rather than building a new command) keeps the UX
+> surface flat. Substantial UI work — sequenced as a new Phase 5 (§13).
+
 ## 12. Retirement of `user_data` tools
 
 ### Removed
@@ -1368,18 +1736,23 @@ Each phase is scoped to fit a ~60-step developer budget and ends with
 **Files:**
 
 - `internal/database/migrations/versions/migration_020_user_memories.py` (new)
-  — tables + both backfills (§5.1, §5.5).
+  — `user_memories` table (with `embedding_model` / `embedding_dimensions`
+  columns per §5.1; **no BLOB table**) + both backfills (§5.1, §5.5).
 - `internal/bot/models/memory_type.py` (new) — `MemoryType` StrEnum (§5.3).
 - `internal/database/repositories/user_memories.py` (new) —
-  `UserMemoryDict` (§5.4), `UserMemoriesRepository` with all methods
-  including the `vec_user_memories_{dim}` lazy creator + `vectorSearch`
-  wiring (§6).
+  `UserMemoryDict` (§5.4, snake_case keys), `UserMemoriesRepository` with
+  all methods including the `vec_user_memories_{dim}` lazy creator +
+  `vectorSearch` wiring, the merged `searchMemories` (filter-only + semantic
+  modes, §6 — no separate `findSimilarMemories`), and the regeneration
+  methods `getMemoriesWithoutEmbeddings` / `deleteObsoleteMemoryEmbeddings`
+  (§5.6, §6).
 - `internal/bot/common/memory_embedding_utils.py` (new) —
   `embedAndSaveMemory` / `deleteMemoryEmbedding` (§7).
 - `internal/database/database.py` — wire `db.userMemories` (4 edits, §6.3).
 - `tests/database/repositories/test_user_memories.py` (new) — CRUD, latest,
-  permanent, `searchMemories` (skip with a marker when vec0 unavailable in
-  CI), `findSimilarMemories` (§14).
+  permanent (incl. `threadId` cross+thread merge), `searchMemories` (both
+  modes; skip semantic with a marker when vec0 unavailable in CI),
+  `getMemoriesWithoutEmbeddings` / `deleteObsoleteMemoryEmbeddings` (§14).
 
 **Exit criteria:** `make test` green; migration up/down idempotent on a
 populated `user_data` + `chat_users.metadata`; the repository round-trips a
@@ -1426,14 +1799,17 @@ tables; the docs must describe them in the same PR).
 **Exit criteria:** tools never raise; dedup thresholds behave exactly; old
 tools are gone; `make test` green.
 
-### Phase 3 — Retrieval + injection + chat settings
+### Phase 3 — Retrieval + injection + regeneration + chat settings
 
 **Files:**
 
 - `internal/bot/models/chat_settings.py` — add `MEMORY_INJECTION_ENABLED`
   and `MEMORY_RETRIEVAL_MODE` to the enum + `_chatSettingsInfo` (§11.1,
-  §11.2).
-- `configs/00-defaults/bot-defaults.toml` — add the two defaults.
+  §11.2); add the two regeneration settings `MEMORY_EMBEDDINGS_ENABLED` and
+  `MEMORY_REGENERATE_EMBEDDINGS` (§11.5).
+- `configs/00-defaults/bot-defaults.toml` — add the four defaults
+  (`memory-injection-enabled`, `memory-retrieval-mode`,
+  `memory-embeddings-enabled`, `memory-regenerate-embeddings`).
 - `internal/bot/common/handlers/base.py` — add `_buildMemoriesBlock` +
   `_injectMemoriesBlock`; call at site 1 (`:701-708`) (§9.1, §9.2).
 - `internal/bot/common/handlers/llm_messages.py` — call at sites 2
@@ -1441,17 +1817,28 @@ tools are gone; `make test` green.
   block (`:274-288`), add the `MEMORY_INJECTION_ENABLED` gate for
   `ADD_MEMORY`/`SEARCH_MEMORIES` (on when true, off when false). The
   Phase-2 `DELETE_MEMORY: False` exclusion stays.
+- `internal/bot/common/handlers/user_data.py` — add the embedding-regen
+  section to `UserDataHandler._dtCronJob` (`:301-470`) per §5.6: discover
+  chats round-robin where `MEMORY_EMBEDDINGS_ENABLED`, gate on
+  `MEMORY_REGENERATE_EMBEDDINGS`, resolve `EMBEDDING_MODEL`, call
+  `deleteObsoleteMemoryEmbeddings` → `getMemoriesWithoutEmbeddings` →
+  re-embed each via `embedAndSaveMemory`. Independent of the refinement
+  body (Phase 4); shares the tick, not the lock.
 - `internal/bot/models/ensured_message.py` — deprecate the `userSummary`
   path (`:917-948`, `:1170`) per §9.3 (comment + stop populating; keep
   field).
 - `tests/bot/common/handlers/test_base.py` and/or
   `tests/bot/common/handlers/test_llm_messages.py` — `_buildMemoriesBlock`
   for latest / relevant / disabled / empty; assert the block lands in the
-  system message at each of the three sites (§14).
+  system message at each of the three sites (§14). Add regeneration tests
+  (stale-model row is re-embedded; obsolete vec0 rows deleted; gates
+  respected) — §14.
 
 **Exit criteria:** with `MEMORY_INJECTION_ENABLED=true`, a chat turn's
 system message contains the `<user-memories>` block; with it false, no
-block; relevant-mode falls back to latest when embeddings are off.
+block; relevant-mode falls back to latest when embeddings are off; with
+`MEMORY_EMBEDDINGS_ENABLED=true` + `MEMORY_REGENERATE_EMBEDDINGS=true`, a
+stale-`embedding_model` memory is re-embedded on the next cron tick.
 
 ### Phase 4 — Prompt rewrite + docs
 
@@ -1468,7 +1855,9 @@ block; relevant-mode falls back to latest when embeddings are off.
   - New ADR in `docs/llm/architecture.md` (User Memories v1; reference
     ADR-014/015).
   - `docs/llm/handlers.md` — note the new tools + injection helper.
-  - `docs/llm/configuration.md` — document the two new settings + the
+  - `docs/llm/configuration.md` — document the four new settings
+    (`MEMORY_INJECTION_ENABLED`, `MEMORY_RETRIEVAL_MODE`,
+    `MEMORY_EMBEDDINGS_ENABLED`, `MEMORY_REGENERATE_EMBEDDINGS`) + the
     rewritten prompt defaults.
   - `docs/database-schema.md` + `docs/database-schema-llm.md` — confirm the
     Phase-1 table docs are complete; add the vec0 runtime table note.
@@ -1477,6 +1866,43 @@ block; relevant-mode falls back to latest when embeddings are off.
 
 **Exit criteria:** whole-repo `make format lint && make test` green;
 `code-reviewer` pass on the full diff; docs in sync.
+
+### Phase 5 — Admin UI (extending `/knowledge_config`)
+
+> AMENDMENT (user review, change #3): New phase. Independent of the LLM
+> tools / injection / regeneration (Phases 1–4) and can ship after the core
+> system works. Recommended as a separate phase rather than folded into
+> Phase 3 because it is substantial UI work with its own test surface.
+
+**Files:**
+
+- `internal/bot/models/enums.py` (`:155-187`) — extend
+  `ButtonUserDataConfigAction` with `TopicSelected`, `MemorySelected`,
+  `DeleteMemory`, `NextPage`, `PrevPage`, `TagFilter`.
+- `internal/bot/common/handlers/user_data.py`:
+  - Repoint the `/knowledge_config` wizard (`knowledge_config_command`
+    `:1357-1400`, dispatcher `_handleUserDataConfiguration` `:1216-1279`,
+    callback router `callbackHandler` `:1281-1311`, step handlers
+    `:785-1214`) at `self.db.userMemories` instead of the cache user-data
+    methods.
+  - New flow: chat picker → topic/type picker (`MemoryType` or "All") →
+    paginated memory list (with optional freeform-tag filter) → per-memory
+    view → delete.
+  - Add pagination (offset-based prev/next inline buttons carrying
+    `(offset, type, tag)` in the callback payload; mirror any existing
+    bot pagination pattern if one exists — flag the chosen pattern in the
+    PR).
+  - Repoint `/get_my_data` (`:1317-1355`) at `user_memories` (JSON dump or
+    readable `[type] content #tags` list).
+- `tests/bot/common/handlers/test_user_data.py` — wizard step coverage:
+  type-filter list, tag-filter list, pagination, per-memory view, delete;
+  private-only enforced; only the calling user's own memories surfaced.
+
+**Exit criteria:** a user can `/knowledge_config` → pick a chat → pick a
+type → page through their memories → view one → delete it; the deleted
+memory is gone from `user_memories` and absent from the next injection;
+`/get_my_data` dumps the user's memories; all of this is private-only and
+scoped to the caller's `userId`.
 
 ## 14. Testing strategy
 
@@ -1493,16 +1919,34 @@ Mirror `tests/database/repositories/test_chat_embeddings.py` (confirm path
 during execution). Cover:
 
 - `addMemory` → `getPermanentMemories` / `getLatestMemories` round-trip.
+  `getPermanentMemories` returns BOTH cross-thread permanent
+  (`thread_id IS NULL`) AND this-thread permanent (`thread_id = :threadId`)
+  — assert a thread-scoped bio (§5.5) and a cross-thread fact both surface
+  for the thread, and that the thread-scoped bio does NOT surface for a
+  different thread.
 - `updateMemory` partial update (`content` only, `tags` only, `type` only).
-- `deleteMemory` + `deleteMemoriesByQuery` (by `type`, by `olderThanDays`).
-- `saveMemoryEmbedding` writes the BLOB row; the vec0 table
+- `deleteMemory` + `deleteMemoriesByQuery`. `deleteMemoriesByQuery` MUST add
+  `AND permanent = 0` (§8.4) — assert a permanent memory matching the query
+  filter is NOT deleted, while a matching ephemeral memory IS.
+- `saveMemoryEmbedding` writes the vec0 table (no BLOB — §5.1):
   `vec_user_memories_{dim}` appears after the first write (assert via
-  `db.userMemories` introspection or a direct `listTables` call).
-- `searchMemories` returns ranked results; **skip with a `pytest.mark.skipif`
-  when vec0 is unavailable in CI** (mirror how `test_chat_search.py` handles
-  it — confirm the exact guard during execution).
-- `findSimilarMemories` returns `(dict, score)` tuples with similarity in
-  `[0, 1]`.
+  `db.userMemories` introspection or a direct `listTables` call); the
+  `user_memories` row's `embedding_model` / `embedding_dimensions` are set.
+- `searchMemories` — two modes (merged method, replaces former
+  `findSimilarMemories`, §6/§10):
+  - **Semantic mode** (`queryEmbedding` provided): returns ranked results
+    with `score = 1.0 - distance` populated on every row (assert
+    `results[i]["score"]` is in `[0, 1]`, descending). **Skip with a
+    `pytest.mark.skipif` when vec0 is unavailable in CI** (mirror
+    `test_chat_search.py` — confirm the exact guard during execution).
+  - **Filter-only mode** (`queryEmbedding=None`): returns rows matching
+    `type`/`tags`/`permanent`/`thread_id` with `score = 0.0` on every row;
+    works without vec0 (no skip).
+- `getMemoriesWithoutEmbeddings` / `deleteObsoleteMemoryEmbeddings` (§5.6):
+  a memory with `embedding_model=NULL` (never embedded) surfaces in
+  `getMemoriesWithoutEmbeddings`; after `saveMemoryEmbedding(..., model="A")`,
+  calling `getMemoriesWithoutEmbeddings(..., currentModel="B", ...)` resurfaces
+  it; `deleteObsoleteMemoryEmbeddings` removes the stale vec0 rows.
 
 ### 14.2 Tool tests — extend `tests/bot/common/handlers/test_user_data.py`
 
@@ -1513,11 +1957,16 @@ similarities are controllable):
 - `add_memory`: `action == "added"` when no similar; `action == "duplicate"`
   when similarity ≥ 0.95; `action == "similar_exists"` when 0.85 < s < 0.95
   AND `isRefinement=True`; `action == "duplicate"` in the grey zone when
-  `isRefinement` is unset (chat-time).
+  `isRefinement` is unset (chat-time). Dedup reads `results[0]["score"]`
+  from `searchMemories` (§8.3, §10 — no separate `findSimilarMemories`).
 - `delete_memory`: by `memory_id` (deleted=1, missing→0); by `query`
-  (deletes only hits ≥ 0.85).
-- `search_memories`: returns ranked results; returns `count == 0` when vec0
-  unsupported (mock `isVectorSearchSupported → False`).
+  (deletes only hits with `score ≥ 0.85`; explicit by-id CAN delete a
+  permanent memory — assert this, §8.4).
+- `search_memories`: with `query` → returns ranked results with `score` set;
+  returns `count == 0` when vec0 unsupported (mock
+  `isVectorSearchSupported → False`). WITHOUT `query` (filter-only) →
+  returns rows matching `type`/`tags` with `score == 0.0`, works without
+  vec0.
 - All three return `{"done": False, "error": ...}` (never raise) when the DB
   throws.
 
@@ -1542,23 +1991,30 @@ similarities are controllable):
 - Seed `user_data` rows + `chat_users.metadata` rolling-bio blobs; run
   `migration_020.up()`; assert the resulting `user_memories` rows:
   - `user_data` → permanent `type=fact`, `source=migration`, correct
-    `content` shape, `tags=[]`.
-  - rolling-bio → permanent `type=bio`, `thread_id=NULL`,
-    `tags=["migrated_bio"]`, summary preserved in `content`.
+    `content` shape, `tags=[]`, `thread_id=NULL` (cross-thread),
+    `embedding_model=NULL`, `embedding_dimensions=NULL`.
+  - rolling-bio → permanent `type=bio`, `thread_id=<original thread>` (NOT
+    NULL — bio is thread-scoped per §5.5), `tags=["migrated_bio"]`, summary
+    preserved in `content`, `embedding_model=NULL`.
 - Idempotency: re-running `up()` (if the framework allows) must not double
   the rows; otherwise assert the framework refuses a second run.
-- `down()`: both new tables dropped; `user_data` intact.
+- `down()`: `user_memories` dropped; `user_data` intact. (No
+  `user_memory_embeddings` table to drop — dropped per §5.1.)
 
 ## 15. Risks & open questions
 
-- **Embedding model drift.** If a chat's `EMBEDDING_MODEL` changes,
-  `user_memory_embeddings` rows are stale (model/dimensions mismatch with
-  the vec0 table for the new dimension). v1: `_buildMemoriesBlock`
-  relevant-mode returns `[]` from `searchMemories` (the dim-specific vec0
-  table is absent for the new model) and falls back to latest-mode
-  silently. **Future work:** a regeneration worker mirroring the
-  `REGENERATE_EMBEDDINGS` chat setting's message-embeddings path
-  (`internal/bot/common/handlers/chat_search.py` backfill).
+- **Embedding model drift.** ~~Future work~~ **Now handled in v1** (Goal #6,
+  §5.6). When a chat's `EMBEDDING_MODEL` changes, stale `user_memories` rows
+  (whose `embedding_model` / `embedding_dimensions` no longer match) are
+  re-embedded by the regeneration section of `UserDataHandler._dtCronJob`,
+  gated by `MEMORY_EMBEDDINGS_ENABLED` + `MEMORY_REGENERATE_EMBEDDINGS`
+  (§11.5). The model/dimensions live on `user_memories` itself (no BLOB
+  table), so stale detection is a single-table query
+  (`getMemoriesWithoutEmbeddings`). Residual risk: if both regeneration
+  settings are left off on a chat that switched models, relevant-mode
+  `searchMemories` returns `[]` (the dim-specific vec0 table is absent for
+  the new model) and `_buildMemoriesBlock` falls back to latest-mode
+  silently — degraded but not broken.
 
 - **vec0 partition-key portability.** The partition-key syntax is
   sqlite-vec-specific; see the TODO at
@@ -1630,6 +2086,10 @@ similarities are controllable):
 - DB repo registry: `internal/database/database.py:108-126` (`__slots__`), `:137-175` (type hints), `:205-217` (`__init__`).
 - Tool-registration primitives: `lib/ai/models.py:151-172` (`LLMParameterType`), `:175-216` (`LLMFunctionParameter`); `ToolName`/`TOOLS_DEFAULT_DICT_KEY` at `internal/bot/constants.py:24-76`.
 - Config: `configs/00-defaults/user-memory.toml` (thresholds + JSONL log); `configs/00-defaults/bot-defaults.toml:128, 131, 158, 173-174` (embeddings-enabled, embedding-model, memory-refinement-enabled, memory-refine-model/fallback defaults); `:350, 363` (memory-refine system/user-prompt defaults — rewritten per §11.3); `:207` (chat-prompt-suffix documenting `userSummary`).
+- Universal row converter: `dbUtils.sqlToTypedDict(data, typedDictClass)` at `internal/database/utils.py:319-374` (import as `from internal.database import utils as dbUtils`, seen at `chat_embeddings.py:32`). Handles snake_case column → TypedDict key mapping, int→bool, JSON TEXT→list, ISO str→datetime. `convertToSQLite` (`utils.py`) is the Python→SQL direction; there is no `convertFromSQLite` (the read direction is `sqlToTypedDict`).
+- Regeneration precedent: `ChatSearchHandler._dtCronJob` at `internal/bot/common/handlers/chat_search.py:284-445` (single path for initial backfill + model-drift regeneration); `deleteObsoleteModelEmbeddings` at `internal/database/repositories/chat_embeddings.py:337-464`; stale-detection `NOT EXISTS` subquery at `:516-532`. Constants `BACKFILL_DEFAULT_BATCH_SIZE = 50` (`:69`), `BACKFILL_INTER_MESSAGE_DELAY_SECS = 0.1` (`:77`).
+- Admin UI precedent: `/knowledge_config` command `internal/bot/common/handlers/user_data.py:1357-1400`; wizard dispatcher `:1216-1279`; callback router `:1281-1311`; step handlers `:785-1214`; `ButtonUserDataConfigAction` enum `internal/bot/models/enums.py:155-187`; `/get_my_data` `:1317-1355`.
+- TypedDict key convention: `ChatMessageDict` / `ChatUserDict` / `MessageEmbeddingDict` at `internal/database/models.py:108-212` use snake_case keys matching DB columns; `ChatMessageDict.score` at `:157-160` is the exact mirror for `UserMemoryDict.score`.
 
 ### Related docs
 
@@ -1641,7 +2101,7 @@ similarities are controllable):
 
 ### Quoted AGENTS.md rules this plan depends on
 
-- "camelCase for variables, args, fields, functions, methods. PascalCase for classes. UPPER_CASE for constants."
+- "camelCase for variables, args, fields, functions, methods. PascalCase for classes. UPPER_CASE for constants." — **applies to Python identifiers only; TypedDict string keys that map to DB columns are snake_case** (repo convention, see `ChatMessageDict` etc.). Repository METHOD params stay camelCase; only the dict keys mirror columns.
 - "Docstrings required on every module/class/method/function/field, with Args: and Returns:."
 - "Type hints required on all function/method params and returns; no `Any` type."
 - "No pydantic. … Use raw dicts + hand-rolled type-hinted classes of TypedDict."
