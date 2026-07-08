@@ -18,8 +18,8 @@ Every durable fact, preference, event, relationship, or high-level bio note
 about a user lives as one row in the `user_memories` table, tagged with a
 `MemoryType` discriminator and a freeform `tags` set. Two classes of memory:
 
-- **Permanent** (`permanent = 1`) — always injected into the chat system
-  message, capped at `PERMANENT_INJECTION_CAP = 10` per `(chat, user)`.
+- **Permanent** (`permanent = 1`) — always injected into the user's
+  messages, capped at `PERMANENT_INJECTION_CAP = 10` per `(chat, user)`.
   Includes the maintained `type=bio` summary (one per thread) and
   cross-thread facts (e.g. `user_data`-migrated rows, `thread_id IS NULL`).
 - **Ephemeral** (`permanent = 0`) — retrieved per turn, newest- or
@@ -30,8 +30,11 @@ Each memory carries a vector embedding in a vec0 virtual table
 de-duplicated** via cosine similarity. Three LLM tools let the model manage
 memories itself: `add_memory`, `delete_memory`, `search_memories`.
 
-Owner handler: `UserDataHandler` (`internal/bot/common/handlers/user_data.py`).
-Schema: `migration_020_user_memories`. Repository:
+Owner handler: `UserDataHandler` (`internal/bot/common/handlers/user_data.py`)
+owns the three LLM tools, the refinement cron, and the regen cron. **Injection**
+is centralised in `MessagePreprocessorHandler.injectMemories()`
+(`internal/bot/common/handlers/message_preprocessor.py`) at message-arrival
+time (see "Injection"). Schema: `migration_020_user_memories`. Repository:
 `UserMemoriesRepository` (`internal/database/repositories/user_memories.py`).
 
 ## Schema
@@ -72,41 +75,54 @@ Schema: `migration_020_user_memories`. Repository:
   `UserMemoriesRepository._upsertVecMemoryEmbedding` on first write of a
   given dimension (mirror of `_upsertVecMessageEmbedding` in
   `chat_embeddings.py`). **NOT created by the migration.**
-- Carries denormalised metadata columns (`chat_id`, `user_id` partition keys,
-  `thread_id`, `permanent`, `type`) plus the `embedding` vector column with
-  cosine distance metric.
+- Carries denormalised metadata columns (`chat_id`, `user_id`, `model`
+  partition keys, `thread_id`, `permanent`, `type`) plus the `embedding`
+  vector column with cosine distance metric. The `model` partition key
+  scopes vectors per embedding model so a model swap does not pollute one
+  model's vector space with another's.
 - Denormalised `type`/`thread_id` go **stale** after `updateMemory`, so the
   JOIN step in `_semanticSearchMemories` re-applies those filters on the
-  authoritative `user_memories` columns (see "Search" below).
+  authoritative `user_memories` columns (see "Search" below). `permanent`
+  is immutable post-creation so it is pushed into the vec0 filter directly;
+  `model` is a partition key and is always part of the vec0 filter clause.
 
 ## Repository — `UserMemoriesRepository`
 
-`internal/database/repositories/user_memories.py` (11 public methods). All
-SQL goes through `BaseSQLProvider`; rows decode via
-`dbUtils.sqlToTypedDict(row, UserMemoryDict)`. Method params are camelCase;
+`internal/database/repositories/user_memories.py` (10 public methods in the
+documented core set — the `/knowledge_config` wizard helpers `getMemory` /
+`getDistinctTags` are tracked separately; all SQL goes through
+`BaseSQLProvider` and rows decode via
+`dbUtils.sqlToTypedDict(row, UserMemoryDict)`). Method params are camelCase;
 dict keys are snake_case to match columns.
 
-- **Writes:** `addMemory` (INSERT), `updateMemory` (PATCH + invalidate
-  embedding on content change), `deleteMemory` (by-id, unrestricted — may
-  target a permanent memory), `deleteMemoriesByQuery` (bulk ephemeral-only —
-  always adds `AND permanent = 0`).
+- **Writes:** `addMemory` (INSERT — requires `embedding: Optional[List[float]]`,
+  `embeddingModel: Optional[str]`, and `source: UserMemorySource`; `threadId`
+  is keyword-only; embeds during add when both `embedding` and `embeddingModel`
+  are provided), `updateMemory` (PATCH + invalidate embedding on content
+  change), `deleteMemory` (by-id, unrestricted — may target a permanent
+  memory).
 - **Reads:** `getPermanentMemories` (cross-thread `NULL` + this-thread
   permanent, newest-updated-first, capped at `PERMANENT_INJECTION_CAP`),
   `getLatestMemories` (ephemeral-only, newest-updated-first, capped at
   `EPHEMERAL_RETRIEVAL_LIMIT`).
 - **Search:** `searchMemories` — filter-only (`queryEmbedding is None`, plain
-  SQL scan, `score = 0.0`) and semantic (`queryEmbedding` is bytes, vec0
-  native, `score = 1.0 - distance`). Always scoped to
-  `chat_id = :chatId AND user_id = :userId` — no cross-user leaks.
-  `tags` is applied as a Python set-intersection post-fetch (ANY-match)
-  because JSON-in-SQL `LIKE` is non-portable. In semantic mode `threadId` /
-  `type` are re-applied in a JOIN step on the authoritative `user_memories`
-  columns (the denormalised vec0 columns go stale after `updateMemory`).
-- **Embedding persistence:** `saveMemoryEmbedding` (lazy vec0 upsert +
-  provenance UPDATE; vec0 write must succeed before provenance is set — a
-  failure leaves `embedding_model = NULL` so the regen cron retries),
-  `deleteMemoryEmbedding` (best-effort, iterates every
-  `vec_user_memories_{N}`, never raises).
+  SQL scan, `score = 0.0`) and semantic (`queryEmbedding` is a `List[float]`,
+  vec0 native, `score = 1.0 - distance`). `embeddingModel: str` is required
+  (keyword-only — pass `None` for filter-only mode); it replaces the old
+  `dimensions: int` arg. Always scoped to
+  `chat_id = :chatId AND user_id = :userId` — no cross-user leaks. The vec0
+  filter clause includes `model = :modelName` (per-model scoping) plus the
+  immutable `permanent` flag. `tags` is applied as a portable SQL `LIKE`
+  filter (`tags LIKE '%"tagN"%'`, ANY-match) — the `tags` column is stored as
+  JSON TEXT via provider auto-serialization of the Python list. In semantic
+  mode `threadId` / `type` are re-applied in a JOIN step on the authoritative
+  `user_memories` columns (the denormalised vec0 columns go stale after
+  `updateMemory`).
+- **Embedding persistence:** `saveMemoryEmbedding` (takes `embeddingModel: str`
+  + `List[float]`; lazy vec0 upsert + provenance UPDATE; vec0 write must
+  succeed before provenance is set — a failure leaves `embedding_model = NULL`
+  so the regen cron retries), `deleteMemoryEmbedding` (best-effort, iterates
+  every `vec_user_memories_{N}`, never raises).
 - **Model-drift regen helpers:** `getMemoriesWithoutEmbeddings` (single-table
   stale detection — also serves the initial backfill since a `NULL`
   `embedding_model` surfaces here), `deleteObsoleteMemoryEmbeddings`
@@ -122,8 +138,14 @@ with content edits — regen only re-embeds on model drift.
 
 ## MemoryType
 
-`internal/bot/models/memory_type.py` — `StrEnum` (AGENTS.md mandates `StrEnum`
-over `Literal[...]`):
+`internal/database/models.py` — `StrEnum` (AGENTS.md mandates `StrEnum`
+over `Literal[...]`). It lives in the database layer (not
+`internal/bot/models/`) so `UserMemoryDict` and the rest of
+`internal.database` can reference it without an upward import into
+`internal.bot.models` (which would create a startup-time circular import —
+`internal.database` initialises before `internal.bot`). It is still
+re-exported as `from internal.bot.models import MemoryType` for callers in
+the bot layer:
 
 - `BIO` (`"bio"`) — high-level evolving summary; exactly one permanent bio
   maintained per `(chat, user, thread)` by the refinement pass; the
@@ -149,9 +171,11 @@ Freeform categorisation beyond these is handled by the JSON `tags` column.
 
 ### Retrieval
 
-- **Injection block** — `_buildMemoriesBlock` on `BaseBotHandler` loads
-  permanent + ephemeral and renders the `<user-memories>` block (see
-  "Injection").
+- **Injection** — `MessagePreprocessorHandler.injectMemories()` loads
+  permanent + ephemeral at message-arrival time, persists them into the
+  chat message's `metadata`, and they ride per-message via
+  `EnsuredMessage.setUserMemories` / `formatForLLM` (JSON key `userMemories`).
+  See "Injection".
 - **`search_memories` tool** — the chat LLM can call `search_memories` to
   look up prior memories on demand (semantic or filter-only).
 
@@ -194,8 +218,10 @@ one-to-one, adapted for the single-store model:
    `NULL` `embedding_model` rows surface here too, serving the initial
    backfill).
 7. **Re-embed loop** — each `UserMemoryDict` re-embedded via
-   `embedAndSaveMemory` with an inter-call sleep; per-row failures
-   swallowed inside the helper.
+   `LLMService.generateEmbedding` (returns `(modelName, List[float])` or
+   `None`) and persisted through `UserMemoriesRepository.saveMemoryEmbedding`
+   with an inter-call sleep; `generateEmbedding` swallows its own failures
+   (returns `None`, the loop skips the save).
 
 Never raises — a regen failure never breaks the refinement body sharing the
 same tick. Batch size: `[user-memory.thresholds].memory-reindex-batch-size`
@@ -219,8 +245,8 @@ default false). Returns
 `{"done": True, "action": "added"|"duplicate"|"similar_exists", ...}` on
 success (see dedup state machine). `source` is set to `"refinement"` when
 `extraData["isRefinement"]` is truthy, else `"chat"`. Best-effort embeds
-after insert via `embedAndSaveMemory` (never raises; regen cron picks up
-failures).
+after insert via `LLMService.generateEmbedding` +
+`saveMemoryEmbedding` (never raises; regen cron picks up failures).
 
 ### `delete_memory` (`_llmToolDeleteMemory`) — refinement-only at chat time
 
@@ -248,73 +274,69 @@ memories are ever returned. When no embedding model is available with a
 
 ## Injection
 
-`BaseBotHandler._buildMemoriesBlock` (`internal/bot/common/handlers/base.py`)
-builds the `<user-memories>` system-prompt block for a chat turn:
+Injection is **centralised** in
+`MessagePreprocessorHandler.injectMemories()` (`internal/bot/common/handlers/message_preprocessor.py`),
+called once per inbound message **at arrival time** (inside
+`newMessageHandler`, before `saveChatMessage`). The previous
+`BaseBotHandler._buildMemoriesBlock` / `_formatMemoriesBlock` /
+`_injectMemoriesBlock` / `_safeEmbedQuery` helpers and the four
+handler-level injection sites (`getThreadByMessageForLLM`, `handleMention`,
+`handleRandomMessage`, `handleReply`) were **deleted** in the
+refactoring — there is no longer a `<user-memories>` system-message block.
 
-1. Bail when `MEMORY_INJECTION_ENABLED` is false (returns `None`).
-2. Load permanent via `getPermanentMemories(..., limit=PERMANENT_INJECTION_CAP)`
-   (cap 10 — includes cross-thread `NULL` + this-thread permanent).
-3. Load ephemeral by `MEMORY_RETRIEVAL_MODE`:
-   - `"relevant"` + non-empty message text + `EMBEDDINGS_ENABLED` →
-     `_safeEmbedQuery` (best-effort; any failure falls back to latest) then
-     `searchMemories(permanent=False, limit=EPHEMERAL_RETRIEVAL_LIMIT)` (cap 5).
-   - Anything else (`"latest"`, relevant-but-embeddings-off,
-     relevant-but-no-embed, relevant-but-search-empty) → `getLatestMemories`
-     (cap 5, ephemeral-only).
-4. `None` when both sections empty; otherwise `_formatMemoriesBlock`.
+### Flow (`MessagePreprocessorHandler.injectMemories`)
 
-**Never-crash contract:** the whole body is wrapped in a top-level
-`try/except Exception` so a transient DB error downgrades to `None` rather
-than breaking the message turn.
+1. Bail when `MEMORY_INJECTION_ENABLED` is false.
+2. **Permanent** — read from the write-through permanent-memories cache via
+   `cache.getChatUserPermanentMemories(chatId, userId, threadId)`
+   (cross-thread `NULL` + this-thread permanent, already capped at
+   `PERMANENT_INJECTION_CAP = 10`, returned as `list[SingleMemoryDict]`).
+3. **Ephemeral (short-term)** — chosen by `MEMORY_RETRIEVAL_MODE`:
+   - `"relevant"` + non-empty message text →
+     `LLMService.generateEmbedding(messageText, chatId, chatSettings)`
+     (returns `(modelName, List[float])` or `None`); on a non-`None` result,
+     `searchMemories(queryEmbedding=<floats>, embeddingModel=<modelName>,
+     permanent=False)` (vec0-ranked); on `None` (no embedding model, rate
+     limit, provider error) falls back to `getLatestMemories`.
+   - Anything else (`"latest"`, relevant-but-no-embed) →
+     `getLatestMemories` (cap `EPHEMERAL_RETRIEVAL_LIMIT = 5`, ephemeral-only).
+4. The ephemeral rows are slimmed to `SingleMemoryDict` via
+   `convertDBMemoryToSingleMemoryDict` (drops DB plumbing keys, keeps
+   `type`/`content`/`tags`/`score`).
+5. `ensuredMessage.setUserMemories({"permanent": permanentMemories,
+   "shortTerm": shortTermMemories})` — a deep copy is stored on
+   `EnsuredMessage.userMemories` and mirrored into
+   `metadata["memories"]`.
 
-### Rendering (`_formatMemoriesBlock`)
+Because step 5 runs **before** `saveChatMessage`, the snapshot is persisted
+into the chat message's `metadata` JSON and **rides per message**: when the
+message is later loaded into an LLM turn (thread context, mention, random,
+reply), `EnsuredMessage.fromDBChatMessage(..., injectMemories=True)` reads
+the `memories` key back via `setUserMemories`, and `formatForLLM` emits them
+under the JSON key **`userMemories`** (a per-message field, not a
+system-message block). The memories seen by the model are therefore the
+snapshot known at the time the message arrived — every message in a thread
+carries its own context, and there is no per-turn re-fetch at the LLM call
+site.
 
-Format (plan §9.1):
+### Permanent-memories cache
 
-```
-<user-memories>
-Permanent:
-[bio] <content>  #<tag> ...
-[preference] <content>
-Recent:
-[fact] <content>
-[event] <content>
-</user-memories>
-```
+The permanent cohort is served from a write-through cache in `CacheService`
+rather than re-queried on every inbound message:
 
-- Each line: `[type] content #tag1 #tag2` (tags omitted when empty).
-- Permanent sorted by `(type, updated_at)`; ephemeral ordered newest-first.
-- The `Permanent:`/`Recent:` header + body are omitted entirely when that
-  list is empty (lets permanent-empty render as just the `Recent:` block).
-- **Soft char cap** `MEMORIES_BLOCK_SOFT_CHAR_CAP = 2000`: when exceeded and
-  `len(ephemeral) > 1`, the recent section is trimmed first (each recent
-  line is smaller and lower-value); when a lone ephemeral line would blow
-  the cap it is still kept (the cap is a guideline — losing the only recent
-  signal is the wrong trade-off).
+- `getChatUserPermanentMemories(chatId, userId, threadId)` →
+  `list[SingleMemoryDict]` — lazily loads + memoises the permanent block for
+  `(chatId, userId, threadId)`; the loader calls `getPermanentMemories` and
+  converts via `convertDBMemoryToSingleMemoryDict`.
+- `invalidateChatUserPermanentMemories(chatId, userId, threadId)` — drops the
+  cached block so the next read re-queries. Called by the memory-write paths
+  (`add_memory` / `delete_memory` / the refinement tools) so a freshly added
+  permanent memory is visible on the next inbound message.
 
-`_injectMemoriesBlock` appends the block to `messages[0].content` (the
-system message) after a blank-line separator; no-op when `block` is falsy
-or `messages` is empty.
-
-### Injection sites (4)
-
-All four system-message construction sites inject the block about the
-relevant user (`recipient.id` / `sender.id` / `dbMessage["user_id"]`),
-driving relevant-mode search with the incoming message text:
-
-1. `base.py` `getThreadByMessageForLLM` — thread context (the thread's
-   root-message sender is the user the thread is about).
-2. `llm_messages.py` `handleMention`.
-3. `llm_messages.py` `handleRandomMessage` non-thread branch (the message
-   list is built here before `_sendLLMChatMessage` is called).
-4. `llm_messages.py` `handleReply` fallback path (fires when
-   `getThreadByMessageForLLM` returned `[]` so the block would otherwise be
-   missing — mirrors site 1; the list is built here before
-   `_sendLLMChatMessage` is called).
-
-Site 1 and the thread branch of site 3 are mutually exclusive (the thread
-branch gets the block via `getThreadByMessageForLLM`, so injecting there too
-would double-inject).
+The old `getChatUserData` / `setChatUserData` / `unsetChatUserData` /
+`clearChatUserData` cache methods (legacy `user_data` key-value blob) were
+**deleted**; `invalidateChatUser(chatId, userId)` still exists but only drops
+`userInfo` and intentionally preserves the permanent-memories cache.
 
 ## Refinement (Phase 4a rewrite)
 
@@ -370,7 +392,7 @@ metadata in `_chatSettingsInfo` (four-site convention — see
 
 | `ChatSettingsKey` | TOML key | Type | Purpose |
 |---|---|---|---|
-| `MEMORY_INJECTION_ENABLED` | `memory-injection-enabled` | BOOL | Gate the `<user-memories>` block injection AND the chat-time availability of `add_memory` / `search_memories`. |
+| `MEMORY_INJECTION_ENABLED` | `memory-injection-enabled` | BOOL | Gate `MessagePreprocessorHandler.injectMemories()` (the message-arrival injection into `EnsuredMessage.userMemories`) AND the chat-time availability of `add_memory` / `search_memories`. |
 | `MEMORY_RETRIEVAL_MODE` | `memory-retrieval-mode` | STRING | `latest` (default) or `relevant` — how ephemeral memories are chosen. |
 | `MEMORY_EMBEDDINGS_ENABLED` | `memory-embeddings-enabled` | BOOL | Gate the regen cron's chat discovery for this chat. |
 | `MEMORY_REGENERATE_EMBEDDINGS` | `memory-regenerate-embeddings` | BOOL | Per-chat gate for re-embedding stale rows (only acts when `MEMORY_EMBEDDINGS_ENABLED` is on). |
@@ -421,7 +443,8 @@ The old `userSummary` injection path was **removed entirely** in Phase 4b:
 `formatForLLM` `userSummary` key are gone (the `chat-prompt-suffix` line
 documenting the `userSummary` JSON field was dropped in the same phase). The
 stale rolling-bio blob in `chat_users.metadata` is left unread — the
-structured `<user-memories>` block fully replaces it. See
+per-message `userMemories` snapshot (injected at arrival time and persisted
+in `chat_messages.metadata.memories`) fully replaces it. See
 [`../../plans/user-memories-v1.md`](../../plans/user-memories-v1.md) §9.3 for
 the decision record.
 
@@ -431,7 +454,7 @@ the decision record.
   authoritative implementation spec (planning document, amended post-impl).
 - [`../architecture.md`](../architecture.md) ADR-016 — unified
   `user_memories` store decision (structured memories + vec0 + tool
-  self-management + `<user-memories>` block injection). ADR-014 covers the
+  self-management + centralised arrival-time injection). ADR-014 covers the
   background refinement machinery (cron + global lock + accounting) that
   still governs `_runRefinement`; ADR-015 covers the `chat_users` cache used
   by the cursor persist.

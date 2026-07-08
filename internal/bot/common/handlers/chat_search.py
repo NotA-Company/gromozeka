@@ -423,7 +423,9 @@ class ChatSearchHandler(BaseBotHandler):
         # asyncio loop responsive between embeddings.
         embedded = 0
         for pendingMessage in pendingMessagesList:
-            ensuredMessage = await EnsuredMessage.fromDBChatMessage(data=pendingMessage, db=self.db)
+            ensuredMessage = await EnsuredMessage.fromDBChatMessage(
+                data=pendingMessage, db=self.db, injectMemories=False
+            )
             if not ensuredMessage.messageText.strip():
                 continue
 
@@ -675,7 +677,7 @@ class ChatSearchHandler(BaseBotHandler):
             ``username``, ``full_name``, ``date``, ``reply_id``,
             and ``thread_id``.
         """
-        eMessage = await EnsuredMessage.fromDBChatMessage(msg, self.db)
+        eMessage = await EnsuredMessage.fromDBChatMessage(msg, self.db, injectMemories=False)
         return json.loads(await eMessage.formatForLLM(self.db, format=LLMMessageFormat.JSON, useSingleMedia=False))
 
     async def _llmToolGetThread(

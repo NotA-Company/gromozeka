@@ -35,6 +35,11 @@
 >
 > This file is retained for historical context. Do not implement from it;
 > implement from [`user-memories.md`](user-memories.md).
+>
+> **Note:** the `<user-memories>` block referenced below was itself
+> superseded by centralized preprocessor injection
+> (`MessagePreprocessorHandler.injectMemories`) — see
+> [`user-memories.md`](user-memories.md) for the current architecture.
 
 Durable implementation notes for the background per-`(chat, user, thread)` memory-refinement subsystem. Implemented 2026-07-04 from [`docs/plans/memory-refine-plan-v1.md`](../../plans/memory-refine-plan-v1.md) (status line there updated to IMPLEMENTED). Owner handler: `UserDataHandler` (`internal/bot/common/handlers/user_data.py`).
 

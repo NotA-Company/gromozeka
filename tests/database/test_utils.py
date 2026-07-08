@@ -16,7 +16,7 @@ from typing import Any, Optional, Union
 
 import pytest
 
-from internal.bot.models.ensured_message import CondensingDict, MetadataDict
+from internal.bot.models.message_metadata import CondensingDict, MetadataDict
 from internal.database.utils import (
     _checkType,
     sqlToCustomType,

@@ -57,12 +57,6 @@ class ToolName(StrEnum):
     SANDBOX_SEND_FILE = "sandbox_send_file"
     SANDBOX_LIST_LIBRARIES = "sandbox_list_libraries"
 
-    # User Data (legacy — retired Phase 2; enum entries kept so any stray
-    # reference resolves instead of KeyError-ing. The tools are no longer
-    # registered; see docs/plans/user-memories-v1.md §12.)
-    ADD_USER_DATA = "add_user_data"
-    DELETE_USER_DATA = "delete_user_data"
-
     # User Memories (Phase 2 — see docs/plans/user-memories-v1.md §8)
     ADD_MEMORY = "add_memory"
     DELETE_MEMORY = "delete_memory"

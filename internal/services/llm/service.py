@@ -966,6 +966,48 @@ class LLMService:
             consumerId=str(chatId) if chatId is not None else None,
         )
 
+    async def generateEmbedding(
+        self,
+        text: str,
+        *,
+        chatId: int,
+        chatSettings: ChatSettingsDict,
+    ) -> Optional[Tuple[str, List[float]]]:
+        """Generate an embedding vector for ``text`` using the chat's embedding model.
+
+        Resolves the embedding model from ``EMBEDDING_MODEL`` in chat settings,
+        applies the chat's rate limit when ``chatId`` is not ``None``, and asks
+        the model to embed the text. The returned model name is read back from
+        the resolved chat setting (not the model instance) so callers can
+        persist it alongside the vector for later stale-detection. Any failure
+        (bad model, rate-limit, provider error) is caught, logged, and surfaced
+        as ``None`` so the cron/tool path can skip the row without raising.
+
+        Args:
+            text: The text to embed.
+            chatId: Chat identifier used for rate limiting; pass ``None`` to
+                skip rate limiting (e.g. for a background regen tick).
+            chatSettings: Chat-level settings dict — must contain a resolved
+                ``EMBEDDING_MODEL`` value.
+
+        Returns:
+            A ``(modelName, embeddingVector)`` tuple on success, or ``None``
+            when embedding failed (the exception is logged).
+        """
+
+        try:
+            embeddingModel = self.resolveModel(
+                ChatSettingsKey.EMBEDDING_MODEL, chatSettings=chatSettings, defaultKey=ChatSettingsKey.EMBEDDING_MODEL
+            )
+
+            if chatId is not None:
+                await self.rateLimit(chatId, chatSettings)
+            embeddingVector = await embeddingModel.generateEmbeddings(text)
+            return (chatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr(), embeddingVector)
+        except Exception:
+            logger.exception("Failed to generate embeddings:", exc_info=True)
+            return None
+
     async def rateLimit(self, chatId: int, chatSettings: ChatSettingsDict) -> None:
         """Apply rate limiting to a chat based on its settings.
 

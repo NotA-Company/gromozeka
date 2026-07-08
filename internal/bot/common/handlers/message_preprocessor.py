@@ -16,11 +16,19 @@ import telegram
 
 from internal.bot.common.embedding_utils import embedAndSaveMessage
 from internal.bot.common.models import UpdateObjectType
-from internal.bot.models import BotProvider, EnsuredMessage, MessageRecipient, MessageSender
-from internal.bot.models.chat_settings import ChatSettingsKey
+from internal.bot.models import (
+    MEMORY_RETRIEVAL_MODE_RELEVANT,
+    BotProvider,
+    ChatSettingsKey,
+    EnsuredMessage,
+    MessageRecipient,
+    MessageSender,
+    convertDBMemoryToSingleMemoryDict,
+)
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import MessageCategory
+from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
 
 from .base import BaseBotHandler, HandlerResultStatus
@@ -66,6 +74,51 @@ class MessagePreprocessorHandler(BaseBotHandler):
         super().__init__(configManager=configManager, database=database, botProvider=botProvider)
         self._searchEnabled: bool = bool(self.configManager.getSearchHistoryConfig().get("enabled", False))
 
+    async def injectMemories(self, ensuredMessage: EnsuredMessage) -> None:
+        """Inject user memories into the ensured message.
+
+        Args:
+            ensuredMessage: The ensured message to inject memories into.
+        """
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
+
+        if not chatSettings[ChatSettingsKey.MEMORY_INJECTION_ENABLED].toBool():
+            return
+
+        permanentMemories = await self.cache.getChatUserPermanentMemories(
+            ensuredMessage.recipient.id,
+            ensuredMessage.sender.id,
+            ensuredMessage.threadId or DEFAULT_THREAD_ID,
+        )
+        memories = []
+        embeddings = None
+        if chatSettings[ChatSettingsKey.MEMORY_RETRIEVAL_MODE].toStr() == MEMORY_RETRIEVAL_MODE_RELEVANT:
+            embeddings = await self.llmService.generateEmbedding(
+                ensuredMessage.messageText,
+                chatId=ensuredMessage.recipient.id,
+                chatSettings=chatSettings,
+            )
+
+        if embeddings is None:
+            memories = await self.db.userMemories.getLatestMemories(
+                chatId=ensuredMessage.recipient.id,
+                userId=ensuredMessage.sender.id,
+                threadId=ensuredMessage.threadId or DEFAULT_THREAD_ID,
+            )
+        else:
+            memories = await self.db.userMemories.searchMemories(
+                chatId=ensuredMessage.recipient.id,
+                userId=ensuredMessage.sender.id,
+                threadId=ensuredMessage.threadId or DEFAULT_THREAD_ID,
+                queryEmbedding=embeddings[1],
+                embeddingModel=embeddings[0],
+                permanent=False,
+            )
+
+        shortTermMemories = [convertDBMemoryToSingleMemoryDict(memory) for memory in memories]
+
+        ensuredMessage.setUserMemories({"permanent": permanentMemories, "shortTerm": shortTermMemories})
+
     async def newMessageHandler(
         self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
     ) -> HandlerResultStatus:
@@ -105,6 +158,8 @@ class MessagePreprocessorHandler(BaseBotHandler):
                     ensuredMessage.addMediaProcessingInfo(media, setMediaId=False)
             case _:
                 logger.error(f"Unsupported bot provider: {self.botProvider}")
+
+        await self.injectMemories(ensuredMessage)
 
         if not await self.saveChatMessage(ensuredMessage, messageCategory=messageCategory):
             logger.error("Failed to save chat message")

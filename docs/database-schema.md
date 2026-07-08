@@ -954,22 +954,21 @@ Semantic search runs over a vec0 virtual table (`vec_user_memories_{dim}`, cosin
 - `idx_user_memories_chat_user_permanent` on `(chat_id, user_id, permanent, updated_at DESC)` — backs `getPermanentMemories`.
 - `idx_user_memories_type` on `(chat_id, user_id, type)` — backs type-filtered scans.
 
-**TypedDict**: [`UserMemoryDict`](../internal/database/repositories/user_memories.py:60) (snake_case keys; `score: NotRequired[float]` populated by semantic search).
+**TypedDict**: [`UserMemoryDict`](../internal/database/models.py:551) (snake_case keys; `score: NotRequired[float]` populated by semantic search).
 
-**Enum**: [`MemoryType`](../internal/bot/models/memory_type.py:18) (`BIO`/`PREFERENCE`/`FACT`/`EVENT`/`RELATIONSHIP`).
+**Enum**: [`MemoryType`](../internal/database/models.py:473) (`BIO`/`PREFERENCE`/`FACT`/`EVENT`/`RELATIONSHIP`); [`UserMemorySource`](../internal/database/models.py:515) (`REFINEMENT`/`CHAT`/`MIGRATION`/`USER`).
 
-**Repository** (`UserMemoriesRepository`, accessed as `db.userMemories`) — 11 public methods; all SQL goes through `BaseSQLProvider`:
-- `addMemory(chatId, userId, memoryId, *, type, content, tags, permanent, threadId=None, source="refinement") -> None` — INSERT (caller generates the UUID).
+**Repository** (`UserMemoriesRepository`, accessed as `db.userMemories`) — 10 public methods; all SQL goes through `BaseSQLProvider`:
+- `addMemory(chatId, userId, memoryId, *, type, content, tags, permanent, source, embedding=None, embeddingModel=None, threadId=None) -> None` — INSERT (caller generates the UUID). `source` is a `UserMemorySource`; `threadId` is keyword-only; when both `embedding` (`List[float]`) and `embeddingModel` are provided the row is embedded during add.
 - `updateMemory(chatId, userId, memoryId, *, content=None, tags=None, type=None) -> bool` — partial PATCH, bumps `updated_at`; a content change resets `embedding_model`/`embedding_dimensions` to NULL and drops the stale vec0 row so the regen cron re-surfaces it.
 - `deleteMemory(chatId, userId, memoryId) -> bool` — explicit by-id delete (unrestricted — may target permanent).
-- `deleteMemoriesByQuery(chatId, userId, *, threadId, type=None, olderThanDays=None) -> int` — ephemeral-only bulk delete (always `AND permanent = 0`).
 - `getPermanentMemories(chatId, userId, threadId, *, limit=10) -> List[UserMemoryDict]` — merges cross-thread permanent (`thread_id IS NULL`) AND this-thread permanent (`thread_id = :threadId`); bio is thread-scoped so a thread's permanent block includes its own bio.
 - `getLatestMemories(chatId, userId, threadId, *, limit=5) -> List[UserMemoryDict]` — thread-scoped newest-first, **ephemeral-only** (`permanent = 0`); permanent memories are served by `getPermanentMemories`.
-- `searchMemories(chatId, userId, *, queryEmbedding=None, threadId=None, type=None, tags=None, permanent=None, limit=20) -> List[UserMemoryDict]` — filter-only (`queryEmbedding is None`, plain SQL scan, `score = 0.0`) or semantic (vec0 KNN, `score = 1.0 - distance`). Always scoped to one `(chat_id, user_id)`; `tags` applied as a Python set-intersection post-fetch.
-- `saveMemoryEmbedding(chatId, userId, memoryId, embedding, modelName) -> None` — lazy-create `vec_user_memories_{dim}` + upsert the vector + set `embedding_model`/`embedding_dimensions` (vec0 write must succeed before provenance is set).
+- `searchMemories(chatId, userId, queryEmbedding=None, *, threadId=None, type=None, tags=None, permanent=None, limit=20, embeddingModel, offset=0) -> List[UserMemoryDict]` — filter-only (`queryEmbedding is None`, plain SQL scan, `score = 0.0`) or semantic (vec0 KNN, `score = 1.0 - distance`). `queryEmbedding` is `Optional[List[float]]`; `embeddingModel` (required, pass `None` for filter-only) replaces the old `dimensions` arg and is part of the vec0 `model` partition filter. Always scoped to one `(chat_id, user_id)`; `tags` applied as a portable SQL `LIKE '%"tagN"%'` filter (ANY-match) against the JSON-TEXT `tags` column.
+- `saveMemoryEmbedding(chatId, userId, memoryId, embedding, embeddingModel) -> bool` — lazy-create `vec_user_memories_{dim}` + upsert the vector (`embedding` is `List[float]`, `embeddingModel` the model name) + set `embedding_model`/`embedding_dimensions` (vec0 write must succeed before provenance is set).
 - `deleteMemoryEmbedding(chatId, userId, memoryId) -> None` — best-effort vec0 DELETE across every `vec_user_memories_{N}` table; never raises.
 - `getMemoriesWithoutEmbeddings(chatId, modelName, *, limit) -> List[UserMemoryDict]` — single-table stale detection (NULL `embedding_model` or model mismatch); backs the regen cron and the initial backfill.
-- `deleteObsoleteMemoryEmbeddings(chatId, modelName) -> int` — model-drift cleanup: resets stale rows' provenance to NULL and drops their vec0 rows.
+- `deleteObsoleteMemoryEmbeddings(chatId, currentModel, currentDimensions) -> int` — model-drift cleanup: resets stale rows' provenance to NULL and drops their vec0 rows.
 
 **Backfills** (`migration_020.up()`):
 - `user_data` rows → permanent cross-thread `type='fact'`, `content="{key}: {data}"`, `tags=[]`, `source='migration'`, original timestamps preserved.

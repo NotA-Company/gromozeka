@@ -183,7 +183,21 @@ def _defaultChatSettings(
     embeddingsEnabled: bool = True,
     embeddingModel: str = "",
 ) -> ChatSettingsDict:
-    """Build a chat-settings dict with the keys the embedding block reads.
+    """Build a chat-settings dict with every key the preprocessor reads.
+
+    Covers both code paths exercised by the tests below:
+
+    * the embedding-dispatch block (``EMBEDDINGS_ENABLED`` / ``EMBEDDING_MODEL``), and
+    * :meth:`MessagePreprocessorHandler.injectMemories`, which runs
+      unconditionally at the top of :meth:`newMessageHandler` and subscripts
+      ``chatSettings[ChatSettingsKey.MEMORY_INJECTION_ENABLED]`` directly
+      before any guard. A sparse dict missing the key raises ``KeyError``
+      (see the "Chat Settings Must Be Complete Dicts" note), so
+      ``MEMORY_INJECTION_ENABLED`` must always be present even when the
+      embedding block is the focus of the test. It defaults to ``"false"`` so
+      ``injectMemories`` short-circuits before touching the cache or the
+      ``MEMORY_RETRIEVAL_MODE`` branch (which the embedding tests do not
+      exercise).
 
     Args:
         embeddingsEnabled: Value for ``EMBEDDINGS_ENABLED``.
@@ -197,6 +211,7 @@ def _defaultChatSettings(
     return {
         ChatSettingsKey.EMBEDDINGS_ENABLED: ChatSettingsValue("true" if embeddingsEnabled else "false"),
         ChatSettingsKey.EMBEDDING_MODEL: ChatSettingsValue(embeddingModel),
+        ChatSettingsKey.MEMORY_INJECTION_ENABLED: ChatSettingsValue("false"),
     }
 
 

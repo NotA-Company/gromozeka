@@ -1,8 +1,16 @@
 # Our TODO list
 - [x] jsonl log user bio change
 - [x] add memories about user, show last X (or most relevant X) + add\delete\search tools
-- [ ] pin data\summary\memories to message
-- [ ] make memory-tags as self-serialized 
+- [x] pin data\summary\memories to message
+- [ ] Memory-config, add memory
+- [ ] memory-repo: add custom source support
+- [ ] move constants to constants
+- [ ] refactor models
+- [ ] make lint - add check for compilation
+- [ ] move injected memories to separate table by hash or keep + links to them
+- [ ] search-memories: ability to search for another user
+- [ ] how\when do we generate embeddings for messages? 
+
 - [ ] Yandex AI Studio does not support webp images. Add config value + convert
 - [ ] Search for tool_name in [] or {} + optional ``` end return some error if yes (to enforce proper tool call)
 - [ ] Subagent with conversation history
@@ -32,9 +40,9 @@
 - [x] Tool for last messages, last discussion messages, user messages
 - [ ] Add summarisation support (thread, messages, from-to [message\timestamp], today, yesterday)
 - [x] Add support for embeddings + Vector search on chat's database
-- [ ] Add support for collecting messages to knowledge database to answer if some user ask known question
+- [?] Add support for collecting messages to knowledge database to answer if some user ask known question
 - [ ] Add support of periodic tasks (summarization for example)
-- [ ] Add cron for analyzing and remembering knowledge from messages
+- [x] Add cron for analyzing and remembering knowledge from messages
 - [ ] Think, how to add summarization of chat to context of random answers
 - [ ] better description + find users by full name
 

@@ -16,6 +16,7 @@ The cache hierarchy includes:
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Dict, List, NotRequired, Optional, Tuple, TypeAlias, TypedDict
 
+from internal.bot.models.message_metadata import SingleMemoryDict
 from internal.database.models import ChatInfoDict, ChatTopicInfoDict, ChatUserDict
 from internal.models import MessageId
 from lib import utils
@@ -141,7 +142,7 @@ class HCChatUserCacheDict(TypedDict):
         userInfo: The chat_users row for this (chatId, userId).
     """
 
-    data: NotRequired[UserDataType]
+    permanentMemories: NotRequired[Dict[int, list[SingleMemoryDict]]]
     """Dictionary containing user-specific data/knowledge."""
 
     userInfo: NotRequired[ChatUserDict]

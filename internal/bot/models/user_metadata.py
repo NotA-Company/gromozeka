@@ -23,17 +23,12 @@ class UserMemoryThreadDict(TypedDict, total=False):
     read).
 
     Attributes:
-        summary: Rolling short summary/bio of the user in this thread.
         lastProcessedMessageId: MessageId.asStr() of the newest message ingested by the
             last refinement (logging/debug only).
         lastProcessedMessageDate: ISO datetime of the newest message ingested by the last
             refinement — the cursor for getChatMessagesSince.
     """
 
-    # LEGACY: no longer written (Phase 4a) or read at runtime (Phase 4b);
-    # kept for backward-compat with old blobs in chat_users.metadata.
-    summary: str
-    """Rolling short summary/bio of the user in this thread."""
     lastProcessedMessageId: str
     """MessageId.asStr() of the newest message ingested by the last refinement (logging/debug only)."""
     lastProcessedMessageDate: str

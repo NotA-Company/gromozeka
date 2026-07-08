@@ -1012,9 +1012,6 @@ class HandlersManager(CommandHandlerGetterInterface):
             ensuredMessage = messageRec.message
             updateObj = messageRec.updateObj
             previousRec = await chatState.getPreviousMessage(messageRec)
-            ensuredMessage.setUserData(
-                await self.cache.getChatUserData(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
-            )
 
             commandRet = await asyncio.wait_for(
                 self.handleCommand(ensuredMessage, updateObj),

@@ -33,6 +33,7 @@ from threading import RLock
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Optional, Tuple, Type
 
 import internal.database.utils as dbUtils
+from internal.bot.models.message_metadata import SingleMemoryDict, convertDBMemoryToSingleMemoryDict
 from internal.bot.models.user_metadata import UserMetadataDict
 from internal.database.models import ChatInfoDict, ChatTopicInfoDict, ChatUserDict
 from internal.models import MessageId
@@ -50,8 +51,6 @@ from .types import (
     HCUserCacheDict,
     UserActiveActionEnum,
     UserActiveConfigurationDict,
-    UserDataType,
-    UserDataValueType,
 )
 
 if TYPE_CHECKING:
@@ -862,155 +861,85 @@ class CacheService:
         """
         return f"{chatId}:{userId}"
 
-    async def getChatUserData(self, chatId: int, userId: int) -> UserDataType:
-        """Get user data for a specific chat.
+    async def getChatUserPermanentMemories(self, chatId: int, userId: int, threadId: int) -> list[SingleMemoryDict]:
+        """Return the permanent memories for (chatId, userId, threadId), read-aside cached.
 
-        Retrieves user data scoped to a specific chat from the cache. If not
-        present in cache, loads it from the database and caches the result.
-        Returns an empty dictionary if no data is found or database is unavailable.
+        Cache hit returns the stored list directly. On a miss the memories are
+        loaded from ``db.userMemories.getPermanentMemories`` and converted to
+        :class:`SingleMemoryDict` via :func:`convertDBMemoryToSingleMemoryDict`,
+        then cached under ``permanentMemories[threadId]`` keyed by the composite
+        ``chatId:userId`` user key. If no database is wired, logs and returns an
+        empty list rather than caching the absence.
 
         Args:
-            chatId: The unique identifier of the chat
-            userId: The unique identifier of the user
+            chatId: The chat the memories belong to.
+            userId: The user the memories are about.
+            threadId: Thread scope (use ``DEFAULT_THREAD_ID`` = 0 for the main
+                thread / cross-thread permanent memories).
 
         Returns:
-            A UserDataType dictionary containing the user's data for the chat,
-            or an empty dictionary if no data exists
+            The cached-or-loaded list of permanent :class:`SingleMemoryDict`
+            entries (empty when nothing is stored or the DB is unavailable).
         """
         userKey = self._getChatUserKey(chatId, userId)
         userCache = self.chatUsers.get(userKey, {})
 
-        if "data" not in userCache:
-            if self.database:
-                # Load from DB
-                userData = {
-                    k: json.loads(v)
-                    for k, v in (await self.database.userData.getUserData(userId=userId, chatId=chatId)).items()
-                }
-                userCache["data"] = userData
-                self.chatUsers.set(userKey, userCache)
-                logger.debug(f"Loaded user data for {userKey} from DB")
-            else:
-                logger.error(f"No dbWrapper found, can't load user data for {userKey}")
-                userCache["data"] = {}
-                self.chatUsers.set(userKey, userCache)
+        if "permanentMemories" not in userCache:
+            userCache["permanentMemories"] = {}
 
-        return userCache.get("data", {})
+        memories = userCache["permanentMemories"].get(threadId, None)
 
-    async def setChatUserData(self, chatId: int, userId: int, key: str, value: UserDataValueType) -> None:
-        """Set user data for a specific chat.
+        if memories is not None:
+            return memories
 
-        Stores a key-value pair in the user data scoped to a specific chat.
-        The data is persisted to the database immediately and marked as dirty
-        for cache persistence.
+        if not self.database:
+            logger.error(f"No dbWrapper found, can't load user data for {userKey}")
+            return []
 
-        Args:
-            chatId: The unique identifier of the chat
-            userId: The unique identifier of the user
-            key: The data key to set
-            value: The data value to store
+        dbMemories = await self.database.userMemories.getPermanentMemories(
+            chatId=chatId,
+            userId=userId,
+            threadId=threadId,
+        )
 
-        Side Effects:
-            - Loads existing user data from database if not already cached
-            - Updates the in-memory cache with the new key-value pair
-            - Marks the user key as dirty for persistence
-            - If database is available:
-                - Persists the data to the database immediately
-            - If database is not available:
-                - Logs an error message
-            - Logs debug information about the update
-        """
-        userKey = self._getChatUserKey(chatId, userId)
-        userCache = self.chatUsers.get(userKey, {})
-        # load userData from DB or initialise as empty dict
-        await self.getChatUserData(chatId, userId)
-
-        if "data" not in userCache:
-            userCache["data"] = {}
-
-        userCache["data"][key] = value
+        userCache["permanentMemories"][threadId] = [convertDBMemoryToSingleMemoryDict(m) for m in dbMemories]
         self.chatUsers.set(userKey, userCache)
+        return userCache["permanentMemories"][threadId]
 
-        # Mark as dirty
-        self.dirtyKeys[CacheNamespace.CHAT_USERS].add(userKey)
+    async def invalidateChatUserPermanentMemories(self, chatId: int, userId: int, threadId: Optional[int]) -> None:
+        """Drop cached permanent memories for (chatId, userId).
 
-        # Persist to DB immediately for user data
-        if self.database:
-            await self.database.userData.addUserData(userId=userId, chatId=chatId, key=key, data=utils.jsonDumps(value))
-        else:
-            logger.error(f"No dbWrapper found, can't save user data for {userKey} ({key}->{value})")
-
-        logger.debug(f"Updated user data for {userKey}, key={key}")
-
-    async def unsetChatUserData(self, chatId: int, userId: int, key: str) -> None:
-        """Unset user data for a specific chat.
-
-        Removes a specific key from the user data scoped to a specific chat.
-        The key is removed from both the cache and the database.
+        Called after a memory write/delete so the next read re-queries the DB.
+        When ``threadId`` is ``None`` the entire ``permanentMemories`` map for
+        that user is cleared (all threads); otherwise only the entry for the
+        given thread is removed. A no-op when nothing is cached for the user or
+        thread — callers may invoke unconditionally after a write.
 
         Args:
-            chatId: The unique identifier of the chat
-            userId: The unique identifier of the user
-            key: The data key to remove
+            chatId: The chat the memories belong to.
+            userId: The user the memories are about.
+            threadId: Thread scope to invalidate, or ``None`` to invalidate
+                every thread for this (chatId, userId).
 
-        Side Effects:
-            - Loads existing user data from database if not already cached
-            - Removes the specified key from the in-memory cache
-            - If database is available:
-                - Removes the key from the database
-            - If database is not available:
-                - Logs an error message
-            - Logs debug information about the update
+        Returns:
+            None
         """
         userKey = self._getChatUserKey(chatId, userId)
-        # Populate UserData from DB if any
-        await self.getChatUserData(chatId, userId)
         userCache = self.chatUsers.get(userKey, {})
-        if "data" not in userCache:
+
+        if "permanentMemories" not in userCache:
             return
 
-        userData = userCache["data"]
-        userData.pop(key, None)
-        self.chatUsers.set(userKey, userCache)
-
-        if self.database:
-            await self.database.userData.deleteUserData(userId=userId, chatId=chatId, key=key)
-        else:
-            logger.error(f"No dbWrapper found, can't delete user data for {userKey} ({key})")
-        logger.debug(f"Unset user data for {userKey}, key={key}")
-
-    async def clearChatUserData(self, chatId: int, userId: int) -> None:
-        """Clear all user data for a specific chat.
-
-        Removes all user data scoped to a specific chat from both the cache
-        and the database.
-
-        Args:
-            chatId: The unique identifier of the chat
-            userId: The unique identifier of the user
-
-        Side Effects:
-            - If database is available:
-                - Removes all user data from the database
-            - If database is not available:
-                - Logs an error message
-            - Removes all user data from the in-memory cache
-            - Logs debug information about the update
-        """
-        userKey = self._getChatUserKey(chatId, userId)
-
-        if self.database:
-            await self.database.userData.clearUserData(userId=userId, chatId=chatId)
-        else:
-            logger.error(f"No dbWrapper found, can't clear user data for {userKey}")
-
-        userCache = self.chatUsers.get(userKey, {})
-        if "data" not in userCache:
+        if threadId is None:
+            userCache["permanentMemories"] = {}
+            self.chatUsers.set(userKey, userCache)
             return
 
-        userCache.pop("data", None)
+        if threadId not in userCache["permanentMemories"]:
+            return
+
+        del userCache["permanentMemories"][threadId]
         self.chatUsers.set(userKey, userCache)
-        logger.debug(f"Cleared user data for {userKey}")
 
     # ## ChatUser UserInfo (chat_users row)
 

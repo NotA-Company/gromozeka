@@ -34,6 +34,7 @@ from internal.bot.models import (
     ChatSettingsKey,
     ChatSettingsValue,
 )
+from internal.database.models import MemoryType, UserMemorySource
 from internal.database.repositories.user_memories import UserMemoryDict
 from internal.services.cache import CacheService
 from internal.services.queue_service.service import QueueService
@@ -161,7 +162,7 @@ def _makeMemoryDict(
     Args:
         memoryId: Value for ``memory_id``.
         content: Value for ``content`` (the text re-embedded).
-        userId: Value for ``user_id`` (forwarded to ``embedAndSaveMemory``).
+        userId: Value for ``user_id`` (forwarded to ``saveMemoryEmbedding``).
         chatId: Value for ``chat_id``.
 
     Returns:
@@ -173,11 +174,11 @@ def _makeMemoryDict(
         "user_id": userId,
         "thread_id": 0,
         "memory_id": memoryId,
-        "type": "fact",
+        "type": MemoryType.FACT,
         "content": content,
         "tags": [],
         "permanent": False,
-        "source": "chat",
+        "source": UserMemorySource.CHAT,
         "embedding_model": None,
         "embedding_dimensions": None,
         "created_at": now,
@@ -235,8 +236,7 @@ def _makeHandler(
     db.userMemories.getMemoriesWithoutEmbeddings = AsyncMock(
         return_value=staleMemories if staleMemories is not None else []
     )
-    # ``embedAndSaveMemory`` (when not patched) calls
-    # ``db.userMemories.saveMemoryEmbedding``; default to success.
+    # ``saveMemoryEmbedding`` is called by the regen re-embed loop; default to success.
     db.userMemories.saveMemoryEmbedding = AsyncMock(return_value=True)
 
     handler = UserDataHandler(
@@ -249,8 +249,13 @@ def _makeHandler(
     handler.getChatSettings = AsyncMock(return_value=cs)  # type: ignore[method-assign]
 
     mockModel = model if model is not None else _makeModelMock()
-    mockManager = Mock(getModel=Mock(return_value=mockModel))
-    handler.llmService.getLLMManager = Mock(return_value=mockManager)  # type: ignore[method-assign]
+    # Mock ``resolveModel`` directly (bypasses the module-level ``_llmManager``
+    # cache in ``chat_settings.toModel``) and ``generateEmbedding`` (the re-embed
+    # entry point). Tests may override either per-case.
+    handler.llmService.resolveModel = Mock(return_value=mockModel)  # type: ignore[method-assign]
+    handler.llmService.generateEmbedding = AsyncMock(  # type: ignore[method-assign]
+        return_value=("embed-v1", [0.1, 0.2, 0.3])
+    )
 
     mocks: Dict[str, Mock] = {
         "db": db,
@@ -392,31 +397,35 @@ class TestRegenGate:
         mocks["userMemories"].getMemoriesWithoutEmbeddings.assert_not_called()
 
     async def test_skipsWhenEmbeddingModelMissing(self) -> None:
-        """An empty ``EMBEDDING_MODEL`` setting bails before cleanup / re-embed."""
+        """An empty ``EMBEDDING_MODEL`` causes ``resolveModel`` to raise before cleanup / re-embed.
+
+        ``resolveModel`` delegates to ``ChatSettingsValue.toModel()`` which raises
+        ``ValueError`` when the model name is empty or unknown. The exception
+        propagates out of ``_runMemoryEmbeddingRegen`` (caught by the
+        ``_dtCronJob`` wrapper in production). The contract under test: cleanup
+        and re-embed are never reached.
+        """
         handler, mocks = _makeHandler(
             chatSettings=_makeChatSettings(embeddingModel=""),
         )
-        await _runRegen(handler)
+        handler.llmService.resolveModel = Mock(side_effect=ValueError("Model not found"))  # type: ignore[method-assign]
+        with pytest.raises(ValueError):
+            await _runRegen(handler)
 
         mocks["userMemories"].deleteObsoleteMemoryEmbeddings.assert_not_called()
         mocks["userMemories"].getMemoriesWithoutEmbeddings.assert_not_called()
 
     async def test_skipsWhenModelNotRegistered(self) -> None:
-        """An unknown ``EMBEDDING_MODEL`` (model not in LLM manager) bails gracefully."""
+        """An unknown ``EMBEDDING_MODEL`` raises before cleanup / re-embed.
+
+        ``resolveModel`` → ``toModel()`` raises ``ValueError`` when the model
+        is not found in the LLM manager. The exception propagates out of
+        ``_runMemoryEmbeddingRegen`` (caught by ``_dtCronJob`` in production).
+        """
         handler, mocks = _makeHandler()
-        # getModel returns None → handler treats it as "model missing".
-        handler.llmService.getLLMManager = Mock(  # type: ignore[method-assign]
-            return_value=Mock(getModel=Mock(return_value=None))
-        )
-        await _runRegen(handler)
-
-        mocks["userMemories"].deleteObsoleteMemoryEmbeddings.assert_not_called()
-        mocks["userMemories"].getMemoriesWithoutEmbeddings.assert_not_called()
-
-    async def test_skipsWhenModelLacksEmbeddingSupport(self) -> None:
-        """A registered model that does not support embeddings bails gracefully."""
-        handler, mocks = _makeHandler(model=_makeModelMock(supportsEmbedding=False))
-        await _runRegen(handler)
+        handler.llmService.resolveModel = Mock(side_effect=ValueError("Model not found"))  # type: ignore[method-assign]
+        with pytest.raises(ValueError):
+            await _runRegen(handler)
 
         mocks["userMemories"].deleteObsoleteMemoryEmbeddings.assert_not_called()
         mocks["userMemories"].getMemoriesWithoutEmbeddings.assert_not_called()
@@ -534,8 +543,8 @@ class TestRegenCleanup:
         assert handler._memoryEmbeddingModelTracker == {100: "embed-v1:384"}
 
         # Tick 2: same model name, different dimensions → cleanup re-fires.
-        handler.llmService.getLLMManager = Mock(  # type: ignore[method-assign]
-            return_value=Mock(getModel=Mock(return_value=_makeModelMock(dimensions=1024))),
+        handler.llmService.resolveModel = Mock(  # type: ignore[method-assign]
+            return_value=_makeModelMock(dimensions=1024),
         )
         await _runRegen(handler)
         assert mocks["userMemories"].deleteObsoleteMemoryEmbeddings.await_count == 2
@@ -563,11 +572,18 @@ class TestRegenCleanup:
         mocks["userMemories"].getMemoriesWithoutEmbeddings.assert_awaited_once()
 
     async def test_cleanupNotReachedWhenModelMissing(self) -> None:
-        """When the chat has no ``EMBEDDING_MODEL``, cleanup is never reached."""
+        """When the chat has no ``EMBEDDING_MODEL``, cleanup is never reached.
+
+        ``resolveModel`` raises ``ValueError`` (empty model → not found); the
+        exception fires before the cleanup block. Caught by ``_dtCronJob``
+        in production.
+        """
         handler, mocks = _makeHandler(
             chatSettings=_makeChatSettings(embeddingModel=""),
         )
-        await _runRegen(handler)
+        handler.llmService.resolveModel = Mock(side_effect=ValueError("Model not found"))  # type: ignore[method-assign]
+        with pytest.raises(ValueError):
+            await _runRegen(handler)
 
         mocks["userMemories"].deleteObsoleteMemoryEmbeddings.assert_not_called()
         mocks["userMemories"].getMemoriesWithoutEmbeddings.assert_not_called()
@@ -582,13 +598,14 @@ class TestRegenReEmbedLoop:
     """Tests for the stale-memory re-embed loop."""
 
     async def test_staleMemoriesAreReEmbedded(self) -> None:
-        """Each stale memory is re-embedded via ``embedAndSaveMemory``.
+        """Each stale memory is re-embedded via ``generateEmbedding`` + ``saveMemoryEmbedding``.
 
-        Verifies the helper is called with the memory's ``user_id`` /
-        ``memory_id`` / ``content`` and the chat's resolved ``modelName``,
-        and that the batch was fetched with the configured model forwarded
-        as ``modelName`` (so rows embedded under a previous model are
-        re-surfaced).
+        Verifies ``generateEmbedding`` is called with the memory's ``content``
+        and the chat's ``chatId``, and ``saveMemoryEmbedding`` is called with
+        the memory's ``user_id`` / ``memory_id`` and the resolved
+        ``embeddingModel`` / ``embedding``. Also verifies the batch fetch
+        forwarded the configured model as ``modelName`` (so rows embedded
+        under a previous model are re-surfaced).
         """
         stale = [
             _makeMemoryDict(memoryId="m1", content="likes coffee", userId=7),
@@ -596,26 +613,23 @@ class TestRegenReEmbedLoop:
         ]
         handler, mocks = _makeHandler(staleMemories=stale)
 
-        # Patch the helper at the module scope it is imported into
-        # (``user_data.embedAndSaveMemory``) so the regen path's call is
-        # observable without exercising the helper's own model resolution.
-        with patch(
-            "internal.bot.common.handlers.user_data.embedAndSaveMemory",
-            new=AsyncMock(return_value=True),
-        ) as embedMock:
-            await _runRegen(handler)
+        await _runRegen(handler)
 
         # The batch fetch forwarded modelName so model-swap rows resurface.
         getKwargs = mocks["userMemories"].getMemoriesWithoutEmbeddings.call_args.kwargs
         assert getKwargs["modelName"] == "embed-v1"
-        # Each memory was re-embedded with the right args.
-        assert embedMock.await_count == 2
-        firstCall = embedMock.await_args_list[0].kwargs
-        assert firstCall["chatId"] == 100
-        assert firstCall["modelName"] == "embed-v1"
-        assert firstCall["memoryId"] == "m1"
-        assert firstCall["userId"] == 7
-        assert firstCall["content"] == "likes coffee"
+        # Each memory was re-embedded.
+        assert handler.llmService.generateEmbedding.await_count == 2  # type: ignore[attr-defined]
+        firstEmbedCall = handler.llmService.generateEmbedding.await_args_list[0]  # type: ignore[attr-defined]
+        assert firstEmbedCall.args[0] == "likes coffee"
+        assert firstEmbedCall.kwargs["chatId"] == 100
+        # The save call carries the right user/memory ids and model name.
+        assert mocks["userMemories"].saveMemoryEmbedding.await_count == 2
+        firstSaveCall = mocks["userMemories"].saveMemoryEmbedding.await_args_list[0].kwargs
+        assert firstSaveCall["chatId"] == 100
+        assert firstSaveCall["embeddingModel"] == "embed-v1"
+        assert firstSaveCall["memoryId"] == "m1"
+        assert firstSaveCall["userId"] == 7
 
     async def test_batchSizeRespected(self) -> None:
         """The configured ``memory-reindex-batch-size`` is forwarded as the fetch limit.
@@ -646,16 +660,10 @@ class TestRegenReEmbedLoop:
         """
         stale = [_makeMemoryDict(memoryId=f"m{i}") for i in range(3)]
         handler, _mocks = _makeHandler(staleMemories=stale)
-        with (
-            patch(
-                "internal.bot.common.handlers.user_data.embedAndSaveMemory",
-                new=AsyncMock(return_value=True),
-            ),
-            patch(
-                "internal.bot.common.handlers.user_data.asyncio.sleep",
-                new=AsyncMock(),
-            ) as sleepMock,
-        ):
+        with patch(
+            "internal.bot.common.handlers.user_data.asyncio.sleep",
+            new=AsyncMock(),
+        ) as sleepMock:
             await _runRegen(handler)
 
         assert sleepMock.await_count == 3
@@ -666,35 +674,32 @@ class TestRegenReEmbedLoop:
     async def test_noStaleMemoriesIsNoop(self) -> None:
         """An empty stale-detection result → no re-embed calls."""
         handler, mocks = _makeHandler(staleMemories=[])
-        with patch(
-            "internal.bot.common.handlers.user_data.embedAndSaveMemory",
-            new=AsyncMock(),
-        ) as embedMock:
-            await _runRegen(handler)
+        await _runRegen(handler)
 
-        embedMock.assert_not_called()
+        handler.llmService.generateEmbedding.assert_not_called()  # type: ignore[attr-defined]
 
     async def test_perMemoryErrorDoesNotAbortBatch(self) -> None:
         """A single failed re-embed never aborts the rest of the batch.
 
-        ``embedAndSaveMemory`` catches every error internally and returns
-        ``False`` on failure, so the loop continues with the remaining
-        memories. The successful row is still saved.
+        ``generateEmbedding`` returning ``None`` (embedding failure) causes
+        the loop to skip ``saveMemoryEmbedding`` for that memory but continue
+        with the remaining ones. The successful row is still saved.
         """
         stale = [
             _makeMemoryDict(memoryId="bad", content="will fail"),
             _makeMemoryDict(memoryId="good", content="will succeed"),
         ]
         handler, mocks = _makeHandler(staleMemories=stale)
-        # First call fails (returns False), second succeeds.
-        with patch(
-            "internal.bot.common.handlers.user_data.embedAndSaveMemory",
-            new=AsyncMock(side_effect=[False, True]),
-        ) as embedMock:
-            await _runRegen(handler)
+        # First call returns None (embedding failure), second returns a valid tuple.
+        handler.llmService.generateEmbedding = AsyncMock(  # type: ignore[method-assign]
+            side_effect=[None, ("embed-v1", [0.1, 0.2, 0.3])],
+        )
+        await _runRegen(handler)
 
         # Both memories were attempted.
-        assert embedMock.await_count == 2
+        assert handler.llmService.generateEmbedding.await_count == 2  # type: ignore[attr-defined]
+        # Only the successful one was saved.
+        assert mocks["userMemories"].saveMemoryEmbedding.await_count == 1
 
     async def test_logsInfoWhenMemoriesEmbedded(self) -> None:
         """A successful batch logs an info line with the embedded count.
@@ -704,11 +709,7 @@ class TestRegenReEmbedLoop:
         """
         stale = [_makeMemoryDict(memoryId="m1")]
         handler, _mocks = _makeHandler(staleMemories=stale)
-        with patch(
-            "internal.bot.common.handlers.user_data.embedAndSaveMemory",
-            new=AsyncMock(return_value=True),
-        ):
-            await _runRegen(handler)
+        await _runRegen(handler)
         # No assertion on the log text itself (logger is not captured); the
         # test guards the branch executing without raising.
 
@@ -737,15 +738,11 @@ class TestRegenNeverCrash:
         """
         handler, mocks = _makeHandler()
         mocks["chatSettings"].listChatsBySetting = AsyncMock(side_effect=RuntimeError("db down"))
-        with patch(
-            "internal.bot.common.handlers.user_data.embedAndSaveMemory",
-            new=AsyncMock(),
-        ) as embedMock:
-            await _runRegen(handler)  # must not raise
+        await _runRegen(handler)  # must not raise
 
         mocks["userMemories"].deleteObsoleteMemoryEmbeddings.assert_not_called()
         mocks["userMemories"].getMemoriesWithoutEmbeddings.assert_not_called()
-        embedMock.assert_not_called()
+        handler.llmService.generateEmbedding.assert_not_called()  # type: ignore[attr-defined]
 
     async def test_getChatSettingsErrorReturnsEarly(self) -> None:
         """A raise in ``getChatSettings`` is swallowed → early return.
@@ -758,15 +755,11 @@ class TestRegenNeverCrash:
         handler.getChatSettings = AsyncMock(  # type: ignore[method-assign]
             side_effect=RuntimeError("settings read failed"),
         )
-        with patch(
-            "internal.bot.common.handlers.user_data.embedAndSaveMemory",
-            new=AsyncMock(),
-        ) as embedMock:
-            await _runRegen(handler)  # must not raise
+        await _runRegen(handler)  # must not raise
 
         mocks["userMemories"].deleteObsoleteMemoryEmbeddings.assert_not_called()
         mocks["userMemories"].getMemoriesWithoutEmbeddings.assert_not_called()
-        embedMock.assert_not_called()
+        handler.llmService.generateEmbedding.assert_not_called()  # type: ignore[attr-defined]
 
     async def test_getMemoriesWithoutEmbeddingsErrorReturnsEarly(self) -> None:
         """A raise in ``getMemoriesWithoutEmbeddings`` is swallowed → no re-embed.
@@ -775,14 +768,10 @@ class TestRegenNeverCrash:
         method logs-and-returns. Cleanup (``deleteObsoleteMemoryEmbeddings``)
         runs BEFORE the fetch and therefore HAS already executed by the time
         the fetch raises — the contract under test here is only that the
-        re-embed loop is never reached (no ``embedAndSaveMemory`` calls).
+        re-embed loop is never reached (no ``generateEmbedding`` calls).
         """
         handler, mocks = _makeHandler()
         mocks["userMemories"].getMemoriesWithoutEmbeddings = AsyncMock(side_effect=RuntimeError("fetch failed"))
-        with patch(
-            "internal.bot.common.handlers.user_data.embedAndSaveMemory",
-            new=AsyncMock(),
-        ) as embedMock:
-            await _runRegen(handler)  # must not raise
+        await _runRegen(handler)  # must not raise
 
-        embedMock.assert_not_called()
+        handler.llmService.generateEmbedding.assert_not_called()  # type: ignore[attr-defined]

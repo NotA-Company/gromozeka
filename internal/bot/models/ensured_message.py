@@ -20,9 +20,10 @@ import datetime
 import json
 import logging
 import time
+from copy import deepcopy
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Dict, List, Optional, Sequence, Tuple, TypedDict
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import telegram
 import telegram.constants
@@ -38,6 +39,7 @@ from lib.ai.models import ModelMessage
 
 from .enums import LLMMessageFormat
 from .media import MediaProcessingInfo
+from .message_metadata import MetadataDict, UserMemoriesDict
 from .text_formatter import FormatEntity, OutputFormat
 
 logger = logging.getLogger(__name__)
@@ -45,44 +47,6 @@ logger = logging.getLogger(__name__)
 MAX_MEDIA_AWAIT_SECS = 300  # 5 minutes
 MEDIA_AWAIT_DELAY = 2.5
 WORD_BREAKERS = ' \t\n\r\f\v.,;:?!…()[]{}<>«»„“”‘’"-–—+=×*÷=<>=≠≤≥%&|\\/@#$№©™®_.'  # Provided By Alice
-
-
-class CondensingDict(TypedDict):
-    """TypedDict for condensed thread information.
-
-    Stores thread condensing data including the condensed text and the
-    boundary message ID and timestamp where condensing occurred.
-
-    Attributes:
-        text: The condensed thread text
-        tillMessageId: The message ID up to which thread was condensed
-        tillTS: The timestamp up to which thread was condensed
-    """
-
-    text: str
-    tillMessageId: MessageId
-    tillTS: float
-
-
-class MetadataDict(TypedDict, total=False):
-    """TypedDict for message metadata.
-
-    Stores optional metadata associated with a message, including condensed
-    thread information, random context, forwarding details, and tool usage history.
-
-    Attributes:
-        condensedThread: List of condensed thread entries
-        randomContext: Random context string for the message
-        forwardedFrom: Dictionary containing forwarding information
-        messagePrefix: Prefix text prepended to the message
-        usedTools: List of tool usage records from AI interactions
-    """
-
-    condensedThread: List[CondensingDict]
-    randomContext: str
-    forwardedFrom: Dict[str, Any]
-    messagePrefix: str
-    usedTools: List[Dict[str, Any]]
 
 
 class ChatType(StrEnum):
@@ -401,7 +365,7 @@ class EnsuredMessage:
         "mediaContent",
         "mediaPrompt",
         "mediaId",
-        "userData",
+        "userMemories",
         "_mentionCheckResult",
         "formatEntities",
         "metadata",
@@ -487,7 +451,7 @@ class EnsuredMessage:
         self.mediaList: List[MediaContent] = []
         """List of Media content if any"""
 
-        self.userData: Optional[Dict[str, Any]] = None
+        self.userMemories: Optional[UserMemoriesDict] = None
         """User data if any"""
         self._mentionCheckResult: Optional[MentionCheckResult] = None
         """Cached mention check result"""
@@ -818,7 +782,12 @@ class EnsuredMessage:
 
     @classmethod
     async def fromDBChatMessage(
-        cls, data: ChatMessageDict, db: Database, forceGetAllMedia: bool = False
+        cls,
+        data: ChatMessageDict,
+        db: Database,
+        *,
+        forceGetAllMedia: bool = False,
+        injectMemories: bool,
     ) -> "EnsuredMessage":
         """
         Create an EnsuredMessage from a database ChatMessageDict.
@@ -895,10 +864,13 @@ class EnsuredMessage:
 
         ensuredMessage.messagePrefix = metadata.get("messagePrefix", "")
 
+        if injectMemories and "memories" in metadata:
+            ensuredMessage.setUserMemories(metadata["memories"])
+
         # logger.debug(f"Ensured Message from DB Chat: {ensuredMessage}")
         return ensuredMessage
 
-    def setUserData(self, userData: Dict[str, Any]) -> None:
+    def setUserMemories(self, memories: UserMemoriesDict) -> None:
         """
         Set additional user data for this message.
 
@@ -907,7 +879,8 @@ class EnsuredMessage:
         Args:
             userData: Dictionary containing additional user-specific data
         """
-        self.userData = userData.copy()
+        self.userMemories = deepcopy(memories)
+        self.metadata["memories"] = self.userMemories
 
     def getBaseMessage(self) -> telegram.Message | maxModels.Message:
         """
@@ -1128,7 +1101,7 @@ class EnsuredMessage:
                         "replyId": self.replyId.asMessageId() if self.replyId else None,
                         "quote": self.quoteText if self.isQuote else None,
                         "mediaDescription": mediaContent,
-                        "userData": self.userData,
+                        "userMemories": self.userMemories,
                     }.items()
                     if v
                 }
@@ -1285,7 +1258,7 @@ class EnsuredMessage:
             "mediaId": self.mediaId,
             "mediaContent": self.mediaContent,
             "mediaList": self.mediaList,
-            "userData": "{...}" if self.userData else None,
+            "userMemories": "{...}" if self.userMemories else None,
         }
         for key in list(ret.keys()):
             if ret[key] is None:

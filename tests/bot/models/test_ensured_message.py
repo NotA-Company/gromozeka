@@ -25,6 +25,7 @@ from internal.bot.models import (
     MessageSender,
 )
 from internal.database import Database
+from internal.database.models import MemoryType
 from internal.database.utils import DEFAULT_THREAD_ID
 
 
@@ -87,8 +88,8 @@ class TestFormatForLLMExcludesUserSummary:
         # Byte-identity: the field name must not appear anywhere in the string.
         assert "userSummary" not in output
 
-    async def test_formatForLLMJsonOmitsUserSummaryWhenUserDataSet(self, testDatabase: Database) -> None:
-        """Even when ``userData`` is populated, no ``userSummary`` key sneaks in.
+    async def test_formatForLLMJsonOmitsUserSummaryWhenUserMemoriesSet(self, testDatabase: Database) -> None:
+        """Even when ``userMemories`` is populated, no ``userSummary`` key sneaks in.
 
         Confirms the removal did not leave the key reachable via the truthiness
         filter when a sibling optional field is populated.
@@ -98,12 +99,19 @@ class TestFormatForLLMExcludesUserSummary:
                 message has no media.
         """
         ensuredMessage = _makeEnsuredMessage()
-        ensuredMessage.setUserData({"preference": "vegan"})
+        ensuredMessage.setUserMemories(
+            {
+                "permanent": [
+                    {"type": MemoryType.PREFERENCE, "content": "vegan", "tags": ["diet"]},
+                ],
+                "shortTerm": [],
+            }
+        )
 
         output = await ensuredMessage.formatForLLM(testDatabase, format=LLMMessageFormat.JSON)
 
         parsed = json.loads(output)
         assert "userSummary" not in parsed
         assert "userSummary" not in output
-        # Sanity: userData is still emitted (proves the assertion is meaningful).
-        assert parsed["userData"] == {"preference": "vegan"}
+        # Sanity: userMemories is still emitted (proves the assertion is meaningful).
+        assert "userMemories" in parsed

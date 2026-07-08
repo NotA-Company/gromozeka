@@ -52,7 +52,6 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import MessageCategory
-from internal.database.utils import DEFAULT_THREAD_ID
 from internal.services.llm import ExtraDataDict, LLMService, UseToolsType
 from lib.ai import (
     ModelMessage,
@@ -602,20 +601,6 @@ class LLMMessageHandler(BaseBotHandler):
                     await ensuredReply.toModelMessage(self.db, format=llmMessageFormat, role="assistant"),
                     await ensuredMessage.toModelMessage(self.db, format=llmMessageFormat, role="user"),
                 ]
-                # User-memories v1 (Phase 3a) — inject the <user-memories> block
-                # into the freshly-built system message. This fallback path
-                # fires when getThreadByMessageForLLM returned [] (the root
-                # message is not in the DB), so the block would otherwise be
-                # missing entirely for a reply-to-bot in this error path
-                # (plan §9.2 — mirrors site 2 in handleMention).
-                memoriesBlock = await self._buildMemoriesBlock(
-                    ensuredMessage.recipient.id,
-                    ensuredMessage.sender.id,
-                    ensuredMessage.threadId if ensuredMessage.threadId is not None else DEFAULT_THREAD_ID,
-                    currentUserMessageText=ensuredMessage.formatMessageText(),
-                    chatSettings=chatSettings,
-                )
-                self._injectMemoriesBlock(reqMessages, memoriesBlock)
 
             if (
                 await self._sendLLMChatMessage(
@@ -707,6 +692,7 @@ class LLMMessageHandler(BaseBotHandler):
 
             # Handle LLM Action
             llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
+            injectMemories = chatSettings[ChatSettingsKey.MEMORY_INJECTION_ENABLED].toBool()
 
             reqMessages = [
                 ModelMessage(
@@ -717,26 +703,26 @@ class LLMMessageHandler(BaseBotHandler):
                 ),
             ]
 
-            # User-memories v1 (Phase 3a) — inject the <user-memories> block
-            # into the system message (plan §9.2 site 2). The memories are
-            # about the incoming-message sender; the message text drives
-            # relevant-mode search.
-            memoriesBlock = await self._buildMemoriesBlock(
-                ensuredMessage.recipient.id,
-                ensuredMessage.sender.id,
-                ensuredMessage.threadId if ensuredMessage.threadId is not None else DEFAULT_THREAD_ID,
-                currentUserMessageText=ensuredMessage.formatMessageText(),
-                chatSettings=chatSettings,
-            )
-            self._injectMemoriesBlock(reqMessages, memoriesBlock)
-
             # Add Parent message if any
             if ensuredMessage.isReply:
                 # TODO: Shoiuld we add whole discussion?
                 ensuredReply: Optional[EnsuredMessage] = ensuredMessage.getEnsuredRepliedToMessage()
                 if ensuredReply is not None:
-                    await self._updateEMessageUserData(ensuredReply)
                     if ensuredReply.messageType == MessageType.TEXT:
+                        # If memory injection enabled, we need to get memories for given message from DB
+                        if injectMemories:
+                            storedReply = await self.db.chatMessages.getChatMessageByMessageId(
+                                chatId=ensuredReply.recipient.id,
+                                messageId=ensuredReply.messageId,
+                            )
+                            if storedReply and storedReply["metadata"]:
+                                try:
+                                    metadata = json.loads(storedReply["metadata"])
+                                    ensuredReply.metadata = metadata
+                                    ensuredReply.setUserMemories(metadata.get("memories"))
+                                except Exception:
+                                    pass
+
                         reqMessages.append(
                             await ensuredReply.toModelMessage(
                                 self.db,
@@ -756,8 +742,9 @@ class LLMMessageHandler(BaseBotHandler):
                                 f"MessageId: {ensuredReply.messageId})"
                             )
                         else:
-                            eStoredReply = await EnsuredMessage.fromDBChatMessage(storedReply, self.db)
-                            await self._updateEMessageUserData(eStoredReply)
+                            eStoredReply = await EnsuredMessage.fromDBChatMessage(
+                                storedReply, self.db, injectMemories=injectMemories
+                            )
                             reqMessages.append(
                                 await eStoredReply.toModelMessage(
                                     self.db,
@@ -817,6 +804,7 @@ class LLMMessageHandler(BaseBotHandler):
         """
 
         chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
+        injectMemories = chatSettings[ChatSettingsKey.MEMORY_INJECTION_ENABLED].toBool()
         answerProbability = chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROBABILITY].toFloat()
         if answerProbability <= 0.0:
             # logger.debug(
@@ -881,22 +869,6 @@ class LLMMessageHandler(BaseBotHandler):
                         + chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROMPT].toStr(),
                     ),
                 ]
-                # User-memories v1 (Phase 3a) — inject the <user-memories>
-                # block into the freshly-built system message (plan §9.2 site
-                # 3, non-thread branch). The thread branch above already gets
-                # it via getThreadByMessageForLLM (site 1), so injecting there
-                # too would double-inject.
-                memoriesBlock = await self._buildMemoriesBlock(
-                    chatId,
-                    ensuredMessage.sender.id,
-                    ensuredMessage.threadId if ensuredMessage.threadId is not None else DEFAULT_THREAD_ID,
-                    currentUserMessageText=ensuredMessage.formatMessageText(),
-                    chatSettings=chatSettings,
-                )
-                self._injectMemoriesBlock(storedMessages, memoriesBlock)
-                # We need to use deque as we add messages to begin of queue (to not reverse db result)
-                # And we do not want to reverse db result as we do not want to process ALL retrieved
-                # messages if some message already has summarized context (i.e. metadata["randomContext"])
                 contextMessages = deque[ModelMessage]()
                 for storedMsg in await self.db.chatMessages.getChatMessagesSince(
                     chatId=chatId,
@@ -907,8 +879,7 @@ class LLMMessageHandler(BaseBotHandler):
                     if storedMsg["message_id"] == ensuredMessage.messageId:
                         # Skip current message from context
                         continue
-                    eMsg = await EnsuredMessage.fromDBChatMessage(storedMsg, self.db)
-                    await self._updateEMessageUserData(eMsg)
+                    eMsg = await EnsuredMessage.fromDBChatMessage(storedMsg, self.db, injectMemories=injectMemories)
 
                     # We need to use `reversed` as deque.extendleft will add messages in reversed order
                     # I assume, that it will just call appendleft for each item in the list

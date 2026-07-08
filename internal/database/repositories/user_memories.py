@@ -8,8 +8,7 @@ notes about a user — the unified store that retires the legacy
 
 The repository covers the full lifecycle:
 - Relational CRUD (``addMemory`` / ``updateMemory`` / ``deleteMemory`` /
-  ``deleteMemoriesByQuery`` / ``getPermanentMemories`` /
-  ``getLatestMemories``).
+  ``getPermanentMemories`` / ``getLatestMemories``).
 - Unified search (``searchMemories``) — filter-only (``queryEmbedding
   is None``) and semantic (vec0 native) modes.
 - Embedding persistence (``saveMemoryEmbedding`` /
@@ -44,16 +43,16 @@ Repository conventions (mirror ``chat_embeddings.py`` /
 """
 
 import array
-import datetime
 import json
 import logging
 import re
-from typing import List, NotRequired, Optional, TypedDict
+from typing import List, Optional
 
-import lib.utils as libUtils
+import numpy
+
+from internal.database.models import UserMemoryDict, UserMemorySource
 
 from .. import utils as dbUtils
-from ..manager import DatabaseManager
 from ..providers.base import (
     BaseSQLProvider,
     VectorColumnType,
@@ -86,55 +85,11 @@ _SELECT_COLUMNS: str = (
 """Column list selected by every read method so ``sqlToTypedDict`` sees all required keys."""
 
 
-class UserMemoryDict(TypedDict):
-    """Row shape returned by ``UserMemoriesRepository`` read methods.
-
-    Keys are snake_case to match DB column names (repo convention — see
-    ``ChatMessageDict`` / ``MessageEmbeddingDict`` in
-    ``internal/database/models.py``). Repository METHOD parameters stay
-    camelCase per AGENTS.md; only the dict keys mirror the columns so
-    the universal converter ``dbUtils.sqlToTypedDict`` can map them
-    directly.
-
-    Attributes:
-        chat_id: Chat the memory belongs to.
-        user_id: User the memory is about.
-        thread_id: Thread scope. ``None`` for cross-thread permanent
-            memories (e.g. ``user_data``-migrated facts); set to the
-            originating thread for thread-specific permanent bio
-            memories (``migration_020`` Backfill B).
-        memory_id: App-generated UUID hex; unique within (chat_id, user_id).
-        type: ``MemoryType`` string value
-            (bio|preference|fact|event|relationship).
-        content: Free-text memory body (source of truth for re-embedding).
-        tags: Decoded list of tag strings (stored as JSON TEXT in the row).
-        permanent: True if the memory is always injected into the system block.
-        source: Provenance — refinement | chat | migration | user.
-        embedding_model: Name of the model that produced the stored vec0
-            embedding, or ``None`` when the memory has not been embedded yet.
-        embedding_dimensions: Dimension count of the stored embedding, or
-            ``None`` when not yet embedded.
-        created_at: Creation timestamp.
-        updated_at: Last-update timestamp.
-        score: Cosine similarity (0.0–1.0) when returned by semantic
-            ``searchMemories`` (Phase 1b); absent on rows from non-search
-            methods. Mirrors ``ChatMessageDict.score``.
-    """
-
-    chat_id: int
-    user_id: int
-    thread_id: Optional[int]
-    memory_id: str
-    type: str
-    content: str
-    tags: List[str]
-    permanent: bool
-    source: str
-    embedding_model: Optional[str]
-    embedding_dimensions: Optional[int]
-    created_at: datetime.datetime
-    updated_at: datetime.datetime
-    score: NotRequired[float]
+def _normalizeTags(tags: Optional[List[str]]) -> Optional[List[str]]:
+    """Normalise tags to lowercase, drop '"' and remove duplicates."""
+    if not tags:
+        return tags
+    return list(set([tag.lower().replace('"', "") for tag in tags]))
 
 
 class UserMemoriesRepository(BaseRepository):
@@ -151,17 +106,6 @@ class UserMemoriesRepository(BaseRepository):
     __slots__ = ()
     """Restricts instance attributes to prevent dynamic attribute creation."""
 
-    def __init__(self, manager: DatabaseManager) -> None:
-        """Initialize the user memories repository.
-
-        Args:
-            manager: Database manager instance for provider access.
-
-        Returns:
-            None
-        """
-        super().__init__(manager)
-
     ###
     # Writes
     ###
@@ -171,12 +115,14 @@ class UserMemoriesRepository(BaseRepository):
         userId: int,
         memoryId: str,
         *,
+        threadId: Optional[int] = None,
         type: str,
         content: str,
         tags: List[str],
         permanent: bool,
-        threadId: Optional[int] = None,
-        source: str = "refinement",
+        source: UserMemorySource,
+        embedding: Optional[List[float]],
+        embeddingModel: Optional[str],
     ) -> None:
         """INSERT a new memory row.
 
@@ -189,11 +135,11 @@ class UserMemoriesRepository(BaseRepository):
             userId: User the memory is about.
             memoryId: App-generated UUID hex; must be unique within
                 (chatId, userId). Caller is responsible for generating it.
+            threadId: Thread scope; ``None`` for cross-thread permanent memories.
             type: ``MemoryType`` string value (bio|preference|fact|event|relationship).
             content: Free-text memory body.
             tags: List of freeform tag strings (stored as JSON TEXT).
             permanent: True for always-injected memories, False for ephemeral.
-            threadId: Thread scope; ``None`` for cross-thread permanent memories.
             source: Provenance — refinement | chat | migration | user.
 
         Returns:
@@ -203,8 +149,11 @@ class UserMemoriesRepository(BaseRepository):
             Exception: Re-raised on PK conflict or any DB error (caller
                 ensures ULID uniqueness).
         """
-        now = libUtils.now()
+        now = dbUtils.getCurrentTimestamp()
         sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
+        # We insert embedding_model and embedding_dimensions as
+        # NULL to ensure they are filled ONLY IF vec0 insert were successfull
+        # This way we'll be sure, that we have embedding with given model\dimensions
         await sqlProvider.execute(
             """
             INSERT INTO user_memories
@@ -213,7 +162,8 @@ class UserMemoriesRepository(BaseRepository):
                  created_at, updated_at)
             VALUES
                 (:chatId, :userId, :threadId, :memoryId, :type, :content, :tags,
-                 :permanent, :source, NULL, NULL, :createdAt, :updatedAt)
+                 :permanent, :source, NULL, NULL,
+                 :createdAt, :updatedAt)
             """,
             {
                 "chatId": chatId,
@@ -222,13 +172,22 @@ class UserMemoriesRepository(BaseRepository):
                 "memoryId": memoryId,
                 "type": type,
                 "content": content,
-                "tags": json.dumps(tags),
+                "tags": _normalizeTags(tags),
                 "permanent": 1 if permanent else 0,
                 "source": source,
                 "createdAt": now,
                 "updatedAt": now,
             },
         )
+
+        if embedding is not None and embeddingModel is not None:
+            await self.saveMemoryEmbedding(
+                chatId=chatId,
+                userId=userId,
+                memoryId=memoryId,
+                embedding=embedding,
+                embeddingModel=embeddingModel,
+            )
 
     async def updateMemory(
         self,
@@ -239,6 +198,8 @@ class UserMemoriesRepository(BaseRepository):
         content: Optional[str] = None,
         tags: Optional[List[str]] = None,
         type: Optional[str] = None,
+        embedding: Optional[List[float]] = None,
+        embeddingModel: Optional[str] = None,
     ) -> bool:
         """PATCH selected columns; bump ``updated_at``.
 
@@ -273,34 +234,43 @@ class UserMemoriesRepository(BaseRepository):
         if content is None and tags is None and type is None:
             return False
 
-        setClauses: List[str] = []
-        params: dict[str, object] = {
-            "chatId": chatId,
-            "userId": userId,
-            "memoryId": memoryId,
-            "updatedAt": libUtils.now(),
-        }
-        if content is not None:
-            setClauses.append("content = :content")
-            params["content"] = content
-        if tags is not None:
-            setClauses.append("tags = :tags")
-            params["tags"] = json.dumps(tags)
-        if type is not None:
-            setClauses.append("type = :type")
-            params["type"] = type
-        setClauses.append("updated_at = :updatedAt")
-
         sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
 
         # The provider's execute() returns None, so check existence to
         # report whether a row was actually updated.
         existing = await sqlProvider.executeFetchOne(
-            "SELECT 1 FROM user_memories " "WHERE chat_id = :chatId AND user_id = :userId AND memory_id = :memoryId",
+            """
+            SELECT 1 FROM user_memories
+            WHERE
+                chat_id = :chatId AND
+                user_id = :userId AND
+                memory_id = :memoryId
+            """,
             {"chatId": chatId, "userId": userId, "memoryId": memoryId},
         )
         if existing is None:
             return False
+
+        setClauses: List[str] = []
+        params: dict[str, object] = {
+            "chatId": chatId,
+            "userId": userId,
+            "memoryId": memoryId,
+            "updatedAt": dbUtils.getCurrentTimestamp(),
+        }
+        if content is not None:
+            setClauses.append("content = :content")
+            # Drop model\dimension as embedding need to be updated in vec0 first
+            setClauses.append("embedding_model = NULL")
+            setClauses.append("embedding_dimensions = NULL")
+            params["content"] = content
+        if tags is not None:
+            setClauses.append("tags = :tags")
+            params["tags"] = _normalizeTags(tags)
+        if type is not None:
+            setClauses.append("type = :type")
+            params["type"] = type
+        setClauses.append("updated_at = :updatedAt")
 
         await sqlProvider.execute(
             f"""
@@ -311,31 +281,18 @@ class UserMemoriesRepository(BaseRepository):
             params,
         )
 
-        # Content change → embedding is stale. Reset provenance columns
-        # AND drop the stale vec0 row so the regen cron
+        # Content change → embedding is stale.
+        # Drop the stale vec0 row so the regen cron
         # (getMemoriesWithoutEmbeddings) re-embeds on the NEW content.
         # Never raise from this cleanup: the content update already
         # succeeded; an embedding-invalidation failure must not undo it
         # (the row will be re-embedded on the next drift pass).
         if content is not None:
             try:
-                await sqlProvider.execute(
-                    """
-                    UPDATE user_memories
-                    SET embedding_model = NULL, embedding_dimensions = NULL
-                    WHERE chat_id = :chatId AND user_id = :userId AND memory_id = :memoryId
-                    """,
-                    {"chatId": chatId, "userId": userId, "memoryId": memoryId},
-                )
-            except Exception:
-                logger.error(
-                    "Failed to null embedding provenance after content update for memory %s chat %d",
-                    memoryId,
-                    chatId,
-                    exc_info=True,
-                )
-            try:
-                await self.deleteMemoryEmbedding(chatId, userId, memoryId)
+                if not embedding or not embeddingModel:
+                    await self.deleteMemoryEmbedding(chatId, userId, memoryId, vecOnly=True)
+                else:
+                    await self.saveMemoryEmbedding(chatId, userId, memoryId, embedding, embeddingModel)
             except Exception:
                 logger.error(
                     "Failed to delete stale vec0 row after content update for memory %s chat %d",
@@ -355,9 +312,14 @@ class UserMemoriesRepository(BaseRepository):
         """DELETE one memory row.
 
         Unrestricted — an explicit by-id delete MAY target a permanent
-        memory (this is the distinction from ``deleteMemoriesByQuery``,
-        which is permanently permanent-guarded). The vec0 embedding row
-        cleanup is Phase 1b.
+        memory. The vec0 embedding row cleanup (best-effort) runs via
+        :meth:`deleteMemoryEmbedding`.
+
+        An existence pre-check (companion SELECT) drives the return
+        value, mirroring :meth:`updateMemory`: a re-delete of an
+        already-gone ``memory_id`` returns ``False`` rather than
+        ``True``. Never raises — on any DB error the exception is
+        logged and ``False`` is returned.
 
         Args:
             chatId: Chat the memory belongs to.
@@ -365,89 +327,50 @@ class UserMemoriesRepository(BaseRepository):
             memoryId: Memory identifier to delete.
 
         Returns:
-            True if a row was deleted, False if no row matched.
+            True if a row was deleted, False if no row matched or on
+            error.
         """
-        sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
-        existing = await sqlProvider.executeFetchOne(
-            "SELECT 1 FROM user_memories " "WHERE chat_id = :chatId AND user_id = :userId AND memory_id = :memoryId",
-            {"chatId": chatId, "userId": userId, "memoryId": memoryId},
-        )
-        if existing is None:
+        try:
+            sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
+
+            # Existence pre-check: the provider's execute() returns None,
+            # so a companion SELECT is the only way to tell "deleted one
+            # row" from "matched zero rows" (mirrors updateMemory). A
+            # re-delete of an already-gone memory_id must return False.
+            existing = await sqlProvider.executeFetchOne(
+                """
+                SELECT 1 FROM user_memories
+                WHERE
+                    chat_id = :chatId AND
+                    user_id = :userId AND
+                    memory_id = :memoryId
+                """,
+                {"chatId": chatId, "userId": userId, "memoryId": memoryId},
+            )
+            if existing is None:
+                return False
+
+            await sqlProvider.execute(
+                """
+                DELETE FROM user_memories
+                WHERE
+                    chat_id = :chatId AND
+                    user_id = :userId AND
+                    memory_id = :memoryId
+                """,
+                {"chatId": chatId, "userId": userId, "memoryId": memoryId},
+            )
+
+            await self.deleteMemoryEmbedding(chatId, userId, memoryId, vecOnly=True)
+            return True
+        except Exception:
+            logger.error(
+                "Failed to delete memory %s chat %d",
+                memoryId,
+                chatId,
+                exc_info=True,
+            )
             return False
-        await sqlProvider.execute(
-            "DELETE FROM user_memories " "WHERE chat_id = :chatId AND user_id = :userId AND memory_id = :memoryId",
-            {"chatId": chatId, "userId": userId, "memoryId": memoryId},
-        )
-        return True
-
-    async def deleteMemoriesByQuery(
-        self,
-        chatId: int,
-        userId: int,
-        *,
-        threadId: Optional[int],
-        type: Optional[str] = None,
-        olderThanDays: Optional[int] = None,
-    ) -> int:
-        """DELETE EPHEMERAL memories matching the scope + filters.
-
-        Always adds ``AND permanent = 0`` — bulk query-delete is
-        ephemeral-only; a query-based bulk delete must never silently
-        remove a permanent memory. Explicit by-id ``deleteMemory`` is
-        unrestricted (intentional explicit action can target a permanent
-        memory).
-
-        Args:
-            chatId: Chat the memories belong to.
-            userId: User the memories are about.
-            threadId: When not ``None``, restrict to this thread; when
-                ``None``, match ephemeral memories across all threads for
-                this (chatId, userId).
-            type: When not ``None``, restrict to this ``MemoryType`` value.
-            olderThanDays: When not ``None``, restrict to memories whose
-                ``created_at`` is older than this many days from now.
-
-        Returns:
-            The count of deleted rows.
-
-        Note: No production callers as of Phase 5a (the wizard's ClearChatData
-            action was removed). Retained for potential future bulk-ephemeral-
-            delete use cases.
-        """
-        conditions: List[str] = [
-            "chat_id = :chatId",
-            "user_id = :userId",
-            "permanent = 0",
-        ]
-        params: dict[str, object] = {"chatId": chatId, "userId": userId}
-        if threadId is not None:
-            conditions.append("thread_id = :threadId")
-            params["threadId"] = threadId
-        if type is not None:
-            conditions.append("type = :type")
-            params["type"] = type
-        if olderThanDays is not None:
-            cutoff = libUtils.now() - datetime.timedelta(days=olderThanDays)
-            conditions.append("created_at < :cutoff")
-            params["cutoff"] = cutoff
-        whereClause = " AND ".join(conditions)
-
-        sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
-
-        # The provider's execute() returns None, so count matching rows
-        # first to report how many were deleted.
-        countRow = await sqlProvider.executeFetchOne(
-            f"SELECT COUNT(*) AS cnt FROM user_memories WHERE {whereClause}",
-            params,
-        )
-        count = int(countRow["cnt"]) if countRow is not None else 0
-        if count == 0:
-            return 0
-        await sqlProvider.execute(
-            f"DELETE FROM user_memories WHERE {whereClause}",
-            params,
-        )
-        return count
 
     ###
     # Reads
@@ -482,8 +405,11 @@ class UserMemoriesRepository(BaseRepository):
         query = f"""
             SELECT {_SELECT_COLUMNS}
             FROM user_memories
-            WHERE chat_id = :chatId AND user_id = :userId AND permanent = 1
-              AND (thread_id IS NULL OR thread_id = :threadId)
+            WHERE
+                chat_id = :chatId AND
+                user_id = :userId AND
+                permanent = 1 AND
+                (thread_id IS NULL OR thread_id = :threadId)
             ORDER BY updated_at DESC
         """
         query = sqlProvider.applyPagination(query=query, limit=limit, offset=0)
@@ -524,8 +450,11 @@ class UserMemoriesRepository(BaseRepository):
         query = f"""
             SELECT {_SELECT_COLUMNS}
             FROM user_memories
-            WHERE chat_id = :chatId AND user_id = :userId AND thread_id = :threadId
-              AND permanent = 0
+            WHERE
+                chat_id = :chatId AND
+                user_id = :userId AND
+                thread_id = :threadId AND
+                permanent = 0
             ORDER BY updated_at DESC
         """
         query = sqlProvider.applyPagination(query=query, limit=limit, offset=0)
@@ -562,7 +491,10 @@ class UserMemoriesRepository(BaseRepository):
             f"""
             SELECT {_SELECT_COLUMNS}
             FROM user_memories
-            WHERE chat_id = :chatId AND user_id = :userId AND memory_id = :memoryId
+            WHERE
+                chat_id = :chatId AND
+                user_id = :userId AND
+                memory_id = :memoryId
             """,
             {"chatId": chatId, "userId": userId, "memoryId": memoryId},
         )
@@ -583,11 +515,7 @@ class UserMemoriesRepository(BaseRepository):
         tag strings. Used by the ``/knowledge_config`` wizard's tag-filter
         picker (Phase 5b) so the user can only pick tags they actually use.
 
-        Tags inserted via the ``add_memory`` LLM tool are lowercased (see
-        :meth:`UserDataHandler._llmToolAddMemory`); tags inserted via other
-        paths (repo :meth:`addMemory`/:meth:`updateMemory`, migration
-        backfills) are NOT normalised — callers should not assume lowercase,
-        and this method performs no extra normalisation.
+        All Tags are lowercased.
 
         Args:
             chatId: Chat the memories belong to.
@@ -600,15 +528,21 @@ class UserMemoriesRepository(BaseRepository):
             no tags exist. Never raises.
         """
         try:
-            conditions: List[str] = ["chat_id = :chatId", "user_id = :userId"]
-            params: dict[str, object] = {"chatId": chatId, "userId": userId}
-            if memoryType is not None:
-                conditions.append("type = :memoryType")
-                params["memoryType"] = memoryType
-            whereClause = " AND ".join(conditions)
+            params: dict[str, object] = {
+                "chatId": chatId,
+                "userId": userId,
+                "memoryType": memoryType,
+            }
+
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=True)
             rows = await sqlProvider.executeFetchAll(
-                f"SELECT tags FROM user_memories WHERE {whereClause}",
+                """
+                SELECT tags FROM user_memories
+                WHERE
+                    chat_id = :chatId AND
+                    user_id = :userId AND
+                    (:memoryType IS NULL OR type = :memoryType)
+                """,
                 params,
             )
             distinctTags: set[str] = set()
@@ -626,6 +560,8 @@ class UserMemoriesRepository(BaseRepository):
                     for tag in parsed:
                         if isinstance(tag, str) and tag:
                             distinctTags.add(tag)
+                else:
+                    logger.error(f"in Row {row}, tags isn't json list, but a {type(parsed)}")
             return sorted(distinctTags)
         except Exception:
             logger.error(
@@ -640,14 +576,14 @@ class UserMemoriesRepository(BaseRepository):
         self,
         chatId: int,
         userId: int,
-        queryEmbedding: Optional[bytes] = None,
+        queryEmbedding: Optional[List[float]] = None,
         *,
         threadId: Optional[int] = None,
         type: Optional[str] = None,
         tags: Optional[List[str]] = None,
         permanent: Optional[bool] = None,
         limit: int = MEMORY_SEARCH_DEFAULT_LIMIT,
-        dimensions: Optional[int] = None,
+        embeddingModel: Optional[str],  # TODO: Add default = None after fixing all callers
         offset: int = 0,
     ) -> List[UserMemoryDict]:
         """Unified memory search with filter-only and semantic modes.
@@ -660,8 +596,8 @@ class UserMemoriesRepository(BaseRepository):
           / ``tags`` / ``permanent`` filters, ordered by ``updated_at``
           descending. Every result row gets ``score = 0.0`` after
           conversion (mirror ``chat_search.py:256``).
-        - **Semantic mode** (``queryEmbedding`` is ``bytes``): native
-          vec0 search over ``vec_user_memories_{dim}``, JOIN back to
+        - **Semantic mode** (``queryEmbedding`` is a ``List[float]``):
+          native vec0 search over ``vec_user_memories_{dim}``, JOIN back to
           ``user_memories`` by ``memory_id``; ``score = 1.0 - distance``
           (mirror ``chat_search.py:785``). Returns ``[]`` (never raises)
           when vec0 is unsupported or the vec0 table is absent.
@@ -691,9 +627,10 @@ class UserMemoriesRepository(BaseRepository):
         Args:
             chatId: Chat to search in.
             userId: User whose memories are searched.
-            queryEmbedding: Pre-serialised query vector bytes
-                (``array.array("f", floats).tobytes()``). When ``None``,
-                runs filter-only mode. When bytes, runs semantic mode.
+            queryEmbedding: Pre-computed query vector as a ``List[float]``.
+                When ``None``, runs filter-only mode. When a non-empty
+                list (and ``embeddingModel`` is set), runs semantic mode.
+                Serialised to float32 bytes internally by the vec0 layer.
             threadId: Optional thread scope filter. When ``None``, NO
                 thread filter is applied (all threads, including the
                 cross-thread ``NULL`` ones, are returned).
@@ -702,9 +639,10 @@ class UserMemoriesRepository(BaseRepository):
                 carries ANY of the listed tags.
             permanent: Optional permanent-flag filter.
             limit: Maximum results to return.
-            dimensions: Embedding dimension (overrides inference from
-                ``queryEmbedding`` byte length). When ``None``, the
-                dimension is inferred as ``len(queryEmbedding) // 4``.
+            embeddingModel: Name of the embedding model that produced
+                ``queryEmbedding``. Required for semantic mode (the vec0
+                table is partitioned by model); when ``None``, filter-only
+                mode runs regardless of ``queryEmbedding``.
             offset: Number of leading results to skip (pagination).
 
         Returns:
@@ -713,7 +651,7 @@ class UserMemoriesRepository(BaseRepository):
             ``1.0 - cosine_distance`` in semantic mode). Empty list on
             failure or when semantic search is unavailable.
         """
-        if queryEmbedding is None:
+        if queryEmbedding is None or embeddingModel is None:
             return await self._filterOnlySearchMemories(
                 chatId=chatId,
                 userId=userId,
@@ -733,7 +671,7 @@ class UserMemoriesRepository(BaseRepository):
             tags=tags,
             permanent=permanent,
             limit=limit,
-            dimensions=dimensions,
+            embeddingModel=embeddingModel,
             offset=offset,
         )
 
@@ -757,8 +695,7 @@ class UserMemoriesRepository(BaseRepository):
             threadId: Optional thread scope filter. ``None`` applies NO
                 thread filter (all threads, including ``NULL`` cross-thread).
             type: Optional ``MemoryType`` value filter.
-            tags: Optional list of tag strings (ANY-match via Python
-                set-intersection post-fetch — see module note on tags).
+            tags: Optional list of tag strings.
             permanent: Optional permanent-flag filter.
             limit: Maximum results to return.
             offset: Number of leading results to skip (pagination).
@@ -767,28 +704,37 @@ class UserMemoriesRepository(BaseRepository):
             List of :class:`UserMemoryDict` with ``score = 0.0``.
         """
         try:
-            conditions: List[str] = ["chat_id = :chatId", "user_id = :userId"]
-            params: dict[str, object] = {"chatId": chatId, "userId": userId}
-            if threadId is not None:
-                conditions.append("thread_id = :threadId")
-                params["threadId"] = threadId
-            if type is not None:
-                conditions.append("type = :type")
-                params["type"] = type
-            if permanent is not None:
-                conditions.append("permanent = :permanent")
-                params["permanent"] = 1 if permanent else 0
-            # NOTE: ``tags`` is NOT filtered in SQL. Tags are stored as
-            # JSON TEXT; ``LIKE '%"tag"%'`` is non-portable (breaks on
-            # tags containing ``"`` / ``%`` / ``_``) — see plan §6.2.
-            # Apply tags as a Python set-intersection post-fetch below.
+            params: dict[str, object] = {
+                "chatId": chatId,
+                "userId": userId,
+                "threadId": threadId,
+                "type": type,
+                "permanent": permanent,
+            }
+            tagsWhereList = []
 
-            whereClause = " AND ".join(conditions)
+            if tags:
+                normalizedTags = _normalizeTags(tags)
+                assert normalizedTags is not None
+                for i, tag in enumerate(normalizedTags):
+                    params[f"tags{i}"] = f'%"{tag}"%'
+                    tagsWhereList.append(f"tags LIKE :tags{i}")
+
+            tagsWhereStr = ""
+            if tagsWhereList:
+                tagsWhereStr = f" AND ( {' OR '.join(tagsWhereList)} )"
+
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=True)
             query = f"""
                 SELECT {_SELECT_COLUMNS}
                 FROM user_memories
-                WHERE {whereClause}
+                WHERE
+                    chat_id = :chatId AND
+                    user_id = :userId AND
+                    (:threadId IS NULL OR thread_id = :threadId) AND
+                    (:type IS NULL OR type = :type) AND
+                    (:permanent IS NULL OR permanent = :permanent)
+                    {tagsWhereStr}
                 ORDER BY updated_at DESC
             """
             query = sqlProvider.applyPagination(query=query, limit=limit, offset=offset)
@@ -799,17 +745,6 @@ class UserMemoriesRepository(BaseRepository):
                 rowDict["score"] = 0.0
                 results.append(rowDict)
 
-            # Tags post-filter: ANY-match via Python set-intersection.
-            # The fetch is not k-limited by vec0 here, so no over-fetch
-            # is needed — the SQL scan already returned all matches.
-            # NOTE: pagination (offset) is applied to the SQL result BEFORE
-            # the tags post-filter, so when a tags filter is combined with a
-            # non-zero offset the page boundary may straddle a trimmed row.
-            # This is acceptable for the admin wizard (tags filter is
-            # Phase 5b); the LLM ``search_memories`` tool does not paginate.
-            if tags:
-                requestedTags = set(tags)
-                results = [r for r in results if requestedTags & set(r.get("tags") or [])]
             return results
         except Exception:
             logger.error(
@@ -824,14 +759,14 @@ class UserMemoriesRepository(BaseRepository):
         self,
         chatId: int,
         userId: int,
-        queryEmbedding: bytes,
+        queryEmbedding: List[float],
         *,
         threadId: Optional[int],
         type: Optional[str],
         tags: Optional[List[str]],
         permanent: Optional[bool],
         limit: int,
-        dimensions: Optional[int],
+        embeddingModel: str,
         offset: int = 0,
     ) -> List[UserMemoryDict]:
         """Semantic search path via native vec0 vector search.
@@ -845,7 +780,8 @@ class UserMemoriesRepository(BaseRepository):
         Args:
             chatId: Chat to search in.
             userId: User whose memories are searched.
-            queryEmbedding: Pre-serialised float32 query vector bytes.
+            queryEmbedding: Query vector as a ``List[float]`` (serialised
+                to float32 bytes internally).
             threadId: Optional thread scope post-filter (JOIN step).
             type: Optional ``MemoryType`` value filter, applied in the
                 JOIN step on the authoritative ``user_memories.type``
@@ -857,8 +793,9 @@ class UserMemoriesRepository(BaseRepository):
                 ``permanent`` is immutable post-creation so it is never
                 stale in the denormalised vec0 row).
             limit: Maximum results to return after ranking.
-            dimensions: Embedding dimension override. When ``None``,
-                inferred as ``len(queryEmbedding) // 4``.
+            embeddingModel: Name of the embedding model that produced
+                ``queryEmbedding`` (selects the model-partitioned vec0
+                table).
             offset: Number of leading ranked results to skip
                 (pagination; applied AFTER ranking and trimming).
 
@@ -877,7 +814,20 @@ class UserMemoriesRepository(BaseRepository):
                 )
                 return []
 
-            dim = dimensions if dimensions is not None else (len(queryEmbedding) // 4)
+            # Guard against zero or near-zero query vectors — cosine distance
+            # is undefined and the results would be arbitrary noise.
+            queryNorm = float(numpy.linalg.norm(numpy.asarray(queryEmbedding, dtype=numpy.float32)))
+            if queryNorm < 1e-8:
+                logger.warning(
+                    "Query embedding has near-zero norm (%s) for chat %s; " "semantic search results will be arbitrary",
+                    queryNorm,
+                    chatId,
+                )
+                return []
+
+            queryVectorBytes: bytes = array.array("f", queryEmbedding).tobytes()
+
+            dim = len(queryEmbedding)
             if dim <= 0:
                 logger.warning(
                     "Invalid embedding dimension %d for chat %d semantic memory search; returning []",
@@ -905,22 +855,26 @@ class UserMemoriesRepository(BaseRepository):
             # ``user_memories.type`` column instead. ``threadId`` is
             # NULL-able and ``tags`` is JSON TEXT; both are also applied
             # in the JOIN / Python step below.
-            filterParts: List[str] = ["chat_id = :chatId", "user_id = :userId"]
+            filterParts: List[str] = [
+                "chat_id = :chatId",
+                "user_id = :userId",
+                "model = :modelName",
+            ]
             filterParams: dict[str, str | int | float | None] = {
                 "chatId": chatId,
                 "userId": userId,
+                "modelName": embeddingModel,
             }
             if permanent is not None:
                 filterParts.append("permanent = :permanent")
                 filterParams["permanent"] = 1 if permanent else 0
 
-            k = max(limit * MEMORY_SEARCH_TOPK_MULTIPLIER, limit)
             vecResults = await sqlProvider.vectorSearch(
                 table=tableName,
                 vectorColumn="embedding",
                 returnColumns=["memory_id"],
-                queryVector=queryEmbedding,
-                k=k,
+                queryVector=queryVectorBytes,
+                k=limit * MEMORY_SEARCH_TOPK_MULTIPLIER,
                 filterClause=" AND ".join(filterParts),
                 filterParams=filterParams,
                 distanceMetric=VectorDistanceMetric.COSINE,
@@ -945,28 +899,39 @@ class UserMemoriesRepository(BaseRepository):
             # LIKE is non-portable — see plan §6.2). The vec0 over-fetch
             # (``MEMORY_SEARCH_TOPK_MULTIPLIER``) absorbs the trimming.
             placeholders: List[str] = []
-            fetchParams: dict[str, object] = {"chatId": chatId, "userId": userId}
-            conditions: List[str] = ["chat_id = :chatId", "user_id = :userId"]
+            fetchParams: dict[str, object] = {
+                "chatId": chatId,
+                "userId": userId,
+                "threadId": threadId,
+                "type": type,
+            }
+
+            tagsWhereList: List[str] = []
+            if tags:
+                normalizedTags = _normalizeTags(tags)
+                assert normalizedTags is not None
+                for i, tag in enumerate(normalizedTags):
+                    filterParams[f"tags{i}"] = f'%"{tag}"%'
+                    tagsWhereList.append(f"tags LIKE :tags{i}")
+
+            tagsWhereStr = ""
+            if tagsWhereList:
+                tagsWhereStr = "AND (" + " OR ".join(tagsWhereList) + ")"
+
             for i, mid in enumerate(scoreByMemoryId):
                 key = f"mid{i}"
                 placeholders.append(f":{key}")
                 fetchParams[key] = mid
-            conditions.append(f"memory_id IN ({', '.join(placeholders)})")
-            if threadId is not None:
-                conditions.append("thread_id = :threadId")
-                fetchParams["threadId"] = threadId
-            if type is not None:
-                # Read the fresh ``user_memories.type`` (NOT the stale
-                # vec0 denormalised column). Plain TEXT equality is
-                # cross-RDBMS portable.
-                conditions.append("type = :type")
-                fetchParams["type"] = type
-
-            whereClause = " AND ".join(conditions)
             query = f"""
                 SELECT {_SELECT_COLUMNS}
                 FROM user_memories
-                WHERE {whereClause}
+                WHERE
+                    chat_id = :chatId AND
+                    user_id = :userId AND
+                    memory_id IN ({', '.join(placeholders)}) AND
+                    (:threadId IS NULL OR thread_id = :threadId) AND
+                    (:type IS NULL OR type = :type)
+                    {tagsWhereStr}
             """
             rows = await sqlProvider.executeFetchAll(query, fetchParams)
 
@@ -976,11 +941,6 @@ class UserMemoriesRepository(BaseRepository):
                 mid = rowDict["memory_id"]
                 rowDict["score"] = scoreByMemoryId.get(mid, 0.0)
                 results.append(rowDict)
-
-            # Tags post-filter: ANY-match via Python set-intersection.
-            if tags:
-                requestedTags = set(tags)
-                results = [r for r in results if requestedTags & set(r.get("tags") or [])]
 
             # Re-rank by similarity descending and trim to limit.
             results.sort(key=lambda r: r.get("score", 0.0), reverse=True)
@@ -1003,34 +963,9 @@ class UserMemoriesRepository(BaseRepository):
         userId: int,
         memoryId: str,
         embedding: List[float],
-        model: str,
+        embeddingModel: str,
     ) -> bool:
-        """Persist a memory embedding: lazy-upsert vec0 + update ``user_memories`` columns.
-
-        Dimensions are derived from ``len(embedding)``. The float vector
-        is serialised to bytes via ``array.array("f", embedding).tobytes()``
-        (mirror ``chat_embeddings.py:115``). The dimension-specific vec0
-        virtual table ``vec_user_memories_{dim}`` is created lazily on
-        first write (mirror ``_upsertVecMessageEmbedding``). After the
-        vec0 upsert, the ``user_memories`` row's ``embedding_model`` and
-        ``embedding_dimensions`` columns are set so stale-detection
-        (``getMemoriesWithoutEmbeddings``) can track provenance.
-
-        No BLOB write — vec0 is the sole embedding store (§5.1 of the
-        user-memories plan dropped the BLOB table by design).
-
-        Strand-proofing: the vec0 upsert runs BEFORE the provenance
-        UPDATE and re-raises on failure (see
-        :meth:`_upsertVecMemoryEmbedding`). On a vec0 write failure this
-        method returns ``False`` WITHOUT touching ``embedding_model`` /
-        ``embedding_dimensions`` — they stay ``NULL`` so the regen cron
-        (:meth:`getMemoriesWithoutEmbeddings`) re-surfaces the memory.
-        Setting provenance only on vec0 success prevents a memory from
-        being marked embedded while carrying no searchable vector.
-
-        Note: every successful write bumps ``updated_at`` (including
-        no-op re-embeds of identical content). This advances
-        re-ranked ordering (``ORDER BY updated_at``); accepted for v1.
+        """Persist a memory embedding: upsert vec0.
 
         Args:
             chatId: Chat the memory belongs to.
@@ -1043,10 +978,6 @@ class UserMemoriesRepository(BaseRepository):
             True on success, False on any failure (never raises).
         """
         try:
-            dimensions = len(embedding)
-            blob = array.array("f", embedding).tobytes()
-            now = libUtils.now()
-
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
 
             # Fetch the memory row to populate vec0 metadata columns
@@ -1055,7 +986,10 @@ class UserMemoriesRepository(BaseRepository):
                 """
                 SELECT thread_id, permanent, type
                 FROM user_memories
-                WHERE chat_id = :chatId AND user_id = :userId AND memory_id = :memoryId
+                WHERE
+                    chat_id = :chatId AND
+                    user_id = :userId AND
+                    memory_id = :memoryId
                 """,
                 {"chatId": chatId, "userId": userId, "memoryId": memoryId},
             )
@@ -1074,40 +1008,43 @@ class UserMemoriesRepository(BaseRepository):
             # provenance UPDATE, leaving embedding_model = NULL so the
             # regen cron retries. Vec0 is the sole embedding store.
             try:
-                await self._upsertVecMemoryEmbedding(
+                if not await self._upsertVecMemoryEmbedding(
                     sqlProvider=sqlProvider,
                     chatId=chatId,
                     userId=userId,
                     memoryId=memoryId,
                     threadId=memoryRow["thread_id"],
-                    permanent=int(memoryRow["permanent"]),
+                    permanent=memoryRow["permanent"],
                     memoryType=memoryRow["type"],
-                    embedding=blob,
-                    dimensions=dimensions,
-                )
+                    embedding=embedding,
+                    embeddingModel=embeddingModel,
+                ):
+                    return False
             except Exception:
                 return False
 
-            # Set provenance columns on the authoritative row. A stale
-            # model switch will surface this row via
-            # getMemoriesWithoutEmbeddings for re-embedding.
             await sqlProvider.execute(
                 """
                 UPDATE user_memories
-                SET embedding_model = :model,
+                SET
+                    embedding_model = :modelName,
                     embedding_dimensions = :dimensions,
-                    updated_at = :now
-                WHERE chat_id = :chatId AND user_id = :userId AND memory_id = :memoryId
+                    updated_at = :updatedAt
+                WHERE
+                    chat_id = :chatId AND
+                    user_id = :userId AND
+                    memory_id = :memoryId
                 """,
                 {
                     "chatId": chatId,
                     "userId": userId,
                     "memoryId": memoryId,
-                    "model": model,
-                    "dimensions": dimensions,
-                    "now": now,
+                    "modelName": embeddingModel,
+                    "dimensions": len(embedding),
+                    "updatedAt": dbUtils.getCurrentTimestamp(),
                 },
             )
+
             return True
         except Exception:
             logger.error(
@@ -1125,20 +1062,20 @@ class UserMemoriesRepository(BaseRepository):
         userId: int,
         memoryId: str,
         threadId: Optional[int],
-        permanent: int,
+        permanent: bool,
         memoryType: str,
-        embedding: bytes,
-        dimensions: int,
-    ) -> None:
+        embeddingModel: str,
+        embedding: list[float],
+    ) -> bool:
         """Upsert a row into the dimension-specific vec0 memory table.
 
         Lazily creates ``vec_user_memories_{dimensions}`` on first use
         via :meth:`BaseSQLProvider.createVectorTable`. Uses DELETE +
         INSERT because vec0 does not support conventional UPSERT on
-        metadata columns. Write failures are logged at warning and then
-        RE-RAISED so the caller (:meth:`saveMemoryEmbedding`) can skip
-        the provenance UPDATE and leave ``embedding_model = NULL`` —
-        that keeps the memory visible to
+        metadata columns. Write failures are logged and the method
+        returns ``False`` so the caller (:meth:`saveMemoryEmbedding`)
+        can skip the provenance UPDATE and leave ``embedding_model =
+        NULL`` — that keeps the memory visible to
         :meth:`getMemoriesWithoutEmbeddings` for re-embedding (vec0 is
         the sole embedding store; a silent failure would strand the
         memory with no searchable vector).
@@ -1152,19 +1089,22 @@ class UserMemoriesRepository(BaseRepository):
             threadId: Thread scope (may be ``None`` for cross-thread).
             permanent: Permanent flag as int (0/1).
             memoryType: ``MemoryType`` string value.
-            embedding: Float32 embedding bytes.
-            dimensions: Embedding dimension.
+            embedding: Float vector (``list[float]``; serialised to
+                float32 bytes internally).
 
         Returns:
-            None.
-
-        Raises:
-            Exception: Re-raised after logging when the vec0 DELETE or
-                INSERT fails (or the lazy table creation fails). The
-                caller is responsible for leaving provenance columns
-                untouched so the regen cron retries.
+            ``True`` on success, ``False`` when vec0 is unsupported or
+            the vec0 DELETE/INSERT (or lazy table creation) fails. The
+            failure is logged at error with ``exc_info`` before
+            returning ``False``; the caller must check the return value
+            rather than relying on an exception.
         """
+        dimensions = len(embedding)
+        embeddingBytes = array.array("f", embedding).tobytes()
         tableName = f"vec_user_memories_{dimensions}"
+
+        if not await sqlProvider.isVectorSearchSupported():
+            return False
 
         try:
             # Lazy table creation — check the catalog first.
@@ -1176,6 +1116,7 @@ class UserMemoriesRepository(BaseRepository):
                         {"name": "memory_id", "columnType": VectorColumnType.TEXT},
                         {"name": "chat_id", "columnType": VectorColumnType.INTEGER, "isPartitionKey": True},
                         {"name": "user_id", "columnType": VectorColumnType.INTEGER, "isPartitionKey": True},
+                        {"name": "model", "columnType": VectorColumnType.TEXT, "isPartitionKey": True},
                         {"name": "thread_id", "columnType": VectorColumnType.INTEGER},
                         {"name": "permanent", "columnType": VectorColumnType.INTEGER},
                         {"name": "type", "columnType": VectorColumnType.TEXT},
@@ -1188,6 +1129,7 @@ class UserMemoriesRepository(BaseRepository):
                     ],
                 )
 
+            # TODO: Test on latest sqlite-vec and leave only one way.
             # vec0 DELETE-by-metadata: try the metadata DELETE first; on
             # failure fall back to a rowid-based delete (some sqlite-vec
             # builds restrict WHERE predicates to partition keys only).
@@ -1211,32 +1153,35 @@ class UserMemoriesRepository(BaseRepository):
 
             await sqlProvider.execute(
                 f"INSERT INTO {tableName} "
-                f"(memory_id, chat_id, user_id, thread_id, permanent, type, embedding) "
-                f"VALUES (:memoryId, :chatId, :userId, :threadId, :permanent, :type, :embedding)",
+                f"(memory_id, chat_id, user_id, model, thread_id, permanent, type, embedding) "
+                f"VALUES (:memoryId, :chatId, :userId, :modelName, :threadId, :permanent, :type, :embedding)",
                 {
                     "memoryId": memoryId,
                     "chatId": chatId,
                     "userId": userId,
+                    "modelName": embeddingModel,
                     "threadId": threadId,
                     "permanent": permanent,
                     "type": memoryType,
-                    "embedding": embedding,
+                    "embedding": embeddingBytes,
                 },
             )
         except Exception:
-            logger.warning(
+            logger.error(
                 "Failed to upsert vec0 memory embedding for chat %s memory %s",
                 chatId,
                 memoryId,
                 exc_info=True,
             )
-            raise
+            return False
+        return True
 
     async def deleteMemoryEmbedding(
         self,
         chatId: int,
         userId: int,
         memoryId: str,
+        vecOnly: bool = False,
     ) -> bool:
         """Best-effort DELETE of a memory's vec0 embedding row. Never raises.
 
@@ -1248,6 +1193,13 @@ class UserMemoriesRepository(BaseRepository):
             chatId: Chat the memory belongs to.
             userId: User the memory is about.
             memoryId: Memory identifier.
+            vecOnly: When ``True``, skip the ``user_memories``
+                provenance-column reset (``embedding_model`` /
+                ``embedding_dimensions``) and only delete vec0 rows.
+                Used by :meth:`deleteMemory` /
+                :meth:`updateMemory`, which manage the relational row
+                themselves. When ``False`` (default), the provenance
+                columns are also nulled and ``updated_at`` bumped.
 
         Returns:
             True if a vec0 row was deleted OR no vec0 table existed
@@ -1256,6 +1208,28 @@ class UserMemoriesRepository(BaseRepository):
         """
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
+
+            if not vecOnly:
+                await sqlProvider.execute(
+                    """
+                    UPDATE user_memories
+                    SET
+                        embedding_model = NULL,
+                        embedding_dimensions = NULL,
+                        updated_at = :updatedAt
+                    WHERE
+                        chat_id = :chatId AND
+                        user_id = :userId AND
+                        memory_id = :memoryId
+                    """,
+                    {
+                        "chatId": chatId,
+                        "userId": userId,
+                        "memoryId": memoryId,
+                        "updatedAt": dbUtils.getCurrentTimestamp(),
+                    },
+                )
+
             if not await sqlProvider.isVectorSearchSupported():
                 return True
 
@@ -1265,6 +1239,10 @@ class UserMemoriesRepository(BaseRepository):
             if not vecTables:
                 return True
 
+            # deletedAny drives the bool return: True ONLY when a vec0 row
+            # was actually deleted (Phase 1b Gate 1 fix — restored after the
+            # refactor regressed it). A vec0 table that exists but holds no
+            # row for this memory_id returns False.
             deletedAny = False
             for table in vecTables:
                 # Companion SELECT to compute the bool return.
@@ -1280,7 +1258,6 @@ class UserMemoriesRepository(BaseRepository):
                             f"WHERE chat_id = :chatId AND user_id = :userId AND memory_id = :memoryId",
                             {"chatId": chatId, "userId": userId, "memoryId": memoryId},
                         )
-                        # Metadata-keyed DELETE succeeded.
                         deletedAny = True
                     except Exception:
                         # Fallback to rowid-based delete for builds that
@@ -1295,7 +1272,6 @@ class UserMemoriesRepository(BaseRepository):
                                 f"DELETE FROM {table} WHERE rowid = :rowid",
                                 {"rowid": row["rowid"]},
                             )
-                            # Rowid-fallback DELETE actually ran.
                             deletedAny = True
             return deletedAny
         except Exception:
@@ -1316,6 +1292,7 @@ class UserMemoriesRepository(BaseRepository):
         *,
         limit: int = BACKFILL_DEFAULT_BATCH_SIZE,
         modelName: Optional[str] = None,
+        dimensions: Optional[int] = None,
     ) -> List[UserMemoryDict]:
         """Return memories whose embedding is stale or absent.
 
@@ -1346,23 +1323,26 @@ class UserMemoriesRepository(BaseRepository):
         """
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=True)
-            if modelName is None:
-                query = f"""
+            query = f"""
                     SELECT {_SELECT_COLUMNS}
                     FROM user_memories
-                    WHERE chat_id = :chatId AND embedding_model IS NULL
+                    WHERE
+                        chat_id = :chatId AND
+                        (
+                            (embedding_model IS NULL OR
+                                (:modelName IS NOT NULL AND embedding_model != :modelName)
+                            ) OR
+                            (embedding_dimensions IS NULL OR
+                                (:dimensions IS NOT NULL AND embedding_dimensions != :dimensions)
+                            )
+                        )
                     ORDER BY updated_at DESC
                 """
-                params: dict[str, object] = {"chatId": chatId}
-            else:
-                query = f"""
-                    SELECT {_SELECT_COLUMNS}
-                    FROM user_memories
-                    WHERE chat_id = :chatId
-                      AND (embedding_model IS NULL OR embedding_model != :modelName)
-                    ORDER BY updated_at DESC
-                """
-                params = {"chatId": chatId, "modelName": modelName}
+            params = {
+                "chatId": chatId,
+                "modelName": modelName,
+                "dimensions": dimensions,
+            }
             query = sqlProvider.applyPagination(query=query, limit=limit, offset=0)
             rows = await sqlProvider.executeFetchAll(query, params)
             return [dbUtils.sqlToTypedDict(row, UserMemoryDict) for row in rows]
@@ -1386,20 +1366,25 @@ class UserMemoriesRepository(BaseRepository):
         (embedding_model != currentModel OR embedding_dimensions !=
         currentDimensions)``, deletes their vec0 rows, then sets
         ``embedding_model = NULL`` and ``embedding_dimensions = NULL`` on
-        those ``user_memories`` rows so ``getMemoriesWithoutEmbeddings``
+        those ``user_memories`` rows so :meth:`getMemoriesWithoutEmbeddings`
         picks them up for re-embedding on the next regeneration tick.
 
         Mirrors ``deleteObsoleteModelEmbeddings``
         (``chat_embeddings.py:337-464``) but single-store (no BLOB table
-        to clean — only vec0 + the provenance columns).
+        to clean — only vec0 + the provenance columns). The provenance
+        column reset is what distinguishes this method from the
+        chat-history analog: there is no BLOB table, so the vec0 DELETE
+        alone would leave ``embedding_model`` set and the regen cron's
+        :meth:`getMemoriesWithoutEmbeddings` would never re-surface the
+        stale rows.
 
         ``currentDimensions`` accepts ``None`` for embedding models that
         do not expose a dimension count (e.g. plain OpenAI-style models
-        whose ``getDimensions()`` returns ``None``). In that case the SQL
-        ``embedding_dimensions != NULL`` predicate evaluates to NULL
-        (falsy) in SQLite, so cleanup matches purely on the model name —
-        the correct behaviour for dim-less models. Mirrors the
-        ``Optional[int]`` contract of the chat-history analog.
+        whose ``getDimensions()`` returns ``None``). In that case the
+        stale-row predicate collapses to model-name-only (the dimensions
+        clause is omitted rather than relying on SQL three-valued
+        ``!= NULL`` semantics — explicit branching mirrors the
+        chat-history analog for readability/portability).
 
         Args:
             chatId: Chat to clean.
@@ -1409,91 +1394,96 @@ class UserMemoriesRepository(BaseRepository):
                 expose dimensions (dim-less cleanup on model name only).
 
         Returns:
-            The count of reset rows. Never raises.
+            The count of reset rows. ``0`` when no rows were stale OR
+            on any internal error (never raises; the exception is
+            logged).
         """
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
 
-            # 1. Collect stale memory_ids.
-            staleRows = await sqlProvider.executeFetchAll(
-                """
-                SELECT memory_id
-                FROM user_memories
-                WHERE chat_id = :chatId
-                  AND embedding_model IS NOT NULL
-                  AND (embedding_model != :currentModel OR embedding_dimensions != :currentDimensions)
-                """,
-                {
-                    "chatId": chatId,
-                    "currentModel": currentModel,
-                    "currentDimensions": currentDimensions,
-                },
-            )
-            if not staleRows:
-                return 0
-
-            staleIds: List[str] = [row["memory_id"] for row in staleRows]
-
-            # 2. Delete their vec0 rows from every vec_user_memories_{N} table.
+            # Delete their vec0 rows from every vec_user_memories_{N} table.
             if await sqlProvider.isVectorSearchSupported():
                 try:
                     vecTables = await sqlProvider.listTables("vec_user_memories_%")
                     vecTables = [t for t in vecTables if re.match(r"^vec_user_memories_\d+$", t)]
                     for table in vecTables:
-                        # Batch-delete by memory_id IN (...). Use named
-                        # placeholders to stay portable across RDBMS drivers.
-                        placeholders: List[str] = []
-                        params: dict[str, object] = {"chatId": chatId}
-                        for i, mid in enumerate(staleIds):
-                            key = f"mid{i}"
-                            placeholders.append(f":{key}")
-                            params[key] = mid
-                        try:
+                        tableDim: Optional[int] = None
+                        if currentDimensions is not None:
+                            try:
+                                tableDim = int(table.rsplit("_", 1)[-1])
+                            except (ValueError, IndexError):
+                                # Defensive: skip tables with non-numeric suffixes
+                                # (shouldn't happen after the regex filter above).
+                                continue
+                        if tableDim == currentDimensions or currentDimensions is None:
                             await sqlProvider.execute(
-                                f"DELETE FROM {table} "
-                                f"WHERE chat_id = :chatId AND memory_id IN ({', '.join(placeholders)})",
-                                params,
+                                f"DELETE FROM {table} WHERE chat_id = :chatId AND model != :currentModel",
+                                {"chatId": chatId, "currentModel": currentModel},
                             )
-                        except Exception:
-                            # Some vec0 builds restrict WHERE to partition
-                            # keys only; fall back to per-row delete.
-                            for mid in staleIds:
-                                row = await sqlProvider.executeFetchOne(
-                                    f"SELECT rowid FROM {table} WHERE chat_id = :chatId AND memory_id = :memoryId",
-                                    {"chatId": chatId, "memoryId": mid},
-                                )
-                                if row is not None:
-                                    await sqlProvider.execute(
-                                        f"DELETE FROM {table} WHERE rowid = :rowid",
-                                        {"rowid": row["rowid"]},
-                                    )
+                        # If the table dimension does not match the current dimension,
+                        # delete all rows from the table for given chatId.
+                        else:
+                            await sqlProvider.execute(
+                                f"DELETE FROM {table} WHERE chat_id = :chatId",
+                                {"chatId": chatId},
+                            )
+
                 except NotImplementedError:
                     logger.debug(
                         "listTables not supported for chat %d; skipping vec0 cleanup",
                         chatId,
                     )
 
-            # 3. Reset provenance columns so getMemoriesWithoutEmbeddings
-            #    re-surfaces these rows for re-embedding.
-            placeholders = []
-            params = {"chatId": chatId}
-            for i, mid in enumerate(staleIds):
-                key = f"mid{i}"
-                placeholders.append(f":{key}")
-                params[key] = mid
-            await sqlProvider.execute(
-                f"""
-                UPDATE user_memories
-                SET embedding_model = NULL, embedding_dimensions = NULL
-                WHERE chat_id = :chatId AND memory_id IN ({', '.join(placeholders)})
-                """,
-                params,
+            # Build the stale-row predicate ONCE — used by both the
+            # COUNT and the UPDATE so they stay in lockstep. Explicit
+            # branching on currentDimensions mirrors chat_embeddings.py
+            # (avoids relying on SQL three-valued != NULL semantics).
+            # Only rows that HAVE been embedded (embedding_model IS NOT
+            # NULL) are candidates — never-embedded rows are already
+            # NULL and already surfaced by getMemoriesWithoutEmbeddings.
+            if currentDimensions is not None:
+                staleWhere = (
+                    "chat_id = :chatId AND embedding_model IS NOT NULL "
+                    "AND (embedding_model != :currentModel OR embedding_dimensions != :currentDimensions)"
+                )
+                staleParams: dict[str, object] = {
+                    "chatId": chatId,
+                    "currentModel": currentModel,
+                    "currentDimensions": currentDimensions,
+                }
+            else:
+                staleWhere = "chat_id = :chatId AND embedding_model IS NOT NULL " "AND embedding_model != :currentModel"
+                staleParams = {
+                    "chatId": chatId,
+                    "currentModel": currentModel,
+                }
+
+            # Count the stale rows BEFORE cleanup so the caller knows how
+            # many were reset (the provider's execute() returns None, so
+            # the UPDATE's affected-row count is not directly available).
+            countRow = await sqlProvider.executeFetchOne(
+                f"SELECT COUNT(*) AS cnt FROM user_memories WHERE {staleWhere}",
+                staleParams,
             )
-            return len(staleIds)
+            resetCount = int(countRow["cnt"]) if countRow is not None else 0
+
+            # Reset provenance columns on user_memories. THIS is the step
+            # that re-surfaces stale rows for re-embedding: without it,
+            # getMemoriesWithoutEmbeddings (which keys on
+            # embedding_model IS NULL / != modelName) would never see
+            # these rows again — the regen cron's stale-detection loop
+            # would be broken.
+            await sqlProvider.execute(
+                f"UPDATE user_memories SET embedding_model = NULL, embedding_dimensions = NULL WHERE {staleWhere}",
+                staleParams,
+            )
+
+            return resetCount
         except Exception:
             logger.error(
-                "Failed to delete obsolete memory embeddings for chat %d",
+                "Failed to delete obsolete memory embeddings for chat %d (current model %s)",
                 chatId,
+                currentModel,
                 exc_info=True,
             )
             return 0

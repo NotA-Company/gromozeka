@@ -56,6 +56,8 @@ run: venv
 lint: venv
 	$(FLAKE8) .
 	$(ISORT) --check-only --diff .
+	@echo "Checking for circular imports..."
+	$(PYTHON) -c "import main" || (echo "FAIL: circular import detected (or main.py cannot be imported)" && exit 1)
 	$(PYRIGHT)
 
 # Format Python files using black and isort

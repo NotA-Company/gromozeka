@@ -326,7 +326,7 @@ class MediaHandler(BaseBotHandler):
                 logger.error(f"Failed to get parent message #{ensuredReply.recipient.id}:{ensuredReply.messageId}")
             else:
                 # logger.debug(f"storedReply: {storedReply}")
-                eStoredMsg = await EnsuredMessage.fromDBChatMessage(storedReply, self.db)
+                eStoredMsg = await EnsuredMessage.fromDBChatMessage(storedReply, self.db, injectMemories=False)
                 # logger.debug(f"eStoredMsg: {eStoredMsg}")
                 await eStoredMsg.updateMediaContent(self.db)
                 # logger.debug(f"eStoredMsg V2: {eStoredMsg}")
@@ -649,8 +649,9 @@ class MediaHandler(BaseBotHandler):
                     limit=10,
                 )
             ):
-                eMsg = await EnsuredMessage.fromDBChatMessage(msg, self.db)
-                await self._updateEMessageUserData(eMsg)
+                eMsg = await EnsuredMessage.fromDBChatMessage(
+                    msg, self.db, injectMemories=chatSettings[ChatSettingsKey.MEMORY_INJECTION_ENABLED].toBool()
+                )
                 latestMessages.append(
                     await eMsg.toModelMessage(
                         self.db,

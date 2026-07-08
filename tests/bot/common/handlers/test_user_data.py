@@ -43,7 +43,7 @@ import json
 import time
 import tomllib
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional, Sequence
+from typing import Any, Dict, Generator, List, Optional, Sequence, Tuple
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -65,8 +65,8 @@ from internal.bot.models import (
     MessageRecipient,
     MessageSender,
 )
-from internal.bot.models.memory_type import MemoryType
 from internal.database import Database
+from internal.database.models import MemoryType, UserMemorySource
 from internal.database.repositories.user_memories import UserMemoriesRepository, UserMemoryDict
 from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
@@ -1151,6 +1151,9 @@ class TestPhase4aRefinementRewrite:
             tags=[],
             permanent=True,
             threadId=DEFAULT_THREAD_ID,
+            source=UserMemorySource.CHAT,
+            embedding=None,
+            embeddingModel=None,
         )
         await testDatabase.userMemories.addMemory(
             chatId,
@@ -1161,6 +1164,9 @@ class TestPhase4aRefinementRewrite:
             tags=[],
             permanent=False,
             threadId=DEFAULT_THREAD_ID,
+            source=UserMemorySource.CHAT,
+            embedding=None,
+            embeddingModel=None,
         )
 
         await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
@@ -1251,19 +1257,27 @@ class TestPhase4aRefinementRewrite:
         assert entry.get("lastProcessedMessageId") == "1004"
         assert entry.get("lastProcessedMessageDate") == "2026-07-01T12:04:00+00:00"
 
-    async def test_runRefinementBackwardCompatOldPlaceholdersStillFormat(self, testDatabase: Database) -> None:
-        """A per-chat override using the OLD template placeholders still formats.
+    async def test_runRefinementCustomUserPromptTemplateFormats(self, testDatabase: Database) -> None:
+        """A per-chat ``MEMORY_REFINE_USER_PROMPT_TEMPLATE`` override formats end-to-end.
 
-        Phase 4a passes ``existingUserData`` / ``existingSummary`` as backward-
-        compat aliases so a stale per-chat override does not raise ``KeyError``
-        on ``str.format``. This test installs an old-shape template via the
-        ``_chatSettings`` stub path and asserts the run completes.
+        ``_runRefinement`` calls ``userPromptTemplate.format(...)`` with only
+        the Phase-4a placeholders — ``{existingMemories}`` and ``{messages}``
+        (the retired ``{existingUserData}`` / ``{existingSummary}`` aliases are
+        NOT passed). This test installs a custom override carrying exactly the
+        supported placeholders and asserts the run completes without
+        ``KeyError``. It complements
+        :meth:`test_runRefinementPreloadsMemoriesIntoUserPrompt` by exercising
+        the config-manager-driven override path rather than the default
+        template.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
         """
         handler = await _makeHandler(testDatabase, configManager=_makeUserMemoryConfigManager(enabled=True))
-        # Install an explicitly OLD-shape template.
+        # Install a custom template carrying ONLY the placeholders production passes.
         settings = _chatSettings(memoryRefinementEnabled=True)
         settings[ChatSettingsKey.MEMORY_REFINE_USER_PROMPT_TEMPLATE] = ChatSettingsValue(
-            "{existingUserData}\n{existingSummary}\n{messages}"
+            "{existingMemories}\n{messages}"
         )
         handler.getChatSettings = AsyncMock(return_value=settings)  # type: ignore[method-assign]
         handler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
@@ -1443,40 +1457,29 @@ class TestPhase4aJsonLogToolCounts:
 # behaviour is deterministic without vec0 or a real embedding API.
 
 
-def _makeMockModel(*, floats: Optional[List[float]] = None, supportsEmbedding: bool = True) -> Mock:
-    """Build a mock embedding model exposing ``supportsEmbedding`` + ``generateEmbeddings``.
+def _stubGenerateEmbedding(
+    handler: UserDataHandler,
+    *,
+    result: Optional[Tuple[str, List[float]]] = ("test-embed-model", [0.1, 0.2, 0.3]),
+) -> AsyncMock:
+    """Wire ``handler.llmService.generateEmbedding`` to return a fixed result.
 
-    Args:
-        floats: The vector ``generateEmbeddings`` returns (default a 3-dim placeholder).
-        supportsEmbedding: Value of the ``supportsEmbedding`` attribute.
-
-    Returns:
-        ``Mock`` with ``supportsEmbedding`` and an ``AsyncMock generateEmbeddings``.
-    """
-    mockModel = Mock()
-    mockModel.supportsEmbedding = supportsEmbedding
-    mockModel.generateEmbeddings = AsyncMock(return_value=floats or [0.1, 0.2, 0.3])
-    return mockModel
-
-
-def _stubEmbeddingModel(handler: UserDataHandler, model: Optional[Mock]) -> Mock:
-    """Wire ``handler.llmService.getLLMManager().getModel()`` to return *model*.
-
-    When *model* is ``None``, the handler's ``_resolveEmbeddingModel`` returns
-    ``None`` (model not found / not embedding-capable), simulating the
-    no-embedding-available path.
+    The refactored tool handlers embed via ``self.llmService.generateEmbedding``
+    (not the deleted ``embedAndSaveMemory`` helper). This stub mocks the method
+    directly so the return value is deterministic without exercising model
+    resolution, rate limiting, or a real embedding API.
 
     Args:
         handler: Handler under test.
-        model: Mock model (or ``None`` for the not-found case).
+        result: The ``(modelName, floats)`` tuple to return. When ``None``,
+            the handler treats embedding as failed and skips dedup.
 
     Returns:
-        The mock manager installed on ``handler.llmService``.
+        The installed ``AsyncMock`` (for call assertions).
     """
-    mockManager = Mock()
-    mockManager.getModel = Mock(return_value=model)
-    handler.llmService.getLLMManager = Mock(return_value=mockManager)  # type: ignore[method-assign]
-    return mockManager
+    mock = AsyncMock(return_value=result)
+    handler.llmService.generateEmbedding = mock  # type: ignore[method-assign]
+    return mock
 
 
 def _mockUserMemories(
@@ -1560,11 +1563,11 @@ def _makeMemoryDict(
         user_id=userId,
         thread_id=threadId,
         memory_id=memoryId,
-        type=memoryType,
+        type=MemoryType(memoryType),
         content=content,
         tags=[],
         permanent=permanent,
-        source="chat",
+        source=UserMemorySource.CHAT,
         embedding_model="test-embed-model",
         embedding_dimensions=3,
         created_at=datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc),
@@ -1589,22 +1592,18 @@ class TestLlmToolAddMemory:
         """
         handler = await _makeHandler(testDatabase)
         _stubToolChatSettings(handler)
-        _stubEmbeddingModel(handler, _makeMockModel())
+        embedMock = _stubGenerateEmbedding(handler)
         mockRepo = _mockUserMemories(handler, searchResults=[])
 
         ensuredMessage = _makeEnsuredMessage()
 
-        with patch(
-            "internal.bot.common.handlers.user_data.embedAndSaveMemory",
-            new_callable=AsyncMock,
-        ) as mockEmbed:
-            result = await handler._llmToolAddMemory(  # type: ignore[attr-defined]
-                extraData={"ensuredMessage": ensuredMessage},
-                content="user is vegan",
-                type="preference",
-                tags=["diet"],
-                permanent=False,
-            )
+        result = await handler._llmToolAddMemory(  # type: ignore[attr-defined]
+            extraData={"ensuredMessage": ensuredMessage},
+            content="user is vegan",
+            type="preference",
+            tags=["diet"],
+            permanent=False,
+        )
 
         assert result["done"] is True
         assert result["action"] == "added"
@@ -1615,8 +1614,8 @@ class TestLlmToolAddMemory:
         assert callKwargs.kwargs["content"] == "user is vegan"
         assert callKwargs.kwargs["tags"] == ["diet"]
         assert callKwargs.kwargs["permanent"] is False
-        assert callKwargs.kwargs["source"] == "chat"
-        mockEmbed.assert_awaited_once()
+        assert callKwargs.kwargs["source"] == UserMemorySource.CHAT
+        embedMock.assert_awaited_once()
 
     async def test_duplicateWhenScoreAtOrAboveThreshold(self, testDatabase: Database) -> None:
         """Score ≥ 0.95 → ``action == "duplicate"``, no ``addMemory`` call.
@@ -1626,7 +1625,7 @@ class TestLlmToolAddMemory:
         """
         handler = await _makeHandler(testDatabase)
         _stubToolChatSettings(handler)
-        _stubEmbeddingModel(handler, _makeMockModel())
+        _stubGenerateEmbedding(handler)
         existing = _makeMemoryDict(memoryId="mem-existing", content="user is vegan", score=0.96)
         mockRepo = _mockUserMemories(handler, searchResults=[existing])
 
@@ -1651,7 +1650,7 @@ class TestLlmToolAddMemory:
         """
         handler = await _makeHandler(testDatabase)
         _stubToolChatSettings(handler)
-        _stubEmbeddingModel(handler, _makeMockModel())
+        _stubGenerateEmbedding(handler)
         existing = _makeMemoryDict(score=0.90)
         mockRepo = _mockUserMemories(handler, searchResults=[existing])
 
@@ -1675,7 +1674,7 @@ class TestLlmToolAddMemory:
         """
         handler = await _makeHandler(testDatabase)
         _stubToolChatSettings(handler)
-        _stubEmbeddingModel(handler, _makeMockModel())
+        _stubGenerateEmbedding(handler)
         existing = _makeMemoryDict(memoryId="mem-old", content="user lives in Berlin", memoryType="fact", score=0.90)
         mockRepo = _mockUserMemories(handler, searchResults=[existing])
 
@@ -1706,20 +1705,16 @@ class TestLlmToolAddMemory:
         """
         handler = await _makeHandler(testDatabase)
         _stubToolChatSettings(handler)
-        _stubEmbeddingModel(handler, model=None)  # model not found
+        _stubGenerateEmbedding(handler, result=None)  # embedding not available
         mockRepo = _mockUserMemories(handler)
 
         ensuredMessage = _makeEnsuredMessage()
 
-        with patch(
-            "internal.bot.common.handlers.user_data.embedAndSaveMemory",
-            new_callable=AsyncMock,
-        ):
-            result = await handler._llmToolAddMemory(  # type: ignore[attr-defined]
-                extraData={"ensuredMessage": ensuredMessage},
-                content="a new fact",
-                type="fact",
-            )
+        result = await handler._llmToolAddMemory(  # type: ignore[attr-defined]
+            extraData={"ensuredMessage": ensuredMessage},
+            content="a new fact",
+            type="fact",
+        )
 
         assert result["done"] is True
         assert result["action"] == "added"
@@ -1734,7 +1729,7 @@ class TestLlmToolAddMemory:
         """
         handler = await _makeHandler(testDatabase)
         _stubToolChatSettings(handler)
-        _stubEmbeddingModel(handler, _makeMockModel())
+        _stubGenerateEmbedding(handler)
         mockRepo = _mockUserMemories(handler)
 
         ensuredMessage = _makeEnsuredMessage()
@@ -1779,21 +1774,17 @@ class TestLlmToolAddMemory:
         """
         handler = await _makeHandler(testDatabase)
         _stubToolChatSettings(handler)
-        _stubEmbeddingModel(handler, _makeMockModel())
+        _stubGenerateEmbedding(handler)
         mockRepo = _mockUserMemories(handler, searchResults=[])
 
         ensuredMessage = _makeEnsuredMessage(threadId=42)
 
-        with patch(
-            "internal.bot.common.handlers.user_data.embedAndSaveMemory",
-            new_callable=AsyncMock,
-        ):
-            result = await handler._llmToolAddMemory(  # type: ignore[attr-defined]
-                extraData={"ensuredMessage": ensuredMessage},
-                content="high-level bio",
-                type="bio",
-                permanent=True,
-            )
+        result = await handler._llmToolAddMemory(  # type: ignore[attr-defined]
+            extraData={"ensuredMessage": ensuredMessage},
+            content="high-level bio",
+            type="bio",
+            permanent=True,
+        )
 
         assert result["action"] == "added"
         callKwargs = mockRepo.addMemory.call_args
@@ -1804,8 +1795,18 @@ class TestLlmToolAddMemory:
 class TestLlmToolDeleteMemory:
     """Tests for :meth:`UserDataHandler._llmToolDeleteMemory` (by-id + by-query)."""
 
-    async def test_deleteByIdCallsDeleteMemoryAndEmbeddingCleanup(self, testDatabase: Database) -> None:
-        """``memory_id`` provided → ``deleteMemory`` + ``deleteMemoryEmbedding`` both called.
+    async def test_deleteByIdDelegatesToDeleteMemory(self, testDatabase: Database) -> None:
+        """``memory_id`` provided → handler delegates to ``deleteMemory`` and reports deleted.
+
+        The handler's by-id path calls ``db.userMemories.deleteMemory`` (which
+        owns its own vec0 embedding cleanup — see
+        :meth:`UserMemoriesRepository.deleteMemory`, line 366, where
+        ``deleteMemoryEmbedding`` cascades internally) and then invalidates the
+        permanent-memories cache. The embedding cleanup is therefore a
+        repository-level concern (covered by the repo tests in
+        ``tests/database/repositories/test_user_memories.py``), not a separate
+        handler call — asserting ``deleteMemoryEmbedding`` here would be wrong
+        because this test mocks the whole repo away.
 
         Args:
             testDatabase: Fresh in-memory database fixture.
@@ -1823,8 +1824,11 @@ class TestLlmToolDeleteMemory:
         assert result["done"] is True
         assert result["deleted"] == 1
         assert result["memory_id"] == "mem-123"
-        mockRepo.deleteMemory.assert_awaited_once()
-        mockRepo.deleteMemoryEmbedding.assert_awaited_once()
+        mockRepo.deleteMemory.assert_awaited_once_with(
+            ensuredMessage.recipient.id,
+            ensuredMessage.sender.id,
+            "mem-123",
+        )
 
     async def test_deleteByIdMissingReturnsDeletedFalse(self, testDatabase: Database) -> None:
         """``memory_id`` not found → ``deleted == False`` (deleteMemory returned False).
@@ -1857,7 +1861,7 @@ class TestLlmToolDeleteMemory:
         """
         handler = await _makeHandler(testDatabase)
         _stubToolChatSettings(handler)
-        _stubEmbeddingModel(handler, _makeMockModel())
+        _stubGenerateEmbedding(handler)
         hitAbove = _makeMemoryDict(memoryId="mem-above", score=0.90)
         hitBelow = _makeMemoryDict(memoryId="mem-below", score=0.80)
         mockRepo = _mockUserMemories(handler, searchResults=[hitAbove, hitBelow])
@@ -1907,7 +1911,7 @@ class TestLlmToolSearchMemories:
         """
         handler = await _makeHandler(testDatabase)
         _stubToolChatSettings(handler)
-        _stubEmbeddingModel(handler, _makeMockModel())
+        _stubGenerateEmbedding(handler)
         results = [
             _makeMemoryDict(memoryId="m1", content="first", score=0.92),
             _makeMemoryDict(memoryId="m2", content="second", score=0.80),
@@ -1937,7 +1941,7 @@ class TestLlmToolSearchMemories:
         """
         handler = await _makeHandler(testDatabase)
         _stubToolChatSettings(handler)
-        _stubEmbeddingModel(handler, _makeMockModel())
+        _stubGenerateEmbedding(handler)
         results = [_makeMemoryDict(memoryId="m1", content="a preference")]
         mockRepo = _mockUserMemories(handler, searchResults=results)
 
@@ -1962,7 +1966,7 @@ class TestLlmToolSearchMemories:
         """
         handler = await _makeHandler(testDatabase)
         _stubToolChatSettings(handler)
-        _stubEmbeddingModel(handler, _makeMockModel())
+        _stubGenerateEmbedding(handler)
         _mockUserMemories(handler, searchResults=[])
 
         ensuredMessage = _makeEnsuredMessage()
@@ -2160,6 +2164,9 @@ class TestKnowledgeConfigWizard:
                 tags=[],
                 permanent=False,
                 threadId=DEFAULT_THREAD_ID,
+                source=UserMemorySource.CHAT,
+                embedding=None,
+                embeddingModel=None,
             )
 
         async def renderPage(offset: int) -> Optional[Sequence[Sequence[CallbackButton]]]:
@@ -2226,6 +2233,9 @@ class TestKnowledgeConfigWizard:
             tags=["location"],
             permanent=True,
             threadId=DEFAULT_THREAD_ID,
+            source=UserMemorySource.CHAT,
+            embedding=None,
+            embeddingModel=None,
         )
 
         await handler._handleUserDataConfiguration(  # type: ignore[attr-defined]
@@ -2277,6 +2287,9 @@ class TestKnowledgeConfigWizard:
             tags=[],
             permanent=False,
             threadId=DEFAULT_THREAD_ID,
+            source=UserMemorySource.CHAT,
+            embedding=None,
+            embeddingModel=None,
         )
         # Sanity: the row exists before the delete.
         assert await testDatabase.userMemories.getMemory(chatId, userId, memoryId) is not None
@@ -2343,6 +2356,9 @@ class TestKnowledgeConfigWizard:
             tags=[],
             permanent=False,
             threadId=DEFAULT_THREAD_ID,
+            source=UserMemorySource.CHAT,
+            embedding=None,
+            embeddingModel=None,
         )
         # Sanity: the row exists before the (failed) delete.
         assert await testDatabase.userMemories.getMemory(chatId, userId, memoryId) is not None
@@ -2407,6 +2423,9 @@ class TestKnowledgeConfigWizard:
             tags=[],
             permanent=False,
             threadId=DEFAULT_THREAD_ID,
+            source=UserMemorySource.CHAT,
+            embedding=None,
+            embeddingModel=None,
         )
         await testDatabase.userMemories.addMemory(
             chatId,
@@ -2417,6 +2436,9 @@ class TestKnowledgeConfigWizard:
             tags=[],
             permanent=False,
             threadId=DEFAULT_THREAD_ID,
+            source=UserMemorySource.CHAT,
+            embedding=None,
+            embeddingModel=None,
         )
 
         await handler._handleUserDataConfiguration(  # type: ignore[attr-defined]
@@ -2468,6 +2490,9 @@ class TestKnowledgeConfigWizard:
             tags=["work"],
             permanent=False,
             threadId=DEFAULT_THREAD_ID,
+            source=UserMemorySource.CHAT,
+            embedding=None,
+            embeddingModel=None,
         )
         await testDatabase.userMemories.addMemory(
             chatId,
@@ -2478,6 +2503,9 @@ class TestKnowledgeConfigWizard:
             tags=["home"],
             permanent=False,
             threadId=DEFAULT_THREAD_ID,
+            source=UserMemorySource.CHAT,
+            embedding=None,
+            embeddingModel=None,
         )
 
         await handler._handleUserDataConfiguration(  # type: ignore[attr-defined]
@@ -2540,6 +2568,9 @@ class TestKnowledgeConfigWizard:
                 tags=[tag],
                 permanent=False,
                 threadId=DEFAULT_THREAD_ID,
+                source=UserMemorySource.CHAT,
+                embedding=None,
+                embeddingModel=None,
             )
 
         await handler._handleUserDataConfiguration(  # type: ignore[attr-defined]
@@ -2597,6 +2628,9 @@ class TestKnowledgeConfigWizard:
                 tags=[tag],
                 permanent=False,
                 threadId=DEFAULT_THREAD_ID,
+                source=UserMemorySource.CHAT,
+                embedding=None,
+                embeddingModel=None,
             )
 
         await handler._handleUserDataConfiguration(  # type: ignore[attr-defined]
@@ -2652,6 +2686,9 @@ class TestKnowledgeConfigWizard:
                 tags=["work"],
                 permanent=False,
                 threadId=DEFAULT_THREAD_ID,
+                source=UserMemorySource.CHAT,
+                embedding=None,
+                embeddingModel=None,
             )
 
         await handler._handleUserDataConfiguration(  # type: ignore[attr-defined]
@@ -2727,6 +2764,9 @@ class TestGetMyDataCommand:
             tags=["timezone"],
             permanent=False,
             threadId=DEFAULT_THREAD_ID,
+            source=UserMemorySource.CHAT,
+            embedding=None,
+            embeddingModel=None,
         )
 
         ensuredMessage = _makeEnsuredMessage(chatId=chatId, userId=userId)

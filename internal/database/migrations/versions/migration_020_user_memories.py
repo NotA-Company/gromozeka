@@ -85,8 +85,8 @@ class Migration020UserMemories(BaseMigration):
                         tags       TEXT      NOT NULL DEFAULT '[]',
                         permanent  INTEGER   NOT NULL DEFAULT 0,
                         source     TEXT      NOT NULL DEFAULT 'refinement',
-                        embedding_model      TEXT,
-                        embedding_dimensions INTEGER,
+                        embedding_model      TEXT,     -- For re-embedding process
+                        embedding_dimensions INTEGER,  -- For re-embedding process
                         created_at TIMESTAMP NOT NULL,
                         updated_at TIMESTAMP NOT NULL,
                         PRIMARY KEY (chat_id, user_id, memory_id)

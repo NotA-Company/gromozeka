@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 _llmManager: Optional["LLMManager"] = None
 
+MEMORY_RETRIEVAL_MODE_LATEST = "latest"
+MEMORY_RETRIEVAL_MODE_RELEVANT = "relevant"
+
 
 def getLLMManager() -> "LLMManager":
     """

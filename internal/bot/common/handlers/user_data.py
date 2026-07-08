@@ -6,18 +6,17 @@ and LLM tool integration for AI-assisted data management. All data is scoped to
 specific chat and user combinations.
 """
 
-import array
 import asyncio
 import datetime
 import logging
 import time
 import uuid
+from collections.abc import Sequence
 from typing import Dict, List, Optional, Tuple
 
 from dateutil import parser as dateutilParser
 
 import lib.utils as utils
-from internal.bot.common.memory_embedding_utils import embedAndSaveMemory
 from internal.bot.common.models import CallbackButton, UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
 from internal.bot.constants import ToolName
@@ -37,10 +36,9 @@ from internal.bot.models import (
     MessageSender,
     commandHandlerV2,
 )
-from internal.bot.models.memory_type import MemoryType
 from internal.config.manager import ConfigManager
 from internal.database import Database
-from internal.database.models import ChatMessageDict, MessageCategory
+from internal.database.models import ChatMessageDict, MemoryType, MessageCategory, UserMemorySource
 from internal.database.repositories.user_memories import UserMemoryDict
 from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
@@ -49,14 +47,13 @@ from internal.services.llm import LLMService
 from internal.services.llm.models import ExtraDataDict
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
 from lib.ai import (
-    AbstractModel,
     LLMFunctionParameter,
     LLMParameterType,
     ModelMessage,
 )
 from lib.ai.models import ModelRunResult
 
-from .base import BaseBotHandler, HandlerResultStatus, _formatMemoriesBlockRaw, _formatMemoryLine
+from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +133,63 @@ pagination correct under a tag filter, ``_renderMemoryList`` fetches up to
 this many matching rows at offset 0 and paginates the filtered result in
 Python. 200 comfortably exceeds any realistic single-user tagged set; a user
 with more tagged memories simply sees the first 200 (documented edge)."""
+
+
+def _formatMemoryLine(mem: UserMemoryDict) -> str:
+    """Render a single memory dict as one ``[type] content #tag …`` line.
+
+    Tags are appended as ``#tag`` tokens (space-separated) and omitted
+    entirely when the memory carries no tags. The ``type`` is rendered in
+    square brackets before the content (plan §9.1).
+
+    Args:
+        mem: A :class:`UserMemoryDict` row.
+
+    Returns:
+        A single formatted line (no trailing newline).
+    """
+    tags = mem.get("tags") or []
+    tagSuffix = ""
+    if tags:
+        tagSuffix = " " + " ".join(f"#{t}" for t in tags if t)
+    return f"[{mem['type']}] {mem['content']}{tagSuffix}"
+
+
+def _formatMemoriesBlockRaw(
+    permanent: Sequence[UserMemoryDict],
+    ephemeral: Sequence[UserMemoryDict],
+) -> Optional[str]:
+    """Render the ``<user-memories>`` block with no soft-cap trimming.
+
+    Shared by :meth:`BaseBotHandler._formatMemoriesBlock` (the staticmethod
+    wrapper that applies :data:`MEMORIES_BLOCK_SOFT_CHAR_CAP`) so the trim
+    loop can re-render with a smaller recent slice without re-implementing
+    the layout. See :meth:`BaseBotHandler._formatMemoriesBlock` for the
+    format spec.
+
+    Args:
+        permanent: Permanent memories (already capped + ordered).
+        ephemeral: Ephemeral memories (already capped + ordered newest-first).
+
+    Returns:
+        The formatted block string, or ``None`` when both inputs are empty.
+    """
+    if not permanent and not ephemeral:
+        return None
+    lines: List[str] = ["<user-memories>"]
+    if permanent:
+        lines.append("Permanent:")
+        for mem in sorted(
+            permanent,
+            key=lambda m: (str(m.get("type", "")), str(m.get("updated_at", ""))),
+        ):
+            lines.append(_formatMemoryLine(mem))
+    if ephemeral:
+        lines.append("Recent:")
+        for mem in ephemeral:
+            lines.append(_formatMemoryLine(mem))
+    lines.append("</user-memories>")
+    return "\n".join(lines)
 
 
 class UserDataHandler(BaseBotHandler):
@@ -272,7 +326,8 @@ class UserDataHandler(BaseBotHandler):
                     "tags. Use ``permanent=true`` only for durable, always-relevant knowledge (a "
                     "high-level bio summary, a stable preference); use the default ephemeral mode "
                     "for everything else. Near-duplicates above a similarity threshold are "
-                    "auto-skipped, so call this freely when you learn something worth remembering."
+                    "auto-skipped, so call this freely when you learn something worth remembering "
+                    "or when user asks you to remember something."
                 ),
                 parameters=[
                     LLMFunctionParameter(
@@ -285,7 +340,7 @@ class UserDataHandler(BaseBotHandler):
                     ),
                     LLMFunctionParameter(
                         name="type",
-                        description="Memory category. One of: bio, preference, fact, event, relationship.",
+                        description=f"Memory category. One of: {', '.join([v for v in MemoryType])}",
                         type=LLMParameterType.STRING,
                         required=True,
                     ),
@@ -297,7 +352,7 @@ class UserDataHandler(BaseBotHandler):
                     ),
                     LLMFunctionParameter(
                         name="permanent",
-                        description="When true, the memory is always injected into future replies. Default false.",
+                        description="When true, the memory is always injected into future replies. Default: false.",
                         type=LLMParameterType.BOOLEAN,
                         required=False,
                     ),
@@ -334,7 +389,7 @@ class UserDataHandler(BaseBotHandler):
                         name="type",
                         description=(
                             "Optional MemoryType filter (only used with query): "
-                            "bio|preference|fact|event|relationship."
+                            f"{'|'.join([v for v in MemoryType])}."
                         ),
                         type=LLMParameterType.STRING,
                         required=False,
@@ -359,7 +414,7 @@ class UserDataHandler(BaseBotHandler):
                     ),
                     LLMFunctionParameter(
                         name="type",
-                        description="Optional MemoryType filter: bio|preference|fact|event|relationship.",
+                        description=f"Optional MemoryType filter: {'|'.join([v for v in MemoryType])}.",
                         type=LLMParameterType.STRING,
                         required=False,
                     ),
@@ -392,45 +447,6 @@ class UserDataHandler(BaseBotHandler):
     # See docs/plans/user-memories-v1.md §8.3-8.5 for the authoritative spec.
     # Contract (§3.4): async, never raises (errors → {"done": False, "error": ...}),
     # chat context resolved from extraData["ensuredMessage"].
-
-    @staticmethod
-    def _resolveEmbeddingModel(llmService: LLMService, modelName: str) -> Optional[AbstractModel]:
-        """Resolve an embedding model by name from the LLM manager.
-
-        Returns the model object or ``None`` when not found / not
-        embedding-capable (``supportsEmbedding`` property is False). Used by
-        the three tool handlers to decide whether dedup/semantic search is
-        possible or whether to fall back to a direct insert / filter-only
-        search.
-
-        Args:
-            llmService: The LLM service singleton (``self.llmService``).
-            modelName: Embedding model name resolved from chat settings.
-
-        Returns:
-            The :class:`AbstractModel`, or ``None`` when missing or not
-            embedding-capable.
-        """
-        model = llmService.getLLMManager().getModel(modelName)
-        if model is None or not model.supportsEmbedding:
-            return None
-        return model
-
-    @staticmethod
-    def _floatsToBytes(floats: List[float]) -> bytes:
-        """Serialise a float vector to float32 little-endian bytes for vec0 search.
-
-        Mirrors ``UserMemoriesRepository.saveMemoryEmbedding``
-        (``array.array("f", embedding).tobytes()``) — the same serialisation
-        the write path uses, so cosine distances are computed consistently.
-
-        Args:
-            floats: Embedding float vector.
-
-        Returns:
-            ``float32`` little-endian bytes ready for ``searchMemories``.
-        """
-        return array.array("f", floats).tobytes()
 
     async def _llmToolAddMemory(
         self,
@@ -484,30 +500,37 @@ class UserDataHandler(BaseBotHandler):
 
             # --- Type validation ---------------------------------------------------
             try:
-                MemoryType(type)  # validates the value is a known member
+                type = MemoryType(type)  # validates the value is a known member
             except ValueError:
-                return {"done": False, "error": f"Invalid memory type: {type}"}
+                return {
+                    "done": False,
+                    "error": f"Invalid memory type: {type}. Please use one of {[e.value for e in MemoryType]}.",
+                }
 
             # --- Dedup: resolve embedding model + search --------------------------
             chatSettings = await self.getChatSettings(chatId)
-            embeddingModelName = chatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr()
-            model = self._resolveEmbeddingModel(self.llmService, embeddingModelName)
 
-            if model is not None:
+            embeddings = await self.llmService.generateEmbedding(
+                content,
+                chatId=ensuredMessage.recipient.id,
+                chatSettings=chatSettings,
+            )
+
+            similar = []
+            if embeddings is not None:
                 # Dedup embedding + search are best-effort: a transient
                 # embedding outage must NEVER prevent the memory from being
                 # stored (plan §8.3 — "never raise; on failure skip dedup").
                 # This mirrors the ``model is None`` fallback below: on any
                 # dedup failure ``similar = []`` and the insert proceeds.
                 try:
-                    queryEmbeddingFloats = await model.generateEmbeddings(content)
-                    queryEmbedding = self._floatsToBytes(queryEmbeddingFloats)
                     similar = await self.db.userMemories.searchMemories(
                         chatId,
                         userId,
-                        queryEmbedding,
+                        embeddings[1],
                         threadId=threadId,
                         limit=1,
+                        embeddingModel=embeddings[0],
                     )
                 except Exception:
                     logger.warning(
@@ -515,9 +538,6 @@ class UserDataHandler(BaseBotHandler):
                         exc_info=True,
                     )
                     similar = []
-            else:
-                # No embedding model available — skip dedup, insert directly.
-                similar = []
 
             if similar:
                 topScore = float(similar[0].get("score", 0.0))
@@ -529,6 +549,7 @@ class UserDataHandler(BaseBotHandler):
                         "existing_memory_id": existing["memory_id"],
                         "existing_content": existing["content"],
                         "existing_type": existing["type"],
+                        "existing_tags": existing["tags"],
                         "score": topScore,
                     }
                 if topScore > MEMORY_DEDUP_SIMILAR_THRESHOLD:
@@ -541,6 +562,7 @@ class UserDataHandler(BaseBotHandler):
                             "existing_memory_id": existing["memory_id"],
                             "existing_content": existing["content"],
                             "existing_type": existing["type"],
+                            "existing_tags": existing["tags"],
                             "score": topScore,
                         }
                     return {
@@ -549,6 +571,7 @@ class UserDataHandler(BaseBotHandler):
                         "existing_memory_id": existing["memory_id"],
                         "existing_content": existing["content"],
                         "existing_type": existing["type"],
+                        "existing_tags": existing["tags"],
                         "score": topScore,
                     }
 
@@ -557,7 +580,6 @@ class UserDataHandler(BaseBotHandler):
             # tags, but an LLM that ignores the instruction must not persist
             # mixed-case tags that would break the case-sensitive
             # set-intersection filtering at injection time.
-            tags = [t.lower() for t in (tags or [])]
             memoryId = uuid.uuid4().hex
             await self.db.userMemories.addMemory(
                 chatId,
@@ -565,21 +587,15 @@ class UserDataHandler(BaseBotHandler):
                 memoryId,
                 type=type,
                 content=content,
-                tags=tags,
+                tags=tags or [],
                 permanent=permanent,
                 threadId=threadId,
-                source="refinement" if isRefinement else "chat",
+                source=UserMemorySource.REFINEMENT if isRefinement else UserMemorySource.CHAT,
+                embeddingModel=embeddings[0] if embeddings else None,
+                embedding=embeddings[1] if embeddings else None,
             )
-            # Best-effort embedding — never raises; on failure the regen cron
-            # (Phase 3) will pick the memory up via getMemoriesWithoutEmbeddings.
-            await embedAndSaveMemory(
-                chatId=chatId,
-                userId=userId,
-                memoryId=memoryId,
-                content=content,
-                modelName=embeddingModelName,
-                db=self.db,
-            )
+            if permanent:
+                await self.cache.invalidateChatUserPermanentMemories(chatId=chatId, userId=userId, threadId=threadId)
             return {"done": True, "action": "added", "memory_id": memoryId}
         except Exception as e:
             logger.exception("_llmToolAddMemory: failed")
@@ -623,6 +639,7 @@ class UserDataHandler(BaseBotHandler):
 
             chatId = ensuredMessage.recipient.id
             userId = ensuredMessage.sender.id
+            threadId = ensuredMessage.threadId or DEFAULT_THREAD_ID
 
             if not memory_id and not query:
                 return {"done": False, "error": "Provide either memory_id or query"}
@@ -630,23 +647,34 @@ class UserDataHandler(BaseBotHandler):
             # --- By-id delete (unrestricted — can target permanent) ---------------
             if memory_id:
                 deleted = await self.db.userMemories.deleteMemory(chatId, userId, memory_id)
+                # Not necessary permanent one were deleted, but whatever
+                await self.cache.invalidateChatUserPermanentMemories(
+                    chatId=chatId,
+                    userId=userId,
+                    threadId=threadId,
+                )
                 return {"done": True, "deleted": 1 if deleted else 0, "memory_id": memory_id}
 
             # --- By-query delete (semantic; similarity >= 0.85 threshold) ---------
             assert query is not None  # narrowed by the guard above
             chatSettings = await self.getChatSettings(chatId)
-            embeddingModelName = chatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr()
-            model = self._resolveEmbeddingModel(self.llmService, embeddingModelName)
-            if model is None:
-                return {"done": False, "error": "Embedding model unavailable for query delete"}
 
-            queryEmbeddingFloats = await model.generateEmbeddings(query)
-            queryEmbedding = self._floatsToBytes(queryEmbeddingFloats)
+            embeddings = await self.llmService.generateEmbedding(
+                query,
+                chatId=chatId,
+                chatSettings=chatSettings,
+            )
+
+            if embeddings is None:
+                return {"done": False, "error": "Can not generate embedding for query"}
+
             hits = await self.db.userMemories.searchMemories(
                 chatId,
                 userId,
-                queryEmbedding,
+                embeddings[1],
+                threadId=threadId,
                 type=type,
+                embeddingModel=embeddings[0],
                 limit=5,
             )
             # Only delete clear matches (similarity >= MEMORY_DEDUP_SIMILAR_THRESHOLD).
@@ -656,6 +684,12 @@ class UserDataHandler(BaseBotHandler):
                 mid = m["memory_id"]
                 if await self.db.userMemories.deleteMemory(chatId, userId, mid):
                     deletedCount += 1
+            if deletedCount > 0:
+                await self.cache.invalidateChatUserPermanentMemories(
+                    chatId=chatId,
+                    userId=userId,
+                    threadId=threadId,
+                )
             return {"done": True, "deleted": deletedCount}
         except Exception as e:
             logger.exception("_llmToolDeleteMemory: failed")
@@ -712,28 +746,25 @@ class UserDataHandler(BaseBotHandler):
                 else MEMORY_SEARCH_DEFAULT_LIMIT
             )
 
-            queryEmbedding: Optional[bytes] = None
+            chatSettings = await self.getChatSettings(chatId)
+            queryEmbedding = None
             trimmedQuery = (query or "").strip()
             if trimmedQuery:
-                chatSettings = await self.getChatSettings(chatId)
-                embeddingModelName = chatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr()
-                model = self._resolveEmbeddingModel(self.llmService, embeddingModelName)
-                if model is None:
-                    # No embedding model — fall back to filter-only so the call
-                    # is still useful (returns type/tag matches unranked).
-                    queryEmbedding = None
-                else:
-                    queryEmbeddingFloats = await model.generateEmbeddings(trimmedQuery)
-                    queryEmbedding = self._floatsToBytes(queryEmbeddingFloats)
+                queryEmbedding = await self.llmService.generateEmbedding(
+                    trimmedQuery,
+                    chatId=chatId,
+                    chatSettings=chatSettings,
+                )
 
             results = await self.db.userMemories.searchMemories(
                 chatId,
                 userId,
-                queryEmbedding,
+                queryEmbedding[1] if queryEmbedding else None,
                 threadId=threadId,
                 type=type,
                 tags=tags,
                 permanent=permanent,
+                embeddingModel=queryEmbedding[0] if queryEmbedding else None,
                 limit=effectiveLimit,
             )
             return {"done": True, "results": results, "count": len(results)}
@@ -786,14 +817,23 @@ class UserDataHandler(BaseBotHandler):
            :meth:`UserMemoriesRepository.getMemoriesWithoutEmbeddings`
            (also surfaces never-embedded rows for the initial backfill).
         7. **Re-embed loop**: each ``UserMemoryDict`` is re-embedded via
-           :func:`embedAndSaveMemory` with an inter-call sleep; per-row
-           failures are swallowed inside the helper.
+           :meth:`LLMService.generateEmbedding` and persisted through
+           :meth:`UserMemoriesRepository.saveMemoryEmbedding`; per-row
+           failures are swallowed (``generateEmbedding`` returns ``None`` on
+           error and the loop skips the save) with an inter-call sleep between
+           rows.
 
-        Never raises — every failure path logs and returns so a regen
-        failure never breaks the refinement body sharing the same tick.
-        The two operations share the tick but NOT the lock (regen is
-        read/embed/write on ``user_memories``; refinement is
-        LLM-tool-driven) — see docs/plans/user-memories-v1.md §5.6.
+        Almost every failure path logs and returns, but model resolution
+        (step 4) is the one unguarded path: ``resolveModel`` →
+        ``ChatSettingsValue.toModel`` raises ``ValueError`` when the
+        configured ``EMBEDDING_MODEL`` is empty or not registered in the
+        model manager. That exception propagates out of this method and is
+        caught by the ``_dtCronJob`` caller (which wraps the call in
+        try/except), so a regen failure never breaks the refinement body
+        sharing the same tick. The two operations share the tick but NOT
+        the lock (regen is read/embed/write on ``user_memories``;
+        refinement is LLM-tool-driven) — see
+        docs/plans/user-memories-v1.md §5.6.
 
         Args:
             None (uses ``self.db`` / ``self.llmService`` and the cached
@@ -801,6 +841,11 @@ class UserDataHandler(BaseBotHandler):
 
         Returns:
             None
+
+        Raises:
+            ValueError: from ``resolveModel``/``toModel`` when
+                ``EMBEDDING_MODEL`` is empty or unregistered in the model
+                manager; caught by the ``_dtCronJob`` caller.
         """
         startTime = utils.now()
         # 1. Chat discovery — MEMORY_EMBEDDINGS_ENABLED defaults to false,
@@ -834,12 +879,9 @@ class UserDataHandler(BaseBotHandler):
         if not chatSettings[ChatSettingsKey.MEMORY_REGENERATE_EMBEDDINGS].toBool():
             return  # regeneration disabled for this chat
 
-        modelName = chatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr()
-        if not modelName:
-            return  # no embedding model configured
-        model = self.llmService.getLLMManager().getModel(modelName)
-        if model is None or not model.supportsEmbedding:
-            return  # model missing or not embedding-capable
+        embeddingModel = self.llmService.resolveModel(
+            ChatSettingsKey.EMBEDDING_MODEL, chatSettings=chatSettings, defaultKey=ChatSettingsKey.EMBEDDING_MODEL
+        )
 
         # 5. Stale cleanup (model-drift detection). ``modelKey`` is
         # ``modelName`` alone when the model does not expose dimensions, or
@@ -855,7 +897,8 @@ class UserDataHandler(BaseBotHandler):
         # re-embedding below — so the embed path self-heals even when the
         # vec0 cleanup did not (the only residual is orphaned old-dim vec0
         # rows, which do not affect search correctness).
-        currentDims = await model.getDimensions()
+        currentDims = await embeddingModel.getDimensions()
+        modelName = chatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr()
         modelKey = modelName
         if currentDims is not None:
             modelKey = f"{modelName}:{currentDims}"
@@ -877,6 +920,7 @@ class UserDataHandler(BaseBotHandler):
                 chatId,
                 limit=self._memoryReindexBatchSize,
                 modelName=modelName,
+                dimensions=currentDims,
             )
         except Exception as e:
             logger.warning("Memory regen: failed to list stale memories for chat %d: %s", chatId, e)
@@ -884,9 +928,9 @@ class UserDataHandler(BaseBotHandler):
         if not staleMemories:
             return
 
-        # 7. Re-embed loop. ``embedAndSaveMemory`` has its own try/except
-        # boundary and never raises, so a single bad row cannot abort the
-        # batch; the small inter-call sleep keeps the asyncio loop
+        # 7. Re-embed loop. ``generateEmbedding`` catches its own exceptions
+        # and returns ``None`` on failure, so a single bad row cannot abort
+        # the batch; the small inter-call sleep keeps the asyncio loop
         # responsive between embeddings.
         embedded = 0
         for memory in staleMemories:
@@ -898,15 +942,20 @@ class UserDataHandler(BaseBotHandler):
             if not memory["content"].strip():
                 continue
 
-            if await embedAndSaveMemory(
+            memoryEmbedding = await self.llmService.generateEmbedding(
+                memory["content"],
                 chatId=chatId,
-                userId=memory["user_id"],
-                memoryId=memory["memory_id"],
-                content=memory["content"],
-                modelName=modelName,
-                db=self.db,
-            ):
-                embedded += 1
+                chatSettings=chatSettings,
+            )
+            if memoryEmbedding is not None:
+                if await self.db.userMemories.saveMemoryEmbedding(
+                    chatId=chatId,
+                    userId=memory["user_id"],
+                    memoryId=memory["memory_id"],
+                    embedding=memoryEmbedding[1],
+                    embeddingModel=memoryEmbedding[0],
+                ):
+                    embedded += 1
             await asyncio.sleep(MEMORY_BACKFILL_INTER_MESSAGE_DELAY_SECS)
 
         if embedded > 0:
@@ -990,7 +1039,11 @@ class UserDataHandler(BaseBotHandler):
         try:
             await self._runMemoryEmbeddingRegen()
         except Exception:
-            logger.exception("Memory embedding regeneration failed; continuing to refinement")
+            logger.exception(
+                "Memory embedding regeneration failed; continuing to refinement",
+                exc_info=True,
+                stack_info=True,
+            )
 
         # Bail this tick if a previous batch is still running (a single LLM call
         # can exceed the 60s cadence). The lock serializes everything so the
@@ -1016,19 +1069,24 @@ class UserDataHandler(BaseBotHandler):
             # is full, skip the candidate if its `_lastRefinedTS` >= `maxDueTS`,
             # otherwise evict the entry with the largest `_lastRefinedTS` and
             # recompute `maxDueTS`.
-            for (chatId, userId, threadId), newMessagesCount in candidates:
+            for key, newMessagesCount in candidates:
                 # Guard the ENTIRE per-candidate body so a transient DB error
                 # (chat settings OR memory-entry read) skips just this one
                 # candidate instead of aborting the whole scan.
                 try:
+                    chatId, userId, threadId = key
                     # Per-chat enable gate (runtime-disable safe).
                     chatSettings = await self.getChatSettings(chatId)
                     if not chatSettings[ChatSettingsKey.MEMORY_REFINEMENT_ENABLED].toBool():
+                        # Drop this candidate from future checks
+                        async with self._accountingLock:
+                            self._accounting.pop(key, None)
+                            self._lastRefinedTS.pop(key, None)
                         continue
 
                     lastRefinedTS = 0
                     async with self._accountingLock:
-                        lastRefinedTS = self._lastRefinedTS.get((chatId, userId, threadId), 0)
+                        lastRefinedTS = self._lastRefinedTS.get(key, 0)
                     if (len(due) >= maxDueLen) and (lastRefinedTS >= maxDueTS):
                         # If due list is full and our lastRefinedTS >= maxDueTS
                         #  then we definitely don't match this batch
@@ -1115,7 +1173,7 @@ class UserDataHandler(BaseBotHandler):
 
                         # If for some reason, there is no _lastRefinedTS for this key, set to current time
                         if key not in self._lastRefinedTS:
-                            self._lastRefinedTS[(chatId, userId, threadId)] = int(time.time())
+                            self._lastRefinedTS[key] = int(time.time())
 
     async def _runRefinement(self, chatId: int, userId: int, threadId: int) -> None:
         """Run one memory-refinement LLM pass for a (chat, user, thread).
@@ -1179,6 +1237,7 @@ class UserDataHandler(BaseBotHandler):
         # both. Failures are tolerated (empty list) so a transient DB error
         # can't abort the run — the LLM simply has no prior context.
         try:
+            # We use directDB access here instead of cache as we need full memory data for the LLM
             permanentMemories = await self.db.userMemories.getPermanentMemories(chatId, userId, threadId)
             latestMemories = await self.db.userMemories.getLatestMemories(chatId, userId, threadId)
         except Exception:
@@ -1199,17 +1258,15 @@ class UserDataHandler(BaseBotHandler):
         systemPrompt = chatSettings[ChatSettingsKey.MEMORY_REFINE_SYSTEM_PROMPT].toStr()
         userPromptTemplate = chatSettings[ChatSettingsKey.MEMORY_REFINE_USER_PROMPT_TEMPLATE].toStr()
 
-        # The new template uses ``{existingMemories}`` + ``{messages}``.
-        # ``existingUserData`` / ``{existingSummary}`` are passed as backward-
-        # compat aliases so a per-chat override still referencing the OLD
-        # placeholders keeps formatting without raising KeyError (plan §11.3 —
-        # the default TOML drops them, but existing overrides may pre-date the
-        # rewrite).
+        # The new template uses ``{existingMemories}`` + ``{messages}`` only.
+        # Note: templates referencing the old ``{existingUserData}`` /
+        # ``{existingSummary}`` placeholders are no longer supported; use
+        # ``{existingMemories}``. A deployed per-chat override still carrying
+        # the old placeholders would raise ``KeyError`` here, caught by the
+        # outer try/except (refinement stops for that user this tick).
         userPrompt = userPromptTemplate.format(
             messages=rendered,
             existingMemories=existingMemoriesText,
-            existingUserData=existingMemoriesText,
-            existingSummary="(none)",
         )
 
         async def intermediateCallback(res: ModelRunResult, extraData: ExtraDataDict) -> None:
@@ -1424,7 +1481,7 @@ class UserDataHandler(BaseBotHandler):
         renderedParts: List[str] = []
         # reversed() → oldest-first for natural reading order (matches SummarizationHandler).
         for msg in reversed(messages):
-            eMsg = await EnsuredMessage.fromDBChatMessage(msg, self.db)
+            eMsg = await EnsuredMessage.fromDBChatMessage(msg, self.db, injectMemories=False)
             renderedParts.append(await eMsg.formatForLLM(self.db, format=LLMMessageFormat.JSON, stripAtsign=True))
         return "\n".join(renderedParts)
 
@@ -1749,6 +1806,7 @@ class UserDataHandler(BaseBotHandler):
                     tags=[tag],
                     threadId=None,
                     limit=KNOWLEDGE_CONFIG_TAG_FILTER_FETCH_LIMIT,
+                    embeddingModel=None,
                     offset=0,
                 )
                 hasNext = len(allFiltered) > offset + KNOWLEDGE_CONFIG_PAGE_SIZE
@@ -1761,6 +1819,7 @@ class UserDataHandler(BaseBotHandler):
                     type=typeForQuery,
                     threadId=None,
                     limit=KNOWLEDGE_CONFIG_PAGE_SIZE + 1,
+                    embeddingModel=None,
                     offset=offset,
                 )
                 hasNext = len(memories) > KNOWLEDGE_CONFIG_PAGE_SIZE
@@ -1989,7 +2048,7 @@ class UserDataHandler(BaseBotHandler):
         keyboard: List[List[CallbackButton]] = [
             [
                 CallbackButton(
-                    "Удалить памят",
+                    "Удалить память",
                     {
                         ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.DeleteMemory,
                         ButtonDataKey.ChatId: chatId,
@@ -2070,6 +2129,7 @@ class UserDataHandler(BaseBotHandler):
         deleted = False
         try:
             deleted = await self.db.userMemories.deleteMemory(chatId, user.id, memoryId)
+            await self.cache.invalidateChatUserPermanentMemories(chatId=chatId, userId=user.id, threadId=None)
         except Exception:
             logger.error("DeleteMemory: failed to delete memory %s in chat %d", memoryId, chatId, exc_info=True)
             deleted = False
@@ -2491,6 +2551,7 @@ class UserDataHandler(BaseBotHandler):
             None,
             threadId=None,
             limit=MEMORY_SEARCH_MAX_LIMIT,
+            embeddingModel=None,
         )
         if not memories:
             lines = ["(памятей не найдено)"]

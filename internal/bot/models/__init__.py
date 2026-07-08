@@ -21,6 +21,8 @@ from ...models import MessageType
 
 # Chat Settings (already exists)
 from .chat_settings import (
+    MEMORY_RETRIEVAL_MODE_LATEST,
+    MEMORY_RETRIEVAL_MODE_RELEVANT,
     ChatSettingsDict,
     ChatSettingsKey,
     ChatSettingsPage,
@@ -56,6 +58,13 @@ from .enums import (
 
 # Media
 from .media import MediaProcessingInfo
+from .message_metadata import (
+    CondensingDict,
+    MetadataDict,
+    SingleMemoryDict,
+    UserMemoriesDict,
+    convertDBMemoryToSingleMemoryDict,
+)
 from .text_formatter import FormatEntity, FormatType, OutputFormat
 
 # User Metadata
@@ -90,6 +99,8 @@ __all__ = [
     "getChatSettingsInfo",
     "ChatSettingsPage",
     "ChatSettingsDict",
+    "MEMORY_RETRIEVAL_MODE_LATEST",
+    "MEMORY_RETRIEVAL_MODE_RELEVANT",
     # Ensured Message
     "EnsuredMessage",
     "MentionCheckResult",
@@ -99,4 +110,9 @@ __all__ = [
     "FormatType",
     "OutputFormat",
     "FormatEntity",
+    "SingleMemoryDict",
+    "UserMemoriesDict",
+    "MetadataDict",
+    "CondensingDict",
+    "convertDBMemoryToSingleMemoryDict",
 ]

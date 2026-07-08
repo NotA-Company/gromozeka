@@ -731,52 +731,6 @@ class TestRandomAnswerPromptAndSkipSentinel:
         messages = captured["messages"]
         assert RANDOM_PROMPT_MARKER not in messages[0].content
 
-    async def testReplyFallbackInjectsMemoriesBlock(self, liveHandler: LLMMessageHandler) -> None:
-        """handleReply fallback (empty thread) still injects the memories block.
-
-        Regression for Fix 3: when ``getThreadByMessageForLLM`` returns ``[]``
-        (root message not in DB), ``handleReply`` rebuilds the system message
-        from ``CHAT_PROMPT + CHAT_PROMPT_SUFFIX`` and appends the bot/user
-        messages directly. That fallback must ALSO inject the ``<user-memories>``
-        block — otherwise a reply-to-bot in this error path is processed
-        without memory context. Mirrors site 2 (handleMention).
-
-        ``_buildMemoriesBlock`` is stubbed to a known block so the test
-        isolates the injection wiring (not the build logic).
-
-        Args:
-            liveHandler: Live handler fixture.
-        """
-        generate, captured = _captureGenerate("hi")
-        liveHandler.llmService.generateTextViaLLM = generate  # type: ignore[method-assign]
-        em = _liveEnsuredMessage(isReply=True)
-        replied = _liveEnsuredMessage(senderId=999, senderName="Bot")
-        memoriesBlock = "<user-memories>FALLBACK-MEMORIES</user-memories>"
-        liveHandler.getThreadByMessageForLLM = AsyncMock(return_value=[])  # type: ignore[method-assign]
-        liveHandler.getBotId = AsyncMock(return_value=999)  # type: ignore[method-assign]
-        liveHandler._buildMemoriesBlock = AsyncMock(return_value=memoriesBlock)  # type: ignore[method-assign]
-
-        with (
-            patch.object(EnsuredMessage, "getEnsuredRepliedToMessage", Mock(return_value=replied)),
-            patch.object(EnsuredMessage, "updateMediaContent", AsyncMock(return_value=None)),
-            patch.object(
-                EnsuredMessage,
-                "toModelMessage",
-                AsyncMock(return_value=ModelMessage(role="user", content="x")),
-            ),
-        ):
-            result = await liveHandler.handleReply(em, Mock())
-
-        assert result is True
-        messages = captured["messages"]
-        assert "FALLBACK-MEMORIES" in messages[0].content
-        liveHandler._buildMemoriesBlock.assert_awaited_once()  # type: ignore[attr-defined]
-        # The fallback resolves the target user from the incoming-message sender
-        # (the message this turn is about), not the replied-to bot message.
-        callArgs = liveHandler._buildMemoriesBlock.call_args  # type: ignore[attr-defined]
-        assert callArgs.args[0] == em.recipient.id
-        assert callArgs.args[1] == em.sender.id
-
     async def testRandomAnswerPromptNotAppendedToMention(self, liveHandler: LLMMessageHandler) -> None:
         """handleMention must NOT receive the random-answer fragment.
 
@@ -1343,94 +1297,15 @@ class TestMemoryInjectionToolGating:
             assert capturedUseTools.get(ToolName.SEARCH_MEMORIES) is False
 
 
-class TestMemoriesBlockInjection:
-    """Phase 3a: the ``<user-memories>`` block lands in the system message at each site.
-
-    Integration coverage for plan §9.2 sites 2 (``handleMention``) and 3
-    (``handleRandomMessage`` non-thread branch). Site 1
-    (``getThreadByMessageForLLM``) is covered by the ``_buildMemoriesBlock`` /
-    ``_injectMemoriesBlock`` unit tests in ``test_base.py`` (the helper logic
-    is identical; only the call site differs). ``_buildMemoriesBlock`` is
-    stubbed to return a sentinel block so no DB seeding is required.
-    """
-
-    async def test_handleMention_appendsMemoriesBlockToSystemMessage(self, liveHandler: LLMMessageHandler) -> None:
-        """``handleMention`` appends the block to ``reqMessages[0].content`` when enabled.
-
-        Stubs ``_buildMemoriesBlock`` to return a known sentinel, drives
-        ``handleMention`` (via ``_wireMentionPath``), captures the messages
-        passed to ``generateTextViaLLM``, and asserts the leading system
-        message contains the sentinel.
-
-        Args:
-            liveHandler: Live handler fixture.
-        """
-        settings = _fullChatSettings()
-        settings[ChatSettingsKey.MEMORY_INJECTION_ENABLED] = ChatSettingsValue("true")
-        liveHandler.getChatSettings = AsyncMock(return_value=settings)  # type: ignore[method-assign]
-        liveHandler._buildMemoriesBlock = AsyncMock(  # type: ignore[method-assign]
-            return_value="<user-memories>MENTION_SENTINEL</user-memories>"
-        )
-        generate, captured = _captureGenerate("ok")
-        liveHandler.llmService.generateTextViaLLM = generate  # type: ignore[method-assign]
-
-        em, stack = _wireMentionPath(liveHandler)
-        with stack:
-            await liveHandler.handleMention(em, updateObj=Mock())
-
-        msgs = captured["messages"]
-        assert msgs[0].role == "system"
-        assert "<user-memories>MENTION_SENTINEL</user-memories>" in msgs[0].content
-        liveHandler._buildMemoriesBlock.assert_awaited_once()  # type: ignore[attr-defined]
-
-    async def test_handleRandomMessageNonThread_appendsMemoriesBlockToSystemMessage(
-        self, liveHandler: LLMMessageHandler
-    ) -> None:
-        """``handleRandomMessage`` non-thread branch appends the block to the system message.
-
-        Uses ``_wireRandomPath(isReply=False)`` so the non-thread branch runs
-        (the thread branch already gets the block via site 1).
-
-        Args:
-            liveHandler: Live handler fixture.
-        """
-        settings = _fullChatSettings()
-        settings[ChatSettingsKey.MEMORY_INJECTION_ENABLED] = ChatSettingsValue("true")
-        liveHandler.getChatSettings = AsyncMock(return_value=settings)  # type: ignore[method-assign]
-        liveHandler._buildMemoriesBlock = AsyncMock(  # type: ignore[method-assign]
-            return_value="<user-memories>RANDOM_SENTINEL</user-memories>"
-        )
-        generate, captured = _captureGenerate("ok")
-        liveHandler.llmService.generateTextViaLLM = generate  # type: ignore[method-assign]
-
-        em, stack = _wireRandomPath(liveHandler, isReply=False)
-        with stack:
-            await liveHandler.handleRandomMessage(em, updateObj=Mock())
-
-        msgs = captured["messages"]
-        assert msgs[0].role == "system"
-        assert "<user-memories>RANDOM_SENTINEL</user-memories>" in msgs[0].content
-        liveHandler._buildMemoriesBlock.assert_awaited_once()  # type: ignore[attr-defined]
-
-    async def test_handleMention_doesNotInject_whenInjectionDisabled(self, liveHandler: LLMMessageHandler) -> None:
-        """With ``MEMORY_INJECTION_ENABLED=false`` the system message has no block.
-
-        ``_buildMemoriesBlock`` returns ``None`` (the disabled short-circuit),
-        so ``_injectMemoriesBlock`` is a no-op and the system message keeps its
-        base content. Pins the negative path so the block isn't accidentally
-        injected when the feature is off.
-
-        Args:
-            liveHandler: Live handler fixture.
-        """
-        # _fullChatSettings already has MEMORY_INJECTION_ENABLED=false.
-        liveHandler._buildMemoriesBlock = AsyncMock(return_value=None)  # type: ignore[method-assign]
-        generate, captured = _captureGenerate("ok")
-        liveHandler.llmService.generateTextViaLLM = generate  # type: ignore[method-assign]
-
-        em, stack = _wireMentionPath(liveHandler)
-        with stack:
-            await liveHandler.handleMention(em, updateObj=Mock())
-
-        msgs = captured["messages"]
-        assert "<user-memories>" not in msgs[0].content
+# ---------------------------------------------------------------------------
+# NOTE: handler-level ``<user-memories>`` system-message block injection
+# (the former ``TestMemoriesBlockInjection`` class) was removed. Memory
+# injection moved to :meth:`MessagePreprocessorHandler.injectMemories`
+# (pre-arrival), which attaches memories to the :class:`EnsuredMessage` via
+# ``setUserMemories``; the per-message renderer (``formatForLLM``) carries
+# them as a structured ``userMemories`` field. The old handler-side
+# ``_buildMemoriesBlock`` / ``_injectMemoriesBlock`` methods no longer exist
+# (see the matching note in ``test_base.py``). The handler message-assembly
+# paths themselves (handleMention / handleRandomMessage / handleReply) stay
+# covered by :class:`TestRandomAnswerPromptAndSkipSentinel` and
+# :class:`TestMediaDescriptionExtraction`.

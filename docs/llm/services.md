@@ -43,9 +43,12 @@ await cache.setChatInfo(chatId, chatInfo)
 admins: Optional[Dict[int, Tuple[str, str]]] = cache.getChatAdmins(chatId, ttl=3600)
 cache.setChatAdmins(chatId, admins)
 
-# User data (async methods)
-userData = await cache.getChatUserData(chatId=chatId, userId=userId)
-await cache.setChatUserData(chatId=chatId, userId=userId, key=key, value=value)
+# Permanent user memories (async, write-through cache; injected at message-arrival
+# time by MessagePreprocessorHandler.injectMemories into EnsuredMessage.userMemories)
+permanentMemories: list[SingleMemoryDict] = await cache.getChatUserPermanentMemories(
+    chatId=chatId, userId=userId, threadId=threadId
+)
+await cache.invalidateChatUserPermanentMemories(chatId=chatId, userId=userId, threadId=threadId)
 
 # chat_users row + metadata (async, write-through; see ADR-015)
 userInfo: Optional[ChatUserDict] = await cache.getChatUser(chatId=chatId, userId=userId)
@@ -59,7 +62,7 @@ userInfo = await cache.getChatUser(chatId=chatId, userId=userId, refresh=True)
 await cache.updateChatUser(chatId=chatId, userId=userId, username="@user", fullName="Name")
 metadata: UserMetadataDict = await cache.getUserMetadata(chatId=chatId, userId=userId)
 await cache.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadata)  # full-dict replace, NO merge
-cache.invalidateChatUser(chatId=chatId, userId=userId)  # sync; pops userInfo only, preserves data
+cache.invalidateChatUser(chatId=chatId, userId=userId)  # sync; pops userInfo only, preserves permanentMemories
 
 # Default chat settings are handled by config/database, not CacheService
 # Use config files in configs/ for defaults, or set per-chat via setChatSetting()

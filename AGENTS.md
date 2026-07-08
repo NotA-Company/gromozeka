@@ -102,7 +102,10 @@ These come from [`docs/llm/index.md`](docs/llm/index.md):
 
 ## Lint/format pipeline
 
-`make lint` runs `flake8 .`, `isort --check-only --diff .`, then `pyright`.
+`make lint` runs `flake8 .`, `isort --check-only --diff .`, an `import main`
+check (catches circular imports in the production import graph — added after
+the `85aa945` refactor introduced a startup-breaking cycle that flake8/isort
+couldn't see), then `pyright`.
 `make format` runs `isort` + `black` on the tree, then iterates each
 `lib/ext_modules/*/` separately (they are not auto-traversed). If you touch
 anything under `lib/ext_modules/`, run `make format` rather than running
