@@ -64,6 +64,14 @@
 | `webhookUpdates` | `getUnprocessedUpdates(limit=100)` | `List[WebhookUpdatesRow]` | Pending webhook payloads oldest-first; backs the receiver's GET /updates long-poll |
 | `webhookUpdates` | `markProcessed(updateIds)` | `None` | Atomically mark a batch of updates processed (single batch commit prevents duplicate delivery) |
 | `webhookUpdates` | `deleteProcessedOlderThan(ttlSeconds=3600)` | `bool` | Reap processed rows past the TTL; cutoff computed in Python for cross-RDBMS portability |
+| `userMemories` | `addMemory(chatId, userId, memoryId, *, type, content, tags, permanent, threadId=None, source="refinement")` | `None` | INSERT a memory row (caller generates the UUID hex; `memoryId` is not delegated to the DB) |
+| `userMemories` | `getPermanentMemories(chatId, userId, threadId, *, limit=10)` | `List[UserMemoryDict]` | Permanent block for injection — merges cross-thread (`thread_id IS NULL`) AND this-thread permanent (`permanent = 1`), newest-updated-first |
+| `userMemories` | `getLatestMemories(chatId, userId, threadId, *, limit=5)` | `List[UserMemoryDict]` | Ephemeral-only (`permanent = 0`) newest-first, thread-scoped — backs `MEMORY_RETRIEVAL_MODE = latest` |
+| `userMemories` | `searchMemories(chatId, userId, *, queryEmbedding=None, threadId=None, type=None, tags=None, permanent=None, limit=20)` | `List[UserMemoryDict]` | Filter-only (`queryEmbedding is None`, plain SQL scan, `score = 0.0`) or semantic (`queryEmbedding` bytes, vec0 KNN, `score = 1.0 - distance`). Always scoped to one `(chat_id, user_id)`; `tags` applied as a Python set-intersection post-fetch |
+| `userMemories` | `getMemoriesWithoutEmbeddings(chatId, modelName, *, limit)` | `List[UserMemoryDict]` | Backfill/regen-cron input — rows whose `embedding_model` is NULL or differs from `modelName` (single-table stale detection; also serves the initial backfill) |
+| `userMemories` | `saveMemoryEmbedding(chatId, userId, memoryId, embedding, modelName)` | `None` | Lazy-create `vec_user_memories_{dim}` (if missing) + upsert the vector + set `embedding_model`/`embedding_dimensions` on the row (vec0 write must succeed before provenance is set) |
+
+The full `UserMemoriesRepository` has 11 public methods (the remainder are `updateMemory`, `deleteMemory`, `deleteMemoriesByQuery`, `deleteMemoryEmbedding`, `deleteObsoleteMemoryEmbeddings`); see [`docs/llm/memories/user-memories.md`](memories/user-memories.md) "Repository" and the schema docs for the complete list. All SQL goes through `BaseSQLProvider`.
 
 ---
 
@@ -702,7 +710,7 @@ success, value = sqlToCustomType("123", Union[int, str])
    - Validate that all historical migrations are accounted for
 
 **Known implemented migrations:**
-- `migration_001` to `migration_019` — Baseline migrations through latest schema updates
+- `migration_001` to `migration_020` — Baseline migrations through latest schema updates
 - `migration_010`: Adds `updated_by INTEGER NOT NULL` to `chat_settings` table (audit trail)
 - `migration_011` and `migration_012`: Additional schema improvements
 - `migration_013`: Removes `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns (explicit timestamp handling)
@@ -712,6 +720,7 @@ success, value = sqlToCustomType("123", Union[int, str])
 - `migration_017`: Adds the [`message_embeddings`](#message_embeddings) table (composite PK `(chat_id, message_id)`) — stores float32 embedding BLOBs for semantic chat-history search via the `ChatSearchHandler`
 - `migration_018`: Adds `idx_message_embeddings_chat_model` index on `message_embeddings (chat_id, model)` — speeds up `_loadEmbeddingsFromDb` by letting SQLite seek directly to the active model's rows instead of scanning the full chat
 - `migration_019`: Adds the [`webhook_updates`](../../docs/database-schema-llm.md#webhook_updates) table (`id TEXT PRIMARY KEY`) for Max webhook ingestion — raw webhook payloads are written here by the standalone webhook receiver and consumed via the `webhookUpdates` repository. Plus `idx_webhook_updates_unprocessed` on `(processed, received_at)` to back the unprocessed-rows query
+- `migration_020`: Adds the [`user_memories`](../../docs/database-schema-llm.md#user_memories) table (composite PK `(chat_id, user_id, memory_id)`) — the unified per-(chat, user, thread) memory store that retires `user_data` and the rolling-bio JSON blob. Three indexes (`idx_user_memories_chat_user_thread`, `idx_user_memories_chat_user_permanent`, `idx_user_memories_type`). Backfills `user_data` rows into permanent cross-thread `type='fact'` memories and `chat_users.metadata.memoryRefinement` rolling-bio entries into permanent thread-scoped `type='bio'` memories. The vec0 virtual table (`vec_user_memories_{dim}`) is **not** created by the migration — it is created lazily at runtime on first write (mirrors `message_embeddings`). Schema/ADR: [`docs/llm/memories/user-memories.md`](memories/user-memories.md) and ADR-016.
 
 ---
 

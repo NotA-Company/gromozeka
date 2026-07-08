@@ -63,7 +63,7 @@ Core LLM system-prompt settings applied to `LLMMessageHandler` paths. Defined in
 | `ChatSettingsKey` enum | Setting key | Type | Page | Notes |
 |---|---|---|---|---|
 | `CHAT_PROMPT` | `chat-prompt` | STRING | `LLM_BASE` | Base system prompt ("bot personality"). Used by all three LLM handler paths (`handleReply`, `handleMention`, `handleRandomMessage`). |
-| `CHAT_PROMPT_SUFFIX` | `chat-prompt-suffix` | STRING | `BOT_OWNER_SYSTEM` | Suffix appended to `chat-prompt` on every LLM path. Describes structured fields (`userSummary`, etc.) — do not change outside testing. |
+| `CHAT_PROMPT_SUFFIX` | `chat-prompt-suffix` | STRING | `BOT_OWNER_SYSTEM` | Suffix appended to `chat-prompt` on every LLM path. Describes the structured message-JSON fields the chat model sees (`userData`, `mediaDescription`, etc.) — do not change outside testing. (The former `userSummary` line was dropped in Phase 4b when the `<user-memories>` block replaced per-message summary injection.) |
 | `RANDOM_ANSWER_PROMPT` | `random-answer-prompt` | STRING | `LLM_BASE` | Extra system-prompt fragment appended **only inside `handleRandomMessage`** (both thread and non-thread assembly paths). Tells the model it is overhearing a chat rather than being addressed, and defines the `<skip>` abstention sentinel (see below). Never appended in `handleReply` / `handleMention`. |
 
 The default `random-answer-prompt` is a Russian triple-string (full text in [`bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml)); its key lines:
@@ -743,11 +743,11 @@ Max Messenger webhook receiver configuration. Defaults live in [`configs/00-defa
 
 ### `[user-memory]`
 
-Background per-`(chat, user, thread)` memory refinement. Defaults live in [`configs/00-defaults/user-memory.toml`](../../configs/00-defaults/user-memory.toml). The feature is a background cron-driven LLM subsystem owned by `UserDataHandler` (see [`handlers.md`](handlers.md) `UserDataHandler` row and [`architecture.md`](architecture.md) ADR-014).
+Unified per-`(chat, user, thread)` structured memory system. Defaults live in [`configs/00-defaults/user-memory.toml`](../../configs/00-defaults/user-memory.toml). The feature is owned by `UserDataHandler` (see [`handlers.md`](handlers.md) `UserDataHandler` row, [`architecture.md`](architecture.md) ADR-016 for the unified-store decision and ADR-014 for the refinement machinery). Canonical durable summary: [`memories/user-memories.md`](memories/user-memories.md).
 
 | Key | Type | Default | Purpose |
 |---|---|---|---|
-| `enabled` | bool | `false` | Global kill switch. When `false`, the refinement cron early-returns regardless of per-chat settings. Per-chat enable is a separate gate — the `memory-refinement-enabled` chat setting (see `[bot.defaults]` below). |
+| `enabled` | bool | `false` | Global kill switch. When `false`, the refinement cron early-returns, the regen cron early-returns, AND the three memory tools (`add_memory`/`delete_memory`/`search_memories`) are not registered. Per-chat enable is a separate gate — the `memory-injection-enabled` chat setting (see "Memory chat settings" below). |
 
 #### `[user-memory.thresholds]`
 
@@ -758,6 +758,7 @@ Background per-`(chat, user, thread)` memory refinement. Defaults live in [`conf
 | `min-messages-to-refine` | int | `5` | Bail if fewer new messages are available (prevents refining tiny bursts) |
 | `max-messages-per-run` | int | `128` | Cap on messages fed to a single refinement LLM call |
 | `max-refines-per-tick` | int | `3` | Upper bound on refinement LLM calls per 60s cron tick |
+| `memory-reindex-batch-size` | int | `50` | Per-tick cap on memory rows re-embedded by the regen cron (`_runMemoryEmbeddingRegen`) — mirrors `[search-history.embeddings].reindex-batch-size` for chat-history search |
 
 #### `[user-memory.json-logging]`
 
@@ -793,22 +794,33 @@ Optional JSONL log of every successful memory-refinement run, mirroring the LLM-
 
 #### Refinement prompts (chat settings)
 
-The refinement prompts are **per-chat settings** (not `[user-memory.prompts]` config — that section was removed). Defaults live under `[bot.defaults]` in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml) and can be overridden per chat:
+The refinement prompts are **per-chat settings** (not `[user-memory.prompts]` config — that section was removed). Defaults live under `[bot.defaults]` in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml) and can be overridden per chat. The Phase 4a rewrite switched the refinement pass from emitting a summary string to **curating the `user_memories` store live via the three tools**, so the user-prompt template now interpolates the rendered memory block (`{existingMemories}`) — the old `{existingUserData}` / `{existingSummary}` placeholders are kept as backward-compat aliases only (a per-chat override referencing them still formats without `KeyError`).
 
 | `ChatSettingsKey` enum | Setting key | Type | Page | Purpose |
 |---|---|---|---|---|
-| `MEMORY_REFINE_SYSTEM_PROMPT` | `memory-refine-system-prompt` | STRING | `FRIEND` | System instruction for the refinement LLM call |
-| `MEMORY_REFINE_USER_PROMPT_TEMPLATE` | `memory-refine-user-prompt-template` | STRING | `FRIEND` | User message template. Placeholders: `{existingUserData}`, `{existingSummary}`, `{messages}` |
+| `MEMORY_REFINE_SYSTEM_PROMPT` | `memory-refine-system-prompt` | STRING | `FRIEND` | System instruction for the refinement LLM call (tool-curation model — instructs the model to manage memories via `add_memory`/`delete_memory`/`search_memories`, maintain one permanent `type=bio` summary, and emit tool calls rather than a summary paragraph) |
+| `MEMORY_REFINE_USER_PROMPT_TEMPLATE` | `memory-refine-user-prompt-template` | STRING | `FRIEND` | User message template. Placeholders: `{existingMemories}` (rendered permanent+recent block), `{messages}` (recent chat messages). Legacy aliases `{existingUserData}` / `{existingSummary}` still format but are no longer populated by the rewrite |
 
-**Related `[bot.defaults]` keys** (in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml)) — all five are `ChatSettingsKey` defaults wired via the four-site convention:
+**Related `[bot.defaults]` keys** (in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml)) — all are `ChatSettingsKey` defaults wired via the four-site convention:
 
 | `ChatSettingsKey` enum | Setting key | Type | Page | Purpose |
 |---|---|---|---|---|
-| `MEMORY_REFINEMENT_ENABLED` | `memory-refinement-enabled` | BOOL | `FRIEND` | Per-chat gate. Default `false`. Enabled for the friend tier via the local config overlay (`configs/common/` is gitignored — same model as `allow-sandbox`; see [`teamlead-memory.md`](teamlead-memory.md) "Configs Tracking Gotcha") |
+| `MEMORY_REFINEMENT_ENABLED` | `memory-refinement-enabled` | BOOL | `FRIEND` | Per-chat gate for the refinement cron. Default `false`. Enabled for the friend tier via the local config overlay (`configs/common/` is gitignored — same model as `allow-sandbox`; see [`teamlead-memory.md`](teamlead-memory.md) "Configs Tracking Gotcha") |
 | `MEMORY_REFINE_MODEL` | `memory-refine-model` | MODEL | `FRIEND` | Primary LLM for refinement runs (default `"openrouter/free"`) |
 | `MEMORY_REFINE_FALLBACK_MODEL` | `memory-refine-fallback-model` | MODEL | `FRIEND` | Fallback when the primary fails (default `"aliceai-llm-flash"`) |
 | `MEMORY_REFINE_SYSTEM_PROMPT` | `memory-refine-system-prompt` | STRING | `FRIEND` | System prompt for the refinement call (default in `bot-defaults.toml`) |
-| `MEMORY_REFINE_USER_PROMPT_TEMPLATE` | `memory-refine-user-prompt-template` | STRING | `FRIEND` | User-prompt template with `{existingUserData}`/`{existingSummary}`/`{messages}` placeholders |
+| `MEMORY_REFINE_USER_PROMPT_TEMPLATE` | `memory-refine-user-prompt-template` | STRING | `FRIEND` | User-prompt template with `{existingMemories}`/`{messages}` placeholders (legacy `{existingUserData}`/`{existingSummary}` aliases kept for backward-compat) |
+
+#### Memory chat settings (injection + embeddings)
+
+Four additional `ChatSettingsKey` defaults under `[bot.defaults]`, all `page = FRIEND`, wired via the four-site convention. These gate the chat-time **injection** of the `<user-memories>` block and the **regen cron** chat discovery (distinct from the refinement cron above):
+
+| `ChatSettingsKey` enum | Setting key | Type | Page | Default | Purpose |
+|---|---|---|---|---|---|
+| `MEMORY_INJECTION_ENABLED` | `memory-injection-enabled` | BOOL | `FRIEND` | `false` | Gate the `<user-memories>` block injection (4 sites on `BaseBotHandler`) AND the chat-time availability of the `add_memory` / `search_memories` tools (the chat LLM can only call them when this is on). `delete_memory` is always forced off at chat time (D3 gating) |
+| `MEMORY_RETRIEVAL_MODE` | `memory-retrieval-mode` | STRING | `FRIEND` | `latest` | How ephemeral memories are chosen for injection: `latest` (newest-updated-first) or `relevant` (semantic via `_safeEmbedQuery` + `searchMemories`; falls back to `latest` when embeddings are off, the query embed fails, or search returns empty) |
+| `MEMORY_EMBEDDINGS_ENABLED` | `memory-embeddings-enabled` | BOOL | `FRIEND` | `false` | Gate the regen cron's chat discovery for this chat (`_runMemoryEmbeddingRegen` discovers chats via `listChatsBySetting(MEMORY_EMBEDDINGS_ENABLED)`, filtered through `ChatSettingsValue.toBool()`). Must be on for any memory to receive a vec0 embedding |
+| `MEMORY_REGENERATE_EMBEDDINGS` | `memory-regenerate-embeddings` | BOOL | `FRIEND` | `true` | Per-chat gate for re-embedding stale rows (only acts when `MEMORY_EMBEDDINGS_ENABLED` is on). Mirrors the chat-history `REGENERATE_EMBEDDINGS` semantics — defaults true so it is rarely persisted; must be manually reset via `/settings` (does not self-reset) |
 
 ---
 

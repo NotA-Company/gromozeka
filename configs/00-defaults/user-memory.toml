@@ -1,6 +1,6 @@
 # User Memory Refinement Configuration
 # Background per-(chat, user, thread) rolling memory refined by an LLM.
-# See docs/plans/memory-refine-plan-v1.md
+# See docs/llm/memories/user-memories.md
 
 [user-memory]
 # Global kill switch for the memory-refinement subsystem.
@@ -14,6 +14,7 @@ time-seconds = 21600           # 6 hours — elapsed since lastRefinedTS thresho
 min-messages-to-refine = 5     # bail if fewer new messages than this
 max-messages-per-run = 128     # cap on messages fed to one refinement LLM call
 max-refines-per-tick = 3       # bound on LLM calls per 60s cron tick
+memory-reindex-batch-size = 50  # per-tick batch cap for memory-embedding regen cron (Phase 3b, §5.6)
 
 [user-memory.json-logging]
 # Log each memory-refinement run to a JSONL file for debugging/analysis.

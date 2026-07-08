@@ -316,6 +316,17 @@ class ChatSettingsKey(StrEnum):
     """System prompt defining the memory-refinement model's role and rules."""
     MEMORY_REFINE_USER_PROMPT_TEMPLATE = "memory-refine-user-prompt-template"
     """Template for the user message fed to the memory-refinement LLM call."""
+    # User-memories v1 (Phase 3a) — injection + retrieval + regen-discovery settings.
+    # See docs/plans/user-memories-v1.md §11.1, §11.2, §11.5. Mirror EMBEDDINGS_ENABLED
+    # / REGENERATE_EMBEDDINGS for shape.
+    MEMORY_INJECTION_ENABLED = "memory-injection-enabled"
+    """Gates memories-block injection and chat-time add_memory/search_memories availability."""
+    MEMORY_RETRIEVAL_MODE = "memory-retrieval-mode"
+    """Ephemeral-memory retrieval strategy: ``latest`` (newest) or ``relevant`` (semantic)."""
+    MEMORY_EMBEDDINGS_ENABLED = "memory-embeddings-enabled"
+    """Discovery gate for the memory-embedding regeneration cron (which chats to scan on model drift)."""
+    MEMORY_REGENERATE_EMBEDDINGS = "memory-regenerate-embeddings"
+    """Per-chat gate for re-embedding stale user_memories rows once MEMORY_EMBEDDINGS_ENABLED is on."""
     # Prompts for different actions
     SUMMARY_PROMPT = "summary-prompt"
     """System prompt for message summarization."""
@@ -915,8 +926,47 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
     ChatSettingsKey.MEMORY_REFINE_USER_PROMPT_TEMPLATE: {
         "type": ChatSettingsType.STRING,
         "short": "Шаблон пользовательского сообщения для обновления памяти",
-        "long": ("Шаблон, в который подставляются {existingUserData}, {existingSummary}, {messages}."),
+        "long": "Шаблон, в который подставляются {existingMemories} и {messages}.",
         "page": ChatSettingsPage.FRIEND,
+    },
+    # User-memories v1 (Phase 3a) — injection + retrieval + regen-discovery.
+    # See docs/plans/user-memories-v1.md §11.1, §11.2, §11.5.
+    ChatSettingsKey.MEMORY_INJECTION_ENABLED: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Включить инъекцию памяти о пользователе",
+        "long": (
+            "Включить вставку блока памяти о пользователе в системный промпт чата, "
+            "а также доступность инструментов add_memory/search_memories во время чата."
+        ),
+        "page": ChatSettingsPage.FRIEND,
+    },
+    ChatSettingsKey.MEMORY_RETRIEVAL_MODE: {
+        "type": ChatSettingsType.STRING,
+        "short": "Режим выборки памяти о пользователе",
+        "long": (
+            "Как выбирать недолговечную память для подстановки: "
+            "latest — последние по времени; "
+            "relevant — семантический поиск по тексту входящего сообщения."
+        ),
+        "page": ChatSettingsPage.FRIEND,
+    },
+    ChatSettingsKey.MEMORY_EMBEDDINGS_ENABLED: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Включить обновление эмбеддингов памяти",
+        "long": (
+            "Включить фоновое обнаружение устаревших эмбеддингов памяти о пользователе "
+            "для этого чата (при смене модели эмбеддингов)."
+        ),
+        "page": ChatSettingsPage.FRIEND,
+    },
+    ChatSettingsKey.MEMORY_REGENERATE_EMBEDDINGS: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Перестраивать устаревшие эмбеддинги памяти",
+        "long": (
+            "Перегенерировать отсутствующие или устаревшие эмбеддинги памяти о пользователе, "
+            "когда включено обнаружение (memory-embeddings-enabled)."
+        ),
+        "page": ChatSettingsPage.BOT_OWNER,
     },
     ChatSettingsKey.DELETE_DENIED_COMMANDS: {
         "type": ChatSettingsType.BOOL,

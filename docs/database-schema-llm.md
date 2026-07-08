@@ -6,7 +6,7 @@
 **Database Class**: [`Database`](../internal/database/database.py:1)
 **Models**: [`internal/database/models.py`](../internal/database/models.py:1)
 **Repositories**: [`internal/database/repositories/`](../internal/database/repositories/)
-**Migrations**: 19 (up to `migration_019`)
+**Migrations**: 20 (up to `migration_020`)
 
 ---
 
@@ -585,6 +585,59 @@ CREATE TABLE webhook_updates (
 - `deleteProcessedOlderThan(ttlSeconds=3600) -> bool` — reap processed rows past the TTL; cutoff computed in Python for cross-RDBMS portability.
 
 **Note**: Created by `migration_019`. No `AUTOINCREMENT`/`SERIAL`, no `DEFAULT CURRENT_TIMESTAMP` — `id` is caller-generated and timestamps are application-set. Processed rows are reaped by the receiver's background cleanup task (default TTL 1h).
+
+---
+
+### user_memories
+**Purpose**: Unified per-(chat, user, thread) memory store — durable facts, preferences, events, relationships, and high-level bio notes about a user. Retires the legacy `user_data` key-value table and the rolling-bio JSON blob (`chat_users.metadata.memoryRefinement`); both are backfilled into this table by `migration_020`. Created by `migration_020`. Semantic search runs over a vec0 virtual table (`vec_user_memories_{dim}`, cosine distance) that is **not** created by the migration — it is created lazily at runtime on first write (mirrors `message_embeddings`). Unlike chat-history search there is no BLOB side table: `embedding_model` / `embedding_dimensions` are tracked on `user_memories` itself and vec0 is the sole embedding store. When vec0 is unavailable, `searchMemories` returns `[]` (no numpy fallback).
+**Primary Key**: `(chat_id, user_id, memory_id)` — composite natural key (no `AUTOINCREMENT`).
+
+```sql
+CREATE TABLE user_memories (
+    chat_id    INTEGER   NOT NULL,
+    user_id    INTEGER   NOT NULL,
+    thread_id  INTEGER,            -- NULL = cross-thread permanent within chat
+    memory_id  TEXT      NOT NULL, -- app-generated UUID hex
+    type       TEXT      NOT NULL, -- MemoryType: bio|preference|fact|event|relationship
+    content    TEXT      NOT NULL,
+    tags       TEXT      NOT NULL DEFAULT '[]',  -- JSON array of strings
+    permanent  INTEGER   NOT NULL DEFAULT 0,    -- boolean 0/1
+    source     TEXT      NOT NULL DEFAULT 'refinement', -- refinement|chat|migration|user
+    embedding_model      TEXT,     -- NULL = not yet embedded
+    embedding_dimensions INTEGER,  -- NULL = not yet embedded
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
+    PRIMARY KEY (chat_id, user_id, memory_id)
+)
+```
+
+**Indexes**:
+- `idx_user_memories_chat_user_thread` on `(chat_id, user_id, thread_id, updated_at DESC)` — backs `getLatestMemories` and same-thread retrieval.
+- `idx_user_memories_chat_user_permanent` on `(chat_id, user_id, permanent, updated_at DESC)` — backs `getPermanentMemories`.
+- `idx_user_memories_type` on `(chat_id, user_id, type)` — backs type-filtered scans.
+
+**TypedDict**: [`UserMemoryDict`](../internal/database/repositories/user_memories.py:60) (snake_case keys matching columns; `score` is `NotRequired[float]` populated by semantic search).
+
+**Enum**: [`MemoryType`](../internal/bot/models/memory_type.py:18) (`BIO`/`PREFERENCE`/`FACT`/`EVENT`/`RELATIONSHIP`).
+
+**Repository** (`UserMemoriesRepository`, accessed as `db.userMemories`) — 11 public methods; all SQL goes through `BaseSQLProvider`:
+- `addMemory(chatId, userId, memoryId, *, type, content, tags, permanent, threadId=None, source="refinement") -> None` — INSERT (caller generates the UUID).
+- `updateMemory(chatId, userId, memoryId, *, content=None, tags=None, type=None) -> bool` — partial PATCH, bumps `updated_at`; a content change resets `embedding_model`/`embedding_dimensions` to NULL and drops the stale vec0 row.
+- `deleteMemory(chatId, userId, memoryId) -> bool` — explicit by-id delete (unrestricted — may target permanent).
+- `deleteMemoriesByQuery(chatId, userId, *, threadId, type=None, olderThanDays=None) -> int` — ephemeral-only bulk delete (always `AND permanent = 0`).
+- `getPermanentMemories(chatId, userId, threadId, *, limit=10) -> List[UserMemoryDict]` — merges cross-thread permanent (`thread_id IS NULL`) AND this-thread permanent.
+- `getLatestMemories(chatId, userId, threadId, *, limit=5) -> List[UserMemoryDict]` — thread-scoped newest-first, **ephemeral-only** (`permanent = 0`); permanent memories are served by `getPermanentMemories`.
+- `searchMemories(chatId, userId, *, queryEmbedding=None, threadId=None, type=None, tags=None, permanent=None, limit=20) -> List[UserMemoryDict]` — filter-only (`queryEmbedding is None`) or semantic (vec0 KNN, `score = 1.0 - distance`); `tags` applied as a Python set-intersection post-fetch.
+- `saveMemoryEmbedding(chatId, userId, memoryId, embedding, modelName) -> None` — lazy-create `vec_user_memories_{dim}` + upsert the vector + set provenance.
+- `deleteMemoryEmbedding(chatId, userId, memoryId) -> None` — best-effort vec0 DELETE; never raises.
+- `getMemoriesWithoutEmbeddings(chatId, modelName, *, limit) -> List[UserMemoryDict]` — stale detection (NULL or mismatched `embedding_model`); backs the regen cron + initial backfill.
+- `deleteObsoleteMemoryEmbeddings(chatId, modelName) -> int` — model-drift cleanup.
+
+**Backfills** (`migration_020.up()`):
+- `user_data` rows → permanent cross-thread `type='fact'`, `content="{key}: {data}"`, `tags=[]`, `source='migration'`, original timestamps preserved.
+- `chat_users.metadata.memoryRefinement[str(threadId)]` entries (non-empty summary) → permanent thread-scoped `type='bio'`, `tags=["migrated_bio"]`, `source='migration'`, summary preserved in `content`.
+
+**Note**: No `AUTOINCREMENT`/`SERIAL`, no `DEFAULT CURRENT_TIMESTAMP` — `memory_id` is an app-generated UUID and timestamps are application-set. `down()` drops only `user_memories`; `user_data` is kept for rollback safety. The vec0 runtime table (`vec_user_memories_{dim}`) is NOT created by this migration — it is created lazily on first write at runtime.
 
 ---
 
@@ -1243,6 +1296,7 @@ chat_info (1) ──< (N) chat_topics
 chat_info (1) ──< (N) chat_users
 chat_users (1) ──< (N) chat_messages
 chat_users (1) ──< (N) user_data
+chat_users (1) ──< (N) user_memories
 media_attachments (1) ──< (N) chat_messages
 chat_messages (1) ──< (N) chat_messages (self-reference via reply_id, root_message_id)
 ```

@@ -1,6 +1,6 @@
 # User Memories v1
 
-**Status:** DRAFT (planning)
+**Status:** IMPLEMENTED (all phases complete; Phases 1–5 shipped)
 **Date:** 2026-07-06
 **Author:** planning pass
 **Related:**
@@ -1431,28 +1431,53 @@ block = await self._buildMemoriesBlock(
 self._injectMemoriesBlock(storedMessages, block)
 ```
 
-### 9.3 Deprecate `EnsuredMessage.applyUserMetadata` `userSummary` path
+### 9.3 Retire `EnsuredMessage.applyUserMetadata` / `userSummary` path
 
-`internal/bot/models/ensured_message.py:917-948` currently reads
+> **PHASE 4B UPDATE (2026-07-07) — this overrides the original "keep /
+> deprecate" plan below.** Gate 1 review of Phase 4b established that by the
+> end of Phase 4b there are **no remaining writers or readers** of the
+> rolling-bio `userSummary` field:
+>
+> - **Writers gone** — the `_runRefinement` rewrite (§10, Phase 4a) stops
+>   writing the `summary` blob to `chat_users.metadata.memoryRefinement`
+>   (only the message cursor is persisted now). Migration backfill B
+>   (§5.4 / `migration_020`) copies legacy blobs into permanent `type=bio`
+>   rows and then leaves them unread.
+> - **Readers gone** — the structured `<user-memories>` block (§9.1 /
+>   `_buildMemoriesBlock`) fully replaces the single-string `userSummary`
+>   injection at all four system-message construction sites.
+>
+> The original `[DESIGN CHOICE]` to keep the path "for rollback safety"
+> was therefore retracted: a stub method + field that nothing writes and
+> nothing reads is pure surface area. Phase 4b **removed the path
+> entirely**: `EnsuredMessage.applyUserMetadata`, the `EnsuredMessage.userSummary`
+> field, and the `userSummary` key in `EnsuredMessage.formatForLLM` are all
+> gone. The `chat-prompt-suffix` line in `bot-defaults.toml` documenting the
+> `userSummary` JSON field was dropped in the same phase. The old
+> `_updateEMessageUserData` / `HandlersManager._processMessageRec`
+> `applyUserMetadata(...)` call sites were removed with it.
+>
+> Canonical documentation of the replacement system lives in
+> [`docs/llm/memories/user-memories.md`](../llm/memories/user-memories.md).
+> The historical "keep / deprecate" rationale is preserved below for the
+> audit trail only — it no longer describes the shipped code.
+
+**Original v1 plan (superseded — NOT what shipped):**
+
+`internal/bot/models/ensured_message.py:917-948` reads
 `metadata.memoryRefinement[threadId].summary` into `self.userSummary`, which
 `formatForLLM` (`:1170`) serialises into each message JSON under key
 `userSummary`.
 
-**v1 change:**
-
-- **Stop populating `userSummary`** — the refinement rewrite (§10) no longer
-  writes the rolling-bio blob, so this read returns nothing for fresh data.
-- **Keep the method + the `userSummary` field** for backward-compat (a stale
-  blob for a since-not-refined chat would otherwise throw). Add a
-  `# DEPRECATED v1 user memories — kept for rollback; remove with the
-  user_data table` comment on both.
-- The chat-prompt-suffix docs the `userSummary` JSON field at
-  `bot-defaults.toml:207`; leave that line (harmless when empty) and note
-  the deprecation in the §13 doc-sync phase.
-- `[DESIGN CHOICE]` — alternative is to repoint `applyUserMetadata` to load
-  the permanent `type=bio` memory on the fly. Rejected for v1: it adds a DB
-  round-trip per message and duplicates `_buildMemoriesBlock`'s permanent
-  load. The unified block fully replaces `userSummary`.
+The original plan was to **stop populating `userSummary`** (the refinement
+rewrite no longer writes the rolling-bio blob) but **keep the method + the
+`userSummary` field** for backward-compat with a stale `# DEPRECATED` comment,
+and to leave the `chat-prompt-suffix` `userSummary` docs line in
+`bot-defaults.toml`. The alternative considered was repointing
+`applyUserMetadata` to load the permanent `type=bio` memory on the fly
+(rejected for v1: it adds a DB round-trip per message and duplicates
+`_buildMemoriesBlock`'s permanent load). Phase 4b went further than either
+option and removed the path outright, for the reasons in the banner above.
 
 ## 10. Refinement changes (`_runRefinement` rewrite)
 
@@ -1824,9 +1849,9 @@ tools are gone; `make test` green.
   `deleteObsoleteMemoryEmbeddings` → `getMemoriesWithoutEmbeddings` →
   re-embed each via `embedAndSaveMemory`. Independent of the refinement
   body (Phase 4); shares the tick, not the lock.
-- `internal/bot/models/ensured_message.py` — deprecate the `userSummary`
-  path (`:917-948`, `:1170`) per §9.3 (comment + stop populating; keep
-  field).
+- `internal/bot/models/ensured_message.py` — retire the `userSummary` path
+  per §9.3 (Phase 4b removed `applyUserMetadata` + the `userSummary` field +
+  the `formatForLLM` key entirely, not just deprecated them).
 - `tests/bot/common/handlers/test_base.py` and/or
   `tests/bot/common/handlers/test_llm_messages.py` — `_buildMemoriesBlock`
   for latest / relevant / disabled / empty; assert the block lands in the

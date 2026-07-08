@@ -19,7 +19,8 @@ class UserMemoryThreadDict(TypedDict, total=False):
     Note: the ``lastRefinedTS`` (unix timestamp of the last refinement run) is
     NO LONGER persisted here — it is tracked in-memory on the handler
     (``UserDataHandler._lastRefinedTS``) so the persisted entry stays limited
-    to the durable summary + message cursors.
+    to message cursors (the ``summary`` field is legacy — no longer written or
+    read).
 
     Attributes:
         summary: Rolling short summary/bio of the user in this thread.
@@ -29,6 +30,8 @@ class UserMemoryThreadDict(TypedDict, total=False):
             refinement — the cursor for getChatMessagesSince.
     """
 
+    # LEGACY: no longer written (Phase 4a) or read at runtime (Phase 4b);
+    # kept for backward-compat with old blobs in chat_users.metadata.
     summary: str
     """Rolling short summary/bio of the user in this thread."""
     lastProcessedMessageId: str

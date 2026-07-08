@@ -161,6 +161,7 @@ Migrations are located in [`internal/database/migrations/versions/`](../internal
 | 17 | [`migration_017_message_embeddings.py`](../internal/database/migrations/versions/migration_017_message_embeddings.py:1) | Creates [`message_embeddings`](#message_embeddings) table for semantic search |
 | 18 | [`migration_018_message_embeddings_index.py`](../internal/database/migrations/versions/migration_018_message_embeddings_index.py:1) | Adds secondary index on `message_embeddings` (chat_id, model) |
 | 19 | [`migration_019_add_webhook_updates_table.py`](../internal/database/migrations/versions/migration_019_add_webhook_updates_table.py:1) | Creates [`webhook_updates`](#webhook_updates) table for Max webhook ingestion |
+| 20 | [`migration_020_user_memories.py`](../internal/database/migrations/versions/migration_020_user_memories.py:1) | Creates [`user_memories`](#user_memories) table (unified per-user memory store) with backfills from `user_data` + rolling-bio |
 
 ### Creating New Migrations
 
@@ -922,6 +923,62 @@ Stores raw incoming Max Messenger webhook payloads awaiting consumption by the b
 
 ---
 
+## User Memory Tables
+
+### user_memories
+
+Unified per-(chat, user, thread) memory store — durable facts, preferences, events, relationships, and high-level bio notes about a user. Retires the legacy `user_data` key-value table and the rolling-bio JSON blob (`chat_users.metadata.memoryRefinement`); both are backfilled into this table by `migration_020`. See [`docs/llm/memories/user-memories.md`](llm/memories/user-memories.md) (canonical durable summary) and [`docs/plans/user-memories-v1.md`](plans/user-memories-v1.md).
+
+Semantic search runs over a vec0 virtual table (`vec_user_memories_{dim}`, cosine distance) that is **not** created by the migration — it is created lazily at runtime on first write (mirrors `message_embeddings` / `vec_message_embeddings_{dim}`). Unlike chat-history search there is no BLOB side table: `embedding_model` / `embedding_dimensions` are tracked on `user_memories` itself and vec0 is the sole embedding store. When vec0 is unavailable, `searchMemories` returns `[]` (no numpy fallback).
+
+**Primary Key**: `(chat_id, user_id, memory_id)` — composite natural key (no `AUTOINCREMENT`).
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `chat_id` | INTEGER | No | - | Chat identifier |
+| `user_id` | INTEGER | No | - | User the memory is about |
+| `thread_id` | INTEGER | Yes | NULL | Thread scope; NULL = cross-thread permanent within the chat |
+| `memory_id` | TEXT | No | - | App-generated UUID hex, unique within (chat_id, user_id) |
+| `type` | TEXT | No | - | `MemoryType` value: bio\|preference\|fact\|event\|relationship |
+| `content` | TEXT | No | - | Free-text memory body (source of truth for re-embedding) |
+| `tags` | TEXT | No | `'[]'` | JSON array of freeform tag strings |
+| `permanent` | INTEGER | No | 0 | Boolean 0/1 — permanent memories are always injected |
+| `source` | TEXT | No | `'refinement'` | Provenance: refinement\|chat\|migration\|user |
+| `embedding_model` | TEXT | Yes | NULL | Model that produced the vec0 embedding (NULL = not yet embedded) |
+| `embedding_dimensions` | INTEGER | Yes | NULL | Embedding dimension count (NULL = not yet embedded) |
+| `created_at` | TIMESTAMP | No | - | Creation timestamp (application-set) |
+| `updated_at` | TIMESTAMP | No | - | Last-update timestamp (application-set) |
+
+**Indexes**:
+- `idx_user_memories_chat_user_thread` on `(chat_id, user_id, thread_id, updated_at DESC)` — backs `getLatestMemories` and same-thread retrieval.
+- `idx_user_memories_chat_user_permanent` on `(chat_id, user_id, permanent, updated_at DESC)` — backs `getPermanentMemories`.
+- `idx_user_memories_type` on `(chat_id, user_id, type)` — backs type-filtered scans.
+
+**TypedDict**: [`UserMemoryDict`](../internal/database/repositories/user_memories.py:60) (snake_case keys; `score: NotRequired[float]` populated by semantic search).
+
+**Enum**: [`MemoryType`](../internal/bot/models/memory_type.py:18) (`BIO`/`PREFERENCE`/`FACT`/`EVENT`/`RELATIONSHIP`).
+
+**Repository** (`UserMemoriesRepository`, accessed as `db.userMemories`) — 11 public methods; all SQL goes through `BaseSQLProvider`:
+- `addMemory(chatId, userId, memoryId, *, type, content, tags, permanent, threadId=None, source="refinement") -> None` — INSERT (caller generates the UUID).
+- `updateMemory(chatId, userId, memoryId, *, content=None, tags=None, type=None) -> bool` — partial PATCH, bumps `updated_at`; a content change resets `embedding_model`/`embedding_dimensions` to NULL and drops the stale vec0 row so the regen cron re-surfaces it.
+- `deleteMemory(chatId, userId, memoryId) -> bool` — explicit by-id delete (unrestricted — may target permanent).
+- `deleteMemoriesByQuery(chatId, userId, *, threadId, type=None, olderThanDays=None) -> int` — ephemeral-only bulk delete (always `AND permanent = 0`).
+- `getPermanentMemories(chatId, userId, threadId, *, limit=10) -> List[UserMemoryDict]` — merges cross-thread permanent (`thread_id IS NULL`) AND this-thread permanent (`thread_id = :threadId`); bio is thread-scoped so a thread's permanent block includes its own bio.
+- `getLatestMemories(chatId, userId, threadId, *, limit=5) -> List[UserMemoryDict]` — thread-scoped newest-first, **ephemeral-only** (`permanent = 0`); permanent memories are served by `getPermanentMemories`.
+- `searchMemories(chatId, userId, *, queryEmbedding=None, threadId=None, type=None, tags=None, permanent=None, limit=20) -> List[UserMemoryDict]` — filter-only (`queryEmbedding is None`, plain SQL scan, `score = 0.0`) or semantic (vec0 KNN, `score = 1.0 - distance`). Always scoped to one `(chat_id, user_id)`; `tags` applied as a Python set-intersection post-fetch.
+- `saveMemoryEmbedding(chatId, userId, memoryId, embedding, modelName) -> None` — lazy-create `vec_user_memories_{dim}` + upsert the vector + set `embedding_model`/`embedding_dimensions` (vec0 write must succeed before provenance is set).
+- `deleteMemoryEmbedding(chatId, userId, memoryId) -> None` — best-effort vec0 DELETE across every `vec_user_memories_{N}` table; never raises.
+- `getMemoriesWithoutEmbeddings(chatId, modelName, *, limit) -> List[UserMemoryDict]` — single-table stale detection (NULL `embedding_model` or model mismatch); backs the regen cron and the initial backfill.
+- `deleteObsoleteMemoryEmbeddings(chatId, modelName) -> int` — model-drift cleanup: resets stale rows' provenance to NULL and drops their vec0 rows.
+
+**Backfills** (`migration_020.up()`):
+- `user_data` rows → permanent cross-thread `type='fact'`, `content="{key}: {data}"`, `tags=[]`, `source='migration'`, original timestamps preserved.
+- `chat_users.metadata.memoryRefinement[str(threadId)]` entries with a non-empty summary → permanent thread-scoped `type='bio'`, `tags=["migrated_bio"]`, `source='migration'`, summary preserved in `content`.
+
+**Note**: Created by `migration_020`. No `AUTOINCREMENT`/`SERIAL`, no `DEFAULT CURRENT_TIMESTAMP` — `memory_id` is an app-generated UUID and timestamps are application-set. `down()` drops only `user_memories`; `user_data` is kept for rollback safety and `chat_users.metadata` is left untouched (the refinement rewrite stopped writing the rolling-bio blob, and the `userSummary` reader/field was removed entirely in Phase 4b — stale blobs are simply never read). The vec0 runtime table (`vec_user_memories_{dim}`) is NOT created by this migration — it is created lazily on first write at runtime.
+
+---
+
 ## System Tables
 
 ### settings
@@ -1045,7 +1102,7 @@ These TypedDict models provide:
 
 ## Repository Pattern
 
-The database uses a repository pattern with 15 specialized repositories, each handling a specific domain:
+The database uses a repository pattern with 16 specialized repositories, each handling a specific domain:
 
 | Repository | File | Purpose |
 |---|---|---|
@@ -1062,7 +1119,8 @@ The database uses a repository pattern with 15 specialized repositories, each ha
 | `divinations` | [`divinations.py`](../internal/database/repositories/divinations.py) | Tarot/runes readings and layout discovery |
 | `mediaAttachments` | [`media_attachments.py`](../internal/database/repositories/media_attachments.py) | Media attachment management |
 | `spam` | [`spam.py`](../internal/database/repositories/spam.py) | Spam detection and ham classification |
-| `userData` | [`user_data.py`](../internal/database/repositories/user_data.py) | User key-value data |
+| `userData` | [`user_data.py`](../internal/database/repositories/user_data.py) | User key-value data (superseded by `user_memories`; table kept for rollback) |
+| `userMemories` | [`user_memories.py`](../internal/database/repositories/user_memories.py) | Unified per-(chat, user, thread) structured memory store (`migration_020`; vec0-backed semantic search) |
 | `webhookUpdates` | [`webhook_updates.py`](../internal/database/repositories/webhook_updates.py) | Max webhook payload storage and consumption |
 
 ### Accessing Repositories

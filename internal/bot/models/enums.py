@@ -59,6 +59,7 @@ class ButtonDataKey(StrEnum):
         MaxMessages: Maximum number of messages.
         Prompt: Prompt text.
         Page: Page number.
+        Tag: Freeform tag string (knowledge-config wizard tag filter).
 
     Generic Keys:
         Key: Generic key identifier.
@@ -85,6 +86,8 @@ class ButtonDataKey(StrEnum):
     MaxMessages = "m"
     Prompt = "prompt"
     Page = "p"
+    Tag = "tg"
+    """`tg` - freeform tag string (carried in knowledge-config payloads)."""
 
     # Generic keys
     Key = "k"
@@ -155,27 +158,39 @@ class ButtonSummarizationAction(StrEnum):
 class ButtonUserDataConfigAction(StrEnum):
     """User data configuration action types for button callbacks.
 
-    This enum defines the specific actions available in the user data
-    configuration workflow, used as values for ButtonDataKey.UserDataConfigAction.
+    This enum defines the specific actions available in the user-memories
+    configuration wizard (``/knowledge_config``), used as values for
+    ButtonDataKey.UserDataConfigAction. The wizard browses a user's own
+    ``user_memories`` rows by type and lets them view/delete individual ones.
 
     Attributes:
-        Init: Initialize user data configuration workflow.
+        Init: Initialize wizard (chat picker).
         Cancel: Cancel current configuration.
-        ChatSelected: Chat has been selected.
-        KeySelected: Key has been selected.
-        SetValue: Set a value for the selected key.
-        DeleteKey: Delete the selected key.
-        ClearChatData: Clear all data for the selected chat.
+        ChatSelected: Chat has been selected; render the MemoryType picker.
+        TopicSelected: A MemoryType (or ``"all"``) was picked; render the
+            paginated memory list. May also carry an optional ``Tag`` filter
+            (Phase 5b) that narrows the list to memories carrying that tag.
+        MemorySelected: A specific ``memory_id`` was picked; render the
+            per-memory detail view.
+        DeleteMemory: Delete the selected memory by id (unrestricted).
+        NextPage: Advance the memory list to the next page (offset +PAGE_SIZE).
+        PrevPage: Step the memory list back one page (offset -PAGE_SIZE,
+            clamped at 0).
+        TagFilter: Render the tag picker for tag-based filtering of the
+            memory list (Phase 5b). Selecting a tag returns to
+            ``TopicSelected`` with the tag applied.
     """
 
     Init = "init"
     Cancel = "cancel"
 
     ChatSelected = "c"
-    KeySelected = "k"
-    SetValue = "s"
-    DeleteKey = "d"
-    ClearChatData = "clear"
+    TopicSelected = "ts"
+    MemorySelected = "ms"
+    DeleteMemory = "dm"
+    NextPage = "np"
+    PrevPage = "pp"
+    TagFilter = "tf"
 
     @classmethod
     def all(cls) -> list[str]:

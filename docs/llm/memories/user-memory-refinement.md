@@ -1,5 +1,41 @@
 # User Memory Refinement — Task Memory
 
+> **⚠ SUPERSEDED (2026-07-07) by the unified user-memories system.** This
+> doc describes the **rolling-bio** subsystem that was replaced. The
+> canonical durable doc is now
+> [`user-memories.md`](user-memories.md); the implementation spec is
+> [`docs/plans/user-memories-v1.md`](../../plans/user-memories-v1.md).
+>
+> **What is superseded (described below as LIVE behaviour — no longer
+> shipped):**
+> - The rolling-bio **summary** artefact and its injection as
+>   `EnsuredMessage.userSummary` (via `applyUserMetadata`, serialised by
+>   `formatForLLM` under the `userSummary` key) — removed entirely in
+>   Phase 4b of the user-memories plan (§9.3). Replaced by the structured
+>   `<user-memories>` block (`_buildMemoriesBlock`).
+> - The `_runRefinement` write of the `summary` blob — `_runRefinement` now
+>   persists only the message cursor; memories are authored live via the
+>   `add_memory` / `delete_memory` / `search_memories` tools.
+> - The `add_user_data` / `delete_user_data` LLM tools — retired.
+>
+> **What is still accurate and was adapted for the new system** (the
+> accounting / cron / locking / cursor machinery is unchanged and still
+> governs `_runRefinement`):
+> - The `_dtCronJob` (60s) + `_accounting` counter (credit-consumed reset) +
+>   single global `_refineLock` + online top-K due-list selection —
+>   "Concurrency model" below is accurate.
+> - The message cursor (`lastProcessedMessageId` /
+>   `lastProcessedMessageDate`) persisted to
+>   `chat_users.metadata.memoryRefinement[str(threadId)]` via the
+>   read-modify-write + `chatUserMetadataLock()` pattern — still used
+>   (cursor-only now; the `summary` key is gone).
+> - The nested-metadata-write invariant + ADR-014/015 lock ordering — still
+>   apply (see "CRITICAL gotcha — nested metadata writes").
+> - `_makeSyntheticEnsuredMessage` — reused by the new tools.
+>
+> This file is retained for historical context. Do not implement from it;
+> implement from [`user-memories.md`](user-memories.md).
+
 Durable implementation notes for the background per-`(chat, user, thread)` memory-refinement subsystem. Implemented 2026-07-04 from [`docs/plans/memory-refine-plan-v1.md`](../../plans/memory-refine-plan-v1.md) (status line there updated to IMPLEMENTED). Owner handler: `UserDataHandler` (`internal/bot/common/handlers/user_data.py`).
 
 ## Subsystem at a glance
@@ -7,7 +43,7 @@ Durable implementation notes for the background per-`(chat, user, thread)` memor
 - Every incoming message increments an in-memory `UserDataHandler._accounting[(chatId, userId, threadId)]` counter (gated by the per-chat `MEMORY_REFINEMENT_ENABLED` setting), at the very top of `newMessageHandler`, before any other gate.
 - A 60s `CRON_JOB` (`_dtCronJob`) scans the counter; when a user crosses the count threshold (`5`) OR the time threshold (6h since the in-memory `_lastRefinedTS`), it runs `_runRefinement`. All `[user-memory]` config is read ONCE in `__init__` and cached as instance attributes (`_memoryRefineEnabled`, `_memoryCountThreshold`, `_memoryTimeThresholdSeconds`, `_memoryMinMessagesToRefine`, `_memoryMaxMessagesPerRun`, `_memoryMaxRefinesPerTick`); the cron hot path and `_runRefinement` perform NO `configManager.get(...)` calls.
 - `_runRefinement` fetches the user's recent messages via `getChatMessagesSince` (new `userId` filter), renders them, and calls `LLMService.generateTextViaLLM` with `chatId=None` (skips rate-limiting) and a per-tool dict: `ADD_USER_DATA`, `DELETE_USER_DATA`, `SEARCH_MESSAGES`, `GET_CURRENT_DATETIME`. The resulting summary text replaces the old one. If the fetch hits the `max-messages-per-run` cap (default 128), older overflow messages are silently skipped and a `logger.warning` is emitted (accepted risk: a burst >128 permanently loses the tail for that run — see [`../../plans/memory-refine-plan-v1.md`](../../plans/memory-refine-plan-v1.md) §16).
-- The summary is injected into normal chat context as `EnsuredMessage.userSummary` (omitted from JSON when `None` → byte-identical default output).
+- ~~The summary is injected into normal chat context as `EnsuredMessage.userSummary` (omitted from JSON when `None` → byte-identical default output).~~ **[SUPERSEDED]** — `userSummary` / `applyUserMetadata` / the `formatForLLM` key were removed in Phase 4b; replaced by the structured `<user-memories>` block (`_buildMemoriesBlock`).
 
 ## Storage convention (NO migration)
 
@@ -52,6 +88,15 @@ This is also recorded as a reusable gotcha in [`tasks.md`](../tasks.md) §3.
 - **Bail-path TS reset** — `_runRefinement` sets `self._lastRefinedTS[(chatId, userId, threadId)] = int(time.time())` on the `< min-messages` bail path, so idle (e.g. post-restart, previously-refined) users aren't re-scanned and re-bailed on every 60s tick until enough new messages accumulate. The count threshold still fires independently. Without this the cron hot-loops over idle due-by-time users.
 
 ## Context injection sites
+
+> **[SUPERSEDED — entire section.]** Every site below (`applyUserMetadata`,
+> the `_updateEMessageUserData` / `_processMessageRec` metadata fetch, the
+> `formatForLLM` `userSummary` key, the `chat-prompt-suffix` docs line) was
+> removed in Phase 4b. The structured `<user-memories>` block
+> (`_buildMemoriesBlock`) is now injected at four system-message
+> construction sites instead — see [`user-memories.md`](user-memories.md)
+> "Injection". This section is kept verbatim as a record of how the old
+> system wired the summary into context.
 
 - `EnsuredMessage.applyUserMetadata(metadata)` — reads `metadata.get("memoryRefinement", {}).get(str(threadId or DEFAULT_THREAD_ID), {}).get("summary")` and, when non-empty, assigns it to `self.userSummary`. Pure reader of the passed-in dict; does NOT persist `metadata`.
 - `BaseBotHandler._updateEMessageUserData` (`base.py`) and `HandlersManager._processMessageRec` (`manager.py`) fetch the full `UserMetadataDict` via `cache.getUserMetadata(...)` and pass it to `ensuredMessage.applyUserMetadata(...)`. Intentionally NOT gated on the per-chat `MEMORY_REFINEMENT_ENABLED` setting at injection — the write side (`UserDataHandler._persistMemoryEntry`) only persists summaries when the feature is on, so absence of a summary in metadata is the gate. A stale summary for a since-disabled chat will still be injected; this is accepted as the intended simplification.
@@ -102,7 +147,7 @@ All five are `page = ChatSettingsPage.FRIEND` in `_chatSettingsInfo` (`internal/
 | `MEMORY_REFINE_SYSTEM_PROMPT` | `memory-refine-system-prompt` | STRING |
 | `MEMORY_REFINE_USER_PROMPT_TEMPLATE` | `memory-refine-user-prompt-template` | STRING |
 
-New tool: `ToolName.DELETE_USER_DATA = "delete_user_data"` (`internal/bot/constants.py`), registered alongside the existing `ADD_USER_DATA`.
+New tool: ~~`ToolName.DELETE_USER_DATA = "delete_user_data"` (`internal/bot/constants.py`), registered alongside the existing `ADD_USER_DATA`.~~ **[SUPERSEDED]** — both `add_user_data` and `delete_user_data` were retired; the new tools are `add_memory` / `delete_memory` / `search_memories` (see [`user-memories.md`](user-memories.md) "LLM tools").
 
 ## Synthetic EnsuredMessage for background tool calls
 

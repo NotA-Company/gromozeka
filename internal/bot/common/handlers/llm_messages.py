@@ -52,6 +52,7 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import MessageCategory
+from internal.database.utils import DEFAULT_THREAD_ID
 from internal.services.llm import ExtraDataDict, LLMService, UseToolsType
 from lib.ai import (
     ModelMessage,
@@ -272,11 +273,12 @@ class LLMMessageHandler(BaseBotHandler):
 
         try:
             useTools = chatSettings[ChatSettingsKey.USE_TOOLS].toBool()
-            useSandbox = chatSettings[ChatSettingsKey.ALLOW_SANDBOX].toBool()
-            if useTools and not all([useSandbox]):
-                # Disable tools if they are disabled for given chatId
-                useTools = {constants.TOOLS_DEFAULT_DICT_KEY: True}
-                if not useSandbox:
+            if useTools:
+                useTools = {
+                    constants.TOOLS_DEFAULT_DICT_KEY: True,
+                    constants.ToolName.DELETE_MEMORY: False,
+                }
+                if not chatSettings[ChatSettingsKey.ALLOW_SANDBOX].toBool():
                     useTools.update(
                         {
                             constants.ToolName.RUN_PYTHON: False,
@@ -284,6 +286,13 @@ class LLMMessageHandler(BaseBotHandler):
                             constants.ToolName.SANDBOX_LIST_LIBRARIES: False,
                             constants.ToolName.SANDBOX_READ_FILE: False,
                             constants.ToolName.SANDBOX_SEND_FILE: False,
+                        }
+                    )
+                if not chatSettings[ChatSettingsKey.MEMORY_INJECTION_ENABLED].toBool():
+                    useTools.update(
+                        {
+                            constants.ToolName.ADD_MEMORY: False,
+                            constants.ToolName.SEARCH_MEMORIES: False,
                         }
                     )
             mlRet = await self._generateTextViaLLM(
@@ -593,6 +602,20 @@ class LLMMessageHandler(BaseBotHandler):
                     await ensuredReply.toModelMessage(self.db, format=llmMessageFormat, role="assistant"),
                     await ensuredMessage.toModelMessage(self.db, format=llmMessageFormat, role="user"),
                 ]
+                # User-memories v1 (Phase 3a) — inject the <user-memories> block
+                # into the freshly-built system message. This fallback path
+                # fires when getThreadByMessageForLLM returned [] (the root
+                # message is not in the DB), so the block would otherwise be
+                # missing entirely for a reply-to-bot in this error path
+                # (plan §9.2 — mirrors site 2 in handleMention).
+                memoriesBlock = await self._buildMemoriesBlock(
+                    ensuredMessage.recipient.id,
+                    ensuredMessage.sender.id,
+                    ensuredMessage.threadId if ensuredMessage.threadId is not None else DEFAULT_THREAD_ID,
+                    currentUserMessageText=ensuredMessage.formatMessageText(),
+                    chatSettings=chatSettings,
+                )
+                self._injectMemoriesBlock(reqMessages, memoriesBlock)
 
             if (
                 await self._sendLLMChatMessage(
@@ -693,6 +716,19 @@ class LLMMessageHandler(BaseBotHandler):
                     + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
                 ),
             ]
+
+            # User-memories v1 (Phase 3a) — inject the <user-memories> block
+            # into the system message (plan §9.2 site 2). The memories are
+            # about the incoming-message sender; the message text drives
+            # relevant-mode search.
+            memoriesBlock = await self._buildMemoriesBlock(
+                ensuredMessage.recipient.id,
+                ensuredMessage.sender.id,
+                ensuredMessage.threadId if ensuredMessage.threadId is not None else DEFAULT_THREAD_ID,
+                currentUserMessageText=ensuredMessage.formatMessageText(),
+                chatSettings=chatSettings,
+            )
+            self._injectMemoriesBlock(reqMessages, memoriesBlock)
 
             # Add Parent message if any
             if ensuredMessage.isReply:
@@ -845,6 +881,19 @@ class LLMMessageHandler(BaseBotHandler):
                         + chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROMPT].toStr(),
                     ),
                 ]
+                # User-memories v1 (Phase 3a) — inject the <user-memories>
+                # block into the freshly-built system message (plan §9.2 site
+                # 3, non-thread branch). The thread branch above already gets
+                # it via getThreadByMessageForLLM (site 1), so injecting there
+                # too would double-inject.
+                memoriesBlock = await self._buildMemoriesBlock(
+                    chatId,
+                    ensuredMessage.sender.id,
+                    ensuredMessage.threadId if ensuredMessage.threadId is not None else DEFAULT_THREAD_ID,
+                    currentUserMessageText=ensuredMessage.formatMessageText(),
+                    chatSettings=chatSettings,
+                )
+                self._injectMemoriesBlock(storedMessages, memoriesBlock)
                 # We need to use deque as we add messages to begin of queue (to not reverse db result)
                 # And we do not want to reverse db result as we do not want to process ALL retrieved
                 # messages if some message already has summarized context (i.e. metadata["randomContext"])

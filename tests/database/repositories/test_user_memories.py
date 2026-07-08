@@ -1,0 +1,1056 @@
+"""Tests for :class:`UserMemoriesRepository`.
+
+Covers the full lifecycle on the ``user_memories`` table:
+
+- Phase 1a relational CRUD: ``addMemory`` / ``updateMemory`` /
+  ``deleteMemory`` / ``deleteMemoriesByQuery`` /
+  ``getPermanentMemories`` / ``getLatestMemories``.
+- Phase 1b vector layer: ``searchMemories`` (filter-only + semantic
+  modes), ``saveMemoryEmbedding`` (lazy vec0 creation),
+  ``deleteMemoryEmbedding``, ``getMemoriesWithoutEmbeddings`` /
+  ``deleteObsoleteMemoryEmbeddings`` (model-drift regeneration).
+
+Uses the shared ``testDatabase`` fixture from ``tests/conftest.py`` so
+each test gets a fresh in-memory SQLite database with all migrations
+(including ``migration_020``) applied — no mocks. Semantic-mode tests
+skip cleanly when sqlite-vec is not available (mirrors
+``test_chat_embeddings.py``).
+"""
+
+# pyright: reportTypedDictNotRequiredAccess=false
+
+import array
+import datetime
+import uuid
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from internal.bot.models.memory_type import MemoryType
+from internal.database import Database
+from internal.database.providers.sqlite3 import _SQLITE_VEC_AVAILABLE, SQLite3Provider
+from internal.database.repositories.user_memories import UserMemoryDict
+
+CHAT_ID = 1
+USER_ID = 100
+
+
+def _newMemoryId() -> str:
+    """Generate a fresh app-side memory id (UUID hex, mirroring the migration)."""
+    return uuid.uuid4().hex
+
+
+class TestUserMemoriesRepository:
+    """Phase-1a behavioural coverage for the unified ``user_memories`` store."""
+
+    @staticmethod
+    async def _add(
+        db: Database,
+        *,
+        chatId: int = CHAT_ID,
+        userId: int = USER_ID,
+        memoryType: str = MemoryType.FACT,
+        content: str = "some content",
+        tags: list[str] | None = None,
+        permanent: bool = False,
+        threadId: int | None = None,
+        source: str = "refinement",
+    ) -> str:
+        """Insert a memory and return its generated id."""
+        memoryId = _newMemoryId()
+        await db.userMemories.addMemory(
+            chatId=chatId,
+            userId=userId,
+            memoryId=memoryId,
+            type=memoryType,
+            content=content,
+            tags=tags if tags is not None else [],
+            permanent=permanent,
+            threadId=threadId,
+            source=source,
+        )
+        return memoryId
+
+    ###
+    # Round-trip: add → getPermanentMemories / getLatestMemories
+    ###
+    async def test_addMemory_getPermanentMemories_roundTrip(self, testDatabase: Database) -> None:
+        """A permanent cross-thread fact round-trips through getPermanentMemories with full dict shape."""
+        memoryId = await self._add(
+            testDatabase,
+            content="lives in Berlin",
+            tags=["geo"],
+            permanent=True,
+            threadId=None,
+            memoryType=MemoryType.FACT,
+            source="refinement",
+        )
+
+        result = await testDatabase.userMemories.getPermanentMemories(CHAT_ID, USER_ID, threadId=0)
+
+        assert len(result) == 1
+        row: UserMemoryDict = result[0]
+        assert row["chat_id"] == CHAT_ID
+        assert row["user_id"] == USER_ID
+        assert row["memory_id"] == memoryId
+        assert row["type"] == MemoryType.FACT
+        assert row["content"] == "lives in Berlin"
+        assert row["tags"] == ["geo"]
+        assert row["permanent"] is True
+        assert row["source"] == "refinement"
+        assert row["thread_id"] is None
+        assert row["embedding_model"] is None
+        assert row["embedding_dimensions"] is None
+        assert row["created_at"] is not None
+        assert row["updated_at"] is not None
+
+    async def test_addMemory_getLatestMemories_roundTrip(self, testDatabase: Database) -> None:
+        """getLatestMemories returns ONLY ephemeral memories, newest-first; permanent is excluded.
+
+        A permanent row in the same thread must NOT surface in
+        getLatestMemories (it is served by getPermanentMemories) — this
+        locks the ephemeral-only contract so a thread-scoped permanent
+        bio never renders twice in the injection layer.
+        """
+        await self._add(testDatabase, content="older", permanent=False, threadId=5)
+        await self._add(testDatabase, content="newer", permanent=False, threadId=5)
+        # Permanent row in the SAME thread — must be excluded from getLatestMemories.
+        await self._add(
+            testDatabase,
+            content="permanent bio",
+            permanent=True,
+            threadId=5,
+            memoryType=MemoryType.BIO,
+        )
+
+        latest = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5)
+        permanent = await testDatabase.userMemories.getPermanentMemories(CHAT_ID, USER_ID, threadId=5)
+
+        # getLatestMemories is ephemeral-only: the permanent row is excluded.
+        assert len(latest) == 2
+        # Newest-updated-first.
+        assert latest[0]["content"] == "newer"
+        assert latest[1]["content"] == "older"
+        for row in latest:
+            assert row["thread_id"] == 5
+            assert row["permanent"] is False
+
+        # getPermanentMemories serves the permanent row.
+        assert len(permanent) == 1
+        assert permanent[0]["content"] == "permanent bio"
+        assert permanent[0]["permanent"] is True
+
+    async def test_getLatestMemories_threadScoped(self, testDatabase: Database) -> None:
+        """getLatestMemories only returns memories for the requested thread."""
+        await self._add(testDatabase, content="thread5", threadId=5)
+        await self._add(testDatabase, content="thread9", threadId=9)
+
+        result5 = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5)
+        result9 = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=9)
+
+        assert len(result5) == 1 and result5[0]["content"] == "thread5"
+        assert len(result9) == 1 and result9[0]["content"] == "thread9"
+
+    ###
+    # getPermanentMemories: cross-thread + this-thread merge
+    ###
+    async def test_getPermanentMemories_crossAndThreadMerge(self, testDatabase: Database) -> None:
+        """getPermanentMemories merges cross-thread permanent (NULL thread_id) with this-thread permanent.
+
+        A thread-scoped permanent bio for a DIFFERENT thread must NOT surface.
+        """
+        # Cross-thread permanent fact (thread_id NULL).
+        await self._add(
+            testDatabase,
+            content="cross-thread fact",
+            permanent=True,
+            threadId=None,
+            memoryType=MemoryType.FACT,
+        )
+        # Permanent bio scoped to thread 5.
+        await self._add(
+            testDatabase,
+            content="bio for thread 5",
+            permanent=True,
+            threadId=5,
+            memoryType=MemoryType.BIO,
+        )
+        # Permanent bio scoped to thread 9 (must NOT surface for thread 5).
+        await self._add(
+            testDatabase,
+            content="bio for thread 9",
+            permanent=True,
+            threadId=9,
+            memoryType=MemoryType.BIO,
+        )
+
+        thread5 = await testDatabase.userMemories.getPermanentMemories(CHAT_ID, USER_ID, threadId=5)
+        thread9 = await testDatabase.userMemories.getPermanentMemories(CHAT_ID, USER_ID, threadId=9)
+
+        thread5Contents = {r["content"] for r in thread5}
+        assert thread5Contents == {"cross-thread fact", "bio for thread 5"}
+
+        thread9Contents = {r["content"] for r in thread9}
+        assert thread9Contents == {"cross-thread fact", "bio for thread 9"}
+
+    async def test_getPermanentMemories_excludesEphemeral(self, testDatabase: Database) -> None:
+        """getPermanentMemories never returns non-permanent rows."""
+        await self._add(testDatabase, content="permanent", permanent=True, threadId=None)
+        await self._add(testDatabase, content="ephemeral", permanent=False, threadId=5)
+
+        result = await testDatabase.userMemories.getPermanentMemories(CHAT_ID, USER_ID, threadId=5)
+        assert {r["content"] for r in result} == {"permanent"}
+
+    ###
+    # updateMemory: partial updates
+    ###
+    async def test_updateMemory_contentOnly(self, testDatabase: Database) -> None:
+        """Patching content leaves tags/type untouched."""
+        memoryId = await self._add(
+            testDatabase,
+            content="old",
+            tags=["t1"],
+            memoryType=MemoryType.FACT,
+            threadId=5,
+        )
+
+        ok = await testDatabase.userMemories.updateMemory(CHAT_ID, USER_ID, memoryId, content="new")
+        assert ok is True
+
+        rows = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5)
+        assert len(rows) == 1
+        assert rows[0]["content"] == "new"
+        assert rows[0]["tags"] == ["t1"]
+        assert rows[0]["type"] == MemoryType.FACT
+
+    async def test_updateMemory_tagsOnly(self, testDatabase: Database) -> None:
+        """Patching tags leaves content/type untouched."""
+        memoryId = await self._add(
+            testDatabase,
+            content="keep",
+            tags=["old"],
+            memoryType=MemoryType.FACT,
+            threadId=5,
+        )
+
+        ok = await testDatabase.userMemories.updateMemory(CHAT_ID, USER_ID, memoryId, tags=["a", "b"])
+        assert ok is True
+
+        rows = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5)
+        assert len(rows) == 1
+        assert rows[0]["content"] == "keep"
+        assert rows[0]["tags"] == ["a", "b"]
+        assert rows[0]["type"] == MemoryType.FACT
+
+    async def test_updateMemory_typeOnly(self, testDatabase: Database) -> None:
+        """Patching type leaves content/tags untouched."""
+        memoryId = await self._add(
+            testDatabase,
+            content="keep",
+            tags=["t"],
+            memoryType=MemoryType.FACT,
+            threadId=5,
+        )
+
+        ok = await testDatabase.userMemories.updateMemory(CHAT_ID, USER_ID, memoryId, type=MemoryType.EVENT)
+        assert ok is True
+
+        rows = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5)
+        assert len(rows) == 1
+        assert rows[0]["content"] == "keep"
+        assert rows[0]["tags"] == ["t"]
+        assert rows[0]["type"] == MemoryType.EVENT
+
+    async def test_updateMemory_noMatchReturnsFalse(self, testDatabase: Database) -> None:
+        """Updating a nonexistent memory id returns False and writes nothing."""
+        ok = await testDatabase.userMemories.updateMemory(CHAT_ID, USER_ID, "does-not-exist", content="x")
+        assert ok is False
+
+    async def test_updateMemory_noFieldsReturnsFalse(self, testDatabase: Database) -> None:
+        """Calling updateMemory with no fields is a no-op returning False."""
+        memoryId = await self._add(testDatabase, content="keep", threadId=5)
+        ok = await testDatabase.userMemories.updateMemory(CHAT_ID, USER_ID, memoryId)
+        assert ok is False
+
+    ###
+    # deleteMemory
+    ###
+    async def test_deleteMemory(self, testDatabase: Database) -> None:
+        """deleteMemory removes the row and returns True; re-deleting returns False."""
+        memoryId = await self._add(testDatabase, content="bye", threadId=5)
+
+        ok = await testDatabase.userMemories.deleteMemory(CHAT_ID, USER_ID, memoryId)
+        assert ok is True
+
+        rows = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5)
+        assert rows == []
+
+        # Re-delete the same id.
+        ok2 = await testDatabase.userMemories.deleteMemory(CHAT_ID, USER_ID, memoryId)
+        assert ok2 is False
+
+    async def test_deleteMemory_canTargetPermanent(self, testDatabase: Database) -> None:
+        """Explicit by-id deleteMemory is unrestricted — it MAY remove a permanent memory."""
+        memoryId = await self._add(testDatabase, content="permanent", permanent=True, threadId=None)
+        ok = await testDatabase.userMemories.deleteMemory(CHAT_ID, USER_ID, memoryId)
+        assert ok is True
+        assert await testDatabase.userMemories.getPermanentMemories(CHAT_ID, USER_ID, threadId=0) == []
+
+    ###
+    # deleteMemoriesByQuery: permanent guard + ephemeral deletion
+    ###
+    async def test_deleteMemoriesByQuery_preservesPermanent(self, testDatabase: Database) -> None:
+        """deleteMemoriesByQuery adds AND permanent = 0 — a matching permanent row survives."""
+        # Ephemeral memories that match the filter (thread 5).
+        await self._add(testDatabase, content="eph1", permanent=False, threadId=5)
+        await self._add(testDatabase, content="eph2", permanent=False, threadId=5)
+        # Permanent memory that ALSO matches the thread filter — must survive.
+        await self._add(testDatabase, content="perm-survives", permanent=True, threadId=5)
+
+        deleted = await testDatabase.userMemories.deleteMemoriesByQuery(CHAT_ID, USER_ID, threadId=5)
+        assert deleted == 2
+
+        # The permanent row survives (deleteMemoriesByQuery is ephemeral-only).
+        # Verified via getPermanentMemories — getLatestMemories is now
+        # ephemeral-only and would correctly return nothing here.
+        remaining = await testDatabase.userMemories.getPermanentMemories(CHAT_ID, USER_ID, threadId=5)
+        assert len(remaining) == 1
+        assert remaining[0]["content"] == "perm-survives"
+        assert remaining[0]["permanent"] is True
+
+    async def test_deleteMemoriesByQuery_typeFilter(self, testDatabase: Database) -> None:
+        """The type filter restricts the ephemeral bulk delete."""
+        await self._add(testDatabase, content="pref", permanent=False, threadId=5, memoryType=MemoryType.PREFERENCE)
+        await self._add(testDatabase, content="fact", permanent=False, threadId=5, memoryType=MemoryType.FACT)
+
+        deleted = await testDatabase.userMemories.deleteMemoriesByQuery(
+            CHAT_ID, USER_ID, threadId=5, type=MemoryType.PREFERENCE
+        )
+        assert deleted == 1
+
+        remaining = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5)
+        assert len(remaining) == 1
+        assert remaining[0]["type"] == MemoryType.FACT
+
+    async def test_deleteMemoriesByQuery_noThreadScope(self, testDatabase: Database) -> None:
+        """threadId=None deletes ephemeral memories across all threads for the user."""
+        await self._add(testDatabase, content="t5", permanent=False, threadId=5)
+        await self._add(testDatabase, content="t9", permanent=False, threadId=9)
+        await self._add(testDatabase, content="perm", permanent=True, threadId=None)
+
+        deleted = await testDatabase.userMemories.deleteMemoriesByQuery(CHAT_ID, USER_ID, threadId=None)
+        assert deleted == 2
+
+        # Permanent cross-thread survives.
+        permanent = await testDatabase.userMemories.getPermanentMemories(CHAT_ID, USER_ID, threadId=0)
+        assert len(permanent) == 1 and permanent[0]["content"] == "perm"
+
+    async def test_deleteMemoriesByQuery_olderThanDays(self, testDatabase: Database) -> None:
+        """olderThanDays filters by created_at age.
+
+        We cannot back-date created_at through the repository (it always
+        stamps now), so this test seeds an old row directly via the
+        provider, then confirms only the old ephemeral row is deleted.
+        """
+        # Seed an old ephemeral row directly with a back-dated created_at.
+        sqlProvider = await testDatabase.manager.getProvider(chatId=CHAT_ID, readonly=False)
+        oldTs = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=90)
+        await sqlProvider.execute(
+            """
+            INSERT INTO user_memories
+                (chat_id, user_id, thread_id, memory_id, type, content, tags,
+                 permanent, source, embedding_model, embedding_dimensions,
+                 created_at, updated_at)
+            VALUES
+                (:chatId, :userId, :threadId, :memoryId, 'fact', :content, '[]',
+                 0, 'refinement', NULL, NULL, :createdAt, :updatedAt)
+            """,
+            {
+                "chatId": CHAT_ID,
+                "userId": USER_ID,
+                "threadId": 5,
+                "memoryId": "old-ephemeral",
+                "content": "old row",
+                "createdAt": oldTs,
+                "updatedAt": oldTs,
+            },
+        )
+        # Fresh ephemeral row (created now).
+        await self._add(testDatabase, content="fresh", permanent=False, threadId=5)
+
+        deleted = await testDatabase.userMemories.deleteMemoriesByQuery(CHAT_ID, USER_ID, threadId=5, olderThanDays=30)
+        assert deleted == 1
+
+        remaining = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5)
+        assert len(remaining) == 1
+        assert remaining[0]["content"] == "fresh"
+
+    ###
+    # getDistinctTags (Phase 5b — tag-filter picker source)
+    ###
+    async def test_getDistinctTags_returnsUniqueSortedTags(self, testDatabase: Database) -> None:
+        """Distinct tags across rows are returned as a sorted, de-duplicated list.
+
+        Seeds 3 memories with overlapping tags ``["a","b"]``, ``["b","c"]``,
+        ``["a"]`` and asserts ``getDistinctTags`` returns ``["a","b","c"]``
+        (unique + sorted).
+        """
+        await self._add(testDatabase, content="m1", tags=["b", "a"])
+        await self._add(testDatabase, content="m2", tags=["c", "b"])
+        await self._add(testDatabase, content="m3", tags=["a"])
+
+        result = await testDatabase.userMemories.getDistinctTags(CHAT_ID, USER_ID)
+
+        assert result == ["a", "b", "c"]
+
+    async def test_getDistinctTags_filteredByType(self, testDatabase: Database) -> None:
+        """The optional ``memoryType`` filter narrows the tag set to that type.
+
+        Seeds ``FACT`` memories tagged ``["geo"]`` and ``PREFERENCE`` memories
+        tagged ``["vegan"]``, then asserts ``getDistinctTags(memoryType=FACT)``
+        returns only ``["geo"]`` and ``getDistinctTags(memoryType=PREFERENCE)``
+        returns only ``["vegan"]``.
+        """
+        await self._add(
+            testDatabase,
+            content="fact-geo",
+            tags=["geo"],
+            memoryType=MemoryType.FACT,
+        )
+        await self._add(
+            testDatabase,
+            content="pref-vegan",
+            tags=["vegan"],
+            memoryType=MemoryType.PREFERENCE,
+        )
+
+        factTags = await testDatabase.userMemories.getDistinctTags(CHAT_ID, USER_ID, MemoryType.FACT)
+        assert factTags == ["geo"]
+
+        prefTags = await testDatabase.userMemories.getDistinctTags(CHAT_ID, USER_ID, MemoryType.PREFERENCE)
+        assert prefTags == ["vegan"]
+
+        # No type filter → union of both.
+        allTags = await testDatabase.userMemories.getDistinctTags(CHAT_ID, USER_ID)
+        assert allTags == ["geo", "vegan"]
+
+    async def test_getDistinctTags_emptyReturnsEmptyList(self, testDatabase: Database) -> None:
+        """No memories (or only tag-less memories) → empty list, never raises."""
+        # No memories at all.
+        assert await testDatabase.userMemories.getDistinctTags(CHAT_ID, USER_ID) == []
+
+        # Memory with empty tags list.
+        await self._add(testDatabase, content="tagless", tags=[])
+        assert await testDatabase.userMemories.getDistinctTags(CHAT_ID, USER_ID) == []
+
+    async def test_getDistinctTags_scopedToUserAndChat(self, testDatabase: Database) -> None:
+        """getDistinctTags never leaks tags across users or chats."""
+        await self._add(testDatabase, chatId=1, userId=100, content="a", tags=["alpha"])
+        await self._add(testDatabase, chatId=1, userId=200, content="b", tags=["beta"])
+        await self._add(testDatabase, chatId=2, userId=100, content="c", tags=["gamma"])
+
+        assert await testDatabase.userMemories.getDistinctTags(1, 100) == ["alpha"]
+        assert await testDatabase.userMemories.getDistinctTags(1, 200) == ["beta"]
+        assert await testDatabase.userMemories.getDistinctTags(2, 100) == ["gamma"]
+
+    async def test_getDistinctTags_skipsMalformedJsonTags(self, testDatabase: Database) -> None:
+        """Rows with a non-JSON ``tags`` value are skipped, not crashed on.
+
+        Seeds a valid memory tagged ``["a", "b"]``, then corrupts a second
+        row's ``tags`` column to the literal string ``'not-json'`` via raw
+        SQL (simulating a backfill gone wrong / hand-edited row). Asserts
+        ``getDistinctTags`` returns only the valid tags and does not raise.
+        """
+        await self._add(testDatabase, content="good", tags=["a", "b"])
+        badId = await self._add(testDatabase, content="corrupted", tags=["x", "y"])
+
+        # Corrupt the second row's tags column to a non-JSON string.
+        sqlProvider = await testDatabase.manager.getProvider(chatId=CHAT_ID, readonly=False)
+        await sqlProvider.execute(
+            "UPDATE user_memories SET tags = :tags WHERE memory_id = :memoryId",
+            {"tags": "not-json", "memoryId": badId},
+        )
+
+        result = await testDatabase.userMemories.getDistinctTags(CHAT_ID, USER_ID)
+
+        assert result == ["a", "b"]
+
+    async def test_getDistinctTags_skipsNullTags(self, testDatabase: Database) -> None:
+        """Rows with an empty ``tags`` value are skipped gracefully.
+
+        Seeds a valid memory tagged ``["a", "b"]``, then blanks a second
+        row's ``tags`` column to ``''`` via raw SQL (the column is ``NOT
+        NULL``, so this exercises the realistic empty-string case rather
+        than a literal NULL). Asserts ``getDistinctTags`` returns only the
+        valid tags and does not raise.
+        """
+        await self._add(testDatabase, content="good", tags=["a", "b"])
+        nullId = await self._add(testDatabase, content="blanked", tags=["x", "y"])
+
+        # Blank the second row's tags column to an empty string.
+        sqlProvider = await testDatabase.manager.getProvider(chatId=CHAT_ID, readonly=False)
+        await sqlProvider.execute(
+            "UPDATE user_memories SET tags = :tags WHERE memory_id = :memoryId",
+            {"tags": "", "memoryId": nullId},
+        )
+
+        result = await testDatabase.userMemories.getDistinctTags(CHAT_ID, USER_ID)
+
+        assert result == ["a", "b"]
+
+
+class TestUserMemoriesVectorLayer:
+    """Phase-1b behavioural coverage: search, embedding persistence, regeneration.
+
+    These tests exercise the vec0 vector layer (``searchMemories``
+    semantic mode, ``saveMemoryEmbedding``, ``deleteMemoryEmbedding``,
+    ``getMemoriesWithoutEmbeddings``, ``deleteObsoleteMemoryEmbeddings``).
+    Tests that need vec0 skip cleanly when sqlite-vec is not available
+    (mirror ``test_chat_embeddings.py:244-247``). Filter-only
+    ``searchMemories`` and the regeneration queries work without vec0
+    and run unconditionally.
+    """
+
+    @staticmethod
+    async def _add(
+        db: Database,
+        *,
+        chatId: int = CHAT_ID,
+        userId: int = USER_ID,
+        memoryType: str = MemoryType.FACT,
+        content: str = "some content",
+        tags: list[str] | None = None,
+        permanent: bool = False,
+        threadId: int | None = None,
+        source: str = "refinement",
+    ) -> str:
+        """Insert a memory and return its generated id."""
+        memoryId = _newMemoryId()
+        await db.userMemories.addMemory(
+            chatId=chatId,
+            userId=userId,
+            memoryId=memoryId,
+            type=memoryType,
+            content=content,
+            tags=tags if tags is not None else [],
+            permanent=permanent,
+            threadId=threadId,
+            source=source,
+        )
+        return memoryId
+
+    @staticmethod
+    def _vecAvailable(testDatabase: Database, chatId: int = CHAT_ID) -> bool:
+        """Check whether vec0 is usable in this test environment (sync wrapper)."""
+        return _SQLITE_VEC_AVAILABLE
+
+    ###
+    # searchMemories — filter-only mode
+    ###
+    async def test_searchMemories_filterOnly(self, testDatabase: Database) -> None:
+        """Filter-only mode returns matching rows with score = 0.0; works without vec0.
+
+        Seeds memories with different type/tags/threadId, then queries
+        with ``queryEmbedding=None`` and various filter combinations.
+        Every returned row must have ``score == 0.0``.
+        """
+        await self._add(
+            testDatabase,
+            content="pref1",
+            tags=["vegan"],
+            memoryType=MemoryType.PREFERENCE,
+            threadId=5,
+        )
+        await self._add(
+            testDatabase,
+            content="fact1",
+            tags=["geo"],
+            memoryType=MemoryType.FACT,
+            threadId=5,
+        )
+        await self._add(
+            testDatabase,
+            content="pref2",
+            tags=["dark-mode"],
+            memoryType=MemoryType.PREFERENCE,
+            threadId=9,
+        )
+
+        # Filter by type.
+        prefs = await testDatabase.userMemories.searchMemories(CHAT_ID, USER_ID, type=MemoryType.PREFERENCE, limit=10)
+        assert len(prefs) == 2
+        assert {r["content"] for r in prefs} == {"pref1", "pref2"}
+        for r in prefs:
+            assert r["score"] == 0.0
+
+        # Filter by tag.
+        vegan = await testDatabase.userMemories.searchMemories(CHAT_ID, USER_ID, tags=["vegan"], limit=10)
+        assert len(vegan) == 1
+        assert vegan[0]["content"] == "pref1"
+        assert vegan[0]["score"] == 0.0
+
+        # Filter by threadId.
+        thread5 = await testDatabase.userMemories.searchMemories(CHAT_ID, USER_ID, threadId=5, limit=10)
+        assert {r["content"] for r in thread5} == {"pref1", "fact1"}
+
+        # Filter by permanent.
+        await self._add(
+            testDatabase,
+            content="permanent-fact",
+            permanent=True,
+            threadId=None,
+            memoryType=MemoryType.FACT,
+        )
+        permOnly = await testDatabase.userMemories.searchMemories(CHAT_ID, USER_ID, permanent=True, limit=10)
+        assert len(permOnly) == 1
+        assert permOnly[0]["content"] == "permanent-fact"
+
+    async def test_searchMemories_scoping(self, testDatabase: Database) -> None:
+        """searchMemories never leaks across users or chats."""
+        # User A in chat 1.
+        await self._add(testDatabase, chatId=1, userId=100, content="userA-chat1", threadId=5)
+        # User B in the same chat.
+        await self._add(testDatabase, chatId=1, userId=200, content="userB-chat1", threadId=5)
+        # User A in a different chat.
+        await self._add(testDatabase, chatId=2, userId=100, content="userA-chat2", threadId=5)
+
+        # User A in chat 1 sees only their own memory.
+        resultA = await testDatabase.userMemories.searchMemories(1, 100, limit=10)
+        assert len(resultA) == 1
+        assert resultA[0]["content"] == "userA-chat1"
+
+        # User B in chat 1 sees only their own memory.
+        resultB = await testDatabase.userMemories.searchMemories(1, 200, limit=10)
+        assert len(resultB) == 1
+        assert resultB[0]["content"] == "userB-chat1"
+
+        # User A in chat 2 sees only their chat-2 memory.
+        resultA2 = await testDatabase.userMemories.searchMemories(2, 100, limit=10)
+        assert len(resultA2) == 1
+        assert resultA2[0]["content"] == "userA-chat2"
+
+    async def test_searchMemories_offsetPaginates(self, testDatabase: Database) -> None:
+        """``offset`` skips the first N rows; combined with ``limit`` it pages results.
+
+        Seeds 12 fact memories (all same type/thread) and asserts that
+        ``offset=0, limit=8`` returns the first 8 and ``offset=8, limit=8``
+        returns the remaining 4 — proving the offset threads through to the
+        ``applyPagination`` call in the filter-only path.
+        """
+        for i in range(12):
+            await self._add(testDatabase, content=f"fact-{i:02d}", memoryType=MemoryType.FACT, threadId=5)
+
+        firstPage = await testDatabase.userMemories.searchMemories(
+            CHAT_ID, USER_ID, type=MemoryType.FACT, threadId=5, limit=8, offset=0
+        )
+        assert len(firstPage) == 8
+
+        secondPage = await testDatabase.userMemories.searchMemories(
+            CHAT_ID, USER_ID, type=MemoryType.FACT, threadId=5, limit=8, offset=8
+        )
+        assert len(secondPage) == 4
+        # No overlap between the two pages.
+        firstIds = {r["memory_id"] for r in firstPage}
+        secondIds = {r["memory_id"] for r in secondPage}
+        assert firstIds.isdisjoint(secondIds)
+
+    async def test_searchMemories_threadIdNoneReturnsAllThreads(self, testDatabase: Database) -> None:
+        """``threadId=None`` returns memories from ALL threads (no thread filter).
+
+        Seeds memories in three thread scopes — thread 0, thread 99, and
+        cross-thread ``None`` — then asserts a single ``threadId=None``
+        query returns all three. This is the scoping the
+        ``/knowledge_config`` wizard relies on (it has no thread picker).
+        """
+        await self._add(testDatabase, content="thread-0", memoryType=MemoryType.FACT, threadId=0)
+        await self._add(testDatabase, content="thread-99", memoryType=MemoryType.FACT, threadId=99)
+        await self._add(testDatabase, content="cross-thread", memoryType=MemoryType.FACT, threadId=None)
+
+        allThreads = await testDatabase.userMemories.searchMemories(CHAT_ID, USER_ID, threadId=None, limit=10)
+        contents = {r["content"] for r in allThreads}
+        assert contents == {"thread-0", "thread-99", "cross-thread"}
+
+    async def test_getMemoryReturnsRowByPk(self, testDatabase: Database) -> None:
+        """``getMemory`` fetches a single row by the full (chat, user, memoryId) key.
+
+        Returns the matching ``UserMemoryDict`` or ``None`` when absent.
+        """
+        memId = await self._add(testDatabase, content="fetchable", memoryType=MemoryType.PREFERENCE, threadId=7)
+
+        fetched = await testDatabase.userMemories.getMemory(CHAT_ID, USER_ID, memId)
+        assert fetched is not None
+        assert fetched["memory_id"] == memId
+        assert fetched["content"] == "fetchable"
+        assert fetched["type"] == MemoryType.PREFERENCE
+
+        # Wrong user → None.
+        assert await testDatabase.userMemories.getMemory(CHAT_ID, 999, memId) is None
+        # Wrong memoryId → None.
+        assert await testDatabase.userMemories.getMemory(CHAT_ID, USER_ID, "nope") is None
+
+    ###
+    # searchMemories — semantic mode (requires vec0)
+    ###
+    async def test_searchMemories_semantic(self, testDatabase: Database) -> None:
+        """Semantic mode ranks by cosine similarity; top match has the highest score.
+
+        Embeds 3 memories with distinct orthogonal-ish vectors, queries
+        with one vector, and asserts the matching memory ranks first
+        with ``score > 0`` and results are ordered descending.
+        """
+        if not self._vecAvailable(testDatabase):
+            pytest.skip("sqlite-vec not installed")
+
+        chatId = CHAT_ID
+        userId = USER_ID
+        model = "test-embed"
+
+        # Three memories with distinct content vectors.
+        idA = await self._add(testDatabase, content="apples", threadId=5)
+        idB = await self._add(testDatabase, content="bananas", threadId=5)
+        idC = await self._add(testDatabase, content="cherries", threadId=5)
+
+        # Embed A with [1,0,0], B with [0,1,0], C with [0,0,1].
+        okA = await testDatabase.userMemories.saveMemoryEmbedding(chatId, userId, idA, [1.0, 0.0, 0.0], model)
+        okB = await testDatabase.userMemories.saveMemoryEmbedding(chatId, userId, idB, [0.0, 1.0, 0.0], model)
+        okC = await testDatabase.userMemories.saveMemoryEmbedding(chatId, userId, idC, [0.0, 0.0, 1.0], model)
+        assert okA and okB and okC
+
+        # Query for A's vector → A should rank first with score ≈ 1.0.
+        queryBytes = array.array("f", [1.0, 0.0, 0.0]).tobytes()
+        results = await testDatabase.userMemories.searchMemories(chatId, userId, queryEmbedding=queryBytes, limit=3)
+
+        assert len(results) == 3
+        # Top match is A.
+        assert results[0]["memory_id"] == idA
+        assert results[0]["score"] == pytest.approx(1.0, abs=1e-6)
+        # Scores are in descending order.
+        assert results[0]["score"] >= results[1]["score"] >= results[2]["score"]
+        # All scores are in [0, 1].
+        for r in results:
+            assert 0.0 <= r["score"] <= 1.0
+
+    async def test_searchMemories_semantic_scoping(self, testDatabase: Database) -> None:
+        """Semantic mode honours (chat, user) scoping — no cross-user leaks.
+
+        Embeds memories for two users in the same chat; querying as user
+        A must not surface user B's memories even when the query vector
+        is identical.
+        """
+        if not self._vecAvailable(testDatabase):
+            pytest.skip("sqlite-vec not installed")
+
+        chatId = CHAT_ID
+        model = "test-embed"
+
+        idA = await self._add(testDatabase, chatId=chatId, userId=100, content="A", threadId=5)
+        idB = await self._add(testDatabase, chatId=chatId, userId=200, content="B", threadId=5)
+
+        await testDatabase.userMemories.saveMemoryEmbedding(chatId, 100, idA, [1.0, 0.0], model)
+        await testDatabase.userMemories.saveMemoryEmbedding(chatId, 200, idB, [1.0, 0.0], model)
+
+        queryBytes = array.array("f", [1.0, 0.0]).tobytes()
+        resultsA = await testDatabase.userMemories.searchMemories(chatId, 100, queryEmbedding=queryBytes, limit=5)
+        resultsB = await testDatabase.userMemories.searchMemories(chatId, 200, queryEmbedding=queryBytes, limit=5)
+
+        assert len(resultsA) == 1 and resultsA[0]["memory_id"] == idA
+        assert len(resultsB) == 1 and resultsB[0]["memory_id"] == idB
+
+    async def test_searchMemories_semantic_returnsEmptyWhenUnsupported(self, testDatabase: Database) -> None:
+        """When vec0 is unsupported, semantic mode returns [] (never raises).
+
+        This test patches ``isVectorSearchSupported`` to False on the
+        CONCRETE provider class to verify the guard path unconditionally
+        (even when sqlite-vec IS installed in the test environment).
+        Patching must target ``SQLite3Provider``, not ``BaseSQLProvider``:
+        the concrete class overrides the method, so a base-class patch is
+        shadowed by the subclass's own binding via the MRO.
+        """
+        idA = await self._add(testDatabase, content="x", threadId=5)
+        # Write an embedding (this will be skipped if vec0 isn't
+        # available; the test still validates the search guard).
+        if self._vecAvailable(testDatabase):
+            await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, idA, [1.0, 0.0], "m")
+
+        queryBytes = array.array("f", [1.0, 0.0]).tobytes()
+
+        # Patch on the concrete provider class — the repository resolves
+        # the provider via ``manager.getProvider(...).isVectorSearchSupported()``,
+        # and the instance is a ``SQLite3Provider`` whose own method
+        # binding wins over any base-class patch.
+        with patch.object(
+            SQLite3Provider,
+            "isVectorSearchSupported",
+            new=AsyncMock(return_value=False),
+        ):
+            results = await testDatabase.userMemories.searchMemories(
+                CHAT_ID, USER_ID, queryEmbedding=queryBytes, limit=5
+            )
+
+        assert results == []
+
+    ###
+    # saveMemoryEmbedding — lazy vec0 creation + provenance columns
+    ###
+    async def test_saveMemoryEmbedding_lazyVec0Create(self, testDatabase: Database) -> None:
+        """First write creates the vec0 table; second write reuses it; columns set."""
+        if not self._vecAvailable(testDatabase):
+            pytest.skip("sqlite-vec not installed")
+
+        idA = await self._add(testDatabase, content="A", threadId=5)
+        idB = await self._add(testDatabase, content="B", threadId=5)
+
+        sqlProvider = await testDatabase.manager.getProvider(chatId=CHAT_ID, readonly=True)
+
+        # Before first write: no vec0 table exists.
+        tablesBefore = await sqlProvider.listTables("vec_user_memories_%")
+        realTablesBefore = [t for t in tablesBefore if t.startswith("vec_user_memories_")]
+        assert not any("vec_user_memories_3" in t for t in realTablesBefore)
+
+        # First write → table created, embedding columns set.
+        ok = await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, idA, [1.0, 0.0, 0.0], "modelA")
+        assert ok is True
+
+        tablesAfter = await sqlProvider.listTables("vec_user_memories_%")
+        realTablesAfter = [t for t in tablesAfter if "vec_user_memories_3" in t]
+        assert realTablesAfter, "Expected vec_user_memories_3 table to exist after first write"
+
+        # Provenance columns set on user_memories.
+        rows = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5)
+        rowA = next(r for r in rows if r["memory_id"] == idA)
+        assert rowA["embedding_model"] == "modelA"
+        assert rowA["embedding_dimensions"] == 3
+
+        # Second write → table reused (no new table created).
+        ok2 = await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, idB, [0.0, 1.0, 0.0], "modelA")
+        assert ok2 is True
+
+        tablesAfterSecond = await sqlProvider.listTables("vec_user_memories_%")
+        realTablesAfterSecond = [t for t in tablesAfterSecond if "vec_user_memories_3" in t]
+        assert len(realTablesAfterSecond) == len(realTablesAfter), "No duplicate vec0 tables"
+
+        rows2 = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5)
+        rowB2 = next(r for r in rows2 if r["memory_id"] == idB)
+        assert rowB2["embedding_model"] == "modelA"
+        assert rowB2["embedding_dimensions"] == 3
+
+    ###
+    # deleteMemoryEmbedding
+    ###
+    async def test_deleteMemoryEmbedding(self, testDatabase: Database) -> None:
+        """deleteMemoryEmbedding removes the vec0 row; returns True."""
+        if not self._vecAvailable(testDatabase):
+            pytest.skip("sqlite-vec not installed")
+
+        idA = await self._add(testDatabase, content="A", threadId=5)
+        await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, idA, [1.0, 0.0, 0.0], "modelA")
+
+        # Semantic search finds it.
+        queryBytes = array.array("f", [1.0, 0.0, 0.0]).tobytes()
+        before = await testDatabase.userMemories.searchMemories(CHAT_ID, USER_ID, queryEmbedding=queryBytes, limit=5)
+        assert len(before) == 1
+
+        ok = await testDatabase.userMemories.deleteMemoryEmbedding(CHAT_ID, USER_ID, idA)
+        assert ok is True
+
+        # After delete, semantic search returns [] (vec0 row gone).
+        after = await testDatabase.userMemories.searchMemories(CHAT_ID, USER_ID, queryEmbedding=queryBytes, limit=5)
+        assert after == []
+
+    async def test_deleteMemoryEmbedding_noTable(self, testDatabase: Database) -> None:
+        """deleteMemoryEmbedding returns True (no-op) when no vec0 table exists."""
+        if not self._vecAvailable(testDatabase):
+            pytest.skip("sqlite-vec not installed")
+
+        idA = await self._add(testDatabase, content="A", threadId=5)
+        # No saveMemoryEmbedding call → no vec0 table created.
+
+        ok = await testDatabase.userMemories.deleteMemoryEmbedding(CHAT_ID, USER_ID, idA)
+        assert ok is True
+
+    ###
+    # getMemoriesWithoutEmbeddings
+    ###
+    async def test_getMemoriesWithoutEmbeddings(self, testDatabase: Database) -> None:
+        """Returns never-embedded + stale-model memories; not current-model."""
+        idFresh = await self._add(testDatabase, content="fresh", threadId=5)
+        idStale = await self._add(testDatabase, content="stale", threadId=5)
+        idCurrent = await self._add(testDatabase, content="current", threadId=5)
+
+        if self._vecAvailable(testDatabase):
+            # Embed stale with old model, current with new model.
+            await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, idStale, [1.0, 0.0], "old-model")
+            await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, idCurrent, [1.0, 0.0], "new-model")
+        else:
+            # Without vec0, manually set the columns via provider.
+            sqlProvider = await testDatabase.manager.getProvider(chatId=CHAT_ID, readonly=False)
+            await sqlProvider.execute(
+                "UPDATE user_memories SET embedding_model = :m, embedding_dimensions = :d "
+                "WHERE chat_id = :c AND user_id = :u AND memory_id = :mid",
+                {"c": CHAT_ID, "u": USER_ID, "mid": idStale, "m": "old-model", "d": 2},
+            )
+            await sqlProvider.execute(
+                "UPDATE user_memories SET embedding_model = :m, embedding_dimensions = :d "
+                "WHERE chat_id = :c AND user_id = :u AND memory_id = :mid",
+                {"c": CHAT_ID, "u": USER_ID, "mid": idCurrent, "m": "new-model", "d": 2},
+            )
+
+        # Query with currentModel="new-model": surfaces fresh (NULL) + stale ("old-model").
+        stale = await testDatabase.userMemories.getMemoriesWithoutEmbeddings(CHAT_ID, modelName="new-model", limit=10)
+        staleIds = {r["memory_id"] for r in stale}
+        assert idFresh in staleIds  # never embedded
+        assert idStale in staleIds  # stale model
+        assert idCurrent not in staleIds  # current model
+
+    ###
+    # deleteObsoleteMemoryEmbeddings
+    ###
+    async def test_deleteObsoleteMemoryEmbeddings(self, testDatabase: Database) -> None:
+        """Stale rows have embedding columns reset; current-model rows untouched."""
+        idStale = await self._add(testDatabase, content="stale", threadId=5)
+        idCurrent = await self._add(testDatabase, content="current", threadId=5)
+
+        sqlProvider = await testDatabase.manager.getProvider(chatId=CHAT_ID, readonly=False)
+
+        if self._vecAvailable(testDatabase):
+            await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, idStale, [1.0, 0.0], "old-model")
+            await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, idCurrent, [1.0, 0.0], "new-model")
+        else:
+            # Manually set columns.
+            await sqlProvider.execute(
+                "UPDATE user_memories SET embedding_model = :m, embedding_dimensions = :d "
+                "WHERE chat_id = :c AND user_id = :u AND memory_id = :mid",
+                {"c": CHAT_ID, "u": USER_ID, "mid": idStale, "m": "old-model", "d": 2},
+            )
+            await sqlProvider.execute(
+                "UPDATE user_memories SET embedding_model = :m, embedding_dimensions = :d "
+                "WHERE chat_id = :c AND user_id = :u AND memory_id = :mid",
+                {"c": CHAT_ID, "u": USER_ID, "mid": idCurrent, "m": "new-model", "d": 2},
+            )
+
+        # Call with currentModel="new-model", currentDimensions=2.
+        # Stale (model="old-model") should be reset; current untouched.
+        count = await testDatabase.userMemories.deleteObsoleteMemoryEmbeddings(CHAT_ID, "new-model", 2)
+        assert count == 1
+
+        # Verify columns.
+        rows = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5)
+        staleRow = next(r for r in rows if r["memory_id"] == idStale)
+        currentRow = next(r for r in rows if r["memory_id"] == idCurrent)
+        assert staleRow["embedding_model"] is None
+        assert staleRow["embedding_dimensions"] is None
+        assert currentRow["embedding_model"] == "new-model"
+        assert currentRow["embedding_dimensions"] == 2
+
+        # After reset, getMemoriesWithoutEmbeddings picks up the stale row.
+        stale = await testDatabase.userMemories.getMemoriesWithoutEmbeddings(CHAT_ID, modelName="new-model", limit=10)
+        staleIds = {r["memory_id"] for r in stale}
+        assert idStale in staleIds
+        assert idCurrent not in staleIds
+
+    ###
+    # Gate-1 regression tests
+    ###
+    async def test_saveMemoryEmbedding_vec0WriteFailure_strandProof(self, testDatabase: Database) -> None:
+        """Regression (Fix 1): a vec0 write failure leaves embedding_model NULL.
+
+        When the vec0 INSERT/table-create fails, ``saveMemoryEmbedding``
+        must return ``False`` WITHOUT setting provenance columns. If it
+        set ``embedding_model`` anyway, the memory would be marked
+        embedded but carry no searchable vector — and
+        ``getMemoriesWithoutEmbeddings`` would never surface it (vec0 is
+        the sole embedding store). Leaving ``embedding_model = NULL``
+        makes the regen cron retry.
+        """
+        if not self._vecAvailable(testDatabase):
+            pytest.skip("sqlite-vec not installed")
+
+        idA = await self._add(testDatabase, content="A", threadId=5)
+
+        # Force the vec0 lazy-table creation to fail so the whole vec0
+        # write path raises inside _upsertVecMemoryEmbedding.
+        with patch.object(
+            SQLite3Provider,
+            "createVectorTable",
+            new=AsyncMock(side_effect=RuntimeError("vec0 table creation failed")),
+        ):
+            ok = await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, idA, [1.0, 0.0, 0.0], "modelA")
+
+        assert ok is False
+
+        # Provenance NOT set — stays NULL so regen retries.
+        rows = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5)
+        rowA = next(r for r in rows if r["memory_id"] == idA)
+        assert rowA["embedding_model"] is None
+        assert rowA["embedding_dimensions"] is None
+
+    async def test_deleteMemoryEmbedding_returnsFalseWhenNoMatch(self, testDatabase: Database) -> None:
+        """Regression (Fix 5): returns False when a vec0 table exists but the memory was never embedded.
+
+        Earlier the bool was set True whenever the companion SELECT found
+        a row — regardless of whether a DELETE actually ran. Now it is
+        True only inside the successful DELETE branches. A vec0 table
+        that exists (seeded by embedding a DIFFERENT memory) with no row
+        for this memory_id must therefore return ``False``.
+        """
+        if not self._vecAvailable(testDatabase):
+            pytest.skip("sqlite-vec not installed")
+
+        # Embed a DIFFERENT memory so the vec0 table exists.
+        idEmbedded = await self._add(testDatabase, content="embedded", threadId=5)
+        await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, idEmbedded, [1.0, 0.0], "modelA")
+
+        # A memory that was never embedded (no vec0 row for it).
+        idNotEmbedded = await self._add(testDatabase, content="not-embedded", threadId=5)
+
+        ok = await testDatabase.userMemories.deleteMemoryEmbedding(CHAT_ID, USER_ID, idNotEmbedded)
+        assert ok is False
+
+    async def test_updateMemory_contentInvalidatesEmbedding(self, testDatabase: Database) -> None:
+        """Regression (Fix 4): a content update invalidates the embedding.
+
+        After ``updateMemory(content=...)``, the provenance columns
+        (``embedding_model`` / ``embedding_dimensions``) must be reset to
+        ``NULL`` AND the stale vec0 row dropped, so the regen cron
+        (:meth:`getMemoriesWithoutEmbeddings`) re-embeds on the new
+        content. Without this, regen only re-embeds on model drift — a
+        content edit would leave a stale vector forever.
+        """
+        idA = await self._add(testDatabase, content="original content", threadId=5)
+
+        if self._vecAvailable(testDatabase):
+            await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, idA, [1.0, 0.0], "modelA")
+        else:
+            sqlProvider = await testDatabase.manager.getProvider(chatId=CHAT_ID, readonly=False)
+            await sqlProvider.execute(
+                "UPDATE user_memories SET embedding_model = :m, embedding_dimensions = :d "
+                "WHERE chat_id = :c AND user_id = :u AND memory_id = :mid",
+                {"c": CHAT_ID, "u": USER_ID, "mid": idA, "m": "modelA", "d": 2},
+            )
+
+        # Sanity: provenance was set.
+        rows = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5)
+        assert next(r for r in rows if r["memory_id"] == idA)["embedding_model"] == "modelA"
+
+        # Content update → embedding invalidated.
+        ok = await testDatabase.userMemories.updateMemory(CHAT_ID, USER_ID, idA, content="edited content")
+        assert ok is True
+
+        # Provenance columns reset to NULL.
+        rows = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5)
+        rowA = next(r for r in rows if r["memory_id"] == idA)
+        assert rowA["embedding_model"] is None
+        assert rowA["embedding_dimensions"] is None
+        assert rowA["content"] == "edited content"
+
+        # Regen picks it up for re-embedding.
+        stale = await testDatabase.userMemories.getMemoriesWithoutEmbeddings(CHAT_ID, modelName="modelA", limit=10)
+        assert idA in {r["memory_id"] for r in stale}
+
+        # With vec0: the stale vec0 row is gone → semantic search misses.
+        if self._vecAvailable(testDatabase):
+            queryBytes = array.array("f", [1.0, 0.0]).tobytes()
+            results = await testDatabase.userMemories.searchMemories(
+                CHAT_ID, USER_ID, queryEmbedding=queryBytes, limit=5
+            )
+            assert all(r["memory_id"] != idA for r in results)

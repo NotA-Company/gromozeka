@@ -40,6 +40,7 @@ import pytest
 
 from internal.bot.common.handlers.base import HandlerResultStatus
 from internal.bot.common.handlers.llm_messages import LLMMessageHandler, LLMReplyOutcome
+from internal.bot.constants import ToolName
 from internal.bot.models import (
     BotProvider,
     ChatSettingsDict,
@@ -404,6 +405,11 @@ def _fullChatSettings(
         ChatSettingsKey.ALLOW_MENTION: ChatSettingsValue("true"),
         ChatSettingsKey.BOT_NICKNAMES: ChatSettingsValue(""),
         ChatSettingsKey.BOT_ANSWER_PROBABILITY: ChatSettingsValue("1.0"),
+        # Phase 3a: memory-injection default off so the chat-time useTools gate
+        # (ADD_MEMORY/SEARCH_MEMORIES) hides the memory tools by default. Tests
+        # that exercise the gate override MEMORY_INJECTION_ENABLED inline by
+        # building a settings dict with it set to "true" directly.
+        ChatSettingsKey.MEMORY_INJECTION_ENABLED: ChatSettingsValue("false"),
     }
 
 
@@ -724,6 +730,52 @@ class TestRandomAnswerPromptAndSkipSentinel:
         assert result is True
         messages = captured["messages"]
         assert RANDOM_PROMPT_MARKER not in messages[0].content
+
+    async def testReplyFallbackInjectsMemoriesBlock(self, liveHandler: LLMMessageHandler) -> None:
+        """handleReply fallback (empty thread) still injects the memories block.
+
+        Regression for Fix 3: when ``getThreadByMessageForLLM`` returns ``[]``
+        (root message not in DB), ``handleReply`` rebuilds the system message
+        from ``CHAT_PROMPT + CHAT_PROMPT_SUFFIX`` and appends the bot/user
+        messages directly. That fallback must ALSO inject the ``<user-memories>``
+        block — otherwise a reply-to-bot in this error path is processed
+        without memory context. Mirrors site 2 (handleMention).
+
+        ``_buildMemoriesBlock`` is stubbed to a known block so the test
+        isolates the injection wiring (not the build logic).
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        generate, captured = _captureGenerate("hi")
+        liveHandler.llmService.generateTextViaLLM = generate  # type: ignore[method-assign]
+        em = _liveEnsuredMessage(isReply=True)
+        replied = _liveEnsuredMessage(senderId=999, senderName="Bot")
+        memoriesBlock = "<user-memories>FALLBACK-MEMORIES</user-memories>"
+        liveHandler.getThreadByMessageForLLM = AsyncMock(return_value=[])  # type: ignore[method-assign]
+        liveHandler.getBotId = AsyncMock(return_value=999)  # type: ignore[method-assign]
+        liveHandler._buildMemoriesBlock = AsyncMock(return_value=memoriesBlock)  # type: ignore[method-assign]
+
+        with (
+            patch.object(EnsuredMessage, "getEnsuredRepliedToMessage", Mock(return_value=replied)),
+            patch.object(EnsuredMessage, "updateMediaContent", AsyncMock(return_value=None)),
+            patch.object(
+                EnsuredMessage,
+                "toModelMessage",
+                AsyncMock(return_value=ModelMessage(role="user", content="x")),
+            ),
+        ):
+            result = await liveHandler.handleReply(em, Mock())
+
+        assert result is True
+        messages = captured["messages"]
+        assert "FALLBACK-MEMORIES" in messages[0].content
+        liveHandler._buildMemoriesBlock.assert_awaited_once()  # type: ignore[attr-defined]
+        # The fallback resolves the target user from the incoming-message sender
+        # (the message this turn is about), not the replied-to bot message.
+        callArgs = liveHandler._buildMemoriesBlock.call_args  # type: ignore[attr-defined]
+        assert callArgs.args[0] == em.recipient.id
+        assert callArgs.args[1] == em.sender.id
 
     async def testRandomAnswerPromptNotAppendedToMention(self, liveHandler: LLMMessageHandler) -> None:
         """handleMention must NOT receive the random-answer fragment.
@@ -1109,3 +1161,276 @@ class TestMediaDescriptionExtraction:
             liveHandler.sendMessage.call_args.kwargs["messageText"]  # type: ignore[attr-defined]
             == "middle<media-description>bar</media-description>"
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests: D3 gating — DELETE_MEMORY never exposed at chat time
+# ---------------------------------------------------------------------------
+
+
+class TestD3DeleteMemoryGating:
+    """D3 regression: ``DELETE_MEMORY`` is never exposed at chat time.
+
+    Pins the Fix 1 restructuring in ``_sendLLMChatMessage``: the
+    ``DELETE_MEMORY: False`` override must apply regardless of the
+    ``ALLOW_SANDBOX`` setting. Before the fix, the whole ``useTools``
+    dict-construction block was guarded by
+    ``if useTools and not all([useSandbox]):``, so when ``ALLOW_SANDBOX=true``
+    the block was skipped entirely — ``useTools`` stayed the plain bool
+    ``True`` and ``_resolveTools`` returned ALL registered tools, including
+    ``DELETE_MEMORY`` (violating D3: delete is refinement-only; plan §8.3).
+
+    Each test registers ``DELETE_MEMORY`` and a sandbox tool on the handler's
+    ``LLMService`` singleton, drives ``_sendLLMChatMessage`` with a given
+    ``(USE_TOOLS, ALLOW_SANDBOX)`` combo, captures the ``useTools`` value
+    passed to ``generateTextViaLLM``, resolves it via ``_resolveTools``, and
+    asserts ``DELETE_MEMORY`` is never among the resolved tool names.
+    """
+
+    @pytest.mark.parametrize(
+        ("useToolsSetting", "allowSandboxSetting"),
+        [
+            (True, True),  # the case that was broken before Fix 1
+            (True, False),
+            (False, True),
+            (False, False),
+        ],
+    )
+    async def test_deleteMemoryNeverResolvedAtChatTime(
+        self,
+        liveHandler: LLMMessageHandler,
+        useToolsSetting: bool,
+        allowSandboxSetting: bool,
+    ) -> None:
+        """``DELETE_MEMORY`` absent from resolved tools for all 4 setting combos.
+
+        Args:
+            liveHandler: Live handler fixture.
+            useToolsSetting: Value for ``USE_TOOLS`` chat setting.
+            allowSandboxSetting: Value for ``ALLOW_SANDBOX`` chat setting.
+        """
+        # Register DELETE_MEMORY + a sandbox tool on the singleton so the
+        # assertion is meaningful (otherwise DELETE_MEMORY's absence is
+        # trivially true because nothing is registered).
+        liveHandler.llmService.registerTool(
+            name=ToolName.DELETE_MEMORY,
+            description="delete memory (refinement-only)",
+            parameters=[],
+            handler=AsyncMock(),
+        )
+        liveHandler.llmService.registerTool(
+            name=ToolName.RUN_PYTHON,
+            description="run python",
+            parameters=[],
+            handler=AsyncMock(),
+        )
+
+        settings = _fullChatSettings()
+        settings[ChatSettingsKey.USE_TOOLS] = ChatSettingsValue("true" if useToolsSetting else "false")
+        settings[ChatSettingsKey.ALLOW_SANDBOX] = ChatSettingsValue("true" if allowSandboxSetting else "false")
+        liveHandler.getChatSettings = AsyncMock(return_value=settings)  # type: ignore[method-assign]
+
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult("ok")
+        )
+        em = _liveEnsuredMessage()
+        messagesHistory = [ModelMessage(role="system", content="sys")]
+        typingManager = AsyncMock()
+
+        await liveHandler._sendLLMChatMessage(em, messagesHistory, typingManager=typingManager)
+
+        capturedUseTools = liveHandler.llmService.generateTextViaLLM.call_args.kwargs[  # type: ignore[attr-defined]
+            "useTools"
+        ]
+        resolved = liveHandler.llmService._resolveTools(capturedUseTools)  # type: ignore[attr-defined]
+        resolvedNames = {t.name for t in resolved}
+        # D3: DELETE_MEMORY must never appear in chat-time tools, regardless of
+        # the sandbox setting.
+        assert ToolName.DELETE_MEMORY not in resolvedNames
+
+        # Sanity: when USE_TOOLS=true the sandbox tool (RUN_PYTHON) is present
+        # when ALLOW_SANDBOX=true, proving the fix does not over-disable
+        # everything. The (True, True) combo is the one that was broken: before
+        # Fix 1, ``useTools`` stayed a plain ``True`` and ALL tools (including
+        # DELETE_MEMORY) were returned.
+        if useToolsSetting:
+            if allowSandboxSetting:
+                assert ToolName.RUN_PYTHON in resolvedNames
+            else:
+                assert ToolName.RUN_PYTHON not in resolvedNames
+        else:
+            # USE_TOOLS=false → no tools at all.
+            assert resolvedNames == set()
+
+
+class TestMemoryInjectionToolGating:
+    """Phase 3a: ``MEMORY_INJECTION_ENABLED`` gates ``ADD_MEMORY`` / ``SEARCH_MEMORIES``.
+
+    Pins the useTools gate added in ``_sendLLMChatMessage`` (plan §13 / §11.1):
+    when the chat-time ``MEMORY_INJECTION_ENABLED`` setting is off, both
+    ``ADD_MEMORY`` and ``SEARCH_MEMORIES`` are explicitly disabled in the
+    per-call ``useTools`` dict so the memory tools don't appear before the
+    feature is opted in. When the setting is on, both are left to the wildcard
+    (available). ``DELETE_MEMORY`` stays off regardless (D3 — covered by
+    :class:`TestD3DeleteMemoryGating`).
+    """
+
+    @pytest.mark.parametrize(
+        "injectionEnabled",
+        [True, False],
+    )
+    async def test_addAndSearchMemoriesGatedOnInjectionFlag(
+        self,
+        liveHandler: LLMMessageHandler,
+        injectionEnabled: bool,
+    ) -> None:
+        """``ADD_MEMORY``/``SEARCH_MEMORIES`` resolved iff ``MEMORY_INJECTION_ENABLED`` is on.
+
+        Registers all three memory tools on the singleton (so absence is
+        meaningful, not trivial), drives ``_sendLLMChatMessage`` with
+        ``USE_TOOLS=true``, captures the ``useTools`` kwarg, and resolves it
+        via ``_resolveTools``.
+
+        Args:
+            liveHandler: Live handler fixture.
+            injectionEnabled: Value for ``MEMORY_INJECTION_ENABLED``.
+        """
+        # Register all three memory tools so the assertion is meaningful.
+        for name in (ToolName.ADD_MEMORY, ToolName.SEARCH_MEMORIES, ToolName.DELETE_MEMORY):
+            liveHandler.llmService.registerTool(
+                name=name,
+                description=f"memory tool {name}",
+                parameters=[],
+                handler=AsyncMock(),
+            )
+
+        settings = _fullChatSettings()
+        settings[ChatSettingsKey.USE_TOOLS] = ChatSettingsValue("true")
+        settings[ChatSettingsKey.ALLOW_SANDBOX] = ChatSettingsValue("false")
+        settings[ChatSettingsKey.MEMORY_INJECTION_ENABLED] = ChatSettingsValue("true" if injectionEnabled else "false")
+        liveHandler.getChatSettings = AsyncMock(return_value=settings)  # type: ignore[method-assign]
+
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult("ok")
+        )
+        em = _liveEnsuredMessage()
+        messagesHistory = [ModelMessage(role="system", content="sys")]
+        typingManager = AsyncMock()
+
+        await liveHandler._sendLLMChatMessage(em, messagesHistory, typingManager=typingManager)
+
+        capturedUseTools = liveHandler.llmService.generateTextViaLLM.call_args.kwargs[  # type: ignore[attr-defined]
+            "useTools"
+        ]
+        assert isinstance(capturedUseTools, dict)
+        resolved = liveHandler.llmService._resolveTools(capturedUseTools)  # type: ignore[attr-defined]
+        resolvedNames = {t.name for t in resolved}
+
+        # DELETE_MEMORY is always hidden at chat time (D3), regardless of the
+        # injection setting.
+        assert ToolName.DELETE_MEMORY not in resolvedNames
+
+        if injectionEnabled:
+            # Both memory tools fall through to the wildcard (available).
+            assert ToolName.ADD_MEMORY in resolvedNames
+            assert ToolName.SEARCH_MEMORIES in resolvedNames
+        else:
+            # The gate explicitly disables both.
+            assert ToolName.ADD_MEMORY not in resolvedNames
+            assert ToolName.SEARCH_MEMORIES not in resolvedNames
+            # And the raw useTools dict carries the explicit False overrides.
+            assert capturedUseTools.get(ToolName.ADD_MEMORY) is False
+            assert capturedUseTools.get(ToolName.SEARCH_MEMORIES) is False
+
+
+class TestMemoriesBlockInjection:
+    """Phase 3a: the ``<user-memories>`` block lands in the system message at each site.
+
+    Integration coverage for plan §9.2 sites 2 (``handleMention``) and 3
+    (``handleRandomMessage`` non-thread branch). Site 1
+    (``getThreadByMessageForLLM``) is covered by the ``_buildMemoriesBlock`` /
+    ``_injectMemoriesBlock`` unit tests in ``test_base.py`` (the helper logic
+    is identical; only the call site differs). ``_buildMemoriesBlock`` is
+    stubbed to return a sentinel block so no DB seeding is required.
+    """
+
+    async def test_handleMention_appendsMemoriesBlockToSystemMessage(self, liveHandler: LLMMessageHandler) -> None:
+        """``handleMention`` appends the block to ``reqMessages[0].content`` when enabled.
+
+        Stubs ``_buildMemoriesBlock`` to return a known sentinel, drives
+        ``handleMention`` (via ``_wireMentionPath``), captures the messages
+        passed to ``generateTextViaLLM``, and asserts the leading system
+        message contains the sentinel.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        settings = _fullChatSettings()
+        settings[ChatSettingsKey.MEMORY_INJECTION_ENABLED] = ChatSettingsValue("true")
+        liveHandler.getChatSettings = AsyncMock(return_value=settings)  # type: ignore[method-assign]
+        liveHandler._buildMemoriesBlock = AsyncMock(  # type: ignore[method-assign]
+            return_value="<user-memories>MENTION_SENTINEL</user-memories>"
+        )
+        generate, captured = _captureGenerate("ok")
+        liveHandler.llmService.generateTextViaLLM = generate  # type: ignore[method-assign]
+
+        em, stack = _wireMentionPath(liveHandler)
+        with stack:
+            await liveHandler.handleMention(em, updateObj=Mock())
+
+        msgs = captured["messages"]
+        assert msgs[0].role == "system"
+        assert "<user-memories>MENTION_SENTINEL</user-memories>" in msgs[0].content
+        liveHandler._buildMemoriesBlock.assert_awaited_once()  # type: ignore[attr-defined]
+
+    async def test_handleRandomMessageNonThread_appendsMemoriesBlockToSystemMessage(
+        self, liveHandler: LLMMessageHandler
+    ) -> None:
+        """``handleRandomMessage`` non-thread branch appends the block to the system message.
+
+        Uses ``_wireRandomPath(isReply=False)`` so the non-thread branch runs
+        (the thread branch already gets the block via site 1).
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        settings = _fullChatSettings()
+        settings[ChatSettingsKey.MEMORY_INJECTION_ENABLED] = ChatSettingsValue("true")
+        liveHandler.getChatSettings = AsyncMock(return_value=settings)  # type: ignore[method-assign]
+        liveHandler._buildMemoriesBlock = AsyncMock(  # type: ignore[method-assign]
+            return_value="<user-memories>RANDOM_SENTINEL</user-memories>"
+        )
+        generate, captured = _captureGenerate("ok")
+        liveHandler.llmService.generateTextViaLLM = generate  # type: ignore[method-assign]
+
+        em, stack = _wireRandomPath(liveHandler, isReply=False)
+        with stack:
+            await liveHandler.handleRandomMessage(em, updateObj=Mock())
+
+        msgs = captured["messages"]
+        assert msgs[0].role == "system"
+        assert "<user-memories>RANDOM_SENTINEL</user-memories>" in msgs[0].content
+        liveHandler._buildMemoriesBlock.assert_awaited_once()  # type: ignore[attr-defined]
+
+    async def test_handleMention_doesNotInject_whenInjectionDisabled(self, liveHandler: LLMMessageHandler) -> None:
+        """With ``MEMORY_INJECTION_ENABLED=false`` the system message has no block.
+
+        ``_buildMemoriesBlock`` returns ``None`` (the disabled short-circuit),
+        so ``_injectMemoriesBlock`` is a no-op and the system message keeps its
+        base content. Pins the negative path so the block isn't accidentally
+        injected when the feature is off.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        # _fullChatSettings already has MEMORY_INJECTION_ENABLED=false.
+        liveHandler._buildMemoriesBlock = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        generate, captured = _captureGenerate("ok")
+        liveHandler.llmService.generateTextViaLLM = generate  # type: ignore[method-assign]
+
+        em, stack = _wireMentionPath(liveHandler)
+        with stack:
+            await liveHandler.handleMention(em, updateObj=Mock())
+
+        msgs = captured["messages"]
+        assert "<user-memories>" not in msgs[0].content

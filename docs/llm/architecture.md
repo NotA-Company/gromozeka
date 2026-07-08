@@ -120,7 +120,7 @@ class MyService:
 **Why:** Allows read replicas, separate databases for different data types, cross-bot data reading
 
 **Architecture Principles:**
-- **Repository Pattern**: 15 specialized repositories handle specific data domains (chat_info, chat_messages, chat_settings, chat_users, chat_summarization, cache, spam, user_data, media_attachments, delayed_tasks, common, chat_search, chat_embeddings, divinations, webhook_updates)
+- **Repository Pattern**: 16 specialized repositories handle specific data domains (chat_info, chat_messages, chat_settings, chat_users, chat_summarization, cache, spam, user_data, media_attachments, delayed_tasks, common, chat_search, chat_embeddings, divinations, webhook_updates, user_memories)
 - **Simple Priority Routing**: `dataSource` param → `chatId` mapping → default source
 - **Readonly Protection**: Sources marked `readonly=True` reject write operations
 - **Cross-Bot Communication**: Can read from external bot databases via `dataSource` param
@@ -171,6 +171,7 @@ timeout = 10
 - `SpamRepository` — Spam detection and messages
 - `UserDataRepository` — User-specific data
 - `WebhookUpdatesRepository` — Max webhook payload storage and consumption (backed by `migration_019`)
+- `UserMemoriesRepository` — Unified per-`(chat, user, thread)` structured memory store (backed by `migration_020`; supersedes `user_data` + rolling-bio blob — see ADR-016)
 - `BaseRepository` — Abstract base with common functionality
 
 **Implementation Details:**
@@ -481,6 +482,12 @@ await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
 
 ### ADR-014: Background User-Memory Refinement (Cron + Global Lock + Context Injection)
 
+> **SUPERSEDED (partial):** The *storage* (rolling-bio blob in `chat_users.metadata`)
+> and *injection* (`EnsuredMessage.userSummary` / `applyUserMetadata`) decisions in
+> this ADR were superseded by ADR-016 (structured `user_memories` store + `<user-memories>`
+> block injection, Phases 1–4b). The cron / lock / accounting invariants below are still
+> authoritative. See ADR-016 and `docs/llm/memories/user-memories.md`.
+
 **Decision:** A rolling per-`(chat, user, thread)` memory summary is refined in the background by an LLM on a 60s `CRON_JOB` owned by `UserDataHandler`, and injected into normal chat context as a new `EnsuredMessage.userSummary` field.
 
 **Why:** Lets future replies carry short-term context about each user without re-reading their whole history or putting durable facts into every message's `userData`. The work is asynchronous and bounded so it never blocks the hot reply path or floods the LLM provider.
@@ -539,6 +546,38 @@ await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
 **Write-through ordering:** all setters write the DB first and update the cache only on success, so a DB failure leaves the cache untouched (no cache-DB divergence).
 
 **Tests:** [`tests/services/cache/test_user_info.py`](../../tests/services/cache/test_user_info.py) (cache unit tests), [`tests/bot/common/handlers/test_user_info_cache_regression.py`](../../tests/bot/common/handlers/test_user_info_cache_regression.py) (regression: a warm-message produces 0 `chat_users` DB reads/writes), [`tests/bot/common/handlers/test_spam_microopt.py`](../../tests/bot/common/handlers/test_spam_microopt.py) (conditional-refresh helper: at-or-above-threshold no-refresh, below-threshold refresh, cold-cache no-refresh, strict-`<` boundary + `markAsSpam` `+1` form). Plan of record: [`docs/plans/user-info-cache-plan-v1.md`](../plans/user-info-cache-plan-v1.md) (§16 supersedes §3/§14/§15 for the post-review contract).
+
+---
+
+### ADR-016: Unified `user_memories` Store (Structured Memories + vec0 + Tool Self-Management)
+
+**Decision:** Every durable fact, preference, event, relationship, or high-level bio note about a user lives as one row in a single `user_memories` table (`migration_020`), discriminated by a `MemoryType` tag and a freeform `tags` set, split into **permanent** (always injected) and **ephemeral** (retrieved per turn) classes. Memories are searchable via a vec0 virtual table (`vec_user_memories_{dim}`, cosine distance) and are managed by the LLM itself through three tools (`add_memory` / `delete_memory` / `search_memories`). A structured `<user-memories>` block replaces the old opaque per-message `userSummary` JSON injection.
+
+**Context:** The predecessor (ADR-014) refined a single rolling-bio **string** per `(chat, user, thread)` — an opaque summary blob stored in `chat_users.metadata.memoryRefinement[threadId].summary` and injected whole into every chat turn as `EnsuredMessage.userSummary`. That design could not represent discrete facts, could not be searched, could not be selectively retained vs. expired, and forced the model to emit one re-written paragraph per run. The legacy `user_data` key-value table held durable facts but was equally opaque (one JSON blob per user, no type/tags, no search, no dedup). Both were LLM-read-only at chat time: the model could not add, delete, or look up a specific memory on demand.
+
+The unified store gives each memory a `type` (`bio`/`preference`/`fact`/`event`/`relationship`), a `tags` set, a `permanent` flag, a `source` provenance, and an embedding — so memories are individually addressable, filterable, de-duplicated (cosine similarity at insert time), and curatable by the model itself.
+
+**Components** (see [`memories/user-memories.md`](memories/user-memories.md) for the canonical durable summary):
+
+- **`user_memories` table** (`migration_020`) — composite natural key `(chat_id, user_id, memory_id)` (no `AUTOINCREMENT`); `memory_id` is an app-generated UUID hex. Three indexes back the read paths (`idx_user_memories_chat_user_thread`, `idx_user_memories_chat_user_permanent`, `idx_user_memories_type`).
+- **vec0 virtual table `vec_user_memories_{dim}`** — lazy-created at runtime by `UserMemoriesRepository._upsertVecMemoryEmbedding` on first write of a given dimension (mirrors `chat_embeddings._upsertVecMessageEmbedding`). NOT created by the migration. Carries denormalised partition columns (`chat_id`/`user_id`/`thread_id`/`permanent`/`type`) plus the `embedding` vector column; the denormalised `type`/`thread_id` go stale after `updateMemory`, so semantic search re-applies those filters in a JOIN step on the authoritative `user_memories` columns.
+- **`UserMemoriesRepository`** (`internal/database/repositories/user_memories.py`, wired as `db.userMemories`) — 11 public methods (writes, reads, search, embedding persistence, model-drift regen helpers); all SQL goes through `BaseSQLProvider`.
+- **3 LLM tools** (registered in `UserDataHandler.__init__`, gated on the global `[user-memory].enabled` kill switch): `add_memory` (dedup state machine at insert), `delete_memory` (refinement-only at chat time — D3 gating forces `useTools[DELETE_MEMORY] = False` on every chat-time turn), `search_memories` (semantic or filter-only).
+- **Injection** — `BaseBotHandler._buildMemoriesBlock` loads permanent + ephemeral and renders the `<user-memories>` system-prompt block; injected at 4 system-message construction sites (see [`memories/user-memories.md`](memories/user-memories.md) "Injection sites"). Wrapped in a top-level `try/except` so a transient DB error downgrades to `None` rather than breaking the turn.
+- **Regeneration cron** — `UserDataHandler._runMemoryEmbeddingRegen` runs every 60s tick (outside `_refineLock`) and mirrors `ChatSearchHandler._dtCronJob` one-to-one, adapted for the single-store model: chat discovery via `listChatsBySetting(MEMORY_EMBEDDINGS_ENABLED)`, model-drift cleanup, stale detection (`getMemoriesWithoutEmbeddings`), re-embed loop. Never raises.
+
+**Consequences:**
+
+- **Old `user_data` table is backfilled in** (permanent cross-thread `type='fact'`, `thread_id=NULL`); the table itself is **kept** for rollback safety — only the `add_user_data` / `delete_user_data` LLM tools that wrote it were retired.
+- **Old rolling-bio blob is backfilled in** (permanent thread-scoped `type='bio'`, `tags=["migrated_bio"]`); the stale `chat_users.metadata.memoryRefinement` blob is left unread (the refinement rewrite stops writing it; only the message cursor is still persisted there).
+- **Old `userSummary` injection path is removed entirely** — `EnsuredMessage.applyUserMetadata`, the `userSummary` field, the `formatForLLM` key, and the `chat-prompt-suffix` documentation line are all gone (Phase 4b). The structured `<user-memories>` block fully replaces per-message summary JSON.
+- **vec0 is the sole embedding store** — unlike chat-history search (`message_embeddings` BLOB table + vec0), `user_memories` has no BLOB side table. `embedding_model` / `embedding_dimensions` are tracked on `user_memories` itself; the vectors live only in vec0. When vec0 is unavailable, `searchMemories` returns `[]` (no numpy fallback).
+- **Refinement rewrite** — `_runRefinement` no longer emits a summary string; it curates the store live via the three tools during the LLM call. The accounting/cron/locking machinery (ADR-014) and the `chat_users` cursor persist (ADR-015) are unchanged.
+- The per-tool JSONL refinement log now records `addCount` / `deleteCount` / `searchCount` (the primary observability for the grey-zone dedup review) instead of a summary string.
+
+**Config:** `[user-memory]` (global kill switch + thresholds including `memory-reindex-batch-size`); per-chat `MEMORY_INJECTION_ENABLED` / `MEMORY_RETRIEVAL_MODE` / `MEMORY_EMBEDDINGS_ENABLED` / `MEMORY_REGENERATE_EMBEDDINGS` chat settings under `[bot.defaults]`. See [`configuration.md`](configuration.md) §`[user-memory]` and [`memories/user-memories.md`](memories/user-memories.md).
+
+**Relationship to ADR-014 / ADR-015:** ADR-014 documented the rolling-bio refinement machinery (cron + global lock + context injection); the cron/lock/accounting invariants still govern `_runRefinement`, but the *storage* and *injection* decisions there are superseded by this ADR (structured store + block injection, not string blob + `userSummary` field). ADR-015's `chat_users` cache and `chatUserMetadataLock()` still back the refinement message-cursor persist.
 
 ---
 

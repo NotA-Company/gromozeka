@@ -18,12 +18,14 @@ Key Features:
 - Command handler discovery via decorators
 """
 
+import array
 import asyncio
 import datetime
 import hashlib
 import json
 import logging
 import time
+from collections.abc import MutableSequence
 from enum import Enum
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -62,6 +64,12 @@ from internal.bot.models import (
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import ChatInfoDict, ChatUserDict, MediaStatus, MessageCategory
+from internal.database.repositories.user_memories import (
+    EPHEMERAL_RETRIEVAL_LIMIT,
+    PERMANENT_INJECTION_CAP,
+    UserMemoryDict,
+)
+from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
 from internal.services.cache import CacheService
 from internal.services.llm import LLMService
@@ -76,6 +84,74 @@ from lib.ai import (
 logger = logging.getLogger(__name__)
 
 __all__ = ["HandlerResultStatus", "BaseBotHandler"]
+
+MEMORIES_BLOCK_SOFT_CHAR_CAP: int = 2000
+"""Soft character cap on the rendered ``<user-memories>`` block.
+
+When the combined permanent + recent sections exceed this, the recent
+section is trimmed first (its items are individually smaller and
+lower-value than the permanent block). See
+``docs/plans/user-memories-v1.md`` §9.1 (``_formatMemoriesBlock``).
+"""
+
+
+def _formatMemoryLine(mem: UserMemoryDict) -> str:
+    """Render a single memory dict as one ``[type] content #tag …`` line.
+
+    Tags are appended as ``#tag`` tokens (space-separated) and omitted
+    entirely when the memory carries no tags. The ``type`` is rendered in
+    square brackets before the content (plan §9.1).
+
+    Args:
+        mem: A :class:`UserMemoryDict` row.
+
+    Returns:
+        A single formatted line (no trailing newline).
+    """
+    memType = str(mem.get("type", "")).strip()
+    content = str(mem.get("content", "")).strip()
+    tags = mem.get("tags") or []
+    tagSuffix = ""
+    if tags:
+        tagSuffix = " " + " ".join(f"#{t}" for t in tags if t)
+    return f"[{memType}] {content}{tagSuffix}"
+
+
+def _formatMemoriesBlockRaw(
+    permanent: Sequence[UserMemoryDict],
+    ephemeral: Sequence[UserMemoryDict],
+) -> Optional[str]:
+    """Render the ``<user-memories>`` block with no soft-cap trimming.
+
+    Shared by :meth:`BaseBotHandler._formatMemoriesBlock` (the staticmethod
+    wrapper that applies :data:`MEMORIES_BLOCK_SOFT_CHAR_CAP`) so the trim
+    loop can re-render with a smaller recent slice without re-implementing
+    the layout. See :meth:`BaseBotHandler._formatMemoriesBlock` for the
+    format spec.
+
+    Args:
+        permanent: Permanent memories (already capped + ordered).
+        ephemeral: Ephemeral memories (already capped + ordered newest-first).
+
+    Returns:
+        The formatted block string, or ``None`` when both inputs are empty.
+    """
+    if not permanent and not ephemeral:
+        return None
+    lines: List[str] = ["<user-memories>"]
+    if permanent:
+        lines.append("Permanent:")
+        for mem in sorted(
+            permanent,
+            key=lambda m: (str(m.get("type", "")), str(m.get("updated_at", ""))),
+        ):
+            lines.append(_formatMemoryLine(mem))
+    if ephemeral:
+        lines.append("Recent:")
+        for mem in ephemeral:
+            lines.append(_formatMemoryLine(mem))
+    lines.append("</user-memories>")
+    return "\n".join(lines)
 
 
 class HandlerResultStatus(Enum):
@@ -373,10 +449,6 @@ class BaseBotHandler(CommandHandlerMixin):
             await self.cache.getChatUserData(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
         )
 
-        ensuredMessage.applyUserMetadata(
-            await self.cache.getUserMetadata(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
-        )
-
     async def checkEMMentionsMe(self, ensuredMessage: EnsuredMessage) -> MentionCheckResult:
         """
         Check if a message mentions the bot
@@ -660,6 +732,248 @@ class BaseBotHandler(CommandHandlerMixin):
     # Chat Management
     ###
 
+    async def _buildMemoriesBlock(
+        self,
+        chatId: int,
+        userId: int,
+        threadId: int,
+        currentUserMessageText: Optional[str],
+        chatSettings: ChatSettingsDict,
+    ) -> Optional[str]:
+        """Build the ``<user-memories>`` system-prompt block for a chat turn.
+
+        Loads permanent memories (always-in, capped) plus ephemeral memories
+        (latest- or relevant-mode), formats them into a single text block, and
+        returns it. Returns ``None`` when injection is disabled or no memories
+        exist (both sections empty).
+
+        ``relevant`` mode (selected via ``MEMORY_RETRIEVAL_MODE``) embeds the
+        incoming message text and runs a semantic ``searchMemories`` over the
+        ephemeral store; embedding generation is best-effort — any failure
+        (missing model, API error) falls back to the ``latest`` path so a
+        transient embedding outage never breaks a chat turn.
+
+        Args:
+            chatId: Chat the reply is being composed in.
+            userId: User the reply is addressed to / about.
+            threadId: Active thread (``DEFAULT_THREAD_ID = 0`` for main).
+            currentUserMessageText: The user's incoming message text, used
+                only when retrieval mode is ``relevant`` (to embed for the
+                search). May be ``None`` or empty; relevant-mode then falls
+                back to latest.
+            chatSettings: Resolved chat settings for ``chatId``.
+
+        Returns:
+            Formatted ``<user-memories>`` block string, or ``None`` when
+            injection is disabled or both sections are empty.
+
+        Never-crash contract: a memory-injection failure must NOT break the
+        surrounding message turn. The DB calls below (``getPermanentMemories``,
+        ``getLatestMemories``) and the formatter are wrapped in a top-level
+        ``try/except Exception`` so a transient DB error (e.g. "database is
+        locked", stale connection) is logged and downgrades to ``None`` rather
+        than propagating. The inner ``try/except`` around ``searchMemories``
+        (relevant-mode only) is a more specific net that falls back to latest;
+        this outer net is the safety net of last resort.
+        """
+        if not chatSettings[ChatSettingsKey.MEMORY_INJECTION_ENABLED].toBool():
+            return None
+
+        try:
+            permanent: List[UserMemoryDict] = await self.db.userMemories.getPermanentMemories(
+                chatId, userId, threadId, limit=PERMANENT_INJECTION_CAP
+            )
+
+            mode = chatSettings[ChatSettingsKey.MEMORY_RETRIEVAL_MODE].toStr()
+            ephemeral: List[UserMemoryDict] = []
+            # Only "relevant" is treated as semantic; anything else falls through
+            # to the latest path (plan §11.2 — treat anything != "relevant" as
+            # "latest" at read time).
+            if mode == "relevant" and currentUserMessageText:
+                # Gate on the chat-history EMBEDDINGS_ENABLED setting: it owns the
+                # embedding-API wiring (model availability, dimensions). When off,
+                # skip the embedding call entirely and fall back to latest mode.
+                if chatSettings[ChatSettingsKey.EMBEDDINGS_ENABLED].toBool():
+                    queryEmbedding = await self._safeEmbedQuery(
+                        chatId=chatId,
+                        modelName=chatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr(),
+                        text=currentUserMessageText,
+                    )
+                    if queryEmbedding is not None:
+                        try:
+                            ephemeral = await self.db.userMemories.searchMemories(
+                                chatId,
+                                userId,
+                                queryEmbedding,
+                                threadId=threadId,
+                                permanent=False,
+                                limit=EPHEMERAL_RETRIEVAL_LIMIT,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "user-memories: semantic searchMemories failed for chat %d user %d; "
+                                "falling back to latest",
+                                chatId,
+                                userId,
+                            )
+                            ephemeral = []
+
+            if not ephemeral:
+                # Covers: mode == "latest", relevant-but-EMBEDDINGS_ENABLED-off,
+                # relevant-but-no-embed (model/API failure), relevant-but-search-empty.
+                ephemeral = await self.db.userMemories.getLatestMemories(
+                    chatId, userId, threadId, limit=EPHEMERAL_RETRIEVAL_LIMIT
+                )
+
+            if not permanent and not ephemeral:
+                return None  # genuinely nothing to inject
+
+            return self._formatMemoriesBlock(permanent, ephemeral)
+        except Exception:
+            logger.exception(
+                "user-memories: failed to build memories block for chat %d user %d thread %d; skipping injection",
+                chatId,
+                userId,
+                threadId,
+            )
+            return None
+
+    @staticmethod
+    def _formatMemoriesBlock(
+        permanent: Sequence[UserMemoryDict],
+        ephemeral: Sequence[UserMemoryDict],
+    ) -> Optional[str]:
+        """Render permanent + ephemeral memories into a ``<user-memories>`` block.
+
+        Format (plan §9.1)::
+
+            <user-memories>
+            Permanent:
+            [bio] <content>  #<tag> ...
+            [preference] <content>
+            Recent:
+            [fact] <content>
+            [event] <content>
+            </user-memories>
+
+        Each line: ``[type] content #tag1 #tag2`` (tags omitted when empty).
+        The ``Permanent:`` (or ``Recent:``) header and its body are omitted
+        entirely when that list is empty — this is what lets the
+        permanent-empty / ephemeral-only case render as just the ``Recent:``
+        block (plan §9.1 permanent-empty gap fix). The recent section is
+        trimmed first when the combined output exceeds
+        :data:`MEMORIES_BLOCK_SOFT_CHAR_CAP`.
+
+        Soft-cap edge case: when ``len(ephemeral) <= 1`` the trim loop is
+        bypassed and the (single) ephemeral line is kept even if the block is
+        over cap. Dropping the lone ephemeral memory down to permanent-only
+        would discard the user's only recent signal purely to fit a soft cap,
+        which is the wrong trade-off — the cap is a guideline, not a hard
+        limit, and a slightly-over block is preferable to losing the single
+        recent memory entirely.
+
+        Args:
+            permanent: Permanent memories (already capped + ordered by the
+                caller). Sorted here by ``type`` then ``updated_at``.
+            ephemeral: Ephemeral memories (already capped + ordered
+                newest-first by the caller).
+
+        Returns:
+            The formatted block string, or ``None`` when both inputs are empty.
+        """
+        block = _formatMemoriesBlockRaw(permanent, ephemeral)
+        if block is None:
+            return None
+
+        # Soft cap: trim the recent section first when the block is too long.
+        # Each recent line is individually small and lower-value than the
+        # permanent block; dropping from the end keeps the newest items.
+        if len(block) <= MEMORIES_BLOCK_SOFT_CHAR_CAP or len(ephemeral) <= 1:
+            return block
+        keep = len(ephemeral) - 1
+        while keep > 0:
+            trimmed = _formatMemoriesBlockRaw(permanent, ephemeral[:keep])
+            if trimmed is not None and len(trimmed) <= MEMORIES_BLOCK_SOFT_CHAR_CAP:
+                return trimmed
+            keep -= 1
+        # Even one recent line blows the cap → keep permanent only.
+        return _formatMemoriesBlockRaw(permanent, [])
+
+    def _injectMemoriesBlock(
+        self,
+        messages: MutableSequence[ModelMessage],
+        block: Optional[str],
+    ) -> None:
+        """Append the memories block to ``messages[0].content`` (the system message) in place.
+
+        No-op when ``block`` is falsy or ``messages`` is empty. The block is
+        appended after a blank-line separator so it reads as a distinct
+        fragment of the system message (plan §9.2).
+
+        Mutates element state: although the ``messages`` list itself is not
+        re-assigned or re-sized, this method writes to ``messages[0].content``.
+        The parameter is therefore typed :class:`MutableSequence` rather than
+        :class:`~collections.abc.Sequence` (which implies read-only). A plain
+        ``list`` — the only type actually passed by the call sites — satisfies
+        the bound.
+
+        Args:
+            messages: The message list whose ``[0]`` is the system message.
+            block: The formatted block (or ``None`` / empty to no-op).
+
+        Returns:
+            None.
+        """
+        if block and messages:
+            messages[0].content = f"{messages[0].content}\n\n{block}"
+
+    async def _safeEmbedQuery(self, *, chatId: int, modelName: str, text: str) -> Optional[bytes]:
+        """Best-effort query-embedding for relevant-mode memory search.
+
+        Resolves the embedding model via the LLM service singleton and calls
+        ``generateEmbeddings(text)``. Never raises — every failure (missing
+        model, model without embedding support, API error) is logged and
+        returns ``None`` so the caller (:meth:`_buildMemoriesBlock`) can fall
+        back to latest-mode retrieval. Mirrors the never-crash contract of
+        ``internal/bot/common/memory_embedding_utils.embedAndSaveMemory``.
+
+        Args:
+            chatId: Chat the query belongs to (for logging only).
+            modelName: Embedding model name (the chat's ``EMBEDDING_MODEL``).
+            text: Query text to embed (the incoming message text).
+
+        Returns:
+            Pre-serialised query vector bytes
+            (``array.array("f", floats).tobytes()``) ready for vec0
+            ``searchMemories``, or ``None`` on any failure.
+        """
+        if not modelName:
+            return None
+        try:
+            model = self.llmService.getLLMManager().getModel(modelName)
+        except Exception:
+            logger.exception("user-memories: failed to resolve embedding model %r for chat %d", modelName, chatId)
+            return None
+        if model is None or not model.supportsEmbedding:
+            logger.warning(
+                "user-memories: embedding model %r missing or lacks embedding support for chat %d",
+                modelName,
+                chatId,
+            )
+            return None
+        try:
+            floats = await model.generateEmbeddings(text)
+        except Exception:
+            logger.exception(
+                "user-memories: failed to generate query embedding for chat %d with model %r",
+                chatId,
+                modelName,
+            )
+            return None
+        if not floats:
+            return None
+        return array.array("f", floats).tobytes()
+
     async def getThreadByMessageForLLM(
         self,
         ensuredMessage: EnsuredMessage,
@@ -706,6 +1020,20 @@ class BaseBotHandler(CommandHandlerMixin):
                 + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
             ),
         ]
+
+        # User-memories v1 (Phase 3a) — inject the <user-memories> block into
+        # the system message (plan §9.2 site 1). Resolves the target user from
+        # the thread's root-message sender (``dbMessage["user_id"]`` is the
+        # user the thread is about, verified via chat_messages schema). The
+        # incoming message text (``message_text``) drives relevant-mode search.
+        memoriesBlock = await self._buildMemoriesBlock(
+            chatId,
+            dbMessage["user_id"],
+            dbMessage["thread_id"] or DEFAULT_THREAD_ID,
+            currentUserMessageText=dbMessage.get("message_text"),
+            chatSettings=chatSettings,
+        )
+        self._injectMemoriesBlock(ret, memoriesBlock)
 
         if dbMessage["root_message_id"] is None:
             eMessage = await EnsuredMessage.fromDBChatMessage(dbMessage, self.db)

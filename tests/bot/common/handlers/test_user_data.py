@@ -1,9 +1,7 @@
-"""Tests for :class:`UserDataHandler` (memory-refinement phases 7a + 7b).
+"""Tests for :class:`UserDataHandler` (memory-refinement + user-memory tools).
 
-Phase 7a — deterministic behaviours that hold without any LLM interaction:
+Phase 7a/7b — deterministic refinement-loop behaviours:
 
-* ``(A)`` ``_llmToolDeleteUserData`` removes a single scoped key from user data
-  and leaves sibling keys untouched.
 * ``(B)`` ``newMessageHandler`` increments the per-``(chatId, userId, threadId)``
   ``_accounting`` counter and returns ``NEXT`` when
   ``ChatSettingsKey.MEMORY_REFINEMENT_ENABLED`` is on.
@@ -25,43 +23,57 @@ Phase 7b — the CRON refinement loop (``_dtCronJob`` / ``_runRefinement``) with
 * ``(K)`` ``_dtCronJob`` uses the credit-consumed counter reset: increments that
   arrive during the (slow) LLM call are preserved, not zeroed (follow-up #1).
 
+Phase 2 — the three user-memory LLM tools (``add_memory`` / ``delete_memory`` /
+``search_memories``) with dedup state machine (see
+docs/plans/user-memories-v1.md §8.3-8.5, §14.2). The ``db.userMemories``
+repository is replaced with a ``Mock`` per test, and the embedding model is
+stubbed on the shared ``LLMService`` singleton so dedup search behaviour is
+deterministic without hitting vec0 or a real embedding API.
+
 The handler is constructed against a real in-memory database (``testDatabase``
 fixture) and the real :class:`CacheService` singleton (reset per test by the
-local autouse fixture), so the ``setChatUserData`` / ``unsetChatUserData`` /
-``getChatUserData`` round-trip in test (A) hits a genuine SQLite backend.
-``getChatSettings`` is stubbed at the instance level for tests (B)/(C) to flip
-the boolean ``MEMORY_REFINEMENT_ENABLED`` flag, mirroring the pattern used by
-the other handler tests under ``tests/bot/common/handlers/``.
+local autouse fixture). ``getChatSettings`` is stubbed at the instance level for
+tests (B)/(C) to flip the boolean ``MEMORY_REFINEMENT_ENABLED`` flag, mirroring
+the pattern used by the other handler tests under
+``tests/bot/common/handlers/``.
 """
 
 import datetime
 import json
 import time
+import tomllib
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional
-from unittest.mock import AsyncMock, Mock
+from typing import Any, Dict, Generator, List, Optional, Sequence
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from internal.bot.common.handlers.base import HandlerResultStatus
 from internal.bot.common.handlers.user_data import UserDataHandler
+from internal.bot.common.models import CallbackButton
+from internal.bot.constants import ToolName
 from internal.bot.models import (
     BotProvider,
+    ButtonDataKey,
+    ButtonUserDataConfigAction,
     ChatSettingsDict,
     ChatSettingsKey,
     ChatSettingsValue,
     ChatType,
+    CommandPermission,
     EnsuredMessage,
     MessageRecipient,
     MessageSender,
 )
+from internal.bot.models.memory_type import MemoryType
 from internal.database import Database
+from internal.database.repositories.user_memories import UserMemoriesRepository, UserMemoryDict
 from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
 from internal.services.cache import CacheService
 from internal.services.queue_service.service import QueueService
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
-from lib.ai import ModelResultStatus, ModelRunResult
+from lib.ai import LLMToolCall, ModelMessage, ModelResultStatus, ModelRunResult
 
 # ---------------------------------------------------------------------------
 # Singleton hygiene
@@ -160,7 +172,7 @@ def _makeEnsuredMessage(
 ) -> EnsuredMessage:
     """Build a minimal real :class:`EnsuredMessage` for handler tests.
 
-    The ``_llmToolDeleteUserData`` guard asserts
+    The tool handlers' isinstance guard asserts
     ``isinstance(ensuredMessage, EnsuredMessage)``, so a real instance (not a
     ``Mock``) is required. Only ``recipient.id``, ``sender.id``, ``threadId``
     and ``recipient.chatType`` are read by the code paths under test.
@@ -198,7 +210,11 @@ def _chatSettings(
     ``newMessageHandler`` and ``_runRefinement``) plus the two prompt settings
     (``MEMORY_REFINE_SYSTEM_PROMPT`` / ``MEMORY_REFINE_USER_PROMPT_TEMPLATE``)
     now read by ``_runRefinement``. The user-prompt template MUST contain the
-    three ``.format()`` placeholders so the template render doesn't raise.
+    ``.format()`` placeholders so the template render doesn't raise. Phase 4a
+    switched the template to ``{existingMemories}`` + ``{messages}``; the
+    ``{existingUserData}`` / ``{existingSummary}`` keys are passed as
+    backward-compat aliases (see ``_runRefinement``) so older per-chat
+    overrides still format.
 
     When *refineModel* is provided, the ``MEMORY_REFINE_MODEL`` setting is
     populated so tests asserting the JSONL-log ``model`` field can pin it.
@@ -220,9 +236,7 @@ def _chatSettings(
     settings: ChatSettingsDict = {
         ChatSettingsKey.MEMORY_REFINEMENT_ENABLED: ChatSettingsValue("true" if memoryRefinementEnabled else "false"),
         ChatSettingsKey.MEMORY_REFINE_SYSTEM_PROMPT: ChatSettingsValue("system prompt placeholder"),
-        ChatSettingsKey.MEMORY_REFINE_USER_PROMPT_TEMPLATE: ChatSettingsValue(
-            "{existingUserData}\n{existingSummary}\n{messages}"
-        ),
+        ChatSettingsKey.MEMORY_REFINE_USER_PROMPT_TEMPLATE: ChatSettingsValue("{existingMemories}\n{messages}"),
     }
     if refineModel is not None:
         settings[ChatSettingsKey.MEMORY_REFINE_MODEL] = ChatSettingsValue(refineModel)
@@ -268,45 +282,6 @@ def _stubGetChatSettings(
     )
     handler.getChatSettings = getChatSettingsMock  # type: ignore[method-assign]
     return getChatSettingsMock
-
-
-# ---------------------------------------------------------------------------
-# (A) _llmToolDeleteUserData
-# ---------------------------------------------------------------------------
-
-
-class TestLlmToolDeleteUserData:
-    """Tests for :meth:`UserDataHandler._llmToolDeleteUserData`."""
-
-    async def test_deleteUserDataRemovesOnlyTargetKey(self, testDatabase: Database) -> None:
-        """``_llmToolDeleteUserData`` removes the named key and leaves siblings intact.
-
-        Two keys are pre-populated (``hobby`` and ``name``); after deleting
-        ``hobby`` the ``getChatUserData`` round-trip must contain only ``name``,
-        and the tool's return dict must be ``{"done": True, "key": ...}``.
-
-        Args:
-            testDatabase: Fresh in-memory database fixture.
-        """
-        handler = await _makeHandler(testDatabase)
-        chatId = 100
-        userId = 7
-
-        await handler.cache.setChatUserData(chatId=chatId, userId=userId, key="hobby", value="chess")
-        await handler.cache.setChatUserData(chatId=chatId, userId=userId, key="name", value="alice")
-
-        ensuredMessage = _makeEnsuredMessage(chatId=chatId, userId=userId)
-
-        result = await handler._llmToolDeleteUserData(  # type: ignore[attr-defined]
-            extraData={"ensuredMessage": ensuredMessage},
-            key="hobby",
-        )
-
-        assert result == {"done": True, "key": "hobby"}
-
-        userData = await handler.cache.getChatUserData(chatId=chatId, userId=userId)
-        assert "hobby" not in userData
-        assert userData.get("name") == "alice"
 
 
 # ---------------------------------------------------------------------------
@@ -568,10 +543,12 @@ class TestCronJobAndRefinement:
         Seeds a chat_users row + 5 messages (meets ``min-messages``), sets the
         accounting counter to the count threshold (5), and asserts that after
         the tick: ``generateTextViaLLM`` was awaited once, the counter reset to
-        0, and ``chat_users.metadata.memoryRefinement["0"]`` carries the mocked
-        summary plus a fresh ``lastProcessedMessageDate``. The
-        ``lastRefinedTS`` is NO LONGER persisted to the DB entry — it is tracked
-        in-memory on ``handler._lastRefinedTS`` instead.
+        0, and ``chat_users.metadata.memoryRefinement["0"]`` carries a fresh
+        ``lastProcessedMessageDate`` cursor. Phase 4a dropped the rolling-bio
+        ``summary`` from the persisted blob (memories now live in
+        ``user_memories`` via the tools), so ``summary`` must NOT be present.
+        The ``lastRefinedTS`` is NO LONGER persisted to the DB entry — it is
+        tracked in-memory on ``handler._lastRefinedTS`` instead.
 
         Args:
             testDatabase: Fresh in-memory database fixture.
@@ -607,7 +584,9 @@ class TestCronJobAndRefinement:
         metadata = handler.parseUserMetadata(userInfo)
         entry = metadata.get("memoryRefinement", {}).get(str(threadId))
         assert entry is not None
-        assert entry.get("summary") == "Refined summary text"
+        # Phase 4a: the rolling-bio ``summary`` is no longer persisted — only
+        # the cursor survives. Memories live in ``user_memories`` via the tools.
+        assert "summary" not in entry
         # lastRefinedTS is NO LONGER persisted to the DB entry (moved in-memory).
         assert "lastRefinedTS" not in entry
         # Instead it is tracked in handler._lastRefinedTS.
@@ -859,12 +838,13 @@ class TestRefinementJsonLog:
         assert list(tmp_path.glob("refine.jsonl*")) == []
 
     async def test_refinementJsonLogWritesAllFields(self, testDatabase: Database, tmp_path: Path) -> None:
-        """Successful refinement → exactly one JSONL line with all 11 fields.
+        """Successful refinement → exactly one JSONL line with all 12 fields.
 
         Seeds 5 messages (ids 1000..1004, newest=1004), runs ``_runRefinement``
         with a mocked non-fallback result, and asserts the written JSONL line
-        carries every field with the expected value, including the resolved
-        primary model id and the LLM elapsed time.
+        carries every field with the expected value, including the Phase 4a
+        per-tool counts (``addCount``/``deleteCount``/``searchCount``). The
+        mocked result has no ``toolUsageHistory`` → all three counts are 0.
 
         Args:
             testDatabase: Fresh in-memory database fixture.
@@ -908,16 +888,22 @@ class TestRefinementJsonLog:
         assert entry["firstMessageId"] == "1000"
         assert entry["lastMessageId"] == "1004"
         assert entry["summary"] == "Refined summary text"
+        # Phase 4a: per-tool counts derived from ``result.toolUsageHistory``.
+        # The mocked result has no tool history → all three counts are 0.
+        assert entry["addCount"] == 0
+        assert entry["deleteCount"] == 0
+        assert entry["searchCount"] == 0
         # ``date`` is present and ISO-parseable.
         datetime.datetime.fromisoformat(entry["date"])
 
     async def test_refinementJsonLogWritesEmptySummary(self, testDatabase: Database, tmp_path: Path) -> None:
         """Empty summary → JSONL line is still written with ``summary == ""``.
 
-        The hook is placed before the empty-summary early-return, so an empty
-        result must still be logged. Mocks ``generateTextViaLLM`` to return
-        ``resultText=""`` and asserts the entry exists with an empty summary
-        and that no memory entry is persisted (the early-return path).
+        The hook is placed before the cursor persist, so an empty result must
+        still be logged. Phase 4a removed the empty-summary early-return: the
+        cursor now advances regardless (the LLM persisted memories via tools),
+        so the ``memoryRefinement`` entry is written with the cursor but NO
+        ``summary`` key.
 
         Args:
             testDatabase: Fresh in-memory database fixture.
@@ -947,10 +933,14 @@ class TestRefinementJsonLog:
         assert entries[0]["summary"] == ""
         assert entries[0]["chatId"] == chatId
         assert entries[0]["userId"] == userId
-        # Empty summary → early-return path → no memory entry persisted.
+        # Phase 4a: no early-return on empty summary → cursor IS persisted, but
+        # the ``summary`` key is absent from the blob.
         userInfo = await testDatabase.chatUsers.getChatUser(chatId=chatId, userId=userId)
         metadata = handler.parseUserMetadata(userInfo)
-        assert metadata.get("memoryRefinement", {}).get(str(threadId)) is None
+        entry = metadata.get("memoryRefinement", {}).get(str(threadId))
+        assert entry is not None
+        assert "summary" not in entry
+        assert entry.get("lastProcessedMessageId") == "1004"
 
     async def test_refinementJsonLogUsesFallbackModelWhenIsFallback(
         self, testDatabase: Database, tmp_path: Path
@@ -1060,3 +1050,1690 @@ def _readRefineLog(path: Path) -> List[Dict[str, Any]]:
     """
     lines = [line for line in path.read_text().splitlines() if line.strip()]
     return [json.loads(line) for line in lines]
+
+
+# ---------------------------------------------------------------------------
+# Phase 4a — refinement prompt rewrite + memory pre-load + JSONL tool counts
+# ---------------------------------------------------------------------------
+#
+# See docs/plans/user-memories-v1.md §10, §10.2(a)/(d), §13 Phase 4. The
+# refinement LLM no longer produces a rolling text summary; it curates the
+# ``user_memories`` store via add_memory / delete_memory / search_memories.
+# ``_runRefinement`` therefore: pre-loads permanent + recent memories into
+# ``{existingMemories}`` (replacing the old ``{existingUserData}`` /
+# ``{existingSummary}``), drops the ``summary`` from the persisted cursor
+# blob, and logs per-tool counts in the JSONL line.
+
+
+def _repoRoot() -> Path:
+    """Return the repository root (the dir containing ``configs/``).
+
+    Computed relative to this test file so the prompt-placeholder test can
+    locate ``configs/00-defaults/bot-defaults.toml`` without depending on the
+    process CWD (pytest may be invoked from anywhere).
+
+    Returns:
+        Absolute path to the repo root.
+    """
+    # tests/bot/common/handlers/test_user_data.py → up 4 parents = repo root.
+    return Path(__file__).resolve().parents[4]
+
+
+class TestPhase4aRefinementRewrite:
+    """Phase 4a — prompt rewrite, memory pre-load, dropped summary persistence.
+
+    Each test drives a real ``_runRefinement`` against the in-memory database
+    with ``generateTextViaLLM`` mocked, then inspects the persisted cursor blob
+    and/or the captured LLM call args.
+    """
+
+    async def test_defaultPromptTemplateUsesNewPlaceholders(self) -> None:
+        """The TOML default user-prompt template carries the Phase-4a placeholders.
+
+        Parses ``configs/00-defaults/bot-defaults.toml`` and asserts the
+        ``memory-refine-user-prompt-template`` value contains
+        ``{existingMemories}`` and ``{messages}``, and does NOT contain the
+        retired ``{existingUserData}`` / ``{existingSummary}`` placeholders.
+        Catches a drift where the default is reverted to the old shape.
+        """
+        tomlPath = _repoRoot() / "configs" / "00-defaults" / "bot-defaults.toml"
+        with open(tomlPath, "rb") as f:
+            data = tomllib.load(f)
+        template = data["bot"]["defaults"]["memory-refine-user-prompt-template"]
+        assert "{existingMemories}" in template
+        assert "{messages}" in template
+        assert "{existingUserData}" not in template
+        assert "{existingSummary}" not in template
+
+    async def test_defaultSystemPromptReferencesNewTools(self) -> None:
+        """The TOML default system prompt instructs the new memory tools.
+
+        Asserts the ``memory-refine-system-prompt`` value references
+        ``add_memory`` / ``delete_memory`` / ``search_memories`` and does NOT
+        reference the retired ``add_user_data`` / ``delete_user_data``.
+        """
+        tomlPath = _repoRoot() / "configs" / "00-defaults" / "bot-defaults.toml"
+        with open(tomlPath, "rb") as f:
+            data = tomllib.load(f)
+        prompt = data["bot"]["defaults"]["memory-refine-system-prompt"]
+        assert "add_memory" in prompt
+        assert "delete_memory" in prompt
+        assert "search_memories" in prompt
+        assert "add_user_data" not in prompt
+        assert "delete_user_data" not in prompt
+
+    async def test_runRefinementPreloadsMemoriesIntoUserPrompt(self, testDatabase: Database) -> None:
+        """Pre-loaded memories appear in the user prompt passed to the LLM.
+
+        Seeds one permanent and one recent memory, runs ``_runRefinement``, and
+        asserts both memory contents appear in the ``messages[1].content`` (the
+        user message) captured from the ``generateTextViaLLM`` call.
+        """
+        handler = await _makeHandler(testDatabase, configManager=_makeUserMemoryConfigManager(enabled=True))
+        _stubGetChatSettings(handler, memoryRefinementEnabled=True)
+        handler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="")
+        )
+
+        chatId, userId, threadId = 410, 18, DEFAULT_THREAD_ID
+        await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user18", "Karl")
+        await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
+        # Seed a permanent + a recent memory the pre-load should surface.
+        # ``threadId`` matches how the refinement tools store memories (Amendment
+        # #7: every tool-created memory is scoped to the active thread, not
+        # NULL — only migration-backfilled facts carry thread_id IS NULL).
+        await testDatabase.userMemories.addMemory(
+            chatId,
+            userId,
+            "mem-perm",
+            type="bio",
+            content="PERMANENT_MARKER_BIO",
+            tags=[],
+            permanent=True,
+            threadId=DEFAULT_THREAD_ID,
+        )
+        await testDatabase.userMemories.addMemory(
+            chatId,
+            userId,
+            "mem-recent",
+            type="fact",
+            content="RECENT_MARKER_FACT",
+            tags=[],
+            permanent=False,
+            threadId=DEFAULT_THREAD_ID,
+        )
+
+        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+
+        sentMessages = handler.llmService.generateTextViaLLM.call_args.kwargs["messages"]  # type: ignore[attr-defined]
+        userPrompt = sentMessages[1].content
+        assert "PERMANENT_MARKER_BIO" in userPrompt
+        assert "RECENT_MARKER_FACT" in userPrompt
+
+    async def test_runRefinementPreloadFailsGracefullyOnDbError(self, testDatabase: Database) -> None:
+        """A ``getPermanentMemories`` failure does NOT abort the run.
+
+        The pre-load is best-effort: a transient DB error yields an empty
+        snapshot and the LLM simply has no prior context. The run still
+        completes and the cursor still advances.
+        """
+        handler = await _makeHandler(testDatabase, configManager=_makeUserMemoryConfigManager(enabled=True))
+        _stubGetChatSettings(handler, memoryRefinementEnabled=True)
+        handler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="")
+        )
+        chatId, userId, threadId = 420, 19, DEFAULT_THREAD_ID
+        await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user19", "Lena")
+        await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
+
+        # Force the pre-load to raise. The repo uses ``__slots__ = ()`` so the
+        # mocks must patch the class, not a bare instance attribute (mirrors
+        # the established ``patch.object(UserMemoriesRepository, …)`` pattern).
+        with (
+            patch.object(UserMemoriesRepository, "getPermanentMemories", AsyncMock(side_effect=RuntimeError("boom"))),
+            patch.object(UserMemoriesRepository, "getLatestMemories", AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+
+        handler.llmService.generateTextViaLLM.assert_awaited_once()  # type: ignore[attr-defined]
+        # Cursor still advances despite the pre-load failure.
+        userInfo = await testDatabase.chatUsers.getChatUser(chatId=chatId, userId=userId)
+        metadata = handler.parseUserMetadata(userInfo)
+        assert metadata.get("memoryRefinement", {}).get(str(threadId)) is not None
+
+    async def test_runRefinementDoesNotPersistSummary(self, testDatabase: Database) -> None:
+        """After a run, the cursor blob has no ``summary`` key.
+
+        The LLM returned non-empty text, but Phase 4a dropped ``summary`` from
+        the persisted blob — memories live in ``user_memories`` via the tools.
+        """
+        handler = await _makeHandler(testDatabase, configManager=_makeUserMemoryConfigManager(enabled=True))
+        _stubGetChatSettings(handler, memoryRefinementEnabled=True)
+        handler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="would-be summary")
+        )
+
+        chatId, userId, threadId = 430, 20, DEFAULT_THREAD_ID
+        await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user20", "Mona")
+        await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
+
+        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+
+        userInfo = await testDatabase.chatUsers.getChatUser(chatId=chatId, userId=userId)
+        metadata = handler.parseUserMetadata(userInfo)
+        entry = metadata.get("memoryRefinement", {}).get(str(threadId))
+        assert entry is not None
+        assert "summary" not in entry
+
+    async def test_runRefinementCursorAdvancesToNewestMessage(self, testDatabase: Database) -> None:
+        """``lastProcessedMessageDate`` is updated to the newest analyzed message.
+
+        ``_seedChatMessages`` writes ids 1000..1004 (newest=1004). After the run
+        the cursor must point at message 1004 / its date, proving the cursor
+        advance logic survived the Phase 4a rewrite.
+        """
+        handler = await _makeHandler(testDatabase, configManager=_makeUserMemoryConfigManager(enabled=True))
+        _stubGetChatSettings(handler, memoryRefinementEnabled=True)
+        handler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="")
+        )
+
+        chatId, userId, threadId = 440, 21, DEFAULT_THREAD_ID
+        await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user21", "Nina")
+        await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
+
+        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+
+        userInfo = await testDatabase.chatUsers.getChatUser(chatId=chatId, userId=userId)
+        metadata = handler.parseUserMetadata(userInfo)
+        entry = metadata.get("memoryRefinement", {}).get(str(threadId))
+        assert entry is not None
+        assert entry.get("lastProcessedMessageId") == "1004"
+        assert entry.get("lastProcessedMessageDate") == "2026-07-01T12:04:00+00:00"
+
+    async def test_runRefinementBackwardCompatOldPlaceholdersStillFormat(self, testDatabase: Database) -> None:
+        """A per-chat override using the OLD template placeholders still formats.
+
+        Phase 4a passes ``existingUserData`` / ``existingSummary`` as backward-
+        compat aliases so a stale per-chat override does not raise ``KeyError``
+        on ``str.format``. This test installs an old-shape template via the
+        ``_chatSettings`` stub path and asserts the run completes.
+        """
+        handler = await _makeHandler(testDatabase, configManager=_makeUserMemoryConfigManager(enabled=True))
+        # Install an explicitly OLD-shape template.
+        settings = _chatSettings(memoryRefinementEnabled=True)
+        settings[ChatSettingsKey.MEMORY_REFINE_USER_PROMPT_TEMPLATE] = ChatSettingsValue(
+            "{existingUserData}\n{existingSummary}\n{messages}"
+        )
+        handler.getChatSettings = AsyncMock(return_value=settings)  # type: ignore[method-assign]
+        handler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="")
+        )
+
+        chatId, userId, threadId = 450, 22, DEFAULT_THREAD_ID
+        await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user22", "Oleg")
+        await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
+
+        # Must not raise KeyError.
+        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+        handler.llmService.generateTextViaLLM.assert_awaited_once()  # type: ignore[attr-defined]
+
+
+class TestPhase4aJsonLogToolCounts:
+    """Phase 4a — JSONL log records per-tool call counts from the run history.
+
+    The counts are derived from ``result.toolUsageHistory`` (walked by
+    :meth:`UserDataHandler._countRefinementToolCalls`). Each test seeds a
+    mocked ``ModelRunResult`` carrying assistant messages with ``toolCalls``
+    and asserts the JSONL ``addCount`` / ``deleteCount`` / ``searchCount``.
+    """
+
+    @staticmethod
+    def _resultWithToolHistory(toolCallsByTurn: List[List[LLMToolCall]], *, resultText: str = "") -> ModelRunResult:
+        """Build a ``ModelRunResult`` whose ``toolUsageHistory`` carries the given calls.
+
+        Args:
+            toolCallsByTurn: One list of :class:`LLMToolCall` per assistant turn.
+            resultText: Final-turn text (default empty).
+
+        Returns:
+            A ``ModelRunResult`` with ``toolUsageHistory`` populated.
+        """
+        history: List[ModelMessage] = []
+        for calls in toolCallsByTurn:
+            history.append(ModelMessage(role="assistant", content="", toolCalls=calls))
+        return ModelRunResult(
+            rawResult={},
+            status=ModelResultStatus.FINAL,
+            resultText=resultText,
+            toolUsageHistory=history,
+        )
+
+    async def test_jsonLogRecordsToolCallCounts(self, testDatabase: Database, tmp_path: Path) -> None:
+        """2 add_memory + 1 search_memories + 1 delete_memory → matching counts.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: Per-test temporary directory for the JSONL log file.
+        """
+        refineLogFile = str(tmp_path / "refine.jsonl")
+        handler = await _makeHandler(
+            testDatabase,
+            configManager=_makeUserMemoryConfigManager(
+                enabled=True,
+                jsonLogging={"enabled": True, "file": refineLogFile, "add-date-suffix": False},
+            ),
+        )
+        _stubGetChatSettings(handler, memoryRefinementEnabled=True, refineModel="test-refine-model")
+        handler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=self._resultWithToolHistory(
+                [
+                    [LLMToolCall(id="c1", name=ToolName.SEARCH_MEMORIES.value, parameters={})],
+                    [
+                        LLMToolCall(id="c2", name=ToolName.ADD_MEMORY.value, parameters={}),
+                        LLMToolCall(id="c3", name=ToolName.ADD_MEMORY.value, parameters={}),
+                        LLMToolCall(id="c4", name=ToolName.DELETE_MEMORY.value, parameters={}),
+                    ],
+                ]
+            )
+        )
+
+        chatId, userId, threadId = 460, 23, DEFAULT_THREAD_ID
+        await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user23", "Pavel")
+        await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
+
+        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+
+        entries = _readRefineLog(tmp_path / "refine.jsonl")
+        assert len(entries) == 1
+        entry = entries[0]
+        assert entry["addCount"] == 2
+        assert entry["searchCount"] == 1
+        assert entry["deleteCount"] == 1
+
+    async def test_jsonLogZeroCountsWhenNoToolHistory(self, testDatabase: Database, tmp_path: Path) -> None:
+        """No ``toolUsageHistory`` on the result → all three counts are 0.
+
+        Covers the single-turn / no-tools path (e.g. the LLM returned only text).
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: Per-test temporary directory for the JSONL log file.
+        """
+        refineLogFile = str(tmp_path / "refine.jsonl")
+        handler = await _makeHandler(
+            testDatabase,
+            configManager=_makeUserMemoryConfigManager(
+                enabled=True,
+                jsonLogging={"enabled": True, "file": refineLogFile, "add-date-suffix": False},
+            ),
+        )
+        _stubGetChatSettings(handler, memoryRefinementEnabled=True, refineModel="test-refine-model")
+        handler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="plain text")
+        )
+
+        chatId, userId, threadId = 470, 24, DEFAULT_THREAD_ID
+        await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user24", "Rita")
+        await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
+
+        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+
+        entries = _readRefineLog(tmp_path / "refine.jsonl")
+        assert len(entries) == 1
+        assert entries[0]["addCount"] == 0
+        assert entries[0]["deleteCount"] == 0
+        assert entries[0]["searchCount"] == 0
+
+    async def test_jsonLogCountsFromFallbackToolCalls(self, testDatabase: Database, tmp_path: Path) -> None:
+        """``toolUsageHistory=None`` + ``toolCalls=[...]`` → counts from the elif fallback.
+
+        Single-turn providers populate only the final-turn ``result.toolCalls``
+        (no ``toolUsageHistory``). ``_countRefinementToolCalls`` must then
+        count via the ``elif result.toolCalls:`` branch instead of the history walk.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: Per-test temporary directory for the JSONL log file.
+        """
+        refineLogFile = str(tmp_path / "refine.jsonl")
+        handler = await _makeHandler(
+            testDatabase,
+            configManager=_makeUserMemoryConfigManager(
+                enabled=True,
+                jsonLogging={"enabled": True, "file": refineLogFile, "add-date-suffix": False},
+            ),
+        )
+        _stubGetChatSettings(handler, memoryRefinementEnabled=True, refineModel="test-refine-model")
+        handler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=ModelRunResult(
+                rawResult={},
+                status=ModelResultStatus.FINAL,
+                resultText="",
+                toolUsageHistory=None,
+                toolCalls=[
+                    LLMToolCall(id="c1", name=ToolName.ADD_MEMORY.value, parameters={}),
+                    LLMToolCall(id="c2", name=ToolName.SEARCH_MEMORIES.value, parameters={}),
+                ],
+            )
+        )
+
+        chatId, userId, threadId = 480, 25, DEFAULT_THREAD_ID
+        await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user25", "Sven")
+        await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
+
+        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+
+        entries = _readRefineLog(tmp_path / "refine.jsonl")
+        assert len(entries) == 1
+        entry = entries[0]
+        assert entry["addCount"] == 1
+        assert entry["searchCount"] == 1
+        assert entry["deleteCount"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — user-memory LLM tools (add_memory / delete_memory / search_memories)
+# ---------------------------------------------------------------------------
+#
+# See docs/plans/user-memories-v1.md §8.3-8.5, §14.2 for the full spec. The
+# ``db.userMemories`` repository is replaced with a ``Mock`` per test (the repo
+# itself has round-trip tests in ``tests/database/repositories/``), and the
+# embedding model is stubbed on the shared ``LLMService`` singleton so dedup
+# behaviour is deterministic without vec0 or a real embedding API.
+
+
+def _makeMockModel(*, floats: Optional[List[float]] = None, supportsEmbedding: bool = True) -> Mock:
+    """Build a mock embedding model exposing ``supportsEmbedding`` + ``generateEmbeddings``.
+
+    Args:
+        floats: The vector ``generateEmbeddings`` returns (default a 3-dim placeholder).
+        supportsEmbedding: Value of the ``supportsEmbedding`` attribute.
+
+    Returns:
+        ``Mock`` with ``supportsEmbedding`` and an ``AsyncMock generateEmbeddings``.
+    """
+    mockModel = Mock()
+    mockModel.supportsEmbedding = supportsEmbedding
+    mockModel.generateEmbeddings = AsyncMock(return_value=floats or [0.1, 0.2, 0.3])
+    return mockModel
+
+
+def _stubEmbeddingModel(handler: UserDataHandler, model: Optional[Mock]) -> Mock:
+    """Wire ``handler.llmService.getLLMManager().getModel()`` to return *model*.
+
+    When *model* is ``None``, the handler's ``_resolveEmbeddingModel`` returns
+    ``None`` (model not found / not embedding-capable), simulating the
+    no-embedding-available path.
+
+    Args:
+        handler: Handler under test.
+        model: Mock model (or ``None`` for the not-found case).
+
+    Returns:
+        The mock manager installed on ``handler.llmService``.
+    """
+    mockManager = Mock()
+    mockManager.getModel = Mock(return_value=model)
+    handler.llmService.getLLMManager = Mock(return_value=mockManager)  # type: ignore[method-assign]
+    return mockManager
+
+
+def _mockUserMemories(
+    handler: UserDataHandler,
+    *,
+    searchResults: Optional[List[UserMemoryDict]] = None,
+) -> Mock:
+    """Replace ``handler.db.userMemories`` with a ``Mock`` for tool-level isolation.
+
+    The real ``UserMemoriesRepository`` has ``__slots__ = ()`` so individual
+    methods can't be monkey-patched; the whole attribute (which IS in
+    ``Database.__slots__``) is swapped out instead. Each method is an
+    ``AsyncMock`` so call args can be asserted.
+
+    Args:
+        handler: Handler under test.
+        searchResults: Value ``searchMemories`` returns (default ``[]``).
+
+    Returns:
+        The installed ``Mock`` (for per-method call assertions).
+    """
+    mockRepo = Mock()
+    mockRepo.searchMemories = AsyncMock(return_value=searchResults or [])
+    mockRepo.addMemory = AsyncMock()
+    mockRepo.deleteMemory = AsyncMock(return_value=True)
+    mockRepo.deleteMemoryEmbedding = AsyncMock(return_value=True)
+    handler.db.userMemories = mockRepo  # type: ignore[method-assign]
+    return mockRepo
+
+
+def _stubToolChatSettings(handler: UserDataHandler, *, embeddingModel: str = "test-embed-model") -> AsyncMock:
+    """Stub ``handler.getChatSettings`` to return a minimal settings dict for tool tests.
+
+    The tool handlers only read ``ChatSettingsKey.EMBEDDING_MODEL`` from the
+    settings (to resolve the embedding model name). This stub returns a dict
+    carrying just that key.
+
+    Args:
+        handler: Handler under test.
+        embeddingModel: Value for ``EMBEDDING_MODEL``.
+
+    Returns:
+        The installed ``AsyncMock``.
+    """
+    settings: ChatSettingsDict = {
+        ChatSettingsKey.EMBEDDING_MODEL: ChatSettingsValue(embeddingModel),
+    }
+    mock = AsyncMock(return_value=settings)
+    handler.getChatSettings = mock  # type: ignore[method-assign]
+    return mock
+
+
+def _makeMemoryDict(
+    *,
+    memoryId: str = "mem-existing",
+    content: str = "existing content",
+    memoryType: str = "fact",
+    score: float = 0.0,
+    chatId: int = 100,
+    userId: int = 7,
+    threadId: int = DEFAULT_THREAD_ID,
+    permanent: bool = False,
+) -> UserMemoryDict:
+    """Build a minimal ``UserMemoryDict`` for mocking ``searchMemories`` results.
+
+    Args:
+        memoryId: Memory id.
+        content: Memory body text.
+        memoryType: ``MemoryType`` string value.
+        score: Cosine similarity (0.0–1.0).
+        chatId: Chat id.
+        userId: User id.
+        threadId: Thread id.
+        permanent: Permanent flag.
+
+    Returns:
+        A ``UserMemoryDict`` with the given fields.
+    """
+    return UserMemoryDict(
+        chat_id=chatId,
+        user_id=userId,
+        thread_id=threadId,
+        memory_id=memoryId,
+        type=memoryType,
+        content=content,
+        tags=[],
+        permanent=permanent,
+        source="chat",
+        embedding_model="test-embed-model",
+        embedding_dimensions=3,
+        created_at=datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc),
+        updated_at=datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc),
+        score=score,
+    )
+
+
+class TestLlmToolAddMemory:
+    """Tests for :meth:`UserDataHandler._llmToolAddMemory` (dedup state machine).
+
+    Covers the full D5 matrix: insert / duplicate (≥0.95) / grey-zone chat-time
+    (folds to duplicate) / grey-zone refinement (returns ``similar_exists``) /
+    model-not-found (skip dedup, insert directly) / error path.
+    """
+
+    async def test_insertsWhenNoSimilar(self, testDatabase: Database) -> None:
+        """No similar memory → ``addMemory`` called, returns ``action == "added"``.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        _stubToolChatSettings(handler)
+        _stubEmbeddingModel(handler, _makeMockModel())
+        mockRepo = _mockUserMemories(handler, searchResults=[])
+
+        ensuredMessage = _makeEnsuredMessage()
+
+        with patch(
+            "internal.bot.common.handlers.user_data.embedAndSaveMemory",
+            new_callable=AsyncMock,
+        ) as mockEmbed:
+            result = await handler._llmToolAddMemory(  # type: ignore[attr-defined]
+                extraData={"ensuredMessage": ensuredMessage},
+                content="user is vegan",
+                type="preference",
+                tags=["diet"],
+                permanent=False,
+            )
+
+        assert result["done"] is True
+        assert result["action"] == "added"
+        assert "memory_id" in result
+        mockRepo.addMemory.assert_awaited_once()
+        callKwargs = mockRepo.addMemory.call_args
+        assert callKwargs.kwargs["type"] == "preference"
+        assert callKwargs.kwargs["content"] == "user is vegan"
+        assert callKwargs.kwargs["tags"] == ["diet"]
+        assert callKwargs.kwargs["permanent"] is False
+        assert callKwargs.kwargs["source"] == "chat"
+        mockEmbed.assert_awaited_once()
+
+    async def test_duplicateWhenScoreAtOrAboveThreshold(self, testDatabase: Database) -> None:
+        """Score ≥ 0.95 → ``action == "duplicate"``, no ``addMemory`` call.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        _stubToolChatSettings(handler)
+        _stubEmbeddingModel(handler, _makeMockModel())
+        existing = _makeMemoryDict(memoryId="mem-existing", content="user is vegan", score=0.96)
+        mockRepo = _mockUserMemories(handler, searchResults=[existing])
+
+        ensuredMessage = _makeEnsuredMessage()
+
+        result = await handler._llmToolAddMemory(  # type: ignore[attr-defined]
+            extraData={"ensuredMessage": ensuredMessage},
+            content="the user follows a vegan diet",
+            type="preference",
+        )
+
+        assert result["done"] is True
+        assert result["action"] == "duplicate"
+        assert result["existing_memory_id"] == "mem-existing"
+        mockRepo.addMemory.assert_not_called()
+
+    async def test_greyZoneFoldsToDuplicateAtChatTime(self, testDatabase: Database) -> None:
+        """Score in (0.85, 0.95), no ``isRefinement`` → folds to ``duplicate``.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        _stubToolChatSettings(handler)
+        _stubEmbeddingModel(handler, _makeMockModel())
+        existing = _makeMemoryDict(score=0.90)
+        mockRepo = _mockUserMemories(handler, searchResults=[existing])
+
+        ensuredMessage = _makeEnsuredMessage()
+
+        result = await handler._llmToolAddMemory(  # type: ignore[attr-defined]
+            extraData={"ensuredMessage": ensuredMessage},  # no isRefinement → chat-time
+            content="something similar",
+            type="fact",
+        )
+
+        assert result["done"] is True
+        assert result["action"] == "duplicate"
+        mockRepo.addMemory.assert_not_called()
+
+    async def test_greyZoneReturnsSimilarExistsAtRefinement(self, testDatabase: Database) -> None:
+        """Score in (0.85, 0.95), ``isRefinement=True`` → ``similar_exists`` with existing data.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        _stubToolChatSettings(handler)
+        _stubEmbeddingModel(handler, _makeMockModel())
+        existing = _makeMemoryDict(memoryId="mem-old", content="user lives in Berlin", memoryType="fact", score=0.90)
+        mockRepo = _mockUserMemories(handler, searchResults=[existing])
+
+        ensuredMessage = _makeEnsuredMessage()
+
+        result = await handler._llmToolAddMemory(  # type: ignore[attr-defined]
+            extraData={"ensuredMessage": ensuredMessage, "isRefinement": True},
+            content="the user resides in Berlin",
+            type="fact",
+        )
+
+        assert result["done"] is True
+        assert result["action"] == "similar_exists"
+        assert result["existing_memory_id"] == "mem-old"
+        assert result["existing_content"] == "user lives in Berlin"
+        assert result["existing_type"] == "fact"
+        assert result["score"] == 0.90
+        mockRepo.addMemory.assert_not_called()
+
+    async def test_insertsDirectlyWhenModelNotFound(self, testDatabase: Database) -> None:
+        """No embedding model → skip dedup, insert directly (best-effort).
+
+        The handler should NOT call ``searchMemories`` (no embedding to search
+        with) and should still insert the memory.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        _stubToolChatSettings(handler)
+        _stubEmbeddingModel(handler, model=None)  # model not found
+        mockRepo = _mockUserMemories(handler)
+
+        ensuredMessage = _makeEnsuredMessage()
+
+        with patch(
+            "internal.bot.common.handlers.user_data.embedAndSaveMemory",
+            new_callable=AsyncMock,
+        ):
+            result = await handler._llmToolAddMemory(  # type: ignore[attr-defined]
+                extraData={"ensuredMessage": ensuredMessage},
+                content="a new fact",
+                type="fact",
+            )
+
+        assert result["done"] is True
+        assert result["action"] == "added"
+        mockRepo.searchMemories.assert_not_called()
+        mockRepo.addMemory.assert_awaited_once()
+
+    async def test_invalidTypeReturnsError(self, testDatabase: Database) -> None:
+        """Unknown ``type`` value → ``{"done": False, "error": ...}``, no insert.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        _stubToolChatSettings(handler)
+        _stubEmbeddingModel(handler, _makeMockModel())
+        mockRepo = _mockUserMemories(handler)
+
+        ensuredMessage = _makeEnsuredMessage()
+
+        result = await handler._llmToolAddMemory(  # type: ignore[attr-defined]
+            extraData={"ensuredMessage": ensuredMessage},
+            content="x",
+            type="not_a_valid_type",
+        )
+
+        assert result["done"] is False
+        assert "error" in result
+        mockRepo.addMemory.assert_not_called()
+
+    async def test_getChatSettingsFailureReturnsErrorDict(self, testDatabase: Database) -> None:
+        """``getChatSettings`` raises → handler catches, returns ``{"done": False, ...}``.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        handler.getChatSettings = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
+        mockRepo = _mockUserMemories(handler)
+
+        ensuredMessage = _makeEnsuredMessage()
+
+        result = await handler._llmToolAddMemory(  # type: ignore[attr-defined]
+            extraData={"ensuredMessage": ensuredMessage},
+            content="x",
+            type="fact",
+        )
+
+        assert result["done"] is False
+        assert "error" in result
+        mockRepo.addMemory.assert_not_called()
+
+    async def test_permanentMemoryUsesCurrentThread(self, testDatabase: Database) -> None:
+        """``permanent=True`` → ``threadId`` is the current thread, not NULL (amendment #7).
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        _stubToolChatSettings(handler)
+        _stubEmbeddingModel(handler, _makeMockModel())
+        mockRepo = _mockUserMemories(handler, searchResults=[])
+
+        ensuredMessage = _makeEnsuredMessage(threadId=42)
+
+        with patch(
+            "internal.bot.common.handlers.user_data.embedAndSaveMemory",
+            new_callable=AsyncMock,
+        ):
+            result = await handler._llmToolAddMemory(  # type: ignore[attr-defined]
+                extraData={"ensuredMessage": ensuredMessage},
+                content="high-level bio",
+                type="bio",
+                permanent=True,
+            )
+
+        assert result["action"] == "added"
+        callKwargs = mockRepo.addMemory.call_args
+        assert callKwargs.kwargs["threadId"] == 42
+        assert callKwargs.kwargs["permanent"] is True
+
+
+class TestLlmToolDeleteMemory:
+    """Tests for :meth:`UserDataHandler._llmToolDeleteMemory` (by-id + by-query)."""
+
+    async def test_deleteByIdCallsDeleteMemoryAndEmbeddingCleanup(self, testDatabase: Database) -> None:
+        """``memory_id`` provided → ``deleteMemory`` + ``deleteMemoryEmbedding`` both called.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        mockRepo = _mockUserMemories(handler)
+
+        ensuredMessage = _makeEnsuredMessage()
+
+        result = await handler._llmToolDeleteMemory(  # type: ignore[attr-defined]
+            extraData={"ensuredMessage": ensuredMessage},
+            memory_id="mem-123",
+        )
+
+        assert result["done"] is True
+        assert result["deleted"] == 1
+        assert result["memory_id"] == "mem-123"
+        mockRepo.deleteMemory.assert_awaited_once()
+        mockRepo.deleteMemoryEmbedding.assert_awaited_once()
+
+    async def test_deleteByIdMissingReturnsDeletedFalse(self, testDatabase: Database) -> None:
+        """``memory_id`` not found → ``deleted == False`` (deleteMemory returned False).
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        mockRepo = _mockUserMemories(handler)
+        mockRepo.deleteMemory = AsyncMock(return_value=False)
+
+        ensuredMessage = _makeEnsuredMessage()
+
+        result = await handler._llmToolDeleteMemory(  # type: ignore[attr-defined]
+            extraData={"ensuredMessage": ensuredMessage},
+            memory_id="mem-gone",
+        )
+
+        assert result["done"] is True
+        assert result["deleted"] == 0
+
+    async def test_deleteByQueryRemovesOnlyMatchesAboveThreshold(self, testDatabase: Database) -> None:
+        """By-query → only memories with score ≥ 0.85 are deleted.
+
+        Seeds two search hits: score 0.90 (above threshold) and score 0.80
+        (below). Only the 0.90 hit should be deleted.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        _stubToolChatSettings(handler)
+        _stubEmbeddingModel(handler, _makeMockModel())
+        hitAbove = _makeMemoryDict(memoryId="mem-above", score=0.90)
+        hitBelow = _makeMemoryDict(memoryId="mem-below", score=0.80)
+        mockRepo = _mockUserMemories(handler, searchResults=[hitAbove, hitBelow])
+
+        ensuredMessage = _makeEnsuredMessage()
+
+        result = await handler._llmToolDeleteMemory(  # type: ignore[attr-defined]
+            extraData={"ensuredMessage": ensuredMessage},
+            query="stale information",
+        )
+
+        assert result["done"] is True
+        assert result["deleted"] == 1
+        # Only mem-above was deleted.
+        deletedIds = [call.args[2] for call in mockRepo.deleteMemory.call_args_list]
+        assert "mem-above" in deletedIds
+        assert "mem-below" not in deletedIds
+
+    async def test_neitherMemoryIdNorQueryReturnsError(self, testDatabase: Database) -> None:
+        """No ``memory_id`` and no ``query`` → ``{"done": False, "error": ...}``.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        mockRepo = _mockUserMemories(handler)
+
+        ensuredMessage = _makeEnsuredMessage()
+
+        result = await handler._llmToolDeleteMemory(  # type: ignore[attr-defined]
+            extraData={"ensuredMessage": ensuredMessage},
+        )
+
+        assert result["done"] is False
+        assert "error" in result
+        mockRepo.deleteMemory.assert_not_called()
+
+
+class TestLlmToolSearchMemories:
+    """Tests for :meth:`UserDataHandler._llmToolSearchMemories` (semantic + filter-only)."""
+
+    async def test_semanticSearchReturnsResults(self, testDatabase: Database) -> None:
+        """``query`` provided → embedding generated, results returned with count.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        _stubToolChatSettings(handler)
+        _stubEmbeddingModel(handler, _makeMockModel())
+        results = [
+            _makeMemoryDict(memoryId="m1", content="first", score=0.92),
+            _makeMemoryDict(memoryId="m2", content="second", score=0.80),
+        ]
+        mockRepo = _mockUserMemories(handler, searchResults=results)
+
+        ensuredMessage = _makeEnsuredMessage()
+
+        result = await handler._llmToolSearchMemories(  # type: ignore[attr-defined]
+            extraData={"ensuredMessage": ensuredMessage},
+            query="what do you know",
+        )
+
+        assert result["done"] is True
+        assert result["count"] == 2
+        assert len(result["results"]) == 2  # type: ignore[arg-type]
+        mockRepo.searchMemories.assert_awaited_once()
+        # queryEmbedding should be bytes (not None) in semantic mode.
+        callArgs = mockRepo.searchMemories.call_args
+        assert callArgs.args[2] is not None  # queryEmbedding positional arg
+
+    async def test_filterOnlyWhenQueryOmitted(self, testDatabase: Database) -> None:
+        """No ``query`` → filter-only scan (``queryEmbedding=None``).
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        _stubToolChatSettings(handler)
+        _stubEmbeddingModel(handler, _makeMockModel())
+        results = [_makeMemoryDict(memoryId="m1", content="a preference")]
+        mockRepo = _mockUserMemories(handler, searchResults=results)
+
+        ensuredMessage = _makeEnsuredMessage()
+
+        result = await handler._llmToolSearchMemories(  # type: ignore[attr-defined]
+            extraData={"ensuredMessage": ensuredMessage},
+            type="preference",
+        )
+
+        assert result["done"] is True
+        assert result["count"] == 1
+        callArgs = mockRepo.searchMemories.call_args
+        assert callArgs.args[2] is None  # queryEmbedding is None in filter-only
+        assert callArgs.kwargs["type"] == "preference"
+
+    async def test_emptyResultsReturnCountZero(self, testDatabase: Database) -> None:
+        """Search with no matches → ``count == 0``, empty results list.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        _stubToolChatSettings(handler)
+        _stubEmbeddingModel(handler, _makeMockModel())
+        _mockUserMemories(handler, searchResults=[])
+
+        ensuredMessage = _makeEnsuredMessage()
+
+        result = await handler._llmToolSearchMemories(  # type: ignore[attr-defined]
+            extraData={"ensuredMessage": ensuredMessage},
+            query="nonexistent",
+        )
+
+        assert result["done"] is True
+        assert result["count"] == 0
+        assert result["results"] == []
+
+    async def test_missingEnsuredMessageReturnsError(self, testDatabase: Database) -> None:
+        """No ``ensuredMessage`` in extraData → ``{"done": False, "error": ...}``.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        _mockUserMemories(handler)
+
+        result = await handler._llmToolSearchMemories(  # type: ignore[attr-defined]
+            extraData={},
+            query="x",
+        )
+
+        assert result["done"] is False
+        assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Phase 5a — /knowledge_config wizard (user_memories browser)
+# ---------------------------------------------------------------------------
+#
+# The wizard was repointed at the unified ``user_memories`` store. These tests
+# drive the internal ``_handleUserDataConfiguration`` router (which dispatches
+# to the per-action handlers) against a real in-memory database seeded via
+# ``testDatabase.userMemories.addMemory(...)``. ``editMessage`` is stubbed with
+# an ``AsyncMock`` so the rendered text + inline keyboard can be inspected.
+
+
+def _flattenButtons(
+    keyboard: Optional[Sequence[Sequence[CallbackButton]]],
+) -> List[CallbackButton]:
+    """Flatten a 2D inline-keyboard into a flat list of :class:`CallbackButton`.
+
+    The wizard builds keyboards as ``List[List[CallbackButton]]`` (one row per
+    button for memory entries, a shared row for prev/next nav). Flattening
+    makes action-based assertions trivial regardless of row layout.
+
+    Args:
+        keyboard: The ``inlineKeyboard`` kwarg captured from ``editMessage``,
+            or ``None``.
+
+    Returns:
+        Flat list of every :class:`CallbackButton` in the keyboard (empty
+        when *keyboard* is ``None`` or empty).
+    """
+    flat: List[CallbackButton] = []
+    if keyboard:
+        for row in keyboard:
+            for btn in row:
+                flat.append(btn)
+    return flat
+
+
+def _buttonsForAction(
+    keyboard: Optional[Sequence[Sequence[CallbackButton]]],
+    action: ButtonUserDataConfigAction,
+) -> List[CallbackButton]:
+    """Return the buttons whose payload carries the given wizard action.
+
+    Args:
+        keyboard: The captured ``inlineKeyboard`` (or ``None``).
+        action: The :class:`ButtonUserDataConfigAction` to match on.
+
+    Returns:
+        List of buttons whose ``payload[ButtonDataKey.UserDataConfigAction]``
+        equals *action*.
+    """
+    return [btn for btn in _flattenButtons(keyboard) if btn.payload.get(ButtonDataKey.UserDataConfigAction) == action]
+
+
+def _makeChatInfo(chatId: int) -> Dict[str, object]:
+    """Build a minimal :class:`ChatInfoDict` for ``getChatInfo`` mocks.
+
+    Only the fields read by ``getChatTitle`` (``chat_id`` / ``title`` /
+    ``username`` / ``type``) matter for the wizard path; the rest are
+    populated to satisfy the TypedDict shape.
+
+    Args:
+        chatId: Chat id to embed.
+
+    Returns:
+        A ``ChatInfoDict``-shaped dict with ``type == "private"``.
+    """
+    ts = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+    return {
+        "chat_id": chatId,
+        "title": "Test Chat",
+        "username": None,
+        "type": ChatType.PRIVATE,
+        "is_forum": False,
+        "created_at": ts,
+        "updated_at": ts,
+    }
+
+
+class TestKnowledgeConfigWizard:
+    """Wizard-level tests for the repointed ``/knowledge_config`` browser.
+
+    Covers the Phase 5a rewrite: the ``ChatSelected`` MemoryType picker, the
+    paginated ``TopicSelected`` memory list (page-size-8 boundary), the
+    per-memory ``MemorySelected`` detail view, ``DeleteMemory`` removal, the
+    ``"all"`` type filter, and the ``PRIVATE``-only enforcement on the command
+    decorator.
+    """
+
+    async def test_chatSelectedRendersTypePicker(self, testDatabase: Database) -> None:
+        """``ChatSelected`` renders one button per ``MemoryType`` + "Все типы" + nav.
+
+        Asserts the keyboard exposes all 5 ``MemoryType`` values plus the
+        "all types" sentinel (6 ``TopicSelected`` buttons total), a back
+        button (``Init``), and an exit button (``Cancel``). Each type button
+        carries its ``MemoryType`` value in ``ButtonDataKey.Key`` and
+        ``Page=0``.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        editMock = AsyncMock()
+        handler.editMessage = editMock  # type: ignore[method-assign]
+        chatId = 500
+        handler.getChatInfo = AsyncMock(return_value=_makeChatInfo(chatId))  # type: ignore[method-assign]
+        user = MessageSender(id=7, name="Alice", username="@alice")
+
+        await handler._handleUserDataConfiguration(  # type: ignore[attr-defined]
+            {
+                ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.ChatSelected,
+                ButtonDataKey.ChatId: chatId,
+            },
+            messageId=MessageId(1),
+            messageChatId=chatId,
+            user=user,
+        )
+
+        editMock.assert_awaited_once()
+        keyboard = editMock.call_args.kwargs.get("inlineKeyboard")
+        # 5 MemoryType rows + "Все типы" row + back row + exit row == 8 rows.
+        assert len(_flattenButtons(keyboard)) == len(list(MemoryType)) + 3
+
+        topicButtons = _buttonsForAction(keyboard, ButtonUserDataConfigAction.TopicSelected)
+        # One per MemoryType plus the "all types" sentinel.
+        assert len(topicButtons) == len(list(MemoryType)) + 1
+        typeValuesOnButtons = {btn.payload.get(ButtonDataKey.Key) for btn in topicButtons}
+        for memType in MemoryType:
+            assert memType.value in typeValuesOnButtons
+        assert "all" in typeValuesOnButtons
+        # Every type button starts at page 0.
+        for btn in topicButtons:
+            assert btn.payload.get(ButtonDataKey.Page) == 0
+        # Nav buttons: back (Init) + exit (Cancel).
+        assert len(_buttonsForAction(keyboard, ButtonUserDataConfigAction.Init)) == 1
+        assert len(_buttonsForAction(keyboard, ButtonUserDataConfigAction.Cancel)) == 1
+
+    async def test_topicSelectedPaginates(self, testDatabase: Database) -> None:
+        """Page-size-8 boundary: 10 memories → page 0 shows 8 + Next, page 8 shows 2 + Prev.
+
+        Seeds 10 ``FACT`` memories, then calls ``TopicSelected`` at offset 0
+        and offset 8. Page 0 must render 8 ``MemorySelected`` buttons and a
+        ``NextPage`` button (no ``PrevPage``); page 8 must render 2 buttons
+        and a ``PrevPage`` button (no ``NextPage``). This pins the
+        ``KNOWLEDGE_CONFIG_PAGE_SIZE`` boundary (fetch PAGE_SIZE+1 to detect
+        the next page).
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        chatId = 510
+        userId = 8
+        handler = await _makeHandler(testDatabase)
+        editMock = AsyncMock()
+        handler.editMessage = editMock  # type: ignore[method-assign]
+        user = MessageSender(id=userId, name="Bob", username="@bob")
+
+        for i in range(10):
+            await testDatabase.userMemories.addMemory(
+                chatId,
+                userId,
+                f"mem-{i}",
+                type=MemoryType.FACT.value,
+                content=f"fact number {i}",
+                tags=[],
+                permanent=False,
+                threadId=DEFAULT_THREAD_ID,
+            )
+
+        async def renderPage(offset: int) -> Optional[Sequence[Sequence[CallbackButton]]]:
+            """Drive TopicSelected at the given offset and return its keyboard.
+
+            Args:
+                offset: Page offset to pass as ``ButtonDataKey.Page``.
+
+            Returns:
+                The captured ``inlineKeyboard`` (or ``None``).
+            """
+            editMock.reset_mock()
+            await handler._handleUserDataConfiguration(  # type: ignore[attr-defined]
+                {
+                    ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.TopicSelected,
+                    ButtonDataKey.ChatId: chatId,
+                    ButtonDataKey.Key: MemoryType.FACT.value,
+                    ButtonDataKey.Page: offset,
+                },
+                messageId=MessageId(1),
+                messageChatId=chatId,
+                user=user,
+            )
+            editMock.assert_awaited_once()
+            return editMock.call_args.kwargs.get("inlineKeyboard")
+
+        # Page 0 → 8 memory buttons + Next (no Prev).
+        kb0 = await renderPage(0)
+        assert len(_buttonsForAction(kb0, ButtonUserDataConfigAction.MemorySelected)) == 8
+        assert len(_buttonsForAction(kb0, ButtonUserDataConfigAction.NextPage)) == 1
+        assert len(_buttonsForAction(kb0, ButtonUserDataConfigAction.PrevPage)) == 0
+
+        # Page 8 → 2 memory buttons + Prev (no Next).
+        kb8 = await renderPage(8)
+        assert len(_buttonsForAction(kb8, ButtonUserDataConfigAction.MemorySelected)) == 2
+        assert len(_buttonsForAction(kb8, ButtonUserDataConfigAction.NextPage)) == 0
+        assert len(_buttonsForAction(kb8, ButtonUserDataConfigAction.PrevPage)) == 1
+
+    async def test_memorySelectedRendersDetailView(self, testDatabase: Database) -> None:
+        """``MemorySelected`` renders content/type/tags + delete + back + exit.
+
+        Seeds one memory with known content, type, tags, and ``permanent``,
+        then asserts the rendered text contains the content, the type value,
+        and the ``#tag`` token. The keyboard must offer a ``DeleteMemory``
+        button, a back button (``TopicSelected``), and an exit button.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        chatId = 520
+        userId = 9
+        handler = await _makeHandler(testDatabase)
+        editMock = AsyncMock()
+        handler.editMessage = editMock  # type: ignore[method-assign]
+        user = MessageSender(id=userId, name="Carol", username="@carol")
+
+        memoryId = "mem-detail-1"
+        await testDatabase.userMemories.addMemory(
+            chatId,
+            userId,
+            memoryId,
+            type=MemoryType.FACT.value,
+            content="Lives in Berlin",
+            tags=["location"],
+            permanent=True,
+            threadId=DEFAULT_THREAD_ID,
+        )
+
+        await handler._handleUserDataConfiguration(  # type: ignore[attr-defined]
+            {
+                ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.MemorySelected,
+                ButtonDataKey.ChatId: chatId,
+                ButtonDataKey.Key: memoryId,
+                ButtonDataKey.Page: 0,
+            },
+            messageId=MessageId(1),
+            messageChatId=chatId,
+            user=user,
+        )
+
+        editMock.assert_awaited_once()
+        renderedText: str = editMock.call_args.kwargs.get("text", "")
+        assert "Lives in Berlin" in renderedText
+        assert MemoryType.FACT.value in renderedText
+        assert "#location" in renderedText
+        keyboard = editMock.call_args.kwargs.get("inlineKeyboard")
+        assert len(_buttonsForAction(keyboard, ButtonUserDataConfigAction.DeleteMemory)) == 1
+        assert len(_buttonsForAction(keyboard, ButtonUserDataConfigAction.TopicSelected)) == 1
+        assert len(_buttonsForAction(keyboard, ButtonUserDataConfigAction.Cancel)) == 1
+
+    async def test_deleteMemoryRemovesRow(self, testDatabase: Database) -> None:
+        """``DeleteMemory`` removes the row and renders the "Память удалена" confirmation.
+
+        Seeds one memory, drives ``DeleteMemory`` with its id, then asserts
+        ``getMemory`` returns ``None`` afterward and the confirmation text is
+        the expected Russian string.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        chatId = 530
+        userId = 10
+        handler = await _makeHandler(testDatabase)
+        editMock = AsyncMock()
+        handler.editMessage = editMock  # type: ignore[method-assign]
+        user = MessageSender(id=userId, name="Dave", username="@dave")
+
+        memoryId = "mem-del-1"
+        await testDatabase.userMemories.addMemory(
+            chatId,
+            userId,
+            memoryId,
+            type=MemoryType.PREFERENCE.value,
+            content="prefers dark mode",
+            tags=[],
+            permanent=False,
+            threadId=DEFAULT_THREAD_ID,
+        )
+        # Sanity: the row exists before the delete.
+        assert await testDatabase.userMemories.getMemory(chatId, userId, memoryId) is not None
+
+        await handler._handleUserDataConfiguration(  # type: ignore[attr-defined]
+            {
+                ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.DeleteMemory,
+                ButtonDataKey.ChatId: chatId,
+                ButtonDataKey.Key: memoryId,
+                ButtonDataKey.Page: 0,
+            },
+            messageId=MessageId(1),
+            messageChatId=chatId,
+            user=user,
+        )
+
+        editMock.assert_awaited_once()
+        assert editMock.call_args.kwargs.get("text") == "Память удалена"
+        assert await testDatabase.userMemories.getMemory(chatId, userId, memoryId) is None
+
+    @pytest.mark.parametrize(
+        "failMode",
+        ["returnFalse", "raiseException"],
+        ids=["returnFalse", "raiseException"],
+    )
+    async def test_deleteMemoryFailureShowsErrorMessage(self, testDatabase: Database, failMode: str) -> None:
+        """``DeleteMemory`` failure (return False OR exception) → error text, row intact.
+
+        Regression test for the false-success bug: the OLD handler wrapped
+        ``deleteMemory`` in a bare ``try/except`` that swallowed the error and
+        then unconditionally rendered ``"Память удалена"`` — so on a DB
+        failure (or a no-op ``False`` return, e.g. the row was already gone)
+        the user was told the memory was deleted when it was not. The NEW
+        handler inspects the ``bool`` return and renders a distinct error
+        message on any failure path.
+
+        Two failure modes are exercised (parametrized) since the fix touches
+        both: ``returnFalse`` (``deleteMemory`` returns ``False``, no row
+        matched) and ``raiseException`` (``deleteMemory`` raises, e.g. DB
+        locked). In both cases the rendered text must NOT contain the success
+        string ``"Память удалена"``, MUST contain the error marker
+        ``"Не удалось удалить"``, and the memory row must still be present
+        (the mock replaced the real delete, so the row was never removed).
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            failMode: ``"returnFalse"`` patches ``deleteMemory`` to return
+                ``False``; ``"raiseException"`` patches it to raise.
+        """
+        chatId = 531
+        userId = 10
+        handler = await _makeHandler(testDatabase)
+        editMock = AsyncMock()
+        handler.editMessage = editMock  # type: ignore[method-assign]
+        user = MessageSender(id=userId, name="Dave", username="@dave")
+
+        memoryId = "mem-del-fail-1"
+        await testDatabase.userMemories.addMemory(
+            chatId,
+            userId,
+            memoryId,
+            type=MemoryType.PREFERENCE.value,
+            content="prefers dark mode",
+            tags=[],
+            permanent=False,
+            threadId=DEFAULT_THREAD_ID,
+        )
+        # Sanity: the row exists before the (failed) delete.
+        assert await testDatabase.userMemories.getMemory(chatId, userId, memoryId) is not None
+
+        # Patch the repo method at the class level — the real
+        # ``UserMemoriesRepository`` has ``__slots__ = ()`` so an instance-level
+        # attribute assignment is forbidden (mirrors the established
+        # ``patch.object(UserMemoriesRepository, …)`` pattern elsewhere in this
+        # file). Only ``deleteMemory`` is patched; ``getMemory`` keeps the real
+        # implementation so the post-call row check is meaningful.
+        if failMode == "returnFalse":
+            deleteMock = AsyncMock(return_value=False)
+        else:
+            deleteMock = AsyncMock(side_effect=RuntimeError("db locked"))
+        with patch.object(UserMemoriesRepository, "deleteMemory", deleteMock):
+            await handler._handleUserDataConfiguration(  # type: ignore[attr-defined]
+                {
+                    ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.DeleteMemory,
+                    ButtonDataKey.ChatId: chatId,
+                    ButtonDataKey.Key: memoryId,
+                    ButtonDataKey.Page: 0,
+                },
+                messageId=MessageId(1),
+                messageChatId=chatId,
+                user=user,
+            )
+
+        editMock.assert_awaited_once()
+        deleteMock.assert_awaited_once()
+        renderedText: str = editMock.call_args.kwargs.get("text", "")
+        # Must NOT report success.
+        assert "Память удалена" not in renderedText
+        # Must report the failure distinctly.
+        assert "Не удалось удалить" in renderedText
+        # The memory row was never actually removed (the mock replaced the real delete).
+        assert await testDatabase.userMemories.getMemory(chatId, userId, memoryId) is not None
+
+    async def test_allTypesFilterReturnsMultipleTypes(self, testDatabase: Database) -> None:
+        """``Key="all"`` returns memories of every type (2 distinct → 2 buttons).
+
+        Seeds one ``FACT`` and one ``PREFERENCE`` memory, drives
+        ``TopicSelected`` with ``Key="all"`` (no type filter), and asserts
+        both memories appear in the rendered list (2 ``MemorySelected``
+        buttons). Pins the ``"all"`` sentinel handling in ``_renderMemoryList``.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        chatId = 540
+        userId = 11
+        handler = await _makeHandler(testDatabase)
+        editMock = AsyncMock()
+        handler.editMessage = editMock  # type: ignore[method-assign]
+        user = MessageSender(id=userId, name="Erin", username="@erin")
+
+        await testDatabase.userMemories.addMemory(
+            chatId,
+            userId,
+            "mem-fact-1",
+            type=MemoryType.FACT.value,
+            content="works as a nurse",
+            tags=[],
+            permanent=False,
+            threadId=DEFAULT_THREAD_ID,
+        )
+        await testDatabase.userMemories.addMemory(
+            chatId,
+            userId,
+            "mem-pref-1",
+            type=MemoryType.PREFERENCE.value,
+            content="vegan diet",
+            tags=[],
+            permanent=False,
+            threadId=DEFAULT_THREAD_ID,
+        )
+
+        await handler._handleUserDataConfiguration(  # type: ignore[attr-defined]
+            {
+                ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.TopicSelected,
+                ButtonDataKey.ChatId: chatId,
+                ButtonDataKey.Key: "all",
+                ButtonDataKey.Page: 0,
+            },
+            messageId=MessageId(1),
+            messageChatId=chatId,
+            user=user,
+        )
+
+        editMock.assert_awaited_once()
+        keyboard = editMock.call_args.kwargs.get("inlineKeyboard")
+        memButtons = _buttonsForAction(keyboard, ButtonUserDataConfigAction.MemorySelected)
+        assert len(memButtons) == 2
+        # Both memory ids appear as the button payload key.
+        buttonKeys = {btn.payload.get(ButtonDataKey.Key) for btn in memButtons}
+        assert "mem-fact-1" in buttonKeys
+        assert "mem-pref-1" in buttonKeys
+
+    async def test_tagFilterRendersTagsFromUserMemories(self, testDatabase: Database) -> None:
+        """``TagFilter`` renders one button per distinct tag + clear + back + exit.
+
+        Seeds memories with known tags (``work``, ``home``), drives the
+        ``TagFilter`` action, and asserts the rendered keyboard exposes one
+        ``TopicSelected`` button per tag carrying the tag in
+        ``ButtonDataKey.Tag``. Also asserts a clear-filter button, a back
+        button, and an exit button are present.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        chatId = 560
+        userId = 13
+        handler = await _makeHandler(testDatabase)
+        editMock = AsyncMock()
+        handler.editMessage = editMock  # type: ignore[method-assign]
+        user = MessageSender(id=userId, name="Frank", username="@frank")
+
+        await testDatabase.userMemories.addMemory(
+            chatId,
+            userId,
+            "mem-work-1",
+            type=MemoryType.FACT.value,
+            content="work fact",
+            tags=["work"],
+            permanent=False,
+            threadId=DEFAULT_THREAD_ID,
+        )
+        await testDatabase.userMemories.addMemory(
+            chatId,
+            userId,
+            "mem-home-1",
+            type=MemoryType.FACT.value,
+            content="home fact",
+            tags=["home"],
+            permanent=False,
+            threadId=DEFAULT_THREAD_ID,
+        )
+
+        await handler._handleUserDataConfiguration(  # type: ignore[attr-defined]
+            {
+                ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.TagFilter,
+                ButtonDataKey.ChatId: chatId,
+                ButtonDataKey.Key: MemoryType.FACT.value,
+                ButtonDataKey.Page: 0,
+            },
+            messageId=MessageId(1),
+            messageChatId=chatId,
+            user=user,
+        )
+
+        editMock.assert_awaited_once()
+        renderedText: str = editMock.call_args.kwargs.get("text", "")
+        assert "Выберите тег" in renderedText
+        keyboard = editMock.call_args.kwargs.get("inlineKeyboard")
+        # Two tag buttons (TopicSelected carrying a Tag) + clear + back + exit.
+        topicButtons = _buttonsForAction(keyboard, ButtonUserDataConfigAction.TopicSelected)
+        tagButtons = [btn for btn in topicButtons if btn.payload.get(ButtonDataKey.Tag)]
+        tagValues = {btn.payload.get(ButtonDataKey.Tag) for btn in tagButtons}
+        assert tagValues == {"work", "home"}
+        # The remaining TopicSelected buttons (no Tag) are: the clear-filter
+        # button AND the back button (no currentTag was passed, so back has no
+        # Tag either). Distinguish the clear button by its label.
+        noTagButtons = [btn for btn in topicButtons if not btn.payload.get(ButtonDataKey.Tag)]
+        assert len(noTagButtons) == 2
+        clearTexts = [btn.text for btn in noTagButtons]
+        assert any("Сбросить" in t for t in clearTexts)
+        # Exit present.
+        assert len(_buttonsForAction(keyboard, ButtonUserDataConfigAction.Cancel)) == 1
+
+    async def test_topicSelectedAppliesTagFilter(self, testDatabase: Database) -> None:
+        """``TopicSelected`` with a ``Tag`` narrows the list to tagged memories.
+
+        Seeds 3 FACT memories (2 tagged ``work``, 1 tagged ``home``), drives
+        ``TopicSelected`` with ``Tag="work"``, and asserts only the 2
+        ``work`` memories render as ``MemorySelected`` buttons. Also asserts
+        the filter/clear row and that the rendered text reflects the active
+        tag.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        chatId = 570
+        userId = 14
+        handler = await _makeHandler(testDatabase)
+        editMock = AsyncMock()
+        handler.editMessage = editMock  # type: ignore[method-assign]
+        user = MessageSender(id=userId, name="Grace", username="@grace")
+
+        for i, tag in enumerate(["work", "work", "home"]):
+            await testDatabase.userMemories.addMemory(
+                chatId,
+                userId,
+                f"mem-{tag}-{i}",
+                type=MemoryType.FACT.value,
+                content=f"{tag} fact {i}",
+                tags=[tag],
+                permanent=False,
+                threadId=DEFAULT_THREAD_ID,
+            )
+
+        await handler._handleUserDataConfiguration(  # type: ignore[attr-defined]
+            {
+                ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.TopicSelected,
+                ButtonDataKey.ChatId: chatId,
+                ButtonDataKey.Key: MemoryType.FACT.value,
+                ButtonDataKey.Tag: "work",
+                ButtonDataKey.Page: 0,
+            },
+            messageId=MessageId(1),
+            messageChatId=chatId,
+            user=user,
+        )
+
+        editMock.assert_awaited_once()
+        renderedText: str = editMock.call_args.kwargs.get("text", "")
+        assert "#work" in renderedText
+        keyboard = editMock.call_args.kwargs.get("inlineKeyboard")
+        memButtons = _buttonsForAction(keyboard, ButtonUserDataConfigAction.MemorySelected)
+        assert len(memButtons) == 2
+        buttonKeys = {btn.payload.get(ButtonDataKey.Key) for btn in memButtons}
+        # The two "work" memories (ids mem-work-0 and mem-work-1).
+        assert "mem-work-0" in buttonKeys
+        assert "mem-work-1" in buttonKeys
+        assert "mem-home-2" not in buttonKeys
+        # Active-filter row shows the tag and offers a clear button.
+        assert len(_buttonsForAction(keyboard, ButtonUserDataConfigAction.TagFilter)) == 1
+
+    async def test_tagFilterClearResetsFilter(self, testDatabase: Database) -> None:
+        """``TopicSelected`` with no ``Tag`` shows all memories (filter cleared).
+
+        Seeds 3 memories with different tags, drives ``TopicSelected`` with no
+        ``Tag`` key, and asserts all 3 render (no tag filtering). Verifies the
+        unfiltered path and that the "filter by tag" entry button (not the
+        active-filter variant) is shown.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        chatId = 580
+        userId = 15
+        handler = await _makeHandler(testDatabase)
+        editMock = AsyncMock()
+        handler.editMessage = editMock  # type: ignore[method-assign]
+        user = MessageSender(id=userId, name="Heidi", username="@heidi")
+
+        for i, tag in enumerate(["work", "home", "hobby"]):
+            await testDatabase.userMemories.addMemory(
+                chatId,
+                userId,
+                f"mem-clear-{i}",
+                type=MemoryType.FACT.value,
+                content=f"{tag} fact {i}",
+                tags=[tag],
+                permanent=False,
+                threadId=DEFAULT_THREAD_ID,
+            )
+
+        await handler._handleUserDataConfiguration(  # type: ignore[attr-defined]
+            {
+                ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.TopicSelected,
+                ButtonDataKey.ChatId: chatId,
+                ButtonDataKey.Key: MemoryType.FACT.value,
+                ButtonDataKey.Page: 0,
+            },
+            messageId=MessageId(1),
+            messageChatId=chatId,
+            user=user,
+        )
+
+        editMock.assert_awaited_once()
+        renderedText: str = editMock.call_args.kwargs.get("text", "")
+        # No "#tag" in the title (filter is off).
+        assert "#" not in renderedText
+        keyboard = editMock.call_args.kwargs.get("inlineKeyboard")
+        memButtons = _buttonsForAction(keyboard, ButtonUserDataConfigAction.MemorySelected)
+        assert len(memButtons) == 3
+        # The unfiltered list shows the "filter by tag" entry button (TagFilter),
+        # NOT the active-filter/clear variant.
+        tagFilterButtons = _buttonsForAction(keyboard, ButtonUserDataConfigAction.TagFilter)
+        assert len(tagFilterButtons) == 1
+
+    async def test_tagFilterPersistsAcrossPagination(self, testDatabase: Database) -> None:
+        """Next/Prev buttons carry the active tag so the filter survives paging.
+
+        Seeds 10 FACT memories all tagged ``work`` (exceeds
+        ``KNOWLEDGE_CONFIG_PAGE_SIZE`` = 8), drives ``TopicSelected`` with
+        ``Tag="work"`` at offset 0, and asserts the ``NextPage`` button
+        payload carries ``Tag="work"``. Then simulates the next page and
+        asserts results are still tag-filtered.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        chatId = 590
+        userId = 16
+        handler = await _makeHandler(testDatabase)
+        editMock = AsyncMock()
+        handler.editMessage = editMock  # type: ignore[method-assign]
+        user = MessageSender(id=userId, name="Ivan", username="@ivan")
+
+        for i in range(10):
+            await testDatabase.userMemories.addMemory(
+                chatId,
+                userId,
+                f"mem-page-{i}",
+                type=MemoryType.FACT.value,
+                content=f"work fact {i}",
+                tags=["work"],
+                permanent=False,
+                threadId=DEFAULT_THREAD_ID,
+            )
+
+        await handler._handleUserDataConfiguration(  # type: ignore[attr-defined]
+            {
+                ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.TopicSelected,
+                ButtonDataKey.ChatId: chatId,
+                ButtonDataKey.Key: MemoryType.FACT.value,
+                ButtonDataKey.Tag: "work",
+                ButtonDataKey.Page: 0,
+            },
+            messageId=MessageId(1),
+            messageChatId=chatId,
+            user=user,
+        )
+
+        editMock.assert_awaited_once()
+        keyboard = editMock.call_args.kwargs.get("inlineKeyboard")
+        # Page 0 → 8 memory buttons + Next (no Prev).
+        assert len(_buttonsForAction(keyboard, ButtonUserDataConfigAction.MemorySelected)) == 8
+        nextButtons = _buttonsForAction(keyboard, ButtonUserDataConfigAction.NextPage)
+        assert len(nextButtons) == 1
+        # The tag MUST ride on the NextPage payload.
+        assert nextButtons[0].payload.get(ButtonDataKey.Tag) == "work"
+
+    def test_knowledgeConfigPrivateOnly(self) -> None:
+        """``knowledge_config_command`` is ``PRIVATE``-only (not ``GROUP``).
+
+        Inspects the ``@commandHandlerV2`` metadata attached to the unbound
+        command function and asserts ``CommandPermission.PRIVATE`` is in
+        ``availableFor`` while ``CommandPermission.GROUP`` is not — the wizard
+        is intentionally private-chats only.
+
+        Args:
+            testDatabase: (unused) — kept off the signature; this is a pure
+                metadata assertion.
+        """
+        info = getattr(UserDataHandler.knowledge_config_command, "_commandHandlerInfoV2")
+        assert CommandPermission.PRIVATE in info.availableFor
+        assert CommandPermission.GROUP not in info.availableFor
+
+
+class TestGetMyDataCommand:
+    """Tests for the repointed ``/get_my_data`` command (now reads ``user_memories``).
+
+    Phase 5a repointed the dump at ``db.userMemories``; the legacy
+    ``user_data`` key-value path is retired. This verifies a seeded memory's
+    content reaches the sent message.
+    """
+
+    async def test_getMyDataDumpsUserMemories(self, testDatabase: Database) -> None:
+        """``/get_my_data`` renders the caller's memories in a code block.
+
+        Seeds one memory for ``(chatId, userId)``, drives
+        ``get_my_data_command`` with ``sendMessage`` stubbed, and asserts the
+        sent message text contains the ``[type] content`` line produced by
+        ``_formatMemoryLine``.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        chatId = 550
+        userId = 12
+        handler = await _makeHandler(testDatabase)
+        sendMock = AsyncMock()
+        handler.sendMessage = sendMock  # type: ignore[method-assign]
+
+        await testDatabase.userMemories.addMemory(
+            chatId,
+            userId,
+            "mem-dump-1",
+            type=MemoryType.FACT.value,
+            content="GET_MY_DATA_MARKER",
+            tags=["timezone"],
+            permanent=False,
+            threadId=DEFAULT_THREAD_ID,
+        )
+
+        ensuredMessage = _makeEnsuredMessage(chatId=chatId, userId=userId)
+        await handler.get_my_data_command(ensuredMessage, "get_my_data", "", Mock(), None)  # type: ignore[attr-defined]
+
+        sendMock.assert_awaited_once()
+        sentText: str = sendMock.call_args.kwargs.get("messageText", "")
+        assert "GET_MY_DATA_MARKER" in sentText
+        assert MemoryType.FACT.value in sentText
+        assert "#timezone" in sentText

@@ -1015,9 +1015,6 @@ class HandlersManager(CommandHandlerGetterInterface):
             ensuredMessage.setUserData(
                 await self.cache.getChatUserData(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
             )
-            ensuredMessage.applyUserMetadata(
-                await self.cache.getUserMetadata(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
-            )
 
             commandRet = await asyncio.wait_for(
                 self.handleCommand(ensuredMessage, updateObj),
