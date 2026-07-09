@@ -693,6 +693,8 @@ class BaseBotHandler(CommandHandlerMixin):
 
         if dbMessage["root_message_id"] is None:
             eMessage = await EnsuredMessage.fromDBChatMessage(dbMessage, self.db, injectMemories=needMemories)
+            if needMemories:
+                await eMessage.resolveMemories(self.cache)
             return ret + await eMessage.toModelMessageList(
                 self.db,
                 format=llmMFormat,
@@ -724,6 +726,8 @@ class BaseBotHandler(CommandHandlerMixin):
                 eMessage = await EnsuredMessage.fromDBChatMessage(
                     dbMessageList[i], self.db, injectMemories=needMemories
                 )
+                if needMemories:
+                    await eMessage.resolveMemories(self.cache)
                 ret.extend(
                     await eMessage.toModelMessageList(
                         self.db,
@@ -752,6 +756,8 @@ class BaseBotHandler(CommandHandlerMixin):
 
         for dbMessage in dbMessageList:
             eMessage = await EnsuredMessage.fromDBChatMessage(dbMessage, self.db, injectMemories=needMemories)
+            if needMemories:
+                await eMessage.resolveMemories(self.cache)
             ret.extend(
                 await eMessage.toModelMessageList(
                     self.db,

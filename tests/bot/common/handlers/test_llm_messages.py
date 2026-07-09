@@ -33,6 +33,7 @@ Three feature areas are covered, each in its own class:
 
 import contextlib
 import datetime
+import json
 from collections.abc import Awaitable, Callable, Sequence
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -51,6 +52,7 @@ from internal.bot.models import (
     MentionCheckResult,
     MessageRecipient,
     MessageSender,
+    MessageType,
 )
 from internal.models import MessageId
 from internal.services.cache.service import CacheService
@@ -1309,3 +1311,97 @@ class TestMemoryInjectionToolGating:
 # paths themselves (handleMention / handleRandomMessage / handleReply) stay
 # covered by :class:`TestRandomAnswerPromptAndSkipSentinel` and
 # :class:`TestMediaDescriptionExtraction`.
+
+
+# ---------------------------------------------------------------------------
+# Tests: handleMention text-reply memory bypass (memory-compaction-v1 Phase 3b-i)
+# ---------------------------------------------------------------------------
+
+
+class TestHandleMentionCompactMemoryBypass:
+    """Phase 3b-i: the ``handleMention`` text-reply bypass no longer renders compact IDs.
+
+    The text-message-reply branch of ``handleMention`` does NOT build its reply
+    :class:`EnsuredMessage` via ``fromDBChatMessage``; it manually parses the
+    stored reply's metadata JSON and applies memories directly. Before Phase
+    3b-i it called ``setUserMemories(metadata.get("memories"))`` — under the
+    compact format that set ``userMemories`` to the raw
+    ``{"permanentIds": [...], "shortTermIds": [...]}`` ID dict and
+    ``formatForLLM`` rendered it verbatim as the ``userMemories`` block
+    (garbage). The fix routes through ``loadMemoriesMetadata`` (stash) +
+    ``resolveMemories`` (resolve IDs -> content) before the render.
+
+    This test drives the REAL ``handleMention`` with ``MEMORY_INJECTION_ENABLED
+    = true``, a reply parent whose stored metadata carries compact IDs, and a
+    stub cache, then asserts on the live reply object's state: ``userMemories``
+    holds the resolved content (NOT the ID dict) and ``metadata["memories"]``
+    still carries the compact IDs (no re-point). Before the fix,
+    ``userMemories`` would equal the ID-list dict — the regression this guards.
+    """
+
+    async def test_compactIdReply_resolvesNotRenderedAsIdList(self, liveHandler: LLMMessageHandler) -> None:
+        """A compact-format stored reply resolves to content; the ID list is never in ``userMemories``.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        # Enable memory injection for the chat.
+        settings = _fullChatSettings()
+        settings[ChatSettingsKey.MEMORY_INJECTION_ENABLED] = ChatSettingsValue("true")
+        liveHandler.getChatSettings = AsyncMock(return_value=settings)  # type: ignore[method-assign]
+
+        # The incoming message mentions the bot and is a reply.
+        em = _liveEnsuredMessage(isReply=True)
+        liveHandler.checkEMMentionsMe = AsyncMock(  # type: ignore[method-assign]
+            return_value=MentionCheckResult(byName=(0, 4), restText="hello there")
+        )
+
+        # Build the reply parent as a real EnsuredMessage with messageType=TEXT
+        # (required to take the bypass branch).
+        reply = EnsuredMessage(
+            sender=MessageSender(id=7, name="Alice", username="@alice"),
+            recipient=MessageRecipient(id=-100, chatType=ChatType.GROUP),
+            messageId=MessageId(55),
+            date=datetime.datetime(2026, 5, 5, 11, 0, 0, tzinfo=datetime.timezone.utc),
+            messageText="an earlier message",
+            messageType=MessageType.TEXT,
+        )
+
+        stack = contextlib.ExitStack()
+        stack.enter_context(patch.object(EnsuredMessage, "getEnsuredRepliedToMessage", Mock(return_value=reply)))
+        # Patch toModelMessage at class level so the render doesn't touch the DB.
+        stack.enter_context(
+            patch.object(
+                EnsuredMessage, "toModelMessage", AsyncMock(return_value=ModelMessage(role="user", content="x"))
+            )
+        )
+
+        # Stored reply carries the COMPACT memory-ID format in metadata.
+        compactMemories = {"permanentIds": ["a"], "shortTermIds": []}
+        liveHandler.db.chatMessages.getChatMessageByMessageId = AsyncMock(  # type: ignore[method-assign]
+            return_value={"metadata": json.dumps({"memories": compactMemories})}
+        )
+        # Stub cache resolves the compact ID -> content (keepId=False shape: no id).
+        liveHandler.cache.getMemoriesByIds = AsyncMock(  # type: ignore[method-assign]
+            return_value={"a": {"type": "fact", "content": "resolved perm fact", "tags": ["t"]}}
+        )
+        liveHandler.getBotId = AsyncMock(return_value=999)  # type: ignore[method-assign]
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult("ok")
+        )
+
+        with stack:
+            result = await liveHandler.handleMention(em, Mock())
+
+        assert result is True
+
+        # Regression guard: before the fix, setUserMemories(metadata.get("memories"))
+        # set userMemories to the raw {"permanentIds": [...], "shortTermIds": [...]}
+        # dict. After the fix, userMemories holds the RESOLVED content.
+        assert reply.userMemories is not None
+        assert "permanentIds" not in reply.userMemories
+        assert "shortTermIds" not in reply.userMemories
+        assert reply.userMemories["permanent"][0]["content"] == "resolved perm fact"
+        assert reply.userMemories["shortTerm"] == []
+        # metadata["memories"] stays the compact IDs (resolveMemories does not re-point).
+        assert reply.metadata.get("memories") == compactMemories

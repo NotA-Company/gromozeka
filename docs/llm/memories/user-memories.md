@@ -6,7 +6,10 @@ Implemented from [`docs/plans/user-memories-v1.md`](../../plans/user-memories-v1
 (authoritative spec). This doc is the canonical durable summary; the plan is
 the implementation record and [`../architecture.md`](../architecture.md)
 ADR-016 carries the architecture decision (the unified store + vec0 + tools),
-building on ADR-014's refinement machinery (cron + global lock).
+building on ADR-014's refinement machinery (cron + global lock). The
+memory-compaction-v1 change (compact per-message storage + by-id cache +
+soft-delete) is recorded in [`../../plans/memory-compaction-v1.md`](../../plans/memory-compaction-v1.md)
+and ADR-017.
 
 This system **supersedes** the rolling-bio subsystem documented in
 [`user-memory-refinement.md`](user-memory-refinement.md) (that doc is kept as
@@ -56,9 +59,12 @@ time (see "Injection"). Schema: `migration_020_user_memories`. Repository:
 | `embedding_dimensions` | INTEGER | `NULL` = not yet embedded. |
 | `created_at` | TIMESTAMP NOT NULL | Set application-side (no `DEFAULT CURRENT_TIMESTAMP`). |
 | `updated_at` | TIMESTAMP NOT NULL | Set application-side; bumped on every write. |
+| `deleted_at` | TIMESTAMP NULL | Soft-delete timestamp (migration 021). Set application-side in `deleteMemory` via `dbUtils.getCurrentTimestamp()` (no DB default). `NULL` = live; non-`NULL` = soft-deleted (row survives for historical reads; every live read filters `AND deleted_at IS NULL`). |
 
 - **Primary key:** composite natural key `(chat_id, user_id, memory_id)` —
-  no `AUTOINCREMENT` (cross-RDBMS portability, AGENTS.md).
+  no `AUTOINCREMENT` (cross-RDBMS portability, AGENTS.md). `deleted_at` is **not**
+  part of the key and has no index — `AND deleted_at IS NULL` is a cheap residual
+  predicate on the already-indexed `(chat_id, user_id, ...)` row set.
 - **Indexes (3):** `idx_user_memories_chat_user_thread`
   `(chat_id, user_id, thread_id, updated_at DESC)`,
   `idx_user_memories_chat_user_permanent`
@@ -80,11 +86,13 @@ time (see "Injection"). Schema: `migration_020_user_memories`. Repository:
   vector column with cosine distance metric. The `model` partition key
   scopes vectors per embedding model so a model swap does not pollute one
   model's vector space with another's.
-- Denormalised `type`/`thread_id` go **stale** after `updateMemory`, so the
-  JOIN step in `_semanticSearchMemories` re-applies those filters on the
-  authoritative `user_memories` columns (see "Search" below). `permanent`
-  is immutable post-creation so it is pushed into the vec0 filter directly;
-  `model` is a partition key and is always part of the vec0 filter clause.
+- Denormalised `type`/`thread_id` are written once at embed time and never
+  edited (content/type changes go through `deleteMemory` + `addMemory`, which
+  rebuild the vec0 row), so the JOIN step in `_semanticSearchMemories` still
+  re-applies those filters on the authoritative `user_memories` columns as
+  belt-and-suspenders. `permanent` is immutable post-creation so it is pushed
+  into the vec0 filter directly; `model` is a partition key and is always part
+  of the vec0 filter clause.
 
 ## Repository — `UserMemoriesRepository`
 
@@ -98,13 +106,21 @@ dict keys are snake_case to match columns.
 - **Writes:** `addMemory` (INSERT — requires `embedding: Optional[List[float]]`,
   `embeddingModel: Optional[str]`, and `source: UserMemorySource`; `threadId`
   is keyword-only; embeds during add when both `embedding` and `embeddingModel`
-  are provided), `updateMemory` (PATCH + invalidate embedding on content
-  change), `deleteMemory` (by-id, unrestricted — may target a permanent
-  memory).
+  are provided), `deleteMemory` (SOFT DELETE — sets `deleted_at` + bumps
+  `updated_at`, drops the vec0 row, nulls `embedding_model`/
+  `embedding_dimensions`; unrestricted — may target a permanent memory). There
+  is no in-place PATCH: content changes go through `deleteMemory` + `addMemory`
+  (the dedup state machine in `add_memory` already handles the "similar exists →
+  delete-old + re-add-updated" path via the refinement LLM).
 - **Reads:** `getPermanentMemories` (cross-thread `NULL` + this-thread
   permanent, newest-updated-first, capped at `PERMANENT_INJECTION_CAP`),
   `getLatestMemories` (ephemeral-only, newest-updated-first, capped at
-  `EPHEMERAL_RETRIEVAL_LIMIT`).
+  `EPHEMERAL_RETRIEVAL_LIMIT`), `getMemoriesByIds(memoryIds: List[str])`
+  (the single read path that does NOT filter `deleted_at` — resolves
+  UUIDs to content for historical message reconstruction; no
+  `chatId`/`userId` scoping since UUIDs are globally unique; routes to the
+  default DB). Every live read method adds `AND deleted_at IS NULL` so
+  soft-deleted rows are skipped on the live injection/search path.
 - **Search:** `searchMemories` — filter-only (`queryEmbedding is None`, plain
   SQL scan, `score = 0.0`) and semantic (`queryEmbedding` is a `List[float]`,
   vec0 native, `score = 1.0 - distance`). `embeddingModel: str` is required
@@ -116,8 +132,7 @@ dict keys are snake_case to match columns.
   filter (`tags LIKE '%"tagN"%'`, ANY-match) — the `tags` column is stored as
   JSON TEXT via provider auto-serialization of the Python list. In semantic
   mode `threadId` / `type` are re-applied in a JOIN step on the authoritative
-  `user_memories` columns (the denormalised vec0 columns go stale after
-  `updateMemory`).
+  `user_memories` columns (which also filters `deleted_at IS NULL`).
 - **Embedding persistence:** `saveMemoryEmbedding` (takes `embeddingModel: str`
   + `List[float]`; lazy vec0 upsert + provenance UPDATE; vec0 write must
   succeed before provenance is set — a failure leaves `embedding_model = NULL`
@@ -129,12 +144,19 @@ dict keys are snake_case to match columns.
   (resets provenance to `NULL` + drops stale vec0 rows for rows whose
   model/dimensions drifted).
 
-`updateMemory` content-change invalidation: when `content` is provided, the
-stored vec0 vector (derived from the OLD content) is stale, so
-`embedding_model`/`embedding_dimensions` are reset to `NULL` **and** the
-stale vec0 row is dropped (best-effort) so `getMemoriesWithoutEmbeddings`
-re-surfaces it. This is the **sole** trigger that keeps embeddings in sync
-with content edits — regen only re-embeds on model drift.
+`deleteMemory` soft-delete semantics: instead of hard-`DELETE`-ing the row,
+`deleteMemory` runs `UPDATE user_memories SET deleted_at = :deletedAt,
+updated_at = :updatedAt WHERE ... AND deleted_at IS NULL` and then calls
+`deleteMemoryEmbedding(..., vecOnly=False)` — which drops the vec0 row AND
+nulls `embedding_model`/`embedding_dimensions` (so the regen cron never
+re-embeds a deleted memory and it is never a semantic-search hit). The content
+row survives with `deleted_at` set so `getMemoriesByIds` (no `deleted_at`
+filter) can still resolve it for historical reads. A re-delete of an
+already-soft-deleted `memory_id` returns `False` (the existence pre-check is
+scoped to the live row via `AND deleted_at IS NULL`). The whole body stays in
+its never-raise `try/except` (returns `False` on any DB error). Vec0 columns
+are written once at embed time and never edited, so there is no embedding-sync
+trigger — content changes go through `deleteMemory` + `addMemory`.
 
 ## MemoryType
 
@@ -179,10 +201,13 @@ Freeform categorisation beyond these is handled by the JSON `tags` column.
 ### Retrieval
 
 - **Injection** — `MessagePreprocessorHandler.injectMemories()` loads
-  permanent + ephemeral at message-arrival time, persists them into the
-  chat message's `metadata`, and they ride per-message via
-  `EnsuredMessage.setUserMemories` / `formatForLLM` (JSON key `userMemories`).
-  See "Injection".
+  permanent + ephemeral at message-arrival time. Since the memory-compaction-v1
+  change, the message's `metadata["memories"]` stores **compact memory IDs**
+  (`{"permanentIds": [...], "shortTermIds": [...]}`) rather than full content,
+  and the read path resolves IDs → content via the `MEMORIES_BY_ID` cache at
+  render time (see "Injection"). The current-turn `userMemories` still carries
+  resolved content (so the LLM sees it immediately). `formatForLLM` emits the
+  resolved block under JSON key `userMemories`.
 - **`search_memories` tool** — the chat LLM can call `search_memories` to
   look up prior memories on demand (semantic or filter-only).
 
@@ -310,21 +335,99 @@ refactoring — there is no longer a `<user-memories>` system-message block.
 4. The ephemeral rows are slimmed to `SingleMemoryDict` via
    `convertDBMemoryToSingleMemoryDict` (drops DB plumbing keys, keeps
    `type`/`content`/`tags`/`score`).
-5. `ensuredMessage.setUserMemories({"permanent": permanentMemories,
-   "shortTerm": shortTermMemories})` — a deep copy is stored on
-   `EnsuredMessage.userMemories` and mirrored into
-   `metadata["memories"]`.
+5. **Split userMemories (content) from metadata["memories"] (compact IDs).**
+   This deliberately bypasses `setUserMemories` (which would mirror content
+   into `metadata["memories"]`) and assigns the two fields separately:
+   - `permanentIds = [m["id"] for m in permanentMemories]`,
+     `shortTermIds = [m["memory_id"] for m in memories]` (extracted before the
+     slim conversion, since the slim form drops `memory_id`). The permanent
+     cache loader uses `convertDBMemoryToSingleMemoryDict(m, keepId=True)` so
+     each entry carries its `id` — needed here to build `permanentIds`.
+   - `permanentContent` strips `id` from each permanent entry (a leaked uuid
+     adds tokens for no chat-time benefit and violates `SingleMemoryDict.id`'s
+     "absent on injected snapshots" invariant — the cache keeps `id`, the
+     injected content does not).
+   - `ensuredMessage.userMemories = {"permanent": permanentContent,
+     "shortTerm": shortTermMemories}` — resolved content for the CURRENT turn's
+     LLM context.
+   - `ensuredMessage.metadata["memories"] = {"permanentIds": [...],
+     "shortTermIds": [...]}` — the compact ID shape that gets saved into
+     `chat_messages.metadata`.
 
-Because step 5 runs **before** `saveChatMessage`, the snapshot is persisted
-into the chat message's `metadata` JSON and **rides per message**: when the
-message is later loaded into an LLM turn (thread context, mention, random,
-reply), `EnsuredMessage.fromDBChatMessage(..., injectMemories=True)` reads
-the `memories` key back via `setUserMemories`, and `formatForLLM` emits them
-under the JSON key **`userMemories`** (a per-message field, not a
-system-message block). The memories seen by the model are therefore the
-snapshot known at the time the message arrived — every message in a thread
-carries its own context, and there is no per-turn re-fetch at the LLM call
-site.
+Because the metadata assignment runs **before** `saveChatMessage`, the compact
+IDs are persisted into the chat message's `metadata` JSON and **ride per
+message**. This is the memory-compaction-v1 change (see
+[`docs/plans/memory-compaction-v1.md`](../../plans/memory-compaction-v1.md) and
+[`../architecture.md`](../architecture.md) ADR-017): instead of persisting a
+~2–3 KB full content snapshot per message (the permanent block being
+byte-identical across a whole thread), each message now carries just the UUID
+lists, and the read path resolves IDs → content via a cache at render time.
+
+### Read-path resolution (compact IDs → content)
+
+When a message is later loaded into an LLM turn (thread context, mention,
+random, reply), `EnsuredMessage.fromDBChatMessage(..., injectMemories=True)`
+does NOT resolve the IDs inline (resolving there would import `CacheService`,
+creating a circular import). Instead it stashes the raw
+`metadata["memories"]` via `EnsuredMessage.loadMemoriesMetadata`, which detects
+the format:
+
+- **Compact format** (`permanentIds`/`shortTermIds` present) — leaves
+  `userMemories` unset; the IDs stay stashed in `metadata["memories"]` for
+  later resolution.
+- **Old content format** (`{"permanent": [...], "shortTerm": [...]}`) —
+  applied via `setUserMemories` as before (backward compat; no backfill of old
+  messages).
+- `None` / non-dict — a no-op (regression guard against the old
+  `"permanentIds" in None` `TypeError`).
+
+Every read-path consumer that then renders the message for the LLM calls
+`await ensuredMessage.resolveMemories(self.cache)` **before**
+`formatForLLM` / `toModelMessage` / `toModelMessageList`. `resolveMemories`
+is a no-op when `userMemories` is already populated (old content format, or
+the current-turn write path that set content directly); otherwise it resolves
+all `permanentIds` + `shortTermIds` in one `cache.getMemoriesByIds(...)` call
+and deep-copies the resolved content into `userMemories`.
+
+The four render sites (gated on each site's `injectMemories` condition —
+typically `MEMORY_INJECTION_ENABLED`) are:
+`getThreadByMessageForLLM` (`base.py` — three rendered `eMessage` sites; the
+`eRootMessage` is built but never rendered so it needs no resolution),
+`handleMention` (both branches in `llm_messages.py`, including the text-reply
+bypass that was rewritten from a `setUserMemories(metadata.get("memories"))`
+bypass to `loadMemoriesMetadata` + `resolveMemories`), `handleRandomMessage`
+(`llm_messages.py`), and the image-prompt fallback in `draw_command`
+(`media.py`). A structural AST guard
+([`tests/test_memory_resolution_coverage.py`](../../../tests/test_memory_resolution_coverage.py))
+enforces that every future `fromDBChatMessage(injectMemories=<not literal
+False>)` render site is followed by `resolveMemories` before render, and bans
+the `setUserMemories(metadata-derived)` bypass shape.
+
+> **Two implementation deviations from the plan (recorded in ADR-017 and the
+> plan's status note):**
+> 1. `resolveMemories` populates `self.userMemories` ONLY and does NOT re-point
+>    `metadata["memories"]` to resolved content. The condense branch of
+>    `getThreadByMessageForLLM` writes `eRootMessage.metadata` (whole dict)
+>    back to DB — re-pointing to resolved content would persist content over
+>    the compact IDs for condensed-thread root messages, defeating compaction.
+> 2. The by-id resolution cache (`MEMORIES_BY_ID` / `getMemoriesByIds`) stores
+>    entries with `keepId=False` (the plan said `keepId=True`). The cache is
+>    the read-path resolver: entries are looked up by dict key (the key IS the
+>    id) and `formatForLLM` renders the content verbatim, so storing `id`
+>    would leak a uuid into the LLM prompt. The separate permanent-memories
+>    cache uses `keepId=True` so the write path can extract `permanentIds`.
+
+> **Empty-memories read-path difference:** a zero-memory compact-format
+> message (empty `permanentIds`/`shortTermIds`) renders WITHOUT a
+> `userMemories` block in `formatForLLM` (`resolveMemories` returns early,
+> leaving `userMemories = None`, and the dict-comprehension drops the falsy
+> value) — an improvement over the old format, which rendered an empty
+> `{"permanent": [], "shortTerm": []}` block.
+
+The memories seen by the model are therefore the snapshot known at the time
+the message arrived — every message in a thread carries its own context, and
+there is no per-turn re-fetch at the LLM call site (just a cache lookup of the
+persisted IDs).
 
 ### Permanent-memories cache
 
@@ -334,7 +437,9 @@ rather than re-queried on every inbound message:
 - `getChatUserPermanentMemories(chatId, userId, threadId)` →
   `list[SingleMemoryDict]` — lazily loads + memoises the permanent block for
   `(chatId, userId, threadId)`; the loader calls `getPermanentMemories` and
-  converts via `convertDBMemoryToSingleMemoryDict`.
+  converts via `convertDBMemoryToSingleMemoryDict(m, keepId=True)` so each
+  entry carries its `id` (the write path needs the ids to build
+  `permanentIds`; `injectMemories` then strips `id` from the injected content).
 - `invalidateChatUserPermanentMemories(chatId, userId, threadId)` — drops the
   cached block so the next read re-queries. Called by the memory-write paths
   (`add_memory` / `delete_memory` / the refinement tools) so a freshly added
@@ -344,6 +449,43 @@ The old `getChatUserData` / `setChatUserData` / `unsetChatUserData` /
 `clearChatUserData` cache methods (legacy `user_data` key-value blob) were
 **deleted**; `invalidateChatUser(chatId, userId)` still exists but only drops
 `userInfo` and intentionally preserves the permanent-memories cache.
+
+### By-id resolution cache (`MEMORIES_BY_ID`)
+
+The read-path resolver (memory-compaction-v1). `CacheService.getMemoriesByIds(
+memoryIds: List[str]) -> Dict[str, Optional[SingleMemoryDict]]` is a
+cache-aside lookup in the `CacheNamespace.MEMORIES_BY_ID` namespace
+(MEMORY_ONLY persistence — never written to disk, cleared on process restart):
+
+- Each requested ID is looked up in the namespace; misses are batch-queried
+  via `db.userMemories.getMemoriesByIds(missingIds)` (which deliberately has
+  NO `deleted_at` filter, so a soft-deleted memory still resolves to its
+  preserved content — the whole point of soft-delete), converted via
+  `convertDBMemoryToSingleMemoryDict` with the default `keepId=False`, and
+  populated back into the cache.
+- IDs not found in the DB are **negative-cached as `None`** so a repeated miss
+  does not re-query.
+- **No invalidation method exists** for this namespace: soft-delete preserves
+  content (so a cached entry stays valid — there is no `updateMemory` to
+  invalidate), `addMemory` does not invalidate a not-yet-cached entry, and
+  process restart clears the cache naturally. The only writer to the cache is
+  `getMemoriesByIds` itself (cache-aside on miss).
+
+## Deferred (memory-compaction-v1 scope boundaries)
+
+Two follow-up features are explicitly out of scope and noted as known
+limitations (see [`docs/plans/memory-compaction-v1.md`](../../plans/memory-compaction-v1.md)
+§8):
+
+- **Prompt hoisting** (permanent block → a single system message). This change
+  stores memories compactly per-message (a prerequisite for hoisting) but
+  memories still attach per-message, resolved from cache at render time.
+  Hoisting is a separate future feature.
+- **GC for soft-deleted rows.** Soft-deleted rows accumulate in `user_memories`
+  over time (the content survives for historical reads). If GC becomes
+  necessary, the shape is: hard-delete soft-deleted memories older than N days
+  that no live message references (the message-reference check is a non-trivial
+  join over `chat_messages.metadata` JSON TEXT — tracked as a follow-up).
 
 ## Refinement (Phase 4a rewrite)
 
@@ -459,9 +601,14 @@ the decision record.
 
 - [`../../plans/user-memories-v1.md`](../../plans/user-memories-v1.md) —
   authoritative implementation spec (planning document, amended post-impl).
+- [`../../plans/memory-compaction-v1.md`](../../plans/memory-compaction-v1.md)
+  — the compact-ID storage + by-id cache + soft-delete change (status:
+  IMPLEMENTED). This doc's "Injection" / "Read-path resolution" / "By-id
+  resolution cache" sections summarise it; see ADR-017 for the decision.
 - [`../architecture.md`](../architecture.md) ADR-016 — unified
   `user_memories` store decision (structured memories + vec0 + tool
-  self-management + centralised arrival-time injection). ADR-014 covers the
+  self-management + centralised arrival-time injection); ADR-017 — compact-ID
+  per-message storage + by-id cache + soft-delete. ADR-014 covers the
   background refinement machinery (cron + global lock + accounting) that
   still governs `_runRefinement`; ADR-015 covers the `chat_users` cache used
   by the cursor persist.

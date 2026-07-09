@@ -30,7 +30,7 @@ import logging
 import time
 from collections import OrderedDict
 from threading import RLock
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Optional, Tuple, Type
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Tuple, Type
 
 import internal.database.utils as dbUtils
 from internal.bot.models.message_metadata import SingleMemoryDict, convertDBMemoryToSingleMemoryDict
@@ -265,7 +265,8 @@ class CacheService:
                 LRUCache[int | str, HCChatCacheDict]
                 | LRUCache[str, HCChatUserCacheDict]
                 | LRUCache[int, HCUserCacheDict]
-                | LRUCache[int, HCChatPersistentCacheDict],
+                | LRUCache[int, HCChatPersistentCacheDict]
+                | LRUCache[str, Optional[SingleMemoryDict]],
             ] = {
                 CacheNamespace.CHATS: LRUCache[int | str, HCChatCacheDict](
                     self.maxCacheSize,
@@ -281,6 +282,11 @@ class CacheService:
                 CacheNamespace.USERS: LRUCache[int, HCUserCacheDict](
                     self.maxCacheSize, keyType=int, valueType=HCUserCacheDict
                 ),
+                CacheNamespace.MEMORIES_BY_ID: LRUCache[str, Optional[SingleMemoryDict]](
+                    self.maxCacheSize,
+                    keyType=str,
+                    valueType=Optional[SingleMemoryDict],  # pyright: ignore[reportArgumentType]
+                ),
             }
             """Dictionary mapping cache namespaces to their LRU cache instances."""
 
@@ -290,6 +296,7 @@ class CacheService:
                 CacheNamespace.CHAT_PERSISTENT: set(),
                 CacheNamespace.CHAT_USERS: set(),
                 CacheNamespace.USERS: set(),
+                CacheNamespace.MEMORIES_BY_ID: set(),
             }
             """Dictionary tracking keys that have been modified and need persistence."""
 
@@ -365,6 +372,21 @@ class CacheService:
             The LRU cache for the CHAT_PERSISTENT namespace
         """
         return self._caches[CacheNamespace.CHAT_PERSISTENT]  # pyright: ignore[reportReturnType]
+
+    @property
+    def memoriesById(self) -> LRUCache[str, Optional[SingleMemoryDict]]:
+        """Access memoriesById namespace.
+
+        Provides direct access to the MEMORIES_BY_ID namespace cache which maps
+        memory UUID strings to their resolved :class:`SingleMemoryDict` form (or
+        ``None`` for IDs not found in the DB — negative-cached to avoid repeat
+        queries). MEMORY_ONLY persistence: never written to disk, cleared on
+        process restart.
+
+        Returns:
+            The LRU cache for the MEMORIES_BY_ID namespace
+        """
+        return self._caches[CacheNamespace.MEMORIES_BY_ID]  # pyright: ignore[reportReturnType]
 
     async def injectDatabase(self, database: "Database") -> None:
         """Inject database wrapper for persistence.
@@ -902,7 +924,15 @@ class CacheService:
             threadId=threadId,
         )
 
-        userCache["permanentMemories"][threadId] = [convertDBMemoryToSingleMemoryDict(m) for m in dbMemories]
+        # keepId=True so each entry carries its memory id — the write path
+        # (MessagePreprocessorHandler.injectMemories) extracts permanentIds from
+        # this field. Contrast with the by-id resolution cache
+        # (getMemoriesByIds), which is keepId=False (resolved entries are looked
+        # up by dict key, never by the internal id field, so it is stripped to
+        # avoid leaking a uuid into the LLM prompt).
+        userCache["permanentMemories"][threadId] = [
+            convertDBMemoryToSingleMemoryDict(m, keepId=True) for m in dbMemories
+        ]
         self.chatUsers.set(userKey, userCache)
         return userCache["permanentMemories"][threadId]
 
@@ -940,6 +970,65 @@ class CacheService:
 
         del userCache["permanentMemories"][threadId]
         self.chatUsers.set(userKey, userCache)
+
+    async def getMemoriesByIds(self, memoryIds: List[str]) -> Dict[str, Optional[SingleMemoryDict]]:
+        """Resolve memory IDs to their SingleMemoryDict form, cache-aside.
+
+        Cache-first: each requested ID is looked up in the MEMORIES_BY_ID
+        namespace. Misses are batch-queried via
+        ``db.userMemories.getMemoriesByIds(missingIds)``, converted to
+        :class:`SingleMemoryDict` via :func:`convertDBMemoryToSingleMemoryDict`
+        (default ``keepId=False``), and populated back into the cache. This
+        cache is the read-path resolver (Phase 3's
+        ``EnsuredMessage.resolveMemories``): each entry is looked up by dict
+        key — the ``mid`` key IS the memory id — so the entry's internal
+        ``id`` field is never read. The resolved content is rendered verbatim
+        by ``formatForLLM`` into ``userMemories``, so storing ``id`` would
+        leak a uuid into the LLM prompt, violating the
+        :class:`SingleMemoryDict.id` invariant ("Absent on injected/in-memory
+        snapshots"). Entries are therefore stored WITHOUT ``id``. Returns a
+        dict mapping every requested ID to its resolved entry, or ``None`` for
+        IDs not found in the DB (a missing ID is cached as ``None`` so a
+        repeated miss does not re-query — negative caching).
+
+        No invalidation method exists for this namespace: soft-delete preserves
+        content (so a cached entry stays valid), ``addMemory`` does not
+        invalidate a not-yet-cached entry, and process restart clears the
+        cache naturally (MEMORY_ONLY persistence).
+
+        Args:
+            memoryIds: Memory UUID hex strings to resolve.
+
+        Returns:
+            ``Dict[str, Optional[SingleMemoryDict]]`` keyed by the requested
+            IDs. Every requested ID is present in the result (a resolved entry
+            or ``None``). Empty dict when ``memoryIds`` is empty or no database
+            is wired.
+        """
+        if not memoryIds:
+            return {}
+
+        if not self.database:
+            logger.error("No dbWrapper found, can't resolve memory ids via getMemoriesByIds")
+            return {}
+
+        # Partition requested IDs into cache hits and misses. Membership uses
+        # the underlying OrderedDict ``in`` (no LRU reordering); the return-path
+        # ``.get`` below touches LRU order on hits.
+        missingIds = [mid for mid in memoryIds if mid not in self.memoriesById]
+
+        if missingIds:
+            dbRows = await self.database.userMemories.getMemoriesByIds(missingIds)
+            resolvedBy: Dict[str, SingleMemoryDict] = {
+                row["memory_id"]: convertDBMemoryToSingleMemoryDict(row) for row in dbRows
+            }
+            # Populate the cache for EVERY miss — including None for IDs not
+            # found in the DB (negative caching) so a repeated miss does not
+            # re-query.
+            for mid in missingIds:
+                self.memoriesById.set(mid, resolvedBy.get(mid, None))
+
+        return {mid: self.memoriesById.get(mid, None) for mid in memoryIds}
 
     # ## ChatUser UserInfo (chat_users row)
 

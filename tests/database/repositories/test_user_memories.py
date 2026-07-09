@@ -2,8 +2,11 @@
 
 Covers the full lifecycle on the ``user_memories`` table:
 
-- Phase 1a relational CRUD: ``addMemory`` / ``updateMemory`` /
-  ``deleteMemory`` / ``getPermanentMemories`` / ``getLatestMemories``.
+- Phase 1a relational CRUD: ``addMemory`` / ``deleteMemory`` /
+  ``getPermanentMemories`` / ``getLatestMemories``.
+- Memory-compaction-v1 Phase 1: soft-delete (``deleteMemory`` sets
+  ``deleted_at``; live reads skip it) + ``getMemoriesByIds`` (no
+  ``deleted_at`` filter — returns soft-deleted for historical reads).
 - Phase 1b vector layer: ``searchMemories`` (filter-only + semantic
   modes), ``saveMemoryEmbedding`` (lazy vec0 creation),
   ``deleteMemoryEmbedding``, ``getMemoriesWithoutEmbeddings`` /
@@ -203,82 +206,10 @@ class TestUserMemoriesRepository:
         assert {r["content"] for r in result} == {"permanent"}
 
     ###
-    # updateMemory: partial updates
-    ###
-    async def test_updateMemory_contentOnly(self, testDatabase: Database) -> None:
-        """Patching content leaves tags/type untouched."""
-        memoryId = await self._add(
-            testDatabase,
-            content="old",
-            tags=["t1"],
-            memoryType=MemoryType.FACT,
-            threadId=5,
-        )
-
-        ok = await testDatabase.userMemories.updateMemory(CHAT_ID, USER_ID, memoryId, content="new")
-        assert ok is True
-
-        rows = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5)
-        assert len(rows) == 1
-        assert rows[0]["content"] == "new"
-        assert rows[0]["tags"] == ["t1"]
-        assert rows[0]["type"] == MemoryType.FACT
-
-    async def test_updateMemory_tagsOnly(self, testDatabase: Database) -> None:
-        """Patching tags leaves content/type untouched."""
-        memoryId = await self._add(
-            testDatabase,
-            content="keep",
-            tags=["old"],
-            memoryType=MemoryType.FACT,
-            threadId=5,
-        )
-
-        ok = await testDatabase.userMemories.updateMemory(CHAT_ID, USER_ID, memoryId, tags=["a", "b"])
-        assert ok is True
-
-        rows = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5)
-        assert len(rows) == 1
-        assert rows[0]["content"] == "keep"
-        # ``_normalizeTags`` de-dupes via ``set()`` (unordered); compare as a sorted set.
-        assert sorted(rows[0]["tags"]) == ["a", "b"]
-        assert rows[0]["type"] == MemoryType.FACT
-
-    async def test_updateMemory_typeOnly(self, testDatabase: Database) -> None:
-        """Patching type leaves content/tags untouched."""
-        memoryId = await self._add(
-            testDatabase,
-            content="keep",
-            tags=["t"],
-            memoryType=MemoryType.FACT,
-            threadId=5,
-        )
-
-        ok = await testDatabase.userMemories.updateMemory(CHAT_ID, USER_ID, memoryId, type=MemoryType.EVENT)
-        assert ok is True
-
-        rows = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5)
-        assert len(rows) == 1
-        assert rows[0]["content"] == "keep"
-        assert rows[0]["tags"] == ["t"]
-        assert rows[0]["type"] == MemoryType.EVENT
-
-    async def test_updateMemory_noMatchReturnsFalse(self, testDatabase: Database) -> None:
-        """Updating a nonexistent memory id returns False and writes nothing."""
-        ok = await testDatabase.userMemories.updateMemory(CHAT_ID, USER_ID, "does-not-exist", content="x")
-        assert ok is False
-
-    async def test_updateMemory_noFieldsReturnsFalse(self, testDatabase: Database) -> None:
-        """Calling updateMemory with no fields is a no-op returning False."""
-        memoryId = await self._add(testDatabase, content="keep", threadId=5)
-        ok = await testDatabase.userMemories.updateMemory(CHAT_ID, USER_ID, memoryId)
-        assert ok is False
-
-    ###
     # deleteMemory
     ###
     async def test_deleteMemory(self, testDatabase: Database) -> None:
-        """deleteMemory removes the row and returns True; re-deleting returns False."""
+        """deleteMemory soft-deletes the row; live reads no longer return it. Re-deleting returns False."""
         memoryId = await self._add(testDatabase, content="bye", threadId=5)
 
         ok = await testDatabase.userMemories.deleteMemory(CHAT_ID, USER_ID, memoryId)
@@ -292,7 +223,7 @@ class TestUserMemoriesRepository:
         assert ok2 is False
 
     async def test_deleteMemory_canTargetPermanent(self, testDatabase: Database) -> None:
-        """Explicit by-id deleteMemory is unrestricted — it MAY remove a permanent memory."""
+        """Explicit by-id deleteMemory is unrestricted — it soft-deletes a permanent memory; live reads skip it."""
         memoryId = await self._add(testDatabase, content="permanent", permanent=True, threadId=None)
         ok = await testDatabase.userMemories.deleteMemory(CHAT_ID, USER_ID, memoryId)
         assert ok is True
@@ -938,50 +869,178 @@ class TestUserMemoriesVectorLayer:
         ok = await testDatabase.userMemories.deleteMemoryEmbedding(CHAT_ID, USER_ID, idNotEmbedded)
         assert ok is False
 
-    async def test_updateMemory_contentInvalidatesEmbedding(self, testDatabase: Database) -> None:
-        """Regression (Fix 4): a content update invalidates the embedding.
+    ###
+    # Memory-compaction-v1 Phase 1: soft-delete + getMemoriesByIds
+    ###
+    async def test_softDelete_rowSurvivesAndLiveReadsSkipIt(self, testDatabase: Database) -> None:
+        """After ``deleteMemory`` the row survives with ``deleted_at`` set; live reads skip it.
 
-        After ``updateMemory(content=...)``, the provenance columns
-        (``embedding_model`` / ``embedding_dimensions``) must be reset to
-        ``NULL`` AND the stale vec0 row dropped, so the regen cron
-        (:meth:`getMemoriesWithoutEmbeddings`) re-embeds on the new
-        content. Without this, regen only re-embeds on model drift — a
-        content edit would leave a stale vector forever.
+        Covers: getPermanentMemories, getLatestMemories, searchMemories
+        (filter-only), getMemory, and getDistinctTags all skip the
+        soft-deleted row; the content row itself is NOT removed.
         """
-        idA = await self._add(testDatabase, content="original content", threadId=5)
+        # Permanent memory tagged "keep", ephemeral tagged "bye".
+        permId = await self._add(
+            testDatabase,
+            content="permanent to delete",
+            tags=["solo"],
+            permanent=True,
+            threadId=None,
+            memoryType=MemoryType.FACT,
+        )
+        ephemeralId = await self._add(
+            testDatabase,
+            content="ephemeral to delete",
+            tags=["bye"],
+            permanent=False,
+            threadId=5,
+            memoryType=MemoryType.FACT,
+        )
+
+        ok = await testDatabase.userMemories.deleteMemory(CHAT_ID, USER_ID, permId)
+        assert ok is True
+        ok = await testDatabase.userMemories.deleteMemory(CHAT_ID, USER_ID, ephemeralId)
+        assert ok is True
+
+        # Live reads skip both.
+        assert await testDatabase.userMemories.getPermanentMemories(CHAT_ID, USER_ID, threadId=0) == []
+        assert await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5) == []
+        search = await testDatabase.userMemories.searchMemories(CHAT_ID, USER_ID, embeddingModel=None, limit=10)
+        assert search == []
+        assert await testDatabase.userMemories.getMemory(CHAT_ID, USER_ID, permId) is None
+        assert await testDatabase.userMemories.getMemory(CHAT_ID, USER_ID, ephemeralId) is None
+        # Tags of the soft-deleted rows are excluded from the wizard picker.
+        assert await testDatabase.userMemories.getDistinctTags(CHAT_ID, USER_ID) == []
+
+        # The content rows themselves survived (getMemoriesByIds has no
+        # deleted_at filter) — this proves it was a soft, not hard, delete.
+        survivors = await testDatabase.userMemories.getMemoriesByIds([permId, ephemeralId])
+        survivorContents = {r["content"] for r in survivors}
+        assert survivorContents == {"permanent to delete", "ephemeral to delete"}
+
+        # deleted_at is set on the surviving rows (column is plumbing not
+        # exposed via UserMemoryDict; read it via the raw provider).
+        sqlProvider = await testDatabase.manager.getProvider(chatId=CHAT_ID, readonly=True)
+        permRow = await sqlProvider.executeFetchOne(
+            "SELECT deleted_at FROM user_memories WHERE memory_id = :mid",
+            {"mid": permId},
+        )
+        assert permRow is not None and permRow["deleted_at"] is not None
+
+    async def test_deleteMemory_idempotent_returnsFalseOnReDelete(self, testDatabase: Database) -> None:
+        """A second ``deleteMemory`` on the same id returns False (already soft-deleted)."""
+        memoryId = await self._add(testDatabase, content="bye", threadId=5)
+
+        ok1 = await testDatabase.userMemories.deleteMemory(CHAT_ID, USER_ID, memoryId)
+        assert ok1 is True
+        # Re-delete the same id → False (already soft-deleted, no live row).
+        ok2 = await testDatabase.userMemories.deleteMemory(CHAT_ID, USER_ID, memoryId)
+        assert ok2 is False
+
+    async def test_deleteMemory_neverRaises(self, testDatabase: Database) -> None:
+        """``deleteMemory`` swallows DB errors and returns False (never raises).
+
+        Injects a failure by patching the provider's execute to raise, then
+        asserts the contract: no exception escapes, False is returned.
+        """
+        memoryId = await self._add(testDatabase, content="doomed", threadId=5)
+
+        with patch.object(
+            SQLite3Provider,
+            "executeFetchOne",
+            new=AsyncMock(side_effect=RuntimeError("boom")),
+        ):
+            ok = await testDatabase.userMemories.deleteMemory(CHAT_ID, USER_ID, memoryId)
+        assert ok is False
+
+    async def test_softDelete_clearsVec0AndProvenance(self, testDatabase: Database) -> None:
+        """After soft-delete the vec0 row is gone and provenance is NULL; regen does not resurface.
+
+        A soft-deleted memory must never be a semantic-search hit and must
+        never be re-embedded by the regen cron (``getMemoriesWithoutEmbeddings``
+        skips it via the ``deleted_at IS NULL`` filter even though its
+        ``embedding_model`` is NULL).
+        """
+        idA = await self._add(testDatabase, content="embedded then deleted", threadId=5)
 
         if self._vecAvailable(testDatabase):
-            await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, idA, [1.0, 0.0], "modelA")
+            await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, idA, [1.0, 0.0, 0.0], "modelA")
+            # Sanity: semantic search finds it before delete.
+            before = await testDatabase.userMemories.searchMemories(
+                CHAT_ID, USER_ID, queryEmbedding=[1.0, 0.0, 0.0], embeddingModel="modelA", limit=5
+            )
+            assert any(r["memory_id"] == idA for r in before)
         else:
             sqlProvider = await testDatabase.manager.getProvider(chatId=CHAT_ID, readonly=False)
             await sqlProvider.execute(
                 "UPDATE user_memories SET embedding_model = :m, embedding_dimensions = :d "
                 "WHERE chat_id = :c AND user_id = :u AND memory_id = :mid",
-                {"c": CHAT_ID, "u": USER_ID, "mid": idA, "m": "modelA", "d": 2},
+                {"c": CHAT_ID, "u": USER_ID, "mid": idA, "m": "modelA", "d": 3},
             )
 
-        # Sanity: provenance was set.
-        rows = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5)
-        assert next(r for r in rows if r["memory_id"] == idA)["embedding_model"] == "modelA"
-
-        # Content update → embedding invalidated.
-        ok = await testDatabase.userMemories.updateMemory(CHAT_ID, USER_ID, idA, content="edited content")
+        ok = await testDatabase.userMemories.deleteMemory(CHAT_ID, USER_ID, idA)
         assert ok is True
 
-        # Provenance columns reset to NULL.
-        rows = await testDatabase.userMemories.getLatestMemories(CHAT_ID, USER_ID, threadId=5)
-        rowA = next(r for r in rows if r["memory_id"] == idA)
-        assert rowA["embedding_model"] is None
-        assert rowA["embedding_dimensions"] is None
-        assert rowA["content"] == "edited content"
+        # Provenance nulled on the surviving row.
+        survivors = await testDatabase.userMemories.getMemoriesByIds([idA])
+        assert len(survivors) == 1
+        assert survivors[0]["embedding_model"] is None
+        assert survivors[0]["embedding_dimensions"] is None
 
-        # Regen picks it up for re-embedding.
+        # The regen cron does NOT resurface the soft-deleted row for re-embedding
+        # (its embedding_model is NULL, but deleted_at IS NOT NULL means the
+        # deleted_at IS NULL filter excludes it).
         stale = await testDatabase.userMemories.getMemoriesWithoutEmbeddings(CHAT_ID, modelName="modelA", limit=10)
-        assert idA in {r["memory_id"] for r in stale}
+        assert idA not in {r["memory_id"] for r in stale}
 
-        # With vec0: the stale vec0 row is gone → semantic search misses.
+        # With vec0: the row is gone → semantic search no longer hits it.
         if self._vecAvailable(testDatabase):
-            results = await testDatabase.userMemories.searchMemories(
-                CHAT_ID, USER_ID, queryEmbedding=[1.0, 0.0], embeddingModel="modelA", limit=5
+            after = await testDatabase.userMemories.searchMemories(
+                CHAT_ID, USER_ID, queryEmbedding=[1.0, 0.0, 0.0], embeddingModel="modelA", limit=5
             )
-            assert all(r["memory_id"] != idA for r in results)
+            assert all(r["memory_id"] != idA for r in after)
+
+    async def test_getMemoriesByIds_returnsSoftDeleted(self, testDatabase: Database) -> None:
+        """``getMemoriesByIds`` returns a soft-deleted memory (content preserved)."""
+        memoryId = await self._add(testDatabase, content="historical", threadId=5)
+
+        await testDatabase.userMemories.deleteMemory(CHAT_ID, USER_ID, memoryId)
+
+        result = await testDatabase.userMemories.getMemoriesByIds([memoryId])
+        assert len(result) == 1
+        assert result[0]["memory_id"] == memoryId
+        assert result[0]["content"] == "historical"
+
+    async def test_getMemoriesByIds_ignoresChatAndUserScope(self, testDatabase: Database) -> None:
+        """``getMemoriesByIds`` returns memories from different (chat, user) scopes in one call.
+
+        UUIDs are globally unique, so no chatId/userId scoping is needed.
+        """
+        idA = await self._add(testDatabase, chatId=1, userId=100, content="scope-a", threadId=5)
+        idB = await self._add(testDatabase, chatId=2, userId=200, content="scope-b", threadId=9)
+
+        result = await testDatabase.userMemories.getMemoriesByIds([idA, idB])
+        contents = {r["content"] for r in result}
+        assert contents == {"scope-a", "scope-b"}
+
+    async def test_getMemoriesByIds_emptyListReturnsEmptyNoQuery(self, testDatabase: Database) -> None:
+        """``getMemoriesByIds([])`` returns ``[]`` immediately (no SQL round-trip)."""
+        # Patch at the class level (SQLite3Provider uses __slots__, so an
+        # instance-level patch raises). If the empty-list path incorrectly
+        # issued SQL, this would raise the AssertionError.
+        with patch.object(
+            SQLite3Provider,
+            "executeFetchAll",
+            new=AsyncMock(side_effect=AssertionError("expected no SQL round-trip for empty memoryIds")),
+        ):
+            result = await testDatabase.userMemories.getMemoriesByIds([])
+        assert result == []
+
+    async def test_getMemoriesByIds_missingIdsAbsentFromResult(self, testDatabase: Database) -> None:
+        """An id not in the DB is simply absent from the result list."""
+        idA = await self._add(testDatabase, content="present", threadId=5)
+        missingId = "deadbeefdeadbeefdeadbeefdeadbeef"
+
+        result = await testDatabase.userMemories.getMemoriesByIds([idA, missingId])
+        assert len(result) == 1
+        assert result[0]["memory_id"] == idA

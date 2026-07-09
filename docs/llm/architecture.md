@@ -581,6 +581,39 @@ The unified store gives each memory a `type` (`bio`/`preference`/`fact`/`event`/
 
 ---
 
+### ADR-017: Memory Compaction v1 — Compact Per-Message ID Storage + By-Id Cache + Soft-Delete
+
+**Decision:** Each message's `metadata["memories"]` stores **compact memory IDs** (`{"permanentIds": [...], "shortTermIds": [...]}`) instead of a full per-message content snapshot. The read path resolves IDs → content at render time through a new `CacheNamespace.MEMORIES_BY_ID` cache + `CacheService.getMemoriesByIds` + `UserMemoriesRepository.getMemoriesByIds`. `user_memories.deleteMemory` becomes a **soft delete** (sets `deleted_at`, drops vec0 + provenance; the row survives) so a historical message referencing a now-deleted memory can still resolve its content. Spec/plan: [`docs/plans/memory-compaction-v1.md`](../plans/memory-compaction-v1.md) (status: IMPLEMENTED).
+
+**Context:** ADR-016's injection design persists the resolved memory content into `chat_messages.metadata.memories` per message so `formatForLLM` can render it later without a re-fetch. For a user with 10 permanent + 5 ephemeral memories, that is ~2–3 KB per message; the permanent block (~1.5 KB) is byte-identical across every message in the same `(chat, user, thread)`, so a 50-message thread carries ~75 KB of duplicated permanent-memory JSON. Compacting the storage to UUID lists and resolving at read time eliminates the duplication (IDs are ~tiny relative to content). Soft-delete is required because a historical message that references a deleted memory must still resolve its content for the LLM — a hard `DELETE` would make it resolve to `None` and silently drop from the rendered block.
+
+**Components** (see [`memories/user-memories.md`](memories/user-memories.md) "Injection" / "Read-path resolution" / "By-id resolution cache" for the canonical summary):
+
+- **Migration 021** (`migration_021_user_memories_soft_delete`) — adds nullable `deleted_at TIMESTAMP` to `user_memories`. `down()` is a no-op that logs (portable `DROP COLUMN` unavailable; nullable additive column safe on rollback).
+- **`deleteMemory` soft-delete** (`UserMemoriesRepository`) — `UPDATE ... SET deleted_at = :deletedAt, updated_at = :updatedAt WHERE ... AND deleted_at IS NULL` + `deleteMemoryEmbedding(..., vecOnly=False)` (drops vec0 + nulls provenance). Row survives; never raises; re-delete of an already-soft-deleted id returns `False`. `updateMemory` was **removed** (zero production callers; content changes go through `deleteMemory` + `addMemory`).
+- **`AND deleted_at IS NULL`** added to all 8 live read methods (the live injection/search path skips soft-deleted rows). `getMemoriesByIds` is the single deliberate exception.
+- **`getMemoriesByIds(memoryIds: List[str]) -> List[UserMemoryDict]`** — fetches by UUID list with NO `deleted_at` filter, no `chatId`/`userId` (UUIDs globally unique), routing to the default DB. The historical-resolution read path.
+- **`CacheNamespace.MEMORIES_BY_ID` + `CacheService.getMemoriesByIds`** — MEMORY_ONLY cache-aside resolver (`:named`→keyed by mid; misses batch-queried; not-found IDs negative-cached as `None`). No invalidation method (soft-delete preserves content; `addMemory` doesn't invalidate a not-yet-cached entry; restart clears it).
+- **Write path** (`MessagePreprocessorHandler.injectMemories`) — splits `userMemories` (resolved content for the current turn, with `id` stripped from permanent entries) from `metadata["memories"]` (the compact ID lists persisted into `chat_messages.metadata`). The permanent-memories cache loader switches to `keepId=True` so the write path can extract `permanentIds`.
+- **Read path** (`EnsuredMessage.loadMemoriesMetadata` + `resolveMemories`) — `fromDBChatMessage` stashes compact IDs without resolving (avoids a `CacheService`→`ensured_message` circular import); each render site calls `await msg.resolveMemories(self.cache)` before `formatForLLM`/`toModelMessage`. An AST-based coverage guard (`tests/test_memory_resolution_coverage.py`) enforces every `fromDBChatMessage(injectMemories=<not literal False>)` render site is followed by `resolveMemories`, and bans the `setUserMemories(metadata-derived)` bypass.
+
+**Consequences:**
+
+- **Backward compat without backfill:** old messages keep their inline content snapshots (`{"permanent": [...], "shortTerm": [...]}`) and render unchanged via `setUserMemories`; new messages carry the compact ID shape. `loadMemoriesMetadata` detects the format. A zero-memory compact-format message now renders WITHOUT a `userMemories` block (was an empty block) — empty blocks are LLM noise.
+- **Soft-deleted rows accumulate** — the `user_memories` table grows over time. GC is deferred (the safe shape requires a join against `chat_messages.metadata` JSON TEXT to check ID references; tracked as a follow-up).
+- **Prompt hoisting deferred** — memories still attach per-message (resolved from cache); hoisting the permanent block to a single system message is a separate future feature for which this compact storage is a prerequisite.
+
+**Implementation deviations from the plan** (recorded in the plan's status note and [`memories/user-memories.md`](memories/user-memories.md) "Read-path resolution"):
+
+1. **`resolveMemories` does NOT re-point `metadata["memories"]`** (plan §5.2.2 said to call `setUserMemories`, which re-points metadata). The condense branch of `getThreadByMessageForLLM` writes `eRootMessage.metadata` (whole dict) back to DB — re-pointing to resolved content would persist content over compact IDs for condensed-thread root messages, defeating compaction. Fix: `resolveMemories` populates `self.userMemories` only (deepcopy), leaving `metadata["memories"]` as compact IDs. (This contradicts the plan's claim that "no read-path consumer re-persists the message" — that claim is false for the condense path.)
+2. **By-id cache uses `keepId=False`** (plan §4.3 said `keepId=True`). The cache is the read-path resolver: entries are looked up by dict key (the key IS the id), and `formatForLLM` renders content verbatim, so storing `id` would leak a uuid into the LLM prompt (violating `SingleMemoryDict.id`'s "absent on injected snapshots" invariant). The separate permanent-memories cache uses `keepId=True` (write path needs the ids).
+3. **`resolveMemoriesBatch` deferred.** `getThreadByMessageForLLM`'s build-render-interleaved structure has no clean "collect all then resolve" call site, so per-message `resolveMemories` is used everywhere (correct per plan §5.2.3, just one DB query per message on a cold cache; warm cache makes subsequent messages cheap).
+4. **AST coverage guard** implemented with a dynamic scan over `internal/` (not a fixed file list) + target-tracking for the `eRootMessage` exemption (built but never rendered) + `setUserMemories(metadata-derived)` bypass ban. 8 sanity tests prove detection.
+
+> **Count reconciliation:** the plan records 6 deviations while ADR-017 lists 4 numbered implementation deviations because #5 (the `_llmToolGenerateImage`→`draw_command` symbol drift) is a plan-internal self-correction — ADR-017 names `draw_command` correctly throughout — and #6 (a zero-memory compact-format message omits the `userMemories` block) is recorded under ADR-017's **Consequences** above, not as a deviation.
+
+---
+
 ## 2. Dependency Map
 
 ### 2.1 Component Dependency Graph

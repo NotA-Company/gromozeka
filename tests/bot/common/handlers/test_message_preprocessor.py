@@ -23,6 +23,7 @@ import pytest
 from internal.bot.common.handlers.base import HandlerResultStatus
 from internal.bot.common.handlers.message_preprocessor import MessagePreprocessorHandler
 from internal.bot.models import (
+    MEMORY_RETRIEVAL_MODE_LATEST,
     BotProvider,
     ChatSettingsDict,
     ChatSettingsKey,
@@ -31,7 +32,10 @@ from internal.bot.models import (
     EnsuredMessage,
     MessageRecipient,
     MessageSender,
+    SingleMemoryDict,
 )
+from internal.database.models import MemoryType, UserMemoryDict
+from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
 from internal.services.cache.service import CacheService
 from internal.services.llm.service import LLMService
@@ -657,3 +661,251 @@ class TestChatMemberHandlers:
             userId=9,
             metadata={"memoryRefinement": {"0": {"summary": "pre-existing"}}, "leftChat": True},
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests: injectMemories compact-format write path (memory-compaction-v1 Phase 3a)
+# ---------------------------------------------------------------------------
+
+
+def _chatSettingsWithMemoryInjection(*, retrievalMode: str = MEMORY_RETRIEVAL_MODE_LATEST) -> ChatSettingsDict:
+    """Build chat settings enabling memory injection.
+
+    The default ``handler`` fixture wires ``getChatSettings`` to
+    ``_defaultChatSettings()`` which sets ``MEMORY_INJECTION_ENABLED=false`` so
+    ``injectMemories`` short-circuits. These tests need injection enabled and the
+    retrieval mode pinned to ``latest`` (so the ``getLatestMemories`` branch runs
+    and the semantic-search/embedding path is skipped).
+
+    Args:
+        retrievalMode: Value for ``MEMORY_RETRIEVAL_MODE`` (default ``latest``).
+
+    Returns:
+        A chat-settings dict with injection enabled.
+    """
+    return {
+        ChatSettingsKey.MEMORY_INJECTION_ENABLED: ChatSettingsValue("true"),
+        ChatSettingsKey.MEMORY_RETRIEVAL_MODE: ChatSettingsValue(retrievalMode),
+        ChatSettingsKey.EMBEDDINGS_ENABLED: ChatSettingsValue("false"),
+        ChatSettingsKey.EMBEDDING_MODEL: ChatSettingsValue(""),
+    }
+
+
+def _realEnsuredMessage(messageText: str = "hello world") -> EnsuredMessage:
+    """Build a real :class:`EnsuredMessage` for the injectMemories write-path tests.
+
+    A real instance (not a spec-mock) is needed because ``injectMemories`` assigns
+    to ``userMemories`` (a ``__slots__`` attribute) and subscripts ``metadata``
+    (a real dict); we then assert on the resulting shape.
+
+    Args:
+        messageText: Message text (unused by the latest-retrieval branch but
+            kept for completeness).
+
+    Returns:
+        A freshly constructed :class:`EnsuredMessage`.
+    """
+    msg = EnsuredMessage(
+        sender=MessageSender(id=7, name="Alice", username="alice"),
+        recipient=MessageRecipient(id=100, chatType=ChatType.PRIVATE),
+        messageId=42,
+        date=datetime.datetime(2026, 6, 20, 12, 0, 0, tzinfo=datetime.timezone.utc),
+        messageText=messageText,
+    )
+    msg.threadId = DEFAULT_THREAD_ID
+    return msg
+
+
+def _permanentSingleMemory(memoryId: str, content: str) -> SingleMemoryDict:
+    """Build a permanent :class:`SingleMemoryDict` carrying an ``id``.
+
+    Mirrors the ``keepId=True`` output of the permanent-memories cache loader
+    (``CacheService.getChatUserPermanentMemories``) so the write path can extract
+    ``permanentIds`` from the ``id`` field.
+
+    Args:
+        memoryId: Memory UUID hex.
+        content: Memory body text.
+
+    Returns:
+        A :class:`SingleMemoryDict` with an ``id`` key.
+    """
+    return {"id": memoryId, "type": MemoryType.FACT, "content": content, "tags": ["bio"]}
+
+
+def _dbUserMemory(memoryId: str, content: str) -> UserMemoryDict:
+    """Build a minimal :class:`UserMemoryDict` carrying ``memory_id``.
+
+    Mirrors the row shape returned by ``getLatestMemories``. Only the keys
+    consumed by the write path (``memory_id``) and the
+    ``convertDBMemoryToSingleMemoryDict`` converter (``type``/``tags``/``content``)
+    are populated.
+
+    Args:
+        memoryId: Memory UUID hex.
+        content: Memory body text.
+
+    Returns:
+        A minimal :class:`UserMemoryDict`.
+    """
+    return cast(
+        UserMemoryDict,
+        {"memory_id": memoryId, "type": MemoryType.PREFERENCE, "content": content, "tags": ["recent"]},
+    )
+
+
+class TestInjectMemoriesCompactFormat:
+    """Tests for the compact memory-ID write path in :meth:`injectMemories`.
+
+    Phase 3a: ``injectMemories`` now stores compact ID lists
+    (``permanentIds``/``shortTermIds``) in ``metadata["memories"]`` (for
+    persistence) and stripped content (no ``id``) in ``userMemories`` (for the
+    current turn's LLM context). The permanent-memories cache loader carries
+    ``id`` (``keepId=True``) so ``permanentIds`` is extractable; the injected
+    content form strips ``id`` so no uuid leaks into ``formatForLLM``.
+    """
+
+    def _wireForInjection(
+        self,
+        handler: MessagePreprocessorHandler,
+        *,
+        permanentMemories: list[SingleMemoryDict],
+        dbMemories: list[UserMemoryDict],
+    ) -> EnsuredMessage:
+        """Wire cache/db/getChatSettings for the latest-retrieval injectMemories path.
+
+        Args:
+            handler: Preprocessor fixture (cache/db already mocked).
+            permanentMemories: Permanent memories the cache returns (carry ``id``).
+            dbMemories: Short-term memories the DB returns (carry ``memory_id``).
+
+        Returns:
+            A real :class:`EnsuredMessage` ready to be passed to ``injectMemories``.
+        """
+        handler.getChatSettings = AsyncMock(  # type: ignore[method-assign]
+            return_value=_chatSettingsWithMemoryInjection()
+        )
+        cache = cast(Any, handler.cache)
+        cache.getChatUserPermanentMemories = AsyncMock(return_value=permanentMemories)
+        handler.db.userMemories.getLatestMemories = AsyncMock(return_value=dbMemories)  # type: ignore[attr-defined]
+        return _realEnsuredMessage()
+
+    async def test_injectMemories_writesCompactIdsToMetadata(self, handler: MessagePreprocessorHandler) -> None:
+        """``metadata["memories"]`` carries ``permanentIds``/``shortTermIds``, not content.
+
+        Regression guard for the compact-format write contract: the persisted
+        shape must be the ID lists (what gets saved into ``chat_messages.metadata``).
+
+        Args:
+            handler: Preprocessor fixture.
+        """
+        msg = self._wireForInjection(
+            handler,
+            permanentMemories=[_permanentSingleMemory("perm-1", "vegan")],
+            dbMemories=[_dbUserMemory("short-1", "just woke up")],
+        )
+
+        await handler.injectMemories(msg)
+
+        stored = msg.metadata.get("memories")
+        assert stored is not None
+        assert "permanentIds" in stored  # type: ignore[operator]
+        assert "shortTermIds" in stored  # type: ignore[operator]
+        assert "permanent" not in stored  # type: ignore[operator]
+        assert "shortTerm" not in stored  # type: ignore[operator]
+        assert stored["permanentIds"] == ["perm-1"]  # type: ignore[index]
+        assert stored["shortTermIds"] == ["short-1"]  # type: ignore[index]
+
+    async def test_injectMemories_stripsIdFromInjectedContent(self, handler: MessagePreprocessorHandler) -> None:
+        """No entry in ``userMemories["permanent"]`` carries an ``id`` key.
+
+        The uuid stays only in ``metadata["memories"]["permanentIds"]``. Regression
+        guard against leaking uuids into the LLM prompt via ``formatForLLM``.
+
+        Args:
+            handler: Preprocessor fixture.
+        """
+        msg = self._wireForInjection(
+            handler,
+            permanentMemories=[_permanentSingleMemory("perm-1", "vegan")],
+            dbMemories=[_dbUserMemory("short-1", "just woke up")],
+        )
+
+        await handler.injectMemories(msg)
+
+        assert msg.userMemories is not None
+        for entry in msg.userMemories["permanent"]:
+            assert "id" not in entry
+        # Content is still present (sanity).
+        assert msg.userMemories["permanent"][0]["content"] == "vegan"
+
+    async def test_injectMemories_permanentIdsNonEmptyConfirmsKeepId(self, handler: MessagePreprocessorHandler) -> None:
+        """``permanentIds`` is non-empty when a permanent memory carries ``id``.
+
+        Confirms the ``keepId=True`` loader fix flows through end-to-end: the
+        permanent cache returns entries with ``id``, and the write path extracts
+        them. Without ``keepId=True`` the permanent entries would lack ``id`` and
+        ``permanentIds`` would be empty.
+
+        Args:
+            handler: Preprocessor fixture.
+        """
+        msg = self._wireForInjection(
+            handler,
+            permanentMemories=[
+                _permanentSingleMemory("perm-1", "vegan"),
+                _permanentSingleMemory("perm-2", "lives in Berlin"),
+            ],
+            dbMemories=[],
+        )
+
+        await handler.injectMemories(msg)
+
+        stored = msg.metadata.get("memories")
+        assert stored is not None
+        assert stored["permanentIds"] == ["perm-1", "perm-2"]  # type: ignore[index]
+
+    async def test_injectMemories_dropsFalsyMemoryIds(self, handler: MessagePreprocessorHandler) -> None:
+        """A short-term memory whose ``memory_id`` is falsy is dropped from ``shortTermIds``.
+
+        Defensive filter (``if m.get("memory_id")``) so a malformed row never
+        writes ``None`` into the ID list.
+
+        Args:
+            handler: Preprocessor fixture.
+        """
+        malformed = cast(UserMemoryDict, {"memory_id": "", "type": MemoryType.PREFERENCE, "content": "x", "tags": []})
+        msg = self._wireForInjection(
+            handler,
+            permanentMemories=[],
+            dbMemories=[malformed, _dbUserMemory("short-1", "real")],
+        )
+
+        await handler.injectMemories(msg)
+
+        stored = msg.metadata.get("memories")
+        assert stored is not None
+        assert stored["shortTermIds"] == ["short-1"]  # type: ignore[index]
+
+    async def test_injectMemories_userMemoriesHasShortTermContent(self, handler: MessagePreprocessorHandler) -> None:
+        """``userMemories["shortTerm"]`` carries the slimmed content for the current turn.
+
+        Sanity guard that the current-turn LLM context still gets the (id-stripped)
+        short-term memories even though persistence uses the compact ID form.
+
+        Args:
+            handler: Preprocessor fixture.
+        """
+        msg = self._wireForInjection(
+            handler,
+            permanentMemories=[_permanentSingleMemory("perm-1", "vegan")],
+            dbMemories=[_dbUserMemory("short-1", "just woke up")],
+        )
+
+        await handler.injectMemories(msg)
+
+        assert msg.userMemories is not None
+        assert len(msg.userMemories["shortTerm"]) == 1
+        assert msg.userMemories["shortTerm"][0]["content"] == "just woke up"
+        # The slimmed short-term form has no memory_id (it's not SingleMemoryDict.id either).
+        assert "memory_id" not in msg.userMemories["shortTerm"][0]

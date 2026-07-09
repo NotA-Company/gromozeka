@@ -7,8 +7,9 @@ notes about a user — the unified store that retires the legacy
 ``user_data`` key-value table and the rolling-bio JSON blob.
 
 The repository covers the full lifecycle:
-- Relational CRUD (``addMemory`` / ``updateMemory`` / ``deleteMemory`` /
-  ``getPermanentMemories`` / ``getLatestMemories``).
+- Relational CRUD (``addMemory`` / ``deleteMemory`` /
+  ``getPermanentMemories`` / ``getLatestMemories``). Content changes go
+  through ``deleteMemory`` + ``addMemory`` (there is no in-place PATCH).
 - Unified search (``searchMemories``) — filter-only (``queryEmbedding
   is None``) and semantic (vec0 native) modes.
 - Embedding persistence (``saveMemoryEmbedding`` /
@@ -184,139 +185,31 @@ class UserMemoriesRepository(BaseRepository):
                 embeddingModel=embeddingModel,
             )
 
-    async def updateMemory(
-        self,
-        chatId: int,
-        userId: int,
-        memoryId: str,
-        *,
-        content: Optional[str] = None,
-        tags: Optional[List[str]] = None,
-        type: Optional[str] = None,
-        embedding: Optional[List[float]] = None,
-        embeddingModel: Optional[str] = None,
-    ) -> bool:
-        """PATCH selected columns; bump ``updated_at``.
-
-        Only the columns whose argument is not ``None`` are written. When
-        every argument is ``None`` the call is a no-op and returns
-        ``False`` (nothing to update). ``updated_at`` is always bumped
-        when at least one column changes.
-
-        Content updates invalidate the embedding: the stored vec0 vector
-        was derived from the OLD content, so it is stale after a content
-        change. When ``content`` is provided, this method resets
-        ``embedding_model``/``embedding_dimensions`` to ``NULL`` AND
-        drops the stale vec0 row (best-effort, never raises over it), so
-        :meth:`getMemoriesWithoutEmbeddings` re-surfaces the memory for
-        re-embedding on the new content. Regen only re-embeds on model
-        drift, NOT content drift — so the invalidation here is the sole
-        trigger that keeps embeddings in sync with content edits.
-
-        Args:
-            chatId: Chat the memory belongs to.
-            userId: User the memory is about.
-            memoryId: Memory identifier to update.
-            content: New content body, or ``None`` to leave unchanged.
-            tags: New tag list, or ``None`` to leave unchanged.
-            type: New ``MemoryType`` value, or ``None`` to leave unchanged.
-
-        Returns:
-            True if a matching row existed (and was therefore updated),
-            False if no row matched (chatId, userId, memoryId) or if
-            nothing was requested.
-
-        Note:
-            Writes are routed based on chatId mapping. Cannot write to readonly sources.
-        """
-        if content is None and tags is None and type is None:
-            return False
-
-        sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
-
-        # The provider's execute() returns None, so check existence to
-        # report whether a row was actually updated.
-        existing = await sqlProvider.executeFetchOne(
-            """
-            SELECT 1 FROM user_memories
-            WHERE
-                chat_id = :chatId AND
-                user_id = :userId AND
-                memory_id = :memoryId
-            """,
-            {"chatId": chatId, "userId": userId, "memoryId": memoryId},
-        )
-        if existing is None:
-            return False
-
-        setClauses: List[str] = []
-        params: dict[str, object] = {
-            "chatId": chatId,
-            "userId": userId,
-            "memoryId": memoryId,
-            "updatedAt": dbUtils.getCurrentTimestamp(),
-        }
-        if content is not None:
-            setClauses.append("content = :content")
-            # Drop model\dimension as embedding need to be updated in vec0 first
-            setClauses.append("embedding_model = NULL")
-            setClauses.append("embedding_dimensions = NULL")
-            params["content"] = content
-        if tags is not None:
-            setClauses.append("tags = :tags")
-            params["tags"] = _normalizeTags(tags)
-        if type is not None:
-            setClauses.append("type = :type")
-            params["type"] = type
-        setClauses.append("updated_at = :updatedAt")
-
-        await sqlProvider.execute(
-            f"""
-            UPDATE user_memories
-            SET {', '.join(setClauses)}
-            WHERE chat_id = :chatId AND user_id = :userId AND memory_id = :memoryId
-            """,
-            params,
-        )
-
-        # Content change → embedding is stale.
-        # Drop the stale vec0 row so the regen cron
-        # (getMemoriesWithoutEmbeddings) re-embeds on the NEW content.
-        # Never raise from this cleanup: the content update already
-        # succeeded; an embedding-invalidation failure must not undo it
-        # (the row will be re-embedded on the next drift pass).
-        if content is not None:
-            try:
-                if not embedding or not embeddingModel:
-                    await self.deleteMemoryEmbedding(chatId, userId, memoryId, vecOnly=True)
-                else:
-                    await self.saveMemoryEmbedding(chatId, userId, memoryId, embedding, embeddingModel)
-            except Exception:
-                logger.error(
-                    "Failed to delete stale vec0 row after content update for memory %s chat %d",
-                    memoryId,
-                    chatId,
-                    exc_info=True,
-                )
-
-        return True
-
     async def deleteMemory(
         self,
         chatId: int,
         userId: int,
         memoryId: str,
     ) -> bool:
-        """DELETE one memory row.
+        """Soft-delete one memory row (sets ``deleted_at``; the row survives).
 
         Unrestricted — an explicit by-id delete MAY target a permanent
-        memory. The vec0 embedding row cleanup (best-effort) runs via
-        :meth:`deleteMemoryEmbedding`.
+        memory. Instead of hard-``DELETE``-ing the row, this sets
+        ``deleted_at`` (and bumps ``updated_at``) so the content row
+        survives for historical reconstruction: a message that
+        references a now-deleted memory must still resolve its content
+        via :meth:`getMemoriesByIds` (which deliberately has no
+        ``deleted_at`` filter). The vec0 embedding row is deleted and the
+        provenance columns (``embedding_model`` /
+        ``embedding_dimensions``) are nulled (via
+        :meth:`deleteMemoryEmbedding(..., vecOnly=False)`) so a deleted
+        memory is never a semantic-search hit and the regen cron never
+        re-embeds it.
 
-        An existence pre-check (companion SELECT) drives the return
-        value, mirroring :meth:`updateMemory`: a re-delete of an
-        already-gone ``memory_id`` returns ``False`` rather than
-        ``True``. Never raises — on any DB error the exception is
+        An existence pre-check (companion SELECT scoped to the LIVE row
+        via ``AND deleted_at IS NULL``) drives the return value: a
+        re-delete of an already-soft-deleted ``memory_id`` returns
+        ``False``. Never raises — on any DB error the exception is
         logged and ``False`` is returned.
 
         Args:
@@ -325,8 +218,8 @@ class UserMemoriesRepository(BaseRepository):
             memoryId: Memory identifier to delete.
 
         Returns:
-            True if a row was deleted, False if no row matched or on
-            error.
+            True if a live row was soft-deleted, False if no live row
+            matched (already soft-deleted or never existed) or on error.
 
         Note:
             Writes are routed based on chatId mapping. Cannot write to readonly sources.
@@ -334,17 +227,21 @@ class UserMemoriesRepository(BaseRepository):
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
 
+            now = dbUtils.getCurrentTimestamp()
+
             # Existence pre-check: the provider's execute() returns None,
-            # so a companion SELECT is the only way to tell "deleted one
-            # row" from "matched zero rows" (mirrors updateMemory). A
-            # re-delete of an already-gone memory_id must return False.
+            # so a companion SELECT is the only way to tell "soft-deleted
+            # one live row" from "matched zero live rows". Scoped to the
+            # LIVE row (deleted_at IS NULL) so a re-delete of an
+            # already-soft-deleted memory_id returns False.
             existing = await sqlProvider.executeFetchOne(
                 """
                 SELECT 1 FROM user_memories
                 WHERE
                     chat_id = :chatId AND
                     user_id = :userId AND
-                    memory_id = :memoryId
+                    memory_id = :memoryId AND
+                    deleted_at IS NULL
                 """,
                 {"chatId": chatId, "userId": userId, "memoryId": memoryId},
             )
@@ -353,16 +250,30 @@ class UserMemoriesRepository(BaseRepository):
 
             await sqlProvider.execute(
                 """
-                DELETE FROM user_memories
+                UPDATE user_memories
+                SET
+                    deleted_at = :deletedAt,
+                    updated_at = :updatedAt
                 WHERE
                     chat_id = :chatId AND
                     user_id = :userId AND
-                    memory_id = :memoryId
+                    memory_id = :memoryId AND
+                    deleted_at IS NULL
                 """,
-                {"chatId": chatId, "userId": userId, "memoryId": memoryId},
+                {
+                    "chatId": chatId,
+                    "userId": userId,
+                    "memoryId": memoryId,
+                    "deletedAt": now,
+                    "updatedAt": now,
+                },
             )
 
-            await self.deleteMemoryEmbedding(chatId, userId, memoryId, vecOnly=True)
+            # vecOnly=False so the provenance columns are also nulled —
+            # otherwise getMemoriesWithoutEmbeddings would re-surface the
+            # soft-deleted row for re-embedding. The vec0 row is deleted
+            # so a deleted memory is never a semantic-search hit.
+            await self.deleteMemoryEmbedding(chatId, userId, memoryId, vecOnly=False)
             return True
         except Exception:
             logger.error(
@@ -412,7 +323,8 @@ class UserMemoriesRepository(BaseRepository):
                 chat_id = :chatId AND
                 user_id = :userId AND
                 permanent = 1 AND
-                (thread_id IS NULL OR thread_id = :threadId)
+                (thread_id IS NULL OR thread_id = :threadId) AND
+                deleted_at IS NULL
             ORDER BY updated_at DESC
         """
         query = sqlProvider.applyPagination(query=query, limit=limit, offset=0)
@@ -459,7 +371,8 @@ class UserMemoriesRepository(BaseRepository):
                 chat_id = :chatId AND
                 user_id = :userId AND
                 thread_id = :threadId AND
-                permanent = 0
+                permanent = 0 AND
+                deleted_at IS NULL
             ORDER BY updated_at DESC
         """
         query = sqlProvider.applyPagination(query=query, limit=limit, offset=0)
@@ -502,13 +415,54 @@ class UserMemoriesRepository(BaseRepository):
             WHERE
                 chat_id = :chatId AND
                 user_id = :userId AND
-                memory_id = :memoryId
+                memory_id = :memoryId AND
+                deleted_at IS NULL
             """,
             {"chatId": chatId, "userId": userId, "memoryId": memoryId},
         )
         if row is None:
             return None
         return dbUtils.sqlToTypedDict(row, UserMemoryDict)
+
+    async def getMemoriesByIds(
+        self,
+        memoryIds: List[str],
+    ) -> List[UserMemoryDict]:
+        """Fetch memories by UUID list, including soft-deleted rows.
+
+        The single read path that does NOT filter ``deleted_at``: a
+        historical message that references a now-deleted memory must
+        still resolve its content for LLM context reconstruction. UUIDs
+        are globally unique, so no ``chatId``/``userId`` scoping is
+        needed (internal callers only).
+
+        Args:
+            memoryIds: List of memory UUID hex strings.
+
+        Returns:
+            List of :class:`UserMemoryDict` (including soft-deleted rows).
+            Rows whose ``memory_id`` is not present are simply absent
+            from the result (the caller maps request → result by
+            ``memory_id``).
+        """
+        if not memoryIds:
+            return []
+        placeholders: List[str] = []
+        fetchParams: dict[str, object] = {}
+        for i, mid in enumerate(memoryIds):
+            key = f"id{i}"
+            placeholders.append(f":{key}")
+            fetchParams[key] = mid
+        sqlProvider = await self.manager.getProvider(chatId=None, readonly=True)
+        rows = await sqlProvider.executeFetchAll(
+            f"""
+            SELECT {_SELECT_COLUMNS}
+            FROM user_memories
+            WHERE memory_id IN ({', '.join(placeholders)})
+            """,
+            fetchParams,
+        )
+        return [dbUtils.sqlToTypedDict(row, UserMemoryDict) for row in rows]
 
     async def getDistinctTags(
         self,
@@ -552,7 +506,8 @@ class UserMemoriesRepository(BaseRepository):
                 WHERE
                     chat_id = :chatId AND
                     user_id = :userId AND
-                    (:memoryType IS NULL OR type = :memoryType)
+                    (:memoryType IS NULL OR type = :memoryType) AND
+                    deleted_at IS NULL
                 """,
                 params,
             )
@@ -621,7 +576,9 @@ class UserMemoriesRepository(BaseRepository):
         containing ``"`` / ``%`` / ``_`` (plan §6.2). In semantic mode
         ``threadId`` and ``type`` are applied in the JOIN step on the
         authoritative ``user_memories`` columns (the denormalised vec0
-        ``type``/``thread_id`` columns go stale after ``updateMemory``).
+        ``type``/``thread_id`` columns are written once at embed time and
+        never edited — content changes go through ``deleteMemory`` +
+        ``addMemory``, so the vec0 row is always rebuilt).
 
         Thread scoping: ``threadId is None`` returns memories from ALL
         threads for ``(chatId, userId)`` (no thread filter) — this is the
@@ -750,7 +707,8 @@ class UserMemoriesRepository(BaseRepository):
                     user_id = :userId AND
                     (:threadId IS NULL OR thread_id = :threadId) AND
                     (:type IS NULL OR type = :type) AND
-                    (:permanent IS NULL OR permanent = :permanent)
+                    (:permanent IS NULL OR permanent = :permanent) AND
+                    deleted_at IS NULL
                     {tagsWhereStr}
                 ORDER BY updated_at DESC
             """
@@ -803,8 +761,10 @@ class UserMemoriesRepository(BaseRepository):
             threadId: Optional thread scope post-filter (JOIN step).
             type: Optional ``MemoryType`` value filter, applied in the
                 JOIN step on the authoritative ``user_memories.type``
-                column (NOT pushed into vec0 — the vec0 denormalised
-                ``type`` column goes stale after ``updateMemory(type=...)``).
+                column (NOT pushed into vec0 — the denormalised vec0
+                ``type`` column is written once at embed time and never
+                edited; content/type changes go through ``deleteMemory`` +
+                ``addMemory``, rebuilding the vec0 row).
             tags: Optional list of tag strings (ANY-match via Python
                 set-intersection post-fetch — see module note on tags).
             permanent: Optional permanent-flag filter (applied in vec0;
@@ -869,8 +829,10 @@ class UserMemoriesRepository(BaseRepository):
             # scoping (chat_id, user_id) and ``permanent`` (immutable
             # post-creation → never stale in vec0) are safe to push in.
             # ``type`` is NOT pushed into vec0: the denormalised vec0
-            # ``type`` column goes stale after ``updateMemory(type=...)``,
-            # so it is applied in the JOIN step on the authoritative
+            # ``type`` column is written once at embed time and never
+            # edited (content/type changes go through ``deleteMemory`` +
+            # ``addMemory``, which rebuild the vec0 row), so it is
+            # applied in the JOIN step on the authoritative
             # ``user_memories.type`` column instead. ``threadId`` is
             # NULL-able and ``tags`` is JSON TEXT; both are also applied
             # in the JOIN / Python step below.
@@ -949,7 +911,8 @@ class UserMemoriesRepository(BaseRepository):
                     user_id = :userId AND
                     memory_id IN ({', '.join(placeholders)}) AND
                     (:threadId IS NULL OR thread_id = :threadId) AND
-                    (:type IS NULL OR type = :type)
+                    (:type IS NULL OR type = :type) AND
+                    deleted_at IS NULL
                     {tagsWhereStr}
             """
             rows = await sqlProvider.executeFetchAll(query, fetchParams)
@@ -1004,6 +967,10 @@ class UserMemoriesRepository(BaseRepository):
 
             # Fetch the memory row to populate vec0 metadata columns
             # (thread_id, permanent, type) that the vec0 table carries.
+            # NOTE: deleted_at IS NULL — a soft-deleted memory must never be
+            # re-embedded. Today only the regen-cron gatekeeper (which already
+            # filters deleted_at) and addMemory (fresh live rows) reach here,
+            # but this guard is defense-in-depth for any future caller.
             memoryRow = await sqlProvider.executeFetchOne(
                 """
                 SELECT thread_id, permanent, type
@@ -1011,7 +978,8 @@ class UserMemoriesRepository(BaseRepository):
                 WHERE
                     chat_id = :chatId AND
                     user_id = :userId AND
-                    memory_id = :memoryId
+                    memory_id = :memoryId AND
+                    deleted_at IS NULL
                 """,
                 {"chatId": chatId, "userId": userId, "memoryId": memoryId},
             )
@@ -1218,8 +1186,7 @@ class UserMemoriesRepository(BaseRepository):
             vecOnly: When ``True``, skip the ``user_memories``
                 provenance-column reset (``embedding_model`` /
                 ``embedding_dimensions``) and only delete vec0 rows.
-                Used by :meth:`deleteMemory` /
-                :meth:`updateMemory`, which manage the relational row
+                Used by callers that manage the relational row
                 themselves. When ``False`` (default), the provenance
                 columns are also nulled and ``updated_at`` bumped.
 
@@ -1358,6 +1325,7 @@ class UserMemoriesRepository(BaseRepository):
                     FROM user_memories
                     WHERE
                         chat_id = :chatId AND
+                        deleted_at IS NULL AND
                         (
                             (embedding_model IS NULL OR
                                 (:modelName IS NOT NULL AND embedding_model != :modelName)
@@ -1477,6 +1445,7 @@ class UserMemoriesRepository(BaseRepository):
             if currentDimensions is not None:
                 staleWhere = (
                     "chat_id = :chatId AND embedding_model IS NOT NULL "
+                    "AND deleted_at IS NULL "
                     "AND (embedding_model != :currentModel OR embedding_dimensions != :currentDimensions)"
                 )
                 staleParams: dict[str, object] = {
@@ -1485,7 +1454,11 @@ class UserMemoriesRepository(BaseRepository):
                     "currentDimensions": currentDimensions,
                 }
             else:
-                staleWhere = "chat_id = :chatId AND embedding_model IS NOT NULL " "AND embedding_model != :currentModel"
+                staleWhere = (
+                    "chat_id = :chatId AND embedding_model IS NOT NULL "
+                    "AND deleted_at IS NULL "
+                    "AND embedding_model != :currentModel"
+                )
                 staleParams = {
                     "chatId": chatId,
                     "currentModel": currentModel,

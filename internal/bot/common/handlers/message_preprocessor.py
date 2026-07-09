@@ -10,7 +10,7 @@ normalized and persisted before being passed to other handlers.
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Optional, cast
 
 import telegram
 
@@ -23,6 +23,7 @@ from internal.bot.models import (
     EnsuredMessage,
     MessageRecipient,
     MessageSender,
+    SingleMemoryDict,
     convertDBMemoryToSingleMemoryDict,
 )
 from internal.config.manager import ConfigManager
@@ -117,7 +118,28 @@ class MessagePreprocessorHandler(BaseBotHandler):
 
         shortTermMemories = [convertDBMemoryToSingleMemoryDict(memory) for memory in memories]
 
-        ensuredMessage.setUserMemories({"permanent": permanentMemories, "shortTerm": shortTermMemories})
+        # Extract IDs for PERSISTENCE before the content form is finalised.
+        permanentIds = [m["id"] for m in permanentMemories if "id" in m]
+        shortTermIds = [m["memory_id"] for m in memories if m.get("memory_id")]
+        # Content for the CURRENT turn's LLM context — strip `id` from each permanent
+        # entry so no uuid leaks into formatForLLM (SingleMemoryDict.id invariant:
+        # "absent on injected/in-memory snapshots"). The cache keeps `id`; the
+        # injected content does not. A dict comprehension widens to dict[str, object],
+        # so cast back to SingleMemoryDict (the source entries are SingleMemoryDict
+        # with exactly one key removed).
+        permanentContent: list[SingleMemoryDict] = [
+            cast(SingleMemoryDict, {k: v for k, v in m.items() if k != "id"}) for m in permanentMemories
+        ]
+        # Deliberately bypass setUserMemories (which would overwrite metadata["memories"]
+        # with content): assign userMemories and metadata["memories"] separately so the
+        # persisted metadata carries compact IDs, not content.
+        ensuredMessage.userMemories = {"permanent": permanentContent, "shortTerm": shortTermMemories}
+        # Compact ID shape is a tagged-union sibling of UserMemoriesDict the TypedDict
+        # cannot express.
+        ensuredMessage.metadata["memories"] = {  # type: ignore[assignment]
+            "permanentIds": permanentIds,
+            "shortTermIds": shortTermIds,
+        }
 
     async def newMessageHandler(
         self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType

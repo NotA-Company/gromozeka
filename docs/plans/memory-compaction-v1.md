@@ -1,6 +1,9 @@
 # Memory Compaction v1
 
-**Status:** PLANNING (not yet implemented)
+**Status:** IMPLEMENTED (2026-07-09) — Phases 1–3 complete, 3079 tests passing.
+The body below is the historical spec; see "Implementation notes (post-impl
+addendum)" at the end of this file for the 6 deviations from the spec that the
+implementation made.
 **Date:** 2026-07-09
 **Author:** planning pass
 **Related:**
@@ -9,15 +12,17 @@
 - [`docs/llm/memories/user-memories.md`](../llm/memories/user-memories.md) — canonical
   feature doc (current architecture).
 - [`docs/llm/architecture.md`](../llm/architecture.md) ADR-016 — the unified
-  `user_memories` store decision this builds on.
+  `user_memories` store decision this builds on; ADR-017 — this compaction change.
 
-> This is a **planning document**, not a spec the code currently honours. It is
-> written so a developer agent can execute it phase-by-phase without further
-> design decisions. Every file path and `file:line` anchor was verified against
-> the tree at planning time. The ten design decisions in §1.2 are **LOCKED by the
-> user** — do not re-litigate them during implementation. `[DESIGN CHOICE]` marks
-> a judgement call that goes beyond the locked decisions; the executing agent
-> should flag these in its PR description but is not expected to re-litigate them.
+> This was a **planning document**; it is now IMPLEMENTED (2026-07-09, Phases
+> 1–3 complete, 3079 tests passing). The body is preserved as the historical
+> spec. Every file path and `file:line` anchor was verified against the tree at
+> planning time; line numbers have since drifted (the implementation is the
+> source of truth). The ten design decisions in §1.2 are **LOCKED by the
+> user** — they stand. `[DESIGN CHOICE]` marks a judgement call that goes
+> beyond the locked decisions. The implementation made 6 deviations from this
+> spec, recorded in "Implementation notes (post-impl addendum)" at the end of
+> this file.
 
 ### Review pass (2026-07-09)
 
@@ -1037,3 +1042,61 @@ deeper guide in [`docs/llm/index.md`](../llm/index.md):
   the access pattern; `getMemoriesByIds` is a method on it. No change.
 - **`./venv/bin/python3`** for any script; `make format lint` before AND after
   edits; `make test` after every phase.
+
+---
+
+## 10. Implementation notes (post-impl addendum, 2026-07-09)
+
+Phases 1–3 are complete; `make test` passes (3079 tests). The §1.3 locked
+decisions stand. The implementation made 6 deviations from the spec above;
+each is documented in the production code (docstrings/comments) and in the
+canonical docs ([`../llm/memories/user-memories.md`](../llm/memories/user-memories.md)
+"Read-path resolution" / "By-id resolution cache", and ADR-017 in
+[`../llm/architecture.md`](../llm/architecture.md)):
+
+1. **`resolveMemories` does NOT re-point `metadata["memories"]`** (§5.2.2 said
+   to call `setUserMemories`, which re-points metadata). Reason: the condense
+   branch of `getThreadByMessageForLLM` (`base.py:825-836`) writes
+   `eRootMessage.metadata` (whole dict) back to DB — re-pointing to resolved
+   content would persist content over compact IDs for condensed-thread root
+   messages, defeating compaction. Fix: `resolveMemories` populates
+   `self.userMemories` only (deepcopy), leaving `metadata["memories"]` as
+   compact IDs. This contradicts §5.2.2's claim that "no read-path consumer
+   re-persists the message" — that claim is **false** for the condense path.
+
+2. **By-id cache uses `keepId=False`** (§4.3 said `keepId=True`). Reason: the
+   by-id cache is the read-path resolver (`resolveMemories`), not the write
+   path. Entries are looked up by dict key (the `mid` IS the id); `formatForLLM`
+   renders the content verbatim, so storing `id` would leak a uuid into the
+   LLM prompt, violating `SingleMemoryDict.id`'s "absent on injected snapshots"
+   invariant. The write path uses the SEPARATE `getChatUserPermanentMemories`
+   cache (which DOES use `keepId=True`) to extract `permanentIds`, then strips
+   `id` from the injected content. This collapsed §5.1's "id-strip in
+   resolveMemories" concern — `resolveMemories` needs no id-strip because the
+   by-id cache has no id.
+
+3. **`resolveMemoriesBatch` (§5.2.2) SKIPPED.** Reason:
+   `getThreadByMessageForLLM`'s structure (upfront batch fetch then
+   interleaved build-render per message) has no clean "collect all then
+   resolve" call site. Per-message `resolveMemories` is used everywhere (§5.2.3
+   sanctions this as correct, just one DB query per message on a cold first
+   turn — the cache makes subsequent messages cheap). The §7.3
+   `resolveMemoriesBatch` test is also skipped.
+
+4. **AST guard (§7.3) implemented with dynamic scan** over `internal/` (not a
+   fixed file list) + target-tracking (handles the `eRootMessage` exemption:
+   built but never rendered → no `resolveMemories` needed) +
+   `setUserMemories(metadata-derived)` bypass ban. The guard is
+   [`tests/test_memory_resolution_coverage.py`](../../tests/test_memory_resolution_coverage.py);
+   8 sanity tests prove detection (a guard that passes trivially protects
+   nothing).
+
+5. **Symbol drift:** §5.2.3 / the review-pass cited `_llmToolGenerateImage` —
+   no such symbol exists. The actual site is `draw_command` in `media.py`.
+
+6. **Empty-memories read-path difference:** a zero-memory compact-format
+   message (empty `permanentIds`/`shortTermIds`) now renders WITHOUT a
+   `userMemories` block in `formatForLLM` — `resolveMemories` returns early
+   (leaving `userMemories = None`) and the dict-comprehension drops the falsy
+   value. The old format rendered an empty `{"permanent": [], "shortTerm": []}`
+   block. Improvement — empty blocks are LLM noise.

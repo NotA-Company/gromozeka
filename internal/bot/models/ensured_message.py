@@ -23,7 +23,7 @@ import time
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 
 import telegram
 import telegram.constants
@@ -39,8 +39,14 @@ from lib.ai.models import ModelMessage
 
 from .enums import LLMMessageFormat
 from .media import MediaProcessingInfo
-from .message_metadata import MetadataDict, UserMemoriesDict
+from .message_metadata import MetadataDict, SingleMemoryDict, UserMemoriesDict
 from .text_formatter import FormatEntity, OutputFormat
+
+if TYPE_CHECKING:
+    # CacheService imports from internal.bot.models, so a runtime import here
+    # would create a circular import (caught by `make lint`'s `import main`
+    # check). resolveMemories only needs the type for its signature.
+    from internal.services.cache.service import CacheService
 
 logger = logging.getLogger(__name__)
 
@@ -865,7 +871,10 @@ class EnsuredMessage:
         ensuredMessage.messagePrefix = metadata.get("messagePrefix", "")
 
         if injectMemories and "memories" in metadata:
-            ensuredMessage.setUserMemories(metadata["memories"])
+            # metadata["memories"] is typed UserMemoriesDict but at runtime holds
+            # either the content form or the compact ID form (both plain dicts);
+            # pyright does not treat TypedDict as assignable to Dict[str, object].
+            ensuredMessage.loadMemoriesMetadata(metadata["memories"])  # type: ignore[arg-type]
 
         # logger.debug(f"Ensured Message from DB Chat: {ensuredMessage}")
         return ensuredMessage
@@ -881,6 +890,84 @@ class EnsuredMessage:
         """
         self.userMemories = deepcopy(memories)
         self.metadata["memories"] = self.userMemories
+
+    def loadMemoriesMetadata(self, rawMemories: Optional[Dict[str, object]]) -> None:
+        """Stash raw memories metadata without resolving IDs to content.
+
+        Compact format (``permanentIds``/``shortTermIds``) leaves ``userMemories``
+        unset — resolved later by :meth:`resolveMemories`. Old content format is
+        applied via :meth:`setUserMemories` as before. ``None``/non-dict is a no-op
+        (tolerant of bypass sites that did ``metadata.get("memories")`` on a dict
+        lacking the key, or stored ``None``).
+
+        Args:
+            rawMemories: The raw value of ``metadata["memories"]`` (compact ID dict,
+                old content dict, or ``None``).
+
+        Returns:
+            None.
+        """
+        if not isinstance(rawMemories, dict):
+            return
+        if "permanentIds" in rawMemories or "shortTermIds" in rawMemories:
+            # Compact format: keep raw IDs in metadata; userMemories stays None
+            # (resolving here would import CacheService -> circular import). The
+            # compact shape is a tagged-union sibling of UserMemoriesDict that the
+            # TypedDict cannot express, so the assignment is type-ignored.
+            self.metadata["memories"] = rawMemories  # type: ignore[assignment]
+        else:
+            # Old content format: content is already inline. rawMemories is
+            # Optional[Dict[str, object]], not assignable to UserMemoriesDict.
+            self.setUserMemories(rawMemories)  # type: ignore[arg-type]
+
+    async def resolveMemories(self, cache: "CacheService") -> None:
+        """Resolve the compact memory-ID format to content via the cache.
+
+        No-op when ``userMemories`` is already populated (old content format, or the
+        current-turn write path that sets content directly). Otherwise, when
+        ``metadata["memories"]`` carries the compact ID lists (``permanentIds`` /
+        ``shortTermIds``), resolves all IDs in one cache call and populates
+        ``userMemories`` with the resolved content. Called by read-path consumers
+        AFTER building the message and BEFORE ``formatForLLM``.
+
+        DEVIATION from plan §5.2.2: does NOT call :meth:`setUserMemories` (which
+        would re-point ``metadata["memories"]`` to resolved content). The condense
+        branch of ``getThreadByMessageForLLM`` persists ``eRootMessage.metadata``
+        (whole dict) to DB; if ``metadata["memories"]`` were re-pointed to resolved
+        content, the condense write would persist content over compact IDs,
+        defeating compaction for condensed threads. So ``metadata["memories"]`` is
+        left as the compact IDs; only ``userMemories`` is populated (deep-copied to
+        avoid aliasing the cache). The by-id cache stores entries without ``id``
+        (``keepId=False``), so no uuid leaks into ``formatForLLM``.
+
+        Args:
+            cache: CacheService singleton for ID->content resolution.
+
+        Returns:
+            None.
+        """
+        if self.userMemories is not None:
+            return  # already resolved (old format or current-turn content)
+        rawMemories = self.metadata.get("memories")
+        if not isinstance(rawMemories, dict):
+            return  # None / non-dict
+        permanentIds = rawMemories.get("permanentIds", []) or []
+        shortTermIds = rawMemories.get("shortTermIds", []) or []
+        if not permanentIds and not shortTermIds:
+            return
+        allIds = permanentIds + shortTermIds
+        resolved = await cache.getMemoriesByIds(allIds)
+        # Populate userMemories ONLY (do NOT re-point metadata["memories"]).
+        # Walrus + ``is not None`` narrows the Optional away so the list is typed
+        # list[SingleMemoryDict] (the cache returns Optional[SingleMemoryDict]).
+        # Deep-copy to avoid aliasing the cache (mirror setUserMemories's contract).
+        permanentEntries: List[SingleMemoryDict] = [
+            entry for mid in permanentIds if (entry := resolved.get(mid)) is not None
+        ]
+        shortTermEntries: List[SingleMemoryDict] = [
+            entry for mid in shortTermIds if (entry := resolved.get(mid)) is not None
+        ]
+        self.userMemories = deepcopy({"permanent": permanentEntries, "shortTerm": shortTermEntries})
 
     def getBaseMessage(self) -> telegram.Message | maxModels.Message:
         """
