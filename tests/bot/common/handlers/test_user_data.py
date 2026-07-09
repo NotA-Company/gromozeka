@@ -70,7 +70,7 @@ from internal.database.models import MemoryType, UserMemorySource
 from internal.database.repositories.user_memories import UserMemoriesRepository, UserMemoryDict
 from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
-from internal.services.cache import CacheService
+from internal.services.cache import CacheService, UserActiveActionEnum
 from internal.services.queue_service.service import QueueService
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
 from lib.ai import LLMToolCall, ModelMessage, ModelResultStatus, ModelRunResult
@@ -1999,7 +1999,7 @@ class TestLlmToolSearchMemories:
 
 
 # ---------------------------------------------------------------------------
-# Phase 5a — /knowledge_config wizard (user_memories browser)
+# Phase 5a — /memory_config wizard (user_memories browser)
 # ---------------------------------------------------------------------------
 #
 # The wizard was repointed at the unified ``user_memories`` store. These tests
@@ -2077,7 +2077,7 @@ def _makeChatInfo(chatId: int) -> Dict[str, object]:
 
 
 class TestKnowledgeConfigWizard:
-    """Wizard-level tests for the repointed ``/knowledge_config`` browser.
+    """Wizard-level tests for the repointed ``/memory_config`` browser.
 
     Covers the Phase 5a rewrite: the ``ChatSelected`` MemoryType picker, the
     paginated ``TopicSelected`` memory list (page-size-8 boundary), the
@@ -2713,8 +2713,8 @@ class TestKnowledgeConfigWizard:
         # The tag MUST ride on the NextPage payload.
         assert nextButtons[0].payload.get(ButtonDataKey.Tag) == "work"
 
-    def test_knowledgeConfigPrivateOnly(self) -> None:
-        """``knowledge_config_command`` is ``PRIVATE``-only (not ``GROUP``).
+    def test_memoryConfigPrivateOnly(self) -> None:
+        """``memory_config_command`` is ``PRIVATE``-only (not ``GROUP``).
 
         Inspects the ``@commandHandlerV2`` metadata attached to the unbound
         command function and asserts ``CommandPermission.PRIVATE`` is in
@@ -2725,9 +2725,261 @@ class TestKnowledgeConfigWizard:
             testDatabase: (unused) — kept off the signature; this is a pure
                 metadata assertion.
         """
-        info = getattr(UserDataHandler.knowledge_config_command, "_commandHandlerInfoV2")
+        info = getattr(UserDataHandler.memory_config_command, "_commandHandlerInfoV2")
         assert CommandPermission.PRIVATE in info.availableFor
         assert CommandPermission.GROUP not in info.availableFor
+
+    def test_memoryConfigCommandRenamed(self) -> None:
+        """The command decorator registers ``memory_config`` (not knowledge_config).
+
+        Pins the Task 1 rename: the ``@commandHandlerV2`` metadata must carry
+        ``"memory_config"`` in ``commands`` and must NOT carry the old
+        ``"knowledge_config"`` alias (no backward-compat alias is kept).
+
+        Args:
+            testDatabase: (unused) — kept off the signature; this is a pure
+                metadata assertion.
+        """
+        info = getattr(UserDataHandler.memory_config_command, "_commandHandlerInfoV2")
+        assert "memory_config" in info.commands
+        assert "knowledge_config" not in info.commands
+
+    async def test_addMemoryButtonShownInList(self, testDatabase: Database) -> None:
+        """``TopicSelected`` for a specific type renders the "Добавить память" button.
+
+        Seeds one ``FACT`` memory, drives ``TopicSelected`` with
+        ``Key=MemoryType.FACT.value``, and asserts exactly one ``AddMemory``
+        button is rendered carrying the type in ``ButtonDataKey.Key``.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        chatId = 600
+        userId = 17
+        handler = await _makeHandler(testDatabase)
+        editMock = AsyncMock()
+        handler.editMessage = editMock  # type: ignore[method-assign]
+        user = MessageSender(id=userId, name="Karl", username="@karl")
+
+        await testDatabase.userMemories.addMemory(
+            chatId,
+            userId,
+            "mem-am-1",
+            type=MemoryType.FACT.value,
+            content="a fact",
+            tags=[],
+            permanent=False,
+            threadId=DEFAULT_THREAD_ID,
+            source=UserMemorySource.CHAT,
+            embedding=None,
+            embeddingModel=None,
+        )
+
+        await handler._handleUserDataConfiguration(  # type: ignore[attr-defined]
+            {
+                ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.TopicSelected,
+                ButtonDataKey.ChatId: chatId,
+                ButtonDataKey.Key: MemoryType.FACT.value,
+                ButtonDataKey.Page: 0,
+            },
+            messageId=MessageId(1),
+            messageChatId=chatId,
+            user=user,
+        )
+
+        editMock.assert_awaited_once()
+        keyboard = editMock.call_args.kwargs.get("inlineKeyboard")
+        addButtons = _buttonsForAction(keyboard, ButtonUserDataConfigAction.AddMemory)
+        assert len(addButtons) == 1
+        assert "Добавить память" in addButtons[0].text
+        assert addButtons[0].payload.get(ButtonDataKey.Key) == MemoryType.FACT.value
+
+    async def test_addMemoryButtonNotShownForAllTypes(self, testDatabase: Database) -> None:
+        """``TopicSelected`` with ``Key="all"`` does NOT render the add button.
+
+        The "Add memory" button is intentionally hidden for the "all types"
+        view so the new memory always inherits a concrete ``MemoryType``.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        chatId = 610
+        userId = 18
+        handler = await _makeHandler(testDatabase)
+        editMock = AsyncMock()
+        handler.editMessage = editMock  # type: ignore[method-assign]
+        user = MessageSender(id=userId, name="Lena", username="@lena")
+
+        await testDatabase.userMemories.addMemory(
+            chatId,
+            userId,
+            "mem-am-2",
+            type=MemoryType.FACT.value,
+            content="a fact",
+            tags=[],
+            permanent=False,
+            threadId=DEFAULT_THREAD_ID,
+            source=UserMemorySource.CHAT,
+            embedding=None,
+            embeddingModel=None,
+        )
+
+        await handler._handleUserDataConfiguration(  # type: ignore[attr-defined]
+            {
+                ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.TopicSelected,
+                ButtonDataKey.ChatId: chatId,
+                ButtonDataKey.Key: "all",
+                ButtonDataKey.Page: 0,
+            },
+            messageId=MessageId(1),
+            messageChatId=chatId,
+            user=user,
+        )
+
+        editMock.assert_awaited_once()
+        keyboard = editMock.call_args.kwargs.get("inlineKeyboard")
+        addButtons = _buttonsForAction(keyboard, ButtonUserDataConfigAction.AddMemory)
+        assert len(addButtons) == 0
+
+    async def test_addMemoryCreatesMemory(self, testDatabase: Database) -> None:
+        """Full free-text flow: seed state → send message → memory created.
+
+        Seeds the ``UserDataConfig`` state (as ``_handleConfigAction_AddMemory``
+        would), sends a free-text message via ``newMessageHandler``, and asserts
+        the handler returns ``FINAL`` and the memory is persisted with the typed
+        content and the selected type. This exercises the restored free-text
+        path end-to-end.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        chatId = 620
+        userId = 19
+        handler = await _makeHandler(testDatabase)
+        editMock = AsyncMock()
+        handler.editMessage = editMock  # type: ignore[method-assign]
+        _stubGetChatSettings(handler, memoryRefinementEnabled=False)
+
+        handler.cache.setUserState(
+            userId=userId,
+            stateKey=UserActiveActionEnum.UserDataConfig,
+            value={
+                "data": {
+                    ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.SetMemoryContent,
+                    ButtonDataKey.ChatId: chatId,
+                    ButtonDataKey.Key: MemoryType.PREFERENCE.value,
+                },
+                "messageId": MessageId(1),
+                "messageChatId": chatId,
+            },
+        )
+
+        ensuredMessage = _makeEnsuredMessage(chatId=chatId, userId=userId, messageText="prefers dark mode")
+        result = await handler.newMessageHandler(ensuredMessage, Mock())  # type: ignore[attr-defined]
+        assert result == HandlerResultStatus.FINAL
+
+        memories = await testDatabase.userMemories.searchMemories(
+            chatId,
+            userId,
+            None,
+            type=MemoryType.PREFERENCE.value,
+            threadId=None,
+            limit=10,
+            embeddingModel=None,
+        )
+        assert len(memories) == 1
+        assert memories[0]["content"] == "prefers dark mode"
+
+    async def test_addMemoryEmptyContentShowsError(self, testDatabase: Database) -> None:
+        """Empty/whitespace content → error message rendered, no memory created.
+
+        Drives ``SetMemoryContent`` directly with a whitespace-only ``Value``.
+        Asserts the rendered text marks the error and that no memory row was
+        inserted.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        chatId = 630
+        userId = 20
+        handler = await _makeHandler(testDatabase)
+        editMock = AsyncMock()
+        handler.editMessage = editMock  # type: ignore[method-assign]
+        user = MessageSender(id=userId, name="Nina", username="@nina")
+
+        await handler._handleUserDataConfiguration(  # type: ignore[attr-defined]
+            {
+                ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.SetMemoryContent,
+                ButtonDataKey.ChatId: chatId,
+                ButtonDataKey.Key: MemoryType.FACT.value,
+                ButtonDataKey.Value: "   ",
+            },
+            messageId=MessageId(1),
+            messageChatId=chatId,
+            user=user,
+        )
+
+        editMock.assert_awaited_once()
+        renderedText: str = editMock.call_args.kwargs.get("text", "")
+        assert "пустым" in renderedText
+        memories = await testDatabase.userMemories.searchMemories(
+            chatId,
+            userId,
+            None,
+            threadId=None,
+            limit=10,
+            embeddingModel=None,
+        )
+        assert len(memories) == 0
+
+    async def test_addMemoryIsEphemeralAndUserSource(self, testDatabase: Database) -> None:
+        """Created memory is ephemeral, ``source=USER``, no embedding.
+
+        Full free-text flow (seed state → send message), then asserts the
+        persisted memory has ``permanent is False``, ``source ==
+        UserMemorySource.USER``, and ``embedding_model is None``.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        chatId = 640
+        userId = 21
+        handler = await _makeHandler(testDatabase)
+        editMock = AsyncMock()
+        handler.editMessage = editMock  # type: ignore[method-assign]
+        _stubGetChatSettings(handler, memoryRefinementEnabled=False)
+
+        handler.cache.setUserState(
+            userId=userId,
+            stateKey=UserActiveActionEnum.UserDataConfig,
+            value={
+                "data": {
+                    ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.SetMemoryContent,
+                    ButtonDataKey.ChatId: chatId,
+                    ButtonDataKey.Key: MemoryType.FACT.value,
+                },
+                "messageId": MessageId(1),
+                "messageChatId": chatId,
+            },
+        )
+
+        ensuredMessage = _makeEnsuredMessage(chatId=chatId, userId=userId, messageText="lives in Paris")
+        await handler.newMessageHandler(ensuredMessage, Mock())  # type: ignore[attr-defined]
+
+        memories = await testDatabase.userMemories.searchMemories(
+            chatId,
+            userId,
+            None,
+            type=MemoryType.FACT.value,
+            threadId=None,
+            limit=10,
+            embeddingModel=None,
+        )
+        assert len(memories) == 1
+        mem = memories[0]
+        assert mem["permanent"] is False
+        assert mem["source"] == UserMemorySource.USER
+        assert mem["embedding_model"] is None
 
 
 class TestGetMyDataCommand:

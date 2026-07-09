@@ -46,7 +46,7 @@ unifies them into a single **`user_memories`** store with the following goals:
    `embedding_model` / `embedding_dimensions` no longer match) are
    re-embedded by a background tick. Mirrors the chat-history regeneration
    path (`chat_search.py` backfill) one-to-one. See §5.6.
-7. **Admin UI.** The existing `/knowledge_config` wizard is repointed at
+7. **Admin UI.** The existing `/memory_config` wizard is repointed at
    `user_memories` so a user can browse, filter (by topic/type/tag), and
    delete their own memories interactively. Private-only, paging added.
    See §11.6.
@@ -1655,18 +1655,18 @@ Mirror `REGENERATE_EMBEDDINGS` (`chat_settings.py:439-440` enum,
 > turn embedding-model-drift regeneration from a Non-Goal into a shipped
 > feature, mirroring the chat-history precedent one-to-one.
 
-### 11.6 Admin UI — extending `/knowledge_config`
+### 11.6 Admin UI — extending `/memory_config`
 
-Repoints the existing `/knowledge_config` wizard at `user_memories` (the
+Repoints the existing `/memory_config` wizard at `user_memories` (the
 `user_data` key-value store it currently edits is being retired — §12) and
 adds browse/filter/delete for the calling user's own memories. **Private-only,
 unchanged** (`visibility={CommandPermission.PRIVATE}`). The wizard only ever
 shows the calling user's OWN memories (`userId = user.id`).
 
-**Current `/knowledge_config` state (verified, do not re-explore):**
+**Current `/memory_config` state (verified, do not re-explore):**
 
-- Command: `@commandHandlerV2(commands=("knowledge_config",))` decorates
-  `knowledge_config_command` at `internal/bot/common/handlers/user_data.py:1357-1400`.
+- Command: `@commandHandlerV2(commands=("memory_config",))` decorates
+  `memory_config_command` at `internal/bot/common/handlers/user_data.py:1357-1400`.
   No tier gate.
 - Wizard dispatcher: `_handleUserDataConfiguration(data, *, messageId,
   messageChatId, user)` at `user_data.py:1216-1279`, matches on
@@ -1721,7 +1721,7 @@ shows the calling user's OWN memories (`userId = user.id`).
    calling user's OWN memories (`userId = user.id`).
 
 > AMENDMENT (user review, change #3): Promoted from a Non-Goal ("GUI / admin
-> tooling for memories") to a Goal. The `/knowledge_config` wizard already
+> tooling for memories") to a Goal. The `/memory_config` wizard already
 > exists and is the natural home for interactive memory management; repointing
 > it at `user_memories` (rather than building a new command) keeps the UX
 > surface flat. Substantial UI work — sequenced as a new Phase 5 (§13).
@@ -1892,7 +1892,7 @@ stale-`embedding_model` memory is re-embedded on the next cron tick.
 **Exit criteria:** whole-repo `make format lint && make test` green;
 `code-reviewer` pass on the full diff; docs in sync.
 
-### Phase 5 — Admin UI (extending `/knowledge_config`)
+### Phase 5 — Admin UI (extending `/memory_config`)
 
 > AMENDMENT (user review, change #3): New phase. Independent of the LLM
 > tools / injection / regeneration (Phases 1–4) and can ship after the core
@@ -1905,7 +1905,7 @@ stale-`embedding_model` memory is re-embedded on the next cron tick.
   `ButtonUserDataConfigAction` with `TopicSelected`, `MemorySelected`,
   `DeleteMemory`, `NextPage`, `PrevPage`, `TagFilter`.
 - `internal/bot/common/handlers/user_data.py`:
-  - Repoint the `/knowledge_config` wizard (`knowledge_config_command`
+  - Repoint the `/memory_config` wizard (`memory_config_command`
     `:1357-1400`, dispatcher `_handleUserDataConfiguration` `:1216-1279`,
     callback router `callbackHandler` `:1281-1311`, step handlers
     `:785-1214`) at `self.db.userMemories` instead of the cache user-data
@@ -1923,7 +1923,7 @@ stale-`embedding_model` memory is re-embedded on the next cron tick.
   type-filter list, tag-filter list, pagination, per-memory view, delete;
   private-only enforced; only the calling user's own memories surfaced.
 
-**Exit criteria:** a user can `/knowledge_config` → pick a chat → pick a
+**Exit criteria:** a user can `/memory_config` → pick a chat → pick a
 type → page through their memories → view one → delete it; the deleted
 memory is gone from `user_memories` and absent from the next injection;
 `/get_my_data` dumps the user's memories; all of this is private-only and
@@ -2113,7 +2113,7 @@ similarities are controllable):
 - Config: `configs/00-defaults/user-memory.toml` (thresholds + JSONL log); `configs/00-defaults/bot-defaults.toml:128, 131, 158, 173-174` (embeddings-enabled, embedding-model, memory-refinement-enabled, memory-refine-model/fallback defaults); `:350, 363` (memory-refine system/user-prompt defaults — rewritten per §11.3); `:207` (chat-prompt-suffix documenting `userSummary`).
 - Universal row converter: `dbUtils.sqlToTypedDict(data, typedDictClass)` at `internal/database/utils.py:319-374` (import as `from internal.database import utils as dbUtils`, seen at `chat_embeddings.py:32`). Handles snake_case column → TypedDict key mapping, int→bool, JSON TEXT→list, ISO str→datetime. `convertToSQLite` (`utils.py`) is the Python→SQL direction; there is no `convertFromSQLite` (the read direction is `sqlToTypedDict`).
 - Regeneration precedent: `ChatSearchHandler._dtCronJob` at `internal/bot/common/handlers/chat_search.py:284-445` (single path for initial backfill + model-drift regeneration); `deleteObsoleteModelEmbeddings` at `internal/database/repositories/chat_embeddings.py:337-464`; stale-detection `NOT EXISTS` subquery at `:516-532`. Constants `BACKFILL_DEFAULT_BATCH_SIZE = 50` (`:69`), `BACKFILL_INTER_MESSAGE_DELAY_SECS = 0.1` (`:77`).
-- Admin UI precedent: `/knowledge_config` command `internal/bot/common/handlers/user_data.py:1357-1400`; wizard dispatcher `:1216-1279`; callback router `:1281-1311`; step handlers `:785-1214`; `ButtonUserDataConfigAction` enum `internal/bot/models/enums.py:155-187`; `/get_my_data` `:1317-1355`.
+- Admin UI precedent: `/memory_config` command `internal/bot/common/handlers/user_data.py:1357-1400`; wizard dispatcher `:1216-1279`; callback router `:1281-1311`; step handlers `:785-1214`; `ButtonUserDataConfigAction` enum `internal/bot/models/enums.py:155-187`; `/get_my_data` `:1317-1355`.
 - TypedDict key convention: `ChatMessageDict` / `ChatUserDict` / `MessageEmbeddingDict` at `internal/database/models.py:108-212` use snake_case keys matching DB columns; `ChatMessageDict.score` at `:157-160` is the exact mirror for `UserMemoryDict.score`.
 
 ### Related docs

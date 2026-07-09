@@ -585,7 +585,7 @@ class TestUserMemoriesVectorLayer:
         Seeds memories in three thread scopes — thread 0, thread 99, and
         cross-thread ``None`` — then asserts a single ``threadId=None``
         query returns all three. This is the scoping the
-        ``/knowledge_config`` wizard relies on (it has no thread picker).
+        ``/memory_config`` wizard relies on (it has no thread picker).
         """
         await self._add(testDatabase, content="thread-0", memoryType=MemoryType.FACT, threadId=0)
         await self._add(testDatabase, content="thread-99", memoryType=MemoryType.FACT, threadId=99)

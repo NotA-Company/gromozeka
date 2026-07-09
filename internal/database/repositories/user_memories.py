@@ -479,7 +479,7 @@ class UserMemoriesRepository(BaseRepository):
     ) -> Optional[UserMemoryDict]:
         """Return a single memory row selected by the full primary key.
 
-        Single-row read used by the ``/knowledge_config`` per-memory detail
+        Single-row read used by the ``/memory_config`` per-memory detail
         view. Unrestricted by ``permanent`` / ``thread_id`` — the caller
         (the wizard) already knows the ``(chatId, userId)`` scope, so this
         only needs the explicit ``memoryId`` to fetch the row.
@@ -522,7 +522,7 @@ class UserMemoriesRepository(BaseRepository):
 
         Fetches every ``tags`` JSON column for ``(chatId, userId)`` (optionally
         narrowed by ``type``), parses each row's JSON list, and collects unique
-        tag strings. Used by the ``/knowledge_config`` wizard's tag-filter
+        tag strings. Used by the ``/memory_config`` wizard's tag-filter
         picker (Phase 5b) so the user can only pick tags they actually use.
 
         All Tags are lowercased.
@@ -625,7 +625,7 @@ class UserMemoriesRepository(BaseRepository):
 
         Thread scoping: ``threadId is None`` returns memories from ALL
         threads for ``(chatId, userId)`` (no thread filter) — this is the
-        mode the ``/knowledge_config`` wizard uses. When ``threadId`` is
+        mode the ``/memory_config`` wizard uses. When ``threadId`` is
         provided, results are restricted to that thread.
 
         Pagination: ``offset`` is forwarded to

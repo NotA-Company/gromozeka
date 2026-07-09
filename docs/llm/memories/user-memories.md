@@ -89,7 +89,7 @@ time (see "Injection"). Schema: `migration_020_user_memories`. Repository:
 ## Repository — `UserMemoriesRepository`
 
 `internal/database/repositories/user_memories.py` (10 public methods in the
-documented core set — the `/knowledge_config` wizard helpers `getMemory` /
+documented core set — the `/memory_config` wizard helpers `getMemory` /
 `getDistinctTags` are tracked separately; all SQL goes through
 `BaseSQLProvider` and rows decode via
 `dbUtils.sqlToTypedDict(row, UserMemoryDict)`). Method params are camelCase;
@@ -168,6 +168,13 @@ Freeform categorisation beyond these is handled by the JSON `tags` column.
 3. **Migration backfill** (`migration_020`): legacy `user_data` → permanent
    cross-thread `fact`; legacy rolling-bio blob → permanent thread-scoped
    `bio` (see "Migration from old system").
+4. **Manual (``/memory_config`` wizard)**: the "➕ Добавить память" button in
+   the memory list starts a free-text-entry flow (`AddMemory` →
+   `SetMemoryContent`). The user types the content; the wizard inserts an
+   ephemeral (`permanent=False`), user-authored (`source="user"`) memory of
+   the currently-selected `MemoryType`, with no embedding (the regen cron
+   embeds it later). Only offered when a specific type is selected (not
+   "all"), so the memory always inherits a concrete type.
 
 ### Retrieval
 

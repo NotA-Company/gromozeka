@@ -59,7 +59,7 @@ class ButtonDataKey(StrEnum):
         MaxMessages: Maximum number of messages.
         Prompt: Prompt text.
         Page: Page number.
-        Tag: Freeform tag string (knowledge-config wizard tag filter).
+        Tag: Freeform tag string (memory-config wizard tag filter).
 
     Generic Keys:
         Key: Generic key identifier.
@@ -87,7 +87,7 @@ class ButtonDataKey(StrEnum):
     Prompt = "prompt"
     Page = "p"
     Tag = "tg"
-    """`tg` - freeform tag string (carried in knowledge-config payloads)."""
+    """`tg` - freeform tag string (carried in memory-config payloads)."""
 
     # Generic keys
     Key = "k"
@@ -159,9 +159,10 @@ class ButtonUserDataConfigAction(StrEnum):
     """User data configuration action types for button callbacks.
 
     This enum defines the specific actions available in the user-memories
-    configuration wizard (``/knowledge_config``), used as values for
+    configuration wizard (``/memory_config``), used as values for
     ButtonDataKey.UserDataConfigAction. The wizard browses a user's own
-    ``user_memories`` rows by type and lets them view/delete individual ones.
+    ``user_memories`` rows by type and lets them view/delete individual ones,
+    and create new memories via free-text entry.
 
     Attributes:
         Init: Initialize wizard (chat picker).
@@ -179,6 +180,15 @@ class ButtonUserDataConfigAction(StrEnum):
         TagFilter: Render the tag picker for tag-based filtering of the
             memory list (Phase 5b). Selecting a tag returns to
             ``TopicSelected`` with the tag applied.
+        AddMemory: Begin the "add memory" free-text-entry flow for the
+            currently-selected type. Sets a ``UserActiveActionEnum.UserDataConfig``
+            state so the user's next free-text message is captured as the
+            memory content. Only offered when a specific ``MemoryType`` is
+            selected (not ``"all"``) so the new memory inherits a concrete type.
+        SetMemoryContent: Process the free-text input captured during the
+            ``AddMemory`` flow and persist a new ephemeral, user-authored
+            memory. Routed from :meth:`UserDataHandler.newMessageHandler`
+            (not a button click) — the content rides on ``ButtonDataKey.Value``.
     """
 
     Init = "init"
@@ -191,6 +201,8 @@ class ButtonUserDataConfigAction(StrEnum):
     NextPage = "np"
     PrevPage = "pp"
     TagFilter = "tf"
+    AddMemory = "am"
+    SetMemoryContent = "sm"
 
     @classmethod
     def all(cls) -> list[str]:

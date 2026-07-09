@@ -213,7 +213,7 @@ headroom for user-facing message traffic."""
 
 # Knowledge config wizard
 KNOWLEDGE_CONFIG_PAGE_SIZE: int = 8
-"""Max memories shown per page in the ``/knowledge_config`` wizard memory list.
+"""Max memories shown per page in the ``/memory_config`` wizard memory list.
 
 Chosen to keep the inline-keyboard list short enough to be scannable on a
 phone screen while limiting the number of ``CallbackButton`` rows (each row

@@ -1458,25 +1458,26 @@ class UserDataHandler(BaseBotHandler):
     async def newMessageHandler(
         self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
     ) -> HandlerResultStatus:
-        """
-        Count this message toward memory refinement and pass it on.
+        """Count this message toward memory refinement; consume wizard free-text input.
 
         Always increments the memory-refinement counter for the message's
         (chatId, userId, threadId) when refinement is enabled for the chat,
-        regardless of chat type, then returns ``NEXT`` so the message flows
-        to subsequent handlers (the LLM message handler). The wizard no
-        longer consumes free-text input — Phase 5 removed the key-value
-        ``SetValue`` path, and the tag-filter free-text entry is deferred
-        to Phase 5b. ``UserActiveActionEnum.UserDataConfig`` is kept as an
-        enum member for that future reuse.
+        regardless of chat type. Then, if the user has an active
+        ``UserActiveActionEnum.UserDataConfig`` state (set by the
+        ``_handleConfigAction_AddMemory`` flow), their free-text message is
+        captured as the memory content: it is injected as
+        ``ButtonDataKey.Value`` and routed through the wizard dispatcher as a
+        ``SetMemoryContent`` action, after which the message is consumed
+        (``FINAL``). When no wizard state is present the message flows on
+        untouched (``NEXT``).
 
         Args:
             ensuredMessage (EnsuredMessage): Ensured message object.
             updateObj (UpdateObjectType): Telegram update object.
 
         Returns:
-            HandlerResultStatus: Always ``NEXT`` (the increment is work
-            done for every message; no message is consumed here).
+            HandlerResultStatus: ``FINAL`` when the message was consumed by the
+            wizard free-text flow, otherwise ``NEXT``.
         """
 
         # Memory-refinement accounting: count this message if refinement is enabled for this chat.
@@ -1486,6 +1487,25 @@ class UserDataHandler(BaseBotHandler):
             key = (ensuredMessage.recipient.id, ensuredMessage.sender.id, threadId)
             async with self._accountingLock:
                 self._accounting[key] = self._accounting.get(key, 0) + 1
+
+        # Wizard free-text input (memory creation). When the user is mid-wizard
+        # "Add memory" flow, their next free-text message IS the memory content.
+        # The state is set by ``_handleConfigAction_AddMemory`` and consumed
+        # here: the dispatcher (``_handleUserDataConfiguration``) clears the
+        # state at its top, then routes to ``SetMemoryContent`` which persists
+        # the memory. ``getUserState`` returns ``None`` for users without an
+        # active wizard, so normal message flow is unaffected.
+        memoryConfigState = self.cache.getUserState(
+            userId=ensuredMessage.sender.id, stateKey=UserActiveActionEnum.UserDataConfig
+        )
+        if memoryConfigState is not None:
+            await self._handleUserDataConfiguration(
+                data={**memoryConfigState["data"], ButtonDataKey.Value: ensuredMessage.formatMessageText()},
+                messageId=memoryConfigState["messageId"],
+                messageChatId=memoryConfigState["messageChatId"],
+                user=ensuredMessage.sender,
+            )
+            return HandlerResultStatus.FINAL
 
         return HandlerResultStatus.NEXT
 
@@ -1794,6 +1814,26 @@ class UserDataHandler(BaseBotHandler):
                             ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.MemorySelected,
                             ButtonDataKey.ChatId: chatId,
                             ButtonDataKey.Key: mem["memory_id"],
+                            ButtonDataKey.Page: offset,
+                        },
+                    )
+                ]
+            )
+
+        # "Add memory" button — only offered when a specific MemoryType is
+        # selected (NOT for "all"), so the new memory inherits a concrete type.
+        # The payload carries the current type filter + offset so the AddMemory
+        # handler can route back to the same list position after creation, and
+        # so the SetMemoryContent flow knows which type to assign.
+        if typeFilterRaw != "all":
+            keyboard.append(
+                [
+                    CallbackButton(
+                        "➕ Добавить память",
+                        {
+                            ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.AddMemory,
+                            ButtonDataKey.ChatId: chatId,
+                            ButtonDataKey.Key: typeFilterRaw,
                             ButtonDataKey.Page: offset,
                         },
                     )
@@ -2336,6 +2376,250 @@ class UserDataHandler(BaseBotHandler):
             inlineKeyboard=keyboard,
         )
 
+    async def _handleConfigAction_AddMemory(
+        self,
+        data: utils.PayloadDict,
+        *,
+        messageId: MessageId,
+        messageChatId: int,
+        user: MessageSender,
+    ) -> None:
+        """Prompt the user for free-text memory content (AddMemory flow).
+
+        Sets a :class:`UserActiveActionEnum.UserDataConfig` state so the user's
+        next free-text message is captured by :meth:`newMessageHandler` and
+        routed back into the wizard as a ``SetMemoryContent`` action carrying
+        the typed text on :attr:`ButtonDataKey.Value`. The state payload carries
+        the selected chat + ``MemoryType`` (read from ``Key``) so the created
+        memory inherits a concrete type — the "Add memory" button is only
+        offered for a specific type, never ``"all"``.
+
+        Args:
+            data (utils.PayloadDict): Callback data with chat ID, the selected
+                ``MemoryType`` value (``Key``), and the current page offset.
+            messageId (MessageId): Message ID to edit.
+            messageChatId (int): Chat ID where the message is located.
+            user (MessageSender): The calling user.
+        """
+        chatId = data.get(ButtonDataKey.ChatId, None)
+        if not isinstance(chatId, int):
+            logger.error(f"AddMemory: wrong chatId: {type(chatId).__name__}#{chatId}")
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Ошибка: некорректный идентификатор чата",
+            )
+            return
+
+        typeFilterRaw = str(data.get(ButtonDataKey.Key, "") or "")
+        offset = int(data.get(ButtonDataKey.Page, 0) or 0)
+
+        # Validate the type is a known MemoryType (defensive — the button only
+        # appears for specific types, but a crafted payload could carry "all").
+        try:
+            typeLabel = MemoryType(typeFilterRaw).value
+        except ValueError:
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Ошибка: выберите конкретный тип памяти.",
+            )
+            return
+
+        # Capture the caller's page offset so the back button returns to the
+        # same scroll position. The state payload is consumed by
+        # ``newMessageHandler`` on the user's next free-text message.
+        self.cache.setUserState(
+            userId=user.id,
+            stateKey=UserActiveActionEnum.UserDataConfig,
+            value={
+                "data": {
+                    ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.SetMemoryContent,
+                    ButtonDataKey.ChatId: chatId,
+                    ButtonDataKey.Key: typeFilterRaw,
+                },
+                "messageId": messageId,
+                "messageChatId": messageChatId,
+            },
+        )
+
+        exitButton = CallbackButton(
+            "Закончить настройку",
+            {ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.Cancel},
+        )
+        keyboard: List[List[CallbackButton]] = [
+            [
+                CallbackButton(
+                    "<< Отмена",
+                    {
+                        ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.TopicSelected,
+                        ButtonDataKey.ChatId: chatId,
+                        ButtonDataKey.Key: typeFilterRaw,
+                        ButtonDataKey.Page: offset,
+                    },
+                )
+            ],
+            [exitButton],
+        ]
+        await self.editMessage(
+            messageId=messageId,
+            chatId=messageChatId,
+            text=f'Введите текст для новой памят типа "{typeLabel}":',
+            inlineKeyboard=keyboard,
+        )
+
+    async def _handleConfigAction_SetMemoryContent(
+        self,
+        data: utils.PayloadDict,
+        *,
+        messageId: MessageId,
+        messageChatId: int,
+        user: MessageSender,
+    ) -> None:
+        """Process free-text input from the AddMemory flow and persist a memory.
+
+        Reads the content from :attr:`ButtonDataKey.Value` (injected by
+        :meth:`newMessageHandler` from the user's free-text message), validates
+        it is non-empty, and inserts a new ephemeral, user-authored memory of
+        the type selected in the AddMemory step. The memory is created with no
+        embedding (``embedding=None`` / ``embeddingModel=None``) — the embedding
+        regen cron re-embeds it later. The user-state set by
+        :meth:`_handleConfigAction_AddMemory` is cleared at the top of
+        :meth:`_handleUserDataConfiguration` before this handler runs.
+
+        Manual-memory attributes (fixed by design — see plan §memory-creation):
+        ``permanent=False`` (ephemeral), ``source=UserMemorySource.USER``,
+        ``tags=[]``, ``threadId=DEFAULT_THREAD_ID`` (the wizard is private-chat
+        only), ``embedding``/``embeddingModel`` = ``None``.
+
+        Args:
+            data (utils.PayloadDict): Callback data with chat ID, the selected
+                ``MemoryType`` value (``Key``), and the content (``Value``).
+            messageId (MessageId): Message ID to edit.
+            messageChatId (int): Chat ID where the message is located.
+            user (MessageSender): The calling user (memories are scoped to id).
+        """
+        chatId = data.get(ButtonDataKey.ChatId, None)
+        if not isinstance(chatId, int):
+            logger.error(f"SetMemoryContent: wrong chatId: {type(chatId).__name__}#{chatId}")
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Ошибка: некорректный идентификатор чата",
+            )
+            return
+
+        typeFilterRaw = str(data.get(ButtonDataKey.Key, "") or "")
+        content = str(data.get(ButtonDataKey.Value, "") or "").strip()
+
+        # Validate the type is a known MemoryType before attempting the insert.
+        try:
+            memoryType = MemoryType(typeFilterRaw)
+        except ValueError:
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Ошибка: некорректный тип памяти.",
+            )
+            return
+
+        exitButton = CallbackButton(
+            "Закончить настройку",
+            {ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.Cancel},
+        )
+
+        if not content:
+            keyboard: List[List[CallbackButton]] = [
+                [
+                    CallbackButton(
+                        "<< Назад к списку",
+                        {
+                            ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.TopicSelected,
+                            ButtonDataKey.ChatId: chatId,
+                            ButtonDataKey.Key: typeFilterRaw,
+                            ButtonDataKey.Page: 0,
+                        },
+                    )
+                ],
+                [exitButton],
+            ]
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Содержание не может быть пустым.",
+                inlineKeyboard=keyboard,
+            )
+            return
+
+        # Persist the memory. The wizard never crashes — a transient DB error
+        # renders a distinct failure message rather than propagating the
+        # exception out of the callback handler.
+        memoryId = uuid.uuid4().hex
+        try:
+            await self.db.userMemories.addMemory(
+                chatId,
+                user.id,
+                memoryId,
+                type=memoryType,
+                content=content,
+                tags=[],
+                permanent=False,
+                threadId=DEFAULT_THREAD_ID,
+                source=UserMemorySource.USER,
+                embedding=None,
+                embeddingModel=None,
+            )
+        except Exception:
+            logger.error(
+                "SetMemoryContent: failed to add memory in chat %d user %d",
+                chatId,
+                user.id,
+                exc_info=True,
+            )
+            keyboard = [
+                [
+                    CallbackButton(
+                        "<< Назад к списку",
+                        {
+                            ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.TopicSelected,
+                            ButtonDataKey.ChatId: chatId,
+                            ButtonDataKey.Key: typeFilterRaw,
+                            ButtonDataKey.Page: 0,
+                        },
+                    )
+                ],
+                [exitButton],
+            ]
+            await self.editMessage(
+                messageId=messageId,
+                chatId=messageChatId,
+                text="Не удалось добавить память.",
+                inlineKeyboard=keyboard,
+            )
+            return
+
+        keyboard = [
+            [
+                CallbackButton(
+                    "<< Назад к списку",
+                    {
+                        ButtonDataKey.UserDataConfigAction: ButtonUserDataConfigAction.TopicSelected,
+                        ButtonDataKey.ChatId: chatId,
+                        ButtonDataKey.Key: typeFilterRaw,
+                        ButtonDataKey.Page: 0,
+                    },
+                )
+            ],
+            [exitButton],
+        ]
+        preview = content[:200]
+        await self.editMessage(
+            messageId=messageId,
+            chatId=messageChatId,
+            text=f"Память добавлена:\n```\n{preview}\n```",
+            inlineKeyboard=keyboard,
+        )
+
     async def _handleUserDataConfiguration(
         self,
         data: utils.PayloadDict,
@@ -2397,6 +2681,14 @@ class UserDataHandler(BaseBotHandler):
                 )
             case ButtonUserDataConfigAction.TagFilter:
                 await self._handleConfigAction_TagFilter(
+                    data, messageId=messageId, messageChatId=messageChatId, user=user
+                )
+            case ButtonUserDataConfigAction.AddMemory:
+                await self._handleConfigAction_AddMemory(
+                    data, messageId=messageId, messageChatId=messageChatId, user=user
+                )
+            case ButtonUserDataConfigAction.SetMemoryContent:
+                await self._handleConfigAction_SetMemoryContent(
                     data, messageId=messageId, messageChatId=messageChatId, user=user
                 )
 
@@ -2503,15 +2795,15 @@ class UserDataHandler(BaseBotHandler):
         )
 
     @commandHandlerV2(
-        commands=("knowledge_config",),
-        shortDescription="Start wisard for user-data manaagement",
-        helpMessage=": Запустить мастер управления знаниями бота о вас.",
+        commands=("memory_config",),
+        shortDescription="Start wizard for user-data management",
+        helpMessage=": Запустить мастер управления памятью бота о вас.",
         visibility={CommandPermission.PRIVATE},
         availableFor={CommandPermission.PRIVATE},
         helpOrder=CommandHandlerOrder.WIZARDS,
         category=CommandCategory.PRIVATE,
     )
-    async def knowledge_config_command(
+    async def memory_config_command(
         self,
         ensuredMessage: EnsuredMessage,
         command: str,
@@ -2532,7 +2824,7 @@ class UserDataHandler(BaseBotHandler):
 
         msg = await self.sendMessage(
             ensuredMessage,
-            messageText="Запускаю мастер управления знаниями бота о вас...",
+            messageText="Запускаю мастер управления памятью бота о вас...",
             messageCategory=MessageCategory.BOT_COMMAND_REPLY,
         )
         if msg:
