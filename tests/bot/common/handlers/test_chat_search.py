@@ -24,10 +24,10 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from internal.bot.common.handlers.chat_search import (
+from internal.bot.common.handlers.chat_search import ChatSearchHandler
+from internal.bot.constants import (
     BACKFILL_DEFAULT_BATCH_SIZE,
     SEARCH_DEFAULT_MAX_RESULTS,
-    ChatSearchHandler,
 )
 from internal.bot.models import (
     BotProvider,

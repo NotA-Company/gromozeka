@@ -16,8 +16,8 @@ import telegram
 
 from internal.bot.common.embedding_utils import embedAndSaveMessage
 from internal.bot.common.models import UpdateObjectType
+from internal.bot.constants import MEMORY_RETRIEVAL_MODE_RELEVANT
 from internal.bot.models import (
-    MEMORY_RETRIEVAL_MODE_RELEVANT,
     BotProvider,
     ChatSettingsKey,
     EnsuredMessage,

@@ -77,15 +77,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["HandlerResultStatus", "BaseBotHandler"]
 
-MEMORIES_BLOCK_SOFT_CHAR_CAP: int = 2000
-"""Soft character cap on the rendered ``<user-memories>`` block.
-
-When the combined permanent + recent sections exceed this, the recent
-section is trimmed first (its items are individually smaller and
-lower-value than the permanent block). See
-``docs/plans/user-memories-v1.md`` §9.1 (``_formatMemoriesBlock``).
-"""
-
 
 class HandlerResultStatus(Enum):
     """

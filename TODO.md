@@ -3,8 +3,8 @@
 - [x] add memories about user, show last X (or most relevant X) + add\delete\search tools
 - [x] pin data\summary\memories to message
 - [ ] Memory-config, add memory
-- [ ] memory-repo: add custom source support
-- [ ] move constants to constants
+- [x] memory-repo: add custom source support
+- [x] move constants to constants
 - [ ] refactor models
 - [ ] make lint - add check for compilation
 - [ ] move injected memories to separate table by hash or keep + links to them

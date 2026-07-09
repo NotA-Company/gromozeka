@@ -50,6 +50,13 @@ from typing import List, Optional
 
 import numpy
 
+from internal.database.constants import (
+    BACKFILL_DEFAULT_BATCH_SIZE,
+    EPHEMERAL_RETRIEVAL_LIMIT,
+    MEMORY_SEARCH_DEFAULT_LIMIT,
+    MEMORY_SEARCH_TOPK_MULTIPLIER,
+    PERMANENT_INJECTION_CAP,
+)
 from internal.database.models import UserMemoryDict, UserMemorySource
 
 from .. import utils as dbUtils
@@ -61,21 +68,6 @@ from ..providers.base import (
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)
-
-PERMANENT_INJECTION_CAP: int = 10
-"""Max permanent memories injected per (chat, user) into a chat turn's system block."""
-
-EPHEMERAL_RETRIEVAL_LIMIT: int = 5
-"""Default cap on ephemeral (non-permanent) memories retrieved per chat turn."""
-
-MEMORY_SEARCH_DEFAULT_LIMIT: int = 20
-"""Default result cap for :meth:`UserMemoriesRepository.searchMemories`."""
-
-MEMORY_SEARCH_TOPK_MULTIPLIER: int = 3
-"""vec0 ``k`` is ``limit * this multiplier`` to absorb post-filter trimming."""
-
-BACKFILL_DEFAULT_BATCH_SIZE: int = 50
-"""Default per-tick batch size for the memory embedding regeneration cron."""
 
 _SELECT_COLUMNS: str = (
     "chat_id, user_id, thread_id, memory_id, type, content, tags, "
@@ -148,6 +140,9 @@ class UserMemoriesRepository(BaseRepository):
         Raises:
             Exception: Re-raised on PK conflict or any DB error (caller
                 ensures ULID uniqueness).
+
+        Note:
+            Writes are routed based on chatId mapping. Cannot write to readonly sources.
         """
         now = dbUtils.getCurrentTimestamp()
         sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
@@ -230,6 +225,9 @@ class UserMemoriesRepository(BaseRepository):
             True if a matching row existed (and was therefore updated),
             False if no row matched (chatId, userId, memoryId) or if
             nothing was requested.
+
+        Note:
+            Writes are routed based on chatId mapping. Cannot write to readonly sources.
         """
         if content is None and tags is None and type is None:
             return False
@@ -329,6 +327,9 @@ class UserMemoriesRepository(BaseRepository):
         Returns:
             True if a row was deleted, False if no row matched or on
             error.
+
+        Note:
+            Writes are routed based on chatId mapping. Cannot write to readonly sources.
         """
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
@@ -382,6 +383,7 @@ class UserMemoriesRepository(BaseRepository):
         threadId: int,
         *,
         limit: int = PERMANENT_INJECTION_CAP,
+        dataSource: Optional[str] = None,
     ) -> List[UserMemoryDict]:
         """Return permanent memories for the thread, newest-updated-first, capped.
 
@@ -397,11 +399,12 @@ class UserMemoriesRepository(BaseRepository):
             threadId: Active thread (the caller passes
                 ``DEFAULT_THREAD_ID`` for the main thread).
             limit: Maximum rows to return.
+            dataSource: Optional data source name for explicit routing.
 
         Returns:
             List of :class:`UserMemoryDict` ordered by ``updated_at`` desc.
         """
-        sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=True)
+        sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)
         query = f"""
             SELECT {_SELECT_COLUMNS}
             FROM user_memories
@@ -426,6 +429,7 @@ class UserMemoriesRepository(BaseRepository):
         threadId: int,
         *,
         limit: int = EPHEMERAL_RETRIEVAL_LIMIT,
+        dataSource: Optional[str] = None,
     ) -> List[UserMemoryDict]:
         """Return newest-updated EPHEMERAL memories scoped to (chatId, userId, threadId), capped.
 
@@ -441,12 +445,13 @@ class UserMemoriesRepository(BaseRepository):
             threadId: Active thread (the caller passes
                 ``DEFAULT_THREAD_ID`` for the main thread).
             limit: Maximum rows to return.
+            dataSource: Optional data source name for explicit routing.
 
         Returns:
             List of :class:`UserMemoryDict` (``permanent = 0`` only)
             ordered by ``updated_at`` desc.
         """
-        sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=True)
+        sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)
         query = f"""
             SELECT {_SELECT_COLUMNS}
             FROM user_memories
@@ -469,6 +474,8 @@ class UserMemoriesRepository(BaseRepository):
         chatId: int,
         userId: int,
         memoryId: str,
+        *,
+        dataSource: Optional[str] = None,
     ) -> Optional[UserMemoryDict]:
         """Return a single memory row selected by the full primary key.
 
@@ -481,12 +488,13 @@ class UserMemoriesRepository(BaseRepository):
             chatId: Chat the memory belongs to.
             userId: User the memory is about.
             memoryId: Memory identifier to fetch.
+            dataSource: Optional data source name for explicit routing.
 
         Returns:
             The matching :class:`UserMemoryDict`, or ``None`` when no row
             matches the full ``(chatId, userId, memoryId)`` key.
         """
-        sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=True)
+        sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)
         row = await sqlProvider.executeFetchOne(
             f"""
             SELECT {_SELECT_COLUMNS}
@@ -507,6 +515,8 @@ class UserMemoriesRepository(BaseRepository):
         chatId: int,
         userId: int,
         memoryType: Optional[str] = None,
+        *,
+        dataSource: Optional[str] = None,
     ) -> List[str]:
         """Return the sorted set of distinct tag strings across a user's memories.
 
@@ -522,6 +532,7 @@ class UserMemoriesRepository(BaseRepository):
             userId: User the memories are about.
             memoryType: Optional ``MemoryType`` value filter. When ``None``,
                 tags from memories of ALL types are collected.
+            dataSource: Optional data source name for explicit routing.
 
         Returns:
             Sorted list of distinct tag strings. Empty list on error or when
@@ -534,7 +545,7 @@ class UserMemoriesRepository(BaseRepository):
                 "memoryType": memoryType,
             }
 
-            sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=True)
+            sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)
             rows = await sqlProvider.executeFetchAll(
                 """
                 SELECT tags FROM user_memories
@@ -585,6 +596,7 @@ class UserMemoriesRepository(BaseRepository):
         limit: int = MEMORY_SEARCH_DEFAULT_LIMIT,
         embeddingModel: Optional[str],  # TODO: Add default = None after fixing all callers
         offset: int = 0,
+        dataSource: Optional[str] = None,
     ) -> List[UserMemoryDict]:
         """Unified memory search with filter-only and semantic modes.
 
@@ -644,6 +656,7 @@ class UserMemoriesRepository(BaseRepository):
                 table is partitioned by model); when ``None``, filter-only
                 mode runs regardless of ``queryEmbedding``.
             offset: Number of leading results to skip (pagination).
+            dataSource: Optional data source name for explicit routing.
 
         Returns:
             List of :class:`UserMemoryDict` with the ``score`` field
@@ -661,6 +674,7 @@ class UserMemoriesRepository(BaseRepository):
                 permanent=permanent,
                 limit=limit,
                 offset=offset,
+                dataSource=dataSource,
             )
         return await self._semanticSearchMemories(
             chatId=chatId,
@@ -673,6 +687,7 @@ class UserMemoriesRepository(BaseRepository):
             limit=limit,
             embeddingModel=embeddingModel,
             offset=offset,
+            dataSource=dataSource,
         )
 
     async def _filterOnlySearchMemories(
@@ -686,6 +701,7 @@ class UserMemoriesRepository(BaseRepository):
         permanent: Optional[bool],
         limit: int,
         offset: int = 0,
+        dataSource: Optional[str] = None,
     ) -> List[UserMemoryDict]:
         """Filter-only search path (no vector ranking). Every row gets ``score = 0.0``.
 
@@ -699,6 +715,7 @@ class UserMemoriesRepository(BaseRepository):
             permanent: Optional permanent-flag filter.
             limit: Maximum results to return.
             offset: Number of leading results to skip (pagination).
+            dataSource: Optional data source name for explicit routing.
 
         Returns:
             List of :class:`UserMemoryDict` with ``score = 0.0``.
@@ -724,7 +741,7 @@ class UserMemoriesRepository(BaseRepository):
             if tagsWhereList:
                 tagsWhereStr = f" AND ( {' OR '.join(tagsWhereList)} )"
 
-            sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=True)
+            sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)
             query = f"""
                 SELECT {_SELECT_COLUMNS}
                 FROM user_memories
@@ -768,6 +785,7 @@ class UserMemoriesRepository(BaseRepository):
         limit: int,
         embeddingModel: str,
         offset: int = 0,
+        dataSource: Optional[str] = None,
     ) -> List[UserMemoryDict]:
         """Semantic search path via native vec0 vector search.
 
@@ -798,6 +816,7 @@ class UserMemoriesRepository(BaseRepository):
                 table).
             offset: Number of leading ranked results to skip
                 (pagination; applied AFTER ranking and trimming).
+            dataSource: Optional data source name for explicit routing.
 
         Returns:
             List of :class:`UserMemoryDict` ranked by similarity
@@ -806,7 +825,7 @@ class UserMemoriesRepository(BaseRepository):
             matches are found.
         """
         try:
-            sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=True)
+            sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)
             if not await sqlProvider.isVectorSearchSupported():
                 logger.debug(
                     "Semantic memory search requested for chat %d but vec0 is unsupported; returning []",
@@ -976,6 +995,9 @@ class UserMemoriesRepository(BaseRepository):
 
         Returns:
             True on success, False on any failure (never raises).
+
+        Note:
+            Writes are routed based on chatId mapping. Cannot write to readonly sources.
         """
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
@@ -1205,6 +1227,9 @@ class UserMemoriesRepository(BaseRepository):
             True if a vec0 row was deleted OR no vec0 table existed
             (nothing to clean). False when tables existed but the
             memory_id was not found in any of them.
+
+        Note:
+            Writes are routed based on chatId mapping. Cannot write to readonly sources.
         """
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
@@ -1293,6 +1318,7 @@ class UserMemoriesRepository(BaseRepository):
         limit: int = BACKFILL_DEFAULT_BATCH_SIZE,
         modelName: Optional[str] = None,
         dimensions: Optional[int] = None,
+        dataSource: Optional[str] = None,
     ) -> List[UserMemoryDict]:
         """Return memories whose embedding is stale or absent.
 
@@ -1316,13 +1342,17 @@ class UserMemoriesRepository(BaseRepository):
                 ``embedding_model`` is ``NULL`` OR differs from this
                 value are returned. When ``None``, only never-embedded
                 rows (``embedding_model IS NULL``) are returned.
+            dimensions: Currently-active embedding dimensionality; rows
+                whose ``embedding_dimensions`` differs are returned. When
+                ``None``, the dimension check is omitted.
+            dataSource: Optional data source name for explicit routing.
 
         Returns:
             List of :class:`UserMemoryDict` ordered by ``updated_at``
             descending. Empty list on error.
         """
         try:
-            sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=True)
+            sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)
             query = f"""
                     SELECT {_SELECT_COLUMNS}
                     FROM user_memories
@@ -1397,6 +1427,9 @@ class UserMemoriesRepository(BaseRepository):
             The count of reset rows. ``0`` when no rows were stale OR
             on any internal error (never raises; the exception is
             logged).
+
+        Note:
+            Writes are routed based on chatId mapping. Cannot write to readonly sources.
         """
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)

@@ -19,7 +19,22 @@ from dateutil import parser as dateutilParser
 import lib.utils as utils
 from internal.bot.common.models import CallbackButton, UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
-from internal.bot.constants import ToolName
+from internal.bot.constants import (
+    KNOWLEDGE_CONFIG_PAGE_SIZE,
+    KNOWLEDGE_CONFIG_TAG_FILTER_FETCH_LIMIT,
+    MEMORY_BACKFILL_DEFAULT_BATCH_SIZE,
+    MEMORY_BACKFILL_INTER_MESSAGE_DELAY_SECS,
+    MEMORY_COUNT_THRESHOLD,
+    MEMORY_DEDUP_DUPLICATE_THRESHOLD,
+    MEMORY_DEDUP_SIMILAR_THRESHOLD,
+    MEMORY_MAX_MESSAGES_PER_RUN,
+    MEMORY_MAX_REFINES_PER_TICK,
+    MEMORY_MIN_MESSAGES_TO_REFINE,
+    MEMORY_SEARCH_DEFAULT_LIMIT,
+    MEMORY_SEARCH_MAX_LIMIT,
+    MEMORY_TIME_THRESHOLD_SECONDS,
+    ToolName,
+)
 from internal.bot.models import (
     BotProvider,
     ButtonDataKey,
@@ -57,83 +72,6 @@ from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)
 
-# Memory-refinement tuning constants.
-# Refinement fires when ``newMessagesCount >= MEMORY_COUNT_THRESHOLD`` OR
-# ``elapsed since lastRefinedTS >= MEMORY_TIME_THRESHOLD_SECONDS``.
-MEMORY_COUNT_THRESHOLD = 5
-"""Per-(chat, user, thread) new-message count that triggers a refinement run."""
-
-MEMORY_TIME_THRESHOLD_SECONDS = 6 * 60 * 60
-"""Max seconds since the last refinement run before another is forced (6 hours)."""
-
-MEMORY_MIN_MESSAGES_TO_REFINE = 5
-"""Don't refine if fewer than this many new messages are available."""
-
-MEMORY_MAX_MESSAGES_PER_RUN = 128
-"""Cap on messages fed to a single refinement LLM call."""
-
-MEMORY_MAX_REFINES_PER_TICK = 3
-"""Upper bound on refinement LLM calls per 60s cron tick."""
-
-# User-memories dedup / search tuning (Phase 2 — see
-# docs/plans/user-memories-v1.md §8.2).
-MEMORY_DEDUP_DUPLICATE_THRESHOLD: float = 0.95
-"""Cosine similarity at/above which ``add_memory`` treats the new memory as a
-duplicate of an existing one (no-op insert)."""
-
-MEMORY_DEDUP_SIMILAR_THRESHOLD: float = 0.85
-"""Cosine similarity above which ``add_memory`` returns ``similar_exists`` to
-the refinement LLM (grey-zone), and above which ``delete_memory`` by-query
-will delete a matching memory."""
-
-MEMORY_SEARCH_DEFAULT_LIMIT: int = 20
-"""Default result cap for the ``search_memories`` LLM tool when no ``limit`` is
-passed by the model."""
-
-MEMORY_SEARCH_MAX_LIMIT: int = 100
-"""Upper bound on the ``search_memories`` ``limit`` parameter.
-
-Mirrors the sibling ``_llmToolSearchMessages`` clamp
-(``internal/bot/common/handlers/chat_search.py``): a model passing a huge
-``limit`` would otherwise trigger an unbounded query (and the vec0 ``k`` is
-sized as ``limit * 3``). Clamped to this value; the lower bound is 1."""
-
-MEMORY_BACKFILL_DEFAULT_BATCH_SIZE: int = 50
-"""Default per-tick batch size for the memory-embedding regeneration cron.
-
-Read from ``[user-memory.thresholds].memory-reindex-batch-size``; falls back
-to this constant when unset. Mirrors ``BACKFILL_DEFAULT_BATCH_SIZE`` in
-``chat_search.py:69`` and the repository-level default on
-``UserMemoriesRepository.getMemoriesWithoutEmbeddings``."""
-
-MEMORY_BACKFILL_INTER_MESSAGE_DELAY_SECS: float = 0.1
-"""Pause between consecutive memory-embedding API calls within a regen batch.
-
-Mirrors ``BACKFILL_INTER_MESSAGE_DELAY_SECS`` (``chat_search.py:77``).
-``LLMService`` already rate-limits at the provider level, but a small extra
-cushion keeps the handler from monopolising the asyncio loop and leaves
-headroom for user-facing message traffic."""
-
-KNOWLEDGE_CONFIG_PAGE_SIZE: int = 8
-"""Max memories shown per page in the ``/knowledge_config`` wizard memory list.
-
-Chosen to keep the inline-keyboard list short enough to be scannable on a
-phone screen while limiting the number of ``CallbackButton`` rows (each row
-is a separate ``memory_id`` payload — at 8 per page plus pagination / nav
-buttons the keyboard stays under the Telegram per-message button budget)."""
-
-KNOWLEDGE_CONFIG_TAG_FILTER_FETCH_LIMIT: int = 200
-"""Max rows fetched when a tag filter is active in the wizard memory list.
-
-When a tag filter is applied, the tags post-filter in ``searchMemories`` runs
-AFTER the SQL-level offset — so paginating via SQL offset would silently
-straddle trimmed rows (see the note in
-:meth:`UserMemoriesRepository._filterOnlySearchMemories`). To keep wizard
-pagination correct under a tag filter, ``_renderMemoryList`` fetches up to
-this many matching rows at offset 0 and paginates the filtered result in
-Python. 200 comfortably exceeds any realistic single-user tagged set; a user
-with more tagged memories simply sees the first 200 (documented edge)."""
-
 
 def _formatMemoryLine(mem: UserMemoryDict) -> str:
     """Render a single memory dict as one ``[type] content #tag …`` line.
@@ -162,7 +100,7 @@ def _formatMemoriesBlockRaw(
     """Render the ``<user-memories>`` block with no soft-cap trimming.
 
     Shared by :meth:`BaseBotHandler._formatMemoriesBlock` (the staticmethod
-    wrapper that applies :data:`MEMORIES_BLOCK_SOFT_CHAR_CAP`) so the trim
+    wrapper that may trim the recent slice to a soft char cap) so the trim
     loop can re-render with a smaller recent slice without re-implementing
     the layout. See :meth:`BaseBotHandler._formatMemoriesBlock` for the
     format spec.

@@ -23,10 +23,10 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from internal.bot.common.handlers.user_data import (
+from internal.bot.common.handlers.user_data import UserDataHandler
+from internal.bot.constants import (
     MEMORY_BACKFILL_DEFAULT_BATCH_SIZE,
     MEMORY_BACKFILL_INTER_MESSAGE_DELAY_SECS,
-    UserDataHandler,
 )
 from internal.bot.models import (
     BotProvider,

@@ -31,7 +31,14 @@ import lib.utils as libUtils
 from internal.bot.common.embedding_utils import embedAndSaveMessage
 from internal.bot.common.models import UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
-from internal.bot.constants import ToolName
+from internal.bot.constants import (
+    BACKFILL_DEFAULT_BATCH_SIZE,
+    BACKFILL_INTER_MESSAGE_DELAY_SECS,
+    SEARCH_DEFAULT_DAYS,
+    SEARCH_DEFAULT_MAX_RESULTS,
+    SEARCH_TOOL_MAX_MESSAGE_LENGTH,
+    ToolName,
+)
 from internal.bot.models import (
     BotProvider,
     ChatSettingsDict,
@@ -56,29 +63,6 @@ from lib.ai import LLMFunctionParameter, LLMParameterType
 from .base import BaseBotHandler
 
 logger = logging.getLogger(__name__)
-
-
-SEARCH_DEFAULT_MAX_RESULTS: int = 10
-"""Default ``max-results`` for `/search` when `[search-history.defaults]` is
-unset. Matches the TOML default in `configs/00-defaults/search-history.toml`."""
-
-SEARCH_DEFAULT_DAYS: int = 30
-"""Default `days` window for `/search` when `[search-history.defaults]` is unset.
-Matches the TOML default in `configs/00-defaults/search-history.toml`."""
-
-BACKFILL_DEFAULT_BATCH_SIZE: int = 50
-"""Default per-tick batch size for the backfill CRON_JOB when
-``[search-history.embeddings].reindex-batch-size`` is unset."""
-
-SEARCH_TOOL_MAX_MESSAGE_LENGTH: int = 512
-"""Max chars per message text in LLM tool search results. Longer texts
-are truncated with ``…`` to avoid blowing up the LLM context window."""
-
-BACKFILL_INTER_MESSAGE_DELAY_SECS: float = 0.1
-"""Pause inserted between consecutive embedding API calls within a
-backfill batch. ``LLMService`` already rate-limits at the provider level,
-but a small extra cushion keeps the handler from monopolising the
-asyncio loop and leaves headroom for user-facing message traffic."""
 
 
 class _CategoryGroup(StrEnum):
