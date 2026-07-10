@@ -8,9 +8,9 @@
 - [ ] refactor models
 - [x] make lint - add check for compilation
 - [x] move injected memories to separate table by hash or keep + links to them
-- [ ] add chat+source to get-memories-by-id
+- [x] add chat+source to get-memories-by-id
 - [ ] search-memories: ability to search for another user
-- [ ] how\when do we generate embeddings for messages? 
+- [x] how\when do we generate embeddings for messages? 
 
 - [ ] Yandex AI Studio does not support webp images. Add config value + convert
 - [ ] Search for tool_name in [] or {} + optional ``` end return some error if yes (to enforce proper tool call)

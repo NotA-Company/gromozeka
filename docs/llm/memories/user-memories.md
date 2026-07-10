@@ -321,19 +321,36 @@ refactoring — there is no longer a `<user-memories>` system-message block.
 
 ### Flow (`MessagePreprocessorHandler.injectMemories`)
 
+The embedding (when needed) is generated **in `newMessageHandler`**, not inside
+`injectMemories`. `newMessageHandler` computes `chatMemoriesEmbeddingsEnabled =
+MEMORY_EMBEDDINGS_ENABLED && MEMORY_INJECTION_ENABLED &&
+MEMORY_RETRIEVAL_MODE == "relevant"` and, when that gate **plus non-empty
+message text** holds, embeds the message inline via `generateEmbedding`. The
+resulting vector (or `None`) is then passed into `injectMemories` as
+`queryEmbedding`. This makes `MEMORY_EMBEDDINGS_ENABLED` a **dual-purpose
+gate**: besides driving the regen-cron chat discovery, it also enables the
+inline embedding that powers relevant-mode query-time injection — a chat with
+`MEMORY_INJECTION_ENABLED=true` + `MEMORY_RETRIEVAL_MODE=relevant` but this
+`false` never produces a query embedding, so `injectMemories` is called with
+`queryEmbedding=None` and degrades to `getLatestMemories` (latest retrieval).
+Empty/whitespace message text skips the embedding block for the same reason
+(no garbage vector) and likewise falls through to the `getLatestMemories`
+fallback.
+
 1. Bail when `MEMORY_INJECTION_ENABLED` is false.
 2. **Permanent** — read from the write-through permanent-memories cache via
    `cache.getChatUserPermanentMemories(chatId, userId, threadId)`
    (cross-thread `NULL` + this-thread permanent, already capped at
    `PERMANENT_INJECTION_CAP = 10`, returned as `list[SingleMemoryDict]`).
-3. **Ephemeral (short-term)** — chosen by `MEMORY_RETRIEVAL_MODE`:
-   - `"relevant"` + non-empty message text →
-     `LLMService.generateEmbedding(messageText, chatId, chatSettings)`
-     (returns `(modelName, List[float])` or `None`); on a non-`None` result,
+3. **Ephemeral (short-term)** — chosen by `queryEmbedding` (produced upstream
+   in `newMessageHandler`):
+   - `queryEmbedding` is a vector (relevant mode, embeddings enabled,
+     non-empty text, embedding succeeded) →
      `searchMemories(queryEmbedding=<floats>, embeddingModel=<modelName>,
-     permanent=False)` (vec0-ranked); on `None` (no embedding model, rate
-     limit, provider error) falls back to `getLatestMemories`.
-   - Anything else (`"latest"`, relevant-but-no-embed) →
+     permanent=False)` (vec0-ranked).
+   - `queryEmbedding is None` (latest mode; or relevant mode with
+     `MEMORY_EMBEDDINGS_ENABLED=false` / empty text / `generateEmbedding`
+     returned `None` due to no model, rate limit, or provider error) →
      `getLatestMemories` (cap `EPHEMERAL_RETRIEVAL_LIMIT = 5`, ephemeral-only).
 4. The ephemeral rows are slimmed to `SingleMemoryDict` via
    `convertDBMemoryToSingleMemoryDict` (drops DB plumbing keys, keeps
@@ -559,7 +576,7 @@ metadata in `_chatSettingsInfo` (four-site convention — see
 |---|---|---|---|
 | `MEMORY_INJECTION_ENABLED` | `memory-injection-enabled` | BOOL | Gate `MessagePreprocessorHandler.injectMemories()` (the message-arrival injection into `EnsuredMessage.userMemories`) AND the chat-time availability of `add_memory` / `search_memories`. |
 | `MEMORY_RETRIEVAL_MODE` | `memory-retrieval-mode` | STRING | `latest` (default) or `relevant` — how ephemeral memories are chosen. |
-| `MEMORY_EMBEDDINGS_ENABLED` | `memory-embeddings-enabled` | BOOL | Gate the regen cron's chat discovery for this chat. |
+| `MEMORY_EMBEDDINGS_ENABLED` | `memory-embeddings-enabled` | BOOL | Dual-purpose gate: (a) discovery gate for the memory-embedding regen cron (which chats to scan on model drift), and (b) query-time gate for relevant-mode memory injection in `newMessageHandler` — a chat with `MEMORY_INJECTION_ENABLED=true` + `MEMORY_RETRIEVAL_MODE=relevant` but this `false` degrades to `latest` (no inline embedding → `getLatestMemories` instead of semantic search). |
 | `MEMORY_REGENERATE_EMBEDDINGS` | `memory-regenerate-embeddings` | BOOL | Per-chat gate for re-embedding stale rows (only acts when `MEMORY_EMBEDDINGS_ENABLED` is on). |
 
 The five refinement settings from the rolling-bio system are unchanged:

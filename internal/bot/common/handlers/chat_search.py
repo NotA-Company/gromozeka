@@ -25,10 +25,9 @@ import datetime
 import json
 import logging
 from enum import StrEnum
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import lib.utils as libUtils
-from internal.bot.common.embedding_utils import embedAndSaveMessage
 from internal.bot.common.models import UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
 from internal.bot.constants import (
@@ -410,14 +409,8 @@ class ChatSearchHandler(BaseBotHandler):
             ensuredMessage = await EnsuredMessage.fromDBChatMessage(
                 data=pendingMessage, db=self.db, injectMemories=False
             )
-            if not ensuredMessage.messageText.strip():
-                continue
 
-            if await embedAndSaveMessage(
-                ensuredMessage=ensuredMessage,
-                modelName=modelName,
-                db=self.db,
-            ):
+            if await self.embedAndSaveMessage(ensuredMessage=ensuredMessage):
                 embedded += 1
             await asyncio.sleep(BACKFILL_INTER_MESSAGE_DELAY_SECS)
 
@@ -429,6 +422,53 @@ class ChatSearchHandler(BaseBotHandler):
                 chatId,
                 elapsedTime.total_seconds(),
             )
+
+    async def embedAndSaveMessage(self, ensuredMessage: EnsuredMessage) -> bool:
+        """Embed a single message and persist its vector.
+
+        Background-only helper invoked from the backfill CRON_JOB loop
+        (``_dtCronJob``). **Never raises**: any exception is logged and
+        surfaced as ``False`` so a single bad row never aborts the batch
+        (the caller relies on this never-crash contract).
+
+        Passes ``chatId=None`` to :meth:`LLMService.generateEmbedding` so the
+        background backfill does NOT consume the per-chat hot-path rate budget
+        (``generateEmbedding`` skips rate-limiting when ``chatId is None``).
+
+        Args:
+            ensuredMessage: The message to embed + persist.
+
+        Returns:
+            ``True`` when an embedding was generated and saved, ``False``
+            otherwise (no vector produced, DB write failure, or any exception).
+        """
+        try:
+            messageText: str = await ensuredMessage.formatForLLM(
+                self.db, format=LLMMessageFormat.TEXT, useSingleMedia=False
+            )
+            embeddings: Optional[Tuple[str, List[float]]] = None
+            if messageText.strip():
+                embeddings = await self.llmService.generateEmbedding(
+                    messageText,
+                    chatId=None,
+                    chatSettings=await self.getChatSettings(ensuredMessage.recipient.id),
+                )
+            if embeddings is not None:
+                return await self.db.chatEmbeddings.saveMessageEmbedding(
+                    chatId=ensuredMessage.recipient.id,
+                    messageId=ensuredMessage.messageId,
+                    embedding=embeddings[1],
+                    model=embeddings[0],
+                    date=ensuredMessage.date.isoformat() if ensuredMessage.date is not None else None,
+                )
+            return False
+        except Exception:
+            logger.exception(
+                "embedAndSaveMessage: failed to embed message %s in chat %d",
+                ensuredMessage.messageId,
+                ensuredMessage.recipient.id,
+            )
+            return False
 
     ###
     # LLM tool: semantic search over chat history

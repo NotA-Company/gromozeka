@@ -1,21 +1,30 @@
-"""Tests for :class:`MessagePreprocessorHandler` embedding-dispatch hook.
+"""Tests for :class:`MessagePreprocessorHandler` embedding + memory-injection path.
 
 The preprocessor sits in the message pipeline immediately after media processing
-and ``saveChatMessage``. Once a message is durably persisted it can optionally
-dispatch a background task that generates and stores an embedding vector
-(``embedAndSaveMessage``) — but only if:
+and ``saveChatMessage``. Once a message is durably persisted,
+``newMessageHandler`` optionally generates a single embedding vector *inline*
+(via ``self.llmService.generateEmbedding``) and reuses it for both chat-search
+storage (``saveMessageEmbedding``) and memory injection. The inline path runs
+when either:
 
-* ``[search-history].enabled`` is true (server-wide feature flag),
-* the per-chat setting ``EMBEDDINGS_ENABLED`` is true (chat opt-in),
-* the message has non-empty text.
+* chat search is enabled (``[search-history].enabled`` server-wide **and** the
+  per-chat ``EMBEDDINGS_ENABLED`` opt-in), or
+* memory-embedding retrieval is enabled (``MEMORY_EMBEDDINGS_ENABLED`` +
+  ``MEMORY_INJECTION_ENABLED`` + ``MEMORY_RETRIEVAL_MODE == "relevant"``).
 
-This module covers every gate independently, plus the three failure modes of
-``embedAndSaveMessage`` and the never-crash guarantee of the dispatch block.
+When memory injection is enabled but the embedding path did not run (or
+returned ``None``), ``injectMemories`` is called with ``(None, None)`` as a
+latest-retrieval fallback. The dedicated ``embedAndSaveMessage`` helper tests
+live in ``tests/bot/common/handlers/test_chat_search.py`` (the helper was
+re-homed onto :class:`ChatSearchHandler`).
+
+This module covers every gate independently, plus the graceful-degradation
+guarantee of the inline embedding path.
 """
 
 import contextlib
 import datetime
-from typing import Any, AsyncIterator, cast
+from typing import Any, AsyncIterator, Optional, cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -24,6 +33,7 @@ from internal.bot.common.handlers.base import HandlerResultStatus
 from internal.bot.common.handlers.message_preprocessor import MessagePreprocessorHandler
 from internal.bot.models import (
     MEMORY_RETRIEVAL_MODE_LATEST,
+    MEMORY_RETRIEVAL_MODE_RELEVANT,
     BotProvider,
     ChatSettingsDict,
     ChatSettingsKey,
@@ -34,6 +44,7 @@ from internal.bot.models import (
     MessageSender,
     SingleMemoryDict,
 )
+from internal.bot.models.ensured_message import MediaContent
 from internal.database.models import MemoryType, UserMemoryDict
 from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
@@ -85,28 +96,6 @@ def mockDb() -> Mock:
 
 
 @pytest.fixture
-def mockLlmManager() -> Mock:
-    """Build a mock LLMManager for the handler's LLM service.
-
-    The autouse ``resetLlmServiceSingleton`` fixture has already
-    reset the ``LLMService`` singleton before this fixture runs, so
-    patching ``getLLMManager`` on the singleton is safe and stays in
-    effect for the whole test (the patch lives on the singleton
-    instance, which is what ``embedAndSaveMessage`` looks up via
-    ``LLMService.getInstance()``).
-
-    Returns:
-        Mock: An ``LLMManager`` whose ``getModel(name)`` returns
-        ``None`` by default. Tests assign their own ``getModel``
-        behaviour to control whether a model is found.
-    """
-    manager = Mock()
-    manager.getModel = Mock(return_value=None)
-    manager.listModels = Mock(return_value=[])
-    return manager
-
-
-@pytest.fixture
 def mockQueue() -> Mock:
     """Build a QueueService stub.
 
@@ -123,24 +112,20 @@ def mockQueue() -> Mock:
 def handler(
     mockConfig: Mock,
     mockDb: Mock,
-    mockLlmManager: Mock,
     mockQueue: Mock,
 ) -> MessagePreprocessorHandler:
     """Construct a :class:`MessagePreprocessorHandler` with all deps mocked.
 
-    The handler is wired with a real ``LLMService`` singleton (the
-    autouse ``resetLlmServiceSingleton`` fixture has already reset
-    it). The ``getLLMManager`` method on the singleton is patched to
-    return ``mockLlmManager`` so each test can drive model resolution
-    via ``mockLlmManager.getModel``. ``embedAndSaveMessage`` looks up
-    the LLM service via ``LLMService.getInstance()`` (the same
-    singleton) so the patch is in effect for both the dispatch path
-    and the helper.
+    The handler is wired with a real ``LLMService`` singleton (the autouse
+    ``resetLlmServiceSingleton`` fixture resets it before each test). The
+    ``generateEmbedding`` method on the singleton is replaced with an
+    ``AsyncMock`` so the inline embedding path can be driven without touching
+    the real model-resolution / rate-limit / provider chain. Individual tests
+    override the mock's ``return_value`` to control success vs. failure.
 
     Args:
         mockConfig: ConfigManager stub.
         mockDb: Database stub.
-        mockLlmManager: Mock LLMManager.
         mockQueue: QueueService stub.
 
     Returns:
@@ -170,10 +155,11 @@ def handler(
     # Default chat-settings stub: EMBEDDINGS_ENABLED=true, EMBEDDING_MODEL="".
     h.getChatSettings = AsyncMock(return_value=_defaultChatSettings())  # type: ignore[method-assign]
 
-    # llmService attribute was set by BaseBotHandler.__init__ from the
-    # real singleton; install the mock LLMManager on it so the
-    # embedding helper sees the same patched manager.
-    cast(Any, h).llmService.getLLMManager = Mock(return_value=mockLlmManager)
+    # generateEmbedding is the inline embedding boundary exercised by
+    # newMessageHandler. Default to None (no vector produced) so tests that
+    # do not care about embeddings get a clean no-op; tests that need a
+    # successful embedding override the return_value.
+    cast(Any, h).llmService.generateEmbedding = AsyncMock(return_value=None)  # type: ignore[method-assign]
     return h
 
 
@@ -189,19 +175,23 @@ def _defaultChatSettings(
 ) -> ChatSettingsDict:
     """Build a chat-settings dict with every key the preprocessor reads.
 
-    Covers both code paths exercised by the tests below:
+    Covers every code path exercised by the tests below:
 
-    * the embedding-dispatch block (``EMBEDDINGS_ENABLED`` / ``EMBEDDING_MODEL``), and
-    * :meth:`MessagePreprocessorHandler.injectMemories`, which runs
-      unconditionally at the top of :meth:`newMessageHandler` and subscripts
-      ``chatSettings[ChatSettingsKey.MEMORY_INJECTION_ENABLED]`` directly
-      before any guard. A sparse dict missing the key raises ``KeyError``
-      (see the "Chat Settings Must Be Complete Dicts" note), so
-      ``MEMORY_INJECTION_ENABLED`` must always be present even when the
-      embedding block is the focus of the test. It defaults to ``"false"`` so
-      ``injectMemories`` short-circuits before touching the cache or the
-      ``MEMORY_RETRIEVAL_MODE`` branch (which the embedding tests do not
-      exercise).
+    * the inline embedding block (``EMBEDDINGS_ENABLED`` / ``EMBEDDING_MODEL``),
+    * the memory-embedding gate (``MEMORY_EMBEDDINGS_ENABLED`` +
+      ``MEMORY_RETRIEVAL_MODE``), read by ``newMessageHandler`` to decide
+      whether to embed for memory-retrieval purposes, and
+    * :meth:`MessagePreprocessorHandler.injectMemories`, whose early-return
+      ``MEMORY_INJECTION_ENABLED`` gate moved up into ``newMessageHandler``.
+      ``newMessageHandler`` subscripts ``chatSettings`` directly for all of
+      these keys before any guard, so a sparse dict missing any of them raises
+      ``KeyError``.
+
+    ``MEMORY_INJECTION_ENABLED`` defaults to ``"false"`` so ``injectMemories``
+    is skipped; ``MEMORY_EMBEDDINGS_ENABLED`` defaults to ``"false"`` and
+    ``MEMORY_RETRIEVAL_MODE`` to ``"latest"`` (matching the real defaults in
+    ``configs/00-defaults/bot-defaults.toml``) so the memory-embedding gate
+    never trips unless a test explicitly opts in.
 
     Args:
         embeddingsEnabled: Value for ``EMBEDDINGS_ENABLED``.
@@ -216,6 +206,8 @@ def _defaultChatSettings(
         ChatSettingsKey.EMBEDDINGS_ENABLED: ChatSettingsValue("true" if embeddingsEnabled else "false"),
         ChatSettingsKey.EMBEDDING_MODEL: ChatSettingsValue(embeddingModel),
         ChatSettingsKey.MEMORY_INJECTION_ENABLED: ChatSettingsValue("false"),
+        ChatSettingsKey.MEMORY_EMBEDDINGS_ENABLED: ChatSettingsValue("false"),
+        ChatSettingsKey.MEMORY_RETRIEVAL_MODE: ChatSettingsValue(MEMORY_RETRIEVAL_MODE_LATEST),
     }
 
 
@@ -258,16 +250,80 @@ def _makeEnsuredMessage(
     return msg
 
 
+def _realEnsuredMessageForEmbedding(
+    *,
+    messageText: str = "",
+    mediaContent: Optional[str] = None,
+) -> EnsuredMessage:
+    """Build a real :class:`EnsuredMessage` for the formatted-text guard tests.
+
+    A real instance (not a spec-mock) is needed because the embedding guard in
+    :meth:`newMessageHandler` operates on the return value of
+    ``formatForLLM(TEXT, useSingleMedia=False)``, and that method's TEXT branch
+    prepends a ``<media-description>...</media-description>`` block when
+    ``self.mediaContent`` is truthy. Using a real EnsuredMessage exercises that
+    code path faithfully; a ``Mock(spec=EnsuredMessage)`` returns a truthy Mock
+    from ``formatForLLM``, which defeats the guard entirely.
+
+    When ``mediaContent`` is provided, the returned message is a media-only
+    message: ``messageText`` is the raw text (typically empty), and the media
+    attributes are pre-populated so ``formatForLLM`` emits the
+    ``<media-description>`` block.
+
+    :meth:`EnsuredMessage.updateMediaContent` is NOT stubbed here — callers
+    must wrap the ``newMessageHandler`` call in::
+
+        patch.object(EnsuredMessage, "updateMediaContent", AsyncMock(return_value=None))
+
+    to prevent ``formatForLLM`` from polling the (mock) DB for media
+    descriptions. ``EnsuredMessage`` uses ``__slots__``, so the patch must
+    target the class, not the instance.
+
+    Args:
+        messageText: Raw message text (default ``""`` — an empty media-only
+            message).
+        mediaContent: Optional media description; when set, the returned
+            message carries a ``mediaList`` entry and ``mediaContent``
+            attribute so ``formatForLLM``'s TEXT branch prepends a
+            ``<media-description>`` block.
+
+    Returns:
+        A real :class:`EnsuredMessage` with the given text and optional media.
+    """
+    msg = EnsuredMessage(
+        sender=MessageSender(id=7, name="Alice", username="alice"),
+        recipient=MessageRecipient(id=100, chatType=ChatType.PRIVATE),
+        messageId=42,
+        date=datetime.datetime(2026, 6, 20, 12, 0, 0, tzinfo=datetime.timezone.utc),
+        messageText=messageText,
+    )
+    msg.threadId = DEFAULT_THREAD_ID
+    # setBaseMessage so getBaseMessage() doesn't raise; a plain Mock is not a
+    # telegram.Message so the is_automatic_forward branch is skipped.
+    msg.setBaseMessage(Mock())
+    if mediaContent is not None:
+        msg.mediaContent = mediaContent
+        msg.mediaId = "media-1"
+        msg.mediaList.append(MediaContent(id="media-1", content=mediaContent, processingInfo=None))
+    return msg
+
+
 # ---------------------------------------------------------------------------
 # Tests: dispatch gating
 # ---------------------------------------------------------------------------
 
 
 class TestNewMessageHandlerDispatchGates:
-    """Tests for the three gates that block embedding dispatch."""
+    """Tests for the gates that control inline embedding generation.
+
+    The refactor moved embedding generation inline into ``newMessageHandler``
+    (no more ``queueService.addBackgroundTask`` dispatch). The boundary is now
+    ``self.llmService.generateEmbedding`` (called once per message) followed by
+    ``db.chatEmbeddings.saveMessageEmbedding`` when a vector is produced.
+    """
 
     async def testNoDispatchServerDisabled(self, handler: MessagePreprocessorHandler, mockConfig: Mock) -> None:
-        """Server-wide ``[search-history].enabled = false`` → no task scheduled.
+        """Server-wide ``[search-history].enabled = false`` → no embedding generated.
 
         Args:
             handler: Preprocessor fixture.
@@ -283,10 +339,10 @@ class TestNewMessageHandlerDispatchGates:
         result = await handler.newMessageHandler(ensured, updateObj=Mock())
 
         assert result is HandlerResultStatus.NEXT
-        handler.queueService.addBackgroundTask.assert_not_called()  # type: ignore[attr-defined]
+        cast(Any, handler.llmService).generateEmbedding.assert_not_called()
 
     async def testNoDispatchPerChatDisabled(self, handler: MessagePreprocessorHandler) -> None:
-        """Per-chat ``EMBEDDINGS_ENABLED = false`` → no task scheduled.
+        """Per-chat ``EMBEDDINGS_ENABLED = false`` → no embedding generated.
 
         Args:
             handler: Preprocessor fixture.
@@ -299,23 +355,86 @@ class TestNewMessageHandlerDispatchGates:
         result = await handler.newMessageHandler(ensured, updateObj=Mock())
 
         assert result is HandlerResultStatus.NEXT
-        handler.queueService.addBackgroundTask.assert_not_called()  # type: ignore[attr-defined]
+        cast(Any, handler.llmService).generateEmbedding.assert_not_called()
 
     async def testNoDispatchEmptyText(self, handler: MessagePreprocessorHandler) -> None:
-        """All gates pass, but ``messageText`` is whitespace-only → no task scheduled.
+        """Empty/whitespace FORMATTED text with no media does NOT trigger embedding.
+
+        The embedding guard in ``newMessageHandler`` operates on the FORMATTED
+        text (``formatForLLM(TEXT, useSingleMedia=False)`` output), not the raw
+        ``messageText``. For a no-media message, ``formatForLLM(TEXT)`` returns
+        the raw text verbatim, so whitespace-only text → formatted text is empty
+        after ``.strip()`` → the embedding block is skipped.
+
+        Every *other* gate is opened here (injection enabled, relevant mode,
+        memory-embeddings enabled, search enabled) so the empty-formatted-text
+        guard is the only thing blocking ``generateEmbedding`` — proving it is
+        the text guard, not some other gate, that prevents the embedding. Memory
+        injection still runs via the latest-retrieval fallback
+        (``injectMemories`` called with ``queryEmbedding=None``), so an
+        empty-text message is not left without context.
+
+        NOTE: This test alone does NOT distinguish a formatted guard from a raw
+        guard — for no-media messages, formatted text equals raw text. See
+        :meth:`testMediaOnlyMessageTriggersEmbedding` for the pin that
+        distinguishes them.
 
         Args:
             handler: Preprocessor fixture.
         """
-        ensured = _makeEnsuredMessage(messageText="   \n\t  ")
+        # Every gate open except message text. Without the empty-text guard
+        # this combination WOULD call generateEmbedding.
+        handler.getChatSettings = AsyncMock(  # type: ignore[method-assign]
+            return_value={
+                ChatSettingsKey.EMBEDDINGS_ENABLED: ChatSettingsValue("true"),
+                ChatSettingsKey.EMBEDDING_MODEL: ChatSettingsValue("text-embedding-3-small"),
+                ChatSettingsKey.MEMORY_INJECTION_ENABLED: ChatSettingsValue("true"),
+                ChatSettingsKey.MEMORY_EMBEDDINGS_ENABLED: ChatSettingsValue("true"),
+                ChatSettingsKey.MEMORY_RETRIEVAL_MODE: ChatSettingsValue(MEMORY_RETRIEVAL_MODE_RELEVANT),
+            }
+        )
+        # Spy on injectMemories so we can assert the latest-retrieval fallback
+        # still fires for empty-text messages.
+        handler.injectMemories = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        # The post-injection metadata update awaits this; wire it awaitable.
+        handler.db.chatMessages.updateChatMessageMetadata = AsyncMock(return_value=None)  # type: ignore[attr-defined]
+        # Real EnsuredMessage so formatForLLM returns the actual whitespace
+        # text (a Mock(spec=EnsuredMessage) returns a truthy Mock from
+        # formatForLLM, which defeats the guard).
+        ensured = _realEnsuredMessageForEmbedding(messageText="   \n\t  ")
 
-        result = await handler.newMessageHandler(ensured, updateObj=Mock())
+        with patch.object(EnsuredMessage, "updateMediaContent", AsyncMock(return_value=None)):
+            result = await handler.newMessageHandler(ensured, updateObj=Mock())
 
         assert result is HandlerResultStatus.NEXT
-        handler.queueService.addBackgroundTask.assert_not_called()  # type: ignore[attr-defined]
+        cast(Any, handler.llmService).generateEmbedding.assert_not_called()
+        handler.db.chatEmbeddings.saveMessageEmbedding.assert_not_called()  # type: ignore[attr-defined]
+        # Memory injection still happened via the latest-retrieval fallback.
+        handler.injectMemories.assert_awaited_once()  # type: ignore[attr-defined]
+        callKwargs = handler.injectMemories.await_args.kwargs  # type: ignore[attr-defined]
+        assert callKwargs["queryEmbedding"] is None
 
-    async def testDispatchAllGatesPass(self, handler: MessagePreprocessorHandler) -> None:
-        """All gates pass (incl. non-empty model name) → ``addBackgroundTask`` called once.
+    async def testMediaOnlyMessageTriggersEmbedding(self, handler: MessagePreprocessorHandler) -> None:
+        """Media-only message (empty raw text) DOES trigger embedding via the formatted guard.
+
+        This is the key regression pin for the FORMATTED-text guard. A message
+        with EMPTY raw ``messageText`` but a non-empty media description
+        produces a non-empty ``formatForLLM(TEXT)`` output — the
+        ``<media-description>...</media-description>`` block — so the embedding
+        guard allows the embedding.
+
+        If the guard were on RAW ``messageText`` instead of the formatted text,
+        this message would be skipped (raw text is empty → ``.strip()`` is
+        falsy → no embedding). The test FAILS under a raw-text guard and PASSES
+        under the formatted guard — a true regression pin.
+
+        The media content is set up via ``_realEnsuredMessageForEmbedding``
+        which pre-populates ``mediaContent`` and ``mediaList`` so
+        ``formatForLLM(TEXT, useSingleMedia=False)`` returns::
+
+            <media-description>['A photo of a cat']</media-description>\\n\\n
+
+        which is non-empty after ``.strip()``.
 
         Args:
             handler: Preprocessor fixture.
@@ -323,16 +442,70 @@ class TestNewMessageHandlerDispatchGates:
         handler.getChatSettings = AsyncMock(  # type: ignore[method-assign]
             return_value=_defaultChatSettings(embeddingModel="text-embedding-3-small")
         )
-        ensured = _makeEnsuredMessage(messageText="meaningful text")
+        cast(Any, handler.llmService).generateEmbedding = AsyncMock(  # type: ignore[method-assign]
+            return_value=("text-embedding-3-small", [0.1, 0.2, 0.3])
+        )
+        # Empty raw text but media content → formatForLLM produces a
+        # <media-description> block, making the formatted text non-empty.
+        ensured = _realEnsuredMessageForEmbedding(messageText="", mediaContent="A photo of a cat")
 
-        result = await handler.newMessageHandler(ensured, updateObj=Mock())
+        with patch.object(EnsuredMessage, "updateMediaContent", AsyncMock(return_value=None)):
+            result = await handler.newMessageHandler(ensured, updateObj=Mock())
 
         assert result is HandlerResultStatus.NEXT
-        handler.queueService.addBackgroundTask.assert_awaited_once()  # type: ignore[attr-defined]
-        # The argument should be a coroutine (asyncio.create_task wraps a coroutine).
-        taskArg = handler.queueService.addBackgroundTask.await_args.args[0]  # type: ignore[attr-defined]
-        # asyncio.Task is created from a coroutine; we just sanity-check it is awaitable-ish.
-        assert taskArg is not None
+        cast(Any, handler.llmService).generateEmbedding.assert_awaited_once()
+        handler.db.chatEmbeddings.saveMessageEmbedding.assert_awaited_once()  # type: ignore[attr-defined]
+
+    async def testDispatchAllGatesPass(self, handler: MessagePreprocessorHandler) -> None:
+        """All gates pass + embedding succeeds → ``saveMessageEmbedding`` invoked.
+
+        Args:
+            handler: Preprocessor fixture.
+        """
+        handler.getChatSettings = AsyncMock(  # type: ignore[method-assign]
+            return_value=_defaultChatSettings(embeddingModel="text-embedding-3-small")
+        )
+        cast(Any, handler.llmService).generateEmbedding = AsyncMock(  # type: ignore[method-assign]
+            return_value=("text-embedding-3-small", [0.1, 0.2, 0.3])
+        )
+        ensured = _realEnsuredMessageForEmbedding(messageText="meaningful text")
+
+        with patch.object(EnsuredMessage, "updateMediaContent", AsyncMock(return_value=None)):
+            result = await handler.newMessageHandler(ensured, updateObj=Mock())
+
+        assert result is HandlerResultStatus.NEXT
+        cast(Any, handler.llmService).generateEmbedding.assert_awaited_once()
+        handler.db.chatEmbeddings.saveMessageEmbedding.assert_awaited_once()  # type: ignore[attr-defined]
+        saveKwargs = handler.db.chatEmbeddings.saveMessageEmbedding.await_args.kwargs  # type: ignore[attr-defined]
+        assert saveKwargs["chatId"] == 100
+        assert saveKwargs["embedding"] == [0.1, 0.2, 0.3]
+        assert saveKwargs["model"] == "text-embedding-3-small"
+
+    async def testEmbeddingFailureReturnsNext(self, handler: MessagePreprocessorHandler) -> None:
+        """``generateEmbedding`` returns ``None`` → ``NEXT`` returned, no DB write.
+
+        ``generateEmbedding`` swallows every internal failure (bad model,
+        rate-limit, provider error) and surfaces it as ``None``. The inline
+        path treats ``None`` as "no vector" and moves on: no
+        ``saveMessageEmbedding`` call, no exception, the handler still returns
+        ``NEXT``. This is the graceful-degradation guarantee that replaced the
+        old dispatch-block never-crash wrapper.
+
+        Args:
+            handler: Preprocessor fixture.
+        """
+        handler.getChatSettings = AsyncMock(  # type: ignore[method-assign]
+            return_value=_defaultChatSettings(embeddingModel="text-embedding-3-small")
+        )
+        cast(Any, handler.llmService).generateEmbedding = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        ensured = _realEnsuredMessageForEmbedding(messageText="meaningful text")
+
+        with patch.object(EnsuredMessage, "updateMediaContent", AsyncMock(return_value=None)):
+            result = await handler.newMessageHandler(ensured, updateObj=Mock())
+
+        assert result is HandlerResultStatus.NEXT
+        cast(Any, handler.llmService).generateEmbedding.assert_awaited_once()
+        handler.db.chatEmbeddings.saveMessageEmbedding.assert_not_called()  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
@@ -400,10 +573,10 @@ class TestSearchEnabledCaching:
         """A config flip after construction does not change the cached value.
 
         Builds a handler with ``enabled=False``, then mutates the mock
-        to report ``enabled=True``, then invokes the dispatch path —
-        no background task should be scheduled. The cached value must
-        win; the test guards against a future "fix" that re-reads the
-        config on every message and re-introduces the round-trip.
+        to report ``enabled=True``, then invokes the inline embedding path —
+        no embedding should be generated. The cached value must win; the test
+        guards against a future "fix" that re-reads the config on every
+        message and re-introduces the round-trip.
 
         Args:
             mockConfig: ConfigManager stub fixture.
@@ -432,111 +605,10 @@ class TestSearchEnabledCaching:
         ensured = _makeEnsuredMessage(messageText="meaningful text")
         result = await h.newMessageHandler(ensured, updateObj=Mock())
 
-        # The handler still returns NEXT, but the dispatch path is gated
-        # by the cached flag and must NOT call addBackgroundTask.
+        # The handler still returns NEXT, but the embedding path is gated
+        # by the cached flag and must NOT call generateEmbedding.
         assert result is HandlerResultStatus.NEXT
-        h.queueService.addBackgroundTask.assert_not_called()  # type: ignore[attr-defined]
-
-
-# ---------------------------------------------------------------------------
-# Tests: embedAndSaveMessage failure handling
-# ---------------------------------------------------------------------------
-
-
-class TestEmbedMessage:
-    """Tests for the shared ``embedAndSaveMessage`` helper as invoked by the preprocessor.
-
-    The preprocessor hands off the real ``EnsuredMessage`` it just
-    saved to the helper (which resolves the LLM singleton internally
-    and writes the vector via ``db.chatEmbeddings.saveMessageEmbedding``).
-    The three failure modes below cover the helper's never-crash
-    contract: model missing, embedding API raising, and the happy
-    path. The dispatch-block never-crash guarantee is its own test.
-    """
-
-    async def _runHelper(self, handler: MessagePreprocessorHandler, modelName: str) -> None:
-        """Call ``embedAndSaveMessage`` with an ``EnsuredMessage``.
-
-        Args:
-            handler: Preprocessor fixture.
-            modelName: Embedding model name.
-        """
-        from internal.bot.common.embedding_utils import embedAndSaveMessage
-
-        ensured = _makeEnsuredMessage(messageText="hello")
-        await embedAndSaveMessage(
-            ensuredMessage=ensured,
-            modelName=modelName,
-            db=handler.db,
-        )
-
-    async def testEmbedMessageModelNotFound(self, handler: MessagePreprocessorHandler) -> None:
-        """``getModel`` returns None → logged warning, no crash, no DB write.
-
-        Args:
-            handler: Preprocessor fixture.
-        """
-        handler.llmService.getLLMManager().getModel = Mock(return_value=None)  # type: ignore[attr-defined]
-
-        # Should not raise.
-        await self._runHelper(handler, modelName="missing-model")
-
-        handler.db.chatEmbeddings.saveMessageEmbedding.assert_not_called()  # type: ignore[attr-defined]
-
-    async def testEmbedMessageGenerationError(self, handler: MessagePreprocessorHandler) -> None:
-        """``generateEmbeddings`` raises → caught, logged, no crash, no DB write.
-
-        Args:
-            handler: Preprocessor fixture.
-        """
-        mockModel = Mock()
-        mockModel.generateEmbeddings = AsyncMock(side_effect=RuntimeError("API down"))
-        handler.llmService.getLLMManager().getModel = Mock(return_value=mockModel)  # type: ignore[attr-defined]
-
-        # Should not raise.
-        await self._runHelper(handler, modelName="text-embedding-3-small")
-
-        handler.db.chatEmbeddings.saveMessageEmbedding.assert_not_called()  # type: ignore[attr-defined]
-
-    async def testEmbedMessageSuccess(self, handler: MessagePreprocessorHandler) -> None:
-        """Happy path → ``saveMessageEmbedding`` invoked with model + vector.
-
-        Args:
-            handler: Preprocessor fixture.
-        """
-        mockModel = Mock()
-        mockModel.generateEmbeddings = AsyncMock(return_value=[0.1, 0.2, 0.3, 0.4])
-        handler.llmService.getLLMManager().getModel = Mock(return_value=mockModel)  # type: ignore[attr-defined]
-
-        await self._runHelper(handler, modelName="text-embedding-3-small")
-
-        handler.db.chatEmbeddings.saveMessageEmbedding.assert_awaited_once()  # type: ignore[attr-defined]
-        callKwargs = handler.db.chatEmbeddings.saveMessageEmbedding.await_args.kwargs  # type: ignore[attr-defined]
-        assert callKwargs["chatId"] == 100
-        assert callKwargs["messageId"] == MessageId(42)
-        assert callKwargs["embedding"] == [0.1, 0.2, 0.3, 0.4]
-        assert callKwargs["model"] == "text-embedding-3-small"
-
-    async def testDispatchBlockNeverCrashes(self, handler: MessagePreprocessorHandler) -> None:
-        """``addBackgroundTask`` raising inside the dispatch block → NEXT is still returned.
-
-        The entire dispatch is wrapped in ``except Exception`` so the message
-        pipeline must never see an embedding-dispatch failure as an error.
-
-        Args:
-            handler: Preprocessor fixture.
-        """
-        handler.getChatSettings = AsyncMock(  # type: ignore[method-assign]
-            return_value=_defaultChatSettings(embeddingModel="text-embedding-3-small")
-        )
-        handler.queueService.addBackgroundTask = AsyncMock(
-            side_effect=RuntimeError("queue down")
-        )  # type: ignore[method-assign]
-        ensured = _makeEnsuredMessage(messageText="meaningful text")
-
-        result = await handler.newMessageHandler(ensured, updateObj=Mock())
-
-        assert result is HandlerResultStatus.NEXT
+        cast(Any, h.llmService).generateEmbedding.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -805,7 +877,7 @@ class TestInjectMemoriesCompactFormat:
             dbMemories=[_dbUserMemory("short-1", "just woke up")],
         )
 
-        await handler.injectMemories(msg)
+        await handler.injectMemories(msg, None, None)
 
         stored = msg.metadata.get("memories")
         assert stored is not None
@@ -834,7 +906,7 @@ class TestInjectMemoriesCompactFormat:
             dbMemories=[_dbUserMemory("short-1", "just woke up")],
         )
 
-        await handler.injectMemories(msg)
+        await handler.injectMemories(msg, None, None)
 
         assert msg.userMemories is not None
         for entry in msg.userMemories["permanent"]:
@@ -865,7 +937,7 @@ class TestInjectMemoriesCompactFormat:
             dbMemories=[],
         )
 
-        await handler.injectMemories(msg)
+        await handler.injectMemories(msg, None, None)
 
         stored = msg.metadata.get("memories")
         assert stored is not None
@@ -887,7 +959,7 @@ class TestInjectMemoriesCompactFormat:
             dbMemories=[malformed, _dbUserMemory("short-1", "real")],
         )
 
-        await handler.injectMemories(msg)
+        await handler.injectMemories(msg, None, None)
 
         stored = msg.metadata.get("memories")
         assert stored is not None
@@ -908,7 +980,7 @@ class TestInjectMemoriesCompactFormat:
             dbMemories=[_dbUserMemory("short-1", "just woke up")],
         )
 
-        await handler.injectMemories(msg)
+        await handler.injectMemories(msg, None, None)
 
         assert msg.userMemories is not None
         assert len(msg.userMemories["shortTerm"]) == 1
@@ -939,7 +1011,7 @@ class TestInjectMemoriesCompactFormat:
             dbMemories=[_dbUserMemory("short-1", "just woke up")],
         )
 
-        await handler.injectMemories(msg)
+        await handler.injectMemories(msg, None, None)
 
         # (1) Both cohorts in userMemories are id-stripped.
         assert msg.userMemories is not None

@@ -324,7 +324,11 @@ class ChatSettingsKey(StrEnum):
     MEMORY_RETRIEVAL_MODE = "memory-retrieval-mode"
     """Ephemeral-memory retrieval strategy: ``latest`` (newest) or ``relevant`` (semantic)."""
     MEMORY_EMBEDDINGS_ENABLED = "memory-embeddings-enabled"
-    """Discovery gate for the memory-embedding regeneration cron (which chats to scan on model drift)."""
+    """Dual-purpose gate. (1) Discovery gate for the memory-embedding regeneration cron
+    (which chats to scan on model drift). (2) Query-time gate for relevant-mode memory
+    injection in ``MessagePreprocessorHandler``: a chat with ``MEMORY_INJECTION_ENABLED=true``
+    and ``MEMORY_RETRIEVAL_MODE=relevant`` but this setting ``false`` degrades to ``latest``
+    (no inline embedding, so ``getLatestMemories`` is used instead of semantic search)."""
     MEMORY_REGENERATE_EMBEDDINGS = "memory-regenerate-embeddings"
     """Per-chat gate for re-embedding stale user_memories rows once MEMORY_EMBEDDINGS_ENABLED is on."""
     # Prompts for different actions
@@ -955,7 +959,9 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "short": "Включить обновление эмбеддингов памяти",
         "long": (
             "Включить фоновое обнаружение устаревших эмбеддингов памяти о пользователе "
-            "для этого чата (при смене модели эмбеддингов)."
+            "для этого чата (при смене модели эмбеддингов). Также включает семантический "
+            "подбор памяти по тексту сообщения в режиме «relevant»: если выключено — "
+            "режим relevant деградирует до «latest» (последние по времени)."
         ),
         "page": ChatSettingsPage.FRIEND,
     },

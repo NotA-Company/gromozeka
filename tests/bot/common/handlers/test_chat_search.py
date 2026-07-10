@@ -968,6 +968,84 @@ class TestSemanticSearch:
 
 
 # ---------------------------------------------------------------------------
+# 2c. embedAndSaveMessage tests (re-homed from deleted embedding_utils module)
+# ---------------------------------------------------------------------------
+
+
+class TestEmbedAndSaveMessage:
+    """Tests for :meth:`ChatSearchHandler.embedAndSaveMessage`.
+
+    The helper was re-homed from the deleted ``embedding_utils`` module onto
+    :class:`ChatSearchHandler`. It formats the message, calls
+    ``llmService.generateEmbedding`` (the ``LLMService`` boundary that owns
+    model resolution + rate-limiting + provider calls), and persists the
+    resulting vector via ``chatEmbeddings.saveMessageEmbedding`` when a vector
+    is produced. ``generateEmbedding`` swallows every internal failure and
+    returns ``None``, so the helper's contract is: ``None`` → ``False`` (no
+    save), tuple → save + return the repo's result.
+    """
+
+    async def test_returnsFalseAndDoesNotSaveWhenEmbeddingIsNone(self) -> None:
+        """``generateEmbedding`` returns ``None`` → ``False``, no ``saveMessageEmbedding``.
+
+        Covers the model-not-found / generation-error path: both surface as
+        ``None`` at this boundary because ``generateEmbedding`` catches every
+        internal exception and logs it before returning.
+        """
+        handler, mocks = _makeHandler()
+        cast(Any, handler).llmService.generateEmbedding = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        saveMock = AsyncMock(return_value=True)
+        mocks["db"].chatEmbeddings.saveMessageEmbedding = saveMock
+
+        result = await handler.embedAndSaveMessage(ensuredMessage=_makeEnsuredMessage())
+
+        assert result is False
+        saveMock.assert_not_called()
+
+    async def test_savesEmbeddingAndReturnsTrueOnSuccess(self) -> None:
+        """``generateEmbedding`` returns ``(modelName, vector)`` → vector saved, ``True`` returned.
+
+        Asserts the exact kwargs forwarded to ``saveMessageEmbedding`` so a
+        future refactor cannot silently drop the model name or the vector.
+        """
+        handler, mocks = _makeHandler()
+        cast(Any, handler).llmService.generateEmbedding = AsyncMock(  # type: ignore[method-assign]
+            return_value=("text-embedding-3-small", [0.1, 0.2, 0.3, 0.4])
+        )
+        saveMock = AsyncMock(return_value=True)
+        mocks["db"].chatEmbeddings.saveMessageEmbedding = saveMock
+
+        result = await handler.embedAndSaveMessage(ensuredMessage=_makeEnsuredMessage())
+
+        assert result is True
+        saveMock.assert_awaited_once()
+        saveKwargs = saveMock.await_args_list[0].kwargs
+        assert saveKwargs["chatId"] == 100
+        assert saveKwargs["messageId"] == MessageId(42)
+        assert saveKwargs["embedding"] == [0.1, 0.2, 0.3, 0.4]
+        assert saveKwargs["model"] == "text-embedding-3-small"
+
+    async def test_returnsFalseWhenSaveMessageEmbeddingReturnsFalse(self) -> None:
+        """Repo write returns ``False`` → helper returns ``False`` (pass-through).
+
+        The helper returns whatever ``saveMessageEmbedding`` returns, so a DB
+        write failure propagates as ``False`` to the caller (the backfill
+        CRON_JOB), which simply does not count the row as embedded.
+        """
+        handler, mocks = _makeHandler()
+        cast(Any, handler).llmService.generateEmbedding = AsyncMock(  # type: ignore[method-assign]
+            return_value=("text-embedding-3-small", [0.1])
+        )
+        saveMock = AsyncMock(return_value=False)
+        mocks["db"].chatEmbeddings.saveMessageEmbedding = saveMock
+
+        result = await handler.embedAndSaveMessage(ensuredMessage=_makeEnsuredMessage())
+
+        assert result is False
+        saveMock.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
 # 3. Backfill CRON_JOB tests
 # ---------------------------------------------------------------------------
 
@@ -1156,28 +1234,36 @@ class TestDtCronJob:
 
         Verifies:
         1. The configured ``EMBEDDING_MODEL`` is resolved via
-           ``llmService.getLLMManager().getModel(name)``.
+           ``llmService.getLLMManager().getModel(name)`` (the construction-time
+           gate that checks ``supportsEmbedding``).
         2. The DB batch is fetched with the default batch size
            (``BACKFILL_DEFAULT_BATCH_SIZE``) when no explicit
            ``reindex-batch-size`` is configured, and the chat's
            ``EMBEDDING_MODEL`` is forwarded as ``modelName`` so rows
            embedded under a previous model are re-surfaced.
-        3. Each pending message is embedded via the shared
+        3. Each pending message is embedded via the
            ``embedAndSaveMessage`` helper, which calls
-           ``model.generateEmbeddings`` and then persists the vector
-           via ``chatEmbeddings.saveMessageEmbedding`` with the
-           matching ``model`` name (so a future model swap triggers
-           a re-embed for the old rows).
+           ``llmService.generateEmbedding`` and then persists the vector
+           via ``chatEmbeddings.saveMessageEmbedding`` with the matching
+           ``model`` name (so a future model swap triggers a re-embed for
+           the old rows).
         """
         cs = _makeChatSettings(embeddingModel="text-embedding-3-small")
         handler, mocks = _makeHandler(chatSettings=cs)
         mocks["db"].chatSettings.listChatsBySetting = AsyncMock(return_value={100: "true"})
+        # The CRON gate resolves the model via getLLMManager().getModel() and
+        # checks supportsEmbedding + getDimensions before the batch loop.
         mockModel = Mock()
         mockModel.supportsEmbedding = True
         mockModel.getDimensions = AsyncMock(return_value=None)
-        mockModel.generateEmbeddings = AsyncMock(side_effect=lambda text: [0.1, 0.2, 0.3])
         mockManager = Mock(getModel=Mock(return_value=mockModel))
         cast(Any, handler).llmService.getLLMManager = Mock(return_value=mockManager)
+        # embedAndSaveMessage routes through llmService.generateEmbedding (the
+        # LLMService singleton boundary). Mock it directly so the test does not
+        # depend on the singleton's resolveModel/rateLimit/generateEmbeddings
+        # chain, whose module-level state leaks across tests.
+        generateEmbeddingMock = AsyncMock(return_value=("text-embedding-3-small", [0.1, 0.2, 0.3]))
+        cast(Any, handler).llmService.generateEmbedding = generateEmbeddingMock
         pairs = [
             self._makePendingMessage(messageId=MessageId(1), messageText="hello world"),
             self._makePendingMessage(messageId=MessageId(2), messageText="another message"),
@@ -1194,7 +1280,7 @@ class TestDtCronJob:
             )
         )
 
-        # The configured model name was resolved.
+        # The configured model name was resolved (the CRON gate).
         mockManager.getModel.assert_called_with("text-embedding-3-small")
         # The batch was fetched with the default batch size and the
         # chat's embedding model forwarded as ``modelName`` so a model
@@ -1202,9 +1288,9 @@ class TestDtCronJob:
         getKwargs = mocks["db"].chatEmbeddings.getMessagesWithoutEmbeddings.call_args.kwargs
         assert getKwargs["limit"] == BACKFILL_DEFAULT_BATCH_SIZE
         assert getKwargs["modelName"] == "text-embedding-3-small"
-        # Each message was embedded by the model and the result saved
+        # Each message was embedded via generateEmbedding and the result saved
         # through ``embedAndSaveMessage`` → ``saveMessageEmbedding``.
-        assert mockModel.generateEmbeddings.await_count == 2
+        assert generateEmbeddingMock.await_count == 2
         assert saveMock.await_count == 2
         # ``saveMessageEmbedding`` is invoked with keyword args
         # (see ``embedAndSaveMessage``), so we assert on ``kwargs``.
@@ -1216,21 +1302,29 @@ class TestDtCronJob:
     async def test_cron_per_message_error_does_not_abort_batch(self) -> None:
         """A single bad row never aborts the rest of the batch.
 
-        Verifies the per-message isolation in the shared
-        ``embedAndSaveMessage`` helper: the helper catches every
-        error and returns ``False`` on failure, so the loop continues
-        with the remaining messages. The other rows in the batch
-        must still be embedded and saved.
+        Verifies the per-message isolation in ``embedAndSaveMessage`` +
+        ``generateEmbedding``: ``generateEmbedding`` swallows every internal
+        failure and returns ``None`` (never raising), so ``embedAndSaveMessage``
+        returns ``False`` and the loop continues with the remaining messages.
+        The other rows in the batch must still be embedded and saved.
+
+        The ``generateEmbedding`` boundary is mocked directly so the test is
+        robust against singleton-state leaks (``rateLimiterManager`` /
+        module-level ``_llmManager`` cache) that made the old low-level
+        ``getModel``/``generateEmbeddings`` mock flaky in-suite.
         """
         cs = _makeChatSettings(embeddingModel="text-embedding-3-small")
         handler, mocks = _makeHandler(chatSettings=cs)
         mocks["db"].chatSettings.listChatsBySetting = AsyncMock(return_value={100: "true"})
+        # The CRON gate resolves the model via getLLMManager().getModel().
         mockModel = Mock()
         mockModel.supportsEmbedding = True
         mockModel.getDimensions = AsyncMock(return_value=None)
-        # First call raises, second call succeeds.
-        mockModel.generateEmbeddings = AsyncMock(side_effect=[RuntimeError("embedder down"), [0.4, 0.5, 0.6]])
         cast(Any, handler).llmService.getLLMManager = Mock(return_value=Mock(getModel=Mock(return_value=mockModel)))
+        # First message: generateEmbedding returns None (internal failure
+        # swallowed). Second message: succeeds.
+        generateEmbeddingMock = AsyncMock(side_effect=[None, ("text-embedding-3-small", [0.4, 0.5, 0.6])])
+        cast(Any, handler).llmService.generateEmbedding = generateEmbeddingMock
         pairs = [
             self._makePendingMessage(messageId=MessageId(1), messageText="bad message"),
             self._makePendingMessage(messageId=MessageId(2), messageText="good message"),
@@ -1248,7 +1342,7 @@ class TestDtCronJob:
         )
 
         # Both messages were attempted despite the first one's failure.
-        assert mockModel.generateEmbeddings.await_count == 2
+        assert generateEmbeddingMock.await_count == 2
         # Only the successful row was saved.
         assert saveMock.await_count == 1
         # ``saveMessageEmbedding`` is invoked with keyword args via

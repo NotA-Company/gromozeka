@@ -970,7 +970,7 @@ class LLMService:
         self,
         text: str,
         *,
-        chatId: int,
+        chatId: Optional[int],
         chatSettings: ChatSettingsDict,
     ) -> Optional[Tuple[str, List[float]]]:
         """Generate an embedding vector for ``text`` using the chat's embedding model.
