@@ -106,6 +106,7 @@ permission:
     "head *": allow
     "sort": allow
     "sort *": allow
+    "uniq *": allow
     "wc": allow
     "wc *": allow
     "echo *": allow
@@ -117,7 +118,10 @@ permission:
     "sed -n *": allow
   edit: deny
   write: deny
-  task: deny
+  task:
+    "*": deny
+    "code-analyst": allow
+    "code-reviewer": allow
   webfetch: allow
   todowrite: allow
 ---

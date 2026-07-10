@@ -236,7 +236,7 @@ Custom handlers are always placed in a fixed position in the chain:
 │ 2. SpamHandler                  │ SEQUENTIAL - always second
 │ 3. ConfigureCommandHandler      │ PARALLEL
 │ 4. SummarizationHandler         │ PARALLEL
-│ 5. UserDataHandler              │ PARALLEL
+│ 5. UserMemoriesHandler          │ PARALLEL
 │ 6. DevCommandsHandler           │ PARALLEL
 │ 7. MediaHandler                 │ PARALLEL
 │ 8. CommonHandler                │ PARALLEL

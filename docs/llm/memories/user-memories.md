@@ -33,7 +33,7 @@ Each memory carries a vector embedding in a vec0 virtual table
 de-duplicated** via cosine similarity. Three LLM tools let the model manage
 memories itself: `add_memory`, `delete_memory`, `search_memories`.
 
-Owner handler: `UserDataHandler` (`internal/bot/common/handlers/user_data.py`)
+Owner handler: `UserMemoriesHandler` (`internal/bot/common/handlers/user_memories.py`)
 owns the three LLM tools, the refinement cron, and the regen cron. **Injection**
 is centralised in `MessagePreprocessorHandler.injectMemories()`
 (`internal/bot/common/handlers/message_preprocessor.py`) at message-arrival
@@ -231,7 +231,7 @@ prevent the memory from being stored).
 
 ### Regeneration (model-drift cron)
 
-`_runMemoryEmbeddingRegen` in `UserDataHandler` runs every 60s tick
+`_runMemoryEmbeddingRegen` in `UserMemoriesHandler` runs every 60s tick
 (outside `_refineLock`) and mirrors `ChatSearchHandler._dtCronJob`
 one-to-one, adapted for the single-store model:
 
@@ -264,7 +264,7 @@ same tick. Batch size: `[user-memory.thresholds].memory-reindex-batch-size`
 
 ## LLM tools
 
-Registered in `UserDataHandler.__init__`, gated on the global
+Registered in `UserMemoriesHandler.__init__`, gated on the global
 `[user-memory].enabled` kill switch (no registration when off → nothing
 exposed via the chat-time `useTools` wildcard). Per-chat availability is
 additionally controlled in `_sendLLMChatMessage`. All three are async,
@@ -527,7 +527,7 @@ limitations (see [`docs/plans/memory-compaction-v1.md`](../../plans/memory-compa
 
 ## Refinement (Phase 4a rewrite)
 
-`UserDataHandler._runRefinement` was rewritten for the unified store. The
+`UserMemoriesHandler._runRefinement` was rewritten for the unified store. The
 accounting / cron / locking machinery is **unchanged** from the rolling-bio
 system (see [`user-memory-refinement.md`](user-memory-refinement.md)
 "Concurrency model" — still accurate): `_dtCronJob` (60s tick), `_accounting`
@@ -591,7 +591,7 @@ The five refinement settings from the rolling-bio system are unchanged:
 
 ### Config — `[user-memory]` (`configs/00-defaults/user-memory.toml`)
 
-Read ONCE in `UserDataHandler.__init__` and cached as instance attributes
+Read ONCE in `UserMemoriesHandler.__init__` and cached as instance attributes
 (the cron hot path and `_runRefinement` perform no `configManager.get(...)`
 calls). Defaults live in `configs/00-defaults/user-memory.toml`:
 
@@ -652,6 +652,6 @@ the decision record.
   by the cursor persist.
 - [`user-memory-refinement.md`](user-memory-refinement.md) — the predecessor
   rolling-bio subsystem (SUPERSEDED, kept as historical context).
-- [`../handlers.md`](../handlers.md) `UserDataHandler` row;
+- [`../handlers.md`](../handlers.md) `UserMemoriesHandler` row;
   [`../configuration.md`](../configuration.md) §`[user-memory]`;
   [`../database.md`](../database.md) for migration patterns.

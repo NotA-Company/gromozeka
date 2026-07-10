@@ -18,7 +18,7 @@ class UserMemoryThreadDict(TypedDict, total=False):
 
     Note: the ``lastRefinedTS`` (unix timestamp of the last refinement run) is
     NO LONGER persisted here — it is tracked in-memory on the handler
-    (``UserDataHandler._lastRefinedTS``) so the persisted entry stays limited
+    (``UserMemoriesHandler._lastRefinedTS``) so the persisted entry stays limited
     to message cursors (the ``summary`` field is legacy — no longer written or
     read).
 

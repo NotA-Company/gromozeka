@@ -1,12 +1,12 @@
-"""Tests for memory-embedding regeneration in :meth:`UserDataHandler._dtCronJob`.
+"""Tests for memory-embedding regeneration in :meth:`UserMemoriesHandler._dtCronJob`.
 
 Covers the Phase 3b regeneration mechanism (see
 docs/plans/user-memories-v1.md §5.6, §13 Phase 3, §14.7), which mirrors the
 chat-history backfill cron (``ChatSearchHandler._dtCronJob`` at
 ``chat_search.py:284-445``) adapted for the ``user_memories`` store.
 
-The handler under test is :class:`UserDataHandler`; the regeneration logic
-lives in :meth:`UserDataHandler._runMemoryEmbeddingRegen`, invoked once per
+The handler under test is :class:`UserMemoriesHandler`; the regeneration logic
+lives in :meth:`UserMemoriesHandler._runMemoryEmbeddingRegen`, invoked once per
 60s CRON_JOB tick independently of the refinement body (shared tick, NOT
 shared lock — see the plan's ``[DESIGN CHOICE]`` in §5.6).
 
@@ -23,7 +23,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from internal.bot.common.handlers.user_data import UserDataHandler
+from internal.bot.common.handlers.user_memories import UserMemoriesHandler
 from internal.bot.constants import (
     MEMORY_BACKFILL_DEFAULT_BATCH_SIZE,
     MEMORY_BACKFILL_INTER_MESSAGE_DELAY_SECS,
@@ -52,7 +52,7 @@ def _resetCacheServiceSingleton() -> Generator[None, None, None]:
     ``BaseBotHandler.__init__`` fetches both singletons; without a reset the
     ``CRON_JOB`` handler registrations accumulate across tests and a closed
     in-memory database from a previous module would leak in. Mirrors the
-    autouse fixture in ``tests/bot/common/handlers/test_user_data.py``.
+    autouse fixture in ``tests/bot/common/handlers/test_user_memories_memory_regen.py``.
 
     Yields:
         None (autouse — no return value).
@@ -72,7 +72,7 @@ def _resetCacheServiceSingleton() -> Generator[None, None, None]:
 def _makeConfigManager(*, enabled: bool = True, reindexBatchSize: Optional[int] = None) -> Mock:
     """Build a ``ConfigManager`` stub for the handler constructor.
 
-    ``UserDataHandler.__init__`` reads ``getBotConfig()`` (via
+    ``UserMemoriesHandler.__init__`` reads ``getBotConfig()`` (via
     ``BaseBotHandler``) and ``get("user-memory", {})`` to cache the
     refinement + regen config. When ``enabled`` is true the constructor also
     registers the three user-memory LLM tools (against the real
@@ -195,8 +195,8 @@ def _makeHandler(
     model: Optional[Mock] = None,
     staleMemories: Optional[List[UserMemoryDict]] = None,
     cleanupResult: int = 0,
-) -> Tuple[UserDataHandler, Dict[str, Mock]]:
-    """Construct a :class:`UserDataHandler` wired for the regen tests.
+) -> Tuple[UserMemoriesHandler, Dict[str, Mock]]:
+    """Construct a :class:`UserMemoriesHandler` wired for the regen tests.
 
     The DB is a ``Mock`` whose ``chatSettings`` / ``userMemories``
     sub-attributes are stubbed with ``AsyncMock`` so the regen path can be
@@ -239,7 +239,7 @@ def _makeHandler(
     # ``saveMemoryEmbedding`` is called by the regen re-embed loop; default to success.
     db.userMemories.saveMemoryEmbedding = AsyncMock(return_value=True)
 
-    handler = UserDataHandler(
+    handler = UserMemoriesHandler(
         configManager=cm,
         database=db,
         botProvider=BotProvider.TELEGRAM,
@@ -280,7 +280,7 @@ def _makeDelayedTask() -> DelayedTask:
     )
 
 
-async def _runRegen(handler: UserDataHandler) -> None:
+async def _runRegen(handler: UserMemoriesHandler) -> None:
     """Invoke ``_runMemoryEmbeddingRegen`` once.
 
     Args:
@@ -661,7 +661,7 @@ class TestRegenReEmbedLoop:
         stale = [_makeMemoryDict(memoryId=f"m{i}") for i in range(3)]
         handler, _mocks = _makeHandler(staleMemories=stale)
         with patch(
-            "internal.bot.common.handlers.user_data.asyncio.sleep",
+            "internal.bot.common.handlers.user_memories.asyncio.sleep",
             new=AsyncMock(),
         ) as sleepMock:
             await _runRegen(handler)

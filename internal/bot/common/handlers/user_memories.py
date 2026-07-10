@@ -1,9 +1,9 @@
 """
-User data management handlers for Gromozeka bot.
+User memories management handlers for Gromozeka bot.
 
-Provides handlers for user-specific data storage: viewing, deleting, clearing data,
-and LLM tool integration for AI-assisted data management. All data is scoped to
-specific chat and user combinations.
+Provides handlers for user memories: viewing, deleting, clearing memories,
+and LLM tool integration for AI-assisted memory management. All memories are
+scoped to specific chat and user combinations.
 """
 
 import asyncio
@@ -130,9 +130,9 @@ def _formatMemoriesBlockRaw(
     return "\n".join(lines)
 
 
-class UserDataHandler(BaseBotHandler):
+class UserMemoriesHandler(BaseBotHandler):
     """
-    Handler for user data management with LLM tool integration.
+    Handler for user memories management with LLM tool integration.
 
     Attributes:
         llmService (LLMService): Service for LLM tool registration and management.

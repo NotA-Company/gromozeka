@@ -176,7 +176,7 @@ gromozeka/
 │   │   │   │   ├── message_preprocessor.py  # Message saving + pre-processing
 │   │   │   │   ├── configure.py    # /configure command handler
 │   │   │   │   ├── summarization.py# Chat summarization handler
-│   │   │   │   ├── user_data.py    # User data management handler
+│   │   │   │   ├── user_memories.py    # User memories management handler
 │   │   │   │   ├── dev_commands.py # Developer/admin command handler
 │   │   │   │   ├── weather.py      # Weather integration handler
 │   │   │   │   ├── yandex_search.py# Yandex search integration handler
@@ -734,7 +734,7 @@ The handler system is the core of message processing All incoming messages go th
 2. Built-in handlers are registered in order:
    - MessagePreprocessorHandler (always SEQUENTIAL, first)
    - SpamHandler (always SEQUENTIAL, second)
-   - ConfigureCommandHandler, SummarizationHandler, UserDataHandler,
+   - ConfigureCommandHandler, SummarizationHandler, UserMemoriesHandler,
      DevCommandsHandler, MediaHandler, CommonHandler, HelpHandler
    - Platform-specific handlers (Telegram-only)
    - Config-gated handlers: WeatherHandler (if enabled),
@@ -761,7 +761,7 @@ Incoming Message
         │
         ├── ConfigureCommandHandler
         ├── SummarizationHandler
-        ├── UserDataHandler
+        ├── UserMemoriesHandler
         ├── DevCommandsHandler
         ├── MediaHandler
         ├── CommonHandler
@@ -873,7 +873,7 @@ async def myCommandHandler(
 | `SpamHandler` | [`spam.py`](internal/bot/common/handlers/spam.py) | ML spam detection + user management |
 | `ConfigureCommandHandler` | [`configure.py`](internal/bot/common/handlers/configure.py) | `/configure` settings wizard |
 | `SummarizationHandler` | [`summarization.py`](internal/bot/common/handlers/summarization.py) | `/summarize` chat history |
-| `UserDataHandler` | [`user_data.py`](internal/bot/common/handlers/user_data.py) | User profile management |
+| `UserMemoriesHandler` | [`user_memories.py`](internal/bot/common/handlers/user_memories.py) | User memories management |
 | `DevCommandsHandler` | [`dev_commands.py`](internal/bot/common/handlers/dev_commands.py) | Developer/admin commands |
 | `MediaHandler` | [`media.py`](internal/bot/common/handlers/media.py) | Image/file/sticker processing |
 | `CommonHandler` | [`common.py`](internal/bot/common/handlers/common.py) | Shared command handling |

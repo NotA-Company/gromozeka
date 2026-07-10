@@ -187,7 +187,7 @@ class ButtonUserDataConfigAction(StrEnum):
             selected (not ``"all"``) so the new memory inherits a concrete type.
         SetMemoryContent: Process the free-text input captured during the
             ``AddMemory`` flow and persist a new ephemeral, user-authored
-            memory. Routed from :meth:`UserDataHandler.newMessageHandler`
+            memory. Routed from :meth:`UserMemoriesHandler.newMessageHandler`
             (not a button click) — the content rides on ``ButtonDataKey.Value``.
     """
 

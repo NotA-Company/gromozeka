@@ -82,7 +82,7 @@ from .sandbox import SandboxHandler
 from .spam import SpamHandler
 from .summarization import SummarizationHandler
 from .topic_manager import TopicManagerHandler
-from .user_data import UserDataHandler
+from .user_memories import UserMemoriesHandler
 from .weather import WeatherHandler
 from .yandex_search import YandexSearchHandler
 
@@ -451,7 +451,7 @@ class HandlersManager(CommandHandlerGetterInterface):
                 HandlerParallelism.PARALLEL,
             ),
             (
-                UserDataHandler(configManager=configManager, database=database, botProvider=botProvider),
+                UserMemoriesHandler(configManager=configManager, database=database, botProvider=botProvider),
                 HandlerParallelism.PARALLEL,
             ),
             # # Fourth - all other handlers

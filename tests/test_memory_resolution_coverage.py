@@ -457,7 +457,7 @@ def test_check1_expectedProductionSites() -> None:
             "internal/bot/common/handlers/llm_messages.py",
             "internal/bot/common/handlers/media.py",
             "internal/bot/common/handlers/summarization.py",
-            "internal/bot/common/handlers/user_data.py",
+            "internal/bot/common/handlers/user_memories.py",
         ]
     )
     assert (

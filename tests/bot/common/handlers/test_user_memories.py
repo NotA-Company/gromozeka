@@ -1,4 +1,4 @@
-"""Tests for :class:`UserDataHandler` (memory-refinement + user-memory tools).
+"""Tests for :class:`UserMemoriesHandler` (memory-refinement + user-memory tools).
 
 Phase 7a/7b — deterministic refinement-loop behaviours:
 
@@ -49,7 +49,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from internal.bot.common.handlers.base import HandlerResultStatus
-from internal.bot.common.handlers.user_data import UserDataHandler
+from internal.bot.common.handlers.user_memories import UserMemoriesHandler
 from internal.bot.common.models import CallbackButton
 from internal.bot.constants import ToolName
 from internal.bot.models import (
@@ -113,7 +113,7 @@ def _resetCacheServiceSingleton() -> Generator[None, None, None]:
 def _makeConfigManager() -> Mock:
     """Build a minimal ``ConfigManager`` stub for the handler constructor.
 
-    ``BaseBotHandler.__init__`` reads ``getBotConfig()``; ``UserDataHandler.__init__``
+    ``BaseBotHandler.__init__`` reads ``getBotConfig()``; ``UserMemoriesHandler.__init__``
     additionally reads ``get("user-memory", {})`` to cache the refinement config
     (enabled flag + thresholds). Returning ``{}`` makes every threshold fall back
     to its module constant and leaves the feature disabled — matching the
@@ -129,8 +129,8 @@ def _makeConfigManager() -> Mock:
     return cm
 
 
-async def _makeHandler(testDatabase: Database, configManager: Optional[Mock] = None) -> UserDataHandler:
-    """Construct a :class:`UserDataHandler` wired to a real in-memory database.
+async def _makeHandler(testDatabase: Database, configManager: Optional[Mock] = None) -> UserMemoriesHandler:
+    """Construct a :class:`UserMemoriesHandler` wired to a real in-memory database.
 
     Resets the ``CacheService`` singleton, injects *testDatabase* into it (so
     ``handler.cache.setChatUserData`` / ``getChatUserData`` round-trip through
@@ -147,14 +147,14 @@ async def _makeHandler(testDatabase: Database, configManager: Optional[Mock] = N
             memory-refinement CRON path.
 
     Returns:
-        A fully constructed :class:`UserDataHandler` whose ``cache`` is backed
+        A fully constructed :class:`UserMemoriesHandler` whose ``cache`` is backed
         by *testDatabase*.
     """
     CacheService._instance = None
     cache = CacheService.getInstance()
     await cache.injectDatabase(testDatabase)
 
-    handler = UserDataHandler(
+    handler = UserMemoriesHandler(
         configManager=configManager or _makeConfigManager(),
         database=testDatabase,
         botProvider=BotProvider.TELEGRAM,
@@ -246,7 +246,7 @@ def _chatSettings(
 
 
 def _stubGetChatSettings(
-    handler: UserDataHandler,
+    handler: UserMemoriesHandler,
     *,
     memoryRefinementEnabled: bool,
     refineModel: Optional[str] = None,
@@ -290,7 +290,7 @@ def _stubGetChatSettings(
 
 
 class TestNewMessageHandlerAccounting:
-    """Tests for the ``_accounting`` increment in :meth:`UserDataHandler.newMessageHandler`.
+    """Tests for the ``_accounting`` increment in :meth:`UserMemoriesHandler.newMessageHandler`.
 
     A non-private (group) message is used so the handler returns ``NEXT``
     immediately after the accounting block, without entering the wizard path
@@ -1075,7 +1075,7 @@ def _repoRoot() -> Path:
     Returns:
         Absolute path to the repo root.
     """
-    # tests/bot/common/handlers/test_user_data.py → up 4 parents = repo root.
+    # tests/bot/common/handlers/test_user_memories.py → up 4 parents = repo root.
     return Path(__file__).resolve().parents[4]
 
 
@@ -1297,7 +1297,7 @@ class TestPhase4aJsonLogToolCounts:
     """Phase 4a — JSONL log records per-tool call counts from the run history.
 
     The counts are derived from ``result.toolUsageHistory`` (walked by
-    :meth:`UserDataHandler._countRefinementToolCalls`). Each test seeds a
+    :meth:`UserMemoriesHandler._countRefinementToolCalls`). Each test seeds a
     mocked ``ModelRunResult`` carrying assistant messages with ``toolCalls``
     and asserts the JSONL ``addCount`` / ``deleteCount`` / ``searchCount``.
     """
@@ -1458,7 +1458,7 @@ class TestPhase4aJsonLogToolCounts:
 
 
 def _stubGenerateEmbedding(
-    handler: UserDataHandler,
+    handler: UserMemoriesHandler,
     *,
     result: Optional[Tuple[str, List[float]]] = ("test-embed-model", [0.1, 0.2, 0.3]),
 ) -> AsyncMock:
@@ -1483,7 +1483,7 @@ def _stubGenerateEmbedding(
 
 
 def _mockUserMemories(
-    handler: UserDataHandler,
+    handler: UserMemoriesHandler,
     *,
     searchResults: Optional[List[UserMemoryDict]] = None,
 ) -> Mock:
@@ -1510,7 +1510,7 @@ def _mockUserMemories(
     return mockRepo
 
 
-def _stubToolChatSettings(handler: UserDataHandler, *, embeddingModel: str = "test-embed-model") -> AsyncMock:
+def _stubToolChatSettings(handler: UserMemoriesHandler, *, embeddingModel: str = "test-embed-model") -> AsyncMock:
     """Stub ``handler.getChatSettings`` to return a minimal settings dict for tool tests.
 
     The tool handlers only read ``ChatSettingsKey.EMBEDDING_MODEL`` from the
@@ -1577,7 +1577,7 @@ def _makeMemoryDict(
 
 
 class TestLlmToolAddMemory:
-    """Tests for :meth:`UserDataHandler._llmToolAddMemory` (dedup state machine).
+    """Tests for :meth:`UserMemoriesHandler._llmToolAddMemory` (dedup state machine).
 
     Covers the full D5 matrix: insert / duplicate (≥0.95) / grey-zone chat-time
     (folds to duplicate) / grey-zone refinement (returns ``similar_exists``) /
@@ -1793,7 +1793,7 @@ class TestLlmToolAddMemory:
 
 
 class TestLlmToolDeleteMemory:
-    """Tests for :meth:`UserDataHandler._llmToolDeleteMemory` (by-id + by-query)."""
+    """Tests for :meth:`UserMemoriesHandler._llmToolDeleteMemory` (by-id + by-query)."""
 
     async def test_deleteByIdDelegatesToDeleteMemory(self, testDatabase: Database) -> None:
         """``memory_id`` provided → handler delegates to ``deleteMemory`` and reports deleted.
@@ -1901,7 +1901,7 @@ class TestLlmToolDeleteMemory:
 
 
 class TestLlmToolSearchMemories:
-    """Tests for :meth:`UserDataHandler._llmToolSearchMemories` (semantic + filter-only)."""
+    """Tests for :meth:`UserMemoriesHandler._llmToolSearchMemories` (semantic + filter-only)."""
 
     async def test_semanticSearchReturnsResults(self, testDatabase: Database) -> None:
         """``query`` provided → embedding generated, results returned with count.
@@ -2827,7 +2827,7 @@ class TestKnowledgeConfigWizard:
             testDatabase: (unused) — kept off the signature; this is a pure
                 metadata assertion.
         """
-        info = getattr(UserDataHandler.memory_config_command, "_commandHandlerInfoV2")
+        info = getattr(UserMemoriesHandler.memory_config_command, "_commandHandlerInfoV2")
         assert CommandPermission.PRIVATE in info.availableFor
         assert CommandPermission.GROUP not in info.availableFor
 
@@ -2842,7 +2842,7 @@ class TestKnowledgeConfigWizard:
             testDatabase: (unused) — kept off the signature; this is a pure
                 metadata assertion.
         """
-        info = getattr(UserDataHandler.memory_config_command, "_commandHandlerInfoV2")
+        info = getattr(UserMemoriesHandler.memory_config_command, "_commandHandlerInfoV2")
         assert "memory_config" in info.commands
         assert "knowledge_config" not in info.commands
 

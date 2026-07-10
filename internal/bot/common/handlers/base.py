@@ -457,7 +457,7 @@ class BaseBotHandler(CommandHandlerMixin):
     async def _resolveUserId(self, *, chatId: int, userIdentifier: Optional[str]) -> Optional[int]:
         """Resolve a user identifier to a numeric ``user_id``.
 
-        Shared between the ``search_memories`` LLM tool (``UserDataHandler``)
+        Shared between the ``search_memories`` LLM tool (``UserMemoriesHandler``)
         and the ``search_messages`` LLM tool / ``/search`` command
         (``ChatSearchHandler``). Accepts a login (with or without a leading
         ``@``) OR a numeric ``user_id`` string.
@@ -1144,7 +1144,7 @@ class BaseBotHandler(CommandHandlerMixin):
             spam-flag/leftChat use cases (flat boolean flags). For NESTED sub-dicts
             (e.g. ``memoryRefinement``) do NOT use this method; perform an explicit
             full-read + nested-mutate + full-write via ``cache.getUserMetadata`` /
-            ``cache.updateUserMetadata`` (see ``UserDataHandler._persistMemoryEntry``).
+            ``cache.updateUserMetadata`` (see ``UserMemoriesHandler._persistMemoryEntry``).
         """
         async with self.cache.chatUserMetadataLock():
             if isUpdate:

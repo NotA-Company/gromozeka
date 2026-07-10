@@ -743,7 +743,7 @@ Max Messenger webhook receiver configuration. Defaults live in [`configs/00-defa
 
 ### `[user-memory]`
 
-Unified per-`(chat, user, thread)` structured memory system. Defaults live in [`configs/00-defaults/user-memory.toml`](../../configs/00-defaults/user-memory.toml). The feature is owned by `UserDataHandler` (see [`handlers.md`](handlers.md) `UserDataHandler` row, [`architecture.md`](architecture.md) ADR-016 for the unified-store decision and ADR-014 for the refinement machinery). Canonical durable summary: [`memories/user-memories.md`](memories/user-memories.md).
+Unified per-`(chat, user, thread)` structured memory system. Defaults live in [`configs/00-defaults/user-memory.toml`](../../configs/00-defaults/user-memory.toml). The feature is owned by `UserMemoriesHandler` (see [`handlers.md`](handlers.md) `UserMemoriesHandler` row, [`architecture.md`](architecture.md) ADR-016 for the unified-store decision and ADR-014 for the refinement machinery). Canonical durable summary: [`memories/user-memories.md`](memories/user-memories.md).
 
 | Key | Type | Default | Purpose |
 |---|---|---|---|
@@ -762,7 +762,7 @@ Unified per-`(chat, user, thread)` structured memory system. Defaults live in [`
 
 #### `[user-memory.json-logging]`
 
-Optional JSONL log of every successful memory-refinement run, mirroring the LLM-interaction logger (`AbstractModel.printJSONLog`). Read ONCE in `UserDataHandler.__init__` into `_refineLogEnabled` / `_refineLogFile` / `_refineLogAddDateSuffix` (same cache-once pattern as the other `[user-memory]` keys). The writer is a best-effort synchronous append guarded by `if self._refineLogEnabled:` so the default (off) does zero work on the hot path.
+Optional JSONL log of every successful memory-refinement run, mirroring the LLM-interaction logger (`AbstractModel.printJSONLog`). Read ONCE in `UserMemoriesHandler.__init__` into `_refineLogEnabled` / `_refineLogFile` / `_refineLogAddDateSuffix` (same cache-once pattern as the other `[user-memory]` keys). The writer is a best-effort synchronous append guarded by `if self._refineLogEnabled:` so the default (off) does zero work on the hot path.
 
 | Key | Type | Default | Purpose |
 |---|---|---|---|
@@ -788,7 +788,7 @@ Optional JSONL log of every successful memory-refinement run, mirroring the LLM-
 
 **Behavior notes:**
 
-- **Success-path-only.** The hook sits in `_runRefinement` ([`internal/bot/common/handlers/user_data.py`](../../internal/bot/common/handlers/user_data.py)) AFTER the LLM returns and `newSummary` is bound, BEFORE the empty-summary early-return guard. An exception during the LLM call re-raises before the hook, so failed runs are NOT logged (mirrors `printJSONLog`).
+- **Success-path-only.** The hook sits in `_runRefinement` ([`internal/bot/common/handlers/user_memories.py`](../../internal/bot/common/handlers/user_memories.py)) AFTER the LLM returns and `newSummary` is bound, BEFORE the empty-summary early-return guard. An exception during the LLM call re-raises before the hook, so failed runs are NOT logged (mirrors `printJSONLog`).
 - **Empty summaries ARE logged** (as `""`) — the hook runs before the `if not newSummary: return` guard, by design.
 - **IO-failure tolerant.** The write is wrapped in `try/except OSError` with `logger.debug` on failure — a logging failure never breaks the refinement pipeline. This intentionally diverges from `printJSONLog`, which has no error handling.
 

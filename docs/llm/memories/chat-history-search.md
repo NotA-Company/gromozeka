@@ -316,7 +316,7 @@ optimization). Key changes:
 - **Don't duplicate `_resolveUserId`**: The existing `_resolveUserId(chatId=, userIdentifier=)`
   helper on `BaseBotHandler` already strips `@`, short-circuits numeric identifiers, calls
   `getChatUserByUsername` for logins, handles try/except, and returns `Optional[int]`. No need
-  to re-implement inline. Shared between `ChatSearchHandler` and `UserDataHandler`.
+  to re-implement inline. Shared between `ChatSearchHandler` and `UserMemoriesHandler`.
 - **`last_active` None handling**: When `updated_at` is `None` in a `ChatUserDict`,
   `.get("updated_at", "")` returns `None` (default only for missing keys), and `str(None)`
   produces `"None"`. Must check `is None` explicitly before `str()`.

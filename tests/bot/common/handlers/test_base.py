@@ -7,7 +7,7 @@ these tests fail if the wrapper is dropped.
 
 :meth:`BaseBotHandler.setUserMetadata` lives on :class:`BaseBotHandler`, which is
 abstract / mixin-bound and not instantiated directly. It is exercised here through its
-concrete subclass :class:`UserDataHandler`, constructed against a real in-memory database
+concrete subclass :class:`UserMemoriesHandler`, constructed against a real in-memory database
 (``testDatabase`` fixture) with the ``CacheService`` singleton reset per test by the local
 autouse fixture. For the ``isUpdate=True`` path the handler reads via
 ``cache.getUserMetadata``; the autouse singleton reset plus
@@ -23,7 +23,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from internal.bot.common.handlers.user_data import UserDataHandler, _formatMemoriesBlockRaw
+from internal.bot.common.handlers.user_memories import UserMemoriesHandler, _formatMemoriesBlockRaw
 from internal.bot.models import (
     BotProvider,
     UserMetadataDict,
@@ -62,7 +62,7 @@ def _resetCacheServiceSingleton() -> Generator[None, None, None]:
 def _makeConfigManager() -> Mock:
     """Build a minimal ``ConfigManager`` stub for the handler constructor.
 
-    ``UserDataHandler.__init__`` reads ``get("user-memory", {})`` to cache the
+    ``UserMemoriesHandler.__init__`` reads ``get("user-memory", {})`` to cache the
     refinement config; returning ``{}`` leaves the feature disabled and makes
     thresholds fall back to module constants. These tests only exercise the
     inherited ``setUserMetadata`` helper, so the cached values are unused.
@@ -77,22 +77,22 @@ def _makeConfigManager() -> Mock:
     return cm
 
 
-async def _makeHandler(testDatabase: Database) -> UserDataHandler:
-    """Construct a :class:`UserDataHandler` wired to a real in-memory database.
+async def _makeHandler(testDatabase: Database) -> UserMemoriesHandler:
+    """Construct a :class:`UserMemoriesHandler` wired to a real in-memory database.
 
     Args:
         testDatabase: Fresh in-memory :class:`Database`` (``testDatabase``
             fixture).
 
     Returns:
-        A :class:`UserDataHandler` whose ``db`` is *testDatabase*, used as the
+        A :class:`UserMemoriesHandler` whose ``db`` is *testDatabase*, used as the
         host for the inherited ``setUserMetadata`` helper.
     """
     CacheService._instance = None
     cache = CacheService.getInstance()
     await cache.injectDatabase(testDatabase)
 
-    handler = UserDataHandler(
+    handler = UserMemoriesHandler(
         configManager=_makeConfigManager(),
         database=testDatabase,
         botProvider=BotProvider.TELEGRAM,
@@ -237,7 +237,7 @@ class TestSetUserMetadataLockContract:
 # The Phase-3a ``_buildMemoriesBlock`` / ``_injectMemoriesBlock`` methods were
 # removed from ``BaseBotHandler`` when memory injection moved to
 # ``MessagePreprocessorHandler.injectMemories``. The rendering logic survives
-# as the module function ``_formatMemoriesBlockRaw`` in ``user_data.py``; these
+# as the module function ``_formatMemoriesBlockRaw`` in ``user_memories.py``; these
 # tests pin the render contract (header omission, tag formatting, sort order)
 # against that function.
 #
@@ -357,7 +357,7 @@ class TestResolveUserId:
     """Tests for :meth:`BaseBotHandler._resolveUserId`.
 
     The method is shared between the ``search_memories`` and ``search_messages``
-    LLM tools. It is exercised here through :class:`UserDataHandler` (a concrete
+    LLM tools. It is exercised here through :class:`UserMemoriesHandler` (a concrete
     subclass of :class:`BaseBotHandler`), constructed against a real in-memory
     database. The ``chatUsers`` repository attribute is swapped for a ``Mock``
     per test so the login-resolution path can be spied on without touching the DB.
