@@ -346,3 +346,183 @@ class TestFormatMemoriesBlockRaw:
         assert block is not None
         assert "[fact] lives in Berlin #geo #europe" in block
         assert "[event] no tags here\n" in block + "\n"
+
+
+# ---------------------------------------------------------------------------
+# _resolveUserId (inherited from BaseBotHandler)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveUserId:
+    """Tests for :meth:`BaseBotHandler._resolveUserId`.
+
+    The method is shared between the ``search_memories`` and ``search_messages``
+    LLM tools. It is exercised here through :class:`UserDataHandler` (a concrete
+    subclass of :class:`BaseBotHandler`), constructed against a real in-memory
+    database. The ``chatUsers`` repository attribute is swapped for a ``Mock``
+    per test so the login-resolution path can be spied on without touching the DB.
+
+    Covers:
+
+    * Numeric ``user_id`` short-circuit (no DB lookup) — plain digits and
+      ``@``-prefixed digits.
+    * Login resolution (with and without ``@``) — both normalise to the
+      ``@``-prefixed form the ``chat_users`` table stores.
+    * Non-existent login → ``None``.
+    * Empty / ``None`` input → ``None`` (no DB call).
+    * DB exception → ``None`` (never raises).
+    """
+
+    async def test_numericString_returnsIntWithoutDbCall(self, testDatabase: Database) -> None:
+        """A purely-numeric identifier is returned as int with no DB lookup.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        mockChatUsers = Mock()
+        mockChatUsers.getChatUserByUsername = AsyncMock()
+        handler.db.chatUsers = mockChatUsers  # type: ignore[assignment]
+
+        result = await handler._resolveUserId(chatId=100, userIdentifier="12345")
+
+        assert result == 12345
+        mockChatUsers.getChatUserByUsername.assert_not_called()
+
+    async def test_numericStringWithAtPrefix_returnsIntWithoutDbCall(self, testDatabase: Database) -> None:
+        """``"@12345"`` strips ``@`` then resolves as numeric user_id (no DB call).
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        mockChatUsers = Mock()
+        mockChatUsers.getChatUserByUsername = AsyncMock()
+        handler.db.chatUsers = mockChatUsers  # type: ignore[assignment]
+
+        result = await handler._resolveUserId(chatId=100, userIdentifier="@12345")
+
+        assert result == 12345
+        mockChatUsers.getChatUserByUsername.assert_not_called()
+
+    async def test_loginWithAt_resolvesViaDb(self, testDatabase: Database) -> None:
+        """Login with ``@`` prefix → DB lookup with ``@``-prefixed username.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        mockChatUsers = Mock()
+        mockChatUsers.getChatUserByUsername = AsyncMock(return_value={"user_id": 999})
+        handler.db.chatUsers = mockChatUsers  # type: ignore[assignment]
+
+        result = await handler._resolveUserId(chatId=100, userIdentifier="@alice")
+
+        assert result == 999
+        mockChatUsers.getChatUserByUsername.assert_awaited_once_with(chatId=100, username="@alice")
+
+    async def test_loginWithoutAt_prependsAtForDbLookup(self, testDatabase: Database) -> None:
+        """Login without ``@`` → ``@`` is prepended before DB lookup.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        mockChatUsers = Mock()
+        mockChatUsers.getChatUserByUsername = AsyncMock(return_value={"user_id": 999})
+        handler.db.chatUsers = mockChatUsers  # type: ignore[assignment]
+
+        result = await handler._resolveUserId(chatId=100, userIdentifier="alice")
+
+        assert result == 999
+        mockChatUsers.getChatUserByUsername.assert_awaited_once_with(chatId=100, username="@alice")
+
+    async def test_nonExistentLogin_returnsNone(self, testDatabase: Database) -> None:
+        """Login not in DB → ``None``.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        mockChatUsers = Mock()
+        mockChatUsers.getChatUserByUsername = AsyncMock(return_value=None)
+        handler.db.chatUsers = mockChatUsers  # type: ignore[assignment]
+
+        result = await handler._resolveUserId(chatId=100, userIdentifier="ghost")
+
+        assert result is None
+        mockChatUsers.getChatUserByUsername.assert_awaited_once_with(chatId=100, username="@ghost")
+
+    async def test_emptyInput_returnsNone(self, testDatabase: Database) -> None:
+        """Empty string → ``None`` (no DB call).
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        mockChatUsers = Mock()
+        mockChatUsers.getChatUserByUsername = AsyncMock()
+        handler.db.chatUsers = mockChatUsers  # type: ignore[assignment]
+
+        result = await handler._resolveUserId(chatId=100, userIdentifier="")
+
+        assert result is None
+        mockChatUsers.getChatUserByUsername.assert_not_called()
+
+    async def test_noneInput_returnsNone(self, testDatabase: Database) -> None:
+        """``None`` → ``None`` (no DB call).
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        mockChatUsers = Mock()
+        mockChatUsers.getChatUserByUsername = AsyncMock()
+        handler.db.chatUsers = mockChatUsers  # type: ignore[assignment]
+
+        result = await handler._resolveUserId(chatId=100, userIdentifier=None)
+
+        assert result is None
+        mockChatUsers.getChatUserByUsername.assert_not_called()
+
+    async def test_dbException_returnsNone(self, testDatabase: Database) -> None:
+        """DB exception → ``None`` (method never raises).
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        mockChatUsers = Mock()
+        mockChatUsers.getChatUserByUsername = AsyncMock(side_effect=RuntimeError("DB down"))
+        handler.db.chatUsers = mockChatUsers  # type: ignore[assignment]
+
+        result = await handler._resolveUserId(chatId=100, userIdentifier="alice")
+
+        assert result is None
+
+    async def test_unicodeSuperscript_returnsNone(self, testDatabase: Database) -> None:
+        """Unicode "other digit" value (``"²"`` U+00B2) → ``None`` (never raises).
+
+        Regression for the ``isdigit()`` → ``isdecimal()`` fix: ``str.isdigit()``
+        admits superscripts such as ``"²"`` that ``int()`` cannot parse, so the
+        old ``clean.isdigit()`` check routed them into ``int(clean)`` and raised
+        ``ValueError`` — breaking the never-raises contract of the LLM tools
+        (notably ``search_messages``) whose call paths are unguarded by
+        try/except. With ``clean.isdecimal()`` the value is NOT a decimal, so it
+        falls through to the login path; the DB lookup finds no match and
+        ``None`` is returned. A plain decimal still resolves directly — see
+        :meth:`test_numericString_returnsIntWithoutDbCall`.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        mockChatUsers = Mock()
+        mockChatUsers.getChatUserByUsername = AsyncMock(return_value=None)
+        handler.db.chatUsers = mockChatUsers  # type: ignore[assignment]
+
+        # Must not raise (a ValueError here means isdigit() was used instead of
+        # isdecimal()).
+        result = await handler._resolveUserId(chatId=100, userIdentifier="²")
+
+        assert result is None

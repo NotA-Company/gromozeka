@@ -454,6 +454,70 @@ class BaseBotHandler(CommandHandlerMixin):
 
         return await self._bot.isAdmin(user=user, chat=chat, allowBotOwners=allowBotOwners)
 
+    async def _resolveUserId(self, *, chatId: int, userIdentifier: Optional[str]) -> Optional[int]:
+        """Resolve a user identifier to a numeric ``user_id``.
+
+        Shared between the ``search_memories`` LLM tool (``UserDataHandler``)
+        and the ``search_messages`` LLM tool / ``/search`` command
+        (``ChatSearchHandler``). Accepts a login (with or without a leading
+        ``@``) OR a numeric ``user_id`` string.
+
+        Resolution order:
+
+        1. Falsy / None → ``None``.
+        2. Strip leading ``@`` and whitespace. Empty → ``None``.
+        3. **Numeric path**: if the cleaned value is all digits, return
+           ``int(clean)`` directly — no database lookup. Telegram and Max
+           usernames cannot be purely numeric, so a numeric identifier is
+           safely treated as a ``user_id``.
+        4. **Login path**: re-prepend ``@`` (the ``chat_users`` table stores
+           usernames with the ``@`` prefix) and look up the row via
+           :meth:`ChatUsersRepository.getChatUserByUsername` (case-insensitive,
+           provider-portable). On a DB exception or no match, log and return
+           ``None``.
+
+        Args:
+            chatId: Chat the user belongs to (used only by the login path).
+            userIdentifier: A login (with or without ``@``) or a numeric
+                ``user_id`` string.
+
+        Returns:
+            The resolved numeric ``user_id`` (an ``int``) when the identifier
+            is a numeric ``user_id`` string (returned directly, no DB lookup)
+            or a login that matches a user in the chat (resolved via
+            ``chat_users`` lookup); ``None`` when the identifier was
+            missing/empty or the login did not match any user in the chat.
+        """
+        if not userIdentifier:
+            return None
+        clean = userIdentifier.lstrip("@").strip()
+        if not clean:
+            return None
+        # Numeric identifier → treat as a user_id directly (Telegram/Max
+        # usernames cannot be purely numeric, so there is no ambiguity).
+        # ``isdecimal()`` (not ``isdigit()``) is the precise predicate for the
+        # character set ``int()`` accepts in base 10: ``isdigit()`` also admits
+        # Unicode "other digit" chars (e.g. "²" U+00B2) that ``int()`` cannot
+        # parse, which would raise ``ValueError`` and break the never-raises
+        # contract of the LLM tools that call this method.
+        if clean.isdecimal():
+            return int(clean)
+        # Login path: DB stores usernames with the @ prefix. Normalise to that
+        # format so the case-insensitive comparison matches.
+        clean = f"@{clean}"
+        try:
+            user = await self.db.chatUsers.getChatUserByUsername(chatId=chatId, username=clean)
+        except Exception:
+            logger.exception("resolveUserId: failed to look up user %r in chat %d", clean, chatId)
+            return None
+        if user is None:
+            logger.warning(f"resolveUserId: user {userIdentifier!r} not found in chat {chatId}")
+            return None
+        userId = user.get("user_id")
+        if userId is None:
+            return None
+        return int(userId)
+
     async def editMessage(
         self,
         messageId: MessageId,

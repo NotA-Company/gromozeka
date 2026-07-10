@@ -1251,6 +1251,15 @@ even in a group chat; this matches D1's per-(chat,user) scoping and avoids
 leaking one user's memories to another. If a future "what does the group
 know about X" feature is wanted, it gets a separate tool.
 
+> **Superseded (2026-07-10):** This design choice was reversed —
+> `search_memories` now accepts an optional `user` parameter (a login with
+> or without `@`, or a numeric `user_id`) to search a different user's
+> memories within the same chat. It was added to the existing tool rather
+> than as a separate tool. When the `user` login cannot be resolved, the
+> tool returns `{"done": False, "error": ...}` without searching (no
+> all-user fallback). See [`memories/user-memories.md`](../llm/memories/user-memories.md)
+> §`search_memories`.
+
 ## 9. Retrieval + injection
 
 ### 9.1 `_buildMemoriesBlock` helper

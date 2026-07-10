@@ -207,7 +207,7 @@ class ChatSearchHandler(BaseBotHandler):
                 ),
                 LLMFunctionParameter(
                     name="user_name",
-                    description="Filter by username (with or without @)",
+                    description="Filter by username (with or without @) or numeric user_id",
                     type=LLMParameterType.STRING,
                     required=False,
                 ),
@@ -497,7 +497,7 @@ class ChatSearchHandler(BaseBotHandler):
             query: Search query text.
             limit: Max results (default 5).
             max_age_days: Only messages newer than this many days.
-            user_name: Filter by username (with or without @).
+            user_name: Filter by username (with or without @) or numeric user_id.
             thread_message_id: Restrict to thread rooted at this message ID.
             **kwargs: Additional keyword arguments (ignored).
 
@@ -536,7 +536,7 @@ class ChatSearchHandler(BaseBotHandler):
         # Gate 3: resolve optional user filter.
         userId: Optional[int] = None
         if user_name:
-            userId = await self._resolveUserId(chatId=chatId, username=user_name)
+            userId = await self._resolveUserId(chatId=chatId, userIdentifier=user_name)
 
         # Gate 4: resolve optional thread filter.
         threadMessageId: Optional[MessageId] = None
@@ -986,7 +986,7 @@ class ChatSearchHandler(BaseBotHandler):
                 return
 
         categoryFilter: Optional[List[MessageCategory]] = self._resolveCategoryGroup(parsed["category"])
-        userId = await self._resolveUserId(chatId=targetChatId, username=parsed["user"])
+        userId = await self._resolveUserId(chatId=targetChatId, userIdentifier=parsed["user"])
         rootMessageId: Optional[MessageId] = None
         if parsed["thread"] is not None:
             try:
@@ -1310,50 +1310,6 @@ class ChatSearchHandler(BaseBotHandler):
             logger.warning(f"/search: unknown category {name!r}, ignoring")
             return None
         return _CATEGORY_GROUPS[group]
-
-    async def _resolveUserId(self, *, chatId: int, username: Optional[str]) -> Optional[int]:
-        """Resolve a `user:` argument to a numeric user_id.
-
-        Looks the username up in the chat's known users via the
-        single-row helper
-        :meth:`ChatUsersRepository.getChatUserByUsername` — the
-        case-insensitive comparison goes through
-        ``provider.getCaseInsensitiveComparison`` so it stays
-        portable across SQLite, PostgreSQL, and MySQL. The leading
-        ``@`` is stripped from the input for normalisation, then
-        always prepended before the query (the ``chat_users`` table
-        stores usernames with the ``@`` prefix); both ``"@alice"``
-        and ``"alice"`` resolve to the same row.
-
-        Args:
-            chatId: Chat the user belongs to.
-            username: Username (with or without leading ``@``). The
-                lookup is case-insensitive.
-
-        Returns:
-            The matching `user_id`, or `None` if the argument was
-            missing, empty, or no user matched.
-        """
-        if not username:
-            return None
-        clean = username.lstrip("@").strip()
-        if not clean:
-            return None
-        # DB stores usernames with @ prefix. Normalise to that format.
-        clean = f"@{clean}"
-        try:
-            user = await self.db.chatUsers.getChatUserByUsername(chatId=chatId, username=clean)
-        except Exception as e:
-            logger.error(f"/search: failed to look up user {clean!r} in chat {chatId}: {e}")
-            logger.exception(e)
-            return None
-        if user is None:
-            logger.warning(f"/search: user {username!r} not found in chat {chatId}")
-            return None
-        userId = user.get("user_id")
-        if userId is None:
-            return None
-        return int(userId)
 
     async def _listUsersInternal(
         self,

@@ -301,7 +301,10 @@ optimization). Key changes:
   with no prefix handling. But `_resolveUserId` strips `@` with `lstrip("@")` before querying —
   `LOWER("@cthulho") != LOWER("cthulho")`. Fix: after stripping `@` for normalisation, always
   prepend `@` before the DB call: `clean = f"@{clean}"`. Regression test
-  `test_resolve_without_at_prefix` encodes this.
+  `test_resolve_without_at_prefix` encodes this. Note: `_resolveUserId` now lives on
+  `BaseBotHandler` (shared between `search_memories` and `search_messages`), accepts a
+  `userIdentifier` kwarg (was `username`), and short-circuits numeric identifiers to `int()`
+  without a DB lookup.
 - **LLM tool `int(limit)` guard**: `limit: int` params can arrive as `None` (LLM passes `null`) or
   `float` (NUMBER type). Always guard:
   `effectiveLimit = int(limit) if limit is not None else DEFAULT`. Same in `/users` command where
@@ -310,9 +313,10 @@ optimization). Key changes:
   `RuntimeError`/`ValueError`. The LLM tool dispatcher does NOT catch exceptions, so an uncaught
   raise aborts the entire LLM generation. All LLM tool handlers that call `rateLimit` must wrap
   it.
-- **Don't duplicate `_resolveUserId`**: The existing `_resolveUserId(chatId=, username=)` helper
-  already strips `@`, calls `getChatUserByUsername`, handles try/except, and returns
-  `Optional[int]`. No need to re-implement inline.
+- **Don't duplicate `_resolveUserId`**: The existing `_resolveUserId(chatId=, userIdentifier=)`
+  helper on `BaseBotHandler` already strips `@`, short-circuits numeric identifiers, calls
+  `getChatUserByUsername` for logins, handles try/except, and returns `Optional[int]`. No need
+  to re-implement inline. Shared between `ChatSearchHandler` and `UserDataHandler`.
 - **`last_active` None handling**: When `updated_at` is `None` in a `ChatUserDict`,
   `.get("updated_at", "")` returns `None` (default only for missing keys), and `str(None)`
   produces `"None"`. Must check `is None` explicitly before `str()`.

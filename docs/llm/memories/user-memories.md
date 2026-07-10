@@ -302,9 +302,14 @@ is only ever callable from the refinement pass (which sets it to `True`).
 
 Params: `query` (optional — semantic when provided, filter-only when
 omitted), `type`, `tags` (ANY-match), `limit` (default `20`, clamped to
-`[1, MEMORY_SEARCH_MAX_LIMIT = 100]`), `permanent`. Returns
-`{"done": True, "results": [...], "count": int}`. Only the caller's own
-memories are ever returned. When no embedding model is available with a
+`[1, MEMORY_SEARCH_MAX_LIMIT = 100]`), `permanent`, `user` (optional —
+search a different user's memories instead of the caller's; accepts a login
+with or without `@` or a numeric `user_id`; when the login cannot be
+resolved, returns `{"done": False, "error": ...}` without searching).
+Returns `{"done": True, "results": [...], "count": int}`. By default
+searches the calling user's own memories; when `user` is provided, resolves
+it via `BaseBotHandler._resolveUserId` (shared with `search_messages`) and
+searches that user's memories. When no embedding model is available with a
 `query`, falls back to filter-only.
 
 ## Injection

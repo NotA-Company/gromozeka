@@ -1997,6 +1997,108 @@ class TestLlmToolSearchMemories:
         assert result["done"] is False
         assert "error" in result
 
+    # --- cross-user search (``user`` param) ---
+
+    async def test_userOmitted_searchesOwnMemories(self, testDatabase: Database) -> None:
+        """``user`` omitted → ``searchMemories`` called with the sender's id.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        _stubToolChatSettings(handler)
+        _stubGenerateEmbedding(handler)
+        mockRepo = _mockUserMemories(handler, searchResults=[])
+
+        ensuredMessage = _makeEnsuredMessage(chatId=100, userId=7)
+
+        await handler._llmToolSearchMemories(  # type: ignore[attr-defined]
+            extraData={"ensuredMessage": ensuredMessage},
+        )
+
+        mockRepo.searchMemories.assert_awaited_once()
+        # userId is the second positional arg (chatId, userId, queryEmbedding, ...)
+        assert mockRepo.searchMemories.call_args.args[1] == 7
+
+    async def test_userLoginResolvable_searchesResolvedUser(self, testDatabase: Database) -> None:
+        """``user="alice"`` resolvable → ``searchMemories`` called with the resolved id (not sender's).
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        _stubToolChatSettings(handler)
+        _stubGenerateEmbedding(handler)
+        mockRepo = _mockUserMemories(handler, searchResults=[])
+        # Stub chatUsers so _resolveUserId finds "alice" → user_id 999.
+        mockChatUsers = Mock()
+        mockChatUsers.getChatUserByUsername = AsyncMock(return_value={"user_id": 999})
+        handler.db.chatUsers = mockChatUsers  # type: ignore[assignment]
+
+        ensuredMessage = _makeEnsuredMessage(chatId=100, userId=7)
+
+        await handler._llmToolSearchMemories(  # type: ignore[attr-defined]
+            extraData={"ensuredMessage": ensuredMessage},
+            user="alice",
+        )
+
+        mockRepo.searchMemories.assert_awaited_once()
+        # Must use the RESOLVED id (999), not the sender's id (7).
+        assert mockRepo.searchMemories.call_args.args[1] == 999
+        mockChatUsers.getChatUserByUsername.assert_awaited_once_with(chatId=100, username="@alice")
+
+    async def test_userLoginUnresolvable_returnsErrorAndDoesNotSearch(self, testDatabase: Database) -> None:
+        """``user="ghost"`` unresolvable → error dict returned, ``searchMemories`` NOT called.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        _stubToolChatSettings(handler)
+        _stubGenerateEmbedding(handler)
+        mockRepo = _mockUserMemories(handler, searchResults=[])
+        mockChatUsers = Mock()
+        mockChatUsers.getChatUserByUsername = AsyncMock(return_value=None)
+        handler.db.chatUsers = mockChatUsers  # type: ignore[assignment]
+
+        ensuredMessage = _makeEnsuredMessage(chatId=100, userId=7)
+
+        result = await handler._llmToolSearchMemories(  # type: ignore[attr-defined]
+            extraData={"ensuredMessage": ensuredMessage},
+            user="ghost",
+        )
+
+        assert result["done"] is False
+        assert "User not found: ghost" in result["error"]  # type: ignore[arg-type]
+        mockRepo.searchMemories.assert_not_called()
+
+    async def test_userNumeric_searchesByUserIdWithoutDbLookup(self, testDatabase: Database) -> None:
+        """``user="12345"`` numeric → ``searchMemories`` called with 12345, no DB lookup.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        _stubToolChatSettings(handler)
+        _stubGenerateEmbedding(handler)
+        mockRepo = _mockUserMemories(handler, searchResults=[])
+        mockChatUsers = Mock()
+        mockChatUsers.getChatUserByUsername = AsyncMock()
+        handler.db.chatUsers = mockChatUsers  # type: ignore[assignment]
+
+        ensuredMessage = _makeEnsuredMessage(chatId=100, userId=7)
+
+        await handler._llmToolSearchMemories(  # type: ignore[attr-defined]
+            extraData={"ensuredMessage": ensuredMessage},
+            user="12345",
+        )
+
+        mockRepo.searchMemories.assert_awaited_once()
+        # Must use the numeric id (12345), not the sender's id (7).
+        assert mockRepo.searchMemories.call_args.args[1] == 12345
+        # Numeric path must NOT touch the DB.
+        mockChatUsers.getChatUserByUsername.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Phase 5a — /memory_config wizard (user_memories browser)

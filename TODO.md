@@ -9,7 +9,7 @@
 - [x] make lint - add check for compilation
 - [x] move injected memories to separate table by hash or keep + links to them
 - [x] add chat+source to get-memories-by-id
-- [ ] search-memories: ability to search for another user
+- [x] search-memories: ability to search for another user
 - [x] how\when do we generate embeddings for messages? 
 
 - [ ] Yandex AI Studio does not support webp images. Add config value + convert

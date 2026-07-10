@@ -2340,11 +2340,24 @@ class TestFormatMessageDict:
 
 
 class TestResolveUserId:
-    """Tests for :meth:`ChatSearchHandler._resolveUserId`."""
+    """Tests for ``_resolveUserId`` (inherited from :class:`BaseBotHandler`).
+
+    The method now lives on :class:`BaseBotHandler` and is shared between the
+    ``search_memories`` and ``search_messages`` tools. These tests exercise it
+    through :class:`ChatSearchHandler`, which inherits the base implementation.
+    Covers the login-resolution path (with/without ``@``), the numeric
+    ``user_id`` short-circuit, and the empty/None/no-match fallbacks.
+    """
 
     @pytest.fixture
     def handler(self) -> ChatSearchHandler:
-        """Create a handler with mocked dependencies for resolve-user tests."""
+        """Create a handler with mocked dependencies for resolve-user tests.
+
+        Returns:
+            A :class:`ChatSearchHandler` with ``db``, ``llmService``,
+            ``sendMessage``, and ``getChatSettings`` stubbed so the inherited
+            ``_resolveUserId`` can be exercised in isolation.
+        """
         h = ChatSearchHandler(
             configManager=_makeConfigManager(),
             database=_makeDatabase(),
@@ -2361,7 +2374,7 @@ class TestResolveUserId:
         cast(Any, handler).db.chatUsers = Mock()
         cast(Any, handler).db.chatUsers.getChatUserByUsername = AsyncMock(return_value={"user_id": 123})
 
-        result = await handler._resolveUserId(chatId=-100123, username="@testuser")
+        result = await handler._resolveUserId(chatId=-100123, userIdentifier="@testuser")
 
         assert result == 123
         cast(Any, handler).db.chatUsers.getChatUserByUsername.assert_called_once_with(
@@ -2373,27 +2386,45 @@ class TestResolveUserId:
         cast(Any, handler).db.chatUsers = Mock()
         cast(Any, handler).db.chatUsers.getChatUserByUsername = AsyncMock(return_value={"user_id": 456})
 
-        result = await handler._resolveUserId(chatId=-100123, username="testuser")
+        result = await handler._resolveUserId(chatId=-100123, userIdentifier="testuser")
 
         assert result == 456
         cast(Any, handler).db.chatUsers.getChatUserByUsername.assert_called_once_with(
             chatId=-100123, username="@testuser"
         )
 
+    async def test_resolve_numeric_userId_noDbLookup(self, handler: ChatSearchHandler) -> None:
+        """A purely-numeric identifier is returned as int with no DB call."""
+        cast(Any, handler).db.chatUsers = Mock()
+
+        result = await handler._resolveUserId(chatId=-100123, userIdentifier="12345")
+
+        assert result == 12345
+        cast(Any, handler).db.chatUsers.getChatUserByUsername.assert_not_called()
+
+    async def test_resolve_numeric_userId_with_at_prefix(self, handler: ChatSearchHandler) -> None:
+        """``"@12345"`` strips @ then resolves as numeric user_id (no DB call)."""
+        cast(Any, handler).db.chatUsers = Mock()
+
+        result = await handler._resolveUserId(chatId=-100123, userIdentifier="@12345")
+
+        assert result == 12345
+        cast(Any, handler).db.chatUsers.getChatUserByUsername.assert_not_called()
+
     async def test_resolve_empty_after_strip(self, handler: ChatSearchHandler) -> None:
         """Username that becomes empty after stripping @ returns None without DB query."""
         cast(Any, handler).db.chatUsers = Mock()
 
-        result = await handler._resolveUserId(chatId=-100123, username="@")
+        result = await handler._resolveUserId(chatId=-100123, userIdentifier="@")
 
         assert result is None
         cast(Any, handler).db.chatUsers.getChatUserByUsername.assert_not_called()
 
     async def test_resolve_none(self, handler: ChatSearchHandler) -> None:
-        """None username returns None without DB query."""
+        """None identifier returns None without DB query."""
         cast(Any, handler).db.chatUsers = Mock()
 
-        result = await handler._resolveUserId(chatId=-100123, username=None)
+        result = await handler._resolveUserId(chatId=-100123, userIdentifier=None)
 
         assert result is None
         cast(Any, handler).db.chatUsers.getChatUserByUsername.assert_not_called()
@@ -2403,7 +2434,7 @@ class TestResolveUserId:
         cast(Any, handler).db.chatUsers = Mock()
         cast(Any, handler).db.chatUsers.getChatUserByUsername = AsyncMock(return_value=None)
 
-        result = await handler._resolveUserId(chatId=-100123, username="nobody")
+        result = await handler._resolveUserId(chatId=-100123, userIdentifier="nobody")
 
         assert result is None
         cast(Any, handler).db.chatUsers.getChatUserByUsername.assert_called_once_with(
@@ -2415,7 +2446,7 @@ class TestResolveUserId:
         cast(Any, handler).db.chatUsers = Mock()
         cast(Any, handler).db.chatUsers.getChatUserByUsername = AsyncMock(return_value={"username": "@testuser"})
 
-        result = await handler._resolveUserId(chatId=-100123, username="testuser")
+        result = await handler._resolveUserId(chatId=-100123, userIdentifier="testuser")
 
         assert result is None
         cast(Any, handler).db.chatUsers.getChatUserByUsername.assert_called_once_with(

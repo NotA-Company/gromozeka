@@ -339,9 +339,9 @@ class UserDataHandler(BaseBotHandler):
             self.llmService.registerTool(
                 name=ToolName.SEARCH_MEMORIES,
                 description=(
-                    "Search the calling user's own memories. Pass ``query`` for semantic search, "
-                    "or omit it to list memories matching a filter (by type/tags). Only the "
-                    "caller's own memories are ever returned — never another user's."
+                    "Search memories. By default searches the calling user's own memories; pass "
+                    "``user`` to search a different user's memories. Pass ``query`` for semantic "
+                    "search, or omit it to list memories matching a filter (by type/tags)."
                 ),
                 parameters=[
                     LLMFunctionParameter(
@@ -372,6 +372,15 @@ class UserDataHandler(BaseBotHandler):
                         name="permanent",
                         description="Optional permanent-flag filter: true for permanent memories, false for ephemeral.",
                         type=LLMParameterType.BOOLEAN,
+                        required=False,
+                    ),
+                    LLMFunctionParameter(
+                        name="user",
+                        description=(
+                            "Optional: search a different user's memories instead of your own. "
+                            "Accepts a login (with or without @) or a numeric user_id."
+                        ),
+                        type=LLMParameterType.STRING,
                         required=False,
                     ),
                 ],
@@ -641,14 +650,18 @@ class UserDataHandler(BaseBotHandler):
         tags: Optional[List[str]] = None,
         limit: Optional[int] = None,
         permanent: Optional[bool] = None,
+        user: Optional[str] = None,
         **kwargs: object,
     ) -> Dict[str, object]:
-        """LLM tool: search the calling user's own memories (plan §8.5).
+        """LLM tool: search memories, optionally for a different user (plan §8.5).
 
         Two modes (mirror ``UserMemoriesRepository.searchMemories``):
         ``query`` provided → semantic vec0 search; ``query`` omitted →
         filter-only scan (lets the LLM ask "all preference memories" with no
-        embedding). Only the caller's own memories are ever returned.
+        embedding). By default searches the calling user's own memories; when
+        ``user`` is provided, resolves it to a userId (login or numeric
+        user_id) and searches that user's memories instead. If ``user`` is
+        provided but cannot be resolved, returns an error without searching.
 
         Never raises.
 
@@ -660,6 +673,11 @@ class UserDataHandler(BaseBotHandler):
             limit: Max results (default ``MEMORY_SEARCH_DEFAULT_LIMIT``,
                 clamped to ``MEMORY_SEARCH_MAX_LIMIT``).
             permanent: Optional permanent-flag filter.
+            user: Optional identifier for a DIFFERENT user whose memories to
+                search instead of the caller's. Accepts a login (with or
+                without ``@``) or a numeric ``user_id``. When the login cannot
+                be resolved to a known user, the tool returns
+                ``{"done": False, "error": ...}`` without searching.
             **kwargs: Ignored.
 
         Returns:
@@ -672,8 +690,14 @@ class UserDataHandler(BaseBotHandler):
                 return {"done": False, "error": "Missing ensuredMessage"}
 
             chatId = ensuredMessage.recipient.id
-            userId = ensuredMessage.sender.id
             threadId: int = ensuredMessage.threadId or DEFAULT_THREAD_ID
+            if user:
+                resolvedId = await self._resolveUserId(chatId=chatId, userIdentifier=user)
+                if resolvedId is None:
+                    return {"done": False, "error": f"User not found: {user}"}
+                userId = resolvedId
+            else:
+                userId = ensuredMessage.sender.id
             # Clamp limit to [1, MEMORY_SEARCH_MAX_LIMIT] (mirrors
             # ``_llmToolSearchMessages`` in ``chat_search.py``). A model passing
             # a huge ``limit`` would otherwise trigger an unbounded query and an

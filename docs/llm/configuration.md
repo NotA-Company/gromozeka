@@ -503,7 +503,7 @@ The `MessagePreprocessorHandler.newMessageHandler` always schedules a background
   - Example: `/users`, `/users limit=20 min_messages=100`.
 
 **LLM tools** (always registered when `ChatSearchHandler` is constructed, gated only by the handler-level `[search-history].enabled` switch, each gated by the chat's `ALLOW_TOOLS_COMMANDS` setting):
-- `search_messages(query, limit?, max_age_days?, user_name?, thread_message_id?)` — semantic search over chat history. Uses embeddings to find messages similar to `query`. `limit` defaults to `[search-history.defaults].max-results` (10). `max_age_days` defaults to `[search-history.defaults].default-days` (30). `user_name` filters by username. `thread_message_id` restricts to a thread. Returns matching message texts with metadata.
+- `search_messages(query, limit?, max_age_days?, user_name?, thread_message_id?)` — semantic search over chat history. Uses embeddings to find messages similar to `query`. `limit` defaults to `[search-history.defaults].max-results` (10). `max_age_days` defaults to `[search-history.defaults].default-days` (30). `user_name` filters by username (with or without `@`) or numeric `user_id` (when the identifier is purely numeric, it is treated as a `user_id` with no DB lookup). `thread_message_id` restricts to a thread. Returns matching message texts with metadata.
 - `list_users(limit?, min_messages?)` — list chat participants with activity statistics. `limit` defaults to 50, `min_messages` defaults to 1. Returns username, display name, and message count per user.
 - `get_thread(message_id)` — retrieve full conversation thread for a given root message. Returns all messages in chronological order.
 
