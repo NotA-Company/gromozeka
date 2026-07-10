@@ -60,6 +60,7 @@ from .enums import (
 # Media
 from .media import MediaProcessingInfo
 from .message_metadata import (
+    CompactMemoryIdsDict,
     CondensingDict,
     MetadataDict,
     SingleMemoryDict,
@@ -113,6 +114,7 @@ __all__ = [
     "FormatEntity",
     "SingleMemoryDict",
     "UserMemoriesDict",
+    "CompactMemoryIdsDict",
     "MetadataDict",
     "CondensingDict",
     "convertDBMemoryToSingleMemoryDict",

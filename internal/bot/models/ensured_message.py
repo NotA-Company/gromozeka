@@ -23,7 +23,7 @@ import time
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, cast
 
 import telegram
 import telegram.constants
@@ -794,21 +794,32 @@ class EnsuredMessage:
         *,
         forceGetAllMedia: bool = False,
         injectMemories: bool,
+        cache: Optional["CacheService"] = None,
     ) -> "EnsuredMessage":
-        """
-        Create an EnsuredMessage from a database ChatMessageDict.
+        """Create an EnsuredMessage from a database ChatMessageDict.
 
         Factory method that reconstructs an EnsuredMessage from database-stored
         message data, including all metadata like replies, quotes, topics, and
-        media information.
+        media information. When ``injectMemories`` is True and a ``cache`` is
+        provided, compact memory IDs in ``metadata["memories"]`` are resolved to
+        content in-place via :meth:`resolveMemories` (the read-path resolver).
+        When ``cache`` is None, ``userMemories`` is left unset — the caller
+        resolves later (or does not need memories).
 
         Args:
-            data: Dictionary containing chat message data from the database
-            db: Database wrapper instance for accessing media attachments
-            forceGetAllMedia: Whether to force retrieval of all media attachments (default: False)
+            data: Dictionary containing chat message data from the database.
+            db: Database wrapper instance for accessing media attachments.
+            forceGetAllMedia: Whether to force retrieval of all media attachments (default: False).
+            injectMemories: Whether to process the stored memories metadata
+                (compact IDs are stashed for later resolution; resolution only
+                runs when ``cache`` is also provided).
+            cache: Optional CacheService for resolving compact memory IDs to
+                content. When ``None`` and ``injectMemories`` is True,
+                ``metadata["memories"]`` still carries the compact IDs but
+                ``userMemories`` stays unset.
 
         Returns:
-            A fully initialized EnsuredMessage instance populated with database data
+            A fully initialized EnsuredMessage instance populated with database data.
         """
         markupList: List[FormatEntity] = []
         if data["markup"]:
@@ -870,55 +881,55 @@ class EnsuredMessage:
 
         ensuredMessage.messagePrefix = metadata.get("messagePrefix", "")
 
-        if injectMemories and "memories" in metadata:
-            # metadata["memories"] is typed UserMemoriesDict but at runtime holds
-            # either the content form or the compact ID form (both plain dicts);
-            # pyright does not treat TypedDict as assignable to Dict[str, object].
-            ensuredMessage.loadMemoriesMetadata(metadata["memories"])  # type: ignore[arg-type]
+        # metadata["memories"] is already the stored compact ID dict
+        # ({"permanentIds": [...], "shortTermIds": [...]}); no transformation
+        # is needed — resolveMemories reads it directly. When a cache is
+        # provided, resolve compact IDs to content in-place.
+        if injectMemories and cache is not None:
+            await ensuredMessage.resolveMemories(cache)
 
-        # logger.debug(f"Ensured Message from DB Chat: {ensuredMessage}")
         return ensuredMessage
 
     def setUserMemories(self, memories: UserMemoriesDict) -> None:
-        """
-        Set additional user data for this message.
+        """Write-path setter: set userMemories (content, id stripped) and metadata['memories'] (compact IDs).
 
-        Creates a copy of the provided dictionary to avoid external modifications.
-
-        Args:
-            userData: Dictionary containing additional user-specific data
-        """
-        self.userMemories = deepcopy(memories)
-        self.metadata["memories"] = self.userMemories
-
-    def loadMemoriesMetadata(self, rawMemories: Optional[Dict[str, object]]) -> None:
-        """Stash raw memories metadata without resolving IDs to content.
-
-        Compact format (``permanentIds``/``shortTermIds``) leaves ``userMemories``
-        unset — resolved later by :meth:`resolveMemories`. Old content format is
-        applied via :meth:`setUserMemories` as before. ``None``/non-dict is a no-op
-        (tolerant of bypass sites that did ``metadata.get("memories")`` on a dict
-        lacking the key, or stored ``None``).
+        Each entry in ``memories['permanent']`` / ``memories['shortTerm']`` should
+        carry an ``'id'`` (SingleMemoryDict.id, present when the converter was
+        called with ``keepId=True``) so it can be extracted into the compact ID
+        list. The id is stripped from the userMemories content to honour the
+        "absent on injected snapshots" invariant. READ-PATH resolution
+        (:meth:`resolveMemories`) does NOT use this method — it assigns
+        userMemories directly without touching metadata (deviation #1).
 
         Args:
-            rawMemories: The raw value of ``metadata["memories"]`` (compact ID dict,
-                old content dict, or ``None``).
+            memories: Content dict with 'permanent'/'shortTerm' lists of
+                SingleMemoryDict (entries carry 'id').
 
         Returns:
             None.
         """
-        if not isinstance(rawMemories, dict):
-            return
-        if "permanentIds" in rawMemories or "shortTermIds" in rawMemories:
-            # Compact format: keep raw IDs in metadata; userMemories stays None
-            # (resolving here would import CacheService -> circular import). The
-            # compact shape is a tagged-union sibling of UserMemoriesDict that the
-            # TypedDict cannot express, so the assignment is type-ignored.
-            self.metadata["memories"] = rawMemories  # type: ignore[assignment]
-        else:
-            # Old content format: content is already inline. rawMemories is
-            # Optional[Dict[str, object]], not assignable to UserMemoriesDict.
-            self.setUserMemories(rawMemories)  # type: ignore[arg-type]
+        permanent = memories.get("permanent", [])
+        shortTerm = memories.get("shortTerm", [])
+        # A dict comprehension widens to dict[str, object], so cast back to
+        # SingleMemoryDict (the source entries are SingleMemoryDict with at
+        # most the ``id`` key removed) — same pattern as the write path in
+        # message_preprocessor.py.
+        self.userMemories = deepcopy(
+            {
+                "permanent": [cast(SingleMemoryDict, {k: v for k, v in m.items() if k != "id"}) for m in permanent],
+                "shortTerm": [cast(SingleMemoryDict, {k: v for k, v in m.items() if k != "id"}) for m in shortTerm],
+            }
+        )
+        # metadata["memories"] accepts both UserMemoriesDict (content form)
+        # and CompactMemoryIdsDict (compact ID form); the dict literal below
+        # matches the latter. Walrus + ``.get()`` so pyright's
+        # reportTypedDictNotRequiredAccess is satisfied (``id`` is NotRequired on
+        # SingleMemoryDict; ``__getitem__`` after a ``.get()`` truthy guard does
+        # not narrow, but the walrus captures the narrowed value directly).
+        self.metadata["memories"] = {
+            "permanentIds": [mid for m in permanent if (mid := m.get("id"))],
+            "shortTermIds": [mid for m in shortTerm if (mid := m.get("id"))],
+        }
 
     async def resolveMemories(self, cache: "CacheService") -> None:
         """Resolve the compact memory-ID format to content via the cache.
@@ -956,7 +967,7 @@ class EnsuredMessage:
         if not permanentIds and not shortTermIds:
             return
         allIds = permanentIds + shortTermIds
-        resolved = await cache.getMemoriesByIds(allIds)
+        resolved = await cache.getMemoriesByIds(allIds, chatId=self.recipient.id)
         # Populate userMemories ONLY (do NOT re-point metadata["memories"]).
         # Walrus + ``is not None`` narrows the Optional away so the list is typed
         # list[SingleMemoryDict] (the cache returns Optional[SingleMemoryDict]).

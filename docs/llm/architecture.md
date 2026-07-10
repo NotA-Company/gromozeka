@@ -612,6 +612,48 @@ The unified store gives each memory a `type` (`bio`/`preference`/`fact`/`event`/
 
 > **Count reconciliation:** the plan records 6 deviations while ADR-017 lists 4 numbered implementation deviations because #5 (the `_llmToolGenerateImage`→`draw_command` symbol drift) is a plan-internal self-correction — ADR-017 names `draw_command` correctly throughout — and #6 (a zero-memory compact-format message omits the `userMemories` block) is recorded under ADR-017's **Consequences** above, not as a deviation.
 
+**Follow-up refactor (2026-07-10, 3101 tests):** The sections above are the
+original ADR-017 snapshot. A post-implementation refactor tightened the
+read/write paths (detail in [`memory-compaction-v1.md`](../plans/memory-compaction-v1.md)
+§10 "Follow-up refactor"):
+
+- **Cache namespace renamed:** `MEMORIES_BY_ID`/`"memoriesById"`/property
+  `memoriesById` → `MEMORIES`/`"memories"`/property `memories`. Same
+  MEMORY_ONLY cache-aside resolver for `memory_id → SingleMemoryDict`, same
+  negative-caching-of-`None` semantics.
+- **`getMemoriesByIds` routing (repo + cache):** both
+  `UserMemoriesRepository.getMemoriesByIds(memoryIds, *, chatId=None,
+  dataSource=None)` and `CacheService.getMemoriesByIds(...)` now accept
+  optional `chatId`/`dataSource`, forwarded to
+  `getProvider(chatId=..., dataSource=..., readonly=True)`. Default `None` →
+  default DB. The cache key stays the memory UUID (routing only selects which
+  DB is queried on miss).
+- **`fromDBChatMessage` `cache=` param:** `fromDBChatMessage(cls, data, db,
+  *, forceGetAllMedia=False, injectMemories: bool, cache: Optional[CacheService]=None)`.
+  When `injectMemories and cache is not None`, it calls `resolveMemories(cache)`
+  internally. The six render sites pass `cache=self.cache`; `eRootMessage`
+  (never rendered) passes `cache=None`.
+- **`setUserMemories` is now the write-path setter:** takes content whose
+  entries carry `id` (`keepId=True`), strips `id` into `userMemories` AND
+  extracts `permanentIds`/`shortTermIds` into `metadata["memories"]`. The write
+  path `injectMemories` routes through it. The read path (`resolveMemories`)
+  still assigns `userMemories` directly without touching metadata (deviation
+  #1 — unchanged).
+- **`loadMemoriesMetadata` REMOVED / decision #7 superseded:** only the
+  compact format is supported. The old content-format read-path branch is
+  gone; old-format messages render with no memories (and log a conversion
+  warning until cleared by the cleanup script). Mitigated by
+  `scripts/clear_old_format_memories.py`.
+- **`CompactMemoryIdsDict` added** (`internal/bot/models/message_metadata.py`):
+  `{permanentIds: list[str], shortTermIds: list[str]}`.
+  `MetadataDict.memories` is now `CompactMemoryIdsDict | UserMemoriesDict`
+  (compact first — `sqlToCustomType` tries the common shape first, avoiding a
+  spurious ERROR log; eliminated the `# type: ignore[assignment]` writes).
+- **AST guard updated:** Check 1 now verifies each
+  `fromDBChatMessage(injectMemories=<truthy>)` render site passes a non-None
+  `cache=` keyword (was: looks for an external `resolveMemories`). Check 2
+  (ban `setUserMemories(metadata-derived)`) unchanged; 9 sanity tests.
+
 ---
 
 ## 2. Dependency Map

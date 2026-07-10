@@ -1100,3 +1100,85 @@ canonical docs ([`../llm/memories/user-memories.md`](../llm/memories/user-memori
    (leaving `userMemories = None`) and the dict-comprehension drops the falsy
    value. The old format rendered an empty `{"permanent": [], "shortTerm": []}`
    block. Improvement — empty blocks are LLM noise.
+
+### Follow-up refactor (2026-07-10, 3101 tests)
+
+A post-implementation refactor (all green, 3101 tests) tightened the read/write
+paths and dropped the old content-format read-path support. The items below
+supersede the numbered notes above where noted.
+
+1. **Cache namespace renamed:** `CacheNamespace.MEMORIES_BY_ID` /
+   `"memoriesById"` / property `memoriesById` → `CacheNamespace.MEMORIES` /
+   `"memories"` / property `memories`. Same MEMORY_ONLY cache-aside resolver
+   for `memory_id → SingleMemoryDict`; same negative-caching-of-`None`
+   semantics. Every `MEMORIES_BY_ID`/`memoriesById` reference in the body above
+   is the historical spec name — the production code now uses `MEMORIES`.
+
+2. **`getMemoriesByIds` routing (repo + cache):** both
+   `UserMemoriesRepository.getMemoriesByIds(memoryIds, *, chatId=None,
+   dataSource=None)` and `CacheService.getMemoriesByIds(memoryIds, *,
+   chatId=None, dataSource=None)` now accept optional `chatId`/`dataSource`,
+   forwarded to `getProvider(chatId=chatId, dataSource=dataSource,
+   readonly=True)`. Default `None` → default DB (the single-DB assumption from
+   locked decision #3 still holds in production). The cache key stays the
+   memory UUID (globally unique per DB); routing only selects which DB is
+   queried on a cache miss. `EnsuredMessage.resolveMemories` now passes
+   `chatId=self.recipient.id` so the miss query routes to the correct source.
+   This supersedes the "routes to the default DB only" limitation in §8 — the
+   caller can now route, though production remains single-DB.
+
+3. **`fromDBChatMessage` gained a `cache=` param:**
+   `fromDBChatMessage(cls, data, db, *, forceGetAllMedia=False,
+   injectMemories: bool, cache: Optional["CacheService"]=None)`. When
+   `injectMemories and cache is not None`, it calls `resolveMemories(cache)`
+   internally. The six read-path render sites
+   (`getThreadByMessageForLLM` ×3, `handleMention` non-text,
+   `handleRandomMessage`, `draw_command`) now pass `cache=self.cache` and no
+   longer call an external `resolveMemories`. `eRootMessage` (never rendered)
+   does NOT pass cache. The `handleMention` text-reply branch still loads
+   `metadata` directly and calls `resolveMemories(self.cache)` externally (it
+   does not go through `fromDBChatMessage`).
+
+4. **`loadMemoriesMetadata` REMOVED / decision #7 SUPERSEDED.** The code now
+   supports ONLY the compact format (`metadata["memories"] =
+   {"permanentIds":[...], "shortTermIds":[...]}`). The old content-format
+   read-path branch (format detection + `setUserMemories` fallback via
+   `loadMemoriesMetadata`) is gone. **This supersedes locked decision #7**
+   ("read path detects format and handles both") — old-format messages now
+   render with no memories (silently). Mitigated by item 8 (cleanup script).
+   The §3.4 `getMemoriesByIds` spec text is unchanged except for the
+   `chatId`/`dataSource` routing params added in item 2.
+
+5. **`setUserMemories` is now the WRITE-PATH setter.** Previously it set
+   `userMemories` + re-pointed `metadata["memories"]` to content; now it takes
+   content whose entries carry `id` (via `keepId=True`), strips `id` into
+   `userMemories` (id-free, per the `SingleMemoryDict.id` "absent on injected
+   snapshots" invariant) AND extracts `permanentIds`/`shortTermIds` into
+   `metadata["memories"]` (the `CompactMemoryIdsDict` shape). The write path
+   `injectMemories` routes through it (short-term now converted with
+   `keepId=True` so ids are extractable). The READ path (`resolveMemories`)
+   still assigns `userMemories` directly WITHOUT touching metadata (deviation
+   #1 — the condense-write hazard fix; unchanged).
+
+6. **`CompactMemoryIdsDict` TypedDict added**
+   (`internal/bot/models/message_metadata.py`):
+   `{permanentIds: list[str], shortTermIds: list[str]}`.
+   `MetadataDict.memories` is now `CompactMemoryIdsDict | UserMemoriesDict`
+   (compact FIRST in the union — so `sqlToCustomType` tries the common compact
+   shape first and avoids a spurious ERROR log). This eliminated the
+   `# type: ignore[assignment]` annotations on the compact-metadata writes.
+
+7. **AST coverage guard updated**
+   (`tests/test_memory_resolution_coverage.py`): Check 1 now verifies each
+   `fromDBChatMessage(injectMemories=<truthy>)` render site passes a non-None
+   `cache=` keyword (instead of looking for an external `resolveMemories`
+   call). 9 sanity tests. Check 2 (ban `setUserMemories(metadata-derived)`)
+   unchanged; the message was de-staled.
+
+8. **New cleanup script:** `scripts/clear_old_format_memories.py` — one-time
+   maintenance that removes old-format `memories`
+   (`{"permanent":[...],"shortTerm":[...]}`) from `chat_messages.metadata`,
+   leaving new-format compact untouched. Mirrors
+   `scripts/clear_memory_refinement.py` (raw sqlite3, `--dry-run`, TOCTOU
+   warning). Regression tests at
+   `tests/scripts/test_clear_old_format_memories.py`.

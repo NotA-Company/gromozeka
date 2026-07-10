@@ -52,7 +52,7 @@ class CacheNamespace(StrEnum):
             in memory and can be reconstructed from the database.
         USERS: Namespace for user profile and preference data. Uses ON_SHUTDOWN
             persistence level to survive service restarts.
-        MEMORIES_BY_ID: Namespace for the memory_id -> SingleMemoryDict
+        MEMORIES: Namespace for the memory_id -> SingleMemoryDict
             resolution cache. Exists only in memory (MEMORY_ONLY persistence —
             cleared on process restart) and reconstructed on demand via the
             ``getMemoriesByIds`` repository batch read.
@@ -62,7 +62,7 @@ class CacheNamespace(StrEnum):
     CHAT_PERSISTENT = "chatPersistent"
     CHAT_USERS = "chatUsers"
     USERS = "users"
-    MEMORIES_BY_ID = "memoriesById"
+    MEMORIES = "memories"
     """Namespace for the memory_id -> SingleMemoryDict resolution cache.
 
     Keys memory UUID strings to their slimmed :class:`SingleMemoryDict` form.

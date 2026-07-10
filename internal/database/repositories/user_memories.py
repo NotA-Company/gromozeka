@@ -427,6 +427,9 @@ class UserMemoriesRepository(BaseRepository):
     async def getMemoriesByIds(
         self,
         memoryIds: List[str],
+        *,
+        chatId: Optional[int] = None,
+        dataSource: Optional[str] = None,
     ) -> List[UserMemoryDict]:
         """Fetch memories by UUID list, including soft-deleted rows.
 
@@ -434,10 +437,17 @@ class UserMemoriesRepository(BaseRepository):
         historical message that references a now-deleted memory must
         still resolve its content for LLM context reconstruction. UUIDs
         are globally unique, so no ``chatId``/``userId`` scoping is
-        needed (internal callers only).
+        needed in the WHERE clause (internal callers only); the
+        ``chatId`` / ``dataSource`` params are routing-only — they tell
+        :meth:`DatabaseManager.getProvider` which data source to query
+        on a cache miss. When both are ``None`` the default DB is used.
 
         Args:
             memoryIds: List of memory UUID hex strings.
+            chatId: Optional chat ID for data-source routing. ``None``
+                routes to the default source.
+            dataSource: Optional explicit data-source name for routing.
+                Takes precedence over ``chatId`` when both are set.
 
         Returns:
             List of :class:`UserMemoryDict` (including soft-deleted rows).
@@ -453,7 +463,7 @@ class UserMemoriesRepository(BaseRepository):
             key = f"id{i}"
             placeholders.append(f":{key}")
             fetchParams[key] = mid
-        sqlProvider = await self.manager.getProvider(chatId=None, readonly=True)
+        sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)
         rows = await sqlProvider.executeFetchAll(
             f"""
             SELECT {_SELECT_COLUMNS}

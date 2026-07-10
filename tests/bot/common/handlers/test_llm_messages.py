@@ -1328,8 +1328,9 @@ class TestHandleMentionCompactMemoryBypass:
     compact format that set ``userMemories`` to the raw
     ``{"permanentIds": [...], "shortTermIds": [...]}`` ID dict and
     ``formatForLLM`` rendered it verbatim as the ``userMemories`` block
-    (garbage). The fix routes through ``loadMemoriesMetadata`` (stash) +
-    ``resolveMemories`` (resolve IDs -> content) before the render.
+    (garbage). The fix sets ``metadata`` directly (the compact IDs are already
+    in the stored metadata) + ``resolveMemories`` (resolve IDs -> content)
+    before the render.
 
     This test drives the REAL ``handleMention`` with ``MEMORY_INJECTION_ENABLED
     = true``, a reply parent whose stored metadata carries compact IDs, and a

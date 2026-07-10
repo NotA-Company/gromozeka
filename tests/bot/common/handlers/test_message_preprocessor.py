@@ -817,10 +817,13 @@ class TestInjectMemoriesCompactFormat:
         assert stored["shortTermIds"] == ["short-1"]  # type: ignore[index]
 
     async def test_injectMemories_stripsIdFromInjectedContent(self, handler: MessagePreprocessorHandler) -> None:
-        """No entry in ``userMemories["permanent"]`` carries an ``id`` key.
+        """No entry in ``userMemories["permanent"]`` or ``["shortTerm"]`` carries an ``id`` key.
 
-        The uuid stays only in ``metadata["memories"]["permanentIds"]``. Regression
-        guard against leaking uuids into the LLM prompt via ``formatForLLM``.
+        The uuid stays only in ``metadata["memories"]["permanentIds"]`` /
+        ``["shortTermIds"]``. Regression guard against leaking uuids into the LLM
+        prompt via ``formatForLLM``. Both cohorts now flow through
+        :meth:`EnsuredMessage.setUserMemories`, which strips ``id`` from every
+        entry regardless of cohort.
 
         Args:
             handler: Preprocessor fixture.
@@ -836,8 +839,11 @@ class TestInjectMemoriesCompactFormat:
         assert msg.userMemories is not None
         for entry in msg.userMemories["permanent"]:
             assert "id" not in entry
-        # Content is still present (sanity).
+        for entry in msg.userMemories["shortTerm"]:
+            assert "id" not in entry
+        # Content is still present (sanity) for both cohorts.
         assert msg.userMemories["permanent"][0]["content"] == "vegan"
+        assert msg.userMemories["shortTerm"][0]["content"] == "just woke up"
 
     async def test_injectMemories_permanentIdsNonEmptyConfirmsKeepId(self, handler: MessagePreprocessorHandler) -> None:
         """``permanentIds`` is non-empty when a permanent memory carries ``id``.
@@ -909,3 +915,47 @@ class TestInjectMemoriesCompactFormat:
         assert msg.userMemories["shortTerm"][0]["content"] == "just woke up"
         # The slimmed short-term form has no memory_id (it's not SingleMemoryDict.id either).
         assert "memory_id" not in msg.userMemories["shortTerm"][0]
+
+    async def test_injectMemories_routesThroughSetUserMemories(self, handler: MessagePreprocessorHandler) -> None:
+        """``injectMemories`` produces exactly the ``setUserMemories`` contract.
+
+        Guards against regressing back to the old manual-assign path (which set
+        ``userMemories`` and ``metadata["memories"]`` independently). The
+        ``setUserMemories`` contract has two inseparable halves: (1) every
+        ``userMemories`` entry has ``id`` stripped, and (2) ``metadata["memories"]``
+        is exactly ``{"permanentIds": [...], "shortTermIds": [...]}`` with the ids
+        extracted from both cohorts. Asserting both together pins the single
+        write-path entry point down.
+
+        Args:
+            handler: Preprocessor fixture.
+        """
+        msg = self._wireForInjection(
+            handler,
+            permanentMemories=[
+                _permanentSingleMemory("perm-1", "vegan"),
+                _permanentSingleMemory("perm-2", "lives in Berlin"),
+            ],
+            dbMemories=[_dbUserMemory("short-1", "just woke up")],
+        )
+
+        await handler.injectMemories(msg)
+
+        # (1) Both cohorts in userMemories are id-stripped.
+        assert msg.userMemories is not None
+        for entry in msg.userMemories["permanent"]:
+            assert "id" not in entry
+        for entry in msg.userMemories["shortTerm"]:
+            assert "id" not in entry
+        # (2) metadata["memories"] is exactly the compact id form, extracted from
+        # both cohorts' `id` fields. The manual-assign path would have produced the
+        # same dict, but only setUserMemories guarantees both halves stay in sync
+        # (the old path read short-term ids from `memory_id` on the DB dict, not
+        # from `id` on the converted entry — a divergence that this test would
+        # catch if the converter's keepId flag were ever dropped).
+        stored = msg.metadata.get("memories")
+        assert stored is not None
+        assert stored == {  # type: ignore[comparison-overlap]
+            "permanentIds": ["perm-1", "perm-2"],
+            "shortTermIds": ["short-1"],
+        }

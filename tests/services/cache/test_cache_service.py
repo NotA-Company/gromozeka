@@ -888,7 +888,7 @@ class TestMemoriesByIdCache:
         original = testDatabase.userMemories.getMemoriesByIds
         with patch.object(UserMemoriesRepository, "getMemoriesByIds", new=AsyncMock(wraps=original)) as spy:
             resolved = await cacheService.getMemoriesByIds([idA, idB])
-            spy.assert_called_once_with([idA, idB])
+            spy.assert_called_once_with([idA, idB], chatId=None, dataSource=None)
 
         assert len(resolved) == 2
         entryA = resolved[idA]
@@ -927,7 +927,7 @@ class TestMemoriesByIdCache:
         # Mixed call: idA is a hit, idB is a miss. The spy must only see [idB].
         with patch.object(UserMemoriesRepository, "getMemoriesByIds", new=AsyncMock(wraps=original)) as spy:
             resolved = await cacheService.getMemoriesByIds([idA, idB])
-            spy.assert_called_once_with([idB])
+            spy.assert_called_once_with([idB], chatId=None, dataSource=None)
 
         entryA = resolved[idA]
         entryB = resolved[idB]
@@ -1037,6 +1037,27 @@ class TestMemoriesByIdCache:
             spy.assert_not_called()
 
         assert resolved == {}
+
+    async def test_routingParamsPassedToRepoOnMiss(self, testDatabase: Database, cacheService: CacheService) -> None:
+        """``chatId``/``dataSource`` are forwarded to the repo ``getMemoriesByIds`` on a cache miss.
+
+        Routing guard: the cache must pass the routing params through to the
+        repo so the DB query hits the correct data source.
+
+        Args:
+            testDatabase: Real in-memory database.
+            cacheService: Cache wired to *testDatabase*.
+        """
+        memoryId = await self._addMemory(testDatabase, content="route-me")
+
+        original = testDatabase.userMemories.getMemoriesByIds
+        with patch.object(UserMemoriesRepository, "getMemoriesByIds", new=AsyncMock(wraps=original)) as spy:
+            await cacheService.getMemoriesByIds([memoryId], chatId=42, dataSource="custom-src")
+
+        spy.assert_awaited_once()
+        callArgs = spy.call_args
+        assert callArgs.kwargs.get("chatId") == 42
+        assert callArgs.kwargs.get("dataSource") == "custom-src"
 
 
 if __name__ == "__main__":

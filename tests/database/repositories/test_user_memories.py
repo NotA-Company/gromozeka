@@ -27,6 +27,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from internal.database import Database
+from internal.database.manager import DatabaseManager
 from internal.database.models import MemoryType, UserMemorySource
 from internal.database.providers.sqlite3 import _SQLITE_VEC_AVAILABLE, SQLite3Provider
 from internal.database.repositories.user_memories import UserMemoryDict
@@ -1044,3 +1045,31 @@ class TestUserMemoriesVectorLayer:
         result = await testDatabase.userMemories.getMemoriesByIds([idA, missingId])
         assert len(result) == 1
         assert result[0]["memory_id"] == idA
+
+    async def test_getMemoriesByIds_routesChatIdToProvider(self, testDatabase: Database) -> None:
+        """``getMemoriesByIds`` passes ``chatId``/``dataSource`` through to ``getProvider``.
+
+        Routing guard: the new ``chatId`` / ``dataSource`` params must reach
+        ``self.manager.getProvider`` so the by-id query hits the correct data
+        source on a multi-DB deployment. A simple spy assertion is sufficient —
+        the default-source fallback is exercised by every other test here.
+        """
+        memoryId = await self._add(testDatabase, content="route-me", threadId=5)
+        original = testDatabase.manager.getProvider
+
+        # DatabaseManager uses __slots__ (getProvider is not a slot), so
+        # instance-level patch.object fails with AttributeError. Patch the
+        # CLASS instead; the AsyncMock wraps the bound method so the real
+        # provider is still called.
+        with patch.object(
+            DatabaseManager,
+            "getProvider",
+            new=AsyncMock(wraps=original),
+        ) as spy:
+            await testDatabase.userMemories.getMemoriesByIds([memoryId], chatId=CHAT_ID, dataSource="custom-src")
+
+        # The spy must have been called with the chatId and dataSource kwargs.
+        assert spy.call_count >= 1
+        lastCall = spy.call_args
+        assert lastCall.kwargs.get("chatId") == CHAT_ID
+        assert lastCall.kwargs.get("dataSource") == "custom-src"

@@ -54,6 +54,23 @@ class UserMemoriesDict(TypedDict):
     shortTerm: list[SingleMemoryDict]
 
 
+class CompactMemoryIdsDict(TypedDict):
+    """Compact per-message memory ID lists (the compact storage form).
+
+    The memory-compaction feature stores memory IDs (not full content) per
+    message under ``metadata["memories"]``. The read path
+    (:meth:`EnsuredMessage.resolveMemories`) resolves these IDs to content
+    via the cache at render time.
+
+    Attributes:
+        permanentIds: UUID hex strings of permanent memories.
+        shortTermIds: UUID hex strings of short-term memories.
+    """
+
+    permanentIds: list[str]
+    shortTermIds: list[str]
+
+
 class CondensingDict(TypedDict):
     """TypedDict for condensed thread information.
 
@@ -83,7 +100,10 @@ class MetadataDict(TypedDict, total=False):
         forwardedFrom: Dictionary containing forwarding information
         messagePrefix: Prefix text prepended to the message
         usedTools: List of tool usage records from AI interactions
-        memories: User memories dictionary
+        memories: User memories — either the content form
+            (:class:`UserMemoriesDict`, legacy/pre-compaction) or the compact
+            ID form (:class:`CompactMemoryIdsDict`, post-compaction). The read
+            path detects the shape at render time.
     """
 
     condensedThread: List[CondensingDict]
@@ -91,7 +111,7 @@ class MetadataDict(TypedDict, total=False):
     forwardedFrom: Dict[str, Any]
     messagePrefix: str
     usedTools: List[Dict[str, Any]]
-    memories: UserMemoriesDict
+    memories: CompactMemoryIdsDict
 
 
 def convertDBMemoryToSingleMemoryDict(dbMemory: UserMemoryDict, *, keepId: bool = False) -> SingleMemoryDict:

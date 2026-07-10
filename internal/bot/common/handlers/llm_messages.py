@@ -719,14 +719,9 @@ class LLMMessageHandler(BaseBotHandler):
                                 try:
                                     metadata = json.loads(storedReply["metadata"])
                                     ensuredReply.metadata = metadata
-                                    # Stash the raw memories metadata (compact IDs or old
-                                    # content) the same way fromDBChatMessage does, so the
-                                    # compact format is resolved later rather than rendered
-                                    # verbatim as the userMemories block.
-                                    ensuredReply.loadMemoriesMetadata(metadata.get("memories"))
                                 except Exception:
                                     pass
-                            # Resolve any stashed compact IDs to content before rendering (no-op if none stashed).
+                            # Resolve compact IDs from stored metadata before rendering (no-op if absent or resolved).
                             await ensuredReply.resolveMemories(self.cache)
 
                         reqMessages.append(
@@ -749,10 +744,8 @@ class LLMMessageHandler(BaseBotHandler):
                             )
                         else:
                             eStoredReply = await EnsuredMessage.fromDBChatMessage(
-                                storedReply, self.db, injectMemories=injectMemories
+                                storedReply, self.db, injectMemories=injectMemories, cache=self.cache
                             )
-                            if injectMemories:
-                                await eStoredReply.resolveMemories(self.cache)
                             reqMessages.append(
                                 await eStoredReply.toModelMessage(
                                     self.db,
@@ -887,9 +880,9 @@ class LLMMessageHandler(BaseBotHandler):
                     if storedMsg["message_id"] == ensuredMessage.messageId:
                         # Skip current message from context
                         continue
-                    eMsg = await EnsuredMessage.fromDBChatMessage(storedMsg, self.db, injectMemories=injectMemories)
-                    if injectMemories:
-                        await eMsg.resolveMemories(self.cache)
+                    eMsg = await EnsuredMessage.fromDBChatMessage(
+                        storedMsg, self.db, injectMemories=injectMemories, cache=self.cache
+                    )
 
                     # We need to use `reversed` as deque.extendleft will add messages in reversed order
                     # I assume, that it will just call appendleft for each item in the list

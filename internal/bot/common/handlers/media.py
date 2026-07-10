@@ -650,9 +650,9 @@ class MediaHandler(BaseBotHandler):
                     limit=10,
                 )
             ):
-                eMsg = await EnsuredMessage.fromDBChatMessage(msg, self.db, injectMemories=memoriesEnabled)
-                if memoriesEnabled:
-                    await eMsg.resolveMemories(self.cache)
+                eMsg = await EnsuredMessage.fromDBChatMessage(
+                    msg, self.db, injectMemories=memoriesEnabled, cache=self.cache
+                )
                 latestMessages.append(
                     await eMsg.toModelMessage(
                         self.db,

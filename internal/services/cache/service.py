@@ -282,7 +282,7 @@ class CacheService:
                 CacheNamespace.USERS: LRUCache[int, HCUserCacheDict](
                     self.maxCacheSize, keyType=int, valueType=HCUserCacheDict
                 ),
-                CacheNamespace.MEMORIES_BY_ID: LRUCache[str, Optional[SingleMemoryDict]](
+                CacheNamespace.MEMORIES: LRUCache[str, Optional[SingleMemoryDict]](
                     self.maxCacheSize,
                     keyType=str,
                     valueType=Optional[SingleMemoryDict],  # pyright: ignore[reportArgumentType]
@@ -296,7 +296,7 @@ class CacheService:
                 CacheNamespace.CHAT_PERSISTENT: set(),
                 CacheNamespace.CHAT_USERS: set(),
                 CacheNamespace.USERS: set(),
-                CacheNamespace.MEMORIES_BY_ID: set(),
+                CacheNamespace.MEMORIES: set(),
             }
             """Dictionary tracking keys that have been modified and need persistence."""
 
@@ -374,19 +374,19 @@ class CacheService:
         return self._caches[CacheNamespace.CHAT_PERSISTENT]  # pyright: ignore[reportReturnType]
 
     @property
-    def memoriesById(self) -> LRUCache[str, Optional[SingleMemoryDict]]:
-        """Access memoriesById namespace.
+    def memories(self) -> LRUCache[str, Optional[SingleMemoryDict]]:
+        """Access memories namespace.
 
-        Provides direct access to the MEMORIES_BY_ID namespace cache which maps
+        Provides direct access to the MEMORIES namespace cache which maps
         memory UUID strings to their resolved :class:`SingleMemoryDict` form (or
         ``None`` for IDs not found in the DB — negative-cached to avoid repeat
         queries). MEMORY_ONLY persistence: never written to disk, cleared on
         process restart.
 
         Returns:
-            The LRU cache for the MEMORIES_BY_ID namespace
+            The LRU cache for the MEMORIES namespace
         """
-        return self._caches[CacheNamespace.MEMORIES_BY_ID]  # pyright: ignore[reportReturnType]
+        return self._caches[CacheNamespace.MEMORIES]  # pyright: ignore[reportReturnType]
 
     async def injectDatabase(self, database: "Database") -> None:
         """Inject database wrapper for persistence.
@@ -971,10 +971,16 @@ class CacheService:
         del userCache["permanentMemories"][threadId]
         self.chatUsers.set(userKey, userCache)
 
-    async def getMemoriesByIds(self, memoryIds: List[str]) -> Dict[str, Optional[SingleMemoryDict]]:
+    async def getMemoriesByIds(
+        self,
+        memoryIds: List[str],
+        *,
+        chatId: Optional[int] = None,
+        dataSource: Optional[str] = None,
+    ) -> Dict[str, Optional[SingleMemoryDict]]:
         """Resolve memory IDs to their SingleMemoryDict form, cache-aside.
 
-        Cache-first: each requested ID is looked up in the MEMORIES_BY_ID
+        Cache-first: each requested ID is looked up in the MEMORIES
         namespace. Misses are batch-queried via
         ``db.userMemories.getMemoriesByIds(missingIds)``, converted to
         :class:`SingleMemoryDict` via :func:`convertDBMemoryToSingleMemoryDict`
@@ -991,6 +997,12 @@ class CacheService:
         IDs not found in the DB (a missing ID is cached as ``None`` so a
         repeated miss does not re-query — negative caching).
 
+        The cache key is the memory UUID (``mid``) — globally unique per DB —
+        so ``chatId`` / ``dataSource`` are routing-only: they tell the repo
+        which data source to query on a miss. A cache hit returns the correct
+        content regardless of which source was originally queried. When both
+        are ``None`` the default DB is queried.
+
         No invalidation method exists for this namespace: soft-delete preserves
         content (so a cached entry stays valid), ``addMemory`` does not
         invalidate a not-yet-cached entry, and process restart clears the
@@ -998,6 +1010,10 @@ class CacheService:
 
         Args:
             memoryIds: Memory UUID hex strings to resolve.
+            chatId: Optional chat ID for data-source routing on a cache miss.
+                ``None`` routes to the default source.
+            dataSource: Optional explicit data-source name for routing; takes
+                precedence over ``chatId`` when both are set.
 
         Returns:
             ``Dict[str, Optional[SingleMemoryDict]]`` keyed by the requested
@@ -1015,10 +1031,10 @@ class CacheService:
         # Partition requested IDs into cache hits and misses. Membership uses
         # the underlying OrderedDict ``in`` (no LRU reordering); the return-path
         # ``.get`` below touches LRU order on hits.
-        missingIds = [mid for mid in memoryIds if mid not in self.memoriesById]
+        missingIds = [mid for mid in memoryIds if mid not in self.memories]
 
         if missingIds:
-            dbRows = await self.database.userMemories.getMemoriesByIds(missingIds)
+            dbRows = await self.database.userMemories.getMemoriesByIds(missingIds, chatId=chatId, dataSource=dataSource)
             resolvedBy: Dict[str, SingleMemoryDict] = {
                 row["memory_id"]: convertDBMemoryToSingleMemoryDict(row) for row in dbRows
             }
@@ -1026,9 +1042,9 @@ class CacheService:
             # found in the DB (negative caching) so a repeated miss does not
             # re-query.
             for mid in missingIds:
-                self.memoriesById.set(mid, resolvedBy.get(mid, None))
+                self.memories.set(mid, resolvedBy.get(mid, None))
 
-        return {mid: self.memoriesById.get(mid, None) for mid in memoryIds}
+        return {mid: self.memories.get(mid, None) for mid in memoryIds}
 
     # ## ChatUser UserInfo (chat_users row)
 

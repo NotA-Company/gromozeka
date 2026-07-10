@@ -115,10 +115,13 @@ dict keys are snake_case to match columns.
 - **Reads:** `getPermanentMemories` (cross-thread `NULL` + this-thread
   permanent, newest-updated-first, capped at `PERMANENT_INJECTION_CAP`),
   `getLatestMemories` (ephemeral-only, newest-updated-first, capped at
-  `EPHEMERAL_RETRIEVAL_LIMIT`), `getMemoriesByIds(memoryIds: List[str])`
-  (the single read path that does NOT filter `deleted_at` — resolves
-  UUIDs to content for historical message reconstruction; no
-  `chatId`/`userId` scoping since UUIDs are globally unique; routes to the
+  `EPHEMERAL_RETRIEVAL_LIMIT`),
+  `getMemoriesByIds(memoryIds: List[str], *, chatId: Optional[int] = None,
+  dataSource: Optional[str] = None)` (the single read path that does NOT
+  filter `deleted_at` — resolves UUIDs to content for historical message
+  reconstruction; no `chatId`/`userId` scoping in the WHERE clause since UUIDs
+  are globally unique; `chatId`/`dataSource` are routing-only — forwarded to
+  `getProvider(chatId=..., dataSource=..., readonly=True)`; default `None` →
   default DB). Every live read method adds `AND deleted_at IS NULL` so
   soft-deleted rows are skipped on the live injection/search path.
 - **Search:** `searchMemories` — filter-only (`queryEmbedding is None`, plain
@@ -204,7 +207,7 @@ Freeform categorisation beyond these is handled by the JSON `tags` column.
   permanent + ephemeral at message-arrival time. Since the memory-compaction-v1
   change, the message's `metadata["memories"]` stores **compact memory IDs**
   (`{"permanentIds": [...], "shortTermIds": [...]}`) rather than full content,
-  and the read path resolves IDs → content via the `MEMORIES_BY_ID` cache at
+  and the read path resolves IDs → content via the `MEMORIES` cache at
   render time (see "Injection"). The current-turn `userMemories` still carries
   resolved content (so the LLM sees it immediately). `formatForLLM` emits the
   resolved block under JSON key `userMemories`.
@@ -335,24 +338,19 @@ refactoring — there is no longer a `<user-memories>` system-message block.
 4. The ephemeral rows are slimmed to `SingleMemoryDict` via
    `convertDBMemoryToSingleMemoryDict` (drops DB plumbing keys, keeps
    `type`/`content`/`tags`/`score`).
-5. **Split userMemories (content) from metadata["memories"] (compact IDs).**
-   This deliberately bypasses `setUserMemories` (which would mirror content
-   into `metadata["memories"]`) and assigns the two fields separately:
-   - `permanentIds = [m["id"] for m in permanentMemories]`,
-     `shortTermIds = [m["memory_id"] for m in memories]` (extracted before the
-     slim conversion, since the slim form drops `memory_id`). The permanent
-     cache loader uses `convertDBMemoryToSingleMemoryDict(m, keepId=True)` so
-     each entry carries its `id` — needed here to build `permanentIds`.
-   - `permanentContent` strips `id` from each permanent entry (a leaked uuid
-     adds tokens for no chat-time benefit and violates `SingleMemoryDict.id`'s
-     "absent on injected snapshots" invariant — the cache keeps `id`, the
-     injected content does not).
-   - `ensuredMessage.userMemories = {"permanent": permanentContent,
-     "shortTerm": shortTermMemories}` — resolved content for the CURRENT turn's
-     LLM context.
-   - `ensuredMessage.metadata["memories"] = {"permanentIds": [...],
-     "shortTermIds": [...]}` — the compact ID shape that gets saved into
-     `chat_messages.metadata`.
+5. **Route the write through `setUserMemories` (the write-path setter).**
+   Both permanent and short-term memories are converted via
+   `convertDBMemoryToSingleMemoryDict(..., keepId=True)` so each entry carries
+   its `id` (the short-term conversion switched to `keepId=True` in the
+   refactor so ids are extractable). `setUserMemories` then performs BOTH
+   halves of the write contract: it strips `id` from each entry into
+   `userMemories` (id-free content for the current turn's LLM context,
+   honouring `SingleMemoryDict.id`'s "absent on injected snapshots" invariant)
+   AND extracts `permanentIds`/`shortTermIds` into `metadata["memories"]` (the
+   compact `CompactMemoryIdsDict` shape that gets saved into
+   `chat_messages.metadata`). The read path (`resolveMemories`) does NOT use
+   `setUserMemories` — it assigns `userMemories` directly without touching
+   metadata (deviation #1, see "Read-path resolution").
 
 Because the metadata assignment runs **before** `saveChatMessage`, the compact
 IDs are persisted into the chat message's `metadata` JSON and **ride per
@@ -363,54 +361,65 @@ message**. This is the memory-compaction-v1 change (see
 byte-identical across a whole thread), each message now carries just the UUID
 lists, and the read path resolves IDs → content via a cache at render time.
 
+> **TypedDict note:** the compact ID shape is typed as
+> `CompactMemoryIdsDict` (`internal/bot/models/message_metadata.py`) —
+> `{permanentIds: list[str], shortTermIds: list[str]}`. `MetadataDict.memories`
+> is `CompactMemoryIdsDict | UserMemoriesDict` with **compact first** in the
+> union, so `sqlToCustomType` tries the common compact shape first and avoids
+> a spurious ERROR log. This eliminated the `# type: ignore[assignment]`
+> annotations that previously guarded the compact-metadata writes.
+
 ### Read-path resolution (compact IDs → content)
 
 When a message is later loaded into an LLM turn (thread context, mention,
-random, reply), `EnsuredMessage.fromDBChatMessage(..., injectMemories=True)`
-does NOT resolve the IDs inline (resolving there would import `CacheService`,
-creating a circular import). Instead it stashes the raw
-`metadata["memories"]` via `EnsuredMessage.loadMemoriesMetadata`, which detects
-the format:
+random, reply), `EnsuredMessage.fromDBChatMessage(data, db, *,
+injectMemories=True, cache=self.cache)` resolves the compact IDs **inline**
+when a `cache` is provided. `fromDBChatMessage` gained a `cache:
+Optional[CacheService]` keyword in the refactor; when `injectMemories and
+cache is not None`, it calls `await ensuredMessage.resolveMemories(cache)`
+before returning, populating `userMemories` with the resolved content. When
+`cache is None`, `userMemories` is left unset — the caller resolves later (or
+does not need memories).
 
-- **Compact format** (`permanentIds`/`shortTermIds` present) — leaves
-  `userMemories` unset; the IDs stay stashed in `metadata["memories"]` for
-  later resolution.
-- **Old content format** (`{"permanent": [...], "shortTerm": [...]}`) —
-  applied via `setUserMemories` as before (backward compat; no backfill of old
-  messages).
-- `None` / non-dict — a no-op (regression guard against the old
-  `"permanentIds" in None` `TypeError`).
+Only the **compact format** (`{"permanentIds": [...], "shortTermIds": [...]}`)
+is supported. The old content-format read-path branch — `loadMemoriesMetadata`
+(format detection + `setUserMemories` fallback) — was **removed**. This
+**supersedes locked decision #7** ("read path detects format and handles
+both"): old-format messages (`{"permanent": [...], "shortTerm": [...]}`)
+now render with no memories (and log a conversion warning until cleared by
+the cleanup script). A one-time cleanup script
+([`scripts/clear_old_format_memories.py`](../../../scripts/clear_old_format_memories.py))
+removes stale old-format `memories` from `chat_messages.metadata` so the
+stored payload does not carry dead data.
 
-Every read-path consumer that then renders the message for the LLM calls
-`await ensuredMessage.resolveMemories(self.cache)` **before**
-`formatForLLM` / `toModelMessage` / `toModelMessageList`. `resolveMemories`
-is a no-op when `userMemories` is already populated (old content format, or
-the current-turn write path that set content directly); otherwise it resolves
-all `permanentIds` + `shortTermIds` in one `cache.getMemoriesByIds(...)` call
-and deep-copies the resolved content into `userMemories`.
-
-The four render sites (gated on each site's `injectMemories` condition —
-typically `MEMORY_INJECTION_ENABLED`) are:
-`getThreadByMessageForLLM` (`base.py` — three rendered `eMessage` sites; the
-`eRootMessage` is built but never rendered so it needs no resolution),
-`handleMention` (both branches in `llm_messages.py`, including the text-reply
-bypass that was rewritten from a `setUserMemories(metadata.get("memories"))`
-bypass to `loadMemoriesMetadata` + `resolveMemories`), `handleRandomMessage`
-(`llm_messages.py`), and the image-prompt fallback in `draw_command`
-(`media.py`). A structural AST guard
+The six render sites that pass `cache=self.cache` (gated on each site's
+`injectMemories` condition — typically `MEMORY_INJECTION_ENABLED`) are:
+`getThreadByMessageForLLM` (`base.py` — three rendered `eMessage` sites),
+`handleMention` non-text branch (`llm_messages.py`),
+`handleRandomMessage` (`llm_messages.py`), and the image-prompt fallback in
+`draw_command` (`media.py`). The `eRootMessage` (`base.py`) is built but
+never rendered, so it intentionally passes `cache=None` (no resolution
+needed). The `handleMention` **text-reply** branch (`llm_messages.py`)
+constructs its `EnsuredMessage` without `fromDBChatMessage` — it loads
+`metadata` directly from the stored reply and calls
+`await ensuredReply.resolveMemories(self.cache)` before render. A structural
+AST guard
 ([`tests/test_memory_resolution_coverage.py`](../../../tests/test_memory_resolution_coverage.py))
-enforces that every future `fromDBChatMessage(injectMemories=<not literal
-False>)` render site is followed by `resolveMemories` before render, and bans
-the `setUserMemories(metadata-derived)` bypass shape.
+enforces that every future `fromDBChatMessage(injectMemories=<truthy>)`
+render site passes a non-None `cache=` keyword, and bans the
+`setUserMemories(metadata-derived)` bypass shape.
 
-> **Two implementation deviations from the plan (recorded in ADR-017 and the
+> **Implementation deviations from the plan (recorded in ADR-017 and the
 > plan's status note):**
 > 1. `resolveMemories` populates `self.userMemories` ONLY and does NOT re-point
->    `metadata["memories"]` to resolved content. The condense branch of
->    `getThreadByMessageForLLM` writes `eRootMessage.metadata` (whole dict)
->    back to DB — re-pointing to resolved content would persist content over
->    the compact IDs for condensed-thread root messages, defeating compaction.
-> 2. The by-id resolution cache (`MEMORIES_BY_ID` / `getMemoriesByIds`) stores
+>    `metadata["memories"]` to resolved content (the condense-write hazard
+>    fix). The condense branch of `getThreadByMessageForLLM` writes
+>    `eRootMessage.metadata` (whole dict) back to DB — re-pointing to resolved
+>    content would persist content over the compact IDs for condensed-thread
+>    root messages, defeating compaction. This is why the write path routes
+>    through `setUserMemories` (which re-points metadata to compact IDs) but
+>    the read path assigns `userMemories` directly without touching metadata.
+> 2. The by-id resolution cache (`MEMORIES` / `getMemoriesByIds`) stores
 >    entries with `keepId=False` (the plan said `keepId=True`). The cache is
 >    the read-path resolver: entries are looked up by dict key (the key IS the
 >    id) and `formatForLLM` renders the content verbatim, so storing `id`
@@ -450,21 +459,28 @@ The old `getChatUserData` / `setChatUserData` / `unsetChatUserData` /
 **deleted**; `invalidateChatUser(chatId, userId)` still exists but only drops
 `userInfo` and intentionally preserves the permanent-memories cache.
 
-### By-id resolution cache (`MEMORIES_BY_ID`)
+### By-id resolution cache (`MEMORIES`)
 
 The read-path resolver (memory-compaction-v1). `CacheService.getMemoriesByIds(
-memoryIds: List[str]) -> Dict[str, Optional[SingleMemoryDict]]` is a
-cache-aside lookup in the `CacheNamespace.MEMORIES_BY_ID` namespace
-(MEMORY_ONLY persistence — never written to disk, cleared on process restart):
+memoryIds: List[str], *, chatId: Optional[int] = None, dataSource: Optional[str] = None
+) -> Dict[str, Optional[SingleMemoryDict]]` is a cache-aside lookup in the
+`CacheNamespace.MEMORIES` namespace (MEMORY_ONLY persistence — never written
+to disk, cleared on process restart):
 
 - Each requested ID is looked up in the namespace; misses are batch-queried
-  via `db.userMemories.getMemoriesByIds(missingIds)` (which deliberately has
-  NO `deleted_at` filter, so a soft-deleted memory still resolves to its
-  preserved content — the whole point of soft-delete), converted via
-  `convertDBMemoryToSingleMemoryDict` with the default `keepId=False`, and
-  populated back into the cache.
+  via `db.userMemories.getMemoriesByIds(missingIds, chatId=chatId,
+  dataSource=dataSource)` (which deliberately has NO `deleted_at` filter, so
+  a soft-deleted memory still resolves to its preserved content — the whole
+  point of soft-delete), converted via `convertDBMemoryToSingleMemoryDict`
+  with the default `keepId=False`, and populated back into the cache.
 - IDs not found in the DB are **negative-cached as `None`** so a repeated miss
   does not re-query.
+- `chatId`/`dataSource` are **routing-only**: they tell the repo
+  `getProvider(chatId=..., dataSource=..., readonly=True)` which data source
+  to query on a miss. The cache key is the memory UUID (globally unique per
+  DB), so a cache hit returns the correct content regardless of which source
+  was originally queried. When both are `None` (the default), the default DB
+  is queried. `resolveMemories` passes `chatId=self.recipient.id`.
 - **No invalidation method exists** for this namespace: soft-delete preserves
   content (so a cached entry stays valid — there is no `updateMemory` to
   invalidate), `addMemory` does not invalidate a not-yet-cached entry, and

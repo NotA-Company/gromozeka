@@ -27,8 +27,9 @@ from internal.bot.models import (
     SingleMemoryDict,
 )
 from internal.database import Database
-from internal.database.models import MemoryType
+from internal.database.models import ChatMessageDict, MemoryType, MessageCategory
 from internal.database.utils import DEFAULT_THREAD_ID
+from internal.models import MessageId
 
 
 def _makeEnsuredMessage() -> EnsuredMessage:
@@ -145,81 +146,70 @@ def _singleMemory(
 
 
 class TestMemoriesResolution:
-    """Tests for the compact memory-ID format stash/resolve methods.
+    """Tests for the compact memory-ID format resolution.
 
-    Phase 3a of the memory-compaction-v1 plan: ``loadMemoriesMetadata`` stashes
-    the compact ID format into ``metadata["memories"]`` without resolving (leaving
-    ``userMemories=None``), and ``resolveMemories`` resolves IDs -> content via
-    the cache WITHOUT re-pointing ``metadata["memories"]`` (the condense write
-    path persists the whole metadata dict, so re-pointing to content would
-    defeat compaction).
+    After the refactor: ``setUserMemories`` is the WRITE-PATH setter (strips
+    ``id`` from content, sets compact IDs in metadata), and ``resolveMemories``
+    resolves compact IDs -> content via the cache WITHOUT re-pointing
+    ``metadata["memories"]`` (the condense write path persists the whole
+    metadata dict, so re-pointing to content would defeat compaction).
+    ``metadata["memories"]`` is already the stored compact IDs — no
+    transformation is needed before ``resolveMemories``.
     """
 
-    # --- loadMemoriesMetadata ---
+    # --- setUserMemories (write-path contract) ---
 
-    def test_loadMemoriesMetadata_compactFormat_stashesIdsLeavesUserMemoriesNone(self) -> None:
-        """Compact format (``permanentIds``/``shortTermIds``) stashes raw IDs and leaves ``userMemories`` unset.
+    def test_setUserMemories_stripsIdFromContent_setsCompactIdsInMetadata(self) -> None:
+        """Write-path setter: userMemories has entries WITHOUT id; metadata carries compact IDs.
 
-        Regression guard for the read-path contract: the compact dict must be
-        stored verbatim in ``metadata["memories"]`` (resolved later by
-        ``resolveMemories``), and ``userMemories`` must remain ``None``.
+        Passing ``{"permanent": [{"id":"a",...}], "shortTerm": [{"id":"b",...}]}``
+        sets ``userMemories`` with ``id`` stripped from each entry and
+        ``metadata["memories"]`` to ``{"permanentIds":["a"],"shortTermIds":["b"]}``.
         """
         msg = _makeEnsuredMessage()
-        raw = {"permanentIds": ["a"], "shortTermIds": ["b"]}
-
-        msg.loadMemoriesMetadata(raw)  # type: ignore[arg-type]
-
-        assert msg.userMemories is None
-        assert msg.metadata.get("memories") == {"permanentIds": ["a"], "shortTermIds": ["b"]}
-
-    def test_loadMemoriesMetadata_compactFormat_detectsOnlyOneKey(self) -> None:
-        """A compact dict with only ``permanentIds`` (no ``shortTermIds``) is still detected as compact."""
-        msg = _makeEnsuredMessage()
-
-        msg.loadMemoriesMetadata({"permanentIds": ["x"]})  # type: ignore[arg-type]
-
-        assert msg.userMemories is None
-        assert msg.metadata.get("memories") == {"permanentIds": ["x"]}
-
-    def test_loadMemoriesMetadata_oldContentFormat_appliesSetUserMemories(self) -> None:
-        """Old content format (``permanent``/``shortTerm``) is applied via ``setUserMemories``.
-
-        ``setUserMemories`` deep-copies and re-points both ``userMemories`` and
-        ``metadata["memories"]`` to the content, matching the pre-compaction behaviour.
-        """
-        msg = _makeEnsuredMessage()
-        content = {
-            "permanent": [_singleMemory("bio fact")],
-            "shortTerm": [_singleMemory("recent fact")],
-        }
-
-        msg.loadMemoriesMetadata(content)  # type: ignore[arg-type]
+        msg.setUserMemories(
+            {
+                "permanent": [
+                    {"id": "a", "type": MemoryType.FACT, "content": "perm fact", "tags": ["t"]},
+                ],
+                "shortTerm": [
+                    {"id": "b", "type": MemoryType.PREFERENCE, "content": "short fact", "tags": ["t"]},
+                ],
+            }
+        )
 
         assert msg.userMemories is not None
-        assert msg.userMemories["permanent"][0]["content"] == "bio fact"
-        assert msg.metadata.get("memories") is msg.userMemories
+        # id stripped from content
+        assert "id" not in msg.userMemories["permanent"][0]
+        assert msg.userMemories["permanent"][0]["content"] == "perm fact"
+        assert "id" not in msg.userMemories["shortTerm"][0]
+        assert msg.userMemories["shortTerm"][0]["content"] == "short fact"
+        # compact IDs in metadata
+        assert msg.metadata.get("memories") == {"permanentIds": ["a"], "shortTermIds": ["b"]}
 
-    def test_loadMemoriesMetadata_none_isNoOp(self) -> None:
-        """``None`` is a no-op (no TypeError).
+    def test_setUserMemories_entriesLackingId_gracefullyIncludedInContentNoIdInMetadata(self) -> None:
+        """Entries without ``id`` are included in userMemories but contribute no id to metadata.
 
-        Regression guard: bypass sites that did ``metadata.get("memories")`` can
-        pass ``None``; the old ``"permanentIds" in None`` would raise ``TypeError``.
+        Regression guard: a malformed entry (no ``id`` key) must not crash the
+        id-extraction and must still appear in the content form.
         """
         msg = _makeEnsuredMessage()
+        msg.setUserMemories(
+            {
+                "permanent": [
+                    {"id": "a", "type": MemoryType.FACT, "content": "has-id", "tags": ["t"]},
+                    {"type": MemoryType.FACT, "content": "no-id", "tags": ["t"]},
+                ],
+                "shortTerm": [],
+            }
+        )
 
-        msg.loadMemoriesMetadata(None)
-
-        assert msg.userMemories is None
-        assert "memories" not in msg.metadata
-
-    def test_loadMemoriesMetadata_nonDict_isNoOp(self) -> None:
-        """A non-dict value (e.g. a stray string) is a no-op."""
-        msg = _makeEnsuredMessage()
-
-        msg.loadMemoriesMetadata("not a dict")  # type: ignore[arg-type]
-
-        assert msg.userMemories is None
-        assert "memories" not in msg.metadata
+        assert msg.userMemories is not None
+        assert len(msg.userMemories["permanent"]) == 2
+        assert msg.userMemories["permanent"][0]["content"] == "has-id"
+        assert msg.userMemories["permanent"][1]["content"] == "no-id"
+        # Only the entry with id contributes to compact IDs
+        assert msg.metadata.get("memories") == {"permanentIds": ["a"], "shortTermIds": []}
 
     # --- resolveMemories ---
 
@@ -232,7 +222,7 @@ class TestMemoriesResolution:
         the condense write persist content over compact IDs.
         """
         msg = _makeEnsuredMessage()
-        msg.loadMemoriesMetadata({"permanentIds": ["a"], "shortTermIds": ["b"]})  # type: ignore[arg-type]
+        msg.metadata["memories"] = {"permanentIds": ["a"], "shortTermIds": ["b"]}  # type: ignore[assignment]
         rawBefore = msg.metadata.get("memories")
         cache = Mock()
         cache.getMemoriesByIds = AsyncMock(
@@ -288,7 +278,7 @@ class TestMemoriesResolution:
     async def test_resolveMemories_noOpOnSecondCall(self) -> None:
         """A second ``resolveMemories`` call is a no-op (``userMemories`` already set)."""
         msg = _makeEnsuredMessage()
-        msg.loadMemoriesMetadata({"permanentIds": ["a"], "shortTermIds": []})  # type: ignore[arg-type]
+        msg.metadata["memories"] = {"permanentIds": ["a"], "shortTermIds": []}  # type: ignore[assignment]
         cache = Mock()
         cache.getMemoriesByIds = AsyncMock(return_value={"a": _singleMemory("perm")})
 
@@ -308,7 +298,7 @@ class TestMemoriesResolution:
         originalEntry = _singleMemory("original")
         cache = Mock()
         cache.getMemoriesByIds = AsyncMock(return_value={"a": originalEntry})
-        msg.loadMemoriesMetadata({"permanentIds": ["a"], "shortTermIds": []})  # type: ignore[arg-type]
+        msg.metadata["memories"] = {"permanentIds": ["a"], "shortTermIds": []}  # type: ignore[assignment]
 
         await msg.resolveMemories(cache)  # type: ignore[arg-type]
 
@@ -324,7 +314,7 @@ class TestMemoriesResolution:
         SingleMemoryDict.id "absent on injected snapshots" invariant).
         """
         msg = _makeEnsuredMessage()
-        msg.loadMemoriesMetadata({"permanentIds": ["a"], "shortTermIds": ["b"]})  # type: ignore[arg-type]
+        msg.metadata["memories"] = {"permanentIds": ["a"], "shortTermIds": ["b"]}  # type: ignore[assignment]
         cache = Mock()
         cache.getMemoriesByIds = AsyncMock(return_value={"a": _singleMemory("perm"), "b": _singleMemory("short")})
 
@@ -337,7 +327,7 @@ class TestMemoriesResolution:
     async def test_resolveMemories_dropsMissingIds(self) -> None:
         """An ID that resolves to ``None`` (not in DB) is silently dropped from the cohort."""
         msg = _makeEnsuredMessage()
-        msg.loadMemoriesMetadata({"permanentIds": ["a", "missing"], "shortTermIds": []})  # type: ignore[arg-type]
+        msg.metadata["memories"] = {"permanentIds": ["a", "missing"], "shortTermIds": []}  # type: ignore[assignment]
         cache = Mock()
         cache.getMemoriesByIds = AsyncMock(return_value={"a": _singleMemory("perm")})
 
@@ -346,6 +336,23 @@ class TestMemoriesResolution:
         assert msg.userMemories is not None
         assert len(msg.userMemories["permanent"]) == 1
         assert msg.userMemories["permanent"][0]["content"] == "perm"
+
+    async def test_resolveMemories_passesChatIdToCache(self) -> None:
+        """``resolveMemories`` passes the message's ``recipient.id`` as ``chatId`` to the cache.
+
+        Routing guard: the cache call must include ``chatId=self.recipient.id``
+        so the by-id resolver routes to the correct data source on a cache miss.
+        """
+        msg = _makeEnsuredMessage()  # recipient.id = 100
+        msg.metadata["memories"] = {"permanentIds": ["a"], "shortTermIds": []}  # type: ignore[assignment]
+        cache = Mock()
+        cache.getMemoriesByIds = AsyncMock(return_value={"a": _singleMemory("perm")})
+
+        await msg.resolveMemories(cache)  # type: ignore[arg-type]
+
+        cache.getMemoriesByIds.assert_awaited_once()
+        callArgs = cache.getMemoriesByIds.call_args
+        assert callArgs.kwargs.get("chatId") == 100
 
 
 # ---------------------------------------------------------------------------
@@ -414,7 +421,7 @@ class TestFormatForLLMMemoriesResolution:
         oldMsg.setUserMemories({"permanent": [permEntry], "shortTerm": [shortEntry]})
 
         newMsg = _makeEnsuredMessage()
-        newMsg.loadMemoriesMetadata({"permanentIds": ["a"], "shortTermIds": ["b"]})  # type: ignore[arg-type]
+        newMsg.metadata["memories"] = {"permanentIds": ["a"], "shortTermIds": ["b"]}  # type: ignore[assignment]
         cache = Mock()
         cache.getMemoriesByIds = AsyncMock(return_value={"a": permEntry, "b": shortEntry})
         await newMsg.resolveMemories(cache)  # type: ignore[arg-type]
@@ -441,7 +448,7 @@ class TestFormatForLLMMemoriesResolution:
             testDatabase: Real in-memory database; never read (no media).
         """
         msg = _makeEnsuredMessage()
-        msg.loadMemoriesMetadata({"permanentIds": [], "shortTermIds": []})  # type: ignore[arg-type]
+        msg.metadata["memories"] = {"permanentIds": [], "shortTermIds": []}  # type: ignore[assignment]
         assert msg.userMemories is None
         cache = Mock()
         cache.getMemoriesByIds = AsyncMock(return_value={})
@@ -475,7 +482,7 @@ class TestFormatForLLMMemoriesResolution:
         oldMsg.setUserMemories({"permanent": [permEntry], "shortTerm": [shortEntry]})
 
         newMsg = _makeEnsuredMessage()
-        newMsg.loadMemoriesMetadata({"permanentIds": ["p1"], "shortTermIds": ["s1"]})  # type: ignore[arg-type]
+        newMsg.metadata["memories"] = {"permanentIds": ["p1"], "shortTermIds": ["s1"]}
         cache = Mock()
         cache.getMemoriesByIds = AsyncMock(return_value={"p1": permEntry, "s1": shortEntry})
         await newMsg.resolveMemories(cache)  # type: ignore[arg-type]
@@ -485,3 +492,95 @@ class TestFormatForLLMMemoriesResolution:
 
         assert oldBlock == newBlock
         assert oldBlock != ""
+
+
+# ---------------------------------------------------------------------------
+# fromDBChatMessage cache param (memory read-path refactor)
+# ---------------------------------------------------------------------------
+
+
+def _chatMessageDict(
+    *,
+    chatId: int = 100,
+    memoriesMetadata: dict[str, object] | None = None,
+) -> ChatMessageDict:
+    """Build a minimal :class:`ChatMessageDict` for ``fromDBChatMessage`` tests.
+
+    Args:
+        chatId: Chat ID (also the recipient.id on the resulting EnsuredMessage).
+        memoriesMetadata: Optional value for ``metadata["memories"]`` (compact
+            ID dict). When ``None``, no ``memories`` key is set in metadata.
+
+    Returns:
+        A fresh :class:`ChatMessageDict` with the given metadata.
+    """
+    metadata: dict[str, object] = {}
+    if memoriesMetadata is not None:
+        metadata["memories"] = memoriesMetadata
+    return {
+        "chat_id": chatId,
+        "user_id": 7,
+        "message_id": MessageId(42),
+        "date": datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc),
+        "message_type": "text",
+        "message_text": "hello",
+        "full_name": "Alice",
+        "username": "@alice",
+        "markup": "",
+        "metadata": json.dumps(metadata) if metadata else "",
+        "reply_id": None,
+        "quote_text": None,
+        "thread_id": 0,
+        "root_message_id": None,
+        "message_category": MessageCategory.USER,
+        "created_at": datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc),
+        "media_group_id": None,
+        "media_id": None,
+    }
+
+
+class TestFromDBChatMessageCacheParam:
+    """Tests for the ``cache`` param on ``fromDBChatMessage``.
+
+    When ``cache`` is provided alongside ``injectMemories=True``,
+    ``fromDBChatMessage`` resolves compact memory IDs internally via
+    ``resolveMemories``. When ``cache`` is ``None``, ``userMemories`` stays
+    unset — the caller resolves later (or does not need memories).
+    """
+
+    async def test_fromDBChatMessage_withCache_resolvesMemoriesInternally(self, testDatabase: Database) -> None:
+        """Passing ``cache=<stub>`` with ``injectMemories=True`` resolves memories in-place.
+
+        The resulting ``userMemories`` is populated with resolved content
+        (resolveMemories ran internally).
+
+        Args:
+            testDatabase: Real in-memory database for the ``db`` arg.
+        """
+        data = _chatMessageDict(memoriesMetadata={"permanentIds": ["a"], "shortTermIds": []})
+        cache = Mock()
+        cache.getMemoriesByIds = AsyncMock(return_value={"a": _singleMemory("resolved perm")})
+
+        msg = await EnsuredMessage.fromDBChatMessage(  # type: ignore[arg-type]
+            data, testDatabase, injectMemories=True, cache=cache
+        )
+
+        assert msg.userMemories is not None
+        assert msg.userMemories["permanent"][0]["content"] == "resolved perm"
+
+    async def test_fromDBChatMessage_withoutCache_leavesUserMemoriesNone(self, testDatabase: Database) -> None:
+        """Passing ``cache=None`` with ``injectMemories=True`` leaves ``userMemories`` unset.
+
+        The metadata still carries the compact IDs; the caller is expected to
+        call ``resolveMemories`` later.
+
+        Args:
+            testDatabase: Real in-memory database for the ``db`` arg.
+        """
+        data = _chatMessageDict(memoriesMetadata={"permanentIds": ["a"], "shortTermIds": []})
+
+        msg = await EnsuredMessage.fromDBChatMessage(data, testDatabase, injectMemories=True, cache=None)
+
+        assert msg.userMemories is None
+        # metadata still carries compact IDs
+        assert msg.metadata.get("memories") == {"permanentIds": ["a"], "shortTermIds": []}

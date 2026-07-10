@@ -692,9 +692,9 @@ class BaseBotHandler(CommandHandlerMixin):
         ]
 
         if dbMessage["root_message_id"] is None:
-            eMessage = await EnsuredMessage.fromDBChatMessage(dbMessage, self.db, injectMemories=needMemories)
-            if needMemories:
-                await eMessage.resolveMemories(self.cache)
+            eMessage = await EnsuredMessage.fromDBChatMessage(
+                dbMessage, self.db, injectMemories=needMemories, cache=self.cache
+            )
             return ret + await eMessage.toModelMessageList(
                 self.db,
                 format=llmMFormat,
@@ -724,10 +724,8 @@ class BaseBotHandler(CommandHandlerMixin):
             # It should be ony starting message
             for i in range(min(keepFirstN, len(dbMessageList))):
                 eMessage = await EnsuredMessage.fromDBChatMessage(
-                    dbMessageList[i], self.db, injectMemories=needMemories
+                    dbMessageList[i], self.db, injectMemories=needMemories, cache=self.cache
                 )
-                if needMemories:
-                    await eMessage.resolveMemories(self.cache)
                 ret.extend(
                     await eMessage.toModelMessageList(
                         self.db,
@@ -755,9 +753,9 @@ class BaseBotHandler(CommandHandlerMixin):
                 dbMessageList = dbMessageList[skippedMessages:]
 
         for dbMessage in dbMessageList:
-            eMessage = await EnsuredMessage.fromDBChatMessage(dbMessage, self.db, injectMemories=needMemories)
-            if needMemories:
-                await eMessage.resolveMemories(self.cache)
+            eMessage = await EnsuredMessage.fromDBChatMessage(
+                dbMessage, self.db, injectMemories=needMemories, cache=self.cache
+            )
             ret.extend(
                 await eMessage.toModelMessageList(
                     self.db,

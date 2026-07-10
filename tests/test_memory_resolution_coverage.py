@@ -1,13 +1,13 @@
 """AST-based coverage guard for the memory-compaction-v1 read-path wiring.
 
-Phase 3 of ``docs/plans/memory-compaction-v1.md`` wired
-``EnsuredMessage.resolveMemories(self.cache)`` into every read-path consumer that
-builds an ``EnsuredMessage`` from stored DB data and renders it for the LLM. The
-compact memory format stores IDs in ``metadata["memories"]``
-(``{"permanentIds": [...], "shortTermIds": [...]}``); ``resolveMemories`` resolves
-those IDs to content via the cache and populates ``userMemories``. **If a future
-developer adds a new ``fromDBChatMessage(..., injectMemories=<truthy>)`` render
-site WITHOUT a ``resolveMemories`` call, compact-format messages at that site
+Phase 3 of ``docs/plans/memory-compaction-v1.md`` wired memory resolution into
+every read-path consumer that builds an ``EnsuredMessage`` from stored DB data
+and renders it for the LLM. The compact memory format stores IDs in
+``metadata["memories"]`` (``{"permanentIds": [...], "shortTermIds": [...]}``);
+passing ``cache=<CacheService>`` to ``fromDBChatMessage`` resolves those IDs to
+content internally via ``resolveMemories`` and populates ``userMemories``.
+**If a future developer adds a new ``fromDBChatMessage(..., injectMemories=<truthy>)``
+render site WITHOUT passing ``cache=``, compact-format messages at that site
 render with NO ``userMemories`` (silently dropped).** This guard catches that
 structurally — a plain grep for ``injectMemories=True`` does NOT work because no
 production site uses the literal ``True`` (all pass a bool variable or an inline
@@ -16,12 +16,12 @@ production site uses the literal ``True`` (all pass a bool variable or an inline
 Two checks:
 
 * **Check 1 (primary):** every ``fromDBChatMessage(injectMemories=<not literal
-  False>)`` render site is followed by ``resolveMemories`` on the SAME target,
-  in source order, before that target is rendered via ``toModelMessage`` /
-  ``toModelMessageList`` / ``formatForLLM``. A site whose target is never
-  rendered (e.g. ``eRootMessage`` in ``getThreadByMessageForLLM``, built for
-  metadata read/persist only) is exempt. The scan set is discovered dynamically
-  — every production file under ``internal/`` containing a
+  False>)`` render site passes ``cache=<non-None>`` so compact IDs are resolved
+  to content in-place. A site whose target is never rendered (e.g.
+  ``eRootMessage`` in ``getThreadByMessageForLLM``, built for metadata
+  read/persist only) is exempt — resolution is wasteful and its compact
+  ``metadata["memories"]`` must persist intact. The scan set is discovered
+  dynamically — every production file under ``internal/`` containing a
   ``fromDBChatMessage`` call — so a new read-path consumer is auto-covered
   without editing this guard.
 * **Check 2 (secondary):** no production ``setUserMemories(...)`` call whose
@@ -29,7 +29,7 @@ Two checks:
   ``metadata.get("memories")`` or an ``ast.Subscript`` like
   ``metadata["memories"]``). Such a bypass would render the compact ID dict as
   the ``userMemories`` block (garbage). All memory-setting from stored metadata
-  must go through ``loadMemoriesMetadata``.
+  must go through ``resolveMemories`` or ``cache=`` on ``fromDBChatMessage``.
 
 The analysis is factored into pure helpers that take parsed AST (or a source
 string) and return a list of violations/sites, so the sanity tests prove the
@@ -50,7 +50,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Render methods that turn an EnsuredMessage into LLM-facing content. A site is
 # "rendered" the first time its target hits one of these after the assignment.
 RENDER_ATTRS = frozenset({"toModelMessage", "toModelMessageList", "formatForLLM"})
-RESOLVE_ATTR = "resolveMemories"
 FROMDB_ATTR = "fromDBChatMessage"
 SETUSERMEMORIES_ATTR = "setUserMemories"
 
@@ -119,8 +118,9 @@ class Check1Site(NamedTuple):
         target: Assignment-target variable name (e.g. ``eMessage``).
         included: True when ``injectMemories`` is not the literal ``False``.
         verdict: One of ``"skipped"`` (literal-False), ``"exempt"`` (included but
-            never rendered), ``"ok"`` (rendered, resolveMemories present between),
-            or ``"violation"`` (rendered, no resolveMemories between).
+            never rendered), ``"ok"`` (rendered, ``cache=`` non-None passed to
+            ``fromDBChatMessage``), or ``"violation"`` (rendered, no ``cache=``
+            or ``cache=None``).
         detail: Failure message, populated only when ``verdict == "violation"``.
     """
 
@@ -191,12 +191,12 @@ def _fromDBAssignment(node: Union[ast.Assign, ast.AnnAssign]) -> Optional[Tuple[
 
 
 def _injectMemoriesIncluded(call: ast.Call) -> bool:
-    """Return whether the ``injectMemories`` keyword warrants a resolveMemories.
+    """Return whether the ``injectMemories`` keyword warrants a Check-1 scan.
 
     The literal ``injectMemories=False`` is the only exempt shape (memory
     injection explicitly off). Any other value (a ``Name`` like
     ``needMemories``, a ``Call`` like ``.toBool()``, or an absent keyword) is
-    treated as potentially truthy and therefore requires resolution.
+    treated as potentially truthy and therefore requires a ``cache=`` keyword.
 
     Args:
         call: A ``fromDBChatMessage`` call node.
@@ -212,6 +212,30 @@ def _injectMemoriesIncluded(call: ast.Call) -> bool:
                 return False
             return True
     return True
+
+
+def _cacheKeywordProvided(call: ast.Call) -> bool:
+    """Return whether the ``cache`` keyword on a ``fromDBChatMessage`` call is a non-None value.
+
+    The read-path resolution runs inside ``fromDBChatMessage`` only when ``cache``
+    is provided and non-None. A missing keyword or an explicit ``cache=None``
+    leaves ``userMemories`` unset (no resolution), so a rendered compact-format
+    site would silently drop memories. Returns True only when a ``cache`` keyword
+    is present whose value is NOT the literal ``None`` constant.
+
+    Args:
+        call: A ``fromDBChatMessage`` call node.
+
+    Returns:
+        True iff a ``cache=`` keyword is present with a non-None value.
+    """
+    for kw in call.keywords:
+        if kw.arg == "cache":
+            v = kw.value
+            if isinstance(v, ast.Constant) and v.value is None:
+                return False
+            return True
+    return False
 
 
 def _walkScopeBody(func: ast.AST) -> List[ast.AST]:
@@ -244,8 +268,8 @@ def analyzeCheck1(tree: ast.AST, file: str) -> List[Check1Site]:
 
     For every ``FunctionDef`` / ``AsyncFunctionDef`` (including nested ones,
     each analysed in its own scope), finds ``fromDBChatMessage`` assignments and
-    verifies each included site is followed by a ``resolveMemories`` on the same
-    target before the target's first render.
+    verifies each included render site passes ``cache=<non-None>`` to the call
+    (so compact memory IDs are resolved in-place).
 
     Args:
         tree: A parsed ``ast.Module`` (or any AST root).
@@ -265,12 +289,12 @@ def analyzeCheck1(tree: ast.AST, file: str) -> List[Check1Site]:
 def _analyzeFunctionCheck1(func: ast.AST, file: str) -> List[Check1Site]:
     """Analyse a single function body for Check-1 sites.
 
-    Collects (target, line) events for ``fromDBChatMessage`` assignments,
-    ``resolveMemories`` calls, and render calls, then applies source-order line
-    comparison per assignment (see plan §7.3 note on variable reuse: each
-    assignment is followed by its own render+resolve before the next
-    assignment, so pure line comparison is sufficient — no control-flow
-    analysis).
+    Collects ``fromDBChatMessage`` assignments (with their call nodes) and render
+    calls, then classifies each assignment: a site is "ok" iff it is rendered
+    AND the call node passes ``cache=<non-None>``. The ``cache=`` check is on the
+    call node itself (not on a separate ``resolveMemories`` call), so reused
+    target names are handled naturally — each assignment's call node is checked
+    independently.
 
     Args:
         func: A ``FunctionDef`` / ``AsyncFunctionDef`` node.
@@ -280,26 +304,23 @@ def _analyzeFunctionCheck1(func: ast.AST, file: str) -> List[Check1Site]:
         List of :class:`Check1Site` for each ``fromDBChatMessage`` assignment in
         this function's own scope.
     """
-    assigns: List[Tuple[str, int, bool]] = []
+    assigns: List[Tuple[str, int, bool, bool]] = []
     renders: List[Tuple[str, int]] = []
-    resolves: List[Tuple[str, int]] = []
     for node in _walkScopeBody(func):
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             got = _fromDBAssignment(node)
             if got is not None:
                 target, lineno, call = got
-                assigns.append((target, lineno, _injectMemoriesIncluded(call)))
+                assigns.append((target, lineno, _injectMemoriesIncluded(call), _cacheKeywordProvided(call)))
             continue
         na = _nameAttrCall(node)
         if na is not None:
             name, attr, callLine = na
-            if attr == RESOLVE_ATTR:
-                resolves.append((name, callLine))
-            elif attr in RENDER_ATTRS:
+            if attr in RENDER_ATTRS:
                 renders.append((name, callLine))
 
     out: List[Check1Site] = []
-    for target, lineno, included in assigns:
+    for target, lineno, included, cacheOk in assigns:
         if not included:
             out.append(Check1Site(file, lineno, target, False, "skipped"))
             continue
@@ -310,8 +331,7 @@ def _analyzeFunctionCheck1(func: ast.AST, file: str) -> List[Check1Site]:
             out.append(Check1Site(file, lineno, target, True, "exempt"))
             continue
         renderLine = renderLines[0]
-        resolveBetween = [ml for (mn, ml) in resolves if mn == target and lineno < ml < renderLine]
-        if resolveBetween:
+        if cacheOk:
             out.append(Check1Site(file, lineno, target, True, "ok"))
         else:
             out.append(
@@ -323,8 +343,8 @@ def _analyzeFunctionCheck1(func: ast.AST, file: str) -> List[Check1Site]:
                     "violation",
                     (
                         f"fromDBChatMessage(injectMemories=<truthy>) assigns {target} "
-                        f"which is rendered at {renderLine} but no {target}.resolveMemories(...) "
-                        f"call found between — compact-format memories would be silently dropped"
+                        f"which is rendered at {renderLine} but cache= was not passed "
+                        f"(or cache=None) — compact-format memories would be silently dropped"
                     ),
                 )
             )
@@ -349,7 +369,7 @@ def analyzeCheck2(tree: ast.AST, file: str) -> List[Violation]:
     Finds every ``setUserMemories(...)`` call and flags it when the first
     positional argument is an ``ast.Call`` (e.g. ``metadata.get("memories")``)
     or an ``ast.Subscript`` (e.g. ``metadata["memories"]``) — both bypass
-    ``loadMemoriesMetadata`` and would render the compact ID dict verbatim.
+    ``resolveMemories`` and would render the compact ID dict verbatim.
 
     Args:
         tree: A parsed ``ast.Module`` (or any AST root).
@@ -375,8 +395,8 @@ def analyzeCheck2(tree: ast.AST, file: str) -> List[Violation]:
                     line=node.lineno,
                     message=(
                         f"setUserMemories called with a metadata-derived argument "
-                        f"({ast.dump(arg)}); use loadMemoriesMetadata instead to handle "
-                        f"the compact format"
+                        f"({ast.dump(arg)}); resolve compact IDs via resolveMemories(cache) "
+                        f"or pass cache= to fromDBChatMessage instead of setUserMemories"
                     ),
                 )
             )
@@ -408,30 +428,27 @@ def _formatViolations(violations: List[Violation]) -> str:
     return "\n".join(f"{v.file}:{v.line}: {v.message}" for v in violations)
 
 
-# --- Check 1: production tree has no missing resolveMemories sites -----------
+# --- Check 1: production tree has no missing cache= sites ---------------------
 
 
 def test_check1_noViolationsOnProductionTree() -> None:
     """Check 1: every rendered ``fromDBChatMessage(injectMemories=<truthy>)`` site
-    in the scanned production files is followed by a ``resolveMemories`` on the
-    same target before its first render. Zero violations expected on the current
-    Phase-3 tree.
+    in the scanned production files passes ``cache=<non-None>`` so compact IDs
+    are resolved in-place. Zero violations expected on the current tree.
     """
     violations: List[Violation] = []
     for relPath in CHECK1_FILES:
         tree, label = _readTree(relPath)
         violations.extend(check1Violations(analyzeCheck1(tree, label)))
-    assert not violations, "Check-1 violations (missing resolveMemories before render):\n" + _formatViolations(
-        violations
-    )
+    assert not violations, "Check-1 violations (missing cache= before render):\n" + _formatViolations(violations)
 
 
 def test_check1_expectedProductionSites() -> None:
     """Lock the known Check-1 site set so a silently-disappearing or newly-added
     site is surfaced for review. Verifies the dynamically-discovered scan set
     matches the expected production files, the included ``fromDBChatMessage``
-    sites match the Phase-3 wiring exactly, and ``eRootMessage`` is the single
-    exempt (built-but-not-rendered) site.
+    sites match the wiring exactly, and ``eRootMessage`` is the single exempt
+    (built-but-not-rendered) site.
     """
     expectedFiles = sorted(
         [
@@ -482,7 +499,8 @@ def test_check1_expectedProductionSites() -> None:
 def test_check2_noSetUserMemoriesBypassInProduction() -> None:
     """Check 2: no ``setUserMemories(...)`` call in the scanned production files
     (read-path consumers + write path) passes a metadata-derived argument.
-    All memory-setting from stored metadata must go through ``loadMemoriesMetadata``.
+    All memory-setting from stored metadata must go through ``resolveMemories``
+    or ``cache=`` on ``fromDBChatMessage``.
     """
     violations: List[Violation] = []
     for relPath in CHECK2_FILES:
@@ -494,9 +512,9 @@ def test_check2_noSetUserMemoriesBypassInProduction() -> None:
 # --- Sanity tests: prove the guard detects each violation class --------------
 
 
-def test_sanity_check1_flagsMissingResolveBeforeRender() -> None:
-    """A ``fromDBChatMessage(injectMemories=<truthy>)`` site rendered WITHOUT a
-    preceding ``resolveMemories`` must be flagged as a violation.
+def test_sanity_check1_flagsMissingCacheKeyword() -> None:
+    """A ``fromDBChatMessage(injectMemories=<truthy>)`` site rendered WITHOUT
+    ``cache=`` must be flagged as a violation.
     """
     src = textwrap.dedent("""
         async def f(self):
@@ -506,18 +524,19 @@ def test_sanity_check1_flagsMissingResolveBeforeRender() -> None:
         """)
     violations = check1Violations(analyzeCheck1(ast.parse(src), "synthetic.py"))
     assert len(violations) == 1, f"expected one violation, got {violations}"
-    assert "resolveMemories" in violations[0].message
+    assert "cache" in violations[0].message
     assert violations[0].file == "synthetic.py"
 
 
-def test_sanity_check1_passesWithResolveBeforeRender() -> None:
-    """The same site WITH a ``resolveMemories`` between assignment and render
-    must pass cleanly.
+def test_sanity_check1_passesWithCacheKeyword() -> None:
+    """The same site WITH ``cache=<Name>`` (e.g. ``cache=self.cache``) passed to
+    ``fromDBChatMessage`` must pass cleanly.
     """
     src = textwrap.dedent("""
         async def f(self):
-            eMessage = await EnsuredMessage.fromDBChatMessage(dbMessage, self.db, injectMemories=needMemories)
-            await eMessage.resolveMemories(self.cache)
+            eMessage = await EnsuredMessage.fromDBChatMessage(
+                dbMessage, self.db, injectMemories=needMemories, cache=self.cache
+            )
             ret = await eMessage.toModelMessageList(self.db)
             return ret
         """)
@@ -525,10 +544,27 @@ def test_sanity_check1_passesWithResolveBeforeRender() -> None:
     assert violations == []
 
 
+def test_sanity_check1_flagsCacheNoneLiteral() -> None:
+    """A truthy rendered site with ``cache=None`` (explicit None) must be flagged
+    as a violation — ``None`` means no in-place resolution.
+    """
+    src = textwrap.dedent("""
+        async def f(self):
+            eMessage = await EnsuredMessage.fromDBChatMessage(
+                dbMessage, self.db, injectMemories=needMemories, cache=None
+            )
+            ret = await eMessage.toModelMessageList(self.db)
+            return ret
+        """)
+    violations = check1Violations(analyzeCheck1(ast.parse(src), "synthetic.py"))
+    assert len(violations) == 1, f"expected one violation, got {violations}"
+    assert "cache" in violations[0].message
+
+
 def test_sanity_check1_exemptsUnrenderedTarget() -> None:
     """A site whose target is built but never rendered (the ``eRootMessage``
-    exemption) must pass — no ``resolveMemories`` is required for a message that
-    is only read/persisted, never turned into LLM content.
+    exemption) must pass — no ``cache=`` is required for a message that is only
+    read/persisted, never turned into LLM content.
     """
     src = textwrap.dedent("""
         async def f(self):
@@ -565,28 +601,31 @@ def test_sanity_check1_skipsInjectMemoriesFalse() -> None:
 def test_sanity_check1_handlesReusedTargetName() -> None:
     """A reused target name (e.g. ``eMessage`` assigned by multiple
     ``fromDBChatMessage`` calls in ``getThreadByMessageForLLM``) must be analysed
-    per-assignment by source-order line comparison: each assignment is followed
-    by its own render+resolve before the next assignment, so all pass.
+    per-call-node: each assignment's call node is checked independently for
+    ``cache=``, so both pass cleanly when each call passes ``cache=``.
     """
     src = textwrap.dedent("""
         async def f(self):
-            eMessage = await EnsuredMessage.fromDBChatMessage(a, self.db, injectMemories=needMemories)
-            await eMessage.resolveMemories(self.cache)
+            eMessage = await EnsuredMessage.fromDBChatMessage(
+                a, self.db, injectMemories=needMemories, cache=self.cache
+            )
             ret = await eMessage.toModelMessageList(self.db)
-            eMessage = await EnsuredMessage.fromDBChatMessage(b, self.db, injectMemories=needMemories)
-            await eMessage.resolveMemories(self.cache)
+            eMessage = await EnsuredMessage.fromDBChatMessage(
+                b, self.db, injectMemories=needMemories, cache=self.cache
+            )
             ret2 = await eMessage.toModelMessageList(self.db)
             return [ret, ret2]
         """)
     violations = check1Violations(analyzeCheck1(ast.parse(src), "synthetic.py"))
     assert violations == []
 
-    # And the same shape with the second block missing its resolveMemories must
+    # And the same shape with the second block missing its cache= must
     # surface exactly one violation pointing at the second assignment.
     badSrc = textwrap.dedent("""
         async def f(self):
-            eMessage = await EnsuredMessage.fromDBChatMessage(a, self.db, injectMemories=needMemories)
-            await eMessage.resolveMemories(self.cache)
+            eMessage = await EnsuredMessage.fromDBChatMessage(
+                a, self.db, injectMemories=needMemories, cache=self.cache
+            )
             ret = await eMessage.toModelMessageList(self.db)
             eMessage = await EnsuredMessage.fromDBChatMessage(b, self.db, injectMemories=needMemories)
             ret2 = await eMessage.toModelMessageList(self.db)
@@ -596,11 +635,11 @@ def test_sanity_check1_handlesReusedTargetName() -> None:
     assert len(badViolations) == 1, f"expected one violation, got {badViolations}"
 
 
-def test_sanity_check1_flagsAnnAssignMissingResolve() -> None:
+def test_sanity_check1_flagsAnnAssignMissingCache() -> None:
     """A typed/annotated ``T: SomeType = ... fromDBChatMessage(injectMemories=<truthy>)``
-    site rendered WITHOUT a preceding ``resolveMemories`` must be flagged.
-    No current production site uses this ``ast.AnnAssign`` shape, but a future
-    one would evade the guard without explicit handling.
+    site rendered WITHOUT ``cache=`` must be flagged. No current production site
+    uses this ``ast.AnnAssign`` shape, but a future one would evade the guard
+    without explicit handling.
     """
     src = textwrap.dedent("""
         async def f(self):
@@ -613,7 +652,7 @@ def test_sanity_check1_flagsAnnAssignMissingResolve() -> None:
     violations = check1Violations(analyzeCheck1(ast.parse(src), "synthetic.py"))
     assert len(violations) == 1, f"expected one violation, got {violations}"
     assert "eMessage" in violations[0].message
-    assert "resolveMemories" in violations[0].message
+    assert "cache" in violations[0].message
 
 
 def test_sanity_check2_flagsMetadataDerivedSetUserMemories() -> None:
@@ -628,7 +667,7 @@ def test_sanity_check2_flagsMetadataDerivedSetUserMemories() -> None:
         """)
     violations = analyzeCheck2(ast.parse(src), "synthetic.py")
     assert len(violations) == 2, f"expected two violations, got {violations}"
-    assert all("loadMemoriesMetadata" in v.message for v in violations)
+    assert all("resolveMemories" in v.message for v in violations)
 
 
 def test_sanity_check2_passesNameArgument() -> None:
