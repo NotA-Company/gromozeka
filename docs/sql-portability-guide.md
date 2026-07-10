@@ -58,7 +58,7 @@ SQLite uses `ON CONFLICT` for upsert operations, but the syntax differs signific
 | [`internal/database/repositories/chat_messages.py`](internal/database/repositories/chat_messages.py:160) | 160 | Chat user stats upsert |
 | [`internal/database/repositories/chat_users.py`](internal/database/repositories/chat_users.py:74) | 74 | Chat user upsert |
 | [`internal/database/repositories/chat_settings.py`](internal/database/repositories/chat_settings.py:65) | 65 | Chat settings upsert |
-| [`internal/database/repositories/user_data.py`](internal/database/repositories/user_data.py:67) | 67 | User data upsert |
+| [`internal/database/repositories/chat_info.py`](internal/database/repositories/chat_info.py:71) | 71 | Chat info upsert |
 | [`internal/database/repositories/media_attachments.py`](internal/database/repositories/media_attachments.py:61) | 61 | Media group upsert |
 
 #### Example Code
@@ -1389,7 +1389,7 @@ The following items have been intentionally skipped for now:
   - [ ] Update [`internal/database/repositories/chat_settings.py`](internal/database/repositories/chat_settings.py)
   - [ ] Update [`internal/database/repositories/media_attachments.py`](internal/database/repositories/media_attachments.py)
   - [ ] Update [`internal/database/repositories/spam.py`](internal/database/repositories/spam.py)
-  - [ ] Update [`internal/database/repositories/user_data.py`](internal/database/repositories/user_data.py)
+  - [ ] Update [`internal/database/repositories/chat_info.py`](internal/database/repositories/chat_info.py)
 
 - [ ] **Review migration files**
   - [ ] Check for AUTO_INCREMENT usage

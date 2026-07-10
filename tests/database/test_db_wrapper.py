@@ -1028,77 +1028,6 @@ class TestCacheOperations:
 
 
 # ============================================================================
-# User Data Operations Tests
-# ============================================================================
-
-
-class TestUserDataOperations:
-    """Test user data storage operations."""
-
-    @pytest.mark.asyncio
-    async def testAddUserData(self, inMemoryDb, sampleChatId, sampleUserId):
-        """Test adding user data."""
-        result = await inMemoryDb.userData.addUserData(sampleUserId, sampleChatId, "preference", "dark_mode")
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def testGetUserData(self, inMemoryDb, sampleChatId, sampleUserId):
-        """Test retrieving user data."""
-        await inMemoryDb.userData.addUserData(sampleUserId, sampleChatId, "key1", "value1")
-        await inMemoryDb.userData.addUserData(sampleUserId, sampleChatId, "key2", "value2")
-
-        data = await inMemoryDb.userData.getUserData(sampleUserId, sampleChatId)
-        assert data == {"key1": "value1", "key2": "value2"}
-
-    @pytest.mark.asyncio
-    async def testGetUserDataEmpty(self, inMemoryDb, sampleChatId, sampleUserId):
-        """Test retrieving user data when none exists."""
-        data = await inMemoryDb.userData.getUserData(sampleUserId, sampleChatId)
-        assert data == {}
-
-    @pytest.mark.asyncio
-    async def testDeleteUserData(self, inMemoryDb, sampleChatId, sampleUserId):
-        """Test deleting specific user data."""
-        await inMemoryDb.userData.addUserData(sampleUserId, sampleChatId, "key1", "value1")
-        await inMemoryDb.userData.addUserData(sampleUserId, sampleChatId, "key2", "value2")
-
-        result = await inMemoryDb.userData.deleteUserData(sampleUserId, sampleChatId, "key1")
-        assert result is True
-
-        data = await inMemoryDb.userData.getUserData(sampleUserId, sampleChatId)
-        assert "key1" not in data
-        assert "key2" in data
-
-    @pytest.mark.asyncio
-    async def testClearUserData(self, inMemoryDb, sampleChatId, sampleUserId):
-        """Test clearing all user data."""
-        await inMemoryDb.userData.addUserData(sampleUserId, sampleChatId, "key1", "value1")
-        await inMemoryDb.userData.addUserData(sampleUserId, sampleChatId, "key2", "value2")
-
-        result = await inMemoryDb.userData.clearUserData(sampleUserId, sampleChatId)
-        assert result is True
-
-        data = await inMemoryDb.userData.getUserData(sampleUserId, sampleChatId)
-        assert data == {}
-
-    @pytest.mark.asyncio
-    async def testUserDataIsolation(self, inMemoryDb):
-        """Test that user data is isolated between users and chats."""
-        user1 = 7001
-        user2 = 7002
-        chat1 = 8001
-        chat2 = 8002
-
-        await inMemoryDb.userData.addUserData(user1, chat1, "key", "user1_chat1")
-        await inMemoryDb.userData.addUserData(user1, chat2, "key", "user1_chat2")
-        await inMemoryDb.userData.addUserData(user2, chat1, "key", "user2_chat1")
-
-        assert (await inMemoryDb.userData.getUserData(user1, chat1))["key"] == "user1_chat1"
-        assert (await inMemoryDb.userData.getUserData(user1, chat2))["key"] == "user1_chat2"
-        assert (await inMemoryDb.userData.getUserData(user2, chat1))["key"] == "user2_chat1"
-
-
-# ============================================================================
 # Spam/Ham Operations Tests
 # ============================================================================
 
@@ -1643,27 +1572,19 @@ class TestIntegration:
         assert len(spamMessages) == 3
 
     @pytest.mark.asyncio
-    async def testChatSettingsAndUserDataWorkflow(self, inMemoryDb):
-        """Test chat settings and user data interaction."""
+    async def testChatSettingsWorkflow(self, inMemoryDb):
+        """Test chat settings set/get workflow."""
         chatId = 13401
-        userId = 13402
 
         # 1. Set chat settings
         await inMemoryDb.chatSettings.setChatSetting(chatId, "model", "gpt-4", updatedBy=0)
         await inMemoryDb.chatSettings.setChatSetting(chatId, "temperature", "0.7", updatedBy=0)
 
-        # 2. Add user data
-        await inMemoryDb.userData.addUserData(userId, chatId, "preference", "dark_mode")
-        await inMemoryDb.userData.addUserData(userId, chatId, "language", "en")
-
-        # 3. Verify isolation
+        # 2. Verify retrieval
         chatSettings = await inMemoryDb.chatSettings.getChatSettings(chatId)
-        userData = await inMemoryDb.userData.getUserData(userId, chatId)
 
         assert "model" in chatSettings
-        assert "preference" in userData
         assert len(chatSettings) == 2
-        assert len(userData) == 2
 
     @pytest.mark.asyncio
     async def testReferentialIntegrity(self, inMemoryDb):
@@ -1986,7 +1907,6 @@ class TestMigrationAndSchema:
             "delayed_tasks",
             "spam_messages",
             "ham_messages",
-            "user_data",
             "cache",
             "cache_storage",
             "chat_summarization_cache",

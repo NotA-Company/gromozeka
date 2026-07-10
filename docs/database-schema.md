@@ -19,8 +19,6 @@ This document provides comprehensive documentation for the Gromozeka bot's datab
   - [chat_user_stats](#chat_user_stats)
 - [Media Tables](#media-tables)
   - [media_attachments](#media_attachments)
-- [User Data Tables](#user-data-tables)
-  - [user_data](#user_data)
 - [Spam Detection Tables](#spam-detection-tables)
   - [spam_messages](#spam_messages)
   - [ham_messages](#ham_messages)
@@ -269,7 +267,6 @@ Stores per-chat user information and statistics.
 
 **Relationships**:
 - Referenced by [`chat_messages`](#chat_messages) via `(chat_id, user_id)`
-- Referenced by [`user_data`](#user_data) via `(chat_id, user_id)`
 
 **`metadata` JSON convention:** the column holds a JSON object (`internal/bot/models/user_metadata.py` → `UserMetadataDict`, `total=False`) with boolean flags (`isSpammer`, `notSpammer`, `dropMessages`, `leftChat`) plus an optional `memoryRefinement` sub-dict keyed by `str(threadId)` (e.g. `"0"` for the main thread). Each `memoryRefinement[threadId]` entry (`UserMemoryThreadDict`) carries: `summary` (rolling short bio), `lastProcessedMessageId` + `lastProcessedMessageDate` (message cursor for `getChatMessagesSince`). The `lastRefinedTS` (unix timestamp of the last refinement run) is NO LONGER persisted here — it is tracked in-memory on `UserMemoriesHandler._lastRefinedTS` (lost on restart; absent → 0 → treated as due). Read via `CacheService.getUserMetadata()`; the nested `memoryRefinement` sub-dict must be written via read-modify-write through `CacheService.updateUserMetadata()` (full-dict replace, NO merge — see [`docs/llm/tasks.md`](llm/tasks.md) §3: `setUserMetadata(isUpdate=True)` shallow-merges at the top level and would wipe sibling threads). Single-row `(chatId, userId)` reads/writes are cached via `CacheService` (ADR-015; the cached `messages_count` is best-effort stale — incremented by raw SQL in `saveChatMessage`, bypassing the cache).
 
@@ -527,33 +524,11 @@ Stores information about media attachments (images, documents, etc.).
 
 ---
 
-## User Data Tables
+## User Data Tables (DROPPED)
 
 ### user_data
 
-Stores arbitrary key-value data about users collected during conversations.
-
-**Primary Key**: `(user_id, chat_id, key)`
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `user_id` | INTEGER | No | - | Telegram user identifier |
-| `chat_id` | INTEGER | No | - | Telegram chat identifier |
-| `key` | TEXT | No | - | Data key |
-| `data` | TEXT | No | - | Data value |
-| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
-| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
-
-**Example**: Store user preferences, facts mentioned in conversation, etc.
-
-```python
-# Store user data
-db.userData.addUserData(userId=123, chatId=-1001234567890, key='favorite_color', data='blue')
-
-# Retrieve user data
-userData = db.userData.getUserData(userId=123, chatId=-1001234567890)
-favoriteColor = userData.get('favorite_color')
-```
+**Dropped in `migration_022`** (superseded by [`user_memories`](#user_memories)). Historical rows were backfilled into `user_memories` by `migration_020`.
 
 ---
 
@@ -928,7 +903,7 @@ Stores raw incoming Max Messenger webhook payloads awaiting consumption by the b
 
 ### user_memories
 
-Unified per-(chat, user, thread) memory store — durable facts, preferences, events, relationships, and high-level bio notes about a user. Retires the legacy `user_data` key-value table and the rolling-bio JSON blob (`chat_users.metadata.memoryRefinement`); both are backfilled into this table by `migration_020`. See [`docs/llm/memories/user-memories.md`](llm/memories/user-memories.md) (canonical durable summary) and [`docs/plans/user-memories-v1.md`](plans/user-memories-v1.md).
+Unified per-(chat, user, thread) memory store — durable facts, preferences, events, relationships, and high-level bio notes about a user. Retires the legacy `user_data` key-value table (dropped in `migration_022`) and the rolling-bio JSON blob (`chat_users.metadata.memoryRefinement`); both were backfilled into this table by `migration_020`. See [`docs/llm/memories/user-memories.md`](llm/memories/user-memories.md) (canonical durable summary) and [`docs/plans/user-memories-v1.md`](plans/user-memories-v1.md).
 
 Semantic search runs over a vec0 virtual table (`vec_user_memories_{dim}`, cosine distance) that is **not** created by the migration — it is created lazily at runtime on first write (mirrors `message_embeddings` / `vec_message_embeddings_{dim}`). Unlike chat-history search there is no BLOB side table: `embedding_model` / `embedding_dimensions` are tracked on `user_memories` itself and vec0 is the sole embedding store. When vec0 is unavailable, `searchMemories` returns `[]` (no numpy fallback).
 
@@ -976,7 +951,7 @@ Semantic search runs over a vec0 virtual table (`vec_user_memories_{dim}`, cosin
 - `user_data` rows → permanent cross-thread `type='fact'`, `content="{key}: {data}"`, `tags=[]`, `source='migration'`, original timestamps preserved.
 - `chat_users.metadata.memoryRefinement[str(threadId)]` entries with a non-empty summary → permanent thread-scoped `type='bio'`, `tags=["migrated_bio"]`, `source='migration'`, summary preserved in `content`.
 
-**Note**: Created by `migration_020`; `deleted_at` added by `migration_021` (soft-delete — `down()` is a no-op that logs, since a portable `DROP COLUMN` is unavailable and a nullable additive column is safe on rollback). No `AUTOINCREMENT`/`SERIAL`, no `DEFAULT CURRENT_TIMESTAMP` — `memory_id` is an app-generated UUID and timestamps are application-set. `down()` for migration 020 drops only `user_memories`; `user_data` is kept for rollback safety and `chat_users.metadata` is left untouched (the refinement rewrite stopped writing the rolling-bio blob, and the `userSummary` reader/field was removed entirely in Phase 4b — stale blobs are simply never read). The vec0 runtime table (`vec_user_memories_{dim}`) is NOT created by a migration — it is created lazily on first write at runtime.
+**Note**: Created by `migration_020`; `deleted_at` added by `migration_021` (soft-delete — `down()` is a no-op that logs, since a portable `DROP COLUMN` is unavailable and a nullable additive column is safe on rollback). No `AUTOINCREMENT`/`SERIAL`, no `DEFAULT CURRENT_TIMESTAMP` — `memory_id` is an app-generated UUID and timestamps are application-set. `down()` for migration 020 drops only `user_memories`; the legacy `user_data` table was subsequently dropped by `migration_022` (superseded by `user_memories`), and `chat_users.metadata` is left untouched (the refinement rewrite stopped writing the rolling-bio blob, and the `userSummary` reader/field was removed entirely in Phase 4b — stale blobs are simply never read). The vec0 runtime table (`vec_user_memories_{dim}`) is NOT created by a migration — it is created lazily on first write at runtime.
 
 ---
 
@@ -1103,7 +1078,7 @@ These TypedDict models provide:
 
 ## Repository Pattern
 
-The database uses a repository pattern with 16 specialized repositories, each handling a specific domain:
+The database uses a repository pattern with 15 specialized repositories, each handling a specific domain:
 
 | Repository | File | Purpose |
 |---|---|---|
@@ -1120,7 +1095,6 @@ The database uses a repository pattern with 16 specialized repositories, each ha
 | `divinations` | [`divinations.py`](../internal/database/repositories/divinations.py) | Tarot/runes readings and layout discovery |
 | `mediaAttachments` | [`media_attachments.py`](../internal/database/repositories/media_attachments.py) | Media attachment management |
 | `spam` | [`spam.py`](../internal/database/repositories/spam.py) | Spam detection and ham classification |
-| `userData` | [`user_data.py`](../internal/database/repositories/user_data.py) | User key-value data (superseded by `user_memories`; table kept for rollback) |
 | `userMemories` | [`user_memories.py`](../internal/database/repositories/user_memories.py) | Unified per-(chat, user, thread) structured memory store (`migration_020`; vec0-backed semantic search) |
 | `webhookUpdates` | [`webhook_updates.py`](../internal/database/repositories/webhook_updates.py) | Max webhook payload storage and consumption |
 

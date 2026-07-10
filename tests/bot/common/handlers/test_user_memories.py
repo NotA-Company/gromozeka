@@ -133,10 +133,9 @@ async def _makeHandler(testDatabase: Database, configManager: Optional[Mock] = N
     """Construct a :class:`UserMemoriesHandler` wired to a real in-memory database.
 
     Resets the ``CacheService`` singleton, injects *testDatabase* into it (so
-    ``handler.cache.setChatUserData`` / ``getChatUserData`` round-trip through
-    SQLite), then builds the handler. The handler's
-    ``BaseBotHandler.__init__`` re-fetches the same cache singleton, so
-    ``handler.cache`` is the injected instance.
+    cache reads/writes round-trip through SQLite), then builds the handler.
+    The handler's ``BaseBotHandler.__init__`` re-fetches the same cache
+    singleton, so ``handler.cache`` is the injected instance.
 
     Args:
         testDatabase: Fresh in-memory :class:`Database` (``testDatabase``

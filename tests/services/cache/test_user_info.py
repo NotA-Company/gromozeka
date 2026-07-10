@@ -24,7 +24,7 @@ Test areas:
 * cold-write posture of ``updateUserMetadata`` (cache left cold)
 * nested-write safety (option (i) dumb primitives do not reintroduce the
   shallow-merge trap when callers compose correctly)
-* ``invalidateChatUser`` drops ONLY ``userInfo``, preserving the ``data`` blob
+* ``invalidateChatUser`` drops ONLY ``userInfo``, preserving ``permanentMemories``
 """
 
 import json
@@ -473,7 +473,7 @@ async def test_nestedWriteSafety_shallowMergeDoesNotWipeNested(
 async def test_invalidateChatUser_dropsOnlyUserInfo(testDatabase: Database, cacheService: CacheService) -> None:
     """``invalidateChatUser`` drops only ``userInfo``, preserving sibling cached fields.
 
-    The legacy ``data`` user_data blob was retired by the user_memories
+    The legacy ``data`` field was retired by the user_memories
     migration, so this now asserts the narrower contract: ``userInfo`` is
     invalidated while a sibling cached field (``permanentMemories``) survives.
 

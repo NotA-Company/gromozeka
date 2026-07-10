@@ -136,9 +136,7 @@ class HCChatUserCacheDict(TypedDict):
     preferences, temporary data, or interaction history.
 
     Attributes:
-        data: Dictionary containing user-specific data. Keys are string
-            identifiers and values can be strings, lists of strings, or
-            dictionaries with arbitrary data.
+        permanentMemories: Dictionary containing user-specific data/knowledge.
         userInfo: The chat_users row for this (chatId, userId).
     """
 

@@ -278,8 +278,6 @@ class TestChatSettings(unittest.IsolatedAsyncioTestCase):
         self.mockDb.chatSettings.setChatSetting = createAsyncMock(returnValue=True)
         self.mockDb.chatInfo.getChatInfo = createAsyncMock(returnValue=None)
         self.mockDb.chatInfo.setChatInfo = createAsyncMock(returnValue=True)
-        self.mockDb.userData.getUserData = createAsyncMock(returnValue=None)
-        self.mockDb.userData.setUserData = createAsyncMock(returnValue=True)
         await self.cache.injectDatabase(self.mockDb)
 
     async def asyncTearDown(self) -> None:

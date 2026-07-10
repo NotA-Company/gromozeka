@@ -456,7 +456,6 @@ async def testSchemaCreation(inMemoryDb):
         "media_groups",
         "settings",
         "spam_messages",
-        "user_data",
     ]
 
     for table in expectedTables:
@@ -755,59 +754,6 @@ async def testChatSettingsCrud(inMemoryDb):
 
     settings = await db.chatSettings.getChatSettings(123)
     assert len(settings) == 0
-
-
-# ============================================================================
-# CRUD Operations Tests - User Data
-# ============================================================================
-
-
-@pytest.mark.asyncio
-async def testUserDataCrud(inMemoryDb):
-    """Test CRUD operations for user data"""
-    db = inMemoryDb
-
-    # Setup
-    await db.chatInfo.updateChatInfo(chatId=123, type="group", title="Test")
-    await db.chatUsers.updateChatUser(chatId=123, userId=1001, username="user1", fullName="User One")
-
-    # CREATE
-    success = await db.userData.addUserData(1001, 123, "preference", "dark_mode")
-    assert success is True
-
-    # READ
-    data = await db.userData.getUserData(1001, 123)
-    assert "preference" in data
-    assert data["preference"] == "dark_mode"
-
-    # UPDATE
-    success = await db.userData.addUserData(1001, 123, "preference", "light_mode")
-    assert success is True
-
-    data = await db.userData.getUserData(1001, 123)
-    assert data["preference"] == "light_mode"
-
-    # CREATE multiple
-    await db.userData.addUserData(1001, 123, "language", "en")
-    await db.userData.addUserData(1001, 123, "timezone", "UTC")
-
-    data = await db.userData.getUserData(1001, 123)
-    assert len(data) == 3
-
-    # DELETE one
-    success = await db.userData.deleteUserData(1001, 123, "language")
-    assert success is True
-
-    data = await db.userData.getUserData(1001, 123)
-    assert "language" not in data
-    assert len(data) == 2
-
-    # DELETE all
-    success = await db.userData.clearUserData(1001, 123)
-    assert success is True
-
-    data = await db.userData.getUserData(1001, 123)
-    assert len(data) == 0
 
 
 # ============================================================================

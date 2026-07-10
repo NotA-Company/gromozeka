@@ -48,12 +48,13 @@ async def test_migration_020_up_downAndBackfills(testDatabase: Database) -> None
 
     # --- Roll back migration 020 to reach the pre-020 state.
     # This also exercises down(): user_memories must be dropped while
-    # user_data + chat_users survive. Two steps are rolled back because
-    # migration 021 (user_memories.deleted_at) sits above 020: step 1 is
-    # 021's no-op down(), step 2 is 020's down() that drops the table.
+    # user_data + chat_users survive. Three steps are rolled back because
+    # migration 022 (drop user_data) and 021 (user_memories.deleted_at) sit
+    # above 020: step 1 is 022's down() (re-creates empty user_data), step 2
+    # is 021's no-op down(), step 3 is 020's down() that drops the table.
     rollbackManager = MigrationManager()
     rollbackManager.loadMigrationsFromVersions()
-    await rollbackManager.rollback(steps=2, sqlProvider=provider)
+    await rollbackManager.rollback(steps=3, sqlProvider=provider)
 
     preStateTables = await _tableNames(testDatabase)
     assert "user_memories" not in preStateTables, "down() should have dropped user_memories"

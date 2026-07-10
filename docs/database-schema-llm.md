@@ -181,21 +181,9 @@ CREATE TABLE media_attachments (
 
 ---
 
-### user_data
-**Purpose**: Arbitrary user key-value data
-**Primary Key**: `(user_id, chat_id, key)`
+### user_data (DROPPED)
 
-```sql
-CREATE TABLE user_data (
-    user_id INTEGER NOT NULL,
-    chat_id INTEGER NOT NULL,
-    key TEXT NOT NULL,
-    data TEXT NOT NULL,
-    created_at TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP NOT NULL,
-    PRIMARY KEY (user_id, chat_id, key)
-)
-```
+Dropped in `migration_022` (superseded by [`user_memories`](#user_memories)). Historical rows were backfilled into `user_memories` by `migration_020`.
 
 ---
 
@@ -589,7 +577,7 @@ CREATE TABLE webhook_updates (
 ---
 
 ### user_memories
-**Purpose**: Unified per-(chat, user, thread) memory store — durable facts, preferences, events, relationships, and high-level bio notes about a user. Retires the legacy `user_data` key-value table and the rolling-bio JSON blob (`chat_users.metadata.memoryRefinement`); both are backfilled into this table by `migration_020`. Created by `migration_020`. Semantic search runs over a vec0 virtual table (`vec_user_memories_{dim}`, cosine distance) that is **not** created by the migration — it is created lazily at runtime on first write (mirrors `message_embeddings`). Unlike chat-history search there is no BLOB side table: `embedding_model` / `embedding_dimensions` are tracked on `user_memories` itself and vec0 is the sole embedding store. When vec0 is unavailable, `searchMemories` returns `[]` (no numpy fallback).
+**Purpose**: Unified per-(chat, user, thread) memory store — durable facts, preferences, events, relationships, and high-level bio notes about a user. Retires the legacy `user_data` key-value table (dropped in `migration_022`) and the rolling-bio JSON blob (`chat_users.metadata.memoryRefinement`); both were backfilled into this table by `migration_020`. Created by `migration_020`. Semantic search runs over a vec0 virtual table (`vec_user_memories_{dim}`, cosine distance) that is **not** created by the migration — it is created lazily at runtime on first write (mirrors `message_embeddings`). Unlike chat-history search there is no BLOB side table: `embedding_model` / `embedding_dimensions` are tracked on `user_memories` itself and vec0 is the sole embedding store. When vec0 is unavailable, `searchMemories` returns `[]` (no numpy fallback).
 **Primary Key**: `(chat_id, user_id, memory_id)` — composite natural key (no `AUTOINCREMENT`).
 
 ```sql
@@ -634,10 +622,10 @@ CREATE TABLE user_memories (
 - `deleteObsoleteMemoryEmbeddings(chatId, currentModel, currentDimensions) -> int` — model-drift cleanup.
 
 **Backfills** (`migration_020.up()`):
-- `user_data` rows → permanent cross-thread `type='fact'`, `content="{key}: {data}"`, `tags=[]`, `source='migration'`, original timestamps preserved.
+- `user_data` rows (table dropped in `migration_022`) → permanent cross-thread `type='fact'`, `content="{key}: {data}"`, `tags=[]`, `source='migration'`, original timestamps preserved.
 - `chat_users.metadata.memoryRefinement[str(threadId)]` entries (non-empty summary) → permanent thread-scoped `type='bio'`, `tags=["migrated_bio"]`, `source='migration'`, summary preserved in `content`.
 
-**Note**: No `AUTOINCREMENT`/`SERIAL`, no `DEFAULT CURRENT_TIMESTAMP` — `memory_id` is an app-generated UUID and timestamps are application-set. Created by `migration_020`; `deleted_at` added by `migration_021` (soft-delete — `down()` is a no-op that logs: portable `DROP COLUMN` unavailable, nullable additive column safe on rollback). `down()` for migration 020 drops only `user_memories`; `user_data` is kept for rollback safety. The vec0 runtime table (`vec_user_memories_{dim}`) is NOT created by a migration — it is created lazily on first write at runtime.
+**Note**: No `AUTOINCREMENT`/`SERIAL`, no `DEFAULT CURRENT_TIMESTAMP` — `memory_id` is an app-generated UUID and timestamps are application-set. Created by `migration_020`; `deleted_at` added by `migration_021` (soft-delete — `down()` is a no-op that logs: portable `DROP COLUMN` unavailable, nullable additive column safe on rollback). `down()` for migration 020 drops only `user_memories`; the legacy `user_data` table was subsequently dropped by `migration_022` (superseded by `user_memories`). The vec0 runtime table (`vec_user_memories_{dim}`) is NOT created by a migration — it is created lazily on first write at runtime.
 
 ---
 
@@ -983,38 +971,6 @@ db.mediaAttachments.updateMediaDescription(
 
 ---
 
-### User Data Operations
-
-**Add User Data**
-```python
-db.userData.addUserData(
-    userId: int,
-    chatId: int,
-    key: str,
-    data: str
-) -> bool
-```
-
-**Get User Data**
-```python
-db.userData.getUserData(
-    userId: int,
-    chatId: int,
-    dataSource: Optional[str] = None
-) -> Dict[str, str]
-```
-
-**Delete User Data**
-```python
-db.userData.deleteUserData(
-    userId: int,
-    chatId: int,
-    key: str
-) -> bool
-```
-
----
-
 ### Spam Detection Operations
 
 **Save Spam Message**
@@ -1295,7 +1251,6 @@ if cached:
 chat_info (1) ──< (N) chat_topics
 chat_info (1) ──< (N) chat_users
 chat_users (1) ──< (N) chat_messages
-chat_users (1) ──< (N) user_data
 chat_users (1) ──< (N) user_memories
 media_attachments (1) ──< (N) chat_messages
 chat_messages (1) ──< (N) chat_messages (self-reference via reply_id, root_message_id)

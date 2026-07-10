@@ -222,7 +222,6 @@ class CacheService:
         >>> # Or use convenience methods
         >>> settings = await cache.getChatSettings(123)
         >>> await cache.setChatSetting(123, ChatSettingsKey.LANGUAGE, ChatSettingsValue("en"), userId=1)
-        >>> await cache.setUserData(123, 456, "key", "value")
     """
 
     _instance: Optional["CacheService"] = None
@@ -867,7 +866,7 @@ class CacheService:
         self.chats.set(chatId, chatCache)
         logger.debug(f"Updated chat admins list for {chatId}")
 
-    # ## ChatUser UserData
+    # ## ChatUser permanent memories
     def _getChatUserKey(self, chatId: int, userId: int) -> str:
         """Generate a unique key for chat user data.
 
@@ -1214,7 +1213,7 @@ class CacheService:
     def invalidateChatUser(self, chatId: int, userId: int) -> None:
         """Drop ONLY the cached chat_users row (userInfo) for (chatId, userId).
 
-        The cache entry's other fields (e.g. the ``data`` user_data blob) are
+        The cache entry's other fields (notably ``permanentMemories``) are
         preserved. Escape hatch for callers that know the row was mutated
         out-of-band; the next ``getChatUser`` re-fetches from DB.
 

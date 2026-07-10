@@ -226,8 +226,7 @@ gromozeka/
 │   │   │   ├── common.py           # Common repository
 │   │   │   ├── delayed_tasks.py    # Delayed tasks repository
 │   │   │   ├── media_attachments.py # Media attachments repository
-│   │   │   ├── spam.py             # Spam repository
-│   │   │   └── user_data.py        # User data repository
+│   │   │   └── spam.py             # Spam repository
 │   │   └── migrations/             # Migration system
 │   │       ├── base.py             # BaseMigration abstract class
 │   │       ├── manager.py          # MigrationManager - auto-discovery + apply
@@ -601,7 +600,7 @@ The database layer uses a repository pattern with 15 specialized repositories Ea
 | [`DivinationRepository`](internal/database/repositories/divinations.py) | `divinations.py` | Tarot/runes readings and layout discovery operations |
 | [`MediaAttachmentsRepository`](internal/database/repositories/media_attachments.py) | `media_attachments.py` | Media metadata operations |
 | [`SpamRepository`](internal/database/repositories/spam.py) | `spam.py` | Spam detection operations |
-| [`UserDataRepository`](internal/database/repositories/user_data.py) | `user_data.py` | User data operations |
+| [`UserMemoriesRepository`](internal/database/repositories/user_memories.py) | `user_memories.py` | Per-(chat, user, thread) structured memory operations (permanent + ephemeral, vec0-backed) |
 | [`WebhookUpdatesRepository`](internal/database/repositories/webhook_updates.py) | `webhook_updates.py` | Max webhook payload storage and consumption |
 
 ### Multi-Source Routing

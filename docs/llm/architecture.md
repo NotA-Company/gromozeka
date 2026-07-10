@@ -120,7 +120,7 @@ class MyService:
 **Why:** Allows read replicas, separate databases for different data types, cross-bot data reading
 
 **Architecture Principles:**
-- **Repository Pattern**: 16 specialized repositories handle specific data domains (chat_info, chat_messages, chat_settings, chat_users, chat_summarization, cache, spam, user_data, media_attachments, delayed_tasks, common, chat_search, chat_embeddings, divinations, webhook_updates, user_memories)
+- **Repository Pattern**: 15 specialized repositories handle specific data domains (chat_info, chat_messages, chat_settings, chat_users, chat_summarization, cache, spam, media_attachments, delayed_tasks, common, chat_search, chat_embeddings, divinations, webhook_updates, user_memories)
 - **Simple Priority Routing**: `dataSource` param → `chatId` mapping → default source
 - **Readonly Protection**: Sources marked `readonly=True` reject write operations
 - **Cross-Bot Communication**: Can read from external bot databases via `dataSource` param
@@ -169,9 +169,8 @@ timeout = 10
 - `DivinationsRepository` — Tarot/runes divination data
 - `MediaAttachmentsRepository` — Media file attachments
 - `SpamRepository` — Spam detection and messages
-- `UserDataRepository` — User-specific data
 - `WebhookUpdatesRepository` — Max webhook payload storage and consumption (backed by `migration_019`)
-- `UserMemoriesRepository` — Unified per-`(chat, user, thread)` structured memory store (backed by `migration_020`; supersedes `user_data` + rolling-bio blob — see ADR-016)
+- `UserMemoriesRepository` — Unified per-`(chat, user, thread)` structured memory store (backed by `migration_020`; supersedes the legacy `user_data` key-value table, dropped in `migration_022`, + rolling-bio blob — see ADR-016)
 - `BaseRepository` — Abstract base with common functionality
 
 **Implementation Details:**

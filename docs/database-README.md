@@ -64,9 +64,6 @@ A streamlined reference optimized for LLM consumption, featuring:
 #### Media Tables
 - [`media_attachments`](database-schema.md#media_attachments) - Media file information
 
-#### User Data Tables
-- [`user_data`](database-schema.md#user_data) - Arbitrary user key-value data
-
 #### Spam Detection Tables
 - [`spam_messages`](database-schema.md#spam_messages) - Spam message tracking
 - [`ham_messages`](database-schema.md#ham_messages) - Legitimate message tracking
@@ -147,7 +144,7 @@ All database operations use TypedDict models:
 - **Type safety**: IDE autocomplete and type checking
 - **Documentation**: Clear field names and types
 - **Validation**: Runtime validation for data integrity
-- **Repository pattern**: Organized access through 14 specialized repositories
+- **Repository pattern**: Organized access through 15 specialized repositories
 
 Learn more: [TypedDict Models](database-schema.md#typeddict-models)
 
@@ -400,7 +397,7 @@ To switch between database providers:
 
 ### Repository Pattern Architecture
 
-The database system uses a repository pattern with 14 specialized repositories, each responsible for a specific domain of data operations:
+The database system uses a repository pattern with 15 specialized repositories, each responsible for a specific domain of data operations:
 
 #### Available Repositories
 
@@ -434,51 +431,45 @@ The database system uses a repository pattern with 14 specialized repositories, 
    - `addChatSummarization()` - Store a chat summary
    - `getChatSummarization()` - Retrieve cached summaries
 
-6. **[`userData`](../internal/database/repositories/user_data.py:1)** - User key-value storage
-   - `addUserData()` - Store user-specific data
-   - `getUserData()` - Retrieve user data
-   - `deleteUserData()` - Remove specific user data
-   - `clearUserData()` - Clear all data for a user in a chat
-
-7. **[`mediaAttachments`](../internal/database/repositories/media_attachments.py:1)** - Media file tracking
+6. **[`mediaAttachments`](../internal/database/repositories/media_attachments.py:1)** - Media file tracking
    - `addMediaAttachment()` - Store media metadata
    - `updateMediaAttachment()` - Update media metadata
    - `getMediaAttachment()` - Retrieve media information
    - `getMediaAttachmentsByGroupId()` - Get media by group ID
 
-8. **[`spam`](../internal/database/repositories/spam.py:1)** - Spam detection
+7. **[`spam`](../internal/database/repositories/spam.py:1)** - Spam detection
    - `addSpamMessage()` - Track spam messages
    - `addHamMessage()` - Track legitimate messages
    - `getSpamMessages()` - Get recorded spam messages
 
-9. **[`delayedTasks`](../internal/database/repositories/delayed_tasks.py:1)** - Task scheduling
+8. **[`delayedTasks`](../internal/database/repositories/delayed_tasks.py:1)** - Task scheduling
    - `addDelayedTask()` - Schedule a task
    - `getPendingDelayedTasks()` - Retrieve pending tasks
    - `updateDelayedTask()` - Mark a task as done
    - `cleanupOldCompletedDelayedTasks()` - Remove old completed tasks
 
-10. **[`cache`](../internal/database/repositories/cache.py:1)** - Generic caching
-    - `setCacheEntry()` - Store a cached value
-    - `getCacheEntry()` - Retrieve a cached value
-    - `clearCache()` - Remove cache entries by type
-    - `getCacheStorage()` - List storage namespaces
-    - `setCacheStorage()` - Set a storage namespace
+9. **[`cache`](../internal/database/repositories/cache.py:1)** - Generic caching
+   - `setCacheEntry()` - Store a cached value
+   - `getCacheEntry()` - Retrieve a cached value
+   - `clearCache()` - Remove cache entries by type
+   - `getCacheStorage()` - List storage namespaces
+   - `setCacheStorage()` - Set a storage namespace
 
-11. **[`common`](../internal/database/repositories/common.py:1)** - Common operations
+10. **[`common`](../internal/database/repositories/common.py:1)** - Common operations
     - `getSettings()` - Get global system settings
     - `getSetting()` - Get a specific setting
     - `setSetting()` - Update a system setting
 
-12. **[`chatSearch`](../internal/database/repositories/chat_search.py:1)** - Chat message search
+11. **[`chatSearch`](../internal/database/repositories/chat_search.py:1)** - Chat message search
     - `searchChatMessages()` - Search messages (filter-only or semantic)
 
-13. **[`chatEmbeddings`](../internal/database/repositories/chat_embeddings.py:1)** - Message embedding vectors
+12. **[`chatEmbeddings`](../internal/database/repositories/chat_embeddings.py:1)** - Message embedding vectors
     - `saveMessageEmbedding()` - Store message embedding
     - `getMessageEmbedding()` - Retrieve message embedding
     - `deleteChatEmbeddings()` - Remove all embeddings for a chat
     - `getMessagesWithoutEmbeddings()` - Find messages needing embeddings
 
-14. **[`divinations`](../internal/database/repositories/divinations.py:1)** - Divination readings and layouts
+13. **[`divinations`](../internal/database/repositories/divinations.py:1)** - Divination readings and layouts
     - `insertReading()` - Save a divination reading
     - `getLayout()` - Retrieve a cached layout definition
     - `saveLayout()` - Cache a layout definition
@@ -492,7 +483,6 @@ All repositories are accessed through the main `Database` instance:
 # Access repositories via the db instance
 await db.chatMessages.saveChatMessage(...)
 await db.chatSettings.getChatSetting(...)
-await db.userData.addUserData(...)
 ```
 
 Each repository is automatically initialized when the `Database` class is instantiated and provides type-safe access to its domain-specific operations.
@@ -578,24 +568,6 @@ settingValue = await db.chatSettings.getChatSetting(
     chatId=-1001234567890,
     setting='parse-images'
 )
-```
-
-### User Data Operations
-```python
-# Save user data
-await db.userData.addUserData(
-    chatId=-1001234567890,
-    userId=123456789,
-    key='preference',
-    data='dark-mode'
-)
-
-# Get user data
-userData = await db.userData.getUserData(
-    chatId=-1001234567890,
-    userId=123456789,
-)
-preference = userData.get('preference', 'default')
 ```
 
 ### Cache Operations
@@ -723,8 +695,8 @@ See: [Best Practices](database-schema.md#best-practices)
 - **Cache Tables**: 7+ (dynamic based on CacheType enum)
 - **Spam Detection Tables**: 4 (spam, ham, tokens, classes)
 - **Statistics Tables**: 2 (chat stats, user stats)
-- **Current Migration Version**: 18
-- **Total Repositories**: 14 specialized repositories
+- **Current Migration Version**: 22
+- **Total Repositories**: 15 specialized repositories
 
 ## 🤝 Contributing
 

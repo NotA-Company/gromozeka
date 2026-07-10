@@ -51,7 +51,6 @@ from .repositories import (
     DivinationsRepository,
     MediaAttachmentsRepository,
     SpamRepository,
-    UserDataRepository,
     UserMemoriesRepository,
     WebhookUpdatesRepository,
 )
@@ -85,7 +84,6 @@ class Database:
         chatSettings: Repository for chat-specific settings and configurations.
         chatInfo: Repository for chat metadata and information.
         chatSummarization: Repository for chat summarization data.
-        userData: Repository for user-specific data and preferences.
         mediaAttachments: Repository for media attachment storage and management.
         spam: Repository for spam detection and filtering data.
         delayedTasks: Repository for delayed task scheduling and management.
@@ -116,7 +114,6 @@ class Database:
         "chatSettings",
         "chatInfo",
         "chatSummarization",
-        "userData",
         "userMemories",
         "mediaAttachments",
         "spam",
@@ -154,9 +151,6 @@ class Database:
 
     chatSummarization: ChatSummarizationRepository
     """Repository for chat summarization data."""
-
-    userData: UserDataRepository
-    """Repository for user-specific data and preferences."""
 
     userMemories: UserMemoriesRepository
     """Repository for the unified ``user_memories`` store (per-(chat, user, thread)
@@ -214,7 +208,6 @@ class Database:
         self.chatSettings = ChatSettingsRepository(self.manager)
         self.chatInfo = ChatInfoRepository(self.manager)
         self.chatSummarization = ChatSummarizationRepository(self.manager)
-        self.userData = UserDataRepository(self.manager)
         self.userMemories = UserMemoriesRepository(self.manager)
         self.mediaAttachments = MediaAttachmentsRepository(self.manager)
         self.spam = SpamRepository(self.manager)
