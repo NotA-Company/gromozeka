@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from internal.bot.common.handlers.base import HandlerResultStatus
 from internal.bot.common.handlers.chat_search import ChatSearchHandler
 from internal.bot.constants import (
     BACKFILL_DEFAULT_BATCH_SIZE,
@@ -1062,15 +1063,15 @@ class TestDtCronJob:
     """
 
     async def test_cron_proceeds_after_construction(self) -> None:
-        """The cron job always runs its chat-discovery logic, regardless of ``enabled``.
+        """The cron job always runs its logic, regardless of ``enabled``.
 
-        The `[search-history].enabled` flag is a construction-time gate
+        The ``[search-history].enabled`` flag is a construction-time gate
         enforced in ``HandlersManager`` (see ``manager.py:531``) — the
         handler is only instantiated when the feature is enabled. The
         cron job itself does not re-check the flag. With ``enabled=False``
-        the cron job still attempts its normal chat-discovery logic; if
-        no chat discovery mock is set up, the underlying call raises
-        and is caught by the ``except`` around ``listChatsBySetting``.
+        the cron job still runs, but since no chats are tracked yet
+        (``_trackedChats`` is empty on a fresh handler), it bails out
+        before any batch fetch or embedding work.
         """
         cm = _makeConfigManager(enabled=False)
         handler, mocks = _makeHandler(configManager=cm)
@@ -1083,24 +1084,18 @@ class TestDtCronJob:
             )
         )
 
-        # The cron job does attempt chat discovery regardless of the
-        # ``enabled`` flag — the flag is a construction-time gate only.
-        # ``listChatsBySetting`` is a plain Mock, so awaiting it raises,
-        # but that exception is caught by the try/except in ``_dtCronJob``.
-        mocks["db"].chatSettings.listChatsBySetting.assert_called_once()
+        # The cron job ran (no exception), but with an empty
+        # ``_trackedChats`` it returns before any embedding work.
         mocks["db"].chatEmbeddings.getMessagesWithoutEmbeddings.assert_not_called()
 
     async def test_cron_no_enabled_chats(self) -> None:
-        """No chats with ``EMBEDDINGS_ENABLED=true`` → backfill is a no-op.
+        """No tracked chats -> backfill is a no-op.
 
-        The backfill chat-discovery query targets the per-chat
-        ``EMBEDDINGS_ENABLED`` setting (not ``REGENERATE_EMBEDDINGS`` —
-        a chat that only enables new-message embeddings has no need
-        for a backfill pass over its history). An empty result short-
-        circuits the tick before any batch fetch or embedding call.
+        With an empty ``_trackedChats`` (the default on a fresh handler),
+        the cron job short-circuits at the discovery gate before any
+        batch fetch or embedding call.
         """
         handler, mocks = _makeHandler()
-        mocks["db"].chatSettings.listChatsBySetting = AsyncMock(return_value={})
         await handler._dtCronJob(
             DelayedTask(
                 taskId=f"cron-{id(self)}",
@@ -1110,8 +1105,6 @@ class TestDtCronJob:
             )
         )
 
-        # The discovery query targets EMBEDDINGS_ENABLED specifically.
-        mocks["db"].chatSettings.listChatsBySetting.assert_awaited_once_with(key=ChatSettingsKey.EMBEDDINGS_ENABLED)
         mocks["db"].chatEmbeddings.getMessagesWithoutEmbeddings.assert_not_called()
 
     async def test_cron_skips_when_embedding_model_missing(self) -> None:
@@ -1123,7 +1116,7 @@ class TestDtCronJob:
         """
         cs = _makeChatSettings(embeddingModel="")
         handler, mocks = _makeHandler(chatSettings=cs)
-        mocks["db"].chatSettings.listChatsBySetting = AsyncMock(return_value={100: "true"})
+        handler._trackedChats = {100}
         mocks["db"].chatEmbeddings.getMessagesWithoutEmbeddings = AsyncMock()
         await handler._dtCronJob(
             DelayedTask(
@@ -1140,7 +1133,7 @@ class TestDtCronJob:
         """An unknown ``EMBEDDING_MODEL`` is skipped (model not in LLM manager)."""
         cs = _makeChatSettings(embeddingModel="missing-model")
         handler, mocks = _makeHandler(chatSettings=cs)
-        mocks["db"].chatSettings.listChatsBySetting = AsyncMock(return_value={100: "true"})
+        handler._trackedChats = {100}
         cast(Any, handler).llmService.getLLMManager = Mock(return_value=Mock(getModel=Mock(return_value=None)))
         mocks["db"].chatEmbeddings.getMessagesWithoutEmbeddings = AsyncMock()
         await handler._dtCronJob(
@@ -1158,7 +1151,7 @@ class TestDtCronJob:
         """A registered model that does not support embeddings is skipped."""
         cs = _makeChatSettings(embeddingModel="chat-only-model")
         handler, mocks = _makeHandler(chatSettings=cs)
-        mocks["db"].chatSettings.listChatsBySetting = AsyncMock(return_value={100: "true"})
+        handler._trackedChats = {100}
         mockModel = Mock()
         mockModel.supportsEmbedding = False
         mockModel.generateEmbeddings = AsyncMock()
@@ -1250,7 +1243,7 @@ class TestDtCronJob:
         """
         cs = _makeChatSettings(embeddingModel="text-embedding-3-small")
         handler, mocks = _makeHandler(chatSettings=cs)
-        mocks["db"].chatSettings.listChatsBySetting = AsyncMock(return_value={100: "true"})
+        handler._trackedChats = {100}
         # The CRON gate resolves the model via getLLMManager().getModel() and
         # checks supportsEmbedding + getDimensions before the batch loop.
         mockModel = Mock()
@@ -1315,7 +1308,7 @@ class TestDtCronJob:
         """
         cs = _makeChatSettings(embeddingModel="text-embedding-3-small")
         handler, mocks = _makeHandler(chatSettings=cs)
-        mocks["db"].chatSettings.listChatsBySetting = AsyncMock(return_value={100: "true"})
+        handler._trackedChats = {100}
         # The CRON gate resolves the model via getLLMManager().getModel().
         mockModel = Mock()
         mockModel.supportsEmbedding = True
@@ -1369,7 +1362,7 @@ class TestDtCronJob:
         )
         cs = _makeChatSettings(embeddingModel="text-embedding-3-small")
         handler, mocks = _makeHandler(configManager=cm, chatSettings=cs)
-        mocks["db"].chatSettings.listChatsBySetting = AsyncMock(return_value={100: "true"})
+        handler._trackedChats = {100}
         mockModel = Mock()
         mockModel.supportsEmbedding = True
         mockModel.getDimensions = AsyncMock(return_value=None)
@@ -1397,7 +1390,7 @@ class TestDtCronJob:
         """
         cs = _makeChatSettings(embeddingModel="text-embedding-3-small")
         handler, mocks = _makeHandler(chatSettings=cs)
-        mocks["db"].chatSettings.listChatsBySetting = AsyncMock(return_value={100: "true", 200: "true"})
+        handler._trackedChats = {100, 200}
         mockModel = Mock()
         mockModel.supportsEmbedding = True
         mockModel.getDimensions = AsyncMock(return_value=None)
@@ -1438,7 +1431,7 @@ class TestDtCronJob:
         """
         cs = _makeChatSettings(embeddingModel="text-embedding-3-small")
         handler, mocks = _makeHandler(chatSettings=cs)
-        mocks["db"].chatSettings.listChatsBySetting = AsyncMock(return_value={100: "true"})
+        handler._trackedChats = {100}
         mockModel = Mock()
         mockModel.supportsEmbedding = True
         mockModel.getDimensions = AsyncMock(return_value=None)
@@ -1471,7 +1464,7 @@ class TestDtCronJob:
         """
         cs = _makeChatSettings(embeddingModel="text-embedding-3-small")
         handler, mocks = _makeHandler(chatSettings=cs)
-        mocks["db"].chatSettings.listChatsBySetting = AsyncMock(return_value={100: "true"})
+        handler._trackedChats = {100}
         mockModel = Mock()
         mockModel.supportsEmbedding = True
         mockModel.getDimensions = AsyncMock(return_value=None)
@@ -1497,6 +1490,82 @@ class TestDtCronJob:
 
         # The self-reset must NOT fire when the batch is full.
         mocks["db"].chatSettings.setChatSetting.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 3b. Tracked-chats discovery regression tests
+# ---------------------------------------------------------------------------
+
+
+class TestTrackedChatsDiscovery:
+    """Regression tests for the in-memory ``_trackedChats`` mechanism.
+
+    After the rewrite that removed ``ChatSettingsRepository.listChatsBySetting``,
+    chat discovery for the backfill CRON_JOB is driven by an in-memory
+    ``MutableSet[int]`` populated by :meth:`ChatSearchHandler.newMessageHandler`
+    and evicted by :meth:`ChatSearchHandler._dtCronJob` via ``.discard()``.
+    These tests pin the add/skip/evict semantics so a future refactor
+    cannot silently regress the discovery path.
+    """
+
+    async def test_newMessageHandler_addsChatWhenBothFlagsTrue(self) -> None:
+        """``newMessageHandler`` tracks a chat when both embedding flags are true.
+
+        When ``EMBEDDINGS_ENABLED=true`` and ``REGENERATE_EMBEDDINGS=true``,
+        the message's ``recipient.id`` must be added to ``_trackedChats`` so
+        the backfill CRON_JOB can round-robin over it on a later tick. The
+        handler always returns ``NEXT`` so downstream handlers still run.
+        """
+        handler, _mocks = _makeHandler()
+        em = _makeEnsuredMessage(chatId=100)
+
+        result = await handler.newMessageHandler(em, Mock())
+
+        assert em.recipient.id in handler._trackedChats
+        assert result is HandlerResultStatus.NEXT
+
+    async def test_newMessageHandler_skipsWhenEmbeddingsDisabled(self) -> None:
+        """``newMessageHandler`` does not track a chat when embeddings are disabled.
+
+        When ``EMBEDDINGS_ENABLED=false`` (regardless of
+        ``REGENERATE_EMBEDDINGS``), the chat must NOT be added to
+        ``_trackedChats``. The set stays empty and the handler still
+        returns ``NEXT`` (fire-and-forget, never short-circuits the chain).
+        """
+        cs = _makeChatSettings(embeddingsEnabled=False)
+        handler, _mocks = _makeHandler(chatSettings=cs)
+        em = _makeEnsuredMessage(chatId=100)
+
+        result = await handler.newMessageHandler(em, Mock())
+
+        assert em.recipient.id not in handler._trackedChats
+        assert handler._trackedChats == set()
+        assert result is HandlerResultStatus.NEXT
+
+    async def test_dtCronJob_evictsChatOnGateFail(self) -> None:
+        """``_dtCronJob`` evicts a tracked chat whose settings no longer pass the gate.
+
+        A chat in ``_trackedChats`` whose ``EMBEDDINGS_ENABLED`` or
+        ``REGENERATE_EMBEDDINGS`` is now ``false`` must be removed via
+        ``.discard()`` (no ``KeyError``) on the next cron tick, so the
+        set does not retain stale entries for chats that disabled the
+        feature between messages.
+        """
+        cs = _makeChatSettings(embeddingsEnabled=False)
+        handler, _mocks = _makeHandler(chatSettings=cs)
+        handler._trackedChats = {100}
+
+        await handler._dtCronJob(
+            DelayedTask(
+                taskId=f"cron-{id(self)}",
+                delayedUntil=0.0,
+                function=DelayedTaskFunction.CRON_JOB,
+                kwargs={},
+            )
+        )
+
+        # The chat was evicted by the gate-revalidation ``.discard()`` call.
+        assert 100 not in handler._trackedChats
 
 
 # ---------------------------------------------------------------------------

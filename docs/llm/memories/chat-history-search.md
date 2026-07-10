@@ -31,10 +31,16 @@ How to use this file:
   - `ChatUsersRepository.getChatUsers` — activity filters (exposes `limit` / `minMessages` /
     `lastActiveDays` / `seenSince` on a single method)
   - `ChatMessagesRepository.getMessageThread` — thread retrieval
-- **Backfill**: `_dtCronJob` in `ChatSearchHandler` — round-robin per-chat, discovers chats via
-  `EMBEDDINGS_ENABLED` (which defaults to false, so enabled chats always have a DB row), then gates
-  per-chat by checking `REGENERATE_EMBEDDINGS` (which defaults to true, so it's rarely persisted and
-  can't be queried directly). No auto-reset — manual only via `/settings`.
+- **Backfill**: `_dtCronJob` in `ChatSearchHandler` — round-robins over an
+  in-memory `self._trackedChats: MutableSet[int]` (no DB scan). `newMessageHandler`
+  populates the set by adding a chat's id whenever it sees a message in a chat
+  with `EMBEDDINGS_ENABLED=true` and `REGENERATE_EMBEDDINGS=true`; the cron then
+  re-validates those settings per tick and evicts (one-way, `.discard()`) any
+  chat whose gate has since flipped to false. Cold-start tradeoff: `_trackedChats`
+  starts empty on restart and only grows from live messages, so a quiet chat with
+  a pre-existing backlog is not backfilled until the next message arrives
+  (intentional). `REGENERATE_EMBEDDINGS` defaults to true so it's rarely
+  persisted; no auto-reset — manual only via `/settings`.
 - **Shared helper**: `embedAndSaveMessage` in `internal/bot/common/embedding_utils.py` — takes
   `EnsuredMessage`, resolves `LLMService` via `getInstance()`
 - **Config cached**: `_searchEnabled`, `_reindexBatchSize` in handler `__init__`
@@ -75,15 +81,23 @@ construction time) and `EMBEDDINGS_ENABLED` are both on.
 ### Architecture & Design Decisions
 
 - **`MAX_MESSAGES_FOR_SEMANTIC_SEARCH` page**: `BOT_OWNER` (resolved from plan inconsistency).
-- **Backfill chat discovery**: Query DB for chats with `EMBEDDINGS_ENABLED = true`, then gate
-  per-chat by checking `REGENERATE_EMBEDDINGS`. Process N chats per CRON_JOB tick with configurable
-  batch size.
+- **Backfill chat discovery**: round-robin over the in-memory
+  `_trackedChats` set (populated by `newMessageHandler` when
+  `EMBEDDINGS_ENABLED=true` AND `REGENERATE_EMBEDDINGS=true`), then
+  re-validate those settings per tick. The previous DB-scan discovery
+  (the deleted `ChatSettingsRepository` method that queried the
+  `chat_settings` table for `EMBEDDINGS_ENABLED`) was removed — a quiet
+  chat is no longer backfilled until a new
+  message arrives (intentional).
 - **Plan gaps fixed**: `ChatSettingsPage.BOT_OWNER` reconciled; backfill discovery specified.
 - **Parser merge semantics in `_parseSearchArgs`**: bare words merge with `keywords:`, first
   occurrence wins for other keys, values span tokens until next known key.
-- **Lazy import of `ChatSettingsValue` in `internal/database/repositories/chat_settings.py`**:
-  `listChatsBySetting` imports `ChatSettingsValue` inside the method body to break a
-  package-initialization cycle (`internal.database → internal.bot.models → internal.database`).
+- **Lazy import of `ChatSettingsValue` in `internal/database/repositories/chat_settings.py`**
+  (historical): the deleted DB-scan discovery method once imported `ChatSettingsValue`
+  inside its method body to break a package-initialization cycle
+  (`internal.database → internal.bot.models → internal.database`). The method was
+  removed entirely when chat discovery moved to the in-memory `_trackedChats` set,
+  so this is no longer relevant.
 - **Backfill as CRON_JOB handler**: Backfill lives in `ChatSearchHandler._dtCronJob`, not a
   separate `BackfillWorker` class. The previous
   `internal/bot/common/workers/backfill_worker.py` module was removed. `HandlersManager.__init__`
@@ -115,8 +129,9 @@ construction time) and `EMBEDDINGS_ENABLED` are both on.
 - **`listChatUsers` → merged into `getChatUsers`**: The separate `listChatUsers` method was
   merged into `getChatUsers`, which now exposes `limit` / `minMessages` / `lastActiveDays` /
   `seenSince` on a single method.
-- **`listChatsBySetting` simplified**: Returns `List[Dict]` with `chat_id`/`value`; callers filter
-  via `ChatSettingsValue.toBool()`.
+- **DB-scan discovery method removed**: the `ChatSettingsRepository` method (and its
+  value-filtering / cross-source aggregation logic) was deleted entirely when chat
+  discovery moved to the in-memory `_trackedChats` set. No replacement.
 
 ### Production Bugs Found & Fixed
 
@@ -199,11 +214,15 @@ These mistakes were made during Step 1 implementation and fixed. Don't repeat th
     AFTER the SQL LIMIT, silently dropping matching results outside the limit window. Always
     filter first, then truncate.
 
-14. **Backfill discovery uses `EMBEDDINGS_ENABLED`, not `REGENERATE_EMBEDDINGS`.**
-    `REGENERATE_EMBEDDINGS` defaults to true so it's rarely in the DB and `listChatsBySetting`
-    would miss most chats. Instead, query `EMBEDDINGS_ENABLED` (which defaults to false, so
-    enabled chats always have a DB row), then filter per-chat by checking `REGENERATE_EMBEDDINGS`
-    after discovery.
+14. **Discovery now uses `_trackedChats`, not `EMBEDDINGS_ENABLED` DB rows.**
+    The cron round-robins over an in-memory `self._trackedChats` set populated
+    by `newMessageHandler` (added when `EMBEDDINGS_ENABLED=true` AND
+    `REGENERATE_EMBEDDINGS=true`).     The previous DB-scan discovery method (the deleted
+    `ChatSettingsRepository` query over `chat_settings` for
+    `EMBEDDINGS_ENABLED`) was removed. Tradeoff: a quiet chat with a backlog is not backfilled until
+    the next message arrives (intentional — the goal is to not scan old unused
+    chats); eviction is one-way (`.discard()`), so re-enabling embeddings does
+    not re-add a chat until the next qualifying message.
 
 15. **Don't list all rows to find one.** `_resolveUserId` called `listChatUsers(limit=None)` to
     find one user by username. Use targeted queries: `getChatUserByUsername(chatId, username)`.

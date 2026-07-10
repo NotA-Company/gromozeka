@@ -11,7 +11,7 @@ import datetime
 import logging
 import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import MutableSet, Sequence
 from typing import Dict, List, Optional, Tuple
 
 from dateutil import parser as dateutilParser
@@ -40,7 +40,6 @@ from internal.bot.models import (
     ButtonDataKey,
     ButtonUserDataConfigAction,
     ChatSettingsKey,
-    ChatSettingsValue,
     ChatType,
     CommandCategory,
     CommandHandlerOrder,
@@ -155,6 +154,9 @@ class UserMemoriesHandler(BaseBotHandler):
 
         self.llmService = LLMService.getInstance()
 
+        # Set of chats bot need to check for embeddings backfill
+        self._trackedChats: MutableSet[int] = set()
+
         # In-memory per-(chatId, userId, threadId) new-message counter used by the
         # memory-refinement cron to decide when a user's rolling summary is due.
         # Lost on restart; refinement re-fires after the next threshold crossing.
@@ -170,7 +172,7 @@ class UserMemoriesHandler(BaseBotHandler):
         # Lock guarding self._accounting and self._lastRefinedTS reads/writes.
         # _accounting is mutated under this lock in newMessageHandler (increment)
         # and _dtCronJob (credit-consumed subtract/drop); _lastRefinedTS is written
-        # under it in _dtCronJob's finally block and _runRefinement, and read under
+        # under it in _dtCronJob's finally block and _runSingleRefinement, and read under
         # it in the _dtCronJob due-list scan, so the scan never observes a
         # half-updated timestamp. The scan-loop snapshot
         # ``list(self._accounting.items())`` is intentionally taken without the
@@ -184,7 +186,7 @@ class UserMemoriesHandler(BaseBotHandler):
         self._refineLock = asyncio.Lock()
 
         # Cache the [user-memory] config ONCE at construction so the cron hot
-        # path and _runRefinement never touch configManager. Thresholds fall
+        # path and _runSingleRefinement never touch configManager. Thresholds fall
         # back to the module constants (which mirror the TOML defaults) when the
         # section is absent or partially specified.
         userMemoryConfig = configManager.get("user-memory", {})
@@ -740,8 +742,8 @@ class UserMemoriesHandler(BaseBotHandler):
     #
     # Flow (see docs/llm/memories/user-memories.md "Refinement"):
     #   newMessageHandler increments _accounting  ->  _dtCronJob (every 60s)
-    #   scans the counter, builds a due list, runs _runRefinement for each
-    #   under a single global _refineLock  ->  _runRefinement fetches recent
+    #   scans the counter, builds a due list, runs _runSingleRefinement for each
+    #   under a single global _refineLock  ->  _runSingleRefinement fetches recent
     #   messages and curates the user_memories store LIVE via the tools
     #   (add_memory / delete_memory / search_memories); it persists ONLY the
     #   message cursor (no summary) to
@@ -759,10 +761,17 @@ class UserMemoriesHandler(BaseBotHandler):
         (``embedding_model`` / ``embedding_dimensions``), so stale detection
         is a single-table query (no vec0 JOIN). Per tick:
 
-        1. **Chat discovery**: list chats with
-           ``MEMORY_EMBEDDINGS_ENABLED=true`` via
-           ``listChatsBySetting``, filtered through
-           :meth:`ChatSettingsValue.toBool`.
+        1. **Chat discovery (in-memory)**: round-robin over
+           ``self._trackedChats``, a ``MutableSet[int]`` populated by
+           :meth:`newMessageHandler` whenever it sees a message in a chat
+           with ``MEMORY_EMBEDDINGS_ENABLED=true`` and
+           ``MEMORY_REGENERATE_EMBEDDINGS=true``. Cold-start tradeoff:
+           the set is empty on restart and only grows from live message
+           activity, so a quiet chat with a backlog is not backfilled
+           until a new message arrives (intentional). Eviction is
+           one-way: a chat that later disables embeddings (or regen) is
+           removed in step 3 and not re-added until the next qualifying
+           message.
         2. **Round-robin pick**: one chat per tick, advanced through
            ``_memoryBackfillIndex`` (stable order across ticks).
         3. **Per-chat gate**: bail when
@@ -810,27 +819,20 @@ class UserMemoriesHandler(BaseBotHandler):
                 manager; caught by the ``_dtCronJob`` caller.
         """
         startTime = utils.now()
-        # 1. Chat discovery — MEMORY_EMBEDDINGS_ENABLED defaults to false,
-        # so any chat that explicitly enabled it has a DB row (same trick
-        # the chat-history cron uses with EMBEDDINGS_ENABLED).
-        try:
-            chatMap = await self.db.chatSettings.listChatsBySetting(key=ChatSettingsKey.MEMORY_EMBEDDINGS_ENABLED)
-        except Exception as e:
-            logger.warning("Memory regen: failed to list enabled chats: %s", e)
+        # 1. Chat discovery — round-robin over the in-memory ``_trackedChats``
+        # set (populated by ``newMessageHandler`` for chats with memory
+        # embeddings on; cold-start: empty on restart).
+
+        if not self._trackedChats:
             return
 
-        enabledChats: List[int] = sorted(
-            [chatId for chatId, value in chatMap.items() if ChatSettingsValue(value).toBool()]
-        )
-        if not enabledChats:
-            return
-
-        # 2. Round-robin pick across ``enabledChats`` sorted by chat ID for
+        # 2. Round-robin pick across ``chatList`` sorted by chat ID for
         # stable ordering across ticks. ``% len`` is safe because the list
         # is non-empty (checked above).
-        chatId = enabledChats[self._memoryBackfillIndex % len(enabledChats)]
+        chatList = sorted(self._trackedChats)
+        chatId = chatList[self._memoryBackfillIndex % len(chatList)]
         self._memoryBackfillIndex += 1
-        self._memoryBackfillIndex %= len(enabledChats)
+        self._memoryBackfillIndex %= len(chatList)
 
         # 3-4. Per-chat gate + model resolution.
         try:
@@ -838,7 +840,11 @@ class UserMemoriesHandler(BaseBotHandler):
         except Exception as e:
             logger.warning("Memory regen: failed to read chat settings for %d: %s", chatId, e)
             return
-        if not chatSettings[ChatSettingsKey.MEMORY_REGENERATE_EMBEDDINGS].toBool():
+        if (
+            not chatSettings[ChatSettingsKey.MEMORY_REGENERATE_EMBEDDINGS].toBool()
+            or not chatSettings[ChatSettingsKey.MEMORY_EMBEDDINGS_ENABLED].toBool()
+        ):
+            self._trackedChats.discard(chatId)
             return  # regeneration disabled for this chat
 
         embeddingModel = self.llmService.resolveModel(
@@ -872,10 +878,11 @@ class UserMemoriesHandler(BaseBotHandler):
             )
             self._memoryEmbeddingModelTracker[chatId] = modelKey
 
-        # 6. Stale detection. ``modelName`` is forwarded so rows embedded
-        # under a different model (e.g. after a model swap) are re-surfaced.
-        # A NULL ``embedding_model`` (never-embedded memory) surfaces here
-        # too, so this same query serves the initial backfill.
+        # 6. Stale detection. ``modelName`` and ``dimensions`` are forwarded
+        # so rows embedded under a different model or dimensionality (e.g.
+        # after a model swap) are re-surfaced. A NULL ``embedding_model``
+        # (never-embedded memory) surfaces here too, so this same query
+        # serves the initial backfill.
         staleMemories: List[UserMemoryDict] = []
         try:
             staleMemories = await self.db.userMemories.getMemoriesWithoutEmbeddings(
@@ -941,7 +948,7 @@ class UserMemoriesHandler(BaseBotHandler):
            every tick OUTSIDE ``_refineLock`` (read/embed/write on
            ``user_memories``; does not contend with refinement).
         2. **Memory refinement** (the body below): scans ``_accounting``
-           to build a due list, runs ``_runRefinement`` for each under the
+           to build a due list, runs ``_runSingleRefinement`` for each under the
            single global ``_refineLock``.
 
         The regen pass runs first (under its own try/except) so a regen
@@ -967,7 +974,7 @@ class UserMemoriesHandler(BaseBotHandler):
         list, that max is evicted and replaced by the candidate, and the running
         max is recomputed. Never-refined users (TS=0) are deliberately NOT
         skipped: they are refined from their lifetime chat history on the first
-        due tick; if too few lifetime messages exist, ``_runRefinement`` bails
+        due tick; if too few lifetime messages exist, ``_runSingleRefinement`` bails
         once and advances the in-memory ``_lastRefinedTS`` so the candidate is
         not retried until the count or time threshold fires again.
 
@@ -978,7 +985,7 @@ class UserMemoriesHandler(BaseBotHandler):
         attempted (credit-consumed), clamped at 0 and dropped when it reaches 0
         so empty keys are not re-iterated.
 
-        Known limitation (accepted risk): when ``_runRefinement`` raises, the
+        Known limitation (accepted risk): when ``_runSingleRefinement`` raises, the
         ``finally`` block still subtracts ``preCount`` and may drop the key. This
         acts as accidental backoff during a provider outage, but means every
         active user pays the cost simultaneously on recovery (their counters are
@@ -1007,6 +1014,44 @@ class UserMemoriesHandler(BaseBotHandler):
                 stack_info=True,
             )
 
+        try:
+            await self._runMemoryRefinement()
+        except Exception:
+            logger.exception(
+                "Memory refinement failed",
+                exc_info=True,
+                stack_info=True,
+            )
+
+    async def _runMemoryRefinement(self) -> None:
+        """Scan ``_accounting`` and run one batch of memory refinements.
+
+        Runs independently of :meth:`_runMemoryEmbeddingRegen` (the two
+        share the 60s ``_dtCronJob`` tick but are dispatched in separate
+        try/except blocks) and serializes on ``_refineLock`` so a slow
+        LLM call (which can exceed the 60s cadence) blocks the next tick
+        instead of spawning a concurrent refinement.
+
+        Bails early when ``_refineLock`` is already held (a previous
+        batch still running). Otherwise acquires the lock and, under it,
+        scans ``_accounting`` for due candidates — a key is due when its
+        new-message count crosses ``_memoryCountThreshold`` or its age
+        since last refinement crosses ``_memoryTimeThresholdSeconds``.
+        Selects the top-K (``_memoryMaxRefinesPerTick``) by smallest
+        ``_lastRefinedTS`` (oldest-due / never-refined). For each
+        candidate the chat settings are re-read; when the gate now fails
+        (requires BOTH ``MEMORY_REFINEMENT_ENABLED`` and
+        ``MEMORY_EMBEDDINGS_ENABLED``) the candidate is dropped from
+        ``_accounting`` and ``_lastRefinedTS``. Survivors are dispatched
+        to :meth:`_runSingleRefinement`, after which the per-key counter
+        is decremented (credit-consumed) and dropped when it reaches 0.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+        """
         # Bail this tick if a previous batch is still running (a single LLM call
         # can exceed the 60s cadence). The lock serializes everything so the
         # provider is never flooded with concurrent refinement calls.
@@ -1039,7 +1084,14 @@ class UserMemoriesHandler(BaseBotHandler):
                     chatId, userId, threadId = key
                     # Per-chat enable gate (runtime-disable safe).
                     chatSettings = await self.getChatSettings(chatId)
-                    if not chatSettings[ChatSettingsKey.MEMORY_REFINEMENT_ENABLED].toBool():
+                    # Refinement now requires memory embeddings too: the
+                    # ``search_memories`` LLM tool used during refinement is
+                    # semantic and returns nothing without embeddings, so
+                    # refinement is only meaningful when they are enabled.
+                    if (
+                        not chatSettings[ChatSettingsKey.MEMORY_REFINEMENT_ENABLED].toBool()
+                        or not chatSettings[ChatSettingsKey.MEMORY_EMBEDDINGS_ENABLED].toBool()
+                    ):
                         # Drop this candidate from future checks
                         async with self._accountingLock:
                             self._accounting.pop(key, None)
@@ -1102,7 +1154,7 @@ class UserMemoriesHandler(BaseBotHandler):
                 preCount = dueEntry[1]
                 chatId, userId, threadId = key
                 try:
-                    await self._runRefinement(chatId, userId, threadId)
+                    await self._runSingleRefinement(chatId, userId, threadId)
                 except Exception:
                     logger.exception(
                         "Memory refinement failed for chatId=%s userId=%s threadId=%s",
@@ -1137,7 +1189,7 @@ class UserMemoriesHandler(BaseBotHandler):
                         if key not in self._lastRefinedTS:
                             self._lastRefinedTS[key] = int(time.time())
 
-    async def _runRefinement(self, chatId: int, userId: int, threadId: int) -> None:
+    async def _runSingleRefinement(self, chatId: int, userId: int, threadId: int) -> None:
         """Run one memory-refinement LLM pass for a (chat, user, thread).
 
         Fetches recent messages since the last processed date, pre-loads the
@@ -1506,6 +1558,15 @@ class UserMemoriesHandler(BaseBotHandler):
 
         # Memory-refinement accounting: count this message if refinement is enabled for this chat.
         chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
+
+        if (
+            chatSettings[ChatSettingsKey.MEMORY_EMBEDDINGS_ENABLED].toBool()
+            and chatSettings[ChatSettingsKey.MEMORY_REGENERATE_EMBEDDINGS].toBool()
+        ):
+            self._trackedChats.add(ensuredMessage.recipient.id)
+        # Admitted on MEMORY_REFINEMENT_ENABLED alone; _runMemoryRefinement re-checks
+        # MEMORY_EMBEDDINGS_ENABLED, so refinement-on/embeddings-off chats accumulate
+        # accounting but never refine.
         if chatSettings[ChatSettingsKey.MEMORY_REFINEMENT_ENABLED].toBool():
             threadId = ensuredMessage.threadId or DEFAULT_THREAD_ID
             key = (ensuredMessage.recipient.id, ensuredMessage.sender.id, threadId)

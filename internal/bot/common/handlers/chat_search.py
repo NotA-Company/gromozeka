@@ -24,6 +24,7 @@ import asyncio
 import datetime
 import json
 import logging
+from collections.abc import MutableSet
 from enum import StrEnum
 from typing import Any, Dict, List, Optional, Tuple, cast
 
@@ -42,7 +43,6 @@ from internal.bot.models import (
     BotProvider,
     ChatSettingsDict,
     ChatSettingsKey,
-    ChatSettingsValue,
     ChatType,
     CommandCategory,
     CommandHandlerOrder,
@@ -59,7 +59,7 @@ from internal.models import MessageId
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
 from lib.ai import LLMFunctionParameter, LLMParameterType
 
-from .base import BaseBotHandler
+from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +174,9 @@ class ChatSearchHandler(BaseBotHandler):
         # obsolete-embedding deletion only fires once per model switch.
         self._embeddingModelTracker: Dict[int, str] = {}
 
+        # Set of chats bot need to check for embeddings backfill
+        self._trackedChats: MutableSet[int] = set()
+
         # Register backfill CRON_JOB. Multiple handlers can subscribe to
         # the same `DelayedTaskFunction` (they run in registration order
         # — see `QueueService.registerDelayedTaskHandler`), so the
@@ -270,19 +273,24 @@ class ChatSearchHandler(BaseBotHandler):
         Runs every 60 seconds (the ``CRON_JOB`` cadence in
         :class:`QueueService`). Per tick:
 
-        1. List chats with ``EMBEDDINGS_ENABLED=true`` via the
-           cross-source-aggregating ``ChatSettingsRepository.listChatsBySetting``
-           helper. ``value`` is filtered through
-           :meth:`ChatSettingsValue.toBool` so ``"true"``/``"1"`` (any
-           case) match. (``REGENERATE_EMBEDDINGS`` defaults to ``true``
-           so it is rarely persisted to the DB; ``EMBEDDINGS_ENABLED``
-           defaults to ``false`` so any chat that explicitly enabled it
-           always has a DB row — see the inline comment at the query
-           site.)
-        2. Skip chats where ``REGENERATE_EMBEDDINGS`` is explicitly set
-           to ``"false"`` — because the setting defaults to true, a chat
-           that never touched it is automatically opted in for the
-           backfill pass.
+        1. **Chat discovery (in-memory)**: round-robin over
+           ``self._trackedChats``, a ``MutableSet[int]`` populated by
+           :meth:`newMessageHandler` whenever it sees a message in a chat
+           with ``EMBEDDINGS_ENABLED=true`` and
+           ``REGENERATE_EMBEDDINGS=true``. Cold-start tradeoff: the set
+           is empty on restart and only grows from live message
+           activity, so a quiet chat with a pre-existing backlog is not
+           backfilled until a new message arrives (intentional — the old
+           DB-scanning discovery path was removed). Eviction is one-way:
+           a chat that later disables embeddings (or regen) is removed
+           from the set in step 2 and is not re-added until the next
+           qualifying message.
+        2. **Per-chat gate (runtime re-validation)**: bail — and evict
+           from ``_trackedChats`` — when ``REGENERATE_EMBEDDINGS`` or
+           ``EMBEDDINGS_ENABLED`` is now explicitly false. Because
+           membership is driven by live messages, a chat that flips a
+           setting off between messages is dropped here rather than
+           re-scanned every tick.
         3. Round-robin: pick the next chat in stable order, advance
            ``_backfillIndex``.
         4. Resolve the chat's embedding model from its ``EMBEDDING_MODEL``
@@ -314,29 +322,17 @@ class ChatSearchHandler(BaseBotHandler):
         """
         startTime = libUtils.now()
         # Gate 1: discover chats that explicitly opted in to a backfill
-        # pass via `REGENERATE_EMBEDDINGS = true`.
-        try:
-            # Search for chats with enabled embeddings and then filter out via REGENERATE_EMBEDDINGS
-            # as REGENERATE_EMBEDDINGS is true by default, so it won't be in database for most chats
-            # In the same time EMBEDDINGS_ENABLED is false by default, so all chats with enabled will be in DB
-            chatMap = await self.db.chatSettings.listChatsBySetting(key=ChatSettingsKey.EMBEDDINGS_ENABLED)
-        except Exception as e:
-            logger.warning("Backfill: failed to list enabled chats: %s", e)
+        if not self._trackedChats:
             return
 
-        enabledChats: List[int] = sorted(
-            [chatId for chatId, value in chatMap.items() if ChatSettingsValue(value).toBool()]
-        )
-        if not enabledChats:
-            return
-
-        # Round-robin pick across ``enabledChats`` sorted by chat ID for
+        # Round-robin pick across ``chatList`` sorted by chat ID for
         # stable ordering across CRON_JOB ticks. ``% len`` is safe because
-        # ``enabledChats`` is non-empty (checked above), so a zero-division
+        # ``chatList`` is non-empty (checked above), so a zero-division
         # never lands.
-        chatId = enabledChats[self._backfillIndex % len(enabledChats)]
+        chatList = sorted(self._trackedChats)
+        chatId = chatList[self._backfillIndex % len(chatList)]
         self._backfillIndex += 1
-        self._backfillIndex %= len(enabledChats)
+        self._backfillIndex %= len(chatList)
 
         # Gate 3: resolve the embedding model.
         try:
@@ -344,12 +340,17 @@ class ChatSearchHandler(BaseBotHandler):
         except Exception as e:
             logger.warning("Backfill: failed to read chat settings for %d: %s", chatId, e)
             return
-        if not chatSettings[ChatSettingsKey.REGENERATE_EMBEDDINGS].toBool():
+        if (
+            not chatSettings[ChatSettingsKey.REGENERATE_EMBEDDINGS].toBool()
+            or not chatSettings[ChatSettingsKey.EMBEDDINGS_ENABLED].toBool()
+        ):
             # Regenerating embeddings is disabled for given chat
+            self._trackedChats.discard(chatId)
             return
 
         modelName = chatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr()
         if not modelName:
+            logger.warning("Embedding model isn't configured for chat#%d", chatId)
             return
         model = self.llmService.getLLMManager().getModel(modelName)
         if model is None or not model.supportsEmbedding:
@@ -393,6 +394,7 @@ class ChatSearchHandler(BaseBotHandler):
                 chatId,
                 limit=self._reindexBatchSize,
                 modelName=modelName,
+                dimensions=currentDims,
             )
         except Exception as e:
             logger.warning("Backfill: failed to list pending messages for chat %d: %s", chatId, e)
@@ -774,6 +776,38 @@ class ChatSearchHandler(BaseBotHandler):
             "target_message": targetFormatted,
             "thread_messages": list(formattedThreadMessages),
         }
+
+    async def newMessageHandler(
+        self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
+    ) -> HandlerResultStatus:
+        """Track chats that may need embeddings backfill.
+
+        Reads the chat settings and, when both ``EMBEDDINGS_ENABLED`` and
+        ``REGENERATE_EMBEDDINGS`` are true, adds the message's chat id to
+        the in-memory ``self._trackedChats`` set so the
+        :meth:`_dtCronJob` backfill pass can round-robin over it on a
+        later tick. This is a fire-and-forget tracker — it never
+        short-circuits the handler chain.
+
+        Args:
+            ensuredMessage: The incoming message (its ``recipient.id``
+                is the chat added to the tracking set).
+            updateObj: Raw platform update object (unused).
+
+        Returns:
+            ``HandlerResultStatus.NEXT`` — always, so downstream handlers
+            (notably ``LLMMessageHandler``) still process the message.
+        """
+
+        # Track chats needing embeddings backfill.
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
+        if (
+            chatSettings[ChatSettingsKey.EMBEDDINGS_ENABLED].toBool()
+            and chatSettings[ChatSettingsKey.REGENERATE_EMBEDDINGS].toBool()
+        ):
+            self._trackedChats.add(ensuredMessage.recipient.id)
+
+        return HandlerResultStatus.NEXT
 
     ###
     # /users command

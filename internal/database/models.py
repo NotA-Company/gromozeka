@@ -524,7 +524,7 @@ class UserMemorySource(StrEnum):
 
     Members:
         REFINEMENT: Created by the background refinement pass
-            (``UserMemoriesHandler._runRefinement``), which runs an LLM over
+            (``UserMemoriesHandler._runSingleRefinement``), which runs an LLM over
             recent messages and emits ``add_memory`` / ``delete_memory``
             tool calls. See ``isRefinement=True`` in the add path.
         CHAT: Created inline during an interactive conversation via the same

@@ -191,27 +191,24 @@ def _makeHandler(
     enabled: bool = True,
     reindexBatchSize: Optional[int] = None,
     chatSettings: Optional[ChatSettingsDict] = None,
-    enabledChats: Optional[Dict[int, str]] = None,
     model: Optional[Mock] = None,
     staleMemories: Optional[List[UserMemoryDict]] = None,
     cleanupResult: int = 0,
 ) -> Tuple[UserMemoriesHandler, Dict[str, Mock]]:
     """Construct a :class:`UserMemoriesHandler` wired for the regen tests.
 
-    The DB is a ``Mock`` whose ``chatSettings`` / ``userMemories``
-    sub-attributes are stubbed with ``AsyncMock`` so the regen path can be
-    driven deterministically without touching SQLite or vec0. The handler's
-    ``getChatSettings`` and ``llmService.getLLMManager`` are overridden at
-    the instance level (mirrors ``test_chat_search_cleanup.py``).
+    The DB is a ``Mock`` whose ``userMemories`` sub-attribute is stubbed
+    with ``AsyncMock`` so the regen path can be driven deterministically
+    without touching SQLite or vec0. Chat discovery is driven via the
+    in-memory ``handler._trackedChats`` set (default ``{100}``). The
+    handler's ``getChatSettings`` and ``llmService.getLLMManager`` are
+    overridden at the instance level (mirrors ``test_chat_search_cleanup.py``).
 
     Args:
         enabled: Value for ``[user-memory].enabled``. Default ``True``.
         reindexBatchSize: Optional ``memory-reindex-batch-size`` override.
         chatSettings: Chat-settings dict returned by ``getChatSettings``.
             Defaults to :func:`_makeChatSettings`.
-        enabledChats: Chat-discovery result (``chatId -> raw value``)
-            returned by ``listChatsBySetting``. Defaults to a single enabled
-            chat (id 100) so the round-robin pick is deterministic.
         model: Mock embedding model returned by the LLM manager. Defaults
             to a model without dimensions (mirrors a plain OpenAI-style model).
         staleMemories: Result of ``getMemoriesWithoutEmbeddings``. Defaults
@@ -222,15 +219,11 @@ def _makeHandler(
 
     Returns:
         Tuple ``(handler, mocks)`` where ``mocks`` exposes the ``db`` and
-        ``userMemories`` / ``chatSettings`` mocks for direct assertion.
+        ``userMemories`` mocks for direct assertion.
     """
     cm = _makeConfigManager(enabled=enabled, reindexBatchSize=reindexBatchSize)
     db = Mock()
     db.manager = Mock()
-    db.chatSettings = Mock()
-    db.chatSettings.listChatsBySetting = AsyncMock(
-        return_value=enabledChats if enabledChats is not None else {100: "true"}
-    )
     db.userMemories = Mock()
     db.userMemories.deleteObsoleteMemoryEmbeddings = AsyncMock(return_value=cleanupResult)
     db.userMemories.getMemoriesWithoutEmbeddings = AsyncMock(
@@ -257,10 +250,13 @@ def _makeHandler(
         return_value=("embed-v1", [0.1, 0.2, 0.3])
     )
 
+    # Default tracked-chats pool so most tests inherit chat 100 automatically.
+    # Override per-test when an empty pool or a different chat is needed.
+    handler._trackedChats = {100}  # type: ignore[attr-defined]
+
     mocks: Dict[str, Mock] = {
         "db": db,
         "userMemories": db.userMemories,
-        "chatSettings": db.chatSettings,
         "model": mockModel,
     }
     return handler, mocks
@@ -307,7 +303,8 @@ class TestRegenDiscovery:
         handler, mocks = _makeHandler(enabled=False)
         await handler._dtCronJob(task=_makeDelayedTask())  # type: ignore[attr-defined]
 
-        mocks["chatSettings"].listChatsBySetting.assert_not_called()
+        mocks["userMemories"].deleteObsoleteMemoryEmbeddings.assert_not_called()
+        mocks["userMemories"].getMemoriesWithoutEmbeddings.assert_not_called()
 
     async def test_regenRunsViaCronWhenEnabled(self) -> None:
         """``[user-memory].enabled = true`` → ``_dtCronJob`` invokes regen.
@@ -319,42 +316,34 @@ class TestRegenDiscovery:
         handler, mocks = _makeHandler(enabled=True)
         await handler._dtCronJob(task=_makeDelayedTask())  # type: ignore[attr-defined]
 
-        mocks["chatSettings"].listChatsBySetting.assert_awaited_once_with(key=ChatSettingsKey.MEMORY_EMBEDDINGS_ENABLED)
-
-    async def test_discoveryUsesMemoryEmbeddingsEnabledKey(self) -> None:
-        """The discovery query targets ``MEMORY_EMBEDDINGS_ENABLED`` (not ``EMBEDDINGS_ENABLED``).
-
-        This is the key distinction from the chat-history backfill cron
-        (which queries ``EMBEDDINGS_ENABLED``). Memory regen has its own
-        per-feature discovery flag so a chat can enable message search
-        without opting into memory re-embedding.
-        """
-        handler, mocks = _makeHandler()
-        await _runRegen(handler)
-
-        mocks["chatSettings"].listChatsBySetting.assert_awaited_once_with(key=ChatSettingsKey.MEMORY_EMBEDDINGS_ENABLED)
+        # The regen pass ran through to the stale-detection fetch.
+        mocks["userMemories"].getMemoriesWithoutEmbeddings.assert_awaited_once()
 
     async def test_noEnabledChatsIsNoop(self) -> None:
         """An empty discovery result short-circuits before cleanup / re-embed."""
-        handler, mocks = _makeHandler(enabledChats={})
+        handler, mocks = _makeHandler()
+        handler._trackedChats = set()  # type: ignore[attr-defined]
         await _runRegen(handler)
 
         mocks["userMemories"].deleteObsoleteMemoryEmbeddings.assert_not_called()
         mocks["userMemories"].getMemoriesWithoutEmbeddings.assert_not_called()
 
-    async def test_chatsWithFlagOffAreSkipped(self) -> None:
-        """Discovery filters values through ``ChatSettingsValue.toBool``.
+    async def test_chatsWithFlagOffAreEvictedFromTrackedChats(self) -> None:
+        """A chat whose per-chat gate fails is evicted from ``_trackedChats``.
 
-        A chat whose ``MEMORY_EMBEDDINGS_ENABLED`` value is ``"false"`` (or
-        any falsy string) is dropped from the round-robin pool. Only chats
-        with a truthy value are scanned.
+        With the in-memory discovery mechanism, ``_trackedChats`` is the
+        round-robin pool. When the per-chat gate (``MEMORY_REGENERATE_EMBEDDINGS``
+        or ``MEMORY_EMBEDDINGS_ENABLED`` false) fails, the chat is removed via
+        ``.discard()`` and cleanup / re-embed are never reached for it.
         """
-        handler, mocks = _makeHandler(enabledChats={100: "true", 200: "false", 300: "0"})
+        handler, mocks = _makeHandler(
+            chatSettings=_makeChatSettings(memoryRegenerateEmbeddings=False),
+        )
         await _runRegen(handler)
 
-        # Only chat 100 survived the toBool filter → it was the one scanned.
-        getArgs = mocks["userMemories"].getMemoriesWithoutEmbeddings.call_args.args
-        assert getArgs[0] == 100
+        mocks["userMemories"].deleteObsoleteMemoryEmbeddings.assert_not_called()
+        mocks["userMemories"].getMemoriesWithoutEmbeddings.assert_not_called()
+        assert 100 not in handler._trackedChats  # type: ignore[attr-defined]
 
     async def test_roundRobinPicksNextChatEachTick(self) -> None:
         """Subsequent ticks pick the next enabled chat in stable (sorted) order.
@@ -363,7 +352,8 @@ class TestRegenDiscovery:
         second picks 200. The index survives across ticks on the same
         handler instance (``_memoryBackfillIndex`` is an instance attr).
         """
-        handler, mocks = _makeHandler(enabledChats={200: "true", 100: "true"})
+        handler, mocks = _makeHandler()
+        handler._trackedChats = {200, 100}  # type: ignore[attr-defined]
         await _runRegen(handler)
         firstChat = mocks["userMemories"].getMemoriesWithoutEmbeddings.call_args.args[0]
         assert firstChat == 100
@@ -470,7 +460,8 @@ class TestRegenCleanup:
 
     async def test_cleanupScopedToPickedChat(self) -> None:
         """The ``chatId`` argument matches the chat picked by round-robin."""
-        handler, mocks = _makeHandler(enabledChats={999: "true"})
+        handler, mocks = _makeHandler()
+        handler._trackedChats = {999}  # type: ignore[attr-defined]
         await _runRegen(handler)
 
         mocks["userMemories"].deleteObsoleteMemoryEmbeddings.assert_awaited_once_with(
@@ -720,29 +711,14 @@ class TestRegenReEmbedLoop:
 
 
 class TestRegenNeverCrash:
-    """Tests for the three ``except Exception`` never-crash guards in regen.
+    """Tests for the ``except Exception`` never-crash guards in regen.
 
-    ``_runMemoryEmbeddingRegen`` wraps its discovery / settings-read / stale-
-    fetch in defensive ``try/except Exception`` blocks so a transient DB
-    failure never crashes the shared 60s cron tick. Each test forces one
-    branch to raise and asserts the method returns without raising AND that
-    no downstream step (cleanup / fetch / re-embed) is reached.
+    ``_runMemoryEmbeddingRegen`` wraps its settings-read and stale-fetch in
+    defensive ``try/except Exception`` blocks so a transient DB failure never
+    crashes the shared 60s cron tick. Each test forces one branch to raise
+    and asserts the method returns without raising AND that no downstream
+    step (cleanup / fetch / re-embed) is reached.
     """
-
-    async def test_listChatsBySettingErrorReturnsEarly(self) -> None:
-        """A raise in ``listChatsBySetting`` is swallowed → early return.
-
-        The discovery query is the first guarded block; on failure the method
-        logs-and-returns so a DB hiccup never propagates to ``_dtCronJob``.
-        None of the downstream steps (cleanup, stale fetch, re-embed) may run.
-        """
-        handler, mocks = _makeHandler()
-        mocks["chatSettings"].listChatsBySetting = AsyncMock(side_effect=RuntimeError("db down"))
-        await _runRegen(handler)  # must not raise
-
-        mocks["userMemories"].deleteObsoleteMemoryEmbeddings.assert_not_called()
-        mocks["userMemories"].getMemoriesWithoutEmbeddings.assert_not_called()
-        handler.llmService.generateEmbedding.assert_not_called()  # type: ignore[attr-defined]
 
     async def test_getChatSettingsErrorReturnsEarly(self) -> None:
         """A raise in ``getChatSettings`` is swallowed → early return.

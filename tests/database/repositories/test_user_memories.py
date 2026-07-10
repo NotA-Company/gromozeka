@@ -766,6 +766,55 @@ class TestUserMemoriesVectorLayer:
         assert idStale in staleIds  # stale model
         assert idCurrent not in staleIds  # current model
 
+    async def test_getMemoriesWithoutEmbeddings_filtersByDimensions(self, testDatabase: Database) -> None:
+        """Pin dimension-mismatch detection independent of embedding model.
+
+        Two memories share the same ``embedding_model`` ("modelA") but
+        differ in ``embedding_dimensions`` (384 vs 1024). Passing
+        ``dimensions=1024`` must surface only the 384-dim row as stale;
+        passing ``dimensions=None`` (the default) omits the dimension
+        check, so a matching-model row is never returned even when its
+        dimensions differ. This pins the ``None``-default
+        behaviour-preserving property and guards against the
+        dimension-filter clause regressing out of the WHERE ``OR(...)``.
+        """
+        idLow = await self._add(testDatabase, content="low-dim", threadId=5)
+        idHigh = await self._add(testDatabase, content="high-dim", threadId=5)
+
+        if self._vecAvailable(testDatabase):
+            # Same model, different embedding lengths -> different dimensions.
+            await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, idLow, [0.0] * 384, "modelA")
+            await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, idHigh, [0.0] * 1024, "modelA")
+        else:
+            # Without vec0, manually set the provenance columns via provider.
+            sqlProvider = await testDatabase.manager.getProvider(chatId=CHAT_ID, readonly=False)
+            await sqlProvider.execute(
+                "UPDATE user_memories SET embedding_model = :m, embedding_dimensions = :d "
+                "WHERE chat_id = :c AND user_id = :u AND memory_id = :mid",
+                {"c": CHAT_ID, "u": USER_ID, "mid": idLow, "m": "modelA", "d": 384},
+            )
+            await sqlProvider.execute(
+                "UPDATE user_memories SET embedding_model = :m, embedding_dimensions = :d "
+                "WHERE chat_id = :c AND user_id = :u AND memory_id = :mid",
+                {"c": CHAT_ID, "u": USER_ID, "mid": idHigh, "m": "modelA", "d": 1024},
+            )
+
+        # dimensions=1024: the 384-dim row is stale (mismatch); the 1024-dim row is current.
+        staleLow = await testDatabase.userMemories.getMemoriesWithoutEmbeddings(
+            CHAT_ID, modelName="modelA", dimensions=1024, limit=10
+        )
+        staleLowIds = {r["memory_id"] for r in staleLow}
+        assert idLow in staleLowIds  # dimension mismatch -> stale
+        assert idHigh not in staleLowIds  # dimensions match -> current
+
+        # dimensions=None: dimension check omitted; both rows match the model -> neither stale.
+        noneStale = await testDatabase.userMemories.getMemoriesWithoutEmbeddings(
+            CHAT_ID, modelName="modelA", dimensions=None, limit=10
+        )
+        noneStaleIds = {r["memory_id"] for r in noneStale}
+        assert idLow not in noneStaleIds
+        assert idHigh not in noneStaleIds
+
     ###
     # deleteObsoleteMemoryEmbeddings
     ###

@@ -8,16 +8,16 @@ Phase 7a/7b — deterministic refinement-loop behaviours:
 * ``(C)`` ``newMessageHandler`` leaves ``_accounting`` untouched when the feature
   is disabled.
 
-Phase 7b — the CRON refinement loop (``_dtCronJob`` / ``_runRefinement``) with
+Phase 7b — the CRON refinement loop (``_dtCronJob`` / ``_runSingleRefinement``) with
 ``LLMService.generateTextViaLLM`` mocked per-handler-instance:
 
 * ``(F)`` ``_dtCronJob`` early-returns when ``[user-memory].enabled`` is false.
 * ``(G)`` ``_dtCronJob`` early-returns when ``_refineLock`` is already held.
 * ``(H)`` ``_dtCronJob`` dispatches refinement for a due (count-threshold) entry,
   resets its counter, and persists the summary + cursors.
-* ``(I)`` ``_runRefinement`` bails when fewer than ``min-messages`` are available.
+* ``(I)`` ``_runSingleRefinement`` bails when fewer than ``min-messages`` are available.
 * ``(J)`` ``_dtCronJob`` dispatches a never-refined (TS=0) user due-by-time even
-  when its new-message counter is below ``min-messages``; ``_runRefinement``
+  when its new-message counter is below ``min-messages``; ``_runSingleRefinement``
   then pulls lifetime history, bails on too few messages, and advances the
   in-memory ``_lastRefinedTS`` so the user is not retried every tick.
 * ``(K)`` ``_dtCronJob`` uses the credit-consumed counter reset: increments that
@@ -206,13 +206,18 @@ def _chatSettings(
     """Build a chat-settings dict carrying the keys the refinement path reads.
 
     Includes ``MEMORY_REFINEMENT_ENABLED`` (the boolean toggle read by
-    ``newMessageHandler`` and ``_runRefinement``) plus the two prompt settings
-    (``MEMORY_REFINE_SYSTEM_PROMPT`` / ``MEMORY_REFINE_USER_PROMPT_TEMPLATE``)
-    now read by ``_runRefinement``. The user-prompt template MUST contain the
+    ``newMessageHandler`` and ``_runSingleRefinement``), the two embeddings
+    flags (``MEMORY_EMBEDDINGS_ENABLED`` / ``MEMORY_REGENERATE_EMBEDDINGS`` —
+    both defaulting to ``"true"`` because the rewritten gates in
+    ``newMessageHandler``, ``_runMemoryRefinement``, and
+    ``_runMemoryEmbeddingRegen`` read them via direct subscript), plus the
+    two prompt settings (``MEMORY_REFINE_SYSTEM_PROMPT`` /
+    ``MEMORY_REFINE_USER_PROMPT_TEMPLATE``) now read by
+    ``_runSingleRefinement``. The user-prompt template MUST contain the
     ``.format()`` placeholders so the template render doesn't raise. Phase 4a
     switched the template to ``{existingMemories}`` + ``{messages}``; the
     ``{existingUserData}`` / ``{existingSummary}`` keys are passed as
-    backward-compat aliases (see ``_runRefinement``) so older per-chat
+    backward-compat aliases (see ``_runSingleRefinement``) so older per-chat
     overrides still format.
 
     When *refineModel* is provided, the ``MEMORY_REFINE_MODEL`` setting is
@@ -230,10 +235,13 @@ def _chatSettings(
             (the fallback model id). When ``None`` the key is omitted.
 
     Returns:
-        Mapping with the refinement toggle + prompt keys (+ optional model(s)).
+        Mapping with the refinement toggle, embeddings flags, prompt keys
+        (+ optional model(s)).
     """
     settings: ChatSettingsDict = {
         ChatSettingsKey.MEMORY_REFINEMENT_ENABLED: ChatSettingsValue("true" if memoryRefinementEnabled else "false"),
+        ChatSettingsKey.MEMORY_EMBEDDINGS_ENABLED: ChatSettingsValue("true"),
+        ChatSettingsKey.MEMORY_REGENERATE_EMBEDDINGS: ChatSettingsValue("true"),
         ChatSettingsKey.MEMORY_REFINE_SYSTEM_PROMPT: ChatSettingsValue("system prompt placeholder"),
         ChatSettingsKey.MEMORY_REFINE_USER_PROMPT_TEMPLATE: ChatSettingsValue("{existingMemories}\n{messages}"),
     }
@@ -370,6 +378,90 @@ class TestNewMessageHandlerAccounting:
 
 
 # ---------------------------------------------------------------------------
+# In-memory chat discovery (_trackedChats) — regen-discovery rewrite
+# ---------------------------------------------------------------------------
+
+
+class TestTrackedChatsDiscovery:
+    """Regression tests for the in-memory ``_trackedChats`` discovery mechanism.
+
+    The DB-scan chat discovery (``ChatSettingsRepository.listChatsBySetting``)
+    was replaced by an in-memory ``self._trackedChats: MutableSet[int]``
+    populated by :meth:`UserMemoriesHandler.newMessageHandler` when both
+    ``MEMORY_EMBEDDINGS_ENABLED`` and ``MEMORY_REGENERATE_EMBEDDINGS`` are
+    true. The cron's ``_runMemoryEmbeddingRegen`` round-robins over this set
+    and self-evicts a chat via ``.discard()`` when the per-chat gate fails.
+
+    These tests pin the three behavioural contracts of that rewrite: the
+    add-path on both-flags-true, the skip-path on embeddings-disabled, and
+    the eviction-path on a gate failure during regen.
+    """
+
+    async def test_newMessageHandler_addsChatWhenBothFlagsTrue(self, testDatabase: Database) -> None:
+        """Both embeddings flags true → recipient chat id added to ``_trackedChats``.
+
+        ``newMessageHandler`` reads ``MEMORY_EMBEDDINGS_ENABLED`` and
+        ``MEMORY_REGENERATE_EMBEDDINGS`` via direct subscript; when both are
+        truthy the recipient id is inserted into ``_trackedChats`` so the
+        regen cron can discover it on the next tick.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        _stubGetChatSettings(handler, memoryRefinementEnabled=True)
+
+        ensuredMessage = _makeEnsuredMessage(chatId=100, userId=7, chatType=ChatType.GROUP)
+
+        await handler.newMessageHandler(ensuredMessage, updateObj=Mock())
+
+        assert 100 in handler._trackedChats  # type: ignore[attr-defined]
+
+    async def test_newMessageHandler_skipsWhenEmbeddingsDisabled(self, testDatabase: Database) -> None:
+        """``MEMORY_EMBEDDINGS_ENABLED=false`` → chat NOT added to ``_trackedChats``.
+
+        When embeddings are disabled the ``and`` short-circuits before the
+        ``.add()``, so the chat never enters the regen discovery pool even
+        if ``MEMORY_REGENERATE_EMBEDDINGS`` is true.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        settings = _chatSettings(memoryRefinementEnabled=True)
+        settings[ChatSettingsKey.MEMORY_EMBEDDINGS_ENABLED] = ChatSettingsValue("false")
+        handler.getChatSettings = AsyncMock(return_value=settings)  # type: ignore[method-assign]
+
+        ensuredMessage = _makeEnsuredMessage(chatId=100, userId=7, chatType=ChatType.GROUP)
+
+        await handler.newMessageHandler(ensuredMessage, updateObj=Mock())
+
+        assert 100 not in handler._trackedChats  # type: ignore[attr-defined]
+
+    async def test_runMemoryEmbeddingRegen_evictsChatOnGateFail(self, testDatabase: Database) -> None:
+        """Gate failure in ``_runMemoryEmbeddingRegen`` evicts chat via ``.discard()``.
+
+        Seeds ``_trackedChats = {100}`` with chat settings whose
+        ``MEMORY_REGENERATE_EMBEDDINGS`` is false. After one regen tick the
+        chat must be removed from ``_trackedChats`` (one-way eviction via
+        ``set.discard``) so it is not re-scanned on subsequent ticks until a
+        new qualifying message re-adds it.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        settings = _chatSettings(memoryRefinementEnabled=True)
+        settings[ChatSettingsKey.MEMORY_REGENERATE_EMBEDDINGS] = ChatSettingsValue("false")
+        handler.getChatSettings = AsyncMock(return_value=settings)  # type: ignore[method-assign]
+
+        handler._trackedChats = {100}  # type: ignore[attr-defined]
+        await handler._runMemoryEmbeddingRegen()  # type: ignore[attr-defined]
+
+        assert 100 not in handler._trackedChats  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
 # Phase 7b helpers — CRON refinement loop
 # ---------------------------------------------------------------------------
 
@@ -472,7 +564,7 @@ async def _seedChatMessages(
 
 
 # ---------------------------------------------------------------------------
-# (F-J) _dtCronJob / _runRefinement
+# (F-J) _dtCronJob / _runSingleRefinement
 # ---------------------------------------------------------------------------
 
 
@@ -592,7 +684,7 @@ class TestCronJobAndRefinement:
         lastRefined = handler._lastRefinedTS.get((chatId, userId, threadId))  # type: ignore[attr-defined]
         assert isinstance(lastRefined, int)
         assert abs(int(time.time()) - lastRefined) < 10
-        # _runRefinement persists the refinement cursor from the NEWEST message
+        # _runSingleRefinement persists the refinement cursor from the NEWEST message
         # of the batch: lastProcessedMessageDate = newest["date"].isoformat()
         # and lastProcessedMessageId = newest["message_id"].asStr(), where
         # ``newest`` is ``messages[0]`` of the DESC-ordered
@@ -605,11 +697,11 @@ class TestCronJobAndRefinement:
         assert entry.get("lastProcessedMessageDate") == "2026-07-01T12:04:00+00:00"
         assert entry.get("lastProcessedMessageId") == "1004"
 
-    async def test_runRefinementBailsWhenFewerThanMinMessages(self, testDatabase: Database) -> None:
-        """Below ``min-messages`` → ``_runRefinement`` returns with no LLM call.
+    async def test_runSingleRefinementBailsWhenFewerThanMinMessages(self, testDatabase: Database) -> None:
+        """Below ``min-messages`` → ``_runSingleRefinement`` returns with no LLM call.
 
         Creates a chat_users row + only 2 messages (below the 5-message floor),
-        then calls ``_runRefinement`` directly. The LLM mock must not fire and
+        then calls ``_runSingleRefinement`` directly. The LLM mock must not fire and
         no memory entry must be persisted.
 
         Args:
@@ -624,7 +716,7 @@ class TestCronJobAndRefinement:
         await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user10", "Bob")
         await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=2)
 
-        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+        await handler._runSingleRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
 
         mockGenerate.assert_not_called()
         userInfo = await testDatabase.chatUsers.getChatUser(chatId=chatId, userId=userId)
@@ -646,7 +738,7 @@ class TestCronJobAndRefinement:
 
         A never-refined user (``_lastRefinedTS`` absent → TS=0) is therefore
         due-by-time (``elapsed = now - 0`` far exceeds the 6h threshold) and
-        enters the due list. ``_runRefinement`` then fetches the lifetime
+        enters the due list. ``_runSingleRefinement`` then fetches the lifetime
         messages; if fewer than ``min-messages`` (5) exist it bails — BUT
         advances the in-memory ``_lastRefinedTS`` to ``now`` so the user is not
         re-scanned and re-bailed on every 60s tick (the count threshold still
@@ -672,7 +764,7 @@ class TestCronJobAndRefinement:
 
         chatId, userId, threadId = 340, 11, DEFAULT_THREAD_ID
         await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user11", "Carol")
-        # Fewer than min-messages (5) LIFETIME messages → _runRefinement bails.
+        # Fewer than min-messages (5) LIFETIME messages → _runSingleRefinement bails.
         # count (2) is deliberately distinct from the counter value (3) below so
         # the two magnitudes can't be confused in a failure trace.
         await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=2)
@@ -763,10 +855,10 @@ class TestRefinementJsonLog:
 
     Mirrors the established ``AbstractModel.printJSONLog`` shape: a guarded,
     synchronous append of one JSON object per line. The hook fires from
-    ``_runRefinement`` after the LLM call succeeds and before the empty-summary
+    ``_runSingleRefinement`` after the LLM call succeeds and before the empty-summary
     early-return, so both populated and empty summaries are logged.
 
-    Each test drives a real ``_runRefinement`` against the in-memory database
+    Each test drives a real ``_runSingleRefinement`` against the in-memory database
     with ``generateTextViaLLM`` mocked, then reads back the JSONL file written
     under the pytest ``tmp_path`` fixture (never the real ``logs/`` dir).
     """
@@ -796,7 +888,7 @@ class TestRefinementJsonLog:
         await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user13", "Erin")
         await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
 
-        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+        await handler._runSingleRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
 
         # No dated-suffix variant either — glob covers refine.jsonl and refine.jsonl.YYYY-MM-DD.
         assert list(tmp_path.glob("refine.jsonl*")) == []
@@ -831,7 +923,7 @@ class TestRefinementJsonLog:
         await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user13", "Erin")
         await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
 
-        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+        await handler._runSingleRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
 
         # No dated-suffix variant either — glob covers refine.jsonl and refine.jsonl.YYYY-MM-DD.
         assert list(tmp_path.glob("refine.jsonl*")) == []
@@ -839,7 +931,7 @@ class TestRefinementJsonLog:
     async def test_refinementJsonLogWritesAllFields(self, testDatabase: Database, tmp_path: Path) -> None:
         """Successful refinement → exactly one JSONL line with all 12 fields.
 
-        Seeds 5 messages (ids 1000..1004, newest=1004), runs ``_runRefinement``
+        Seeds 5 messages (ids 1000..1004, newest=1004), runs ``_runSingleRefinement``
         with a mocked non-fallback result, and asserts the written JSONL line
         carries every field with the expected value, including the Phase 4a
         per-tool counts (``addCount``/``deleteCount``/``searchCount``). The
@@ -873,7 +965,7 @@ class TestRefinementJsonLog:
         await testDatabase.chatUsers.updateChatUser(chatId, userId, login, "Frank")
         await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
 
-        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+        await handler._runSingleRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
 
         entries = _readRefineLog(tmp_path / "refine.jsonl")
         assert len(entries) == 1
@@ -925,7 +1017,7 @@ class TestRefinementJsonLog:
         await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user15", "Grace")
         await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
 
-        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+        await handler._runSingleRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
 
         entries = _readRefineLog(tmp_path / "refine.jsonl")
         assert len(entries) == 1
@@ -985,7 +1077,7 @@ class TestRefinementJsonLog:
         await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user16", "Heidi")
         await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
 
-        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+        await handler._runSingleRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
 
         entries = _readRefineLog(tmp_path / "refine.jsonl")
         assert len(entries) == 1
@@ -1023,7 +1115,7 @@ class TestRefinementJsonLog:
         await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user17", "Ivan")
         await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
 
-        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+        await handler._runSingleRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
 
         # The suffix uses UTC, same as the writer — compute it identically here.
         expectedSuffix = datetime.datetime.now(tz=datetime.timezone.utc).strftime("%Y-%m-%d")
@@ -1058,7 +1150,7 @@ def _readRefineLog(path: Path) -> List[Dict[str, Any]]:
 # See docs/plans/user-memories-v1.md §10, §10.2(a)/(d), §13 Phase 4. The
 # refinement LLM no longer produces a rolling text summary; it curates the
 # ``user_memories`` store via add_memory / delete_memory / search_memories.
-# ``_runRefinement`` therefore: pre-loads permanent + recent memories into
+# ``_runSingleRefinement`` therefore: pre-loads permanent + recent memories into
 # ``{existingMemories}`` (replacing the old ``{existingUserData}`` /
 # ``{existingSummary}``), drops the ``summary`` from the persisted cursor
 # blob, and logs per-tool counts in the JSONL line.
@@ -1081,7 +1173,7 @@ def _repoRoot() -> Path:
 class TestPhase4aRefinementRewrite:
     """Phase 4a — prompt rewrite, memory pre-load, dropped summary persistence.
 
-    Each test drives a real ``_runRefinement`` against the in-memory database
+    Each test drives a real ``_runSingleRefinement`` against the in-memory database
     with ``generateTextViaLLM`` mocked, then inspects the persisted cursor blob
     and/or the captured LLM call args.
     """
@@ -1121,10 +1213,10 @@ class TestPhase4aRefinementRewrite:
         assert "add_user_data" not in prompt
         assert "delete_user_data" not in prompt
 
-    async def test_runRefinementPreloadsMemoriesIntoUserPrompt(self, testDatabase: Database) -> None:
+    async def test_runSingleRefinementPreloadsMemoriesIntoUserPrompt(self, testDatabase: Database) -> None:
         """Pre-loaded memories appear in the user prompt passed to the LLM.
 
-        Seeds one permanent and one recent memory, runs ``_runRefinement``, and
+        Seeds one permanent and one recent memory, runs ``_runSingleRefinement``, and
         asserts both memory contents appear in the ``messages[1].content`` (the
         user message) captured from the ``generateTextViaLLM`` call.
         """
@@ -1168,14 +1260,14 @@ class TestPhase4aRefinementRewrite:
             embeddingModel=None,
         )
 
-        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+        await handler._runSingleRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
 
         sentMessages = handler.llmService.generateTextViaLLM.call_args.kwargs["messages"]  # type: ignore[attr-defined]
         userPrompt = sentMessages[1].content
         assert "PERMANENT_MARKER_BIO" in userPrompt
         assert "RECENT_MARKER_FACT" in userPrompt
 
-    async def test_runRefinementPreloadFailsGracefullyOnDbError(self, testDatabase: Database) -> None:
+    async def test_runSingleRefinementPreloadFailsGracefullyOnDbError(self, testDatabase: Database) -> None:
         """A ``getPermanentMemories`` failure does NOT abort the run.
 
         The pre-load is best-effort: a transient DB error yields an empty
@@ -1198,7 +1290,7 @@ class TestPhase4aRefinementRewrite:
             patch.object(UserMemoriesRepository, "getPermanentMemories", AsyncMock(side_effect=RuntimeError("boom"))),
             patch.object(UserMemoriesRepository, "getLatestMemories", AsyncMock(side_effect=RuntimeError("boom"))),
         ):
-            await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+            await handler._runSingleRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
 
         handler.llmService.generateTextViaLLM.assert_awaited_once()  # type: ignore[attr-defined]
         # Cursor still advances despite the pre-load failure.
@@ -1206,7 +1298,7 @@ class TestPhase4aRefinementRewrite:
         metadata = handler.parseUserMetadata(userInfo)
         assert metadata.get("memoryRefinement", {}).get(str(threadId)) is not None
 
-    async def test_runRefinementDoesNotPersistSummary(self, testDatabase: Database) -> None:
+    async def test_runSingleRefinementDoesNotPersistSummary(self, testDatabase: Database) -> None:
         """After a run, the cursor blob has no ``summary`` key.
 
         The LLM returned non-empty text, but Phase 4a dropped ``summary`` from
@@ -1222,7 +1314,7 @@ class TestPhase4aRefinementRewrite:
         await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user20", "Mona")
         await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
 
-        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+        await handler._runSingleRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
 
         userInfo = await testDatabase.chatUsers.getChatUser(chatId=chatId, userId=userId)
         metadata = handler.parseUserMetadata(userInfo)
@@ -1230,7 +1322,7 @@ class TestPhase4aRefinementRewrite:
         assert entry is not None
         assert "summary" not in entry
 
-    async def test_runRefinementCursorAdvancesToNewestMessage(self, testDatabase: Database) -> None:
+    async def test_runSingleRefinementCursorAdvancesToNewestMessage(self, testDatabase: Database) -> None:
         """``lastProcessedMessageDate`` is updated to the newest analyzed message.
 
         ``_seedChatMessages`` writes ids 1000..1004 (newest=1004). After the run
@@ -1247,7 +1339,7 @@ class TestPhase4aRefinementRewrite:
         await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user21", "Nina")
         await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
 
-        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+        await handler._runSingleRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
 
         userInfo = await testDatabase.chatUsers.getChatUser(chatId=chatId, userId=userId)
         metadata = handler.parseUserMetadata(userInfo)
@@ -1256,16 +1348,16 @@ class TestPhase4aRefinementRewrite:
         assert entry.get("lastProcessedMessageId") == "1004"
         assert entry.get("lastProcessedMessageDate") == "2026-07-01T12:04:00+00:00"
 
-    async def test_runRefinementCustomUserPromptTemplateFormats(self, testDatabase: Database) -> None:
+    async def test_runSingleRefinementCustomUserPromptTemplateFormats(self, testDatabase: Database) -> None:
         """A per-chat ``MEMORY_REFINE_USER_PROMPT_TEMPLATE`` override formats end-to-end.
 
-        ``_runRefinement`` calls ``userPromptTemplate.format(...)`` with only
+        ``_runSingleRefinement`` calls ``userPromptTemplate.format(...)`` with only
         the Phase-4a placeholders — ``{existingMemories}`` and ``{messages}``
         (the retired ``{existingUserData}`` / ``{existingSummary}`` aliases are
         NOT passed). This test installs a custom override carrying exactly the
         supported placeholders and asserts the run completes without
         ``KeyError``. It complements
-        :meth:`test_runRefinementPreloadsMemoriesIntoUserPrompt` by exercising
+        :meth:`test_runSingleRefinementPreloadsMemoriesIntoUserPrompt` by exercising
         the config-manager-driven override path rather than the default
         template.
 
@@ -1288,7 +1380,7 @@ class TestPhase4aRefinementRewrite:
         await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
 
         # Must not raise KeyError.
-        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+        await handler._runSingleRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
         handler.llmService.generateTextViaLLM.assert_awaited_once()  # type: ignore[attr-defined]
 
 
@@ -1355,7 +1447,7 @@ class TestPhase4aJsonLogToolCounts:
         await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user23", "Pavel")
         await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
 
-        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+        await handler._runSingleRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
 
         entries = _readRefineLog(tmp_path / "refine.jsonl")
         assert len(entries) == 1
@@ -1390,7 +1482,7 @@ class TestPhase4aJsonLogToolCounts:
         await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user24", "Rita")
         await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
 
-        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+        await handler._runSingleRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
 
         entries = _readRefineLog(tmp_path / "refine.jsonl")
         assert len(entries) == 1
@@ -1435,7 +1527,7 @@ class TestPhase4aJsonLogToolCounts:
         await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user25", "Sven")
         await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
 
-        await handler._runRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+        await handler._runSingleRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
 
         entries = _readRefineLog(tmp_path / "refine.jsonl")
         assert len(entries) == 1

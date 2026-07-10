@@ -1305,12 +1305,15 @@ class UserMemoriesRepository(BaseRepository):
         (never-embedded memory) also surfaces here, so this same query
         serves the initial backfill.
 
-        Per-chat, model-only (no ``userId``) and dimension-agnostic:
-        dimension-mismatch detection relies on
-        :meth:`deleteObsoleteMemoryEmbeddings` running first in the
-        regen sequence (it resets ``embedding_model``/``embedding_dimensions``
-        to ``NULL`` for stale-dimension rows, which this method then
-        surfaces). This matches the ``chat_embeddings`` precedent.
+        Per-chat (no ``userId``): keys off BOTH the ``embedding_model``
+        and ``embedding_dimensions`` provenance columns (single-table
+        query — no vec0 JOIN). This is complementary to
+        :meth:`deleteObsoleteMemoryEmbeddings`, the destructive-cleanup
+        step that wipes stale vec0 rows and NULLs provenance for
+        mismatched rows (swallowing exceptions); this method then
+        re-surfaces those NULLed rows for re-embedding — belt-and-suspenders,
+        since a swallowed cleanup failure would otherwise leave stale
+        dimensions undetected.
 
         Args:
             chatId: Chat to scan.

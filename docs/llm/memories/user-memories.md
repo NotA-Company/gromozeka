@@ -188,7 +188,7 @@ Freeform categorisation beyond these is handled by the JSON `tags` column.
 
 1. **LLM tools** (chat-time + refinement): `add_memory` inserts a row with
    `source="chat"` or `source="refinement"`.
-2. **Refinement pass** (`_runRefinement`): the background LLM curates the
+2. **Refinement pass** (`_runSingleRefinement`): the background LLM curates the
    store directly via the three tools (Phase 4a rewrite — see "Refinement").
 3. **Migration backfill** (`migration_020`): legacy `user_data` → permanent
    cross-thread `fact`; legacy rolling-bio blob → permanent thread-scoped
@@ -235,11 +235,25 @@ prevent the memory from being stored).
 (outside `_refineLock`) and mirrors `ChatSearchHandler._dtCronJob`
 one-to-one, adapted for the single-store model:
 
-1. **Chat discovery** — `listChatsBySetting(MEMORY_EMBEDDINGS_ENABLED)`,
-   filtered through `ChatSettingsValue(...).toBool()`.
+1. **Chat discovery (in-memory)** — round-robin over
+   `self._trackedChats: MutableSet[int]`, populated by `newMessageHandler`
+   when it sees a message in a chat where `MEMORY_EMBEDDINGS_ENABLED` and
+   `MEMORY_REGENERATE_EMBEDDINGS` are both true. There is **no DB scan** —
+   the previous DB-scan discovery (the deleted
+   `ChatSettingsRepository` method that queried `chat_settings` for
+   `MEMORY_EMBEDDINGS_ENABLED`) and that repository method were both removed. **Cold-start
+   tradeoff (intentional):** `_trackedChats` is empty on restart and only
+   grows from live inbound messages, so a chat with a pre-existing
+   backlog that stays quiet after a restart is not backfilled until the
+   next qualifying message arrives. **Eviction is one-way:** when a
+   tracked chat's per-chat gate (step 3) fails, it is removed via
+   `.discard()` and is not re-added until the next message — re-enabling
+   embeddings on a chat does not repopulate the set on its own.
 2. **Round-robin pick** — one chat per tick via `_memoryBackfillIndex`
-   (stable order across ticks).
-3. **Per-chat gate** — bail when `MEMORY_REGENERATE_EMBEDDINGS` is false.
+   over `sorted(self._trackedChats)` (stable order across ticks).
+3. **Per-chat gate (runtime re-validation)** — bail — and `.discard()`
+   the chat from `_trackedChats` — when `MEMORY_REGENERATE_EMBEDDINGS`
+   or `MEMORY_EMBEDDINGS_ENABLED` is now explicitly false.
 4. **Model resolution** — `EMBEDDING_MODEL`; bail when empty, unknown, or
    not embedding-capable.
 5. **Stale cleanup (model-drift detection)** — when the in-memory
@@ -248,10 +262,10 @@ one-to-one, adapted for the single-store model:
    `deleteObsoleteMemoryEmbeddings` (resets stale rows' provenance to
    `NULL`); advance the tracker unconditionally so cleanup fires once per
    model switch.
-6. **Stale detection** — `getMemoriesWithoutEmbeddings` (forwards
-   `modelName` so rows embedded under a different model are re-surfaced;
-   `NULL` `embedding_model` rows surface here too, serving the initial
-   backfill).
+ 6. **Stale detection** — `getMemoriesWithoutEmbeddings` (forwards
+    `modelName` and `dimensions` so rows embedded under a different model or
+    dimensionality are re-surfaced; `NULL` `embedding_model` rows surface
+    here too, serving the initial backfill).
 7. **Re-embed loop** — each `UserMemoryDict` re-embedded via
    `LLMService.generateEmbedding` (returns `(modelName, List[float])` or
    `None`) and persisted through `UserMemoriesRepository.saveMemoryEmbedding`
@@ -333,7 +347,8 @@ MEMORY_RETRIEVAL_MODE == "relevant"` and, when that gate **plus non-empty
 message text** holds, embeds the message inline via `generateEmbedding`. The
 resulting vector (or `None`) is then passed into `injectMemories` as
 `queryEmbedding`. This makes `MEMORY_EMBEDDINGS_ENABLED` a **dual-purpose
-gate**: besides driving the regen-cron chat discovery, it also enables the
+gate**: besides being the entry condition for the regen cron's
+`_trackedChats` (chat discovery), it also enables the
 inline embedding that powers relevant-mode query-time injection — a chat with
 `MEMORY_INJECTION_ENABLED=true` + `MEMORY_RETRIEVAL_MODE=relevant` but this
 `false` never produces a query embedding, so `injectMemories` is called with
@@ -527,7 +542,7 @@ limitations (see [`docs/plans/memory-compaction-v1.md`](../../plans/memory-compa
 
 ## Refinement (Phase 4a rewrite)
 
-`UserMemoriesHandler._runRefinement` was rewritten for the unified store. The
+`UserMemoriesHandler._runSingleRefinement` was rewritten for the unified store. The
 accounting / cron / locking machinery is **unchanged** from the rolling-bio
 system (see [`user-memory-refinement.md`](user-memory-refinement.md)
 "Concurrency model" — still accurate): `_dtCronJob` (60s tick), `_accounting`
@@ -556,6 +571,14 @@ skipped rule, the bail-path TS reset.
   pattern — see ADR-014/015). The `userSummary` field / `applyUserMetadata`
   reader / `formatForLLM` key were removed entirely in Phase 4b (no
   remaining writers/readers — see [`../../plans/user-memories-v1.md`](../../plans/user-memories-v1.md) §9.3).
+- **Refinement now requires memory embeddings** — the dispatch gate
+  re-checks BOTH `MEMORY_REFINEMENT_ENABLED` AND `MEMORY_EMBEDDINGS_ENABLED`
+  per candidate; candidates failing the gate are dropped from `_accounting`
+  / `_lastRefinedTS`. Rationale: refinement's `search_memories` LLM tool is
+  semantic and returns nothing without embeddings, so refinement is only
+  meaningful when embeddings are enabled. A chat with
+  `MEMORY_REFINEMENT_ENABLED=true` but `MEMORY_EMBEDDINGS_ENABLED=false`
+  will not refine.
 - **JSONL log extended with tool-call counts** — when
   `[user-memory.json-logging].enabled`, `_writeRefinementJsonLog` writes one
   JSONL line per successful run. The `summary` field is now the LLM's raw
@@ -581,18 +604,23 @@ metadata in `_chatSettingsInfo` (four-site convention — see
 |---|---|---|---|
 | `MEMORY_INJECTION_ENABLED` | `memory-injection-enabled` | BOOL | Gate `MessagePreprocessorHandler.injectMemories()` (the message-arrival injection into `EnsuredMessage.userMemories`) AND the chat-time availability of `add_memory` / `search_memories`. |
 | `MEMORY_RETRIEVAL_MODE` | `memory-retrieval-mode` | STRING | `latest` (default) or `relevant` — how ephemeral memories are chosen. |
-| `MEMORY_EMBEDDINGS_ENABLED` | `memory-embeddings-enabled` | BOOL | Dual-purpose gate: (a) discovery gate for the memory-embedding regen cron (which chats to scan on model drift), and (b) query-time gate for relevant-mode memory injection in `newMessageHandler` — a chat with `MEMORY_INJECTION_ENABLED=true` + `MEMORY_RETRIEVAL_MODE=relevant` but this `false` degrades to `latest` (no inline embedding → `getLatestMemories` instead of semantic search). |
+| `MEMORY_EMBEDDINGS_ENABLED` | `memory-embeddings-enabled` | BOOL | Dual-purpose gate: (a) entry condition for a chat to be added to the regen cron's in-memory `_trackedChats` set (the cron round-robins over `_trackedChats`, NOT a DB scan — the old `ChatSettingsRepository` discovery method was removed), and (b) query-time gate for relevant-mode memory injection in `newMessageHandler` — a chat with `MEMORY_INJECTION_ENABLED=true` + `MEMORY_RETRIEVAL_MODE=relevant` but this `false` degrades to `latest` (no inline embedding → `getLatestMemories` instead of semantic search). **Also a prerequisite for refinement** — see `MEMORY_REFINEMENT_ENABLED`. Cold-start note: `_trackedChats` is empty on restart and only grows from live messages (intentional). |
 | `MEMORY_REGENERATE_EMBEDDINGS` | `memory-regenerate-embeddings` | BOOL | Per-chat gate for re-embedding stale rows (only acts when `MEMORY_EMBEDDINGS_ENABLED` is on). |
 
 The five refinement settings from the rolling-bio system are unchanged:
 `MEMORY_REFINEMENT_ENABLED`, `MEMORY_REFINE_MODEL`,
 `MEMORY_REFINE_FALLBACK_MODEL`, `MEMORY_REFINE_SYSTEM_PROMPT`,
-`MEMORY_REFINE_USER_PROMPT_TEMPLATE`.
+`MEMORY_REFINE_USER_PROMPT_TEMPLATE`. Note: `MEMORY_REFINEMENT_ENABLED`
+now also requires `MEMORY_EMBEDDINGS_ENABLED=true` — the refinement
+dispatch gate re-checks both per candidate, because refinement's
+`search_memories` LLM tool is semantic and returns nothing without
+embeddings. A chat with `MEMORY_REFINEMENT_ENABLED=true` but
+`MEMORY_EMBEDDINGS_ENABLED=false` will not refine.
 
 ### Config — `[user-memory]` (`configs/00-defaults/user-memory.toml`)
 
 Read ONCE in `UserMemoriesHandler.__init__` and cached as instance attributes
-(the cron hot path and `_runRefinement` perform no `configManager.get(...)`
+(the cron hot path and `_runSingleRefinement` perform no `configManager.get(...)`
 calls). Defaults live in `configs/00-defaults/user-memory.toml`:
 
 - `[user-memory].enabled` — global kill switch (default `false`); also gates
@@ -648,7 +676,7 @@ the decision record.
   self-management + centralised arrival-time injection); ADR-017 — compact-ID
   per-message storage + by-id cache + soft-delete. ADR-014 covers the
   background refinement machinery (cron + global lock + accounting) that
-  still governs `_runRefinement`; ADR-015 covers the `chat_users` cache used
+  still governs `_runSingleRefinement`; ADR-015 covers the `chat_users` cache used
   by the cursor persist.
 - [`user-memory-refinement.md`](user-memory-refinement.md) — the predecessor
   rolling-bio subsystem (SUPERSEDED, kept as historical context).
