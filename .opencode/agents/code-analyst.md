@@ -77,7 +77,7 @@ description: >-
 mode: all
 model: code-analyzer
 temperature: 0.1
-steps: 30
+steps: 50
 color: "#FF2D55"
 permission:
   bash: deny
@@ -154,7 +154,7 @@ This repo has deliberate conventions that look unusual. **Recognize them as inte
 
 - **camelCase identifiers** (not snake_case), **no pydantic**, **`MessageId` class** (wraps `int|str`, provides `.asInt()`/`.asStr()`) for multi-platform message IDs
 - **SQL portability**: `BaseSQLProvider` with `:named` params; no `AUTOINCREMENT` / `DEFAULT CURRENT_TIMESTAMP`
-- **`getChatSettings()` returns `Dict[key, tuple[value, updatedBy]]`** — `[0]` indexing is correct
+- **`getChatSettings()` return shape is layer-dependent**: handler/cache return `Dict[ChatSettingsKey, ChatSettingsValue]` (access via `.toBool()`/`.toStr()`/etc.); the DB-repo `ChatSettingsRepository.getChatSettings()` returns `Dict[str, tuple[str, int]]` where `[0]` indexing is correct
 - **Handler ordering**: `LLMMessageHandler` is intentionally last (catch-all); **chat type**: `chatId > 0` = private
 
 Describe code following these as "the project's standard pattern" — never suggest changing them unless explicitly asked.

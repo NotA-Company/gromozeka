@@ -144,6 +144,10 @@ Copy the decorator shape from an existing handler (e.g. [`internal/bot/common/ha
 
 ## Step 5 — LLM tool registration (if the handler provides tools)
 
+> **Note:** Step 5 here covers tool registration (Sites 1–3 only). For destructive
+> or refinement-only tools, chat-time gating (Site 4) is required — load
+> [`add-llm-tool`](../add-llm-tool/SKILL.md) for the full four-site recipe.
+
 If your handler registers LLM tools for the model to call, follow this pattern:
 
 ### 5a — Add a `ToolName` member
@@ -187,7 +191,7 @@ Key rules:
 - Use `ToolName.YOUR_TOOL` (from the enum), NOT a raw string literal.
 - Gate registration on the feature's `enabled` flag so tools aren't registered when the handler is disabled.
 - Name the handler method `_llmTool*` (e.g., `_llmToolRunSandboxCode`, `_llmToolSearchMessages`) — the prefix makes the method's role obvious without reading the registration.
-- The handler signature: `async def _llmTool*(self, extraData: Optional[Dict[str, Any]], param1, ..., **kwargs: Any) -> Dict[str, Any]`. Return a dict with `{"done": bool, ...}` — the LLM service handles JSON serialization. NEVER raise. Get chat context from `extraData["ensuredMessage"]`.
+- The handler signature: `async def _llmTool*(self, extraData: Optional[Dict[str, object]], param1, ..., **kwargs: object) -> Dict[str, object]`. Return a dict with `{"done": bool, ...}` — the LLM service handles JSON serialization. NEVER raise. Get chat context from `extraData["ensuredMessage"]`.
 - Do NOT return JSON strings — return dicts directly. The LLM service serializes to JSON.
 
 The `_llmTool*` naming convention and handler signature are enforced by the existing patterns in the codebase; see the registered tools in [`weather.py`](../../../internal/bot/common/handlers/weather.py), [`sandbox.py`](../../../internal/bot/common/handlers/sandbox.py), or [`chat_search.py`](../../../internal/bot/common/handlers/chat_search.py) for concrete examples.

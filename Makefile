@@ -104,6 +104,10 @@ check: lint
 	$(BLACK) --check --diff .
 	@echo "Code quality check completed"
 
+# Check that local markdown links resolve to files on disk
+check-docs: venv
+	$(PYTHON) scripts/check_docs.py
+
 # Clean build files and cache
 clean:
 	rm -rf $(VENV_PATH)
@@ -128,9 +132,10 @@ help:
 	@echo "  test-failed                 - Re-run failed tests (Pass V=1 for verbose output)"
 	@echo "  coverage                    - Run tests with coverage report (Pass V=1 for verbose output)"
 	@echo "  check                       - Check code quality (lint + format)"
+	@echo "  check-docs                  - Check that local markdown links resolve"
 	@echo "  clean                       - Clean build files and cache"
 	@echo "  help                        - Show this help message"
 
 # Default target
-.PHONY: install activate freeze-requirements list-outdated-requirements run lint format test test-failed coverage check clean help venv-alpine
+.PHONY: install activate freeze-requirements list-outdated-requirements run lint format test test-failed coverage check check-docs clean help venv-alpine
 

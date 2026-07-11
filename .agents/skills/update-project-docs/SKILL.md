@@ -145,6 +145,9 @@ Before declaring docs complete:
 - [ ] `.agents/skills/` index updated if you added a skill.
 - [ ] `make format lint && make test` still green — this catches code examples that drifted.
 
+> **Note:** If you are `docs-writer` (or another agent restricted from running `make format`/`make test`), substitute `make lint && make check-docs` as your verification gate. The full `make format lint && make test` remains the canonical gate for agents that can run it (`software-developer`, `debugger`, etc.).
+- [ ] `make check-docs` run; no broken markdown links (read-only; exit 1 if any local link is broken).
+
 If any step fails, fix it before closing the task. Stale docs are worse than verbose docs.
 
 ## Quick reference matrix

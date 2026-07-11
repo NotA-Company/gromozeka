@@ -6,8 +6,8 @@ description: >
   `_chatSettingsInfo` TypedDict entry, the default value in the right TOML
   config file, and any consumer code that reads it. Encodes the `tasks.md §4.1`
   CRITICAL lesson: missing any of these leaves a setting half-wired and
-  non-functional. Also covers the `getChatSettings()` tuple-return gotcha and
-  the keyword-only `updatedBy` requirement. Triggers: add chat setting, new
+  non-functional. Also covers the `getChatSettings()` return-shape gotcha
+  (handler vs DB-repo layer) and the keyword-only argument requirement. Triggers: add chat setting, new
   chat setting, settings key, per-chat config, ChatSettingsKey.
 ---
 
@@ -121,28 +121,33 @@ Without a default, `/settings` will show the setting but it will be empty, and t
 
 Two gotchas live here. Both are in [`AGENTS.md`](../../../AGENTS.md) and [`docs/llm/tasks.md`](../../../docs/llm/tasks.md) §3.
 
-### Gotcha A — `getChatSettings()` returns tuples, not bare values
+### Gotcha A — `getChatSettings()` return shape depends on the layer
+
+In **handler code** you call `BaseBotHandler.getChatSettings()` (inherited as `self.getChatSettings()`), which returns `ChatSettingsDict` = `Dict[ChatSettingsKey, ChatSettingsValue]`. Each value is a **`ChatSettingsValue` object**, not a tuple — access it via the typed converters:
 
 ```python
-settings: ChatSettingsDict = await self.db.getChatSettings(chatId)
-# settings[key] is a tuple: (value, updatedBy)
-rawValue = settings[ChatSettingsKey.MY_NEW_SETTING][0]  # [0] for the value
+settings: ChatSettingsDict = await self.getChatSettings(chatId)
+# settings[key] is a ChatSettingsValue object (NOT a tuple)
+rawValue = settings[ChatSettingsKey.MY_NEW_SETTING].toStr()   # .toBool()/.toInt()/.toFloat()/.toList()/.toModel() as appropriate
+updaterId = settings[ChatSettingsKey.MY_NEW_SETTING].updatedBy  # int, user who last set it
 ```
 
-Indexing `[0]` is mandatory. `[1]` is the user ID who set it (useful for audit displays).
+The `(value, updatedBy)` tuple shape exists **ONLY at the DB-repository layer** — `self.db.chatSettings.getChatSettings(chatId)` returns `Dict[str, tuple[str, int]]`, where `[0]` is the value and `[1]` is the updater ID. Handlers rarely call the repo directly; prefer `self.getChatSettings()`. Do **not** index `[0]` on the handler/cache result — `ChatSettingsValue` is not subscriptable.
 
-### Gotcha B — `setChatSetting()` requires keyword-only `updatedBy`
+### Gotcha B — `setChatSetting()` keyword-only arg differs per layer
+
+At the **handler layer**, pass a `MessageSender` via the keyword-only `user` arg:
 
 ```python
-await self.db.setChatSetting(
+await self.setChatSetting(
     chatId,
     ChatSettingsKey.MY_NEW_SETTING,
-    "new value",
-    updatedBy=userId,   # keyword-only, REQUIRED
+    ChatSettingsValue("new value"),
+    user=ensuredMessage.sender,   # keyword-only, REQUIRED (a MessageSender)
 )
 ```
 
-Omitting `updatedBy` will raise `TypeError`.
+At the **DB-repository layer** (`self.db.chatSettings.setChatSetting(...)`), the keyword-only arg is `updatedBy=userId` (an `int`). Omitting the keyword-only arg on either layer raises `TypeError`.
 
 ## Step 5 — Verify manually
 
@@ -184,7 +189,7 @@ make test
 - [ ] `_chatSettingsInfo` entry added as a **dict literal** (not a dataclass call) with `type` / `short` / `long` / `page`.
 - [ ] Appropriate `ChatSettingsType` and `ChatSettingsPage` chosen.
 - [ ] Default value in the matching section of `configs/00-defaults/bot-defaults.toml` (or the relevant defaults TOML), keyed in kebab-case.
-- [ ] Consumer code reads `settings[key][0]` (not `settings[key]`) and passes `updatedBy=` when writing.
+- [ ] Consumer code reads settings via the typed converters (`settings[key].toBool()`/`.toStr()`/...) — NOT tuple indexing — and passes the correct keyword-only arg when writing (`user=` at the handler layer).
 - [ ] `/settings <my-new-setting>` shows both descriptions and a non-empty default.
 - [ ] Tests cover default and override paths.
 - [ ] `make format lint && make test` green.
