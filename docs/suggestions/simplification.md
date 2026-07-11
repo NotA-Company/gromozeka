@@ -43,9 +43,9 @@
 
 There are **two completely separate caching systems** in the repo
 
-- [`lib/cache/interface.py`](../lib/cache/interface.py:15) — Generic `CacheInterface[K, V]` with async `get`/`set`/`clear` and a pluggable `KeyGenerator[K]` strategy  
-- [`lib/cache/dict_cache.py`](../lib/cache/dict_cache.py:41) — `DictCache[K, V]` implementing that interface  
-- [`internal/services/cache/service.py`](../internal/services/cache/service.py:88) — `CacheService` with its own `LRUCache[K, V]` and all bot-specific cache methods
+- [`lib/cache/interface.py`](/lib/cache/interface.py:15) — Generic `CacheInterface[K, V]` with async `get`/`set`/`clear` and a pluggable `KeyGenerator[K]` strategy  
+- [`lib/cache/dict_cache.py`](/lib/cache/dict_cache.py:41) — `DictCache[K, V]` implementing that interface  
+- [`internal/services/cache/service.py`](/internal/services/cache/service.py:88) — `CacheService` with its own `LRUCache[K, V]` and all bot-specific cache methods
 
 The `lib/cache/` system is used in exactly **one place** — inside `lib/yandex_search/cache_utils.py` — for Yandex Search result caching. The rest of the bot uses `CacheService` exclusively. So we have two implementations of the same concept
 
@@ -131,8 +131,8 @@ def getInstance(cls) -> "CacheService":
 ```
 
 The same pattern exists verbatim in:
-- [`internal/services/queue_service/service.py`](../internal/services/queue_service/service.py:82) — `QueueService`
-- [`lib/rate_limiter/manager.py`](../lib/rate_limiter/manager.py:65) — `RateLimiterManager`
+- [`internal/services/queue_service/service.py`](/internal/services/queue_service/service.py:82) — `QueueService`
+- [`lib/rate_limiter/manager.py`](/lib/rate_limiter/manager.py:65) — `RateLimiterManager`
 
 ### Proposed Simplification
 
@@ -192,7 +192,7 @@ Minor: need to ensure `__new__` overrides still work correctly with inheritance.
 
 ### Current Complexity
 
-[`internal/bot/common/bot.py`](../internal/bot/common/bot.py) is a 1000-line class where **every single method** contains a platform `if/elif` branch
+[`internal/bot/common/bot.py`](/internal/bot/common/bot.py) is a 1000-line class where **every single method** contains a platform `if/elif` branch
 
 ```python
 # internal/bot/common/bot.py:116-121
@@ -285,7 +285,7 @@ def __init__(
 # 15+ handlers all with identical signatures
 ```
 
-And in [`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py:249-318), each handler is constructed with the same 4 arguments:
+And in [`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py:249-318), each handler is constructed with the same 4 arguments:
 ```python
 (MessagePreprocessorHandler(configManager, database, llmManager, botProvider), ...),
 (SpamHandler(configManager, database, llmManager, botProvider), ...),
@@ -349,7 +349,7 @@ Minor: all call sites need updating. If a handler needs additional deps (like `H
 
 ### Current Complexity
 
-[`internal/config/manager.py`](../internal/config/manager.py:184-280) has many **identical one-liner wrapper methods** that only differ in the config key they access
+[`internal/config/manager.py`](/internal/config/manager.py:184-280) has many **identical one-liner wrapper methods** that only differ in the config key they access
 
 ```python
 # internal/config/manager.py:184-233
@@ -490,7 +490,7 @@ Or equivalently, remove `provider.models` and keep only `LLMManager.modelRegistr
 
 ### Current Complexity
 
-[`internal/services/cache/service.py`](../internal/services/cache/service.py:203-368) has **two overlapping chat settings concepts** with very similar names
+[`internal/services/cache/service.py`](/internal/services/cache/service.py:203-368) has **two overlapping chat settings concepts** with very similar names
 
 ```python
 # "settings" = raw settings loaded from DB (written by setChatSetting/setChatSettings)
@@ -538,7 +538,7 @@ Requires updating string literals in CacheService and the TypedDict in `types.py
 
 ### Current Complexity
 
-[`internal/bot/models/ensured_message.py`](../internal/bot/models/ensured_message.py:449-456) has deprecated fields that are explicitly marked with a TODO but never cleaned up
+[`internal/bot/models/ensured_message.py`](/internal/bot/models/ensured_message.py:449-456) has deprecated fields that are explicitly marked with a TODO but never cleaned up
 
 ```python
 # internal/bot/models/ensured_message.py:449-456
@@ -595,7 +595,7 @@ Requires scanning all usages of `mediaId`, `mediaContent`, `mediaPrompt` and rep
 
 ### Current Complexity
 
-[`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py:774-891) has **4 near-identical for-loops** that iterate through handlers and check `isFinalState()`
+[`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py:774-891) has **4 near-identical for-loops** that iterate through handlers and check `isFinalState()`
 
 ```python
 # manager.py:774 — _handleCallback
@@ -670,7 +670,7 @@ Using `getattr(handler, handlerMethod)` loses static type checking. Alternativel
 
 ### Current Complexity
 
-[`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py:110-113) uses **busy polling** with `asyncio.sleep(0.1)` to wait for steps
+[`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py:110-113) uses **busy polling** with `asyncio.sleep(0.1)` to wait for steps
 
 ```python
 # manager.py:110-113
@@ -730,7 +730,7 @@ Slightly more memory per message record (one `Event` per step). Negligible in pr
 
 ### Current Complexity
 
-[`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py:566-629) runs **two separate permission checks** for each command, with the same error/delete-message logic duplicated
+[`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py:566-629) runs **two separate permission checks** for each command, with the same error/delete-message logic duplicated
 
 ```python
 # Check 1: CommandPermission enum check (lines 571-594)
@@ -797,7 +797,7 @@ None. Pure simplification
 
 ### Current Complexity
 
-[`lib/cache/dict_cache.py`](../lib/cache/dict_cache.py:60-65) requires a separate `KeyGenerator[K]` strategy object just to convert keys to strings for internal dict storage
+[`lib/cache/dict_cache.py`](/lib/cache/dict_cache.py:60-65) requires a separate `KeyGenerator[K]` strategy object just to convert keys to strings for internal dict storage
 
 ```python
 class DictCache(CacheInterface[K, V]):
@@ -852,7 +852,7 @@ If custom key serialization is ever needed (e.g., tuple key → composite string
 
 ### Current Complexity
 
-[`lib/rate_limiter/manager.py`](../lib/rate_limiter/manager.py) implements a full **queue-to-limiter mapping** system with named limiters, `bindQueue()`, `setDefaultLimiter()`, etc. But looking at the actual config in [`configs/00-defaults/00-config.toml`](../configs/00-defaults/00-config.toml:29-44):
+[`lib/rate_limiter/manager.py`](/lib/rate_limiter/manager.py) implements a full **queue-to-limiter mapping** system with named limiters, `bindQueue()`, `setDefaultLimiter()`, etc. But looking at the actual config in [`configs/00-defaults/00-config.toml`](/configs/00-defaults/00-config.toml:29-44):
 
 ```toml
 [ratelimiter.ratelimiters.default]
@@ -921,7 +921,7 @@ self.storage = StorageService.getInstance()
 self.storage.injectConfig(self.configManager)  # ← post-construction!
 ```
 
-And in [`internal/services/cache/service.py`](../internal/services/cache/service.py:185-190):
+And in [`internal/services/cache/service.py`](/internal/services/cache/service.py:185-190):
 ```python
 def injectDatabase(self, dbWrapper: "DatabaseWrapper") -> None:
     """Inject database wrapper for persistence"""
@@ -979,7 +979,7 @@ Significant change — all `injectDatabase`, `injectConfig`, `injectBot` pattern
 
 ### Current Complexity
 
-[`internal/services/cache/types.py`](../internal/services/cache/types.py:41-48) defines `HCChatCacheDict` as a `TypedDict` with the keys `"settings"`, `"cachedSettings"`, `"info"`, `"topicInfo"`, `"admins"`. But throughout [`CacheService`](../internal/services/cache/service.py) these are accessed via **magic string literals** scattered everywhere
+[`internal/services/cache/types.py`](/internal/services/cache/types.py:41-48) defines `HCChatCacheDict` as a `TypedDict` with the keys `"settings"`, `"cachedSettings"`, `"info"`, `"topicInfo"`, `"admins"`. But throughout [`CacheService`](/internal/services/cache/service.py) these are accessed via **magic string literals** scattered everywhere
 
 ```python
 # internal/services/cache/service.py:253
@@ -1038,7 +1038,7 @@ Medium refactor effort. Splitting into multiple namespaces requires more LRUCach
 
 ### Current Complexity
 
-[`main.py`](../main.py:50) calls `asyncio.run()` **inside a class constructor**, which is an async/sync mixing anti-pattern
+[`main.py`](/main.py:50) calls `asyncio.run()` **inside a class constructor**, which is an async/sync mixing anti-pattern
 
 ```python
 # main.py:46-51
@@ -1105,7 +1105,7 @@ Minor: `main()` needs to call `bot.run()` which internally calls `asyncio.run()`
 
 ### Current Complexity
 
-[`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py:92-103) has parameters that are **never used**
+[`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py:92-103) has parameters that are **never used**
 
 ```python
 # manager.py:92-96
@@ -1165,11 +1165,11 @@ These don't need a full section but are worth noting:
 
 | Location | Issue | Fix |
 |---|---|---|
-| [`internal/bot/common/bot.py:75`](../internal/bot/common/bot.py:75) | Typo: `"tgBot need to be providen if botProvider is Telegram"` — says Telegram even for Max case | Fix the error message |
-| [`internal/bot/common/handlers/manager.py:616`](../internal/bot/common/handlers/manager.py:616) | `canProcess = False; pass` — `pass` after `canProcess = False` is dead code | Remove `pass` |
-| [`internal/bot/models/ensured_message.py:1111`](../internal/bot/models/ensured_message.py:1111) | `raise RuntimeError("Unreacible code has been reached")` after exhaustive match | Fix typo "Unreacible" + this IS reachable if `format` is some unknown value |
-| [`lib/ai/manager.py:51-53`](../lib/ai/manager.py:51) | ⚠️ VERIFIED STILL PRESENT (2026-05-08): f-string without f prefix: `"Provider type is not specified for provider {provider_name}"` | Add `f` prefix |
-| [`internal/bot/common/handlers/manager.py:447`](../internal/bot/common/handlers/manager.py:447) | `TODO: Write docstring` on `addMessageToChatQueue` | Write it or remove comment |
+| [`internal/bot/common/bot.py:75`](/internal/bot/common/bot.py:75) | Typo: `"tgBot need to be providen if botProvider is Telegram"` — says Telegram even for Max case | Fix the error message |
+| [`internal/bot/common/handlers/manager.py:616`](/internal/bot/common/handlers/manager.py:616) | `canProcess = False; pass` — `pass` after `canProcess = False` is dead code | Remove `pass` |
+| [`internal/bot/models/ensured_message.py:1111`](/internal/bot/models/ensured_message.py:1111) | `raise RuntimeError("Unreacible code has been reached")` after exhaustive match | Fix typo "Unreacible" + this IS reachable if `format` is some unknown value |
+| [`lib/ai/manager.py:51-53`](/lib/ai/manager.py:51) | ⚠️ VERIFIED STILL PRESENT (2026-05-08): f-string without f prefix: `"Provider type is not specified for provider {provider_name}"` | Add `f` prefix |
+| [`internal/bot/common/handlers/manager.py:447`](/internal/bot/common/handlers/manager.py:447) | `TODO: Write docstring` on `addMessageToChatQueue` | Write it or remove comment |
 
 ---
 

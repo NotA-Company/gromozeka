@@ -11,14 +11,14 @@
 - [x] add chat+source to get-memories-by-id
 - [x] search-memories: ability to search for another user
 - [x] how\when do we generate embeddings for messages? 
-- [ ] condencing - populate list of condensed messages for search
-- [ ] memory and search chatSettings - investigate, discuss
-- [ ] script to search and delete nonexistent settings from chatSettings table
+- [.] condencing - populate list of condensed messages for search
+- [x] memory and search chatSettings - investigate, discuss
+- [x] script to search and delete nonexistent settings from chatSettings table
 
 - [ ] Yandex AI Studio does not support webp images. Add config value + convert
 - [ ] Search for tool_name in [] or {} + optional ``` end return some error if yes (to enforce proper tool call)
 - [ ] Subagent with conversation history
-- [ ] Better random-message handling
+- [x] Better random-message handling
 - [ ] Better compaction (drop tools result, more settings, drop userdata, use subagent for compaction)
 - [ ] Topic-level configs
 - [ ] Support random-message sending function
@@ -33,7 +33,7 @@
 - [ ] More statistics (messages, divinations, tools, spam)
 - [ ] Infrastucture for statistics
 - [ ] On web search\get-url-content, allow bot to add compaction prompt
-- [ ] Proxy support (SOCKS5?)
+- [x] Proxy support (SOCKS5?)
 - [ ] think about https://download.geonames.org/export/dump/
 - [ ] In case of geocoder\weather error, try to get from cache (with no TTL)
 - [ ] Add some decorator for LLM functions
@@ -52,9 +52,9 @@
 
 # Also:
 - [ ] Add coverage badge?
-- [ ] Think about channels support
+- [x] Think about channels support
 - [ ] Run LLM and other requests in separate threads
-- [ ] Random answer: summarisation instead of raw messages
+- [x] Random answer: summarisation instead of raw messages
 - [ ] Logging: try to not log same messages if possible
 - [ ] ConfigManager: Use TypedDict's
 - [ ] Add replied message to context more close to message (maybe in message metadata)

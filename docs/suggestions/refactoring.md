@@ -47,7 +47,7 @@
 
 #### Current Problem (HISTORICAL)
 
-[`DatabaseWrapper`](../internal/database/wrapper.py:113) was a 3 021-line class that violated every dimension of the Single Responsibility Principle It mixed:
+[`DatabaseWrapper`](/internal/database/database.py) was a 3 021-line class that violated every dimension of the Single Responsibility Principle It mixed:
 
 - Connection pool management (lines ~140–310)
 - Schema migrations bootstrapping (~352–388)
@@ -141,7 +141,7 @@ Callers keep using `db.getChatInfo(...)` etc. by delegating on the façade — b
 
 #### Affected Files
 
-- [`internal/database/wrapper.py`](../internal/database/wrapper.py) — split into many
+- [`internal/database/database.py`](/internal/database/database.py) — split into many
 - `internal/database/repositories/` — new directory
 - Every handler and service that calls `self.db.*` — no signature changes if façade is maintained
 - [`tests/database/test_db_wrapper.py`](../../tests/database/test_db_wrapper.py)
@@ -154,7 +154,7 @@ Callers keep using `db.getChatInfo(...)` etc. by delegating on the façade — b
 
 #### Current Problem
 
-[`BaseBotHandler`](../internal/bot/common/handlers/base.py:110) is 1 805 lines with at least five distinct responsibility clusters
+[`BaseBotHandler`](/internal/bot/common/handlers/base.py:110) is 1 805 lines with at least five distinct responsibility clusters
 
 | Responsibility | Approximate Lines |
 |---|---|
@@ -224,7 +224,7 @@ Handlers that only need message-sending can declare `MessageSenderMixin` directl
 
 #### Affected Files
 
-- [`internal/bot/common/handlers/base.py`](../internal/bot/common/handlers/base.py) — becomes thin composer
+- [`internal/bot/common/handlers/base.py`](/internal/bot/common/handlers/base.py) — becomes thin composer
 - `internal/bot/common/handlers/mixins/` — new directory with 5+ files
 - All handler subclasses — no signature changes required
 
@@ -236,7 +236,7 @@ Handlers that only need message-sending can declare `MessageSenderMixin` directl
 
 #### Current Problem
 
-[`TheBot`](../internal/bot/common/bot.py:31) is 1 000 lines and every public method contains an `if self.botProvider == BotProvider.TELEGRAM … elif self.botProvider == BotProvider.MAX …` branch Examples seen at lines 116, 171, 178, 231, 269, 289. This pattern will be duplicated for every new operation and every new platform.
+[`TheBot`](/internal/bot/common/bot.py:31) is 1 000 lines and every public method contains an `if self.botProvider == BotProvider.TELEGRAM … elif self.botProvider == BotProvider.MAX …` branch Examples seen at lines 116, 171, 178, 231, 269, 289. This pattern will be duplicated for every new operation and every new platform.
 
 #### Proposed Solution
 
@@ -302,9 +302,9 @@ class TheBot:
 
 #### Affected Files
 
-- [`internal/bot/common/bot.py`](../internal/bot/common/bot.py) — major rewrite
+- [`internal/bot/common/bot.py`](/internal/bot/common/bot.py) — major rewrite
 - `internal/bot/platform/` — new directory
-- [`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py:389) — `injectBot` factory
+- [`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py:389) — `injectBot` factory
 - All tests mocking `TheBot`
 
 ---
@@ -319,7 +319,7 @@ class TheBot:
 
 #### Current Problem
 
-[`MaxBotClient`](../lib/max_bot/client.py:75) is 1 751 lines covering messaging, chat management, user management, file uploads, polling, and low-level HTTP. This is a classic god-class in the API client layer
+[`MaxBotClient`](/lib/max_bot/client.py:75) is 1 751 lines covering messaging, chat management, user management, file uploads, polling, and low-level HTTP. This is a classic god-class in the API client layer
 
 #### Proposed Solution
 
@@ -373,8 +373,8 @@ class MaxBotClient:
 
 #### Affected Files
 
-- [`lib/max_bot/client.py`](../lib/max_bot/client.py) — split into `lib/max_bot/api/`
-- [`internal/bot/platform/max_adapter.py`](../internal/bot/platform/max_adapter.py) — if refactoring #3 is done
+- [`lib/max_bot/client.py`](/lib/max_bot/client.py) — split into `lib/max_bot/api/`
+- [`internal/bot/max/application.py`](/internal/bot/max/application.py) — if refactoring #3 is done
 
 ---
 
@@ -384,7 +384,7 @@ class MaxBotClient:
 
 #### Current Problem
 
-[`CacheService`](../internal/services/cache/service.py:88) is 796 lines and manages four different data domains (chats, chat-users, users, chat-persistent) through a single dict of `LRUCache` objects. Every convenience method for every domain lives in one class. Methods like `getChatSettings`, `setChatSetting`, `getChatAdmins`, `setUserData`, `getUserActiveAction` etc. are all jumbled together
+[`CacheService`](/internal/services/cache/service.py:88) is 796 lines and manages four different data domains (chats, chat-users, users, chat-persistent) through a single dict of `LRUCache` objects. Every convenience method for every domain lives in one class. Methods like `getChatSettings`, `setChatSetting`, `getChatAdmins`, `setUserData`, `getUserActiveAction` etc. are all jumbled together
 
 Additionally, the circular-import workaround at line 249 (`from internal.bot.models.chat_settings import ...` inside a method) indicates tight coupling that should be resolved structurally.
 
@@ -427,7 +427,7 @@ class CacheService:
 
 #### Affected Files
 
-- [`internal/services/cache/service.py`](../internal/services/cache/service.py) — major split
+- [`internal/services/cache/service.py`](/internal/services/cache/service.py) — major split
 - `internal/services/cache/` — new sub-modules
 - All handlers calling `self.cache.*` — no change if shims exist
 
@@ -439,7 +439,7 @@ class CacheService:
 
 #### Current Problem
 
-[`HandlersManager.__init__`](../internal/bot/common/handlers/manager.py:185) directly instantiates all 14+ concrete handler classes inline (lines 249–313). This means:
+[`HandlersManager.__init__`](/internal/bot/common/handlers/manager.py:185) directly instantiates all 14+ concrete handler classes inline (lines 249–313). This means:
 
 - Adding any new handler requires modifying `HandlersManager`
 - Conditional handler loading (`WeatherHandler`, `YandexSearchHandler`, `ResenderHandler`) embeds feature-toggle logic deep inside the constructor
@@ -514,7 +514,7 @@ self.handlers = factory.buildHandlers(
 
 #### Affected Files
 
-- [`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py) — constructor simplified
+- [`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py) — constructor simplified
 - `internal/bot/common/handlers/registry.py` — new
 - `internal/bot/common/handlers/factory.py` — new
 
@@ -526,7 +526,7 @@ self.handlers = factory.buildHandlers(
 
 #### Current Problem
 
-[`HandlersManager`](../internal/bot/common/handlers/manager.py:177) mixes two very different responsibilities: handler chain orchestration AND per-chat message queue state management (`chatStates`, `addMessageToChatQueue`, `_dtCronJob` for stale-state cleanup). The `ChatProcessingState` and `MessageQueueRecord` classes (lines 77–174) are essentially a mini queue subsystem embedded inside the manager
+[`HandlersManager`](/internal/bot/common/handlers/manager.py:177) mixes two very different responsibilities: handler chain orchestration AND per-chat message queue state management (`chatStates`, `addMessageToChatQueue`, `_dtCronJob` for stale-state cleanup). The `ChatProcessingState` and `MessageQueueRecord` classes (lines 77–174) are essentially a mini queue subsystem embedded inside the manager
 
 #### Proposed Solution
 
@@ -566,7 +566,7 @@ class HandlersManager:
 
 #### Affected Files
 
-- [`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py)
+- [`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py)
 - `internal/bot/common/chat_queue_manager.py` — new file
 - Related tests
 
@@ -578,7 +578,7 @@ class HandlersManager:
 
 #### Current Problem
 
-Every method in [`TheBot`](../internal/bot/common/bot.py:31) repeats the same `if self.botProvider == BotProvider.TELEGRAM … elif self.botProvider == BotProvider.MAX` pattern. As seen at line 116 (`getBotId`), line 150 (`getChatAdmins`), line 196 (`isAdmin`), line 268 (`editMessage`), etc. This is a textbook Open/Closed violation — adding a third platform means modifying every method
+Every method in [`TheBot`](/internal/bot/common/bot.py:31) repeats the same `if self.botProvider == BotProvider.TELEGRAM … elif self.botProvider == BotProvider.MAX` pattern. As seen at line 116 (`getBotId`), line 150 (`getChatAdmins`), line 196 (`isAdmin`), line 268 (`editMessage`), etc. This is a textbook Open/Closed violation — adding a third platform means modifying every method
 
 This is closely related to refactoring #3 but can be done incrementally even before the full platform adapter extraction.
 
@@ -621,7 +621,7 @@ Long-term, use the `AbstractPlatformAdapter` from refactoring #3
 
 #### Affected Files
 
-- [`internal/bot/common/bot.py`](../internal/bot/common/bot.py) — all platform-dispatching methods
+- [`internal/bot/common/bot.py`](/internal/bot/common/bot.py) — all platform-dispatching methods
 
 ---
 
@@ -631,7 +631,7 @@ Long-term, use the `AbstractPlatformAdapter` from refactoring #3
 
 #### Current Problem
 
-[`LLMMessageHandler`](../internal/bot/common/handlers/llm_messages.py:62) is 847 lines. A significant portion builds conversation context: assembling `ModelMessage` sequences from DB history, trimming to context window size, formatting user/system prompts, injecting tool results, etc. This context-building logic has no clear boundary and is interleaved with trigger detection (is this a reply? a mention? a random message?) and actual LLM call logic
+[`LLMMessageHandler`](/internal/bot/common/handlers/llm_messages.py:62) is 847 lines. A significant portion builds conversation context: assembling `ModelMessage` sequences from DB history, trimming to context window size, formatting user/system prompts, injecting tool results, etc. This context-building logic has no clear boundary and is interleaved with trigger detection (is this a reply? a mention? a random message?) and actual LLM call logic
 
 #### Proposed Solution
 
@@ -678,9 +678,9 @@ class LLMContextBuilder:
 
 #### Affected Files
 
-- [`internal/bot/common/handlers/llm_messages.py`](../internal/bot/common/handlers/llm_messages.py)
+- [`internal/bot/common/handlers/llm_messages.py`](/internal/bot/common/handlers/llm_messages.py)
 - `internal/services/llm/context_builder.py` — new
-- [`internal/services/llm/service.py`](../internal/services/llm/service.py)
+- [`internal/services/llm/service.py`](/internal/services/llm/service.py)
 
 ---
 
@@ -690,7 +690,7 @@ class LLMContextBuilder:
 
 #### Current Problem
 
-[`CacheService.getChatSettings`](../internal/services/cache/service.py:246) contains:
+[`CacheService.getChatSettings`](/internal/services/cache/service.py:246) contains:
 
 ```python
 def getChatSettings(self, chatId: int) -> ...:
@@ -722,8 +722,8 @@ Alternatively, define a `ChatSettingsProtocol` in `internal/services/cache/types
 
 #### Affected Files
 
-- [`internal/services/cache/service.py`](../internal/services/cache/service.py:246)
-- [`internal/bot/models/`](../internal/bot/models/) — source of moved classes
+- [`internal/services/cache/service.py`](/internal/services/cache/service.py:246)
+- [`internal/bot/models/`](/internal/bot/models/) — source of moved classes
 - `internal/models/` — destination
 - All files importing `ChatSettingsKey`/`ChatSettingsValue`
 
@@ -741,7 +741,7 @@ Alternatively, define a `ChatSettingsProtocol` in `internal/services/cache/types
 
 #### Current Problem (HISTORICAL)
 
-[`DatabaseWrapper._validateDictIsChatMessageDict`](../internal/database/wrapper.py:394) and similar `_validateDict*` methods performed row-to-TypedDict validation. These methods were private helpers duplicated across the wrapper — each did essentially the same enum-coercion + required-field check pattern They added ~200+ lines to the already-massive wrapper.
+[`DatabaseWrapper._validateDictIsChatMessageDict`](/internal/database/database.py) and similar `_validateDict*` methods performed row-to-TypedDict validation. These methods were private helpers duplicated across the wrapper — each did essentially the same enum-coercion + required-field check pattern They added ~200+ lines to the already-massive wrapper.
 
 #### Proposed Solution
 
@@ -786,7 +786,7 @@ class DatabaseRowValidator:
 
 #### Affected Files
 
-- [`internal/database/wrapper.py`](../internal/database/wrapper.py:394) — remove validation methods
+- [`internal/database/database.py`](/internal/database/database.py) — remove validation methods
 - `internal/database/row_validator.py` — new
 
 ---
@@ -797,7 +797,7 @@ class DatabaseRowValidator:
 
 #### Current Problem
 
-[`TelegramBotApplication`](../internal/bot/telegram/application.py:62) and [`MaxBotApplication`](../internal/bot/max/application.py:29) duplicate a significant lifecycle pattern
+[`TelegramBotApplication`](/internal/bot/telegram/application.py:62) and [`MaxBotApplication`](/internal/bot/max/application.py:29) duplicate a significant lifecycle pattern
 
 - Both store `configManager`, `database`, `llmManager`, `handlerManager`, `queueService`, `_schedulerTask`
 - Both have `postInit` / `postStop` with nearly identical steps (start scheduler, inject bot, shutdown handlerManager, stop queueService)
@@ -861,8 +861,8 @@ class BaseBotApplication(ABC):
 
 #### Affected Files
 
-- [`internal/bot/telegram/application.py`](../internal/bot/telegram/application.py)
-- [`internal/bot/max/application.py`](../internal/bot/max/application.py)
+- [`internal/bot/telegram/application.py`](/internal/bot/telegram/application.py)
+- [`internal/bot/max/application.py`](/internal/bot/max/application.py)
 - `internal/bot/base_application.py` — new
 
 ---
@@ -873,7 +873,7 @@ class BaseBotApplication(ABC):
 
 #### Current Problem
 
-[`HandlersManager.injectBot`](../internal/bot/common/handlers/manager.py:389) does two very different things: it creates a `TheBot` instance AND resolves bot-owner usernames to user IDs by querying the database This username→ID resolution is a cross-cutting concern that should be separate:
+[`HandlersManager.injectBot`](/internal/bot/common/handlers/manager.py:389) does two very different things: it creates a `TheBot` instance AND resolves bot-owner usernames to user IDs by querying the database This username→ID resolution is a cross-cutting concern that should be separate:
 
 ```python
 # lines 411–413 in manager.py
@@ -912,7 +912,7 @@ class BotOwnerResolver:
 
 #### Affected Files
 
-- [`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py:389)
+- [`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py:389)
 - `internal/bot/bot_owner_resolver.py` — new
 
 ---
@@ -923,7 +923,7 @@ class BotOwnerResolver:
 
 #### Current Problem
 
-[`QueueService`](../internal/services/queue_service/service.py:49) uses `asyncio.Task` sets for background tasks. The shutdown in `HandlersManager.shutdown` does:
+[`QueueService`](/internal/services/queue_service/service.py:49) uses `asyncio.Task` sets for background tasks. The shutdown in `HandlersManager.shutdown` does:
 
 ```python
 await asyncio.gather(*self.handlerTasks)
@@ -968,9 +968,9 @@ class TaskTracker:
 
 #### Affected Files
 
-- [`internal/services/queue_service/service.py`](../internal/services/queue_service/service.py)
-- [`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py:430)
-- [`internal/bot/max/application.py`](../internal/bot/max/application.py:85)
+- [`internal/services/queue_service/service.py`](/internal/services/queue_service/service.py)
+- [`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py:430)
+- [`internal/bot/max/application.py`](/internal/bot/max/application.py:85)
 
 ---
 
@@ -980,7 +980,7 @@ class TaskTracker:
 
 #### Current Problem
 
-[`BaseBotHandler.getChatSettings`](../internal/bot/common/handlers/base.py:195) is an 80+ line method with complex logic for determining which settings are available at each chat tier. It mixes tier comparison, bot-owner bypass logic, and model validation into one tangled block (lines 280–308). Adding a new tier or a new settings type requires modifying this core method
+[`BaseBotHandler.getChatSettings`](/internal/bot/common/handlers/base.py:195) is an 80+ line method with complex logic for determining which settings are available at each chat tier. It mixes tier comparison, bot-owner bypass logic, and model validation into one tangled block (lines 280–308). Adding a new tier or a new settings type requires modifying this core method
 
 #### Proposed Solution
 
@@ -1027,7 +1027,7 @@ class TierPolicy:
 
 #### Affected Files
 
-- [`internal/bot/common/handlers/base.py`](../internal/bot/common/handlers/base.py:280)
+- [`internal/bot/common/handlers/base.py`](/internal/bot/common/handlers/base.py:280)
 - `internal/bot/models/tier_policy.py` — new
 
 ---
@@ -1038,7 +1038,7 @@ class TierPolicy:
 
 #### Current Problem
 
-[`TheBot`](../internal/bot/common/bot.py:44) has a TODO comment `# TODO Add __slots__` at line 44. `TheBot` instances are created per-session, and the class has at least 6 instance attributes that are accessed on every message. Missing `__slots__` means a `__dict__` is allocated per instance and attribute access is slower
+[`TheBot`](/internal/bot/common/bot.py:44) has a TODO comment `# TODO Add __slots__` at line 44. `TheBot` instances are created per-session, and the class has at least 6 instance attributes that are accessed on every message. Missing `__slots__` means a `__dict__` is allocated per instance and attribute access is slower
 
 Additionally, other frequently-created objects like `MessageQueueRecord` (line 81 already has `__slots__`) and `ChatProcessingState` (line 120) already use slots — but `TheBot`, `BaseBotHandler` subclasses, and similar objects do not.
 
@@ -1067,8 +1067,8 @@ Audit all frequently-instantiated classes for missing `__slots__` and add them s
 
 #### Affected Files
 
-- [`internal/bot/common/bot.py`](../internal/bot/common/bot.py:44)
-- [`internal/bot/common/handlers/base.py`](../internal/bot/common/handlers/base.py) — `BaseBotHandler`
+- [`internal/bot/common/bot.py`](/internal/bot/common/bot.py:44)
+- [`internal/bot/common/handlers/base.py`](/internal/bot/common/handlers/base.py) — `BaseBotHandler`
 - Handler subclasses that add their own instance attributes
 
 ---
@@ -1079,7 +1079,7 @@ Audit all frequently-instantiated classes for missing `__slots__` and add them s
 
 #### Current Problem
 
-[`TheBot.editMessage`](../internal/bot/common/bot.py:246) and other message-sending methods inline the Markdown→MarkdownV2 conversion and platform-specific `parse_mode` selection. The same pattern is scattered across `sendMessage`, `sendReply`, `editMessage` etc. in `TheBot` and also in `BaseBotHandler` `markdownToMarkdownV2` is imported directly in `bot.py` at line 26.
+[`TheBot.editMessage`](/internal/bot/common/bot.py:246) and other message-sending methods inline the Markdown→MarkdownV2 conversion and platform-specific `parse_mode` selection. The same pattern is scattered across `sendMessage`, `sendReply`, `editMessage` etc. in `TheBot` and also in `BaseBotHandler` `markdownToMarkdownV2` is imported directly in `bot.py` at line 26.
 
 #### Proposed Solution
 
@@ -1116,8 +1116,8 @@ All message-sending paths call `self._formatter.formatText(text, useMarkdown=use
 
 #### Affected Files
 
-- [`internal/bot/common/bot.py`](../internal/bot/common/bot.py)
-- [`internal/bot/common/handlers/base.py`](../internal/bot/common/handlers/base.py)
+- [`internal/bot/common/bot.py`](/internal/bot/common/bot.py)
+- [`internal/bot/common/handlers/base.py`](/internal/bot/common/handlers/base.py)
 - `internal/bot/common/message_formatter.py` — new
 
 ---
@@ -1128,7 +1128,7 @@ All message-sending paths call `self._formatter.formatText(text, useMarkdown=use
 
 #### Current Problem
 
-[`CacheService`](../internal/services/cache/service.py:105), [`QueueService`](../internal/services/queue_service/service.py:82), [`LLMService`](../internal/services/llm/service.py), [`StorageService`](../internal/services/storage/service.py), and [`RateLimiterManager`](../lib/rate_limiter/manager.py) all implement the same boilerplate singleton pattern: `_instance`, `_lock`, `__new__`, `getInstance()` This is 15+ lines of identical code copy-pasted across 5+ classes.
+[`CacheService`](/internal/services/cache/service.py:105), [`QueueService`](/internal/services/queue_service/service.py:82), [`LLMService`](/internal/services/llm/service.py), [`StorageService`](/internal/services/storage/service.py), and [`RateLimiterManager`](/lib/rate_limiter/manager.py) all implement the same boilerplate singleton pattern: `_instance`, `_lock`, `__new__`, `getInstance()` This is 15+ lines of identical code copy-pasted across 5+ classes.
 
 #### Proposed Solution
 
@@ -1179,11 +1179,11 @@ class CacheService(SingletonMixin):
 #### Affected Files
 
 - `lib/singleton.py` — new
-- [`internal/services/cache/service.py`](../internal/services/cache/service.py:105)
-- [`internal/services/queue_service/service.py`](../internal/services/queue_service/service.py:82)
-- [`internal/services/llm/service.py`](../internal/services/llm/service.py)
-- [`internal/services/storage/service.py`](../internal/services/storage/service.py)
-- [`lib/rate_limiter/manager.py`](../lib/rate_limiter/manager.py)
+- [`internal/services/cache/service.py`](/internal/services/cache/service.py:105)
+- [`internal/services/queue_service/service.py`](/internal/services/queue_service/service.py:82)
+- [`internal/services/llm/service.py`](/internal/services/llm/service.py)
+- [`internal/services/storage/service.py`](/internal/services/storage/service.py)
+- [`lib/rate_limiter/manager.py`](/lib/rate_limiter/manager.py)
 
 ---
 
@@ -1229,8 +1229,8 @@ The `settings` table creation moves into a bootstrap migration
 
 #### Affected Files
 
-- [`internal/database/wrapper.py`](../internal/database/wrapper.py:352)
-- [`internal/database/migrations/versions/`](../internal/database/migrations/versions/) — new/modified bootstrap migration
+- [`internal/database/database.py`](/internal/database/database.py)
+- [`internal/database/migrations/versions/`](/internal/database/migrations/versions/) — new/modified bootstrap migration
 
 ---
 
@@ -1242,9 +1242,9 @@ The `settings` table creation moves into a bootstrap migration
 
 Throughout the codebase, configuration is passed as untyped `Dict[str, Any]`  Examples:
 
-- [`TheBot.__init__`](../internal/bot/common/bot.py:46): `config: Dict[str, Any]`
-- [`DatabaseWrapper.__init__`](../internal/database/wrapper.py:119): `config: Dict[str, Any]`
-- [`GromozekBot.__init__`](../main.py:34) passes `configManager.getBotConfig()` which returns `Dict[str, Any]`
+- [`TheBot.__init__`](/internal/bot/common/bot.py:46): `config: Dict[str, Any]`
+- [`DatabaseWrapper.__init__`](/internal/database/database.py): `config: Dict[str, Any]`
+- [`GromozekBot.__init__`](/main.py:34) passes `configManager.getBotConfig()` which returns `Dict[str, Any]`
 
 Access is via string keys like `config.get("bot_owners", [])` (line 85), `config.get("max-tasks", 1024)` (line 245) — typos silently return defaults
 
@@ -1291,12 +1291,12 @@ class BotConfig:
 
 #### Affected Files
 
-- [`internal/config/manager.py`](../internal/config/manager.py)
+- [`internal/config/manager.py`](/internal/config/manager.py)
 - `internal/config/models.py` — new
-- [`main.py`](../main.py)
-- [`internal/bot/common/bot.py`](../internal/bot/common/bot.py)
-- [`internal/database/wrapper.py`](../internal/database/wrapper.py)
-- [`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py)
+- [`main.py`](/main.py)
+- [`internal/bot/common/bot.py`](/internal/bot/common/bot.py)
+- [`internal/database/database.py`](/internal/database/database.py)
+- [`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py)
 
 ---
 
@@ -1306,7 +1306,7 @@ class BotConfig:
 
 #### Current Problem
 
-[`MessageQueueRecord.awaitStepDone`](../internal/bot/common/handlers/manager.py:110) uses a busy-wait loop:
+[`MessageQueueRecord.awaitStepDone`](/internal/bot/common/handlers/manager.py:110) uses a busy-wait loop:
 
 ```python
 async def awaitStepDone(self, step: int) -> None:
@@ -1314,7 +1314,7 @@ async def awaitStepDone(self, step: int) -> None:
         await asyncio.sleep(0.1)
 ```
 
-And similarly [`ChatProcessingState.messageProcessed`](../internal/bot/common/handlers/manager.py:149) has another polling loop:
+And similarly [`ChatProcessingState.messageProcessed`](/internal/bot/common/handlers/manager.py:149) has another polling loop:
 
 ```python
 while self.queue and self.queue[0].getId() != messageId:
@@ -1362,7 +1362,7 @@ class MessageQueueRecord:
 
 #### Affected Files
 
-- [`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py:110)
+- [`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py:110)
 
 ---
 

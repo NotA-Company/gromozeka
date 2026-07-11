@@ -132,12 +132,12 @@ The project is organized in a strict layered architecture where each layer only 
 
 | Pattern | Where Used | Purpose |
 |---|---|---|
-| Singleton | [`CacheService`](internal/services/cache/service.py:88), [`QueueService`](internal/services/queue_service/service.py), [`RateLimiterManager`](lib/rate_limiter/manager.py:12) | Shared state across handlers |
-| Abstract Base Class | [`AbstractModel`](lib/ai/abstract.py:47), [`AbstractLLMProvider`](lib/ai/abstract.py:904), [`CacheInterface`](lib/cache/interface.py:15), [`BaseMigration`](internal/database/migrations/base.py:9) | Type-safe extensibility |
-| Chain of Responsibility | Handler pipeline in [`HandlersManager`](internal/bot/common/handlers/manager.py:177) | Sequential/parallel message processing |
-| Multi-source Router | [`Database`](internal/database/database.py) | Chat-to-database routing |
-| Decorator-based Discovery | `@commandHandlerV2` decorator, [`CommandHandlerMixin`](internal/bot/models) | Auto-discovery of bot commands |
-| Golden Data Testing | [`tests/`](tests/) | Deterministic API test replay |
+| Singleton | [`CacheService`](/internal/services/cache/service.py:88), [`QueueService`](/internal/services/queue_service/service.py), [`RateLimiterManager`](/lib/rate_limiter/manager.py:12) | Shared state across handlers |
+| Abstract Base Class | [`AbstractModel`](/lib/ai/abstract.py:47), [`AbstractLLMProvider`](/lib/ai/abstract.py:904), [`CacheInterface`](/lib/cache/interface.py:15), [`BaseMigration`](/internal/database/migrations/base.py:9) | Type-safe extensibility |
+| Chain of Responsibility | Handler pipeline in [`HandlersManager`](/internal/bot/common/handlers/manager.py:177) | Sequential/parallel message processing |
+| Multi-source Router | [`Database`](/internal/database/database.py) | Chat-to-database routing |
+| Decorator-based Discovery | `@commandHandlerV2` decorator, [`CommandHandlerMixin`](/internal/bot/models) | Auto-discovery of bot commands |
+| Golden Data Testing | [`tests/`](/tests/) | Deterministic API test replay |
 
 ---
 
@@ -341,7 +341,7 @@ The configuration system uses hierarchical TOML files Configs are merged in sort
 
 ### How Config Loading Works
 
-[`ConfigManager`](internal/config/manager.py:59) loads configs in the following priority order (lowest to highest)
+[`ConfigManager`](/internal/config/manager.py:59) loads configs in the following priority order (lowest to highest)
 
 1. Config files from `--config-dir` directories (loaded recursively, sorted alphabetically)
 2. The single `--config` file (default: `config.toml`)
@@ -553,11 +553,11 @@ yandexConfig = configManager.getYandexSearchConfig()
 
 ## 5. Database Layer
 
-The database layer provides SQL access via [`Database`](internal/database/database.py) with multi-source routing, connection pooling, repository pattern, and an automatic migration system It supports SQLite, MySQL, and PostgreSQL through a provider abstraction
+The database layer provides SQL access via [`Database`](/internal/database/database.py) with multi-source routing, connection pooling, repository pattern, and an automatic migration system It supports SQLite, MySQL, and PostgreSQL through a provider abstraction
 
 ### Database
 
-[`Database`](internal/database/database.py) is the main interface to the database It supports multiple named database providers, with per-chat routing so different chats can use different databases The database uses a repository pattern with 15 specialized repositories for different data domains
+[`Database`](/internal/database/database.py) is the main interface to the database It supports multiple named database providers, with per-chat routing so different chats can use different databases The database uses a repository pattern with 15 specialized repositories for different data domains
 
 ```python
 from internal.database import Database
@@ -587,21 +587,21 @@ The database layer uses a repository pattern with 15 specialized repositories Ea
 
 | Repository | File | Purpose |
 |---|---|---|
-| [`CacheRepository`](internal/database/repositories/cache.py) | `cache.py` | Cache storage operations |
-| [`ChatInfoRepository`](internal/database/repositories/chat_info.py) | `chat_info.py` | Chat metadata operations |
-| [`ChatMessagesRepository`](internal/database/repositories/chat_messages.py) | `chat_messages.py` | Message history operations |
-| [`ChatSettingsRepository`](internal/database/repositories/chat_settings.py) | `chat_settings.py` | Chat settings operations |
-| [`ChatSummarizationRepository`](internal/database/repositories/chat_summarization.py) | `chat_summarization.py` | Chat summarization operations |
-| [`ChatUsersRepository`](internal/database/repositories/chat_users.py) | `chat_users.py` | Per-chat user metadata operations |
-| [`CommonRepository`](internal/database/repositories/common.py) | `common.py` | Common database operations |
-| [`DelayedTasksRepository`](internal/database/repositories/delayed_tasks.py) | `delayed_tasks.py` | Background task queue operations |
-| [`ChatSearchRepository`](internal/database/repositories/chat_search.py) | `chat_search.py` | Message search and user listing operations |
-| [`ChatEmbeddingsRepository`](internal/database/repositories/chat_embeddings.py) | `chat_embeddings.py` | Message embedding operations |
-| [`DivinationRepository`](internal/database/repositories/divinations.py) | `divinations.py` | Tarot/runes readings and layout discovery operations |
-| [`MediaAttachmentsRepository`](internal/database/repositories/media_attachments.py) | `media_attachments.py` | Media metadata operations |
-| [`SpamRepository`](internal/database/repositories/spam.py) | `spam.py` | Spam detection operations |
-| [`UserMemoriesRepository`](internal/database/repositories/user_memories.py) | `user_memories.py` | Per-(chat, user, thread) structured memory operations (permanent + ephemeral, vec0-backed) |
-| [`WebhookUpdatesRepository`](internal/database/repositories/webhook_updates.py) | `webhook_updates.py` | Max webhook payload storage and consumption |
+| [`CacheRepository`](/internal/database/repositories/cache.py) | `cache.py` | Cache storage operations |
+| [`ChatInfoRepository`](/internal/database/repositories/chat_info.py) | `chat_info.py` | Chat metadata operations |
+| [`ChatMessagesRepository`](/internal/database/repositories/chat_messages.py) | `chat_messages.py` | Message history operations |
+| [`ChatSettingsRepository`](/internal/database/repositories/chat_settings.py) | `chat_settings.py` | Chat settings operations |
+| [`ChatSummarizationRepository`](/internal/database/repositories/chat_summarization.py) | `chat_summarization.py` | Chat summarization operations |
+| [`ChatUsersRepository`](/internal/database/repositories/chat_users.py) | `chat_users.py` | Per-chat user metadata operations |
+| [`CommonRepository`](/internal/database/repositories/common.py) | `common.py` | Common database operations |
+| [`DelayedTasksRepository`](/internal/database/repositories/delayed_tasks.py) | `delayed_tasks.py` | Background task queue operations |
+| [`ChatSearchRepository`](/internal/database/repositories/chat_search.py) | `chat_search.py` | Message search and user listing operations |
+| [`ChatEmbeddingsRepository`](/internal/database/repositories/chat_embeddings.py) | `chat_embeddings.py` | Message embedding operations |
+| [`DivinationRepository`](/internal/database/repositories/divinations.py) | `divinations.py` | Tarot/runes readings and layout discovery operations |
+| [`MediaAttachmentsRepository`](/internal/database/repositories/media_attachments.py) | `media_attachments.py` | Media metadata operations |
+| [`SpamRepository`](/internal/database/repositories/spam.py) | `spam.py` | Spam detection operations |
+| [`UserMemoriesRepository`](/internal/database/repositories/user_memories.py) | `user_memories.py` | Per-(chat, user, thread) structured memory operations (permanent + ephemeral, vec0-backed) |
+| [`WebhookUpdatesRepository`](/internal/database/repositories/webhook_updates.py) | `webhook_updates.py` | Max webhook payload storage and consumption |
 
 ### Multi-Source Routing
 
@@ -669,9 +669,9 @@ The schema is defined and evolved through migrations. Key tables include:
 
 ### Migration System
 
-Migrations live in [`internal/database/migrations/versions/`](internal/database/migrations/versions/) and are auto-discovered by [`MigrationManager`](internal/database/migrations/manager.py)
+Migrations live in [`internal/database/migrations/versions/`](/internal/database/migrations/versions/) and are auto-discovered by [`MigrationManager`](/internal/database/migrations/manager.py)
 
-Each migration inherits from [`BaseMigration`](internal/database/migrations/base.py:9):
+Each migration inherits from [`BaseMigration`](/internal/database/migrations/base.py:9):
 
 ```python
 from internal.database.migrations.base import BaseMigration
@@ -694,7 +694,7 @@ class Migration(BaseMigration):
         await sqlProvider.execute("DROP TABLE IF EXISTS my_new_table")
 ```
 
-Migrations are applied automatically on [`Database`](internal/database/database.py) initialization The schema version is tracked in the `settings` table using the `db-migration-version` and `db-migration-last-run` keys.
+Migrations are applied automatically on [`Database`](/internal/database/database.py) initialization The schema version is tracked in the `settings` table using the `db-migration-version` and `db-migration-last-run` keys.
 
 ### How to Add a Migration
 
@@ -714,7 +714,7 @@ cp internal/database/migrations/versions/migration_012_unify_cache_tables.py \
 
 3. **Edit the file** to set `version`, `description`, and implement `up()` / `down()`
 
-4. **Register the migration** in [`internal/database/migrations/versions/__init__.py`](internal/database/migrations/versions/__init__.py) if needed.
+4. **Register the migration** in [`internal/database/migrations/versions/__init__.py`](/internal/database/migrations/versions/__init__.py) if needed.
 
 5. **Run the bot** — migrations are applied automatically
 
@@ -724,7 +724,7 @@ cp internal/database/migrations/versions/migration_012_unify_cache_tables.py \
 
 ## 6. Handler System
 
-The handler system is the core of message processing All incoming messages go through a pipeline of handlers managed by [`HandlersManager`](internal/bot/common/handlers/manager.py:177)
+The handler system is the core of message processing All incoming messages go through a pipeline of handlers managed by [`HandlersManager`](/internal/bot/common/handlers/manager.py:177)
 
 ### Handler Lifecycle
 
@@ -781,7 +781,7 @@ Incoming Message
 
 ### HandlerResultStatus
 
-Each handler returns a [`HandlerResultStatus`](internal/bot/common/handlers/base.py:82) to signal how processing should continue
+Each handler returns a [`HandlerResultStatus`](/internal/bot/common/handlers/base.py:82) to signal how processing should continue
 
 ```python
 class HandlerResultStatus(Enum):
@@ -802,18 +802,18 @@ class HandlerParallelism(IntEnum):
 
 ### BaseBotHandler
 
-All handlers inherit from [`BaseBotHandler`](internal/bot/common/handlers/base.py:110) This base class provides:
+All handlers inherit from [`BaseBotHandler`](/internal/bot/common/handlers/base.py:110) This base class provides:
 
-- `self.db` — [`Database`](internal/database/database.py) instance
-- `self.llmService` — [`LLMService`](internal/services/llm/service.py) instance (access LLMManager via `self.llmService.getLLMManager()`)
-- `self.cache` — [`CacheService`](internal/services/cache/service.py:88) instance
-- `self.queueService` — [`QueueService`](internal/services/queue_service/service.py) instance
-- `self.storage` — [`StorageService`](internal/services/storage/service.py) instance
-- `self.configManager` — [`ConfigManager`](internal/config/manager.py:59) instance
+- `self.db` — [`Database`](/internal/database/database.py) instance
+- `self.llmService` — [`LLMService`](/internal/services/llm/service.py) instance (access LLMManager via `self.llmService.getLLMManager()`)
+- `self.cache` — [`CacheService`](/internal/services/cache/service.py:88) instance
+- `self.queueService` — [`QueueService`](/internal/services/queue_service/service.py) instance
+- `self.storage` — [`StorageService`](/internal/services/storage/service.py) instance
+- `self.configManager` — [`ConfigManager`](/internal/config/manager.py:59) instance
 - `self.config` — raw bot config dict
-- `self.botProvider` — [`BotProvider`](internal/bot/models/enums.py) enum
+- `self.botProvider` — [`BotProvider`](/internal/bot/models/enums.py) enum
 
-Key methods from [`BaseBotHandler`](internal/bot/common/handlers/base.py:110):
+Key methods from [`BaseBotHandler`](/internal/bot/common/handlers/base.py:110):
 
 ```python
 # Get merged chat settings (with defaults)
@@ -868,28 +868,28 @@ async def myCommandHandler(
 
 | Handler | File | Description |
 |---|---|---|
-| `MessagePreprocessorHandler` | [`message_preprocessor.py`](internal/bot/common/handlers/message_preprocessor.py) | Save message to DB, preprocess text |
-| `SpamHandler` | [`spam.py`](internal/bot/common/handlers/spam.py) | ML spam detection + user management |
-| `ConfigureCommandHandler` | [`configure.py`](internal/bot/common/handlers/configure.py) | `/configure` settings wizard |
-| `SummarizationHandler` | [`summarization.py`](internal/bot/common/handlers/summarization.py) | `/summarize` chat history |
-| `UserMemoriesHandler` | [`user_memories.py`](internal/bot/common/handlers/user_memories.py) | User memories management |
-| `DevCommandsHandler` | [`dev_commands.py`](internal/bot/common/handlers/dev_commands.py) | Developer/admin commands |
-| `MediaHandler` | [`media.py`](internal/bot/common/handlers/media.py) | Image/file/sticker processing |
-| `CommonHandler` | [`common.py`](internal/bot/common/handlers/common.py) | Shared command handling |
-| `HelpHandler` | [`help_command.py`](internal/bot/common/handlers/help_command.py) | `/help` command |
-| `ReactOnUserMessageHandler` | [`react_on_user.py`](internal/bot/common/handlers/react_on_user.py) | User join/leave reactions |
-| `TopicManagerHandler` | [`topic_manager.py`](internal/bot/common/handlers/topic_manager.py) | Forum topic management |
-| `WeatherHandler` | [`weather.py`](internal/bot/common/handlers/weather.py) | Weather query handler |
-| `YandexSearchHandler` | [`yandex_search.py`](internal/bot/common/handlers/yandex_search.py) | Web search handler |
-| `ResenderHandler` | [`resender.py`](internal/bot/common/handlers/resender.py) | Message forwarding |
-| `DivinationHandler` | [`divination.py`](internal/bot/common/handlers/divination.py) | `/taro` and `/runes` divination commands |
-| `SandboxHandler` | [`sandbox.py`](internal/bot/common/handlers/sandbox.py) | Sandboxed code execution (if sandbox.enabled) |
-| `ChatSearchHandler` | [`chat_search.py`](internal/bot/common/handlers/chat_search.py) | `/search` command and message search LLM tools (if search-history.enabled) |
-| `LLMMessageHandler` | [`llm_messages.py`](internal/bot/common/handlers/llm_messages.py) | Main AI conversation handler |
+| `MessagePreprocessorHandler` | [`message_preprocessor.py`](/internal/bot/common/handlers/message_preprocessor.py) | Save message to DB, preprocess text |
+| `SpamHandler` | [`spam.py`](/internal/bot/common/handlers/spam.py) | ML spam detection + user management |
+| `ConfigureCommandHandler` | [`configure.py`](/internal/bot/common/handlers/configure.py) | `/configure` settings wizard |
+| `SummarizationHandler` | [`summarization.py`](/internal/bot/common/handlers/summarization.py) | `/summarize` chat history |
+| `UserMemoriesHandler` | [`user_memories.py`](/internal/bot/common/handlers/user_memories.py) | User memories management |
+| `DevCommandsHandler` | [`dev_commands.py`](/internal/bot/common/handlers/dev_commands.py) | Developer/admin commands |
+| `MediaHandler` | [`media.py`](/internal/bot/common/handlers/media.py) | Image/file/sticker processing |
+| `CommonHandler` | [`common.py`](/internal/bot/common/handlers/common.py) | Shared command handling |
+| `HelpHandler` | [`help_command.py`](/internal/bot/common/handlers/help_command.py) | `/help` command |
+| `ReactOnUserMessageHandler` | [`react_on_user.py`](/internal/bot/common/handlers/react_on_user.py) | User join/leave reactions |
+| `TopicManagerHandler` | [`topic_manager.py`](/internal/bot/common/handlers/topic_manager.py) | Forum topic management |
+| `WeatherHandler` | [`weather.py`](/internal/bot/common/handlers/weather.py) | Weather query handler |
+| `YandexSearchHandler` | [`yandex_search.py`](/internal/bot/common/handlers/yandex_search.py) | Web search handler |
+| `ResenderHandler` | [`resender.py`](/internal/bot/common/handlers/resender.py) | Message forwarding |
+| `DivinationHandler` | [`divination.py`](/internal/bot/common/handlers/divination.py) | `/taro` and `/runes` divination commands |
+| `SandboxHandler` | [`sandbox.py`](/internal/bot/common/handlers/sandbox.py) | Sandboxed code execution (if sandbox.enabled) |
+| `ChatSearchHandler` | [`chat_search.py`](/internal/bot/common/handlers/chat_search.py) | `/search` command and message search LLM tools (if search-history.enabled) |
+| `LLMMessageHandler` | [`llm_messages.py`](/internal/bot/common/handlers/llm_messages.py) | Main AI conversation handler |
 
 ### How to Create a New Handler
 
-See [`example_custom_handler.py`](internal/bot/common/handlers/example_custom_handler.py) for a complete working example
+See [`example_custom_handler.py`](/internal/bot/common/handlers/example_custom_handler.py) for a complete working example
 
 **Step 1**: Create your handler class in a new file
 
@@ -977,7 +977,7 @@ class MyNewHandler(BaseBotHandler):
         )
 ```
 
-**Step 2**: Register the handler in [`HandlersManager`](internal/bot/common/handlers/manager.py:249)
+**Step 2**: Register the handler in [`HandlersManager`](/internal/bot/common/handlers/manager.py:249)
 
 ```python
 # In internal/bot/common/handlers/manager.py, add import:
@@ -1063,7 +1063,7 @@ The system prompt applies to both LLM calls, while the info and structure prompt
 #### Testing Discovery
 
 The discovery feature has comprehensive test coverage in:
-- [`tests/bot/test_divination_discovery.py`](tests/bot/test_divination_discovery.py) — Full discovery workflow tests
+- [`tests/bot/test_divination_discovery.py`](/tests/bot/test_divination_discovery.py) — Full discovery workflow tests
 
 Tests cover:
 - Successful layout discovery with valid web search results
@@ -1091,7 +1091,7 @@ The service layer provides singleton services shared across all handlers Service
 
 ### CacheService
 
-[`CacheService`](internal/services/cache/service.py:88) is a bot-level singleton providing fast in-memory caching with optional database persistence and LRU eviction
+[`CacheService`](/internal/services/cache/service.py:88) is a bot-level singleton providing fast in-memory caching with optional database persistence and LRU eviction
 
 ```python
 from internal.services.cache import CacheService
@@ -1125,7 +1125,7 @@ chatUserInfo = cache.getChatUser(chatId=123, userId=456)
 
 ### QueueService
 
-[`QueueService`](internal/services/queue_service/service.py) manages background async tasks with delay support It also handles lifecycle events (`DO_EXIT`, `CRON_JOB`)
+[`QueueService`](/internal/services/queue_service/service.py) manages background async tasks with delay support It also handles lifecycle events (`DO_EXIT`, `CRON_JOB`)
 
 ```python
 from internal.services.queue_service import QueueService, makeEmptyAsyncTask
@@ -1149,7 +1149,7 @@ await queueService.enqueue(
 
 ### LLMService
 
-[`LLMService`](internal/services/llm/service.py) wraps [`LLMManager`](lib/ai/manager.py:49) as a singleton service
+[`LLMService`](/internal/services/llm/service.py) wraps [`LLMManager`](/lib/ai/manager.py:49) as a singleton service
 
 ```python
 from internal.services.llm import LLMService
@@ -1162,7 +1162,7 @@ model = llmService.getModel("my-model-name")
 
 ### StorageService
 
-[`StorageService`](internal/services/storage/service.py) provides file storage (local filesystem or S3-compatible)
+[`StorageService`](/internal/services/storage/service.py) provides file storage (local filesystem or S3-compatible)
 
 ```python
 from internal.services.storage import StorageService
@@ -1189,9 +1189,9 @@ The AI system provides a provider-agnostic interface for interacting with multip
 
 | Class | File | Description |
 |---|---|---|
-| [`LLMManager`](lib/ai/manager.py:49) | `manager.py` | Top-level registry of providers and models |
-| [`AbstractLLMProvider`](lib/ai/abstract.py:904) | `abstract.py` | Base class for providers |
-| [`AbstractModel`](lib/ai/abstract.py:47) | `abstract.py` | Base class for individual models |
+| [`LLMManager`](/lib/ai/manager.py:49) | `manager.py` | Top-level registry of providers and models |
+| [`AbstractLLMProvider`](/lib/ai/abstract.py:904) | `abstract.py` | Base class for providers |
+| [`AbstractModel`](/lib/ai/abstract.py:47) | `abstract.py` | Base class for individual models |
 | `BasicOpenAIProvider` | `providers/basic_openai_provider.py` | Base OpenAI-compatible API provider |
 | `CustomOpenAIProvider` | `providers/custom_openai_provider.py` | OpenAI-compatible API provider (extends BasicOpenAIProvider) |
 | `FastembedProvider` | `providers/fastembed_provider.py` | Fast embedding model provider |
@@ -1239,8 +1239,8 @@ if result.status == ModelResultStatus.SUCCESS:
 
 **Adding a new LLM provider:**
 
-1. Create `lib/ai/providers/my_provider.py` implementing [`AbstractLLMProvider`](lib/ai/abstract.py:904) and the model class extending [`AbstractModel`](lib/ai/abstract.py:47)
-2. Register it in [`LLMManager._initProviders()`](lib/ai/manager.py:36) by adding it to `providerTypes`:
+1. Create `lib/ai/providers/my_provider.py` implementing [`AbstractLLMProvider`](/lib/ai/abstract.py:904) and the model class extending [`AbstractModel`](/lib/ai/abstract.py:47)
+2. Register it in [`LLMManager._initProviders()`](/lib/ai/manager.py:36) by adding it to `providerTypes`:
 
 ```python
 providerTypes = {
@@ -1267,7 +1267,7 @@ A generic, type-safe cache library for any key-value storage need Not to be conf
 
 | Class | File | Description |
 |---|---|---|
-| [`CacheInterface[K, V]`](lib/cache/interface.py:15) | `interface.py` | Abstract base for all caches |
+| [`CacheInterface[K, V]`](/lib/cache/interface.py:15) | `interface.py` | Abstract base for all caches |
 | `DictCache[K, V]` | `dict_cache.py` | In-memory dict-backed cache |
 | `NullCache` | *(imported from lib.cache)* | No-op cache (caching disabled) |
 
@@ -1309,7 +1309,7 @@ Sliding window rate limiter with a global singleton manager Used to limit API ca
 
 | Class | File | Description |
 |---|---|---|
-| [`RateLimiterManager`](lib/rate_limiter/manager.py:12) | `manager.py` | Singleton manager of named limiters |
+| [`RateLimiterManager`](/lib/rate_limiter/manager.py:12) | `manager.py` | Singleton manager of named limiters |
 | `SlidingWindowRateLimiter` | `sliding_window.py` | Sliding window implementation |
 | `RateLimiterInterface` | `interface.py` | Abstract base class |
 
@@ -1339,7 +1339,7 @@ An async HTTP client for the Max Messenger Bot API Analogous to `python-telegram
 
 | Class | File | Description |
 |---|---|---|
-| [`MaxBotClient`](lib/max_bot/client.py:75) | `client.py` | Main async client |
+| [`MaxBotClient`](/lib/max_bot/client.py:75) | `client.py` | Main async client |
 | `MaxBotError` | `exceptions.py` | Base exception class |
 | `AuthenticationError` | `exceptions.py` | Auth failures |
 | `RateLimitError` | `exceptions.py` | Rate limit hit |
@@ -1373,7 +1373,7 @@ await client.sendMessage(
 )
 ```
 
-**Constants** from [`lib/max_bot/constants.py`](lib/max_bot/constants.py):
+**Constants** from [`lib/max_bot/constants.py`](/lib/max_bot/constants.py):
 
 ```python
 # Max API v2 (platform-api2.max.ru). Old endpoints kept as comments only:
@@ -1454,7 +1454,7 @@ places = await client.lookup(["R2623018"])
 
 ### 8.8 Bayes Filter (Spam Detection)
 
-The Naive Bayes spam filter lives in the database layer at [`internal/database/bayes_storage.py`](internal/database/bayes_storage.py) and is used by `SpamHandler`
+The Naive Bayes spam filter lives in the database layer at [`internal/database/bayes_storage.py`](/internal/database/bayes_storage.py) and is used by `SpamHandler`
 
 **How it works:**
 1. Every message is scored against the trained Bayes model
@@ -2311,7 +2311,7 @@ All sandbox settings live in [`configs/00-defaults/sandbox.toml`](configs/00-def
 
 1. **Create the handler file** See [Section 6 - Creating a New Handler](#how-to-create-a-new-handler) for the complete template.
 
-2. **Register in [`HandlersManager`](internal/bot/common/handlers/manager.py:249)**
+2. **Register in [`HandlersManager`](/internal/bot/common/handlers/manager.py:249)**
 
 ```python
 # In internal/bot/common/handlers/manager.py
@@ -2455,9 +2455,9 @@ maxRequests = 30
 coolapi = "coolapi"
 ```
 
-**Step 5**: Add a `getCoolApiConfig()` method to [`ConfigManager`](internal/config/manager.py:59).
+**Step 5**: Add a `getCoolApiConfig()` method to [`ConfigManager`](/internal/config/manager.py:59).
 
-**Step 6**: Create a handler that uses the client and register it in [`HandlersManager`](internal/bot/common/handlers/manager.py:177).
+**Step 6**: Create a handler that uses the client and register it in [`HandlersManager`](/internal/bot/common/handlers/manager.py:177).
 
 **Step 7**: Write tests using the golden data fixture pattern
 
@@ -2576,7 +2576,7 @@ class MyProvider(AbstractLLMProvider):
         return model
 ```
 
-**Step 2**: Register in [`LLMManager._initProviders()`](lib/ai/manager.py:36)
+**Step 2**: Register in [`LLMManager._initProviders()`](/lib/ai/manager.py:36)
 
 ```python
 # In lib/ai/manager.py, add import:
@@ -2676,9 +2676,9 @@ class Migration(BaseMigration):
 
 ### 13.5 Adding a New Chat Setting
 
-Chat settings are key-value pairs stored per-chat and cached in [`CacheService`](internal/services/cache/service.py:88)
+Chat settings are key-value pairs stored per-chat and cached in [`CacheService`](/internal/services/cache/service.py:88)
 
-**Step 1**: Add the key to `ChatSettingsKey` enum in [`internal/bot/models/chat_settings.py`](internal/bot/models/chat_settings.py)
+**Step 1**: Add the key to `ChatSettingsKey` enum in [`internal/bot/models/chat_settings.py`](/internal/bot/models/chat_settings.py)
 
 ```python
 class ChatSettingsKey(StrEnum):
@@ -2712,27 +2712,27 @@ myValue: str = settings.get(ChatSettingsKey.MY_NEW_SETTING, "default_value")
 |---|---|
 | Entry point | [`main.py`](main.py) |
 | Bot orchestrator class | [`main.py:31`](main.py:31) → `GromozekBot` |
-| Multi-platform bot client | [`internal/bot/common/bot.py:31`](internal/bot/common/bot.py:31) → `TheBot` |
-| Base handler class | [`internal/bot/common/handlers/base.py:110`](internal/bot/common/handlers/base.py:110) → `BaseBotHandler` |
-| Handler result enum | [`internal/bot/common/handlers/base.py:82`](internal/bot/common/handlers/base.py:82) → `HandlerResultStatus` |
-| Handler manager | [`internal/bot/common/handlers/manager.py:177`](internal/bot/common/handlers/manager.py:177) → `HandlersManager` |
-| Config manager | [`internal/config/manager.py:59`](internal/config/manager.py:59) → `ConfigManager` |
-| Database | [`internal/database/database.py`](internal/database/database.py) → `Database` |
-| Database source config | [`internal/database/database.py`](internal/database/database.py) → `SourceConfig` |
-| Cache service | [`internal/services/cache/service.py:88`](internal/services/cache/service.py:88) → `CacheService` |
-| LLM manager | [`lib/ai/manager.py:49`](lib/ai/manager.py:49) → `LLMManager` |
-| LLM abstract model | [`lib/ai/abstract.py:47`](lib/ai/abstract.py:47) → `AbstractModel` |
-| LLM abstract provider | [`lib/ai/abstract.py:904`](lib/ai/abstract.py:904) → `AbstractLLMProvider` |
-| Rate limiter manager | [`lib/rate_limiter/manager.py:12`](lib/rate_limiter/manager.py:12) → `RateLimiterManager` |
-| Cache interface | [`lib/cache/interface.py:15`](lib/cache/interface.py:15) → `CacheInterface[K, V]` |
-| Migration base class | [`internal/database/migrations/base.py:9`](internal/database/migrations/base.py:9) → `BaseMigration` |
+| Multi-platform bot client | [`internal/bot/common/bot.py:31`](/internal/bot/common/bot.py:31) → `TheBot` |
+| Base handler class | [`internal/bot/common/handlers/base.py:110`](/internal/bot/common/handlers/base.py:110) → `BaseBotHandler` |
+| Handler result enum | [`internal/bot/common/handlers/base.py:82`](/internal/bot/common/handlers/base.py:82) → `HandlerResultStatus` |
+| Handler manager | [`internal/bot/common/handlers/manager.py:177`](/internal/bot/common/handlers/manager.py:177) → `HandlersManager` |
+| Config manager | [`internal/config/manager.py:59`](/internal/config/manager.py:59) → `ConfigManager` |
+| Database | [`internal/database/database.py`](/internal/database/database.py) → `Database` |
+| Database source config | [`internal/database/database.py`](/internal/database/database.py) → `SourceConfig` |
+| Cache service | [`internal/services/cache/service.py:88`](/internal/services/cache/service.py:88) → `CacheService` |
+| LLM manager | [`lib/ai/manager.py:49`](/lib/ai/manager.py:49) → `LLMManager` |
+| LLM abstract model | [`lib/ai/abstract.py:47`](/lib/ai/abstract.py:47) → `AbstractModel` |
+| LLM abstract provider | [`lib/ai/abstract.py:904`](/lib/ai/abstract.py:904) → `AbstractLLMProvider` |
+| Rate limiter manager | [`lib/rate_limiter/manager.py:12`](/lib/rate_limiter/manager.py:12) → `RateLimiterManager` |
+| Cache interface | [`lib/cache/interface.py:15`](/lib/cache/interface.py:15) → `CacheInterface[K, V]` |
+| Migration base class | [`internal/database/migrations/base.py:9`](/internal/database/migrations/base.py:9) → `BaseMigration` |
 | Default config | [`configs/00-defaults/00-config.toml`](configs/00-defaults/00-config.toml) |
 | Bot defaults config | [`configs/00-defaults/bot-defaults.toml`](configs/00-defaults/bot-defaults.toml) |
-| Custom handler example | [`internal/bot/common/handlers/example_custom_handler.py`](internal/bot/common/handlers/example_custom_handler.py) |
-| Markdown parser | [`lib/markdown/parser.py`](lib/markdown/parser.py) → `MarkdownParser` |
-| Max Bot client | [`lib/max_bot/client.py:75`](lib/max_bot/client.py:75) → `MaxBotClient` |
-| Weather client | [`lib/openweathermap/client.py:22`](lib/openweathermap/client.py:22) → `OpenWeatherMapClient` |
-| Geocode client | [`lib/geocode_maps/client.py:26`](lib/geocode_maps/client.py:26) → `GeocodeMapsClient` |
+| Custom handler example | [`internal/bot/common/handlers/example_custom_handler.py`](/internal/bot/common/handlers/example_custom_handler.py) |
+| Markdown parser | [`lib/markdown/parser.py`](/lib/markdown/parser.py) → `MarkdownParser` |
+| Max Bot client | [`lib/max_bot/client.py:75`](/lib/max_bot/client.py:75) → `MaxBotClient` |
+| Weather client | [`lib/openweathermap/client.py:22`](/lib/openweathermap/client.py:22) → `OpenWeatherMapClient` |
+| Geocode client | [`lib/geocode_maps/client.py:26`](/lib/geocode_maps/client.py:26) → `GeocodeMapsClient` |
 
 ### Startup Sequence
 
@@ -2781,7 +2781,7 @@ main()
 
 9. **Don't block the event loop** All database and network calls must be async or run in a thread executor!
 
-10. **Don't hardcode config values** Everything configurable must go through [`ConfigManager`](internal/config/manager.py:59) and TOML!
+10. **Don't hardcode config values** Everything configurable must go through [`ConfigManager`](/internal/config/manager.py:59) and TOML!
 
 ---
 

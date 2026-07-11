@@ -53,7 +53,7 @@
 
 #### Current State
 
-There is no metrics collection at all The only observability is standard Python `logging`. The [`RateLimiterManager.getStats()`](../lib/rate_limiter/manager.py:256) method exists but its output is never exposed outside the process. There are no counters for messages processed, LLM calls, cache hits, or errors
+There is no metrics collection at all The only observability is standard Python `logging`. The [`RateLimiterManager.getStats()`](/lib/rate_limiter/manager.py:256) method exists but its output is never exposed outside the process. There are no counters for messages processed, LLM calls, cache hits, or errors
 
 #### Proposed Improvement
 
@@ -73,9 +73,9 @@ QUEUE_DEPTH = Gauge("gromozeka_queue_depth", "Current message queue depth")
 SPAM_BLOCKED = Counter("gromozeka_spam_blocked_total", "Messages blocked by spam filter")
 ```
 
-Increment counters at instrumentation points in [`HandlersManager`](../internal/bot/common/handlers/manager.py), [`LLMService`](../internal/services/llm/service.py), and [`CacheService`](../internal/services/cache/service.py)
+Increment counters at instrumentation points in [`HandlersManager`](/internal/bot/common/handlers/manager.py), [`LLMService`](/internal/services/llm/service.py), and [`CacheService`](/internal/services/cache/service.py)
 
-Start the metrics HTTP server in [`GromozekBot.__init__()`](../main.py:34) based on config flag
+Start the metrics HTTP server in [`GromozekBot.__init__()`](/main.py:34) based on config flag
 
 #### Expected Impact
 
@@ -87,16 +87,16 @@ Start the metrics HTTP server in [`GromozekBot.__init__()`](../main.py:34) based
 
 - Add `prometheus_client` to `requirements.txt`
 - Config: `[metrics] enabled = true`, `port = 9090` in `configs/00-defaults/00-config.toml`
-- Add getter `getMetricsConfig()` to [`ConfigManager`](../internal/config/manager.py)
+- Add getter `getMetricsConfig()` to [`ConfigManager`](/internal/config/manager.py)
 - Expose metrics port in Docker/deployment config
 
 #### Affected Files
 
-- [`main.py`](../main.py)
-- [`internal/config/manager.py`](../internal/config/manager.py)
-- [`internal/services/llm/service.py`](../internal/services/llm/service.py)
-- [`internal/services/cache/service.py`](../internal/services/cache/service.py)
-- [`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py)
+- [`main.py`](/main.py)
+- [`internal/config/manager.py`](/internal/config/manager.py)
+- [`internal/services/llm/service.py`](/internal/services/llm/service.py)
+- [`internal/services/cache/service.py`](/internal/services/cache/service.py)
+- [`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py)
 - `lib/metrics/collector.py` (new)
 - `configs/00-defaults/00-config.toml`
 
@@ -110,11 +110,11 @@ Start the metrics HTTP server in [`GromozekBot.__init__()`](../main.py:34) based
 
 #### Current State
 
-Log lines are unstructured plain text. The [`lib/logging_utils.py`](../lib/logging_utils.py) provides `initLogging()` but only configures standard format strings. Correlating logs across a multi-step message processing flow (preprocessor → spam → LLM) is impossible
+Log lines are unstructured plain text. The [`lib/logging_utils.py`](/lib/logging_utils.py) provides `initLogging()` but only configures standard format strings. Correlating logs across a multi-step message processing flow (preprocessor → spam → LLM) is impossible
 
 #### Proposed Improvement
 
-Assign a `traceId` (UUID4 short) per message at [`MessagePreprocessorHandler`](../internal/bot/common/handlers/message_preprocessor.py) and propagate it through the handler chain via `EnsuredMessage.traceId`
+Assign a `traceId` (UUID4 short) per message at [`MessagePreprocessorHandler`](/internal/bot/common/handlers/message_preprocessor.py) and propagate it through the handler chain via `EnsuredMessage.traceId`
 
 Emit structured JSON logs via `python-json-logger`:
 
@@ -148,13 +148,13 @@ Add `logging.LoggerAdapter` that injects `traceId` + `chatId` into every log rec
 - Add `python-json-logger` to `requirements.txt`
 - Config: `[logging] json = true` in TOML
 - `EnsuredMessage.traceId: Optional[str]` is a non-breaking field addition
-- The existing `json-logging` config key in [`LLMManager._initModels()`](../lib/ai/manager.py:64) already shows intent for JSON logs — unify it
+- The existing `json-logging` config key in [`LLMManager._initModels()`](/lib/ai/manager.py:64) already shows intent for JSON logs — unify it
 
 #### Affected Files
 
-- [`lib/logging_utils.py`](../lib/logging_utils.py)
-- [`internal/bot/models/ensured_message.py`](../internal/bot/models/ensured_message.py)
-- [`internal/bot/common/handlers/message_preprocessor.py`](../internal/bot/common/handlers/message_preprocessor.py)
+- [`lib/logging_utils.py`](/lib/logging_utils.py)
+- [`internal/bot/models/ensured_message.py`](/internal/bot/models/ensured_message.py)
+- [`internal/bot/common/handlers/message_preprocessor.py`](/internal/bot/common/handlers/message_preprocessor.py)
 - `configs/00-defaults/00-config.toml`
 
 ---
@@ -167,11 +167,11 @@ Add `logging.LoggerAdapter` that injects `traceId` + `chatId` into every log rec
 
 #### Current State
 
-[`CacheService`](../internal/services/cache/service.py:88) has no hit/miss counters The internal [`LRUCache`](../internal/services/cache/service.py:39) has a `maxSize` but its eviction counter only goes to `logger.debug` There is no way to know if the LRU cache is undersized or if persistence round-trips are happening frequently
+[`CacheService`](/internal/services/cache/service.py:88) has no hit/miss counters The internal [`LRUCache`](/internal/services/cache/service.py:39) has a `maxSize` but its eviction counter only goes to `logger.debug` There is no way to know if the LRU cache is undersized or if persistence round-trips are happening frequently
 
 #### Proposed Improvement
 
-Add lightweight counters to [`LRUCache`](../internal/services/cache/service.py:39) and expose them in a `getStats()` method
+Add lightweight counters to [`LRUCache`](/internal/services/cache/service.py:39) and expose them in a `getStats()` method
 
 ```python
 class LRUCache[K, V](OrderedDict[K, V]):
@@ -190,7 +190,7 @@ class LRUCache[K, V](OrderedDict[K, V]):
         return {"hits": self.hits, "misses": self.misses, "evictions": self.evictions, "hitRatePct": hitRate, "size": len(self)}
 ```
 
-Surface via `/dev stats` command in [`DevCommandsHandler`](../internal/bot/common/handlers/dev_commands.py)
+Surface via `/dev stats` command in [`DevCommandsHandler`](/internal/bot/common/handlers/dev_commands.py)
 
 #### Expected Impact
 
@@ -199,8 +199,8 @@ Surface via `/dev stats` command in [`DevCommandsHandler`](../internal/bot/commo
 
 #### Affected Files
 
-- [`internal/services/cache/service.py`](../internal/services/cache/service.py)
-- [`internal/bot/common/handlers/dev_commands.py`](../internal/bot/common/handlers/dev_commands.py)
+- [`internal/services/cache/service.py`](/internal/services/cache/service.py)
+- [`internal/bot/common/handlers/dev_commands.py`](/internal/bot/common/handlers/dev_commands.py)
 
 ---
 
@@ -237,8 +237,8 @@ Expose via a `/admin analytics` command (admin-only, using `CommandPermission.OW
 #### Affected Files
 
 - `internal/analytics/` (new module)
-- [`internal/bot/common/handlers/dev_commands.py`](../internal/bot/common/handlers/dev_commands.py)
-- [`internal/services/queue_service/service.py`](../internal/services/queue_service/service.py)
+- [`internal/bot/common/handlers/dev_commands.py`](/internal/bot/common/handlers/dev_commands.py)
+- [`internal/services/queue_service/service.py`](/internal/services/queue_service/service.py)
 
 ---
 
@@ -275,7 +275,7 @@ async def handleHealth(request: web.Request) -> web.Response:
     return web.json_response({"status": "ok" if allHealthy else "degraded", "checks": checks}, status=status)
 ```
 
-Start server alongside bot in [`main.py`](../main.py:74)
+Start server alongside bot in [`main.py`](/main.py:74)
 
 #### Expected Impact
 
@@ -291,9 +291,9 @@ Start server alongside bot in [`main.py`](../main.py:74)
 
 #### Affected Files
 
-- [`main.py`](../main.py)
+- [`main.py`](/main.py)
 - `lib/health/server.py` (new)
-- [`internal/config/manager.py`](../internal/config/manager.py)
+- [`internal/config/manager.py`](/internal/config/manager.py)
 - `configs/00-defaults/00-config.toml`
 
 ---
@@ -306,7 +306,7 @@ Start server alongside bot in [`main.py`](../main.py:74)
 
 #### Current State
 
-[`LLMManager`](../lib/ai/manager.py:17) supports provider fallback, but there is no circuit breaker If the primary provider is consistently returning errors (5XX, timeouts), every single message still hits it and waits for a timeout before falling back Under heavy load this creates a thundering-herd retry storm
+[`LLMManager`](/lib/ai/manager.py:17) supports provider fallback, but there is no circuit breaker If the primary provider is consistently returning errors (5XX, timeouts), every single message still hits it and waits for a timeout before falling back Under heavy load this creates a thundering-herd retry storm
 
 #### Proposed Improvement
 
@@ -337,7 +337,7 @@ class ProviderCircuitBreaker:
     def isAvailable(self) -> bool: ...
 ```
 
-Integrate into [`AbstractLLMProvider`](../lib/ai/abstract.py) so each provider instance has a circuit breaker
+Integrate into [`AbstractLLMProvider`](/lib/ai/abstract.py) so each provider instance has a circuit breaker
 
 #### Expected Impact
 
@@ -353,9 +353,9 @@ Integrate into [`AbstractLLMProvider`](../lib/ai/abstract.py) so each provider i
 #### Affected Files
 
 - `lib/ai/circuit_breaker.py` (new)
-- [`lib/ai/abstract.py`](../lib/ai/abstract.py)
-- [`lib/ai/manager.py`](../lib/ai/manager.py)
-- [`internal/services/llm/service.py`](../internal/services/llm/service.py)
+- [`lib/ai/abstract.py`](/lib/ai/abstract.py)
+- [`lib/ai/manager.py`](/lib/ai/manager.py)
+- [`internal/services/llm/service.py`](/internal/services/llm/service.py)
 
 ---
 
@@ -367,7 +367,7 @@ Integrate into [`AbstractLLMProvider`](../lib/ai/abstract.py) so each provider i
 
 #### Current State
 
-[`Database`](../../internal/database/database.py) façade raises raw `sqlite3.OperationalError` and `sqlite3.IntegrityError` exceptions in underlying repositories In [`HandlersManager`](../internal/bot/common/handlers/manager.py) there is no catch-all error recovery for DB failures in the handler chain A transient SQLite `database is locked` error would crash the entire message processing coroutine
+[`Database`](../../internal/database/database.py) façade raises raw `sqlite3.OperationalError` and `sqlite3.IntegrityError` exceptions in underlying repositories In [`HandlersManager`](/internal/bot/common/handlers/manager.py) there is no catch-all error recovery for DB failures in the handler chain A transient SQLite `database is locked` error would crash the entire message processing coroutine
 
 #### Proposed Improvement
 
@@ -408,7 +408,7 @@ def withRetry(maxAttempts: int = 3, delayMs: float = 50.0):
 #### Affected Files
 
 - [`internal/database/repositories/base.py`](../../internal/database/repositories/base.py) (apply retry decorator to BaseRepository or individual repositories)
-- [`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py)
+- [`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py)
 - `internal/database/retry.py` (new)
 
 ---
@@ -457,7 +457,7 @@ Long-term: migrate `_getConnection()` to use `aiosqlite.connect()`
 #### Affected Files
 
 - [`internal/database/providers/`](../../internal/database/providers/) (add aiosqlite provider)
-- [`internal/bot/common/handlers/base.py`](../internal/bot/common/handlers/base.py)
+- [`internal/bot/common/handlers/base.py`](/internal/bot/common/handlers/base.py)
 - Handlers that call `self.db.*` (now through repositories)
 
 ---
@@ -470,7 +470,7 @@ Long-term: migrate `_getConnection()` to use `aiosqlite.connect()`
 
 #### Current State
 
-The migrations in [`internal/database/migrations/versions/`](../internal/database/migrations/versions/) create tables but some high-frequency query patterns may lack covering indexes Common queries like `getChatMessagesSince(chatId, since)` or `getSpamMessagesByUserId(chatId, userId)` filter on multiple columns Without composite indexes these do full table scans as data grows
+The migrations in [`internal/database/migrations/versions/`](/internal/database/migrations/versions/) create tables but some high-frequency query patterns may lack covering indexes Common queries like `getChatMessagesSince(chatId, since)` or `getSpamMessagesByUserId(chatId, userId)` filter on multiple columns Without composite indexes these do full table scans as data grows
 
 #### Proposed Improvement
 
@@ -517,11 +517,11 @@ Create a migration for each batch
 
 #### Current State
 
-Bot token and API keys are stored directly in TOML config files The [`ConfigManager`](../internal/config/manager.py) reads raw values from TOML with `getBotToken()` which calls `sys.exit()` if missing, but provides no environment variable interpolation This means tokens can accidentally be committed to version control
+Bot token and API keys are stored directly in TOML config files The [`ConfigManager`](/internal/config/manager.py) reads raw values from TOML with `getBotToken()` which calls `sys.exit()` if missing, but provides no environment variable interpolation This means tokens can accidentally be committed to version control
 
 #### Proposed Improvement
 
-Add environment variable interpolation to [`ConfigManager._mergeConfigs()`](../internal/config/manager.py) — resolve `${ENV_VAR}` placeholders at load time
+Add environment variable interpolation to [`ConfigManager._mergeConfigs()`](/internal/config/manager.py) — resolve `${ENV_VAR}` placeholders at load time
 
 ```python
 # internal/config/manager.py
@@ -560,7 +560,7 @@ Update example configs to use `${BOT_TOKEN}` placeholders
 
 #### Affected Files
 
-- [`internal/config/manager.py`](../internal/config/manager.py)
+- [`internal/config/manager.py`](/internal/config/manager.py)
 - `configs/common/00-config.toml`
 - `configs/00-defaults/00-config.toml`
 
@@ -574,11 +574,11 @@ Update example configs to use `${BOT_TOKEN}` placeholders
 
 #### Current State
 
-[`RateLimiterManager`](../lib/rate_limiter/manager.py:12) applies limits per named queue (e.g., `yandex-search`, `openweathermap`), but these are global limits, not per-user A single user can flood the bot with commands and consume the full global API budget, starving other users
+[`RateLimiterManager`](/lib/rate_limiter/manager.py:12) applies limits per named queue (e.g., `yandex-search`, `openweathermap`), but these are global limits, not per-user A single user can flood the bot with commands and consume the full global API budget, starving other users
 
 #### Proposed Improvement
 
-Extend [`SlidingWindowRateLimiter`](../lib/rate_limiter/sliding_window.py) to support per-key tracking (it already has a `key` parameter in `applyLimit()` but the window storage needs per-key state)
+Extend [`SlidingWindowRateLimiter`](/lib/rate_limiter/sliding_window.py) to support per-key tracking (it already has a `key` parameter in `applyLimit()` but the window storage needs per-key state)
 
 ```python
 # lib/rate_limiter/sliding_window.py
@@ -606,11 +606,11 @@ await self.rateLimiterManager.applyLimit("openweathermap", key=str(ensuredMessag
 
 #### Affected Files
 
-- [`lib/rate_limiter/sliding_window.py`](../lib/rate_limiter/sliding_window.py)
-- [`lib/rate_limiter/manager.py`](../lib/rate_limiter/manager.py)
-- [`internal/bot/common/handlers/weather.py`](../internal/bot/common/handlers/weather.py)
-- [`internal/bot/common/handlers/yandex_search.py`](../internal/bot/common/handlers/yandex_search.py)
-- [`internal/bot/common/handlers/llm_messages.py`](../internal/bot/common/handlers/llm_messages.py)
+- [`lib/rate_limiter/sliding_window.py`](/lib/rate_limiter/sliding_window.py)
+- [`lib/rate_limiter/manager.py`](/lib/rate_limiter/manager.py)
+- [`internal/bot/common/handlers/weather.py`](/internal/bot/common/handlers/weather.py)
+- [`internal/bot/common/handlers/yandex_search.py`](/internal/bot/common/handlers/yandex_search.py)
+- [`internal/bot/common/handlers/llm_messages.py`](/internal/bot/common/handlers/llm_messages.py)
 
 ---
 
@@ -622,7 +622,7 @@ await self.rateLimiterManager.applyLimit("openweathermap", key=str(ensuredMessag
 
 #### Current State
 
-`CommandPermission.OWNER` restricts some commands, but the check in [`BaseBotHandler`](../internal/bot/common/handlers/base.py) relies on `bot_owners` config list which includes both usernames (strings) and user IDs (ints) There is no cryptographic verification of admin actions, and the spam action button uses a `spam-button-salt` HMAC but this pattern isn't applied to admin commands
+`CommandPermission.OWNER` restricts some commands, but the check in [`BaseBotHandler`](/internal/bot/common/handlers/base.py) relies on `bot_owners` config list which includes both usernames (strings) and user IDs (ints) There is no cryptographic verification of admin actions, and the spam action button uses a `spam-button-salt` HMAC but this pattern isn't applied to admin commands
 
 #### Proposed Improvement
 
@@ -653,10 +653,10 @@ cursor.execute("""
 
 #### Affected Files
 
-- [`internal/bot/common/handlers/base.py`](../internal/bot/common/handlers/base.py)
+- [`internal/bot/common/handlers/base.py`](/internal/bot/common/handlers/base.py)
 - Internal database repositories (for admin_actions persistence - TBD which repository)
 - `internal/database/migrations/versions/NNN_add_admin_actions.py` (new)
-- [`main.py`](../main.py)
+- [`main.py`](/main.py)
 
 ---
 
@@ -668,7 +668,7 @@ cursor.execute("""
 
 #### Current State
 
-[`MessagePreprocessorHandler`](../internal/bot/common/handlers/message_preprocessor.py) saves all incoming messages, but there is no guard on message length before passing to LLM or storing in DB An adversary could send 100KB messages to exhaust LLM token budgets or inflate DB size
+[`MessagePreprocessorHandler`](/internal/bot/common/handlers/message_preprocessor.py) saves all incoming messages, but there is no guard on message length before passing to LLM or storing in DB An adversary could send 100KB messages to exhaust LLM token budgets or inflate DB size
 
 #### Proposed Improvement
 
@@ -692,8 +692,8 @@ Add config key `[bot] max-input-length = 4096`
 
 #### Affected Files
 
-- [`internal/bot/common/handlers/message_preprocessor.py`](../internal/bot/common/handlers/message_preprocessor.py)
-- [`internal/config/manager.py`](../internal/config/manager.py)
+- [`internal/bot/common/handlers/message_preprocessor.py`](/internal/bot/common/handlers/message_preprocessor.py)
+- [`internal/config/manager.py`](/internal/config/manager.py)
 - `configs/00-defaults/bot-defaults.toml`
 
 ---
@@ -710,11 +710,11 @@ Add config key `[bot] max-input-length = 4096`
 
 #### Current State
 
-[`LLMService.generateText()`](../internal/services/llm/service.py:80) waits for the full LLM response before sending it to the user For long responses (summaries, code generation) users see nothing for 5-30 seconds Both OpenAI and OpenRouter APIs support SSE streaming
+[`LLMService.generateText()`](/internal/services/llm/service.py:80) waits for the full LLM response before sending it to the user For long responses (summaries, code generation) users see nothing for 5-30 seconds Both OpenAI and OpenRouter APIs support SSE streaming
 
 #### Proposed Improvement
 
-Add streaming support to [`AbstractModel`](../lib/ai/abstract.py) and implement it in the OpenAI-based providers
+Add streaming support to [`AbstractModel`](/lib/ai/abstract.py) and implement it in the OpenAI-based providers
 
 ```python
 # lib/ai/abstract.py — new abstract method
@@ -734,7 +734,7 @@ class AbstractModel:
         raise NotImplementedError
 ```
 
-In [`LLMMessageHandler`](../internal/bot/common/handlers/llm_messages.py) accumulate chunks and update the bot message every ~500ms using `editMessage()`
+In [`LLMMessageHandler`](/internal/bot/common/handlers/llm_messages.py) accumulate chunks and update the bot message every ~500ms using `editMessage()`
 
 ```python
 async def _streamResponse(self, ensuredMessage: EnsuredMessage, model: AbstractModel) -> str:
@@ -770,12 +770,12 @@ async def _streamResponse(self, ensuredMessage: EnsuredMessage, model: AbstractM
 
 #### Affected Files
 
-- [`lib/ai/abstract.py`](../lib/ai/abstract.py)
-- [`lib/ai/providers/basic_openai_provider.py`](../lib/ai/providers/basic_openai_provider.py)
-- [`lib/ai/providers/openrouter_provider.py`](../lib/ai/providers/openrouter_provider.py)
-- [`internal/services/llm/service.py`](../internal/services/llm/service.py)
-- [`internal/bot/common/handlers/llm_messages.py`](../internal/bot/common/handlers/llm_messages.py)
-- [`internal/bot/common/bot.py`](../internal/bot/common/bot.py)
+- [`lib/ai/abstract.py`](/lib/ai/abstract.py)
+- [`lib/ai/providers/basic_openai_provider.py`](/lib/ai/providers/basic_openai_provider.py)
+- [`lib/ai/providers/openrouter_provider.py`](/lib/ai/providers/openrouter_provider.py)
+- [`internal/services/llm/service.py`](/internal/services/llm/service.py)
+- [`internal/bot/common/handlers/llm_messages.py`](/internal/bot/common/handlers/llm_messages.py)
+- [`internal/bot/common/bot.py`](/internal/bot/common/bot.py)
 
 ---
 
@@ -787,7 +787,7 @@ async def _streamResponse(self, ensuredMessage: EnsuredMessage, model: AbstractM
 
 #### Current State
 
-Chat settings exist via [`ChatSettingsKey`](../internal/bot/models/chat_settings.py) but there is no UI for users to manage personal preferences (language, response style, preferred model) distinct from the group-level settings set by admins Every user in a group shares the same LLM persona/system prompt
+Chat settings exist via [`ChatSettingsKey`](/internal/bot/models/chat_settings.py) but there is no UI for users to manage personal preferences (language, response style, preferred model) distinct from the group-level settings set by admins Every user in a group shares the same LLM persona/system prompt
 
 #### Proposed Improvement
 
@@ -808,7 +808,7 @@ class ChatSettingsKey(StrEnum):
     USER_PREFERRED_MODEL = "user_preferred_model"
 ```
 
-In [`LLMMessageHandler`](../internal/bot/common/handlers/llm_messages.py) merge user preferences on top of chat settings when building the system prompt
+In [`LLMMessageHandler`](/internal/bot/common/handlers/llm_messages.py) merge user preferences on top of chat settings when building the system prompt
 
 #### Expected Impact
 
@@ -819,9 +819,9 @@ In [`LLMMessageHandler`](../internal/bot/common/handlers/llm_messages.py) merge 
 
 - `internal/database/migrations/versions/NNN_add_user_preferences.py` (new)
 - [`internal/database/repositories/user_preferences.py`](../../internal/database/repositories/) (new repository)
-- [`internal/services/cache/service.py`](../internal/services/cache/service.py)
+- [`internal/services/cache/service.py`](/internal/services/cache/service.py)
 - `internal/bot/common/handlers/preferences.py` (new handler)
-- [`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py)
+- [`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py)
 
 ---
 
@@ -833,7 +833,7 @@ In [`LLMMessageHandler`](../internal/bot/common/handlers/llm_messages.py) merge 
 
 #### Current State
 
-[`QueueService`](../internal/services/queue_service/service.py) already has `DelayedTaskFunction.SEND_MESSAGE` and a working delayed task scheduler But there is no user-facing command to create reminders The infrastructure is there — only the handler is missing
+[`QueueService`](/internal/services/queue_service/service.py) already has `DelayedTaskFunction.SEND_MESSAGE` and a working delayed task scheduler But there is no user-facing command to create reminders The infrastructure is there — only the handler is missing
 
 #### Proposed Improvement
 
@@ -870,7 +870,7 @@ async def remindCommand(self, ensuredMessage: EnsuredMessage, command: str, args
 #### Affected Files
 
 - `internal/bot/common/handlers/reminders.py` (new handler)
-- [`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py)
+- [`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py)
 
 ---
 
@@ -882,7 +882,7 @@ async def remindCommand(self, ensuredMessage: EnsuredMessage, command: str, args
 
 #### Current State
 
-[`ModelRunResult`](../lib/ai/models.py) likely contains token usage data (input/output tokens) from provider responses, but there is no aggregation or cost calculation Operators have no way to know monthly LLM costs until they receive a provider invoice
+[`ModelRunResult`](/lib/ai/models.py) likely contains token usage data (input/output tokens) from provider responses, but there is no aggregation or cost calculation Operators have no way to know monthly LLM costs until they receive a provider invoice
 
 #### Proposed Improvement
 
@@ -914,8 +914,8 @@ Trigger `DelayedTaskFunction.CRON_JOB` daily to post cost summary to admin chat
 #### Affected Files
 
 - `internal/analytics/cost_tracker.py` (new)
-- [`lib/ai/models.py`](../lib/ai/models.py)
-- [`internal/services/llm/service.py`](../internal/services/llm/service.py)
+- [`lib/ai/models.py`](/lib/ai/models.py)
+- [`internal/services/llm/service.py`](/internal/services/llm/service.py)
 - `internal/database` repositories (cost tracking storage - TBD specific repository)
 
 ---
@@ -964,9 +964,9 @@ def _onSigHup(self) -> None:
 
 #### Affected Files
 
-- [`main.py`](../main.py)
-- [`internal/config/manager.py`](../internal/config/manager.py)
-- [`lib/ai/manager.py`](../lib/ai/manager.py)
+- [`main.py`](/main.py)
+- [`internal/config/manager.py`](/internal/config/manager.py)
+- [`lib/ai/manager.py`](/lib/ai/manager.py)
 
 ---
 
@@ -1002,7 +1002,7 @@ def seedDatabase(dbPath: str = "./dev_data.db") -> None:
         db.saveChatMessage(...)
 ```
 
-Add `make seed` and `make reset-dev` targets to [`Makefile`](../Makefile)
+Add `make seed` and `make reset-dev` targets to [`Makefile`](/Makefile)
 
 #### Expected Impact
 
@@ -1012,7 +1012,7 @@ Add `make seed` and `make reset-dev` targets to [`Makefile`](../Makefile)
 #### Affected Files
 
 - `scripts/seed_dev_db.py` (new)
-- [`Makefile`](../Makefile)
+- [`Makefile`](/Makefile)
 - `tests/fixtures/seed_data.py` (new)
 
 ---
@@ -1025,7 +1025,7 @@ Add `make seed` and `make reset-dev` targets to [`Makefile`](../Makefile)
 
 #### Current State
 
-The [`Makefile`](../Makefile) has `test`, `lint`, `format` targets but no watch mode for auto-running tests on file changes CI runs all checks serially There is no `make ci` target that runs lint + tests in parallel
+The [`Makefile`](/Makefile) has `test`, `lint`, `format` targets but no watch mode for auto-running tests on file changes CI runs all checks serially There is no `make ci` target that runs lint + tests in parallel
 
 #### Proposed Improvement
 
@@ -1055,7 +1055,7 @@ typecheck: venv
 
 #### Affected Files
 
-- [`Makefile`](../Makefile)
+- [`Makefile`](/Makefile)
 
 ---
 
@@ -1102,7 +1102,7 @@ Also add `pip-audit` to the `make lint` pipeline for vulnerability scanning
 #### Affected Files
 
 - `renovate.json` (new) or `.github/dependabot.yml` (new)
-- [`Makefile`](../Makefile)
+- [`Makefile`](/Makefile)
 
 ---
 
@@ -1144,7 +1144,7 @@ class TestHandlerChainPerformance:
         benchmark(testDatabase.saveChatMessage, chatId=1, ...)
 ```
 
-Add `make benchmark` target to [`Makefile`](../Makefile)
+Add `make benchmark` target to [`Makefile`](/Makefile)
 
 #### Expected Impact
 
@@ -1156,7 +1156,7 @@ Add `make benchmark` target to [`Makefile`](../Makefile)
 - `tests/performance/` (new directory)
 - `tests/performance/test_handler_throughput.py` (new)
 - `tests/performance/test_db_performance.py` (new)
-- [`Makefile`](../Makefile)
+- [`Makefile`](/Makefile)
 - `pyproject.toml`
 
 ---
@@ -1263,7 +1263,7 @@ E2E tests run via `make test-e2e` (separate from the main test suite to avoid Te
 
 - `tests/integration/test_e2e_bot.py` (new)
 - `tests/integration/conftest.py` (new)
-- [`Makefile`](../Makefile)
+- [`Makefile`](/Makefile)
 
 ---
 
@@ -1316,7 +1316,7 @@ class PluginLoader:
 #### Affected Files
 
 - `internal/bot/common/handlers/plugin_loader.py` (new)
-- [`internal/bot/common/handlers/manager.py`](../internal/bot/common/handlers/manager.py)
+- [`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py)
 - `configs/00-defaults/00-config.toml`
 
 ---
@@ -1329,7 +1329,7 @@ class PluginLoader:
 
 #### Current State
 
-[`QueueService`](../internal/services/queue_service/service.py) uses an in-process `asyncio.PriorityQueue` This is single-process only — running multiple bot instances for high availability requires each instance to independently receive and process updates, causing duplicate processing
+[`QueueService`](/internal/services/queue_service/service.py) uses an in-process `asyncio.PriorityQueue` This is single-process only — running multiple bot instances for high availability requires each instance to independently receive and process updates, causing duplicate processing
 
 #### Proposed Improvement
 
@@ -1364,8 +1364,8 @@ Config: `[queue] backend = "redis"`, `[queue.redis] url = "redis://localhost:637
 #### Affected Files
 
 - `internal/services/queue_service/backends/` (new)
-- [`internal/services/queue_service/service.py`](../internal/services/queue_service/service.py)
-- [`internal/config/manager.py`](../internal/config/manager.py)
+- [`internal/services/queue_service/service.py`](/internal/services/queue_service/service.py)
+- [`internal/config/manager.py`](/internal/config/manager.py)
 
 ---
 
@@ -1412,7 +1412,7 @@ Simple read-only panel that connects to the existing SQLite file via the `readon
 - `admin/` (new directory)
 - `admin/main.py` (new)
 - `admin/requirements.txt` (new)
-- [`Makefile`](../Makefile)
+- [`Makefile`](/Makefile)
 
 ---
 

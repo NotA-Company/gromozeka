@@ -218,7 +218,7 @@ Stores all chat messages with detailed metadata.
 | `thread_id` | INTEGER | No | 0 | Forum topic ID (0 for non-forum chats) |
 | `root_message_id` | TEXT | Yes | NULL | Root message ID for conversation threads |
 | `message_text` | TEXT | No | - | Message text content |
-| `message_type` | TEXT | No | 'text' | Type of message (see [`MessageType`](../internal/models.py:1)) |
+| `message_type` | TEXT | No | 'text' | Type of message (see [`MessageType`](/internal/models/shared_enums.py)) |
 | `message_category` | TEXT | No | 'user' | Message category (see [`MessageCategory`](#messagecategory)) |
 | `quote_text` | TEXT | Yes | NULL | Quoted text from replied message |
 | `media_id` | TEXT | Yes | NULL | Foreign key to [`media_attachments.file_unique_id`](#media_attachments) |

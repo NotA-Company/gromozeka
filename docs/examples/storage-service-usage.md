@@ -655,7 +655,7 @@ def storeWithMetrics(storage: StorageService, key: str, data: bytes):
 ## Related Documentation
 
 - [Storage Service README](../../internal/services/storage/README.md) - Complete API reference
-- [Design Document](../design/storage-service-design-v1.md) - Architecture and design decisions
+- Design Document - Architecture and design decisions
 
 ---
 

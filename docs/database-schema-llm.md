@@ -412,7 +412,7 @@ CREATE TABLE divination_layouts (
 ---
 
 ### message_embeddings
-**Purpose**: Float32 embedding vectors for chat messages — powers semantic ranking in `searchChatMessages`. Created by `migration_017`. Only populated when `[search-history] enabled = true`. See [`docs/llm/database.md`](../llm/database.md) §5.5 and [`docs/llm/configuration.md`](../llm/configuration.md) §`[search-history]`.
+**Purpose**: Float32 embedding vectors for chat messages — powers semantic ranking in `searchChatMessages`. Created by `migration_017`. Only populated when `[search-history] enabled = true`. See [`docs/llm/database.md`](/docs/llm/database.md) §5.5 and [`docs/llm/configuration.md`](/docs/llm/configuration.md) §`[search-history]`.
 **Primary Key**: `(chat_id, message_id)` — same natural key as `chat_messages`
 
 ```sql

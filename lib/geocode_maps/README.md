@@ -169,7 +169,7 @@ All response models are TypedDict classes for type safety:
 - `NameDetails`: Name translations in different languages
 - `ExtraTags`: Additional OSM tags and metadata
 
-See [`lib/geocode_maps/models.py`](lib/geocode_maps/models.py) for complete model definitions.
+See [`lib/geocode_maps/models.py`](/lib/geocode_maps/models.py) for complete model definitions.
 
 ## Caching
 
@@ -243,8 +243,8 @@ pytest lib/geocode_maps/test_models.py -v
 ## Design Documentation
 
 For detailed design decisions and architecture, see:
-- [`docs/archive/design/geocode-maps-client-design-v1.md`](docs/archive/design/geocode-maps-client-design-v1.md)
-- [`docs/other/geocode-maps/Geocode-Maps-API.md`](docs/other/geocode-maps/Geocode-Maps-API.md)
+- [`docs/archive/design/geocode-maps-client-design-v1.md`](/docs/archive/design/geocode-maps-client-design-v1.md)
+- [`docs/other/geocode-maps/Geocode-Maps-API.md`](/docs/other/geocode-maps/Geocode-Maps-API.md)
 
 ## License
 

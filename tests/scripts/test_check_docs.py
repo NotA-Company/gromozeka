@@ -1,15 +1,15 @@
-"""Tests for scripts/check_docs.py.
+"""Test suite for ``scripts/check_docs.py``, the local markdown-link checker.
 
 Covers the link-extraction + resolution logic against throwaway temp trees
 (``tmp_path``): broken-link detection, external-link skipping, anchor/line
 suffix stripping, archive skipping, plus one end-to-end run against the real
 repository.
 
-The real-repo test is ``xfail`` because the repository currently carries
-known broken doc links (concentrated in ``docs/templates/`` placeholders, the
-vendored ``lib/ext_modules/grabliarium/`` planning docs, and systematic
-off-by-one relative-depth links in ``docs/*.md``). The xfail flips to XPASS
-once that drift is cleaned up -- which is the signal to drop the marker.
+The real-repo test is a regression guard: it fails if any future change
+introduces a broken local link. The directories ``docs/archive`` (frozen
+historical snapshot), ``docs/templates`` (illustrative placeholder paths),
+and ``lib/ext_modules`` (vendored nested repo) are excluded from scanning via
+``_EXCLUDED_PATH_PREFIXES`` in ``check_docs.py``.
 """
 
 from __future__ import annotations
@@ -164,6 +164,24 @@ def test_skipsArchive(tmp_path: Path) -> None:
     assert result.brokenLinks == []
 
 
+def test_skipsTemplates(tmp_path: Path) -> None:
+    """``docs/templates/`` carries illustrative placeholder paths and is not checked."""
+    _write(tmp_path / "docs" / "templates" / "stale.md", "[dead](gone.md)\n")
+    _write(tmp_path / "index.md", "[ok](./docs)\n")  # docs/ exists -> not broken
+    result = checkDocs(tmp_path)
+    assert result.exitCode == 0
+    assert result.brokenLinks == []
+
+
+def test_skipsExtModules(tmp_path: Path) -> None:
+    """``lib/ext_modules/`` is a vendored nested repo and is not checked."""
+    _write(tmp_path / "lib" / "ext_modules" / "stale.md", "[dead](gone.md)\n")
+    _write(tmp_path / "index.md", "[ok](./lib)\n")  # lib/ exists -> not broken
+    result = checkDocs(tmp_path)
+    assert result.exitCode == 0
+    assert result.brokenLinks == []
+
+
 def test_skipsExcludedDirs(tmp_path: Path) -> None:
     """Venv / cache / .opencode dirs are never descended into."""
     _write(tmp_path / ".venv" / "pkg" / "readme.md", "[dead](gone.md)\n")
@@ -283,25 +301,12 @@ def test_singleQuoteTitleLinkResolves(tmp_path: Path) -> None:
     assert result.linksChecked == 2
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Repository currently carries known broken doc links (run "
-        "`make check-docs` for the live list). Dominant categories: "
-        "(1) docs/templates/* placeholder paths, (2) vendored "
-        "lib/ext_modules/grabliarium/ planning docs with miscalculated "
-        "relative paths, (3) systematic off-by-one relative-depth links in "
-        "docs/*.md (written as repo-root-relative but living one level deep). "
-        "When that drift is cleaned up this test XPASSes and the marker "
-        "should be removed."
-    ),
-    strict=True,
-)
 def test_noBrokenLinks_inRealRepo() -> None:
-    """The real repository should have zero broken local doc links.
+    """The repo's markdown links must all resolve.
 
-    Runs the checker end-to-end against the repo root. Prints the first
-    findings on the (expected) failure so the drift is visible in the test
-    log. See the ``xfail`` reason for why this is currently expected to fail.
+    Regression guard: runs the checker end-to-end against the repo root and
+    fails if a future change introduces a broken local link. Prints the first
+    findings on failure so the drift is visible in the test log.
     """
     repoRoot: Path = Path(__file__).resolve().parent.parent.parent
     result = checkDocs(repoRoot)

@@ -134,7 +134,7 @@ keepConnection = true  # Connect immediately (good for readonly replicas)
 - **Special case:** In-memory SQLite3 (`:memory:`) defaults to `true` to prevent data loss
 
 **Key classes:**
-- [`SourceConfig`](../../internal/config/types.py) — config for one DB provider
+- `SourceConfig` — config for one DB provider
 - [`SQLProviderConfig`](../../internal/database/providers/__init__.py) — provider config dict with `provider` and `parameters`
 
 **Routing priority:** `dataSource` param → `chatId` mapping → default source
@@ -299,7 +299,7 @@ def getMigration() -> Type[BaseMigration]:
 
 **See also:**
 - [`internal/database/migrations/README.md`](../../internal/database/migrations/README.md) — Full migration guide with patterns
-- [`docs/sql-portability-guide.md`](../../sql-portability-guide.md) — SQL portability rules
+- [`docs/sql-portability-guide.md`](/docs/sql-portability-guide.md) — SQL portability rules
 
 ---
 
@@ -720,7 +720,7 @@ success, value = sqlToCustomType("123", Union[int, str])
 - `migration_018`: Adds `idx_message_embeddings_chat_model` index on `message_embeddings (chat_id, model)` — speeds up `_loadEmbeddingsFromDb` by letting SQLite seek directly to the active model's rows instead of scanning the full chat
 - `migration_019`: Adds the [`webhook_updates`](../../docs/database-schema-llm.md#webhook_updates) table (`id TEXT PRIMARY KEY`) for Max webhook ingestion — raw webhook payloads are written here by the standalone webhook receiver and consumed via the `webhookUpdates` repository. Plus `idx_webhook_updates_unprocessed` on `(processed, received_at)` to back the unprocessed-rows query
 - `migration_020`: Adds the [`user_memories`](../../docs/database-schema-llm.md#user_memories) table (composite PK `(chat_id, user_id, memory_id)`) — the unified per-(chat, user, thread) memory store that retires `user_data` (table subsequently dropped in `migration_022`) and the rolling-bio JSON blob. Three indexes (`idx_user_memories_chat_user_thread`, `idx_user_memories_chat_user_permanent`, `idx_user_memories_type`). Backfills `user_data` rows into permanent cross-thread `type='fact'` memories and `chat_users.metadata.memoryRefinement` rolling-bio entries into permanent thread-scoped `type='bio'` memories. The vec0 virtual table (`vec_user_memories_{dim}`) is **not** created by the migration — it is created lazily at runtime on first write (mirrors `message_embeddings`). Schema/ADR: [`docs/llm/memories/user-memories.md`](memories/user-memories.md) and ADR-016.
-- `migration_021`: Adds the nullable `deleted_at` column to [`user_memories`](../../docs/database-schema-llm.md#user_memories) (soft-delete — `deleteMemory` sets `deleted_at` + drops vec0 + nulls provenance instead of hard-`DELETE`-ing the row, so historical messages referencing a deleted memory can still resolve its content via `getMemoriesByIds`). Every live read gains `AND deleted_at IS NULL`. Additive nullable column; `down()` is a no-op that logs (portable `DROP COLUMN` unavailable). Part of memory-compaction-v1 (see ADR-017 and [`docs/plans/memory-compaction-v1.md`](../../plans/memory-compaction-v1.md)).
+- `migration_021`: Adds the nullable `deleted_at` column to [`user_memories`](../../docs/database-schema-llm.md#user_memories) (soft-delete — `deleteMemory` sets `deleted_at` + drops vec0 + nulls provenance instead of hard-`DELETE`-ing the row, so historical messages referencing a deleted memory can still resolve its content via `getMemoriesByIds`). Every live read gains `AND deleted_at IS NULL`. Additive nullable column; `down()` is a no-op that logs (portable `DROP COLUMN` unavailable). Part of memory-compaction-v1 (see ADR-017 and [`docs/plans/memory-compaction-v1.md`](/docs/plans/memory-compaction-v1.md)).
 
 ---
 

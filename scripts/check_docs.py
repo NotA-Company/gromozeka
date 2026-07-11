@@ -71,6 +71,18 @@ _EXCLUDED_DIR_NAMES: frozenset[str] = frozenset(
     }
 )
 
+# Path-precise exclusions given as ``(rootSegment, childSegment)`` pairs --
+# directories at the top of the repo whose content is intentionally not
+# validated because it is either a frozen historical snapshot
+# (``docs/archive``), template placeholder paths (``docs/templates``), or a
+# vendored nested git repo (``lib/ext_modules``). Unlike the name-based
+# ``_EXCLUDED_DIR_NAMES`` above, these are matched on the directory's position
+# in the tree so a common leaf name like ``templates`` is only excluded at the
+# intended root.
+_EXCLUDED_PATH_PREFIXES: frozenset[tuple[str, str]] = frozenset(
+    {("docs", "archive"), ("docs", "templates"), ("lib", "ext_modules")}
+)
+
 # External link schemes that are skipped (network checking is out of scope).
 _EXTERNAL_SCHEMES: tuple[str, ...] = ("http://", "https://", "mailto:", "ftp://")
 
@@ -169,10 +181,13 @@ def _isExcludedDir(relDir: Path) -> bool:
     """Decide whether a directory (given relative to the repo root) is pruned.
 
     A directory is pruned when its final name is in ``_EXCLUDED_DIR_NAMES``
-    (VCS / venv / caches / ``.opencode``) or when it sits at
-    ``docs/archive`` -- the latter is a frozen historical snapshot tree whose
-    intentionally-stale links are documented as not maintained (see
-    ``docs/archive/README.md``).
+    (VCS / venv / caches / ``.opencode``) or when its ``(root, child)`` prefix
+    is in ``_EXCLUDED_PATH_PREFIXES`` -- the latter covers
+    ``docs/archive`` (a frozen historical snapshot tree whose intentionally-stale
+    links are documented as not maintained, see ``docs/archive/README.md``),
+    ``docs/templates`` (PR/task templates carrying intentional placeholder
+    paths that are not real links), and ``lib/ext_modules`` (a vendored nested
+    git repo whose docs should not be validated against the main repo tree).
 
     Args:
         relDir: Directory path relative to the repo root.
@@ -183,7 +198,7 @@ def _isExcludedDir(relDir: Path) -> bool:
     parts: tuple[str, ...] = relDir.parts
     if parts and parts[-1] in _EXCLUDED_DIR_NAMES:
         return True
-    if len(parts) >= 2 and parts[0] == "docs" and parts[1] == "archive":
+    if len(parts) >= 2 and (parts[0], parts[1]) in _EXCLUDED_PATH_PREFIXES:
         return True
     return False
 

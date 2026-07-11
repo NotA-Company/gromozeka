@@ -126,4 +126,4 @@ No vendor lock-in. No "sorry, the API is down." No black boxes.
 
 ---
 
-[Documentation](docs/) · [License](LICENSE) · [Contributing](CONTRIBUTING.md)
+[Documentation](/docs) · [License](/LICENSE) · Contributing
