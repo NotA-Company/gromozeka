@@ -12,6 +12,7 @@ import unittest
 from unittest.mock import patch
 
 from lib.rate_limiter.sliding_window import QueueConfig, SlidingWindowRateLimiter
+from tests.lib.rate_limiter.conftest import installFakeClock
 
 
 class TestQueueConfig(unittest.TestCase):
@@ -107,9 +108,11 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         """Async set up for test fixtures.
 
-        Initializes the rate limiter before each test.
+        Initializes the rate limiter and installs a fake clock so the test
+        fast-forwards time instead of blocking on real rate-limit windows.
         """
         await self.limiter.initialize()
+        self.clockNow = installFakeClock(self)
 
     async def asyncTearDown(self) -> None:
         """Clean up after tests.

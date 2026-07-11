@@ -18,7 +18,7 @@ or database.
 
 import datetime
 from typing import Dict, Generator, List, Optional, Tuple
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -334,6 +334,10 @@ class TestForwardTargetDataModel:
 # ---------------------------------------------------------------------------
 
 
+# NOTE: the autouse _noOpSendPacingSleep fixture no-ops asyncio.sleep for this class.
+# Media-group forwarding tests MUST go in a separate class — the production
+# media-group wait loop (resender.py ~line 383-389) advances via real
+# asyncio.sleep and would infinite-loop if no-op'd.
 class TestResendCronJobForwarding:
     """Tests for the forward loop inside :meth:`ResenderHandler.resendCronJob`.
 
@@ -342,6 +346,44 @@ class TestResendCronJobForwarding:
     resend (``sendMessage``) is stubbed to succeed; only the additional
     forward step varies between tests.
     """
+
+    @pytest.fixture(autouse=True)
+    def _noOpSendPacingSleep(self) -> Generator[None, None, None]:
+        """No-op the inter-send / inter-forward pacing sleeps.
+
+        ``ResenderHandler.resendCronJob`` awaits ``asyncio.sleep`` for
+        two production pacing reasons (neither asserted on by any test
+        here):
+
+        * ``asyncio.sleep(messageSendDelay)`` (``resender.py`` ~line 476)
+          — an exponential-backoff cushion between resent messages
+          (initial value ``0.25``, doubling up to 10s).
+        * ``asyncio.sleep(0.1)`` (``resender.py`` ~line 474) — a brief
+          pause between forward targets to avoid rate-limit issues.
+
+        Left unmocked these cost ~0.25-0.45s of real wall-clock per test
+        (~2.7s across the eight forwarding tests). Patched to an async
+        no-op so the suite exercises the identical forward logic without
+        paying the pacing tax.
+
+        The media-group readiness wait (``resender.py`` ~line 389,
+        ``asyncio.sleep(mediaGroupDelaySecs - age)`` inside a ``while``
+        loop) is a *timing-condition* sleep, not pacing — but it is
+        unreachable here: every test stubs messages via
+        :func:`_makeMessageDict` with ``mediaGroupId=None``, so the
+        ``if message["media_group_id"]`` gate is always false. No-op'ing
+        ``asyncio.sleep`` is therefore safe for this class; the
+        timing-condition loop is never entered.
+
+        Yields:
+            ``None`` — patches ``asyncio.sleep`` for the duration of
+            each test, then restores it.
+        """
+        with patch(
+            "internal.bot.common.handlers.resender.asyncio.sleep",
+            new=AsyncMock(),
+        ):
+            yield
 
     async def testCronJobForwardsToSingleTarget(self) -> None:
         """A job with one ``forwardTo`` target forwards the resent message once.

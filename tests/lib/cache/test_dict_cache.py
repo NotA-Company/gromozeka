@@ -12,7 +12,7 @@ This test suite validates all functionality of the DictCache class including:
 
 import asyncio
 import time
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import pytest
 
@@ -180,14 +180,15 @@ class TestDictCacheTTL:
     """
 
     @pytest.mark.asyncio
-    async def test_ttl_expiration(self) -> None:
+    async def test_ttl_expiration(self, fakeClock: List[float]) -> None:
         """Test that entries expire after TTL.
 
         Verifies that cache entries are automatically removed after their
         TTL expires and subsequent get operations return None.
 
         Args:
-            None
+            fakeClock: Mutable fake clock ([now]); advanced past the TTL instead
+                of sleeping.
 
         Returns:
             None
@@ -204,22 +205,22 @@ class TestDictCacheTTL:
         value = await cache.get("key1")
         assert value == "value1"
 
-        # Wait for expiration
-        await asyncio.sleep(1.1)
+        # Advance fake clock past the 1 second TTL (no real waiting)
+        fakeClock[0] += 1.1
 
         # Value should be expired
         value = await cache.get("key1")
         assert value is None
 
     @pytest.mark.asyncio
-    async def test_custom_ttl_per_get(self) -> None:
+    async def test_custom_ttl_per_get(self, fakeClock: List[float]) -> None:
         """Test custom TTL per get operation.
 
         Verifies that the get() method accepts a custom TTL parameter that
         overrides the default TTL for that specific retrieval.
 
         Args:
-            None
+            fakeClock: Mutable fake clock ([now]); advanced instead of sleeping.
 
         Returns:
             None
@@ -236,8 +237,8 @@ class TestDictCacheTTL:
         value = await cache.get("key1")
         assert value == "value1"
 
-        # Wait a bit
-        await asyncio.sleep(0.2)
+        # Advance the fake clock (under default TTL of 10s but over custom 0.1s)
+        fakeClock[0] += 0.2
 
         # Value should still be available with default TTL
         value = await cache.get("key1")
@@ -333,14 +334,15 @@ class TestDictCacheSize:
         assert await cache.get("key4") == "value4"
 
     @pytest.mark.asyncio
-    async def test_lru_eviction(self) -> None:
+    async def test_lru_eviction(self, fakeClock: List[float]) -> None:
         """Test LRU-like eviction behavior (oldest entries are evicted first).
 
         Verifies that when the cache is full, the oldest entries are evicted
         first to make room for new entries.
 
         Args:
-            None
+            fakeClock: Mutable fake clock ([now]); nudged forward to give each
+                entry a distinct timestamp for deterministic eviction ordering.
 
         Returns:
             None
@@ -352,7 +354,7 @@ class TestDictCacheSize:
 
         # Add two entries
         await cache.set("key1", "value1")
-        await asyncio.sleep(0.01)  # Small delay to ensure different timestamps
+        fakeClock[0] += 0.01  # Nudge the clock to ensure different timestamps
         await cache.set("key2", "value2")
 
         # Add third entry (should evict key1, the oldest)
@@ -529,7 +531,7 @@ class TestDictCacheThreadSafety:
                 await cache.set(f"key_{i}", f"value_{i}")
 
         async def clearer() -> None:
-            await asyncio.sleep(0.05)  # Let writer start
+            await asyncio.sleep(0)  # Yield once so the writer can start
             await cache.clear()
 
         # Run writer and clearer concurrently
@@ -653,14 +655,15 @@ class TestDictCachePerformance:
         assert get_time < 2.0  # Should complete in under 2 seconds
 
     @pytest.mark.asyncio
-    async def test_cleanup_performance(self) -> None:
+    async def test_cleanup_performance(self, fakeClock: List[float]) -> None:
         """Test cleanup performance with many expired entries.
 
         Verifies that the cache cleanup process efficiently removes expired
         entries even when there are many of them.
 
         Args:
-            None
+            fakeClock: Mutable fake clock ([now]); advanced past the short TTL
+                instead of sleeping.
 
         Returns:
             None
@@ -674,13 +677,15 @@ class TestDictCachePerformance:
         for i in range(100):
             await cache.set(f"key_{i}", f"value_{i}")
 
-        # Wait for expiration
-        await asyncio.sleep(0.2)
+        # Advance fake clock past the short TTL (no real waiting)
+        fakeClock[0] += 0.2
 
-        # Cleanup should be efficient
-        start_time = time.time()
+        # Cleanup should be efficient. NOTE: measure with perf_counter, not
+        # time.time() — the fakeClock fixture patches time.time, which would
+        # freeze both reads to the same value and make this a tautology.
+        start_time = time.perf_counter()
         stats = cache.getStats()  # Triggers cleanup
-        cleanup_time = time.time() - start_time
+        cleanup_time = time.perf_counter() - start_time
 
         assert stats["entries"] == 0  # All entries should be cleaned up
         assert cleanup_time < 1.0  # Should complete quickly
