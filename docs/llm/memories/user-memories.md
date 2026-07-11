@@ -82,17 +82,17 @@ time (see "Injection"). Schema: `migration_020_user_memories`. Repository:
   given dimension (mirror of `_upsertVecMessageEmbedding` in
   `chat_embeddings.py`). **NOT created by the migration.**
 - Carries denormalised metadata columns (`chat_id`, `user_id`, `model`
-  partition keys, `thread_id`, `permanent`, `type`) plus the `embedding`
+  partition keys, `permanent`) plus the `embedding`
   vector column with cosine distance metric. The `model` partition key
   scopes vectors per embedding model so a model swap does not pollute one
   model's vector space with another's.
-- Denormalised `type`/`thread_id` are written once at embed time and never
-  edited (content/type changes go through `deleteMemory` + `addMemory`, which
-  rebuild the vec0 row), so the JOIN step in `_semanticSearchMemories` still
-  re-applies those filters on the authoritative `user_memories` columns as
-  belt-and-suspenders. `permanent` is immutable post-creation so it is pushed
-  into the vec0 filter directly; `model` is a partition key and is always part
-  of the vec0 filter clause.
+- `thread_id` and `type` are deliberately NOT carried in vec0 (they
+  were previously written as denormalised copies but never read back for
+  filtering, search, or deletion). The JOIN step in
+  `_semanticSearchMemories` applies both filters on the authoritative
+  `user_memories` columns. `permanent` is immutable post-creation so it
+  is pushed into the vec0 filter directly; `model` is a partition key and
+  is always part of the vec0 filter clause.
 
 ## Repository — `UserMemoriesRepository`
 

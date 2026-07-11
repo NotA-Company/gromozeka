@@ -11,6 +11,9 @@
 - [x] add chat+source to get-memories-by-id
 - [x] search-memories: ability to search for another user
 - [x] how\when do we generate embeddings for messages? 
+- [ ] condencing - populate list of condensed messages for search
+- [ ] memory and search chatSettings - investigate, discuss
+- [ ] script to search and delete nonexistent settings from chatSettings table
 
 - [ ] Yandex AI Studio does not support webp images. Add config value + convert
 - [ ] Search for tool_name in [] or {} + optional ``` end return some error if yes (to enforce proper tool call)

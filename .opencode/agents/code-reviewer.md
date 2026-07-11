@@ -116,6 +116,11 @@ permission:
     "awk *": allow
     "pwd": allow
     "sed -n *": allow
+    "make format": allow
+    "make lint": allow
+    "make format lint": allow
+    "make test": allow
+    "./venv/bin/pytest *": allow
   edit: deny
   write: deny
   task:

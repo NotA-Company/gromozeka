@@ -696,18 +696,16 @@ class TestUserMemoriesVectorLayer:
         assert rowB2["embedding_dimensions"] == 3
 
     async def test_saveMemoryEmbedding_crossThreadNullThreadId(self, testDatabase: Database) -> None:
-        """Regression: a memory with ``thread_id IS NULL`` must be embeddable.
+        """A memory with ``thread_id IS NULL`` must be embeddable and searchable.
 
         Cross-thread permanent memories (``thread_id IS NULL`` — e.g.
         migration_020 backfill A from the legacy ``user_data`` table) must
-        survive the vec0 upsert. vec0 metadata columns are non-nullable
-        ``INTEGER``, so passing ``None`` for ``thread_id`` raises
-        ``sqlite3.OperationalError: Expected integer for INTEGER metadata
-        column thread_id, received NULL``. The fix coerces ``None`` to
-        ``DEFAULT_THREAD_ID`` (0) for the vec0 insert ONLY; the
-        authoritative ``user_memories.thread_id`` stays ``NULL`` and the
-        denormalised vec0 ``thread_id`` is never read back for filtering
-        (the JOIN step on ``user_memories.thread_id`` is authoritative).
+        survive the vec0 upsert and remain semantically searchable. The
+        vec0 table no longer carries a ``thread_id`` column (it was
+        write-only and never read back), so ``thread_id`` is never
+        involved in the vec0 write path; the authoritative
+        ``user_memories.thread_id`` stays ``NULL`` and the JOIN step on
+        ``user_memories.thread_id`` remains the filter source.
         """
         if not self._vecAvailable(testDatabase):
             pytest.skip("sqlite-vec not installed")
@@ -726,7 +724,7 @@ class TestUserMemoriesVectorLayer:
         # Provenance columns set on user_memories (only happens on vec0 success).
         perm = await testDatabase.userMemories.getPermanentMemories(CHAT_ID, USER_ID, threadId=0)
         row = next(r for r in perm if r["memory_id"] == memoryId)
-        assert row["thread_id"] is None, "relational thread_id must remain NULL (vec0 coercion is vec0-only)"
+        assert row["thread_id"] is None, "relational thread_id must remain NULL (vec0 no longer touches thread_id)"
         assert row["embedding_model"] == "modelA"
         assert row["embedding_dimensions"] == 3
 

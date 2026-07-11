@@ -585,10 +585,8 @@ class UserMemoriesRepository(BaseRepository):
         because JSON-in-SQL ``LIKE`` is non-portable and breaks on tags
         containing ``"`` / ``%`` / ``_`` (plan §6.2). In semantic mode
         ``threadId`` and ``type`` are applied in the JOIN step on the
-        authoritative ``user_memories`` columns (the denormalised vec0
-        ``type``/``thread_id`` columns are written once at embed time and
-        never edited — content changes go through ``deleteMemory`` +
-        ``addMemory``, so the vec0 row is always rebuilt).
+        authoritative ``user_memories`` columns (vec0 carries neither —
+        both live only on ``user_memories``).
 
         Thread scoping: ``threadId is None`` returns memories from ALL
         threads for ``(chatId, userId)`` (no thread filter) — this is the
@@ -771,10 +769,8 @@ class UserMemoriesRepository(BaseRepository):
             threadId: Optional thread scope post-filter (JOIN step).
             type: Optional ``MemoryType`` value filter, applied in the
                 JOIN step on the authoritative ``user_memories.type``
-                column (NOT pushed into vec0 — the denormalised vec0
-                ``type`` column is written once at embed time and never
-                edited; content/type changes go through ``deleteMemory`` +
-                ``addMemory``, rebuilding the vec0 row).
+                column (vec0 carries no ``type`` column — it lives only
+                on ``user_memories``).
             tags: Optional list of tag strings (ANY-match via Python
                 set-intersection post-fetch — see module note on tags).
             permanent: Optional permanent-flag filter (applied in vec0;
@@ -836,16 +832,14 @@ class UserMemoriesRepository(BaseRepository):
                 return []
 
             # vec0 filter clause: keep it minimal. Only the mandatory
-            # scoping (chat_id, user_id) and ``permanent`` (immutable
-            # post-creation → never stale in vec0) are safe to push in.
-            # ``type`` is NOT pushed into vec0: the denormalised vec0
-            # ``type`` column is written once at embed time and never
-            # edited (content/type changes go through ``deleteMemory`` +
-            # ``addMemory``, which rebuild the vec0 row), so it is
-            # applied in the JOIN step on the authoritative
-            # ``user_memories.type`` column instead. ``threadId`` is
-            # NULL-able and ``tags`` is JSON TEXT; both are also applied
-            # in the JOIN / Python step below.
+            # scoping (chat_id, user_id, model partition) and ``permanent``
+            # (immutable post-creation → never stale in vec0) are pushed
+            # into vec0. ``threadId`` and ``type`` are NOT carried as vec0
+            # columns (they live only on the authoritative
+            # ``user_memories`` row), so they are applied in the JOIN step
+            # below on ``user_memories``. ``tags`` is JSON TEXT and is
+            # likewise applied as a Python set-intersection post-fetch
+            # (JSON-in-SQL LIKE is non-portable — see plan §6.2).
             filterParts: List[str] = [
                 "chat_id = :chatId",
                 "user_id = :userId",
@@ -964,7 +958,7 @@ class UserMemoriesRepository(BaseRepository):
             userId: User the memory is about.
             memoryId: Memory identifier.
             embedding: Float vector (any length; becomes the dimension).
-            model: Model name that produced the embedding.
+            embeddingModel: Model name that produced the embedding.
 
         Returns:
             True on success, False on any failure (never raises).
@@ -975,15 +969,15 @@ class UserMemoriesRepository(BaseRepository):
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
 
-            # Fetch the memory row to populate vec0 metadata columns
-            # (thread_id, permanent, type) that the vec0 table carries.
-            # NOTE: deleted_at IS NULL — a soft-deleted memory must never be
-            # re-embedded. Today only the regen-cron gatekeeper (which already
-            # filters deleted_at) and addMemory (fresh live rows) reach here,
-            # but this guard is defense-in-depth for any future caller.
+            # Fetch the memory row to populate the vec0 ``permanent``
+            # metadata column. NOTE: deleted_at IS NULL — a soft-deleted
+            # memory must never be re-embedded. Today only the regen-cron
+            # gatekeeper (which already filters deleted_at) and addMemory
+            # (fresh live rows) reach here, but this guard is
+            # defense-in-depth for any future caller.
             memoryRow = await sqlProvider.executeFetchOne(
                 """
-                SELECT thread_id, permanent, type
+                SELECT permanent
                 FROM user_memories
                 WHERE
                     chat_id = :chatId AND
@@ -1013,9 +1007,7 @@ class UserMemoriesRepository(BaseRepository):
                     chatId=chatId,
                     userId=userId,
                     memoryId=memoryId,
-                    threadId=memoryRow["thread_id"],
                     permanent=memoryRow["permanent"],
-                    memoryType=memoryRow["type"],
                     embedding=embedding,
                     embeddingModel=embeddingModel,
                 ):
@@ -1061,9 +1053,7 @@ class UserMemoriesRepository(BaseRepository):
         chatId: int,
         userId: int,
         memoryId: str,
-        threadId: Optional[int],
         permanent: bool,
-        memoryType: str,
         embeddingModel: str,
         embedding: list[float],
     ) -> bool:
@@ -1086,9 +1076,10 @@ class UserMemoriesRepository(BaseRepository):
             chatId: Chat ID.
             userId: User ID.
             memoryId: Memory identifier.
-            threadId: Thread scope (may be ``None`` for cross-thread).
             permanent: Permanent flag as int (0/1).
-            memoryType: ``MemoryType`` string value.
+            embeddingModel: Embedding-model name; bound to the vec0 ``model``
+                partition key so a model swap does not cross-contaminate
+                vector spaces.
             embedding: Float vector (``list[float]``; serialised to
                 float32 bytes internally).
 
@@ -1117,9 +1108,7 @@ class UserMemoriesRepository(BaseRepository):
                         {"name": "chat_id", "columnType": VectorColumnType.INTEGER, "isPartitionKey": True},
                         {"name": "user_id", "columnType": VectorColumnType.INTEGER, "isPartitionKey": True},
                         {"name": "model", "columnType": VectorColumnType.TEXT, "isPartitionKey": True},
-                        {"name": "thread_id", "columnType": VectorColumnType.INTEGER},
                         {"name": "permanent", "columnType": VectorColumnType.INTEGER},
-                        {"name": "type", "columnType": VectorColumnType.TEXT},
                         {
                             "name": "embedding",
                             "columnType": VectorColumnType.VECTOR,
@@ -1153,16 +1142,14 @@ class UserMemoriesRepository(BaseRepository):
 
             await sqlProvider.execute(
                 f"INSERT INTO {tableName} "
-                f"(memory_id, chat_id, user_id, model, thread_id, permanent, type, embedding) "
-                f"VALUES (:memoryId, :chatId, :userId, :modelName, :threadId, :permanent, :type, :embedding)",
+                f"(memory_id, chat_id, user_id, model, permanent, embedding) "
+                f"VALUES (:memoryId, :chatId, :userId, :modelName, :permanent, :embedding)",
                 {
                     "memoryId": memoryId,
                     "chatId": chatId,
                     "userId": userId,
                     "modelName": embeddingModel,
-                    "threadId": threadId,
                     "permanent": permanent,
-                    "type": memoryType,
                     "embedding": embeddingBytes,
                 },
             )
