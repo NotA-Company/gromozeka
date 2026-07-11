@@ -14,7 +14,6 @@ from typing import List, Optional, Tuple
 import telegram
 
 from internal.bot.common.models import UpdateObjectType
-from internal.bot.constants import MEMORY_RETRIEVAL_MODE_RELEVANT
 from internal.bot.models import (
     BotProvider,
     ChatSettingsKey,
@@ -96,7 +95,7 @@ class MessagePreprocessorHandler(BaseBotHandler):
                 vector selects ``searchMemories(queryEmbedding=...)`` (vec0
                 semantic ranking). ``None`` is the path taken when memory
                 injection is enabled but no embedding was generated (latest
-                retrieval mode, empty message text, or an embedding failure).
+                retrieval fallback, empty message text, or an embedding failure).
         """
 
         permanentMemories = await self.cache.getChatUserPermanentMemories(
@@ -180,12 +179,11 @@ class MessagePreprocessorHandler(BaseBotHandler):
         chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
 
         chatSearchEnabled = self._searchEnabled and chatSettings[ChatSettingsKey.EMBEDDINGS_ENABLED].toBool()
-        memoriesInjectionEnabled = chatSettings[ChatSettingsKey.MEMORY_INJECTION_ENABLED].toBool()
-        chatMemoriesEmbeddingsEnabled = (
-            chatSettings[ChatSettingsKey.MEMORY_EMBEDDINGS_ENABLED].toBool()
-            and memoriesInjectionEnabled
-            and chatSettings[ChatSettingsKey.MEMORY_RETRIEVAL_MODE].toStr() == MEMORY_RETRIEVAL_MODE_RELEVANT
-        )
+        memoriesEnabled = chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool()
+        embeddingsEnabled = chatSettings[ChatSettingsKey.EMBEDDINGS_ENABLED].toBool()
+        # Semantic ("relevant") memory retrieval is used when MEMORY_ENABLED and
+        # EMBEDDINGS_ENABLED are both on; otherwise memory injection falls back to latest.
+        chatMemoriesEmbeddingsEnabled = memoriesEnabled and embeddingsEnabled
         memoryInjected = False
 
         if chatSearchEnabled or chatMemoriesEmbeddingsEnabled:
@@ -222,7 +220,7 @@ class MessagePreprocessorHandler(BaseBotHandler):
 
         # If memory injection needed, but wasn't happened
         # (because of it uses 'latest' or because of some issue)
-        if memoriesInjectionEnabled and not memoryInjected:
+        if memoriesEnabled and not memoryInjected:
             await self.injectMemories(ensuredMessage, None, queryEmbedding=None)
             memoryInjected = True
 

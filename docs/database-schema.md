@@ -817,7 +817,7 @@ await repo.saveLayout(
 
 ### message_embeddings
 
-Stores one float32 embedding vector per `(chat_id, message_id)` to enable semantic ranking of chat-history search results. Produced by the `MessagePreprocessorHandler` (real-time, post-`saveChatMessage`) and the `ChatSearchHandler._dtCronJob` backfill `CRON_JOB` (catches up un-embedded rows and `REGENERATE_EMBEDDINGS=true` triggers); consumed by `ChatMessagesRepository.searchChatMessages` for cosine-similarity ranking. See [`docs/llm/database.md`](llm/database.md) §5.5 for repository usage, and [`docs/llm/configuration.md`](llm/configuration.md) for `[search-history]` config. There is no separate `BackfillWorker` class — backfill duty lives in `ChatSearchHandler`.
+Stores one float32 embedding vector per `(chat_id, message_id)` to enable semantic ranking of chat-history search results. Produced by the `MessagePreprocessorHandler` (real-time, post-`saveChatMessage`) and the `ChatSearchHandler._dtCronJob` backfill `CRON_JOB` (catches up un-embedded rows; backfill runs whenever the per-chat `EMBEDDINGS_ENABLED` setting is on — there is no separate one-shot regen trigger); consumed by `ChatMessagesRepository.searchChatMessages` for cosine-similarity ranking. See [`docs/llm/database.md`](llm/database.md) §5.5 for repository usage, and [`docs/llm/configuration.md`](llm/configuration.md) for `[search-history]` config. There is no separate `BackfillWorker` class — backfill duty lives in `ChatSearchHandler`.
 
 **Primary Key**: `(chat_id, message_id)`
 

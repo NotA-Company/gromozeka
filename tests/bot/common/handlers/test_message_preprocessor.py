@@ -9,8 +9,11 @@ when either:
 
 * chat search is enabled (``[search-history].enabled`` server-wide **and** the
   per-chat ``EMBEDDINGS_ENABLED`` opt-in), or
-* memory-embedding retrieval is enabled (``MEMORY_EMBEDDINGS_ENABLED`` +
-  ``MEMORY_INJECTION_ENABLED`` + ``MEMORY_RETRIEVAL_MODE == "relevant"``).
+* memory injection is enabled with embeddings (``MEMORY_ENABLED`` +
+  ``EMBEDDINGS_ENABLED``). This combination selects the *semantic* memory
+  retrieval path (cosine-similarity ranking); when ``MEMORY_ENABLED`` is on but
+  ``EMBEDDINGS_ENABLED`` is off, memory injection still runs but falls back to
+  *latest* retrieval (``injectMemories`` called with ``queryEmbedding=None``).
 
 When memory injection is enabled but the embedding path did not run (or
 returned ``None``), ``injectMemories`` is called with ``(None, None)`` as a
@@ -32,8 +35,6 @@ import pytest
 from internal.bot.common.handlers.base import HandlerResultStatus
 from internal.bot.common.handlers.message_preprocessor import MessagePreprocessorHandler
 from internal.bot.models import (
-    MEMORY_RETRIEVAL_MODE_LATEST,
-    MEMORY_RETRIEVAL_MODE_RELEVANT,
     BotProvider,
     ChatSettingsDict,
     ChatSettingsKey,
@@ -178,20 +179,16 @@ def _defaultChatSettings(
     Covers every code path exercised by the tests below:
 
     * the inline embedding block (``EMBEDDINGS_ENABLED`` / ``EMBEDDING_MODEL``),
-    * the memory-embedding gate (``MEMORY_EMBEDDINGS_ENABLED`` +
-      ``MEMORY_RETRIEVAL_MODE``), read by ``newMessageHandler`` to decide
-      whether to embed for memory-retrieval purposes, and
-    * :meth:`MessagePreprocessorHandler.injectMemories`, whose early-return
-      ``MEMORY_INJECTION_ENABLED`` gate moved up into ``newMessageHandler``.
+      read by ``newMessageHandler`` to decide whether to embed for chat-search
+      storage and memory-retrieval purposes, and
+    * :meth:`MessagePreprocessorHandler.injectMemories`, whose master gate
+      (``MEMORY_ENABLED``) is read by ``newMessageHandler``.
       ``newMessageHandler`` subscripts ``chatSettings`` directly for all of
       these keys before any guard, so a sparse dict missing any of them raises
       ``KeyError``.
 
-    ``MEMORY_INJECTION_ENABLED`` defaults to ``"false"`` so ``injectMemories``
-    is skipped; ``MEMORY_EMBEDDINGS_ENABLED`` defaults to ``"false"`` and
-    ``MEMORY_RETRIEVAL_MODE`` to ``"latest"`` (matching the real defaults in
-    ``configs/00-defaults/bot-defaults.toml``) so the memory-embedding gate
-    never trips unless a test explicitly opts in.
+    ``MEMORY_ENABLED`` defaults to ``"false"`` so ``injectMemories``
+    is skipped unless a test explicitly opts in.
 
     Args:
         embeddingsEnabled: Value for ``EMBEDDINGS_ENABLED``.
@@ -205,9 +202,7 @@ def _defaultChatSettings(
     return {
         ChatSettingsKey.EMBEDDINGS_ENABLED: ChatSettingsValue("true" if embeddingsEnabled else "false"),
         ChatSettingsKey.EMBEDDING_MODEL: ChatSettingsValue(embeddingModel),
-        ChatSettingsKey.MEMORY_INJECTION_ENABLED: ChatSettingsValue("false"),
-        ChatSettingsKey.MEMORY_EMBEDDINGS_ENABLED: ChatSettingsValue("false"),
-        ChatSettingsKey.MEMORY_RETRIEVAL_MODE: ChatSettingsValue(MEMORY_RETRIEVAL_MODE_LATEST),
+        ChatSettingsKey.MEMORY_ENABLED: ChatSettingsValue("false"),
     }
 
 
@@ -366,10 +361,10 @@ class TestNewMessageHandlerDispatchGates:
         the raw text verbatim, so whitespace-only text → formatted text is empty
         after ``.strip()`` → the embedding block is skipped.
 
-        Every *other* gate is opened here (injection enabled, relevant mode,
-        memory-embeddings enabled, search enabled) so the empty-formatted-text
-        guard is the only thing blocking ``generateEmbedding`` — proving it is
-        the text guard, not some other gate, that prevents the embedding. Memory
+        Every *other* gate is opened here (memory enabled, embeddings
+        enabled, search enabled) so the empty-formatted-text guard is the
+        only thing blocking ``generateEmbedding`` — proving it is the text
+        guard, not some other gate, that prevents the embedding. Memory
         injection still runs via the latest-retrieval fallback
         (``injectMemories`` called with ``queryEmbedding=None``), so an
         empty-text message is not left without context.
@@ -388,9 +383,7 @@ class TestNewMessageHandlerDispatchGates:
             return_value={
                 ChatSettingsKey.EMBEDDINGS_ENABLED: ChatSettingsValue("true"),
                 ChatSettingsKey.EMBEDDING_MODEL: ChatSettingsValue("text-embedding-3-small"),
-                ChatSettingsKey.MEMORY_INJECTION_ENABLED: ChatSettingsValue("true"),
-                ChatSettingsKey.MEMORY_EMBEDDINGS_ENABLED: ChatSettingsValue("true"),
-                ChatSettingsKey.MEMORY_RETRIEVAL_MODE: ChatSettingsValue(MEMORY_RETRIEVAL_MODE_RELEVANT),
+                ChatSettingsKey.MEMORY_ENABLED: ChatSettingsValue("true"),
             }
         )
         # Spy on injectMemories so we can assert the latest-retrieval fallback
@@ -506,6 +499,50 @@ class TestNewMessageHandlerDispatchGates:
         assert result is HandlerResultStatus.NEXT
         cast(Any, handler.llmService).generateEmbedding.assert_awaited_once()
         handler.db.chatEmbeddings.saveMessageEmbedding.assert_not_called()  # type: ignore[attr-defined]
+
+    async def test_semanticMemoryInjectionWhenEmbeddingsEnabled(self, handler: MessagePreprocessorHandler) -> None:
+        """Both MEMORY_ENABLED + EMBEDDINGS_ENABLED → semantic ``injectMemories`` (non-None queryEmbedding).
+
+        Pins the semantic-retrieval branch of ``newMessageHandler`` (~line 218):
+        when both master gates are on and an embedding was produced,
+        ``injectMemories`` is called with the embedding model and a NON-None
+        ``queryEmbedding`` vector, and the latest-retrieval fallback (the
+        ``if memoriesInjectionEnabled and not memoryInjected:`` block at
+        ~line 223) is NOT reached — ``memoryInjected`` is set ``True`` by the
+        semantic branch, so ``injectMemories`` fires exactly once.
+
+        Args:
+            handler: Preprocessor fixture.
+        """
+        handler.getChatSettings = AsyncMock(  # type: ignore[method-assign]
+            return_value={
+                ChatSettingsKey.EMBEDDINGS_ENABLED: ChatSettingsValue("true"),
+                ChatSettingsKey.EMBEDDING_MODEL: ChatSettingsValue("text-embedding-3-small"),
+                ChatSettingsKey.MEMORY_ENABLED: ChatSettingsValue("true"),
+            }
+        )
+        cast(Any, handler.llmService).generateEmbedding = AsyncMock(  # type: ignore[method-assign]
+            return_value=("test-model", [0.1, 0.2, 0.3])
+        )
+        # Spy on injectMemories so we can assert the semantic branch's call args;
+        # the post-injection metadata update must also be awaitable.
+        handler.injectMemories = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        handler.db.chatMessages.updateChatMessageMetadata = AsyncMock(return_value=None)  # type: ignore[attr-defined]
+        ensured = _realEnsuredMessageForEmbedding(messageText="meaningful text")
+
+        with patch.object(EnsuredMessage, "updateMediaContent", AsyncMock(return_value=None)):
+            result = await handler.newMessageHandler(ensured, updateObj=Mock())
+
+        assert result is HandlerResultStatus.NEXT
+        cast(Any, handler.llmService).generateEmbedding.assert_awaited_once()
+        # Semantic branch: injectMemories called with a NON-None queryEmbedding.
+        handler.injectMemories.assert_awaited_once()  # type: ignore[attr-defined]
+        callKwargs = handler.injectMemories.await_args.kwargs  # type: ignore[attr-defined]
+        assert callKwargs["queryEmbedding"] is not None
+        assert callKwargs["queryEmbedding"] == [0.1, 0.2, 0.3]
+        # The latest-retrieval fallback must NOT have fired: the semantic branch
+        # set memoryInjected=True, so injectMemories was called exactly once.
+        assert handler.injectMemories.await_count == 1  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
@@ -740,24 +777,22 @@ class TestChatMemberHandlers:
 # ---------------------------------------------------------------------------
 
 
-def _chatSettingsWithMemoryInjection(*, retrievalMode: str = MEMORY_RETRIEVAL_MODE_LATEST) -> ChatSettingsDict:
-    """Build chat settings enabling memory injection.
+def _chatSettingsWithMemoryInjection() -> ChatSettingsDict:
+    """Build chat settings enabling memory injection (``MEMORY_ENABLED=true``).
 
     The default ``handler`` fixture wires ``getChatSettings`` to
-    ``_defaultChatSettings()`` which sets ``MEMORY_INJECTION_ENABLED=false`` so
-    ``injectMemories`` short-circuits. These tests need injection enabled and the
-    retrieval mode pinned to ``latest`` (so the ``getLatestMemories`` branch runs
-    and the semantic-search/embedding path is skipped).
-
-    Args:
-        retrievalMode: Value for ``MEMORY_RETRIEVAL_MODE`` (default ``latest``).
+    ``_defaultChatSettings()`` which sets ``MEMORY_ENABLED=false`` so
+    ``injectMemories`` is skipped. These tests need the master memory gate
+    enabled. ``EMBEDDINGS_ENABLED`` is left false because the latest vs.
+    semantic distinction is a ``newMessageHandler`` concern (driven by the
+    ``MEMORY_ENABLED && EMBEDDINGS_ENABLED`` gate there), not this helper's —
+    the compact-format write path in :meth:`injectMemories` is agnostic to it.
 
     Returns:
-        A chat-settings dict with injection enabled.
+        A chat-settings dict with ``MEMORY_ENABLED`` enabled.
     """
     return {
-        ChatSettingsKey.MEMORY_INJECTION_ENABLED: ChatSettingsValue("true"),
-        ChatSettingsKey.MEMORY_RETRIEVAL_MODE: ChatSettingsValue(retrievalMode),
+        ChatSettingsKey.MEMORY_ENABLED: ChatSettingsValue("true"),
         ChatSettingsKey.EMBEDDINGS_ENABLED: ChatSettingsValue("false"),
         ChatSettingsKey.EMBEDDING_MODEL: ChatSettingsValue(""),
     }

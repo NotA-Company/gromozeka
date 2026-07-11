@@ -493,8 +493,7 @@ class ChatEmbeddingsRepository(BaseRepository):
             limit: Maximum number of rows to return. Defaults to 100.
             modelName: When provided, only messages whose ``message_embeddings``
                 row is missing **or** has a different ``model`` column are
-                returned. This matches the
-                ``REGENERATE_EMBEDDINGS``-with-model-change contract from
+                returned. This matches the backfill-on-model-change contract from
                 §2.7 of the plan: switching the ``EMBEDDING_MODEL`` chat
                 setting should re-embed rows produced by the previous model.
                 When ``None``, only rows with no ``message_embeddings`` row at

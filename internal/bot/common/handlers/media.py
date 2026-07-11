@@ -642,7 +642,7 @@ class MediaHandler(BaseBotHandler):
                     role="system",
                 ),
             ]
-            memoriesEnabled = chatSettings[ChatSettingsKey.MEMORY_INJECTION_ENABLED].toBool()
+            memoriesEnabled = chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool()
             for msg in reversed(
                 await self.db.chatMessages.getChatMessagesByUser(
                     ensuredMessage.recipient.id,

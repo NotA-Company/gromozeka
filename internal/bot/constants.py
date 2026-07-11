@@ -15,7 +15,6 @@ The constants are organized into logical groups:
 - Knowledge-config wizard limits
 - Chat-search-history defaults and backfill tuning
 - Sandbox file-size limits
-- Memory retrieval-mode sentinel values
 
 These constants provide centralized configuration for bot behavior and
 ensure consistency across all bot handlers and services.
@@ -263,12 +262,3 @@ truncation tolerated)."""
 MAX_SANDBOX_SEND_BYTES: int = 20 * 1024 * 1024  # 20 MB
 """Max bytes for a file sent via the ``sandbox_send_file`` LLM tool; larger
 files are rejected before being sent to the user."""
-
-# Memory retrieval modes
-MEMORY_RETRIEVAL_MODE_LATEST: str = "latest"
-"""``latest`` retrieval strategy for the ``memory-retrieval-mode`` chat setting:
-inject the most-recent ephemeral memories."""
-
-MEMORY_RETRIEVAL_MODE_RELEVANT: str = "relevant"
-"""``relevant`` retrieval strategy for the ``memory-retrieval-mode`` chat setting:
-semantic search over ephemeral memories by the incoming message text."""

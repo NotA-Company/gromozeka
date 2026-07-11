@@ -61,7 +61,6 @@ def _makeChatSettings(*, embeddingModel: str = "embed-v1") -> ChatSettingsDict:
         Mapping of every :class:`ChatSettingsKey` the cron job reads.
     """
     return {
-        ChatSettingsKey.REGENERATE_EMBEDDINGS: ChatSettingsValue("true"),
         ChatSettingsKey.EMBEDDING_MODEL: ChatSettingsValue(embeddingModel),
         ChatSettingsKey.LLM_RATELIMITER: ChatSettingsValue(""),
         ChatSettingsKey.ALLOW_TOOLS_COMMANDS: ChatSettingsValue("true"),

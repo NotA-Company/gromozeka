@@ -120,7 +120,7 @@ class ChatSearchHandler(BaseBotHandler):
        semantic ranking pass on top of the SQL filter.
     2. The `_dtCronJob` background task (registered against
        ``DelayedTaskFunction.CRON_JOB``): every minute, pick one chat
-       with ``REGENERATE_EMBEDDINGS=true`` in round-robin order and embed
+       with ``EMBEDDINGS_ENABLED=true`` in round-robin order and embed
        a small batch of its un-embedded messages. Catches up chats that
        flipped the feature on with pre-existing messages.
 
@@ -276,8 +276,7 @@ class ChatSearchHandler(BaseBotHandler):
         1. **Chat discovery (in-memory)**: round-robin over
            ``self._trackedChats``, a ``MutableSet[int]`` populated by
            :meth:`newMessageHandler` whenever it sees a message in a chat
-           with ``EMBEDDINGS_ENABLED=true`` and
-           ``REGENERATE_EMBEDDINGS=true``. Cold-start tradeoff: the set
+           with ``EMBEDDINGS_ENABLED=true``. Cold-start tradeoff: the set
            is empty on restart and only grows from live message
            activity, so a quiet chat with a pre-existing backlog is not
            backfilled until a new message arrives (intentional — the old
@@ -286,8 +285,8 @@ class ChatSearchHandler(BaseBotHandler):
            from the set in step 2 and is not re-added until the next
            qualifying message.
         2. **Per-chat gate (runtime re-validation)**: bail — and evict
-           from ``_trackedChats`` — when ``REGENERATE_EMBEDDINGS`` or
-           ``EMBEDDINGS_ENABLED`` is now explicitly false. Because
+           from ``_trackedChats`` — when ``EMBEDDINGS_ENABLED`` is now
+           explicitly false. Because
            membership is driven by live messages, a chat that flips a
            setting off between messages is dropped here rather than
            re-scanned every tick.
@@ -310,9 +309,9 @@ class ChatSearchHandler(BaseBotHandler):
            sleep to keep the asyncio loop responsive.
         7. Per-message errors are caught and logged — one bad row never
            aborts the batch.
-        8. No self-resetting of ``REGENERATE_EMBEDDINGS``: the per-tick
-           batch is small and the next minute's tick will pick up where
-           this one left off.
+        8. Backfill runs continuously while ``EMBEDDINGS_ENABLED=true``: the
+           per-tick batch is small and the next minute's tick will pick up
+           where this one left off.
 
         Args:
             task: The CRON_JOB delayed task firing this handler. Ignored.
@@ -340,13 +339,9 @@ class ChatSearchHandler(BaseBotHandler):
         except Exception as e:
             logger.warning("Backfill: failed to read chat settings for %d: %s", chatId, e)
             return
-        if (
-            not chatSettings[ChatSettingsKey.REGENERATE_EMBEDDINGS].toBool()
-            or not chatSettings[ChatSettingsKey.EMBEDDINGS_ENABLED].toBool()
-        ):
-            # Regenerating embeddings is disabled for given chat
+        if not chatSettings[ChatSettingsKey.EMBEDDINGS_ENABLED].toBool():
             self._trackedChats.discard(chatId)
-            return
+            return  # embeddings regeneration disabled for this chat
 
         modelName = chatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr()
         if not modelName:
@@ -790,9 +785,9 @@ class ChatSearchHandler(BaseBotHandler):
     ) -> HandlerResultStatus:
         """Track chats that may need embeddings backfill.
 
-        Reads the chat settings and, when both ``EMBEDDINGS_ENABLED`` and
-        ``REGENERATE_EMBEDDINGS`` are true, adds the message's chat id to
-        the in-memory ``self._trackedChats`` set so the
+        Reads the chat settings and, when ``EMBEDDINGS_ENABLED`` is true,
+        adds the message's chat id to the in-memory
+        ``self._trackedChats`` set so the
         :meth:`_dtCronJob` backfill pass can round-robin over it on a
         later tick. This is a fire-and-forget tracker — it never
         short-circuits the handler chain.
@@ -809,10 +804,7 @@ class ChatSearchHandler(BaseBotHandler):
 
         # Track chats needing embeddings backfill.
         chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
-        if (
-            chatSettings[ChatSettingsKey.EMBEDDINGS_ENABLED].toBool()
-            and chatSettings[ChatSettingsKey.REGENERATE_EMBEDDINGS].toBool()
-        ):
+        if chatSettings[ChatSettingsKey.EMBEDDINGS_ENABLED].toBool():
             self._trackedChats.add(ensuredMessage.recipient.id)
 
         return HandlerResultStatus.NEXT

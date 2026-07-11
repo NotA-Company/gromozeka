@@ -34,13 +34,14 @@ How to use this file:
 - **Backfill**: `_dtCronJob` in `ChatSearchHandler` — round-robins over an
   in-memory `self._trackedChats: MutableSet[int]` (no DB scan). `newMessageHandler`
   populates the set by adding a chat's id whenever it sees a message in a chat
-  with `EMBEDDINGS_ENABLED=true` and `REGENERATE_EMBEDDINGS=true`; the cron then
-  re-validates those settings per tick and evicts (one-way, `.discard()`) any
-  chat whose gate has since flipped to false. Cold-start tradeoff: `_trackedChats`
-  starts empty on restart and only grows from live messages, so a quiet chat with
-  a pre-existing backlog is not backfilled until the next message arrives
-  (intentional). `REGENERATE_EMBEDDINGS` defaults to true so it's rarely
-  persisted; no auto-reset — manual only via `/settings`.
+  with `EMBEDDINGS_ENABLED=true`; the cron then re-validates that gate per tick
+  and evicts (one-way, `.discard()`) any chat whose gate has since flipped to
+  false. Backfill always runs while `EMBEDDINGS_ENABLED` is on (the former
+  one-shot re-embedding trigger flag was removed in the chatSettings
+  consolidation — there is no per-chat trigger flag any more). Cold-start
+  tradeoff: `_trackedChats` starts empty on restart and only grows from live
+  messages, so a quiet chat with a pre-existing backlog is not backfilled until
+  the next message arrives (intentional).
 - **Shared helper**: `embedAndSaveMessage` in `internal/bot/common/embedding_utils.py` — takes
   `EnsuredMessage`, resolves `LLMService` via `getInstance()`
 - **Config cached**: `_searchEnabled`, `_reindexBatchSize` in handler `__init__`
@@ -83,12 +84,14 @@ construction time) and `EMBEDDINGS_ENABLED` are both on.
 - **`MAX_MESSAGES_FOR_SEMANTIC_SEARCH` page**: `BOT_OWNER` (resolved from plan inconsistency).
 - **Backfill chat discovery**: round-robin over the in-memory
   `_trackedChats` set (populated by `newMessageHandler` when
-  `EMBEDDINGS_ENABLED=true` AND `REGENERATE_EMBEDDINGS=true`), then
-  re-validate those settings per tick. The previous DB-scan discovery
-  (the deleted `ChatSettingsRepository` method that queried the
-  `chat_settings` table for `EMBEDDINGS_ENABLED`) was removed — a quiet
-  chat is no longer backfilled until a new
-  message arrives (intentional).
+  `EMBEDDINGS_ENABLED=true`), then re-validate that gate per tick. The
+  previous DB-scan discovery (the deleted `ChatSettingsRepository` method
+  that queried the `chat_settings` table for `EMBEDDINGS_ENABLED`) was
+  removed — a quiet chat is no longer backfilled until a new
+  message arrives (intentional). Backfill admission/eviction now keys on
+  `EMBEDDINGS_ENABLED` alone (the former per-chat re-embedding trigger was
+  removed in the chatSettings consolidation; backfill always runs while
+  embeddings are on).
 - **Plan gaps fixed**: `ChatSettingsPage.BOT_OWNER` reconciled; backfill discovery specified.
 - **Parser merge semantics in `_parseSearchArgs`**: bare words merge with `keywords:`, first
   occurrence wins for other keys, values span tokens until next known key.
@@ -216,13 +219,13 @@ These mistakes were made during Step 1 implementation and fixed. Don't repeat th
 
 14. **Discovery now uses `_trackedChats`, not `EMBEDDINGS_ENABLED` DB rows.**
     The cron round-robins over an in-memory `self._trackedChats` set populated
-    by `newMessageHandler` (added when `EMBEDDINGS_ENABLED=true` AND
-    `REGENERATE_EMBEDDINGS=true`).     The previous DB-scan discovery method (the deleted
-    `ChatSettingsRepository` query over `chat_settings` for
-    `EMBEDDINGS_ENABLED`) was removed. Tradeoff: a quiet chat with a backlog is not backfilled until
-    the next message arrives (intentional — the goal is to not scan old unused
-    chats); eviction is one-way (`.discard()`), so re-enabling embeddings does
-    not re-add a chat until the next qualifying message.
+    by `newMessageHandler` (added when `EMBEDDINGS_ENABLED=true`). The previous
+    DB-scan discovery method (the deleted `ChatSettingsRepository` query over
+    `chat_settings` for `EMBEDDINGS_ENABLED`) was removed. Tradeoff: a quiet
+    chat with a backlog is not backfilled until the next message arrives
+    (intentional — the goal is to not scan old unused chats); eviction is
+    one-way (`.discard()`), so re-enabling embeddings does not re-add a chat
+    until the next qualifying message.
 
 15. **Don't list all rows to find one.** `_resolveUserId` called `listChatUsers(limit=None)` to
     find one user by username. Use targeted queries: `getChatUserByUsername(chatId, username)`.
@@ -361,11 +364,11 @@ optimization). Key changes:
   a default. Test mocks that return sparse `ChatSettingsDict` cause `KeyError` for any key the
   production path reads.
 - `_makeChatSettings()` helpers must include every `ChatSettingsKey` that the production path
-  accesses. When adding a new gate check in production (e.g., `REGENERATE_EMBEDDINGS`), the test
+  accesses. When adding a new gate check in production (e.g., `EMBEDDINGS_ENABLED`), the test
   helper must be updated to include it.
-- `test_cron_no_enabled_chats` had a second-order bug: the assertion used a stale key
-  (`REGENERATE_EMBEDDINGS`) that didn't match the current production query
-  (`EMBEDDINGS_ENABLED`). When production queries change, test assertions must follow.
+- `test_cron_no_enabled_chats` had a second-order bug: the assertion queried a stale
+  key that didn't match the current production gate (`EMBEDDINGS_ENABLED`). When
+  production queries change, test assertions must follow.
 
 ## Post-Review Fixes — Round 2 (2026-06-28, updated same day)
 

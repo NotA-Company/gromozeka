@@ -126,7 +126,6 @@ bayes-use-trigrams = false
 
 # Embedding / semantic search (see docs/archive/plans/chat-history-search-plan.md §2.7)
 embeddings-enabled = false
-regenerate-embeddings = true
 max-messages-for-semantic-search = 100000
 embedding-model = "local/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
@@ -157,19 +156,12 @@ paid-tier-untill-ts = 0
 # Whether user memory refinement is enabled
 memory-refinement-enabled       = false
 
-# User-memories v1 (Phase 3a) — injection + retrieval + regen-discovery.
-# See docs/plans/user-memories-v1.md §11.1, §11.2, §11.5.
-# Gates memories-block injection into the chat system message AND chat-time
-# availability of the add_memory/search_memories tools.
-memory-injection-enabled        = false
-# Ephemeral-memory retrieval strategy: "latest" (newest) or "relevant" (semantic
-# search over the incoming message text). Anything != "relevant" is treated as
-# "latest" at read time (BaseBotHandler._buildMemoriesBlock).
-memory-retrieval-mode           = "latest"
-# Discovery gate for the memory-embedding regeneration cron (Phase 3b consumer).
-memory-embeddings-enabled       = false
-# Per-chat regen gate once memory-embeddings-enabled is on.
-memory-regenerate-embeddings    = true
+# User-memories v1 — master per-chat gate.
+# Gates memories-block injection into the chat system message, chat-time
+# availability of the add_memory/search_memories tools, background
+# memory-embedding regen admission, and refinement eligibility. When on
+# alongside embeddings-enabled, memory retrieval is semantic; otherwise latest.
+memory-enabled                   = false
 
 # Per-char ratelimiters for LLM usage and Tools-usage
 llm-ratelimiter                 = "chat-default"

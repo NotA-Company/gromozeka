@@ -215,8 +215,8 @@ class UserMemoriesHandler(BaseBotHandler):
         )
         """Per-tick batch cap for the memory-embedding regeneration loop."""
 
-        # Round-robin index across MEMORY_EMBEDDINGS_ENABLED chats. Survives
-        # across ticks so a backlog drains chat-by-chat in stable order
+        # Round-robin index across chats with MEMORY_ENABLED + EMBEDDINGS_ENABLED.
+        # Survives across ticks so a backlog drains chat-by-chat in stable order
         # rather than re-shuffling every minute. Mirrors ``_backfillIndex``
         # in ``ChatSearchHandler``.
         self._memoryBackfillIndex: int = 0
@@ -254,7 +254,7 @@ class UserMemoriesHandler(BaseBotHandler):
         # ``useTools`` wildcard). Per-chat availability is additionally
         # controlled via ``useTools`` in ``_sendLLMChatMessage``
         # (``DELETE_MEMORY: False`` — D3 enforcement) and, in Phase 3, the
-        # ``MEMORY_INJECTION_ENABLED`` setting. See
+        # ``MEMORY_ENABLED`` setting. See
         # docs/plans/user-memories-v1.md §8.3 / §13 Phase 2.
         if self._memoryRefineEnabled:
             self.llmService.registerTool(
@@ -764,18 +764,18 @@ class UserMemoriesHandler(BaseBotHandler):
         1. **Chat discovery (in-memory)**: round-robin over
            ``self._trackedChats``, a ``MutableSet[int]`` populated by
            :meth:`newMessageHandler` whenever it sees a message in a chat
-           with ``MEMORY_EMBEDDINGS_ENABLED=true`` and
-           ``MEMORY_REGENERATE_EMBEDDINGS=true``. Cold-start tradeoff:
+           with ``MEMORY_ENABLED=true`` and
+           ``EMBEDDINGS_ENABLED=true``. Cold-start tradeoff:
            the set is empty on restart and only grows from live message
            activity, so a quiet chat with a backlog is not backfilled
            until a new message arrives (intentional). Eviction is
-           one-way: a chat that later disables embeddings (or regen) is
-           removed in step 3 and not re-added until the next qualifying
+            one-way: a chat that later disables memory or embeddings is
+            removed in step 3 and not re-added until the next qualifying
            message.
         2. **Round-robin pick**: one chat per tick, advanced through
            ``_memoryBackfillIndex`` (stable order across ticks).
-        3. **Per-chat gate**: bail when
-           ``MEMORY_REGENERATE_EMBEDDINGS`` is explicitly false.
+        3. **Per-chat gate**: bail when ``MEMORY_ENABLED`` or
+           ``EMBEDDINGS_ENABLED`` is explicitly false.
         4. **Model resolution**: ``EMBEDDING_MODEL`` from chat settings;
            bail when empty, unknown, or not embedding-capable.
         5. **Stale cleanup (model-drift detection)**: when the in-memory
@@ -841,11 +841,11 @@ class UserMemoriesHandler(BaseBotHandler):
             logger.warning("Memory regen: failed to read chat settings for %d: %s", chatId, e)
             return
         if (
-            not chatSettings[ChatSettingsKey.MEMORY_REGENERATE_EMBEDDINGS].toBool()
-            or not chatSettings[ChatSettingsKey.MEMORY_EMBEDDINGS_ENABLED].toBool()
+            not chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool()
+            or not chatSettings[ChatSettingsKey.EMBEDDINGS_ENABLED].toBool()
         ):
             self._trackedChats.discard(chatId)
-            return  # regeneration disabled for this chat
+            return  # memory-embedding regeneration disabled for this chat
 
         embeddingModel = self.llmService.resolveModel(
             ChatSettingsKey.EMBEDDING_MODEL, chatSettings=chatSettings, defaultKey=ChatSettingsKey.EMBEDDING_MODEL
@@ -942,8 +942,8 @@ class UserMemoriesHandler(BaseBotHandler):
         Two independent concerns share this 60s tick:
 
         1. **Memory-embedding regeneration** (Phase 3b — see
-           :meth:`_runMemoryEmbeddingRegen`): discovers
-           ``MEMORY_EMBEDDINGS_ENABLED`` chats round-robin, cleans stale
+           :meth:`_runMemoryEmbeddingRegen`): discovers chats with
+           ``MEMORY_ENABLED`` and ``EMBEDDINGS_ENABLED`` round-robin, cleans stale
            embeddings on model drift, and re-embeds a small batch. Runs
            every tick OUTSIDE ``_refineLock`` (read/embed/write on
            ``user_memories``; does not contend with refinement).
@@ -1040,8 +1040,8 @@ class UserMemoriesHandler(BaseBotHandler):
         Selects the top-K (``_memoryMaxRefinesPerTick``) by smallest
         ``_lastRefinedTS`` (oldest-due / never-refined). For each
         candidate the chat settings are re-read; when the gate now fails
-        (requires BOTH ``MEMORY_REFINEMENT_ENABLED`` and
-        ``MEMORY_EMBEDDINGS_ENABLED``) the candidate is dropped from
+        (requires ``MEMORY_REFINEMENT_ENABLED``, ``MEMORY_ENABLED``, and
+        ``EMBEDDINGS_ENABLED``) the candidate is dropped from
         ``_accounting`` and ``_lastRefinedTS``. Survivors are dispatched
         to :meth:`_runSingleRefinement`, after which the per-key counter
         is decremented (credit-consumed) and dropped when it reaches 0.
@@ -1084,13 +1084,14 @@ class UserMemoriesHandler(BaseBotHandler):
                     chatId, userId, threadId = key
                     # Per-chat enable gate (runtime-disable safe).
                     chatSettings = await self.getChatSettings(chatId)
-                    # Refinement now requires memory embeddings too: the
+                    # Refinement now requires memory + embeddings too: the
                     # ``search_memories`` LLM tool used during refinement is
                     # semantic and returns nothing without embeddings, so
-                    # refinement is only meaningful when they are enabled.
+                    # refinement is only meaningful when both are enabled.
                     if (
                         not chatSettings[ChatSettingsKey.MEMORY_REFINEMENT_ENABLED].toBool()
-                        or not chatSettings[ChatSettingsKey.MEMORY_EMBEDDINGS_ENABLED].toBool()
+                        or not chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool()
+                        or not chatSettings[ChatSettingsKey.EMBEDDINGS_ENABLED].toBool()
                     ):
                         # Drop this candidate from future checks
                         async with self._accountingLock:
@@ -1567,18 +1568,16 @@ class UserMemoriesHandler(BaseBotHandler):
         chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
 
         if (
-            chatSettings[ChatSettingsKey.MEMORY_EMBEDDINGS_ENABLED].toBool()
-            and chatSettings[ChatSettingsKey.MEMORY_REGENERATE_EMBEDDINGS].toBool()
+            chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool()
+            and chatSettings[ChatSettingsKey.EMBEDDINGS_ENABLED].toBool()
         ):
             self._trackedChats.add(ensuredMessage.recipient.id)
-        # Admitted on MEMORY_REFINEMENT_ENABLED alone; _runMemoryRefinement re-checks
-        # MEMORY_EMBEDDINGS_ENABLED, so refinement-on/embeddings-off chats accumulate
-        # accounting but never refine.
-        if chatSettings[ChatSettingsKey.MEMORY_REFINEMENT_ENABLED].toBool():
-            threadId = ensuredMessage.threadId or DEFAULT_THREAD_ID
-            key = (ensuredMessage.recipient.id, ensuredMessage.sender.id, threadId)
-            async with self._accountingLock:
-                self._accounting[key] = self._accounting.get(key, 0) + 1
+
+            if chatSettings[ChatSettingsKey.MEMORY_REFINEMENT_ENABLED].toBool():
+                threadId = ensuredMessage.threadId or DEFAULT_THREAD_ID
+                key = (ensuredMessage.recipient.id, ensuredMessage.sender.id, threadId)
+                async with self._accountingLock:
+                    self._accounting[key] = self._accounting.get(key, 0) + 1
 
         # Wizard free-text input (memory creation). When the user is mid-wizard
         # "Add memory" flow, their next free-text message IS the memory content.

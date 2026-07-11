@@ -16,9 +16,6 @@ All exported items are re-exported from their respective submodules to avoid
 circular dependencies and provide a clean import interface.
 """
 
-# Retrieval-mode sentinels live in the central constants module (single source of truth).
-from internal.bot.constants import MEMORY_RETRIEVAL_MODE_LATEST, MEMORY_RETRIEVAL_MODE_RELEVANT
-
 # Re-export MessageType from shared_enums to avoid circular dependency
 from ...models import MessageType
 
@@ -101,8 +98,6 @@ __all__ = [
     "getChatSettingsInfo",
     "ChatSettingsPage",
     "ChatSettingsDict",
-    "MEMORY_RETRIEVAL_MODE_LATEST",
-    "MEMORY_RETRIEVAL_MODE_RELEVANT",
     # Ensured Message
     "EnsuredMessage",
     "MentionCheckResult",

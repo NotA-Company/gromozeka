@@ -206,19 +206,18 @@ def _chatSettings(
     """Build a chat-settings dict carrying the keys the refinement path reads.
 
     Includes ``MEMORY_REFINEMENT_ENABLED`` (the boolean toggle read by
-    ``newMessageHandler`` and ``_runSingleRefinement``), the two embeddings
-    flags (``MEMORY_EMBEDDINGS_ENABLED`` / ``MEMORY_REGENERATE_EMBEDDINGS`` —
-    both defaulting to ``"true"`` because the rewritten gates in
-    ``newMessageHandler``, ``_runMemoryRefinement``, and
-    ``_runMemoryEmbeddingRegen`` read them via direct subscript), plus the
-    two prompt settings (``MEMORY_REFINE_SYSTEM_PROMPT`` /
-    ``MEMORY_REFINE_USER_PROMPT_TEMPLATE``) now read by
-    ``_runSingleRefinement``. The user-prompt template MUST contain the
-    ``.format()`` placeholders so the template render doesn't raise. Phase 4a
-    switched the template to ``{existingMemories}`` + ``{messages}``; the
-    ``{existingUserData}`` / ``{existingSummary}`` keys are passed as
-    backward-compat aliases (see ``_runSingleRefinement``) so older per-chat
-    overrides still format.
+    ``newMessageHandler`` and ``_runSingleRefinement``), the two master gates
+    (``MEMORY_ENABLED`` / ``EMBEDDINGS_ENABLED`` — both defaulting to ``"true"``
+    because the rewritten gates in ``newMessageHandler``,
+    ``_runMemoryRefinement``, and ``_runMemoryEmbeddingRegen`` read them via
+    direct subscript), plus the two prompt settings
+    (``MEMORY_REFINE_SYSTEM_PROMPT`` / ``MEMORY_REFINE_USER_PROMPT_TEMPLATE``)
+    now read by ``_runSingleRefinement``. The user-prompt template MUST
+    contain the ``.format()`` placeholders so the template render doesn't
+    raise. Phase 4a switched the template to ``{existingMemories}`` +
+    ``{messages}``; the ``{existingUserData}`` / ``{existingSummary}`` keys
+    are passed as backward-compat aliases (see ``_runSingleRefinement``) so
+    older per-chat overrides still format.
 
     When *refineModel* is provided, the ``MEMORY_REFINE_MODEL`` setting is
     populated so tests asserting the JSONL-log ``model`` field can pin it.
@@ -235,13 +234,13 @@ def _chatSettings(
             (the fallback model id). When ``None`` the key is omitted.
 
     Returns:
-        Mapping with the refinement toggle, embeddings flags, prompt keys
+        Mapping with the refinement toggle, master gates, prompt keys
         (+ optional model(s)).
     """
     settings: ChatSettingsDict = {
         ChatSettingsKey.MEMORY_REFINEMENT_ENABLED: ChatSettingsValue("true" if memoryRefinementEnabled else "false"),
-        ChatSettingsKey.MEMORY_EMBEDDINGS_ENABLED: ChatSettingsValue("true"),
-        ChatSettingsKey.MEMORY_REGENERATE_EMBEDDINGS: ChatSettingsValue("true"),
+        ChatSettingsKey.MEMORY_ENABLED: ChatSettingsValue("true"),
+        ChatSettingsKey.EMBEDDINGS_ENABLED: ChatSettingsValue("true"),
         ChatSettingsKey.MEMORY_REFINE_SYSTEM_PROMPT: ChatSettingsValue("system prompt placeholder"),
         ChatSettingsKey.MEMORY_REFINE_USER_PROMPT_TEMPLATE: ChatSettingsValue("{existingMemories}\n{messages}"),
     }
@@ -388,22 +387,22 @@ class TestTrackedChatsDiscovery:
     The DB-scan chat discovery (``ChatSettingsRepository.listChatsBySetting``)
     was replaced by an in-memory ``self._trackedChats: MutableSet[int]``
     populated by :meth:`UserMemoriesHandler.newMessageHandler` when both
-    ``MEMORY_EMBEDDINGS_ENABLED`` and ``MEMORY_REGENERATE_EMBEDDINGS`` are
-    true. The cron's ``_runMemoryEmbeddingRegen`` round-robins over this set
-    and self-evicts a chat via ``.discard()`` when the per-chat gate fails.
+    ``MEMORY_ENABLED`` and ``EMBEDDINGS_ENABLED`` are true. The cron's
+    ``_runMemoryEmbeddingRegen`` round-robins over this set and self-evicts
+    a chat via ``.discard()`` when the per-chat gate fails.
 
     These tests pin the three behavioural contracts of that rewrite: the
-    add-path on both-flags-true, the skip-path on embeddings-disabled, and
+    add-path on both-gates-true, the skip-path on memory-disabled, and
     the eviction-path on a gate failure during regen.
     """
 
     async def test_newMessageHandler_addsChatWhenBothFlagsTrue(self, testDatabase: Database) -> None:
-        """Both embeddings flags true → recipient chat id added to ``_trackedChats``.
+        """Both master gates true → recipient chat id added to ``_trackedChats``.
 
-        ``newMessageHandler`` reads ``MEMORY_EMBEDDINGS_ENABLED`` and
-        ``MEMORY_REGENERATE_EMBEDDINGS`` via direct subscript; when both are
-        truthy the recipient id is inserted into ``_trackedChats`` so the
-        regen cron can discover it on the next tick.
+        ``newMessageHandler`` reads ``MEMORY_ENABLED`` and
+        ``EMBEDDINGS_ENABLED`` via direct subscript; when both are truthy
+        the recipient id is inserted into ``_trackedChats`` so the regen
+        cron can discover it on the next tick.
 
         Args:
             testDatabase: Fresh in-memory database fixture.
@@ -417,19 +416,42 @@ class TestTrackedChatsDiscovery:
 
         assert 100 in handler._trackedChats  # type: ignore[attr-defined]
 
-    async def test_newMessageHandler_skipsWhenEmbeddingsDisabled(self, testDatabase: Database) -> None:
-        """``MEMORY_EMBEDDINGS_ENABLED=false`` → chat NOT added to ``_trackedChats``.
+    async def test_newMessageHandler_skipsWhenMemoryDisabled(self, testDatabase: Database) -> None:
+        """``MEMORY_ENABLED=false`` → chat NOT added to ``_trackedChats``.
 
-        When embeddings are disabled the ``and`` short-circuits before the
-        ``.add()``, so the chat never enters the regen discovery pool even
-        if ``MEMORY_REGENERATE_EMBEDDINGS`` is true.
+        Pins the memory branch of the ``MEMORY_ENABLED && EMBEDDINGS_ENABLED``
+        add-gate: when the master memory gate is off the ``and``
+        short-circuits before the ``.add()``, so the chat never enters the
+        regen discovery pool even if ``EMBEDDINGS_ENABLED`` is true.
 
         Args:
             testDatabase: Fresh in-memory database fixture.
         """
         handler = await _makeHandler(testDatabase)
         settings = _chatSettings(memoryRefinementEnabled=True)
-        settings[ChatSettingsKey.MEMORY_EMBEDDINGS_ENABLED] = ChatSettingsValue("false")
+        settings[ChatSettingsKey.MEMORY_ENABLED] = ChatSettingsValue("false")
+        handler.getChatSettings = AsyncMock(return_value=settings)  # type: ignore[method-assign]
+
+        ensuredMessage = _makeEnsuredMessage(chatId=100, userId=7, chatType=ChatType.GROUP)
+
+        await handler.newMessageHandler(ensuredMessage, updateObj=Mock())
+
+        assert 100 not in handler._trackedChats  # type: ignore[attr-defined]
+
+    async def test_newMessageHandler_skipsWhenEmbeddingsDisabled(self, testDatabase: Database) -> None:
+        """``EMBEDDINGS_ENABLED=false`` (memory still on) → chat NOT added to ``_trackedChats``.
+
+        Pins the embeddings branch of the ``MEMORY_ENABLED &&
+        EMBEDDINGS_ENABLED`` add-gate: with ``MEMORY_ENABLED`` still true but
+        ``EMBEDDINGS_ENABLED`` flipped false, the gate fails and the chat is
+        never admitted to the regen discovery pool.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        settings = _chatSettings(memoryRefinementEnabled=True)
+        settings[ChatSettingsKey.EMBEDDINGS_ENABLED] = ChatSettingsValue("false")
         handler.getChatSettings = AsyncMock(return_value=settings)  # type: ignore[method-assign]
 
         ensuredMessage = _makeEnsuredMessage(chatId=100, userId=7, chatType=ChatType.GROUP)
@@ -442,17 +464,17 @@ class TestTrackedChatsDiscovery:
         """Gate failure in ``_runMemoryEmbeddingRegen`` evicts chat via ``.discard()``.
 
         Seeds ``_trackedChats = {100}`` with chat settings whose
-        ``MEMORY_REGENERATE_EMBEDDINGS`` is false. After one regen tick the
-        chat must be removed from ``_trackedChats`` (one-way eviction via
-        ``set.discard``) so it is not re-scanned on subsequent ticks until a
-        new qualifying message re-adds it.
+        ``EMBEDDINGS_ENABLED`` is false. After one regen tick the chat
+        must be removed from ``_trackedChats`` (one-way eviction via
+        ``set.discard``) so it is not re-scanned on subsequent ticks until
+        a new qualifying message re-adds it.
 
         Args:
             testDatabase: Fresh in-memory database fixture.
         """
         handler = await _makeHandler(testDatabase)
         settings = _chatSettings(memoryRefinementEnabled=True)
-        settings[ChatSettingsKey.MEMORY_REGENERATE_EMBEDDINGS] = ChatSettingsValue("false")
+        settings[ChatSettingsKey.EMBEDDINGS_ENABLED] = ChatSettingsValue("false")
         handler.getChatSettings = AsyncMock(return_value=settings)  # type: ignore[method-assign]
 
         handler._trackedChats = {100}  # type: ignore[attr-defined]

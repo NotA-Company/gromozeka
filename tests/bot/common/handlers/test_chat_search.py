@@ -7,7 +7,7 @@ Covers the three layers of the handler in isolation:
 * ``searchCommand`` — the ``/search`` user command (rate-limit → DB
   filter → client-side keyword filter → raw-formatted reply).
 * ``_dtCronJob`` — the embedding-backfill CRON_JOB (construction-time
-  gate via ``[search-history].enabled``, ``REGENERATE_EMBEDDINGS`` chat
+  gate via ``[search-history].enabled``, ``EMBEDDINGS_ENABLED`` chat
   discovery, model resolution, batch embedding, per-message error
   handling).
 
@@ -74,7 +74,6 @@ def _makeChatSettings(
         :class:`ChatSettingsValue` carrying a deterministic test value.
     """
     return {
-        ChatSettingsKey.REGENERATE_EMBEDDINGS: ChatSettingsValue("true"),
         ChatSettingsKey.EMBEDDING_MODEL: ChatSettingsValue(embeddingModel),
         ChatSettingsKey.LLM_RATELIMITER: ChatSettingsValue(""),
         ChatSettingsKey.ALLOW_TOOLS_COMMANDS: ChatSettingsValue("true" if allowTools else "false"),
@@ -1110,7 +1109,7 @@ class TestDtCronJob:
     async def test_cron_skips_when_embedding_model_missing(self) -> None:
         """A chat with no ``EMBEDDING_MODEL`` setting is skipped silently.
 
-        ``REGENERATE_EMBEDDINGS=true`` but no model name means the chat
+        ``EMBEDDINGS_ENABLED=true`` but no model name means the chat
         has no model to embed with, so the backfill moves on without
         touching the embedding API.
         """
@@ -1426,7 +1425,7 @@ class TestDtCronJob:
         """Backfill CRON_JOB returns early when no pending messages exist.
 
         The handler no longer performs any self-reset of
-        ``REGENERATE_EMBEDDINGS`` — the per-tick batch is small and
+        ``EMBEDDINGS_ENABLED`` — the per-tick batch is small and
         the next minute's tick will pick up where this one left off.
         """
         cs = _makeChatSettings(embeddingModel="text-embedding-3-small")
@@ -1455,7 +1454,7 @@ class TestDtCronJob:
         mocks["db"].chatSettings.setChatSetting.assert_not_called()
 
     async def test_cron_self_reset_does_not_fire_on_full_batch(self) -> None:
-        """``REGENERATE_EMBEDDINGS`` is NOT reset when the backlog has a full batch.
+        """``EMBEDDINGS_ENABLED`` is NOT reset when the backlog has a full batch.
 
         When the repo returns exactly ``_reindexBatchSize`` messages,
         the backlog is not yet drained — there may be more messages
@@ -1509,12 +1508,12 @@ class TestTrackedChatsDiscovery:
     """
 
     async def test_newMessageHandler_addsChatWhenBothFlagsTrue(self) -> None:
-        """``newMessageHandler`` tracks a chat when both embedding flags are true.
+        """``newMessageHandler`` tracks a chat when embeddings are enabled.
 
-        When ``EMBEDDINGS_ENABLED=true`` and ``REGENERATE_EMBEDDINGS=true``,
-        the message's ``recipient.id`` must be added to ``_trackedChats`` so
-        the backfill CRON_JOB can round-robin over it on a later tick. The
-        handler always returns ``NEXT`` so downstream handlers still run.
+        When ``EMBEDDINGS_ENABLED=true``, the message's ``recipient.id``
+        must be added to ``_trackedChats`` so the backfill CRON_JOB can
+        round-robin over it on a later tick. The handler always returns
+        ``NEXT`` so downstream handlers still run.
         """
         handler, _mocks = _makeHandler()
         em = _makeEnsuredMessage(chatId=100)
@@ -1527,8 +1526,7 @@ class TestTrackedChatsDiscovery:
     async def test_newMessageHandler_skipsWhenEmbeddingsDisabled(self) -> None:
         """``newMessageHandler`` does not track a chat when embeddings are disabled.
 
-        When ``EMBEDDINGS_ENABLED=false`` (regardless of
-        ``REGENERATE_EMBEDDINGS``), the chat must NOT be added to
+        When ``EMBEDDINGS_ENABLED=false``, the chat must NOT be added to
         ``_trackedChats``. The set stays empty and the handler still
         returns ``NEXT`` (fire-and-forget, never short-circuits the chain).
         """
@@ -1545,11 +1543,10 @@ class TestTrackedChatsDiscovery:
     async def test_dtCronJob_evictsChatOnGateFail(self) -> None:
         """``_dtCronJob`` evicts a tracked chat whose settings no longer pass the gate.
 
-        A chat in ``_trackedChats`` whose ``EMBEDDINGS_ENABLED`` or
-        ``REGENERATE_EMBEDDINGS`` is now ``false`` must be removed via
-        ``.discard()`` (no ``KeyError``) on the next cron tick, so the
-        set does not retain stale entries for chats that disabled the
-        feature between messages.
+        A chat in ``_trackedChats`` whose ``EMBEDDINGS_ENABLED`` is now
+        ``false`` must be removed via ``.discard()`` (no ``KeyError``) on
+        the next cron tick, so the set does not retain stale entries for
+        chats that disabled the feature between messages.
         """
         cs = _makeChatSettings(embeddingsEnabled=False)
         handler, _mocks = _makeHandler(chatSettings=cs)

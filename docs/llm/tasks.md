@@ -472,8 +472,8 @@ ls -1 internal/database/migrations/versions/ | grep "migration_" | sort -V | tai
 | `bot_owners` can be username OR int ID | Both are valid in config | Handle both types in owner checks |
 | `EnsuredMessage.threadId` may be `None` | Not all messages are in threads | Always handle `None` threadId |
 | `condenseThread` default is `True` | Context is condensed by default | Pass `condenseThread=False` if you need full history |
-| `getChatSettings()` returns tuples | Returns `Dict[str, tuple[str, int]]` — value + updated_by | Use `settings[key][0]` to get just the value |
-| `setChatSetting` requires `updatedBy` | `updatedBy` is keyword-only, required argument | Always pass `updatedBy=userId` when calling |
+| `getChatSettings()` return shape is layer-dependent | Handler/cache: `Dict[ChatSettingsKey, ChatSettingsValue]` — access via `.toBool()`/`.toStr()`/`.toInt()`/etc. DB-repo (`self.db.chatSettings.getChatSettings()`): `Dict[str, tuple[str, int]]` — `[0]` is value, `[1]` is updater | In handler code call `self.getChatSettings()` and use the typed converters; do NOT index `[0]` on the handler result (`ChatSettingsValue` is not subscriptable) |
+| `setChatSetting` keyword-only arg | Handler: `*, user: MessageSender`. Repo: `*, updatedBy: int` | At handler layer pass `user=ensuredMessage.sender`; at repo layer pass `updatedBy=userId` |
 | `mediaGroupDelaySecs` default is 10.0 | Time-based Telegram media group detection | Adjust per job if source chat uploads slowly |
 | `MessageSender.name` (NOT `displayName`) | The sender's display name lives on `.name`, not `.displayName` | Use `ensuredMessage.messageSender.name` |
 | `MediaStatus` / `MessageType` are enums | They are NOT plain strings — use the enum members | `MediaStatus.DONE`, `MessageType.IMAGE` (don't pass `"done"` / `"image"`) |
@@ -581,7 +581,7 @@ Include placeholders like {userName} if needed.
 - Look at `internal/bot/models/chat_settings.py` for the full pattern
 - Examine existing entries to understand the metadata structure
 - Check `configs/00-defaults/bot-defaults.toml` for default value examples
-- Load the [`add-chat-setting`](../../.agents/skills/add-chat-setting/SKILL.md) skill for a step-by-step recipe covering all four required sites and the `getChatSettings()` tuple-return gotcha
+- Load the [`add-chat-setting`](../../.agents/skills/add-chat-setting/SKILL.md) skill for a step-by-step recipe covering all four required sites and the `getChatSettings()` return-shape (handler vs DB-repo) gotcha
 
 ---
 

@@ -287,7 +287,7 @@ class LLMMessageHandler(BaseBotHandler):
                             constants.ToolName.SANDBOX_SEND_FILE: False,
                         }
                     )
-                if not chatSettings[ChatSettingsKey.MEMORY_INJECTION_ENABLED].toBool():
+                if not chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool():
                     useTools.update(
                         {
                             constants.ToolName.ADD_MEMORY: False,
@@ -702,7 +702,7 @@ class LLMMessageHandler(BaseBotHandler):
 
             # Handle LLM Action
             llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
-            injectMemories = chatSettings[ChatSettingsKey.MEMORY_INJECTION_ENABLED].toBool()
+            injectMemories = chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool()
 
             reqMessages = [
                 ModelMessage(
@@ -818,7 +818,7 @@ class LLMMessageHandler(BaseBotHandler):
         """
 
         chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
-        injectMemories = chatSettings[ChatSettingsKey.MEMORY_INJECTION_ENABLED].toBool()
+        injectMemories = chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool()
         answerProbability = chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROBABILITY].toFloat()
         if answerProbability <= 0.0:
             # logger.debug(

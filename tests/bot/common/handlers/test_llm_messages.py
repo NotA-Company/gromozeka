@@ -409,9 +409,9 @@ def _fullChatSettings(
         ChatSettingsKey.BOT_ANSWER_PROBABILITY: ChatSettingsValue("1.0"),
         # Phase 3a: memory-injection default off so the chat-time useTools gate
         # (ADD_MEMORY/SEARCH_MEMORIES) hides the memory tools by default. Tests
-        # that exercise the gate override MEMORY_INJECTION_ENABLED inline by
+        # that exercise the gate override MEMORY_ENABLED inline by
         # building a settings dict with it set to "true" directly.
-        ChatSettingsKey.MEMORY_INJECTION_ENABLED: ChatSettingsValue("false"),
+        ChatSettingsKey.MEMORY_ENABLED: ChatSettingsValue("false"),
     }
 
 
@@ -1220,10 +1220,10 @@ class TestD3DeleteMemoryGating:
 
 
 class TestMemoryInjectionToolGating:
-    """Phase 3a: ``MEMORY_INJECTION_ENABLED`` gates ``ADD_MEMORY`` / ``SEARCH_MEMORIES``.
+    """Phase 3a: ``MEMORY_ENABLED`` gates ``ADD_MEMORY`` / ``SEARCH_MEMORIES``.
 
     Pins the useTools gate added in ``_sendLLMChatMessage`` (plan §13 / §11.1):
-    when the chat-time ``MEMORY_INJECTION_ENABLED`` setting is off, both
+    when the chat-time ``MEMORY_ENABLED`` setting is off, both
     ``ADD_MEMORY`` and ``SEARCH_MEMORIES`` are explicitly disabled in the
     per-call ``useTools`` dict so the memory tools don't appear before the
     feature is opted in. When the setting is on, both are left to the wildcard
@@ -1240,7 +1240,7 @@ class TestMemoryInjectionToolGating:
         liveHandler: LLMMessageHandler,
         injectionEnabled: bool,
     ) -> None:
-        """``ADD_MEMORY``/``SEARCH_MEMORIES`` resolved iff ``MEMORY_INJECTION_ENABLED`` is on.
+        """``ADD_MEMORY``/``SEARCH_MEMORIES`` resolved iff ``MEMORY_ENABLED`` is on.
 
         Registers all three memory tools on the singleton (so absence is
         meaningful, not trivial), drives ``_sendLLMChatMessage`` with
@@ -1249,7 +1249,7 @@ class TestMemoryInjectionToolGating:
 
         Args:
             liveHandler: Live handler fixture.
-            injectionEnabled: Value for ``MEMORY_INJECTION_ENABLED``.
+            injectionEnabled: Value for ``MEMORY_ENABLED``.
         """
         # Register all three memory tools so the assertion is meaningful.
         for name in (ToolName.ADD_MEMORY, ToolName.SEARCH_MEMORIES, ToolName.DELETE_MEMORY):
@@ -1263,7 +1263,7 @@ class TestMemoryInjectionToolGating:
         settings = _fullChatSettings()
         settings[ChatSettingsKey.USE_TOOLS] = ChatSettingsValue("true")
         settings[ChatSettingsKey.ALLOW_SANDBOX] = ChatSettingsValue("false")
-        settings[ChatSettingsKey.MEMORY_INJECTION_ENABLED] = ChatSettingsValue("true" if injectionEnabled else "false")
+        settings[ChatSettingsKey.MEMORY_ENABLED] = ChatSettingsValue("true" if injectionEnabled else "false")
         liveHandler.getChatSettings = AsyncMock(return_value=settings)  # type: ignore[method-assign]
 
         liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
@@ -1330,7 +1330,7 @@ class TestHandleMentionCompactMemoryBypass:
     directly (they are already in the stored metadata) and defers resolution to
     :meth:`formatForLLM` (lazy, via ``cache.getMemoriesByIds``).
 
-    This test drives the REAL ``handleMention`` with ``MEMORY_INJECTION_ENABLED
+    This test drives the REAL ``handleMention`` with ``MEMORY_ENABLED
     = true`` and a reply parent whose stored metadata carries compact IDs, then
     asserts on the live reply object's state. ``handleMention`` stores the
     compact IDs in ``reply.metadata`` and defers resolution to ``formatForLLM``
@@ -1346,7 +1346,7 @@ class TestHandleMentionCompactMemoryBypass:
         """
         # Enable memory injection for the chat.
         settings = _fullChatSettings()
-        settings[ChatSettingsKey.MEMORY_INJECTION_ENABLED] = ChatSettingsValue("true")
+        settings[ChatSettingsKey.MEMORY_ENABLED] = ChatSettingsValue("true")
         liveHandler.getChatSettings = AsyncMock(return_value=settings)  # type: ignore[method-assign]
 
         # The incoming message mentions the bot and is a reply.

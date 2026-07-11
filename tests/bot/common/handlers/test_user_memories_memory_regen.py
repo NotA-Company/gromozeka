@@ -103,28 +103,30 @@ def _makeConfigManager(*, enabled: bool = True, reindexBatchSize: Optional[int] 
 def _makeChatSettings(
     *,
     embeddingModel: str = "embed-v1",
-    memoryEmbeddingsEnabled: bool = True,
-    memoryRegenerateEmbeddings: bool = True,
+    memoryEnabled: bool = True,
+    embeddingsEnabled: bool = True,
 ) -> ChatSettingsDict:
     """Build a chat-settings dict pre-populated for the regen path.
+
+    Memory-embedding regen admission/eviction now requires both
+    ``MEMORY_ENABLED`` and ``EMBEDDINGS_ENABLED`` (the former granular
+    flags were folded into these two master gates).
 
     Args:
         embeddingModel: Value for ``EMBEDDING_MODEL`` (default ``"embed-v1"``).
             The handler treats an empty string as "no model configured" and
             bails before cleanup / re-embed.
-        memoryEmbeddingsEnabled: Value for ``MEMORY_EMBEDDINGS_ENABLED``
-            (the discovery flag). Default ``True``.
-        memoryRegenerateEmbeddings: Value for ``MEMORY_REGENERATE_EMBEDDINGS``
-            (the per-chat gate). Default ``True``.
+        memoryEnabled: Value for ``MEMORY_ENABLED`` (the master memory gate).
+            Default ``True``.
+        embeddingsEnabled: Value for ``EMBEDDINGS_ENABLED`` (the master
+            embeddings gate). Default ``True``.
 
     Returns:
         Mapping of every :class:`ChatSettingsKey` the regen path reads.
     """
     return {
-        ChatSettingsKey.MEMORY_EMBEDDINGS_ENABLED: ChatSettingsValue("true" if memoryEmbeddingsEnabled else "false"),
-        ChatSettingsKey.MEMORY_REGENERATE_EMBEDDINGS: ChatSettingsValue(
-            "true" if memoryRegenerateEmbeddings else "false"
-        ),
+        ChatSettingsKey.MEMORY_ENABLED: ChatSettingsValue("true" if memoryEnabled else "false"),
+        ChatSettingsKey.EMBEDDINGS_ENABLED: ChatSettingsValue("true" if embeddingsEnabled else "false"),
         ChatSettingsKey.EMBEDDING_MODEL: ChatSettingsValue(embeddingModel),
     }
 
@@ -310,8 +312,9 @@ class TestRegenDiscovery:
         """``[user-memory].enabled = true`` → ``_dtCronJob`` invokes regen.
 
         Verifies the wiring: the regeneration pass is called from within
-        ``_dtCronJob`` (not just callable directly). The discovery query
-        targets ``MEMORY_EMBEDDINGS_ENABLED`` specifically.
+        ``_dtCronJob`` (not just callable directly). The discovery pool
+        is the in-memory ``_trackedChats`` set, and the per-chat gate
+        checks ``MEMORY_ENABLED`` + ``EMBEDDINGS_ENABLED``.
         """
         handler, mocks = _makeHandler(enabled=True)
         await handler._dtCronJob(task=_makeDelayedTask())  # type: ignore[attr-defined]
@@ -329,15 +332,34 @@ class TestRegenDiscovery:
         mocks["userMemories"].getMemoriesWithoutEmbeddings.assert_not_called()
 
     async def test_chatsWithFlagOffAreEvictedFromTrackedChats(self) -> None:
-        """A chat whose per-chat gate fails is evicted from ``_trackedChats``.
+        """``MEMORY_ENABLED=false`` (embeddings still on) → chat evicted.
 
         With the in-memory discovery mechanism, ``_trackedChats`` is the
-        round-robin pool. When the per-chat gate (``MEMORY_REGENERATE_EMBEDDINGS``
-        or ``MEMORY_EMBEDDINGS_ENABLED`` false) fails, the chat is removed via
-        ``.discard()`` and cleanup / re-embed are never reached for it.
+        round-robin pool. When the per-chat gate
+        (``not MEMORY_ENABLED or not EMBEDDINGS_ENABLED``) fails, the chat is
+        removed via ``.discard()`` and cleanup / re-embed are never reached
+        for it. This test pins the ``MEMORY_ENABLED`` branch of that OR-gate.
         """
         handler, mocks = _makeHandler(
-            chatSettings=_makeChatSettings(memoryRegenerateEmbeddings=False),
+            chatSettings=_makeChatSettings(memoryEnabled=False),
+        )
+        await _runRegen(handler)
+
+        mocks["userMemories"].deleteObsoleteMemoryEmbeddings.assert_not_called()
+        mocks["userMemories"].getMemoriesWithoutEmbeddings.assert_not_called()
+        assert 100 not in handler._trackedChats  # type: ignore[attr-defined]
+
+    async def test_chatsWithFlagOffAreEvictedFromTrackedChats_embeddingsDisabled(self) -> None:
+        """``EMBEDDINGS_ENABLED=false`` (memory still on) → chat evicted.
+
+        Sibling of the memory-disabled eviction test: pins the
+        ``EMBEDDINGS_ENABLED`` branch of the ``not MEMORY_ENABLED or not
+        EMBEDDINGS_ENABLED`` regen-eviction gate. With memory still enabled
+        but embeddings flipped off, the chat must be evicted from
+        ``_trackedChats`` and cleanup / re-embed never reached.
+        """
+        handler, mocks = _makeHandler(
+            chatSettings=_makeChatSettings(memoryEnabled=True, embeddingsEnabled=False),
         )
         await _runRegen(handler)
 
@@ -372,14 +394,14 @@ class TestRegenGate:
     """Tests for the per-chat gate and embedding-model resolution."""
 
     async def test_skipsWhenRegenerateFlagFalse(self) -> None:
-        """``MEMORY_REGENERATE_EMBEDDINGS=false`` → regen skips that chat.
+        """``MEMORY_ENABLED=false`` → regen skips that chat.
 
         The per-chat gate is checked AFTER the round-robin pick (so the
         index still advances) but BEFORE cleanup / re-embed — a chat that
-        paused regeneration is not touched.
+        disabled memory (or embeddings) is not touched.
         """
         handler, mocks = _makeHandler(
-            chatSettings=_makeChatSettings(memoryRegenerateEmbeddings=False),
+            chatSettings=_makeChatSettings(memoryEnabled=False),
         )
         await _runRegen(handler)
 

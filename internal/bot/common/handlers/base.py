@@ -739,7 +739,7 @@ class BaseBotHandler(CommandHandlerMixin):
         chatId = dbMessage["chat_id"]
         chatSettings = await self.getChatSettings(chatId, chatType=ensuredMessage.recipient.chatType)
         llmMFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
-        needMemories = chatSettings[ChatSettingsKey.MEMORY_INJECTION_ENABLED].toBool()
+        needMemories = chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool()
 
         outputFormat = OutputFormat.MARKDOWN
         match self.botProvider:
