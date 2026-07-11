@@ -1303,14 +1303,14 @@ class TestMemoryInjectionToolGating:
 # NOTE: handler-level ``<user-memories>`` system-message block injection
 # (the former ``TestMemoriesBlockInjection`` class) was removed. Memory
 # injection moved to :meth:`MessagePreprocessorHandler.injectMemories`
-# (pre-arrival), which attaches memories to the :class:`EnsuredMessage` via
-# ``setUserMemories``; the per-message renderer (``formatForLLM``) carries
-# them as a structured ``userMemories`` field. The old handler-side
-# ``_buildMemoriesBlock`` / ``_injectMemoriesBlock`` methods no longer exist
-# (see the matching note in ``test_base.py``). The handler message-assembly
-# paths themselves (handleMention / handleRandomMessage / handleReply) stay
-# covered by :class:`TestRandomAnswerPromptAndSkipSentinel` and
-# :class:`TestMediaDescriptionExtraction`.
+# (pre-arrival), which writes compact memory IDs into ``metadata["memories"]``;
+# the per-message renderer (:meth:`formatForLLM`) resolves them lazily via
+# ``cache.getMemoriesByIds`` into a structured ``userMemories`` JSON key. The
+# old handler-side ``_buildMemoriesBlock`` / ``_injectMemoriesBlock`` methods
+# no longer exist (see the matching note in ``test_base.py``). The handler
+# message-assembly paths themselves (handleMention / handleRandomMessage /
+# handleReply) stay covered by :class:`TestRandomAnswerPromptAndSkipSentinel`
+# and :class:`TestMediaDescriptionExtraction`.
 
 
 # ---------------------------------------------------------------------------
@@ -1319,29 +1319,27 @@ class TestMemoryInjectionToolGating:
 
 
 class TestHandleMentionCompactMemoryBypass:
-    """Phase 3b-i: the ``handleMention`` text-reply bypass no longer renders compact IDs.
+    """Phase 3b-i: the ``handleMention`` text-reply bypass stores compact IDs in metadata.
 
     The text-message-reply branch of ``handleMention`` does NOT build its reply
     :class:`EnsuredMessage` via ``fromDBChatMessage``; it manually parses the
-    stored reply's metadata JSON and applies memories directly. Before Phase
-    3b-i it called ``setUserMemories(metadata.get("memories"))`` — under the
-    compact format that set ``userMemories`` to the raw
-    ``{"permanentIds": [...], "shortTermIds": [...]}`` ID dict and
-    ``formatForLLM`` rendered it verbatim as the ``userMemories`` block
-    (garbage). The fix sets ``metadata`` directly (the compact IDs are already
-    in the stored metadata) + ``resolveMemories`` (resolve IDs -> content)
-    before the render.
+    stored reply's metadata JSON. Before Phase 3b-i the bypass tried to set
+    memory content directly from the raw ``{"permanentIds": [...],
+    "shortTermIds": [...]}`` ID dict — which ``formatForLLM`` would then render
+    verbatim (garbage). The fix stores compact IDs in ``reply.metadata``
+    directly (they are already in the stored metadata) and defers resolution to
+    :meth:`formatForLLM` (lazy, via ``cache.getMemoriesByIds``).
 
     This test drives the REAL ``handleMention`` with ``MEMORY_INJECTION_ENABLED
-    = true``, a reply parent whose stored metadata carries compact IDs, and a
-    stub cache, then asserts on the live reply object's state: ``userMemories``
-    holds the resolved content (NOT the ID dict) and ``metadata["memories"]``
-    still carries the compact IDs (no re-point). Before the fix,
-    ``userMemories`` would equal the ID-list dict — the regression this guards.
+    = true`` and a reply parent whose stored metadata carries compact IDs, then
+    asserts on the live reply object's state. ``handleMention`` stores the
+    compact IDs in ``reply.metadata`` and defers resolution to ``formatForLLM``
+    (called via ``toModelMessage``, patched out here). So ``metadata["memories"]``
+    preserves the compact IDs verbatim (no re-point / no mangling).
     """
 
-    async def test_compactIdReply_resolvesNotRenderedAsIdList(self, liveHandler: LLMMessageHandler) -> None:
-        """A compact-format stored reply resolves to content; the ID list is never in ``userMemories``.
+    async def test_compactIdReply_resolvesLazilyViaFormatForLLM(self, liveHandler: LLMMessageHandler) -> None:
+        """A compact-format stored reply preserves compact IDs; resolution is deferred to ``formatForLLM``.
 
         Args:
             liveHandler: Live handler fixture.
@@ -1396,13 +1394,9 @@ class TestHandleMentionCompactMemoryBypass:
 
         assert result is True
 
-        # Regression guard: before the fix, setUserMemories(metadata.get("memories"))
-        # set userMemories to the raw {"permanentIds": [...], "shortTermIds": [...]}
-        # dict. After the fix, userMemories holds the RESOLVED content.
-        assert reply.userMemories is not None
-        assert "permanentIds" not in reply.userMemories
-        assert "shortTermIds" not in reply.userMemories
-        assert reply.userMemories["permanent"][0]["content"] == "resolved perm fact"
-        assert reply.userMemories["shortTerm"] == []
-        # metadata["memories"] stays the compact IDs (resolveMemories does not re-point).
+        # Phase 4: handleMention stores compact IDs in metadata for lazy
+        # resolution by formatForLLM (toModelMessage is patched out here; the
+        # resolution path is covered at the EnsuredMessage level). The
+        # regression guard is: metadata preserves the compact IDs intact
+        # (no re-point / no mangling).
         assert reply.metadata.get("memories") == compactMemories

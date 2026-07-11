@@ -598,8 +598,18 @@ class LLMMessageHandler(BaseBotHandler):
                         + "\n"
                         + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
                     ),
-                    await ensuredReply.toModelMessage(self.db, format=llmMessageFormat, role="assistant"),
-                    await ensuredMessage.toModelMessage(self.db, format=llmMessageFormat, role="user"),
+                    await ensuredReply.toModelMessage(
+                        self.db,
+                        format=llmMessageFormat,
+                        role="assistant",
+                        cache=self.cache,
+                    ),
+                    await ensuredMessage.toModelMessage(
+                        self.db,
+                        format=llmMessageFormat,
+                        role="user",
+                        cache=self.cache,
+                    ),
                 ]
 
             if (
@@ -721,14 +731,17 @@ class LLMMessageHandler(BaseBotHandler):
                                     ensuredReply.metadata = metadata
                                 except Exception:
                                     pass
-                            # Resolve compact IDs from stored metadata before rendering (no-op if absent or resolved).
-                            await ensuredReply.resolveMemories(self.cache)
+                            # Memory resolution now happens lazily in
+                            # toModelMessage -> formatForLLM (cache=self.cache
+                            # passed below), so the eager resolveMemories call
+                            # was removed in Phase 2.
 
                         reqMessages.append(
                             await ensuredReply.toModelMessage(
                                 self.db,
                                 format=llmMessageFormat,
                                 role=("assistant" if ensuredReply.sender.id == await self.getBotId() else "user"),
+                                cache=self.cache,
                             ),
                         )
                     else:
@@ -743,14 +756,13 @@ class LLMMessageHandler(BaseBotHandler):
                                 f"MessageId: {ensuredReply.messageId})"
                             )
                         else:
-                            eStoredReply = await EnsuredMessage.fromDBChatMessage(
-                                storedReply, self.db, injectMemories=injectMemories, cache=self.cache
-                            )
+                            eStoredReply = await EnsuredMessage.fromDBChatMessage(storedReply, self.db)
                             reqMessages.append(
                                 await eStoredReply.toModelMessage(
                                     self.db,
                                     format=llmMessageFormat,
                                     role=("assistant" if ensuredReply.sender.id == await self.getBotId() else "user"),
+                                    cache=self.cache if injectMemories else None,
                                 ),
                             )
 
@@ -760,6 +772,7 @@ class LLMMessageHandler(BaseBotHandler):
                     self.db,
                     format=llmMessageFormat,
                     role="user",
+                    cache=self.cache if injectMemories else None,
                 ),
             )
 
@@ -880,9 +893,7 @@ class LLMMessageHandler(BaseBotHandler):
                     if storedMsg["message_id"] == ensuredMessage.messageId:
                         # Skip current message from context
                         continue
-                    eMsg = await EnsuredMessage.fromDBChatMessage(
-                        storedMsg, self.db, injectMemories=injectMemories, cache=self.cache
-                    )
+                    eMsg = await EnsuredMessage.fromDBChatMessage(storedMsg, self.db)
 
                     # We need to use `reversed` as deque.extendleft will add messages in reversed order
                     # I assume, that it will just call appendleft for each item in the list
@@ -894,6 +905,7 @@ class LLMMessageHandler(BaseBotHandler):
                                 self.db,
                                 format=llmMessageFormat,
                                 role=MessageCategory.fromStr(storedMsg["message_category"]).toRole(),
+                                cache=self.cache if injectMemories else None,
                             )
                         )
                     )
@@ -933,7 +945,13 @@ class LLMMessageHandler(BaseBotHandler):
 
                 else:
                     storedMessages.extend(contextMessages)
-                storedMessages.extend(await ensuredMessage.toModelMessageList(self.db, format=llmMessageFormat))
+                storedMessages.extend(
+                    await ensuredMessage.toModelMessageList(
+                        self.db,
+                        format=llmMessageFormat,
+                        cache=self.cache if injectMemories else None,
+                    )
+                )
 
             outcome = await self._sendLLMChatMessage(
                 ensuredMessage,

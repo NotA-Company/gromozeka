@@ -22,7 +22,6 @@ from internal.bot.models import (
     LLMMessageFormat,
     MessageRecipient,
     MessageSender,
-    convertDBMemoryToSingleMemoryDict,
 )
 from internal.config.manager import ConfigManager
 from internal.database import Database
@@ -105,15 +104,15 @@ class MessagePreprocessorHandler(BaseBotHandler):
             ensuredMessage.sender.id,
             ensuredMessage.threadId or DEFAULT_THREAD_ID,
         )
-        memories = []
+        shortTermMemories = []
         if queryEmbedding is None:
-            memories = await self.db.userMemories.getLatestMemories(
+            shortTermMemories = await self.db.userMemories.getLatestMemories(
                 chatId=ensuredMessage.recipient.id,
                 userId=ensuredMessage.sender.id,
                 threadId=ensuredMessage.threadId or DEFAULT_THREAD_ID,
             )
         else:
-            memories = await self.db.userMemories.searchMemories(
+            shortTermMemories = await self.db.userMemories.searchMemories(
                 chatId=ensuredMessage.recipient.id,
                 userId=ensuredMessage.sender.id,
                 threadId=ensuredMessage.threadId or DEFAULT_THREAD_ID,
@@ -122,15 +121,15 @@ class MessagePreprocessorHandler(BaseBotHandler):
                 permanent=False,
             )
 
-        shortTermMemories = [convertDBMemoryToSingleMemoryDict(memory, keepId=True) for memory in memories]
-
-        # setUserMemories handles both halves of the write contract: it strips
-        # `id` from each entry in the userMemories content (so no uuid leaks
-        # into formatForLLM) and extracts permanentIds/shortTermIds into
-        # metadata["memories"] (the compact persistence form). Both cohorts
-        # must carry `id` (SingleMemoryDict.id, present when the converter
-        # was called with keepId=True) for the extraction.
-        ensuredMessage.setUserMemories({"permanent": permanentMemories, "shortTerm": shortTermMemories})
+        # Write compact memory IDs to metadata["memories"] for persistence and
+        # lazy resolution. formatForLLM resolves these IDs to content via
+        # cache.getMemoriesByIds at render time (the cache was warmed above, so
+        # the read is a HIT). Entries without a usable id are silently dropped
+        # (walrus + truthy guard; ``id`` is NotRequired on SingleMemoryDict).
+        ensuredMessage.metadata["memories"] = {
+            "permanentIds": [mid for m in permanentMemories if (mid := m.get("id"))],
+            "shortTermIds": [m["memory_id"] for m in shortTermMemories if m["memory_id"]],
+        }
 
     async def newMessageHandler(
         self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
@@ -191,7 +190,7 @@ class MessagePreprocessorHandler(BaseBotHandler):
 
         if chatSearchEnabled or chatMemoriesEmbeddingsEnabled:
             messageText: str = await ensuredMessage.formatForLLM(
-                self.db, format=LLMMessageFormat.TEXT, useSingleMedia=False
+                self.db, format=LLMMessageFormat.TEXT, useSingleMedia=False, cache=None
             )
             embeddings: Optional[Tuple[str, List[float]]] = None
 

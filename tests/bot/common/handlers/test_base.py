@@ -18,19 +18,26 @@ lock acquisition can be spied on.
 
 import datetime
 import types
-from typing import Generator, List, Optional, cast
+from typing import Generator, List, Optional, Set, cast
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from internal.bot.common.handlers.base import computeMemoryExcludes
 from internal.bot.common.handlers.user_memories import UserMemoriesHandler, _formatMemoriesBlockRaw
 from internal.bot.models import (
     BotProvider,
+    ChatType,
+    EnsuredMessage,
+    LLMMessageFormat,
+    MessageRecipient,
+    MessageSender,
     UserMetadataDict,
 )
 from internal.database import Database
 from internal.database.models import MemoryType, UserMemorySource
 from internal.database.repositories.user_memories import UserMemoryDict
+from internal.database.utils import DEFAULT_THREAD_ID
 from internal.services.cache import CacheService
 
 # ---------------------------------------------------------------------------
@@ -526,3 +533,198 @@ class TestResolveUserId:
         result = await handler._resolveUserId(chatId=100, userIdentifier="²")
 
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# computeMemoryExcludes — newest→oldest memory deduplication
+# ---------------------------------------------------------------------------
+
+
+def _msgWithMemoryIds(memoryIds: Set[str]) -> EnsuredMessage:
+    """Build a minimal :class:`EnsuredMessage` whose ``getMemoryIds`` returns *memoryIds*.
+
+    ``computeMemoryExcludes`` only inspects each message via
+    ``EnsuredMessage.getMemoryIds`` (which reads
+    ``metadata["memories"]``), so this helper sets the compact ID form directly
+    and leaves everything else at defaults.
+
+    Args:
+        memoryIds: The permanent+short-term memory IDs to inject into the
+            message's compact ``metadata["memories"]`` block.
+
+    Returns:
+        A freshly constructed :class:`EnsuredMessage` carrying *memoryIds* as
+        its ``permanentIds`` list (``shortTermIds`` left empty — the union is
+        all that matters for dedup).
+    """
+    msg = EnsuredMessage(
+        sender=MessageSender(id=7, name="Alice", username="@alice"),
+        recipient=MessageRecipient(id=100, chatType=ChatType.PRIVATE),
+        messageId=42,
+        date=datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc),
+        messageText="hello",
+    )
+    msg.threadId = DEFAULT_THREAD_ID
+    msg.metadata["memories"] = {"permanentIds": sorted(memoryIds), "shortTermIds": []}  # type: ignore[assignment]
+    return msg
+
+
+class TestComputeMemoryExcludes:
+    """Smoke test for the newest→oldest memory-dedup logic in ``computeMemoryExcludes``.
+
+    Verifies the dedup contract from the Phase 3 refactor: each memory appears
+    exactly once, at its LATEST (newest) occurrence. The newest message renders
+    all its memories; each older message renders only memories not already shown
+    by any newer message.
+    """
+
+    def test_dedup_eachMemoryOnceAtNewestOccurrence(self) -> None:
+        """Memory M shared across all 4 messages collapses to a single render at the newest.
+
+        Worked example: messages oldest→newest carry
+        ``m0={M}``, ``m1={M,S1}``, ``m2={M}``, ``m3={M,S2}``. After
+        newest→oldest dedup, M renders only at the newest (m3), S1 only at m1,
+        S2 only at m3. The 3 older M occurrences collapse to one.
+        """
+        m0 = _msgWithMemoryIds({"M"})
+        m1 = _msgWithMemoryIds({"M", "S1"})
+        m2 = _msgWithMemoryIds({"M"})
+        m3 = _msgWithMemoryIds({"M", "S2"})
+        messages = [m0, m1, m2, m3]
+
+        excludes = computeMemoryExcludes(messages)
+
+        # Excludes align positionally (oldest-first): each message drops the IDs
+        # already shown by newer messages. The newest (m3) excludes nothing.
+        assert excludes == [{"M"}, {"M"}, {"M"}, set()]
+
+        # Contract: what each message RENDERS = own IDs − excludes.
+        renders = [messages[i].getMemoryIds() - excludes[i] for i in range(len(messages))]
+
+        # M appears exactly once across all renders (at the newest, m3) — the
+        # core dedup guarantee (M went from N=4 occurrences to 1).
+        assert sum(1 for r in renders if "M" in r) == 1
+        assert renders == [set(), {"S1"}, set(), {"M", "S2"}]
+
+        # Edge sanity: empty input is safe; a single message (empty seen-set)
+        # excludes nothing; disjoint memories never exclude each other.
+        assert computeMemoryExcludes([]) == []
+        assert computeMemoryExcludes([_msgWithMemoryIds({"A", "B"})]) == [set()]
+        disjoint = [_msgWithMemoryIds({"A"}), _msgWithMemoryIds({"B"}), _msgWithMemoryIds({"C"})]
+        assert computeMemoryExcludes(disjoint) == [set(), set(), set()]
+
+
+# ---------------------------------------------------------------------------
+# Dedup index-alignment integration test (keepFirstN ↔ tail wiring)
+# ---------------------------------------------------------------------------
+
+
+class TestDedupIndexAlignment:
+    """Exercises ``computeMemoryExcludes`` (boundary-spanning ID) + ``formatForLLM`` exclude filtering.
+
+    What this test DOES verify (two real things):
+
+    1. :func:`computeMemoryExcludes` over a shared ID that spans the
+       keepFirstN↔tail boundary — the newest→oldest walk must put the ID in the
+       older message's exclude set (so it renders once, at the newest occurrence).
+    2. :meth:`EnsuredMessage.formatForLLM`'s ``excludeMemoryIds`` filtering — an
+       excluded ID must NOT appear in the rendered output. Both are driven
+       through the REAL functions (not mocks of them).
+
+    What this test does NOT verify — and is intentionally not claimed to:
+
+    - Production's CONSUMPTION indexing in :meth:`getThreadByMessageForLLM`
+      (``base.py``: ``excludeMemoryIds=excludes[idx]`` for keepFirstN and
+      ``excludeMemoryIds=excludes[keepFirstNCount + j]`` for tail). This test
+      REPRODUCES that index arithmetic in its own consumption loop — it does not
+      call ``getThreadByMessageForLLM`` — so an off-by-one in production's two
+      indexing lines would NOT be caught here. The production lines carry an
+      inline invariant comment documenting the alignment contract instead. A
+      full end-to-end test through ``getThreadByMessageForLLM`` was weighed and
+      deemed not cost-justified for a 2-line positional-indexing risk (it would
+      require heavy DB/thread/chat-settings setup that obscures the signal).
+    """
+
+    async def test_sharedMemoryAcrossBoundary_rendersOnceAtNewest(self, testDatabase: Database) -> None:
+        """A memory spanning the keepFirstN↔tail boundary renders once, at the newest message.
+
+        Scenario (oldest-first): keepFirstN=[m0{SHARED}, m1{KEEP_ONLY}],
+        tail=[m2{SHARED}, m3{TAIL_ONLY}]. After the newest→oldest walk, SHARED
+        lands in m0's exclude set, so it should render only at m2 (the newest
+        occurrence). This drives the REAL ``computeMemoryExcludes`` and the REAL
+        ``formatForLLM`` (with a mock cache that resolves every ID to
+        distinguishable content). NOTE: the per-message ``excludeMemoryIds`` is
+        indexed in THIS test's own loop (mirroring production's arithmetic) —
+        see the class docstring for why this does not guard production's
+        consumption indexing.
+
+        Args:
+            testDatabase: Real in-memory database; never read (messages have no media).
+        """
+        # Build messages oldest-first. m0, m1 are keepFirstN; m2, m3 are tail.
+        m0 = _msgWithMemoryIds({"SHARED"})
+        m1 = _msgWithMemoryIds({"KEEP_ONLY"})
+        m2 = _msgWithMemoryIds({"SHARED"})
+        m3 = _msgWithMemoryIds({"TAIL_ONLY"})
+
+        # --- Reproduce the production wiring from getThreadByMessageForLLM ---
+        keepFirstNPairs: List[EnsuredMessage] = [m0, m1]
+        tailPairs: List[EnsuredMessage] = [m2, m3]
+        keepFirstNCount = len(keepFirstNPairs)
+
+        renderedMsgs: List[EnsuredMessage] = keepFirstNPairs + tailPairs
+        excludes: List[Set[str]] = computeMemoryExcludes(renderedMsgs)
+
+        # Pre-flight sanity: excludes must align positionally.
+        # renderedMsgs = [m0{SHARED}, m1{KEEP_ONLY}, m2{SHARED}, m3{TAIL_ONLY}]
+        assert excludes == [{"SHARED"}, set(), set(), set()]
+
+        # Mock cache resolves every known ID to distinguishable content.
+        sharedBody = "UNIQUE_SHARED_BODY"
+        keepBody = "KEEP_ONLY_BODY"
+        tailBody = "TAIL_ONLY_BODY"
+        cache = Mock()
+        cache.getMemoriesByIds = AsyncMock(
+            return_value={
+                "SHARED": {"type": MemoryType.FACT, "content": sharedBody, "tags": []},
+                "KEEP_ONLY": {"type": MemoryType.BIO, "content": keepBody, "tags": []},
+                "TAIL_ONLY": {"type": MemoryType.EVENT, "content": tailBody, "tags": []},
+            }
+        )
+
+        # --- Simulate the consumption loop (SAME indexing as production) ---
+        outputs: List[str] = []
+        for idx in range(len(keepFirstNPairs)):
+            outputs.append(
+                await keepFirstNPairs[idx].formatForLLM(
+                    testDatabase,
+                    format=LLMMessageFormat.JSON,
+                    cache=cache,  # type: ignore[arg-type]
+                    excludeMemoryIds=excludes[idx],
+                )
+            )
+        for j in range(len(tailPairs)):
+            outputs.append(
+                await tailPairs[j].formatForLLM(
+                    testDatabase,
+                    format=LLMMessageFormat.JSON,
+                    cache=cache,  # type: ignore[arg-type]
+                    excludeMemoryIds=excludes[keepFirstNCount + j],
+                )
+            )
+
+        # --- Assert the dedup guarantee ---
+        # SHARED content appears EXACTLY ONCE (at m2, the newest occurrence).
+        sharedCount = sum(1 for out in outputs if sharedBody in out)
+        assert sharedCount == 1, f"SHARED content appeared {sharedCount} times (expected 1)"
+
+        # The single occurrence is in m2's output (tail[0]), NOT in m0's
+        # (keepFirstN[0], which spans the boundary but is older).
+        assert sharedBody in outputs[2], "SHARED content missing from m2 (newest occurrence)"
+        assert sharedBody not in outputs[0], "SHARED content leaked into m0 (oldest, should be excluded)"
+
+        # KEEP_ONLY (keepFirstN[1]) and TAIL_ONLY (tail[1]) each render once.
+        assert sum(1 for out in outputs if keepBody in out) == 1
+        assert keepBody in outputs[1]
+        assert sum(1 for out in outputs if tailBody in out) == 1
+        assert tailBody in outputs[3]

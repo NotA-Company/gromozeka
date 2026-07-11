@@ -766,9 +766,9 @@ def _chatSettingsWithMemoryInjection(*, retrievalMode: str = MEMORY_RETRIEVAL_MO
 def _realEnsuredMessage(messageText: str = "hello world") -> EnsuredMessage:
     """Build a real :class:`EnsuredMessage` for the injectMemories write-path tests.
 
-    A real instance (not a spec-mock) is needed because ``injectMemories`` assigns
-    to ``userMemories`` (a ``__slots__`` attribute) and subscripts ``metadata``
-    (a real dict); we then assert on the resulting shape.
+    A real instance (not a spec-mock) is needed because ``injectMemories``
+    subscripts ``metadata`` (a real dict, which a spec-mock does not support);
+    we then assert on the resulting compact-ID shape.
 
     Args:
         messageText: Message text (unused by the latest-retrieval branch but
@@ -829,12 +829,13 @@ def _dbUserMemory(memoryId: str, content: str) -> UserMemoryDict:
 class TestInjectMemoriesCompactFormat:
     """Tests for the compact memory-ID write path in :meth:`injectMemories`.
 
-    Phase 3a: ``injectMemories`` now stores compact ID lists
-    (``permanentIds``/``shortTermIds``) in ``metadata["memories"]`` (for
-    persistence) and stripped content (no ``id``) in ``userMemories`` (for the
-    current turn's LLM context). The permanent-memories cache loader carries
-    ``id`` (``keepId=True``) so ``permanentIds`` is extractable; the injected
-    content form strips ``id`` so no uuid leaks into ``formatForLLM``.
+    Phase 3+: ``injectMemories`` stores compact ID lists
+    (``permanentIds``/``shortTermIds``) in ``metadata["memories"]`` for
+    persistence. The permanent-memories cache loader carries ``id``
+    (``keepId=True``) so ``permanentIds`` is extractable; resolution to content
+    happens lazily in :meth:`EnsuredMessage.formatForLLM` via
+    ``cache.getMemoriesByIds`` at render time (no ``id`` leaks — the converter
+    strips it via ``keepId=False``).
     """
 
     def _wireForInjection(
@@ -888,35 +889,6 @@ class TestInjectMemoriesCompactFormat:
         assert stored["permanentIds"] == ["perm-1"]  # type: ignore[index]
         assert stored["shortTermIds"] == ["short-1"]  # type: ignore[index]
 
-    async def test_injectMemories_stripsIdFromInjectedContent(self, handler: MessagePreprocessorHandler) -> None:
-        """No entry in ``userMemories["permanent"]`` or ``["shortTerm"]`` carries an ``id`` key.
-
-        The uuid stays only in ``metadata["memories"]["permanentIds"]`` /
-        ``["shortTermIds"]``. Regression guard against leaking uuids into the LLM
-        prompt via ``formatForLLM``. Both cohorts now flow through
-        :meth:`EnsuredMessage.setUserMemories`, which strips ``id`` from every
-        entry regardless of cohort.
-
-        Args:
-            handler: Preprocessor fixture.
-        """
-        msg = self._wireForInjection(
-            handler,
-            permanentMemories=[_permanentSingleMemory("perm-1", "vegan")],
-            dbMemories=[_dbUserMemory("short-1", "just woke up")],
-        )
-
-        await handler.injectMemories(msg, None, None)
-
-        assert msg.userMemories is not None
-        for entry in msg.userMemories["permanent"]:
-            assert "id" not in entry
-        for entry in msg.userMemories["shortTerm"]:
-            assert "id" not in entry
-        # Content is still present (sanity) for both cohorts.
-        assert msg.userMemories["permanent"][0]["content"] == "vegan"
-        assert msg.userMemories["shortTerm"][0]["content"] == "just woke up"
-
     async def test_injectMemories_permanentIdsNonEmptyConfirmsKeepId(self, handler: MessagePreprocessorHandler) -> None:
         """``permanentIds`` is non-empty when a permanent memory carries ``id``.
 
@@ -964,70 +936,3 @@ class TestInjectMemoriesCompactFormat:
         stored = msg.metadata.get("memories")
         assert stored is not None
         assert stored["shortTermIds"] == ["short-1"]  # type: ignore[index]
-
-    async def test_injectMemories_userMemoriesHasShortTermContent(self, handler: MessagePreprocessorHandler) -> None:
-        """``userMemories["shortTerm"]`` carries the slimmed content for the current turn.
-
-        Sanity guard that the current-turn LLM context still gets the (id-stripped)
-        short-term memories even though persistence uses the compact ID form.
-
-        Args:
-            handler: Preprocessor fixture.
-        """
-        msg = self._wireForInjection(
-            handler,
-            permanentMemories=[_permanentSingleMemory("perm-1", "vegan")],
-            dbMemories=[_dbUserMemory("short-1", "just woke up")],
-        )
-
-        await handler.injectMemories(msg, None, None)
-
-        assert msg.userMemories is not None
-        assert len(msg.userMemories["shortTerm"]) == 1
-        assert msg.userMemories["shortTerm"][0]["content"] == "just woke up"
-        # The slimmed short-term form has no memory_id (it's not SingleMemoryDict.id either).
-        assert "memory_id" not in msg.userMemories["shortTerm"][0]
-
-    async def test_injectMemories_routesThroughSetUserMemories(self, handler: MessagePreprocessorHandler) -> None:
-        """``injectMemories`` produces exactly the ``setUserMemories`` contract.
-
-        Guards against regressing back to the old manual-assign path (which set
-        ``userMemories`` and ``metadata["memories"]`` independently). The
-        ``setUserMemories`` contract has two inseparable halves: (1) every
-        ``userMemories`` entry has ``id`` stripped, and (2) ``metadata["memories"]``
-        is exactly ``{"permanentIds": [...], "shortTermIds": [...]}`` with the ids
-        extracted from both cohorts. Asserting both together pins the single
-        write-path entry point down.
-
-        Args:
-            handler: Preprocessor fixture.
-        """
-        msg = self._wireForInjection(
-            handler,
-            permanentMemories=[
-                _permanentSingleMemory("perm-1", "vegan"),
-                _permanentSingleMemory("perm-2", "lives in Berlin"),
-            ],
-            dbMemories=[_dbUserMemory("short-1", "just woke up")],
-        )
-
-        await handler.injectMemories(msg, None, None)
-
-        # (1) Both cohorts in userMemories are id-stripped.
-        assert msg.userMemories is not None
-        for entry in msg.userMemories["permanent"]:
-            assert "id" not in entry
-        for entry in msg.userMemories["shortTerm"]:
-            assert "id" not in entry
-        # (2) metadata["memories"] is exactly the compact id form, extracted from
-        # both cohorts' `id` fields. The manual-assign path would have produced the
-        # same dict, but only setUserMemories guarantees both halves stay in sync
-        # (the old path read short-term ids from `memory_id` on the DB dict, not
-        # from `id` on the converted entry — a divergence that this test would
-        # catch if the converter's keepId flag were ever dropped).
-        stored = msg.metadata.get("memories")
-        assert stored is not None
-        assert stored == {  # type: ignore[comparison-overlap]
-            "permanentIds": ["perm-1", "perm-2"],
-            "shortTermIds": ["short-1"],
-        }

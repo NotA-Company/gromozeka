@@ -35,13 +35,15 @@ class SingleMemoryDict(TypedDict):
     score: NotRequired[float]
 
 
-class UserMemoriesDict(TypedDict):
-    """Container for the two cohorts of memories attached to a message.
+class UserMemoriesDict(TypedDict, total=False):
+    """Transient render shape for the two cohorts of resolved memories.
 
-    Stored under :class:`MetadataDict`'s ``memories`` key and on
-    :class:`EnsuredMessage.userMemories`, so handlers and the LLM message
-    builder see a single snapshot of what was known about the user at the
-    time the message was processed.
+    Not stored on :class:`EnsuredMessage` — the canonical stored form is
+    :class:`CompactMemoryIdsDict` under ``metadata["memories"]``.
+    :meth:`EnsuredMessage.formatForLLM` resolves the compact IDs to content
+    via ``cache.getMemoriesByIds`` at render time and emits this shape in its
+    JSON output so the LLM message builder sees a single snapshot of what was
+    known about the user at the time the message was processed.
 
     Attributes:
         permanent: Memories flagged ``permanent=True`` — always injected into
@@ -58,9 +60,9 @@ class CompactMemoryIdsDict(TypedDict):
     """Compact per-message memory ID lists (the compact storage form).
 
     The memory-compaction feature stores memory IDs (not full content) per
-    message under ``metadata["memories"]``. The read path
-    (:meth:`EnsuredMessage.resolveMemories`) resolves these IDs to content
-    via the cache at render time.
+    message under ``metadata["memories"]``. The read path resolves these IDs
+    to content lazily inside :meth:`EnsuredMessage.formatForLLM` via
+    ``cache.getMemoriesByIds`` at render time.
 
     Attributes:
         permanentIds: UUID hex strings of permanent memories.
@@ -100,10 +102,9 @@ class MetadataDict(TypedDict, total=False):
         forwardedFrom: Dictionary containing forwarding information
         messagePrefix: Prefix text prepended to the message
         usedTools: List of tool usage records from AI interactions
-        memories: User memories — either the content form
-            (:class:`UserMemoriesDict`, legacy/pre-compaction) or the compact
-            ID form (:class:`CompactMemoryIdsDict`, post-compaction). The read
-            path detects the shape at render time.
+        memories: Compact memory IDs (:class:`CompactMemoryIdsDict`),
+            resolved to content lazily by :meth:`EnsuredMessage.formatForLLM`
+            via ``cache.getMemoriesByIds`` at render time.
     """
 
     condensedThread: List[CondensingDict]

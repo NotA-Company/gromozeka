@@ -44,7 +44,8 @@ admins: Optional[Dict[int, Tuple[str, str]]] = cache.getChatAdmins(chatId, ttl=3
 cache.setChatAdmins(chatId, admins)
 
 # Permanent user memories (async, write-through cache; injected at message-arrival
-# time by MessagePreprocessorHandler.injectMemories into EnsuredMessage.userMemories)
+# time by MessagePreprocessorHandler.injectMemories into EnsuredMessage.metadata.memories
+# as compact IDs + warmed into the MEMORIES by-id cache)
 permanentMemories: list[SingleMemoryDict] = await cache.getChatUserPermanentMemories(
     chatId=chatId, userId=userId, threadId=threadId
 )

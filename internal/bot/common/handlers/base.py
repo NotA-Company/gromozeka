@@ -25,7 +25,7 @@ import json
 import logging
 import time
 from enum import Enum
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import magic
 import telegram
@@ -104,6 +104,38 @@ class HandlerResultStatus(Enum):
 
     def needLogs(self) -> bool:
         return self not in (HandlerResultStatus.SKIPPED,)
+
+
+def computeMemoryExcludes(messages: Sequence[EnsuredMessage]) -> List[Set[str]]:
+    """Compute per-message memory-exclusion sets newest→oldest for deduplication.
+
+    Walks ``messages`` (assembly order, oldest-first) from NEWEST to OLDEST,
+    accumulating a ``seen`` set of memory IDs. For each message its exclude set
+    is the intersection of its own memory IDs (``EnsuredMessage.getMemoryIds``)
+    with the ``seen`` set accumulated from all NEWER messages; then its own IDs
+    are added to ``seen``. Consequently the newest message excludes nothing
+    (renders all its memories), each older message renders only memories not
+    already shown by any newer message, and each memory appears exactly once, at
+    its latest (newest) occurrence.
+
+    Condense-summary plain-text messages do NOT participate in dedup: callers
+    must pass only the individually-rendered :class:`EnsuredMessage` objects.
+
+    Args:
+        messages: Rendered :class:`EnsuredMessage` sequence in assembly order
+            (oldest-first).
+
+    Returns:
+        A list of memory-ID exclude sets positionally aligned with ``messages``
+        (index ``i`` holds the IDs to drop from ``messages[i]``).
+    """
+    seen: Set[str] = set()
+    excludes: List[Set[str]] = [set() for _ in messages]
+    for i in range(len(messages) - 1, -1, -1):
+        ids = messages[i].getMemoryIds()
+        excludes[i] = ids & seen
+        seen |= ids
+    return excludes
 
 
 class BaseBotHandler(CommandHandlerMixin):
@@ -756,14 +788,14 @@ class BaseBotHandler(CommandHandlerMixin):
         ]
 
         if dbMessage["root_message_id"] is None:
-            eMessage = await EnsuredMessage.fromDBChatMessage(
-                dbMessage, self.db, injectMemories=needMemories, cache=self.cache
-            )
+            eMessage = await EnsuredMessage.fromDBChatMessage(dbMessage, self.db)
             return ret + await eMessage.toModelMessageList(
                 self.db,
                 format=llmMFormat,
                 outputFormat=outputFormat,
                 role=MessageCategory.fromStr(dbMessage["message_category"]).toRole(),
+                cache=self.cache if needMemories else None,
+                excludeMemoryIds=set(),
             )
 
         dbMessageList = await self.db.chatMessages.getChatMessagesByRootId(
@@ -780,33 +812,33 @@ class BaseBotHandler(CommandHandlerMixin):
         keepFirstN = 1
         keepLastN = 1
 
-        eRootMessage = await EnsuredMessage.fromDBChatMessage(dbMessageList[0], self.db, injectMemories=needMemories)
+        eRootMessage = await EnsuredMessage.fromDBChatMessage(dbMessageList[0], self.db)
         condenseCache = eRootMessage.metadata.get("condensedThread", [])
         condenseCacheMessages: List[ModelMessage] = []
+
+        # Build the individually-rendered EnsuredMessages and the condense-summary
+        # plain ModelMessages first (oldest-first), then compute per-message memory
+        # excludes (newest->oldest) and format forward. Condense-summary entries are
+        # plain text and do NOT participate in dedup (they neither contribute to nor
+        # are affected by the seen-set); only the individually-rendered
+        # EnsuredMessages participate. Each pair is (message, message_category).
+        keepFirstNPairs: List[Tuple[EnsuredMessage, str]] = []
+        summaryMsgs: List[ModelMessage] = []
+
         if condenseCache and condenseThread:
             # First - add skipped messages to result.
             # It should be ony starting message
             for i in range(min(keepFirstN, len(dbMessageList))):
-                eMessage = await EnsuredMessage.fromDBChatMessage(
-                    dbMessageList[i], self.db, injectMemories=needMemories, cache=self.cache
-                )
-                ret.extend(
-                    await eMessage.toModelMessageList(
-                        self.db,
-                        format=llmMFormat,
-                        outputFormat=outputFormat,
-                        role=MessageCategory.fromStr(dbMessageList[i]["message_category"]).toRole(),
-                    )
-                )
+                eMessage = await EnsuredMessage.fromDBChatMessage(dbMessageList[i], self.db)
+                keepFirstNPairs.append((eMessage, dbMessageList[i]["message_category"]))
 
             # For each summary:
-            # Add summary message to result
-            # And skip summaried messages
+            # Build summary message and skip summaried messages
             for condensedMessage in condenseCache:
                 # If we'll decide to condenseContext, skip summary message from condensing
                 keepFirstN += 1
                 cacheEntry = ModelMessage(role="user", content=condensedMessage["text"])
-                ret.append(cacheEntry)
+                summaryMsgs.append(cacheEntry)
                 condenseCacheMessages.append(cacheEntry)
                 lastDT = datetime.datetime.fromtimestamp(condensedMessage["tillTS"], datetime.timezone.utc)
                 skippedMessages = 0
@@ -816,16 +848,52 @@ class BaseBotHandler(CommandHandlerMixin):
                         break
                 dbMessageList = dbMessageList[skippedMessages:]
 
-        for dbMessage in dbMessageList:
-            eMessage = await EnsuredMessage.fromDBChatMessage(
-                dbMessage, self.db, injectMemories=needMemories, cache=self.cache
-            )
+        tailPairs: List[Tuple[EnsuredMessage, str]] = []
+        for dbRow in dbMessageList:
+            eMessage = await EnsuredMessage.fromDBChatMessage(dbRow, self.db)
+            tailPairs.append((eMessage, dbRow["message_category"]))
+
+        # Dedup: walk the rendered EnsuredMessage sequence newest->oldest. The
+        # rendered sequence is keepFirstN followed by tail (oldest-first); the
+        # condense-summaries in the middle are excluded from dedup. ``excludes``
+        # aligns positionally with ``renderedMsgs``.
+        renderedMsgs: List[EnsuredMessage] = [em for em, _ in keepFirstNPairs] + [em for em, _ in tailPairs]
+        excludes: List[Set[str]] = computeMemoryExcludes(renderedMsgs)
+
+        # Format forward (oldest-first): keepFirstN -> summaries -> tail, so ``ret``
+        # keeps the same assembly order as before the dedup wiring.
+        # DEDUP-CRITICAL INDEX ALIGNMENT (not covered by an end-to-end test):
+        # keepFirstN consumes ``excludes[0..keepFirstNCount-1]`` (``excludes[idx]``
+        # below) and tail consumes ``excludes[keepFirstNCount..]``
+        # (``excludes[keepFirstNCount + j]`` below), matching ``renderedMsgs``
+        # above (``[*keepFirstNPairs, *tailPairs]``). Keep this in sync with
+        # ``computeMemoryExcludes``'s positional output — an off-by-one here
+        # (e.g. ``excludes[j]`` for tail, dropping the ``keepFirstNCount`` offset)
+        # would silently mis-dedup. The unit test ``TestDedupIndexAlignment``
+        # reproduces this arithmetic rather than calling this loop, so it does
+        # NOT guard these two indexing lines; change both together.
+        keepFirstNCount = len(keepFirstNPairs)
+        for idx, (eMessage, category) in enumerate(keepFirstNPairs):
             ret.extend(
                 await eMessage.toModelMessageList(
                     self.db,
                     format=llmMFormat,
                     outputFormat=outputFormat,
-                    role=MessageCategory.fromStr(dbMessage["message_category"]).toRole(),
+                    role=MessageCategory.fromStr(category).toRole(),
+                    cache=self.cache,
+                    excludeMemoryIds=excludes[idx],
+                )
+            )
+        ret.extend(summaryMsgs)
+        for j, (eMessage, category) in enumerate(tailPairs):
+            ret.extend(
+                await eMessage.toModelMessageList(
+                    self.db,
+                    format=llmMFormat,
+                    outputFormat=outputFormat,
+                    role=MessageCategory.fromStr(category).toRole(),
+                    cache=self.cache,
+                    excludeMemoryIds=excludes[keepFirstNCount + j],
                 )
             )
 

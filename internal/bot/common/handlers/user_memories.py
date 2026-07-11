@@ -1495,8 +1495,15 @@ class UserMemoriesHandler(BaseBotHandler):
         renderedParts: List[str] = []
         # reversed() → oldest-first for natural reading order (matches SummarizationHandler).
         for msg in reversed(messages):
-            eMsg = await EnsuredMessage.fromDBChatMessage(msg, self.db, injectMemories=False)
-            renderedParts.append(await eMsg.formatForLLM(self.db, format=LLMMessageFormat.JSON, stripAtsign=True))
+            eMsg = await EnsuredMessage.fromDBChatMessage(msg, self.db)
+            renderedParts.append(
+                await eMsg.formatForLLM(
+                    self.db,
+                    format=LLMMessageFormat.JSON,
+                    stripAtsign=True,
+                    cache=None,
+                )
+            )
         return "\n".join(renderedParts)
 
     def _makeSyntheticEnsuredMessage(self, *, chatId: int, userId: int, threadId: int) -> EnsuredMessage:

@@ -408,9 +408,7 @@ class ChatSearchHandler(BaseBotHandler):
         # asyncio loop responsive between embeddings.
         embedded = 0
         for pendingMessage in pendingMessagesList:
-            ensuredMessage = await EnsuredMessage.fromDBChatMessage(
-                data=pendingMessage, db=self.db, injectMemories=False
-            )
+            ensuredMessage = await EnsuredMessage.fromDBChatMessage(data=pendingMessage, db=self.db)
 
             if await self.embedAndSaveMessage(ensuredMessage=ensuredMessage):
                 embedded += 1
@@ -446,7 +444,10 @@ class ChatSearchHandler(BaseBotHandler):
         """
         try:
             messageText: str = await ensuredMessage.formatForLLM(
-                self.db, format=LLMMessageFormat.TEXT, useSingleMedia=False
+                self.db,
+                format=LLMMessageFormat.TEXT,
+                useSingleMedia=False,
+                cache=None,
             )
             embeddings: Optional[Tuple[str, List[float]]] = None
             if messageText.strip():
@@ -703,8 +704,15 @@ class ChatSearchHandler(BaseBotHandler):
             ``username``, ``full_name``, ``date``, ``reply_id``,
             and ``thread_id``.
         """
-        eMessage = await EnsuredMessage.fromDBChatMessage(msg, self.db, injectMemories=False)
-        return json.loads(await eMessage.formatForLLM(self.db, format=LLMMessageFormat.JSON, useSingleMedia=False))
+        eMessage = await EnsuredMessage.fromDBChatMessage(msg, self.db)
+        return json.loads(
+            await eMessage.formatForLLM(
+                self.db,
+                format=LLMMessageFormat.JSON,
+                useSingleMedia=False,
+                cache=None,
+            )
+        )
 
     async def _llmToolGetThread(
         self,

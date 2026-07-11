@@ -326,7 +326,7 @@ class MediaHandler(BaseBotHandler):
                 logger.error(f"Failed to get parent message #{ensuredReply.recipient.id}:{ensuredReply.messageId}")
             else:
                 # logger.debug(f"storedReply: {storedReply}")
-                eStoredMsg = await EnsuredMessage.fromDBChatMessage(storedReply, self.db, injectMemories=False)
+                eStoredMsg = await EnsuredMessage.fromDBChatMessage(storedReply, self.db)
                 # logger.debug(f"eStoredMsg: {eStoredMsg}")
                 await eStoredMsg.updateMediaContent(self.db)
                 # logger.debug(f"eStoredMsg V2: {eStoredMsg}")
@@ -650,15 +650,14 @@ class MediaHandler(BaseBotHandler):
                     limit=10,
                 )
             ):
-                eMsg = await EnsuredMessage.fromDBChatMessage(
-                    msg, self.db, injectMemories=memoriesEnabled, cache=self.cache
-                )
+                eMsg = await EnsuredMessage.fromDBChatMessage(msg, self.db)
                 latestMessages.append(
                     await eMsg.toModelMessage(
                         self.db,
                         format=LLMMessageFormat(
                             chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr(),
                         ),
+                        cache=self.cache if memoriesEnabled else None,
                     )
                 )
 

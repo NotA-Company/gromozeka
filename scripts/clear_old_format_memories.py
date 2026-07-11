@@ -7,7 +7,8 @@ have existed over time:
 
   * **New (compact) format** -- ``{"permanentIds": ["uuid", ...], "shortTermIds":
     ["uuid", ...]}``. The current bot code only understands this shape (it is
-    resolved to content on the read path by ``EnsuredMessage.resolveMemories``).
+    resolved to content lazily inside ``formatForLLM`` via
+    ``cache.getMemoriesByIds``).
   * **Old (content) format** -- ``{"permanent": [SingleMemoryDict, ...],
     "shortTerm": [SingleMemoryDict, ...]}``, written before compaction landed.
     The current code path treats any ``memories`` dict lacking
@@ -130,9 +131,10 @@ def _classifyMetadata(
     """Classify one row's ``metadata`` value for the clear operation.
 
     A ``memories`` value is treated as **new-format** iff it is a JSON object
-    containing ``permanentIds`` or ``shortTermIds`` (mirroring
-    ``EnsuredMessage.resolveMemories``). Any other JSON-object value under
-    ``memories`` is the legacy content shape and is cleared.
+    containing ``permanentIds`` or ``shortTermIds`` (mirroring the compact-ID
+    shape that ``formatForLLM`` resolves lazily via ``cache.getMemoriesByIds``).
+    Any other JSON-object value under ``memories`` is the legacy content shape
+    and is cleared.
 
     Args:
         metadata: The raw ``metadata`` column value (never SQL NULL; an empty

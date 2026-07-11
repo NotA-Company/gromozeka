@@ -351,7 +351,6 @@ async def main() -> int:
     condensingPrompt = chatSettings.get(ChatSettingsKey.CONDENSING_PROMPT, ChatSettingsValue("")).toStr()
     condensingSystemPrompt = chatSettings.get(ChatSettingsKey.CONDENSING_SYSTEM_PROMPT, ChatSettingsValue("")).toStr()
     condensingModel = chatSettings.get(ChatSettingsKey.CONDENSING_MODEL, ChatSettingsValue("")).toStr()
-    injectMemories = chatSettings.get(ChatSettingsKey.MEMORY_INJECTION_ENABLED, ChatSettingsValue("true")).toBool()
 
     print(f"Chat type: {chatType.value}")
     print(f"LLM message format: {llmMessageFormat.value}")
@@ -384,7 +383,7 @@ async def main() -> int:
             continue
 
         # Reconstruct EnsuredMessage (line 724)
-        eMsg = await EnsuredMessage.fromDBChatMessage(storedMsg, db, injectMemories=injectMemories)
+        eMsg = await EnsuredMessage.fromDBChatMessage(storedMsg, db)
 
         # Drop randomContext to not add it to metadata (for triggering condencing)
         if eMsg.metadata.get("randomContext", None) is not None:
@@ -396,6 +395,8 @@ async def main() -> int:
             db,
             format=llmMessageFormat,
             role=MessageCategory.fromStr(storedMsg["message_category"]).toRole(),
+            cache=None,
+            excludeMemoryIds=set(),
         )
         contextMessages.extendleft(reversed(messages))
 

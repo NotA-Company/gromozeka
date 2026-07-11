@@ -985,7 +985,7 @@ class CacheService:
         :class:`SingleMemoryDict` via :func:`convertDBMemoryToSingleMemoryDict`
         (default ``keepId=False``), and populated back into the cache. This
         cache is the read-path resolver (Phase 3's
-        ``EnsuredMessage.resolveMemories``): each entry is looked up by dict
+        ``EnsuredMessage.formatForLLM``): each entry is looked up by dict
         key — the ``mid`` key IS the memory id — so the entry's internal
         ``id`` field is never read. The resolved content is rendered verbatim
         by ``formatForLLM`` into ``userMemories``, so storing ``id`` would
