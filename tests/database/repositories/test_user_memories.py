@@ -695,6 +695,47 @@ class TestUserMemoriesVectorLayer:
         assert rowB2["embedding_model"] == "modelA"
         assert rowB2["embedding_dimensions"] == 3
 
+    async def test_saveMemoryEmbedding_crossThreadNullThreadId(self, testDatabase: Database) -> None:
+        """Regression: a memory with ``thread_id IS NULL`` must be embeddable.
+
+        Cross-thread permanent memories (``thread_id IS NULL`` — e.g.
+        migration_020 backfill A from the legacy ``user_data`` table) must
+        survive the vec0 upsert. vec0 metadata columns are non-nullable
+        ``INTEGER``, so passing ``None`` for ``thread_id`` raises
+        ``sqlite3.OperationalError: Expected integer for INTEGER metadata
+        column thread_id, received NULL``. The fix coerces ``None`` to
+        ``DEFAULT_THREAD_ID`` (0) for the vec0 insert ONLY; the
+        authoritative ``user_memories.thread_id`` stays ``NULL`` and the
+        denormalised vec0 ``thread_id`` is never read back for filtering
+        (the JOIN step on ``user_memories.thread_id`` is authoritative).
+        """
+        if not self._vecAvailable(testDatabase):
+            pytest.skip("sqlite-vec not installed")
+
+        # Cross-thread permanent fact — thread_id NULL (mirrors migration_020 backfill A).
+        memoryId = await self._add(
+            testDatabase,
+            content="cross-thread fact",
+            permanent=True,
+            threadId=None,
+        )
+
+        ok = await testDatabase.userMemories.saveMemoryEmbedding(CHAT_ID, USER_ID, memoryId, [1.0, 0.0, 0.0], "modelA")
+        assert ok is True, "saveMemoryEmbedding must succeed for NULL-thread memories"
+
+        # Provenance columns set on user_memories (only happens on vec0 success).
+        perm = await testDatabase.userMemories.getPermanentMemories(CHAT_ID, USER_ID, threadId=0)
+        row = next(r for r in perm if r["memory_id"] == memoryId)
+        assert row["thread_id"] is None, "relational thread_id must remain NULL (vec0 coercion is vec0-only)"
+        assert row["embedding_model"] == "modelA"
+        assert row["embedding_dimensions"] == 3
+
+        # Semantic search (no thread filter) must find the cross-thread memory.
+        results = await testDatabase.userMemories.searchMemories(
+            CHAT_ID, USER_ID, queryEmbedding=[1.0, 0.0, 0.0], embeddingModel="modelA", limit=5
+        )
+        assert any(r["memory_id"] == memoryId for r in results), "cross-thread memory must be searchable"
+
     ###
     # deleteMemoryEmbedding
     ###

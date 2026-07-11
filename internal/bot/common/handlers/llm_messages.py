@@ -26,7 +26,7 @@ import logging
 import random
 import re
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import MutableSet, Sequence
 from enum import StrEnum
 from typing import Optional
 
@@ -884,6 +884,7 @@ class LLMMessageHandler(BaseBotHandler):
                     ),
                 ]
                 contextMessages = deque[ModelMessage]()
+                excludedMemoryIds: MutableSet[str] = ensuredMessage.getMemoryIds()
                 for storedMsg in await self.db.chatMessages.getChatMessagesSince(
                     chatId=chatId,
                     threadId=ensuredMessage.threadId if ensuredMessage.threadId is not None else 0,
@@ -906,9 +907,11 @@ class LLMMessageHandler(BaseBotHandler):
                                 format=llmMessageFormat,
                                 role=MessageCategory.fromStr(storedMsg["message_category"]).toRole(),
                                 cache=self.cache if injectMemories else None,
+                                excludeMemoryIds=excludedMemoryIds,
                             )
                         )
                     )
+                    excludedMemoryIds.update(eMsg.getMemoryIds())
                     if eMsg.metadata.get("randomContext", None) is not None:
                         # If some message already have summarized context,
                         #  do not add previous messages to context
@@ -950,6 +953,7 @@ class LLMMessageHandler(BaseBotHandler):
                         self.db,
                         format=llmMessageFormat,
                         cache=self.cache if injectMemories else None,
+                        excludeMemoryIds=set(),
                     )
                 )
 

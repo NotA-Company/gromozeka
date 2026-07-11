@@ -174,6 +174,26 @@ Unified structured memory system replacing the v1 rolling-bio blob. Canonical do
 > memories no longer include `score`); signature made `*, chatId` keyword-only;
 > added `cache=None` omission test; fixed stale `resolveMemories` docstrings in
 > `scripts/clear_old_format_memories.py`.
+>
+> **Post-shipping user revisions (same day):** user hand-rolled the dedup INLINE
+> and dropped the helper. (1) `getThreadByMessageForLLM` REWRITTEN — tail deduped
+> newest→oldest inline (accumulate exclude-set); keepFirstN (root) message EXEMPT
+> from dedup (`excludeMemoryIds=set()`) by DELIBERATE design choice for code
+> simplicity — a memory shared root↔tail may appear twice in condensed threads
+> (accepted trade-off; common non-condensed case unaffected). (2)
+> `handleRandomMessage` non-reply dedup ADDED inline (history+current,
+> newest→oldest; current message seeds `seen`) — verified correct by review.
+> (3) `computeMemoryExcludes` module fn DELETED (zero prod callers); its 2 test
+> classes (`TestComputeMemoryExcludes`, `TestDedupIndexAlignment`) DELETED — the
+> dedup algorithm now has NO direct unit test (exercised only via handler paths;
+> `getThreadByMessageForLLM` is mocked in handler tests — known coverage gap).
+> (4) `cache=` render-call gate RESTORED to pre-dedup behavior:
+> `cache=self.cache if needMemories else None` (memories render only when
+> injection enabled for the chat). (5) `RANDOM_ANSWER_CONTEXT_LENGTH` 50→64
+> (unrelated tuning). Docs (ADR-018, handlers.md, user-memories.md) updated for
+> inline dedup + root exemption + cache gate. Final: **3087 tests green**, lint
+> clean. NOTE: the dedup contract is now "each memory once at latest occurrence
+> in the NON-condensed path; condensed-replay root is exempt."
 
 Plan to eliminate per-message duplication of user-memories JSON in LLM context (today each `EnsuredMessage` renders its full `{permanent, shortTerm}` block verbatim → ~N× repetition of permanent memories across a thread; storage already compacted to IDs in `metadata["memories"]`, but rendered output still repeats full content). Plan doc: [`docs/plans/memories-context-dedup-plan-v1.md`](../../plans/memories-context-dedup-plan-v1.md). Locked design decisions (agreed with user):
 

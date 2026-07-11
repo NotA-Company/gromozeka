@@ -113,7 +113,7 @@ After this timeout, the processing will be cancelled to prevent
 resource exhaustion. Default is 30 minutes (1800 seconds).
 """
 
-RANDOM_ANSWER_CONTEXT_LENGTH: int = 50
+RANDOM_ANSWER_CONTEXT_LENGTH: int = 64
 """Maximum number of messages to include in the context for random answer generation.
 
 This controls how much recent conversation history is considered when

@@ -1,6 +1,6 @@
 # Memories Context Deduplication Plan v2
 
-- **Status:** **IMPLEMENTED** (2026-07-11) — shipped via the 6-phase plan (P1–P6, 3087 tests green). Decision record: ADR-018 in `docs/llm/architecture.md`; canonical summary: `docs/llm/memories/user-memories.md` "Render-time resolution (lazy + dedup)". Final-actual deltas from this plan body: `setUserMemories` was removed outright (not repurposed); `cache`/`excludeMemoryIds` are REQUIRED keyword-only (no defaults — pyright-enforced); `computeMemoryExcludes` is a module fn in `base.py` (kept, not inlined).
+- **Status:** **IMPLEMENTED** (2026-07-11) — shipped via the 6-phase plan (P1–P6, 3087 tests green). Decision record: ADR-018 in `docs/llm/architecture.md`; canonical summary: `docs/llm/memories/user-memories.md` "Render-time resolution (lazy + dedup)". Final-actual deltas from this plan body: `setUserMemories` was removed outright (not repurposed); `cache`/`excludeMemoryIds` are REQUIRED keyword-only (no defaults — pyright-enforced); `computeMemoryExcludes` was later inlined at each call site and the helper removed from `base.py` (see ADR-018).
 - **Date:** 2026-07-11
 - **Related:**
   - v1 (brief): [`docs/plans/memories-context-dedup-plan-v1.md`](memories-context-dedup-plan-v1.md)

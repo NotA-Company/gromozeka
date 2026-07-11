@@ -436,20 +436,27 @@ resolves the compact IDs **on-demand** in its JSON branch:
   IDs — the invariant ADR-017 deviation #1 established). When all referenced IDs
   fail to resolve (or none survive the exclude filter), the `"userMemories"` key
   is omitted entirely.
-- **Per-context dedup** (`getThreadByMessageForLLM`, thread path): the rendered
-  `EnsuredMessage` sequence (`renderedMsgs = [*keepFirstNMsgs, *tailMsgs]`) is
-  walked newest→oldest by the module function `computeMemoryExcludes`
-  ([`internal/bot/common/handlers/base.py`](../../../internal/bot/common/handlers/base.py)),
-  producing one `excludeMemoryIds` set per message — the intersection of that
-  message's own IDs (`getMemoryIds()`) with everything already seen in newer
-  messages. Each message is then formatted with its exclude set. Result: the
+- **Per-context dedup** is applied **inline at each call site** (no shared
+  helper). Each site walks its message sequence newest→oldest, accumulating an
+  exclude-set: for each message it applies `excludeMemoryIds = ownIds ∩ seen`
+  (where `ownIds = getMemoryIds()`), then adds its own IDs to `seen`. The
   newest message renders its full memory set; each older message renders only
   memories not already shown by any newer message; each memory appears exactly
-  once, at its latest (newest) occurrence. Condense-summary plain-text messages
-  do NOT participate in dedup (only individually-rendered `EnsuredMessage`
-  objects are passed to `computeMemoryExcludes`). Single-message render sites
-  (mention, random, image-prompt fallback) pass `excludeMemoryIds=set()` — no
-  dedup, the message renders its full resolved set.
+  once, at its latest (newest) occurrence. `getThreadByMessageForLLM` walks the
+  tail messages newest→oldest into a `deque` (the `excludedMemoryIds` set
+  accumulates each message's IDs); `handleRandomMessage` does the same across
+  its history+current sequence. Condense-summary plain-text messages carry no
+  memory blocks and never participate in dedup. Genuine single-message render
+  sites (mention, image-prompt fallback) pass `excludeMemoryIds=set()` — the one
+  message renders its full resolved set.
+- **Condense-replay root exemption (accepted trade-off):** in the
+  condense-replay branch of `getThreadByMessageForLLM`, the single
+  `keepFirstN` (root) message is EXEMPT from dedup — it renders its full memory
+  set (`excludeMemoryIds=set()`) to keep the assembly code simple. A memory
+  present in both the root and a newer tail message may therefore appear twice
+  (once at the root, once at its latest tail occurrence). The common
+  (non-condensed) thread case is unaffected — there the root participates in
+  the newest→oldest walk and deduplicates normally.
 
 Only the **compact format** (`{"permanentIds": [...], "shortTermIds": [...]}`)
 is supported. Old-format messages (`{"permanent": [...], "shortTerm": [...]}`,
@@ -462,9 +469,10 @@ removes stale old-format `memories` from `chat_messages.metadata` so the stored
 payload does not carry dead data.
 
 The render sites that pass `cache=self.cache` (gated on each site's
-`MEMORY_INJECTION_ENABLED` condition) are: `getThreadByMessageForLLM`
+`MEMORY_INJECTION_ENABLED` condition, i.e. `cache=self.cache if needMemories
+else None`) are: `getThreadByMessageForLLM`
 (`base.py` — keepFirstN + tail render loops, with per-message `excludeMemoryIds`
-from `computeMemoryExcludes`), `handleMention` (`llm_messages.py`), the
+accumulated inline newest→oldest), `handleMention` (`llm_messages.py`), the
 `handleReply` fallback, `handleRandomMessage` (`llm_messages.py`), and the
 image-prompt fallback in `draw_command` (`media.py`). Non-chat / TEXT callers
 (some search/summarization/user-memories render paths) pass
