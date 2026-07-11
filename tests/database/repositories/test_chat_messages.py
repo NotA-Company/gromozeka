@@ -200,3 +200,141 @@ class TestMessageThread:
         assert result["target_message"]["message_id"] == MessageId(2)
         assert result["root_message"] is not None
         assert result["root_message"]["message_id"] == MessageId(1)
+
+
+class TestGetChatMessagesByMessageIds:
+    """End-to-end tests for ``ChatMessagesRepository.getChatMessagesByMessageIds``.
+
+    Covers the batch-by-ID lookup: found subset, empty input, not-found subset,
+    ascending-date ordering, cross-chat isolation, and duplicate-id handling.
+
+    Uses the shared ``testDatabase`` fixture from ``tests/conftest.py``
+    so each test gets a fresh in-memory SQLite database with all
+    migrations applied — no mocks.
+    """
+
+    @staticmethod
+    async def _seedUser(db: Database, chatId: int, userId: int) -> None:
+        """Insert a chat_users row so JOINs to chat_messages succeed."""
+        await db.chatUsers.updateChatUser(
+            chatId=chatId,
+            userId=userId,
+            username=f"user{userId}",
+            fullName=f"User {userId}",
+        )
+
+    @staticmethod
+    async def _seedMessage(
+        db: Database,
+        chatId: int,
+        userId: int,
+        messageId: int,
+        messageText: str,
+        *,
+        date: datetime.datetime | None = None,
+    ) -> None:
+        """Insert a chat_users row and a chat_messages row for the test seed.
+
+        Args:
+            db: Database fixture.
+            chatId: Chat identifier.
+            userId: Sender identifier.
+            messageId: Message identifier.
+            messageText: Message body text.
+            date: Optional explicit timestamp (defaults to now). Used to
+                control ascending-date ordering in ordering tests.
+        """
+        await TestGetChatMessagesByMessageIds._seedUser(db, chatId=chatId, userId=userId)
+        await db.chatMessages.saveChatMessage(
+            date=date if date is not None else datetime.datetime.now(datetime.timezone.utc),
+            chatId=chatId,
+            userId=userId,
+            messageId=MessageId(messageId),
+            messageText=messageText,
+        )
+
+    async def test_foundSubset(self, testDatabase: Database) -> None:
+        """Requesting a subset of inserted IDs returns exactly those rows."""
+        await self._seedMessage(testDatabase, chatId=1, userId=100, messageId=1, messageText="one")
+        await self._seedMessage(testDatabase, chatId=1, userId=200, messageId=2, messageText="two")
+        await self._seedMessage(testDatabase, chatId=1, userId=300, messageId=3, messageText="three")
+
+        result = await testDatabase.chatMessages.getChatMessagesByMessageIds(
+            chatId=1, messageIds=[MessageId(1), MessageId(3)]
+        )
+
+        resultIds = sorted(row["message_id"].asInt() for row in result)
+        assert resultIds == [1, 3]
+
+    async def test_emptyInput(self, testDatabase: Database) -> None:
+        """Empty ``messageIds`` input returns an empty list (no IN () SQL generated)."""
+        await self._seedMessage(testDatabase, chatId=1, userId=100, messageId=1, messageText="one")
+
+        result = await testDatabase.chatMessages.getChatMessagesByMessageIds(chatId=1, messageIds=[])
+
+        assert result == []
+
+    async def test_notFoundSubset(self, testDatabase: Database) -> None:
+        """Requesting a mix of existing and non-existing IDs returns only found rows.
+
+        The result list is shorter than the input when some IDs don't exist
+        in the chat; the caller is responsible for computing ``notFound``.
+        """
+        await self._seedMessage(testDatabase, chatId=1, userId=100, messageId=1, messageText="one")
+
+        result = await testDatabase.chatMessages.getChatMessagesByMessageIds(
+            chatId=1, messageIds=[MessageId(1), MessageId(999), MessageId(1000)]
+        )
+
+        assert len(result) == 1
+        assert result[0]["message_id"] == MessageId(1)
+
+    async def test_orderingByDateAsc(self, testDatabase: Database) -> None:
+        """Result is ordered ascending by date even when inserted out of order."""
+        base = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+        # Insert in reverse chronological order with explicit dates.
+        await self._seedMessage(
+            testDatabase, chatId=1, userId=100, messageId=3, messageText="newest", date=base.replace(day=3)
+        )
+        await self._seedMessage(
+            testDatabase, chatId=1, userId=100, messageId=1, messageText="oldest", date=base.replace(day=1)
+        )
+        await self._seedMessage(
+            testDatabase, chatId=1, userId=100, messageId=2, messageText="middle", date=base.replace(day=2)
+        )
+
+        result = await testDatabase.chatMessages.getChatMessagesByMessageIds(
+            chatId=1, messageIds=[MessageId(1), MessageId(2), MessageId(3)]
+        )
+
+        resultIds = [row["message_id"].asInt() for row in result]
+        assert resultIds == [1, 2, 3]
+
+    async def test_crossChatIsolation(self, testDatabase: Database) -> None:
+        """A colliding message_id in a different chat is NOT returned.
+
+        Message IDs are scoped per chat; requesting IDs from chat 1 with
+        chatId=2 must not leak chat 1's rows.
+        """
+        await self._seedMessage(testDatabase, chatId=1, userId=100, messageId=42, messageText="in chat 1")
+        await self._seedMessage(testDatabase, chatId=2, userId=100, messageId=42, messageText="in chat 2")
+
+        result = await testDatabase.chatMessages.getChatMessagesByMessageIds(chatId=2, messageIds=[MessageId(42)])
+
+        assert len(result) == 1
+        assert result[0]["message_text"] == "in chat 2"
+
+    async def test_duplicateInputIds(self, testDatabase: Database) -> None:
+        """Passing duplicate IDs in the input returns one row (no error).
+
+        Dedup is the caller's responsibility; when duplicates slip through,
+        the SQL ``IN (...)`` collapses them to a single match.
+        """
+        await self._seedMessage(testDatabase, chatId=1, userId=100, messageId=5, messageText="dup target")
+
+        result = await testDatabase.chatMessages.getChatMessagesByMessageIds(
+            chatId=1, messageIds=[MessageId(5), MessageId(5)]
+        )
+
+        assert len(result) == 1
+        assert result[0]["message_id"] == MessageId(5)

@@ -20,7 +20,7 @@ filtering, and the stale-ID omission contract.
 
 import datetime
 import json
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -35,6 +35,8 @@ from internal.bot.models import (
 from internal.database import Database
 from internal.database.models import MemoryType
 from internal.database.utils import DEFAULT_THREAD_ID
+from internal.models import MessageId
+from lib.ai import ModelMessage
 
 
 def _makeEnsuredMessage() -> EnsuredMessage:
@@ -255,3 +257,101 @@ class TestFormatForLLMMemoryResolution:
         parsed = json.loads(output)
         assert "userMemories" not in parsed
         assert "userMemories" not in output
+
+
+# ---------------------------------------------------------------------------
+# Phase 3b: toModelMessageList randomContext read site
+# (dict shape injects text; legacy str still works)
+# ---------------------------------------------------------------------------
+
+
+class TestRandomContextReadSite:
+    """Phase 4: ``toModelMessageList`` injects ``randomContext`` as JSON.
+
+    After the P3b write-site reshape, ``randomContext`` can be a
+    :class:`CondensingDict` (dict) or a legacy ``str``. Both shapes are now
+    rendered as JSON via :func:`renderCondensedSummary` (Phase 4) — resolving
+    the latent asymmetry where real user messages were JSON but summaries
+    were raw text. The ``type: "condensed"`` discriminator marks the JSON
+    object as a condensed summary.
+
+    ``toModelMessage`` (the inner single-message method called at the end of
+    ``toModelMessageList``) is patched to avoid DB/media access.
+    """
+
+    async def test_dictShapeInjectsJSON(self, testDatabase: Database) -> None:
+        """CondensingDict randomContext -> JSON with type:"condensed" and metadata.
+
+        Args:
+            testDatabase: Real in-memory database; never read (inner method patched).
+        """
+        msg = _makeEnsuredMessage()
+        msg.metadata["randomContext"] = {  # type: ignore[assignment]
+            "text": "dict summary text",
+            "tillMessageId": MessageId(99),
+            "tillTS": 1234.0,
+            "messageIds": [MessageId(1), MessageId(2)],
+            "participants": ["alice"],
+            "messageCount": 2,
+        }
+
+        with patch.object(
+            EnsuredMessage,
+            "toModelMessage",
+            AsyncMock(return_value=ModelMessage(role="user", content="MAIN")),
+        ):
+            result = await msg.toModelMessageList(testDatabase, format=LLMMessageFormat.JSON, cache=None)
+
+        assert len(result) == 2
+        assert result[0].role == "user"
+        parsed = json.loads(result[0].content)
+        assert parsed["type"] == "condensed"
+        assert parsed["summary"] == "dict summary text"
+        assert parsed["coveredMessageIds"] == [1, 2]
+        assert parsed["participants"] == ["alice"]
+        assert parsed["messageCount"] == 2
+        # The main message follows.
+        assert result[1].content == "MAIN"
+
+    async def test_strShapeInjectsJSONBackwardsCompat(self, testDatabase: Database) -> None:
+        """Legacy str randomContext -> JSON with summary only (backwards-compat).
+
+        Args:
+            testDatabase: Real in-memory database; never read (inner method patched).
+        """
+        msg = _makeEnsuredMessage()
+        msg.metadata["randomContext"] = "legacy str context"  # type: ignore[assignment]
+
+        with patch.object(
+            EnsuredMessage,
+            "toModelMessage",
+            AsyncMock(return_value=ModelMessage(role="user", content="MAIN")),
+        ):
+            result = await msg.toModelMessageList(testDatabase, format=LLMMessageFormat.JSON, cache=None)
+
+        assert len(result) == 2
+        parsed = json.loads(result[0].content)
+        assert parsed["type"] == "condensed"
+        assert parsed["summary"] == "legacy str context"
+        # Metadata fields omitted for legacy str input
+        assert "coveredMessageIds" not in parsed
+        assert "participants" not in parsed
+        assert result[1].content == "MAIN"
+
+    async def test_absentRandomContextInjectsNothing(self, testDatabase: Database) -> None:
+        """No randomContext -> only the main message (no injection).
+
+        Args:
+            testDatabase: Real in-memory database; never read (inner method patched).
+        """
+        msg = _makeEnsuredMessage()
+
+        with patch.object(
+            EnsuredMessage,
+            "toModelMessage",
+            AsyncMock(return_value=ModelMessage(role="user", content="MAIN")),
+        ):
+            result = await msg.toModelMessageList(testDatabase, format=LLMMessageFormat.JSON, cache=None)
+
+        assert len(result) == 1
+        assert result[0].content == "MAIN"

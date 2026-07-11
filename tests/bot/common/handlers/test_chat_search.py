@@ -19,8 +19,8 @@ level so the tests never touch a real bot, LLM provider, or database.
 """
 
 import datetime
-from typing import Any, Dict, List, Optional, Tuple, cast
-from unittest.mock import AsyncMock, Mock
+from typing import Any, Dict, Generator, List, Optional, Tuple, cast
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -28,7 +28,9 @@ from internal.bot.common.handlers.base import HandlerResultStatus
 from internal.bot.common.handlers.chat_search import ChatSearchHandler
 from internal.bot.constants import (
     BACKFILL_DEFAULT_BATCH_SIZE,
+    MAX_GET_MESSAGES_BATCH,
     SEARCH_DEFAULT_MAX_RESULTS,
+    ToolName,
 )
 from internal.bot.models import (
     BotProvider,
@@ -1060,6 +1062,33 @@ class TestDtCronJob:
     (the autouse ``resetLlmServiceSingleton`` fixture has reset it),
     and the database stubs are added on top.
     """
+
+    @pytest.fixture(autouse=True)
+    def _noOpBackfillPacingSleep(self) -> Generator[None, None, None]:
+        """No-op the backfill inter-message pacing sleep.
+
+        ``ChatSearchHandler._dtCronJob`` awaits
+        ``asyncio.sleep(BACKFILL_INTER_MESSAGE_DELAY_SECS)`` once per
+        message in a backfill batch (``chat_search.py`` ~line 439). This
+        is a production pacing cushion that keeps the asyncio loop
+        responsive between embedding API calls — it is NOT a timing
+        assertion any test in this class verifies on. Left unmocked it
+        costs ``batchSize * 0.1s`` of real wall-clock per test, so the
+        full-batch regression (``BACKFILL_DEFAULT_BATCH_SIZE == 50``)
+        alone blocks for ~5 seconds. Patched to an async no-op so the
+        suite exercises the identical batch logic without paying the
+        pacing tax. Mirrors the precedent in
+        ``test_user_memories_memory_regen.py`` (~line 676).
+
+        Yields:
+            ``None`` — patches ``asyncio.sleep`` for the duration of
+            each test, then restores it.
+        """
+        with patch(
+            "internal.bot.common.handlers.chat_search.asyncio.sleep",
+            new=AsyncMock(),
+        ):
+            yield
 
     async def test_cron_proceeds_after_construction(self) -> None:
         """The cron job always runs its logic, regardless of ``enabled``.
@@ -2136,6 +2165,407 @@ class TestGetThreadLLMTool:
         result = await handler._llmToolGetThread(extraData={}, message_id="10")
         assert result["done"] is False
         assert "Missing chat context" in result.get("error", "")
+
+
+# ---------------------------------------------------------------------------
+# 6b. LLM tool: get_messages_by_ids tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetMessagesByIdsLLMTool:
+    """Tests for :meth:`ChatSearchHandler._llmToolGetMessagesByIds`.
+
+    Covers the three-layer gating (chat-context, ``ALLOW_TOOLS_COMMANDS``,
+    NOT ``EMBEDDINGS_ENABLED``), the batch fetch + ``_formatMessageDict``
+    reuse, ``notFound`` computation, batch-cap clamping, never-raise, and
+    the emitted tool schema (``items: {"type": "string"}``).
+    """
+
+    @pytest.fixture
+    def handler(self) -> ChatSearchHandler:
+        """Create a handler with mocked dependencies.
+
+        Wires ``db.chatMessages.getChatMessagesByMessageIds`` as an
+        ``AsyncMock`` defaulting to an empty result list; individual tests
+        override it. ``llmService`` is a plain ``Mock`` (the tool path
+        never reaches the LLM provider — pure DB lookup).
+        """
+        h = ChatSearchHandler(
+            configManager=_makeConfigManager(),
+            database=_makeDatabase(),
+            botProvider=BotProvider.TELEGRAM,
+        )
+        h.db = Mock()
+        h.llmService = Mock()
+        cast(Any, h).llmService.rateLimit = AsyncMock(return_value=None)
+        h.sendMessage = AsyncMock()
+        h.getChatSettings = AsyncMock()
+        cast(Any, h).db.chatMessages = Mock()
+        cast(Any, h).db.chatMessages.getChatMessagesByMessageIds = AsyncMock(return_value=[])
+        return h
+
+    @pytest.fixture
+    def ensMessage(self) -> EnsuredMessage:
+        """Create a test ensured message in a group chat."""
+        return _makeEnsuredMessage(chatId=-1001234567890)
+
+    @pytest.fixture
+    def extraData(self, ensMessage: EnsuredMessage) -> Dict[str, Any]:
+        """Create extraData dict with the ensured message."""
+        return {"ensuredMessage": ensMessage}
+
+    @pytest.fixture
+    def chatSettings(self) -> ChatSettingsDict:
+        """Chat settings with tools enabled (embeddings state irrelevant)."""
+        return _makeChatSettings()
+
+    def _makeRow(self, *, messageId: int, text: str = "msg", username: str = "alice") -> ChatMessageDict:
+        """Build a ``ChatMessageDict``-shaped row for the batch-fetch mock.
+
+        Args:
+            messageId: ``message_id`` value (Telegram-flavoured int).
+            text: ``message_text`` value.
+            username: ``username`` value.
+
+        Returns:
+            A dict matching the shape the repository returns and
+            :meth:`_formatMessageDict` consumes.
+        """
+        now = datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc)
+        return {
+            "chat_id": -1001234567890,
+            "message_id": MessageId(messageId),
+            "date": now,
+            "user_id": 7,
+            "reply_id": None,
+            "thread_id": 0,
+            "root_message_id": None,
+            "message_text": text,
+            "message_type": "text",
+            "message_category": MessageCategory.USER,
+            "quote_text": None,
+            "media_id": None,
+            "created_at": now,
+            "metadata": "",
+            "markup": "",
+            "media_group_id": None,
+            "username": username,
+            "full_name": username.capitalize(),
+        }
+
+    async def test_allFound(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+        chatSettings: ChatSettingsDict,
+    ) -> None:
+        """Request 3 ids, all present → 3 messages, empty notFound, count 3."""
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        cast(Any, handler).db.chatMessages.getChatMessagesByMessageIds = AsyncMock(
+            return_value=[self._makeRow(messageId=100), self._makeRow(messageId=101), self._makeRow(messageId=102)]
+        )
+
+        result = await handler._llmToolGetMessagesByIds(extraData=extraData, message_ids=["100", "101", "102"])
+
+        assert result["done"] is True
+        assert result["count"] == 3
+        assert result["notFound"] == []
+        assert [m["messageId"] for m in result["messages"]] == [100, 101, 102]
+
+    async def test_allNotFound(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+        chatSettings: ChatSettingsDict,
+    ) -> None:
+        """Request ids absent from DB → empty messages, all in notFound."""
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        cast(Any, handler).db.chatMessages.getChatMessagesByMessageIds = AsyncMock(return_value=[])
+
+        result = await handler._llmToolGetMessagesByIds(extraData=extraData, message_ids=["200", "201"])
+
+        assert result["done"] is True
+        assert result["messages"] == []
+        assert result["count"] == 0
+        assert sorted(result["notFound"]) == ["200", "201"]
+
+    async def test_mixedFoundAndNotFound(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+        chatSettings: ChatSettingsDict,
+    ) -> None:
+        """Some ids resolve, some don't → correct split."""
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        cast(Any, handler).db.chatMessages.getChatMessagesByMessageIds = AsyncMock(
+            return_value=[self._makeRow(messageId=100), self._makeRow(messageId=101)]
+        )
+
+        result = await handler._llmToolGetMessagesByIds(extraData=extraData, message_ids=["100", "101", "999"])
+
+        assert result["done"] is True
+        assert result["count"] == 2
+        assert result["notFound"] == ["999"]
+        assert [m["messageId"] for m in result["messages"]] == [100, 101]
+
+    async def test_emptyInputNone(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+        chatSettings: ChatSettingsDict,
+    ) -> None:
+        """message_ids=None → empty success result, repo not called."""
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+
+        result = await handler._llmToolGetMessagesByIds(extraData=extraData, message_ids=None)
+
+        assert result["done"] is True
+        assert result["messages"] == []
+        assert result["notFound"] == []
+        assert result["count"] == 0
+        cast(Any, handler).db.chatMessages.getChatMessagesByMessageIds.assert_not_called()
+
+    async def test_emptyInputEmptyList(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+        chatSettings: ChatSettingsDict,
+    ) -> None:
+        """message_ids=[] → empty success result, repo not called."""
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+
+        result = await handler._llmToolGetMessagesByIds(extraData=extraData, message_ids=[])
+
+        assert result["done"] is True
+        assert result["messages"] == []
+        assert result["count"] == 0
+        cast(Any, handler).db.chatMessages.getChatMessagesByMessageIds.assert_not_called()
+
+    async def test_invalidIdsGoToNotFound_noException(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+        chatSettings: ChatSettingsDict,
+    ) -> None:
+        """Garbage/blank/None id entries never raise and land in notFound.
+
+        Blank strings and ``None`` are dropped during normalisation; a
+        non-existent id (``"abc"``) survives to the repo, misses, and lands
+        in ``notFound`` via the requested−found computation.
+        """
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        cast(Any, handler).db.chatMessages.getChatMessagesByMessageIds = AsyncMock(
+            return_value=[self._makeRow(messageId=100)]
+        )
+
+        result = await handler._llmToolGetMessagesByIds(
+            extraData=extraData, message_ids=cast(Any, [None, "", "   ", "abc", "100"])
+        )
+
+        assert result["done"] is True
+        assert result["count"] == 1
+        assert result["notFound"] == ["abc"]
+
+    async def test_neverRaise_repoRaises(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+        chatSettings: ChatSettingsDict,
+    ) -> None:
+        """Repository raises → returns error dict, no exception propagates."""
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        cast(Any, handler).db.chatMessages.getChatMessagesByMessageIds = AsyncMock(side_effect=RuntimeError("DB down"))
+
+        result = await handler._llmToolGetMessagesByIds(extraData=extraData, message_ids=["100"])
+
+        assert result["done"] is False
+        assert "error" in result
+
+    async def test_missingExtraData(self, handler: ChatSearchHandler) -> None:
+        """extraData=None → 'Missing chat context'."""
+        result = await handler._llmToolGetMessagesByIds(extraData=None, message_ids=["100"])
+        assert result["done"] is False
+        assert result["error"] == "Missing chat context"
+
+    async def test_missingEnsuredMessage(self, handler: ChatSearchHandler) -> None:
+        """extraData has no ensuredMessage → 'Missing chat context'."""
+        result = await handler._llmToolGetMessagesByIds(extraData={}, message_ids=["100"])
+        assert result["done"] is False
+        assert result["error"] == "Missing chat context"
+
+    async def test_toolsDisabled(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+    ) -> None:
+        """ALLOW_TOOLS_COMMANDS=False → 'Tools disabled for this chat'."""
+        cs = _makeChatSettings(allowTools=False)
+        handler.getChatSettings = AsyncMock(return_value=cs)
+
+        result = await handler._llmToolGetMessagesByIds(extraData=extraData, message_ids=["100"])
+
+        assert result["done"] is False
+        assert result["error"] == "Tools disabled for this chat"
+
+    async def test_notGatedOnEmbeddingsEnabled(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+    ) -> None:
+        """EMBEDDINGS_ENABLED=False but ALLOW_TOOLS_COMMANDS=True → tool works.
+
+        ``get_messages_by_ids`` is a pure DB lookup; it must NOT require
+        embeddings to be enabled (unlike ``search_messages``).
+        """
+        cs = _makeChatSettings(embeddingsEnabled=False, allowTools=True)
+        handler.getChatSettings = AsyncMock(return_value=cs)
+        cast(Any, handler).db.chatMessages.getChatMessagesByMessageIds = AsyncMock(
+            return_value=[self._makeRow(messageId=100)]
+        )
+
+        result = await handler._llmToolGetMessagesByIds(extraData=extraData, message_ids=["100"])
+
+        assert result["done"] is True
+        assert result["count"] == 1
+
+    async def test_batchCapClamping(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+        chatSettings: ChatSettingsDict,
+    ) -> None:
+        """Requesting more than MAX_GET_MESSAGES_BATCH clamps to the cap."""
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        cast(Any, handler).db.chatMessages.getChatMessagesByMessageIds = AsyncMock(return_value=[])
+
+        tooMany = [str(i) for i in range(MAX_GET_MESSAGES_BATCH + 5)]
+        await handler._llmToolGetMessagesByIds(extraData=extraData, message_ids=tooMany)
+
+        callArgs = cast(Any, handler).db.chatMessages.getChatMessagesByMessageIds.call_args
+        # callArgs.args = (chatId, [MessageId, ...])
+        requestedIds = callArgs.args[1]
+        assert len(requestedIds) == MAX_GET_MESSAGES_BATCH
+
+    async def test_dedup(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+        chatSettings: ChatSettingsDict,
+    ) -> None:
+        """Duplicate ids are de-duplicated before the batch fetch."""
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        cast(Any, handler).db.chatMessages.getChatMessagesByMessageIds = AsyncMock(
+            return_value=[self._makeRow(messageId=100)]
+        )
+
+        result = await handler._llmToolGetMessagesByIds(extraData=extraData, message_ids=["100", "100", "100"])
+
+        callArgs = cast(Any, handler).db.chatMessages.getChatMessagesByMessageIds.call_args
+        assert len(callArgs.args[1]) == 1
+        assert result["count"] == 1
+        assert result["notFound"] == []
+
+    async def test_getChatSettingsRaises_returnsError(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+    ) -> None:
+        """getChatSettings raising → error dict (never-raise)."""
+        handler.getChatSettings = AsyncMock(side_effect=RuntimeError("settings down"))
+
+        result = await handler._llmToolGetMessagesByIds(extraData=extraData, message_ids=["100"])
+
+        assert result["done"] is False
+        assert "error" in result
+
+    async def test_intIdItemsCoercedToString(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+        chatSettings: ChatSettingsDict,
+    ) -> None:
+        """A model passing ints (schema violation) is coerced to str, no crash."""
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        cast(Any, handler).db.chatMessages.getChatMessagesByMessageIds = AsyncMock(
+            return_value=[self._makeRow(messageId=100)]
+        )
+
+        result = await handler._llmToolGetMessagesByIds(extraData=extraData, message_ids=cast(Any, [100, 101]))
+
+        assert result["done"] is True
+        assert result["count"] == 1
+        assert result["notFound"] == ["101"]
+
+    async def test_formatFailure_notReportedAsNotFound(
+        self,
+        handler: ChatSearchHandler,
+        extraData: Dict[str, Any],
+        chatSettings: ChatSettingsDict,
+    ) -> None:
+        """A DB-resolved row that fails to format is NOT reported as notFound.
+
+        Regression: when ``_formatMessageDict`` raises for a row the
+        repository returned, the row's id must still count as "found". A
+        format failure is not a resolution failure, so the id must not
+        appear in ``notFound`` (the LLM would otherwise conclude the
+        message does not exist). The unformattable row is dropped from
+        ``messages``, but ``done`` stays ``True``.
+        """
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        rows = [
+            self._makeRow(messageId=100),
+            self._makeRow(messageId=101),
+            self._makeRow(messageId=102),
+        ]
+        cast(Any, handler).db.chatMessages.getChatMessagesByMessageIds = AsyncMock(return_value=rows)
+
+        def _formatSideEffect(msg: ChatMessageDict) -> Dict[str, Any]:
+            if msg["message_id"].asInt() == 101:
+                raise RuntimeError("format boom")
+            return {"messageId": msg["message_id"].asInt(), "message_text": "ok"}
+
+        cast(Any, handler)._formatMessageDict = AsyncMock(side_effect=_formatSideEffect)
+
+        result = await handler._llmToolGetMessagesByIds(extraData=extraData, message_ids=["100", "101", "102"])
+
+        assert result["done"] is True
+        # The unformattable row is excluded from messages (count 2) ...
+        assert result["count"] == 2
+        formattedIds = [m["messageId"] for m in result["messages"]]
+        assert 101 not in formattedIds
+        # ... but its id is NOT reported as missing.
+        assert "101" not in result["notFound"]
+        assert result["notFound"] == []
+
+    def test_toolRegistered_whenSearchHistoryEnabled(self) -> None:
+        """The tool is registered on the LLM service during handler construction.
+
+        ``ChatSearchHandler`` is only constructed when
+        ``[search-history].enabled`` is true, so the tool's presence here
+        demonstrates it rides that handler-level gate.
+        """
+        h = ChatSearchHandler(
+            configManager=_makeConfigManager(enabled=True),
+            database=_makeDatabase(),
+            botProvider=BotProvider.TELEGRAM,
+        )
+        registeredTools = cast(Any, h).llmService.toolsHandlers.keys()
+        assert ToolName.GET_MESSAGES_BY_IDS in registeredTools
+
+    def test_itemsStringInEmittedSchema(self) -> None:
+        """The emitted schema carries ``items: {"type": "string"}`` on message_ids."""
+        h = ChatSearchHandler(
+            configManager=_makeConfigManager(enabled=True),
+            database=_makeDatabase(),
+            botProvider=BotProvider.TELEGRAM,
+        )
+        toolFn = cast(Any, h).llmService.toolsHandlers[ToolName.GET_MESSAGES_BY_IDS]
+        param = toolFn.parameters[0]
+        assert param.name == "message_ids"
+        # ``extra`` is spread into the JSON schema by LLMFunctionParameter.toJson.
+        assert param.extra == {"items": {"type": "string"}}
+        # And it surfaces in the fully serialised form.
+        assert param.toJson()["message_ids"]["items"] == {"type": "string"}
 
 
 # ---------------------------------------------------------------------------

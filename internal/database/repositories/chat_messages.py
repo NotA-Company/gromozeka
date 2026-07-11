@@ -325,6 +325,59 @@ class ChatMessagesRepository(BaseRepository):
             logger.error(f"Failed to get chat message for chat {chatId}, message_id {messageId}: {e}")
             return None
 
+    async def getChatMessagesByMessageIds(
+        self,
+        chatId: int,
+        messageIds: Sequence[MessageId],
+        *,
+        dataSource: Optional[str] = None,
+    ) -> List[ChatMessageDict]:
+        """Fetch multiple chat messages by ID in one query.
+
+        Uses a portable ``IN (...)`` expansion with named placeholders
+        (``:id0, :id1, ...``). Same user JOIN as
+        :meth:`getChatMessageByMessageId`. Order: ascending by date (matches
+        :meth:`getChatMessagesByRootId`). Dedup of input ids is the caller's
+        responsibility (this method does not dedup; duplicate ids produce one row).
+
+        Args:
+            chatId: Chat identifier (scoping — never cross-chat).
+            messageIds: Message IDs to fetch. Empty -> returns [].
+            dataSource: Optional data-source routing.
+
+        Returns:
+            List of matching ChatMessageDict rows (may be shorter than input if
+            some ids do not exist in this chat; caller computes ``notFound``).
+
+        Raises:
+            Exception: If database operation fails (caught and logged, returns empty list).
+        """
+        if not messageIds:
+            return []
+        logger.debug(f"Getting chat messages for chat {chatId}, message_ids {messageIds}")
+        try:
+            placeholders = ", ".join(f":id{i}" for i in range(len(messageIds)))
+            params: dict[str, Any] = {
+                "chatId": chatId,
+                **{f"id{i}": messageId.asStr() for i, messageId in enumerate(messageIds)},
+            }
+            sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)
+            rows = await sqlProvider.executeFetchAll(
+                f"""
+                SELECT c.*, u.username, u.full_name FROM chat_messages c
+                JOIN chat_users u ON c.user_id = u.user_id AND c.chat_id = u.chat_id
+                WHERE
+                    c.chat_id = :chatId
+                    AND c.message_id IN ({placeholders})
+                ORDER BY c.date ASC
+            """,
+                params,
+            )
+            return [dbUtils.sqlToTypedDict(row, ChatMessageDict) for row in rows]
+        except Exception as e:
+            logger.error(f"Failed to get chat messages for chat {chatId}, message_ids {messageIds}: {e}")
+            return []
+
     async def getChatMessagesByRootId(
         self,
         chatId: int,

@@ -684,6 +684,50 @@ read/write paths (detail in [`memory-compaction-v1.md`](../plans/memory-compacti
 
 ---
 
+### ADR-019: Condensed-Context Retrieval — Coverage Tracking + Lazy JSON Render + `get_messages_by_ids` Tool
+
+**Decision:** When the LLM's conversation context is condensed (older messages summarised to fit the context window), record *which* message IDs each summary covers plus structured metadata (participants, date range, message count) on the persisted `CondensingDict`; render every condensed summary as a JSON object (consistent with the real-user-message JSON shape) via a shared lazy renderer; and expose an `get_messages_by_ids` LLM tool so the model can fetch the originals underlying a summary on demand. Spec: [`docs/plans/condensed-context-retrieval-plan-v1.md`](../plans/condensed-context-retrieval-plan-v1.md) (status: IMPLEMENTED).
+
+**Context:** Two persistent write sites summarise older messages into a `role="user"` `ModelMessage` so the context fits the model window:
+
+- **Path A — `condensedThread`** (`BaseBotHandler.getThreadByMessageForLLM`, [`base.py`](../../internal/bot/common/handlers/base.py)) stores `List[CondensingDict]` under `chat_messages.metadata.condensedThread` and re-summarises (cascade) when the rebuilt context still overruns.
+- **Path B — `randomContext`** (`LLMMessageHandler.handleRandomAnswer`, [`llm_messages.py`](../../internal/bot/common/handlers/llm_messages.py)) stores a single summary under `chat_messages.metadata.randomContext` when the random-answer history is too long.
+
+The originals are **always retained** in `chat_messages` (condensing adds summary metadata; it never deletes source rows). Three problems existed:
+
+1. **Lost detail, no recovery path.** Once condensed the LLM saw only the summary text — there was no tool to fetch the originals, so the summary was the ceiling of detail for those messages for the rest of the conversation.
+2. **Unidentifiable coverage.** The legacy `CondensingDict` recorded only a *boundary* marker (`tillMessageId`/`tillTS`) — not *which* messages a summary actually covered. Re-condense cascades and multi-batch summaries lost precision.
+3. **Latent render asymmetry.** Real user messages are rendered as **JSON** (`EnsuredMessage.formatForLLM` JSON branch), but condensed summaries were injected as **raw text** `role="user"` at both sites. This was an undocumented asymmetry the LLM had to silently accommodate.
+
+**Components** (see [`internal/bot/models/message_metadata.py`](../../internal/bot/models/message_metadata.py)):
+
+- **`CondensingDict` evolution** — the original 3 required fields (`text`/`tillMessageId`/`tillTS`) stay required (they exist on all legacy rows and double as a cheap boundary marker); 4 new `NotRequired` fields are added: `messageIds: List[MessageId]` (authoritative coverage list), `participants: List[str]` (sorted unique sender logins), `dateRange: CondensedDateRangeDict`, `messageCount: int`. Legacy rows lacking the new fields are read defensively by the renderer.
+- **`CondensedDateRangeDict`** — functional-syntax TypedDict `{"from": float, "to": float}` (the JSON key `from` is a Python reserved keyword, so class-body syntax would be a `SyntaxError`; functional syntax is the only way to express it). This is the *storage* shape — two unix-timestamp floats. The renderer converts to ISO strings at call-time; ISO strings are **not** pre-baked into storage (mirrors how real messages render `date`).
+- **`MetadataDict.randomContext` reshape** — widened from `str` to `Union[str, CondensingDict]`. Path B new writes store a single `CondensingDict` (one summarisation possible per random context); legacy `str` rows are read defensively by the shared renderer.
+- **`CondensedSummaryKind(StrEnum)`** — single-member render-side discriminator (`CONDENSED = "condensed"`) for the JSON `"type"` key. **Deliberately separate from `MessageType`** (which classifies real message *media*: text/image/sticker). `condensed` is a render-only construct; the JSON shape is structurally disjoint from real user messages (carries `coveredMessageIds`/`participants`/`dateRange`/`messageCount`/`summary` instead of `login`/`name`/`messageId`/`text`/...), so the shared `"type"` key never collides.
+- **`renderCondensedSummary(data: Union[CondensingDict, str]) -> str`** — shared JSON renderer (module-level in `message_metadata.py`). Output shape: `{type:"condensed", coveredMessageIds:[...], participants:[...], dateRange:{"from":<ISO>,"to":<ISO>}, messageCount:N, summary:"..."}`. Falsy-drop mirrors `formatForLLM` (empty/absent fields omitted, never `null`); `type`+`summary` always present. Legacy `str` input → minimal `{type:"condensed", summary:"..."}`. Both injection sites now call this (Path A at `base.py`; Path B at `ensured_message.py`'s `toModelMessageList`), replacing the raw `condensedMessage["text"]` / raw-string injections.
+- **`buildCondensingFields(entries) -> Dict[str, Any]`** — pure helper computing `messageIds`/`participants`/`dateRange`/`messageCount` from the covered rows (handles both raw `ChatMessageDict` rows and pre-existing `CondensingDict` summaries for the re-condense cascade union). `messageCount` counts UNIQUE `message_id`s for raw rows (callers build parallel index lists tagging every emitted `ModelMessage`, so one original can appear several times). Shared by Path A and Path B.
+- **`condenseContext` additive `returnCoverage` param** ([`internal/services/llm/service.py`](../../internal/services/llm/service.py)) — new keyword-only `returnCoverage: bool = False`. When `False` (default) the return is unchanged (`Sequence[ModelMessage]`) so Path C (`generateTextViaLLM`'s transient auto-condense loop) is **byte-identical**. When `True` it returns `Tuple[Sequence[ModelMessage], List[CondenseBatchCoverage]]`, one `CondenseBatchCoverage` (`{summaryText, coveredFromIndex, coveredToIndex}` — indices into the full input `messages`) per *successfully summarised* batch; skip paths (single-oversized message, exception) emit no coverage. Two `@overload` stubs discriminate by `Literal[True]`/`Literal[False]`.
+- **Caller-side index alignment** — `getThreadByMessageForLLM` (Path A) and `handleRandomAnswer` (Path B) each maintain a parallel `indexToEntry` list aligned 1:1 to the built `ModelMessage` list, then map each `CondenseBatchCoverage` index range through `buildCondensingFields` (+ a `_condensingDictFromCoverage` static method on the Path A caller for the re-condense cascade, which uses a length-based `retHeadLen = len(condensedRet) - len(coverage) - keepLastN` formula robust to batch-failure gaps).
+- **`get_messages_by_ids` LLM tool** ([`chat_search.py`](../../internal/bot/common/handlers/chat_search.py)) — registered in `ChatSearchHandler.__init__` as a normal `registerTool(...)` call alongside the other search tools (constant `ToolName.GET_MESSAGES_BY_IDS`, `internal/bot/constants.py`). Accepts a list of ID strings (batch; `extra={"items": {"type": "string"}}` so the emitted JSON-Schema forces strings — `MessageId` is `int|str`). Returns `{messages:[...EnsuredMessage JSON...], notFound:[...], count:N}`, reusing `_formatMessageDict`. Never-raise (whole body wrapped in try/except). **Three-layer gating**: (1) `[search-history].enabled` via the handler's existing conditional registration at `manager.py:540` (the tool rides the handler's gate — *no manager.py change*); (2) `ALLOW_TOOLS_COMMANDS` per-chat master toggle at tool-resolution time; (3) **NOT** gated on `EMBEDDINGS_ENABLED` or any search-specific flag (pure DB lookup — available whenever chat-search is on, even with semantic search disabled).
+- **`getChatMessagesByMessageIds` batch repo method** ([`chat_messages.py`](../../internal/database/repositories/chat_messages.py)) — portable `IN (:id0, :id1, ...)` named-placeholder expansion; early-returns `[]` on empty input; same JOIN shape as `getChatMessageByMessageId`; `ORDER BY c.date ASC`. Backs the tool.
+
+**`chat-prompt-suffix`** (`configs/00-defaults/bot-defaults.toml`, `BOT_OWNER_SYSTEM`-gated page) gained a Russian block documenting the condensed-summary JSON shape (`type:"condensed"` + the 5 field bullets) and the `get_messages_by_ids` tool reference, so the model is explicitly told originals are retrievable.
+
+**Key decisions:**
+
+- **Additive `returnCoverage` keeps Path C byte-identical.** `condenseContext` operates on `ModelMessage` objects, which carry *no* message IDs/sender logins/timestamps/metadata — only `role`/`content`. Coverage *metadata* is the caller's domain (it owns the source rows). So `condenseContext` reports per-batch **index ranges** into the input `messages` (its own internal state — `startPos`/`currentBatchLen`), and the caller maps those indices to source rows it already holds. Clean separation: service reports indices; bot layer owns the index→metadata mapping. Defaulting `returnCoverage=False` means Path C (`generateTextViaLLM`) never opts in and its return type/behaviour is unchanged.
+- **Store-IDs-render-lazily mirrors ADR-018.** `messageIds`/`participants`/`dateRange` are stored as structured data on the `CondensingDict`; the JSON render with ISO-converted `dateRange` happens at call-time via `renderCondensedSummary`, never pre-baked into storage. Format-agnostic storage; a future render format change needs no data migration.
+- **`CondensedSummaryKind` separate from `MessageType`.** Adding `condensed` to `MessageType` (the media-classification enum) would pollute it with a render-only construct. The JSON shapes are structurally disjoint, so a separate single-member `StrEnum` is unambiguous and self-documenting via the prompt suffix.
+- **Path B `randomContext` reshape `str → CondensingDict` with defensive legacy read.** Only one summarisation is possible for random context, so it is a single `CondensingDict` (not a list). The union type + renderer handle legacy `str` rows gracefully (no migration needed).
+- **Backwards-compat without migration.** Old rows (legacy `CondensingDict` with only the 3 required fields; legacy `randomContext` as flat `str`) render correctly via `renderCondensedSummary` — degraded (no `coveredMessageIds`, so the model cannot call `get_messages_by_ids` for them) but consistent output shape. New rows are richer. `tillMessageId`/`tillTS` retained on all new writes as a cheap boundary marker.
+
+**Relationship to ADR-018:** This ADR mirrors ADR-018's store-IDs-render-lazily discipline (structured data on the row; lazy JSON render at the injection site) and its additive-first phased-delivery shape. It is independent of the memories subsystem (ADR-016/017/018) — it concerns the *condensing* path (`condensedThread`/`randomContext`), not the per-message memory-injection path.
+
+> **Known pre-existing bug (out of scope, tracked separately):** a confirmed infinite-loop hazard in the `condenseContext` adaptive batch-shrink branch was NOT fixed by this feature and is tracked separately. Do not document a fix here.
+
+---
+
 ## 2. Dependency Map
 
 ### 2.1 Component Dependency Graph
@@ -886,4 +930,4 @@ When creating or modifying database migrations, ALWAYS:
 ---
 
 *This guide is auto-maintained and should be updated whenever significant architectural changes are made*
-*Last updated: 2026-06-28*
+*Last updated: 2026-07-12*

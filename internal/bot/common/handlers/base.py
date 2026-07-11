@@ -27,7 +27,7 @@ import time
 from collections import deque
 from collections.abc import MutableSet
 from enum import Enum
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import magic
 import telegram
@@ -49,6 +49,7 @@ from internal.bot.models import (
     ChatType,
     CommandHandlerInfoV2,
     CommandHandlerMixin,
+    CondensingDict,
     EnsuredMessage,
     FormatEntity,
     LLMMessageFormat,
@@ -61,12 +62,13 @@ from internal.bot.models import (
     UserMetadataDict,
     getChatSettingsInfo,
 )
+from internal.bot.models.message_metadata import buildCondensingFields, renderCondensedSummary
 from internal.config.manager import ConfigManager
 from internal.database import Database
-from internal.database.models import ChatInfoDict, ChatUserDict, MediaStatus, MessageCategory
+from internal.database.models import ChatInfoDict, ChatMessageDict, ChatUserDict, MediaStatus, MessageCategory
 from internal.models import MessageId
 from internal.services.cache import CacheService
-from internal.services.llm import LLMService
+from internal.services.llm import CondenseBatchCoverage, LLMService
 from internal.services.queue_service import QueueService, makeEmptyAsyncTask
 from internal.services.storage import StorageService
 from lib.ai import (
@@ -709,6 +711,48 @@ class BaseBotHandler(CommandHandlerMixin):
     # Chat Management
     ###
 
+    @staticmethod
+    def _condensingDictFromCoverage(
+        cov: CondenseBatchCoverage,
+        fields: Dict[str, Any],
+    ) -> CondensingDict:
+        """Build a CondensingDict from a coverage entry and precomputed fields.
+
+        Merges the condensing model's summary text (from the coverage
+        descriptor) with the 4 new metadata fields computed by
+        :func:`buildCondensingFields`. Derives ``tillMessageId``/``tillTS``
+        from the last covered message ID and the max timestamp in the
+        coverage slice — more precise than the legacy single-boundary-marker
+        approach.
+
+        Args:
+            cov: The coverage descriptor for this batch (summaryText +
+                index range).
+            fields: Precomputed metadata fields from
+                :func:`buildCondensingFields` (messageIds, participants,
+                dateRange, messageCount).
+
+        Returns:
+            A fully populated CondensingDict ready to persist.
+        """
+        messageIds = fields.get("messageIds", [])
+        dateRange = fields.get("dateRange")
+        entry: CondensingDict = {
+            "text": cov["summaryText"],
+            # tillMessageId/tillTS derived from the last covered message —
+            # more precise than the legacy single-boundary approach. The
+            # fallback (MessageId(0) / 0.0) is defensive dead code: a
+            # coverage slice always has at least one source entry.
+            "tillMessageId": messageIds[-1] if messageIds else MessageId(0),
+            "tillTS": dateRange["to"] if dateRange else 0.0,
+            "messageIds": messageIds,
+            "participants": fields.get("participants", []),
+            "messageCount": fields.get("messageCount", 0),
+        }
+        if dateRange:
+            entry["dateRange"] = dateRange
+        return entry
+
     async def getThreadByMessageForLLM(
         self,
         ensuredMessage: EnsuredMessage,
@@ -787,30 +831,43 @@ class BaseBotHandler(CommandHandlerMixin):
         condenseCache = eRootMessage.metadata.get("condensedThread", [])
         condenseCacheMessages: List[ModelMessage] = []
 
+        # Parallel list aligned 1:1 to ``ret`` — each entry is the source
+        # ChatMessageDict row or CondensingDict that produced the corresponding
+        # ModelMessage. ``None`` = system prompt (protected by keepFirstN,
+        # never in a coverage slice). Used after
+        # condenseContext(returnCoverage=True) to map per-batch index ranges
+        # back to source entries for metadata extraction via
+        # buildCondensingFields().
+        indexToEntry: List[Optional[Union[ChatMessageDict, CondensingDict]]] = [None]
+        # Snapshot of the original cache before any reassignment; needed to
+        # build indexToEntry2 for the re-condense path.
+        originalCondenseCache: List[CondensingDict] = list(condenseCache)
+
         if condenseCache and condenseThread:
             # First - add skipped messages to result.
             # It should be ony starting message
             for i in range(min(keepFirstN, len(dbMessageList))):
                 eMessage = await EnsuredMessage.fromDBChatMessage(dbMessageList[i], self.db)
                 # Keep memories for root message
-                ret.extend(
-                    await eMessage.toModelMessageList(
-                        self.db,
-                        format=llmMFormat,
-                        role=MessageCategory.fromStr(dbMessageList[i]["message_category"]).toRole(),
-                        outputFormat=outputFormat,
-                        cache=self.cache if needMemories else None,
-                        excludeMemoryIds=set(),
-                    )
+                mMessages = await eMessage.toModelMessageList(
+                    self.db,
+                    format=llmMFormat,
+                    role=MessageCategory.fromStr(dbMessageList[i]["message_category"]).toRole(),
+                    outputFormat=outputFormat,
+                    cache=self.cache if needMemories else None,
+                    excludeMemoryIds=set(),
                 )
+                ret.extend(mMessages)
+                indexToEntry.extend([dbMessageList[i]] * len(mMessages))
 
             # For each summary:
             # Build summary message and skip summaried messages
             for condensedMessage in condenseCache:
                 # If we'll decide to condenseContext, skip summary message from condensing
                 keepFirstN += 1
-                cacheEntry = ModelMessage(role="user", content=condensedMessage["text"])
+                cacheEntry = ModelMessage(role="user", content=renderCondensedSummary(condensedMessage))
                 ret.append(cacheEntry)
+                indexToEntry.append(condensedMessage)
                 condenseCacheMessages.append(cacheEntry)
                 lastDT = datetime.datetime.fromtimestamp(condensedMessage["tillTS"], datetime.timezone.utc)
                 skippedMessages = 0
@@ -822,6 +879,9 @@ class BaseBotHandler(CommandHandlerMixin):
 
         excludedMemoryIds: MutableSet[str] = set()
         retTail: deque[ModelMessage] = deque()
+        # Parallel deque for indexToEntry tail entries, built in lockstep with
+        # retTail to preserve the len(indexToEntry) == len(ret) invariant.
+        indexToEntryTail: deque[Optional[Union[ChatMessageDict, CondensingDict]]] = deque()
         # For proper memory deduplication, construct tail from newest to oldest,
         # but adding to begin of deque to not need revert later
         for dbRow in reversed(dbMessageList):
@@ -837,8 +897,10 @@ class BaseBotHandler(CommandHandlerMixin):
             excludedMemoryIds.update(eMessage.getMemoryIds())
             # extendleft just call appendleft for each element so we need to reverse it for proper order
             retTail.extendleft(reversed(mMessages))
+            indexToEntryTail.extendleft([dbRow] * len(mMessages))
 
         ret.extend(retTail)
+        indexToEntry.extend(indexToEntryTail)
 
         if not condenseThread:
             return ret
@@ -852,7 +914,19 @@ class BaseBotHandler(CommandHandlerMixin):
         if currentTokens < maxTokens:
             return ret
 
-        condensedRet = await self.llmService.condenseContext(
+        # --- Alignment invariant: len(indexToEntry) == len(ret) ---
+        # Every ret.append/extend above has a matching indexToEntry
+        # append/extend. toModelMessageList can emit multiple ModelMessages
+        # per source row (randomContext + toolHistory + main); each emitted
+        # message is tagged with the same source row so the 1:1 alignment
+        # holds exactly.
+        assert len(indexToEntry) == len(ret), f"indexToEntry/ret alignment broken: {len(indexToEntry)} != {len(ret)}"
+
+        keepFirstNFirstCall = keepFirstN
+
+        # First condense pass — request coverage to map summaries back to
+        # source entries for metadata extraction.
+        condensedRet, coverage = await self.llmService.condenseContext(
             ret,
             model=llmModel,
             keepFirstN=keepFirstN,
@@ -861,23 +935,67 @@ class BaseBotHandler(CommandHandlerMixin):
             condensingModel=chatSettings[ChatSettingsKey.CONDENSING_MODEL].toModel(),
             condensingPrompt=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
             condensingSystemPrompt=chatSettings[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT].toStr(),
+            returnCoverage=True,
         )
 
-        # -1 is last element, so -keepLastN to skip skipped elements to get last condensed message
-        lastCondensedMessage = dbMessageList[-1 - keepLastN]
-        # +1 because of system prompt
+        # Build intermediate CondensingDict entries from first-pass coverage.
+        # These carry the 4 new metadata fields; used to build the final
+        # condenseCache, and as source entries in indexToEntry2 for the
+        # potential re-condense pass (cascade union).
+        intermediateEntries: List[CondensingDict] = []
+        for cov in coverage:
+            coveredSlice = [e for e in indexToEntry[cov["coveredFromIndex"] : cov["coveredToIndex"]] if e is not None]
+            fields = buildCondensingFields(coveredSlice)
+            intermediateEntries.append(self._condensingDictFromCoverage(cov, fields))
 
-        # logger.debug("CONDENSING DEBUG")
-        # logger.debug(f"ret   = {condensedRet}")
-        # logger.debug(f"cache = {condenseCache}")
-        # logger.debug(f"lastM = {lastCondensedMessage}")
+        # -1 is last element, so -keepLastN to skip kept tail to get last condensed message.
+        # Guard: dbMessageList may have been trimmed to fewer than keepLastN+1
+        # rows by the summary loop; use the last available row as fallback.
+        # If fully empty (all rows consumed by existing summaries), fall back
+        # to None; the coverage-empty fallback branches below then derive the
+        # boundary from intermediateEntries or skip rather than crash.
+        lastCondensedMessage: Optional[ChatMessageDict]
+        if dbMessageList:
+            lastCondensedMessage = (
+                dbMessageList[-1 - keepLastN] if len(dbMessageList) > keepLastN else dbMessageList[-1]
+            )
+        else:
+            lastCondensedMessage = None
 
         condenseCacheMessages.extend(condensedRet)
         currentTokens = llmModel.getEstimateTokensCount([v.toDict() for v in condenseCacheMessages])
         if currentTokens > maxTokens:
-            # If there are too many condensed entries in cache, condense them as well
+            # If there are too many condensed entries in cache, condense them
+            # as well. Build indexToEntry2 aligned 1:1 to condenseCacheMessages
+            # so the re-condense coverage can be mapped back to source entries.
+            indexToEntry2: List[Optional[Union[ChatMessageDict, CondensingDict]]] = []
+            # Part 1: old summary messages → original CondensingDict entries
+            for cm in originalCondenseCache:
+                indexToEntry2.append(cm)
+            # Part 2: condensedRet messages → map back via indexToEntry and
+            # intermediate entries. condensedRet = head + summaries + tail.
+            # Derive head/tail boundaries from the actual condensedRet structure
+            # (NOT from coverage indices) so that failed batches — skipped
+            # without emitting coverage — don't cause misalignment. When
+            # coverage is empty (all batches failed / truncation mode),
+            # intermediateEntries is also empty and the formula degrades to
+            # head source entries + tail source entries only — the failed
+            # body is dropped, matching condensedRet = retHead + retTail.
+            # (NOT all of indexToEntry: the failed-body source entries are
+            # omitted so indexToEntry2 stays 1:1 with condensedRet.)
+            retHeadLen = len(condensedRet) - len(coverage) - keepLastN
+            indexToEntry2.extend(indexToEntry[:retHeadLen])
+            indexToEntry2.extend(intermediateEntries)
+            indexToEntry2.extend(indexToEntry[len(indexToEntry) - keepLastN :])
+
+            # Alignment invariant for the re-condense pass.
+            assert len(indexToEntry2) == len(condenseCacheMessages), (
+                f"indexToEntry2/condenseCacheMessages alignment broken: "
+                f"{len(indexToEntry2)} != {len(condenseCacheMessages)}"
+            )
+
             keepFirstN = 1
-            condensedRet = await self.llmService.condenseContext(
+            condensedRet, coverage = await self.llmService.condenseContext(
                 condenseCacheMessages,
                 model=llmModel,
                 keepFirstN=keepFirstN,
@@ -886,21 +1004,73 @@ class BaseBotHandler(CommandHandlerMixin):
                 condensingModel=chatSettings[ChatSettingsKey.CONDENSING_MODEL].toModel(),
                 condensingPrompt=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
                 condensingSystemPrompt=chatSettings[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT].toStr(),
+                returnCoverage=True,
             )
             # We'll need to rewrite cache, so empty it here
             condenseCache = []
             condenseCacheMessages = []
 
-        for i in range(keepFirstN + 1, len(condensedRet) - keepLastN):
-            condenseCache.append(
-                {
-                    "text": condensedRet[i].content,
-                    "tillMessageId": lastCondensedMessage["message_id"],
-                    "tillTS": lastCondensedMessage["date"].timestamp(),
-                }
-            )
+            if coverage:
+                for cov in coverage:
+                    coveredSlice = [
+                        e for e in indexToEntry2[cov["coveredFromIndex"] : cov["coveredToIndex"]] if e is not None
+                    ]
+                    fields = buildCondensingFields(coveredSlice)
+                    condenseCache.append(self._condensingDictFromCoverage(cov, fields))
+            else:
+                # Fallback (truncation mode / all batches failed): preserve
+                # the old loop behaviour so nothing regresses. When
+                # lastCondensedMessage is None (dbMessageList fully consumed
+                # by existing summaries), derive the boundary from the last
+                # first-pass intermediate entry, or skip — never emit an entry
+                # missing the required tillMessageId/tillTS boundary markers.
+                for i in range(keepFirstN + 1, len(condensedRet) - keepLastN):
+                    if lastCondensedMessage is not None:
+                        boundaryId = lastCondensedMessage["message_id"]
+                        boundaryTS = lastCondensedMessage["date"].timestamp()
+                    elif intermediateEntries:
+                        boundaryId = intermediateEntries[-1]["tillMessageId"]
+                        boundaryTS = intermediateEntries[-1]["tillTS"]
+                    else:
+                        continue
+                    condenseCache.append(
+                        {
+                            "text": condensedRet[i].content,
+                            "tillMessageId": boundaryId,
+                            "tillTS": boundaryTS,
+                        }
+                    )
+        else:
+            # No re-condense needed. Old cache entries are preserved (they
+            # were protected by keepFirstN in the first condense pass); new
+            # entries are appended from the coverage.
+            if coverage:
+                condenseCache = list(originalCondenseCache)
+                condenseCache.extend(intermediateEntries)
+            else:
+                # Fallback (truncation mode / all batches failed). When
+                # lastCondensedMessage is None (dbMessageList fully consumed
+                # by existing summaries), derive the boundary from the last
+                # first-pass intermediate entry, or skip — never emit an entry
+                # missing the required tillMessageId/tillTS boundary markers.
+                condenseCache = list(originalCondenseCache)
+                for i in range(keepFirstNFirstCall + 1, len(condensedRet) - keepLastN):
+                    if lastCondensedMessage is not None:
+                        boundaryId = lastCondensedMessage["message_id"]
+                        boundaryTS = lastCondensedMessage["date"].timestamp()
+                    elif intermediateEntries:
+                        boundaryId = intermediateEntries[-1]["tillMessageId"]
+                        boundaryTS = intermediateEntries[-1]["tillTS"]
+                    else:
+                        continue
+                    condenseCache.append(
+                        {
+                            "text": condensedRet[i].content,
+                            "tillMessageId": boundaryId,
+                            "tillTS": boundaryTS,
+                        }
+                    )
 
-        # logger.debug(f"cache2 = {condenseCache}")
         eRootMessage.metadata["condensedThread"] = condenseCache
         await self.db.chatMessages.updateChatMessageMetadata(
             chatId=eRootMessage.recipient.id,

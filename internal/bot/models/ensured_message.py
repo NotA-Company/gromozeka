@@ -38,7 +38,7 @@ from lib.ai.models import ModelMessage
 
 from .enums import LLMMessageFormat
 from .media import MediaProcessingInfo
-from .message_metadata import MetadataDict, SingleMemoryDict, UserMemoriesDict
+from .message_metadata import MetadataDict, SingleMemoryDict, UserMemoriesDict, renderCondensedSummary
 from .text_formatter import FormatEntity, OutputFormat
 
 if TYPE_CHECKING:
@@ -1228,7 +1228,14 @@ class EnsuredMessage:
         ret: List[ModelMessage] = []
         randomContext = self.metadata.get("randomContext", None)
         if randomContext:
-            ret.append(ModelMessage(role="user", content=randomContext))
+            # ``randomContext`` is typed ``Union[str, CondensingDict]``. New
+            # writes (Phase 3b) store a single ``CondensingDict``; legacy rows
+            # store a flat ``str``. Both shapes are rendered as JSON via the
+            # shared :func:`renderCondensedSummary` helper — resolving the
+            # latent render asymmetry (real user messages were already JSON;
+            # summaries were raw text). The renderer handles both shapes and
+            # degrades gracefully for legacy ``str`` rows.
+            ret.append(ModelMessage(role="user", content=renderCondensedSummary(randomContext)))
 
         toolsHistory = self.metadata.get("usedTools", None)
         if toolsHistory:

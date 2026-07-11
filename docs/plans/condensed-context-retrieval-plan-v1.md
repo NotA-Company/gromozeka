@@ -1,6 +1,6 @@
 # Condensed-Context Retrieval — Design Plan v1
 
-- **Status:** DRAFT (design + planning only — no implementation)
+- **Status:** IMPLEMENTED (2026-07-12) — all 6 phases shipped (P1 additive foundation → P2 `condenseContext` `returnCoverage` → P3 caller wiring → P4 shared render helper + both injection sites + chat-prompt-suffix → P5 `get_messages_by_ids` tool → P6 docs). 3210 tests green; Gate-2 review passed. Branch `user-memory-v2`, baseline `b73c256`. Architecture decision: ADR-019 in [`docs/llm/architecture.md`](../llm/architecture.md).
 - **Date:** 2026-07-11
 - **Author:** architect
 - **Scope:** Paths A (`condensedThread`) and B (`randomContext`). Path C (transient service-level auto-condense) is **out of scope**.
@@ -63,61 +63,57 @@ class CondensingDict(TypedDict):
 New shape (new fields `NotRequired` for backwards-compat reads):
 
 ```python
-class CondensedDateRangeDict(TypedDict):
-    """ISO-8601 timestamp pair for the render output of a condensed summary.
+CondensedDateRangeDict = TypedDict(
+    "CondensedDateRangeDict",
+    {"from": float, "to": float},
+)
+"""Storage shape for the date range covered by a condensed summary.
 
-    Storage uses a plain ``Tuple[float, float]`` (two unix timestamps) on
-    :class:`CondensingDict.dateRange` to keep the persisted shape compact and
-    locale-free; this dict is only the *rendered* (ISO-string) form emitted by
-    :func:`renderCondensedSummary`.
-
-    Attributes:
-        from: ISO-8601 start timestamp (UTC).
-        to: ISO-8601 end timestamp (UTC).
-    """
-    # NOTE: the JSON key is "from" (matches the user-agreed shape); the Python
-    # attribute is "from_" only because ``from`` is a reserved keyword. The
-    # renderer writes the key as "from" explicitly.
-    from_: str
-    to: str
+Two unix-timestamp floats keyed ``from``/``to``. The JSON key ``from`` is a
+Python reserved keyword, so this TypedDict uses functional syntax (class-body
+syntax cannot express a field named ``from``). This is the *storage* form
+persisted on :class:`CondensingDict.dateRange`; the render helper converts
+these floats to ISO strings at call-time — ISO strings are NOT pre-baked into
+storage.
+"""
 
 
-class CondensingDict(TypedDict, total=False):
+class CondensingDict(TypedDict):
     """Condensed-summary record persisted under ``metadata.condensedThread``
     (Path A, a list of these) or ``metadata.randomContext`` (Path B, a single
     one).
 
     Legacy rows (pre-feature) carry only ``text``/``tillMessageId``/``tillTS``
-    and are read defensively — the renderer falls back when the new fields are
-    absent (§3.5). New writes populate ``messageIds`` as the authoritative
+    and are read defensively — readers fall back gracefully when the new fields
+    are absent (§3.5). New writes populate ``messageIds`` as the authoritative
     coverage list; ``tillMessageId``/``tillTS`` are kept for backwards-compat
     reading by older code paths and as a cheap boundary marker.
 
-    Attributes:
+    Required fields (present on ALL rows, legacy and new):
         text: The condensing model's summary text (unchanged).
         tillMessageId: Legacy boundary marker — last covered message ID.
-            Kept for backwards-compat reads; not authoritative on new writes.
         tillTS: Legacy boundary marker — unix timestamp of last covered msg.
-        messageIds: Authoritative list of covered message IDs (new). Absent
-            on legacy rows.
+
+    Optional fields (NotRequired — absent on legacy rows, present on new):
+        messageIds: Authoritative list of covered message IDs (new).
         participants: Sorted unique sender logins of covered messages (new).
-        dateRange: ``(fromTs, toTs)`` unix-timestamp pair (new). Stored as
-            floats; rendered to ISO strings at call-time.
+        dateRange: CondensedDateRangeDict — ``from``/``to`` unix-timestamp
+            floats covering the summarized messages (new).
         messageCount: Number of original messages this summary covers (new).
     """
     text: str
     tillMessageId: MessageId
     tillTS: float
-    messageIds: List[MessageId]
-    participants: List[str]
-    dateRange: Tuple[float, float]
-    messageCount: int
+    messageIds: NotRequired[List[MessageId]]
+    participants: NotRequired[List[str]]
+    dateRange: NotRequired[CondensedDateRangeDict]
+    messageCount: NotRequired[int]
 ```
 
 **Design notes:**
 
-- `total=False` makes every field optional at the type level, which is the honest representation (legacy rows lack the new fields; the renderer must handle each gracefully). The renderer (§3.5) is the single place that knows which combination is valid.
-- `dateRange` stored as `Tuple[float, float]` (not a TypedDict) at the *storage* layer: cheaper, no locale/format drift in the DB JSON, and matches the existing `tillTS: float` convention. Conversion to ISO strings happens only at render-time, matching how real messages render `date` (`self.date.isoformat()` at `ensured_message.py:1164`). The `CondensedDateRangeDict` is the *rendered* shape only.
+- The original 3 fields (`text`/`tillMessageId`/`tillTS`) remain **required** on `CondensingDict` (they exist on all legacy rows); the 4 new fields are `NotRequired`, so legacy rows that lack them are read defensively without type errors. The renderer (§3.5) is the single place that knows which combination is valid.
+- `CondensedDateRangeDict` uses **functional TypedDict syntax** (an assignment, not `class`) because `from` is a Python reserved keyword and cannot appear as an attribute name in class-body syntax. It is the **storage shape**: two unix-timestamp floats keyed `from`/`to`. The render helper (§3.4, added in P4) converts these to ISO strings at call-time (`datetime.fromtimestamp(ts, UTC).isoformat()`) — ISO strings are NOT pre-baked into storage, matching how real messages render `date` (`self.date.isoformat()` at `ensured_message.py:1164`).
 - `participants` = sorted unique sender logins (`username` column, already JOIN'd in every chat-message query — see `getChatMessageByMessageId` SQL at `internal/database/repositories/chat_messages.py:314`). No extra DB cost.
 - `messageIds` is `List[MessageId]` (wraps `int|str`, Telegram=int/Max=str — see `internal/models/types.py:16`). Serialized to JSON as strings via `MessageId.asMessageId()` at render-time, matching real messages' `messageId` field (`ensured_message.py:1165`).
 

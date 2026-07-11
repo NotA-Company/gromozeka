@@ -28,7 +28,7 @@ import re
 from collections import deque
 from collections.abc import MutableSet, Sequence
 from enum import StrEnum
-from typing import Optional
+from typing import List, Optional
 
 import telegram
 
@@ -44,15 +44,18 @@ from internal.bot.models import (
     CommandCategory,
     CommandHandlerOrder,
     CommandPermission,
+    CondensingDict,
     EnsuredMessage,
     LLMMessageFormat,
     MessageType,
     commandHandlerV2,
 )
+from internal.bot.models.message_metadata import buildCondensingFields
 from internal.config.manager import ConfigManager
 from internal.database import Database
-from internal.database.models import MessageCategory
-from internal.services.llm import ExtraDataDict, LLMService, UseToolsType
+from internal.database.models import ChatMessageDict, MessageCategory
+from internal.models import MessageId
+from internal.services.llm import CondenseBatchCoverage, ExtraDataDict, LLMService, UseToolsType
 from lib.ai import (
     ModelMessage,
     ModelResultStatus,
@@ -96,6 +99,65 @@ class LLMReplyOutcome(StrEnum):
 
     ERROR = "error"
     """Generation or send failed; an error notification has already been logged."""
+
+
+def buildRandomContextDict(
+    summaryText: str,
+    coverage: Sequence[CondenseBatchCoverage],
+    sourceRows: Sequence[ChatMessageDict],
+) -> CondensingDict:
+    """Build a single :class:`CondensingDict` for Path B ``randomContext``.
+
+    Path B (``randomContext``) stores ONE summary (not a list), but
+    :meth:`LLMService.condenseContext` may emit multiple coverage batches.
+    This helper unions ALL batches into a single
+    :class:`CondensingDict`: it slices the parallel ``sourceRows`` list by
+    each :class:`CondenseBatchCoverage` index range, concatenates the
+    covered rows, and feeds the union through :func:`buildCondensingFields`
+    to derive ``messageIds`` / ``participants`` / ``dateRange`` /
+    ``messageCount``.
+
+    Mirrors Path A's ``_condensingDictFromCoverage`` assembly (same
+    ``tillMessageId``/``tillTS`` derivation), but operates on the union of
+    all batches rather than a single batch. Pure function; zero DB/LLM cost.
+
+    Args:
+        summaryText: The joined summary text (``"\n".join(m.content ...)``).
+            Identical to the legacy flat-str ``randomContext`` value so the
+            Phase 3b → Phase 4 read site (which injects ``text`` raw) keeps
+            render behaviour unchanged.
+        coverage: Per-batch coverage descriptors from
+            :meth:`condenseContext` (``returnCoverage=True``). Indices are
+            relative to the full ``sourceRows`` sequence.
+        sourceRows: Parallel list of source :class:`ChatMessageDict` rows,
+            aligned 1:1 to the ModelMessage list that was passed to
+            ``condenseContext``. Sliced by ``coverage`` index ranges.
+
+    Returns:
+        A fully populated :class:`CondensingDict` ready to persist under
+        ``metadata["randomContext"]``.
+    """
+    coveredRows: List[ChatMessageDict] = []
+    for cov in coverage:
+        coveredRows.extend(sourceRows[cov["coveredFromIndex"] : cov["coveredToIndex"]])
+    fields = buildCondensingFields(coveredRows)
+    messageIds = fields.get("messageIds", [])
+    dateRange = fields.get("dateRange")
+    entry: CondensingDict = {
+        "text": summaryText,
+        # tillMessageId/tillTS derived the same way as Path A
+        # (_condensingDictFromCoverage): last covered message id + max
+        # timestamp. The MessageId(0)/0.0 fallback is defensive dead code —
+        # a coverage slice always has at least one source row.
+        "tillMessageId": messageIds[-1] if messageIds else MessageId(0),
+        "tillTS": dateRange["to"] if dateRange else 0.0,
+        "messageIds": messageIds,
+        "participants": fields.get("participants", []),
+        "messageCount": fields.get("messageCount", 0),
+    }
+    if dateRange:
+        entry["dateRange"] = dateRange
+    return entry
 
 
 class LLMMessageHandler(BaseBotHandler):
@@ -884,6 +946,13 @@ class LLMMessageHandler(BaseBotHandler):
                     ),
                 ]
                 contextMessages = deque[ModelMessage]()
+                # Parallel list aligned 1:1 to ``contextMessages`` — each entry
+                # is the source ``ChatMessageDict`` row that produced the
+                # corresponding ModelMessage. Mirrors Path A's ``indexToEntry``
+                # pattern (base.py). Used after condenseContext(returnCoverage=
+                # True) to map per-batch index ranges back to source rows for
+                # coverage metadata extraction via buildCondensingFields().
+                contextRows: deque[ChatMessageDict] = deque()
                 excludedMemoryIds: MutableSet[str] = ensuredMessage.getMemoryIds()
                 for storedMsg in await self.db.chatMessages.getChatMessagesSince(
                     chatId=chatId,
@@ -900,17 +969,18 @@ class LLMMessageHandler(BaseBotHandler):
                     # I assume, that it will just call appendleft for each item in the list
                     # Which will automatically reverse the list. So we need to reverse it again
                     # (using appendleft in for cycle will require reversing the list as well)
-                    contextMessages.extendleft(
-                        reversed(
-                            await eMsg.toModelMessageList(
-                                self.db,
-                                format=llmMessageFormat,
-                                role=MessageCategory.fromStr(storedMsg["message_category"]).toRole(),
-                                cache=self.cache if injectMemories else None,
-                                excludeMemoryIds=excludedMemoryIds,
-                            )
-                        )
+                    emittedMessages = await eMsg.toModelMessageList(
+                        self.db,
+                        format=llmMessageFormat,
+                        role=MessageCategory.fromStr(storedMsg["message_category"]).toRole(),
+                        cache=self.cache if injectMemories else None,
+                        excludeMemoryIds=excludedMemoryIds,
                     )
+                    contextMessages.extendleft(reversed(emittedMessages))
+                    # Tag every emitted ModelMessage with its source row so the
+                    # 1:1 alignment with contextMessages holds exactly (a row
+                    # can emit multiple ModelMessages via toModelMessageList).
+                    contextRows.extendleft([storedMsg] * len(emittedMessages))
                     excludedMemoryIds.update(eMsg.getMemoryIds())
                     if eMsg.metadata.get("randomContext", None) is not None:
                         # If some message already have summarized context,
@@ -923,8 +993,12 @@ class LLMMessageHandler(BaseBotHandler):
                     # We need to use at least 3 here as 1 for `randomContext``
                     # + 1 for message, randomContext is attached to
                     # + 1 answer from bot
-                    condensedMessages = await self.llmService.condenseContext(
-                        contextMessages,
+                    # Convert deques to lists so coverage index ranges can
+                    # slice sourceRows (deques do not support slicing).
+                    contextList = list(contextMessages)
+                    sourceRows = list(contextRows)
+                    condensedRet, coverage = await self.llmService.condenseContext(
+                        contextList,
                         chatSettings[ChatSettingsKey.CHAT_MODEL].toModel(),
                         keepFirstN=0,
                         keepLastN=0,
@@ -932,14 +1006,42 @@ class LLMMessageHandler(BaseBotHandler):
                         condensingPrompt=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
                         condensingSystemPrompt=chatSettings[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT].toStr(),
                         force=True,
+                        returnCoverage=True,
                     )
-                    if not condensedMessages:
+                    if not condensedRet:
                         logger.error("Messages condensing failed")
                     else:
                         # No need to add to context as it will be added later
                         # storedMessages.append(ModelMessage(role="user", content=mlRet.resultText))
-                        condensedText = "\n".join([message.content for message in condensedMessages])
-                        ensuredMessage.metadata["randomContext"] = condensedText
+                        # Join summary text — MATCHES the pre-P3b flat-str behaviour
+                        # exactly (same "\n".join over condensedRet contents).
+                        condensedText = "\n".join([message.content for message in condensedRet])
+                        if coverage:
+                            # Path B = ONE summary (union of all coverage batches).
+                            ensuredMessage.metadata["randomContext"] = buildRandomContextDict(
+                                summaryText=condensedText,
+                                coverage=coverage,
+                                sourceRows=sourceRows,
+                            )
+                        else:
+                            # Defensive fallback (all batches failed / pure-truncation
+                            # mode): persist a legacy 3-field CondensingDict with no
+                            # new metadata fields. tillMessageId/tillTS mark the
+                            # last covered message (upper boundary), consistent with
+                            # CondensingDict's contract and the consumption site
+                            # (base.py treats tillTS as the UPPER bound). Path A's
+                            # _condensingDictFromCoverage and buildRandomContextDict's
+                            # coverage branch both derive these from the NEWEST source
+                            # row; this fallback matches them. Guards against an empty
+                            # sourceRows (should not happen since we only reach here
+                            # when len(contextMessages) > MAX).
+                            newestRow = sourceRows[-1] if sourceRows else None
+                            fallbackDict: CondensingDict = {
+                                "text": condensedText,
+                                "tillMessageId": newestRow["message_id"] if newestRow else MessageId(0),
+                                "tillTS": newestRow["date"].timestamp() if newestRow else 0.0,
+                            }
+                            ensuredMessage.metadata["randomContext"] = fallbackDict
                         await self.db.chatMessages.updateChatMessageMetadata(
                             chatId=ensuredMessage.recipient.id,
                             messageId=ensuredMessage.messageId,

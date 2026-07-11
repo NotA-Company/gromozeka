@@ -147,6 +147,25 @@ condensed = await llmService.condenseContext(
     condensingSystemPrompt=condensingSystemPrompt,
 )
 
+# Condense AND report which input indices each summary batch covered
+# (additive keyword-only param; default False preserves the byte-identical
+# single-return path used by generateTextViaLLM — Path C).
+condensed, coverage = await llmService.condenseContext(
+    messages,
+    model=llmModel,
+    keepFirstN=1,
+    keepLastN=1,
+    condensingModel=condensingModel,
+    condensingPrompt=condensingPrompt,
+    condensingSystemPrompt=condensingSystemPrompt,
+    returnCoverage=True,   # -> Tuple[Sequence[ModelMessage], List[CondenseBatchCoverage]]
+)
+# coverage[i] = {summaryText, coveredFromIndex, coveredToIndex} (indices into
+# the FULL input messages; head/system-prompt offset applied internally). One
+# entry per SUCCESSFULLY summarised batch; skip paths (single-oversized,
+# exception) emit no coverage. Empty when no summaries are produced
+# (pure-truncation mode or force=True under-budget).
+
 # Register LLM tool — always use ToolName.XXX (never raw string)
 llmService.registerTool(
     name=ToolName.EXAMPLE,

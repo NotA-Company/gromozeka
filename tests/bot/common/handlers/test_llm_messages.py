@@ -54,8 +54,10 @@ from internal.bot.models import (
     MessageSender,
     MessageType,
 )
+from internal.database.models import ChatMessageDict, MessageCategory
 from internal.models import MessageId
 from internal.services.cache.service import CacheService
+from internal.services.llm import CondenseBatchCoverage
 from internal.services.queue_service.service import QueueService
 from internal.services.storage.service import StorageService
 from lib.ai import ModelMessage, ModelResultStatus, ModelRunResult
@@ -1400,3 +1402,249 @@ class TestHandleMentionCompactMemoryBypass:
         # regression guard is: metadata preserves the compact IDs intact
         # (no re-point / no mangling).
         assert reply.metadata.get("memories") == compactMemories
+
+
+# ---------------------------------------------------------------------------
+# Tests: Phase 3b — handleRandomMessage condensing persists CondensingDict
+# (Path B reshape: randomContext str → single CondensingDict with coverage)
+# ---------------------------------------------------------------------------
+
+
+def _makeContextRow(messageId: int, username: str, ts: float) -> ChatMessageDict:
+    """Build a minimal ``ChatMessageDict`` for the condensing integration tests.
+
+    Args:
+        messageId: Message ID integer.
+        username: Sender login.
+        ts: Unix timestamp for the message date.
+
+    Returns:
+        A dict matching the ``ChatMessageDict`` shape with all required keys.
+    """
+    ret: ChatMessageDict = {
+        "chat_id": -100,
+        "message_id": MessageId(messageId),
+        "date": datetime.datetime.fromtimestamp(ts, datetime.timezone.utc),
+        "user_id": messageId,
+        "reply_id": None,
+        "thread_id": 0,
+        "root_message_id": None,
+        "message_text": f"msg-{messageId}",
+        "message_type": "text",
+        "message_category": MessageCategory.USER,
+        "quote_text": None,
+        "media_id": None,
+        "created_at": datetime.datetime.fromtimestamp(ts, datetime.timezone.utc),
+        "metadata": "{}",
+        "markup": "",
+        "media_group_id": None,
+        "username": username,
+        "full_name": username,
+    }
+    return ret
+
+
+def _condensingChatSettings() -> ChatSettingsDict:
+    """Build chat settings covering the condensing branch's reads.
+
+    Extends :func:`_fullChatSettings` with the four condensing keys
+    (``CHAT_MODEL``, ``CONDENSING_MODEL``, ``CONDENSING_PROMPT``,
+    ``CONDENSING_SYSTEM_PROMPT``). Model values use real
+    :class:`ChatSettingsValue` wrappers; ``ChatSettingsValue.toModel`` is
+    patched at the test level to avoid hitting the real LLM manager.
+
+    Returns:
+        A complete :class:`ChatSettingsDict` including condensing keys.
+    """
+    base = _fullChatSettings()
+    base[ChatSettingsKey.CHAT_MODEL] = ChatSettingsValue("dummy-chat-model")
+    base[ChatSettingsKey.CONDENSING_MODEL] = ChatSettingsValue("dummy-condensing-model")
+    base[ChatSettingsKey.CONDENSING_PROMPT] = ChatSettingsValue("condense prompt body")
+    base[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT] = ChatSettingsValue("condense sys body")
+    return base
+
+
+def _lightweightContextEM() -> EnsuredMessage:
+    """Build a lightweight EnsuredMessage for the fromDBChatMessage mock.
+
+    Has empty metadata (no ``randomContext``) so the context walk does not
+    break early, and ``getMemoryIds()`` returns an empty set.
+
+    Returns:
+        A minimal :class:`EnsuredMessage`.
+    """
+    return EnsuredMessage(
+        sender=MessageSender(id=1, name="ctx-user", username="@ctxuser"),
+        recipient=MessageRecipient(id=-100, chatType=ChatType.GROUP),
+        messageId=MessageId(999),
+        date=datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc),
+        messageText="context message",
+    )
+
+
+class TestHandleRandomMessageCondensing:
+    """Phase 3b: ``handleRandomMessage`` persists ``randomContext`` as a CondensingDict.
+
+    Drives the real ``handleRandomMessage`` through the condensing branch
+    (``len(contextMessages) > MAX_RANDOM_CONTEXT_MESSAGES``) with
+    ``condenseContext`` mocked to return deterministic
+    ``(condensedRet, coverage)``. Asserts the persisted metadata carries a
+    full :class:`CondensingDict` with coverage fields (single batch, multi
+    batch union) and the defensive fallback (empty coverage → legacy 3-field
+    dict).
+    """
+
+    @staticmethod
+    def _wireCondensePath(
+        handler: LLMMessageHandler,
+        *,
+        rows: list[ChatMessageDict],
+        condensedRet: list[ModelMessage],
+        coverage: list[CondenseBatchCoverage],
+    ) -> tuple[EnsuredMessage, contextlib.ExitStack, AsyncMock]:
+        """Wire the condensing-path mocks and return ``(em, stack, updateMeta)``.
+
+        Args:
+            handler: The live handler fixture.
+            rows: Chronological context rows (oldest-first), as a test author
+                naturally builds them (ascending ``messageId``/timestamp). The
+                real ``getChatMessagesSince`` returns ``ORDER BY c.date DESC``
+                (newest-first); the walk's ``deque.extendleft`` then reverses
+                that back to oldest-first so ``sourceRows`` is chronological.
+                To mirror production, this helper reverses ``rows`` before
+                handing them to the mock — so coverage index ranges and the
+                persisted ``messageIds`` come out oldest-first as callers
+                assert.
+            condensedRet: The condensed messages returned by ``condenseContext``.
+            coverage: The coverage list returned by ``condenseContext``.
+
+        Returns:
+            A ``(em, stack, updateMetaMock)`` triple: the EnsuredMessage, an
+            entered ExitStack (caller must ``with stack:``), and the
+            ``updateChatMessageMetadata`` mock for post-call assertions.
+        """
+        handler.getChatSettings = AsyncMock(return_value=_condensingChatSettings())  # type: ignore[method-assign]
+        # Reverse to newest-first to mirror production's ORDER BY c.date DESC;
+        # the handler's deque.extendleft then yields oldest-first sourceRows.
+        handler.db.chatMessages.getChatMessagesSince = AsyncMock(return_value=list(reversed(rows)))
+        handler.llmService.condenseContext = AsyncMock(  # type: ignore[method-assign]
+            return_value=(condensedRet, coverage)
+        )
+        handler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult("bot reply")
+        )
+        updateMetaMock = AsyncMock()
+        handler.db.chatMessages.updateChatMessageMetadata = updateMetaMock  # type: ignore[method-assign]
+
+        em = _liveEnsuredMessage()
+        stack = contextlib.ExitStack()
+        # Patch fromDBChatMessage so the walk doesn't touch the DB; return a
+        # lightweight EM with empty metadata (no randomContext → no early break).
+        stack.enter_context(
+            patch.object(EnsuredMessage, "fromDBChatMessage", AsyncMock(return_value=_lightweightContextEM()))
+        )
+        # Each context message emits exactly ONE ModelMessage so the 1:1
+        # alignment between contextMessages and contextRows is trivially exact.
+        ctxMsg = ModelMessage(role="user", content="ctx-body")
+        stack.enter_context(patch.object(EnsuredMessage, "toModelMessageList", AsyncMock(return_value=[ctxMsg])))
+        # Avoid hitting the real LLM manager for model-typed settings.
+        stack.enter_context(patch.object(ChatSettingsValue, "toModel", return_value=Mock()))
+        return em, stack, updateMetaMock
+
+    async def testCondensePersistsCondensingDictWithCoverage(self, liveHandler: LLMMessageHandler) -> None:
+        """Single coverage batch -> randomContext is a full CondensingDict.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        rows = [_makeContextRow(100 + i, f"user{i}", 1000.0 + i * 100.0) for i in range(10)]
+        condensedRet = [ModelMessage(role="user", content="SUMMARY TEXT")]
+        coverage = [CondenseBatchCoverage(summaryText="SUMMARY TEXT", coveredFromIndex=0, coveredToIndex=10)]
+        em, stack, updateMetaMock = self._wireCondensePath(
+            liveHandler, rows=rows, condensedRet=condensedRet, coverage=coverage
+        )
+
+        with stack, patch("random.random", return_value=0.0):
+            result = await liveHandler.handleRandomMessage(em, Mock())
+
+        assert result is True
+        updateMetaMock.assert_awaited_once()
+        randomContext = updateMetaMock.call_args.kwargs["metadata"]["randomContext"]
+
+        # Shape: dict, not str (the P3b reshape).
+        assert isinstance(randomContext, dict)
+        # text matches the pre-P3b "\n".join behaviour.
+        assert randomContext["text"] == "SUMMARY TEXT"
+        # Coverage fields populated.
+        assert randomContext["messageIds"] == [MessageId(100 + i) for i in range(10)]
+        assert randomContext["participants"] == sorted(f"user{i}" for i in range(10))
+        assert randomContext["messageCount"] == 10
+        assert randomContext["dateRange"] == {"from": 1000.0, "to": 1900.0}
+        # Legacy boundary markers retained.
+        assert randomContext["tillMessageId"] == MessageId(109)
+        assert randomContext["tillTS"] == 1900.0
+
+    async def testCondenseMultiBatchCoverageUnion(self, liveHandler: LLMMessageHandler) -> None:
+        """Two coverage batches -> messageIds unioned from all batches.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        rows = [_makeContextRow(200 + i, f"sender{i}", 2000.0 + i * 100.0) for i in range(10)]
+        condensedRet = [
+            ModelMessage(role="user", content="BATCH1"),
+            ModelMessage(role="user", content="BATCH2"),
+        ]
+        coverage = [
+            CondenseBatchCoverage(summaryText="BATCH1", coveredFromIndex=0, coveredToIndex=5),
+            CondenseBatchCoverage(summaryText="BATCH2", coveredFromIndex=5, coveredToIndex=10),
+        ]
+        em, stack, updateMetaMock = self._wireCondensePath(
+            liveHandler, rows=rows, condensedRet=condensedRet, coverage=coverage
+        )
+
+        with stack, patch("random.random", return_value=0.0):
+            result = await liveHandler.handleRandomMessage(em, Mock())
+
+        assert result is True
+        randomContext = updateMetaMock.call_args.kwargs["metadata"]["randomContext"]
+
+        # text is the join of BOTH batch summaries (matches pre-P3b join).
+        assert randomContext["text"] == "BATCH1\nBATCH2"
+        # messageIds from both batches (all 10 rows).
+        assert randomContext["messageIds"] == [MessageId(200 + i) for i in range(10)]
+        assert randomContext["messageCount"] == 10
+
+    async def testCondenseEmptyCoverageFallback(self, liveHandler: LLMMessageHandler) -> None:
+        """Empty coverage (all batches failed) -> legacy 3-field dict, no crash.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        rows = [_makeContextRow(300 + i, f"u{i}", 3000.0 + i * 100.0) for i in range(10)]
+        # condenseContext returns non-empty condensedRet but empty coverage
+        # (pure-truncation / all-batches-failed mode).
+        condensedRet = [ModelMessage(role="user", content="FALLBACK SUMMARY")]
+        coverage: list[CondenseBatchCoverage] = []
+        em, stack, updateMetaMock = self._wireCondensePath(
+            liveHandler, rows=rows, condensedRet=condensedRet, coverage=coverage
+        )
+
+        with stack, patch("random.random", return_value=0.0):
+            result = await liveHandler.handleRandomMessage(em, Mock())
+
+        assert result is True
+        randomContext = updateMetaMock.call_args.kwargs["metadata"]["randomContext"]
+
+        # Legacy 3-field shape — no new metadata fields.
+        assert isinstance(randomContext, dict)
+        assert randomContext["text"] == "FALLBACK SUMMARY"
+        assert "messageIds" not in randomContext
+        assert "participants" not in randomContext
+        assert "dateRange" not in randomContext
+        assert "messageCount" not in randomContext
+        # tillMessageId/tillTS mark the LAST covered message (newest source row,
+        # i.e. the upper boundary), matching CondensingDict's contract and the
+        # convention used by Path A and buildRandomContextDict.
+        assert randomContext["tillMessageId"] == MessageId(309)
+        assert randomContext["tillTS"] == 3900.0

@@ -53,6 +53,7 @@ class ToolName(StrEnum):
     SEARCH_MESSAGES = "search_messages"
     LIST_USERS = "list_users"
     GET_THREAD = "get_thread"
+    GET_MESSAGES_BY_IDS = "get_messages_by_ids"
 
     # Sandbox
     RUN_PYTHON = "run_python"
@@ -253,6 +254,11 @@ BACKFILL_INTER_MESSAGE_DELAY_SECS: float = 0.1
 backfill batch. ``LLMService`` already rate-limits at the provider level,
 but a small extra cushion keeps the handler from monopolising the
 asyncio loop and leaves headroom for user-facing message traffic."""
+
+MAX_GET_MESSAGES_BATCH: int = 32
+"""Maximum number of message IDs the ``get_messages_by_ids`` LLM tool will
+fetch in one batch (caps tool abuse). See :class:`CondenseBatchCoverage` /
+condensed-context-retrieval plan §3.8."""
 
 # Sandbox limits
 MAX_SANDBOX_READ_FILE_BYTES: int = 65536  # 64 KB

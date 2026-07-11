@@ -46,6 +46,17 @@ CREATE TABLE chat_messages (
 
 **Note**: The `media_group_id` column links messages that are part of a media group (album of photos/videos sent together).
 
+**`metadata` JSON convention**: the column holds a JSON object (`internal/bot/models/message_metadata.py` → `MetadataDict`, `total=False`). Keys relevant to the condensed-context-retrieval feature (ADR-019):
+
+- `condensedThread` — `List[CondensingDict]` (Path A, `getThreadByMessageForLLM`). Each `CondensingDict` = 3 **required** legacy fields (`text: str`, `tillMessageId: MessageId`, `tillTS: float` — cheap boundary marker on all rows) + 4 **`NotRequired`** coverage fields added by ADR-019 (absent on legacy rows, read defensively): `messageIds: List[MessageId]` (authoritative covered-ID list), `participants: List[str]` (sorted unique sender logins), `dateRange: CondensedDateRangeDict`, `messageCount: int` (unique covered count).
+- `randomContext` — `Union[str, CondensingDict]` (Path B, `handleRandomAnswer`). Reshaped in ADR-019 from flat `str` → single `CondensingDict` on new writes; legacy `str` rows read defensively by the shared renderer.
+
+`CondensedDateRangeDict = TypedDict("CondensedDateRangeDict", {"from": float, "to": float})` uses **functional TypedDict syntax** because the JSON key `from` is a Python reserved keyword (class-body syntax would be a `SyntaxError`). It is the *storage* shape — two unix-timestamp floats; the render helper converts to ISO strings at call-time (ISO strings are NOT pre-baked into storage).
+
+Both keys render to the LLM as a JSON object via the shared `renderCondensedSummary(data)` helper (`{type:"condensed", coveredMessageIds:[...], participants:[...], dateRange:{"from":<ISO>,"to":<ISO>}, messageCount:N, summary:"..."}`; falsy fields omitted; `type`+`summary` always present), so the model sees a uniform format consistent with real user messages and can call the `get_messages_by_ids` tool (`ChatSearchHandler`, three-layer gated, pure DB lookup) to fetch the originals. Condensed summaries + originals always coexist — condensing adds metadata, it never deletes source rows. No migration: legacy rows render correctly (degraded, no `coveredMessageIds`); new rows are richer.
+
+Other `MetadataDict` keys (unrelated to this feature): `forwardedFrom`, `messagePrefix`, `usedTools`, `memories` (`CompactMemoryIdsDict` — see ADR-017/ADR-018).
+
 ---
 
 ### chat_users

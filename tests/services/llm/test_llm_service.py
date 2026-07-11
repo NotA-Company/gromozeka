@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from internal.bot.models.chat_settings import ChatSettingsDict
-from internal.services.llm.service import LLMService, LLMToolHandler
+from internal.services.llm.service import CondenseBatchCoverage, LLMService, LLMToolHandler
 from lib.ai.abstract import AbstractModel
 from lib.ai.manager import LLMManager
 from lib.ai.models import (
@@ -1889,3 +1889,388 @@ async def testGenerateStructuredNoRateLimitWhenChatIdNone(llmService, mockChatSe
     )
 
     llmService.rateLimit.assert_not_called()
+
+
+# ============================================================================
+# condenseContext returnCoverage Tests
+# (Phase 2 — condensed-context retrieval: per-batch index-range coverage)
+# ============================================================================
+
+
+def _condenseTokensFor(data: Any) -> int:
+    """Deterministic token estimator for condenseContext tests.
+
+    Returns the sum of ``content`` string lengths across the message dicts
+    passed in (1 token per character). This makes the token-driven batching
+    branches of ``condenseContext`` fully predictable so the coverage index
+    ranges can be asserted exactly.
+
+    Args:
+        data: A string, or a list of ``ModelMessage.toDict()`` dicts.
+
+    Returns:
+        The deterministic token count.
+    """
+    if isinstance(data, str):
+        return len(data)
+    total = 0
+    for item in data:
+        if isinstance(item, dict):
+            total += len(item.get("content") or "")
+        else:
+            total += len(str(item))
+    return total
+
+
+def _makeCountingModel(contextSize: int) -> Mock:
+    """Build a mock AbstractModel whose token count is the content-length sum.
+
+    Args:
+        contextSize: Value exposed as ``model.contextSize``.
+
+    Returns:
+        A ``Mock(spec=AbstractModel)`` with a deterministic
+        ``getEstimateTokensCount`` (1 token per content character).
+    """
+    model = Mock(spec=AbstractModel)
+    model.contextSize = contextSize
+    model.getEstimateTokensCount = Mock(side_effect=_condenseTokensFor)
+    return model
+
+
+def _makeCondensingModel(contextSize: int, summaryTexts: List[str]) -> Mock:
+    """Build a mock condensing model returning successive deterministic summaries.
+
+    Each call to ``generateText`` returns the next entry from ``summaryTexts``
+    (then a fixed overflow text if exhausted), wrapped in a FINAL
+    :class:`ModelRunResult`. Uses an AsyncMock so ``call_count`` is available.
+
+    Args:
+        contextSize: Value exposed as ``model.contextSize`` (drives
+            ``summaryMaxTokens`` inside ``condenseContext``).
+        summaryTexts: Successive summary texts returned per summarize call.
+
+    Returns:
+        A ``Mock(spec=AbstractModel)`` wired with deterministic token counting
+        and a deterministic ``generateText``.
+    """
+    model = _makeCountingModel(contextSize)
+    it = iter(summaryTexts)
+
+    def _sideEffect(*args: Any, **kwargs: Any) -> ModelRunResult:
+        try:
+            text = next(it)
+        except StopIteration:
+            text = "overflow-summary"
+        return ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText=text)
+
+    model.generateText = createAsyncMock(sideEffect=_sideEffect)
+    return model
+
+
+class TestCondenseContextCoverage:
+    """Tests for ``condenseContext(returnCoverage=True)`` coverage emission.
+
+    Each input is built so the token-driven batching is fully predictable under
+    :func:`_condenseTokensFor` (1 token per content character). ``condensingSystemPrompt``
+    and ``condensingPrompt`` are short fixed strings so the per-request overhead
+    (system + prompt messages) is a known constant of 20 tokens.
+    """
+
+    SYS_PROMPT = "sys"
+    CONDENSING_SYSTEM_PROMPT = "Condenser."  # len 9
+    CONDENSING_PROMPT = "Summarize."  # len 11
+    # Per-batch request overhead = CONDENSING_SYSTEM_PROMPT + CONDENSING_PROMPT = 20 tokens.
+
+    def _messageList(self, bodySizes: List[int]) -> List[ModelMessage]:
+        """Build ``[system] + body users + [tail user]`` with exact content lengths.
+
+        Each body user message content has length exactly ``bodySizes[i]``
+        (the body index label is embedded without changing the length). A trailing
+        ``last`` user message acts as the kept tail (``keepLastN=1``).
+
+        Args:
+            bodySizes: Exact content lengths of each body user message.
+
+        Returns:
+            A list of ModelMessage starting with a system message, followed by
+            one user message per body size, followed by a single tail user message.
+        """
+        msgs: List[ModelMessage] = [ModelMessage(role="system", content=self.SYS_PROMPT)]
+        for i, size in enumerate(bodySizes):
+            label = str(i)
+            msgs.append(ModelMessage(role="user", content=label + "x" * (size - len(label))))
+        msgs.append(ModelMessage(role="user", content="last"))
+        return msgs
+
+    async def testReturnCoverageFalseIsByteIdentical(self, llmService):
+        """Default and explicit ``returnCoverage=False`` produce identical results.
+
+        This is the Path-C safety property: ``generateTextViaLLM`` (which omits
+        ``returnCoverage``) keeps getting a plain message sequence back, never a tuple.
+        """
+        messages = self._messageList([100, 100, 100])
+        model = _makeCountingModel(4096)
+        condA = _makeCondensingModel(1000, ["summary-0"])
+        condB = _makeCondensingModel(1000, ["summary-0"])
+
+        default = await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=1,
+            force=True,
+            condensingModel=condA,
+            condensingPrompt=self.CONDENSING_PROMPT,
+            condensingSystemPrompt=self.CONDENSING_SYSTEM_PROMPT,
+            maxTokens=1000,
+        )
+        explicit = await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=1,
+            force=True,
+            condensingModel=condB,
+            condensingPrompt=self.CONDENSING_PROMPT,
+            condensingSystemPrompt=self.CONDENSING_SYSTEM_PROMPT,
+            maxTokens=1000,
+            returnCoverage=False,
+        )
+
+        # Default return is a plain list, NOT a tuple.
+        assert isinstance(default, list)
+        assert not isinstance(default, tuple)
+        # Byte-identical content/length.
+        assert len(default) == len(explicit)
+        assert [(m.role, m.content) for m in default] == [(m.role, m.content) for m in explicit]
+
+    async def testReturnCoverageTrueSingleBatch(self, llmService):
+        """One summary batch → coverage exactly spans the condensed body range."""
+        # body = 3 messages x 100 tokens = 300. denom = max(1000-256, 1000*0.85) = 850.
+        # batchesCount = 300//850 + 1 = 1 → batchLength = 3 (single batch over all body).
+        # request = 20 + 300 = 320 <= summaryMaxTokens 1000 → fits.
+        messages = self._messageList([100, 100, 100])
+        model = _makeCountingModel(4096)
+        condensing = _makeCondensingModel(1000, ["summary-0"])
+
+        result, coverage = await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=1,
+            force=True,
+            condensingModel=condensing,
+            condensingPrompt=self.CONDENSING_PROMPT,
+            condensingSystemPrompt=self.CONDENSING_SYSTEM_PROMPT,
+            maxTokens=1000,
+            returnCoverage=True,
+        )
+
+        assert isinstance(coverage, list)
+        assert len(coverage) == 1
+        cov: CondenseBatchCoverage = coverage[0]
+        # keepFirstN bumped to 1 (system msg), body = messages[1:4] → coverage (1, 4).
+        assert cov["coveredFromIndex"] == 1
+        assert cov["coveredToIndex"] == 4
+        assert cov["summaryText"] == "summary-0"
+        # Cross-check: the summary message in the result matches coverage.summaryText.
+        headLen = 1
+        assert result[headLen].role == "user"
+        assert result[headLen].content == cov["summaryText"]
+
+    async def testReturnCoverageTrueMultiBatch(self, llmService):
+        """Two summary batches → contiguous, non-overlapping coverage spanning the body."""
+        # body = 6 messages x 150 tokens = 900. denom = 850.
+        # batchesCount = 900//850 + 1 = 2 → batchLength = 6//2 = 3.
+        # each batch request = 20 + 450 = 470 <= 1000 → fits. Batches: [0:3], [3:6].
+        messages = self._messageList([150, 150, 150, 150, 150, 150])
+        model = _makeCountingModel(4096)
+        condensing = _makeCondensingModel(1000, ["summary-0", "summary-1"])
+
+        result, coverage = await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=1,
+            force=True,
+            condensingModel=condensing,
+            condensingPrompt=self.CONDENSING_PROMPT,
+            condensingSystemPrompt=self.CONDENSING_SYSTEM_PROMPT,
+            maxTokens=1000,
+            returnCoverage=True,
+        )
+
+        assert len(coverage) == 2
+        # Contiguous, non-overlapping, union = [1, 7) = full body range (messages[1:7]).
+        assert coverage[0]["coveredFromIndex"] == 1
+        assert coverage[0]["coveredToIndex"] == 4
+        assert coverage[1]["coveredFromIndex"] == 4
+        assert coverage[1]["coveredToIndex"] == 7
+        assert coverage[0]["coveredToIndex"] == coverage[1]["coveredFromIndex"]
+        # Each coverage summary matches the corresponding returned summary message.
+        headLen = 1
+        for i, cov in enumerate(coverage):
+            assert result[headLen + i].role == "user"
+            assert result[headLen + i].content == cov["summaryText"]
+
+    async def testReturnCoverageTrueSingleOversizedMessageSkipped(self, llmService):
+        """A lone message exceeding ``summaryMaxTokens`` is SKIPPED — excluded from coverage.
+
+        Note on the adaptive batch-shrink branch: the ``currentBatchLen //`` reduction
+        in ``condenseContext`` (followed by ``continue``) is a latent non-terminating
+        loop — the ``while`` head recomputes ``currentBatchLen`` from ``batchLength`` on
+        every iteration, so a shrunk-but-not-skipped oversized batch never makes progress
+        and is never successfully summarised. It is therefore NOT exercised here. This
+        test covers the reachable boundary-adjustment path instead: when
+        ``batchLength == 1`` and a lone message still exceeds ``summaryMaxTokens``, it is
+        skipped (no summary, no coverage) and the following message is summarised at the
+        correct index.
+        """
+        # body = [50, 600, 50] tokens. tokensCount = 700, denom = 425.
+        # batchesCount = 700//425 + 1 = 2 → batchLength = 3//2 = 1 (each msg alone).
+        #   msg0 (50):  req = 20+50  = 70  <= 500 → summarised, coverage (1, 2).
+        #   msg1 (600): req = 20+600 = 620 >  500, currentBatchLen==1 → SKIPPED (no coverage).
+        #   msg2 (50):  req = 70      <= 500 → summarised, coverage (3, 4).
+        messages = self._messageList([50, 600, 50])
+        model = _makeCountingModel(4096)
+        condensing = _makeCondensingModel(500, ["summary-0", "summary-1"])
+
+        result, coverage = await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=1,
+            force=True,
+            condensingModel=condensing,
+            condensingPrompt=self.CONDENSING_PROMPT,
+            condensingSystemPrompt=self.CONDENSING_SYSTEM_PROMPT,
+            maxTokens=500,
+            returnCoverage=True,
+        )
+
+        # Only the two small messages were summarised; the HUGE message (index 2) skipped.
+        assert len(coverage) == 2
+        assert coverage[0]["coveredFromIndex"] == 1
+        assert coverage[0]["coveredToIndex"] == 2
+        assert coverage[1]["coveredFromIndex"] == 3
+        assert coverage[1]["coveredToIndex"] == 4
+        # Index 2 (the skipped HUGE message) is covered by NO entry.
+        for cov in coverage:
+            assert not (cov["coveredFromIndex"] <= 2 < cov["coveredToIndex"])
+        # The condensing model was called exactly twice (skip path does not call generateText).
+        assert condensing.generateText.call_count == 2
+        # Coverage summaries match the two returned summary messages.
+        headLen = 1
+        for i, cov in enumerate(coverage):
+            assert result[headLen + i].content == cov["summaryText"]
+
+    async def testReturnCoverageTruePureTruncationEmptyCoverage(self, llmService):
+        """``condensingModel=None`` → pure truncation → coverage is empty."""
+        messages = self._messageList([50, 50, 50])
+        model = _makeCountingModel(4096)
+
+        result, coverage = await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=1,
+            force=True,
+            condensingModel=None,
+            maxTokens=4096,
+            returnCoverage=True,
+        )
+
+        assert coverage == []
+        assert isinstance(result, list)
+        # No truncation needed (fits in budget) → all input messages present.
+        assert len(result) == len(messages)
+
+    async def testReturnCoverageTrueUnderBudgetNoopEmptyCoverage(self, llmService):
+        """``force=False`` under budget → no condensing → empty coverage, returns original."""
+        messages = self._messageList([50, 50, 50])
+        model = _makeCountingModel(4096)
+
+        result, coverage = await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=1,
+            force=False,
+            maxTokens=4096,
+            returnCoverage=True,
+        )
+
+        assert coverage == []
+        # Under-budget no-op returns the ORIGINAL messages object unchanged.
+        assert result is messages
+
+    async def testReturnCoverageTrueGenerateTextExceptionSkipsCoverage(self, llmService):
+        """A batch whose condensingModel.generateText raises produces no coverage entry,
+        but startPos advances so subsequent batches get correct full-input indices."""
+        # body = 9 messages x 200 tokens = 1800. denom = max(1000-256, 1000*0.85) = 850.
+        # batchesCount = 1800//850 + 1 = 3 → batchLength = 9//3 = 3.
+        # each batch request = 20 + 600 = 620 <= 1000 → fits. Batches: [0:3], [3:6], [6:9].
+        # keepFirstN bumped to 1 (system msg) → coverage ranges (1,4), (4,7), (7,10).
+        # The 2nd batch's generateText RAISES → no coverage, startPos still advances by 3.
+        messages = self._messageList([200] * 9)
+        model = _makeCountingModel(4096)
+
+        summaryIt = iter(["summary-0", "summary-2"])
+        callState = {"count": 0}
+
+        def _sideEffect(*args: Any, **kwargs: Any) -> ModelRunResult:
+            callState["count"] += 1
+            if callState["count"] == 2:
+                raise RuntimeError("boom on second batch")
+            text = next(summaryIt)
+            return ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText=text)
+
+        condensing = _makeCountingModel(1000)
+        condensing.generateText = createAsyncMock(sideEffect=_sideEffect)
+
+        result, coverage = await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=1,
+            force=True,
+            condensingModel=condensing,
+            condensingPrompt=self.CONDENSING_PROMPT,
+            condensingSystemPrompt=self.CONDENSING_SYSTEM_PROMPT,
+            maxTokens=1000,
+            returnCoverage=True,
+        )
+
+        # generateText was invoked for ALL three batches (the middle one raised).
+        assert condensing.generateText.call_count == 3
+        # Coverage emitted for batches 1 and 3 only; batch 2 (exception) emitted none.
+        assert len(coverage) == 2
+        assert coverage[0]["coveredFromIndex"] == 1
+        assert coverage[0]["coveredToIndex"] == 4
+        assert coverage[0]["summaryText"] == "summary-0"
+        assert coverage[1]["coveredFromIndex"] == 7
+        assert coverage[1]["coveredToIndex"] == 10
+        assert coverage[1]["summaryText"] == "summary-2"
+        # The exception batch's full-input index range [4, 7) is covered by NO entry.
+        for gapIndex in (4, 5, 6):
+            for cov in coverage:
+                assert not (cov["coveredFromIndex"] <= gapIndex < cov["coveredToIndex"])
+        # The gap is exactly the 2nd batch: batch 1 ends where the gap starts, batch 3
+        # begins where the gap ends — startPos advanced correctly past the failed batch.
+        assert coverage[0]["coveredToIndex"] == 4
+        assert coverage[1]["coveredFromIndex"] == 7
+        # Result = head (system) + 2 surviving summaries + tail ("last") = 4 messages.
+        assert len(result) == 4
+        headLen = 1
+        assert result[headLen].content == "summary-0"
+        assert result[headLen + 1].content == "summary-2"
+
+    async def testReturnCoverageTrueEmptyInputReturnsEmptyCoverage(self, llmService):
+        """Empty messages list with returnCoverage=True returns ([], [])."""
+        model = _makeCountingModel(4096)
+
+        result, coverage = await llmService.condenseContext([], model, returnCoverage=True)
+
+        assert result == []
+        assert coverage == []

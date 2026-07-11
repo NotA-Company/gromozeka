@@ -29,6 +29,7 @@
 |---|---|---|---|
 | `chatMessages` | `saveChatMessage(...)` | `None` | Save incoming/outgoing message |
 | `chatMessages` | `getChatMessageByMessageId(chatId, messageId)` | `Optional[ChatMessageDict]` | Get message by ID |
+| `chatMessages` | `getChatMessagesByMessageIds(chatId, messageIds, *, dataSource?)` | `List[ChatMessageDict]` | Batch-fetch multiple messages by ID in one query. Portable `IN (:id0, :id1, ...)` named-placeholder expansion; same user JOIN as `getChatMessageByMessageId`; `ORDER BY c.date ASC`; early-returns `[]` on empty input. Does NOT dedup input IDs (caller's responsibility — duplicate IDs produce one row). Backs the `get_messages_by_ids` LLM tool (ADR-019). |
 | `chatMessages` | `getChatMessagesByRootId(chatId, rootMessageId, threadId)` | `List[ChatMessageDict]` | Get thread messages |
 | `chatMessages` | `getMessageThread(chatId, messageId, *, dataSource?)` | `Optional[ThreadResultDict]` | Get target + thread root + chronological thread messages |
 | `chatMessages` | `getChatMessagesSince(chatId, sinceDateTime?, tillDateTime?, threadId?, limit?, messageCategory?, userId?, *, dataSource?)` | `List[ChatMessageDict]` | Messages newer than `sinceDateTime` (ordered date DESC). The additive `userId` filter (`AND (:userId IS NULL OR c.user_id = :userId)`) scopes results to one sender — used by the memory-refinement cron to fetch a user's recent messages |
@@ -737,4 +738,4 @@ success, value = sqlToCustomType("123", Union[int, str])
 ---
 
 *This guide is auto-maintained and should be updated whenever significant database changes are made*
-*Last updated: 2026-06-20*
+*Last updated: 2026-07-12*

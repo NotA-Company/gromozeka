@@ -34,6 +34,7 @@ from internal.bot.common.typing_manager import TypingManager
 from internal.bot.constants import (
     BACKFILL_DEFAULT_BATCH_SIZE,
     BACKFILL_INTER_MESSAGE_DELAY_SECS,
+    MAX_GET_MESSAGES_BATCH,
     SEARCH_DEFAULT_DAYS,
     SEARCH_DEFAULT_MAX_RESULTS,
     SEARCH_TOOL_MAX_MESSAGE_LENGTH,
@@ -261,6 +262,35 @@ class ChatSearchHandler(BaseBotHandler):
                 ),
             ],
             handler=self._llmToolGetThread,
+        )
+
+        # Register LLM tool: fetch full content of messages by ID.
+        # Used by the model to read the originals underlying a condensed
+        # summary (summaries carry ``coveredMessageIds``). Pure DB lookup —
+        # NOT gated on EMBEDDINGS_ENABLED (only on the handler's
+        # ``[search-history].enabled`` registration gate and the per-chat
+        # ``ALLOW_TOOLS_COMMANDS`` toggle; see §3.7 of the
+        # condensed-context-retrieval plan).
+        self.llmService.registerTool(
+            name=ToolName.GET_MESSAGES_BY_IDS,
+            description=(
+                "Retrieve the full content of one or more chat messages by their IDs. "
+                "Use this to read the original messages underlying a condensed summary "
+                "(summaries carry coveredMessageIds). Returns each message in the same "
+                "JSON shape as regular user messages, plus a notFound list for IDs that "
+                "did not resolve. Messages are scoped to the current chat. "
+                "Pass the IDs as strings, even if they appear as numbers in a summary."
+            ),
+            parameters=[
+                LLMFunctionParameter(
+                    name="message_ids",
+                    description='List of message ID strings to retrieve (e.g. ["100", "101"]).',
+                    type=LLMParameterType.ARRAY,
+                    required=True,
+                    extra={"items": {"type": "string"}},
+                ),
+            ],
+            handler=self._llmToolGetMessagesByIds,
         )
 
     ###
@@ -779,6 +809,148 @@ class ChatSearchHandler(BaseBotHandler):
             "target_message": targetFormatted,
             "thread_messages": list(formattedThreadMessages),
         }
+
+    ###
+    # LLM tool: get messages by ids
+    ###
+
+    async def _llmToolGetMessagesByIds(
+        self,
+        extraData: Optional[Dict[str, Any]],
+        message_ids: Optional[List[str]] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """LLM tool: fetch the full content of one or more messages by ID.
+
+        Retrieves messages by ID from the current chat (scoped via
+        ``extraData["ensuredMessage"]``). Intended for reading the
+        original messages underlying a condensed summary — condensed
+        summaries carry ``coveredMessageIds``, which the model passes
+        straight through here. Pure DB lookup: NOT gated on
+        ``EMBEDDINGS_ENABLED`` or any search-specific flag (available
+        whenever chat-search is enabled and ``ALLOW_TOOLS_COMMANDS`` is
+        on). Each returned message dict matches the JSON shape of regular
+        user messages (via :meth:`_formatMessageDict`).
+
+        Three-layer gating (condensed-context-retrieval plan §3.7):
+        (1) ``[search-history].enabled`` via handler registration, (2)
+        ``ALLOW_TOOLS_COMMANDS`` per-chat toggle (gate #2 below), (3) NOT
+        gated on embeddings/search flags. Never raises — every failure
+        path returns ``{"done": False, "error": ...}`` (the whole body is
+        wrapped in a top-level ``try/except Exception``).
+
+        Args:
+            extraData: Context dict with an ``ensuredMessage`` key used
+                for chat scoping (``extraData["ensuredMessage"].recipient.id``).
+            message_ids: List of message ID strings to retrieve. ``None``,
+                empty, or all-blank → empty result set (no error). Items
+                are de-duplicated, blank/``None`` entries are dropped, and
+                the list is clamped to :data:`MAX_GET_MESSAGES_BATCH`.
+            **kwargs: Additional keyword arguments (ignored).
+
+        Returns:
+            ``{"done": True, "messages": [...], "notFound": [...],
+            "count": N}`` on success, where each message dict matches
+            :meth:`EnsuredMessage.formatForLLM` JSON output (identical
+            shape to the real user messages the LLM sees) and
+            ``notFound`` lists the requested IDs that did not resolve in
+            this chat. Returns ``{"done": False, "error": "..."}`` on any
+            failure (missing chat context, tools disabled, bad input, or
+            any unexpected exception).
+        """
+        try:
+            # Gate 1: validate chat context.
+            if extraData is None or "ensuredMessage" not in extraData:
+                return {"done": False, "error": "Missing chat context"}
+            chatId = extraData["ensuredMessage"].recipient.id
+
+            # Gate 2: ALLOW_TOOLS_COMMANDS per-chat master toggle. NOT
+            # gated on EMBEDDINGS_ENABLED — this is a pure DB lookup.
+            try:
+                chatSettings = await self.getChatSettings(chatId=chatId)
+            except Exception:
+                logger.exception("get_messages_by_ids: failed to load chat settings for chat %d", chatId)
+                return {"done": False, "error": "Unable to get chat settings"}
+            if not chatSettings[ChatSettingsKey.ALLOW_TOOLS_COMMANDS].toBool():
+                return {"done": False, "error": "Tools disabled for this chat"}
+
+            # Gate 3: validate + clamp input. Dedup (preserve first-seen
+            # order), drop blanks/None, coerce to str (the emitted schema
+            # declares ``items: {"type": "string"}``, but the model can
+            # violate it — str coercion keeps us never-raise), and clamp
+            # to MAX_GET_MESSAGES_BATCH to cap abuse.
+            rawIds: List[str] = []
+            if message_ids:
+                seen: set[str] = set()
+                for mid in message_ids:
+                    if mid is None:
+                        continue
+                    try:
+                        midStr = str(mid).strip()
+                    except Exception:
+                        continue  # unstringifiable junk — skip, never raise
+                    if not midStr or midStr in seen:
+                        continue
+                    seen.add(midStr)
+                    rawIds.append(midStr)
+                    if len(rawIds) >= MAX_GET_MESSAGES_BATCH:
+                        break
+
+            # Wrap each id in MessageId inside try/except — ids that
+            # MessageId(...) rejects (defense-in-depth: str coercion above
+            # already yields valid strings, so this is unlikely to trigger,
+            # but it guarantees the never-raise contract on bad input) go
+            # straight to notFound.
+            validPairs: List[Tuple[str, MessageId]] = []
+            notFound: List[str] = []
+            for midStr in rawIds:
+                try:
+                    validPairs.append((midStr, MessageId(midStr)))
+                except (ValueError, TypeError):
+                    notFound.append(midStr)
+
+            if not validPairs:
+                return {"done": True, "messages": [], "notFound": notFound, "count": 0}
+
+            # Batch fetch (chat-scoped by the repository).
+            rows: List[ChatMessageDict] = await self.db.chatMessages.getChatMessagesByMessageIds(
+                chatId, [msgId for _, msgId in validPairs]
+            )
+
+            # Format each row via the shared helper in parallel;
+            # return_exceptions=True keeps one bad row from aborting the
+            # whole batch (same pattern as _llmToolSearchMessages).
+            rawFormatted = await asyncio.gather(
+                *[self._formatMessageDict(r) for r in rows],
+                return_exceptions=True,
+            )
+
+            messages: List[Dict[str, Any]] = []
+            foundStrs: set[str] = set()
+            for r, ret in zip(rows, rawFormatted):
+                # The row was resolved from the DB, so its id counts as
+                # "found" regardless of whether formatting succeeded — a
+                # format failure is NOT a resolution failure, and the
+                # tool contract says notFound = "IDs that did not
+                # resolve". Normalise to str so int-keyed (Telegram) and
+                # str-keyed (Max) rows both match the requested id strings.
+                midVal = r.get("message_id")
+                idStr = str(midVal) if midVal is not None else ""
+                foundStrs.add(idStr)
+                if isinstance(ret, Exception):
+                    logger.warning("get_messages_by_ids: failed to format row %s: %s", idStr, ret)
+                    continue
+                messages.append(cast(Dict[str, Any], ret))
+
+            # notFound = requested − found.
+            for midStr, _ in validPairs:
+                if midStr not in foundStrs:
+                    notFound.append(midStr)
+
+            return {"done": True, "messages": messages, "notFound": notFound, "count": len(messages)}
+        except Exception as e:
+            logger.exception("get_messages_by_ids: unexpected error")
+            return {"done": False, "error": str(e)}
 
     async def newMessageHandler(
         self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType

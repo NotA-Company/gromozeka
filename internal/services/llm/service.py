@@ -11,7 +11,7 @@ import re
 import uuid
 from collections.abc import Awaitable, Callable, MutableSequence, Sequence
 from threading import RLock
-from typing import Any, Dict, List, Optional, Set, Tuple, TypeAlias, Union
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple, TypeAlias, TypedDict, Union, overload
 
 from internal.bot.constants import TOOLS_DEFAULT_DICT_KEY
 from internal.bot.models.chat_settings import ChatSettingsDict, ChatSettingsKey
@@ -33,6 +33,29 @@ from lib.rate_limiter.manager import RateLimiterManager
 from .models import ExtraDataDict
 
 logger = logging.getLogger(__name__)
+
+
+class CondenseBatchCoverage(TypedDict):
+    """Coverage descriptor for ONE condensed summary batch.
+
+    Emitted by :meth:`LLMService.condenseContext` when called with
+    ``returnCoverage=True`` (added in a later phase). Indices are relative to
+    the FULL input ``messages`` sequence the caller passed in (the head /
+    system-prompt offset is applied internally before reporting), so the caller
+    can slice its own parallel metadata list (aligned 1:1 to the input
+    ``messages``) directly.
+
+    Attributes:
+        summaryText: The condensing model's output text for this batch
+            (identical to the ``content`` of the corresponding
+            ``ModelMessage(role="user")`` in the returned messages list).
+        coveredFromIndex: Inclusive start index into the input ``messages``.
+        coveredToIndex: Exclusive end index into the input ``messages``.
+    """
+
+    summaryText: str
+    coveredFromIndex: int
+    coveredToIndex: int
 
 
 LLMToolHandler: TypeAlias = Callable[..., Awaitable[Union[str, Dict[str, Any], None]]]
@@ -603,6 +626,38 @@ class LLMService:
 
         return ret
 
+    @overload
+    async def condenseContext(  # noqa: E704
+        self,
+        messages: Sequence[ModelMessage],
+        model: AbstractModel,
+        *,
+        keepFirstN: int = ...,
+        keepLastN: int = ...,
+        condensingModel: Optional[AbstractModel] = ...,
+        condensingPrompt: Optional[str] = ...,
+        condensingSystemPrompt: Optional[str] = ...,
+        maxTokens: Optional[int] = ...,
+        force: bool = ...,
+        returnCoverage: Literal[False] = ...,
+    ) -> Sequence[ModelMessage]: ...
+
+    @overload
+    async def condenseContext(  # noqa: E704
+        self,
+        messages: Sequence[ModelMessage],
+        model: AbstractModel,
+        *,
+        keepFirstN: int = ...,
+        keepLastN: int = ...,
+        condensingModel: Optional[AbstractModel] = ...,
+        condensingPrompt: Optional[str] = ...,
+        condensingSystemPrompt: Optional[str] = ...,
+        maxTokens: Optional[int] = ...,
+        force: bool = ...,
+        returnCoverage: Literal[True],
+    ) -> Tuple[Sequence[ModelMessage], List[CondenseBatchCoverage]]: ...
+
     async def condenseContext(
         self,
         messages: Sequence[ModelMessage],
@@ -615,7 +670,8 @@ class LLMService:
         condensingSystemPrompt: Optional[str] = None,
         maxTokens: Optional[int] = None,
         force: bool = False,
-    ) -> Sequence[ModelMessage]:
+        returnCoverage: bool = False,
+    ) -> Union[Sequence[ModelMessage], Tuple[Sequence[ModelMessage], List[CondenseBatchCoverage]]]:
         """Condense a sequence of messages to fit within a token limit.
 
         This method reduces the length of a conversation history by either:
@@ -636,12 +692,30 @@ class LLMService:
                 When provided, replaces the chat personality system prompt during condensing.
             maxTokens: Maximum number of tokens allowed in the condensed result
             force: Whether to force condensing even if the result would fit within the token limit
+            returnCoverage: When True, return ``(messages, coverage)`` where ``coverage``
+                is a list of :class:`CondenseBatchCoverage`, one per successfully
+                summarized batch, each recording the inclusive-from / exclusive-to
+                index range of the FULL input ``messages`` sequence that batch
+                covers. The head / system-prompt offset is applied internally
+                before reporting, so the caller can slice its own parallel
+                metadata list (aligned 1:1 to ``messages``) directly. When False
+                (default), return only the condensed messages — unchanged
+                behaviour. Only meaningful when ``condensingModel`` is provided:
+                pure-truncation mode (no ``condensingModel``) and the
+                under-budget no-op (``force=False``) produce no summaries, so
+                the coverage list is empty in those cases.
 
         Returns:
-            A new sequence of messages condensed to fit within the token limit
+            When ``returnCoverage`` is False (default), a new sequence of
+            messages condensed to fit within the token limit — unchanged
+            behaviour (Path C ``generateTextViaLLM`` is unaffected). When
+            ``returnCoverage`` is True, a ``(messages, coverage)`` tuple where
+            ``coverage`` is a ``List[CondenseBatchCoverage]`` (empty when no
+            summaries were produced).
         """
+        coverage: List[CondenseBatchCoverage] = []
         if not messages:
-            return messages
+            return (messages, coverage) if returnCoverage else messages
 
         if maxTokens is None:
             maxTokens = model.contextSize
@@ -666,7 +740,7 @@ class LLMService:
         bodyTokens = model.getEstimateTokensCount([v.toDict() for v in body])
 
         if not force and (retHTokens + retTTokens + bodyTokens < maxTokens):
-            return messages
+            return (messages, coverage) if returnCoverage else messages
 
         logger.debug(
             f"Condensing context for {messages} to {maxTokens} tokens "
@@ -687,7 +761,7 @@ class LLMService:
             ret.extend(retTail)
 
             logger.debug(f"Condensed context: {ret}")
-            return ret
+            return (ret, coverage) if returnCoverage else ret
 
         if condensingPrompt is None:
             condensingPrompt = (
@@ -757,6 +831,13 @@ class LLMService:
 
             respText = mlRet.resultText
             newBody.append(ModelMessage(role="user", content=respText))
+            coverage.append(
+                CondenseBatchCoverage(
+                    summaryText=respText,
+                    coveredFromIndex=keepFirstN + startPos,
+                    coveredToIndex=keepFirstN + startPos + currentBatchLen,
+                )
+            )
             startPos += currentBatchLen
 
         ret = []
@@ -764,7 +845,7 @@ class LLMService:
         ret.extend(newBody)
         ret.extend(retTail)
         logger.debug(f"Condensed context: {ret}")
-        return ret
+        return (ret, coverage) if returnCoverage else ret
 
     async def generateText(
         self,
