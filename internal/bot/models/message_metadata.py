@@ -1,10 +1,10 @@
 import datetime
-from collections.abc import Sequence
+from collections.abc import Iterable, MutableSet
 from enum import StrEnum
 from typing import Any, Dict, List, NotRequired, Optional, TypedDict, Union
 
 import lib.utils as utils
-from internal.database.models import ChatMessageDict, MemoryType, UserMemoryDict
+from internal.database.models import MemoryType, UserMemoryDict
 from internal.models import MessageId
 
 
@@ -77,10 +77,7 @@ class CompactMemoryIdsDict(TypedDict):
     shortTermIds: list[str]
 
 
-CondensedDateRangeDict = TypedDict(
-    "CondensedDateRangeDict",
-    {"from": float, "to": float},
-)
+CondensedDateRangeDict = TypedDict("CondensedDateRangeDict", {"from": float, "to": float})
 """Storage shape for the date range covered by a condensed summary.
 
 Two unix-timestamp floats keyed ``from``/``to``. The JSON key ``from`` is a
@@ -101,31 +98,38 @@ class CondensingDict(TypedDict):
     (Path A, a list of these) or ``metadata.randomContext`` (Path B, a single
     one).
 
-    Legacy rows (pre-feature) carry only ``text``/``tillMessageId``/``tillTS``
-    and are read defensively — readers fall back gracefully when the new fields
-    are absent. New writes populate ``messageIds`` as the authoritative coverage
-    list; ``tillMessageId``/``tillTS`` are kept for backwards-compat reading by
-    older code paths and as a cheap boundary marker.
+    Legacy rows (pre-feature) carry ``text``/``tillMessageId``/``tillTS``
+    and are read defensively — readers fall back gracefully when the coverage
+    fields are absent. New writes (produced by
+    :func:`generateCondencingDict`) populate ``messageIds`` as the
+    authoritative coverage list; ``tillMessageId``/``tillTS`` are NOT set by
+    ``generateCondencingDict`` (left for legacy compatibility only).
 
-    Required fields (present on ALL rows, legacy and new):
-        text: The condensing model's summary text (unchanged).
-        tillMessageId: Legacy boundary marker — last covered message ID. Kept
-            for backwards-compat reads; not authoritative on new writes.
+    Required field (present on ALL rows, legacy and new):
+        text: The condensing model's summary text.
+
+    Optional fields (``NotRequired``):
+        tillMessageId: Legacy boundary marker — last covered message ID.
+            Present on old rows and on caller-set dicts, but NOT set by
+            :func:`generateCondencingDict`; kept for backwards-compat reads.
         tillTS: Legacy boundary marker — unix timestamp of the last covered
-            message. Kept for backwards-compat reads.
-
-    Optional fields (``NotRequired`` — absent on legacy rows, present on new):
-        messageIds: Authoritative list of covered message IDs. This is the
-            canonical coverage list on new writes.
+            message. Present on old rows and on caller-set dicts, but NOT set
+            by :func:`generateCondencingDict`; kept for backwards-compat reads.
+        messageIds: Authoritative list of covered message IDs. Populated by
+            :func:`generateCondencingDict` when source data is available;
+            this is the canonical coverage list on new writes.
         participants: Sorted unique sender logins of covered messages.
+            Populated by :func:`generateCondencingDict` when available.
         dateRange: :class:`CondensedDateRangeDict` — unix-timestamp pair
             (``from``/``to`` floats) covering the summarized messages.
+            Populated by :func:`generateCondencingDict` when available.
         messageCount: Number of original messages this summary covers.
+            Populated by :func:`generateCondencingDict` when available.
     """
 
     text: str
-    tillMessageId: MessageId
-    tillTS: float
+    tillMessageId: NotRequired[MessageId]
+    tillTS: NotRequired[float]
     messageIds: NotRequired[List[MessageId]]
     participants: NotRequired[List[str]]
     dateRange: NotRequired[CondensedDateRangeDict]
@@ -148,26 +152,29 @@ class CondensedSummaryKind(StrEnum):
     CONDENSED = "condensed"
 
 
-def renderCondensedSummary(data: Union[CondensingDict, str]) -> str:
+def renderCondensedSummary(data: CondensingDict) -> str:
     """Render a condensed-summary record as a JSON string for the LLM.
 
     Produces a JSON object shape consistent with real user messages
     (:meth:`EnsuredMessage.formatForLLM` JSON branch,
     ``ensured_message.py:1158-1177``) so the LLM sees a uniform format.
-    Legacy ``str`` input (old ``randomContext`` rows) is rendered as the new
-    shape with metadata fields omitted — graceful degradation, consistent
-    output shape, and the LLM simply does not call ``get_messages_by_ids``
-    for summaries with no ``coveredMessageIds``.
 
     The falsy-drop convention mirrors ``formatForLLM`` exactly (``if v`` at
     ``ensured_message.py:1173``): ``coveredMessageIds: []``, ``messageCount: 0``,
     ``participants: []``, and absent ``dateRange`` are all OMITTED from the
     output — never emitted as ``null`` or empty.
 
+    The renderer accepts only :class:`CondensingDict`. Callers that hold a
+    legacy ``str`` row (old ``randomContext`` pre-feature) are responsible
+    for pre-wrapping it into ``CondensingDict(text=...)`` before calling
+    this function — the sole caller
+    (:meth:`EnsuredMessage.formatForLLM`, ``ensured_message.py:~1231``)
+    does exactly that.
+
     Args:
-        data: A :class:`CondensingDict` (new writes, carries optional
-            ``messageIds``/``participants``/``dateRange``/``messageCount``)
-            or a legacy ``str`` (old ``randomContext`` rows).
+        data: A :class:`CondensingDict` carrying the summary text and
+            optional ``messageIds`` / ``participants`` / ``dateRange`` /
+            ``messageCount`` coverage fields.
 
     Returns:
         JSON string of shape::
@@ -183,46 +190,38 @@ def renderCondensedSummary(data: Union[CondensingDict, str]) -> str:
 
         Falsy/absent fields are omitted. ``type`` and ``summary`` are always
         present (a summary with no summary text is meaningless; the minimal
-        shape is ``{"type":"condensed","summary":"..."}``). For a legacy
-        ``str`` input, only ``type`` and ``summary`` are emitted.
+        shape is ``{"type":"condensed","summary":"..."}``).
         Serialised via :func:`utils.jsonDumps` (``compact=False``,
         ``sort_keys=True``) — same as the real-message renderer.
     """
-    if isinstance(data, str):
-        # Legacy randomContext (flat str) → minimal shape.
-        ret: Dict[str, Any] = {
+    # New CondensingDict — extract optional metadata, drop falsy.
+    messageIds = data.get("messageIds", [])
+    coveredMessageIds = [mid.asMessageId() for mid in messageIds]
+
+    dateRangeRaw = data.get("dateRange")
+    dateRange: Optional[Dict[str, str]] = None
+    if dateRangeRaw:
+        dateRange = {
+            "from": datetime.datetime.fromtimestamp(dateRangeRaw["from"], datetime.timezone.utc).isoformat(),
+            "to": datetime.datetime.fromtimestamp(dateRangeRaw["to"], datetime.timezone.utc).isoformat(),
+        }
+
+    ret: Dict[str, Any] = {
+        k: v
+        for k, v in {
             "type": CondensedSummaryKind.CONDENSED,
-            "summary": data,
-        }
-    else:
-        # New CondensingDict — extract optional metadata, drop falsy.
-        messageIds = data.get("messageIds")
-        coveredMessageIds = [mid.asMessageId() for mid in messageIds] if messageIds else []
-
-        dateRangeRaw = data.get("dateRange")
-        dateRange: Optional[Dict[str, str]] = None
-        if dateRangeRaw:
-            dateRange = {
-                "from": datetime.datetime.fromtimestamp(dateRangeRaw["from"], datetime.timezone.utc).isoformat(),
-                "to": datetime.datetime.fromtimestamp(dateRangeRaw["to"], datetime.timezone.utc).isoformat(),
-            }
-
-        ret = {
-            k: v
-            for k, v in {
-                "type": CondensedSummaryKind.CONDENSED,
-                "coveredMessageIds": coveredMessageIds,
-                "participants": data.get("participants"),
-                "dateRange": dateRange,
-                "messageCount": data.get("messageCount", 0),
-            }.items()
-            if v
-        }
-        # summary is hoisted out of the falsy-drop so it is ALWAYS present,
-        # honoring the contract that the minimal shape is
-        # {"type":"condensed","summary":"..."} — a summary with no summary
-        # text is meaningless.
-        ret["summary"] = data["text"]
+            "coveredMessageIds": coveredMessageIds,
+            "participants": data.get("participants"),
+            "dateRange": dateRange,
+            "messageCount": data.get("messageCount", 0),
+        }.items()
+        if v
+    }
+    # summary is hoisted out of the falsy-drop so it is ALWAYS present,
+    # honoring the contract that the minimal shape is
+    # {"type":"condensed","summary":"..."} — a summary with no summary
+    # text is meaningless.
+    ret["summary"] = data["text"]
 
     return utils.jsonDumps(ret, compact=False)
 
@@ -276,98 +275,58 @@ def convertDBMemoryToSingleMemoryDict(dbMemory: UserMemoryDict, *, keepId: bool 
     return ret
 
 
-def buildCondensingFields(
-    entries: Sequence[Optional[Union[ChatMessageDict, "CondensingDict"]]],
-) -> Dict[str, Any]:
-    """Compute messageIds/participants/dateRange/messageCount from covered entries.
+def mergeCondensingDicts(dictList: Iterable[CondensingDict]) -> CondensingDict:
+    """Merge a list of CondensingDicts into a single CondensingDict.
 
-    Handles both raw message rows and pre-existing condensed summaries
-    (re-condense cascade union). Pure function; zero DB/LLM cost. For legacy
-    CondensingDict entries lacking the new fields, degrades gracefully.
+    Performs a field-wise union of the inputs:
 
-    The caller slices its ``indexToEntry`` parallel list using a
-    :class:`CondenseBatchCoverage` index range, then passes the slice here.
-    The returned dict is merged into a :class:`CondensingDict` alongside
-    ``text``/``tillMessageId``/``tillTS``.
+    - ``text``: ``"\\n".join`` of each input's ``text`` (order preserved).
+    - ``messageIds``: concatenation of all inputs' ``messageIds`` lists.
+    - ``participants``: sorted-unique union of all inputs' ``participants``.
+    - ``dateRange``: ``{"from": min(all froms), "to": max(all tos)}`` —
+      omitted entirely when no input carries a ``dateRange``.
+    - ``messageCount``: arithmetic sum of all inputs' ``messageCount``.
 
-    Entry kind discrimination: a :class:`ChatMessageDict` row carries the key
-    ``"message_id"`` (the raw DB column); a :class:`CondensingDict` does not —
-    it carries ``"tillMessageId"`` and optionally ``"messageIds"``. This is the
-    runtime discriminator used to branch.
+    The legacy boundary markers (``tillMessageId`` / ``tillTS``) are
+    intentionally NOT carried over — the merged dict represents the union
+    of all inputs and those single-value markers are meaningless in that
+    context.
 
     Args:
-        entries: The covered entries — each is either a ChatMessageDict (raw
-            source message) or a CondensingDict (a pre-existing summary being
-            re-merged). Mixed lists are allowed (a re-condense batch can span
-            old summaries and raw messages). ``None`` entries (system-prompt
-            positions from the parallel index list) are silently skipped.
+        dictList: The list (or any iterable) of CondensingDicts to merge.
 
     Returns:
-        Dict with keys ``messageIds`` (List[MessageId]), ``participants``
-        (List[str], sorted unique), ``dateRange`` (CondensedDateRangeDict or
-        absent if no dates), ``messageCount`` (int — number of UNIQUE original
-        messages covered; raw rows are counted by distinct ``message_id`` so a
-        row that appears multiple times in the parallel index list due to
-        multi-emit is counted once; summary entries contribute their stored
-        count). Caller merges this into a CondensingDict alongside
-        ``text``/``tillMessageId``/``tillTS``.
+        The merged CondensingDict. When the input iterable is empty, the
+        result is ``CondensingDict(text="")`` with no coverage fields.
     """
-    messageIds: List[MessageId] = []
-    participants: set[str] = set()
-    timestamps: List[float] = []
-    # Raw-row contribution to messageCount is the number of UNIQUE original
-    # message_ids (callers build parallel index lists with ``[row] * n`` to tag
-    # every emitted ModelMessage, so one original message can appear several
-    # times). Summary entries contribute their own stored (already-unique) count.
-    rawMessageIds: set[MessageId] = set()
-    summaryCount = 0
-
-    for entry in entries:
-        if entry is None:
-            continue
-
-        if "message_id" in entry:
-            # --- ChatMessageDict (raw source row) ---
-            row: ChatMessageDict = entry  # type: ignore[assignment]
-            msgId = row["message_id"]
-            if msgId not in messageIds:
-                messageIds.append(msgId)
-            rawMessageIds.add(msgId)
-            username = row.get("username", "")
-            if username:
-                participants.add(username)
-            timestamps.append(row["date"].timestamp())
-        else:
-            # --- CondensingDict (pre-existing summary being re-merged) ---
-            summary: CondensingDict = entry  # type: ignore[assignment]
-            existingIds = summary.get("messageIds")
-            if existingIds:
-                for mid in existingIds:
-                    if mid not in messageIds:
-                        messageIds.append(mid)
-            elif "tillMessageId" in summary:
-                # Legacy fallback: no messageIds field, use boundary marker.
-                tmid = summary["tillMessageId"]
-                if tmid not in messageIds:
-                    messageIds.append(tmid)
-
-            for p in summary.get("participants", []):
-                participants.add(p)
-
-            dr = summary.get("dateRange")
-            if dr:
-                timestamps.append(dr["from"])
-                timestamps.append(dr["to"])
-
-            summaryCount += summary.get("messageCount", 0)
-
-    messageCount = len(rawMessageIds) + summaryCount
-    result: Dict[str, Any] = {
-        "messageIds": messageIds,
-        "participants": sorted(participants),
-        "messageCount": messageCount,
-    }
-    if timestamps:
-        result["dateRange"] = {"from": min(timestamps), "to": max(timestamps)}  # type: ignore[typeddict-item]
-
-    return result
+    text: str = ""
+    coveredMessageIds: List[MessageId] = []
+    participants: MutableSet[str] = set()
+    fromDate: Optional[float] = None
+    toDate: Optional[float] = None
+    messageCount: int = 0
+    for cDict in dictList:
+        text += "\n" + cDict["text"]
+        if "messageIds" in cDict:
+            coveredMessageIds.extend(cDict["messageIds"])
+        if "participants" in cDict:
+            participants.update(cDict["participants"])
+        if "dateRange" in cDict:
+            if fromDate is None or cDict["dateRange"]["from"] < fromDate:
+                fromDate = cDict["dateRange"]["from"]
+            if toDate is None or cDict["dateRange"]["to"] > toDate:
+                toDate = cDict["dateRange"]["to"]
+        if "messageCount" in cDict:
+            messageCount += cDict["messageCount"]
+    ret = CondensingDict(
+        text=text.strip(),
+    )
+    if coveredMessageIds:
+        ret["messageIds"] = coveredMessageIds
+    if participants:
+        ret["participants"] = list(participants)
+    if fromDate is not None and toDate is not None:
+        ret["dateRange"] = {"from": fromDate, "to": toDate}
+    if messageCount:
+        ret["messageCount"] = messageCount
+    return ret

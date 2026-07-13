@@ -32,13 +32,13 @@ import lib.max_bot as libMax
 import lib.max_bot.models as maxModels
 import lib.utils as utils
 from internal.database import Database
-from internal.database.models import ChatMessageDict, MediaAttachmentDict, MediaStatus
+from internal.database.models import ChatMessageDict, MediaAttachmentDict, MediaStatus, MessageCategory
 from internal.models import MessageId, MessageType
 from lib.ai.models import ModelMessage
 
 from .enums import LLMMessageFormat
 from .media import MediaProcessingInfo
-from .message_metadata import MetadataDict, SingleMemoryDict, UserMemoriesDict, renderCondensedSummary
+from .message_metadata import CondensingDict, MetadataDict, SingleMemoryDict, UserMemoriesDict, renderCondensedSummary
 from .text_formatter import FormatEntity, OutputFormat
 
 if TYPE_CHECKING:
@@ -1228,6 +1228,10 @@ class EnsuredMessage:
         ret: List[ModelMessage] = []
         randomContext = self.metadata.get("randomContext", None)
         if randomContext:
+            if isinstance(randomContext, str):
+                randomContext = CondensingDict(
+                    text=randomContext,
+                )
             # ``randomContext`` is typed ``Union[str, CondensingDict]``. New
             # writes (Phase 3b) store a single ``CondensingDict``; legacy rows
             # store a flat ``str``. Both shapes are rendered as JSON via the
@@ -1235,7 +1239,7 @@ class EnsuredMessage:
             # latent render asymmetry (real user messages were already JSON;
             # summaries were raw text). The renderer handles both shapes and
             # degrades gracefully for legacy ``str`` rows.
-            ret.append(ModelMessage(role="user", content=renderCondensedSummary(randomContext)))
+            ret.append(ModelMessage(role="user", content=renderCondensedSummary(randomContext), source=randomContext))
 
         toolsHistory = self.metadata.get("usedTools", None)
         if toolsHistory:
@@ -1314,6 +1318,7 @@ class EnsuredMessage:
                 cache=cache,
                 excludeMemoryIds=excludeMemoryIds,
             ),
+            source=self,
         )
 
     def __str__(self) -> str:
@@ -1505,4 +1510,32 @@ class EnsuredMessage:
             ),
             text=self.messageText,
             message_thread_id=self.threadId,
+        )
+
+    def toChatMessageDict(self) -> ChatMessageDict:
+        """
+        Convert this EnsuredMessage to a ChatMessageDict.
+
+        Returns:
+            A ChatMessageDict with the same data as this EnsuredMessage
+        """
+        return ChatMessageDict(
+            chat_id=self.recipient.id,
+            message_id=self.messageId,
+            date=self.date,
+            user_id=self.sender.id,
+            reply_id=self.replyId,
+            thread_id=self.threadId or 0,
+            root_message_id=None,  # TODO: We do not store it here
+            message_text=self.messageText,
+            message_type=self.messageType.value,
+            message_category=MessageCategory.UNSPECIFIED,  # TODO: We do not store it here
+            quote_text=self.quoteText,
+            media_id=self.mediaId,
+            created_at=self.date,
+            metadata=utils.jsonDumps(self.metadata),
+            markup=utils.jsonDumps([v.toDict() for v in self.formatEntities]),
+            media_group_id=self.mediaGroupId,
+            username=self.sender.username,
+            full_name=self.sender.name,
         )

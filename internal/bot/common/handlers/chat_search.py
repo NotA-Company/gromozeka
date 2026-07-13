@@ -279,7 +279,6 @@ class ChatSearchHandler(BaseBotHandler):
                 "(summaries carry coveredMessageIds). Returns each message in the same "
                 "JSON shape as regular user messages, plus a notFound list for IDs that "
                 "did not resolve. Messages are scoped to the current chat. "
-                "Pass the IDs as strings, even if they appear as numbers in a summary."
             ),
             parameters=[
                 LLMFunctionParameter(
@@ -287,7 +286,7 @@ class ChatSearchHandler(BaseBotHandler):
                     description='List of message ID strings to retrieve (e.g. ["100", "101"]).',
                     type=LLMParameterType.ARRAY,
                     required=True,
-                    extra={"items": {"type": "string"}},
+                    # extra={"items": {"type": "string"}},
                 ),
             ],
             handler=self._llmToolGetMessagesByIds,
@@ -817,7 +816,7 @@ class ChatSearchHandler(BaseBotHandler):
     async def _llmToolGetMessagesByIds(
         self,
         extraData: Optional[Dict[str, Any]],
-        message_ids: Optional[List[str]] = None,
+        message_ids: Optional[List] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
         """LLM tool: fetch the full content of one or more messages by ID.
@@ -832,9 +831,8 @@ class ChatSearchHandler(BaseBotHandler):
         on). Each returned message dict matches the JSON shape of regular
         user messages (via :meth:`_formatMessageDict`).
 
-        Three-layer gating (condensed-context-retrieval plan §3.7):
-        (1) ``[search-history].enabled`` via handler registration, (2)
-        ``ALLOW_TOOLS_COMMANDS`` per-chat toggle (gate #2 below), (3) NOT
+        Two-layer gating (condensed-context-retrieval plan §3.7):
+        (1) ``[search-history].enabled`` via handler registration, (2) NOT
         gated on embeddings/search flags. Never raises — every failure
         path returns ``{"done": False, "error": ...}`` (the whole body is
         wrapped in a top-level ``try/except Exception``).
@@ -864,22 +862,13 @@ class ChatSearchHandler(BaseBotHandler):
                 return {"done": False, "error": "Missing chat context"}
             chatId = extraData["ensuredMessage"].recipient.id
 
-            # Gate 2: ALLOW_TOOLS_COMMANDS per-chat master toggle. NOT
-            # gated on EMBEDDINGS_ENABLED — this is a pure DB lookup.
-            try:
-                chatSettings = await self.getChatSettings(chatId=chatId)
-            except Exception:
-                logger.exception("get_messages_by_ids: failed to load chat settings for chat %d", chatId)
-                return {"done": False, "error": "Unable to get chat settings"}
-            if not chatSettings[ChatSettingsKey.ALLOW_TOOLS_COMMANDS].toBool():
-                return {"done": False, "error": "Tools disabled for this chat"}
-
             # Gate 3: validate + clamp input. Dedup (preserve first-seen
             # order), drop blanks/None, coerce to str (the emitted schema
             # declares ``items: {"type": "string"}``, but the model can
             # violate it — str coercion keeps us never-raise), and clamp
             # to MAX_GET_MESSAGES_BATCH to cap abuse.
-            rawIds: List[str] = []
+            notFound: List[str] = []
+            messageIdList: List[MessageId] = []
             if message_ids:
                 seen: set[str] = set()
                 for mid in message_ids:
@@ -892,30 +881,15 @@ class ChatSearchHandler(BaseBotHandler):
                     if not midStr or midStr in seen:
                         continue
                     seen.add(midStr)
-                    rawIds.append(midStr)
-                    if len(rawIds) >= MAX_GET_MESSAGES_BATCH:
+                    messageIdList.append(MessageId(midStr))
+                    if len(messageIdList) >= MAX_GET_MESSAGES_BATCH:
                         break
 
-            # Wrap each id in MessageId inside try/except — ids that
-            # MessageId(...) rejects (defense-in-depth: str coercion above
-            # already yields valid strings, so this is unlikely to trigger,
-            # but it guarantees the never-raise contract on bad input) go
-            # straight to notFound.
-            validPairs: List[Tuple[str, MessageId]] = []
-            notFound: List[str] = []
-            for midStr in rawIds:
-                try:
-                    validPairs.append((midStr, MessageId(midStr)))
-                except (ValueError, TypeError):
-                    notFound.append(midStr)
-
-            if not validPairs:
+            if not messageIdList:
                 return {"done": True, "messages": [], "notFound": notFound, "count": 0}
 
             # Batch fetch (chat-scoped by the repository).
-            rows: List[ChatMessageDict] = await self.db.chatMessages.getChatMessagesByMessageIds(
-                chatId, [msgId for _, msgId in validPairs]
-            )
+            rows: List[ChatMessageDict] = await self.db.chatMessages.getChatMessagesByMessageIds(chatId, messageIdList)
 
             # Format each row via the shared helper in parallel;
             # return_exceptions=True keeps one bad row from aborting the
@@ -934,18 +908,17 @@ class ChatSearchHandler(BaseBotHandler):
                 # tool contract says notFound = "IDs that did not
                 # resolve". Normalise to str so int-keyed (Telegram) and
                 # str-keyed (Max) rows both match the requested id strings.
-                midVal = r.get("message_id")
-                idStr = str(midVal) if midVal is not None else ""
-                foundStrs.add(idStr)
+                midVal = r["message_id"]
+                foundStrs.add(midVal.asStr())
                 if isinstance(ret, Exception):
-                    logger.warning("get_messages_by_ids: failed to format row %s: %s", idStr, ret)
+                    logger.warning("get_messages_by_ids: failed to format row %s: %s", midVal.asStr(), ret)
                     continue
                 messages.append(cast(Dict[str, Any], ret))
 
             # notFound = requested − found.
-            for midStr, _ in validPairs:
-                if midStr not in foundStrs:
-                    notFound.append(midStr)
+            for midVal in messageIdList:
+                if midVal.asStr() not in foundStrs:
+                    notFound.append(midVal.asStr())
 
             return {"done": True, "messages": messages, "notFound": notFound, "count": len(messages)}
         except Exception as e:

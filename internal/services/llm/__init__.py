@@ -7,6 +7,6 @@ LLM operations.
 """
 
 from .models import ExtraDataDict
-from .service import CondenseBatchCoverage, LLMService, LLMToolHandler, UseToolsType
+from .service import LLMService, LLMToolHandler, UseToolsType
 
-__all__ = ["LLMService", "LLMToolHandler", "UseToolsType", "ExtraDataDict", "CondenseBatchCoverage"]
+__all__ = ["LLMService", "LLMToolHandler", "UseToolsType", "ExtraDataDict"]

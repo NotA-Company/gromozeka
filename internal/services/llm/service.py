@@ -9,12 +9,15 @@ import json
 import logging
 import re
 import uuid
-from collections.abc import Awaitable, Callable, MutableSequence, Sequence
+from collections.abc import Awaitable, Callable, MutableSequence, MutableSet, Sequence
 from threading import RLock
-from typing import Any, Dict, List, Literal, Optional, Set, Tuple, TypeAlias, TypedDict, Union, overload
+from typing import Any, Dict, List, Optional, Set, Tuple, TypeAlias, Union
 
 from internal.bot.constants import TOOLS_DEFAULT_DICT_KEY
 from internal.bot.models.chat_settings import ChatSettingsDict, ChatSettingsKey
+from internal.bot.models.ensured_message import EnsuredMessage
+from internal.bot.models.message_metadata import CondensingDict, renderCondensedSummary
+from internal.models.types import MessageId
 from lib import utils
 from lib.ai.abstract import AbstractModel
 from lib.ai.manager import LLMManager
@@ -33,29 +36,6 @@ from lib.rate_limiter.manager import RateLimiterManager
 from .models import ExtraDataDict
 
 logger = logging.getLogger(__name__)
-
-
-class CondenseBatchCoverage(TypedDict):
-    """Coverage descriptor for ONE condensed summary batch.
-
-    Emitted by :meth:`LLMService.condenseContext` when called with
-    ``returnCoverage=True`` (added in a later phase). Indices are relative to
-    the FULL input ``messages`` sequence the caller passed in (the head /
-    system-prompt offset is applied internally before reporting), so the caller
-    can slice its own parallel metadata list (aligned 1:1 to the input
-    ``messages``) directly.
-
-    Attributes:
-        summaryText: The condensing model's output text for this batch
-            (identical to the ``content`` of the corresponding
-            ``ModelMessage(role="user")`` in the returned messages list).
-        coveredFromIndex: Inclusive start index into the input ``messages``.
-        coveredToIndex: Exclusive end index into the input ``messages``.
-    """
-
-    summaryText: str
-    coveredFromIndex: int
-    coveredToIndex: int
 
 
 LLMToolHandler: TypeAlias = Callable[..., Awaitable[Union[str, Dict[str, Any], None]]]
@@ -82,6 +62,82 @@ Accepts:
   ``False`` if absent). Unknown keys (tool names not in the registry) are
   logged as warnings and ignored.
 """
+
+
+def generateCondencingDict(text: str, messages: Sequence[ModelMessage]) -> CondensingDict:
+    """Build a CondensingDict from summary text and the covered ModelMessages.
+
+    Walks ``messages`` and reads each ``message.source`` to derive the
+    coverage metadata:
+
+    - ``EnsuredMessage`` source → extract ``messageId``, ``sender.username``,
+      and ``date.timestamp()`` (a raw source message).
+    - ``dict`` source (a pre-existing ``CondensingDict`` being re-condensed)
+      → union the existing ``messageIds`` / ``participants`` / ``dateRange``
+      / ``messageCount`` fields (re-condense cascade).
+    - ``None`` source → log a warning and skip (an auxiliary tool-history
+      emission, not an original message — carries no extractable metadata
+      and is not counted toward ``messageCount``).
+
+    The returned dict always carries ``text``; ``messageIds``,
+    ``dateRange``, ``participants``, and ``messageCount`` are populated
+    only when the corresponding coverage data is non-empty.
+
+    Does NOT set ``tillMessageId`` / ``tillTS`` — those legacy boundary
+    markers are left to the caller if needed.
+
+    Args:
+        text: The summary text produced by the condensing model.
+        messages: The covered ModelMessages — each must have ``.source``
+            set: an :class:`EnsuredMessage` for raw messages, or a
+            ``dict`` / :class:`CondensingDict` for re-condensed summaries.
+
+    Returns:
+        A :class:`CondensingDict` with ``text`` plus conditionally-populated
+        ``messageIds`` / ``participants`` / ``dateRange`` / ``messageCount``.
+    """
+    ret = CondensingDict(
+        text=text,
+    )
+    messageIdList: List[MessageId] = []
+    dateList: List[float] = []
+    participants: MutableSet[str] = set()
+    messageCount = 0
+    for message in messages:
+        if message.source is None:
+            messageCount += 1
+            logger.warning(f"Message {message} has no source, skipping")
+        elif isinstance(message.source, EnsuredMessage):
+            messageCount += 1
+            messageIdList.append(message.source.messageId)
+            participants.add(message.source.sender.username)
+            dateList.append(message.source.date.timestamp())
+        elif isinstance(message.source, dict):
+            # The only available dict here is CondensingDict
+            if "messageIds" in message.source:
+                messageIdList.extend(message.source["messageIds"])
+            if "participants" in message.source:
+                participants.update(message.source["participants"])
+            if "dateRange" in message.source:
+                dateList.append(message.source["dateRange"]["from"])
+                dateList.append(message.source["dateRange"]["to"])
+            if "messageCount" in message.source:
+                messageCount += message.source["messageCount"]
+            else:
+                messageCount += 1
+        else:
+            logger.warning(f"Message {message} has unknown source type: {type(message.source)}, skipping")
+            messageCount += 1
+
+    if messageIdList:
+        ret["messageIds"] = messageIdList
+    if dateList:
+        ret["dateRange"] = {"from": min(dateList), "to": max(dateList)}
+    if participants:
+        ret["participants"] = list(participants)
+    if messageCount:
+        ret["messageCount"] = messageCount
+    return ret
 
 
 class LLMService:
@@ -539,7 +595,7 @@ class LLMService:
         while True:
             # First - condense context if needed
             maxTokens = int(model.contextSize * maxTokensCoeff)
-            _messages = await self.condenseContext(
+            _messages, _ = await self.condenseContext(
                 _messages,
                 model,
                 keepFirstN=keepFirstN,
@@ -626,38 +682,6 @@ class LLMService:
 
         return ret
 
-    @overload
-    async def condenseContext(  # noqa: E704
-        self,
-        messages: Sequence[ModelMessage],
-        model: AbstractModel,
-        *,
-        keepFirstN: int = ...,
-        keepLastN: int = ...,
-        condensingModel: Optional[AbstractModel] = ...,
-        condensingPrompt: Optional[str] = ...,
-        condensingSystemPrompt: Optional[str] = ...,
-        maxTokens: Optional[int] = ...,
-        force: bool = ...,
-        returnCoverage: Literal[False] = ...,
-    ) -> Sequence[ModelMessage]: ...
-
-    @overload
-    async def condenseContext(  # noqa: E704
-        self,
-        messages: Sequence[ModelMessage],
-        model: AbstractModel,
-        *,
-        keepFirstN: int = ...,
-        keepLastN: int = ...,
-        condensingModel: Optional[AbstractModel] = ...,
-        condensingPrompt: Optional[str] = ...,
-        condensingSystemPrompt: Optional[str] = ...,
-        maxTokens: Optional[int] = ...,
-        force: bool = ...,
-        returnCoverage: Literal[True],
-    ) -> Tuple[Sequence[ModelMessage], List[CondenseBatchCoverage]]: ...
-
     async def condenseContext(
         self,
         messages: Sequence[ModelMessage],
@@ -670,8 +694,7 @@ class LLMService:
         condensingSystemPrompt: Optional[str] = None,
         maxTokens: Optional[int] = None,
         force: bool = False,
-        returnCoverage: bool = False,
-    ) -> Union[Sequence[ModelMessage], Tuple[Sequence[ModelMessage], List[CondenseBatchCoverage]]]:
+    ) -> Tuple[Sequence[ModelMessage], Dict[int, CondensingDict]]:
         """Condense a sequence of messages to fit within a token limit.
 
         This method reduces the length of a conversation history by either:
@@ -692,30 +715,22 @@ class LLMService:
                 When provided, replaces the chat personality system prompt during condensing.
             maxTokens: Maximum number of tokens allowed in the condensed result
             force: Whether to force condensing even if the result would fit within the token limit
-            returnCoverage: When True, return ``(messages, coverage)`` where ``coverage``
-                is a list of :class:`CondenseBatchCoverage`, one per successfully
-                summarized batch, each recording the inclusive-from / exclusive-to
-                index range of the FULL input ``messages`` sequence that batch
-                covers. The head / system-prompt offset is applied internally
-                before reporting, so the caller can slice its own parallel
-                metadata list (aligned 1:1 to ``messages``) directly. When False
-                (default), return only the condensed messages — unchanged
-                behaviour. Only meaningful when ``condensingModel`` is provided:
-                pure-truncation mode (no ``condensingModel``) and the
-                under-budget no-op (``force=False``) produce no summaries, so
-                the coverage list is empty in those cases.
 
         Returns:
-            When ``returnCoverage`` is False (default), a new sequence of
-            messages condensed to fit within the token limit — unchanged
-            behaviour (Path C ``generateTextViaLLM`` is unaffected). When
-            ``returnCoverage`` is True, a ``(messages, coverage)`` tuple where
-            ``coverage`` is a ``List[CondenseBatchCoverage]`` (empty when no
-            summaries were produced).
+            A ``(messages, coverage)`` tuple. The first element is the
+            condensed message list (head + summary ModelMessages + tail).
+            The second element is a ``Dict[int, CondensingDict]`` keyed by
+            body-index → fully-populated ``CondensingDict`` (the summary
+            text plus coverage metadata computed via
+            :func:`generateCondencingDict` reading
+            ``ModelMessage.source``). When no condensing occurs the first
+            element is the original message sequence unchanged and the
+            second element is ``{}``. Path C callers (``generateTextViaLLM``)
+            ignore the second element.
         """
-        coverage: List[CondenseBatchCoverage] = []
+        coverage: Dict[int, CondensingDict] = {}
         if not messages:
-            return (messages, coverage) if returnCoverage else messages
+            return (messages, coverage)
 
         if maxTokens is None:
             maxTokens = model.contextSize
@@ -740,7 +755,7 @@ class LLMService:
         bodyTokens = model.getEstimateTokensCount([v.toDict() for v in body])
 
         if not force and (retHTokens + retTTokens + bodyTokens < maxTokens):
-            return (messages, coverage) if returnCoverage else messages
+            return (messages, coverage)
 
         logger.debug(
             f"Condensing context for {messages} to {maxTokens} tokens "
@@ -761,7 +776,7 @@ class LLMService:
             ret.extend(retTail)
 
             logger.debug(f"Condensed context: {ret}")
-            return (ret, coverage) if returnCoverage else ret
+            return (ret, coverage)
 
         if condensingPrompt is None:
             condensingPrompt = (
@@ -797,8 +812,9 @@ class LLMService:
         batchLength = len(body) // batchesCount
 
         startPos = 0
+        currentBatchLen = int(min(batchLength, len(body) - startPos))
         while startPos < len(body):
-            currentBatchLen = int(min(batchLength, len(body) - startPos))
+            currentBatchLen = int(min(currentBatchLen, len(body) - startPos))
 
             tryMessages = body[startPos : startPos + currentBatchLen]
             reqMessages = [systemMessage]
@@ -830,22 +846,18 @@ class LLMService:
                 continue
 
             respText = mlRet.resultText
-            newBody.append(ModelMessage(role="user", content=respText))
-            coverage.append(
-                CondenseBatchCoverage(
-                    summaryText=respText,
-                    coveredFromIndex=keepFirstN + startPos,
-                    coveredToIndex=keepFirstN + startPos + currentBatchLen,
-                )
-            )
+            resDict = generateCondencingDict(text=respText, messages=tryMessages)
+            newBody.append(ModelMessage(role="user", content=renderCondensedSummary(resDict), source=resDict))
+            coverage[len(newBody) - 1] = resDict
             startPos += currentBatchLen
+            currentBatchLen = int(min(batchLength, len(body) - startPos))
 
         ret = []
         ret.extend(retHead)
         ret.extend(newBody)
         ret.extend(retTail)
         logger.debug(f"Condensed context: {ret}")
-        return (ret, coverage) if returnCoverage else ret
+        return (ret, coverage)
 
     async def generateText(
         self,

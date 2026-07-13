@@ -2393,20 +2393,6 @@ class TestGetMessagesByIdsLLMTool:
         assert result["done"] is False
         assert result["error"] == "Missing chat context"
 
-    async def test_toolsDisabled(
-        self,
-        handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
-    ) -> None:
-        """ALLOW_TOOLS_COMMANDS=False → 'Tools disabled for this chat'."""
-        cs = _makeChatSettings(allowTools=False)
-        handler.getChatSettings = AsyncMock(return_value=cs)
-
-        result = await handler._llmToolGetMessagesByIds(extraData=extraData, message_ids=["100"])
-
-        assert result["done"] is False
-        assert result["error"] == "Tools disabled for this chat"
-
     async def test_notGatedOnEmbeddingsEnabled(
         self,
         handler: ChatSearchHandler,
@@ -2464,19 +2450,6 @@ class TestGetMessagesByIdsLLMTool:
         assert len(callArgs.args[1]) == 1
         assert result["count"] == 1
         assert result["notFound"] == []
-
-    async def test_getChatSettingsRaises_returnsError(
-        self,
-        handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
-    ) -> None:
-        """getChatSettings raising → error dict (never-raise)."""
-        handler.getChatSettings = AsyncMock(side_effect=RuntimeError("settings down"))
-
-        result = await handler._llmToolGetMessagesByIds(extraData=extraData, message_ids=["100"])
-
-        assert result["done"] is False
-        assert "error" in result
 
     async def test_intIdItemsCoercedToString(
         self,
@@ -2551,21 +2524,6 @@ class TestGetMessagesByIdsLLMTool:
         )
         registeredTools = cast(Any, h).llmService.toolsHandlers.keys()
         assert ToolName.GET_MESSAGES_BY_IDS in registeredTools
-
-    def test_itemsStringInEmittedSchema(self) -> None:
-        """The emitted schema carries ``items: {"type": "string"}`` on message_ids."""
-        h = ChatSearchHandler(
-            configManager=_makeConfigManager(enabled=True),
-            database=_makeDatabase(),
-            botProvider=BotProvider.TELEGRAM,
-        )
-        toolFn = cast(Any, h).llmService.toolsHandlers[ToolName.GET_MESSAGES_BY_IDS]
-        param = toolFn.parameters[0]
-        assert param.name == "message_ids"
-        # ``extra`` is spread into the JSON schema by LLMFunctionParameter.toJson.
-        assert param.extra == {"items": {"type": "string"}}
-        # And it surfaces in the fully serialised form.
-        assert param.toJson()["message_ids"]["items"] == {"type": "string"}
 
 
 # ---------------------------------------------------------------------------

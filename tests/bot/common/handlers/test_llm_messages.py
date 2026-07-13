@@ -54,10 +54,10 @@ from internal.bot.models import (
     MessageSender,
     MessageType,
 )
+from internal.bot.models.message_metadata import CondensingDict, mergeCondensingDicts
 from internal.database.models import ChatMessageDict, MessageCategory
 from internal.models import MessageId
 from internal.services.cache.service import CacheService
-from internal.services.llm import CondenseBatchCoverage
 from internal.services.queue_service.service import QueueService
 from internal.services.storage.service import StorageService
 from lib.ai import ModelMessage, ModelResultStatus, ModelRunResult
@@ -1488,10 +1488,11 @@ class TestHandleRandomMessageCondensing:
     Drives the real ``handleRandomMessage`` through the condensing branch
     (``len(contextMessages) > MAX_RANDOM_CONTEXT_MESSAGES``) with
     ``condenseContext`` mocked to return deterministic
-    ``(condensedRet, coverage)``. Asserts the persisted metadata carries a
-    full :class:`CondensingDict` with coverage fields (single batch, multi
-    batch union) and the defensive fallback (empty coverage → legacy 3-field
-    dict).
+    ``(condensedRet, coverage)``. The new contract has ``condenseContext`` return a
+    ``Dict[int, CondensingDict]`` for coverage; the handler merges its values via
+    :func:`mergeCondensingDicts` and writes the result to
+    ``metadata["randomContext"]``. When the coverage dict is empty, the
+    ``if condencedDictMap:`` guard skips the write entirely (no randomContext).
     """
 
     @staticmethod
@@ -1500,7 +1501,7 @@ class TestHandleRandomMessageCondensing:
         *,
         rows: list[ChatMessageDict],
         condensedRet: list[ModelMessage],
-        coverage: list[CondenseBatchCoverage],
+        coverage: dict[int, CondensingDict],
     ) -> tuple[EnsuredMessage, contextlib.ExitStack, AsyncMock]:
         """Wire the condensing-path mocks and return ``(em, stack, updateMeta)``.
 
@@ -1512,11 +1513,12 @@ class TestHandleRandomMessageCondensing:
                 (newest-first); the walk's ``deque.extendleft`` then reverses
                 that back to oldest-first so ``sourceRows`` is chronological.
                 To mirror production, this helper reverses ``rows`` before
-                handing them to the mock — so coverage index ranges and the
-                persisted ``messageIds`` come out oldest-first as callers
-                assert.
+                handing them to the mock.
             condensedRet: The condensed messages returned by ``condenseContext``.
-            coverage: The coverage list returned by ``condenseContext``.
+            coverage: The coverage dict (``Dict[int, CondensingDict]``) returned
+                by ``condenseContext``. Pre-populated with ready-made
+                CondensingDicts (the new design computes coverage inside
+                ``condenseContext``; the mock supplies it directly).
 
         Returns:
             A ``(em, stack, updateMetaMock)`` triple: the EnsuredMessage, an
@@ -1552,14 +1554,25 @@ class TestHandleRandomMessageCondensing:
         return em, stack, updateMetaMock
 
     async def testCondensePersistsCondensingDictWithCoverage(self, liveHandler: LLMMessageHandler) -> None:
-        """Single coverage batch -> randomContext is a full CondensingDict.
+        """Single coverage batch → randomContext is a full CondensingDict.
+
+        The mock returns ``{0: <CondensingDict with coverage fields>}``; the
+        handler writes ``mergeCondensingDicts(coverage.values())`` to
+        ``metadata["randomContext"]``.
 
         Args:
             liveHandler: Live handler fixture.
         """
         rows = [_makeContextRow(100 + i, f"user{i}", 1000.0 + i * 100.0) for i in range(10)]
         condensedRet = [ModelMessage(role="user", content="SUMMARY TEXT")]
-        coverage = [CondenseBatchCoverage(summaryText="SUMMARY TEXT", coveredFromIndex=0, coveredToIndex=10)]
+        inputDict0 = CondensingDict(
+            text="SUMMARY TEXT",
+            messageIds=[MessageId(100 + i) for i in range(10)],
+            participants=[f"user{i}" for i in range(10)],
+            dateRange={"from": 1000.0, "to": 1900.0},
+            messageCount=10,
+        )
+        coverage = {0: inputDict0}
         em, stack, updateMetaMock = self._wireCondensePath(
             liveHandler, rows=rows, condensedRet=condensedRet, coverage=coverage
         )
@@ -1569,23 +1582,29 @@ class TestHandleRandomMessageCondensing:
 
         assert result is True
         updateMetaMock.assert_awaited_once()
-        randomContext = updateMetaMock.call_args.kwargs["metadata"]["randomContext"]
+        metadata = updateMetaMock.call_args.kwargs["metadata"]
+        assert "randomContext" in metadata
+        randomContext = metadata["randomContext"]
 
         # Shape: dict, not str (the P3b reshape).
         assert isinstance(randomContext, dict)
-        # text matches the pre-P3b "\n".join behaviour.
+        # Delegation: randomContext is mergeCondensingDicts of the coverage values.
+        assert randomContext == mergeCondensingDicts(coverage.values())
+        # text matches the single-batch summary.
         assert randomContext["text"] == "SUMMARY TEXT"
-        # Coverage fields populated.
+        # Coverage fields populated (single batch → identity-ish merge).
         assert randomContext["messageIds"] == [MessageId(100 + i) for i in range(10)]
-        assert randomContext["participants"] == sorted(f"user{i}" for i in range(10))
+        assert set(randomContext["participants"]) == {f"user{i}" for i in range(10)}
         assert randomContext["messageCount"] == 10
         assert randomContext["dateRange"] == {"from": 1000.0, "to": 1900.0}
-        # Legacy boundary markers retained.
-        assert randomContext["tillMessageId"] == MessageId(109)
-        assert randomContext["tillTS"] == 1900.0
 
     async def testCondenseMultiBatchCoverageUnion(self, liveHandler: LLMMessageHandler) -> None:
-        """Two coverage batches -> messageIds unioned from all batches.
+        """Two coverage batches → randomContext is the merged union of both.
+
+        The mock returns ``{0: <dict A>, 1: <dict B>}``; the handler writes
+        ``mergeCondensingDicts(coverage.values())`` — messageIds concatenated,
+        participants unioned, dateRange min/max, messageCount summed, text
+        ``"\\n"``-joined.
 
         Args:
             liveHandler: Live handler fixture.
@@ -1595,10 +1614,21 @@ class TestHandleRandomMessageCondensing:
             ModelMessage(role="user", content="BATCH1"),
             ModelMessage(role="user", content="BATCH2"),
         ]
-        coverage = [
-            CondenseBatchCoverage(summaryText="BATCH1", coveredFromIndex=0, coveredToIndex=5),
-            CondenseBatchCoverage(summaryText="BATCH2", coveredFromIndex=5, coveredToIndex=10),
-        ]
+        dictA = CondensingDict(
+            text="BATCH1",
+            messageIds=[MessageId(200 + i) for i in range(5)],
+            participants=[f"sender{i}" for i in range(5)],
+            dateRange={"from": 2000.0, "to": 2400.0},
+            messageCount=5,
+        )
+        dictB = CondensingDict(
+            text="BATCH2",
+            messageIds=[MessageId(205 + i) for i in range(5)],
+            participants=[f"sender{i}" for i in range(5, 10)],
+            dateRange={"from": 2500.0, "to": 2900.0},
+            messageCount=5,
+        )
+        coverage = {0: dictA, 1: dictB}
         em, stack, updateMetaMock = self._wireCondensePath(
             liveHandler, rows=rows, condensedRet=condensedRet, coverage=coverage
         )
@@ -1607,25 +1637,34 @@ class TestHandleRandomMessageCondensing:
             result = await liveHandler.handleRandomMessage(em, Mock())
 
         assert result is True
-        randomContext = updateMetaMock.call_args.kwargs["metadata"]["randomContext"]
+        metadata = updateMetaMock.call_args.kwargs["metadata"]
+        assert "randomContext" in metadata
+        randomContext = metadata["randomContext"]
 
-        # text is the join of BOTH batch summaries (matches pre-P3b join).
+        # Delegation check.
+        assert randomContext == mergeCondensingDicts(coverage.values())
+        # Union properties: text "\n"-joined, messageIds concatenated (disjoint),
+        # participants unioned, dateRange min/max, messageCount summed.
         assert randomContext["text"] == "BATCH1\nBATCH2"
-        # messageIds from both batches (all 10 rows).
         assert randomContext["messageIds"] == [MessageId(200 + i) for i in range(10)]
+        assert set(randomContext["participants"]) == {f"sender{i}" for i in range(10)}
         assert randomContext["messageCount"] == 10
+        assert randomContext["dateRange"] == {"from": 2000.0, "to": 2900.0}
 
-    async def testCondenseEmptyCoverageFallback(self, liveHandler: LLMMessageHandler) -> None:
-        """Empty coverage (all batches failed) -> legacy 3-field dict, no crash.
+    async def testCondenseEmptyCoverageSkipsWrite(self, liveHandler: LLMMessageHandler) -> None:
+        """Empty coverage dict → randomContext is NOT written (F1 ``if condencedDictMap:`` guard).
+
+        The mock returns ``(condensedRet, {})``; the handler's
+        ``if condencedDictMap:`` guard is falsy, so ``metadata["randomContext"]``
+        is never assigned. ``updateChatMessageMetadata`` is still called (it is
+        outside the inner guard), but the persisted metadata lacks the key.
 
         Args:
             liveHandler: Live handler fixture.
         """
         rows = [_makeContextRow(300 + i, f"u{i}", 3000.0 + i * 100.0) for i in range(10)]
-        # condenseContext returns non-empty condensedRet but empty coverage
-        # (pure-truncation / all-batches-failed mode).
         condensedRet = [ModelMessage(role="user", content="FALLBACK SUMMARY")]
-        coverage: list[CondenseBatchCoverage] = []
+        coverage: dict[int, CondensingDict] = {}
         em, stack, updateMetaMock = self._wireCondensePath(
             liveHandler, rows=rows, condensedRet=condensedRet, coverage=coverage
         )
@@ -1634,17 +1673,7 @@ class TestHandleRandomMessageCondensing:
             result = await liveHandler.handleRandomMessage(em, Mock())
 
         assert result is True
-        randomContext = updateMetaMock.call_args.kwargs["metadata"]["randomContext"]
-
-        # Legacy 3-field shape — no new metadata fields.
-        assert isinstance(randomContext, dict)
-        assert randomContext["text"] == "FALLBACK SUMMARY"
-        assert "messageIds" not in randomContext
-        assert "participants" not in randomContext
-        assert "dateRange" not in randomContext
-        assert "messageCount" not in randomContext
-        # tillMessageId/tillTS mark the LAST covered message (newest source row,
-        # i.e. the upper boundary), matching CondensingDict's contract and the
-        # convention used by Path A and buildRandomContextDict.
-        assert randomContext["tillMessageId"] == MessageId(309)
-        assert randomContext["tillTS"] == 3900.0
+        updateMetaMock.assert_awaited_once()
+        metadata = updateMetaMock.call_args.kwargs["metadata"]
+        # Empty coverage → randomContext is NOT written (the write is skipped).
+        assert "randomContext" not in metadata

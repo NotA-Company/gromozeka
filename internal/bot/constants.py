@@ -257,8 +257,8 @@ asyncio loop and leaves headroom for user-facing message traffic."""
 
 MAX_GET_MESSAGES_BATCH: int = 32
 """Maximum number of message IDs the ``get_messages_by_ids`` LLM tool will
-fetch in one batch (caps tool abuse). See :class:`CondenseBatchCoverage` /
-condensed-context-retrieval plan §3.8."""
+fetch in one batch (caps tool abuse). See condensed-context-retrieval
+plan §3.8."""
 
 # Sandbox limits
 MAX_SANDBOX_READ_FILE_BYTES: int = 65536  # 64 KB

@@ -586,7 +586,7 @@ async def main() -> int:
     # ------------------------------------------------------------------
     printSection("Running condenseContext ...")
     try:
-        condensedMessages = await llmService.condenseContext(
+        condensedMessages, _coverage = await llmService.condenseContext(
             messages,
             model=llmModel,
             keepFirstN=_KEEP_FIRST_N,
