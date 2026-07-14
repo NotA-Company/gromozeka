@@ -143,9 +143,21 @@ dict keys are snake_case to match columns.
   every `vec_user_memories_{N}`, never raises).
 - **Model-drift regen helpers:** `getMemoriesWithoutEmbeddings` (single-table
   stale detection — also serves the initial backfill since a `NULL`
-  `embedding_model` surfaces here), `deleteObsoleteMemoryEmbeddings`
-  (resets provenance to `NULL` + drops stale vec0 rows for rows whose
-  model/dimensions drifted).
+  `embedding_model` surfaces here; takes keyword-only `dimensions:
+  Optional[int] = None` so rows embedded under a different dimensionality are
+  re-surfaced), `deleteObsoleteMemoryEmbeddings` (resets provenance to `NULL`
+  + drops stale vec0 rows for rows whose model/dimensions drifted; returns
+  `int` and swallows exceptions → a silent failure mode). The two are a
+  **complementary belt-and-suspenders pair**: `deleteObsoleteMemoryEmbeddings`
+  is the destructive cleanup (regen step 5), and
+  `getMemoriesWithoutEmbeddings(dimensions=currentDims)` (step 6) is the
+  defensive re-surface that catches rows the destructive stage silently
+  failed to reset. The `dimensions` param is **symmetric** with
+  `getMessagesWithoutEmbeddings` in
+  [`/internal/database/repositories/chat_embeddings.py`](/internal/database/repositories/chat_embeddings.py)
+  (the message-search analog — a DIFFERENT file from the memory repo; both
+  regen crons forward the current dimensionality so cross-dimensional drift
+  is detected on each path).
 
 `deleteMemory` soft-delete semantics: instead of hard-`DELETE`-ing the row,
 `deleteMemory` runs `UPDATE user_memories SET deleted_at = :deletedAt,
@@ -355,7 +367,11 @@ either flag is off, no query embedding is produced, so `injectMemories` is
 called with `queryEmbedding=None` and degrades to `getLatestMemories` (latest
 retrieval). Empty/whitespace message text skips the embedding block for the same reason
 (no garbage vector) and likewise falls through to the `getLatestMemories`
-fallback.
+fallback. The guard is on **formatted** text, not raw `messageText`:
+`formatForLLM` injects a `<media-description>` for media-only messages, so
+media-only messages DO produce a non-empty formatted string, get embedded, and
+trigger semantic memory retrieval (the description is the searchable content).
+Truly-empty messages (no text + no media) format to empty and skip embedding.
 
 1. Bail when `MEMORY_ENABLED` is false.
 2. **Permanent** — read from the write-through permanent-memories cache via
@@ -516,8 +532,13 @@ rather than re-queried on every inbound message:
 
 The old `getChatUserData` / `setChatUserData` / `unsetChatUserData` /
 `clearChatUserData` cache methods (legacy `user_data` key-value blob) were
-**deleted**; `invalidateChatUser(chatId, userId)` still exists but only drops
-`userInfo` and intentionally preserves the permanent-memories cache.
+**deleted**; `invalidateChatUser(chatId, userId)` still exists but only `del`s
+`userInfo` and intentionally preserves the permanent-memories cache. The
+`HCChatUserCacheDict.data` field (which held the legacy `user_data` blob
+alongside `userInfo`) is gone — the TypedDict body is just `permanentMemories`
++ `userInfo` now (the bridge methods that populated `data` were deleted in the
+`85aa945` refactoring; five stale prose references in docstrings/comments were
+cleaned up in the post-v1-retirement pass).
 
 ### By-id resolution cache (`MEMORIES`)
 
@@ -548,6 +569,39 @@ to disk, cleared on process restart):
   `getMemoriesByIds` (cache-aside on miss) and `warmMemoriesByIds` (called by
   the write path `injectMemories` to pre-populate the current message's
   entries so its render-time resolution is a HIT).
+
+### Code anchor: `getThreadByMessageForLLM`
+
+The thread-assembly method in
+[`/internal/bot/common/handlers/base.py`](/internal/bot/common/handlers/base.py)
+(approximately `:646-832`; line numbers drift — re-locate by symbol) is the
+primary multi-message render site for memory resolution. Its structure:
+
+- **Branch A** (`rootMessageId is None`, standalone message) — single-row
+  fetch, build + render the one `EnsuredMessage`, return immediately.
+- **Branch B** (thread) — **upfront batch fetch** via
+  `getChatMessagesByRootId` (all rows loaded before any render). The root
+  `eRootMessage` is built from the first row but **never rendered for the
+  LLM** — it only carries the `condensedThread` cache (read on entry,
+  persisted on the condense path).
+- **`keepFirstN` loop** — builds + renders the retained root-adjacent
+  messages.
+- **Main loop** — builds + renders the tail messages; per-message
+  `excludeMemoryIds` accumulated inline newest→oldest (see "Render-time
+  resolution").
+- **Condense gate** — when the rendered context fits within the token
+  budget, return immediately (no metadata write).
+- **Condense path** — `condenseContext` replaces the assembled list; the
+  condensed cache is written into `eRootMessage.metadata["condensedThread"]`
+  and the **whole metadata dict** is persisted via
+  `updateChatMessageMetadata` (approximately `:825-830`). This re-persistence
+  is the reason `formatForLLM` must never mutate `self.metadata`: the
+  condense path would write resolved content over the persisted compact IDs
+  (the ADR-017 deviation #1 invariant — see "Render-time resolution").
+
+`handleReply` delegates to this method; its own fallback builds from the
+live incoming `EnsuredMessage` (no DB-row metadata path — covered by the
+write-path `injectMemories`).
 
 ## Deferred (memory-compaction-v1 scope boundaries)
 
@@ -674,8 +728,10 @@ restart does not insert duplicates:
   memory with `thread_id=NULL` (cross-thread — `user_data` has no thread
   concept), content `"{key}: {data}"`, empty tags, `source='migration'`,
   NULL embedding columns. Original timestamps preserved. The `user_data`
-  **table** is kept for rollback safety (only the tools that wrote it —
-  `add_user_data` / `delete_user_data` — were retired).
+  **table** was kept at `migration_020` time for rollback safety but was later
+  DROPPED by `migration_022` once the v2 system was confirmed stable (see
+  "Post-v2 cleanup & deploy migrations" below); the tools that wrote it
+  (`add_user_data` / `delete_user_data`) were retired in Phase 5a.
 - **Backfill B — rolling-bio → permanent thread-scoped `bio`.** Each
   `chat_users.metadata.memoryRefinement[str(threadId)]` entry with a
   non-empty `summary` becomes a permanent `type='bio'` memory scoped to the
@@ -691,6 +747,38 @@ per-message compact memory IDs (injected at arrival time and persisted in
 `chat_messages.metadata.memories`) fully replace it. See
 [`../../plans/user-memories-v1.md`](../../plans/user-memories-v1.md) §9.3 for
 the decision record.
+
+## Post-v2 cleanup & deploy migrations
+
+After the v2 `user_memories` system shipped and the ChatSettings
+consolidation landed, three deploy artifacts cleaned up the legacy surface:
+
+- **`migration_022` (`migration_022_drop_user_data.py`)** — drops the legacy
+  `user_data` table once the `migration_020` backfill was confirmed stable.
+  `up()` is `DROP TABLE IF EXISTS user_data` via `provider.batchExecute`;
+  `down()` re-creates the EMPTY table (post-`migration_013` shape —
+  `user_id`/`chat_id INTEGER NOT NULL`, `key`/`data TEXT NOT NULL`,
+  `created_at`/`updated_at TIMESTAMP NOT NULL`,
+  `PRIMARY KEY (user_id, chat_id, key)`; no `AUTOINCREMENT`, no
+  `DEFAULT CURRENT_TIMESTAMP`, portable types) for STRUCTURAL reversibility
+  only (data is unrecoverable). `UserDataRepository` and the `db.userData`
+  accessor were deleted in the same pass. The `migration_020` backfill
+  descriptions (which read FROM `user_data`) remain accurate as historical
+  record.
+- **`migration_023` (`migration_023_rename_memory_injection_enabled_to_memory_enabled.py`)**
+  — pure DATA migration (no DDL) from the ChatSettings consolidation: renames
+  the persisted `memory-injection-enabled` key to `memory-enabled` via
+  `UPDATE chat_settings SET key=:newKey WHERE key=:oldKey` through
+  `provider.batchExecute`. Idempotent and down-reversible (factored
+  `OLD_KEY`/`NEW_KEY` constants).
+- **[`/scripts/prune_unknown_chat_settings.py`](/scripts/prune_unknown_chat_settings.py)**
+  — drops persisted rows for removed `ChatSettingsKey` members (the four
+  consolidation casualties and any future-unknown keys). Reads the valid set
+  live from `ChatSettingsKey` (`{member.value for member in ChatSettingsKey}`);
+  supports `--dry-run` (`dest="dryRun"`). Run order: deploy new code
+  (migration 023 auto-runs at startup and renames the key) → stop the bot →
+  run the prune script → restart (the stop avoids a TOCTOU race with live
+  setting writes). Follows `clear_memory_refinement.py` conventions.
 
 ## Cross-references
 

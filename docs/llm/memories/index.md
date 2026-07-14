@@ -14,10 +14,16 @@ Use these files as companions to [`../teamlead-memory.md`](../teamlead-memory.md
 - [`any-type-cleanup.md`](any-type-cleanup.md) — durable notes for the `Any` type cleanup: patterns established, files changed, genuine patterns preserved.
 - [`bot-answer-probability.md`](bot-answer-probability.md) — durable notes for the bot answer probability feature: gating logic, detection heuristic, test coverage.
 - [`chat-history-search.md`](chat-history-search.md) — durable notes for the chat history search feature: implementation decisions, anti-patterns learned (20 items), Step 2 gotchas, embedding pipeline, and all review fix rounds.
+- [`chat-users-cache.md`](chat-users-cache.md) — ADR-015 write-through `chat_users` cache in `CacheService`: `_chatUsersMetadataLock`, `messages_count` staleness hazard.
+- [`condensed-context-retrieval.md`](condensed-context-retrieval.md) — ADR-019 context-condensing subsystem: `condenseContext` primitive, three pathways (A/B/C), `CondensingDict`/`renderCondensedSummary`, `get_messages_by_ids` LLM tool.
+- [`db-maintenance-scripts.md`](db-maintenance-scripts.md) — Standalone `/scripts/` DB-maintenance conventions: direct `sqlite3.connect` precedent, `dest="dryRun"`, `StrEnum` over literals, JSON serializer for `chat_users.metadata`.
 - [`dedoodization.md`](dedoodization.md) — durable notes for the dedoodization script and repo-wide cleanup of informal language.
 - [`delete-from-user.md`](delete-from-user.md) — durable notes for the `DeleteFromUserMessageHandler`: message deletion commands, author extraction gotchas.
+- [`doc-link-fix-campaign.md`](doc-link-fix-campaign.md) — `make check-docs` link checker + 376-broken-link fix campaign; leading-slash link convention, exclusion prefixes, depth gotchas.
+- [`llm-empty-truncated-final.md`](llm-empty-truncated-final.md) — Empty `TRUNCATED_FINAL` production bug (Qwen3 budget exhaustion → empty content → `BadRequest`); Item 1 observability dump shipped.
 - [`max-api-migration.md`](max-api-migration.md) — durable notes for the Max API endpoint migration: `platform-api2`, TLS/SSL, SOCKS5 caveat, polling.
 - [`max-webhook-support.md`](max-webhook-support.md) — durable notes for the Max webhook receiver: two-process architecture, deferred processing, post-review fixes.
+- [`memories-context-dedup.md`](memories-context-dedup.md) — ADR-018 lazy render-time memory resolution + per-context newest→oldest dedup; companion to `user-memories.md` §"Render-time resolution".
 - [`proxy.md`](proxy.md) — durable notes for `lib/proxy/`, proxy configuration, per-service proxy overrides, HTTP client inventory, and the proxy refactoring anti-patterns.
 - [`proxy-lifecycle.md`](proxy-lifecycle.md) — durable notes for the proxy lifecycle management feature: `ProxyService`, `ProxyLifecycle`, subprocess management, health checks, and call-site migration.
 - [`resender.md`](resender.md) — durable notes for the Resender module: cron-based message forwarding, media group handling, forward feature.
