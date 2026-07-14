@@ -24,6 +24,8 @@ import hashlib
 import json
 import logging
 import time
+from collections import deque
+from collections.abc import MutableSet
 from enum import Enum
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -58,6 +60,7 @@ from internal.bot.models import (
     OutputFormat,
     UserMetadataDict,
     getChatSettingsInfo,
+    renderCondensedSummary,
 )
 from internal.config.manager import ConfigManager
 from internal.database import Database
@@ -360,23 +363,6 @@ class BaseBotHandler(CommandHandlerMixin):
     # User Data Management
     ###
 
-    async def _updateEMessageUserData(self, ensuredMessage: EnsuredMessage) -> None:
-        """
-        Update an [`EnsuredMessage`](internal/bot/models/ensured_message.py) with current user data
-
-        Internal helper method to inject user data into message objects.
-
-        Args:
-            ensuredMessage: Message object to update with user data
-        """
-        ensuredMessage.setUserData(
-            await self.cache.getChatUserData(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
-        )
-
-        ensuredMessage.applyUserMetadata(
-            await self.cache.getUserMetadata(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
-        )
-
     async def checkEMMentionsMe(self, ensuredMessage: EnsuredMessage) -> MentionCheckResult:
         """
         Check if a message mentions the bot
@@ -470,6 +456,70 @@ class BaseBotHandler(CommandHandlerMixin):
             raise ValueError("Bot is not initialized")
 
         return await self._bot.isAdmin(user=user, chat=chat, allowBotOwners=allowBotOwners)
+
+    async def _resolveUserId(self, *, chatId: int, userIdentifier: Optional[str]) -> Optional[int]:
+        """Resolve a user identifier to a numeric ``user_id``.
+
+        Shared between the ``search_memories`` LLM tool (``UserMemoriesHandler``)
+        and the ``search_messages`` LLM tool / ``/search`` command
+        (``ChatSearchHandler``). Accepts a login (with or without a leading
+        ``@``) OR a numeric ``user_id`` string.
+
+        Resolution order:
+
+        1. Falsy / None → ``None``.
+        2. Strip leading ``@`` and whitespace. Empty → ``None``.
+        3. **Numeric path**: if the cleaned value is all digits, return
+           ``int(clean)`` directly — no database lookup. Telegram and Max
+           usernames cannot be purely numeric, so a numeric identifier is
+           safely treated as a ``user_id``.
+        4. **Login path**: re-prepend ``@`` (the ``chat_users`` table stores
+           usernames with the ``@`` prefix) and look up the row via
+           :meth:`ChatUsersRepository.getChatUserByUsername` (case-insensitive,
+           provider-portable). On a DB exception or no match, log and return
+           ``None``.
+
+        Args:
+            chatId: Chat the user belongs to (used only by the login path).
+            userIdentifier: A login (with or without ``@``) or a numeric
+                ``user_id`` string.
+
+        Returns:
+            The resolved numeric ``user_id`` (an ``int``) when the identifier
+            is a numeric ``user_id`` string (returned directly, no DB lookup)
+            or a login that matches a user in the chat (resolved via
+            ``chat_users`` lookup); ``None`` when the identifier was
+            missing/empty or the login did not match any user in the chat.
+        """
+        if not userIdentifier:
+            return None
+        clean = userIdentifier.lstrip("@").strip()
+        if not clean:
+            return None
+        # Numeric identifier → treat as a user_id directly (Telegram/Max
+        # usernames cannot be purely numeric, so there is no ambiguity).
+        # ``isdecimal()`` (not ``isdigit()``) is the precise predicate for the
+        # character set ``int()`` accepts in base 10: ``isdigit()`` also admits
+        # Unicode "other digit" chars (e.g. "²" U+00B2) that ``int()`` cannot
+        # parse, which would raise ``ValueError`` and break the never-raises
+        # contract of the LLM tools that call this method.
+        if clean.isdecimal():
+            return int(clean)
+        # Login path: DB stores usernames with the @ prefix. Normalise to that
+        # format so the case-insensitive comparison matches.
+        clean = f"@{clean}"
+        try:
+            user = await self.db.chatUsers.getChatUserByUsername(chatId=chatId, username=clean)
+        except Exception:
+            logger.exception("resolveUserId: failed to look up user %r in chat %d", clean, chatId)
+            return None
+        if user is None:
+            logger.warning(f"resolveUserId: user {userIdentifier!r} not found in chat {chatId}")
+            return None
+        userId = user.get("user_id")
+        if userId is None:
+            return None
+        return int(userId)
 
     async def editMessage(
         self,
@@ -690,6 +740,7 @@ class BaseBotHandler(CommandHandlerMixin):
         chatId = dbMessage["chat_id"]
         chatSettings = await self.getChatSettings(chatId, chatType=ensuredMessage.recipient.chatType)
         llmMFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
+        needMemories = chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool()
 
         outputFormat = OutputFormat.MARKDOWN
         match self.botProvider:
@@ -707,14 +758,16 @@ class BaseBotHandler(CommandHandlerMixin):
             ),
         ]
 
+        # No root message -> current message is root of discussion
         if dbMessage["root_message_id"] is None:
             eMessage = await EnsuredMessage.fromDBChatMessage(dbMessage, self.db)
-            await self._updateEMessageUserData(eMessage)
             return ret + await eMessage.toModelMessageList(
                 self.db,
                 format=llmMFormat,
                 outputFormat=outputFormat,
                 role=MessageCategory.fromStr(dbMessage["message_category"]).toRole(),
+                cache=self.cache if needMemories else None,
+                excludeMemoryIds=set(),
             )
 
         dbMessageList = await self.db.chatMessages.getChatMessagesByRootId(
@@ -732,52 +785,87 @@ class BaseBotHandler(CommandHandlerMixin):
         keepLastN = 1
 
         eRootMessage = await EnsuredMessage.fromDBChatMessage(dbMessageList[0], self.db)
-        await self._updateEMessageUserData(eRootMessage)
         condenseCache = eRootMessage.metadata.get("condensedThread", [])
         condenseCacheMessages: List[ModelMessage] = []
+
+        # Shared memory-ID accumulator across BOTH the first-N (pinned) block
+        # and the tail loop. The pinned block renders its messages against an
+        # empty set (so all of their memories are emitted), then seeds it with
+        # the rendered IDs; the tail loop reuses the same set so that a
+        # permanent memory shared between a pinned message and a tail message
+        # is injected exactly once. Previously the pinned block passed a
+        # throwaway ``set()`` and the tail re-initialised its own set, so a
+        # shared permanent memory was injected twice (once per render path).
+        excludedMemoryIds: MutableSet[str] = set()
+
         if condenseCache and condenseThread:
             # First - add skipped messages to result.
-            # It should be ony starting message
+            # It should be only the starting message
             for i in range(min(keepFirstN, len(dbMessageList))):
                 eMessage = await EnsuredMessage.fromDBChatMessage(dbMessageList[i], self.db)
-                await self._updateEMessageUserData(eMessage)
-                ret.extend(
-                    await eMessage.toModelMessageList(
-                        self.db,
-                        format=llmMFormat,
-                        outputFormat=outputFormat,
-                        role=MessageCategory.fromStr(dbMessageList[i]["message_category"]).toRole(),
-                    )
+                # Keep memories for root message
+                mMessages = await eMessage.toModelMessageList(
+                    self.db,
+                    format=llmMFormat,
+                    role=MessageCategory.fromStr(dbMessageList[i]["message_category"]).toRole(),
+                    outputFormat=outputFormat,
+                    cache=self.cache if needMemories else None,
+                    excludeMemoryIds=set(),
                 )
+                ret.extend(mMessages)
 
             # For each summary:
-            # Add summary message to result
-            # And skip summaried messages
+            # Build summary message and skip summaried messages
             for condensedMessage in condenseCache:
                 # If we'll decide to condenseContext, skip summary message from condensing
                 keepFirstN += 1
-                cacheEntry = ModelMessage(role="user", content=condensedMessage["text"])
+                cacheEntry = ModelMessage(
+                    role="user", content=renderCondensedSummary(condensedMessage), source=condensedMessage
+                )
                 ret.append(cacheEntry)
                 condenseCacheMessages.append(cacheEntry)
-                lastDT = datetime.datetime.fromtimestamp(condensedMessage["tillTS"], datetime.timezone.utc)
+
+                if "tillTS" in condensedMessage:
+                    lastDT = datetime.datetime.fromtimestamp(condensedMessage["tillTS"], datetime.timezone.utc)
+                elif "dateRange" in condensedMessage:
+                    lastDT = datetime.datetime.fromtimestamp(condensedMessage["dateRange"]["to"], datetime.timezone.utc)
+                else:
+                    logger.warning(f"No date range or timestamp found for condensed message {condensedMessage}")
+                    lastDT = utils.now()
+                if "tillMessageId" in condensedMessage:
+                    tillMessageId = condensedMessage["tillMessageId"]
+                elif "messageIds" in condensedMessage:
+                    tillMessageId = condensedMessage["messageIds"][-1]
+                else:
+                    logger.warning(f"No message ID found for condensed message {condensedMessage}")
+                    tillMessageId = MessageId(0)
+
                 skippedMessages = 0
+                # Skip from context messages, condensed to condensedMessage
                 for dbMessage in dbMessageList:
                     skippedMessages += 1
-                    if dbMessage["message_id"] == condensedMessage["tillMessageId"] or dbMessage["date"] > lastDT:
+                    if dbMessage["message_id"] == tillMessageId or dbMessage["date"] > lastDT:
                         break
                 dbMessageList = dbMessageList[skippedMessages:]
 
-        for dbMessage in dbMessageList:
-            eMessage = await EnsuredMessage.fromDBChatMessage(dbMessage, self.db)
-            await self._updateEMessageUserData(eMessage)
-            ret.extend(
-                await eMessage.toModelMessageList(
-                    self.db,
-                    format=llmMFormat,
-                    outputFormat=outputFormat,
-                    role=MessageCategory.fromStr(dbMessage["message_category"]).toRole(),
-                )
+        retTail: deque[ModelMessage] = deque()
+        # For proper memory deduplication, construct tail from newest to oldest,
+        # but adding to begin of deque to not need revert later
+        for dbRow in reversed(dbMessageList):
+            eMessage = await EnsuredMessage.fromDBChatMessage(dbRow, self.db)
+            mMessages = await eMessage.toModelMessageList(
+                self.db,
+                format=llmMFormat,
+                role=MessageCategory.fromStr(dbRow["message_category"]).toRole(),
+                outputFormat=outputFormat,
+                cache=self.cache if needMemories else None,
+                excludeMemoryIds=excludedMemoryIds,
             )
+            excludedMemoryIds.update(eMessage.getMemoryIds())
+            # extendleft just call appendleft for each element so we need to reverse it for proper order
+            retTail.extendleft(reversed(mMessages))
+
+        ret.extend(retTail)
 
         if not condenseThread:
             return ret
@@ -791,7 +879,9 @@ class BaseBotHandler(CommandHandlerMixin):
         if currentTokens < maxTokens:
             return ret
 
-        condensedRet = await self.llmService.condenseContext(
+        # First condense pass — request coverage to map summaries back to
+        # source entries for metadata extraction.
+        condensedRet, condensingDictMap = await self.llmService.condenseContext(
             ret,
             model=llmModel,
             keepFirstN=keepFirstN,
@@ -802,21 +892,14 @@ class BaseBotHandler(CommandHandlerMixin):
             condensingSystemPrompt=chatSettings[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT].toStr(),
         )
 
-        # -1 is last element, so -keepLastN to skip skipped elements to get last condensed message
-        lastCondensedMessage = dbMessageList[-1 - keepLastN]
-        # +1 because of system prompt
-
-        # logger.debug("CONDENSING DEBUG")
-        # logger.debug(f"ret   = {condensedRet}")
-        # logger.debug(f"cache = {condenseCache}")
-        # logger.debug(f"lastM = {lastCondensedMessage}")
-
         condenseCacheMessages.extend(condensedRet)
         currentTokens = llmModel.getEstimateTokensCount([v.toDict() for v in condenseCacheMessages])
         if currentTokens > maxTokens:
-            # If there are too many condensed entries in cache, condense them as well
+            # If there are too many condensed entries in cache, condense them
+            # as well.
+
             keepFirstN = 1
-            condensedRet = await self.llmService.condenseContext(
+            condensedRet, condensingDictMap = await self.llmService.condenseContext(
                 condenseCacheMessages,
                 model=llmModel,
                 keepFirstN=keepFirstN,
@@ -827,19 +910,13 @@ class BaseBotHandler(CommandHandlerMixin):
                 condensingSystemPrompt=chatSettings[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT].toStr(),
             )
             # We'll need to rewrite cache, so empty it here
-            condenseCache = []
-            condenseCacheMessages = []
+            condenseCache = list(condensingDictMap.values())
+        else:
+            # No re-condense needed. Old cache entries are preserved (they
+            # were protected by keepFirstN in the first condense pass); new
+            # entries are appended from the coverage.
+            condenseCache.extend(condensingDictMap.values())
 
-        for i in range(keepFirstN + 1, len(condensedRet) - keepLastN):
-            condenseCache.append(
-                {
-                    "text": condensedRet[i].content,
-                    "tillMessageId": lastCondensedMessage["message_id"],
-                    "tillTS": lastCondensedMessage["date"].timestamp(),
-                }
-            )
-
-        # logger.debug(f"cache2 = {condenseCache}")
         eRootMessage.metadata["condensedThread"] = condenseCache
         await self.db.chatMessages.updateChatMessageMetadata(
             chatId=eRootMessage.recipient.id,
@@ -1094,7 +1171,7 @@ class BaseBotHandler(CommandHandlerMixin):
             spam-flag/leftChat use cases (flat boolean flags). For NESTED sub-dicts
             (e.g. ``memoryRefinement``) do NOT use this method; perform an explicit
             full-read + nested-mutate + full-write via ``cache.getUserMetadata`` /
-            ``cache.updateUserMetadata`` (see ``UserDataHandler._persistMemoryEntry``).
+            ``cache.updateUserMetadata`` (see ``UserMemoriesHandler._persistMemoryEntry``).
         """
         async with self.cache.chatUserMetadataLock():
             if isUpdate:

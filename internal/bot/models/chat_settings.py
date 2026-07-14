@@ -316,6 +316,12 @@ class ChatSettingsKey(StrEnum):
     """System prompt defining the memory-refinement model's role and rules."""
     MEMORY_REFINE_USER_PROMPT_TEMPLATE = "memory-refine-user-prompt-template"
     """Template for the user message fed to the memory-refinement LLM call."""
+    # User-memories v1 — master per-chat gate.
+    MEMORY_ENABLED = "memory-enabled"
+    """Master per-chat gate for all user-memory features: context injection, chat-time
+    ``add_memory``/``search_memories`` tools, memory-embedding regen admission, and
+    refinement eligibility. When on alongside ``EMBEDDINGS_ENABLED``, memory retrieval is
+    semantic; otherwise ``latest``."""
     # Prompts for different actions
     SUMMARY_PROMPT = "summary-prompt"
     """System prompt for message summarization."""
@@ -436,8 +442,7 @@ class ChatSettingsKey(StrEnum):
     """Enable embedding generation and semantic search for this chat."""
     MAX_MESSAGES_FOR_SEMANTIC_SEARCH = "max-messages-for-semantic-search"
     """Max recent messages to load for semantic search ranking."""
-    REGENERATE_EMBEDDINGS = "regenerate-embeddings"
-    """Re-embedding of all messages without embeddings."""
+
     # Tier-related
     BASE_TIER = "base-tier"
     """Default tier level for the chat."""
@@ -889,19 +894,19 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
             "Бот будет периодически обновлять краткое резюме о каждом пользователе "
             "на основе последних сообщений."
         ),
-        "page": ChatSettingsPage.FRIEND,
+        "page": ChatSettingsPage.LLM_PAID,
     },
     ChatSettingsKey.MEMORY_REFINE_MODEL: {
         "type": ChatSettingsType.MODEL,
         "short": "LLM-Модель для обновления памяти",
         "long": "Какую LLM модель использовать для обновления памяти о пользователе",
-        "page": ChatSettingsPage.FRIEND,
+        "page": ChatSettingsPage.LLM_PAID,
     },
     ChatSettingsKey.MEMORY_REFINE_FALLBACK_MODEL: {
         "type": ChatSettingsType.MODEL,
         "short": "Запасная LLM-Модель для обновления памяти пользователя",
         "long": "Какую LLM модель использовать для обновления памяти о пользователе если основная не справилась",
-        "page": ChatSettingsPage.FRIEND,
+        "page": ChatSettingsPage.LLM_PAID,
     },
     ChatSettingsKey.MEMORY_REFINE_SYSTEM_PROMPT: {
         "type": ChatSettingsType.STRING,
@@ -910,13 +915,28 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
             "Системный промпт, задающий роль и правила модели при фоновом обновлении "
             "(актуализации) памяти о пользователе."
         ),
-        "page": ChatSettingsPage.FRIEND,
+        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
     },
     ChatSettingsKey.MEMORY_REFINE_USER_PROMPT_TEMPLATE: {
         "type": ChatSettingsType.STRING,
         "short": "Шаблон пользовательского сообщения для обновления памяти",
-        "long": ("Шаблон, в который подставляются {existingUserData}, {existingSummary}, {messages}."),
-        "page": ChatSettingsPage.FRIEND,
+        "long": "Шаблон, в который подставляются {existingMemories} и {messages}.",
+        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
+    },
+    # User-memories v1 — master per-chat gate.
+    ChatSettingsKey.MEMORY_ENABLED: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Включить память о пользователе",
+        "long": (
+            "Главный переключатель механихма памяти о пользователе для этого чата. "
+            "Когда включено, воспоминания подставляются в контекст LLM, "
+            "а инструменты ``add_memory``/``search_memories`` доступны "
+            "во время общения. Если ``embeddings-enabled`` также включён, "
+            "поиск выполняется семантически; иначе используются последние "
+            "воспоминания. Также управляет фоновой регенерацией эмбеддингов "
+            "памяти и доступностью обновления памяти."
+        ),
+        "page": ChatSettingsPage.LLM_BASE,
     },
     ChatSettingsKey.DELETE_DENIED_COMMANDS: {
         "type": ChatSettingsType.BOOL,
@@ -1107,20 +1127,14 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
     ChatSettingsKey.EMBEDDINGS_ENABLED: {
         "type": ChatSettingsType.BOOL,
         "short": "Включить эмбеддинги",
-        "long": "Включить эмбеддинги для семантического поиска по истории чата.",
-        "page": ChatSettingsPage.FRIEND,
-    },
-    ChatSettingsKey.REGENERATE_EMBEDDINGS: {
-        "type": ChatSettingsType.BOOL,
-        "short": "Перестаривать неверные эмбеддинги",
-        "long": "Перегенерировать отсутствующие или неверные эмбеддинги.",
-        "page": ChatSettingsPage.BOT_OWNER,
+        "long": "Включить эмбеддинги для семантического поиска по истории чата и памяти.",
+        "page": ChatSettingsPage.LLM_PAID,
     },
     ChatSettingsKey.MAX_MESSAGES_FOR_SEMANTIC_SEARCH: {
         "type": ChatSettingsType.INT,
         "short": "Максимальное количество сообщений для поиска",
         "long": "Сколько последних сообщений будут использоваться для поиска.",
-        "page": ChatSettingsPage.BOT_OWNER,
+        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
     },
     # Tier-related
     ChatSettingsKey.BASE_TIER: {

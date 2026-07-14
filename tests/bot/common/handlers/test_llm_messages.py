@@ -33,6 +33,7 @@ Three feature areas are covered, each in its own class:
 
 import contextlib
 import datetime
+import json
 from collections.abc import Awaitable, Callable, Sequence
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -40,6 +41,7 @@ import pytest
 
 from internal.bot.common.handlers.base import HandlerResultStatus
 from internal.bot.common.handlers.llm_messages import LLMMessageHandler, LLMReplyOutcome
+from internal.bot.constants import ToolName
 from internal.bot.models import (
     BotProvider,
     ChatSettingsDict,
@@ -50,7 +52,10 @@ from internal.bot.models import (
     MentionCheckResult,
     MessageRecipient,
     MessageSender,
+    MessageType,
 )
+from internal.bot.models.message_metadata import CondensingDict, mergeCondensingDicts
+from internal.database.models import ChatMessageDict, MessageCategory
 from internal.models import MessageId
 from internal.services.cache.service import CacheService
 from internal.services.queue_service.service import QueueService
@@ -404,6 +409,11 @@ def _fullChatSettings(
         ChatSettingsKey.ALLOW_MENTION: ChatSettingsValue("true"),
         ChatSettingsKey.BOT_NICKNAMES: ChatSettingsValue(""),
         ChatSettingsKey.BOT_ANSWER_PROBABILITY: ChatSettingsValue("1.0"),
+        # Phase 3a: memory-injection default off so the chat-time useTools gate
+        # (ADD_MEMORY/SEARCH_MEMORIES) hides the memory tools by default. Tests
+        # that exercise the gate override MEMORY_ENABLED inline by
+        # building a settings dict with it set to "true" directly.
+        ChatSettingsKey.MEMORY_ENABLED: ChatSettingsValue("false"),
     }
 
 
@@ -1109,3 +1119,561 @@ class TestMediaDescriptionExtraction:
             liveHandler.sendMessage.call_args.kwargs["messageText"]  # type: ignore[attr-defined]
             == "middle<media-description>bar</media-description>"
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests: D3 gating — DELETE_MEMORY never exposed at chat time
+# ---------------------------------------------------------------------------
+
+
+class TestD3DeleteMemoryGating:
+    """D3 regression: ``DELETE_MEMORY`` is never exposed at chat time.
+
+    Pins the Fix 1 restructuring in ``_sendLLMChatMessage``: the
+    ``DELETE_MEMORY: False`` override must apply regardless of the
+    ``ALLOW_SANDBOX`` setting. Before the fix, the whole ``useTools``
+    dict-construction block was guarded by
+    ``if useTools and not all([useSandbox]):``, so when ``ALLOW_SANDBOX=true``
+    the block was skipped entirely — ``useTools`` stayed the plain bool
+    ``True`` and ``_resolveTools`` returned ALL registered tools, including
+    ``DELETE_MEMORY`` (violating D3: delete is refinement-only; plan §8.3).
+
+    Each test registers ``DELETE_MEMORY`` and a sandbox tool on the handler's
+    ``LLMService`` singleton, drives ``_sendLLMChatMessage`` with a given
+    ``(USE_TOOLS, ALLOW_SANDBOX)`` combo, captures the ``useTools`` value
+    passed to ``generateTextViaLLM``, resolves it via ``_resolveTools``, and
+    asserts ``DELETE_MEMORY`` is never among the resolved tool names.
+    """
+
+    @pytest.mark.parametrize(
+        ("useToolsSetting", "allowSandboxSetting"),
+        [
+            (True, True),  # the case that was broken before Fix 1
+            (True, False),
+            (False, True),
+            (False, False),
+        ],
+    )
+    async def test_deleteMemoryNeverResolvedAtChatTime(
+        self,
+        liveHandler: LLMMessageHandler,
+        useToolsSetting: bool,
+        allowSandboxSetting: bool,
+    ) -> None:
+        """``DELETE_MEMORY`` absent from resolved tools for all 4 setting combos.
+
+        Args:
+            liveHandler: Live handler fixture.
+            useToolsSetting: Value for ``USE_TOOLS`` chat setting.
+            allowSandboxSetting: Value for ``ALLOW_SANDBOX`` chat setting.
+        """
+        # Register DELETE_MEMORY + a sandbox tool on the singleton so the
+        # assertion is meaningful (otherwise DELETE_MEMORY's absence is
+        # trivially true because nothing is registered).
+        liveHandler.llmService.registerTool(
+            name=ToolName.DELETE_MEMORY,
+            description="delete memory (refinement-only)",
+            parameters=[],
+            handler=AsyncMock(),
+        )
+        liveHandler.llmService.registerTool(
+            name=ToolName.RUN_PYTHON,
+            description="run python",
+            parameters=[],
+            handler=AsyncMock(),
+        )
+
+        settings = _fullChatSettings()
+        settings[ChatSettingsKey.USE_TOOLS] = ChatSettingsValue("true" if useToolsSetting else "false")
+        settings[ChatSettingsKey.ALLOW_SANDBOX] = ChatSettingsValue("true" if allowSandboxSetting else "false")
+        liveHandler.getChatSettings = AsyncMock(return_value=settings)  # type: ignore[method-assign]
+
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult("ok")
+        )
+        em = _liveEnsuredMessage()
+        messagesHistory = [ModelMessage(role="system", content="sys")]
+        typingManager = AsyncMock()
+
+        await liveHandler._sendLLMChatMessage(em, messagesHistory, typingManager=typingManager)
+
+        capturedUseTools = liveHandler.llmService.generateTextViaLLM.call_args.kwargs[  # type: ignore[attr-defined]
+            "useTools"
+        ]
+        resolved = liveHandler.llmService._resolveTools(capturedUseTools)  # type: ignore[attr-defined]
+        resolvedNames = {t.name for t in resolved}
+        # D3: DELETE_MEMORY must never appear in chat-time tools, regardless of
+        # the sandbox setting.
+        assert ToolName.DELETE_MEMORY not in resolvedNames
+
+        # Sanity: when USE_TOOLS=true the sandbox tool (RUN_PYTHON) is present
+        # when ALLOW_SANDBOX=true, proving the fix does not over-disable
+        # everything. The (True, True) combo is the one that was broken: before
+        # Fix 1, ``useTools`` stayed a plain ``True`` and ALL tools (including
+        # DELETE_MEMORY) were returned.
+        if useToolsSetting:
+            if allowSandboxSetting:
+                assert ToolName.RUN_PYTHON in resolvedNames
+            else:
+                assert ToolName.RUN_PYTHON not in resolvedNames
+        else:
+            # USE_TOOLS=false → no tools at all.
+            assert resolvedNames == set()
+
+
+class TestMemoryInjectionToolGating:
+    """Phase 3a: ``MEMORY_ENABLED`` gates ``ADD_MEMORY`` / ``SEARCH_MEMORIES``.
+
+    Pins the useTools gate added in ``_sendLLMChatMessage`` (plan §13 / §11.1):
+    when the chat-time ``MEMORY_ENABLED`` setting is off, both
+    ``ADD_MEMORY`` and ``SEARCH_MEMORIES`` are explicitly disabled in the
+    per-call ``useTools`` dict so the memory tools don't appear before the
+    feature is opted in. When the setting is on, both are left to the wildcard
+    (available). ``DELETE_MEMORY`` stays off regardless (D3 — covered by
+    :class:`TestD3DeleteMemoryGating`).
+    """
+
+    @pytest.mark.parametrize(
+        "injectionEnabled",
+        [True, False],
+    )
+    async def test_addAndSearchMemoriesGatedOnInjectionFlag(
+        self,
+        liveHandler: LLMMessageHandler,
+        injectionEnabled: bool,
+    ) -> None:
+        """``ADD_MEMORY``/``SEARCH_MEMORIES`` resolved iff ``MEMORY_ENABLED`` is on.
+
+        Registers all three memory tools on the singleton (so absence is
+        meaningful, not trivial), drives ``_sendLLMChatMessage`` with
+        ``USE_TOOLS=true``, captures the ``useTools`` kwarg, and resolves it
+        via ``_resolveTools``.
+
+        Args:
+            liveHandler: Live handler fixture.
+            injectionEnabled: Value for ``MEMORY_ENABLED``.
+        """
+        # Register all three memory tools so the assertion is meaningful.
+        for name in (ToolName.ADD_MEMORY, ToolName.SEARCH_MEMORIES, ToolName.DELETE_MEMORY):
+            liveHandler.llmService.registerTool(
+                name=name,
+                description=f"memory tool {name}",
+                parameters=[],
+                handler=AsyncMock(),
+            )
+
+        settings = _fullChatSettings()
+        settings[ChatSettingsKey.USE_TOOLS] = ChatSettingsValue("true")
+        settings[ChatSettingsKey.ALLOW_SANDBOX] = ChatSettingsValue("false")
+        settings[ChatSettingsKey.MEMORY_ENABLED] = ChatSettingsValue("true" if injectionEnabled else "false")
+        liveHandler.getChatSettings = AsyncMock(return_value=settings)  # type: ignore[method-assign]
+
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult("ok")
+        )
+        em = _liveEnsuredMessage()
+        messagesHistory = [ModelMessage(role="system", content="sys")]
+        typingManager = AsyncMock()
+
+        await liveHandler._sendLLMChatMessage(em, messagesHistory, typingManager=typingManager)
+
+        capturedUseTools = liveHandler.llmService.generateTextViaLLM.call_args.kwargs[  # type: ignore[attr-defined]
+            "useTools"
+        ]
+        assert isinstance(capturedUseTools, dict)
+        resolved = liveHandler.llmService._resolveTools(capturedUseTools)  # type: ignore[attr-defined]
+        resolvedNames = {t.name for t in resolved}
+
+        # DELETE_MEMORY is always hidden at chat time (D3), regardless of the
+        # injection setting.
+        assert ToolName.DELETE_MEMORY not in resolvedNames
+
+        if injectionEnabled:
+            # Both memory tools fall through to the wildcard (available).
+            assert ToolName.ADD_MEMORY in resolvedNames
+            assert ToolName.SEARCH_MEMORIES in resolvedNames
+        else:
+            # The gate explicitly disables both.
+            assert ToolName.ADD_MEMORY not in resolvedNames
+            assert ToolName.SEARCH_MEMORIES not in resolvedNames
+            # And the raw useTools dict carries the explicit False overrides.
+            assert capturedUseTools.get(ToolName.ADD_MEMORY) is False
+            assert capturedUseTools.get(ToolName.SEARCH_MEMORIES) is False
+
+
+# ---------------------------------------------------------------------------
+# NOTE: handler-level ``<user-memories>`` system-message block injection
+# (the former ``TestMemoriesBlockInjection`` class) was removed. Memory
+# injection moved to :meth:`MessagePreprocessorHandler.injectMemories`
+# (pre-arrival), which writes compact memory IDs into ``metadata["memories"]``;
+# the per-message renderer (:meth:`formatForLLM`) resolves them lazily via
+# ``cache.getMemoriesByIds`` into a structured ``userMemories`` JSON key. The
+# old handler-side ``_buildMemoriesBlock`` / ``_injectMemoriesBlock`` methods
+# no longer exist (see the matching note in ``test_base.py``). The handler
+# message-assembly paths themselves (handleMention / handleRandomMessage /
+# handleReply) stay covered by :class:`TestRandomAnswerPromptAndSkipSentinel`
+# and :class:`TestMediaDescriptionExtraction`.
+
+
+# ---------------------------------------------------------------------------
+# Tests: handleMention text-reply memory bypass (memory-compaction-v1 Phase 3b-i)
+# ---------------------------------------------------------------------------
+
+
+class TestHandleMentionCompactMemoryBypass:
+    """Phase 3b-i: the ``handleMention`` text-reply bypass stores compact IDs in metadata.
+
+    The text-message-reply branch of ``handleMention`` does NOT build its reply
+    :class:`EnsuredMessage` via ``fromDBChatMessage``; it manually parses the
+    stored reply's metadata JSON. Before Phase 3b-i the bypass tried to set
+    memory content directly from the raw ``{"permanentIds": [...],
+    "shortTermIds": [...]}`` ID dict — which ``formatForLLM`` would then render
+    verbatim (garbage). The fix stores compact IDs in ``reply.metadata``
+    directly (they are already in the stored metadata) and defers resolution to
+    :meth:`formatForLLM` (lazy, via ``cache.getMemoriesByIds``).
+
+    This test drives the REAL ``handleMention`` with ``MEMORY_ENABLED
+    = true`` and a reply parent whose stored metadata carries compact IDs, then
+    asserts on the live reply object's state. ``handleMention`` stores the
+    compact IDs in ``reply.metadata`` and defers resolution to ``formatForLLM``
+    (called via ``toModelMessage``, patched out here). So ``metadata["memories"]``
+    preserves the compact IDs verbatim (no re-point / no mangling).
+    """
+
+    async def test_compactIdReply_resolvesLazilyViaFormatForLLM(self, liveHandler: LLMMessageHandler) -> None:
+        """A compact-format stored reply preserves compact IDs; resolution is deferred to ``formatForLLM``.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        # Enable memory injection for the chat.
+        settings = _fullChatSettings()
+        settings[ChatSettingsKey.MEMORY_ENABLED] = ChatSettingsValue("true")
+        liveHandler.getChatSettings = AsyncMock(return_value=settings)  # type: ignore[method-assign]
+
+        # The incoming message mentions the bot and is a reply.
+        em = _liveEnsuredMessage(isReply=True)
+        liveHandler.checkEMMentionsMe = AsyncMock(  # type: ignore[method-assign]
+            return_value=MentionCheckResult(byName=(0, 4), restText="hello there")
+        )
+
+        # Build the reply parent as a real EnsuredMessage with messageType=TEXT
+        # (required to take the bypass branch).
+        reply = EnsuredMessage(
+            sender=MessageSender(id=7, name="Alice", username="@alice"),
+            recipient=MessageRecipient(id=-100, chatType=ChatType.GROUP),
+            messageId=MessageId(55),
+            date=datetime.datetime(2026, 5, 5, 11, 0, 0, tzinfo=datetime.timezone.utc),
+            messageText="an earlier message",
+            messageType=MessageType.TEXT,
+        )
+
+        stack = contextlib.ExitStack()
+        stack.enter_context(patch.object(EnsuredMessage, "getEnsuredRepliedToMessage", Mock(return_value=reply)))
+        # Patch toModelMessage at class level so the render doesn't touch the DB.
+        stack.enter_context(
+            patch.object(
+                EnsuredMessage, "toModelMessage", AsyncMock(return_value=ModelMessage(role="user", content="x"))
+            )
+        )
+
+        # Stored reply carries the COMPACT memory-ID format in metadata.
+        compactMemories = {"permanentIds": ["a"], "shortTermIds": []}
+        liveHandler.db.chatMessages.getChatMessageByMessageId = AsyncMock(  # type: ignore[method-assign]
+            return_value={"metadata": json.dumps({"memories": compactMemories})}
+        )
+        # Stub cache resolves the compact ID -> content (keepId=False shape: no id).
+        liveHandler.cache.getMemoriesByIds = AsyncMock(  # type: ignore[method-assign]
+            return_value={"a": {"type": "fact", "content": "resolved perm fact", "tags": ["t"]}}
+        )
+        liveHandler.getBotId = AsyncMock(return_value=999)  # type: ignore[method-assign]
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult("ok")
+        )
+
+        with stack:
+            result = await liveHandler.handleMention(em, Mock())
+
+        assert result is True
+
+        # Phase 4: handleMention stores compact IDs in metadata for lazy
+        # resolution by formatForLLM (toModelMessage is patched out here; the
+        # resolution path is covered at the EnsuredMessage level). The
+        # regression guard is: metadata preserves the compact IDs intact
+        # (no re-point / no mangling).
+        assert reply.metadata.get("memories") == compactMemories
+
+
+# ---------------------------------------------------------------------------
+# Tests: Phase 3b — handleRandomMessage condensing persists CondensingDict
+# (Path B reshape: randomContext str → single CondensingDict with coverage)
+# ---------------------------------------------------------------------------
+
+
+def _makeContextRow(messageId: int, username: str, ts: float) -> ChatMessageDict:
+    """Build a minimal ``ChatMessageDict`` for the condensing integration tests.
+
+    Args:
+        messageId: Message ID integer.
+        username: Sender login.
+        ts: Unix timestamp for the message date.
+
+    Returns:
+        A dict matching the ``ChatMessageDict`` shape with all required keys.
+    """
+    ret: ChatMessageDict = {
+        "chat_id": -100,
+        "message_id": MessageId(messageId),
+        "date": datetime.datetime.fromtimestamp(ts, datetime.timezone.utc),
+        "user_id": messageId,
+        "reply_id": None,
+        "thread_id": 0,
+        "root_message_id": None,
+        "message_text": f"msg-{messageId}",
+        "message_type": "text",
+        "message_category": MessageCategory.USER,
+        "quote_text": None,
+        "media_id": None,
+        "created_at": datetime.datetime.fromtimestamp(ts, datetime.timezone.utc),
+        "metadata": "{}",
+        "markup": "",
+        "media_group_id": None,
+        "username": username,
+        "full_name": username,
+    }
+    return ret
+
+
+def _condensingChatSettings() -> ChatSettingsDict:
+    """Build chat settings covering the condensing branch's reads.
+
+    Extends :func:`_fullChatSettings` with the four condensing keys
+    (``CHAT_MODEL``, ``CONDENSING_MODEL``, ``CONDENSING_PROMPT``,
+    ``CONDENSING_SYSTEM_PROMPT``). Model values use real
+    :class:`ChatSettingsValue` wrappers; ``ChatSettingsValue.toModel`` is
+    patched at the test level to avoid hitting the real LLM manager.
+
+    Returns:
+        A complete :class:`ChatSettingsDict` including condensing keys.
+    """
+    base = _fullChatSettings()
+    base[ChatSettingsKey.CHAT_MODEL] = ChatSettingsValue("dummy-chat-model")
+    base[ChatSettingsKey.CONDENSING_MODEL] = ChatSettingsValue("dummy-condensing-model")
+    base[ChatSettingsKey.CONDENSING_PROMPT] = ChatSettingsValue("condense prompt body")
+    base[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT] = ChatSettingsValue("condense sys body")
+    return base
+
+
+def _lightweightContextEM() -> EnsuredMessage:
+    """Build a lightweight EnsuredMessage for the fromDBChatMessage mock.
+
+    Has empty metadata (no ``randomContext``) so the context walk does not
+    break early, and ``getMemoryIds()`` returns an empty set.
+
+    Returns:
+        A minimal :class:`EnsuredMessage`.
+    """
+    return EnsuredMessage(
+        sender=MessageSender(id=1, name="ctx-user", username="@ctxuser"),
+        recipient=MessageRecipient(id=-100, chatType=ChatType.GROUP),
+        messageId=MessageId(999),
+        date=datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc),
+        messageText="context message",
+    )
+
+
+class TestHandleRandomMessageCondensing:
+    """Phase 3b: ``handleRandomMessage`` persists ``randomContext`` as a CondensingDict.
+
+    Drives the real ``handleRandomMessage`` through the condensing branch
+    (``len(contextMessages) > MAX_RANDOM_CONTEXT_MESSAGES``) with
+    ``condenseContext`` mocked to return deterministic
+    ``(condensedRet, coverage)``. The new contract has ``condenseContext`` return a
+    ``Dict[int, CondensingDict]`` for coverage; the handler merges its values via
+    :func:`mergeCondensingDicts` and writes the result to
+    ``metadata["randomContext"]``. When the coverage dict is empty, the
+    ``if condensingDictMap:`` guard skips the write entirely (no randomContext).
+    """
+
+    @staticmethod
+    def _wireCondensePath(
+        handler: LLMMessageHandler,
+        *,
+        rows: list[ChatMessageDict],
+        condensedRet: list[ModelMessage],
+        coverage: dict[int, CondensingDict],
+    ) -> tuple[EnsuredMessage, contextlib.ExitStack, AsyncMock]:
+        """Wire the condensing-path mocks and return ``(em, stack, updateMeta)``.
+
+        Args:
+            handler: The live handler fixture.
+            rows: Chronological context rows (oldest-first), as a test author
+                naturally builds them (ascending ``messageId``/timestamp). The
+                real ``getChatMessagesSince`` returns ``ORDER BY c.date DESC``
+                (newest-first); the walk's ``deque.extendleft`` then reverses
+                that back to oldest-first so ``sourceRows`` is chronological.
+                To mirror production, this helper reverses ``rows`` before
+                handing them to the mock.
+            condensedRet: The condensed messages returned by ``condenseContext``.
+            coverage: The coverage dict (``Dict[int, CondensingDict]``) returned
+                by ``condenseContext``. Pre-populated with ready-made
+                CondensingDicts (the new design computes coverage inside
+                ``condenseContext``; the mock supplies it directly).
+
+        Returns:
+            A ``(em, stack, updateMetaMock)`` triple: the EnsuredMessage, an
+            entered ExitStack (caller must ``with stack:``), and the
+            ``updateChatMessageMetadata`` mock for post-call assertions.
+        """
+        handler.getChatSettings = AsyncMock(return_value=_condensingChatSettings())  # type: ignore[method-assign]
+        # Reverse to newest-first to mirror production's ORDER BY c.date DESC;
+        # the handler's deque.extendleft then yields oldest-first sourceRows.
+        handler.db.chatMessages.getChatMessagesSince = AsyncMock(return_value=list(reversed(rows)))
+        handler.llmService.condenseContext = AsyncMock(  # type: ignore[method-assign]
+            return_value=(condensedRet, coverage)
+        )
+        handler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResult("bot reply")
+        )
+        updateMetaMock = AsyncMock()
+        handler.db.chatMessages.updateChatMessageMetadata = updateMetaMock  # type: ignore[method-assign]
+
+        em = _liveEnsuredMessage()
+        stack = contextlib.ExitStack()
+        # Patch fromDBChatMessage so the walk doesn't touch the DB; return a
+        # lightweight EM with empty metadata (no randomContext → no early break).
+        stack.enter_context(
+            patch.object(EnsuredMessage, "fromDBChatMessage", AsyncMock(return_value=_lightweightContextEM()))
+        )
+        # Each context message emits exactly ONE ModelMessage so the 1:1
+        # alignment between contextMessages and contextRows is trivially exact.
+        ctxMsg = ModelMessage(role="user", content="ctx-body")
+        stack.enter_context(patch.object(EnsuredMessage, "toModelMessageList", AsyncMock(return_value=[ctxMsg])))
+        # Avoid hitting the real LLM manager for model-typed settings.
+        stack.enter_context(patch.object(ChatSettingsValue, "toModel", return_value=Mock()))
+        return em, stack, updateMetaMock
+
+    async def testCondensePersistsCondensingDictWithCoverage(self, liveHandler: LLMMessageHandler) -> None:
+        """Single coverage batch → randomContext is a full CondensingDict.
+
+        The mock returns ``{0: <CondensingDict with coverage fields>}``; the
+        handler writes ``mergeCondensingDicts(coverage.values())`` to
+        ``metadata["randomContext"]``.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        rows = [_makeContextRow(100 + i, f"user{i}", 1000.0 + i * 100.0) for i in range(10)]
+        condensedRet = [ModelMessage(role="user", content="SUMMARY TEXT")]
+        inputDict0 = CondensingDict(
+            text="SUMMARY TEXT",
+            messageIds=[MessageId(100 + i) for i in range(10)],
+            participants=[f"user{i}" for i in range(10)],
+            dateRange={"from": 1000.0, "to": 1900.0},
+            messageCount=10,
+        )
+        coverage = {0: inputDict0}
+        em, stack, updateMetaMock = self._wireCondensePath(
+            liveHandler, rows=rows, condensedRet=condensedRet, coverage=coverage
+        )
+
+        with stack, patch("random.random", return_value=0.0):
+            result = await liveHandler.handleRandomMessage(em, Mock())
+
+        assert result is True
+        updateMetaMock.assert_awaited_once()
+        metadata = updateMetaMock.call_args.kwargs["metadata"]
+        assert "randomContext" in metadata
+        randomContext = metadata["randomContext"]
+
+        # Shape: dict, not str (the P3b reshape).
+        assert isinstance(randomContext, dict)
+        # Delegation: randomContext is mergeCondensingDicts of the coverage values.
+        assert randomContext == mergeCondensingDicts(coverage.values())
+        # text matches the single-batch summary.
+        assert randomContext["text"] == "SUMMARY TEXT"
+        # Coverage fields populated (single batch → identity-ish merge).
+        assert randomContext["messageIds"] == [MessageId(100 + i) for i in range(10)]
+        assert set(randomContext["participants"]) == {f"user{i}" for i in range(10)}
+        assert randomContext["messageCount"] == 10
+        assert randomContext["dateRange"] == {"from": 1000.0, "to": 1900.0}
+
+    async def testCondenseMultiBatchCoverageUnion(self, liveHandler: LLMMessageHandler) -> None:
+        """Two coverage batches → randomContext is the merged union of both.
+
+        The mock returns ``{0: <dict A>, 1: <dict B>}``; the handler writes
+        ``mergeCondensingDicts(coverage.values())`` — messageIds concatenated,
+        participants unioned, dateRange min/max, messageCount summed, text
+        ``"\\n"``-joined.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        rows = [_makeContextRow(200 + i, f"sender{i}", 2000.0 + i * 100.0) for i in range(10)]
+        condensedRet = [
+            ModelMessage(role="user", content="BATCH1"),
+            ModelMessage(role="user", content="BATCH2"),
+        ]
+        dictA = CondensingDict(
+            text="BATCH1",
+            messageIds=[MessageId(200 + i) for i in range(5)],
+            participants=[f"sender{i}" for i in range(5)],
+            dateRange={"from": 2000.0, "to": 2400.0},
+            messageCount=5,
+        )
+        dictB = CondensingDict(
+            text="BATCH2",
+            messageIds=[MessageId(205 + i) for i in range(5)],
+            participants=[f"sender{i}" for i in range(5, 10)],
+            dateRange={"from": 2500.0, "to": 2900.0},
+            messageCount=5,
+        )
+        coverage = {0: dictA, 1: dictB}
+        em, stack, updateMetaMock = self._wireCondensePath(
+            liveHandler, rows=rows, condensedRet=condensedRet, coverage=coverage
+        )
+
+        with stack, patch("random.random", return_value=0.0):
+            result = await liveHandler.handleRandomMessage(em, Mock())
+
+        assert result is True
+        metadata = updateMetaMock.call_args.kwargs["metadata"]
+        assert "randomContext" in metadata
+        randomContext = metadata["randomContext"]
+
+        # Delegation check.
+        assert randomContext == mergeCondensingDicts(coverage.values())
+        # Union properties: text "\n"-joined, messageIds concatenated (disjoint),
+        # participants unioned, dateRange min/max, messageCount summed.
+        assert randomContext["text"] == "BATCH1\nBATCH2"
+        assert randomContext["messageIds"] == [MessageId(200 + i) for i in range(10)]
+        assert set(randomContext["participants"]) == {f"sender{i}" for i in range(10)}
+        assert randomContext["messageCount"] == 10
+        assert randomContext["dateRange"] == {"from": 2000.0, "to": 2900.0}
+
+    async def testCondenseEmptyCoverageSkipsWrite(self, liveHandler: LLMMessageHandler) -> None:
+        """Empty coverage dict → randomContext is NOT written (F1 ``if condensingDictMap:`` guard).
+
+        The mock returns ``(condensedRet, {})``; the handler's
+        ``if condensingDictMap:`` guard is falsy, so ``metadata["randomContext"]``
+        is never assigned. ``updateChatMessageMetadata`` is still called (it is
+        outside the inner guard), but the persisted metadata lacks the key.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        rows = [_makeContextRow(300 + i, f"u{i}", 3000.0 + i * 100.0) for i in range(10)]
+        condensedRet = [ModelMessage(role="user", content="FALLBACK SUMMARY")]
+        coverage: dict[int, CondensingDict] = {}
+        em, stack, updateMetaMock = self._wireCondensePath(
+            liveHandler, rows=rows, condensedRet=condensedRet, coverage=coverage
+        )
+
+        with stack, patch("random.random", return_value=0.0):
+            result = await liveHandler.handleRandomMessage(em, Mock())
+
+        assert result is True
+        updateMetaMock.assert_awaited_once()
+        metadata = updateMetaMock.call_args.kwargs["metadata"]
+        # Empty coverage → randomContext is NOT written (the write is skipped).
+        assert "randomContext" not in metadata

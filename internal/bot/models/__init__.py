@@ -56,6 +56,18 @@ from .enums import (
 
 # Media
 from .media import MediaProcessingInfo
+from .message_metadata import (
+    CompactMemoryIdsDict,
+    CondensedDateRangeDict,
+    CondensedSummaryKind,
+    CondensingDict,
+    MetadataDict,
+    SingleMemoryDict,
+    UserMemoriesDict,
+    convertDBMemoryToSingleMemoryDict,
+    mergeCondensingDicts,
+    renderCondensedSummary,
+)
 from .text_formatter import FormatEntity, FormatType, OutputFormat
 
 # User Metadata
@@ -99,4 +111,15 @@ __all__ = [
     "FormatType",
     "OutputFormat",
     "FormatEntity",
+    # Message Metadata
+    "SingleMemoryDict",
+    "UserMemoriesDict",
+    "CompactMemoryIdsDict",
+    "CondensedDateRangeDict",
+    "CondensingDict",
+    "CondensedSummaryKind",
+    "renderCondensedSummary",
+    "MetadataDict",
+    "convertDBMemoryToSingleMemoryDict",
+    "mergeCondensingDicts",
 ]

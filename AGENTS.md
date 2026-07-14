@@ -32,6 +32,7 @@ make format lint        # ALWAYS before AND after edits
 make test               # MANDATORY after any change (wrapped in `timeout 5m`; pass V=1 for -v)
 make test-failed        # re-run pytest --last-failed
 ./venv/bin/pytest path/to/test_x.py::TestClass::testFn -v   # single test
+make check-docs         # checks local markdown links resolve (read-only; exit 1 if broken)
 ```
 
 ## Hard rules (enforced socially, not by tooling)
@@ -102,7 +103,10 @@ These come from [`docs/llm/index.md`](docs/llm/index.md):
 
 ## Lint/format pipeline
 
-`make lint` runs `flake8 .`, `isort --check-only --diff .`, then `pyright`.
+`make lint` runs `flake8 .`, `isort --check-only --diff .`, an `import main`
+check (catches circular imports in the production import graph — added after
+the `85aa945` refactor introduced a startup-breaking cycle that flake8/isort
+couldn't see), then `pyright`.
 `make format` runs `isort` + `black` on the tree, then iterates each
 `lib/ext_modules/*/` separately (they are not auto-traversed). If you touch
 anything under `lib/ext_modules/`, run `make format` rather than running
@@ -238,9 +242,15 @@ TOML, hierarchical, merged recursively. Loaded by
   for JSON serialization.
 - Chat type is inferred from sign: `chatId > 0` private, else group.
 - `DEFAULT_THREAD_ID = 0` (int), not `None`. DB queries expect 0.
-- `getChatSettings()` returns `Dict[key, tuple[value, updatedBy]]` — index
-  `[0]` for the value. `setChatSetting(..., updatedBy=...)` is required and
-  keyword-only.
+- Handler-facing `BaseBotHandler.getChatSettings()` (and `CacheService`)
+  return `ChatSettingsDict` = `Dict[ChatSettingsKey, ChatSettingsValue]` —
+  values are `ChatSettingsValue` objects; access via `.toBool()`/`.toStr()`/
+  `.toInt()`/`.toFloat()`/`.toList()`/`.toModel()` (NOT tuple indexing). The
+  `(value, updatedBy)` tuple shape exists ONLY at the DB-repo layer
+  (`self.db.chatSettings.getChatSettings()`, returns `Dict[str, tuple[str, int]]`).
+  At the handler layer, `setChatSetting(..., *, user: MessageSender)` — the
+  keyword-only arg is `user` (pass a `MessageSender`); `updatedBy=` keyword-only
+  applies only to the repository's `setChatSetting`.
 - `bot_owners` config entries can be either int IDs or usernames; check both.
 - Singleton init uses a `hasattr(self, 'initialized')` guard — don't
   re-implement that pattern, just call `getInstance()`.
@@ -260,7 +270,9 @@ TOML, hierarchical, merged recursively. Loaded by
   - [`read-project-docs`](.agents/skills/read-project-docs/SKILL.md) — onboarding / context-building before non-trivial work
   - [`update-project-docs`](.agents/skills/update-project-docs/SKILL.md) — post-change documentation sync with decision matrix
   - [`run-quality-gates`](.agents/skills/run-quality-gates/SKILL.md) — the exact `./venv/bin/python3` / `make format lint` / `make test` workflow
+  - [`write-regression-test`](.agents/skills/write-regression-test/SKILL.md) — regression-test recipe for bug fixes: write the test FIRST (must FAIL before the fix), apply the minimal root-cause fix, then add edge-case tests
   - [`add-database-migration`](.agents/skills/add-database-migration/SKILL.md) — new migration scaffolding + SQL portability rules
   - [`add-handler`](.agents/skills/add-handler/SKILL.md) — add a bot handler end-to-end, with the `LLMMessageHandler`-stays-last invariant
+  - [`add-llm-tool`](.agents/skills/add-llm-tool/SKILL.md) — add an LLM tool end-to-end, with the never-raise contract and D3 chat-time gating across four coordinated sites
   - [`add-chat-setting`](.agents/skills/add-chat-setting/SKILL.md) — wire a new `ChatSettingsKey` across all four required sites
 - [`README.md`](README.md) — user docs

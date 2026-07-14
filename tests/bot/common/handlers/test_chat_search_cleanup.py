@@ -61,7 +61,6 @@ def _makeChatSettings(*, embeddingModel: str = "embed-v1") -> ChatSettingsDict:
         Mapping of every :class:`ChatSettingsKey` the cron job reads.
     """
     return {
-        ChatSettingsKey.REGENERATE_EMBEDDINGS: ChatSettingsValue("true"),
         ChatSettingsKey.EMBEDDING_MODEL: ChatSettingsValue(embeddingModel),
         ChatSettingsKey.LLM_RATELIMITER: ChatSettingsValue(""),
         ChatSettingsKey.ALLOW_TOOLS_COMMANDS: ChatSettingsValue("true"),
@@ -97,17 +96,18 @@ def _makeModelMock(*, embeddingDimensions: Optional[int] = None) -> Mock:
 def _makeHandler(
     *,
     chatSettings: Optional[ChatSettingsDict] = None,
-    enabledChats: Optional[Dict[int, str]] = None,
     model: Optional[Mock] = None,
 ) -> Tuple[ChatSearchHandler, Dict[str, Mock]]:
     """Construct a :class:`ChatSearchHandler` wired for the cleanup tests.
 
+    Seeds ``handler._trackedChats`` with a single chat (id 100) so the
+    round-robin pick in ``_dtCronJob`` is deterministic. Tests that need
+    a different tracked chat (or an empty set) override
+    ``handler._trackedChats`` explicitly after construction.
+
     Args:
         chatSettings: Chat-settings dict returned by ``getChatSettings``.
             Defaults to :func:`_makeChatSettings`.
-        enabledChats: Chat-discovery result (``chatId -> raw value``)
-            returned by ``listChatsBySetting``. Defaults to a single
-            enabled chat (id 100) so the round-robin pick is deterministic.
         model: Mock embedding model returned by the LLM manager. Defaults
             to a model without ``embeddingDimensions`` (mirrors a plain
             OpenAI-style embedding model).
@@ -119,10 +119,6 @@ def _makeHandler(
     cm = _makeConfigManager()
     db = Mock()
     db.chatSearch = Mock()
-    db.chatSettings = Mock()
-    db.chatSettings.listChatsBySetting = AsyncMock(
-        return_value=enabledChats if enabledChats is not None else {100: "true"}
-    )
     db.manager = Mock()
     # The cleanup path now delegates entirely to the repository method;
     # the handler never touches the SQL provider directly. ``manager`` is
@@ -140,6 +136,10 @@ def _makeHandler(
         database=db,
         botProvider=BotProvider.TELEGRAM,
     )
+    # Seed the in-memory chat tracker with a single chat (id 100) so the
+    # round-robin pick in ``_dtCronJob`` is deterministic. Tests that need
+    # a different set override this attribute after construction.
+    handler._trackedChats = {100}
 
     cs = chatSettings if chatSettings is not None else _makeChatSettings()
     handler.getChatSettings = AsyncMock(return_value=cs)  # type: ignore[method-assign]
@@ -215,11 +215,12 @@ class TestModelChangeCleanup:
     async def test_cleanupScopedToCurrentChat(self) -> None:
         """The ``chatId`` argument matches the chat picked by round-robin.
 
-        The backfill tick picks the only enabled chat (here ``999``).
+        The backfill tick picks the only tracked chat (here ``999``).
         The cleanup call must scope to that same chat so it never touches
         another chat's embeddings.
         """
-        handler, mocks = _makeHandler(enabledChats={999: "true"})
+        handler, mocks = _makeHandler()
+        handler._trackedChats = {999}
         await _runCron(handler)
 
         mocks["chatEmbeddings"].deleteObsoleteModelEmbeddings.assert_awaited_once_with(

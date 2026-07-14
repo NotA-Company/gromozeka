@@ -52,12 +52,24 @@ class CacheNamespace(StrEnum):
             in memory and can be reconstructed from the database.
         USERS: Namespace for user profile and preference data. Uses ON_SHUTDOWN
             persistence level to survive service restarts.
+        MEMORIES: Namespace for the memory_id -> SingleMemoryDict
+            resolution cache. Exists only in memory (MEMORY_ONLY persistence —
+            cleared on process restart) and reconstructed on demand via the
+            ``getMemoriesByIds`` repository batch read.
     """
 
     CHATS = "chats"
     CHAT_PERSISTENT = "chatPersistent"
     CHAT_USERS = "chatUsers"
     USERS = "users"
+    MEMORIES = "memories"
+    """Namespace for the memory_id -> SingleMemoryDict resolution cache.
+
+    Keys memory UUID strings to their slimmed :class:`SingleMemoryDict` form.
+    MEMORY_ONLY persistence (never written to disk; cleared on process restart).
+    Used by :meth:`CacheService.getMemoriesByIds` to resolve the compact ID
+    format back to content at read time.
+    """
 
     def getPersistenceLevel(self) -> CachePersistenceLevel:
         """Auto-determine persistence level based on namespace.

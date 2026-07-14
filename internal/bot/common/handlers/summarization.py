@@ -212,7 +212,10 @@ class SummarizationHandler(BaseBotHandler):
                 ModelMessage(
                     role="user",
                     content=await (await EnsuredMessage.fromDBChatMessage(msg, self.db)).formatForLLM(
-                        self.db, LLMMessageFormat.JSON, stripAtsign=True
+                        self.db,
+                        format=LLMMessageFormat.JSON,
+                        stripAtsign=True,
+                        cache=None,
                     ),
                 )
             )

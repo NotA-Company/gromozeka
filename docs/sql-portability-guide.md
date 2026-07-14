@@ -52,14 +52,14 @@ SQLite uses `ON CONFLICT` for upsert operations, but the syntax differs signific
 
 | File | Line | Query Type |
 |------|------|------------|
-| [`internal/database/repositories/cache.py`](internal/database/repositories/cache.py:85) | 85 | Cache storage upsert |
-| [`internal/database/repositories/cache.py`](internal/database/repositories/cache.py:213) | 213 | Cache entry upsert |
-| [`internal/database/repositories/chat_messages.py`](internal/database/repositories/chat_messages.py:149) | 149 | Chat stats upsert |
-| [`internal/database/repositories/chat_messages.py`](internal/database/repositories/chat_messages.py:160) | 160 | Chat user stats upsert |
-| [`internal/database/repositories/chat_users.py`](internal/database/repositories/chat_users.py:74) | 74 | Chat user upsert |
-| [`internal/database/repositories/chat_settings.py`](internal/database/repositories/chat_settings.py:65) | 65 | Chat settings upsert |
-| [`internal/database/repositories/user_data.py`](internal/database/repositories/user_data.py:67) | 67 | User data upsert |
-| [`internal/database/repositories/media_attachments.py`](internal/database/repositories/media_attachments.py:61) | 61 | Media group upsert |
+| [`internal/database/repositories/cache.py`](/internal/database/repositories/cache.py:85) | 85 | Cache storage upsert |
+| [`internal/database/repositories/cache.py`](/internal/database/repositories/cache.py:213) | 213 | Cache entry upsert |
+| [`internal/database/repositories/chat_messages.py`](/internal/database/repositories/chat_messages.py:149) | 149 | Chat stats upsert |
+| [`internal/database/repositories/chat_messages.py`](/internal/database/repositories/chat_messages.py:160) | 160 | Chat user stats upsert |
+| [`internal/database/repositories/chat_users.py`](/internal/database/repositories/chat_users.py:74) | 74 | Chat user upsert |
+| [`internal/database/repositories/chat_settings.py`](/internal/database/repositories/chat_settings.py:65) | 65 | Chat settings upsert |
+| [`internal/database/repositories/chat_info.py`](/internal/database/repositories/chat_info.py:71) | 71 | Chat info upsert |
+| [`internal/database/repositories/media_attachments.py`](/internal/database/repositories/media_attachments.py:61) | 61 | Media group upsert |
 
 #### Example Code
 
@@ -337,14 +337,14 @@ While both styles work in SQLite, MySQL and PostgreSQL have different preference
 
 | File | Line | Binding Style |
 |------|------|---------------|
-| [`internal/database/repositories/chat_messages.py`](internal/database/repositories/chat_messages.py:140) | 140 | Positional (`?`) |
-| [`internal/database/repositories/chat_messages.py`](internal/database/repositories/chat_messages.py:148) | 148 | Positional (`?`) |
-| [`internal/database/repositories/chat_messages.py`](internal/database/repositories/chat_messages.py:152) | 152 | Positional (`?`) |
-| [`internal/database/repositories/chat_users.py`](internal/database/repositories/chat_users.py:110) | 110 | Positional (`?`) |
-| [`internal/database/repositories/chat_settings.py`](internal/database/repositories/chat_settings.py:64) | 64 | Positional (`?`) |
-| [`internal/database/repositories/media_attachments.py`](internal/database/repositories/media_attachments.py:233) | 233 | Positional (`?`) |
-| [`internal/database/repositories/cache.py`](internal/database/repositories/cache.py:84) | 84 | Named (`:name`) |
-| [`internal/database/repositories/cache.py`](internal/database/repositories/cache.py:174) | 174 | Named (`:name`) |
+| [`internal/database/repositories/chat_messages.py`](/internal/database/repositories/chat_messages.py:140) | 140 | Positional (`?`) |
+| [`internal/database/repositories/chat_messages.py`](/internal/database/repositories/chat_messages.py:148) | 148 | Positional (`?`) |
+| [`internal/database/repositories/chat_messages.py`](/internal/database/repositories/chat_messages.py:152) | 152 | Positional (`?`) |
+| [`internal/database/repositories/chat_users.py`](/internal/database/repositories/chat_users.py:110) | 110 | Positional (`?`) |
+| [`internal/database/repositories/chat_settings.py`](/internal/database/repositories/chat_settings.py:64) | 64 | Positional (`?`) |
+| [`internal/database/repositories/media_attachments.py`](/internal/database/repositories/media_attachments.py:233) | 233 | Positional (`?`) |
+| [`internal/database/repositories/cache.py`](/internal/database/repositories/cache.py:84) | 84 | Named (`:name`) |
+| [`internal/database/repositories/cache.py`](/internal/database/repositories/cache.py:174) | 174 | Named (`:name`) |
 
 #### Example Code
 
@@ -440,11 +440,11 @@ This can cause inconsistencies in timestamp comparisons and data integrity issue
 
 | File | Line | Context |
 |------|------|---------|
-| [`internal/database/repositories/cache.py`](internal/database/repositories/cache.py:84) | 84 | Cache storage insert |
-| [`internal/database/repositories/cache.py`](internal/database/repositories/cache.py:212) | 212 | Cache entry insert |
-| [`internal/database/repositories/chat_messages.py`](internal/database/repositories/chat_messages.py:139) | 139 | Chat user update |
-| [`internal/database/repositories/chat_users.py`](internal/database/repositories/chat_users.py:73) | 73 | Chat user insert |
-| [`internal/database/repositories/chat_settings.py`](internal/database/repositories/chat_settings.py:64) | 64 | Chat settings insert |
+| [`internal/database/repositories/cache.py`](/internal/database/repositories/cache.py:84) | 84 | Cache storage insert |
+| [`internal/database/repositories/cache.py`](/internal/database/repositories/cache.py:212) | 212 | Cache entry insert |
+| [`internal/database/repositories/chat_messages.py`](/internal/database/repositories/chat_messages.py:139) | 139 | Chat user update |
+| [`internal/database/repositories/chat_users.py`](/internal/database/repositories/chat_users.py:73) | 73 | Chat user insert |
+| [`internal/database/repositories/chat_settings.py`](/internal/database/repositories/chat_settings.py:64) | 64 | Chat settings insert |
 
 #### Example Code
 
@@ -513,8 +513,8 @@ This affects username lookups and other string-based queries.
 
 | File | Line | Query |
 |------|------|-------|
-| [`internal/database/repositories/chat_users.py`](internal/database/repositories/chat_users.py:182) | 182 | Username lookup |
-| [`internal/database/repositories/spam.py`](internal/database/repositories/spam.py:149) | 149 | Spam text search |
+| [`internal/database/repositories/chat_users.py`](/internal/database/repositories/chat_users.py:182) | 182 | Username lookup |
+| [`internal/database/repositories/spam.py`](/internal/database/repositories/spam.py:149) | 149 | Spam text search |
 
 #### Example Code
 
@@ -714,8 +714,8 @@ The current code uses `LIMIT n` which is compatible, but future pagination may n
 
 | File | Line | Context |
 |------|------|---------|
-| [`internal/database/repositories/chat_users.py`](internal/database/repositories/chat_users.py:225) | 225 | User list limit |
-| [`internal/database/repositories/chat_messages.py`](internal/database/repositories/chat_messages.py:233) | 233 | Message list limit |
+| [`internal/database/repositories/chat_users.py`](/internal/database/repositories/chat_users.py:225) | 225 | User list limit |
+| [`internal/database/repositories/chat_messages.py`](/internal/database/repositories/chat_messages.py:233) | 233 | Message list limit |
 
 #### Example Code
 
@@ -781,8 +781,8 @@ This affects queries that use boolean literals or comparisons.
 
 | File | Line | Context |
 |------|------|---------|
-| [`internal/database/repositories/chat_messages.py`](internal/database/repositories/chat_messages.py:211) | 211 | Message category filter |
-| [`internal/database/repositories/cache.py`](internal/database/repositories/cache.py:287) | 287 | Cache type filter |
+| [`internal/database/repositories/chat_messages.py`](/internal/database/repositories/chat_messages.py:211) | 211 | Message category filter |
+| [`internal/database/repositories/cache.py`](/internal/database/repositories/cache.py:287) | 287 | Cache type filter |
 
 #### Example Code
 
@@ -833,8 +833,8 @@ Current implementation stores JSON as TEXT strings.
 
 | File | Line | Context |
 |------|------|---------|
-| [`internal/database/repositories/chat_messages.py`](internal/database/repositories/chat_messages.py:60) | 60 | Message metadata |
-| [`internal/database/repositories/media_attachments.py`](internal/database/repositories/media_attachments.py:81) | 81 | Media metadata |
+| [`internal/database/repositories/chat_messages.py`](/internal/database/repositories/chat_messages.py:60) | 60 | Message metadata |
+| [`internal/database/repositories/media_attachments.py`](/internal/database/repositories/media_attachments.py:81) | 81 | Media metadata |
 
 #### Example Code
 
@@ -893,7 +893,7 @@ Auto-incrementing primary keys use different syntax:
 
 | File | Line | Context |
 |------|------|---------|
-| [`internal/database/migrations/versions/migration_001_initial_schema.py`](internal/database/migrations/versions/migration_001_initial_schema.py) | Various | Schema definitions |
+| [`internal/database/migrations/versions/migration_001_initial_schema.py`](/internal/database/migrations/versions/migration_001_initial_schema.py) | Various | Schema definitions |
 
 #### Example Code
 
@@ -1249,14 +1249,14 @@ The migration system now relies on the provider's `keepConnection` parameter for
    - Add `enable_foreign_keys` parameter to SQLite-based providers
 
 2. **Create Utility Functions**
-   - Add `getCurrentTimestamp()` helper in [`internal/database/utils.py`](internal/database/utils.py)
+   - Add `getCurrentTimestamp()` helper in [`internal/database/utils.py`](/internal/database/utils.py)
    - Review and update `convertToSQLite()` function for cross-RDBMS compatibility
 
 3. **Update Provider Implementations**
-   - Extend [`internal/database/providers/sqlite3.py`](internal/database/providers/sqlite3.py)
-   - Extend [`internal/database/providers/sqlink.py`](internal/database/providers/sqlink.py)
-   - Create [`internal/database/providers/mysql.py`](internal/database/providers/mysql.py)
-   - Create [`internal/database/providers/postgresql.py`](internal/database/providers/postgresql.py)
+   - Extend [`internal/database/providers/sqlite3.py`](/internal/database/providers/sqlite3.py)
+   - Extend [`internal/database/providers/sqlink.py`](/internal/database/providers/sqlink.py)
+   - Create [`internal/database/providers/mysql.py`](/internal/database/providers/mysql.py)
+   - Create [`internal/database/providers/postgresql.py`](/internal/database/providers/postgresql.py)
 
 ### Phase 2: Migration (Week 3-4)
 
@@ -1349,18 +1349,18 @@ The following items have been intentionally skipped for now:
 ### Code Changes
 
 - [ ] **Add utility functions**
-  - [ ] Add `getCurrentTimestamp()` in [`internal/database/utils.py`](internal/database/utils.py)
+  - [ ] Add `getCurrentTimestamp()` in [`internal/database/utils.py`](/internal/database/utils.py)
   - [ ] Review and update `convertToSQLite()` for cross-RDBMS compatibility
 
 - [ ] **Update SQLite providers**
-  - [ ] Add `upsert()` method to [`internal/database/providers/sqlite3.py`](internal/database/providers/sqlite3.py)
-  - [ ] Add `applyPagination()` method to [`internal/database/providers/sqlite3.py`](internal/database/providers/sqlite3.py)
-  - [ ] Add `getTextType()` method to [`internal/database/providers/sqlite3.py`](internal/database/providers/sqlite3.py)
-  - [ ] Add `enable_foreign_keys` parameter to [`internal/database/providers/sqlite3.py`](internal/database/providers/sqlite3.py)
-  - [ ] Add `upsert()` method to [`internal/database/providers/sqlink.py`](internal/database/providers/sqlink.py)
-  - [ ] Add `applyPagination()` method to [`internal/database/providers/sqlink.py`](internal/database/providers/sqlink.py)
-  - [ ] Add `getTextType()` method to [`internal/database/providers/sqlink.py`](internal/database/providers/sqlink.py)
-  - [ ] Add `enable_foreign_keys` parameter to [`internal/database/providers/sqlink.py`](internal/database/providers/sqlink.py)
+  - [ ] Add `upsert()` method to [`internal/database/providers/sqlite3.py`](/internal/database/providers/sqlite3.py)
+  - [ ] Add `applyPagination()` method to [`internal/database/providers/sqlite3.py`](/internal/database/providers/sqlite3.py)
+  - [ ] Add `getTextType()` method to [`internal/database/providers/sqlite3.py`](/internal/database/providers/sqlite3.py)
+  - [ ] Add `enable_foreign_keys` parameter to [`internal/database/providers/sqlite3.py`](/internal/database/providers/sqlite3.py)
+  - [ ] Add `upsert()` method to [`internal/database/providers/sqlink.py`](/internal/database/providers/sqlink.py)
+  - [ ] Add `applyPagination()` method to [`internal/database/providers/sqlink.py`](/internal/database/providers/sqlink.py)
+  - [ ] Add `getTextType()` method to [`internal/database/providers/sqlink.py`](/internal/database/providers/sqlink.py)
+  - [ ] Add `enable_foreign_keys` parameter to [`internal/database/providers/sqlink.py`](/internal/database/providers/sqlink.py)
 
 - [ ] **Implement MySQL provider**
   - [ ] Create `internal/database/providers/mysql.py`
@@ -1383,13 +1383,13 @@ The following items have been intentionally skipped for now:
   - [ ] Add PostgreSQL-specific optimizations
 
 - [ ] **Update repository files**
-  - [ ] Update [`internal/database/repositories/cache.py`](internal/database/repositories/cache.py)
-  - [ ] Update [`internal/database/repositories/chat_messages.py`](internal/database/repositories/chat_messages.py)
-  - [ ] Update [`internal/database/repositories/chat_users.py`](internal/database/repositories/chat_users.py)
-  - [ ] Update [`internal/database/repositories/chat_settings.py`](internal/database/repositories/chat_settings.py)
-  - [ ] Update [`internal/database/repositories/media_attachments.py`](internal/database/repositories/media_attachments.py)
-  - [ ] Update [`internal/database/repositories/spam.py`](internal/database/repositories/spam.py)
-  - [ ] Update [`internal/database/repositories/user_data.py`](internal/database/repositories/user_data.py)
+  - [ ] Update [`internal/database/repositories/cache.py`](/internal/database/repositories/cache.py)
+  - [ ] Update [`internal/database/repositories/chat_messages.py`](/internal/database/repositories/chat_messages.py)
+  - [ ] Update [`internal/database/repositories/chat_users.py`](/internal/database/repositories/chat_users.py)
+  - [ ] Update [`internal/database/repositories/chat_settings.py`](/internal/database/repositories/chat_settings.py)
+  - [ ] Update [`internal/database/repositories/media_attachments.py`](/internal/database/repositories/media_attachments.py)
+  - [ ] Update [`internal/database/repositories/spam.py`](/internal/database/repositories/spam.py)
+  - [ ] Update [`internal/database/repositories/chat_info.py`](/internal/database/repositories/chat_info.py)
 
 - [ ] **Review migration files**
   - [ ] Check for AUTO_INCREMENT usage
@@ -1413,7 +1413,7 @@ The following items have been intentionally skipped for now:
 
 - [ ] **Update documentation**
   - [ ] Document provider-specific implementations
-  - [ ] Update [`docs/database-README.md`](docs/database-README.md) with portability notes
+  - [ ] Update [`docs/database-README.md`](/docs/database-README.md) with portability notes
   - [ ] Document any RDBMS-specific considerations
   - [ ] Create examples for MySQL and PostgreSQL configuration
 
@@ -1798,7 +1798,7 @@ This SQL portability guide provides a comprehensive analysis of compatibility is
 
 ### Contact Information
 
-For questions or clarifications regarding this portability guide, please contact the database team or refer to the project documentation in [`docs/database-README.md`](docs/database-README.md).
+For questions or clarifications regarding this portability guide, please contact the database team or refer to the project documentation in [`docs/database-README.md`](/docs/database-README.md).
 
 ---
 

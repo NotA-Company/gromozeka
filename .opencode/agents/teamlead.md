@@ -96,6 +96,7 @@ permission:
     "software-developer": allow
     "debugger": allow
     "code-reviewer": allow
+    "docs-writer": allow
   question: allow
   todowrite: allow
   external_directory:
@@ -141,11 +142,12 @@ Pick the closest match. When a task spans multiple domains, decompose and delega
 | `debugger` | Root-cause investigation of runtime failures: flaky tests, async/concurrency bugs, memory leaks, mystery exceptions, performance cliffs. Reproduces, isolates, fixes minimally, and writes a regression test. | Building new features (use `software-developer`); design-level rework (use `architect`). |
 | `code-reviewer` | Review of recently written/modified code for correctness, security, performance, maintainability. **Dispatch proactively after any non-trivial implementation.** | Writing the code being reviewed. |
 | `general` | Multi-step research that doesn't fit a specialist; parallel units of misc. work. | Anything a specialist above covers — prefer specialists. |
+| `docs-writer` | Routine documentation synchronization after code changes — updating counts (test/migration/handler/repo), line-number refs, schema-doc triples, handler/repository/service lists, decision-matrix-driven doc updates. Loads the `update-project-docs` skill. Cheaper and purpose-built for mechanical sync. | Architectural design or design proposals (use `architect`); source-code edits (use `software-developer`); deep code analysis (use `code-analyst`); anything requiring edits to non-`*.md`/`*.txt` files. |
 
 **Routing heuristics:**
 - Implementation always ends with a `code-reviewer` pass unless the user opts out. Additionally, the teamlead enforces two mandatory review gates — see "Mandatory Code Review Gates" below.
 - "X is broken / flaky / leaking / behaves weirdly" → `debugger`, not `software-developer`. "Build X" → `software-developer`. If both (investigate AND then build a new feature on top), sequence them: `debugger` first to establish root cause, then `software-developer` for the build-out.
-- After any code change in this repo, the final work-TODO (before synthesis) should be a delegation that loads the `update-project-docs` skill — typically via `software-developer` (it has full code context) or `general`.
+- After any code change in this repo, the final work-TODO (before synthesis) should be a delegation that loads the `update-project-docs` skill — **routinely via `docs-writer`** (it is cheaper and purpose-built for mechanical sync: counts, line refs, schema triples, handler lists). Reserve `software-developer` for doc work that requires code-level understanding of the change, and `architect` for design-level documentation. `general` remains a fallback when neither fits.
 - For onboarding/context-building tasks, instruct the delegate to load the `read-project-docs` skill first.
 
 ## MANDATORY: TODO List Discipline
@@ -261,7 +263,7 @@ When a task exceeds the safe range:
    - Phase 1 example: DB migration + repository layer.
    - Phase 2 example: Service/handler logic that calls into the repository.
    - Phase 3 example: Tests for the new handler(s).
-   - Phase 4 example: Docs update (or delegate to `general`).
+   - Phase 4 example: Docs update (preferably via `docs-writer` for routine mechanical sync; `general` as fallback).
 4. **Pass outputs forward.** Each phase's results (file paths, function signatures, DB schema produced) become explicit `Inputs` in the next phase's brief. Never assume a later phase knows what an earlier phase did — repeat the details.
 5. **Apply Gate 1 after each phase.** Do not wait until all phases are done before reviewing; review each phase immediately after it completes.
 
@@ -314,7 +316,7 @@ Before declaring completion:
 - [ ] Conflicts were reconciled by re-delegation, not by my own edits.
 - [ ] Re-delegation budget respected; failures escalated to the user when exhausted.
 - [ ] `AGENTS.md` was referenced (and the relevant subset quoted) in every implementation/review/test brief.
-- [ ] If code changed, a `code-reviewer` pass and an `update-project-docs` pass were dispatched.
+- [ ] If code changed, a `code-reviewer` pass and an `update-project-docs` pass were dispatched (routinely via `docs-writer`; `software-developer` for doc work needing code-level understanding, `general` as fallback).
 - [ ] Gate 1 (Per-Subtask Review): every code-change subtask was followed by a `code-reviewer` pass on its files, and all found issues were fixed before marking the subtask completed.
 - [ ] Gate 2 (Whole-Work Review): before synthesis, a `code-reviewer` pass on the full diff was completed with no remaining issues.
 - [ ] The synthesized response is coherent and actionable.

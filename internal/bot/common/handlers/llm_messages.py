@@ -26,7 +26,7 @@ import logging
 import random
 import re
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import MutableSet, Sequence
 from enum import StrEnum
 from typing import Optional
 
@@ -49,6 +49,7 @@ from internal.bot.models import (
     MessageType,
     commandHandlerV2,
 )
+from internal.bot.models.message_metadata import mergeCondensingDicts
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import MessageCategory
@@ -272,11 +273,12 @@ class LLMMessageHandler(BaseBotHandler):
 
         try:
             useTools = chatSettings[ChatSettingsKey.USE_TOOLS].toBool()
-            useSandbox = chatSettings[ChatSettingsKey.ALLOW_SANDBOX].toBool()
-            if useTools and not all([useSandbox]):
-                # Disable tools if they are disabled for given chatId
-                useTools = {constants.TOOLS_DEFAULT_DICT_KEY: True}
-                if not useSandbox:
+            if useTools:
+                useTools = {
+                    constants.TOOLS_DEFAULT_DICT_KEY: True,
+                    constants.ToolName.DELETE_MEMORY: False,
+                }
+                if not chatSettings[ChatSettingsKey.ALLOW_SANDBOX].toBool():
                     useTools.update(
                         {
                             constants.ToolName.RUN_PYTHON: False,
@@ -284,6 +286,13 @@ class LLMMessageHandler(BaseBotHandler):
                             constants.ToolName.SANDBOX_LIST_LIBRARIES: False,
                             constants.ToolName.SANDBOX_READ_FILE: False,
                             constants.ToolName.SANDBOX_SEND_FILE: False,
+                        }
+                    )
+                if not chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool():
+                    useTools.update(
+                        {
+                            constants.ToolName.ADD_MEMORY: False,
+                            constants.ToolName.SEARCH_MEMORIES: False,
                         }
                     )
             mlRet = await self._generateTextViaLLM(
@@ -572,6 +581,7 @@ class LLMMessageHandler(BaseBotHandler):
             await ensuredMessage.updateMediaContent(self.db)
 
             llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
+            injectMemories = chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool()
 
             reqMessages = await self.getThreadByMessageForLLM(ensuredMessage=ensuredMessage)
 
@@ -590,8 +600,18 @@ class LLMMessageHandler(BaseBotHandler):
                         + "\n"
                         + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
                     ),
-                    await ensuredReply.toModelMessage(self.db, format=llmMessageFormat, role="assistant"),
-                    await ensuredMessage.toModelMessage(self.db, format=llmMessageFormat, role="user"),
+                    await ensuredReply.toModelMessage(
+                        self.db,
+                        format=llmMessageFormat,
+                        role="assistant",
+                        cache=self.cache if injectMemories else None,
+                    ),
+                    await ensuredMessage.toModelMessage(
+                        self.db,
+                        format=llmMessageFormat,
+                        role="user",
+                        cache=self.cache if injectMemories else None,
+                    ),
                 ]
 
             if (
@@ -684,6 +704,7 @@ class LLMMessageHandler(BaseBotHandler):
 
             # Handle LLM Action
             llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
+            injectMemories = chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool()
 
             reqMessages = [
                 ModelMessage(
@@ -699,13 +720,30 @@ class LLMMessageHandler(BaseBotHandler):
                 # TODO: Shoiuld we add whole discussion?
                 ensuredReply: Optional[EnsuredMessage] = ensuredMessage.getEnsuredRepliedToMessage()
                 if ensuredReply is not None:
-                    await self._updateEMessageUserData(ensuredReply)
                     if ensuredReply.messageType == MessageType.TEXT:
+                        # If memory injection enabled, we need to get memories for given message from DB
+                        if injectMemories:
+                            storedReply = await self.db.chatMessages.getChatMessageByMessageId(
+                                chatId=ensuredReply.recipient.id,
+                                messageId=ensuredReply.messageId,
+                            )
+                            if storedReply and storedReply["metadata"]:
+                                try:
+                                    metadata = json.loads(storedReply["metadata"])
+                                    ensuredReply.metadata = metadata
+                                except Exception:
+                                    pass
+                            # Memory resolution now happens lazily in
+                            # toModelMessage -> formatForLLM (cache=self.cache
+                            # passed below), so the eager resolveMemories call
+                            # was removed in Phase 2.
+
                         reqMessages.append(
                             await ensuredReply.toModelMessage(
                                 self.db,
                                 format=llmMessageFormat,
                                 role=("assistant" if ensuredReply.sender.id == await self.getBotId() else "user"),
+                                cache=self.cache if injectMemories else None,
                             ),
                         )
                     else:
@@ -721,12 +759,12 @@ class LLMMessageHandler(BaseBotHandler):
                             )
                         else:
                             eStoredReply = await EnsuredMessage.fromDBChatMessage(storedReply, self.db)
-                            await self._updateEMessageUserData(eStoredReply)
                             reqMessages.append(
                                 await eStoredReply.toModelMessage(
                                     self.db,
                                     format=llmMessageFormat,
                                     role=("assistant" if ensuredReply.sender.id == await self.getBotId() else "user"),
+                                    cache=self.cache if injectMemories else None,
                                 ),
                             )
 
@@ -736,6 +774,7 @@ class LLMMessageHandler(BaseBotHandler):
                     self.db,
                     format=llmMessageFormat,
                     role="user",
+                    cache=self.cache if injectMemories else None,
                 ),
             )
 
@@ -781,6 +820,7 @@ class LLMMessageHandler(BaseBotHandler):
         """
 
         chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
+        injectMemories = chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool()
         answerProbability = chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROBABILITY].toFloat()
         if answerProbability <= 0.0:
             # logger.debug(
@@ -845,10 +885,8 @@ class LLMMessageHandler(BaseBotHandler):
                         + chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROMPT].toStr(),
                     ),
                 ]
-                # We need to use deque as we add messages to begin of queue (to not reverse db result)
-                # And we do not want to reverse db result as we do not want to process ALL retrieved
-                # messages if some message already has summarized context (i.e. metadata["randomContext"])
                 contextMessages = deque[ModelMessage]()
+                excludedMemoryIds: MutableSet[str] = ensuredMessage.getMemoryIds()
                 for storedMsg in await self.db.chatMessages.getChatMessagesSince(
                     chatId=chatId,
                     threadId=ensuredMessage.threadId if ensuredMessage.threadId is not None else 0,
@@ -859,21 +897,23 @@ class LLMMessageHandler(BaseBotHandler):
                         # Skip current message from context
                         continue
                     eMsg = await EnsuredMessage.fromDBChatMessage(storedMsg, self.db)
-                    await self._updateEMessageUserData(eMsg)
 
                     # We need to use `reversed` as deque.extendleft will add messages in reversed order
                     # I assume, that it will just call appendleft for each item in the list
                     # Which will automatically reverse the list. So we need to reverse it again
                     # (using appendleft in for cycle will require reversing the list as well)
-                    contextMessages.extendleft(
-                        reversed(
-                            await eMsg.toModelMessageList(
-                                self.db,
-                                format=llmMessageFormat,
-                                role=MessageCategory.fromStr(storedMsg["message_category"]).toRole(),
-                            )
-                        )
+                    emittedMessages = await eMsg.toModelMessageList(
+                        self.db,
+                        format=llmMessageFormat,
+                        role=MessageCategory.fromStr(storedMsg["message_category"]).toRole(),
+                        cache=self.cache if injectMemories else None,
+                        excludeMemoryIds=excludedMemoryIds,
                     )
+                    contextMessages.extendleft(reversed(emittedMessages))
+                    # Tag every emitted ModelMessage with its source row so the
+                    # 1:1 alignment with contextMessages holds exactly (a row
+                    # can emit multiple ModelMessages via toModelMessageList).
+                    excludedMemoryIds.update(eMsg.getMemoryIds())
                     if eMsg.metadata.get("randomContext", None) is not None:
                         # If some message already have summarized context,
                         #  do not add previous messages to context
@@ -885,8 +925,10 @@ class LLMMessageHandler(BaseBotHandler):
                     # We need to use at least 3 here as 1 for `randomContext``
                     # + 1 for message, randomContext is attached to
                     # + 1 answer from bot
-                    condensedMessages = await self.llmService.condenseContext(
-                        contextMessages,
+                    # Convert deques to lists so coverage index ranges can
+                    # slice sourceRows (deques do not support slicing).
+                    condensedRet, condensingDictMap = await self.llmService.condenseContext(
+                        list(contextMessages),
                         chatSettings[ChatSettingsKey.CHAT_MODEL].toModel(),
                         keepFirstN=0,
                         keepLastN=0,
@@ -895,13 +937,11 @@ class LLMMessageHandler(BaseBotHandler):
                         condensingSystemPrompt=chatSettings[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT].toStr(),
                         force=True,
                     )
-                    if not condensedMessages:
+                    if not condensedRet:
                         logger.error("Messages condensing failed")
                     else:
-                        # No need to add to context as it will be added later
-                        # storedMessages.append(ModelMessage(role="user", content=mlRet.resultText))
-                        condensedText = "\n".join([message.content for message in condensedMessages])
-                        ensuredMessage.metadata["randomContext"] = condensedText
+                        if condensingDictMap:
+                            ensuredMessage.metadata["randomContext"] = mergeCondensingDicts(condensingDictMap.values())
                         await self.db.chatMessages.updateChatMessageMetadata(
                             chatId=ensuredMessage.recipient.id,
                             messageId=ensuredMessage.messageId,
@@ -910,7 +950,14 @@ class LLMMessageHandler(BaseBotHandler):
 
                 else:
                     storedMessages.extend(contextMessages)
-                storedMessages.extend(await ensuredMessage.toModelMessageList(self.db, format=llmMessageFormat))
+                storedMessages.extend(
+                    await ensuredMessage.toModelMessageList(
+                        self.db,
+                        format=llmMessageFormat,
+                        cache=self.cache if injectMemories else None,
+                        excludeMemoryIds=set(),
+                    )
+                )
 
             outcome = await self._sendLLMChatMessage(
                 ensuredMessage,

@@ -29,6 +29,7 @@
 |---|---|---|---|
 | `chatMessages` | `saveChatMessage(...)` | `None` | Save incoming/outgoing message |
 | `chatMessages` | `getChatMessageByMessageId(chatId, messageId)` | `Optional[ChatMessageDict]` | Get message by ID |
+| `chatMessages` | `getChatMessagesByMessageIds(chatId, messageIds, *, dataSource?)` | `List[ChatMessageDict]` | Batch-fetch multiple messages by ID in one query. Portable `IN (:id0, :id1, ...)` named-placeholder expansion; same user JOIN as `getChatMessageByMessageId`; `ORDER BY c.date ASC`; early-returns `[]` on empty input. Does NOT dedup input IDs (caller's responsibility — duplicate IDs produce one row). Backs the `get_messages_by_ids` LLM tool (ADR-019). |
 | `chatMessages` | `getChatMessagesByRootId(chatId, rootMessageId, threadId)` | `List[ChatMessageDict]` | Get thread messages |
 | `chatMessages` | `getMessageThread(chatId, messageId, *, dataSource?)` | `Optional[ThreadResultDict]` | Get target + thread root + chronological thread messages |
 | `chatMessages` | `getChatMessagesSince(chatId, sinceDateTime?, tillDateTime?, threadId?, limit?, messageCategory?, userId?, *, dataSource?)` | `List[ChatMessageDict]` | Messages newer than `sinceDateTime` (ordered date DESC). The additive `userId` filter (`AND (:userId IS NULL OR c.user_id = :userId)`) scopes results to one sender — used by the memory-refinement cron to fetch a user's recent messages |
@@ -37,7 +38,7 @@
 | `chatMessages` | `searchChatMessages(chatId, queryEmbedding?, userFilter?, categoryFilter?, maxAgeDays?, rootMessageId?, limit?, dataSource?)` | `List[SearchResultDict]` | Combined filter + (optional) semantic search via cosine similarity over `message_embeddings`. When `queryEmbedding` is `None` results are returned in date order with `score=0.0` |
 | `chatEmbeddings` | `saveMessageEmbedding(chatId, messageId, embedding, model)` | `None` | Upsert a float32 vector blob for `(chat_id, message_id)`. `dimensions` is derived from `len(embedding)` |
 | `chatEmbeddings` | `getMessageEmbedding(chatId, messageId)` | `Optional[MessageEmbeddingDict]` | Fetch a single embedding as a `MessageEmbeddingDict` with `message_id`, `embedding`, `dimensions`, `model`, `created_at`, `updated_at` (no JOIN against `chat_messages` — `message_text` is not included) |
-| `chatEmbeddings` | `getMessagesWithoutEmbeddings(chatId, limit, modelName)` | `List[ChatMessageDict]` | Used by `ChatSearchHandler._dtCronJob` to find messages missing an embedding for `modelName`. Returns full `ChatMessageDict` rows (joined with `chat_users` for `username`/`full_name`); the embedding table is only used as a `NOT EXISTS` filter, not selected from |
+| `chatEmbeddings` | `getMessagesWithoutEmbeddings(chatId, *, limit, modelName?, dimensions?, dataSource?)` | `List[ChatMessageDict]` | Used by `ChatSearchHandler._dtCronJob` to find messages missing an embedding for `modelName`/`dimensions`. Returns full `ChatMessageDict` rows (joined with `chat_users` for `username`/`full_name`); the embedding table is only used as a `NOT EXISTS` filter, not selected from. The `dimensions` filter scopes the NOT-EXISTS check by dimensionality so model-drift re-embedding only surfaces rows embedded under a different (model, dimensions) tuple |
 | `chatEmbeddings` | `deleteChatEmbeddings(chatId)` | `None` | Drop all `message_embeddings` rows for a chat (used when switching to an incompatible model) |
 | `chatUsers` | `getChatUser(chatId, userId)` | `Optional[ChatUserDict]` | Get user in chat |
 | `chatUsers` | `updateChatUser(chatId, userId, username, fullName)` | `None` | Upsert user in chat |
@@ -52,7 +53,6 @@
 | `chatSettings` | `setChatSetting(chatId, key, value, *, updatedBy)` | `None` | Set a chat setting with audit trail |
 | `chatSettings` | `getChatSetting(chatId, setting)` | `Optional[str]` | Get single setting value |
 | `chatSettings` | `getChatSettings(chatId)` | `Dict[str, tuple[str, int]]` | Get all settings as (value, updated_by) |
-| `chatSettings` | `listChatsBySetting(key, *, dataSource?)` | `Dict[int, str]` (`chat_id` → stored value) | Aggregate all `(chat_id, value)` rows whose `key` setting is present, returned as a `chat_id → value` mapping. Callers filter the `value` via `ChatSettingsValue.toBool()` (case-insensitive). Used by `ChatSearchHandler._dtCronJob` to discover chats with `EMBEDDINGS_ENABLED=true` (the `REGENERATE_EMBEDDINGS` flag is checked per-chat after discovery as a gate, not as a discovery key, because it defaults to true and is rarely persisted to the DB). The `REGENERATE_EMBEDDINGS` flag must be manually reset via `/settings` — it does not self-reset. Iterates *configured* providers so not-yet-touched sources in multi-source mode are still queried |
 | `cache` | `clearOldCacheEntries(ttl)` | `None` | Cleanup stale cache |
 | `delayedTasks` | `cleanupOldCompletedDelayedTasks(ttl)` | `None` | Cleanup old tasks |
 | `divinations` | `insertReading(...)` | `None` | Persist a tarot/runes reading row in `divinations` |
@@ -64,6 +64,14 @@
 | `webhookUpdates` | `getUnprocessedUpdates(limit=100)` | `List[WebhookUpdatesRow]` | Pending webhook payloads oldest-first; backs the receiver's GET /updates long-poll |
 | `webhookUpdates` | `markProcessed(updateIds)` | `None` | Atomically mark a batch of updates processed (single batch commit prevents duplicate delivery) |
 | `webhookUpdates` | `deleteProcessedOlderThan(ttlSeconds=3600)` | `bool` | Reap processed rows past the TTL; cutoff computed in Python for cross-RDBMS portability |
+| `userMemories` | `addMemory(chatId, userId, memoryId, *, type, content, tags, permanent, source, embedding=None, embeddingModel=None, threadId=None)` | `None` | INSERT a memory row (caller generates the UUID hex; `memoryId` is not delegated to the DB). `source` is a `UserMemorySource`; when `embedding` (`List[float]`) + `embeddingModel` are provided the row is embedded during add |
+| `userMemories` | `getPermanentMemories(chatId, userId, threadId, *, limit=10)` | `List[UserMemoryDict]` | Permanent block for injection — merges cross-thread (`thread_id IS NULL`) AND this-thread permanent (`permanent = 1`), newest-updated-first |
+| `userMemories` | `getLatestMemories(chatId, userId, threadId, *, limit=5)` | `List[UserMemoryDict]` | Ephemeral-only (`permanent = 0`) newest-first, thread-scoped — backs the `latest` retrieval path (the fallback used when memory embeddings are off, i.e. not both `MEMORY_ENABLED && EMBEDDINGS_ENABLED`; semantic `searchMemories` is used when both are on) |
+| `userMemories` | `searchMemories(chatId, userId, queryEmbedding=None, *, threadId=None, type=None, tags=None, permanent=None, limit=20, embeddingModel, offset=0)` | `List[UserMemoryDict]` | Filter-only (`queryEmbedding is None`, plain SQL scan, `score = 0.0`) or semantic (`queryEmbedding` is a `List[float]`, vec0 KNN, `score = 1.0 - distance`). `embeddingModel` (required; pass `None` for filter-only) replaces the old `dimensions` arg and is part of the vec0 `model` partition filter. Always scoped to one `(chat_id, user_id)`; `tags` applied as a portable SQL `LIKE '%"tagN"%'` filter against the JSON-TEXT column |
+| `userMemories` | `getMemoriesWithoutEmbeddings(chatId, *, limit=50, modelName=None, dimensions=None, dataSource=None)` | `List[UserMemoryDict]` | Backfill/regen-cron input — rows whose `embedding_model`/`embedding_dimensions` is NULL or differs from the active value (single-table stale detection; also serves the initial backfill) |
+| `userMemories` | `saveMemoryEmbedding(chatId, userId, memoryId, embedding, embeddingModel)` | `bool` | Lazy-create `vec_user_memories_{dim}` (if missing) + upsert the vector (`embedding` is `List[float]`, `embeddingModel` the model name) + set `embedding_model`/`embedding_dimensions` on the row (vec0 write must succeed before provenance is set) |
+
+The full `UserMemoriesRepository` has 10 public methods (the remainder are `deleteMemory` (soft-delete), `deleteMemoryEmbedding`, `deleteObsoleteMemoryEmbeddings`, `getMemory`/`getDistinctTags` wizard helpers, and `getMemoriesByIds` — the single read that skips the `deleted_at` filter to resolve soft-deleted memories for historical reconstruction); see [`docs/llm/memories/user-memories.md`](memories/user-memories.md) "Repository" and the schema docs for the complete list. There is no in-place content-PATCH method (`updateMemory` was removed — zero production callers; content changes go through `deleteMemory` + `addMemory`). All SQL goes through `BaseSQLProvider`. Embeddings (regen cron + the memory tools) are produced via `LLMService.generateEmbedding`.
 
 ---
 
@@ -127,7 +135,7 @@ keepConnection = true  # Connect immediately (good for readonly replicas)
 - **Special case:** In-memory SQLite3 (`:memory:`) defaults to `true` to prevent data loss
 
 **Key classes:**
-- [`SourceConfig`](../../internal/config/types.py) — config for one DB provider
+- `SourceConfig` — config for one DB provider
 - [`SQLProviderConfig`](../../internal/database/providers/__init__.py) — provider config dict with `provider` and `parameters`
 
 **Routing priority:** `dataSource` param → `chatId` mapping → default source
@@ -292,7 +300,7 @@ def getMigration() -> Type[BaseMigration]:
 
 **See also:**
 - [`internal/database/migrations/README.md`](../../internal/database/migrations/README.md) — Full migration guide with patterns
-- [`docs/sql-portability-guide.md`](../../sql-portability-guide.md) — SQL portability rules
+- [`docs/sql-portability-guide.md`](/docs/sql-portability-guide.md) — SQL portability rules
 
 ---
 
@@ -428,7 +436,7 @@ await db.chatEmbeddings.deleteChatEmbeddings(chatId=chatId)
 - `delayedTasks` — Task operations
 - `divinations` — Tarot/runes reading persistence (`insertReading(...)`)
 - `webhookUpdates` — Max webhook payload storage and consumption (backs the webhook-receiver / GET /updates flow; see [`architecture.md`](architecture.md))
-- And 4 more specialized repositories
+- And 7 more specialized repositories
 
 **Adding methods to existing repository:**
 
@@ -702,7 +710,7 @@ success, value = sqlToCustomType("123", Union[int, str])
    - Validate that all historical migrations are accounted for
 
 **Known implemented migrations:**
-- `migration_001` to `migration_019` — Baseline migrations through latest schema updates
+- `migration_001` to `migration_023` — Baseline migrations through latest schema updates
 - `migration_010`: Adds `updated_by INTEGER NOT NULL` to `chat_settings` table (audit trail)
 - `migration_011` and `migration_012`: Additional schema improvements
 - `migration_013`: Removes `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns (explicit timestamp handling)
@@ -712,6 +720,10 @@ success, value = sqlToCustomType("123", Union[int, str])
 - `migration_017`: Adds the [`message_embeddings`](#message_embeddings) table (composite PK `(chat_id, message_id)`) — stores float32 embedding BLOBs for semantic chat-history search via the `ChatSearchHandler`
 - `migration_018`: Adds `idx_message_embeddings_chat_model` index on `message_embeddings (chat_id, model)` — speeds up `_loadEmbeddingsFromDb` by letting SQLite seek directly to the active model's rows instead of scanning the full chat
 - `migration_019`: Adds the [`webhook_updates`](../../docs/database-schema-llm.md#webhook_updates) table (`id TEXT PRIMARY KEY`) for Max webhook ingestion — raw webhook payloads are written here by the standalone webhook receiver and consumed via the `webhookUpdates` repository. Plus `idx_webhook_updates_unprocessed` on `(processed, received_at)` to back the unprocessed-rows query
+- `migration_020`: Adds the [`user_memories`](../../docs/database-schema-llm.md#user_memories) table (composite PK `(chat_id, user_id, memory_id)`) — the unified per-(chat, user, thread) memory store that retires `user_data` (table subsequently dropped in `migration_022`) and the rolling-bio JSON blob. Three indexes (`idx_user_memories_chat_user_thread`, `idx_user_memories_chat_user_permanent`, `idx_user_memories_type`). Backfills `user_data` rows into permanent cross-thread `type='fact'` memories and `chat_users.metadata.memoryRefinement` rolling-bio entries into permanent thread-scoped `type='bio'` memories. The vec0 virtual table (`vec_user_memories_{dim}`) is **not** created by the migration — it is created lazily at runtime on first write (mirrors `message_embeddings`). Schema/ADR: [`docs/llm/memories/user-memories.md`](memories/user-memories.md) and ADR-016.
+- `migration_021`: Adds the nullable `deleted_at` column to [`user_memories`](../../docs/database-schema-llm.md#user_memories) (soft-delete — `deleteMemory` sets `deleted_at` + drops vec0 + nulls provenance instead of hard-`DELETE`-ing the row, so historical messages referencing a deleted memory can still resolve its content via `getMemoriesByIds`). Every live read gains `AND deleted_at IS NULL`. Additive nullable column; `down()` is a no-op that logs (portable `DROP COLUMN` unavailable). Part of memory-compaction-v1 (see ADR-017 and [`docs/plans/memory-compaction-v1.md`](/docs/plans/memory-compaction-v1.md)).
+- `migration_022`: DROP TABLE `user_data` (superseded by `user_memories`; data was backfilled into `user_memories` in `migration_020`). The no-op `down()` is intentional — re-creating the table would orphan the rows already moved to `user_memories`.
+- `migration_023`: Idempotent data migration renaming the `chat_settings` key `memory-injection-enabled` → `memory-enabled` via `UPDATE chat_settings SET key='memory-enabled' WHERE key='memory-injection-enabled'`. Companion to the in-code `MEMORY_INJECTION_ENABLED` → `MEMORY_ENABLED` `ChatSettingsKey` enum rename.
 
 ---
 
@@ -728,4 +740,4 @@ success, value = sqlToCustomType("123", Union[int, str])
 ---
 
 *This guide is auto-maintained and should be updated whenever significant database changes are made*
-*Last updated: 2026-06-20*
+*Last updated: 2026-07-12*

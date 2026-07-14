@@ -1,28 +1,28 @@
-"""Tests for :class:`EnsuredMessage` ``userSummary`` handling.
+"""Regression tests for :class:`EnsuredMessage` ``formatForLLM`` JSON output.
 
-Two concerns:
-
-* :meth:`EnsuredMessage.formatForLLM` JSON serialisation of ``userSummary``
-  (behaviour area (D) of the memory-refinements test plan) — when ``userSummary``
-  is ``None`` (the default), the JSON output must omit the ``userSummary`` key
-  entirely, both as a parsed-key absence and as a raw substring absence, so a
-  pre-feature ``EnsuredMessage`` and a post-feature one with no summary produce
-  byte-identical JSON (no trailing comma, no empty field); when ``userSummary``
-  is set, the key must appear with the exact value.
-* :meth:`EnsuredMessage.applyUserMetadata` summary extraction (relocated from
-  the old ``BaseBotHandler.getUserMemorySummary``) — no entry / current-thread /
-  sibling-thread / empty-summary cases, asserting on ``ensuredMessage.userSummary``.
+The legacy per-message ``userSummary`` injection path (the rolling-bio
+``EnsuredMessage.applyUserMetadata`` → ``self.userSummary`` → ``formatForLLM``
+JSON key) was removed in user-memories Phase 4b in favour of the structured
+``<user-memories>`` system-prompt block. These tests guard against its
+accidental reintroduction.
 
 ``formatForLLM`` is async and accepts a ``db`` argument, but with no media
 attached (``mediaId is None`` and empty ``mediaList``) its
 ``updateMediaContent`` early-returns without ever touching ``db``. The real
 ``testDatabase`` fixture is passed for full type-correctness; it is never read.
-The ``applyUserMetadata`` tests are pure (no DB / cache) and take no fixture.
+
+Phase 5 additions: the lazy memory-resolution content tests
+(:class:`TestFormatForLLMMemoryResolution`) verify that compact IDs in
+``metadata["memories"]`` are resolved to rendered content via
+``cache.getMemoriesByIds`` — covering both cohorts, ``excludeMemoryIds``
+filtering, and the stale-ID omission contract.
 """
 
 import datetime
 import json
-from typing import cast
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
 
 from internal.bot.models import (
     ChatType,
@@ -30,17 +30,20 @@ from internal.bot.models import (
     LLMMessageFormat,
     MessageRecipient,
     MessageSender,
-    UserMetadataDict,
+    SingleMemoryDict,
 )
 from internal.database import Database
+from internal.database.models import MemoryType
 from internal.database.utils import DEFAULT_THREAD_ID
+from internal.models import MessageId
+from lib.ai import ModelMessage
 
 
 def _makeEnsuredMessage() -> EnsuredMessage:
-    """Build a minimal real :class:`EnsuredMessage` with no media and no summary.
+    """Build a minimal real :class:`EnsuredMessage` with no media attached.
 
     The sender fields are populated so the emitted JSON is non-empty and stable;
-    ``userSummary`` / ``userData`` are left at their ``None`` defaults.
+    ``metadata`` is left empty (no compact memory IDs).
 
     Returns:
         A freshly constructed :class:`EnsuredMessage`.
@@ -56,164 +59,299 @@ def _makeEnsuredMessage() -> EnsuredMessage:
     return ensuredMessage
 
 
-class TestFormatForLLMUserSummary:
-    """Tests for the ``userSummary`` field in :meth:`EnsuredMessage.formatForLLM`."""
+class TestFormatForLLMExcludesUserSummary:
+    """Regression guard: ``userSummary`` must never appear in ``formatForLLM`` output.
 
-    async def test_userSummaryOmittedWhenNone(self, testDatabase: Database) -> None:
-        """Default ``userSummary=None`` → key absent from parsed JSON and raw string.
+    The field, its slot, and the ``applyUserMetadata`` extraction method were all
+    removed in user-memories Phase 4b. A passing instance no longer has a
+    ``userSummary`` attribute at all, and the JSON branch must not emit it. These
+    tests assert both so the dead plumbing cannot silently reappear.
+    """
 
-        Also confirms ``userData`` is likewise dropped when ``None`` (sanity
-        check that the truthiness filter treats the new optional field
-        consistently with the old one), and that the raw JSON contains no
-        ``userSummary`` token at all (byte-identity with pre-feature output).
+    def test_userSummaryAttributeRemoved(self) -> None:
+        """The ``userSummary`` attribute is gone from :class:`EnsuredMessage`.
+
+        ``EnsuredMessage`` uses ``__slots__``; setting an unknown attribute raises
+        ``AttributeError``, which confirms the slot was removed rather than merely
+        defaulted to ``None``.
+        """
+        ensuredMessage = _makeEnsuredMessage()
+        with pytest.raises(AttributeError):
+            ensuredMessage.userSummary = "should fail"  # type: ignore[attr-defined]
+
+    async def test_formatForLLMJsonOmitsUserSummary(self, testDatabase: Database) -> None:
+        """The JSON branch of ``formatForLLM`` never emits a ``userSummary`` key.
+
+        Guards both the parsed-dict and the raw-string representations so the
+        field cannot reappear either as a serialised value or as a stray token.
 
         Args:
             testDatabase: Real in-memory database; never read because the
                 message has no media.
         """
         ensuredMessage = _makeEnsuredMessage()
-        assert ensuredMessage.userSummary is None
 
-        output = await ensuredMessage.formatForLLM(testDatabase, format=LLMMessageFormat.JSON)
+        output = await ensuredMessage.formatForLLM(
+            testDatabase, format=LLMMessageFormat.JSON, cache=None, excludeMemoryIds=set()
+        )
 
         parsed = json.loads(output)
         assert "userSummary" not in parsed
-        assert "userData" not in parsed
         # Byte-identity: the field name must not appear anywhere in the string.
         assert "userSummary" not in output
 
-    async def test_userSummaryIncludedWhenSet(self, testDatabase: Database) -> None:
-        """A non-empty ``userSummary`` is emitted verbatim under the right key.
+    async def test_formatForLLMJsonOmitsUserSummaryWhenUserMemoriesSet(self, testDatabase: Database) -> None:
+        """Even when memories are populated, no ``userSummary`` key sneaks in.
+
+        Confirms the removal did not leave the key reachable via the truthiness
+        filter when a sibling optional field is populated.
 
         Args:
             testDatabase: Real in-memory database; never read because the
                 message has no media.
         """
         ensuredMessage = _makeEnsuredMessage()
-        ensuredMessage.userSummary = "Likes chess and Python"
+        # Phase 4: memories are stored as compact IDs in metadata["memories"]
+        # and resolved lazily by formatForLLM via cache.getMemoriesByIds.
+        entry: SingleMemoryDict = {"type": MemoryType.PREFERENCE, "content": "vegan", "tags": ["diet"]}
+        ensuredMessage.metadata["memories"] = {"permanentIds": ["m1"], "shortTermIds": []}  # type: ignore[assignment]
+        cache = Mock()
+        cache.getMemoriesByIds = AsyncMock(return_value={"m1": entry})
 
-        output = await ensuredMessage.formatForLLM(testDatabase, format=LLMMessageFormat.JSON)
+        output = await ensuredMessage.formatForLLM(
+            testDatabase, format=LLMMessageFormat.JSON, cache=cache, excludeMemoryIds=set()  # type: ignore[arg-type]
+        )
 
         parsed = json.loads(output)
-        assert parsed["userSummary"] == "Likes chess and Python"
-
-    async def test_userSummaryDropsEmptyString(self, testDatabase: Database) -> None:
-        """An empty-string ``userSummary`` is dropped by the truthiness filter.
-
-        The ``formatForLLM`` JSON branch drops every falsy value, so an empty
-        summary must not leak as ``"userSummary": ""`` — it must be absent,
-        matching the ``None`` case byte-for-byte.
-
-        Args:
-            testDatabase: Real in-memory database; never read because the
-                message has no media.
-        """
-        noneMessage = _makeEnsuredMessage()
-        emptyMessage = _makeEnsuredMessage()
-        emptyMessage.userSummary = ""
-
-        outputNone = await noneMessage.formatForLLM(testDatabase, format=LLMMessageFormat.JSON)
-        outputEmpty = await emptyMessage.formatForLLM(testDatabase, format=LLMMessageFormat.JSON)
-
-        assert "userSummary" not in outputEmpty
-        assert outputEmpty == outputNone
+        assert "userSummary" not in parsed
+        assert "userSummary" not in output
+        # Sanity: userMemories is still emitted (proves the assertion is meaningful).
+        assert "userMemories" in parsed
 
 
-class TestApplyUserMetadata:
-    """Tests for :meth:`EnsuredMessage.applyUserMetadata` summary extraction.
+class TestGetMemoryIds:
+    """Tests for :meth:`EnsuredMessage.getMemoryIds` — the compact ID reader.
 
-    Drives four cases (empty metadata / current-thread / sibling-thread isolation
-    / empty-string-summary), extending the old ``BaseBotHandler.getUserMemorySummary``
-    coverage with an explicit empty-string-summary case for the ``if summary:``
-    truthiness guard, through :meth:`EnsuredMessage.applyUserMetadata` directly and
-    asserting on ``ensuredMessage.userSummary``. No DB or cache is involved — the
-    method is a pure reader of the passed-in metadata dict, so no fixture is required.
+    ``getMemoryIds`` reads ``metadata["memories"]`` and returns the union of
+    ``permanentIds`` and ``shortTermIds``. Its contract is to never raise on
+    an unexpected shape (None, missing, non-canonical). These tests guard the
+    defensive coalescing that backs that contract.
     """
 
-    async def test_emptyMetadata_userSummaryStaysNone(self) -> None:
-        """No ``memoryRefinement`` section -> ``userSummary`` stays at its ``None`` default.
+    async def test_getMemoryIds_noneValuedCompactKeys(self) -> None:
+        """A None-valued compact key must not raise; the other cohort's IDs are returned.
 
-        ``metadata.get("memoryRefinement", {})`` resolves to an empty dict, so
-        no thread entry is found and the assignment is skipped.
+        Regression guard: ``{"permanentIds": None, "shortTermIds": ["id1"]}``
+        previously raised ``TypeError`` at ``set(None)``; the ``or []``
+        coalescing must make this return ``{"id1"}``.
         """
-        ensuredMessage = _makeEnsuredMessage()
-        assert ensuredMessage.userSummary is None
+        msg = _makeEnsuredMessage()
+        msg.metadata["memories"] = {"permanentIds": None, "shortTermIds": ["id1"]}  # type: ignore[assignment]
 
-        ensuredMessage.applyUserMetadata(cast(UserMetadataDict, {}))
+        assert msg.getMemoryIds() == {"id1"}
 
-        assert ensuredMessage.userSummary is None
 
-    async def test_summaryForCurrentThread_isAttached(self) -> None:
-        """A ``memoryRefinement[str(threadId)].summary`` is assigned to ``userSummary``.
+# ---------------------------------------------------------------------------
+# formatForLLM lazy memory resolution — content, filtering, stale-ID omission
+# ---------------------------------------------------------------------------
 
-        The message's ``threadId`` is ``DEFAULT_THREAD_ID`` (0), matching the
-        ``"0"`` key in the metadata, so the summary is attached verbatim.
+
+class TestFormatForLLMMemoryResolution:
+    """Tests for the lazy memory resolution inside :meth:`formatForLLM`.
+
+    Phase 3+ stores compact memory IDs in ``metadata["memories"]``
+    (``{"permanentIds": [...], "shortTermIds": [...]}``); ``formatForLLM``
+    resolves them to content on-demand via ``cache.getMemoriesByIds`` at render
+    time. These tests assert the resolved CONTENT appears in the correct
+    cohorts, that ``excludeMemoryIds`` filters individual IDs, and that stale
+    IDs (resolving to ``None``) cause the ``userMemories`` key to be OMITTED
+    entirely rather than emitted as an empty dict.
+    """
+
+    async def test_resolvesBothCohorts_contentInRightSlots(self, testDatabase: Database) -> None:
+        """Permanent + shortTerm IDs resolve to content in their respective cohorts.
+
+        Args:
+            testDatabase: Real in-memory database; never read (no media).
         """
-        ensuredMessage = _makeEnsuredMessage()  # threadId = DEFAULT_THREAD_ID (0)
-        metadata = cast(
-            UserMetadataDict,
-            {
-                "memoryRefinement": {
-                    "0": {
-                        "summary": "Likes chess and Python",
-                        "lastProcessedMessageId": "1",
-                        "lastProcessedMessageDate": "2026-05-05T12:00:00+00:00",
-                    }
-                }
-            },
+        msg = _makeEnsuredMessage()
+        msg.metadata["memories"] = {"permanentIds": ["p1"], "shortTermIds": ["s1"]}  # type: ignore[assignment]
+
+        cache = Mock()
+        cache.getMemoriesByIds = AsyncMock(
+            return_value={
+                "p1": {"type": MemoryType.FACT, "content": "vegan", "tags": ["diet"]},
+                "s1": {"type": MemoryType.EVENT, "content": "just woke up", "tags": []},
+            }
         )
 
-        ensuredMessage.applyUserMetadata(metadata)
-
-        assert ensuredMessage.userSummary == "Likes chess and Python"
-
-    async def test_summaryForDifferentThread_userSummaryStaysNone(self) -> None:
-        """A summary under a sibling thread is ignored (thread isolation).
-
-        The message's ``threadId`` is ``5`` but the metadata only carries a
-        summary for thread ``0``; ``userSummary`` must stay ``None`` rather than
-        fall back to another thread's summary.
-        """
-        ensuredMessage = _makeEnsuredMessage()
-        ensuredMessage.threadId = 5
-        metadata = cast(
-            UserMetadataDict,
-            {
-                "memoryRefinement": {
-                    "0": {
-                        "summary": "bio text",
-                        "lastProcessedMessageId": "1",
-                        "lastProcessedMessageDate": "2026-05-05T12:00:00+00:00",
-                    }
-                }
-            },
+        output = await msg.formatForLLM(
+            testDatabase, format=LLMMessageFormat.JSON, cache=cache, excludeMemoryIds=set()  # type: ignore[arg-type]
         )
 
-        ensuredMessage.applyUserMetadata(metadata)
+        parsed = json.loads(output)
+        assert "userMemories" in parsed
+        assert parsed["userMemories"]["permanent"][0]["content"] == "vegan"
+        assert parsed["userMemories"]["shortTerm"][0]["content"] == "just woke up"
 
-        assert ensuredMessage.userSummary is None
+    async def test_excludeMemoryIds_dropsPermanentEntryKeepsShortTerm(self, testDatabase: Database) -> None:
+        """``excludeMemoryIds`` drops the targeted ID while the other cohort survives.
 
-    async def test_emptySummary_userSummaryStaysNone(self) -> None:
-        """An empty-string ``summary`` is treated as absent (truthiness filter).
-
-        ``applyUserMetadata`` guards the assignment with ``if summary:``, so a
-        falsy summary (empty string) leaves ``userSummary`` at its ``None``
-        default.
+        Args:
+            testDatabase: Real in-memory database; never read (no media).
         """
-        ensuredMessage = _makeEnsuredMessage()
-        metadata = cast(
-            UserMetadataDict,
-            {
-                "memoryRefinement": {
-                    "0": {
-                        "summary": "",
-                        "lastProcessedMessageId": "1",
-                        "lastProcessedMessageDate": "2026-05-05T12:00:00+00:00",
-                    }
-                }
-            },
+        msg = _makeEnsuredMessage()
+        msg.metadata["memories"] = {"permanentIds": ["p1"], "shortTermIds": ["s1"]}  # type: ignore[assignment]
+
+        cache = Mock()
+        cache.getMemoriesByIds = AsyncMock(
+            return_value={
+                "p1": {"type": MemoryType.FACT, "content": "vegan", "tags": ["diet"]},
+                "s1": {"type": MemoryType.EVENT, "content": "just woke up", "tags": []},
+            }
         )
 
-        ensuredMessage.applyUserMetadata(metadata)
+        output = await msg.formatForLLM(
+            testDatabase, format=LLMMessageFormat.JSON, cache=cache, excludeMemoryIds={"p1"}  # type: ignore[arg-type]
+        )
 
-        assert ensuredMessage.userSummary is None
+        parsed = json.loads(output)
+        assert "userMemories" in parsed
+        assert "permanent" not in parsed["userMemories"]
+        assert parsed["userMemories"]["shortTerm"][0]["content"] == "just woke up"
+
+    async def test_allStaleIds_omitsUserMemoriesKey(self, testDatabase: Database) -> None:
+        """When all referenced memory IDs resolve to ``None``, ``userMemories`` is omitted.
+
+        ``getMemoriesByIds`` signals not-found by mapping the ID to ``None``
+        (negative caching). When every ID is stale, ``formatForLLM`` must OMIT
+        the ``userMemories`` key entirely — NOT emit an empty
+        ``{"permanent": [], "shortTerm": []}`` dict. This locks the behavioral
+        delta vs the old eager-resolution code.
+
+        Args:
+            testDatabase: Real in-memory database; never read (no media).
+        """
+        msg = _makeEnsuredMessage()
+        msg.metadata["memories"] = {"permanentIds": ["ghost"], "shortTermIds": []}  # type: ignore[assignment]
+
+        cache = Mock()
+        cache.getMemoriesByIds = AsyncMock(return_value={"ghost": None})
+
+        output = await msg.formatForLLM(
+            testDatabase, format=LLMMessageFormat.JSON, cache=cache, excludeMemoryIds=set()  # type: ignore[arg-type]
+        )
+
+        parsed = json.loads(output)
+        assert "userMemories" not in parsed
+        # Byte-identity: the key must not appear anywhere in the raw string.
+        assert "userMemories" not in output
+
+    async def test_cacheNone_omitsUserMemoriesKey(self, testDatabase: Database) -> None:
+        """With ``cache=None`` the ``userMemories`` key is never emitted (non-chat paths)."""
+        msg = _makeEnsuredMessage()
+        msg.metadata["memories"] = {"permanentIds": ["p1"], "shortTermIds": []}  # type: ignore[assignment]
+
+        output = await msg.formatForLLM(testDatabase, format=LLMMessageFormat.JSON, cache=None, excludeMemoryIds=set())
+
+        parsed = json.loads(output)
+        assert "userMemories" not in parsed
+        assert "userMemories" not in output
+
+
+# ---------------------------------------------------------------------------
+# Phase 3b: toModelMessageList randomContext read site
+# (dict shape injects text; legacy str still works)
+# ---------------------------------------------------------------------------
+
+
+class TestRandomContextReadSite:
+    """Phase 4: ``toModelMessageList`` injects ``randomContext`` as JSON.
+
+    After the P3b write-site reshape, ``randomContext`` can be a
+    :class:`CondensingDict` (dict) or a legacy ``str``. Both shapes are now
+    rendered as JSON via :func:`renderCondensedSummary` (Phase 4) — resolving
+    the latent asymmetry where real user messages were JSON but summaries
+    were raw text. The ``type: "condensed"`` discriminator marks the JSON
+    object as a condensed summary.
+
+    ``toModelMessage`` (the inner single-message method called at the end of
+    ``toModelMessageList``) is patched to avoid DB/media access.
+    """
+
+    async def test_dictShapeInjectsJSON(self, testDatabase: Database) -> None:
+        """CondensingDict randomContext -> JSON with type:"condensed" and metadata.
+
+        Args:
+            testDatabase: Real in-memory database; never read (inner method patched).
+        """
+        msg = _makeEnsuredMessage()
+        msg.metadata["randomContext"] = {  # type: ignore[assignment]
+            "text": "dict summary text",
+            "tillMessageId": MessageId(99),
+            "tillTS": 1234.0,
+            "messageIds": [MessageId(1), MessageId(2)],
+            "participants": ["alice"],
+            "messageCount": 2,
+        }
+
+        with patch.object(
+            EnsuredMessage,
+            "toModelMessage",
+            AsyncMock(return_value=ModelMessage(role="user", content="MAIN")),
+        ):
+            result = await msg.toModelMessageList(testDatabase, format=LLMMessageFormat.JSON, cache=None)
+
+        assert len(result) == 2
+        assert result[0].role == "user"
+        parsed = json.loads(result[0].content)
+        assert parsed["type"] == "condensed"
+        assert parsed["summary"] == "dict summary text"
+        assert parsed["coveredMessageIds"] == [1, 2]
+        assert parsed["participants"] == ["alice"]
+        assert parsed["messageCount"] == 2
+        # The main message follows.
+        assert result[1].content == "MAIN"
+
+    async def test_strShapeInjectsJSONBackwardsCompat(self, testDatabase: Database) -> None:
+        """Legacy str randomContext -> JSON with summary only (backwards-compat).
+
+        Args:
+            testDatabase: Real in-memory database; never read (inner method patched).
+        """
+        msg = _makeEnsuredMessage()
+        msg.metadata["randomContext"] = "legacy str context"  # type: ignore[assignment]
+
+        with patch.object(
+            EnsuredMessage,
+            "toModelMessage",
+            AsyncMock(return_value=ModelMessage(role="user", content="MAIN")),
+        ):
+            result = await msg.toModelMessageList(testDatabase, format=LLMMessageFormat.JSON, cache=None)
+
+        assert len(result) == 2
+        parsed = json.loads(result[0].content)
+        assert parsed["type"] == "condensed"
+        assert parsed["summary"] == "legacy str context"
+        # Metadata fields omitted for legacy str input
+        assert "coveredMessageIds" not in parsed
+        assert "participants" not in parsed
+        assert result[1].content == "MAIN"
+
+    async def test_absentRandomContextInjectsNothing(self, testDatabase: Database) -> None:
+        """No randomContext -> only the main message (no injection).
+
+        Args:
+            testDatabase: Real in-memory database; never read (inner method patched).
+        """
+        msg = _makeEnsuredMessage()
+
+        with patch.object(
+            EnsuredMessage,
+            "toModelMessage",
+            AsyncMock(return_value=ModelMessage(role="user", content="MAIN")),
+        ):
+            result = await msg.toModelMessageList(testDatabase, format=LLMMessageFormat.JSON, cache=None)
+
+        assert len(result) == 1
+        assert result[0].content == "MAIN"

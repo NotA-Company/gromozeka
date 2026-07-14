@@ -7,7 +7,7 @@ these tests fail if the wrapper is dropped.
 
 :meth:`BaseBotHandler.setUserMetadata` lives on :class:`BaseBotHandler`, which is
 abstract / mixin-bound and not instantiated directly. It is exercised here through its
-concrete subclass :class:`UserDataHandler`, constructed against a real in-memory database
+concrete subclass :class:`UserMemoriesHandler`, constructed against a real in-memory database
 (``testDatabase`` fixture) with the ``CacheService`` singleton reset per test by the local
 autouse fixture. For the ``isUpdate=True`` path the handler reads via
 ``cache.getUserMetadata``; the autouse singleton reset plus
@@ -16,15 +16,25 @@ to a fresh :class:`CacheService`, and the cache is then swapped for a mock per-t
 lock acquisition can be spied on.
 """
 
+import datetime
 import types
-from typing import Generator, Optional, cast
+from typing import Generator, List, Optional, cast
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from internal.bot.common.handlers.user_data import UserDataHandler
-from internal.bot.models import BotProvider, UserMetadataDict
+from internal.bot.common.handlers.user_memories import UserMemoriesHandler, _formatMemoriesBlockRaw
+from internal.bot.models import (
+    BotProvider,
+    ChatType,
+    EnsuredMessage,
+    MessageRecipient,
+    MessageSender,
+    UserMetadataDict,
+)
 from internal.database import Database
+from internal.database.models import MemoryType, UserMemorySource
+from internal.database.repositories.user_memories import UserMemoryDict
 from internal.services.cache import CacheService
 
 # ---------------------------------------------------------------------------
@@ -56,7 +66,7 @@ def _resetCacheServiceSingleton() -> Generator[None, None, None]:
 def _makeConfigManager() -> Mock:
     """Build a minimal ``ConfigManager`` stub for the handler constructor.
 
-    ``UserDataHandler.__init__`` reads ``get("user-memory", {})`` to cache the
+    ``UserMemoriesHandler.__init__`` reads ``get("user-memory", {})`` to cache the
     refinement config; returning ``{}`` leaves the feature disabled and makes
     thresholds fall back to module constants. These tests only exercise the
     inherited ``setUserMetadata`` helper, so the cached values are unused.
@@ -71,22 +81,22 @@ def _makeConfigManager() -> Mock:
     return cm
 
 
-async def _makeHandler(testDatabase: Database) -> UserDataHandler:
-    """Construct a :class:`UserDataHandler` wired to a real in-memory database.
+async def _makeHandler(testDatabase: Database) -> UserMemoriesHandler:
+    """Construct a :class:`UserMemoriesHandler` wired to a real in-memory database.
 
     Args:
         testDatabase: Fresh in-memory :class:`Database`` (``testDatabase``
             fixture).
 
     Returns:
-        A :class:`UserDataHandler` whose ``db`` is *testDatabase*, used as the
+        A :class:`UserMemoriesHandler` whose ``db`` is *testDatabase*, used as the
         host for the inherited ``setUserMetadata`` helper.
     """
     CacheService._instance = None
     cache = CacheService.getInstance()
     await cache.injectDatabase(testDatabase)
 
-    handler = UserDataHandler(
+    handler = UserMemoriesHandler(
         configManager=_makeConfigManager(),
         database=testDatabase,
         botProvider=BotProvider.TELEGRAM,
@@ -222,3 +232,375 @@ class TestSetUserMetadataLockContract:
         assert countingLock.enterCount == 1
         mockCache.getUserMetadata.assert_not_called()
         mockCache.updateUserMetadata.assert_awaited_once_with(chatId=100, userId=7, metadata={"newKey": "newVal"})
+
+
+# ---------------------------------------------------------------------------
+# User-memories formatting contract — _formatMemoriesBlockRaw
+# ---------------------------------------------------------------------------
+#
+# The Phase-3a ``_buildMemoriesBlock`` / ``_injectMemoriesBlock`` methods were
+# removed from ``BaseBotHandler`` when memory injection moved to
+# ``MessagePreprocessorHandler.injectMemories``. The rendering logic survives
+# as the module function ``_formatMemoriesBlockRaw`` in ``user_memories.py``; these
+# tests pin the render contract (header omission, tag formatting, sort order)
+# against that function.
+#
+# Coverage for ``MessagePreprocessorHandler.injectMemories`` lives in
+# ``tests/bot/common/handlers/test_message_preprocessor.py``:
+# ``TestInjectMemoriesCompactFormat`` covers the compact-format write path,
+# and ``TestNewMessageHandlerDispatchGates`` covers dispatch gating.
+
+
+_CHAT_ID = 200
+_USER_ID = 7
+_THREAD_ID = 0
+_TS = datetime.datetime(2026, 7, 7, 12, 0, 0, tzinfo=datetime.timezone.utc)
+
+
+def _memoryDict(
+    *,
+    content: str,
+    memType: str,
+    tags: Optional[List[str]] = None,
+    permanent: bool = False,
+    threadId: Optional[int] = _THREAD_ID,
+    updated_at: datetime.datetime = _TS,
+) -> UserMemoryDict:
+    """Build a minimal :class:`UserMemoryDict` for injection-block tests.
+
+    Args:
+        content: Memory body text.
+        memType: ``MemoryType`` string value (bio/preference/fact/event/relationship).
+        tags: Tag list (defaults to empty).
+        permanent: Permanent flag.
+        threadId: Thread scope (``None`` for cross-thread permanent).
+        updated_at: Last-update timestamp.
+
+    Returns:
+        A :class:`UserMemoryDict` with the fields the formatter reads populated.
+    """
+    return cast(
+        UserMemoryDict,
+        {
+            "chat_id": _CHAT_ID,
+            "user_id": _USER_ID,
+            "thread_id": threadId,
+            "memory_id": f"mid-{content[:8]}",
+            "type": MemoryType(memType),
+            "content": content,
+            "tags": tags or [],
+            "permanent": permanent,
+            "source": UserMemorySource.REFINEMENT,
+            "embedding_model": None,
+            "embedding_dimensions": None,
+            "created_at": _TS,
+            "updated_at": updated_at,
+        },
+    )
+
+
+class TestFormatMemoriesBlockRaw:
+    """Direct tests on :func:`_formatMemoriesBlockRaw` (module function).
+
+    Locks the render contract independently of the DB / settings: header
+    omission for empty sections, tag formatting, and permanent-section sort
+    order (by ``type`` then ``updated_at``). These tests were originally aimed
+    at the ``BaseBotHandler._formatMemoriesBlock`` staticmethod; the rendering
+    logic now lives as the module-level ``_formatMemoriesBlockRaw`` function.
+    """
+
+    def test_bothEmpty_returnsNone(self) -> None:
+        """Both lists empty → ``None``."""
+        assert _formatMemoriesBlockRaw([], []) is None
+
+    def test_permanentSortedByTypeThenUpdatedAt(self) -> None:
+        """Permanent section is sorted by ``type`` then ``updated_at``.
+
+        Inputs are given out-of-order (preference before bio, older bio before
+        newer bio); the rendered block must list them sorted.
+        """
+        older = _TS
+        newer = _TS + datetime.timedelta(seconds=10)
+        permanent = [
+            _memoryDict(content="prefers dark mode", memType="preference", permanent=True, updated_at=newer),
+            _memoryDict(content="is a nurse", memType="fact", permanent=True, updated_at=older),
+            _memoryDict(content="bio older", memType="bio", permanent=True, updated_at=older),
+            _memoryDict(content="bio newer", memType="bio", permanent=True, updated_at=newer),
+        ]
+
+        block = _formatMemoriesBlockRaw(permanent, [])
+
+        assert block is not None
+        lines = block.split("\n")
+        # lines[0] = <user-memories>, [1] = Permanent:, then 4 type lines, then closing tag.
+        assert lines[2] == "[bio] bio older"
+        assert lines[3] == "[bio] bio newer"
+        assert lines[4] == "[fact] is a nurse"
+        assert lines[5] == "[preference] prefers dark mode"
+        assert lines[6] == "</user-memories>"
+
+    def test_tagsRenderAsHashSuffix_omittedWhenEmpty(self) -> None:
+        """``[type] content #tag1 #tag2`` with tags; bare ``[type] content`` without."""
+        permanent = [_memoryDict(content="lives in Berlin", memType="fact", permanent=True, tags=["geo", "europe"])]
+        ephemeral = [_memoryDict(content="no tags here", memType="event", tags=[])]
+
+        block = _formatMemoriesBlockRaw(permanent, ephemeral)
+
+        assert block is not None
+        assert "[fact] lives in Berlin #geo #europe" in block
+        assert "[event] no tags here\n" in block + "\n"
+
+
+# ---------------------------------------------------------------------------
+# _resolveUserId (inherited from BaseBotHandler)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveUserId:
+    """Tests for :meth:`BaseBotHandler._resolveUserId`.
+
+    The method is shared between the ``search_memories`` and ``search_messages``
+    LLM tools. It is exercised here through :class:`UserMemoriesHandler` (a concrete
+    subclass of :class:`BaseBotHandler`), constructed against a real in-memory
+    database. The ``chatUsers`` repository attribute is swapped for a ``Mock``
+    per test so the login-resolution path can be spied on without touching the DB.
+
+    Covers:
+
+    * Numeric ``user_id`` short-circuit (no DB lookup) — plain digits and
+      ``@``-prefixed digits.
+    * Login resolution (with and without ``@``) — both normalise to the
+      ``@``-prefixed form the ``chat_users`` table stores.
+    * Non-existent login → ``None``.
+    * Empty / ``None`` input → ``None`` (no DB call).
+    * DB exception → ``None`` (never raises).
+    """
+
+    async def test_numericString_returnsIntWithoutDbCall(self, testDatabase: Database) -> None:
+        """A purely-numeric identifier is returned as int with no DB lookup.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        mockChatUsers = Mock()
+        mockChatUsers.getChatUserByUsername = AsyncMock()
+        handler.db.chatUsers = mockChatUsers  # type: ignore[assignment]
+
+        result = await handler._resolveUserId(chatId=100, userIdentifier="12345")
+
+        assert result == 12345
+        mockChatUsers.getChatUserByUsername.assert_not_called()
+
+    async def test_numericStringWithAtPrefix_returnsIntWithoutDbCall(self, testDatabase: Database) -> None:
+        """``"@12345"`` strips ``@`` then resolves as numeric user_id (no DB call).
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        mockChatUsers = Mock()
+        mockChatUsers.getChatUserByUsername = AsyncMock()
+        handler.db.chatUsers = mockChatUsers  # type: ignore[assignment]
+
+        result = await handler._resolveUserId(chatId=100, userIdentifier="@12345")
+
+        assert result == 12345
+        mockChatUsers.getChatUserByUsername.assert_not_called()
+
+    async def test_loginWithAt_resolvesViaDb(self, testDatabase: Database) -> None:
+        """Login with ``@`` prefix → DB lookup with ``@``-prefixed username.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        mockChatUsers = Mock()
+        mockChatUsers.getChatUserByUsername = AsyncMock(return_value={"user_id": 999})
+        handler.db.chatUsers = mockChatUsers  # type: ignore[assignment]
+
+        result = await handler._resolveUserId(chatId=100, userIdentifier="@alice")
+
+        assert result == 999
+        mockChatUsers.getChatUserByUsername.assert_awaited_once_with(chatId=100, username="@alice")
+
+    async def test_loginWithoutAt_prependsAtForDbLookup(self, testDatabase: Database) -> None:
+        """Login without ``@`` → ``@`` is prepended before DB lookup.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        mockChatUsers = Mock()
+        mockChatUsers.getChatUserByUsername = AsyncMock(return_value={"user_id": 999})
+        handler.db.chatUsers = mockChatUsers  # type: ignore[assignment]
+
+        result = await handler._resolveUserId(chatId=100, userIdentifier="alice")
+
+        assert result == 999
+        mockChatUsers.getChatUserByUsername.assert_awaited_once_with(chatId=100, username="@alice")
+
+    async def test_nonExistentLogin_returnsNone(self, testDatabase: Database) -> None:
+        """Login not in DB → ``None``.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        mockChatUsers = Mock()
+        mockChatUsers.getChatUserByUsername = AsyncMock(return_value=None)
+        handler.db.chatUsers = mockChatUsers  # type: ignore[assignment]
+
+        result = await handler._resolveUserId(chatId=100, userIdentifier="ghost")
+
+        assert result is None
+        mockChatUsers.getChatUserByUsername.assert_awaited_once_with(chatId=100, username="@ghost")
+
+    async def test_emptyInput_returnsNone(self, testDatabase: Database) -> None:
+        """Empty string → ``None`` (no DB call).
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        mockChatUsers = Mock()
+        mockChatUsers.getChatUserByUsername = AsyncMock()
+        handler.db.chatUsers = mockChatUsers  # type: ignore[assignment]
+
+        result = await handler._resolveUserId(chatId=100, userIdentifier="")
+
+        assert result is None
+        mockChatUsers.getChatUserByUsername.assert_not_called()
+
+    async def test_noneInput_returnsNone(self, testDatabase: Database) -> None:
+        """``None`` → ``None`` (no DB call).
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        mockChatUsers = Mock()
+        mockChatUsers.getChatUserByUsername = AsyncMock()
+        handler.db.chatUsers = mockChatUsers  # type: ignore[assignment]
+
+        result = await handler._resolveUserId(chatId=100, userIdentifier=None)
+
+        assert result is None
+        mockChatUsers.getChatUserByUsername.assert_not_called()
+
+    async def test_dbException_returnsNone(self, testDatabase: Database) -> None:
+        """DB exception → ``None`` (method never raises).
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        mockChatUsers = Mock()
+        mockChatUsers.getChatUserByUsername = AsyncMock(side_effect=RuntimeError("DB down"))
+        handler.db.chatUsers = mockChatUsers  # type: ignore[assignment]
+
+        result = await handler._resolveUserId(chatId=100, userIdentifier="alice")
+
+        assert result is None
+
+    async def test_unicodeSuperscript_returnsNone(self, testDatabase: Database) -> None:
+        """Unicode "other digit" value (``"²"`` U+00B2) → ``None`` (never raises).
+
+        Regression for the ``isdigit()`` → ``isdecimal()`` fix: ``str.isdigit()``
+        admits superscripts such as ``"²"`` that ``int()`` cannot parse, so the
+        old ``clean.isdigit()`` check routed them into ``int(clean)`` and raised
+        ``ValueError`` — breaking the never-raises contract of the LLM tools
+        (notably ``search_messages``) whose call paths are unguarded by
+        try/except. With ``clean.isdecimal()`` the value is NOT a decimal, so it
+        falls through to the login path; the DB lookup finds no match and
+        ``None`` is returned. A plain decimal still resolves directly — see
+        :meth:`test_numericString_returnsIntWithoutDbCall`.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+        mockChatUsers = Mock()
+        mockChatUsers.getChatUserByUsername = AsyncMock(return_value=None)
+        handler.db.chatUsers = mockChatUsers  # type: ignore[assignment]
+
+        # Must not raise (a ValueError here means isdigit() was used instead of
+        # isdecimal()).
+        result = await handler._resolveUserId(chatId=100, userIdentifier="²")
+
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# getThreadByMessageForLLM — permanent-memory dedup across first-N + tail (I6)
+# ---------------------------------------------------------------------------
+
+
+class TestGetThreadByMessageForLLMMemoryDedup:
+    """Regression tests for permanent-memory dedup across the pinned/tail blocks.
+
+    Bug (I6): in :meth:`BaseBotHandler.getThreadByMessageForLLM` the first-N
+    (pinned) block rendered its messages against a throwaway
+    ``excludeMemoryIds=set()`` while the tail loop initialised a SEPARATE
+    accumulator. Because the pinned block's memory IDs never propagated into
+    the tail's set, a permanent memory shared between a pinned message and a
+    tail message (the common case — same user, same thread) was injected TWICE
+    into the LLM context. Memory injection is per-message (each
+    :class:`EnsuredMessage` resolves its own ``metadata["memories"]`` compact
+    IDs via ``cache.getMemoriesByIds`` at render time), so this is a real
+    double injection.
+
+    The fix shares a single ``excludedMemoryIds`` accumulator across both
+    blocks: the pinned block still renders all of its memories (its exclusion
+    set is empty when it renders) and then seeds the set so the tail loop
+    skips the already-emitted IDs.
+
+    The handler is exercised through :class:`UserMemoriesHandler` (a concrete
+    :class:`BaseBotHandler` subclass). :class:`EnsuredMessage` uses
+    ``__slots__``, so the per-row behaviour is driven by patching
+    ``EnsuredMessage.fromDBChatMessage`` at the CLASS level to return
+    controlled messages carrying a shared permanent memory ID.
+    """
+
+    _CHAT_ID = 100
+    """Recipient chat id used by every constructed message/row."""
+
+    _THREAD_ID = 0
+    """Thread id (``DEFAULT_THREAD_ID``) used by every constructed row."""
+
+    _ROOT_ID = 1001
+    """Message id of the root (pinned, first-N) message."""
+
+    _TAIL_ID = 1002
+    """Message id of the tail message (the one ``getThreadByMessageForLLM`` is called for)."""
+
+    _SHARED_MEM_ID = "mem-shared"
+    """Compact permanent-memory id referenced by BOTH the pinned root and the tail."""
+
+    _MEM_CONTENT = "UNIQUE_MEMORY_CONTENT_42"
+    """Distinctive content of the shared memory; asserted to appear exactly once."""
+
+    @classmethod
+    def _makeMsg(cls, *, messageId: int, text: str) -> EnsuredMessage:
+        """Build a real :class:`EnsuredMessage` for one thread row.
+
+        Sender/recipient are identical across rows (same user, same chat) so a
+        memory injected for that user is shared. No media is attached, so
+        ``updateMediaContent`` early-returns without ever touching ``db``.
+
+        Args:
+            messageId: Row message id (root or tail).
+            text: Message body text.
+
+        Returns:
+            A freshly constructed :class:`EnsuredMessage` with ``threadId`` set.
+        """
+        msg = EnsuredMessage(
+            sender=MessageSender(id=7, name="Alice", username="@alice"),
+            recipient=MessageRecipient(id=cls._CHAT_ID, chatType=ChatType.PRIVATE),
+            messageId=messageId,
+            date=datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            messageText=text,
+        )
+        msg.threadId = cls._THREAD_ID
+        return msg

@@ -132,7 +132,7 @@ Subagents available via `task` (recon, investigation, review — never the write
 - **`code-reviewer`** — after significant implementation or refactor.
 - **`architect`** — when the work is genuinely cross-cutting and needs a design pass first.
 
-For Gromozeka-specific gotchas (`MessageId` class wrapping `int|str` (use `.asInt()`/`.asStr()`), `DEFAULT_THREAD_ID = 0` not `None`, `getChatSettings()` returns `(value, updatedBy)` tuples, chat type from sign of `chatId`), consult `docs/llm/tasks.md` §3 before assuming.
+For Gromozeka-specific gotchas (`MessageId` class wrapping `int|str` (use `.asInt()`/`.asStr()`), `DEFAULT_THREAD_ID = 0` not `None`, `getChatSettings()` return shape is layer-dependent — handler/cache return `Dict[ChatSettingsKey, ChatSettingsValue]` (use `.toBool()`/`.toStr()`/etc.), DB-repo returns `(value, updatedBy)` tuples where `[0]` indexing is correct; chat type from sign of `chatId`), consult `docs/llm/tasks.md` §3 before assuming.
 
 ## Done Criteria
 

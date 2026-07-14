@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from internal.bot.common.handlers.sandbox import SandboxHandler
+from internal.bot.constants import MAX_SANDBOX_SEND_BYTES
 from internal.bot.models import (
     BotProvider,
     ChatSettingsKey,
@@ -1174,8 +1175,6 @@ async def test_sandbox_send_file_mime_detection(mockSandboxManager: AsyncMock) -
 
 async def test_sandbox_send_file_size_limit(mockSandboxManager: AsyncMock) -> None:
     """Test _llmToolSandboxSendFile rejects files exceeding MAX_SANDBOX_SEND_BYTES."""
-
-    from internal.bot.common.handlers.sandbox import MAX_SANDBOX_SEND_BYTES
 
     handler, mocks = _makeHandler()
     em = _makeEnsuredMessage()

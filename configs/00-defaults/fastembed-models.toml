@@ -35,3 +35,21 @@ support_embeddings = true
 embedding_dimensions = 384
 tier = "free"
 
+[models.models."local/sentence-transformers/paraphrase-multilingual-mpnet-base-v2"]
+# sentence-transformers/paraphrase-multilingual-mpnet-base-v2
+# 768
+# 1.0 GB
+# Text embeddings, Unimodal (text), Multilingual (~50 languages), 384 input tokens truncation, Prefixes for queries/documents: not necessary, 2021 year.
+provider = "fastembed"
+model_id = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+model_version = "latest"
+temperature = 0.0
+context = 384
+support_tools = false
+support_text = false
+support_images = false
+support_structured_output = false
+support_embeddings = true
+embedding_dimensions = 768
+tier = "free"
+

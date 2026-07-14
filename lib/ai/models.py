@@ -455,6 +455,8 @@ class ModelMessage:
         {'role': 'user', 'content': 'What is the weather in London?'}
     """
 
+    __slots__ = ("role", "content", "contentKey", "toolCalls", "toolCallId", "weight", "source")
+
     def __init__(
         self,
         role: str = "user",
@@ -463,6 +465,7 @@ class ModelMessage:
         toolCalls: List[LLMToolCall] = [],
         toolCallId: Optional[str] = None,
         weight: Optional[int] = None,
+        source: Optional[Any] = None,
     ):
         """Initialize a model message.
 
@@ -473,6 +476,7 @@ class ModelMessage:
             toolCalls: List of tool calls requested by the assistant (default: []).
             toolCallId: ID of the tool call this message is responding to (default: None).
             weight: Optional weight for the message (default: None).
+            source: Optional source message (default: None).
 
         Returns:
             None
@@ -483,6 +487,7 @@ class ModelMessage:
         self.toolCalls = toolCalls
         self.toolCallId = toolCallId
         self.weight = weight
+        self.source = source
 
     @classmethod
     def fromDict(cls, d: Dict[str, Any]) -> "ModelMessage":

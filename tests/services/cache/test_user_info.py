@@ -24,7 +24,7 @@ Test areas:
 * cold-write posture of ``updateUserMetadata`` (cache left cold)
 * nested-write safety (option (i) dumb primitives do not reintroduce the
   shallow-merge trap when callers compose correctly)
-* ``invalidateChatUser`` drops ONLY ``userInfo``, preserving the ``data`` blob
+* ``invalidateChatUser`` drops ONLY ``userInfo``, preserving ``permanentMemories``
 """
 
 import json
@@ -449,7 +449,7 @@ async def test_nestedWriteSafety_shallowMergeDoesNotWipeNested(
     # 1) _persistMemoryEntry-style nested write.
     metadata = await cacheService.getUserMetadata(chatId=1, userId=2)
     threadId = 5
-    metadata.setdefault("memoryRefinement", {})[str(threadId)] = {"summary": "hello"}
+    metadata.setdefault("memoryRefinement", {})[str(threadId)] = {"lastProcessedMessageId": "msg-123"}
     await cacheService.updateUserMetadata(chatId=1, userId=2, metadata=metadata)
 
     # 2) setUserMetadata(isUpdate=True)-style shallow top-level merge.
@@ -462,7 +462,7 @@ async def test_nestedWriteSafety_shallowMergeDoesNotWipeNested(
     assert final.get("isSpammer") is True
     refinement = final.get("memoryRefinement") or {}
     entry = refinement.get(str(threadId)) or {}
-    assert entry.get("summary") == "hello"
+    assert entry.get("lastProcessedMessageId") == "msg-123"
 
 
 # ---------------------------------------------------------------------------
@@ -470,27 +470,31 @@ async def test_nestedWriteSafety_shallowMergeDoesNotWipeNested(
 # ---------------------------------------------------------------------------
 
 
-async def test_invalidateChatUser_dropsOnlyUserInfoPreservingData(
-    testDatabase: Database, cacheService: CacheService
-) -> None:
-    """``invalidateChatUser`` drops only ``userInfo``, preserving the ``data`` blob.
+async def test_invalidateChatUser_dropsOnlyUserInfo(testDatabase: Database, cacheService: CacheService) -> None:
+    """``invalidateChatUser`` drops only ``userInfo``, preserving sibling cached fields.
+
+    The legacy ``data`` field was retired by the user_memories
+    migration, so this now asserts the narrower contract: ``userInfo`` is
+    invalidated while a sibling cached field (``permanentMemories``) survives.
 
     Args:
         testDatabase: Real in-memory database.
         cacheService: Cache wired to *testDatabase*.
     """
     await _seedRow(testDatabase, chatId=1, userId=2, username="bob", fullName="Bob")
-    # Populate the user_data blob (the ``data`` field) via setChatUserData.
-    await cacheService.setChatUserData(chatId=1, userId=2, key="k", value="v")
     # Warm userInfo.
     await cacheService.getChatUser(chatId=1, userId=2)
+    # Populate a sibling field (permanentMemories) under the same user key.
+    await cacheService.getChatUserPermanentMemories(chatId=1, userId=2, threadId=0)
 
     # Invalidate userInfo only.
     cacheService.invalidateChatUser(chatId=1, userId=2)
 
-    # The data blob survives.
-    userData = await cacheService.getChatUserData(chatId=1, userId=2)
-    assert userData.get("k") == "v"
+    # userInfo was dropped, but the permanentMemories sibling survived.
+    userKey = cacheService._getChatUserKey(1, 2)
+    cached = cacheService.chatUsers.get(userKey, {})
+    assert "userInfo" not in cached
+    assert "permanentMemories" in cached
 
     # userInfo was dropped -> next getChatUser re-fetches from DB.
     original = testDatabase.chatUsers.getChatUser

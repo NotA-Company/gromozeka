@@ -24,6 +24,7 @@ import unittest
 
 from lib.rate_limiter.manager import RateLimiterManager
 from lib.rate_limiter.sliding_window import QueueConfig, SlidingWindowRateLimiter
+from tests.lib.rate_limiter.conftest import installFakeClock
 
 
 class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
@@ -41,11 +42,13 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
         """Set up test fixtures before each test.
 
         Initializes a clean RateLimiterManager instance and ensures it's
-        in a fresh state by destroying any existing state.
+        in a fresh state by destroying any existing state. Also installs a
+        fake clock so the test fast-forwards time instead of blocking.
         """
         # Get clean manager instance
         self.manager = RateLimiterManager.getInstance()
         await self.manager.destroy()
+        self.clockNow = installFakeClock(self)
 
     async def asyncTearDown(self) -> None:
         """Clean up after each test.
@@ -115,12 +118,14 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
                 await self.manager.applyLimit("postgres_queries")
 
             db_elapsed = time.time() - start_time
+            # Fake-clock: ~0.0 (db limiter not exceeded); guards against spurious sleeps.
             self.assertLess(db_elapsed, 0.1)  # Should be immediate
 
             # Test unmapped queue uses default
             start_time = time.time()
             await self.manager.applyLimit("unknown_queue")
             default_elapsed = time.time() - start_time
+            # Fake-clock: ~0.0 (first request on a fresh default queue).
             self.assertLess(default_elapsed, 0.1)  # Should be immediate
 
         finally:
@@ -167,6 +172,7 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
             # Strict should be delayed, lenient should be immediate
             self.assertGreater(strict_elapsed, lenient_elapsed)
             self.assertGreaterEqual(strict_elapsed, 0.8)
+            # Fake-clock: ~0.0 (lenient limiter not exceeded); guards against spurious sleeps.
             self.assertLess(lenient_elapsed, 0.1)
 
         finally:
@@ -225,7 +231,7 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
 
             # Should complete in reasonable time (parallel processing)
             self.assertLess(total_elapsed, 5.0)
-            self.assertGreater(total_elapsed, 2.0)  # Some rate limiting expected
+            self.assertGreaterEqual(total_elapsed, 2.0)  # Some rate limiting expected
 
         finally:
             await limiter1.destroy()
@@ -375,12 +381,14 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
                 await self.manager.applyLimit("cache_set")
 
             cache_elapsed = time.time() - start_time
+            # Fake-clock: ~0.0 (cache limiter not exceeded); guards against spurious sleeps.
             self.assertLess(cache_elapsed, 1.0)  # Should be immediate
 
             # Default operations should use search limiter
             start_time = time.time()
             await self.manager.applyLimit("default_search")
             default_elapsed = time.time() - start_time
+            # Fake-clock: ~0.0 (first request on the default/search queue).
             self.assertLess(default_elapsed, 0.1)  # First request should be immediate
 
         finally:
@@ -438,7 +446,7 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
             total_elapsed = time.time() - start_time
 
             # Should complete but with rate limiting delays
-            self.assertGreater(total_elapsed, 2.0)  # Should have some delays
+            self.assertGreaterEqual(total_elapsed, 2.0)  # Should have some delays
             self.assertLess(total_elapsed, 10.0)  # But not too long
 
             # Verify all limiters were used
@@ -560,6 +568,7 @@ class TestRateLimiterIntegration(unittest.IsolatedAsyncioTestCase):
         elapsed = time.time() - start_time
 
         # Should complete quickly
+        # Fake-clock: ~0.0 (all 50 requests within the 100 limit, no sleep fires).
         self.assertLess(elapsed, 1.0)
 
         # Verify statistics
@@ -585,10 +594,12 @@ class TestRateLimiterRealWorldScenarios(unittest.IsolatedAsyncioTestCase):
         """Set up test fixtures before each test.
 
         Initializes a clean RateLimiterManager instance and ensures it's
-        in a fresh state by destroying any existing state.
+        in a fresh state by destroying any existing state. Also installs a
+        fake clock so the test fast-forwards time instead of blocking.
         """
         self.manager = RateLimiterManager.getInstance()
         await self.manager.destroy()
+        self.clockNow = installFakeClock(self)
 
     async def asyncTearDown(self) -> None:
         """Clean up after each test.
@@ -653,6 +664,7 @@ class TestRateLimiterRealWorldScenarios(unittest.IsolatedAsyncioTestCase):
             # Verify different performance characteristics
             self.assertGreater(public_elapsed, premium_elapsed)
             # Internal and premium should both be fast (within limits), so we just check they're reasonable
+            # Fake-clock: both ~0.0 (neither limiter exceeded); guards against spurious sleeps.
             self.assertLess(premium_elapsed, 1.0)
             self.assertLess(internal_elapsed, 1.0)
 

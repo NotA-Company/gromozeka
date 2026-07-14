@@ -23,7 +23,11 @@ import magic
 
 from internal.bot.common.models import UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
-from internal.bot.constants import ToolName
+from internal.bot.constants import (
+    MAX_SANDBOX_READ_FILE_BYTES,
+    MAX_SANDBOX_SEND_BYTES,
+    ToolName,
+)
 from internal.bot.models import (
     BotProvider,
     ChatSettingsKey,
@@ -53,9 +57,6 @@ from lib.sandbox.types import NetworkPolicy
 from .base import BaseBotHandler
 
 logger = logging.getLogger(__name__)
-
-MAX_SANDBOX_READ_FILE_BYTES = 65536  # 64 KB
-MAX_SANDBOX_SEND_BYTES = 20 * 1024 * 1024  # 20 MB
 
 
 class SandboxHandler(BaseBotHandler):

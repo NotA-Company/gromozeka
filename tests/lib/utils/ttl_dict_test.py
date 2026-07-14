@@ -4,8 +4,48 @@ Test suite for lib/utils/ttl_dict.py
 
 import time
 import unittest
+from contextlib import contextmanager
+from typing import Iterator, List
+from unittest import mock
 
 from lib.utils.ttl_dict import TTLDict
+
+
+@contextmanager
+def fakeClock() -> Iterator[List[float]]:
+    """Controllable fake clock so TTL/expiry assertions run without real waiting.
+
+    Patches ``time.time`` and ``time.sleep`` for the duration of the ``with``
+    block: ``time.time()`` returns the value of a single mutable epoch-seconds
+    holder, and ``time.sleep(seconds)`` advances that holder by ``seconds``.
+    The production :class:`TTLDict` resolves expiry by calling ``time.time()``
+    (it never calls ``time.sleep``), so a test's ``time.sleep(N)`` inside this
+    block fast-forwards the clock by ``N`` seconds instead of blocking.
+
+    Why a context manager rather than a pytest fixture: the tests in this module
+    are ``unittest.TestCase`` methods, for which pytest cannot inject fixture
+    return values via test-function parameters. The context manager is the
+    faithful, per-test-scoped equivalent.
+
+    Yields:
+        List[float]: a one-element mutable list ``[now]`` holding the current
+        fake epoch seconds. Tests normally do not need to touch it directly —
+        ``time.sleep(N)`` already advances it — but may write ``now[0] += d``
+        to advance the clock by an arbitrary delta.
+    """
+    now: List[float] = [time.time()]
+
+    def fakeTime() -> float:
+        return now[0]
+
+    def fakeSleep(seconds: float) -> None:
+        now[0] += seconds
+
+    with (
+        mock.patch("time.time", fakeTime),
+        mock.patch("time.sleep", fakeSleep),
+    ):
+        yield now
 
 
 class TestTTLDictBasic(unittest.TestCase):
@@ -369,55 +409,59 @@ class TestTTLDictExpiration(unittest.TestCase):
 
     def test_gc_removes_expired_entries(self) -> None:
         """Test gc removes expired entries"""
-        d = TTLDict[str, int]()
-        d.setDefaultTTL(1)
-        d["a"] = 1
-        d["b"] = 2
-        time.sleep(2)
-        removed = d.gc(force=True)
-        self.assertEqual(removed, 2)
-        self.assertEqual(len(d), 0)
-        self.assertNotIn("a", d)
-        self.assertNotIn("b", d)
+        with fakeClock():
+            d = TTLDict[str, int]()
+            d.setDefaultTTL(1)
+            d["a"] = 1
+            d["b"] = 2
+            time.sleep(2)
+            removed = d.gc(force=True)
+            self.assertEqual(removed, 2)
+            self.assertEqual(len(d), 0)
+            self.assertNotIn("a", d)
+            self.assertNotIn("b", d)
 
     def test_expired_entries_accessible_until_gc(self) -> None:
         """Test expired entries are accessible until GC runs"""
-        d = TTLDict[str, int]()
-        d.set("a", 1, ttl=1)
-        d.set("b", 2, ttl=1)
-        # Immediately, entries should be accessible
-        self.assertEqual(d["a"], 1)
-        self.assertEqual(d["b"], 2)
-        # Wait for expiration
-        time.sleep(2)
-        # Entries should still be accessible before GC
-        self.assertEqual(d["a"], 1)
-        self.assertEqual(d["b"], 2)
-        # Run GC
-        d.gc(force=True)
-        # Now they should be gone
-        self.assertNotIn("a", d)
-        self.assertNotIn("b", d)
+        with fakeClock():
+            d = TTLDict[str, int]()
+            d.set("a", 1, ttl=1)
+            d.set("b", 2, ttl=1)
+            # Immediately, entries should be accessible
+            self.assertEqual(d["a"], 1)
+            self.assertEqual(d["b"], 2)
+            # Wait for expiration
+            time.sleep(2)
+            # Entries should still be accessible before GC
+            self.assertEqual(d["a"], 1)
+            self.assertEqual(d["b"], 2)
+            # Run GC
+            d.gc(force=True)
+            # Now they should be gone
+            self.assertNotIn("a", d)
+            self.assertNotIn("b", d)
 
     def test_none_ttl_never_expires(self) -> None:
         """Test entries with ttl=None never expire"""
-        d = TTLDict[str, int]()
-        d["a"] = 1  # No default TTL set
-        time.sleep(2)
-        d.gc(force=True)
-        self.assertIn("a", d)
-        self.assertEqual(d["a"], 1)
+        with fakeClock():
+            d = TTLDict[str, int]()
+            d["a"] = 1  # No default TTL set
+            time.sleep(2)
+            d.gc(force=True)
+            self.assertIn("a", d)
+            self.assertEqual(d["a"], 1)
 
     def test_default_ttl_none_with_custom_ttl(self) -> None:
         """Test default TTL=None with custom TTL works"""
-        d = TTLDict[str, int]()
-        d.setDefaultTTL(None)
-        d["a"] = 1  # No expiration
-        d.set("b", 2, ttl=1)  # Custom TTL
-        time.sleep(2)
-        d.gc(force=True)
-        self.assertIn("a", d)
-        self.assertNotIn("b", d)
+        with fakeClock():
+            d = TTLDict[str, int]()
+            d.setDefaultTTL(None)
+            d["a"] = 1  # No expiration
+            d.set("b", 2, ttl=1)  # Custom TTL
+            time.sleep(2)
+            d.gc(force=True)
+            self.assertIn("a", d)
+            self.assertNotIn("b", d)
 
     def test_set_ttl_none_clears_previous_expiration(self) -> None:
         """Test that rewriting a key with ttl=None clears the old expiration.
@@ -426,17 +470,18 @@ class TestTTLDictExpiration(unittest.TestCase):
         expiration timestamp in _expirations, causing the entry to expire at
         the original deadline despite the caller's intent to make it non-expiring.
         """
-        d = TTLDict[str, int]()
-        # Set a key with a short TTL
-        d.set("key", 1, ttl=1)
-        # Overwrite the same key with ttl=None — should clear the old expiration
-        d.set("key", 2, ttl=None)
-        # Sleep past the original 1-second deadline
-        time.sleep(2)
-        # Force GC — the entry must still exist because ttl=None cleared the expiration
-        d.gc(force=True)
-        self.assertIn("key", d)
-        self.assertEqual(d["key"], 2)
+        with fakeClock():
+            d = TTLDict[str, int]()
+            # Set a key with a short TTL
+            d.set("key", 1, ttl=1)
+            # Overwrite the same key with ttl=None — should clear the old expiration
+            d.set("key", 2, ttl=None)
+            # Sleep past the original 1-second deadline
+            time.sleep(2)
+            # Force GC — the entry must still exist because ttl=None cleared the expiration
+            d.gc(force=True)
+            self.assertIn("key", d)
+            self.assertEqual(d["key"], 2)
 
     def test_set_default_ttl_none_clears_previous_expiration(self) -> None:
         """Test that rewriting a key with defaultTTL=None clears the old expiration.
@@ -444,58 +489,62 @@ class TestTTLDictExpiration(unittest.TestCase):
         When defaultTTL is None and set() is called without an explicit ttl,
         actualTTL resolves to None, which should also clear any previous expiration.
         """
-        d = TTLDict[str, int]()
-        # Set a key with a short TTL
-        d.set("key", 1, ttl=1)
-        # Overwrite using defaultTTL=None (no explicit ttl argument)
-        d.setDefaultTTL(None)
-        d.set("key", 2)
-        # Sleep past the original 1-second deadline
-        time.sleep(2)
-        d.gc(force=True)
-        self.assertIn("key", d)
-        self.assertEqual(d["key"], 2)
+        with fakeClock():
+            d = TTLDict[str, int]()
+            # Set a key with a short TTL
+            d.set("key", 1, ttl=1)
+            # Overwrite using defaultTTL=None (no explicit ttl argument)
+            d.setDefaultTTL(None)
+            d.set("key", 2)
+            # Sleep past the original 1-second deadline
+            time.sleep(2)
+            d.gc(force=True)
+            self.assertIn("key", d)
+            self.assertEqual(d["key"], 2)
 
     def test_mixed_ttl_values(self) -> None:
         """Test mixing different TTL values"""
-        d = TTLDict[str, int]()
-        d.setDefaultTTL(2)
-        d["a"] = 1  # Default 2s
-        d.set("b", 2, ttl=1)  # Custom 1s
-        d.set("c", 3, ttl=None)  # Never expires
-        time.sleep(1.5)
-        d.gc(force=True)
-        # b should be expired, a and c should remain
-        self.assertIn("a", d)
-        self.assertNotIn("b", d)
-        self.assertIn("c", d)
-        time.sleep(1)
-        d.gc(force=True)
-        # a should now be expired too
-        self.assertNotIn("a", d)
-        self.assertIn("c", d)
+        with fakeClock():
+            d = TTLDict[str, int]()
+            d.setDefaultTTL(2)
+            d["a"] = 1  # Default 2s
+            d.set("b", 2, ttl=1)  # Custom 1s
+            d.set("c", 3, ttl=None)  # Never expires
+            time.sleep(1.5)
+            d.gc(force=True)
+            # b should be expired, a and c should remain
+            self.assertIn("a", d)
+            self.assertNotIn("b", d)
+            self.assertIn("c", d)
+            time.sleep(1)
+            d.gc(force=True)
+            # a should now be expired too
+            self.assertNotIn("a", d)
+            self.assertIn("c", d)
 
     def test_update_preserves_expiration_state(self) -> None:
         """Test that expired entries are not resurrected by update"""
-        d = TTLDict[str, int]()
-        d.set("a", 1, ttl=1)
-        time.sleep(2)
-        d.gc(force=True)
-        self.assertNotIn("a", d)
-        d.update({"a": 2})
-        self.assertEqual(d["a"], 2)
+        with fakeClock():
+            d = TTLDict[str, int]()
+            d.set("a", 1, ttl=1)
+            time.sleep(2)
+            d.gc(force=True)
+            self.assertNotIn("a", d)
+            d.update({"a": 2})
+            self.assertEqual(d["a"], 2)
 
     def test_gc_called_after_set(self) -> None:
         """Test that gc is called after every set operation"""
-        d = TTLDict[str, int]()
-        d.setGCTimeout(0)  # No timeout, always run
-        d.setDefaultTTL(1)
-        d["a"] = 1
-        time.sleep(2)
-        # Set operation should trigger GC
-        d["b"] = 2
-        # a should be removed by now
-        self.assertNotIn("a", d)
+        with fakeClock():
+            d = TTLDict[str, int]()
+            d.setGCTimeout(0)  # No timeout, always run
+            d.setDefaultTTL(1)
+            d["a"] = 1
+            time.sleep(2)
+            # Set operation should trigger GC
+            d["b"] = 2
+            # a should be removed by now
+            self.assertNotIn("a", d)
 
 
 class TestTTLDictThreadSafety(unittest.TestCase):
@@ -588,41 +637,44 @@ class TestTTLDictEdgeCases(unittest.TestCase):
 
     def test_setdefault_with_existing_expired(self) -> None:
         """Test setdefault with expired key"""
-        d = TTLDict[str, int]()
-        d.set("a", 1, ttl=1)
-        time.sleep(2)
-        d.gc(force=True)
-        # Key should be gone
-        self.assertNotIn("a", d)
-        # setdefault should work
-        result = d.setdefault("a", 42)
-        self.assertEqual(result, 42)
-        self.assertEqual(d["a"], 42)
+        with fakeClock():
+            d = TTLDict[str, int]()
+            d.set("a", 1, ttl=1)
+            time.sleep(2)
+            d.gc(force=True)
+            # Key should be gone
+            self.assertNotIn("a", d)
+            # setdefault should work
+            result = d.setdefault("a", 42)
+            self.assertEqual(result, 42)
+            self.assertEqual(d["a"], 42)
 
     def test_pop_expired_key(self) -> None:
         """Test pop on expired key"""
-        d = TTLDict[str, int]()
-        d.set("a", 1, ttl=1)
-        time.sleep(2)
-        d.gc(force=True)
-        # Key should be gone
-        self.assertNotIn("a", d)
-        # pop should return default
-        self.assertEqual(d.pop("a", 42), 42)
+        with fakeClock():
+            d = TTLDict[str, int]()
+            d.set("a", 1, ttl=1)
+            time.sleep(2)
+            d.gc(force=True)
+            # Key should be gone
+            self.assertNotIn("a", d)
+            # pop should return default
+            self.assertEqual(d.pop("a", 42), 42)
 
     def test_iter_after_gc(self) -> None:
         """Test iteration works correctly after GC"""
-        d = TTLDict[str, int]()
-        d.setDefaultTTL(1)
-        d["a"] = 1
-        d["b"] = 2
-        d.set("c", 3, ttl=None)
-        time.sleep(2)
-        d.gc(force=True)
-        # Only c should remain
-        items = list(d.items())
-        self.assertEqual(len(items), 1)
-        self.assertEqual(items[0], ("c", 3))
+        with fakeClock():
+            d = TTLDict[str, int]()
+            d.setDefaultTTL(1)
+            d["a"] = 1
+            d["b"] = 2
+            d.set("c", 3, ttl=None)
+            time.sleep(2)
+            d.gc(force=True)
+            # Only c should remain
+            items = list(d.items())
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0], ("c", 3))
 
 
 if __name__ == "__main__":

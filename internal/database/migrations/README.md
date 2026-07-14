@@ -679,11 +679,6 @@ Potential features for future versions, dood!
 - [`internal/database/providers/base.py`](../providers/base.py:1) - SQL provider interface
 - [`internal/database/utils.py`](../utils.py:1) - Database utilities
 
-### Implementation Plan
-
-- [`docs/reports/sql-portability-implementation-summary.md`](../../../docs/reports/sql-portability-implementation-summary.md:1) - SQL portability implementation
-- [`docs/reports/sql-portability-implementation-status.md`](../../../docs/reports/sql-portability-implementation-status.md:1) - Implementation status
-
 ### External Resources
 
 - [SQLite Documentation](https://www.sqlite.org/docs.html)

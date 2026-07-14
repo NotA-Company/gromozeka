@@ -1,13 +1,56 @@
 # User Memory Refinement — Task Memory
 
-Durable implementation notes for the background per-`(chat, user, thread)` memory-refinement subsystem. Implemented 2026-07-04 from [`docs/plans/memory-refine-plan-v1.md`](../../plans/memory-refine-plan-v1.md) (status line there updated to IMPLEMENTED). Owner handler: `UserDataHandler` (`internal/bot/common/handlers/user_data.py`).
+> **⚠ SUPERSEDED (2026-07-07) by the unified user-memories system.** This
+> doc describes the **rolling-bio** subsystem that was replaced. The
+> canonical durable doc is now
+> [`user-memories.md`](user-memories.md); the implementation spec is
+> [`docs/plans/user-memories-v1.md`](../../plans/user-memories-v1.md).
+>
+> **What is superseded (described below as LIVE behaviour — no longer
+> shipped):**
+> - The rolling-bio **summary** artefact and its injection as
+>   `EnsuredMessage.userSummary` (via `applyUserMetadata`, serialised by
+>   `formatForLLM` under the `userSummary` key) — removed entirely in
+>   Phase 4b of the user-memories plan (§9.3). Replaced by the structured
+>   `<user-memories>` block (`_buildMemoriesBlock`).
+> - The `_runRefinement` write of the `summary` blob — `_runRefinement` now
+>   persists only the message cursor; memories are authored live via the
+>   `add_memory` / `delete_memory` / `search_memories` tools.
+> - The `add_user_data` / `delete_user_data` LLM tools — retired.
+>
+> **What is still accurate and was adapted for the new system** (the
+> accounting / cron / locking / cursor machinery is unchanged and still
+> governs `_runRefinement`):
+> - The `_dtCronJob` (60s) + `_accounting` counter (credit-consumed reset) +
+>   single global `_refineLock` + online top-K due-list selection —
+>   "Concurrency model" below is accurate.
+> - The message cursor (`lastProcessedMessageId` /
+>   `lastProcessedMessageDate`) persisted to
+>   `chat_users.metadata.memoryRefinement[str(threadId)]` via the
+>   read-modify-write + `chatUserMetadataLock()` pattern — still used
+>   (cursor-only now; the `summary` key is gone).
+> - The nested-metadata-write invariant + ADR-014/015 lock ordering — still
+>   apply (see "CRITICAL gotcha — nested metadata writes").
+> - `_makeSyntheticEnsuredMessage` — reused by the new tools.
+>
+> This file is retained for historical context. Do not implement from it;
+> implement from [`user-memories.md`](user-memories.md).
+>
+> **Note:** the `<user-memories>` block referenced below was itself
+> superseded by centralized preprocessor injection
+> (`MessagePreprocessorHandler.injectMemories`) — see
+> [`user-memories.md`](user-memories.md) for the current architecture.
+
+Durable implementation notes for the background per-`(chat, user, thread)` memory-refinement subsystem. Implemented 2026-07-04 from [`docs/plans/memory-refine-plan-v1.md`](../../plans/memory-refine-plan-v1.md) (status line there updated to IMPLEMENTED). Owner handler: ~~`UserDataHandler` (`internal/bot/common/handlers/user_data.py`)~~ — file deleted; class renamed to `UserMemoriesHandler` in [`internal/bot/common/handlers/user_memories.py`](/internal/bot/common/handlers/user_memories.py).
 
 ## Subsystem at a glance
 
+> **[SUPERSEDED — see banner]** The handler, file, and tool names below describe the rolling-bio system that was removed; kept as a historical record.
+
 - Every incoming message increments an in-memory `UserDataHandler._accounting[(chatId, userId, threadId)]` counter (gated by the per-chat `MEMORY_REFINEMENT_ENABLED` setting), at the very top of `newMessageHandler`, before any other gate.
 - A 60s `CRON_JOB` (`_dtCronJob`) scans the counter; when a user crosses the count threshold (`5`) OR the time threshold (6h since the in-memory `_lastRefinedTS`), it runs `_runRefinement`. All `[user-memory]` config is read ONCE in `__init__` and cached as instance attributes (`_memoryRefineEnabled`, `_memoryCountThreshold`, `_memoryTimeThresholdSeconds`, `_memoryMinMessagesToRefine`, `_memoryMaxMessagesPerRun`, `_memoryMaxRefinesPerTick`); the cron hot path and `_runRefinement` perform NO `configManager.get(...)` calls.
-- `_runRefinement` fetches the user's recent messages via `getChatMessagesSince` (new `userId` filter), renders them, and calls `LLMService.generateTextViaLLM` with `chatId=None` (skips rate-limiting) and a per-tool dict: `ADD_USER_DATA`, `DELETE_USER_DATA`, `SEARCH_MESSAGES`, `GET_CURRENT_DATETIME`. The resulting summary text replaces the old one. If the fetch hits the `max-messages-per-run` cap (default 128), older overflow messages are silently skipped and a `logger.warning` is emitted (accepted risk: a burst >128 permanently loses the tail for that run — see [`../../plans/memory-refine-plan-v1.md`](../../plans/memory-refine-plan-v1.md) §16).
-- The summary is injected into normal chat context as `EnsuredMessage.userSummary` (omitted from JSON when `None` → byte-identical default output).
+- `_runRefinement` fetches the user's recent messages via `getChatMessagesSince` (new `userId` filter), renders them, and calls `LLMService.generateTextViaLLM` with `chatId=None` (skips rate-limiting) and a per-tool dict: ~~`ADD_USER_DATA`, `DELETE_USER_DATA`, `SEARCH_MESSAGES`, `GET_CURRENT_DATETIME`~~ (all retired; current tools are `add_memory` / `delete_memory` / `search_memories` — see [`user-memories.md`](user-memories.md)). The resulting summary text replaces the old one. If the fetch hits the `max-messages-per-run` cap (default 128), older overflow messages are silently skipped and a `logger.warning` is emitted (accepted risk: a burst >128 permanently loses the tail for that run — see [`../../plans/memory-refine-plan-v1.md`](../../plans/memory-refine-plan-v1.md) §16).
+- ~~The summary is injected into normal chat context as `EnsuredMessage.userSummary` (omitted from JSON when `None` → byte-identical default output).~~ **[SUPERSEDED]** — `userSummary` / `applyUserMetadata` / the `formatForLLM` key were removed in Phase 4b; replaced by the structured `<user-memories>` block (`_buildMemoriesBlock`).
 
 ## Storage convention (NO migration)
 
@@ -53,6 +96,15 @@ This is also recorded as a reusable gotcha in [`tasks.md`](../tasks.md) §3.
 
 ## Context injection sites
 
+> **[SUPERSEDED — entire section.]** Every site below (`applyUserMetadata`,
+> the `_updateEMessageUserData` / `_processMessageRec` metadata fetch, the
+> `formatForLLM` `userSummary` key, the `chat-prompt-suffix` docs line) was
+> removed in Phase 4b. The structured `<user-memories>` block
+> (`_buildMemoriesBlock`) is now injected at four system-message
+> construction sites instead — see [`user-memories.md`](user-memories.md)
+> "Injection". This section is kept verbatim as a record of how the old
+> system wired the summary into context.
+
 - `EnsuredMessage.applyUserMetadata(metadata)` — reads `metadata.get("memoryRefinement", {}).get(str(threadId or DEFAULT_THREAD_ID), {}).get("summary")` and, when non-empty, assigns it to `self.userSummary`. Pure reader of the passed-in dict; does NOT persist `metadata`.
 - `BaseBotHandler._updateEMessageUserData` (`base.py`) and `HandlersManager._processMessageRec` (`manager.py`) fetch the full `UserMetadataDict` via `cache.getUserMetadata(...)` and pass it to `ensuredMessage.applyUserMetadata(...)`. Intentionally NOT gated on the per-chat `MEMORY_REFINEMENT_ENABLED` setting at injection — the write side (`UserDataHandler._persistMemoryEntry`) only persists summaries when the feature is on, so absence of a summary in metadata is the gate. A stale summary for a since-disabled chat will still be injected; this is accepted as the intended simplification.
 - `EnsuredMessage.formatForLLM` emits `"userSummary"` in the JSON branch; the dict comprehension drops falsy values, so a `None` summary is omitted → byte-identical output for chats with the feature off.
@@ -63,6 +115,32 @@ This is also recorded as a reusable gotcha in [`tasks.md`](../tasks.md) §3.
 - `configs/00-defaults/user-memory.toml` (tracked): `[user-memory].enabled` (global kill switch, default false) and `[user-memory.thresholds]`. The `[user-memory.prompts]` section was REMOVED — prompts are now per-chat settings (see below).
 - `configs/00-defaults/bot-defaults.toml` (tracked): `memory-refine-model` (`"openrouter/free"`), `memory-refine-fallback-model` (`"aliceai-llm-flash"`), `memory-refinement-enabled = false`, `memory-refine-system-prompt`, `memory-refine-user-prompt-template` — all under `[bot.defaults]`.
 - **`configs/common/` is gitignored** — the friend-tier `memory-refinement-enabled = true` lives in the local overlay (`configs/common/01-bot-defaults.toml` under `[bot.tier-defaults.friend]`), same model as `allow-sandbox`. It will NOT propagate via git; it's a per-deployment manual overlay step. See [`teamlead-memory.md`](../teamlead-memory.md) "Configs Tracking Gotcha".
+
+## JSONL refinement log (optional, 2026-07-06)
+
+Configurable JSONL logging of every successful refinement run, mirroring the LLM-interaction logger (`AbstractModel.printJSONLog`). Config: `[user-memory.json-logging]` sub-table (3 keys: `enabled`/`file`/`add-date-suffix`, defaults `false`/`"logs/user-memory-refinement-json.log"`/`true`) in `configs/00-defaults/user-memory.toml`. Read ONCE in `UserDataHandler.__init__` into `_refineLogEnabled` / `_refineLogFile` / `_refineLogAddDateSuffix` (same cache-once pattern as the other `[user-memory]` keys); see [`configuration.md`](../configuration.md) §`[user-memory.json-logging]`.
+
+**Hook placement** (`_runRefinement`, `internal/bot/common/handlers/user_data.py`): AFTER the LLM returns and `newSummary` is bound, BEFORE the empty-summary early-return guard. Consequences:
+
+- **Success path:** logged, then persisted.
+- **Empty summary:** logged (empty string), then early-returns without persisting. (Intentional — the user decided to log empty summaries too.)
+- **Exception during the LLM call:** NOT logged — the exception re-raises (caught by the outer `try/except` which logs and returns) before the hook runs. Success-path-only by design, mirroring `printJSONLog`.
+
+The hook is guarded by `if self._refineLogEnabled:` so no work happens when disabled (the default).
+
+**11 logged fields** (one JSONL line per successful run, `utils.jsonDumps` = `json.dumps(ensure_ascii=False, default=str, sort_keys=True)`):
+
+- `date` — UTC ISO timestamp of the log write.
+- `chatId`, `threadId`, `userId` — int identifiers of the refined scope.
+- `login` — the user's `username` (`messages[0]["username"]`, JOIN'd from `chat_users`; may be `""`).
+- `messagesCount` — `len(messages)` (≤ `_memoryMaxMessagesPerRun`, default 128).
+- `firstMessageId` — `messages[-1]["message_id"].asStr()` (oldest, DESC order).
+- `lastMessageId` — `messages[0]["message_id"].asStr()` (newest — the cursor advanced to).
+- `summary` — `newSummary` (stripped LLM output; the exact value persisted to `chat_users.metadata`).
+- `model` — resolved via `_resolveRefineModel(chatSettings, result)`: `MEMORY_REFINE_FALLBACK_MODEL` when `result.isFallback`, else `MEMORY_REFINE_MODEL`. Defensive `.get(KEY)` (returns `""` if unset) so the hook call site — which is outside any try/except — can never raise `KeyError`.
+- `elapsedTime` — `result.elapsedTime` (seconds the LLM call took).
+
+**File write** — `_writeRefinementJsonLog`: bare `open(file, "a")` + `utils.jsonDumps(data) + "\n"` (append mode). Wrapped in `try/except OSError` with `logger.debug` on failure — refinement must not break over a log write. **This intentionally diverges from `printJSONLog`, which has no error handling.** Date-suffix, when enabled, appends `.<YYYY-MM-DD>` (UTC) to the filename. No shared JSONL-writer utility was extracted — `_writeRefinementJsonLog` is handler-local.
 
 ## Chat settings (four-site convention)
 
@@ -76,7 +154,7 @@ All five are `page = ChatSettingsPage.FRIEND` in `_chatSettingsInfo` (`internal/
 | `MEMORY_REFINE_SYSTEM_PROMPT` | `memory-refine-system-prompt` | STRING |
 | `MEMORY_REFINE_USER_PROMPT_TEMPLATE` | `memory-refine-user-prompt-template` | STRING |
 
-New tool: `ToolName.DELETE_USER_DATA = "delete_user_data"` (`internal/bot/constants.py`), registered alongside the existing `ADD_USER_DATA`.
+New tool: ~~`ToolName.DELETE_USER_DATA = "delete_user_data"` (`internal/bot/constants.py`), registered alongside the existing `ADD_USER_DATA`.~~ **[SUPERSEDED]** — both `add_user_data` and `delete_user_data` were retired; the new tools are `add_memory` / `delete_memory` / `search_memories` (see [`user-memories.md`](user-memories.md) "LLM tools").
 
 ## Synthetic EnsuredMessage for background tool calls
 

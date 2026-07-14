@@ -32,13 +32,20 @@ Example:
 import gc
 import json
 import unittest
+import uuid
 import warnings
-from unittest.mock import Mock
+from typing import Generator
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
 
 from internal.bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
-from internal.services.cache.models import CacheNamespace
+from internal.database import Database
+from internal.database.models import MemoryType, UserMemorySource
+from internal.database.repositories.user_memories import UserMemoriesRepository
 
 # Import directly to avoid circular dependencies
+from internal.services.cache.models import CacheNamespace
 from internal.services.cache.service import CacheService, LRUCache
 from tests.utils import createAsyncMock
 
@@ -271,8 +278,6 @@ class TestChatSettings(unittest.IsolatedAsyncioTestCase):
         self.mockDb.chatSettings.setChatSetting = createAsyncMock(returnValue=True)
         self.mockDb.chatInfo.getChatInfo = createAsyncMock(returnValue=None)
         self.mockDb.chatInfo.setChatInfo = createAsyncMock(returnValue=True)
-        self.mockDb.userData.getUserData = createAsyncMock(returnValue=None)
-        self.mockDb.userData.setUserData = createAsyncMock(returnValue=True)
         await self.cache.injectDatabase(self.mockDb)
 
     async def asyncTearDown(self) -> None:
@@ -402,110 +407,6 @@ class TestChatInfo(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(info, testInfo)
 
         # Note: setChatInfo writes directly to DB, so no dirty tracking needed
-
-
-class TestChatUserData(unittest.IsolatedAsyncioTestCase):
-    """Test suite for chat user data operations.
-
-    Tests the retrieval, caching, and persistence of user-specific data within
-    chats, including complex data structures and JSON serialization.
-    """
-
-    async def asyncSetUp(self) -> None:
-        """Set up test fixtures before each async test method.
-
-        Creates a new CacheService instance with mocked database methods for
-        user data operations.
-        """
-        CacheService._instance = None
-        self.cache = CacheService.getInstance()
-        self.mockDb = Mock()
-        self.mockDb.cache.getCacheStorage = createAsyncMock(returnValue=[])
-        self.mockDb.cache.setCacheStorage = createAsyncMock(returnValue=True)
-        self.mockDb.cache.unsetCacheStorage = createAsyncMock(returnValue=True)
-        self.mockDb.userData.getUserData = createAsyncMock(returnValue={})
-        self.mockDb.userData.setUserData = createAsyncMock(returnValue=True)
-        self.mockDb.userData.addUserData = createAsyncMock(returnValue=True)
-        await self.cache.injectDatabase(self.mockDb)
-
-    async def asyncTearDown(self) -> None:
-        """Clean up after each async test method.
-
-        Clears the database reference to avoid resource warnings and resets
-        the singleton instance.
-        """
-        # Clear the database reference to avoid resource warnings
-        if hasattr(self.cache, "dbWrapper") and self.cache.database is not None:
-            self.cache.database = None
-        if hasattr(self, "mockDb"):
-            # Reset the mock to release any held references
-            self.mockDb.reset_mock()
-            del self.mockDb
-        CacheService._instance = None
-        # Force garbage collection to clean up any lingering references
-        gc.collect()
-
-    async def testGetChatUserDataFromCache(self) -> None:
-        """Test getting user data from cache.
-
-        Verifies that user data is retrieved from the cache when available,
-        avoiding database queries.
-        """
-        testData = {"key1": "value1", "key2": ["item1", "item2"]}
-        self.cache.chatUsers.set("123:456", {"data": testData})
-
-        userData = await self.cache.getChatUserData(123, 456)
-        self.assertEqual(userData, testData)
-
-    async def testGetChatUserDataFromDb(self) -> None:
-        """Test loading user data from database.
-
-        Verifies that user data is loaded from the database when not in cache,
-        and that JSON strings are properly deserialized.
-        """
-        self.mockDb.userData.getUserData.return_value = {
-            "key1": '"value1"',
-            "key2": '["item1", "item2"]',
-        }
-
-        userData = await self.cache.getChatUserData(123, 456)
-
-        self.mockDb.userData.getUserData.assert_called_once_with(userId=456, chatId=123)
-        self.assertEqual(userData["key1"], "value1")
-        self.assertEqual(userData["key2"], ["item1", "item2"])
-
-    async def testSetChatUserData(self) -> None:
-        """Test setting user data.
-
-        Verifies that user data can be set, persisted to the database, and
-        properly tracked as dirty for synchronization.
-        """
-        await self.cache.setChatUserData(123, 456, "testKey", "testValue")
-
-        userData = await self.cache.getChatUserData(123, 456)
-        self.assertEqual(userData["testKey"], "testValue")
-
-        # Check persistence
-        self.mockDb.userData.addUserData.assert_called_once()
-        args = self.mockDb.userData.addUserData.call_args
-        self.assertEqual(args[1]["userId"], 456)
-        self.assertEqual(args[1]["chatId"], 123)
-        self.assertEqual(args[1]["key"], "testKey")
-
-        # Check dirty tracking
-        self.assertIn("123:456", self.cache.dirtyKeys[CacheNamespace.CHAT_USERS])
-
-    async def testSetChatUserDataComplex(self) -> None:
-        """Test setting complex user data.
-
-        Verifies that complex data structures (nested dicts, lists) are properly
-        serialized and deserialized.
-        """
-        complexData = {"nested": {"key": "value"}, "list": [1, 2, 3]}
-        await self.cache.setChatUserData(123, 456, "complex", complexData)
-
-        userData = await self.cache.getChatUserData(123, 456)
-        self.assertEqual(userData["complex"], complexData)
 
 
 class TestUserState(unittest.IsolatedAsyncioTestCase):
@@ -875,33 +776,6 @@ class TestEdgeCases(unittest.IsolatedAsyncioTestCase):
         cachedSettings = await self.cache.getChatSettings(123)
         self.assertEqual(cachedSettings, {key: value})
 
-    async def testSetChatUserDataWithoutDb(self) -> None:
-        """Test setting user data without database.
-
-        Verifies that user data can be set even when no database is configured.
-        """
-        self.cache.database = None
-
-        # Should not raise exception
-        await self.cache.setChatUserData(123, 456, "key", "value")
-
-    async def testGetChatUserDataDbError(self) -> None:
-        """Test handling database errors when loading user data.
-
-        Verifies that database errors are handled gracefully, either by
-        returning an empty dict or raising an exception.
-        """
-        self.mockDb.userData.getUserData.side_effect = Exception("DB Error")
-
-        # Should log error but not crash
-        try:
-            userData = await self.cache.getChatUserData(123, 456)
-            # If it doesn't raise, it should return empty dict
-            self.assertEqual(userData, {})
-        except Exception:
-            # If it raises, that's also acceptable behavior
-            pass
-
     async def testPersistCacheEntryError(self) -> None:
         """Test handling errors during cache entry persistence.
 
@@ -916,6 +790,272 @@ class TestEdgeCases(unittest.IsolatedAsyncioTestCase):
 
         # Should not raise exception
         await self.cache.persistAll()
+
+
+class TestMemoriesByIdCache:
+    """Cache-aside coverage for ``CacheService.getMemoriesByIds`` (memory-compaction-v1 Phase 2).
+
+    Mirrors ``tests/services/cache/test_user_info.py``: the ``CacheService``
+    singleton is reset around every test by the class-scoped autouse fixture
+    (the global ``resetLlmServiceSingleton`` in ``tests/conftest.py`` does not
+    reset the cache singleton), and tests run against the real in-memory
+    ``testDatabase`` so inserted memories carry real app-generated UUIDs.
+
+    Spies wrap ``UserMemoriesRepository.getMemoriesByIds`` (the repo method
+    the cache loader calls on a miss) at the class level — the repo declares
+    ``__slots__ = ()``, which forbids instance-level ``patch.object`` — so the
+    spy asserts the cache-aside flow while the wrapped real method still
+    serves the DB rows.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _resetCacheServiceSingleton(self) -> Generator[None, None, None]:
+        """Reset the ``CacheService`` singleton around every test in this class.
+
+        Prevents the cache (and its closed in-memory DB) of one test leaking
+        into the next via the singleton (not reset by ``tests/conftest.py``).
+
+        Yields:
+            None.
+        """
+        CacheService._instance = None
+        yield
+        CacheService._instance = None
+
+    @pytest.fixture
+    async def cacheService(self, testDatabase: Database) -> CacheService:
+        """Build a ``CacheService`` singleton wired to the real in-memory DB.
+
+        Args:
+            testDatabase: Fresh in-memory :class:`Database` (``testDatabase`` fixture).
+
+        Returns:
+            A ``CacheService`` whose ``database`` is *testDatabase*.
+        """
+        cache = CacheService.getInstance()
+        await cache.injectDatabase(testDatabase)
+        return cache
+
+    @staticmethod
+    async def _addMemory(
+        db: Database,
+        *,
+        content: str,
+        permanent: bool = False,
+        memoryType: str = MemoryType.FACT,
+        tags: list[str] | None = None,
+    ) -> str:
+        """Insert a memory and return its generated UUID.
+
+        Args:
+            db: Real in-memory database.
+            content: Free-text memory body.
+            permanent: Whether the memory is permanent.
+            memoryType: ``MemoryType`` value.
+            tags: Optional tag list.
+
+        Returns:
+            The app-generated ``memory_id`` UUID hex of the inserted row.
+        """
+        memoryId = uuid.uuid4().hex
+        await db.userMemories.addMemory(
+            chatId=1,
+            userId=100,
+            memoryId=memoryId,
+            type=memoryType,
+            content=content,
+            tags=tags if tags is not None else [],
+            permanent=permanent,
+            threadId=5,
+            source=UserMemorySource.REFINEMENT,
+            embedding=None,
+            embeddingModel=None,
+        )
+        return memoryId
+
+    async def test_coldMissQueriesDbAndResolvesBoth(self, testDatabase: Database, cacheService: CacheService) -> None:
+        """Cold cache: a batch of misses fires one DB query and resolves every ID.
+
+        Args:
+            testDatabase: Real in-memory database.
+            cacheService: Cache wired to *testDatabase*.
+        """
+        idA = await self._addMemory(testDatabase, content="alpha")
+        idB = await self._addMemory(testDatabase, content="beta")
+
+        original = testDatabase.userMemories.getMemoriesByIds
+        with patch.object(UserMemoriesRepository, "getMemoriesByIds", new=AsyncMock(wraps=original)) as spy:
+            resolved = await cacheService.getMemoriesByIds([idA, idB])
+            spy.assert_called_once_with([idA, idB], chatId=None, dataSource=None)
+
+        assert len(resolved) == 2
+        entryA = resolved[idA]
+        entryB = resolved[idB]
+        assert entryA is not None
+        assert entryB is not None
+        assert entryA["content"] == "alpha"
+        assert entryB["content"] == "beta"
+        # keepId=False — the by-id cache is the read-path resolver: the ``mid``
+        # dict key IS the memory id, so the entry must NOT carry an internal
+        # ``id`` (it would leak a uuid into the LLM prompt via formatForLLM,
+        # violating the SingleMemoryDict.id invariant).
+        assert "id" not in entryA
+        assert "id" not in entryB
+        assert entryA["type"] == MemoryType.FACT
+
+    async def test_partialMissQueriesOnlyUncachedIds(self, testDatabase: Database, cacheService: CacheService) -> None:
+        """Mixed hit/miss batch: only the uncached IDs are queried, both resolve.
+
+        The core cache-aside invariant on a partial miss: a warm ID already in
+        the cache must NOT be re-queried, while the cold ID is fetched and both
+        resolve correctly.
+
+        Args:
+            testDatabase: Real in-memory database.
+            cacheService: Cache wired to *testDatabase*.
+        """
+        idA = await self._addMemory(testDatabase, content="alpha")
+        idB = await self._addMemory(testDatabase, content="beta")
+
+        # Warm idA into the cache (cold → one query covering [idA]).
+        original = testDatabase.userMemories.getMemoriesByIds
+        with patch.object(UserMemoriesRepository, "getMemoriesByIds", new=AsyncMock(wraps=original)):
+            await cacheService.getMemoriesByIds([idA])
+
+        # Mixed call: idA is a hit, idB is a miss. The spy must only see [idB].
+        with patch.object(UserMemoriesRepository, "getMemoriesByIds", new=AsyncMock(wraps=original)) as spy:
+            resolved = await cacheService.getMemoriesByIds([idA, idB])
+            spy.assert_called_once_with([idB], chatId=None, dataSource=None)
+
+        entryA = resolved[idA]
+        entryB = resolved[idB]
+        assert entryA is not None
+        assert entryB is not None
+        assert entryA["content"] == "alpha"
+        assert entryB["content"] == "beta"
+
+    async def test_warmHitDoesNotQueryDb(self, testDatabase: Database, cacheService: CacheService) -> None:
+        """Warm cache: a repeat call with the same IDs does NOT touch the DB.
+
+        Args:
+            testDatabase: Real in-memory database.
+            cacheService: Cache wired to *testDatabase*.
+        """
+        idA = await self._addMemory(testDatabase, content="alpha")
+        idB = await self._addMemory(testDatabase, content="beta")
+
+        original = testDatabase.userMemories.getMemoriesByIds
+        with patch.object(UserMemoriesRepository, "getMemoriesByIds", new=AsyncMock(wraps=original)) as spy:
+            await cacheService.getMemoriesByIds([idA, idB])  # cold → query
+            await cacheService.getMemoriesByIds([idA, idB])  # warm → no query
+            await cacheService.getMemoriesByIds([idA, idB])  # warm → no query
+            assert spy.call_count == 1
+
+    async def test_batchResolutionSingleQueryForManyIds(
+        self, testDatabase: Database, cacheService: CacheService
+    ) -> None:
+        """A single miss batch covers N IDs in one DB query (not one per ID).
+
+        Args:
+            testDatabase: Real in-memory database.
+            cacheService: Cache wired to *testDatabase*.
+        """
+        ids = [await self._addMemory(testDatabase, content=f"m{i}") for i in range(5)]
+
+        original = testDatabase.userMemories.getMemoriesByIds
+        with patch.object(UserMemoriesRepository, "getMemoriesByIds", new=AsyncMock(wraps=original)) as spy:
+            resolved = await cacheService.getMemoriesByIds(ids)
+            assert spy.call_count == 1
+
+        assert len(resolved) == 5
+        contents = {entry["content"] for entry in resolved.values() if entry is not None}
+        assert contents == {f"m{i}" for i in range(5)}
+
+    async def test_missingIdsCachedAsNoneAndNotRequeried(
+        self, testDatabase: Database, cacheService: CacheService
+    ) -> None:
+        """A DB-absent ID resolves to None and is negative-cached (no repeat query).
+
+        Args:
+            testDatabase: Real in-memory database.
+            cacheService: Cache wired to *testDatabase*.
+        """
+        idA = await self._addMemory(testDatabase, content="present")
+        missingId = uuid.uuid4().hex
+
+        original = testDatabase.userMemories.getMemoriesByIds
+        with patch.object(UserMemoriesRepository, "getMemoriesByIds", new=AsyncMock(wraps=original)) as spy:
+            resolved = await cacheService.getMemoriesByIds([idA, missingId])
+            firstCount = spy.call_count
+            assert firstCount == 1
+
+        assert resolved[idA] is not None
+        entryA = resolved[idA]
+        assert entryA is not None
+        assert entryA["content"] == "present"
+        assert resolved[missingId] is None
+
+        # Second call: the missing ID is now negative-cached as None — no new query.
+        with patch.object(UserMemoriesRepository, "getMemoriesByIds", new=AsyncMock(wraps=original)) as spy2:
+            resolved2 = await cacheService.getMemoriesByIds([idA, missingId])
+            spy2.assert_not_called()
+
+        assert resolved2[idA] is not None
+        assert resolved2[missingId] is None
+
+    async def test_emptyInputReturnsEmptyWithoutDbCall(
+        self, testDatabase: Database, cacheService: CacheService
+    ) -> None:
+        """``getMemoriesByIds([])`` short-circuits to ``{}`` with no DB query.
+
+        Args:
+            testDatabase: Real in-memory database.
+            cacheService: Cache wired to *testDatabase*.
+        """
+        with patch.object(UserMemoriesRepository, "getMemoriesByIds", new=AsyncMock()) as spy:
+            resolved = await cacheService.getMemoriesByIds([])
+            spy.assert_not_called()
+        assert resolved == {}
+
+    async def test_noDatabaseWiredReturnsEmpty(self, testDatabase: Database, cacheService: CacheService) -> None:
+        """With no database wired, ``getMemoriesByIds`` returns ``{}`` and logs (no raise).
+
+        Mirrors the ``getChatUserPermanentMemories`` no-DB guard: a missing
+        database wrapper is an error condition that logs and returns an empty
+        result rather than caching the absence or raising.
+
+        Args:
+            testDatabase: Real in-memory database.
+            cacheService: Cache wired to *testDatabase*.
+        """
+        cacheService.database = None
+
+        with patch.object(UserMemoriesRepository, "getMemoriesByIds", new=AsyncMock()) as spy:
+            resolved = await cacheService.getMemoriesByIds(["some-uuid"])
+            spy.assert_not_called()
+
+        assert resolved == {}
+
+    async def test_routingParamsPassedToRepoOnMiss(self, testDatabase: Database, cacheService: CacheService) -> None:
+        """``chatId``/``dataSource`` are forwarded to the repo ``getMemoriesByIds`` on a cache miss.
+
+        Routing guard: the cache must pass the routing params through to the
+        repo so the DB query hits the correct data source.
+
+        Args:
+            testDatabase: Real in-memory database.
+            cacheService: Cache wired to *testDatabase*.
+        """
+        memoryId = await self._addMemory(testDatabase, content="route-me")
+
+        original = testDatabase.userMemories.getMemoriesByIds
+        with patch.object(UserMemoriesRepository, "getMemoriesByIds", new=AsyncMock(wraps=original)) as spy:
+            await cacheService.getMemoriesByIds([memoryId], chatId=42, dataSource="custom-src")
+
+        spy.assert_awaited_once()
+        callArgs = spy.call_args
+        assert callArgs.kwargs.get("chatId") == 42
+        assert callArgs.kwargs.get("dataSource") == "custom-src"
 
 
 if __name__ == "__main__":

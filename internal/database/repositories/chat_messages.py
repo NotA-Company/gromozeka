@@ -18,6 +18,7 @@ import logging
 from collections.abc import Mapping, Sequence
 from typing import Any, List, Optional
 
+from internal.database.constants import MAX_SQL_VARIABLES
 from internal.models import MessageId, MessageType
 
 from .. import utils as dbUtils
@@ -324,6 +325,81 @@ class ChatMessagesRepository(BaseRepository):
         except Exception as e:
             logger.error(f"Failed to get chat message for chat {chatId}, message_id {messageId}: {e}")
             return None
+
+    async def getChatMessagesByMessageIds(
+        self,
+        chatId: int,
+        messageIds: Sequence[MessageId],
+        *,
+        dataSource: Optional[str] = None,
+    ) -> List[ChatMessageDict]:
+        """Fetch multiple chat messages by ID in one query.
+
+        Uses a portable ``IN (...)`` expansion with named placeholders
+        (``:id0, :id1, ...``). Same user JOIN as
+        :meth:`getChatMessageByMessageId`. Order: ascending by date (matches
+        :meth:`getChatMessagesByRootId`). Dedup of input ids is the caller's
+        responsibility (this method does not dedup; duplicate ids produce one row).
+
+        Large ID lists are auto-chunked into batches of
+        :data:`~internal.database.constants.MAX_SQL_VARIABLES` so the
+        ``IN (:id0, …)`` expansion never exceeds the engine's bound-
+        parameter limit (SQLite's default ``SQLITE_MAX_VARIABLE_COUNT``
+        is 999). Per-chunk result sets are unioned and re-sorted by
+        ``date`` ascending so the cross-chunk ordering matches the
+        single-query contract.
+
+        Args:
+            chatId: Chat identifier (scoping — never cross-chat).
+            messageIds: Message IDs to fetch. Empty -> returns [].
+            dataSource: Optional data-source routing.
+
+        Returns:
+            List of matching ChatMessageDict rows (may be shorter than input if
+            some ids do not exist in this chat; caller computes ``notFound``),
+            ordered ascending by date.
+
+        Raises:
+            Exception: If database operation fails (caught and logged, returns empty list).
+        """
+        if not messageIds:
+            return []
+        logger.debug(f"Getting chat messages for chat {chatId}, message_ids {messageIds}")
+        try:
+            sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)
+            allResults: List[ChatMessageDict] = []
+            # Chunk to stay under SQLITE_MAX_VARIABLE_COUNT (999). Each chunk
+            # runs its own IN(...) + ORDER BY date ASC query; the per-chunk
+            # results are unioned and re-sorted below so the combined list
+            # honours the ascending-by-date contract across chunk boundaries.
+            for chunkStart in range(0, len(messageIds), MAX_SQL_VARIABLES):
+                chunk = messageIds[chunkStart : chunkStart + MAX_SQL_VARIABLES]
+                placeholders = ", ".join(f":id{i}" for i in range(len(chunk)))
+                params: dict[str, Any] = {
+                    "chatId": chatId,
+                    **{f"id{i}": messageId.asStr() for i, messageId in enumerate(chunk)},
+                }
+                rows = await sqlProvider.executeFetchAll(
+                    f"""
+                    SELECT c.*, u.username, u.full_name FROM chat_messages c
+                    JOIN chat_users u ON c.user_id = u.user_id AND c.chat_id = u.chat_id
+                    WHERE
+                        c.chat_id = :chatId
+                        AND c.message_id IN ({placeholders})
+                    ORDER BY c.date ASC
+                """,
+                    params,
+                )
+                allResults.extend(dbUtils.sqlToTypedDict(row, ChatMessageDict) for row in rows)
+            # Re-sort the unioned chunks by date ascending to preserve the
+            # single-query ordering contract across chunk boundaries. Ties
+            # keep chunk order (Python sort is stable); ties are unspecified
+            # in the original SQL ORDER BY as well.
+            allResults.sort(key=lambda r: r["date"])
+            return allResults
+        except Exception as e:
+            logger.error(f"Failed to get chat messages for chat {chatId}, message_ids {messageIds}: {e}")
+            return []
 
     async def getChatMessagesByRootId(
         self,

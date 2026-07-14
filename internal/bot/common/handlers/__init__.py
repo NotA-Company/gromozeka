@@ -10,7 +10,7 @@ registration and execution of different handler types including:
 - Configuration command handlers (ConfigureCommandHandler)
 - Summarization handlers (SummarizationHandler)
 - Message preprocessors (MessagePreprocessorHandler)
-- User data handlers (UserDataHandler)
+- User memories handlers (UserMemoriesHandler)
 - Development command handlers (DevCommandsHandler)
 - Help command handlers (HelpHandler)
 - Weather handlers (WeatherHandler, conditional)

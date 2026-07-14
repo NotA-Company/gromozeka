@@ -499,7 +499,6 @@ See the [`docs/examples/`](../docs/examples/) directory for complete configurati
 - [`multi-source-basic.toml`](../docs/examples/multi-source-basic.toml) - Simple two-provider setup
 - [`multi-source-advanced.toml`](../docs/examples/multi-source-advanced.toml) - Complex multi-provider configuration
 - [`multi-source-readonly-only.toml`](../docs/examples/multi-source-readonly-only.toml) - Read-only bot setup
-- [`multi-source-migration.toml`](../docs/examples/multi-source-migration.toml) - Migration from single database
 
 ### Quick Start Example
 

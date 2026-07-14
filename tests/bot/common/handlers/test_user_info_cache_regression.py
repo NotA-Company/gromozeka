@@ -229,9 +229,10 @@ class TestWarmCacheZeroDbReads:
             saved = await handler.saveChatMessage(message, messageCategory=MessageCategory.USER)
             assert saved is True
 
-            # getUserMetadata routes through cache.getChatUser; the summary
-            # extraction itself now lives in EnsuredMessage.applyUserMetadata
-            # and is covered separately in tests/bot/models/test_ensured_message.py.
+            # getUserMetadata routes through cache.getChatUser. The per-message
+            # userSummary extraction that used to ride alongside this call was
+            # removed in user-memories Phase 4b (structured <user-memories>
+            # system-prompt block is the replacement).
             _ = await handler.cache.getUserMetadata(chatId=_CHAT_ID, userId=_USER_ID)
 
         # Skip-when-unchanged: no DB write.

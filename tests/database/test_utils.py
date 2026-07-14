@@ -16,7 +16,7 @@ from typing import Any, Optional, Union
 
 import pytest
 
-from internal.bot.models.ensured_message import CondensingDict, MetadataDict
+from internal.bot.models.message_metadata import CondensingDict, MetadataDict
 from internal.database.utils import (
     _checkType,
     sqlToCustomType,
@@ -1376,9 +1376,26 @@ class TestSqlToCustomTypeMetadataDict:
         assert isinstance(value["tillMessageId"], MessageId)
         assert value["tillTS"] == pytest.approx(3000.0)
 
-    def testCondensingDictMissingRequiredField(self) -> None:
-        """Test CondensingDict missing required field returns (False, None)."""
+    def testCondensingDictOnlyTextValidates(self) -> None:
+        """Test CondensingDict with only the required ``text`` field validates.
+
+        Under the simplified design, ``text`` is the ONLY required field of
+        :class:`CondensingDict` (all other fields are ``NotRequired``), so a
+        dict carrying just ``{"text": "only text"}`` validates successfully.
+        """
         data = {"text": "only text"}
+        success, value = sqlToCustomType(data, CondensingDict)
+        assert success is True
+        assert value is not None
+        assert value["text"] == "only text"
+
+    def testCondensingDictMissingTextFails(self) -> None:
+        """Test CondensingDict missing the required ``text`` field returns (False, None).
+
+        ``text`` is required, so an empty dict (no ``text``) must fail
+        validation.
+        """
+        data = {}
         success, value = sqlToCustomType(data, CondensingDict)
         assert success is False
         assert value is None
