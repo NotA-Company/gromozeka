@@ -78,7 +78,7 @@ Mitigation: `logger.warning` fires when `len(messages) >= _memoryMaxMessagesPerR
 Line numbers drift with edits — verify before relying. Authoritative current locations (as of the 2026-07-05 review):
 
 - `chat_settings.py` is at [`/internal/bot/models/chat_settings.py`](/internal/bot/models/chat_settings.py) (NOT `internal/bot/common/`).
-- `setUserMetadata` @ `base.py:~1077-1104` (drifted up ~6 lines after `getUserMemorySummary` deletion).
+- `setUserMetadata` @ `base.py:1157-1184` (re-verified 2026-07-14; re-locate by symbol if it drifts again).
 - `spam.py` `_getUserInfoFreshIfMessagesLessThan` @ **202-243** (not 199-241 as an earlier review reported).
 - `chat_messages.py:154` — the raw SQL `messages_count` increment bypass site.
 

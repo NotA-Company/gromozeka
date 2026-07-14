@@ -24,8 +24,9 @@ merge; Gate-2 whole-work review PASSED. Final shape:
 - `computeMemoryExcludes` shipped as a module-level fn in `base.py` for
   reuse/clarity (later DELETED post-shipping — see "Post-shipping revisions").
 - `setUserMemories` was **REMOVED outright** (not repurposed) — `injectMemories`
-  writes compact IDs to `metadata["memories"]` directly + warms the by-id cache
-  via `warmMemoriesByIds`.
+  writes compact IDs to `metadata["memories"]` directly. (`warmMemoriesByIds`,
+  planned in v2 §5.3, was NOT shipped; the by-id cache populates lazily via
+  cache-aside on the first `formatForLLM` call.)
 - Decision record: ADR-018 in [`../architecture.md`](../architecture.md).
 
 ### Gate-2 follow-up corrections (also DONE)
@@ -40,6 +41,13 @@ merge; Gate-2 whole-work review PASSED. Final shape:
   made `*, chatId` keyword-only. Added `cache=None` omission test. Fixed stale
   `resolveMemories` docstrings in
   [`/scripts/clear_old_format_memories.py`](/scripts/clear_old_format_memories.py).
+
+  > **[CORRECTION]** The above Gate-2 follow-up item described
+  > `warmMemoriesByIds` as shipped. It was NOT shipped: `warmMemoriesByIds`
+  > (v2 §5.3) was planned but never implemented. `injectMemories` writes
+  > compact IDs into `metadata["memories"]` only; `formatForLLM`'s first call
+  > cache-misses into `getMemoriesByIds` (one indexed-PK batch query per
+  > inbound message on a cold cache).
 
 ### Post-shipping user revisions (same day)
 
@@ -61,6 +69,12 @@ User hand-rolled the dedup INLINE and dropped the helper:
    `cache=self.cache if needMemories else None` (memories render only when
    injection enabled for the chat).
 5. `RANDOM_ANSWER_CONTEXT_LENGTH` 50→64 (unrelated tuning).
+6. `warmMemoriesByIds` (planned in v2 §5.3) was **NOT shipped**.
+   `injectMemories` writes compact IDs only; `formatForLLM`'s first call
+   cache-misses into `getMemoriesByIds` (one indexed-PK batch query per
+   inbound message on a cold cache). The "Gate-2 follow-up" and "Phase 1/2
+   DONE" notes above that treat `warmMemoriesByIds` as shipped are stale and
+   corrected in place.
 
 Docs (ADR-018, [`../handlers.md`](../handlers.md),
 [`user-memories.md`](user-memories.md)) updated for inline dedup + root
@@ -234,10 +248,11 @@ and is **SUPERSEDED here**:
   [`/internal/bot/models/ensured_message.py`](/internal/bot/models/ensured_message.py)`:983`
   — defensive `or []` for None-valued compact keys per Gate-1 fix +
   `TestGetMemoryIds.test_getMemoryIds_noneValuedCompactKeys`.
-- `CacheService.warmMemoriesByIds(entries, chatId)` at
-  [`/internal/services/cache/service.py`](/internal/services/cache/service.py)`:1048`
-  — keys by memory UUID alone matching `getMemoriesByIds`, strips `id`,
-  `chatId` is routing-only/API-symmetry.
+- `CacheService.warmMemoriesByIds(entries, chatId)` was planned for
+  [`/internal/services/cache/service.py`](/internal/services/cache/service.py)
+  (~`:1048`, a section comment — not the method), but was **NOT shipped**.
+  `injectMemories` writes compact IDs only; render-time resolution pays one
+  indexed-PK batch query per inbound message on a cold cache.
 
 ### Phase 2 DONE (green 3110, Gate-1 clean no blockers)
 
@@ -253,8 +268,8 @@ and is **SUPERSEDED here**:
   builds LOCAL dict (non-mutation invariant verified); `id` never emitted.
 - Both `resolveMemories` CALLS removed (`fromDBChatMessage`, `handleMention`
   `:725`) but METHOD kept (Phase 4).
-- `injectMemories` now calls `warmMemoriesByIds`
-  (`chatId=ensuredMessage.recipient.id`).
+- `injectMemories` writes compact IDs into `metadata["memories"]` directly
+  (no `warmMemoriesByIds` call — that method was never shipped).
 - NOTE: `formatForLLM` got `*` after `db` (ALL params keyword-only) but
   `toModelMessage`/`toModelMessageList` got `*` only before the new params —
   INCONSISTENCY, normalize in Phase 4.

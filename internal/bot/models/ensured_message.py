@@ -32,7 +32,7 @@ import lib.max_bot as libMax
 import lib.max_bot.models as maxModels
 import lib.utils as utils
 from internal.database import Database
-from internal.database.models import ChatMessageDict, MediaAttachmentDict, MediaStatus, MessageCategory
+from internal.database.models import ChatMessageDict, MediaAttachmentDict, MediaStatus
 from internal.models import MessageId, MessageType
 from lib.ai.models import ModelMessage
 
@@ -1510,32 +1510,4 @@ class EnsuredMessage:
             ),
             text=self.messageText,
             message_thread_id=self.threadId,
-        )
-
-    def toChatMessageDict(self) -> ChatMessageDict:
-        """
-        Convert this EnsuredMessage to a ChatMessageDict.
-
-        Returns:
-            A ChatMessageDict with the same data as this EnsuredMessage
-        """
-        return ChatMessageDict(
-            chat_id=self.recipient.id,
-            message_id=self.messageId,
-            date=self.date,
-            user_id=self.sender.id,
-            reply_id=self.replyId,
-            thread_id=self.threadId or 0,
-            root_message_id=None,  # TODO: We do not store it here
-            message_text=self.messageText,
-            message_type=self.messageType.value,
-            message_category=MessageCategory.UNSPECIFIED,  # TODO: We do not store it here
-            quote_text=self.quoteText,
-            media_id=self.mediaId,
-            created_at=self.date,
-            metadata=utils.jsonDumps(self.metadata),
-            markup=utils.jsonDumps([v.toDict() for v in self.formatEntities]),
-            media_group_id=self.mediaGroupId,
-            username=self.sender.username,
-            full_name=self.sender.name,
         )

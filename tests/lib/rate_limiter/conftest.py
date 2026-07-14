@@ -21,11 +21,19 @@ from unittest.mock import patch
 def installFakeClock(testCase: unittest.TestCase) -> List[float]:
     """Install a fake clock on a unittest TestCase for the test's duration.
 
-    Patches ``time.time``, ``time.sleep``, and ``asyncio.sleep`` so that:
+    Patches ``time.time`` and ``time.sleep`` globally, and ``asyncio.sleep``
+    scoped to the ``lib.rate_limiter.sliding_window`` module (the only call
+    site that actually blocks in the rate-limiter path), so that:
     - ``time.time()`` returns a mutable fake "now" (starting at 0.0),
     - sleeping (sync or async) advances the fake clock instead of blocking,
     - concurrent ``asyncio.sleep`` calls overlap (wall-clock semantics) by
       advancing "now" to the maximum sleep deadline rather than summing waits.
+
+    ``time.*`` stays global because the tests themselves read ``time.time()``
+    to measure fake elapsed time. ``asyncio.sleep`` is narrowed to the
+    production module so test code calling ``asyncio.sleep`` directly is
+    unaffected; tests that need to advance the clock should bump ``now[0]``
+    directly instead of awaiting a globally faked ``asyncio.sleep``.
 
     The base is 0.0 (not real time) so window comparisons such as
     ``currentTime - reqTime < windowSeconds`` stay free of float-precision
@@ -79,7 +87,7 @@ def installFakeClock(testCase: unittest.TestCase) -> List[float]:
     patchers = (
         patch("time.time", fakeTime),
         patch("time.sleep", fakeTimeSleep),
-        patch("asyncio.sleep", fakeAsyncSleep),
+        patch("lib.rate_limiter.sliding_window.asyncio.sleep", fakeAsyncSleep),
     )
     for patcher in patchers:
         patcher.start()

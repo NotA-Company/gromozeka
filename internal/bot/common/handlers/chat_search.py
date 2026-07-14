@@ -175,7 +175,18 @@ class ChatSearchHandler(BaseBotHandler):
         # obsolete-embedding deletion only fires once per model switch.
         self._embeddingModelTracker: Dict[int, str] = {}
 
-        # Set of chats bot need to check for embeddings backfill
+        # In-memory set of chat IDs that have seen at least one inbound
+        # message since startup (populated by `newMessageHandler` when
+        # ``EMBEDDINGS_ENABLED=true``). The backfill CRON_JOB (`_dtCronJob`)
+        # processes ONLY chats in this set.
+        #
+        # This is INTENTIONAL design, not a limitation: there is deliberately
+        # NO startup DB-scan that re-enrolls every chat. Chats that are no
+        # longer active (dead/abandoned) are not backfilled — a chat with a
+        # pre-existing embedding backlog is picked up only once it receives a
+        # new message, which proves it is still active. Eviction is one-way:
+        # a chat is removed (`.discard()`) when ``EMBEDDINGS_ENABLED`` flips
+        # to false and is not re-added until the next qualifying message.
         self._trackedChats: MutableSet[int] = set()
 
         # Register backfill CRON_JOB. Multiple handlers can subscribe to

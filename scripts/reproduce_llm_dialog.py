@@ -385,7 +385,7 @@ async def main() -> int:
         # Reconstruct EnsuredMessage (line 724)
         eMsg = await EnsuredMessage.fromDBChatMessage(storedMsg, db)
 
-        # Drop randomContext to not add it to metadata (for triggering condencing)
+        # Drop randomContext to not add it to metadata (for triggering condensing)
         if eMsg.metadata.get("randomContext", None) is not None:
             eMsg.metadata.pop("randomContext", None)
             logger.info(f"Removed randomContext from message {eMsg.messageId}")

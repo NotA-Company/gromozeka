@@ -122,9 +122,10 @@ class MessagePreprocessorHandler(BaseBotHandler):
 
         # Write compact memory IDs to metadata["memories"] for persistence and
         # lazy resolution. formatForLLM resolves these IDs to content via
-        # cache.getMemoriesByIds at render time (the cache was warmed above, so
-        # the read is a HIT). Entries without a usable id are silently dropped
-        # (walrus + truthy guard; ``id`` is NotRequired on SingleMemoryDict).
+        # cache.getMemoriesByIds at render time — the by-id cache is populated
+        # lazily (cache-aside) on that first read, not warmed here. Entries
+        # without a usable id are silently dropped (walrus + truthy guard;
+        # ``id`` is NotRequired on SingleMemoryDict).
         ensuredMessage.metadata["memories"] = {
             "permanentIds": [mid for m in permanentMemories if (mid := m.get("id"))],
             "shortTermIds": [m["memory_id"] for m in shortTermMemories if m["memory_id"]],
@@ -218,7 +219,7 @@ class MessagePreprocessorHandler(BaseBotHandler):
                     await self.injectMemories(ensuredMessage, embeddings[0], queryEmbedding=embeddings[1])
                     memoryInjected = True
 
-        # If memory injection needed, but wasn't happened
+        # If memory injection was needed, but didn't happen
         # (because of it uses 'latest' or because of some issue)
         if memoriesEnabled and not memoryInjected:
             await self.injectMemories(ensuredMessage, None, queryEmbedding=None)

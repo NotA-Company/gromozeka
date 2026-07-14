@@ -5,6 +5,7 @@ including initialization, tool registration, tool execution, LLM interactions,
 error handling, and integration scenarios.
 """
 
+import asyncio
 import datetime
 import uuid
 from typing import Any, Dict, List, Optional
@@ -1977,7 +1978,7 @@ class TestCondenseContextCoverage:
     ``condenseContext`` ALWAYS returns a ``(messages, coverage)`` tuple. The
     second element is a ``Dict[int, CondensingDict]`` keyed by body-index →
     fully-populated ``CondensingDict`` (coverage metadata computed inside
-    ``condenseContext`` via :func:`generateCondencingDict`, which reads each
+    ``condenseContext`` via :func:`generateCondensingDict`, which reads each
     ``ModelMessage.source``).
 
     Each input body message carries ``.source`` = a real :class:`EnsuredMessage`
@@ -2001,7 +2002,7 @@ class TestCondenseContextCoverage:
         body index label is embedded without changing the length) and carries
         ``.source`` = a real :class:`EnsuredMessage` (``messageId=i``,
         ``sender.username=user{i}``, ``date`` at unix ``1000.0+i``) so
-        :func:`generateCondencingDict` can extract ``messageIds`` /
+        :func:`generateCondensingDict` can extract ``messageIds`` /
         ``participants`` / ``dateRange`` / ``messageCount``. A trailing ``last``
         user message acts as the kept tail (``keepLastN=1``).
 
@@ -2254,6 +2255,88 @@ class TestCondenseContextCoverage:
         for cov in coverage.values():
             assert hugeId not in (cov.get("messageIds") or [])
 
+    async def testBatchLengthZeroFloorTerminatesCoverage(self, llmService):
+        """Regression guard for the ``batchLength == 0`` infinite-loop bug (C2).
+
+        ``condenseContext`` computes ``batchLength = len(body) // batchesCount``
+        (service.py:812). When the body holds a few token-heavy messages and
+        ``summaryMaxTokens`` is small, ``batchesCount`` can EXCEED
+        ``len(body)`` and the integer division rounds ``batchLength`` down to 0.
+        That makes ``currentBatchLen = 0`` → ``tryMessages = []`` → an empty
+        batch whose request (overhead only) fits the budget → it is summarised
+        → ``startPos += 0`` → the same empty batch is retried forever, hammering
+        the condensing model until rate-limited/killed. Under the pre-fix code
+        this test HANGS; the regression signal is the ``asyncio.wait_for``
+        timeout (``asyncio.TimeoutError``), not a clean assertion failure.
+
+        body = [450, 450, 450] (3 msgs). summaryMaxTokens = 500.
+        denom = max(500-256, 500*0.85) = max(244, 425) = 425.
+        tokensCount = 3*450 = 1350. batchesCount = 1350//425 + 1 = 3 + 1 = 4.
+        batchLength = 3//4 = 0 (without the floor) → infinite loop on the empty
+        batch. With the ``batchLength < 1`` floor (service.py:812-813),
+        ``batchLength`` becomes 1, every message summarises individually and
+        ``startPos`` advances to completion.
+
+        Per-batch request = CONDENSING_SYSTEM_PROMPT(9) + body(450) +
+        CONDENSING_PROMPT(11) = 470 tokens <= 500 → each single message is
+        summarised successfully.
+
+        The condensing model's ``generateText`` is a bare async function that
+        does ``await asyncio.sleep(0)`` before returning, rather than the
+        file's usual :func:`createAsyncMock` side-effect. A real HTTP-backed
+        ``generateText`` suspends at the network await; a bare ``AsyncMock``
+        side-effect does NOT (its coroutine completes in one ``send`` step and
+        never yields control to the loop), so without this forced yield the
+        pre-fix infinite loop would hang the whole runner instead of letting
+        ``asyncio.wait_for`` fire its timeout as an ``asyncio.TimeoutError``.
+        """
+        messages = self._messageList([450, 450, 450])
+        model = _makeCountingModel(4096)
+
+        summaries = iter(["summary-0", "summary-1", "summary-2"])
+        callState = {"count": 0}
+
+        async def _generateText(*args: object, **kwargs: object) -> ModelRunResult:
+            # Yield to the event loop so asyncio.wait_for's timeout callback can
+            # fire on the pre-fix infinite loop (see the docstring rationale).
+            await asyncio.sleep(0)
+            callState["count"] += 1
+            try:
+                text = next(summaries)
+            except StopIteration:
+                text = "overflow-summary"
+            return ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText=text)
+
+        condensing = _makeCountingModel(500)
+        condensing.generateText = _generateText
+
+        result, coverage = await asyncio.wait_for(
+            llmService.condenseContext(
+                messages,
+                model,
+                keepFirstN=0,
+                keepLastN=1,
+                force=True,
+                condensingModel=condensing,
+                condensingPrompt=self.CONDENSING_PROMPT,
+                condensingSystemPrompt=self.CONDENSING_SYSTEM_PROMPT,
+                maxTokens=500,
+            ),
+            timeout=5.0,
+        )
+
+        # Primary regression signal: the call returned within the timeout
+        # (under pre-fix code asyncio.wait_for raises asyncio.TimeoutError).
+        assert isinstance(result, list)
+        # Three individually-summarised messages → three coverage entries.
+        assert callState["count"] == 3
+        assert set(coverage.keys()) == {0, 1, 2}
+        assert coverage[0].get("messageIds") == [MessageId(0)]
+        assert coverage[1].get("messageIds") == [MessageId(1)]
+        assert coverage[2].get("messageIds") == [MessageId(2)]
+        # result = head (system) + 3 summaries + tail ("last").
+        assert len(result) == 5
+
     async def testPureTruncationEmptyCoverage(self, llmService):
         """``condensingModel=None`` → pure truncation → coverage is ``{}``."""
         messages = self._messageList([50, 50, 50])
@@ -2355,21 +2438,24 @@ class TestCondenseContextCoverage:
         assert coverage == {}
 
     async def testMultiEmitRowsCountUniqueIds(self, llmService):
-        """Multi-emit rows count only unique EnsuredMessage sources, not ModelMessage positions.
+        """Multi-emit rows: ``messageIds`` dedupes to unique sources; ``messageCount`` counts all positions.
 
         When :meth:`EnsuredMessage.toModelMessageList` emits multiple
         ModelMessages for one logical message (the main message plus auxiliary
-        tool-history emissions that carry ``source=None``), ``messageCount``
-        must reflect the number of UNIQUE original messages (one per
-        EnsuredMessage source), NOT the number of ModelMessage positions.
+        tool-history emissions that carry ``source=None``), two distinct
+        behaviours are exercised on the single coverage entry:
+
+        * ``messageIds`` collects only messages whose ``.source`` is a real
+          :class:`EnsuredMessage` — the two ``source=None`` tool-history
+          emissions contribute nothing, so ``messageIds`` is exactly
+          ``[100, 101]`` with no None-leakage or duplicates.
+        * ``messageCount`` counts ALL processed ModelMessage positions in the
+          batch, including the two ``source is None`` auxiliary tool emissions,
+          so for the 4-position body below the expected value is ``4`` (NOT the
+          count of unique originals).
 
         body = [mainMsg(100), toolMsg1(None), toolMsg2(None), mainMsg2(101)] =
-        4 positions but only 2 originals. Before Fix 3 the two None-source tool
-        emissions inflated ``messageCount`` to 4; after Fix 3 it is 2.
-        ``messageIds`` must be exactly ``[100, 101]`` with no None-leakage or
-        dups.
-
-        body = 4 messages x ~12-13 tokens = 50. denom = 850.
+        4 positions, 2 carrying a real source. body tokens ~ 50, denom = 850,
         batchesCount = 50//850 + 1 = 1 → single batch over all body.
         request = 20 + 50 = 70 <= 1000 → fits.
         """

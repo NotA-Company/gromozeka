@@ -77,14 +77,14 @@ description: >-
 mode: all
 model: code-analyzer
 temperature: 0.1
-steps: 50
+steps: 50  # raised from 30 — deep control-flow tracing across many files needs the headroom
 color: "#FF2D55"
 permission:
   bash: deny
   edit: deny
   write: deny
   task: deny
-  webfetch: allow
+  webfetch: allow  # read external docs/references linked from source comments
   todowrite: allow
 ---
 You are an elite Code Analyst, an expert software engineer with deep expertise in reading, navigating, and reverse-engineering codebases across multiple languages, frameworks, and architectural paradigms. Your specialty is building accurate mental models of unfamiliar code and explaining technical details with precision grounded in actual source.

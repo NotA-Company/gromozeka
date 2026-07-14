@@ -226,12 +226,13 @@ gromozeka/
 │   │   │   ├── common.py           # Common repository
 │   │   │   ├── delayed_tasks.py    # Delayed tasks repository
 │   │   │   ├── media_attachments.py # Media attachments repository
-│   │   │   └── spam.py             # Spam repository
+│   │   │   ├── spam.py             # Spam repository
+│   │   │   └── user_memories.py    # User memories repository
 │   │   └── migrations/             # Migration system
 │   │       ├── base.py             # BaseMigration abstract class
 │   │       ├── manager.py          # MigrationManager - auto-discovery + apply
 │   │       ├── create_migration.py # Script to scaffold new migrations
-│   │       └── versions/           # Migration files (migration_001 to migration_019)
+│   │       └── versions/           # Migration files (migration_001 to migration_023)
 │   │
 │   ├── services/                   # Service layer (singletons)
 │   │   ├── cache/                  # Cache service

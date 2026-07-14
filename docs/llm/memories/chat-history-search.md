@@ -38,11 +38,19 @@ How to use this file:
   and evicts (one-way, `.discard()`) any chat whose gate has since flipped to
   false. Backfill always runs while `EMBEDDINGS_ENABLED` is on (the former
   one-shot re-embedding trigger flag was removed in the chatSettings
-  consolidation — there is no per-chat trigger flag any more). Cold-start
-  tradeoff: `_trackedChats` starts empty on restart and only grows from live
-  messages, so a quiet chat with a pre-existing backlog is not backfilled until
-  the next message arrives (intentional).
-- **Shared helper**: `embedAndSaveMessage` in `internal/bot/common/embedding_utils.py` — takes
+  consolidation — there is no per-chat trigger flag any more).
+- **Active-chats-only discovery (intentional design)**: backfill discovery is
+  purely in-memory via `_trackedChats` — there is deliberately NO startup
+  DB-scan that re-enrolls every chat. The set starts empty on restart and
+  grows only from live inbound messages. This is by design, not a limitation:
+  it prevents the bot from spending backfill work on chats that are no longer
+  active (dead/abandoned). A chat with a pre-existing embedding backlog is
+  backfilled only after it receives a new message — i.e., once it is known to
+  still be active.
+- **Method `embedAndSaveMessage`**: re-homed as a method
+  `ChatSearchHandler.embedAndSaveMessage` at
+  `internal/bot/common/handlers/chat_search.py:450` (the former shared helper
+  module `internal/bot/common/embedding_utils.py` was deleted). Takes
   `EnsuredMessage`, resolves `LLMService` via `getInstance()`
 - **Config cached**: `_searchEnabled`, `_reindexBatchSize` in handler `__init__`
 - **`DO_EXIT` registration is OPTIONAL** — not required by `QueueService`.
@@ -87,8 +95,10 @@ construction time) and `EMBEDDINGS_ENABLED` are both on.
   `EMBEDDINGS_ENABLED=true`), then re-validate that gate per tick. The
   previous DB-scan discovery (the deleted `ChatSettingsRepository` method
   that queried the `chat_settings` table for `EMBEDDINGS_ENABLED`) was
-  removed — a quiet chat is no longer backfilled until a new
-  message arrives (intentional). Backfill admission/eviction now keys on
+  removed deliberately: there is no startup DB-scan, so the bot does not
+  spend backfill work on dead/abandoned chats — a quiet chat is not
+  backfilled until a new message arrives (proving it is still active).
+  Backfill admission/eviction now keys on
   `EMBEDDINGS_ENABLED` alone (the former per-chat re-embedding trigger was
   removed in the chatSettings consolidation; backfill always runs while
   embeddings are on).
@@ -233,8 +243,10 @@ These mistakes were made during Step 1 implementation and fixed. Don't repeat th
 ### Code Quality (#16-20)
 
 16. **Extract duplicated logic into shared helpers.** `_dtCronJob` and `_embedMessage` had
-    identical embed+save code. Extracted to `embedAndSaveMessage` in
-    `internal/bot/common/embedding_utils.py`.
+    identical embed+save code. Originally extracted to a shared helper in
+    `internal/bot/common/embedding_utils.py`; that module was later deleted and
+    the logic re-homed as the method `ChatSearchHandler.embedAndSaveMessage`
+    (`internal/bot/common/handlers/chat_search.py:450`).
 
 17. **No redundant guard checks.** `supportsEmbedding` was checked in both `abstract.py` (public
     method) and `basic_openai_provider.py` (private method). The provider check is redundant —
@@ -384,8 +396,12 @@ Five review findings addressed, then two further user decisions applied:
 
 ### User Decisions (2026-06-28)
 
-- **No auto-reset of REGENERATE_EMBEDDINGS**: The flag must be manually reset via `/settings`.
-  Docstrings and config descriptions updated accordingly.
+- **No auto-reset of `REGENERATE_EMBEDDINGS`** `[REMOVED]`: the per-chat
+  `REGENERATE_EMBEDDINGS` trigger was removed in the ChatSettings
+  consolidation (see the overview above); this historical note described a
+  flag that no longer exists. Backfill admission now keys on
+  `EMBEDDINGS_ENABLED` alone (manual `/settings` reset no longer applies to a
+  removed key).
 - **Drop client-side keyword matching**: Vector search (via `queryEmbedding`) is sufficient.
   Removed the post-search substring filter that required `limit=None`. Now always pass
   `limit=self._maxResults`.

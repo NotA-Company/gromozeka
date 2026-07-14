@@ -1,3 +1,5 @@
+"""TypedDicts and helpers for message metadata (condensed summaries, memories, forwarding)."""
+
 import datetime
 from collections.abc import Iterable, MutableSet
 from enum import StrEnum
@@ -101,9 +103,9 @@ class CondensingDict(TypedDict):
     Legacy rows (pre-feature) carry ``text``/``tillMessageId``/``tillTS``
     and are read defensively — readers fall back gracefully when the coverage
     fields are absent. New writes (produced by
-    :func:`generateCondencingDict`) populate ``messageIds`` as the
+    :func:`generateCondensingDict`) populate ``messageIds`` as the
     authoritative coverage list; ``tillMessageId``/``tillTS`` are NOT set by
-    ``generateCondencingDict`` (left for legacy compatibility only).
+    ``generateCondensingDict`` (left for legacy compatibility only).
 
     Required field (present on ALL rows, legacy and new):
         text: The condensing model's summary text.
@@ -111,20 +113,22 @@ class CondensingDict(TypedDict):
     Optional fields (``NotRequired``):
         tillMessageId: Legacy boundary marker — last covered message ID.
             Present on old rows and on caller-set dicts, but NOT set by
-            :func:`generateCondencingDict`; kept for backwards-compat reads.
+            :func:`generateCondensingDict`; kept for backwards-compat reads.
         tillTS: Legacy boundary marker — unix timestamp of the last covered
             message. Present on old rows and on caller-set dicts, but NOT set
-            by :func:`generateCondencingDict`; kept for backwards-compat reads.
+            by :func:`generateCondensingDict`; kept for backwards-compat reads.
         messageIds: Authoritative list of covered message IDs. Populated by
-            :func:`generateCondencingDict` when source data is available;
+            :func:`generateCondensingDict` when source data is available;
             this is the canonical coverage list on new writes.
         participants: Sorted unique sender logins of covered messages.
-            Populated by :func:`generateCondencingDict` when available.
+            Populated by :func:`generateCondensingDict` when available.
         dateRange: :class:`CondensedDateRangeDict` — unix-timestamp pair
             (``from``/``to`` floats) covering the summarized messages.
-            Populated by :func:`generateCondencingDict` when available.
-        messageCount: Number of original messages this summary covers.
-            Populated by :func:`generateCondencingDict` when available.
+            Populated by :func:`generateCondensingDict` when available.
+        messageCount: Number of processed ModelMessage positions this summary
+            covers (includes auxiliary tool-history emissions, not just original
+            user/assistant messages). Populated by
+            :func:`generateCondensingDict` when available.
     """
 
     text: str

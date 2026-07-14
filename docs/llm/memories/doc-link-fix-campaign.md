@@ -4,7 +4,7 @@ Durable record of the 2026-07-11 doc-link fix campaign and the conventions it lo
 
 ## Headline outcome
 
-Fixed ALL 376 broken local markdown links `make check-docs` reported: **105 files / 1526 links → 97 files / 1423 links, 0 broken.** `make check-docs` exits 0. Gate 2 whole-work review PASS (0 critical findings after remediation). The `test_noBrokenLinks_inRealRepo` test (formerly `@pytest.mark.xfail(strict=True)`) is now a normal passing regression guard — the suite in [`tests/scripts/test_check_docs.py`](/tests/scripts/test_check_docs.py) is 22 tests, lint green.
+Fixed ALL 376 broken local markdown links `make check-docs` reported: **105 files / 1526 links → 97 files / 1423 links, 0 broken** (as of 2026-07-11; counts drift as docs land). `make check-docs` exits 0. Gate 2 whole-work review PASS (0 critical findings after remediation). The `test_noBrokenLinks_inRealRepo` test (formerly `@pytest.mark.xfail(strict=True)`) is now a normal passing regression guard — the suite in [`tests/scripts/test_check_docs.py`](/tests/scripts/test_check_docs.py) is 22 tests, lint green.
 
 ## Repo convention LOCKED: leading-slash `/X`
 

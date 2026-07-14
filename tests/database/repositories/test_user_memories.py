@@ -590,6 +590,43 @@ class TestUserMemoriesVectorLayer:
         for r in results:
             assert 0.0 <= r["score"] <= 1.0
 
+    async def test_searchMemories_semanticWithTags(self, testDatabase: Database) -> None:
+        """Regression (C1): semantic search + tags filter returns ONLY matching memories.
+
+        Seeds two memories with identical content ("vegan") but different
+        tags ("diet" vs "other"), embeds both with the same vector, then
+        queries semantic mode with ``tags=["diet"]``. Before the C1 fix
+        the tag params were bound into ``filterParams`` (the vec0 dict)
+        instead of ``fetchParams`` (the JOIN-query dict), causing a
+        sqlite3 ProgrammingError that was swallowed by the broad
+        ``except Exception`` — the method returned ``[]`` instead of the
+        correctly-filtered non-empty result.
+        """
+        if not self._vecAvailable(testDatabase):
+            pytest.skip("sqlite-vec not installed")
+
+        chatId = CHAT_ID
+        userId = USER_ID
+        model = "m"
+
+        # Two memories with identical content but different tags.
+        idDiet = await self._add(testDatabase, content="vegan", tags=["diet"], threadId=5)
+        idOther = await self._add(testDatabase, content="vegan", tags=["other"], threadId=5)
+
+        # Both embedded with the same vector — without the tag filter both would match.
+        okDiet = await testDatabase.userMemories.saveMemoryEmbedding(chatId, userId, idDiet, [1.0, 0.0], model)
+        okOther = await testDatabase.userMemories.saveMemoryEmbedding(chatId, userId, idOther, [1.0, 0.0], model)
+        assert okDiet and okOther
+
+        # Semantic search filtered by tags=["diet"] must return ONLY the diet memory.
+        results = await testDatabase.userMemories.searchMemories(
+            chatId, userId, queryEmbedding=[1.0, 0.0], tags=["diet"], embeddingModel=model, limit=5
+        )
+
+        assert len(results) == 1, f"Expected 1 result, got {len(results)} (C1: tag params bound to wrong dict)"
+        assert results[0]["memory_id"] == idDiet
+        assert results[0]["score"] > 0.0
+
     async def test_searchMemories_semantic_scoping(self, testDatabase: Database) -> None:
         """Semantic mode honours (chat, user) scoping — no cross-user leaks.
 
@@ -1161,3 +1198,82 @@ class TestUserMemoriesVectorLayer:
         lastCall = spy.call_args
         assert lastCall.kwargs.get("chatId") == CHAT_ID
         assert lastCall.kwargs.get("dataSource") == "custom-src"
+
+    ###
+    # Defensive hardening regression tests
+    ###
+    async def test_getMemoriesByIds_autoChunksLargeIdList(self, testDatabase: Database) -> None:
+        """Regression: large ID lists (> MAX_SQL_VARIABLES) are auto-chunked, not rejected.
+
+        SQLite's default SQLITE_MAX_VARIABLE_COUNT is 999; an unbounded
+        ``IN (:id0, …)`` expansion with one placeholder per input ID would
+        raise ``sqlite3.OperationalError: too many SQL variables``. The fix
+        chunks the input into batches of ``MAX_SQL_VARIABLES`` and unions
+        the per-chunk results. This test forces a tiny chunk size via
+        patching (so multiple chunks execute without inserting 900+ rows)
+        and verifies every requested row is returned across the chunks.
+        """
+        ids: list[str] = []
+        for i in range(10):
+            mid = await self._add(testDatabase, content=f"chunk-{i}", threadId=5)
+            ids.append(mid)
+
+        # Force a 3-element chunk size → 4 chunks (3 + 3 + 3 + 1).
+        with patch("internal.database.repositories.user_memories.MAX_SQL_VARIABLES", 3):
+            result = await testDatabase.userMemories.getMemoriesByIds(ids)
+
+        assert len(result) == 10, f"expected all 10 across chunks, got {len(result)}"
+        assert {r["memory_id"] for r in result} == set(ids)
+
+    async def test_getMemoriesByIds_chunkingPreservesMissingIdSemantics(self, testDatabase: Database) -> None:
+        """Chunked fetch still drops IDs not present in the DB (per-chunk absent → global absent)."""
+        ids: list[str] = []
+        for i in range(6):
+            mid = await self._add(testDatabase, content=f"present-{i}", threadId=5)
+            ids.append(mid)
+        # A missing ID interleaved with present IDs.
+        request = [ids[0], "deadbeefdeadbeefdeadbeefdeadbeef", ids[5]]
+
+        with patch("internal.database.repositories.user_memories.MAX_SQL_VARIABLES", 2):
+            result = await testDatabase.userMemories.getMemoriesByIds(request)
+
+        assert {r["memory_id"] for r in result} == {ids[0], ids[5]}
+
+    async def test_normalizeTags_stripsBackslash_roundTripsAndMatches(self, testDatabase: Database) -> None:
+        """Regression: a tag containing a backslash round-trips and matches in search.
+
+        Tags are stored as JSON (``json.dumps`` doubles every ``\\``) and
+        the LIKE-escape helper ``_escapeTagForLike`` doubles ``\\`` again
+        for the LIKE pattern. A literal backslash in a tag would therefore
+        never match its own stored JSON pattern. ``_normalizeTags`` now
+        strips backslashes (alongside quotes) so storage and query
+        normalisation stay symmetric. Before the fix this test FAILED:
+        the search with the backslash tag returned ``[]``.
+        """
+        # Write a memory with a backslash-containing tag.
+        memId = await self._add(
+            testDatabase,
+            content="backslash-tagged",
+            tags=["diet\\low-carb"],
+            threadId=5,
+        )
+
+        # The stored tag has the backslash stripped.
+        rows = await testDatabase.userMemories.searchMemories(CHAT_ID, USER_ID, embeddingModel=None, limit=10)
+        assert len(rows) == 1
+        assert rows[0]["memory_id"] == memId
+        assert rows[0]["tags"] == ["dietlow-carb"], f"backslash must be stripped, got {rows[0]['tags']}"
+
+        # Searching with the backslash tag matches (stripped on both sides).
+        matches = await testDatabase.userMemories.searchMemories(
+            CHAT_ID, USER_ID, tags=["diet\\low-carb"], embeddingModel=None, limit=10
+        )
+        assert len(matches) == 1, "backslash tag must match after stripping on both sides"
+        assert matches[0]["memory_id"] == memId
+
+        # Searching with the already-stripped tag also matches.
+        matches2 = await testDatabase.userMemories.searchMemories(
+            CHAT_ID, USER_ID, tags=["dietlow-carb"], embeddingModel=None, limit=10
+        )
+        assert len(matches2) == 1
+        assert matches2[0]["memory_id"] == memId

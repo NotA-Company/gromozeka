@@ -21,3 +21,14 @@ MEMORY_SEARCH_TOPK_MULTIPLIER: int = 3
 # Embedding regeneration defaults
 BACKFILL_DEFAULT_BATCH_SIZE: int = 50
 """Default per-tick batch size for embedding-regen cron."""
+
+# SQL statement sizing
+MAX_SQL_VARIABLES: int = 900
+"""Safe upper bound on the number of bound parameters in a single SQL statement.
+
+Safe under SQLite's default ``SQLITE_MAX_VARIABLE_COUNT`` (999), with headroom
+for the fixed params (e.g. ``chatId``) that accompany an ``IN (...)`` expansion.
+PostgreSQL/MySQL have analogous limits. Repository methods that expand an
+arbitrary-length ``IN (:id0, :id1, ...)`` list MUST chunk the input into batches
+of at most this size and union the per-chunk results.
+"""

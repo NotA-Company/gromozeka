@@ -139,7 +139,7 @@ if result.status == ModelResultStatus.FINAL:
 # ALWAYS returns a (messages, coverageMap) tuple. The first element is the
 # condensed message list (head + summaries + tail); the second is a
 # Dict[int, CondensingDict] keyed by body-index -> fully-populated
-# CondensingDict (coverage metadata computed inside via generateCondencingDict
+# CondensingDict (coverage metadata computed inside via generateCondensingDict
 # reading ModelMessage.source). Empty dict when no condensing occurs.
 condensed, coverageMap = await llmService.condenseContext(
     messages,

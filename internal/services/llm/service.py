@@ -64,7 +64,7 @@ Accepts:
 """
 
 
-def generateCondencingDict(text: str, messages: Sequence[ModelMessage]) -> CondensingDict:
+def generateCondensingDict(text: str, messages: Sequence[ModelMessage]) -> CondensingDict:
     """Build a CondensingDict from summary text and the covered ModelMessages.
 
     Walks ``messages`` and reads each ``message.source`` to derive the
@@ -110,7 +110,8 @@ def generateCondencingDict(text: str, messages: Sequence[ModelMessage]) -> Conde
         elif isinstance(message.source, EnsuredMessage):
             messageCount += 1
             messageIdList.append(message.source.messageId)
-            participants.add(message.source.sender.username)
+            if message.source.sender.username:
+                participants.add(message.source.sender.username)
             dateList.append(message.source.date.timestamp())
         elif isinstance(message.source, dict):
             # The only available dict here is CondensingDict
@@ -722,7 +723,7 @@ class LLMService:
             The second element is a ``Dict[int, CondensingDict]`` keyed by
             body-index → fully-populated ``CondensingDict`` (the summary
             text plus coverage metadata computed via
-            :func:`generateCondencingDict` reading
+            :func:`generateCondensingDict` reading
             ``ModelMessage.source``). When no condensing occurs the first
             element is the original message sequence unchanged and the
             second element is ``{}``. Path C callers (``generateTextViaLLM``)
@@ -810,6 +811,11 @@ class LLMService:
         tokensCount = condensingModel.getEstimateTokensCount([v.toDict() for v in body])
         batchesCount = tokensCount // max(summaryMaxTokens - 256, summaryMaxTokens * 0.85) + 1
         batchLength = len(body) // batchesCount
+        # Floor at 1: when batchesCount > len(body) (a few token-heavy messages
+        # against a small condensing context) the division rounds to 0, which
+        # yields an empty batch, a zero-advance startPos, and an infinite loop.
+        if batchLength < 1:
+            batchLength = 1
 
         startPos = 0
         currentBatchLen = int(min(batchLength, len(body) - startPos))
@@ -846,7 +852,7 @@ class LLMService:
                 continue
 
             respText = mlRet.resultText
-            resDict = generateCondencingDict(text=respText, messages=tryMessages)
+            resDict = generateCondensingDict(text=respText, messages=tryMessages)
             newBody.append(ModelMessage(role="user", content=renderCondensedSummary(resDict), source=resDict))
             coverage[len(newBody) - 1] = resDict
             startPos += currentBatchLen
@@ -1098,7 +1104,7 @@ class LLMService:
             embeddingVector = await embeddingModel.generateEmbeddings(text)
             return (chatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr(), embeddingVector)
         except Exception:
-            logger.exception("Failed to generate embeddings:", exc_info=True)
+            logger.exception("Failed to generate embeddings:")
             return None
 
     async def rateLimit(self, chatId: int, chatSettings: ChatSettingsDict) -> None:

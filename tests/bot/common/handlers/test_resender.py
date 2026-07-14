@@ -375,13 +375,28 @@ class TestResendCronJobForwarding:
         ``asyncio.sleep`` is therefore safe for this class; the
         timing-condition loop is never entered.
 
+        A bounded-call guard wraps the no-op so a future test that does set
+        a real ``mediaGroupId`` fails loudly (``AssertionError`` after 50
+        calls) instead of busy-spinning forever inside the readiness wait.
+
         Yields:
             ``None`` — patches ``asyncio.sleep`` for the duration of
             each test, then restores it.
         """
+        callCount = 0
+
+        async def _boundedNoOpSleep(_seconds: float) -> None:
+            nonlocal callCount
+            callCount += 1
+            if callCount > 50:
+                raise AssertionError(
+                    "asyncio.sleep called 50 times — possible time-based loop "
+                    "reached under no-op sleep (e.g. the media-group readiness wait)"
+                )
+
         with patch(
             "internal.bot.common.handlers.resender.asyncio.sleep",
-            new=AsyncMock(),
+            new=_boundedNoOpSleep,
         ):
             yield
 

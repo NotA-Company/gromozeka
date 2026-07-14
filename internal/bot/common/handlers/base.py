@@ -788,9 +788,19 @@ class BaseBotHandler(CommandHandlerMixin):
         condenseCache = eRootMessage.metadata.get("condensedThread", [])
         condenseCacheMessages: List[ModelMessage] = []
 
+        # Shared memory-ID accumulator across BOTH the first-N (pinned) block
+        # and the tail loop. The pinned block renders its messages against an
+        # empty set (so all of their memories are emitted), then seeds it with
+        # the rendered IDs; the tail loop reuses the same set so that a
+        # permanent memory shared between a pinned message and a tail message
+        # is injected exactly once. Previously the pinned block passed a
+        # throwaway ``set()`` and the tail re-initialised its own set, so a
+        # shared permanent memory was injected twice (once per render path).
+        excludedMemoryIds: MutableSet[str] = set()
+
         if condenseCache and condenseThread:
             # First - add skipped messages to result.
-            # It should be ony starting message
+            # It should be only the starting message
             for i in range(min(keepFirstN, len(dbMessageList))):
                 eMessage = await EnsuredMessage.fromDBChatMessage(dbMessageList[i], self.db)
                 # Keep memories for root message
@@ -831,14 +841,13 @@ class BaseBotHandler(CommandHandlerMixin):
                     tillMessageId = MessageId(0)
 
                 skippedMessages = 0
-                # Skip from context messages, condenced to condensedMessage
+                # Skip from context messages, condensed to condensedMessage
                 for dbMessage in dbMessageList:
                     skippedMessages += 1
                     if dbMessage["message_id"] == tillMessageId or dbMessage["date"] > lastDT:
                         break
                 dbMessageList = dbMessageList[skippedMessages:]
 
-        excludedMemoryIds: MutableSet[str] = set()
         retTail: deque[ModelMessage] = deque()
         # For proper memory deduplication, construct tail from newest to oldest,
         # but adding to begin of deque to not need revert later
@@ -872,7 +881,7 @@ class BaseBotHandler(CommandHandlerMixin):
 
         # First condense pass — request coverage to map summaries back to
         # source entries for metadata extraction.
-        condensedRet, condencingDictMap = await self.llmService.condenseContext(
+        condensedRet, condensingDictMap = await self.llmService.condenseContext(
             ret,
             model=llmModel,
             keepFirstN=keepFirstN,
@@ -890,7 +899,7 @@ class BaseBotHandler(CommandHandlerMixin):
             # as well.
 
             keepFirstN = 1
-            condensedRet, condencingDictMap = await self.llmService.condenseContext(
+            condensedRet, condensingDictMap = await self.llmService.condenseContext(
                 condenseCacheMessages,
                 model=llmModel,
                 keepFirstN=keepFirstN,
@@ -901,12 +910,12 @@ class BaseBotHandler(CommandHandlerMixin):
                 condensingSystemPrompt=chatSettings[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT].toStr(),
             )
             # We'll need to rewrite cache, so empty it here
-            condenseCache = list(condencingDictMap.values())
+            condenseCache = list(condensingDictMap.values())
         else:
             # No re-condense needed. Old cache entries are preserved (they
             # were protected by keepFirstN in the first condense pass); new
             # entries are appended from the coverage.
-            condenseCache.extend(condencingDictMap.values())
+            condenseCache.extend(condensingDictMap.values())
 
         eRootMessage.metadata["condensedThread"] = condenseCache
         await self.db.chatMessages.updateChatMessageMetadata(

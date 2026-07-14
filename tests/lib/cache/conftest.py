@@ -10,7 +10,6 @@ Note:
     functions is sufficient to control TTL/expiry behaviour deterministically.
 """
 
-import time as _timeModule
 from contextlib import contextmanager
 from typing import Iterator, List
 from unittest.mock import patch
@@ -27,11 +26,14 @@ def fakeClockContext() -> Iterator[List[float]]:
     tests (``test_integration.py``) that cannot receive pytest fixture
     arguments. Patches are restored automatically on context exit.
 
+    The base is ``0.0`` (not real epoch time) for readable TTL deltas and parity
+    with the rate-limiter fake clock; only the deltas matter for expiry logic.
+
     Yields:
-        List[float]: one-element list ``[now]`` in epoch seconds; mutate
+        List[float]: one-element list ``[now]`` seeded at ``0.0``; mutate
             ``now[0]`` to advance the clock.
     """
-    now: List[float] = [_timeModule.time()]
+    now: List[float] = [0.0]
 
     def fakeTime() -> float:
         """Return the current fake clock value.
@@ -62,8 +64,8 @@ def fakeClock() -> Iterator[List[float]]:
     (e.g. ``fakeClock[0] += 2.1``) in place of ``await asyncio.sleep(2.1)``.
 
     Yields:
-        List[float]: one-element list ``[now]`` in epoch seconds; mutate
-            ``now[0]`` to advance the clock.
+        List[float]: one-element list ``[now]`` seeded at ``0.0`` (parity with
+            the rate-limiter fake clock); mutate ``now[0]`` to advance the clock.
     """
     with fakeClockContext() as now:
         yield now

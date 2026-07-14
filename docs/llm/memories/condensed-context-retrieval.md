@@ -20,7 +20,7 @@ condenseContext(messages, model, *, keepFirstN=0, keepLastN=1,
                 condensingSystemPrompt=None, maxTokens=None, force=False)
 ```
 
-- **Always** returns `Tuple[Sequence[ModelMessage], Dict[int, CondensingDict]]`. First element = condensed message list (head + summaries + tail); second = coverage map keyed by body-index → `CondensingDict` (computed inside via `generateCondencingDict` reading `ModelMessage.source`). When no condensing occurs the second element is `{}`. There is NO `returnCoverage` kwarg (deleted in the 2026-07-13 simplification).
+- **Always** returns `Tuple[Sequence[ModelMessage], Dict[int, CondensingDict]]`. First element = condensed message list (head + summaries + tail); second = coverage map keyed by body-index → `CondensingDict` (computed inside via `generateCondensingDict` reading `ModelMessage.source`). When no condensing occurs the second element is `{}`. There is NO `returnCoverage` kwarg (deleted in the 2026-07-13 simplification).
 - Two modes:
   - (a) **No `condensingModel`** → pure front-truncation.
   - (b) **With `condensingModel`** → body split into batches, each batch summarized via `condensingModel.generateText`; the summary is emitted as `ModelMessage(role="user", content=renderCondensedSummary(resDict), source=resDict)`.
@@ -29,11 +29,11 @@ condenseContext(messages, model, *, keepFirstN=0, keepLastN=1,
 
 ### Path A — Handler-level `condensedThread` (PERSISTENT)
 
-`getThreadByMessageForLLM` ([`/internal/bot/common/handlers/base.py`](/internal/bot/common/handlers/base.py)) reads `eRootMessage.metadata["condensedThread"]` = `List[CondensingDict]`, injects each as `role="user"` via `renderCondensedSummary`, and skips the covered raw messages. If the rebuilt context still exceeds 50% of the model context, it re-condenses and writes back via `updateChatMessageMetadata`. The caller unpacks `condensedRet, condencingDictMap = await self.condenseContext(...)` and extends the cache via `condenseCache.extend(condencingDictMap.values())` — no parallel-list machinery.
+`getThreadByMessageForLLM` ([`/internal/bot/common/handlers/base.py`](/internal/bot/common/handlers/base.py)) reads `eRootMessage.metadata["condensedThread"]` = `List[CondensingDict]`, injects each as `role="user"` via `renderCondensedSummary`, and skips the covered raw messages. If the rebuilt context still exceeds 50% of the model context, it re-condenses and writes back via `updateChatMessageMetadata`. The caller unpacks `condensedRet, condensingDictMap = await self.condenseContext(...)` and extends the cache via `condenseCache.extend(condensingDictMap.values())` — no parallel-list machinery.
 
 ### Path B — Random-answer `randomContext` (PERSISTENT)
 
-`handleRandomAnswer` ([`/internal/bot/common/handlers/llm_messages.py`](/internal/bot/common/handlers/llm_messages.py)), when context exceeds `MAX_RANDOM_CONTEXT_MESSAGES`, calls `condenseContext(force=True)`, unpacks `condensedRet, condencedDictMap = ...`, and — if `condencedDictMap` is non-empty — writes `ensuredMessage.metadata["randomContext"] = mergeCondencingDicts(condencedDictMap.values())`. The write is SKIPPED when the map is empty (nothing meaningful to persist). Subsequent loops stop walking older context when they hit a `randomContext` boundary.
+`handleRandomAnswer` ([`/internal/bot/common/handlers/llm_messages.py`](/internal/bot/common/handlers/llm_messages.py)), when context exceeds `MAX_RANDOM_CONTEXT_MESSAGES`, calls `condenseContext(force=True)`, unpacks `condensedRet, condensingDictMap = ...`, and — if `condensingDictMap` is non-empty — writes `ensuredMessage.metadata["randomContext"] = mergeCondencingDicts(condensingDictMap.values())`. The write is SKIPPED when the map is empty (nothing meaningful to persist). Subsequent loops stop walking older context when they hit a `randomContext` boundary.
 
 ### Path C — Service-level auto-condense (TRANSIENT)
 
@@ -56,7 +56,7 @@ Decision record: [`../architecture.md`](../architecture.md) ADR-019. Spec: [`../
 
 **Feature:** record which message IDs each condensed summary covers + structured metadata (participants / dateRange / messageCount) + render summaries as JSON (fixing the latent raw-text asymmetry) + add `get_messages_by_ids` LLM tool for on-demand retrieval of condensed originals.
 
-**Simplification (2026-07-13):** the original caller-side `returnCoverage` / `indexToEntry` / `CondenseBatchCoverage` machinery was DELETED and replaced by `ModelMessage.source`-based coverage computed inside `condenseContext` via `generateCondencingDict`. The simplified design is what shipped: coverage is produced centrally and the callers (Path A / Path B) just consume `condencingDictMap.values()`.
+**Simplification (2026-07-13):** the original caller-side `returnCoverage` / `indexToEntry` / `CondenseBatchCoverage` machinery was DELETED and replaced by `ModelMessage.source`-based coverage computed inside `condenseContext` via `generateCondensingDict`. The simplified design is what shipped: coverage is produced centrally and the callers (Path A / Path B) just consume `condensingDictMap.values()`.
 
 ### What shipped (durable code anchors — line numbers drift, re-locate by symbol)
 
@@ -69,14 +69,14 @@ Decision record: [`../architecture.md`](../architecture.md) ADR-019. Spec: [`../
   - `mergeCondensingDicts(dictList) -> CondensingDict` — unions multiple dicts (`text` = `"\n".join`; `messageIds` concat de-duped via `asStr()` first-seen order; `participants` sorted-unique; `dateRange` min/max; `messageCount` sum). Used by Path B.
 
 - **[`/internal/services/llm/service.py`](/internal/services/llm/service.py):**
-  - `generateCondencingDict(text, messages) -> CondensingDict` (module fn) — the coverage producer. Walks the batch `ModelMessage`s and reads `.source`: `EnsuredMessage` → extract messageId / username / `date.timestamp()`; `dict` / `CondensingDict` → union (re-condense cascade); `None` → `logger.warning` + skip (NOT counted in `messageCount`). Returns `CondensingDict` with `text` + conditionally-populated `messageIds` / `participants` / `dateRange` (`{from:min ts, to:max ts}`, omitted if none) / `messageCount`. Does NOT set `tillMessageId` / `tillTS`. Wrapped in try/except → fallback `CondensingDict(text=respText)` on failure (summary preserved, coverage dropped).
-  - `condenseContext` **always** returns `Tuple[Sequence[ModelMessage], Dict[int, CondensingDict]]` (no `returnCoverage` kwarg); coverage computed inside via `generateCondencingDict`; Path C unpacks `_messages, _`.
+  - `generateCondensingDict(text, messages) -> CondensingDict` (module fn) — the coverage producer. Walks the batch `ModelMessage`s and reads `.source`: `EnsuredMessage` → extract messageId / username / `date.timestamp()`; `dict` / `CondensingDict` → union (re-condense cascade); `None` → `logger.warning` + skip (NOT counted in `messageCount`). Returns `CondensingDict` with `text` + conditionally-populated `messageIds` / `participants` / `dateRange` (`{from:min ts, to:max ts}`, omitted if none) / `messageCount`. Does NOT set `tillMessageId` / `tillTS`. Wrapped in try/except → fallback `CondensingDict(text=respText)` on failure (summary preserved, coverage dropped).
+  - `condenseContext` **always** returns `Tuple[Sequence[ModelMessage], Dict[int, CondensingDict]]` (no `returnCoverage` kwarg); coverage computed inside via `generateCondensingDict`; Path C unpacks `_messages, _`.
 
-- **[`/internal/bot/common/handlers/base.py`](/internal/bot/common/handlers/base.py)** (`getThreadByMessageForLLM`): TWO `condenseContext` call sites (initial condense + re-condense cascade); unpacks `condensedRet, condencingDictMap`; `condenseCache.extend(condencingDictMap.values())` (or `= list(...)` for the cascade); injection site calls `renderCondensedSummary(condensedMessage)`.
+- **[`/internal/bot/common/handlers/base.py`](/internal/bot/common/handlers/base.py)** (`getThreadByMessageForLLM`): TWO `condenseContext` call sites (initial condense + re-condense cascade); unpacks `condensedRet, condensingDictMap`; `condenseCache.extend(condensingDictMap.values())` (or `= list(...)` for the cascade); injection site calls `renderCondensedSummary(condensedMessage)`.
 
-- **[`/internal/bot/common/handlers/llm_messages.py`](/internal/bot/common/handlers/llm_messages.py)** (`handleRandomAnswer`): unpacks `condensedRet, condencedDictMap`; if non-empty writes `mergeCondensingDicts(condencedDictMap.values())` to `randomContext`. The read site in `ensured_message.py` (`toModelMessageList`) pre-wraps legacy `str` into `CondensingDict(text=...)` → `renderCondensedSummary(...)`.
+- **[`/internal/bot/common/handlers/llm_messages.py`](/internal/bot/common/handlers/llm_messages.py)** (`handleRandomAnswer`): unpacks `condensedRet, condensingDictMap`; if non-empty writes `mergeCondensingDicts(condensingDictMap.values())` to `randomContext`. The read site in `ensured_message.py` (`toModelMessageList`) pre-wraps legacy `str` into `CondensingDict(text=...)` → `renderCondensedSummary(...)`.
 
-- **[`/internal/bot/common/handlers/chat_search.py`](/internal/bot/common/handlers/chat_search.py)**: `get_messages_by_ids` tool (registered in `ChatSearchHandler.__init__` as a normal `registerTool(...)` alongside the other search tools; reuses `_formatMessageDict`; never-raise; batch fetch). Constant `ToolName.GET_MESSAGES_BY_IDS` + `MAX_GET_MESSAGES_BATCH = 50` in [`/internal/bot/constants.py`](/internal/bot/constants.py).
+- **[`/internal/bot/common/handlers/chat_search.py`](/internal/bot/common/handlers/chat_search.py)**: `get_messages_by_ids` tool (registered in `ChatSearchHandler.__init__` as a normal `registerTool(...)` alongside the other search tools; reuses `_formatMessageDict`; never-raise; batch fetch). Constant `ToolName.GET_MESSAGES_BY_IDS` + `MAX_GET_MESSAGES_BATCH = 32` (plan §3.8 proposed 50; implementation chose 32) in [`/internal/bot/constants.py`](/internal/bot/constants.py).
 
 - **[`/internal/database/repositories/chat_messages.py`](/internal/database/repositories/chat_messages.py)**: `getChatMessagesByMessageIds(chatId, messageIds, *, dataSource=None)` — portable `IN (:id0, ...)` named placeholders; `ORDER BY c.date ASC`; early-returns `[]` on empty input; does NOT dedup input IDs (caller's responsibility). Backs the tool.
 
@@ -84,7 +84,7 @@ Decision record: [`../architecture.md`](../architecture.md) ADR-019. Spec: [`../
 
 ### `get_messages_by_ids` LLM tool
 
-Registered in `ChatSearchHandler.__init__` ([`/internal/bot/common/handlers/chat_search.py`](/internal/bot/common/handlers/chat_search.py)); constant `ToolName.GET_MESSAGES_BY_IDS`, [`/internal/bot/constants.py`](/internal/bot/constants.py). Accepts a list of ID strings (`extra={"items": {"type": "string"}}` — forces strings because `MessageId` is `int|str`); input clamped to `MAX_GET_MESSAGES_BATCH = 50`. Returns `{messages:[...EnsuredMessage JSON...], notFound:[...], count:N}`, reusing `_formatMessageDict`. Whole body wrapped in try/except (never-raise).
+Registered in `ChatSearchHandler.__init__` ([`/internal/bot/common/handlers/chat_search.py`](/internal/bot/common/handlers/chat_search.py)); constant `ToolName.GET_MESSAGES_BY_IDS`, [`/internal/bot/constants.py`](/internal/bot/constants.py). Accepts a list of ID strings (`extra={"items": {"type": "string"}}` — forces strings because `MessageId` is `int|str`); input clamped to `MAX_GET_MESSAGES_BATCH = 32`. Returns `{messages:[...EnsuredMessage JSON...], notFound:[...], count:N}`, reusing `_formatMessageDict`. Whole body wrapped in try/except (never-raise).
 
 **Three-layer gating** (note: NO handler restructuring, NO `manager.py` change):
 1. `[search-history].enabled` via `ChatSearchHandler`'s existing conditional registration (the tool rides the handler's gate).
@@ -96,9 +96,9 @@ The config section is `[search-history]` (NOT `[chat-search]`), accessed via `co
 ## Durable gotchas / lessons
 
 - **`CondensedDateRangeDict` MUST use functional TypedDict syntax** — `from` is a Python reserved keyword; class-body syntax (`from: float`) is a `SyntaxError`. Functional syntax `TypedDict("...", {"from": float, "to": float})` uses string keys. Field access is subscript-only (`d["from"]`), never attribute.
-- **`tillMessageId` / `tillTS` are NOT set by `generateCondencingDict`.** They are legacy boundary markers, `NotRequired` on `CondensingDict`. Readers use `in` / `.get()` checks and fall back to `dateRange["to"]` / `messageIds[-1]` when absent (see the `base.py` injection-site fallback chain).
+- **`tillMessageId` / `tillTS` are NOT set by `generateCondensingDict`.** They are legacy boundary markers, `NotRequired` on `CondensingDict`. Readers use `in` / `.get()` checks and fall back to `dateRange["to"]` / `messageIds[-1]` when absent (see the `base.py` injection-site fallback chain).
 - **TWO `condenseContext` call sites in `getThreadByMessageForLLM`** (initial condense + re-condense cascade), not one. Both unpack the tuple.
-- **Path B skips the `randomContext` write when `condencedDictMap` is empty** — nothing meaningful to persist.
+- **Path B skips the `randomContext` write when `condensingDictMap` is empty** — nothing meaningful to persist.
 - **Gating detail:** the `get_messages_by_ids` tool rides `[search-history].enabled`. The config section is `[search-history]` NOT `[chat-search]`; accessed via `configManager.getSearchHistoryConfig()`. NO handler restructuring needed. NOT gated on `EMBEDDINGS_ENABLED` (pure DB lookup).
 - **PRE-EXISTING infinite-loop bug in `condenseContext` batch-shrink — FIXED by the 2026-07-13 simplification.** Original defect: the `while` loop head recomputed `currentBatchLen = min(batchLength, len(body) - startPos)` from the fixed `batchLength` every iteration, clobbering any shrunk value → a shrunk-but-not-skipped oversized batch never progressed (only escaped via the `currentBatchLen == 1` skip). The fix (`condenseContext` batch loop): the loop head now reads `min(currentBatchLen, ...)` — the shrunk value persists across the `continue`. The loop provably terminates (each iteration either advances `startPos` or strictly decreases `currentBatchLen`, floored at 1).
   - **Regression-test GAP:** no test covers the shrink path. All overflow tests use `batchLength = 1` and hit only the skip-1 branch; the dynamic shrink (`currentBatchLen >= 2` → divide-by-overshoot-ratio → `-2` → floor at 1) is untested. A reversion to `min(batchLength, ...)` would only be caught by a test that would hang (timeout), not fail cleanly.

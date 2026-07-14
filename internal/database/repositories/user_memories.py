@@ -54,6 +54,7 @@ import numpy
 from internal.database.constants import (
     BACKFILL_DEFAULT_BATCH_SIZE,
     EPHEMERAL_RETRIEVAL_LIMIT,
+    MAX_SQL_VARIABLES,
     MEMORY_SEARCH_DEFAULT_LIMIT,
     MEMORY_SEARCH_TOPK_MULTIPLIER,
     PERMANENT_INJECTION_CAP,
@@ -79,10 +80,60 @@ _SELECT_COLUMNS: str = (
 
 
 def _normalizeTags(tags: Optional[List[str]]) -> Optional[List[str]]:
-    """Normalise tags to lowercase, drop '"' and remove duplicates."""
+    """Normalise tags for symmetric storage/query use: lowercase, strip ``"`` and ``\\``, dedup.
+
+    Called at BOTH write time (``addMemory``) and query time (the search
+    methods), so it must NOT apply LIKE-specific escaping — that would
+    break the JSON round-trip (the backslash introduced by LIKE escaping
+    would be double-escaped by ``json.dumps`` at storage time, so the
+    stored text would never match the LIKE pattern). LIKE wildcard
+    escaping is applied separately, only at pattern-construction time,
+    by :func:`_escapeTagForLike`.
+
+    The backslash (``\\``) is stripped here for the same reason ``"`` is
+    stripped: tags are stored via ``json.dumps`` (which doubles every
+    ``\\`` → ``\\\\``), and the LIKE-escape helper
+    :func:`_escapeTagForLike` doubles ``\\`` again for the LIKE pattern.
+    A tag containing a literal ``\\`` would therefore never match its
+    own stored JSON pattern, so backslash is removed entirely (alongside
+    ``"``) to keep storage and query normalisation symmetric.
+
+    Args:
+        tags: Raw tag list, or ``None``.
+
+    Returns:
+        Deduplicated list of lowercased, quote-and-backslash-stripped
+        tags, or the original ``None`` / empty input.
+    """
     if not tags:
         return tags
-    return list(set([tag.lower().replace('"', "") for tag in tags]))
+    return list(set([tag.lower().replace('"', "").replace("\\", "") for tag in tags]))
+
+
+def _escapeTagForLike(value: str) -> str:
+    r"""Escape LIKE wildcards (``%``, ``_``) and the escape char ``\``.
+
+    Applied ONLY when constructing a LIKE pattern value (never at storage
+    time) so that a tag containing ``%`` or ``_`` matches literally
+    rather than being interpreted as a wildcard. The paired ``ESCAPE '\'``
+    clause on every ``tags LIKE :tagsN`` expression tells the SQL engine
+    to honour the backslash as the escape character.
+
+    Portability note: ``ESCAPE '\'`` is valid on SQLite and PostgreSQL
+    (``standard_conforming_strings = on``, the default since PostgreSQL
+    9.1). On MySQL, where backslash is an escape character inside string
+    literals by default, the clause would need ``ESCAPE '\\'`` — this is
+    documented for when the MySQL provider is wired up.
+
+    Args:
+        value: A single normalised tag string (output of
+            :func:`_normalizeTags`).
+
+    Returns:
+        The tag with ``\``, ``%``, and ``_`` escaped for use inside a
+        LIKE pattern that carries ``ESCAPE '\'``.
+    """
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 class UserMemoriesRepository(BaseRepository):
@@ -442,6 +493,13 @@ class UserMemoriesRepository(BaseRepository):
         :meth:`DatabaseManager.getProvider` which data source to query
         on a cache miss. When both are ``None`` the default DB is used.
 
+        Large ID lists are auto-chunked into batches of
+        :data:`~internal.database.constants.MAX_SQL_VARIABLES` so the
+        ``IN (:id0, …)`` expansion never exceeds the engine's bound-
+        parameter limit (SQLite's default ``SQLITE_MAX_VARIABLE_COUNT``
+        is 999). Per-chunk result sets are unioned; the method has no
+        ``ORDER BY`` so chunking does not change the return semantics.
+
         Args:
             memoryIds: List of memory UUID hex strings.
             chatId: Optional chat ID for data-source routing. ``None``
@@ -457,22 +515,29 @@ class UserMemoriesRepository(BaseRepository):
         """
         if not memoryIds:
             return []
-        placeholders: List[str] = []
-        fetchParams: dict[str, object] = {}
-        for i, mid in enumerate(memoryIds):
-            key = f"id{i}"
-            placeholders.append(f":{key}")
-            fetchParams[key] = mid
         sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)
-        rows = await sqlProvider.executeFetchAll(
-            f"""
-            SELECT {_SELECT_COLUMNS}
-            FROM user_memories
-            WHERE memory_id IN ({', '.join(placeholders)})
-            """,
-            fetchParams,
-        )
-        return [dbUtils.sqlToTypedDict(row, UserMemoryDict) for row in rows]
+        results: List[UserMemoryDict] = []
+        # Chunk to stay under SQLITE_MAX_VARIABLE_COUNT (999). Each chunk
+        # reuses :id0..:idN placeholders, so the param dict is rebuilt per
+        # chunk (no cross-chunk key collision).
+        for chunkStart in range(0, len(memoryIds), MAX_SQL_VARIABLES):
+            chunk = memoryIds[chunkStart : chunkStart + MAX_SQL_VARIABLES]
+            placeholders: List[str] = []
+            fetchParams: dict[str, object] = {}
+            for i, mid in enumerate(chunk):
+                key = f"id{i}"
+                placeholders.append(f":{key}")
+                fetchParams[key] = mid
+            rows = await sqlProvider.executeFetchAll(
+                f"""
+                SELECT {_SELECT_COLUMNS}
+                FROM user_memories
+                WHERE memory_id IN ({', '.join(placeholders)})
+                """,
+                fetchParams,
+            )
+            results.extend(dbUtils.sqlToTypedDict(row, UserMemoryDict) for row in rows)
+        return results
 
     async def getDistinctTags(
         self,
@@ -581,12 +646,15 @@ class UserMemoriesRepository(BaseRepository):
 
         Scoping: always filters ``chat_id = :chatId AND user_id =
         :userId`` — no cross-user/cross-chat leaks. The ``tags`` filter
-        is applied as a Python set-intersection post-fetch (ANY-match)
-        because JSON-in-SQL ``LIKE`` is non-portable and breaks on tags
-        containing ``"`` / ``%`` / ``_`` (plan §6.2). In semantic mode
-        ``threadId`` and ``type`` are applied in the JOIN step on the
-        authoritative ``user_memories`` columns (vec0 carries neither —
-        both live only on ``user_memories``).
+        is applied via SQL ``LIKE`` against the JSON-serialised ``tags``
+        column (ANY-match — a memory qualifies when it carries ANY of
+        the listed tags). LIKE wildcards (``%``, ``_``) and the quote
+        character (``"``) inside tag values are escaped so they match
+        literally (see :func:`_escapeTagForLike` /
+        :func:`_normalizeTags`). In semantic mode ``threadId`` and
+        ``type`` are applied in the JOIN step on the authoritative
+        ``user_memories`` columns (vec0 carries neither — both live only
+        on ``user_memories``).
 
         Thread scoping: ``threadId is None`` returns memories from ALL
         threads for ``(chatId, userId)`` (no thread filter) — this is the
@@ -699,8 +767,8 @@ class UserMemoriesRepository(BaseRepository):
                 normalizedTags = _normalizeTags(tags)
                 assert normalizedTags is not None
                 for i, tag in enumerate(normalizedTags):
-                    params[f"tags{i}"] = f'%"{tag}"%'
-                    tagsWhereList.append(f"tags LIKE :tags{i}")
+                    params[f"tags{i}"] = f'%"{_escapeTagForLike(tag)}"%'
+                    tagsWhereList.append(f"tags LIKE :tags{i} ESCAPE '\\'")
 
             tagsWhereStr = ""
             if tagsWhereList:
@@ -771,8 +839,8 @@ class UserMemoriesRepository(BaseRepository):
                 JOIN step on the authoritative ``user_memories.type``
                 column (vec0 carries no ``type`` column — it lives only
                 on ``user_memories``).
-            tags: Optional list of tag strings (ANY-match via Python
-                set-intersection post-fetch — see module note on tags).
+            tags: Optional list of tag strings (ANY-match via SQL LIKE
+                on the JSON-serialised tags column — see module note).
             permanent: Optional permanent-flag filter (applied in vec0;
                 ``permanent`` is immutable post-creation so it is never
                 stale in the denormalised vec0 row).
@@ -838,8 +906,8 @@ class UserMemoriesRepository(BaseRepository):
             # columns (they live only on the authoritative
             # ``user_memories`` row), so they are applied in the JOIN step
             # below on ``user_memories``. ``tags`` is JSON TEXT and is
-            # likewise applied as a Python set-intersection post-fetch
-            # (JSON-in-SQL LIKE is non-portable — see plan §6.2).
+            # likewise applied via SQL LIKE with wildcard escaping in the
+            # JOIN step below.
             filterParts: List[str] = [
                 "chat_id = :chatId",
                 "user_id = :userId",
@@ -878,11 +946,10 @@ class UserMemoriesRepository(BaseRepository):
                 return []
 
             # JOIN step: fetch full user_memories rows by memory_id,
-            # applying the SQL-safe post-filters (``threadId``, ``type``)
-            # on the AUTHORITATIVE user_memories columns. ``tags`` is
-            # applied as a Python set-intersection post-fetch (JSON-in-SQL
-            # LIKE is non-portable — see plan §6.2). The vec0 over-fetch
-            # (``MEMORY_SEARCH_TOPK_MULTIPLIER``) absorbs the trimming.
+            # applying the SQL-safe post-filters (``threadId``, ``type``,
+            # ``tags``) on the AUTHORITATIVE user_memories columns. The
+            # vec0 over-fetch (``MEMORY_SEARCH_TOPK_MULTIPLIER``) absorbs
+            # the trimming.
             placeholders: List[str] = []
             fetchParams: dict[str, object] = {
                 "chatId": chatId,
@@ -896,8 +963,8 @@ class UserMemoriesRepository(BaseRepository):
                 normalizedTags = _normalizeTags(tags)
                 assert normalizedTags is not None
                 for i, tag in enumerate(normalizedTags):
-                    filterParams[f"tags{i}"] = f'%"{tag}"%'
-                    tagsWhereList.append(f"tags LIKE :tags{i}")
+                    fetchParams[f"tags{i}"] = f'%"{_escapeTagForLike(tag)}"%'
+                    tagsWhereList.append(f"tags LIKE :tags{i} ESCAPE '\\'")
 
             tagsWhereStr = ""
             if tagsWhereList:

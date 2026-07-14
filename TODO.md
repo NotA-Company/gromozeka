@@ -1,24 +1,12 @@
 # Our TODO list
-- [x] jsonl log user bio change
-- [x] add memories about user, show last X (or most relevant X) + add\delete\search tools
-- [x] pin data\summary\memories to message
-- [x] Memory-config, add memory
-- [x] memory-repo: add custom source support
-- [x] move constants to constants
 - [ ] refactor models
-- [x] make lint - add check for compilation
-- [x] move injected memories to separate table by hash or keep + links to them
-- [x] add chat+source to get-memories-by-id
-- [x] search-memories: ability to search for another user
-- [x] how\when do we generate embeddings for messages? 
-- [.] condencing - populate list of condensed messages for search
-- [x] memory and search chatSettings - investigate, discuss
-- [x] script to search and delete nonexistent settings from chatSettings table
+- [ ] opencode commands for review and teamldead memory refinement
+- [ ] changelog
+
 
 - [ ] Yandex AI Studio does not support webp images. Add config value + convert
 - [ ] Search for tool_name in [] or {} + optional ``` end return some error if yes (to enforce proper tool call)
 - [ ] Subagent with conversation history
-- [x] Better random-message handling
 - [ ] Better compaction (drop tools result, more settings, drop userdata, use subagent for compaction)
 - [ ] Topic-level configs
 - [ ] Support random-message sending function
@@ -33,7 +21,6 @@
 - [ ] More statistics (messages, divinations, tools, spam)
 - [ ] Infrastucture for statistics
 - [ ] On web search\get-url-content, allow bot to add compaction prompt
-- [x] Proxy support (SOCKS5?)
 - [ ] think about https://download.geonames.org/export/dump/
 - [ ] In case of geocoder\weather error, try to get from cache (with no TTL)
 - [ ] Add some decorator for LLM functions
@@ -52,9 +39,7 @@
 
 # Also:
 - [ ] Add coverage badge?
-- [x] Think about channels support
 - [ ] Run LLM and other requests in separate threads
-- [x] Random answer: summarisation instead of raw messages
 - [ ] Logging: try to not log same messages if possible
 - [ ] ConfigManager: Use TypedDict's
 - [ ] Add replied message to context more close to message (maybe in message metadata)
@@ -94,6 +79,24 @@ nput). Please reduce the length of either one, or use the "middle-out" transform
 ': None}}}
 
 # Done:
+- [x] jsonl log user bio change
+- [x] add memories about user, show last X (or most relevant X) + add\delete\search tools
+- [x] pin data\summary\memories to message
+- [x] Memory-config, add memory
+- [x] memory-repo: add custom source support
+- [x] move constants to constants
+- [x] make lint - add check for compilation
+- [x] move injected memories to separate table by hash or keep + links to them
+- [x] add chat+source to get-memories-by-id
+- [x] search-memories: ability to search for another user
+- [x] how\when do we generate embeddings for messages? 
+- [x] condensing - populate list of condensed messages for search
+- [x] memory and search chatSettings - investigate, discuss
+- [x] script to search and delete nonexistent settings from chatSettings table
+- [x] Better random-message handling
+- [x] Proxy support (SOCKS5?)
+- [x] Random answer: summarisation instead of raw messages
+- [x] Think about channels support
 - [x] Log used tokens count
 - [x] `dbUtils.sqlToTypedDict(_event, StatsEventDict)` will it work for optional fields?
 - [x] `lib/ai/providers/basic_openai_provider.py` _generateImage need to use _executeChatCompletion (like _generateText and _generateStructured)
@@ -105,7 +108,7 @@ nput). Please reduce the length of either one, or use the "middle-out" transform
 - [x] Add optional condensing of page content via LLM into [`yandex_search.py:_llmToolGetUrlContent`](internal/bot/common/handlers/yandex_search.py)
 - [x] Add support for local LLM-providers (Like Ollama or LLama.cpp)
 - [x] Add ability for different chats use different rate-limiters
-- [x] Add support for cache condenced context + reuse it
+- [x] Add support for cache condensed context + reuse it
 - [x] ensuredMessage: support miltiple media
 - [x] Save info about used tools to put it into context
 - [x] Add user to DB on first message (even if spam) or join

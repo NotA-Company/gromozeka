@@ -1,31 +1,78 @@
+#!/usr/bin/env ./venv/bin/python3
+"""List all fastembed TextEmbedding models supported by the installed version.
+
+Prints a formatted table of every model the installed ``fastembed`` release can
+serve: the HuggingFace model name, embedding dimension, download size in GB,
+and short description. Useful for picking a model for the memory-embedding
+subsystem or verifying which models are available after an upgrade.
+
+Usage::
+
+    ./venv/bin/python3 scripts/fastembed_list_model.py
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+
 from fastembed import TextEmbedding
 
+# Column widths matching the original layout.
+_MODEL_COL_WIDTH: int = 55
+_DIM_COL_WIDTH: int = 12
+_SIZE_COL_WIDTH: int = 12
 
-def list_fastembed_models():
-    models = TextEmbedding.list_supported_models()
+
+def listFastembedModels() -> None:
+    """Print a formatted table of all supported fastembed TextEmbedding models.
+
+    Each row shows the HuggingFace model name, embedding dimension, download
+    size in GB (1 decimal place), and short description. If the installed
+    fastembed reports no models (e.g. network/cache issue), a diagnostic
+    message is printed instead.
+    """
+    models: list[dict[str, object]] = TextEmbedding.list_supported_models()
 
     if not models:
-        print("Нет доступных моделей (проверь сеть или кэш).")
+        print("No models available (check network or cache).")
         return
 
-    # Подбираем ширину колонок
-    print(f"{'Модель':<55} {'Размерность':<12} {'Размер (GB)':<12} {'Описание'}")
+    print(
+        f"{'Model':<{_MODEL_COL_WIDTH}} "
+        f"{'Dim':<{_DIM_COL_WIDTH}} "
+        f"{'Size (GB)':<{_SIZE_COL_WIDTH}} "
+        f"{'Description'}"
+    )
     print("-" * 110)
 
-    for m in models:
-        name = m.get("model", "Неизвестно")
-        dim = m.get("dim", "?")
-        size = m.get("size_in_GB", "?")
-        desc = m.get("description", "Без описания")
+    for modelInfo in models:
+        name = str(modelInfo.get("model", "unknown"))
+        dim = str(modelInfo.get("dim", "?"))
+        sizeVal = modelInfo.get("size_in_GB", "?")
+        desc = str(modelInfo.get("description", ""))
 
-        # Форматируем размер: если число — оставляем 1 знак после запятой, иначе как есть
-        if isinstance(size, (int, float)):
-            size_str = f"{size:.1f}"
+        if isinstance(sizeVal, (int, float)):
+            sizeStr = f"{sizeVal:.1f}"
         else:
-            size_str = str(size)
+            sizeStr = str(sizeVal)
 
-        print(f"{name:<55} {str(dim):<12} {size_str:<12} {desc}")
+        print(f"{name:<{_MODEL_COL_WIDTH}} {dim:<{_DIM_COL_WIDTH}} {sizeStr:<{_SIZE_COL_WIDTH}} {desc}")
+
+
+def main() -> int:
+    """Entry point: list all supported fastembed TextEmbedding models.
+
+    Returns:
+        ``0`` on success.
+    """
+    parser = argparse.ArgumentParser(
+        description="List all fastembed TextEmbedding models supported by the installed version.",
+    )
+    parser.parse_args()
+    listFastembedModels()
+    return 0
 
 
 if __name__ == "__main__":
-    list_fastembed_models()
+    sys.exit(main())

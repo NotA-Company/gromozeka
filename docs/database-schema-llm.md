@@ -6,7 +6,7 @@
 **Database Class**: [`Database`](../internal/database/database.py:1)
 **Models**: [`internal/database/models.py`](../internal/database/models.py:1)
 **Repositories**: [`internal/database/repositories/`](../internal/database/repositories/)
-**Migrations**: 20 (up to `migration_020`)
+**Migrations**: 23 (up to `migration_023`)
 
 ---
 
@@ -48,8 +48,8 @@ CREATE TABLE chat_messages (
 
 **`metadata` JSON convention**: the column holds a JSON object (`internal/bot/models/message_metadata.py` → `MetadataDict`, `total=False`). Keys relevant to the condensed-context-retrieval feature (ADR-019):
 
-- `condensedThread` — `List[CondensingDict]` (Path A, `getThreadByMessageForLLM`). Each `CondensingDict` has only **`text: str`** as a required field; ALL others (`tillMessageId`, `tillTS`, `messageIds`, `participants`, `dateRange`, `messageCount`) are **`NotRequired`** (absent on legacy rows / when no coverage data is available, read defensively via `in`/`.get()`). `tillMessageId`/`tillTS` are legacy boundary markers NOT set by `generateCondencingDict` (the coverage producer). New writes populate `messageIds` (authoritative covered-ID list), `participants` (sorted unique sender logins), `dateRange` (`CondensedDateRangeDict`), `messageCount` (covered count).
-- `randomContext` — `Union[str, CondensingDict]` (Path B, `handleRandomAnswer`). Reshaped in ADR-019 from flat `str` → single `CondensingDict` on new writes (produced by `generateCondencingDict`, merged across batches via `mergeCondensingDicts`); legacy `str` rows are pre-wrapped into `CondensingDict(text=...)` by the read site before calling the renderer.
+- `condensedThread` — `List[CondensingDict]` (Path A, `getThreadByMessageForLLM`). Each `CondensingDict` has only **`text: str`** as a required field; ALL others (`tillMessageId`, `tillTS`, `messageIds`, `participants`, `dateRange`, `messageCount`) are **`NotRequired`** (absent on legacy rows / when no coverage data is available, read defensively via `in`/`.get()`). `tillMessageId`/`tillTS` are legacy boundary markers NOT set by `generateCondensingDict` (the coverage producer). New writes populate `messageIds` (authoritative covered-ID list), `participants` (sorted unique sender logins), `dateRange` (`CondensedDateRangeDict`), `messageCount` (covered count).
+- `randomContext` — `Union[str, CondensingDict]` (Path B, `handleRandomAnswer`). Reshaped in ADR-019 from flat `str` → single `CondensingDict` on new writes (produced by `generateCondensingDict`, merged across batches via `mergeCondensingDicts`); legacy `str` rows are pre-wrapped into `CondensingDict(text=...)` by the read site before calling the renderer.
 
 `CondensedDateRangeDict = TypedDict("CondensedDateRangeDict", {"from": float, "to": float})` uses **functional TypedDict syntax** because the JSON key `from` is a Python reserved keyword (class-body syntax would be a `SyntaxError`). It is the *storage* shape — two unix-timestamp floats; the render helper converts to ISO strings at call-time (ISO strings are NOT pre-baked into storage).
 

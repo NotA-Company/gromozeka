@@ -6,6 +6,16 @@ all ``user_data`` rows into it; migration 021 added soft-delete). There are
 zero live production callers of ``UserDataRepository`` — the table, the
 repository, and the ``db.userData`` accessor are all retired here.
 
+Data-loss warning (partial-failure → drop path): if migration 020's
+backfill crashed mid-flight (some ``user_data`` rows migrated, others
+not), the old sentinel-only guard would skip the remaining rows on
+restart. Applying this migration (022) afterwards would ``DROP TABLE
+user_data`` and destroy the unmigrated rows permanently — ``down()``
+re-creates an EMPTY table (structural reversibility only). Migration
+020 now uses a COUNT-based idempotency guard that detects and recovers
+from partial crashes, but operators should still verify migration 020
+completed fully before applying 022.
+
 ``up()`` drops the table. ``down()`` re-creates the **empty** table (data
 cannot be recovered after a ``DROP`` — this is structural reversibility only,
 sufficient for migration-rollback testing). The re-created DDL matches the
@@ -33,6 +43,8 @@ class Migration022DropUserData(BaseMigration):
     The table's data was migrated to ``user_memories`` (migration 020) and no
     production code reads or writes ``user_data``. This migration removes the
     now-dead table. ``down()`` re-creates it empty for structural reversibility.
+    See the module docstring for the partial-failure data-loss warning and
+    the count-based guard in migration 020 that mitigates it.
 
     Attributes:
         version: Migration version number (22).
@@ -49,6 +61,9 @@ class Migration022DropUserData(BaseMigration):
 
         The table is obsolete: all data was backfilled into ``user_memories``
         (migration 020) and no live code references ``UserDataRepository``.
+        Operators should verify migration 020 completed fully before applying
+        this migration — once the table is dropped, unmigrated rows are
+        permanently lost (``down()`` re-creates an EMPTY table).
 
         Args:
             sqlProvider: SQL provider abstraction; do NOT use raw sqlite3.

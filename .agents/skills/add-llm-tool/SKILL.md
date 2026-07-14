@@ -133,7 +133,8 @@ from lib.ai import LLMFunctionParameter, LLMParameterType
 
 The `registerTool` signature
 ([`internal/services/llm/service.py`](../../../internal/services/llm/service.py)
-~line 137):
+~line 217 — line numbers drift over time; grep `def registerTool` for the stable
+anchor):
 
 ```python
 def registerTool(

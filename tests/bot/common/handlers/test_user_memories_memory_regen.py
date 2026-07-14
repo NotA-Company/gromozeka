@@ -18,6 +18,7 @@ scope here — the DB is a ``Mock`` and the repository methods are stubbed with
 ``AsyncMock`` (mirrors ``tests/bot/common/handlers/test_chat_search_cleanup.py``).
 """
 
+import logging
 from typing import Dict, Generator, List, Optional, Tuple
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -714,17 +715,22 @@ class TestRegenReEmbedLoop:
         # Only the successful one was saved.
         assert mocks["userMemories"].saveMemoryEmbedding.await_count == 1
 
-    async def test_logsInfoWhenMemoriesEmbedded(self) -> None:
+    async def test_logsInfoWhenMemoriesEmbedded(self, caplog: pytest.LogCaptureFixture) -> None:
         """A successful batch logs an info line with the embedded count.
 
         Guards the ``embedded > 0`` info-log branch (which also exercises
-        ``utils.now()`` elapsed-time computation).
+        ``utils.now()`` elapsed-time computation): the emitted record must be
+        at INFO level and name both the count and the chat.
         """
         stale = [_makeMemoryDict(memoryId="m1")]
         handler, _mocks = _makeHandler(staleMemories=stale)
-        await _runRegen(handler)
-        # No assertion on the log text itself (logger is not captured); the
-        # test guards the branch executing without raising.
+        with caplog.at_level(logging.INFO, logger="internal.bot.common.handlers.user_memories"):
+            await _runRegen(handler)
+
+        assert any(
+            rec.levelno == logging.INFO and "Memory regen: embedded 1 memories in chat 100" in rec.message
+            for rec in caplog.records
+        )
 
 
 # ---------------------------------------------------------------------------

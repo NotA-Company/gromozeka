@@ -345,7 +345,7 @@ searches that user's memories. When no embedding model is available with a
 Injection is **centralised** in
 `MessagePreprocessorHandler.injectMemories()` (`internal/bot/common/handlers/message_preprocessor.py`),
 called once per inbound message **at arrival time** (inside
-`newMessageHandler`, before `saveChatMessage`). The previous
+`newMessageHandler`, AFTER `saveChatMessage`). The previous
 `BaseBotHandler._buildMemoriesBlock` / `_formatMemoriesBlock` /
 `_injectMemoriesBlock` / `_safeEmbedQuery` helpers and the four
 handler-level injection sites (`getThreadByMessageForLLM`, `handleMention`,
@@ -391,27 +391,25 @@ Truly-empty messages (no text + no media) format to empty and skip embedding.
 4. The ephemeral rows are slimmed to `SingleMemoryDict` via
    `convertDBMemoryToSingleMemoryDict` (drops DB plumbing keys, keeps
    `type`/`content`/`tags`/`score`).
-5. **Write compact IDs to `metadata["memories"]` + warm the by-id cache.**
+5. **Write compact IDs to `metadata["memories"]` (no cache warming).**
    Both permanent and short-term memories are converted via
    `convertDBMemoryToSingleMemoryDict(..., keepId=True)` so each entry carries
-   its `id`. Then `injectMemories` does TWO things directly (no intermediate
-   setter method — `setUserMemories` was removed in the context-dedup change,
-   ADR-018): (a) it calls
-   `cache.warmMemoriesByIds([*permanentMemories, *shortTermMemories], chatId=chatId)`
-   to pre-populate the `MEMORIES` namespace so the current message's later
-   render-time resolution is a cache HIT (avoids a redundant DB batch query —
-   the entries are stripped of `id` inside `warmMemoriesByIds`, honouring
-   `SingleMemoryDict.id`'s "absent on injected snapshots" invariant); and
-   (b) it writes the compact `CompactMemoryIdsDict`
+   its `id`. Then `injectMemories` writes the compact `CompactMemoryIdsDict`
    `{"permanentIds": [...], "shortTermIds": [...]}` directly into
    `metadata["memories"]` (extracting the `id` from each entry; entries without
-   a usable `id` are silently dropped). The fetched content is NOT hung off the
+   a usable `id` are silently dropped). `injectMemories()` writes compact memory
+   IDs into `ensuredMessage.metadata["memories"]` only (no cache warming); the
+   by-id cache is populated lazily (cache-aside) on the first `formatForLLM` call
+   via `cache.getMemoriesByIds`. The fetched content is NOT hung off the
    message — there is no `userMemories` content field any more (resolution is
-   lazy, in `formatForLLM`; see "Render-time resolution (lazy + dedup)").
+   lazy, in `formatForLLM`; see "Render-time resolution (lazy + dedup)"). The
+   `setUserMemories` setter method was removed in the context-dedup change
+   (ADR-018).
 
-Because the metadata assignment runs **before** `saveChatMessage`, the compact
-IDs are persisted into the chat message's `metadata` JSON and **ride per
-message**. This is the memory-compaction-v1 change (see
+`injectMemories()` is called inside `newMessageHandler` AFTER `saveChatMessage`;
+the compact IDs are then re-persisted via a separate
+`db.chatMessages.updateChatMessageMetadata(...)` call so they ride per message in
+`chat_messages.metadata`. This is the memory-compaction-v1 change (see
 [`docs/plans/memory-compaction-v1.md`](../../plans/memory-compaction-v1.md) and
 [`../architecture.md`](../architecture.md) ADR-017): instead of persisting a
 ~2–3 KB full content snapshot per message (the permanent block being
@@ -532,7 +530,7 @@ rather than re-queried on every inbound message:
 
 The old `getChatUserData` / `setChatUserData` / `unsetChatUserData` /
 `clearChatUserData` cache methods (legacy `user_data` key-value blob) were
-**deleted**; `invalidateChatUser(chatId, userId)` still exists but only `del`s
+**deleted** (replaced by `getChatUserPermanentMemories` / `invalidateChatUserPermanentMemories` above); `invalidateChatUser(chatId, userId)` still exists but only `del`s
 `userInfo` and intentionally preserves the permanent-memories cache. The
 `HCChatUserCacheDict.data` field (which held the legacy `user_data` blob
 alongside `userInfo`) is gone — the TypedDict body is just `permanentMemories`
@@ -565,10 +563,11 @@ to disk, cleared on process restart):
 - **No invalidation method exists** for this namespace: soft-delete preserves
   content (so a cached entry stays valid — there is no `updateMemory` to
   invalidate), `addMemory` does not invalidate a not-yet-cached entry, and
-  process restart clears the cache naturally. The writers to the cache are
-  `getMemoriesByIds` (cache-aside on miss) and `warmMemoriesByIds` (called by
-  the write path `injectMemories` to pre-populate the current message's
-  entries so its render-time resolution is a HIT).
+  process restart clears the cache naturally. The only writer to the cache is
+  `getMemoriesByIds` itself (cache-aside on miss). Note: `warmMemoriesByIds`
+  was planned (context-dedup plan v2 §5.3) but NOT shipped — `injectMemories`
+  writes compact IDs only, so the by-id cache is populated lazily on the first
+  `formatForLLM` call's cache miss into `getMemoriesByIds`.
 
 ### Code anchor: `getThreadByMessageForLLM`
 
@@ -762,7 +761,8 @@ consolidation landed, three deploy artifacts cleaned up the legacy surface:
   `PRIMARY KEY (user_id, chat_id, key)`; no `AUTOINCREMENT`, no
   `DEFAULT CURRENT_TIMESTAMP`, portable types) for STRUCTURAL reversibility
   only (data is unrecoverable). `UserDataRepository` and the `db.userData`
-  accessor were deleted in the same pass. The `migration_020` backfill
+  accessor were deleted in the same pass (replaced by `UserMemoriesRepository`
+  / `db.userMemories`). The `migration_020` backfill
   descriptions (which read FROM `user_data`) remain accurate as historical
   record.
 - **`migration_023` (`migration_023_rename_memory_injection_enabled_to_memory_enabled.py`)**

@@ -2224,7 +2224,7 @@ class UserMemoriesHandler(BaseBotHandler):
         if deleted:
             text = "Память удалена"
         else:
-            text = "Не удалось удалить памят (возможно, она уже удалена)."
+            text = "Не удалось удалить память (возможно, она уже удалена)."
         await self.editMessage(
             messageId=messageId,
             chatId=messageChatId,
@@ -2555,7 +2555,7 @@ class UserMemoriesHandler(BaseBotHandler):
         await self.editMessage(
             messageId=messageId,
             chatId=messageChatId,
-            text=f'Введите текст для новой памят типа "{typeLabel}":',
+            text=f'Введите текст для новой памяти типа "{typeLabel}":',
             inlineKeyboard=keyboard,
         )
 

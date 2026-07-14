@@ -710,7 +710,7 @@ success, value = sqlToCustomType("123", Union[int, str])
    - Validate that all historical migrations are accounted for
 
 **Known implemented migrations:**
-- `migration_001` to `migration_020` — Baseline migrations through latest schema updates
+- `migration_001` to `migration_023` — Baseline migrations through latest schema updates
 - `migration_010`: Adds `updated_by INTEGER NOT NULL` to `chat_settings` table (audit trail)
 - `migration_011` and `migration_012`: Additional schema improvements
 - `migration_013`: Removes `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns (explicit timestamp handling)
@@ -722,6 +722,8 @@ success, value = sqlToCustomType("123", Union[int, str])
 - `migration_019`: Adds the [`webhook_updates`](../../docs/database-schema-llm.md#webhook_updates) table (`id TEXT PRIMARY KEY`) for Max webhook ingestion — raw webhook payloads are written here by the standalone webhook receiver and consumed via the `webhookUpdates` repository. Plus `idx_webhook_updates_unprocessed` on `(processed, received_at)` to back the unprocessed-rows query
 - `migration_020`: Adds the [`user_memories`](../../docs/database-schema-llm.md#user_memories) table (composite PK `(chat_id, user_id, memory_id)`) — the unified per-(chat, user, thread) memory store that retires `user_data` (table subsequently dropped in `migration_022`) and the rolling-bio JSON blob. Three indexes (`idx_user_memories_chat_user_thread`, `idx_user_memories_chat_user_permanent`, `idx_user_memories_type`). Backfills `user_data` rows into permanent cross-thread `type='fact'` memories and `chat_users.metadata.memoryRefinement` rolling-bio entries into permanent thread-scoped `type='bio'` memories. The vec0 virtual table (`vec_user_memories_{dim}`) is **not** created by the migration — it is created lazily at runtime on first write (mirrors `message_embeddings`). Schema/ADR: [`docs/llm/memories/user-memories.md`](memories/user-memories.md) and ADR-016.
 - `migration_021`: Adds the nullable `deleted_at` column to [`user_memories`](../../docs/database-schema-llm.md#user_memories) (soft-delete — `deleteMemory` sets `deleted_at` + drops vec0 + nulls provenance instead of hard-`DELETE`-ing the row, so historical messages referencing a deleted memory can still resolve its content via `getMemoriesByIds`). Every live read gains `AND deleted_at IS NULL`. Additive nullable column; `down()` is a no-op that logs (portable `DROP COLUMN` unavailable). Part of memory-compaction-v1 (see ADR-017 and [`docs/plans/memory-compaction-v1.md`](/docs/plans/memory-compaction-v1.md)).
+- `migration_022`: DROP TABLE `user_data` (superseded by `user_memories`; data was backfilled into `user_memories` in `migration_020`). The no-op `down()` is intentional — re-creating the table would orphan the rows already moved to `user_memories`.
+- `migration_023`: Idempotent data migration renaming the `chat_settings` key `memory-injection-enabled` → `memory-enabled` via `UPDATE chat_settings SET key='memory-enabled' WHERE key='memory-injection-enabled'`. Companion to the in-code `MEMORY_INJECTION_ENABLED` → `MEMORY_ENABLED` `ChatSettingsKey` enum rename.
 
 ---
 

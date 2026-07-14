@@ -581,6 +581,7 @@ class LLMMessageHandler(BaseBotHandler):
             await ensuredMessage.updateMediaContent(self.db)
 
             llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
+            injectMemories = chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool()
 
             reqMessages = await self.getThreadByMessageForLLM(ensuredMessage=ensuredMessage)
 
@@ -603,13 +604,13 @@ class LLMMessageHandler(BaseBotHandler):
                         self.db,
                         format=llmMessageFormat,
                         role="assistant",
-                        cache=self.cache,
+                        cache=self.cache if injectMemories else None,
                     ),
                     await ensuredMessage.toModelMessage(
                         self.db,
                         format=llmMessageFormat,
                         role="user",
-                        cache=self.cache,
+                        cache=self.cache if injectMemories else None,
                     ),
                 ]
 
@@ -742,7 +743,7 @@ class LLMMessageHandler(BaseBotHandler):
                                 self.db,
                                 format=llmMessageFormat,
                                 role=("assistant" if ensuredReply.sender.id == await self.getBotId() else "user"),
-                                cache=self.cache,
+                                cache=self.cache if injectMemories else None,
                             ),
                         )
                     else:
@@ -926,7 +927,7 @@ class LLMMessageHandler(BaseBotHandler):
                     # + 1 answer from bot
                     # Convert deques to lists so coverage index ranges can
                     # slice sourceRows (deques do not support slicing).
-                    condensedRet, condencedDictMap = await self.llmService.condenseContext(
+                    condensedRet, condensingDictMap = await self.llmService.condenseContext(
                         list(contextMessages),
                         chatSettings[ChatSettingsKey.CHAT_MODEL].toModel(),
                         keepFirstN=0,
@@ -939,8 +940,8 @@ class LLMMessageHandler(BaseBotHandler):
                     if not condensedRet:
                         logger.error("Messages condensing failed")
                     else:
-                        if condencedDictMap:
-                            ensuredMessage.metadata["randomContext"] = mergeCondensingDicts(condencedDictMap.values())
+                        if condensingDictMap:
+                            ensuredMessage.metadata["randomContext"] = mergeCondensingDicts(condensingDictMap.values())
                         await self.db.chatMessages.updateChatMessageMetadata(
                             chatId=ensuredMessage.recipient.id,
                             messageId=ensuredMessage.messageId,

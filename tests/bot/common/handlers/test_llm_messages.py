@@ -1492,7 +1492,7 @@ class TestHandleRandomMessageCondensing:
     ``Dict[int, CondensingDict]`` for coverage; the handler merges its values via
     :func:`mergeCondensingDicts` and writes the result to
     ``metadata["randomContext"]``. When the coverage dict is empty, the
-    ``if condencedDictMap:`` guard skips the write entirely (no randomContext).
+    ``if condensingDictMap:`` guard skips the write entirely (no randomContext).
     """
 
     @staticmethod
@@ -1652,10 +1652,10 @@ class TestHandleRandomMessageCondensing:
         assert randomContext["dateRange"] == {"from": 2000.0, "to": 2900.0}
 
     async def testCondenseEmptyCoverageSkipsWrite(self, liveHandler: LLMMessageHandler) -> None:
-        """Empty coverage dict → randomContext is NOT written (F1 ``if condencedDictMap:`` guard).
+        """Empty coverage dict → randomContext is NOT written (F1 ``if condensingDictMap:`` guard).
 
         The mock returns ``(condensedRet, {})``; the handler's
-        ``if condencedDictMap:`` guard is falsy, so ``metadata["randomContext"]``
+        ``if condensingDictMap:`` guard is falsy, so ``metadata["randomContext"]``
         is never assigned. ``updateChatMessageMetadata`` is still called (it is
         outside the inner guard), but the persisted metadata lacks the key.
 

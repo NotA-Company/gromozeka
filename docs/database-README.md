@@ -64,6 +64,9 @@ A streamlined reference optimized for LLM consumption, featuring:
 #### Media Tables
 - [`media_attachments`](database-schema.md#media_attachments) - Media file information
 
+#### User Memory Tables
+- [`user_memories`](database-schema.md#user_memories) - Unified per-(chat, user, thread) structured memory store (permanent + ephemeral, vec0-backed semantic search)
+
 #### Spam Detection Tables
 - [`spam_messages`](database-schema.md#spam_messages) - Spam message tracking
 - [`ham_messages`](database-schema.md#ham_messages) - Legitimate message tracking
@@ -695,7 +698,7 @@ See: [Best Practices](database-schema.md#best-practices)
 - **Cache Tables**: 7+ (dynamic based on CacheType enum)
 - **Spam Detection Tables**: 4 (spam, ham, tokens, classes)
 - **Statistics Tables**: 2 (chat stats, user stats)
-- **Current Migration Version**: 22
+- **Current Migration Version**: 23
 - **Total Repositories**: 15 specialized repositories
 
 ## 🤝 Contributing
