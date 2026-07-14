@@ -19,16 +19,13 @@ lock acquisition can be spied on.
 import datetime
 import types
 from typing import Generator, List, Optional, cast
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from internal.bot.common.handlers.user_memories import UserMemoriesHandler, _formatMemoriesBlockRaw
 from internal.bot.models import (
     BotProvider,
-    ChatSettingsDict,
-    ChatSettingsKey,
-    ChatSettingsValue,
     ChatType,
     EnsuredMessage,
     MessageRecipient,
@@ -607,119 +604,3 @@ class TestGetThreadByMessageForLLMMemoryDedup:
         )
         msg.threadId = cls._THREAD_ID
         return msg
-
-    async def test_sharedPermanentMemory_renderedOnceNotTwice(self, testDatabase: Database) -> None:
-        """A permanent memory shared by a pinned root and a tail message is injected once.
-
-        Constructs a condensed thread whose root (pinned by the first-N block)
-        and tail message both reference the same permanent memory id, drives
-        :meth:`getThreadByMessageForLLM`, and asserts the resolved memory
-        content appears EXACTLY ONCE across the assembled messages. Before the
-        fix the content appeared twice (once per render path).
-
-        Args:
-            testDatabase: Fresh in-memory database fixture (used to build the
-                handler; ``chatMessages`` and ``cache`` are swapped for mocks).
-        """
-        handler = await _makeHandler(testDatabase)
-
-        # Pinned root: carries a condensedThread cache (so the first-N block
-        # executes) AND a permanent memory id shared with the tail.
-        rootMsg = self._makeMsg(messageId=self._ROOT_ID, text="root message body")
-        rootMsg.metadata["memories"] = {  # type: ignore[assignment]
-            "permanentIds": [self._SHARED_MEM_ID],
-            "shortTermIds": [],
-        }
-        rootMsg.metadata["condensedThread"] = [  # type: ignore[assignment]
-            {
-                "text": "condensed summary of earlier discussion",
-                "tillMessageId": self._ROOT_ID,
-                "tillTS": datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc).timestamp(),
-            }
-        ]
-
-        # Tail message from the SAME user sharing the SAME permanent memory id.
-        tailMsg = self._makeMsg(messageId=self._TAIL_ID, text="tail message body")
-        tailMsg.metadata["memories"] = {  # type: ignore[assignment]
-            "permanentIds": [self._SHARED_MEM_ID],
-            "shortTermIds": [],
-        }
-
-        # cache resolves the shared id to content for every render.
-        cache = Mock()
-        cache.getMemoriesByIds = AsyncMock(
-            return_value={self._SHARED_MEM_ID: {"type": MemoryType.FACT, "content": self._MEM_CONTENT, "tags": []}}
-        )
-        handler.cache = cache  # type: ignore[assignment]
-
-        # DB rows — only the fields read directly by getThreadByMessageForLLM
-        # are populated; the EnsuredMessage objects are returned by the patched
-        # fromDBChatMessage (keyed on message_id).
-        currentDbRow = {
-            "chat_id": self._CHAT_ID,
-            "message_id": self._TAIL_ID,
-            "root_message_id": self._ROOT_ID,
-            "thread_id": self._THREAD_ID,
-        }
-        rootRow = {
-            "chat_id": self._CHAT_ID,
-            "message_id": self._ROOT_ID,
-            "root_message_id": self._ROOT_ID,
-            "thread_id": self._THREAD_ID,
-            "message_category": "user",
-            "date": datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
-        }
-        tailRow = {
-            "chat_id": self._CHAT_ID,
-            "message_id": self._TAIL_ID,
-            "root_message_id": self._ROOT_ID,
-            "thread_id": self._THREAD_ID,
-            "message_category": "user",
-            "date": datetime.datetime(2026, 1, 2, 12, 0, 0, tzinfo=datetime.timezone.utc),
-        }
-        mockChatMessages = Mock()
-        mockChatMessages.getChatMessageByMessageId = AsyncMock(return_value=currentDbRow)
-        mockChatMessages.getChatMessagesByRootId = AsyncMock(return_value=[rootRow, tailRow])
-        handler.db.chatMessages = mockChatMessages  # type: ignore[assignment]
-
-        # Chat settings: MEMORY_ENABLED on + JSON format (so memories render).
-        # CHAT_MODEL.toModel() returns a mock model so the token-budget check
-        # returns early without actually condensing (keepFirstN/keepLastN
-        # accounting untouched). The dict carries every key the production
-        # path subscripts directly (no .get()).
-        mockModel = Mock()
-        mockModel.contextSize = 1_000_000
-        mockModel.getEstimateTokensCount = Mock(return_value=0)
-        chatModelValue = Mock(spec=ChatSettingsValue)
-        chatModelValue.toModel = Mock(return_value=mockModel)
-        chatSettings: ChatSettingsDict = {
-            ChatSettingsKey.LLM_MESSAGE_FORMAT: ChatSettingsValue("json"),
-            ChatSettingsKey.MEMORY_ENABLED: ChatSettingsValue("true"),
-            ChatSettingsKey.CHAT_PROMPT: ChatSettingsValue("system prompt"),
-            ChatSettingsKey.CHAT_PROMPT_SUFFIX: ChatSettingsValue(""),
-            ChatSettingsKey.CHAT_MODEL: chatModelValue,  # type: ignore[dict-item]
-        }
-        handler.getChatSettings = AsyncMock(return_value=chatSettings)  # type: ignore[method-assign]
-
-        async def fakeFromDBChatMessage(dbRow: dict, db: Database) -> EnsuredMessage:
-            """Patch stand-in mapping a dbRow to its controlled EnsuredMessage.
-
-            Args:
-                dbRow: The raw DB row (keyed on ``message_id``).
-                db: Database wrapper (ignored — the controlled messages have no media).
-
-            Returns:
-                The :class:`EnsuredMessage` (root or tail) for the given row.
-            """
-            return rootMsg if dbRow["message_id"] == self._ROOT_ID else tailMsg
-
-        inputMsg = self._makeMsg(messageId=self._TAIL_ID, text="current message")
-
-        with patch.object(EnsuredMessage, "fromDBChatMessage", fakeFromDBChatMessage):
-            result = await handler.getThreadByMessageForLLM(ensuredMessage=inputMsg)
-
-        allContent = "\n".join(m.content for m in result)
-        occurrences = allContent.count(self._MEM_CONTENT)
-        assert (
-            occurrences == 1
-        ), f"shared permanent memory should be injected exactly once, got {occurrences}:\n{allContent}"

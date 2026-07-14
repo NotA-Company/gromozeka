@@ -66,7 +66,7 @@ from typing import Optional
 # with a source-built path. Mirrors the production provider's pattern
 # (internal/database/providers/sqlite3.py).
 try:
-    import sqlite_vec
+    import sqlite_vec  # pyright: ignore[reportMissingImports]
 
     _SQLITE_VEC_AVAILABLE = True
 except ImportError:
@@ -172,6 +172,11 @@ def _loadVecExtension(conn: sqlite3.Connection, vecExtensionPath: Optional[str])
         extensionSource = sqlite_vec.loadable_path()
     else:
         return None
+
+    if extensionSource is None:
+        return None
+
+    assert extensionSource is not None
 
     # Two-layer try: the outer catches enable_load_extension(True) failures
     # (e.g. macOS Apple Python compiled without extension support); the inner

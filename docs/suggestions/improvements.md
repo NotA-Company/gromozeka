@@ -561,7 +561,6 @@ Update example configs to use `${BOT_TOKEN}` placeholders
 #### Affected Files
 
 - [`internal/config/manager.py`](/internal/config/manager.py)
-- `configs/common/00-config.toml`
 - `configs/00-defaults/00-config.toml`
 
 ---

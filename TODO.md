@@ -2,40 +2,39 @@
 - [ ] refactor models
 - [ ] opencode commands for review and teamldead memory refinement
 - [ ] changelog
-
-
+- [ ] Review all docs
 - [ ] Yandex AI Studio does not support webp images. Add config value + convert
 - [ ] Search for tool_name in [] or {} + optional ``` end return some error if yes (to enforce proper tool call)
+
+- [ ] On web search\get-url-content, allow bot to add compaction prompt
 - [ ] Subagent with conversation history
-- [ ] Better compaction (drop tools result, more settings, drop userdata, use subagent for compaction)
 - [ ] Topic-level configs
-- [ ] Support random-message sending function
+- [?] Support random-message sending function
 - [ ] Spam module refactoring
 - [ ] Do cache service refactoring
-- [ ] Add command for condensing context of given discussion
 - [ ] Add test\dev decorator support
 - [ ] LLM Timeout
-- [ ] Sandboxed Python for LLM
-- [ ] Sandboxed Python for Gromozeka
 - [ ] Condensing of LLM response (limit + prompt)
 - [ ] More statistics (messages, divinations, tools, spam)
 - [ ] Infrastucture for statistics
-- [ ] On web search\get-url-content, allow bot to add compaction prompt
 - [ ] think about https://download.geonames.org/export/dump/
 - [ ] In case of geocoder\weather error, try to get from cache (with no TTL)
 - [ ] Add some decorator for LLM functions
 - [ ] Some proper framework/mock for telegram (like: we have some amount of users, some of them are admins, one is bot owner. We have some amount of chats)
 - [ ] Meta wizard to guide through all commands
 # Vector search: 
-- [-] Cache embeddings list (and track them)
 - [x] Tool for last messages, last discussion messages, user messages
-- [ ] Add summarisation support (thread, messages, from-to [message\timestamp], today, yesterday)
 - [x] Add support for embeddings + Vector search on chat's database
-- [?] Add support for collecting messages to knowledge database to answer if some user ask known question
-- [ ] Add support of periodic tasks (summarization for example)
 - [x] Add cron for analyzing and remembering knowledge from messages
+- [-] Cache embeddings list (and track them)
+- [?] Add support for collecting messages to knowledge database to answer if some user ask known question
+- [ ] Add summarisation support (thread, messages, from-to [message\timestamp], today, yesterday)
+- [ ] Add support of periodic tasks (summarization for example)
 - [ ] Think, how to add summarization of chat to context of random answers
 - [ ] better description + find users by full name
+- [ ] Add command for condensing context of given discussion
+- [ ] Better compaction (drop tools result, more settings, drop userdata, use subagent for compaction)
+
 
 # Also:
 - [ ] Add coverage badge?
@@ -44,41 +43,9 @@
 - [ ] ConfigManager: Use TypedDict's
 - [ ] Add replied message to context more close to message (maybe in message metadata)
 
-# Bugs:
-- [ ]
-```
-2026-05-12 06:56:01,957 - ERROR - internal.database.providers.sqlite3:183 - Database operation failed: UNIQUE constraint failed: spam_messages.chat_id, spam_messages.user_id, spam_messages.message_id
-2026-05-12 06:56:01,957 - ERROR - internal.database.providers.sqlite3:184 - UNIQUE constraint failed: spam_messages.chat_id, spam_messages.user_id, spam_messages.message_id
-Traceback (most recent call last):
-  File "/home/vgoshev/gromozeka/internal/database/providers/sqlite3.py", line 179, in cursor
-    yield cursor
-  File "/home/vgoshev/gromozeka/internal/database/providers/sqlite3.py", line 229, in _execute
-    await cursor.execute(query.query, utils.convertContainerElementsToSQLite(query.params))
-  File "/home/vgoshev/gromozeka/venv/lib/python3.12/site-packages/aiosqlite/cursor.py", line 40, in execute
-    await self._execute(self._cursor.execute, sql, parameters)
-  File "/home/vgoshev/gromozeka/venv/lib/python3.12/site-packages/aiosqlite/cursor.py", line 32, in _execute
-    return await self._conn._execute(fn, *args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/vgoshev/gromozeka/venv/lib/python3.12/site-packages/aiosqlite/core.py", line 160, in _execute
-    return await future
-           ^^^^^^^^^^^^
-  File "/home/vgoshev/gromozeka/venv/lib/python3.12/site-packages/aiosqlite/core.py", line 63, in _connection_worker_thread
-    result = function()
-             ^^^^^^^^^^
-sqlite3.IntegrityError: UNIQUE constraint failed: spam_messages.chat_id, spam_messages.user_id, spam_messages.message_id
-2026-05-12 06:56:01,962 - ERROR - internal.database.repositories.spam:132 - Failed to add spam message: UNIQUE constraint failed: spam_messages.chat_id, spam_messages.user_id, spam_messages.message_id
-```
-- [ ] Fix:
-
-2025-12-27 15:26:52,074 - lib.ai.providers.basic_openai_provider:155 - ERROR - Error running OpenAI-compatible model yandexgpt: Error code: 400 - {'error': {'message': 'Error in session internal_id=...: number of input tokens must be no more than 32768, got 59830', 'type': 'invalid_request_error'}}
-2025-12-27 15:26:52,074 - lib.ai.abstract:114 - ERROR - Error running model yandexgpt: Error code: 400 - {'error': {'message': 'Error in session internal_id=...: number of input tokens must be no more than 32768, got 59830', 'type': 'invalid_request_error'}}
-
-Error running OpenAI-compatible model deepseek/deepseek-chat-v3.1: Error code: 400
-- {'error': {'message': 'This endpoint\'s maximum context length is 163840 tokens. However, you requested about 221324 tokens (220500 of text input, 824 of tool i
-nput). Please reduce the length of either one, or use the "middle-out" transform to compress your prompt automatically.', 'code': 400, 'metadata': {'provider_name
-': None}}}
-
 # Done:
+- [x] Sandboxed Python for LLM
+- [x] Sandboxed Python for Gromozeka
 - [x] jsonl log user bio change
 - [x] add memories about user, show last X (or most relevant X) + add\delete\search tools
 - [x] pin data\summary\memories to message

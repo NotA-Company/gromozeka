@@ -27,7 +27,7 @@ if _REPO_ROOT not in sys.path:
 # skip gracefully when the sqlite-vec package is unavailable or the Python
 # build lacks extension-loading support (e.g. some CI Pythons).
 try:
-    import sqlite_vec as _sqliteVec
+    import sqlite_vec as _sqliteVec  # pyright: ignore[reportMissingImports]
 
     _SQLITE_VEC_AVAILABLE = True
 except ImportError:

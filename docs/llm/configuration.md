@@ -25,7 +25,6 @@
 **Default config locations:**
 - [`configs/00-defaults/00-config.toml`](../../configs/00-defaults/00-config.toml) — base app defaults
 - [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml) — bot defaults
-- [`configs/common/00-config.toml`](../../configs/common/00-config.toml) — common overrides
 
 ---
 
