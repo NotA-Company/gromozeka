@@ -26,7 +26,8 @@ import logging
 import random
 import re
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import MutableSet, Sequence
+from enum import StrEnum
 from typing import Optional
 
 import telegram
@@ -48,6 +49,7 @@ from internal.bot.models import (
     MessageType,
     commandHandlerV2,
 )
+from internal.bot.models.message_metadata import mergeCondensingDicts
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import MessageCategory
@@ -61,6 +63,40 @@ from lib.ai import (
 from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)
+
+
+class LLMReplyOutcome(StrEnum):
+    """Outcome of an LLM-driven reply attempt.
+
+    Used as the return type of :meth:`LLMMessageHandler._sendLLMChatMessage` so
+    callers can distinguish a model abstention (``SKIPPED_BY_MODEL``) from a real
+    send failure (``ERROR``).
+
+    Attributes:
+        SENT: Message was generated and sent successfully.
+        SKIPPED_BY_MODEL: Model returned the ``<skip>`` sentinel; no message
+            was sent. Expected only from ``handleRandomMessage`` (the sole path
+            that appends the random-answer prompt requesting ``<skip>``), but
+            detected globally inside ``_sendLLMChatMessage`` so any ``<skip>``
+            output abstains.
+        ERROR: Generation or send failed; an error notification has already
+            been logged.
+    """
+
+    SENT = "sent"
+    """Message was generated and sent successfully."""
+
+    SKIPPED_BY_MODEL = "skipped_by_model"
+    """Model returned the ``<skip>`` sentinel; no message was sent.
+
+    Expected only from ``handleRandomMessage`` (the only path that appends the
+    random-answer prompt requesting ``<skip>``), but detected globally inside
+    ``_sendLLMChatMessage`` so any model ``<skip>`` output abstains — see plan
+    §9 risk #2.
+    """
+
+    ERROR = "error"
+    """Generation or send failed; an error notification has already been logged."""
 
 
 class LLMMessageHandler(BaseBotHandler):
@@ -192,7 +228,7 @@ class LLMMessageHandler(BaseBotHandler):
         keepFirstN: int = 0,
         keepLastN: int = 1,
         maxTokensCoeff: float = 0.8,
-    ) -> bool:
+    ) -> LLMReplyOutcome:
         """Send a chat message to the LLM and handle the response.
 
         This method orchestrates the complete flow of sending a message to the LLM,
@@ -219,7 +255,11 @@ class LLMMessageHandler(BaseBotHandler):
             maxTokensCoeff (float, optional): Coefficient for calculating max tokens. Defaults to 0.8.
 
         Returns:
-            bool: True if message was sent successfully, False otherwise.
+            LLMReplyOutcome: ``SENT`` if the message was generated and sent
+                successfully, ``SKIPPED_BY_MODEL`` if the model returned the
+                ``<skip>`` abstention sentinel (so no message was sent), or
+                ``ERROR`` if generation or sending failed (an error
+                notification has already been logged/emitted by this method).
         """
         # For logging purposes
         messageHistoryStr = ""
@@ -233,11 +273,12 @@ class LLMMessageHandler(BaseBotHandler):
 
         try:
             useTools = chatSettings[ChatSettingsKey.USE_TOOLS].toBool()
-            useSandbox = chatSettings[ChatSettingsKey.ALLOW_SANDBOX].toBool()
-            if useTools and not all([useSandbox]):
-                # Disable tools if they are disabled for given chatId
-                useTools = {constants.TOOLS_DEFAULT_DICT_KEY: True}
-                if not useSandbox:
+            if useTools:
+                useTools = {
+                    constants.TOOLS_DEFAULT_DICT_KEY: True,
+                    constants.ToolName.DELETE_MEMORY: False,
+                }
+                if not chatSettings[ChatSettingsKey.ALLOW_SANDBOX].toBool():
                     useTools.update(
                         {
                             constants.ToolName.RUN_PYTHON: False,
@@ -245,6 +286,13 @@ class LLMMessageHandler(BaseBotHandler):
                             constants.ToolName.SANDBOX_LIST_LIBRARIES: False,
                             constants.ToolName.SANDBOX_READ_FILE: False,
                             constants.ToolName.SANDBOX_SEND_FILE: False,
+                        }
+                    )
+                if not chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool():
+                    useTools.update(
+                        {
+                            constants.ToolName.ADD_MEMORY: False,
+                            constants.ToolName.SEARCH_MEMORIES: False,
                         }
                     )
             mlRet = await self._generateTextViaLLM(
@@ -267,7 +315,7 @@ class LLMMessageHandler(BaseBotHandler):
                 messageCategory=MessageCategory.BOT_ERROR,
                 typingManager=typingManager if stopTypingOnSend else None,
             )
-            return False
+            return LLMReplyOutcome.ERROR
 
         addPrefix = ""
         if mlRet.isFallback:
@@ -303,20 +351,50 @@ class LLMMessageHandler(BaseBotHandler):
                     logger.debug("It wasn't JSON...")
                     logger.exception(e)
 
-            if lmRetText.strip().strip("`").strip().startswith("<media-description>"):
-                # Extract content in <media-description> tag to imagePrompt variable and strip from lmRetText
-                lmRetText = lmRetText.strip().strip("`").strip()
-                match = re.search(r"^<media-description>(.*?)</media-description>(.*?)", lmRetText, re.DOTALL)
+            trimmedText = lmRetText.strip().strip("`").strip()
+            if trimmedText.startswith("<media-description>") or trimmedText.endswith("</media-description>"):
+                # Extract content in <media-description> tag to imagePrompt variable and strip from lmRetText.
+                # The regex runs against trimmedText (not lmRetText) so surrounding
+                # whitespace/backtick wrappers are not captured into group(1)/group(3)
+                # and the resulting messageText stays wrapper-free.
+                match = re.search(r"^(.*?)<media-description>(.*?)</media-description>(.*?)$", trimmedText, re.DOTALL)
                 if match:
-                    imagePrompt = match.group(1).strip()
-                    lmRetText = match.group(2).strip()
+                    imagePrompt = match.group(2).strip()
+                    lmRetText = match.group(1).strip() + match.group(3).strip()
                     logger.debug(
                         f"Found <media-description> in answer, generating image ('{imagePrompt}' + '{lmRetText}')"
+                    )
+                else:
+                    # Gate matched (e.g. stray trailing </media-description> without a valid open tag) but
+                    # the open+close pair wasn't found; leave imagePrompt=None and send text as-is.
+                    logger.debug(
+                        f"<media-description> gate matched but no valid open+close tag pair found; "
+                        f"sending text as-is: '{lmRetText}'"
                     )
 
         # TODO: Treat JSON format as well
 
         # TODO: Add separate method for generating+sending photo
+
+        # Abstention sentinel: model declined to participate. Checked BEFORE the
+        # image-gen branch (so <skip> never triggers image generation). The JSON-unwrap
+        # above runs ONLY in TEXT format (heuristic for models that emit JSON despite
+        # being asked for text), so a JSON-wrapped {"text": "<skip>"} abstains in
+        # TEXT-format chats but NOT in explicit JSON-format chats — there the raw JSON
+        # string won't match == "<skip>". Accepted v1 limitation (plan §3 non-goals
+        # defer JSON-shape <skip> recognition). Only the random-answer prompt asks for
+        # <skip>, but detecting it globally is safe — see plan §9 risk #2.
+        # Gated on `imagePrompt is None`: a tag-only <media-description> request leaves
+        # lmRetText empty but sets imagePrompt, and that is NOT abstention — the image
+        # IS the response, so the sentinel must not fire in that case.
+        # The "" clause handles a model returning bare empty text (no image request,
+        # imagePrompt is None): e.g. reasoning-budget exhaustion producing an empty
+        # finish_reason="length" completion. Treating it as SKIPPED_BY_MODEL avoids a
+        # downstream "message text is empty" failure; intentional, not a bug.
+        if imagePrompt is None and lmRetText.strip().strip("`").strip() in ("<skip>", ""):
+            logger.debug("Model abstained (<skip>) or returned empty, not sending a reply")
+            return LLMReplyOutcome.SKIPPED_BY_MODEL
+
         if imagePrompt is not None:
             typingManager.action = TypingAction.UPLOAD_PHOTO
             await typingManager.sendTypingAction()
@@ -334,7 +412,7 @@ class LLMMessageHandler(BaseBotHandler):
                 imgAddPrefix = ""
                 if imgMLRet.isFallback:
                     imgAddPrefix = chatSettings[ChatSettingsKey.FALLBACK_HAPPENED_PREFIX].toStr()
-                return (
+                sendSucceeded = (
                     await self.sendMessage(
                         ensuredMessage,
                         photoData=imgMLRet.mediaData,
@@ -346,11 +424,12 @@ class LLMMessageHandler(BaseBotHandler):
                     )
                     is not None
                 )
+                return LLMReplyOutcome.SENT if sendSucceeded else LLMReplyOutcome.ERROR
 
             # Something went wrong, log and fallback to ordinary message
             logger.error(f"Failed to generate Image by prompt '{imagePrompt}': {imgMLRet}")
 
-        return (
+        sendSucceeded = (
             await self.sendMessage(
                 ensuredMessage,
                 messageText=lmRetText,
@@ -361,6 +440,7 @@ class LLMMessageHandler(BaseBotHandler):
             )
             is not None
         )
+        return LLMReplyOutcome.SENT if sendSucceeded else LLMReplyOutcome.ERROR
 
     ###
     # Handling messages
@@ -501,6 +581,7 @@ class LLMMessageHandler(BaseBotHandler):
             await ensuredMessage.updateMediaContent(self.db)
 
             llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
+            injectMemories = chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool()
 
             reqMessages = await self.getThreadByMessageForLLM(ensuredMessage=ensuredMessage)
 
@@ -519,17 +600,30 @@ class LLMMessageHandler(BaseBotHandler):
                         + "\n"
                         + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
                     ),
-                    await ensuredReply.toModelMessage(self.db, format=llmMessageFormat, role="assistant"),
-                    await ensuredMessage.toModelMessage(self.db, format=llmMessageFormat, role="user"),
+                    await ensuredReply.toModelMessage(
+                        self.db,
+                        format=llmMessageFormat,
+                        role="assistant",
+                        cache=self.cache if injectMemories else None,
+                    ),
+                    await ensuredMessage.toModelMessage(
+                        self.db,
+                        format=llmMessageFormat,
+                        role="user",
+                        cache=self.cache if injectMemories else None,
+                    ),
                 ]
 
-            if not await self._sendLLMChatMessage(
-                ensuredMessage,
-                reqMessages,
-                typingManager=typingManager,
-                keepFirstN=0,
-                keepLastN=2,  # Last message + message it is reply to
-                maxTokensCoeff=0.8,
+            if (
+                await self._sendLLMChatMessage(
+                    ensuredMessage,
+                    reqMessages,
+                    typingManager=typingManager,
+                    keepFirstN=0,
+                    keepLastN=2,  # Last message + message it is reply to
+                    maxTokensCoeff=0.8,
+                )
+                != LLMReplyOutcome.SENT
             ):
                 logger.error("Failed to send LLM reply")
 
@@ -610,6 +704,7 @@ class LLMMessageHandler(BaseBotHandler):
 
             # Handle LLM Action
             llmMessageFormat = LLMMessageFormat(chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr())
+            injectMemories = chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool()
 
             reqMessages = [
                 ModelMessage(
@@ -625,13 +720,30 @@ class LLMMessageHandler(BaseBotHandler):
                 # TODO: Shoiuld we add whole discussion?
                 ensuredReply: Optional[EnsuredMessage] = ensuredMessage.getEnsuredRepliedToMessage()
                 if ensuredReply is not None:
-                    await self._updateEMessageUserData(ensuredReply)
                     if ensuredReply.messageType == MessageType.TEXT:
+                        # If memory injection enabled, we need to get memories for given message from DB
+                        if injectMemories:
+                            storedReply = await self.db.chatMessages.getChatMessageByMessageId(
+                                chatId=ensuredReply.recipient.id,
+                                messageId=ensuredReply.messageId,
+                            )
+                            if storedReply and storedReply["metadata"]:
+                                try:
+                                    metadata = json.loads(storedReply["metadata"])
+                                    ensuredReply.metadata = metadata
+                                except Exception:
+                                    pass
+                            # Memory resolution now happens lazily in
+                            # toModelMessage -> formatForLLM (cache=self.cache
+                            # passed below), so the eager resolveMemories call
+                            # was removed in Phase 2.
+
                         reqMessages.append(
                             await ensuredReply.toModelMessage(
                                 self.db,
                                 format=llmMessageFormat,
                                 role=("assistant" if ensuredReply.sender.id == await self.getBotId() else "user"),
+                                cache=self.cache if injectMemories else None,
                             ),
                         )
                     else:
@@ -647,12 +759,12 @@ class LLMMessageHandler(BaseBotHandler):
                             )
                         else:
                             eStoredReply = await EnsuredMessage.fromDBChatMessage(storedReply, self.db)
-                            await self._updateEMessageUserData(eStoredReply)
                             reqMessages.append(
                                 await eStoredReply.toModelMessage(
                                     self.db,
                                     format=llmMessageFormat,
                                     role=("assistant" if ensuredReply.sender.id == await self.getBotId() else "user"),
+                                    cache=self.cache if injectMemories else None,
                                 ),
                             )
 
@@ -662,10 +774,14 @@ class LLMMessageHandler(BaseBotHandler):
                     self.db,
                     format=llmMessageFormat,
                     role="user",
+                    cache=self.cache if injectMemories else None,
                 ),
             )
 
-            if not await self._sendLLMChatMessage(ensuredMessage, reqMessages, typingManager=typingManager):
+            if (
+                await self._sendLLMChatMessage(ensuredMessage, reqMessages, typingManager=typingManager)
+                != LLMReplyOutcome.SENT
+            ):
                 logger.error("Failed to send LLM reply")
                 return False
 
@@ -704,6 +820,7 @@ class LLMMessageHandler(BaseBotHandler):
         """
 
         chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
+        injectMemories = chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool()
         answerProbability = chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROBABILITY].toFloat()
         if answerProbability <= 0.0:
             # logger.debug(
@@ -741,6 +858,20 @@ class LLMMessageHandler(BaseBotHandler):
                 storedMessages = await self.getThreadByMessageForLLM(ensuredMessage=ensuredMessage)
                 # In case of condensing, keep message, last message is answer to
                 keepLastMessagesN += 1
+                # Append the random-answer context fragment to the leading system message.
+                # `getThreadByMessageForLLM` returns a fresh list whose first element is the
+                # system message by construction; we rebind locally (the list is not shared)
+                # rather than mutate, since the declared type is Sequence[ModelMessage].
+                if storedMessages and storedMessages[0].role == "system":
+                    storedMessages = [
+                        ModelMessage(
+                            role="system",
+                            content=storedMessages[0].content
+                            + "\n"
+                            + chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROMPT].toStr(),
+                        ),
+                        *storedMessages[1:],
+                    ]
 
             if not storedMessages:
                 # Not a thread, get last messages for context
@@ -749,13 +880,13 @@ class LLMMessageHandler(BaseBotHandler):
                         role="system",
                         content=chatSettings[ChatSettingsKey.CHAT_PROMPT].toStr()
                         + "\n"
-                        + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr(),
+                        + chatSettings[ChatSettingsKey.CHAT_PROMPT_SUFFIX].toStr()
+                        + "\n"
+                        + chatSettings[ChatSettingsKey.RANDOM_ANSWER_PROMPT].toStr(),
                     ),
                 ]
-                # We need to use deque as we add messages to begin of queue (to not reverse db result)
-                # And we do not want to reverse db result as we do not want to process ALL retrieved
-                # messages if some message already has summarized context (i.e. metadata["randomContext"])
                 contextMessages = deque[ModelMessage]()
+                excludedMemoryIds: MutableSet[str] = ensuredMessage.getMemoryIds()
                 for storedMsg in await self.db.chatMessages.getChatMessagesSince(
                     chatId=chatId,
                     threadId=ensuredMessage.threadId if ensuredMessage.threadId is not None else 0,
@@ -766,21 +897,23 @@ class LLMMessageHandler(BaseBotHandler):
                         # Skip current message from context
                         continue
                     eMsg = await EnsuredMessage.fromDBChatMessage(storedMsg, self.db)
-                    await self._updateEMessageUserData(eMsg)
 
                     # We need to use `reversed` as deque.extendleft will add messages in reversed order
                     # I assume, that it will just call appendleft for each item in the list
                     # Which will automatically reverse the list. So we need to reverse it again
                     # (using appendleft in for cycle will require reversing the list as well)
-                    contextMessages.extendleft(
-                        reversed(
-                            await eMsg.toModelMessageList(
-                                self.db,
-                                format=llmMessageFormat,
-                                role=MessageCategory.fromStr(storedMsg["message_category"]).toRole(),
-                            )
-                        )
+                    emittedMessages = await eMsg.toModelMessageList(
+                        self.db,
+                        format=llmMessageFormat,
+                        role=MessageCategory.fromStr(storedMsg["message_category"]).toRole(),
+                        cache=self.cache if injectMemories else None,
+                        excludeMemoryIds=excludedMemoryIds,
                     )
+                    contextMessages.extendleft(reversed(emittedMessages))
+                    # Tag every emitted ModelMessage with its source row so the
+                    # 1:1 alignment with contextMessages holds exactly (a row
+                    # can emit multiple ModelMessages via toModelMessageList).
+                    excludedMemoryIds.update(eMsg.getMemoryIds())
                     if eMsg.metadata.get("randomContext", None) is not None:
                         # If some message already have summarized context,
                         #  do not add previous messages to context
@@ -792,8 +925,10 @@ class LLMMessageHandler(BaseBotHandler):
                     # We need to use at least 3 here as 1 for `randomContext``
                     # + 1 for message, randomContext is attached to
                     # + 1 answer from bot
-                    condensedMessages = await self.llmService.condenseContext(
-                        contextMessages,
+                    # Convert deques to lists so coverage index ranges can
+                    # slice sourceRows (deques do not support slicing).
+                    condensedRet, condensingDictMap = await self.llmService.condenseContext(
+                        list(contextMessages),
                         chatSettings[ChatSettingsKey.CHAT_MODEL].toModel(),
                         keepFirstN=0,
                         keepLastN=0,
@@ -802,13 +937,11 @@ class LLMMessageHandler(BaseBotHandler):
                         condensingSystemPrompt=chatSettings[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT].toStr(),
                         force=True,
                     )
-                    if not condensedMessages:
+                    if not condensedRet:
                         logger.error("Messages condensing failed")
                     else:
-                        # No need to add to context as it will be added later
-                        # storedMessages.append(ModelMessage(role="user", content=mlRet.resultText))
-                        condensedText = "\n".join([message.content for message in condensedMessages])
-                        ensuredMessage.metadata["randomContext"] = condensedText
+                        if condensingDictMap:
+                            ensuredMessage.metadata["randomContext"] = mergeCondensingDicts(condensingDictMap.values())
                         await self.db.chatMessages.updateChatMessageMetadata(
                             chatId=ensuredMessage.recipient.id,
                             messageId=ensuredMessage.messageId,
@@ -817,17 +950,28 @@ class LLMMessageHandler(BaseBotHandler):
 
                 else:
                     storedMessages.extend(contextMessages)
-                storedMessages.extend(await ensuredMessage.toModelMessageList(self.db, format=llmMessageFormat))
+                storedMessages.extend(
+                    await ensuredMessage.toModelMessageList(
+                        self.db,
+                        format=llmMessageFormat,
+                        cache=self.cache if injectMemories else None,
+                        excludeMemoryIds=set(),
+                    )
+                )
 
-            if not await self._sendLLMChatMessage(
+            outcome = await self._sendLLMChatMessage(
                 ensuredMessage,
                 storedMessages,
                 typingManager=typingManager,
                 keepFirstN=keepFirstMessagesN,
                 keepLastN=keepLastMessagesN,
                 maxTokensCoeff=maxTokensCoeff,
-            ):
+            )
+            if outcome == LLMReplyOutcome.ERROR:
                 logger.error("Failed to send LLM reply")
+                return False
+            if outcome == LLMReplyOutcome.SKIPPED_BY_MODEL:
+                logger.debug("Model declined to participate in the discussion")
                 return False
 
             return True

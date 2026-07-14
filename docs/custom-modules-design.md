@@ -9,15 +9,15 @@
 ## Implementation Note
 
 This custom handler loading system has been fully implemented in:
-- [`internal/bot/common/handlers/module_loader.py`](internal/bot/common/handlers/module_loader.py) — `CustomHandlerLoader` class
-- [`internal/bot/common/handlers/example_custom_handler.py`](internal/bot/common/handlers/example_custom_handler.py) — Example template
-- [`configs/00-defaults/custom-handlers.toml`](../../configs/00-defaults/custom-handlers.toml) — Default configuration
+- [`internal/bot/common/handlers/module_loader.py`](/internal/bot/common/handlers/module_loader.py) — `CustomHandlerLoader` class
+- [`internal/bot/common/handlers/example_custom_handler.py`](/internal/bot/common/handlers/example_custom_handler.py) — Example template
+- [`configs/00-defaults/custom-handlers.toml`](/configs/00-defaults/custom-handlers.toml) — Default configuration
 
 ---
 
 ## 1. Overview
 
-This document describes the architecture for loading custom handler modules into the Gromozeka bot's handler chain via configuration. Custom modules extend [`BaseBotHandler`](internal/bot/common/handlers/base.py:110) and are inserted **after** all built-in handlers but **before** [`LLMMessageHandler`](internal/bot/common/handlers/llm_messages.py) — the catch-all that must always be last.
+This document describes the architecture for loading custom handler modules into the Gromozeka bot's handler chain via configuration. Custom modules extend [`BaseBotHandler`](/internal/bot/common/handlers/base.py:110) and are inserted **after** all built-in handlers but **before** [`LLMMessageHandler`](/internal/bot/common/handlers/llm_messages.py) — the catch-all that must always be last.
 
 ### Goals
 
@@ -31,7 +31,7 @@ This document describes the architecture for loading custom handler modules into
 
 ## 2. TOML Configuration Format
 
-A new top-level `[custom-handlers]` section is added to the TOML config. This follows the same pattern as existing integrations like `[openweathermap]` and `[resender]` in [`configs/00-defaults/00-config.toml`](configs/00-defaults/00-config.toml:73).
+A new top-level `[custom-handlers]` section is added to the TOML config. This follows the same pattern as existing integrations like `[openweathermap]` and `[resender]` in [`configs/00-defaults/00-config.toml`](/configs/00-defaults/00-config.toml:73).
 
 ### 2.1 Schema
 
@@ -114,7 +114,7 @@ modules-dir = "modules"
 
 ## 3. Module Loader Component
 
-A new module [`internal/bot/common/handlers/module_loader.py`](internal/bot/common/handlers/module_loader.py) provides the loading logic.
+A new module [`internal/bot/common/handlers/module_loader.py`](/internal/bot/common/handlers/module_loader.py) provides the loading logic.
 
 ### 3.1 Class Design
 
@@ -184,7 +184,7 @@ def _loadSingle(self, handlerConfig: Dict[str, Any]) -> HandlerTuple:
    - **`module`**: Use `importlib.import_module()` on the module name (requires `modules-dir` in `sys.path`), then `getattr()` for the `class` field
 3. Call `_validateHandlerClass()` to verify inheritance
 4. Instantiate with keyword-only constructor: `(configManager=configManager, database=database, botProvider=botProvider)`
-5. Resolve parallelism string to [`HandlerParallelism`](internal/bot/common/handlers/manager.py:64) enum
+5. Resolve parallelism string to [`HandlerParallelism`](/internal/bot/common/handlers/manager.py:64) enum
 6. Return `(handlerInstance, parallelism)`
 
 ### 3.4 `_validateHandlerClass()` — Validation
@@ -213,7 +213,7 @@ storage/                    # application root-dir
 └── ...
 ```
 
-- The directory path is resolved relative to the application's working directory (after `root-dir` chdir in [`ConfigManager.__init__`](internal/config/manager.py:71))
+- The directory path is resolved relative to the application's working directory (after `root-dir` chdir in [`ConfigManager.__init__`](/internal/config/manager.py:71))
 - Each `.py` file is a standalone module; no package structure required
 - The directory is added to `sys.path` at load time so `importlib.import_module()` can find modules by name
 - The directory is **not** auto-scanned — only modules explicitly listed in `[[custom-handlers.handlers]]` are loaded
@@ -236,7 +236,7 @@ Custom handlers are always placed in a fixed position in the chain:
 │ 2. SpamHandler                  │ SEQUENTIAL - always second
 │ 3. ConfigureCommandHandler      │ PARALLEL
 │ 4. SummarizationHandler         │ PARALLEL
-│ 5. UserDataHandler              │ PARALLEL
+│ 5. UserMemoriesHandler          │ PARALLEL
 │ 6. DevCommandsHandler           │ PARALLEL
 │ 7. MediaHandler                 │ PARALLEL
 │ 8. CommonHandler                │ PARALLEL
@@ -300,11 +300,11 @@ class CustomHandlerLoadError(Exception):
 
 ## 7. Integration Points in HandlersManager
 
-The changes to [`HandlersManager.__init__`](internal/bot/common/handlers/manager.py:185) are minimal — just insert the loader call between the config-gated built-ins and the final `LLMMessageHandler` append.
+The changes to [`HandlersManager.__init__`](/internal/bot/common/handlers/manager.py:185) are minimal — just insert the loader call between the config-gated built-ins and the final `LLMMessageHandler` append.
 
 ### 7.1 Code Integration Point
 
-In [`manager.py`](internal/bot/common/handlers/manager.py:311), right before the `LLMMessageHandler` append (line 313):
+In [`manager.py`](/internal/bot/common/handlers/manager.py:311), right before the `LLMMessageHandler` append (line 313):
 
 ```python
         # ... existing config-gated handlers (weather, yandex, resender) ...
@@ -330,13 +330,13 @@ In [`manager.py`](internal/bot/common/handlers/manager.py:311), right before the
 
 ### 7.2 Import Addition
 
-Add a new import to [`manager.py`](internal/bot/common/handlers/manager.py) — the `CustomHandlerLoader` is imported inline (inside `__init__`) to avoid circular imports and to make the feature fully optional.
+Add a new import to [`manager.py`](/internal/bot/common/handlers/manager.py) — the `CustomHandlerLoader` is imported inline (inside `__init__`) to avoid circular imports and to make the feature fully optional.
 
 ### 7.3 No Changes to Other Files
 
-- [`BaseBotHandler`](internal/bot/common/handlers/base.py:110) — no changes needed
-- [`ConfigManager`](internal/config/manager.py:59) — no changes needed (uses existing `get()` method)
-- [`HandlerParallelism`](internal/bot/common/handlers/manager.py:64) — no changes needed
+- [`BaseBotHandler`](/internal/bot/common/handlers/base.py:110) — no changes needed
+- [`ConfigManager`](/internal/config/manager.py:59) — no changes needed (uses existing `get()` method)
+- [`HandlerParallelism`](/internal/bot/common/handlers/manager.py:64) — no changes needed
 
 ---
 

@@ -7,12 +7,14 @@ queue mapping, and error handling scenarios.
 """
 
 import asyncio
+import time
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 from lib.rate_limiter.interface import RateLimiterInterface
 from lib.rate_limiter.manager import RateLimiterManager
 from lib.rate_limiter.sliding_window import QueueConfig, SlidingWindowRateLimiter
+from tests.lib.rate_limiter.conftest import installFakeClock
 
 
 class MockRateLimiter(RateLimiterInterface):
@@ -168,7 +170,8 @@ class TestRateLimiterManager(unittest.IsolatedAsyncioTestCase):
 
         Initializes a fresh RateLimiterManager instance, cleans up any
         existing state, and creates mock and real rate limiter instances
-        for testing.
+        for testing. Also installs a fake clock so tests that exercise real
+        rate limiting fast-forward time instead of blocking.
         """
         # Get fresh manager instance
         self.manager = RateLimiterManager.getInstance()
@@ -181,6 +184,8 @@ class TestRateLimiterManager(unittest.IsolatedAsyncioTestCase):
         self.mockLimiter2 = MockRateLimiter()
         self.realLimiter1 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=5, windowSeconds=2))
         self.realLimiter2 = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=10, windowSeconds=2))
+
+        self.clockNow = installFakeClock(self)
 
     async def asyncTearDown(self) -> None:
         """Clean up after tests.
@@ -519,19 +524,19 @@ class TestRateLimiterManager(unittest.IsolatedAsyncioTestCase):
         self.manager.bindQueue("background_jobs", "lenient")
 
         # Test rate limiting through manager
-        start_time = asyncio.get_event_loop().time()
+        start_time = time.time()
 
         # Make requests that should be rate limited by strict limiter
         for i in range(6):  # Exceeds limit of 5
             await self.manager.applyLimit("api_calls")
 
-        elapsed = asyncio.get_event_loop().time() - start_time
+        elapsed = time.time() - start_time
         self.assertGreaterEqual(elapsed, 2.0)  # Should be delayed
 
         # Background jobs should still work immediately
-        start_time = asyncio.get_event_loop().time()
+        start_time = time.time()
         await self.manager.applyLimit("background_jobs")
-        elapsed = asyncio.get_event_loop().time() - start_time
+        elapsed = time.time() - start_time
         self.assertLess(elapsed, 0.1)
 
     async def testMultipleQueuesSameLimiter(self) -> None:

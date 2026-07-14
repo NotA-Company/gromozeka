@@ -8,19 +8,24 @@ the message processing pipeline, ensuring all messages are properly
 normalized and persisted before being passed to other handlers.
 """
 
-import asyncio
 import logging
-from typing import Optional
+from typing import List, Optional, Tuple
 
 import telegram
 
-from internal.bot.common.embedding_utils import embedAndSaveMessage
 from internal.bot.common.models import UpdateObjectType
-from internal.bot.models import BotProvider, EnsuredMessage, MessageRecipient, MessageSender
-from internal.bot.models.chat_settings import ChatSettingsKey
+from internal.bot.models import (
+    BotProvider,
+    ChatSettingsKey,
+    EnsuredMessage,
+    LLMMessageFormat,
+    MessageRecipient,
+    MessageSender,
+)
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import MessageCategory
+from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
 
 from .base import BaseBotHandler, HandlerResultStatus
@@ -66,6 +71,66 @@ class MessagePreprocessorHandler(BaseBotHandler):
         super().__init__(configManager=configManager, database=database, botProvider=botProvider)
         self._searchEnabled: bool = bool(self.configManager.getSearchHistoryConfig().get("enabled", False))
 
+    async def injectMemories(
+        self,
+        ensuredMessage: EnsuredMessage,
+        embeddingModel: Optional[str],
+        queryEmbedding: Optional[List[float]] = None,
+    ) -> None:
+        """Inject user memories into the ensured message.
+
+        Loads permanent memories (always injected) plus an ephemeral cohort
+        chosen by ``queryEmbedding``: when ``None`` the latest memories are
+        fetched (newest-updated-first fallback), when a vector is supplied
+        :meth:`UserMemoriesRepository.searchMemories` ranks them by cosine
+        similarity against ``queryEmbedding`` using ``embeddingModel``.
+
+        Args:
+            ensuredMessage: The ensured message to inject memories into.
+            embeddingModel: The embedding model name used to produce
+                ``queryEmbedding`` (forwarded to ``searchMemories`` for
+                per-model vec0 scoping). Ignored when ``queryEmbedding is None``.
+            queryEmbedding: A single query embedding vector. ``None`` selects
+                ``getLatestMemories`` (newest-first fallback); a non-``None``
+                vector selects ``searchMemories(queryEmbedding=...)`` (vec0
+                semantic ranking). ``None`` is the path taken when memory
+                injection is enabled but no embedding was generated (latest
+                retrieval fallback, empty message text, or an embedding failure).
+        """
+
+        permanentMemories = await self.cache.getChatUserPermanentMemories(
+            ensuredMessage.recipient.id,
+            ensuredMessage.sender.id,
+            ensuredMessage.threadId or DEFAULT_THREAD_ID,
+        )
+        shortTermMemories = []
+        if queryEmbedding is None:
+            shortTermMemories = await self.db.userMemories.getLatestMemories(
+                chatId=ensuredMessage.recipient.id,
+                userId=ensuredMessage.sender.id,
+                threadId=ensuredMessage.threadId or DEFAULT_THREAD_ID,
+            )
+        else:
+            shortTermMemories = await self.db.userMemories.searchMemories(
+                chatId=ensuredMessage.recipient.id,
+                userId=ensuredMessage.sender.id,
+                threadId=ensuredMessage.threadId or DEFAULT_THREAD_ID,
+                queryEmbedding=queryEmbedding,
+                embeddingModel=embeddingModel,
+                permanent=False,
+            )
+
+        # Write compact memory IDs to metadata["memories"] for persistence and
+        # lazy resolution. formatForLLM resolves these IDs to content via
+        # cache.getMemoriesByIds at render time — the by-id cache is populated
+        # lazily (cache-aside) on that first read, not warmed here. Entries
+        # without a usable id are silently dropped (walrus + truthy guard;
+        # ``id`` is NotRequired on SingleMemoryDict).
+        ensuredMessage.metadata["memories"] = {
+            "permanentIds": [mid for m in permanentMemories if (mid := m.get("id"))],
+            "shortTermIds": [m["memory_id"] for m in shortTermMemories if m["memory_id"]],
+        }
+
     async def newMessageHandler(
         self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
     ) -> HandlerResultStatus:
@@ -110,34 +175,62 @@ class MessagePreprocessorHandler(BaseBotHandler):
             logger.error("Failed to save chat message")
             return HandlerResultStatus.ERROR
 
-        # After the message is durably saved, schedule a background embedding job
-        # if the search-history feature is enabled at the server level AND the chat
-        # opts in via the EMBEDDINGS_ENABLED per-chat setting. The dispatch is
-        # non-blocking: the task is created synchronously and only registered with
-        # the queue service, so the handler returns immediately. Any error inside
-        # the background task is caught and logged inside embedAndSaveMessage
-        # and never propagates here.
-        if self._searchEnabled:
-            try:
-                chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
-                if chatSettings[ChatSettingsKey.EMBEDDINGS_ENABLED].toBool():
-                    embeddingModelName = chatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr()
-                    if embeddingModelName:
-                        if ensuredMessage.messageText and ensuredMessage.messageText.strip():
-                            await self.queueService.addBackgroundTask(
-                                asyncio.create_task(
-                                    embedAndSaveMessage(
-                                        ensuredMessage=ensuredMessage,
-                                        modelName=embeddingModelName,
-                                        db=self.db,
-                                    )
-                                )
-                            )
-                    else:
-                        logger.error(f"Embedding model not set for chat {ensuredMessage.recipient.id}")
-            except Exception as e:
-                # Never let embedding dispatch fail the message pipeline.
-                logger.exception("Failed to dispatch embedding for chat %s: %s", ensuredMessage.recipient.id, e)
+        # After the message is durably saved, generate embeddings + injectMemories if needed
+        # (memories require embeddings as well).
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
+
+        chatSearchEnabled = self._searchEnabled and chatSettings[ChatSettingsKey.EMBEDDINGS_ENABLED].toBool()
+        memoriesEnabled = chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool()
+        embeddingsEnabled = chatSettings[ChatSettingsKey.EMBEDDINGS_ENABLED].toBool()
+        # Semantic ("relevant") memory retrieval is used when MEMORY_ENABLED and
+        # EMBEDDINGS_ENABLED are both on; otherwise memory injection falls back to latest.
+        chatMemoriesEmbeddingsEnabled = memoriesEnabled and embeddingsEnabled
+        memoryInjected = False
+
+        if chatSearchEnabled or chatMemoriesEmbeddingsEnabled:
+            messageText: str = await ensuredMessage.formatForLLM(
+                self.db, format=LLMMessageFormat.TEXT, useSingleMedia=False, cache=None
+            )
+            embeddings: Optional[Tuple[str, List[float]]] = None
+
+            # Empty/whitespace message text must never be embedded: a garbage
+            # vector pollutes both chat-search recall and memory semantic search.
+            # Skip the embedding block so execution falls through to the
+            # latest-retrieval fallback below — an empty-text message still gets
+            # memory injection, just not a (meaningless) embedding.
+            if messageText.strip():
+                embeddings = await self.llmService.generateEmbedding(
+                    messageText,
+                    chatId=ensuredMessage.recipient.id,
+                    chatSettings=chatSettings,
+                )
+
+            if embeddings is not None:
+                if chatSearchEnabled:
+                    await self.db.chatEmbeddings.saveMessageEmbedding(
+                        chatId=ensuredMessage.recipient.id,
+                        messageId=ensuredMessage.messageId,
+                        embedding=embeddings[1],
+                        model=embeddings[0],
+                        date=ensuredMessage.date.isoformat() if ensuredMessage.date is not None else None,
+                    )
+
+                if chatMemoriesEmbeddingsEnabled:
+                    await self.injectMemories(ensuredMessage, embeddings[0], queryEmbedding=embeddings[1])
+                    memoryInjected = True
+
+        # If memory injection was needed, but didn't happen
+        # (because of it uses 'latest' or because of some issue)
+        if memoriesEnabled and not memoryInjected:
+            await self.injectMemories(ensuredMessage, None, queryEmbedding=None)
+            memoryInjected = True
+
+        if memoryInjected:
+            await self.db.chatMessages.updateChatMessageMetadata(
+                chatId=ensuredMessage.recipient.id,
+                messageId=ensuredMessage.messageId,
+                metadata=ensuredMessage.metadata,
+            )
 
         return HandlerResultStatus.NEXT
 

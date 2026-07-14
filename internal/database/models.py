@@ -142,7 +142,7 @@ class ChatMessageDict(TypedDict):
     created_at: datetime.datetime
     """Record creation timestamp."""
     metadata: str
-    """JSON metadata."""
+    """Optional JSON metadata. Should be valid MetadataDict"""
     markup: str
     """Message markup."""
     media_group_id: Optional[str]
@@ -468,3 +468,132 @@ class ThreadResultDict(TypedDict):
     """The message the caller asked about."""
     thread_messages: list[ChatMessageDict]
     """All messages in the thread, including the target, in chronological order."""
+
+
+class MemoryType(StrEnum):
+    """Closed set of user-memory categories.
+
+    Stored as the TEXT ``type`` column on the ``user_memories`` table
+    (see ``migration_020_user_memories``). Freeform categorisation beyond
+    these is handled by the JSON ``tags`` column. Lives in the database
+    layer so :class:`UserMemoryDict` (and the rest of ``internal.database``)
+    can reference it without importing from ``internal.bot.models`` —
+    that upward import created a circular dependency at app startup
+    (``internal.database`` initialises before ``internal.bot``).
+
+    Members:
+        BIO: High-level, evolving summary of who the user is. Exactly one
+            permanent bio memory is maintained per (chat, user, thread) by
+            the refinement pass; the rolling-bio migration
+            (``migration_020`` Backfill B) seeds it.
+        PREFERENCE: A stated or inferred preference ("prefers dark mode",
+            "vegan").
+        FACT: A durable, non-preferential fact ("lives in Berlin",
+            "works as a nurse").
+        EVENT: A point-in-time happening ("got married 2024-06",
+            "travelling to Tokyo in May").
+        RELATIONSHIP: A connection to another person/entity ("married to
+            Alex", "mentor is Dr. Lee").
+    """
+
+    BIO = "bio"
+    """High-level user summary; one permanent bio maintained per (chat, user, thread)."""
+
+    PREFERENCE = "preference"
+    """A stated or inferred user preference."""
+
+    FACT = "fact"
+    """A durable, non-preferential fact about the user."""
+
+    EVENT = "event"
+    """A point-in-time happening in the user's life."""
+
+    RELATIONSHIP = "relationship"
+    """A connection between the user and another person/entity."""
+
+
+class UserMemorySource(StrEnum):
+    """Provenance of a row in the ``user_memories`` table.
+
+    Records which subsystem created the memory so refinement, search, and
+    audit code can distinguish user-authored facts from background-derived
+    ones. Stored as the TEXT ``source`` column (see
+    ``migration_020_user_memories``). Lives in the database layer for the
+    same circular-import reason as :class:`MemoryType` (``internal.database``
+    initialises before ``internal.bot``).
+
+    Members:
+        REFINEMENT: Created by the background refinement pass
+            (``UserMemoriesHandler._runSingleRefinement``), which runs an LLM over
+            recent messages and emits ``add_memory`` / ``delete_memory``
+            tool calls. See ``isRefinement=True`` in the add path.
+        CHAT: Created inline during an interactive conversation via the same
+            memory tools, but outside the refinement cron (i.e. the LLM
+            decided to remember something while answering the user).
+        MIGRATION: Backfilled from the legacy ``user_data`` store by
+            ``migration_020`` (Backfill A + B). Idempotent — a sentinel probe
+            on ``source='migration'`` guards re-runs.
+        USER: Explicitly authored or imported by the user themselves (direct
+            user intent rather than system inference). Reserved for
+            user-facing memory-management entry points.
+    """
+
+    REFINEMENT = "refinement"
+    """Created by the background refinement cron (LLM tool calls)."""
+    CHAT = "chat"
+    """Created inline during an interactive conversation (LLM tool calls)."""
+    MIGRATION = "migration"
+    """Backfilled from the legacy user_data store by migration_020."""
+    USER = "user"
+    """Explicitly authored/imported by the user (direct intent)."""
+
+
+class UserMemoryDict(TypedDict):
+    """Row shape returned by ``UserMemoriesRepository`` read methods.
+
+    Keys are snake_case to match DB column names (repo convention — see
+    ``ChatMessageDict`` / ``MessageEmbeddingDict`` in
+    ``internal/database/models.py``). Repository METHOD parameters stay
+    camelCase per AGENTS.md; only the dict keys mirror the columns so
+    the universal converter ``dbUtils.sqlToTypedDict`` can map them
+    directly.
+
+    Attributes:
+        chat_id: Chat the memory belongs to.
+        user_id: User the memory is about.
+        thread_id: Thread scope. ``None`` for cross-thread permanent
+            memories (e.g. ``user_data``-migrated facts); set to the
+            originating thread for thread-specific permanent bio
+            memories (``migration_020`` Backfill B).
+        memory_id: App-generated UUID hex; unique within (chat_id, user_id).
+        type: ``MemoryType`` string value
+            (bio|preference|fact|event|relationship).
+        content: Free-text memory body (source of truth for re-embedding).
+        tags: Decoded list of tag strings (stored as JSON TEXT in the row).
+        permanent: True if the memory is always injected into the system block.
+        source: Provenance — refinement | chat | migration | user.
+        embedding_model: Name of the model that produced the stored vec0
+            embedding, or ``None`` when the memory has not been embedded yet.
+        embedding_dimensions: Dimension count of the stored embedding, or
+            ``None`` when not yet embedded.
+        created_at: Creation timestamp.
+        updated_at: Last-update timestamp.
+        score: Cosine similarity (0.0–1.0) when returned by semantic
+            ``searchMemories`` (Phase 1b); absent on rows from non-search
+            methods. Mirrors ``ChatMessageDict.score``.
+    """
+
+    chat_id: int
+    user_id: int
+    thread_id: Optional[int]
+    memory_id: str
+    type: MemoryType
+    content: str
+    tags: list[str]
+    permanent: bool
+    source: UserMemorySource
+    embedding_model: Optional[str]
+    embedding_dimensions: Optional[int]
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
+    score: NotRequired[float]

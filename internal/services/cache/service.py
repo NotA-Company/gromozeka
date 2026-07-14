@@ -30,9 +30,10 @@ import logging
 import time
 from collections import OrderedDict
 from threading import RLock
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Optional, Tuple, Type
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Tuple, Type
 
 import internal.database.utils as dbUtils
+from internal.bot.models.message_metadata import SingleMemoryDict, convertDBMemoryToSingleMemoryDict
 from internal.bot.models.user_metadata import UserMetadataDict
 from internal.database.models import ChatInfoDict, ChatTopicInfoDict, ChatUserDict
 from internal.models import MessageId
@@ -50,8 +51,6 @@ from .types import (
     HCUserCacheDict,
     UserActiveActionEnum,
     UserActiveConfigurationDict,
-    UserDataType,
-    UserDataValueType,
 )
 
 if TYPE_CHECKING:
@@ -223,7 +222,6 @@ class CacheService:
         >>> # Or use convenience methods
         >>> settings = await cache.getChatSettings(123)
         >>> await cache.setChatSetting(123, ChatSettingsKey.LANGUAGE, ChatSettingsValue("en"), userId=1)
-        >>> await cache.setUserData(123, 456, "key", "value")
     """
 
     _instance: Optional["CacheService"] = None
@@ -266,7 +264,8 @@ class CacheService:
                 LRUCache[int | str, HCChatCacheDict]
                 | LRUCache[str, HCChatUserCacheDict]
                 | LRUCache[int, HCUserCacheDict]
-                | LRUCache[int, HCChatPersistentCacheDict],
+                | LRUCache[int, HCChatPersistentCacheDict]
+                | LRUCache[str, Optional[SingleMemoryDict]],
             ] = {
                 CacheNamespace.CHATS: LRUCache[int | str, HCChatCacheDict](
                     self.maxCacheSize,
@@ -282,6 +281,11 @@ class CacheService:
                 CacheNamespace.USERS: LRUCache[int, HCUserCacheDict](
                     self.maxCacheSize, keyType=int, valueType=HCUserCacheDict
                 ),
+                CacheNamespace.MEMORIES: LRUCache[str, Optional[SingleMemoryDict]](
+                    self.maxCacheSize,
+                    keyType=str,
+                    valueType=Optional[SingleMemoryDict],  # pyright: ignore[reportArgumentType]
+                ),
             }
             """Dictionary mapping cache namespaces to their LRU cache instances."""
 
@@ -291,6 +295,7 @@ class CacheService:
                 CacheNamespace.CHAT_PERSISTENT: set(),
                 CacheNamespace.CHAT_USERS: set(),
                 CacheNamespace.USERS: set(),
+                CacheNamespace.MEMORIES: set(),
             }
             """Dictionary tracking keys that have been modified and need persistence."""
 
@@ -366,6 +371,21 @@ class CacheService:
             The LRU cache for the CHAT_PERSISTENT namespace
         """
         return self._caches[CacheNamespace.CHAT_PERSISTENT]  # pyright: ignore[reportReturnType]
+
+    @property
+    def memories(self) -> LRUCache[str, Optional[SingleMemoryDict]]:
+        """Access memories namespace.
+
+        Provides direct access to the MEMORIES namespace cache which maps
+        memory UUID strings to their resolved :class:`SingleMemoryDict` form (or
+        ``None`` for IDs not found in the DB — negative-cached to avoid repeat
+        queries). MEMORY_ONLY persistence: never written to disk, cleared on
+        process restart.
+
+        Returns:
+            The LRU cache for the MEMORIES namespace
+        """
+        return self._caches[CacheNamespace.MEMORIES]  # pyright: ignore[reportReturnType]
 
     async def injectDatabase(self, database: "Database") -> None:
         """Inject database wrapper for persistence.
@@ -846,7 +866,7 @@ class CacheService:
         self.chats.set(chatId, chatCache)
         logger.debug(f"Updated chat admins list for {chatId}")
 
-    # ## ChatUser UserData
+    # ## ChatUser permanent memories
     def _getChatUserKey(self, chatId: int, userId: int) -> str:
         """Generate a unique key for chat user data.
 
@@ -862,155 +882,168 @@ class CacheService:
         """
         return f"{chatId}:{userId}"
 
-    async def getChatUserData(self, chatId: int, userId: int) -> UserDataType:
-        """Get user data for a specific chat.
+    async def getChatUserPermanentMemories(self, chatId: int, userId: int, threadId: int) -> list[SingleMemoryDict]:
+        """Return the permanent memories for (chatId, userId, threadId), read-aside cached.
 
-        Retrieves user data scoped to a specific chat from the cache. If not
-        present in cache, loads it from the database and caches the result.
-        Returns an empty dictionary if no data is found or database is unavailable.
+        Cache hit returns the stored list directly. On a miss the memories are
+        loaded from ``db.userMemories.getPermanentMemories`` and converted to
+        :class:`SingleMemoryDict` via :func:`convertDBMemoryToSingleMemoryDict`,
+        then cached under ``permanentMemories[threadId]`` keyed by the composite
+        ``chatId:userId`` user key. If no database is wired, logs and returns an
+        empty list rather than caching the absence.
 
         Args:
-            chatId: The unique identifier of the chat
-            userId: The unique identifier of the user
+            chatId: The chat the memories belong to.
+            userId: The user the memories are about.
+            threadId: Thread scope (use ``DEFAULT_THREAD_ID`` = 0 for the main
+                thread / cross-thread permanent memories).
 
         Returns:
-            A UserDataType dictionary containing the user's data for the chat,
-            or an empty dictionary if no data exists
+            The cached-or-loaded list of permanent :class:`SingleMemoryDict`
+            entries (empty when nothing is stored or the DB is unavailable).
         """
         userKey = self._getChatUserKey(chatId, userId)
         userCache = self.chatUsers.get(userKey, {})
 
-        if "data" not in userCache:
-            if self.database:
-                # Load from DB
-                userData = {
-                    k: json.loads(v)
-                    for k, v in (await self.database.userData.getUserData(userId=userId, chatId=chatId)).items()
-                }
-                userCache["data"] = userData
-                self.chatUsers.set(userKey, userCache)
-                logger.debug(f"Loaded user data for {userKey} from DB")
-            else:
-                logger.error(f"No dbWrapper found, can't load user data for {userKey}")
-                userCache["data"] = {}
-                self.chatUsers.set(userKey, userCache)
+        if "permanentMemories" not in userCache:
+            userCache["permanentMemories"] = {}
 
-        return userCache.get("data", {})
+        memories = userCache["permanentMemories"].get(threadId, None)
 
-    async def setChatUserData(self, chatId: int, userId: int, key: str, value: UserDataValueType) -> None:
-        """Set user data for a specific chat.
+        if memories is not None:
+            return memories
 
-        Stores a key-value pair in the user data scoped to a specific chat.
-        The data is persisted to the database immediately and marked as dirty
-        for cache persistence.
+        if not self.database:
+            logger.error(f"No dbWrapper found, can't load user data for {userKey}")
+            return []
 
-        Args:
-            chatId: The unique identifier of the chat
-            userId: The unique identifier of the user
-            key: The data key to set
-            value: The data value to store
+        dbMemories = await self.database.userMemories.getPermanentMemories(
+            chatId=chatId,
+            userId=userId,
+            threadId=threadId,
+        )
 
-        Side Effects:
-            - Loads existing user data from database if not already cached
-            - Updates the in-memory cache with the new key-value pair
-            - Marks the user key as dirty for persistence
-            - If database is available:
-                - Persists the data to the database immediately
-            - If database is not available:
-                - Logs an error message
-            - Logs debug information about the update
-        """
-        userKey = self._getChatUserKey(chatId, userId)
-        userCache = self.chatUsers.get(userKey, {})
-        # load userData from DB or initialise as empty dict
-        await self.getChatUserData(chatId, userId)
-
-        if "data" not in userCache:
-            userCache["data"] = {}
-
-        userCache["data"][key] = value
+        # keepId=True so each entry carries its memory id — the write path
+        # (MessagePreprocessorHandler.injectMemories) extracts permanentIds from
+        # this field. Contrast with the by-id resolution cache
+        # (getMemoriesByIds), which is keepId=False (resolved entries are looked
+        # up by dict key, never by the internal id field, so it is stripped to
+        # avoid leaking a uuid into the LLM prompt).
+        userCache["permanentMemories"][threadId] = [
+            convertDBMemoryToSingleMemoryDict(m, keepId=True) for m in dbMemories
+        ]
         self.chatUsers.set(userKey, userCache)
+        return userCache["permanentMemories"][threadId]
 
-        # Mark as dirty
-        self.dirtyKeys[CacheNamespace.CHAT_USERS].add(userKey)
+    async def invalidateChatUserPermanentMemories(self, chatId: int, userId: int, threadId: Optional[int]) -> None:
+        """Drop cached permanent memories for (chatId, userId).
 
-        # Persist to DB immediately for user data
-        if self.database:
-            await self.database.userData.addUserData(userId=userId, chatId=chatId, key=key, data=utils.jsonDumps(value))
-        else:
-            logger.error(f"No dbWrapper found, can't save user data for {userKey} ({key}->{value})")
-
-        logger.debug(f"Updated user data for {userKey}, key={key}")
-
-    async def unsetChatUserData(self, chatId: int, userId: int, key: str) -> None:
-        """Unset user data for a specific chat.
-
-        Removes a specific key from the user data scoped to a specific chat.
-        The key is removed from both the cache and the database.
+        Called after a memory write/delete so the next read re-queries the DB.
+        When ``threadId`` is ``None`` the entire ``permanentMemories`` map for
+        that user is cleared (all threads); otherwise only the entry for the
+        given thread is removed. A no-op when nothing is cached for the user or
+        thread — callers may invoke unconditionally after a write.
 
         Args:
-            chatId: The unique identifier of the chat
-            userId: The unique identifier of the user
-            key: The data key to remove
+            chatId: The chat the memories belong to.
+            userId: The user the memories are about.
+            threadId: Thread scope to invalidate, or ``None`` to invalidate
+                every thread for this (chatId, userId).
 
-        Side Effects:
-            - Loads existing user data from database if not already cached
-            - Removes the specified key from the in-memory cache
-            - If database is available:
-                - Removes the key from the database
-            - If database is not available:
-                - Logs an error message
-            - Logs debug information about the update
+        Returns:
+            None
         """
         userKey = self._getChatUserKey(chatId, userId)
-        # Populate UserData from DB if any
-        await self.getChatUserData(chatId, userId)
         userCache = self.chatUsers.get(userKey, {})
-        if "data" not in userCache:
+
+        if "permanentMemories" not in userCache:
             return
 
-        userData = userCache["data"]
-        userData.pop(key, None)
-        self.chatUsers.set(userKey, userCache)
-
-        if self.database:
-            await self.database.userData.deleteUserData(userId=userId, chatId=chatId, key=key)
-        else:
-            logger.error(f"No dbWrapper found, can't delete user data for {userKey} ({key})")
-        logger.debug(f"Unset user data for {userKey}, key={key}")
-
-    async def clearChatUserData(self, chatId: int, userId: int) -> None:
-        """Clear all user data for a specific chat.
-
-        Removes all user data scoped to a specific chat from both the cache
-        and the database.
-
-        Args:
-            chatId: The unique identifier of the chat
-            userId: The unique identifier of the user
-
-        Side Effects:
-            - If database is available:
-                - Removes all user data from the database
-            - If database is not available:
-                - Logs an error message
-            - Removes all user data from the in-memory cache
-            - Logs debug information about the update
-        """
-        userKey = self._getChatUserKey(chatId, userId)
-
-        if self.database:
-            await self.database.userData.clearUserData(userId=userId, chatId=chatId)
-        else:
-            logger.error(f"No dbWrapper found, can't clear user data for {userKey}")
-
-        userCache = self.chatUsers.get(userKey, {})
-        if "data" not in userCache:
+        if threadId is None:
+            userCache["permanentMemories"] = {}
+            self.chatUsers.set(userKey, userCache)
             return
 
-        userCache.pop("data", None)
+        if threadId not in userCache["permanentMemories"]:
+            return
+
+        del userCache["permanentMemories"][threadId]
         self.chatUsers.set(userKey, userCache)
-        logger.debug(f"Cleared user data for {userKey}")
+
+    async def getMemoriesByIds(
+        self,
+        memoryIds: List[str],
+        *,
+        chatId: Optional[int] = None,
+        dataSource: Optional[str] = None,
+    ) -> Dict[str, Optional[SingleMemoryDict]]:
+        """Resolve memory IDs to their SingleMemoryDict form, cache-aside.
+
+        Cache-first: each requested ID is looked up in the MEMORIES
+        namespace. Misses are batch-queried via
+        ``db.userMemories.getMemoriesByIds(missingIds)``, converted to
+        :class:`SingleMemoryDict` via :func:`convertDBMemoryToSingleMemoryDict`
+        (default ``keepId=False``), and populated back into the cache. This
+        cache is the read-path resolver (Phase 3's
+        ``EnsuredMessage.formatForLLM``): each entry is looked up by dict
+        key — the ``mid`` key IS the memory id — so the entry's internal
+        ``id`` field is never read. The resolved content is rendered verbatim
+        by ``formatForLLM`` into ``userMemories``, so storing ``id`` would
+        leak a uuid into the LLM prompt, violating the
+        :class:`SingleMemoryDict.id` invariant ("Absent on injected/in-memory
+        snapshots"). Entries are therefore stored WITHOUT ``id``. Returns a
+        dict mapping every requested ID to its resolved entry, or ``None`` for
+        IDs not found in the DB (a missing ID is cached as ``None`` so a
+        repeated miss does not re-query — negative caching).
+
+        The cache key is the memory UUID (``mid``) — globally unique per DB —
+        so ``chatId`` / ``dataSource`` are routing-only: they tell the repo
+        which data source to query on a miss. A cache hit returns the correct
+        content regardless of which source was originally queried. When both
+        are ``None`` the default DB is queried.
+
+        No invalidation method exists for this namespace: soft-delete preserves
+        content (so a cached entry stays valid), ``addMemory`` does not
+        invalidate a not-yet-cached entry, and process restart clears the
+        cache naturally (MEMORY_ONLY persistence).
+
+        Args:
+            memoryIds: Memory UUID hex strings to resolve.
+            chatId: Optional chat ID for data-source routing on a cache miss.
+                ``None`` routes to the default source.
+            dataSource: Optional explicit data-source name for routing; takes
+                precedence over ``chatId`` when both are set.
+
+        Returns:
+            ``Dict[str, Optional[SingleMemoryDict]]`` keyed by the requested
+            IDs. Every requested ID is present in the result (a resolved entry
+            or ``None``). Empty dict when ``memoryIds`` is empty or no database
+            is wired.
+        """
+        if not memoryIds:
+            return {}
+
+        if not self.database:
+            logger.error("No dbWrapper found, can't resolve memory ids via getMemoriesByIds")
+            return {}
+
+        # Partition requested IDs into cache hits and misses. Membership uses
+        # the underlying OrderedDict ``in`` (no LRU reordering); the return-path
+        # ``.get`` below touches LRU order on hits.
+        missingIds = [mid for mid in memoryIds if mid not in self.memories]
+
+        if missingIds:
+            dbRows = await self.database.userMemories.getMemoriesByIds(missingIds, chatId=chatId, dataSource=dataSource)
+            resolvedBy: Dict[str, SingleMemoryDict] = {
+                row["memory_id"]: convertDBMemoryToSingleMemoryDict(row) for row in dbRows
+            }
+            # Populate the cache for EVERY miss — including None for IDs not
+            # found in the DB (negative caching) so a repeated miss does not
+            # re-query.
+            for mid in missingIds:
+                self.memories.set(mid, resolvedBy.get(mid, None))
+
+        return {mid: self.memories.get(mid, None) for mid in memoryIds}
 
     # ## ChatUser UserInfo (chat_users row)
 
@@ -1101,7 +1134,7 @@ class CacheService:
         """Async context manager serializing chat_users.metadata read-modify-write windows.
 
         Callers that do read-modify-write of ``chat_users.metadata`` (e.g.
-        ``setUserMetadata(isUpdate=True)`` and ``UserDataHandler._persistMemoryEntry``)
+        ``setUserMetadata(isUpdate=True)`` and ``UserMemoriesHandler._persistMemoryEntry``)
         MUST hold this lock across the full RMW to avoid lost-update races between
         concurrent writers. Plain reads (``getUserMetadata``) and full-replace writes
         (``updateUserMetadata`` with no preceding read) do NOT need it.
@@ -1180,7 +1213,7 @@ class CacheService:
     def invalidateChatUser(self, chatId: int, userId: int) -> None:
         """Drop ONLY the cached chat_users row (userInfo) for (chatId, userId).
 
-        The cache entry's other fields (e.g. the ``data`` user_data blob) are
+        The cache entry's other fields (notably ``permanentMemories``) are
         preserved. Escape hatch for callers that know the row was mutated
         out-of-band; the next ``getChatUser`` re-fetches from DB.
 

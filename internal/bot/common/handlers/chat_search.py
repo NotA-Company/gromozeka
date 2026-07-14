@@ -24,19 +24,26 @@ import asyncio
 import datetime
 import json
 import logging
+from collections.abc import MutableSet
 from enum import StrEnum
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import lib.utils as libUtils
-from internal.bot.common.embedding_utils import embedAndSaveMessage
 from internal.bot.common.models import UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
-from internal.bot.constants import ToolName
+from internal.bot.constants import (
+    BACKFILL_DEFAULT_BATCH_SIZE,
+    BACKFILL_INTER_MESSAGE_DELAY_SECS,
+    MAX_GET_MESSAGES_BATCH,
+    SEARCH_DEFAULT_DAYS,
+    SEARCH_DEFAULT_MAX_RESULTS,
+    SEARCH_TOOL_MAX_MESSAGE_LENGTH,
+    ToolName,
+)
 from internal.bot.models import (
     BotProvider,
     ChatSettingsDict,
     ChatSettingsKey,
-    ChatSettingsValue,
     ChatType,
     CommandCategory,
     CommandHandlerOrder,
@@ -53,32 +60,9 @@ from internal.models import MessageId
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
 from lib.ai import LLMFunctionParameter, LLMParameterType
 
-from .base import BaseBotHandler
+from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)
-
-
-SEARCH_DEFAULT_MAX_RESULTS: int = 10
-"""Default ``max-results`` for `/search` when `[search-history.defaults]` is
-unset. Matches the TOML default in `configs/00-defaults/search-history.toml`."""
-
-SEARCH_DEFAULT_DAYS: int = 30
-"""Default `days` window for `/search` when `[search-history.defaults]` is unset.
-Matches the TOML default in `configs/00-defaults/search-history.toml`."""
-
-BACKFILL_DEFAULT_BATCH_SIZE: int = 50
-"""Default per-tick batch size for the backfill CRON_JOB when
-``[search-history.embeddings].reindex-batch-size`` is unset."""
-
-SEARCH_TOOL_MAX_MESSAGE_LENGTH: int = 512
-"""Max chars per message text in LLM tool search results. Longer texts
-are truncated with ``…`` to avoid blowing up the LLM context window."""
-
-BACKFILL_INTER_MESSAGE_DELAY_SECS: float = 0.1
-"""Pause inserted between consecutive embedding API calls within a
-backfill batch. ``LLMService`` already rate-limits at the provider level,
-but a small extra cushion keeps the handler from monopolising the
-asyncio loop and leaves headroom for user-facing message traffic."""
 
 
 class _CategoryGroup(StrEnum):
@@ -137,7 +121,7 @@ class ChatSearchHandler(BaseBotHandler):
        semantic ranking pass on top of the SQL filter.
     2. The `_dtCronJob` background task (registered against
        ``DelayedTaskFunction.CRON_JOB``): every minute, pick one chat
-       with ``REGENERATE_EMBEDDINGS=true`` in round-robin order and embed
+       with ``EMBEDDINGS_ENABLED=true`` in round-robin order and embed
        a small batch of its un-embedded messages. Catches up chats that
        flipped the feature on with pre-existing messages.
 
@@ -191,6 +175,20 @@ class ChatSearchHandler(BaseBotHandler):
         # obsolete-embedding deletion only fires once per model switch.
         self._embeddingModelTracker: Dict[int, str] = {}
 
+        # In-memory set of chat IDs that have seen at least one inbound
+        # message since startup (populated by `newMessageHandler` when
+        # ``EMBEDDINGS_ENABLED=true``). The backfill CRON_JOB (`_dtCronJob`)
+        # processes ONLY chats in this set.
+        #
+        # This is INTENTIONAL design, not a limitation: there is deliberately
+        # NO startup DB-scan that re-enrolls every chat. Chats that are no
+        # longer active (dead/abandoned) are not backfilled — a chat with a
+        # pre-existing embedding backlog is picked up only once it receives a
+        # new message, which proves it is still active. Eviction is one-way:
+        # a chat is removed (`.discard()`) when ``EMBEDDINGS_ENABLED`` flips
+        # to false and is not re-added until the next qualifying message.
+        self._trackedChats: MutableSet[int] = set()
+
         # Register backfill CRON_JOB. Multiple handlers can subscribe to
         # the same `DelayedTaskFunction` (they run in registration order
         # — see `QueueService.registerDelayedTaskHandler`), so the
@@ -224,7 +222,7 @@ class ChatSearchHandler(BaseBotHandler):
                 ),
                 LLMFunctionParameter(
                     name="user_name",
-                    description="Filter by username (with or without @)",
+                    description="Filter by username (with or without @) or numeric user_id",
                     type=LLMParameterType.STRING,
                     required=False,
                 ),
@@ -277,6 +275,34 @@ class ChatSearchHandler(BaseBotHandler):
             handler=self._llmToolGetThread,
         )
 
+        # Register LLM tool: fetch full content of messages by ID.
+        # Used by the model to read the originals underlying a condensed
+        # summary (summaries carry ``coveredMessageIds``). Pure DB lookup —
+        # NOT gated on EMBEDDINGS_ENABLED (only on the handler's
+        # ``[search-history].enabled`` registration gate and the per-chat
+        # ``ALLOW_TOOLS_COMMANDS`` toggle; see §3.7 of the
+        # condensed-context-retrieval plan).
+        self.llmService.registerTool(
+            name=ToolName.GET_MESSAGES_BY_IDS,
+            description=(
+                "Retrieve the full content of one or more chat messages by their IDs. "
+                "Use this to read the original messages underlying a condensed summary "
+                "(summaries carry coveredMessageIds). Returns each message in the same "
+                "JSON shape as regular user messages, plus a notFound list for IDs that "
+                "did not resolve. Messages are scoped to the current chat. "
+            ),
+            parameters=[
+                LLMFunctionParameter(
+                    name="message_ids",
+                    description='List of message ID strings to retrieve (e.g. ["100", "101"]).',
+                    type=LLMParameterType.ARRAY,
+                    required=True,
+                    # extra={"items": {"type": "string"}},
+                ),
+            ],
+            handler=self._llmToolGetMessagesByIds,
+        )
+
     ###
     # Backfill CRON_JOB
     ###
@@ -287,19 +313,23 @@ class ChatSearchHandler(BaseBotHandler):
         Runs every 60 seconds (the ``CRON_JOB`` cadence in
         :class:`QueueService`). Per tick:
 
-        1. List chats with ``EMBEDDINGS_ENABLED=true`` via the
-           cross-source-aggregating ``ChatSettingsRepository.listChatsBySetting``
-           helper. ``value`` is filtered through
-           :meth:`ChatSettingsValue.toBool` so ``"true"``/``"1"`` (any
-           case) match. (``REGENERATE_EMBEDDINGS`` defaults to ``true``
-           so it is rarely persisted to the DB; ``EMBEDDINGS_ENABLED``
-           defaults to ``false`` so any chat that explicitly enabled it
-           always has a DB row — see the inline comment at the query
-           site.)
-        2. Skip chats where ``REGENERATE_EMBEDDINGS`` is explicitly set
-           to ``"false"`` — because the setting defaults to true, a chat
-           that never touched it is automatically opted in for the
-           backfill pass.
+        1. **Chat discovery (in-memory)**: round-robin over
+           ``self._trackedChats``, a ``MutableSet[int]`` populated by
+           :meth:`newMessageHandler` whenever it sees a message in a chat
+           with ``EMBEDDINGS_ENABLED=true``. Cold-start tradeoff: the set
+           is empty on restart and only grows from live message
+           activity, so a quiet chat with a pre-existing backlog is not
+           backfilled until a new message arrives (intentional — the old
+           DB-scanning discovery path was removed). Eviction is one-way:
+           a chat that later disables embeddings (or regen) is removed
+           from the set in step 2 and is not re-added until the next
+           qualifying message.
+        2. **Per-chat gate (runtime re-validation)**: bail — and evict
+           from ``_trackedChats`` — when ``EMBEDDINGS_ENABLED`` is now
+           explicitly false. Because
+           membership is driven by live messages, a chat that flips a
+           setting off between messages is dropped here rather than
+           re-scanned every tick.
         3. Round-robin: pick the next chat in stable order, advance
            ``_backfillIndex``.
         4. Resolve the chat's embedding model from its ``EMBEDDING_MODEL``
@@ -319,9 +349,9 @@ class ChatSearchHandler(BaseBotHandler):
            sleep to keep the asyncio loop responsive.
         7. Per-message errors are caught and logged — one bad row never
            aborts the batch.
-        8. No self-resetting of ``REGENERATE_EMBEDDINGS``: the per-tick
-           batch is small and the next minute's tick will pick up where
-           this one left off.
+        8. Backfill runs continuously while ``EMBEDDINGS_ENABLED=true``: the
+           per-tick batch is small and the next minute's tick will pick up
+           where this one left off.
 
         Args:
             task: The CRON_JOB delayed task firing this handler. Ignored.
@@ -331,29 +361,17 @@ class ChatSearchHandler(BaseBotHandler):
         """
         startTime = libUtils.now()
         # Gate 1: discover chats that explicitly opted in to a backfill
-        # pass via `REGENERATE_EMBEDDINGS = true`.
-        try:
-            # Search for chats with enabled embeddings and then filter out via REGENERATE_EMBEDDINGS
-            # as REGENERATE_EMBEDDINGS is true by default, so it won't be in database for most chats
-            # In the same time EMBEDDINGS_ENABLED is false by default, so all chats with enabled will be in DB
-            chatMap = await self.db.chatSettings.listChatsBySetting(key=ChatSettingsKey.EMBEDDINGS_ENABLED)
-        except Exception as e:
-            logger.warning("Backfill: failed to list enabled chats: %s", e)
+        if not self._trackedChats:
             return
 
-        enabledChats: List[int] = sorted(
-            [chatId for chatId, value in chatMap.items() if ChatSettingsValue(value).toBool()]
-        )
-        if not enabledChats:
-            return
-
-        # Round-robin pick across ``enabledChats`` sorted by chat ID for
+        # Round-robin pick across ``chatList`` sorted by chat ID for
         # stable ordering across CRON_JOB ticks. ``% len`` is safe because
-        # ``enabledChats`` is non-empty (checked above), so a zero-division
+        # ``chatList`` is non-empty (checked above), so a zero-division
         # never lands.
-        chatId = enabledChats[self._backfillIndex % len(enabledChats)]
+        chatList = sorted(self._trackedChats)
+        chatId = chatList[self._backfillIndex % len(chatList)]
         self._backfillIndex += 1
-        self._backfillIndex %= len(enabledChats)
+        self._backfillIndex %= len(chatList)
 
         # Gate 3: resolve the embedding model.
         try:
@@ -361,12 +379,13 @@ class ChatSearchHandler(BaseBotHandler):
         except Exception as e:
             logger.warning("Backfill: failed to read chat settings for %d: %s", chatId, e)
             return
-        if not chatSettings[ChatSettingsKey.REGENERATE_EMBEDDINGS].toBool():
-            # Regenerating embeddings is disabled for given chat
-            return
+        if not chatSettings[ChatSettingsKey.EMBEDDINGS_ENABLED].toBool():
+            self._trackedChats.discard(chatId)
+            return  # embeddings regeneration disabled for this chat
 
         modelName = chatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr()
         if not modelName:
+            logger.warning("Embedding model isn't configured for chat#%d", chatId)
             return
         model = self.llmService.getLLMManager().getModel(modelName)
         if model is None or not model.supportsEmbedding:
@@ -410,6 +429,7 @@ class ChatSearchHandler(BaseBotHandler):
                 chatId,
                 limit=self._reindexBatchSize,
                 modelName=modelName,
+                dimensions=currentDims,
             )
         except Exception as e:
             logger.warning("Backfill: failed to list pending messages for chat %d: %s", chatId, e)
@@ -424,14 +444,8 @@ class ChatSearchHandler(BaseBotHandler):
         embedded = 0
         for pendingMessage in pendingMessagesList:
             ensuredMessage = await EnsuredMessage.fromDBChatMessage(data=pendingMessage, db=self.db)
-            if not ensuredMessage.messageText.strip():
-                continue
 
-            if await embedAndSaveMessage(
-                ensuredMessage=ensuredMessage,
-                modelName=modelName,
-                db=self.db,
-            ):
+            if await self.embedAndSaveMessage(ensuredMessage=ensuredMessage):
                 embedded += 1
             await asyncio.sleep(BACKFILL_INTER_MESSAGE_DELAY_SECS)
 
@@ -443,6 +457,56 @@ class ChatSearchHandler(BaseBotHandler):
                 chatId,
                 elapsedTime.total_seconds(),
             )
+
+    async def embedAndSaveMessage(self, ensuredMessage: EnsuredMessage) -> bool:
+        """Embed a single message and persist its vector.
+
+        Background-only helper invoked from the backfill CRON_JOB loop
+        (``_dtCronJob``). **Never raises**: any exception is logged and
+        surfaced as ``False`` so a single bad row never aborts the batch
+        (the caller relies on this never-crash contract).
+
+        Passes ``chatId=None`` to :meth:`LLMService.generateEmbedding` so the
+        background backfill does NOT consume the per-chat hot-path rate budget
+        (``generateEmbedding`` skips rate-limiting when ``chatId is None``).
+
+        Args:
+            ensuredMessage: The message to embed + persist.
+
+        Returns:
+            ``True`` when an embedding was generated and saved, ``False``
+            otherwise (no vector produced, DB write failure, or any exception).
+        """
+        try:
+            messageText: str = await ensuredMessage.formatForLLM(
+                self.db,
+                format=LLMMessageFormat.TEXT,
+                useSingleMedia=False,
+                cache=None,
+            )
+            embeddings: Optional[Tuple[str, List[float]]] = None
+            if messageText.strip():
+                embeddings = await self.llmService.generateEmbedding(
+                    messageText,
+                    chatId=None,
+                    chatSettings=await self.getChatSettings(ensuredMessage.recipient.id),
+                )
+            if embeddings is not None:
+                return await self.db.chatEmbeddings.saveMessageEmbedding(
+                    chatId=ensuredMessage.recipient.id,
+                    messageId=ensuredMessage.messageId,
+                    embedding=embeddings[1],
+                    model=embeddings[0],
+                    date=ensuredMessage.date.isoformat() if ensuredMessage.date is not None else None,
+                )
+            return False
+        except Exception:
+            logger.exception(
+                "embedAndSaveMessage: failed to embed message %s in chat %d",
+                ensuredMessage.messageId,
+                ensuredMessage.recipient.id,
+            )
+            return False
 
     ###
     # LLM tool: semantic search over chat history
@@ -471,7 +535,7 @@ class ChatSearchHandler(BaseBotHandler):
             query: Search query text.
             limit: Max results (default 5).
             max_age_days: Only messages newer than this many days.
-            user_name: Filter by username (with or without @).
+            user_name: Filter by username (with or without @) or numeric user_id.
             thread_message_id: Restrict to thread rooted at this message ID.
             **kwargs: Additional keyword arguments (ignored).
 
@@ -510,7 +574,7 @@ class ChatSearchHandler(BaseBotHandler):
         # Gate 3: resolve optional user filter.
         userId: Optional[int] = None
         if user_name:
-            userId = await self._resolveUserId(chatId=chatId, username=user_name)
+            userId = await self._resolveUserId(chatId=chatId, userIdentifier=user_name)
 
         # Gate 4: resolve optional thread filter.
         threadMessageId: Optional[MessageId] = None
@@ -676,7 +740,14 @@ class ChatSearchHandler(BaseBotHandler):
             and ``thread_id``.
         """
         eMessage = await EnsuredMessage.fromDBChatMessage(msg, self.db)
-        return json.loads(await eMessage.formatForLLM(self.db, format=LLMMessageFormat.JSON, useSingleMedia=False))
+        return json.loads(
+            await eMessage.formatForLLM(
+                self.db,
+                format=LLMMessageFormat.JSON,
+                useSingleMedia=False,
+                cache=None,
+            )
+        )
 
     async def _llmToolGetThread(
         self,
@@ -748,6 +819,151 @@ class ChatSearchHandler(BaseBotHandler):
             "target_message": targetFormatted,
             "thread_messages": list(formattedThreadMessages),
         }
+
+    ###
+    # LLM tool: get messages by ids
+    ###
+
+    async def _llmToolGetMessagesByIds(
+        self,
+        extraData: Optional[Dict[str, Any]],
+        message_ids: Optional[List] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """LLM tool: fetch the full content of one or more messages by ID.
+
+        Retrieves messages by ID from the current chat (scoped via
+        ``extraData["ensuredMessage"]``). Intended for reading the
+        original messages underlying a condensed summary — condensed
+        summaries carry ``coveredMessageIds``, which the model passes
+        straight through here. Pure DB lookup: NOT gated on
+        ``EMBEDDINGS_ENABLED`` or any search-specific flag (available
+        whenever chat-search is enabled and ``ALLOW_TOOLS_COMMANDS`` is
+        on). Each returned message dict matches the JSON shape of regular
+        user messages (via :meth:`_formatMessageDict`).
+
+        Two-layer gating (condensed-context-retrieval plan §3.7):
+        (1) ``[search-history].enabled`` via handler registration, (2) NOT
+        gated on embeddings/search flags. Never raises — every failure
+        path returns ``{"done": False, "error": ...}`` (the whole body is
+        wrapped in a top-level ``try/except Exception``).
+
+        Args:
+            extraData: Context dict with an ``ensuredMessage`` key used
+                for chat scoping (``extraData["ensuredMessage"].recipient.id``).
+            message_ids: List of message ID strings to retrieve. ``None``,
+                empty, or all-blank → empty result set (no error). Items
+                are de-duplicated, blank/``None`` entries are dropped, and
+                the list is clamped to :data:`MAX_GET_MESSAGES_BATCH`.
+            **kwargs: Additional keyword arguments (ignored).
+
+        Returns:
+            ``{"done": True, "messages": [...], "notFound": [...],
+            "count": N}`` on success, where each message dict matches
+            :meth:`EnsuredMessage.formatForLLM` JSON output (identical
+            shape to the real user messages the LLM sees) and
+            ``notFound`` lists the requested IDs that did not resolve in
+            this chat. Returns ``{"done": False, "error": "..."}`` on any
+            failure (missing chat context, tools disabled, bad input, or
+            any unexpected exception).
+        """
+        try:
+            # Gate 1: validate chat context.
+            if extraData is None or "ensuredMessage" not in extraData:
+                return {"done": False, "error": "Missing chat context"}
+            chatId = extraData["ensuredMessage"].recipient.id
+
+            # Gate 3: validate + clamp input. Dedup (preserve first-seen
+            # order), drop blanks/None, coerce to str (the emitted schema
+            # declares ``items: {"type": "string"}``, but the model can
+            # violate it — str coercion keeps us never-raise), and clamp
+            # to MAX_GET_MESSAGES_BATCH to cap abuse.
+            notFound: List[str] = []
+            messageIdList: List[MessageId] = []
+            if message_ids:
+                seen: set[str] = set()
+                for mid in message_ids:
+                    if mid is None:
+                        continue
+                    try:
+                        midStr = str(mid).strip()
+                    except Exception:
+                        continue  # unstringifiable junk — skip, never raise
+                    if not midStr or midStr in seen:
+                        continue
+                    seen.add(midStr)
+                    messageIdList.append(MessageId(midStr))
+                    if len(messageIdList) >= MAX_GET_MESSAGES_BATCH:
+                        break
+
+            if not messageIdList:
+                return {"done": True, "messages": [], "notFound": notFound, "count": 0}
+
+            # Batch fetch (chat-scoped by the repository).
+            rows: List[ChatMessageDict] = await self.db.chatMessages.getChatMessagesByMessageIds(chatId, messageIdList)
+
+            # Format each row via the shared helper in parallel;
+            # return_exceptions=True keeps one bad row from aborting the
+            # whole batch (same pattern as _llmToolSearchMessages).
+            rawFormatted = await asyncio.gather(
+                *[self._formatMessageDict(r) for r in rows],
+                return_exceptions=True,
+            )
+
+            messages: List[Dict[str, Any]] = []
+            foundStrs: set[str] = set()
+            for r, ret in zip(rows, rawFormatted):
+                # The row was resolved from the DB, so its id counts as
+                # "found" regardless of whether formatting succeeded — a
+                # format failure is NOT a resolution failure, and the
+                # tool contract says notFound = "IDs that did not
+                # resolve". Normalise to str so int-keyed (Telegram) and
+                # str-keyed (Max) rows both match the requested id strings.
+                midVal = r["message_id"]
+                foundStrs.add(midVal.asStr())
+                if isinstance(ret, Exception):
+                    logger.warning("get_messages_by_ids: failed to format row %s: %s", midVal.asStr(), ret)
+                    continue
+                messages.append(cast(Dict[str, Any], ret))
+
+            # notFound = requested − found.
+            for midVal in messageIdList:
+                if midVal.asStr() not in foundStrs:
+                    notFound.append(midVal.asStr())
+
+            return {"done": True, "messages": messages, "notFound": notFound, "count": len(messages)}
+        except Exception as e:
+            logger.exception("get_messages_by_ids: unexpected error")
+            return {"done": False, "error": str(e)}
+
+    async def newMessageHandler(
+        self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType
+    ) -> HandlerResultStatus:
+        """Track chats that may need embeddings backfill.
+
+        Reads the chat settings and, when ``EMBEDDINGS_ENABLED`` is true,
+        adds the message's chat id to the in-memory
+        ``self._trackedChats`` set so the
+        :meth:`_dtCronJob` backfill pass can round-robin over it on a
+        later tick. This is a fire-and-forget tracker — it never
+        short-circuits the handler chain.
+
+        Args:
+            ensuredMessage: The incoming message (its ``recipient.id``
+                is the chat added to the tracking set).
+            updateObj: Raw platform update object (unused).
+
+        Returns:
+            ``HandlerResultStatus.NEXT`` — always, so downstream handlers
+            (notably ``LLMMessageHandler``) still process the message.
+        """
+
+        # Track chats needing embeddings backfill.
+        chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
+        if chatSettings[ChatSettingsKey.EMBEDDINGS_ENABLED].toBool():
+            self._trackedChats.add(ensuredMessage.recipient.id)
+
+        return HandlerResultStatus.NEXT
 
     ###
     # /users command
@@ -960,7 +1176,7 @@ class ChatSearchHandler(BaseBotHandler):
                 return
 
         categoryFilter: Optional[List[MessageCategory]] = self._resolveCategoryGroup(parsed["category"])
-        userId = await self._resolveUserId(chatId=targetChatId, username=parsed["user"])
+        userId = await self._resolveUserId(chatId=targetChatId, userIdentifier=parsed["user"])
         rootMessageId: Optional[MessageId] = None
         if parsed["thread"] is not None:
             try:
@@ -1284,50 +1500,6 @@ class ChatSearchHandler(BaseBotHandler):
             logger.warning(f"/search: unknown category {name!r}, ignoring")
             return None
         return _CATEGORY_GROUPS[group]
-
-    async def _resolveUserId(self, *, chatId: int, username: Optional[str]) -> Optional[int]:
-        """Resolve a `user:` argument to a numeric user_id.
-
-        Looks the username up in the chat's known users via the
-        single-row helper
-        :meth:`ChatUsersRepository.getChatUserByUsername` — the
-        case-insensitive comparison goes through
-        ``provider.getCaseInsensitiveComparison`` so it stays
-        portable across SQLite, PostgreSQL, and MySQL. The leading
-        ``@`` is stripped from the input for normalisation, then
-        always prepended before the query (the ``chat_users`` table
-        stores usernames with the ``@`` prefix); both ``"@alice"``
-        and ``"alice"`` resolve to the same row.
-
-        Args:
-            chatId: Chat the user belongs to.
-            username: Username (with or without leading ``@``). The
-                lookup is case-insensitive.
-
-        Returns:
-            The matching `user_id`, or `None` if the argument was
-            missing, empty, or no user matched.
-        """
-        if not username:
-            return None
-        clean = username.lstrip("@").strip()
-        if not clean:
-            return None
-        # DB stores usernames with @ prefix. Normalise to that format.
-        clean = f"@{clean}"
-        try:
-            user = await self.db.chatUsers.getChatUserByUsername(chatId=chatId, username=clean)
-        except Exception as e:
-            logger.error(f"/search: failed to look up user {clean!r} in chat {chatId}: {e}")
-            logger.exception(e)
-            return None
-        if user is None:
-            logger.warning(f"/search: user {username!r} not found in chat {chatId}")
-            return None
-        userId = user.get("user_id")
-        if userId is None:
-            return None
-        return int(userId)
 
     async def _listUsersInternal(
         self,

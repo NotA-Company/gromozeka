@@ -1,0 +1,146 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "format + lint",
+            "detail": "make format lint — the canonical before/after-edit workflow",
+            "type": "shell",
+            "command": "make",
+            "args": ["format", "lint"],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared",
+                "clear": true
+            },
+            "problemMatcher": [
+                {
+                    "owner": "flake8",
+                    "source": "flake8",
+                    "fileLocation": ["autoDetect", "${workspaceFolder}"],
+                    "pattern": {
+                        "regexp": "^(.*\\.py):(\\d+):(\\d+):\\s+([A-Z]\\d{1,4})\\s+(.*)$",
+                        "file": 1,
+                        "line": 2,
+                        "column": 3,
+                        "severity": "error",
+                        "code": 4,
+                        "message": 5
+                    }
+                },
+                {
+                    "owner": "pyright",
+                    "source": "pyright",
+                    "fileLocation": ["autoDetect", "${workspaceFolder}"],
+                    "pattern": {
+                        "regexp": "^\\s*(.*\\.py):(\\d+):(\\d+)\\s+-\\s+(error|warning|information):\\s+(.*)$",
+                        "file": 1,
+                        "line": 2,
+                        "column": 3,
+                        "severity": 4,
+                        "message": 5
+                    }
+                }
+            ]
+        },
+        {
+            "label": "test (all)",
+            "detail": "make test — mandatory after any change",
+            "type": "shell",
+            "command": "make",
+            "args": ["test"],
+            "group": "test",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared",
+                "clear": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "test (last-failed)",
+            "detail": "make test-failed — iterate on red tests",
+            "type": "shell",
+            "command": "make",
+            "args": ["test-failed"],
+            "group": "test",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared",
+                "clear": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "lint",
+            "detail": "make lint — flake8 + isort + import-main + pyright",
+            "type": "shell",
+            "command": "make",
+            "args": ["lint"],
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared",
+                "clear": true
+            },
+            "problemMatcher": [
+                {
+                    "owner": "flake8",
+                    "source": "flake8",
+                    "fileLocation": ["autoDetect", "${workspaceFolder}"],
+                    "pattern": {
+                        "regexp": "^(.*\\.py):(\\d+):(\\d+):\\s+([A-Z]\\d{1,4})\\s+(.*)$",
+                        "file": 1,
+                        "line": 2,
+                        "column": 3,
+                        "severity": "error",
+                        "code": 4,
+                        "message": 5
+                    }
+                },
+                {
+                    "owner": "pyright",
+                    "source": "pyright",
+                    "fileLocation": ["autoDetect", "${workspaceFolder}"],
+                    "pattern": {
+                        "regexp": "^\\s*(.*\\.py):(\\d+):(\\d+)\\s+-\\s+(error|warning|information):\\s+(.*)$",
+                        "file": 1,
+                        "line": 2,
+                        "column": 3,
+                        "severity": 4,
+                        "message": 5
+                    }
+                }
+            ]
+        },
+        {
+            "label": "format",
+            "detail": "make format — isort + black",
+            "type": "shell",
+            "command": "make",
+            "args": ["format"],
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared",
+                "clear": true
+            },
+            "problemMatcher": []
+        }
+    ]
+}

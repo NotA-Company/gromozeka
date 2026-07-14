@@ -154,11 +154,25 @@ def _ageDir(directory: Path, ageMinutes: float) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _resetSingleton():
-    """Reset the SandboxManager singleton before and after each test."""
+async def _resetSingleton():
+    """Reset the SandboxManager singleton before and after each test.
+
+    Also closes any Docker client opened on the previous test's backend so
+    aiohttp ClientSessions are not left dangling (which emits
+    ``ResourceWarning: Unclosed client session`` on GC). The client is only
+    instantiated when GC actually called into ``collectOrphanContainers``,
+    so the close is best-effort and skips cleanly when nothing was opened.
+    """
     SandboxManager._instance = None
     SandboxManager._configInstance = None
     yield
+    # Tear down any backend the test may have instantiated before resetting.
+    instance: "SandboxManager | None" = SandboxManager._instance
+    if instance is not None:
+        try:
+            await instance._backend.close()
+        except Exception:
+            pass
     SandboxManager._instance = None
     SandboxManager._configInstance = None
 

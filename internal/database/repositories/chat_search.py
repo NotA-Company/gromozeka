@@ -331,10 +331,10 @@ class ChatSearchRepository(BaseRepository):
                     # NOTE: The native path may operate on a partially-mirrored vec0 corpus
                     # during the transitional period after rollout. Pre-existing embeddings
                     # in message_embeddings are only dual-written to vec0 when they are
-                    # re-generated (via REGENERATE_EMBEDDINGS chat setting or model change).
+                    # re-generated (backfill on model change or when embeddings are enabled).
                     # Until then, the vec0 table may contain fewer rows than message_embeddings,
                     # and native results will only reflect the dual-written subset.
-                    # Resolution: enable REGENERATE_EMBEDDINGS for affected chats to trigger
+                    # Resolution: keep ``EMBEDDINGS_ENABLED`` on for affected chats to trigger
                     # a full re-embedding pass, which populates vec0 via the dual-write.
                     nativeResults = await self._nativeVectorSearch(
                         sqlProvider=sqlProvider,

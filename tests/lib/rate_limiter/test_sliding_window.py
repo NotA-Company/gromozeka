@@ -12,6 +12,7 @@ import unittest
 from unittest.mock import patch
 
 from lib.rate_limiter.sliding_window import QueueConfig, SlidingWindowRateLimiter
+from tests.lib.rate_limiter.conftest import installFakeClock
 
 
 class TestQueueConfig(unittest.TestCase):
@@ -107,9 +108,11 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         """Async set up for test fixtures.
 
-        Initializes the rate limiter before each test.
+        Initializes the rate limiter and installs a fake clock so the test
+        fast-forwards time instead of blocking on real rate-limit windows.
         """
         await self.limiter.initialize()
+        self.clockNow = installFakeClock(self)
 
     async def asyncTearDown(self) -> None:
         """Clean up after tests.
@@ -202,6 +205,8 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
 
         # Should complete quickly (no rate limiting yet)
         elapsed = time.time() - start_time
+        # Fake-clock: elapsed is ~0.0 (no rate-limit sleep fires within the
+        # limit); this guards against a spurious sleep regression.
         self.assertLess(elapsed, 0.5)
 
         # Verify queue was auto-registered
@@ -240,14 +245,18 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
         for i in range(3):
             await self.limiter.applyLimit("sliding_test")
 
-        # Wait for window to slide (requests to expire)
-        await asyncio.sleep(2.1)  # windowSeconds=2
+        # Wait for window to slide (requests to expire). Advance the fake clock
+        # directly rather than awaiting asyncio.sleep: the fake-clock patch only
+        # covers lib.rate_limiter.sliding_window's sleep, not this test module.
+        self.clockNow[0] += 2.1  # windowSeconds=2
 
         # Should be able to make requests again without delay
         start_time = time.time()
         await self.limiter.applyLimit("sliding_test")
         elapsed = time.time() - start_time
 
+        # Fake-clock: elapsed is ~0.0 (no rate-limit sleep fires once the
+        # window has slid); this guards against a stale-entry cleanup regression.
         self.assertLess(elapsed, 0.1)  # Should be immediate
 
     async def testMultipleQueues(self) -> None:
@@ -269,6 +278,8 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
         await self.limiter.applyLimit("queue2")
 
         elapsed = time.time() - start_time
+        # Fake-clock: elapsed is ~0.0 (queue2 is independent of queue1 and
+        # not yet limited); guards against cross-queue rate-limit leakage.
         self.assertLess(elapsed, 0.5)  # Should be fast
 
         # But queue1 should now be rate limited
@@ -496,8 +507,8 @@ class TestSlidingWindowRateLimiter(unittest.IsolatedAsyncioTestCase):
         # Make requests over a longer period
         for i in range(10):
             await self.limiter.applyLimit("large_test")
-            if i % 3 == 2:  # Every 3rd request, wait a bit
-                await asyncio.sleep(0.5)
+            if i % 3 == 2:  # Every 3rd request, advance fake time
+                self.clockNow[0] += 0.5
 
         # Should complete without errors
         stats = self.limiter.getStats("large_test")

@@ -82,7 +82,7 @@ from .sandbox import SandboxHandler
 from .spam import SpamHandler
 from .summarization import SummarizationHandler
 from .topic_manager import TopicManagerHandler
-from .user_data import UserDataHandler
+from .user_memories import UserMemoriesHandler
 from .weather import WeatherHandler
 from .yandex_search import YandexSearchHandler
 
@@ -451,7 +451,7 @@ class HandlersManager(CommandHandlerGetterInterface):
                 HandlerParallelism.PARALLEL,
             ),
             (
-                UserDataHandler(configManager=configManager, database=database, botProvider=botProvider),
+                UserMemoriesHandler(configManager=configManager, database=database, botProvider=botProvider),
                 HandlerParallelism.PARALLEL,
             ),
             # # Fourth - all other handlers
@@ -1012,12 +1012,6 @@ class HandlersManager(CommandHandlerGetterInterface):
             ensuredMessage = messageRec.message
             updateObj = messageRec.updateObj
             previousRec = await chatState.getPreviousMessage(messageRec)
-            ensuredMessage.setUserData(
-                await self.cache.getChatUserData(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
-            )
-            ensuredMessage.applyUserMetadata(
-                await self.cache.getUserMetadata(chatId=ensuredMessage.recipient.id, userId=ensuredMessage.sender.id)
-            )
 
             commandRet = await asyncio.wait_for(
                 self.handleCommand(ensuredMessage, updateObj),

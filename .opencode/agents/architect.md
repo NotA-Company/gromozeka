@@ -71,7 +71,7 @@ description: >-
 mode: all
 model: architector
 reasoningEffort: high
-steps: 50
+steps: 80
 color: "#FFD700"
 permission:
   bash: deny

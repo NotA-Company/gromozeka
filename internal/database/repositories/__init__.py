@@ -26,7 +26,8 @@ Key Components:
     DivinationsRepository: Persists tarot/runes divination readings.
     MediaAttachmentsRepository: Handles media attachment storage and metadata.
     SpamRepository: Handles spam detection and filtering data.
-    UserDataRepository: Manages user-specific data and preferences.
+    UserMemoriesRepository: Manages the unified ``user_memories`` store
+        (per-(chat, user, thread) facts/preferences/events/relationships/bio).
     WebhookUpdatesRepository: Stores and consumes incoming Max webhook payloads.
 
 Usage Example:
@@ -63,7 +64,7 @@ from .delayed_tasks import DelayedTasksRepository
 from .divinations import DivinationsRepository
 from .media_attachments import MediaAttachmentsRepository
 from .spam import SpamRepository
-from .user_data import UserDataRepository
+from .user_memories import UserMemoriesRepository
 from .webhook_updates import WebhookUpdatesRepository
 
 __all__ = [
@@ -81,6 +82,6 @@ __all__ = [
     "DivinationsRepository",
     "MediaAttachmentsRepository",
     "SpamRepository",
-    "UserDataRepository",
+    "UserMemoriesRepository",
     "WebhookUpdatesRepository",
 ]

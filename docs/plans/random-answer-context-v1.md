@@ -1,6 +1,6 @@
 # Plan: Random-answer context awareness + model abstention (v1)
 
-Status: PROPOSED (2026-07-05).
+Status: IMPLEMENTED (2026-07-05).
 
 Related: [`handleRandomMessage`](../../internal/bot/common/handlers/llm_messages.py), [chat-prompt default](../../configs/00-defaults/bot-defaults.toml), [ChatSettingsKey](../../internal/bot/models/chat_settings.py).
 

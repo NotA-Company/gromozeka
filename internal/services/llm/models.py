@@ -28,9 +28,16 @@ class ExtraDataDict(TypedDict, total=False):
             responses or access chat context.
         typingManager: Manager for typing indicators, allowing tool handlers
             to show typing status during long operations, or None.
+        isRefinement: When True, signals that the call originates from the
+            background memory-refinement pass (not a live chat turn). Read by
+            ``_llmToolAddMemory`` to decide whether the grey-zone dedup
+            threshold returns ``similar_exists`` (refinement) or folds to
+            ``duplicate`` (chat-time). See docs/plans/user-memories-v1.md §8.3/D5.
     """
 
     ensuredMessage: "EnsuredMessage"
     """EnsuredMessage message object from the bot."""
     typingManager: "Optional[TypingManager]"
     """Typing indicator manager, or None."""
+    isRefinement: bool
+    """True when the call is the background memory-refinement pass (not a chat turn)."""

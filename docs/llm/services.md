@@ -43,9 +43,13 @@ await cache.setChatInfo(chatId, chatInfo)
 admins: Optional[Dict[int, Tuple[str, str]]] = cache.getChatAdmins(chatId, ttl=3600)
 cache.setChatAdmins(chatId, admins)
 
-# User data (async methods)
-userData = await cache.getChatUserData(chatId=chatId, userId=userId)
-await cache.setChatUserData(chatId=chatId, userId=userId, key=key, value=value)
+# Permanent user memories (async, write-through cache; injected at message-arrival
+# time by MessagePreprocessorHandler.injectMemories into EnsuredMessage.metadata.memories
+# as compact IDs + warmed into the MEMORIES by-id cache)
+permanentMemories: list[SingleMemoryDict] = await cache.getChatUserPermanentMemories(
+    chatId=chatId, userId=userId, threadId=threadId
+)
+await cache.invalidateChatUserPermanentMemories(chatId=chatId, userId=userId, threadId=threadId)
 
 # chat_users row + metadata (async, write-through; see ADR-015)
 userInfo: Optional[ChatUserDict] = await cache.getChatUser(chatId=chatId, userId=userId)
@@ -59,7 +63,7 @@ userInfo = await cache.getChatUser(chatId=chatId, userId=userId, refresh=True)
 await cache.updateChatUser(chatId=chatId, userId=userId, username="@user", fullName="Name")
 metadata: UserMetadataDict = await cache.getUserMetadata(chatId=chatId, userId=userId)
 await cache.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadata)  # full-dict replace, NO merge
-cache.invalidateChatUser(chatId=chatId, userId=userId)  # sync; pops userInfo only, preserves data
+cache.invalidateChatUser(chatId=chatId, userId=userId)  # sync; pops userInfo only, preserves permanentMemories
 
 # Default chat settings are handled by config/database, not CacheService
 # Use config files in configs/ for defaults, or set per-chat via setChatSetting()
@@ -131,8 +135,13 @@ result: ModelRunResult = await llmService.generateText(
 if result.status == ModelResultStatus.FINAL:
     responseText = result.resultText
 
-# Condense long conversation context
-condensed = await llmService.condenseContext(
+# Condense long conversation context.
+# ALWAYS returns a (messages, coverageMap) tuple. The first element is the
+# condensed message list (head + summaries + tail); the second is a
+# Dict[int, CondensingDict] keyed by body-index -> fully-populated
+# CondensingDict (coverage metadata computed inside via generateCondensingDict
+# reading ModelMessage.source). Empty dict when no condensing occurs.
+condensed, coverageMap = await llmService.condenseContext(
     messages,
     model=llmModel,
     keepFirstN=1,
@@ -142,6 +151,11 @@ condensed = await llmService.condenseContext(
     condensingPrompt=condensingPrompt,
     condensingSystemPrompt=condensingSystemPrompt,
 )
+# coverageMap values are the CondensingDicts to persist (Path A extends its
+# condensedThread list; Path B merges them via mergeCondensingDicts).
+
+# Path C (generateTextViaLLM) unpacks the tuple and ignores coverage:
+#   _messages, _ = await self.condenseContext(...)
 
 # Register LLM tool — always use ToolName.XXX (never raw string)
 llmService.registerTool(

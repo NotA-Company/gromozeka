@@ -29,6 +29,7 @@ from typing import Any, Dict, List
 
 from lib.cache import DictCache, HashKeyGenerator, JsonKeyGenerator, NullCache, StringKeyGenerator
 from lib.cache.interface import CacheInterface
+from tests.lib.cache.conftest import fakeClockContext
 
 
 class TestCachePublicAPI(unittest.IsolatedAsyncioTestCase):
@@ -280,46 +281,42 @@ class TestCacheRealWorldPatterns(unittest.IsolatedAsyncioTestCase):
         """Test caching computed results with TTL.
 
         Tests caching expensive computation results with TTL expiration,
-        verifying that cached results are faster to retrieve and expire
-        correctly after the TTL period.
+        verifying cached value equality and that entries expire correctly
+        after the TTL period.
 
         Raises:
             AssertionError: If TTL expiration doesn't work correctly.
         """
-        cache = DictCache[str, int](
-            keyGenerator=StringKeyGenerator(), defaultTtl=2, maxSize=50  # 2 seconds for testing
-        )
+        with fakeClockContext() as fakeNow:
+            cache = DictCache[str, int](
+                keyGenerator=StringKeyGenerator(), defaultTtl=2, maxSize=50  # 2 seconds for testing
+            )
 
-        # Simulate expensive computation
-        def expensive_computation(x: int) -> int:
-            # Simulate work
-            time.sleep(0.1)
-            return x * x * x  # cube
+            # Simulate expensive computation.
+            def expensive_computation(x: int) -> int:
+                # Simulate work
+                time.sleep(0.1)
+                return x * x * x  # cube
 
-        # Cache computation result
-        input_value = 42
-        cache_key = f"cube:{input_value}"
+            # Cache computation result
+            input_value = 42
+            cache_key = f"cube:{input_value}"
 
-        # First computation (not cached)
-        start_time = time.time()
-        result1 = expensive_computation(input_value)
-        await cache.set(cache_key, result1)
-        first_time = time.time() - start_time
+            # First computation (not cached)
+            result1 = expensive_computation(input_value)
+            await cache.set(cache_key, result1)
 
-        # Second retrieval (cached)
-        start_time = time.time()
-        cached_result = await cache.get(cache_key)
-        second_time = time.time() - start_time
+            # Second retrieval (cached) — the value-equality and TTL-expiry
+            # assertions below cover the caching behavior.
+            cached_result = await cache.get(cache_key)
+            assert cached_result == result1
 
-        assert cached_result == result1
-        assert second_time < first_time / 2  # Should be much faster
+            # Advance the fake clock past the 2 second TTL (no real waiting)
+            fakeNow[0] += 2.1
 
-        # Wait for expiration
-        await asyncio.sleep(2.1)
-
-        # Should be expired now
-        expired_result = await cache.get(cache_key)
-        assert expired_result is None
+            # Should be expired now
+            expired_result = await cache.get(cache_key)
+            assert expired_result is None
 
     async def test_using_cache_with_dataclasses_as_keys(self) -> None:
         """Test using cache with dataclasses as keys.
@@ -594,25 +591,26 @@ class TestCachePerformanceCharacteristics(unittest.IsolatedAsyncioTestCase):
         Raises:
             AssertionError: If TTL expiration doesn't work correctly.
         """
-        cache = DictCache[str, str](keyGenerator=StringKeyGenerator(), defaultTtl=1)  # 1 second
+        with fakeClockContext() as fakeNow:
+            cache = DictCache[str, str](keyGenerator=StringKeyGenerator(), defaultTtl=1)  # 1 second
 
-        # Store value
-        await cache.set("test_key", "test_value")
+            # Store value
+            await cache.set("test_key", "test_value")
 
-        # Should be available immediately
-        value = await cache.get("test_key")
-        assert value == "test_value"
+            # Should be available immediately
+            value = await cache.get("test_key")
+            assert value == "test_value"
 
-        # Wait for expiration
-        await asyncio.sleep(1.1)
+            # Advance the fake clock past the 1 second TTL (no real waiting)
+            fakeNow[0] += 1.1
 
-        # Should be expired
-        value = await cache.get("test_key")
-        assert value is None
+            # Should be expired
+            value = await cache.get("test_key")
+            assert value is None
 
-        # Stats should reflect expiration
-        stats = cache.getStats()
-        assert stats["entries"] == 0
+            # Stats should reflect expiration
+            stats = cache.getStats()
+            assert stats["entries"] == 0
 
     async def test_size_limits_trigger_eviction(self) -> None:
         """Test that size limits trigger eviction.

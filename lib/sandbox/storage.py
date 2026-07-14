@@ -167,6 +167,15 @@ def atomicWriteJson(
         os.replace(tmpFilePath, path)
     except BaseException:
         # 7. Clean up the temp file on any failure.
+        # Close the still-open file handle first: if json.dump raised before
+        # the success-path ``tmpFile.close()`` ran, the OS-level descriptor
+        # would otherwise be leaked until GC, surfacing as a
+        # ``ResourceWarning: Implicitly cleaning up _TemporaryFileWrapper``.
+        if not tmpFile.closed:
+            try:
+                tmpFile.close()
+            except OSError:
+                pass
         if tmpFilePath.exists():
             try:
                 tmpFilePath.unlink()

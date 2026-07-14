@@ -47,6 +47,17 @@ CLEANUP_TTL_SECONDS = 3600
 POLL_INTERVAL = 0.5
 """Seconds between re-checks of the database during a long-poll request."""
 
+# Typed AppKey instances for all entries stored on the aiohttp Application. aiohttp
+# 3.10+ emits ``NotAppKeyWarning`` when indexing ``app[...]`` with a bare string;
+# the typed keys below also give static type checkers a precise element type.
+DATABASE_KEY: web.AppKey[Database] = web.AppKey("database", Database)
+WEBHOOK_SECRET_KEY: web.AppKey[str] = web.AppKey("webhookSecret", str)
+GET_UPDATES_SECRET_KEY: web.AppKey[str] = web.AppKey("getUpdatesSecret", str)
+DATA_SOURCE_KEY: web.AppKey[Optional[str]] = web.AppKey("dataSource", str)
+ENABLE_CLEANUP_KEY: web.AppKey[bool] = web.AppKey("enableCleanup", bool)
+MARK_ON_SUBSEQUENT_POLL_KEY: web.AppKey[bool] = web.AppKey("markOnSubsequentPoll", bool)
+CLEANUP_TASK_KEY: web.AppKey[Optional[asyncio.Task[None]]] = web.AppKey("cleanupTask", asyncio.Task)
+
 
 def _clampIntParam(value: Optional[str], default: int, low: int, high: int) -> int:
     """Parse an integer query parameter and clamp it to ``[low, high]``.
@@ -85,9 +96,9 @@ async def handleWebhook(request: web.Request) -> web.Response:
         JSON response: 403 on a bad secret, 400 on malformed JSON, 500 on
         a database write failure, 200 on success.
     """
-    database: Database = request.app["database"]
-    webhookSecret: str = request.app["webhookSecret"]
-    dataSource: Optional[str] = request.app["dataSource"]
+    database: Database = request.app[DATABASE_KEY]
+    webhookSecret: str = request.app[WEBHOOK_SECRET_KEY]
+    dataSource: Optional[str] = request.app[DATA_SOURCE_KEY]
 
     secretHeader = request.headers.get(SECRET_HEADER, "")
     if not hmac.compare_digest(secretHeader, webhookSecret):
@@ -157,10 +168,10 @@ async def handleGetUpdates(request: web.Request) -> web.Response:
         mismatches.
     """
     app = request.app
-    database: Database = app["database"]
-    getUpdatesSecret: str = app["getUpdatesSecret"]
-    dataSource: Optional[str] = app["dataSource"]
-    markOnSubsequent: bool = app["markOnSubsequentPoll"]
+    database: Database = app[DATABASE_KEY]
+    getUpdatesSecret: str = app[GET_UPDATES_SECRET_KEY]
+    dataSource: Optional[str] = app[DATA_SOURCE_KEY]
+    markOnSubsequent: bool = app[MARK_ON_SUBSEQUENT_POLL_KEY]
 
     if getUpdatesSecret:
         authHeader = request.headers.get("Authorization", "")
@@ -229,9 +240,9 @@ async def cleanupTask(app: web.Application) -> None:
     Returns:
         None.
     """
-    database: Database = app["database"]
-    dataSource: Optional[str] = app["dataSource"]
-    enableCleanup: bool = app["enableCleanup"]
+    database: Database = app[DATABASE_KEY]
+    dataSource: Optional[str] = app[DATA_SOURCE_KEY]
+    enableCleanup: bool = app[ENABLE_CLEANUP_KEY]
     while True:
         try:
             await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
@@ -256,7 +267,7 @@ async def startCleanupTask(app: web.Application) -> None:
     Returns:
         None.
     """
-    app["cleanupTask"] = asyncio.create_task(cleanupTask(app))
+    app[CLEANUP_TASK_KEY] = asyncio.create_task(cleanupTask(app))
 
 
 async def stopCleanupTask(app: web.Application) -> None:
@@ -268,7 +279,7 @@ async def stopCleanupTask(app: web.Application) -> None:
     Returns:
         None.
     """
-    cleanupTaskInstance: Optional[asyncio.Task[None]] = app.get("cleanupTask")
+    cleanupTaskInstance: Optional[asyncio.Task[None]] = app.get(CLEANUP_TASK_KEY)
     if cleanupTaskInstance is not None and not cleanupTaskInstance.done():
         cleanupTaskInstance.cancel()
         try:
@@ -290,7 +301,7 @@ async def warmUpDatabase(app: web.Application) -> None:
     Returns:
         None.
     """
-    database: Database = app["database"]
+    database: Database = app[DATABASE_KEY]
     await database.manager.getProvider()  # triggers migrations
 
 
@@ -303,7 +314,7 @@ async def closeDatabase(app: web.Application) -> None:
     Returns:
         None.
     """
-    database: Database = app["database"]
+    database: Database = app[DATABASE_KEY]
     await database.manager.closeAll()
 
 
@@ -343,12 +354,12 @@ def createApp(
         and lifecycle hooks for the background cleanup task attached.
     """
     app = web.Application()
-    app["database"] = database
-    app["webhookSecret"] = secret
-    app["getUpdatesSecret"] = getUpdatesSecret
-    app["dataSource"] = datasource
-    app["enableCleanup"] = enableCleanup
-    app["markOnSubsequentPoll"] = markOnSubsequentPoll
+    app[DATABASE_KEY] = database
+    app[WEBHOOK_SECRET_KEY] = secret
+    app[GET_UPDATES_SECRET_KEY] = getUpdatesSecret
+    app[DATA_SOURCE_KEY] = datasource
+    app[ENABLE_CLEANUP_KEY] = enableCleanup
+    app[MARK_ON_SUBSEQUENT_POLL_KEY] = markOnSubsequentPoll
 
     app.router.add_post(webhookPath, handleWebhook)
     app.router.add_get("/updates", handleGetUpdates)

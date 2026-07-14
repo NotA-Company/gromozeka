@@ -385,11 +385,7 @@ async def main() -> int:
         # Reconstruct EnsuredMessage (line 724)
         eMsg = await EnsuredMessage.fromDBChatMessage(storedMsg, db)
 
-        # _updateEMessageUserData (line 725, replicates base.py lines 366-377)
-        userData = await cache.getChatUserData(chatId=args.chat_id, userId=eMsg.sender.id)
-        eMsg.setUserData(userData)
-
-        # Drop randomContext to not add it to metadata (for triggering condencing)
+        # Drop randomContext to not add it to metadata (for triggering condensing)
         if eMsg.metadata.get("randomContext", None) is not None:
             eMsg.metadata.pop("randomContext", None)
             logger.info(f"Removed randomContext from message {eMsg.messageId}")
@@ -399,6 +395,8 @@ async def main() -> int:
             db,
             format=llmMessageFormat,
             role=MessageCategory.fromStr(storedMsg["message_category"]).toRole(),
+            cache=None,
+            excludeMemoryIds=set(),
         )
         contextMessages.extendleft(reversed(messages))
 

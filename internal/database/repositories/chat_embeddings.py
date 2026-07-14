@@ -469,6 +469,7 @@ class ChatEmbeddingsRepository(BaseRepository):
         *,
         limit: int = 100,
         modelName: Optional[str] = None,
+        dimensions: Optional[int] = None,
         dataSource: Optional[str] = None,
     ) -> List[ChatMessageDict]:
         """Return pending messages (without embeddings) as full dicts.
@@ -492,12 +493,17 @@ class ChatEmbeddingsRepository(BaseRepository):
             limit: Maximum number of rows to return. Defaults to 100.
             modelName: When provided, only messages whose ``message_embeddings``
                 row is missing **or** has a different ``model`` column are
-                returned. This matches the
-                ``REGENERATE_EMBEDDINGS``-with-model-change contract from
+                returned. This matches the backfill-on-model-change contract from
                 §2.7 of the plan: switching the ``EMBEDDING_MODEL`` chat
                 setting should re-embed rows produced by the previous model.
                 When ``None``, only rows with no ``message_embeddings`` row at
                 all are returned.
+            dimensions: When provided, restricts the NOT-EXISTS check to
+                embeddings matching this dimensionality, so
+                dimension-mismatched rows are re-embedded during model
+                drift (e.g. a model reconfigured from 384 to 1024 dims
+                under the same name). When ``None``, no dimension filter
+                is applied (any existing same-model embedding counts).
             dataSource: Optional explicit data source.
 
         Returns:
@@ -527,6 +533,7 @@ class ChatEmbeddingsRepository(BaseRepository):
                         WHERE me.chat_id = c.chat_id
                         AND me.message_id = c.message_id
                         AND (:modelName IS NULL OR me.model = :modelName)
+                        AND (:dimensions IS NULL OR me.dimensions = :dimensions)
                     )
                 ORDER BY c.date DESC, c.message_id DESC
             """
@@ -540,6 +547,7 @@ class ChatEmbeddingsRepository(BaseRepository):
             params: Dict[str, Any] = {
                 "chatId": chatId,
                 "modelName": modelName,
+                "dimensions": dimensions,
             }
 
             query = sqlProvider.applyPagination(query=query, limit=int(limit))

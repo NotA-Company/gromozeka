@@ -642,6 +642,7 @@ class MediaHandler(BaseBotHandler):
                     role="system",
                 ),
             ]
+            memoriesEnabled = chatSettings[ChatSettingsKey.MEMORY_ENABLED].toBool()
             for msg in reversed(
                 await self.db.chatMessages.getChatMessagesByUser(
                     ensuredMessage.recipient.id,
@@ -650,13 +651,13 @@ class MediaHandler(BaseBotHandler):
                 )
             ):
                 eMsg = await EnsuredMessage.fromDBChatMessage(msg, self.db)
-                await self._updateEMessageUserData(eMsg)
                 latestMessages.append(
                     await eMsg.toModelMessage(
                         self.db,
                         format=LLMMessageFormat(
                             chatSettings[ChatSettingsKey.LLM_MESSAGE_FORMAT].toStr(),
                         ),
+                        cache=self.cache if memoriesEnabled else None,
                     )
                 )
 

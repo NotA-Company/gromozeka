@@ -18,19 +18,17 @@ class UserMemoryThreadDict(TypedDict, total=False):
 
     Note: the ``lastRefinedTS`` (unix timestamp of the last refinement run) is
     NO LONGER persisted here — it is tracked in-memory on the handler
-    (``UserDataHandler._lastRefinedTS``) so the persisted entry stays limited
-    to the durable summary + message cursors.
+    (``UserMemoriesHandler._lastRefinedTS``) so the persisted entry stays limited
+    to message cursors (the ``summary`` field is legacy — no longer written or
+    read).
 
     Attributes:
-        summary: Rolling short summary/bio of the user in this thread.
         lastProcessedMessageId: MessageId.asStr() of the newest message ingested by the
             last refinement (logging/debug only).
         lastProcessedMessageDate: ISO datetime of the newest message ingested by the last
             refinement — the cursor for getChatMessagesSince.
     """
 
-    summary: str
-    """Rolling short summary/bio of the user in this thread."""
     lastProcessedMessageId: str
     """MessageId.asStr() of the newest message ingested by the last refinement (logging/debug only)."""
     lastProcessedMessageDate: str

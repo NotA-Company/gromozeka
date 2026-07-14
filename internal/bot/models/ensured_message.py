@@ -22,7 +22,7 @@ import logging
 import time
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Dict, List, Optional, Sequence, Tuple, TypedDict
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import telegram
 import telegram.constants
@@ -38,52 +38,20 @@ from lib.ai.models import ModelMessage
 
 from .enums import LLMMessageFormat
 from .media import MediaProcessingInfo
+from .message_metadata import CondensingDict, MetadataDict, SingleMemoryDict, UserMemoriesDict, renderCondensedSummary
 from .text_formatter import FormatEntity, OutputFormat
-from .user_metadata import UserMetadataDict
+
+if TYPE_CHECKING:
+    # CacheService imports from internal.bot.models, so a runtime import here
+    # would create a circular import (caught by `make lint`'s `import main`
+    # check). formatForLLM only needs the type for its signature.
+    from internal.services.cache.service import CacheService
 
 logger = logging.getLogger(__name__)
 
 MAX_MEDIA_AWAIT_SECS = 300  # 5 minutes
 MEDIA_AWAIT_DELAY = 2.5
 WORD_BREAKERS = ' \t\n\r\f\v.,;:?!…()[]{}<>«»„“”‘’"-–—+=×*÷=<>=≠≤≥%&|\\/@#$№©™®_.'  # Provided By Alice
-
-
-class CondensingDict(TypedDict):
-    """TypedDict for condensed thread information.
-
-    Stores thread condensing data including the condensed text and the
-    boundary message ID and timestamp where condensing occurred.
-
-    Attributes:
-        text: The condensed thread text
-        tillMessageId: The message ID up to which thread was condensed
-        tillTS: The timestamp up to which thread was condensed
-    """
-
-    text: str
-    tillMessageId: MessageId
-    tillTS: float
-
-
-class MetadataDict(TypedDict, total=False):
-    """TypedDict for message metadata.
-
-    Stores optional metadata associated with a message, including condensed
-    thread information, random context, forwarding details, and tool usage history.
-
-    Attributes:
-        condensedThread: List of condensed thread entries
-        randomContext: Random context string for the message
-        forwardedFrom: Dictionary containing forwarding information
-        messagePrefix: Prefix text prepended to the message
-        usedTools: List of tool usage records from AI interactions
-    """
-
-    condensedThread: List[CondensingDict]
-    randomContext: str
-    forwardedFrom: Dict[str, Any]
-    messagePrefix: str
-    usedTools: List[Dict[str, Any]]
 
 
 class ChatType(StrEnum):
@@ -380,7 +348,6 @@ class EnsuredMessage:
         mediaGroupId: Identifier for media group if message contains grouped media
         mediaList: List of media content objects associated with the message
         userData: Additional user data associated with the message
-        userSummary: Rolling per-(chat, user, thread) memory summary associated with the message
         formatEntities: Text formatting entities for the message
         metadata: Additional metadata including condensed thread information
     """
@@ -403,8 +370,6 @@ class EnsuredMessage:
         "mediaContent",
         "mediaPrompt",
         "mediaId",
-        "userData",
-        "userSummary",
         "_mentionCheckResult",
         "formatEntities",
         "metadata",
@@ -490,10 +455,6 @@ class EnsuredMessage:
         self.mediaList: List[MediaContent] = []
         """List of Media content if any"""
 
-        self.userData: Optional[Dict[str, Any]] = None
-        """User data if any"""
-        self.userSummary: Optional[str] = None
-        """Rolling per-(chat, user, thread) memory summary, if any"""
         self._mentionCheckResult: Optional[MentionCheckResult] = None
         """Cached mention check result"""
 
@@ -823,22 +784,27 @@ class EnsuredMessage:
 
     @classmethod
     async def fromDBChatMessage(
-        cls, data: ChatMessageDict, db: Database, forceGetAllMedia: bool = False
+        cls,
+        data: ChatMessageDict,
+        db: Database,
+        *,
+        forceGetAllMedia: bool = False,
     ) -> "EnsuredMessage":
-        """
-        Create an EnsuredMessage from a database ChatMessageDict.
+        """Create an EnsuredMessage from a database ChatMessageDict.
 
         Factory method that reconstructs an EnsuredMessage from database-stored
         message data, including all metadata like replies, quotes, topics, and
-        media information.
+        media information. Compact memory IDs in ``metadata["memories"]`` are
+        loaded as-is from the stored JSON and resolved lazily by
+        :meth:`formatForLLM` (via ``cache.getMemoriesByIds``) at render time.
 
         Args:
-            data: Dictionary containing chat message data from the database
-            db: Database wrapper instance for accessing media attachments
-            forceGetAllMedia: Whether to force retrieval of all media attachments (default: False)
+            data: Dictionary containing chat message data from the database.
+            db: Database wrapper instance for accessing media attachments.
+            forceGetAllMedia: Whether to force retrieval of all media attachments (default: False).
 
         Returns:
-            A fully initialized EnsuredMessage instance populated with database data
+            A fully initialized EnsuredMessage instance populated with database data.
         """
         markupList: List[FormatEntity] = []
         if data["markup"]:
@@ -900,52 +866,34 @@ class EnsuredMessage:
 
         ensuredMessage.messagePrefix = metadata.get("messagePrefix", "")
 
-        # logger.debug(f"Ensured Message from DB Chat: {ensuredMessage}")
+        # ``metadata["memories"]`` is already the stored compact ID dict
+        # (``{"permanentIds": [...], "shortTermIds": [...]}``). Resolution to
+        # content happens lazily in :meth:`formatForLLM` via
+        # ``cache.getMemoriesByIds`` — nothing to do here at load time.
+
         return ensuredMessage
 
-    def setUserData(self, userData: Dict[str, Any]) -> None:
-        """
-        Set additional user data for this message.
+    def getMemoryIds(self) -> Set[str]:
+        """Return the set of all memory IDs referenced in this message's compact memory metadata.
 
-        Creates a copy of the provided dictionary to avoid external modifications.
-
-        Args:
-            userData: Dictionary containing additional user-specific data
-        """
-        self.userData = userData.copy()
-
-    def applyUserMetadata(self, metadata: UserMetadataDict) -> None:
-        """Extract the per-thread memory-refinement summary from user metadata and attach it.
-
-        Reads ``self.threadId`` (falling back to ``dbUtils.DEFAULT_THREAD_ID`` when it is
-        ``None`` or falsy) to select the ``memoryRefinement[str(threadId)]`` entry; when
-        its ``summary`` is non-empty, assigns it to ``self.userSummary``. When no entry
-        exists for the thread or its ``summary`` is empty/missing, ``userSummary`` is left
-        at its current value (``None`` by default).
-
-        Intentionally NOT gated on the ``MEMORY_REFINEMENT_ENABLED`` chat setting: the
-        write side (``UserDataHandler._persistMemoryEntry``) only persists summaries when
-        the feature is on, so absence of a summary in metadata is the gate. A stale
-        summary for a since-disabled chat will still be injected; this is accepted as the
-        intended simplification.
-
-        Does NOT persist ``metadata`` — this method only reads from it. To persist
-        metadata, use :meth:`BaseBotHandler.setUserMetadata` (a different method that
-        writes through to the DB via ``CacheService``).
-
-        Args:
-            metadata: User metadata dict (see :class:`UserMetadataDict`); the
-                ``memoryRefinement[str(threadId)].summary`` sub-field is the only part
-                read.
+        Reads ``self.metadata["memories"]`` in the canonical compact ID form
+        (:class:`CompactMemoryIdsDict` = ``{"permanentIds": [...], "shortTermIds": [...]}``)
+        and returns the union of both ID lists. Defensive against legacy/None
+        shapes: returns an empty set when ``memories`` is ``None``, missing, or
+        any shape that does not carry BOTH ``"permanentIds"`` and
+        ``"shortTermIds"`` keys (e.g. legacy content-form
+        ``{"permanent": [...], "shortTerm": [...]}``). Never raises on an
+        unexpected shape.
 
         Returns:
-            None
+            The merged set of permanent + short-term memory UUID hex strings,
+            or an empty set when ``metadata["memories"]`` is absent, ``None``,
+            or not in the canonical compact ID form.
         """
-        # threadId may be 0 (main thread); `or` is safe because both None and 0 collapse to DEFAULT_THREAD_ID (== 0).
-        threadIdStr = str(self.threadId or dbUtils.DEFAULT_THREAD_ID)
-        summary = metadata.get("memoryRefinement", {}).get(threadIdStr, {}).get("summary")
-        if summary:
-            self.userSummary = summary
+        memories = self.metadata.get("memories")
+        if not isinstance(memories, dict):
+            return set()
+        return set(memories.get("permanentIds") or []) | set(memories.get("shortTermIds") or [])
 
     def getBaseMessage(self) -> telegram.Message | maxModels.Message:
         """
@@ -1115,11 +1063,14 @@ class EnsuredMessage:
     async def formatForLLM(
         self,
         db: Database,
+        *,
         format: LLMMessageFormat = LLMMessageFormat.JSON,
         replaceMessageText: Optional[str] = None,
         stripAtsign: bool = False,
         outputFormat: OutputFormat = OutputFormat.MARKDOWN,
         useSingleMedia: bool = True,
+        cache: Optional["CacheService"],
+        excludeMemoryIds: Optional[Set[str]] = None,
     ) -> str:
         """
         Format the message for LLM consumption.
@@ -1128,6 +1079,13 @@ class EnsuredMessage:
         supporting both JSON and TEXT formats. Includes media descriptions, quotes,
         and user data when available.
 
+        In the JSON branch, user memories are resolved ON-DEMAND from the compact
+        ID lists in ``metadata["memories"]`` via ``cache.getMemoriesByIds``. When ``cache``
+        is ``None`` the ``userMemories`` key is omitted entirely (non-chat / TEXT
+        path). ``excludeMemoryIds`` filters out IDs that should not be rendered
+        (dedup wiring; Phase 3). This method never mutates ``self.metadata`` —
+        a local dict is built for the output.
+
         Args:
             db: Database wrapper for accessing media content
             format: Output format (JSON or TEXT), default is JSON
@@ -1135,6 +1093,11 @@ class EnsuredMessage:
             stripAtsign: Whether to strip @ from usernames, default is False
             outputFormat: Output format for message text parsing (default: MARKDOWN)
             useSingleMedia: Whether to use single media content or media list (default: True)
+            cache: CacheService singleton for resolving compact memory IDs to content
+                in the JSON branch. ``None`` (non-chat / TEXT path) omits the
+                ``userMemories`` key — no resolution is attempted.
+            excludeMemoryIds: Memory IDs to drop from the rendered cohorts
+                (dedup; Phase 3 wiring). Pass an empty set to render everything.
 
         Returns:
             Formatted string representation of the message for LLM processing
@@ -1142,6 +1105,8 @@ class EnsuredMessage:
         Raises:
             ValueError: If an invalid format is specified.
         """
+        if excludeMemoryIds is None:
+            excludeMemoryIds = set()
         await self.updateMediaContent(db)
         mediaContent = self.mediaContent
         if not useSingleMedia or self.mediaContent is None:
@@ -1153,6 +1118,43 @@ class EnsuredMessage:
             userName = userName.lstrip("@")
         match format:
             case LLMMessageFormat.JSON:
+                # Resolve user memories on-demand from the compact ID lists in
+                # metadata["memories"] via cache.getMemoriesByIds (read path).
+                # Only the JSON branch renders memories; TEXT omits them. When
+                # ``cache`` is None (non-chat / TEXT-only callers), nothing is
+                # cached, or nothing resolves, ``userMemories`` is omitted. When
+                # all referenced memory IDs fail to resolve, the ``userMemories``
+                # key is omitted entirely (NOT an empty-cohorts dict). A
+                # LOCAL dict is built — self.metadata is never mutated here.
+                resolvedMemories: UserMemoriesDict = {}
+                if cache is not None:
+                    rawMemories = self.metadata.get("memories")
+                    if isinstance(rawMemories, dict):
+                        permanentIds = [
+                            mid for mid in (rawMemories.get("permanentIds") or []) if mid not in excludeMemoryIds
+                        ]
+                        shortTermIds = [
+                            mid for mid in (rawMemories.get("shortTermIds") or []) if mid not in excludeMemoryIds
+                        ]
+                        if permanentIds or shortTermIds:
+                            resolved = await cache.getMemoriesByIds(
+                                permanentIds + shortTermIds, chatId=self.recipient.id
+                            )
+                            # Walrus + ``is not None`` narrows the Optional away
+                            # so the list is typed List[SingleMemoryDict]. The
+                            # cache stores entries without ``id`` (keepId=False)
+                            # so no uuid leaks into the output.
+                            permanentEntries: List[SingleMemoryDict] = [
+                                entry for mid in permanentIds if (entry := resolved.get(mid)) is not None
+                            ]
+                            shortTermEntries: List[SingleMemoryDict] = [
+                                entry for mid in shortTermIds if (entry := resolved.get(mid)) is not None
+                            ]
+                            if permanentEntries:
+                                resolvedMemories["permanent"] = permanentEntries
+                            if shortTermEntries:
+                                resolvedMemories["shortTerm"] = shortTermEntries
+
                 # Drop empty-values to save context
                 ret = {
                     k: v
@@ -1166,8 +1168,7 @@ class EnsuredMessage:
                         "replyId": self.replyId.asMessageId() if self.replyId else None,
                         "quote": self.quoteText if self.isQuote else None,
                         "mediaDescription": mediaContent,
-                        "userData": self.userData,
-                        "userSummary": self.userSummary,
+                        "userMemories": resolvedMemories,
                     }.items()
                     if v
                 }
@@ -1191,12 +1192,15 @@ class EnsuredMessage:
     async def toModelMessageList(
         self,
         db: Database,
+        *,
         format: LLMMessageFormat = LLMMessageFormat.JSON,
         replaceMessageText: Optional[str] = None,
         stripAtsign: bool = False,
         role: str = "user",
         outputFormat: OutputFormat = OutputFormat.MARKDOWN,
         useSingleMedia: bool = True,
+        cache: Optional["CacheService"],
+        excludeMemoryIds: Optional[Set[str]] = None,
     ) -> List[ModelMessage]:
         """
         Convert the message to a list of ModelMessage objects including tools history.
@@ -1212,6 +1216,10 @@ class EnsuredMessage:
             role: The role for the model message (e.g., "user", "assistant"), default is "user"
             outputFormat: Output format for message text parsing (default: MARKDOWN)
             useSingleMedia: Whether to use single media content or media list (default: True)
+            cache: CacheService singleton forwarded to :meth:`formatForLLM` for
+                on-demand memory resolution. ``None`` omits memories.
+            excludeMemoryIds: Memory IDs to drop from the rendered cohorts
+                (dedup; Phase 3 wiring). Pass an empty set to render everything.
 
         Returns:
             List of ModelMessage objects including system context, tools history, and the main message
@@ -1220,7 +1228,18 @@ class EnsuredMessage:
         ret: List[ModelMessage] = []
         randomContext = self.metadata.get("randomContext", None)
         if randomContext:
-            ret.append(ModelMessage(role="user", content=randomContext))
+            if isinstance(randomContext, str):
+                randomContext = CondensingDict(
+                    text=randomContext,
+                )
+            # ``randomContext`` is typed ``Union[str, CondensingDict]``. New
+            # writes (Phase 3b) store a single ``CondensingDict``; legacy rows
+            # store a flat ``str``. Both shapes are rendered as JSON via the
+            # shared :func:`renderCondensedSummary` helper — resolving the
+            # latent render asymmetry (real user messages were already JSON;
+            # summaries were raw text). The renderer handles both shapes and
+            # degrades gracefully for legacy ``str`` rows.
+            ret.append(ModelMessage(role="user", content=renderCondensedSummary(randomContext), source=randomContext))
 
         toolsHistory = self.metadata.get("usedTools", None)
         if toolsHistory:
@@ -1236,6 +1255,8 @@ class EnsuredMessage:
                 role=role,
                 outputFormat=outputFormat,
                 useSingleMedia=useSingleMedia,
+                cache=cache,
+                excludeMemoryIds=excludeMemoryIds,
             )
         )
         return ret
@@ -1243,12 +1264,15 @@ class EnsuredMessage:
     async def toModelMessage(
         self,
         db: Database,
+        *,
         format: LLMMessageFormat = LLMMessageFormat.JSON,
         replaceMessageText: Optional[str] = None,
         stripAtsign: bool = False,
         role: str = "user",
         outputFormat: OutputFormat = OutputFormat.MARKDOWN,
         useSingleMedia: bool = True,
+        cache: Optional["CacheService"],
+        excludeMemoryIds: Optional[Set[str]] = None,
     ) -> ModelMessage:
         """
         Convert the message to a ModelMessage for AI model interactions.
@@ -1266,6 +1290,10 @@ class EnsuredMessage:
             role: The role for the model message (e.g., "user", "assistant"), default is "user"
             outputFormat: Output format for message text parsing (default: MARKDOWN)
             useSingleMedia: Whether to use single media content or media list (default: True)
+            cache: CacheService singleton forwarded to :meth:`formatForLLM` for
+                on-demand memory resolution. ``None`` omits memories.
+            excludeMemoryIds: Memory IDs to drop from the rendered cohorts
+                (dedup; Phase 3 wiring). Pass an empty set to render everything.
 
         Returns:
             ModelMessage object ready for AI model consumption.
@@ -1287,7 +1315,10 @@ class EnsuredMessage:
                 stripAtsign=stripAtsign,
                 outputFormat=outputFormat,
                 useSingleMedia=useSingleMedia,
+                cache=cache,
+                excludeMemoryIds=excludeMemoryIds,
             ),
+            source=self,
         )
 
     def __str__(self) -> str:
@@ -1324,7 +1355,7 @@ class EnsuredMessage:
             "mediaId": self.mediaId,
             "mediaContent": self.mediaContent,
             "mediaList": self.mediaList,
-            "userData": "{...}" if self.userData else None,
+            "metadata": self.metadata,
         }
         for key in list(ret.keys()):
             if ret[key] is None:

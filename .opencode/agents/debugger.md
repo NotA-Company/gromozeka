@@ -45,12 +45,12 @@ description: >-
 
   assistant: "Using the debugger agent to reproduce the condition, trace the
   read path, and identify whether the bug is in caching, the provider, or
-  caller-side handling of the (value, updatedBy) tuple."
+  caller-side handling of the layer-dependent return shape."
 
   <commentary>
 
   A "sometimes" bug with ambiguous origin requires systematic isolation,
-  awareness of getChatSettings()'s tuple-return gotcha, and likely
+  awareness of getChatSettings()'s layer-dependent return-shape gotcha, and likely
   asyncio/cache-state experiments. Debugger-shaped, not developer-shaped.
 
   </commentary>
@@ -136,8 +136,8 @@ Before diving into clever theories, rule out the project's known traps. In rough
 3. **`MessageId` class** (defined at `internal/models/types.py`) — wraps `int | str` because Telegram message IDs are `int` while Max Messenger uses `str`. Code assuming bare `int` will `TypeError` only on Max, which may not be exercised locally. Use the `MessageId` class instead of raw `int`/`str`; call `.asInt()` for Telegram API, `.asStr()` for Max/SQL.
 4. **`DEFAULT_THREAD_ID = 0`** (int, not `None`) — queries that use `None` instead of `0` return empty results silently.
 5. **`chatId > 0` means private chat, else group** — sign confusion produces "works for one user, broken for another".
-6. **`getChatSettings()` returns `Dict[key, tuple[value, updatedBy]]`** — callers that don't index `[0]` compare tuples to scalars and silently diverge.
-7. **`setChatSetting(..., updatedBy=...)` is keyword-only, required** — omitting it is a `TypeError` at runtime, not at import.
+6. **`getChatSettings()` return shape is layer-dependent** — handler/cache return `Dict[ChatSettingsKey, ChatSettingsValue]` (access via `.toBool()`/`.toStr()`/`.toInt()`/`.toFloat()`/`.toList()`/`.toModel()`); only the DB-repo `ChatSettingsRepository.getChatSettings()` returns `Dict[str, tuple[str, int]]` where `[0]` indexing is correct. Code that indexes `[0]` on the handler return or calls `.toBool()` on the repo return silently diverges.
+7. **`setChatSetting(...)` keyword-only arg differs by layer** — handler uses `*, user: MessageSender`; cache uses `*, userId: int`; repo uses `*, updatedBy: int`. Omitting the required kwarg is a `TypeError` at runtime, not at import.
 8. **Custom migrations under `internal/database/migrations/versions/NNN_*.py`**, not Alembic — migrations can silently no-op if the version numbering is wrong.
 9. **SQL portability constraints** — raw `ON CONFLICT`, `AUTOINCREMENT`, `DEFAULT CURRENT_TIMESTAMP`, `COLLATE NOCASE`, or dialect-specific syntax will work on SQLite today and break the moment PostgreSQL/MySQL providers are switched on. If a bug only appears on non-SQLite backends, check `BaseSQLProvider` usage first.
 10. **Handler ordering** — `LLMMessageHandler` MUST remain last (catch-all). If a message is being "eaten" or not reaching its intended handler, someone may have broken the ordering in `HandlersManager`.
