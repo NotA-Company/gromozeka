@@ -1873,6 +1873,9 @@ make coverage
 # Format + lint check (good for CI)
 make check
 
+# Run the full CI pipeline locally in the Alpine container (mirrors .sourcecraft/ci.yaml); needs Docker
+make ci
+
 # Install dependencies into venv
 make install
 

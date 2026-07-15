@@ -33,6 +33,7 @@ make test               # MANDATORY after any change (wrapped in `timeout 5m`; p
 make test-failed        # re-run pytest --last-failed
 ./venv/bin/pytest path/to/test_x.py::TestClass::testFn -v   # single test
 make check-docs         # checks local markdown links resolve (read-only; exit 1 if broken)
+make ci                 # run the full CI pipeline locally in the Alpine container (mirrors .sourcecraft/ci.yaml); needs Docker
 ```
 
 ## Hard rules (enforced socially, not by tooling)

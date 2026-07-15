@@ -46,7 +46,16 @@ import sqlite3
 from typing import List, Tuple
 
 import numpy as np
-import sqlite_vec
+import pytest
+
+#: ``sqlite-vec`` is an optional dependency. When the package is not installed
+#: at all, ``importorskip`` skips the whole module rather than failing
+#: collection. (A separate failure mode — the wheel is installed but its bundled
+#: native binary won't load — is handled by the ``RuntimeError`` raised inside
+#: ``loadVecConnection`` further down.) ``importorskip`` returns the module
+#: object so the rest of this file (``sqlite_vec.loadable_path()``, etc.) works
+#: unchanged.
+sqlite_vec = pytest.importorskip("sqlite_vec")
 
 # ---------------------------------------------------------------------------
 # Constants — mirror production's vec0 user-memories table

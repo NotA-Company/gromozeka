@@ -131,6 +131,7 @@ See `/help` in-chat for the full command list.
 ```bash
 make format lint          # before committing
 make test                 # after any change
+make ci                   # run the full CI pipeline locally in the Alpine container (mirrors .sourcecraft/ci.yaml); needs Docker
 ```
 
 For code style, testing, handler creation, migrations, and architecture details, see
