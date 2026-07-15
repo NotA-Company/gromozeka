@@ -35,7 +35,7 @@
 | Type | Multi-platform AI bot (Telegram + Max Messenger) |
 | Python | 3.12+ |
 | Architecture | Modular, async, singleton services |
-| Test count | 2653+ |
+| Test count | 3300+ |
 | Status | Production-ready, active development |
 
 ### Key Features
@@ -216,7 +216,7 @@ vanishingly rare in the Gromozeka codebase.
 | `configs/` | Configuration directory (TOML files) |
 | `internal/` | Internal application code |
 | `lib/` | Reusable library code |
-| `tests/` | Test suite — **all** tests live here, mirroring source structure (`lib/X/Y.py` → `tests/lib/X/test_Y.py`; `internal/X/Y.py` → `tests/X/test_Y.py`). No collocated tests in `lib/` or `internal/`. |
+| `tests/` | Test suite — **all** tests live here, mirroring source structure (`lib/X/Y.py` → `tests/lib/X/test_Y.py`; `internal/X/Y.py` → `tests/X/test_Y.py`). No collocated tests in `lib/` or `internal/`. **Sanctioned exception:** `tests/dependencies/` holds dependency-usage regression tests that pin pinned third-party library behavior (they map to libraries, not source files). |
 | `docs/` | Documentation |
 | `docs/llm/memories/` | Archived task-specific working memories for completed features/subsystems |
 

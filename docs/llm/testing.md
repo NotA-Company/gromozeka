@@ -33,6 +33,8 @@ The mirror layout is the only valid location for test files:
 
 Example: to test `lib/ai/manager.py`, create `tests/lib/ai/test_manager.py` — never `lib/ai/test_manager.py`.
 
+**Sanctioned exception — `tests/dependencies/`:** This directory is the home for **dependency-usage regression tests** that pin the *current* behavior of pinned third-party libraries (`python-dateutil`, `tomli`, `python-magic`, `html-to-markdown`, `numpy`, `sqlite-vec`) so that a version bump silently changing behavior fails loudly. Each file asserts its pinned library version via `importlib.metadata.version()` (sqlite-vec via `SELECT vec_version()`). These tests map to **libraries, not source files**, so the mirror-layout convention does not apply — but they still live under `tests/`, so the "no collocated tests" rule is honored.
+
 ```
 tests/
 ├── conftest.py                              # Global fixtures
@@ -50,6 +52,7 @@ tests/
 │   ├── performance/
 │   ├── providers/
 │   └── repositories/
+├── dependencies/                            # Dependency-usage regression tests (pin pinned-library behavior; exception to mirror layout)
 ├── fixtures/                                # Golden data / test fixtures
 ├── integration/                             # Cross-cutting integration tests
 ├── lib/                                     # Library tests (mirrors lib/ structure)

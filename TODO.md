@@ -1,7 +1,7 @@
 # Our TODO list
 - [x] cleanup of old unused bayes tokens
 - [ ] script for moving chat to separate db
-- [ ] tests for direct dependencies (especially html-to-markdown)
+- [x] tests for direct dependencies (especially html-to-markdown)
 - [ ] refactor models
 - [ ] opencode commands for review and teamldead memory refinement
 - [x] changelog
@@ -10,6 +10,7 @@
 - [ ] Search for tool_name in [] or {} + optional ``` end return some error if yes (to enforce proper tool call)
 - [ ] On web search\get-url-content, allow bot to add compaction prompt
 - [ ] more statistics thing (more sources, consolidation, export + cleanup of old statistics)
+- [ ] to message search add thread restriction (optionaly disabled) + search by substring
 
 - [ ] Subagent with conversation history
 - [ ] Topic-level configs

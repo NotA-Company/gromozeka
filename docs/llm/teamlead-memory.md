@@ -308,9 +308,9 @@ Audit to identify candidate new skills/agents. **[COMPLETED 2026-07-11 — items
 
 **Tech-debt hot spots (TODO markers, 63 total):** densest in handler layer — `llm_messages.py` (10), `spam.py` (7), `ensured_message.py` (6), `cache/service.py` (5), `bot.py` (4). `lib/` is clean.
 
-## Dependency-Usage Regression Tests (2026-07-15, planning done — execution pending)
+## Dependency-Usage Regression Tests (2026-07-15, COMPLETED)
 
-Task: add tests that lock in our *usage* of third-party libs so a dep-version bump can't silently break us. Scope = PURE libs + sqlite-vec; EXTERNAL libs deferred to golden follow-up.
+Task: add tests that lock in our *usage* of third-party libs so a dep-version bump can't silently break us. **DONE: 6 files, 79 tests under `tests/dependencies/` (new dir/convention), all gates green (3300 passed/11 skipped, pyright 0/0/0).** Scope was PURE libs + sqlite-vec; EXTERNAL libs deferred to golden follow-up.
 
 **Direct-dep classification (27 in `requirements.direct.txt`):**
 - **PURE (6):** `python-dateutil` 2.9.0.post0, `numpy` 2.5.1, `html-to-markdown` 3.8.3, `packaging` 26.2, `python-magic` 0.4.27, `tomli` 2.4.1.
@@ -330,6 +330,20 @@ Task: add tests that lock in our *usage* of third-party libs so a dep-version bu
 **User decisions (2026-07-15):** (1) Scope = PURE + sqlite-vec (packaging dropped — already covered). (2) Style = **through-production-code** where a clean wrapper exists; direct-lib fallback where prod path too deep (html-to-markdown in handler, tomli in config manager, magic is a one-liner). (3) Defer `yandex-ai-studio-sdk` + `fastembed` to golden-test follow-up (tracked, not actioned this round).
 
 **Deferred follow-ups (tracked):** golden-test coverage for `yandex-ai-studio-sdk` (entirely untested — biggest gap) and `fastembed` real ONNX inference (never run in CI). Both need the record-real-responses-once workflow.
+
+**OUTCOME (2026-07-15):** `tests/dependencies/` created with 6 files (test_dateutil, test_tomli, test_python_magic, test_html_to_markdown, test_numpy, test_sqlite_vec) + `__init__.py`. 79 tests, all passing. Each file pins its lib version via `importlib.metadata.version()` (sqlite-vec via `SELECT vec_version()` → `"v0.1.9"`) so a bump forces a conscious re-verification pass. Convention documented in `docs/llm/testing.md` (mirror-layout carve-out) + `docs/llm/index.md` (count 3300+) + CHANGELOG `[Unreleased]/Added`.
+
+**Key behavioral findings surfaced by the tests (worth remembering):**
+- **dateutil:** ambiguous `"01/02/2024"` resolves MONTH-FIRST (Jan 2) under `dayfirst=False` default — high-risk if a bump flips it (would silently change "messages since" queries). Also pinned: production's `except (ValueError, OverflowError, TypeError)` relies on dateutil raising a ValueError subclass (`ParserError`) on garbage.
+- **html-to-markdown (3.8.3):** `.content` is NEVER None for string inputs (empty/stripped → `''`, not None). The production fallback branch at `yandex_search.py:419-423` (`else: logger.error("No content returned…")`) is **currently dead code**. Test pins reality; fails loudly if a future bump makes `.content` Optional-in-practice.
+- **numpy:** cosine logic in `chat_search.py:403-424` is INLINE (not a discrete method) — test replicates the algorithm. Tie-order pinned as `[200, 300, 100, 400, 500]` under 2.5.1 (argsort tie-breaking is unspecified). Float32 literal pins use TOLERANCE (accumulation order is BLAS-defined, not a contract); dtype preservation is the separately-pinned authority.
+- **sqlite-vec (0.1.9):** BOTH DELETE shapes (metadata-WHERE and rowid-fallback) SUCCEED today → production's try/except fallback at `user_memories.py:1188-1208` is currently never triggered, and `memory_id` (NOT a partition key) IS accepted in the DELETE predicate. If a future bump restricts DELETE-WHERE to partition keys (the scenario the production `TODO: Test on latest sqlite-vec` warns of), the tests fail loudly and the fallback becomes load-bearing. vec0 distance is deterministic per version (fixed native C ext), so its exact literal IS pinned (contrast numpy's tolerance).
+
+**New test conventions established:**
+- `tests/dependencies/` = sanctioned home for dep-usage regression tests (tests map to LIBRARIES, not source files → deliberate mirror-layout exception; documented in testing.md).
+- Each file asserts `importlib.metadata.version("<dist>") == PINNED_VERSION` (or native version probe for loadable extensions) so bumps are a forced checkpoint.
+- Philosophy: pin DETERMINISTIC library outputs exactly; use TOLERANCE for outputs with implementation-defined accumulation/ordering.
+- Helper-naming: `_` prefix = trivial private wrapper; no prefix = documented production-mirror replica.
 
 ## user-memory-v2 Pre-Merge Review (2026-07-14)
 

@@ -6,6 +6,9 @@ process governing this file, see [docs/llm/changelog.md](docs/llm/changelog.md).
 
 ## [Unreleased]
 
+### Added
+- New `tests/dependencies/` suite of dependency-usage regression tests (79 tests) pinning the current behavior of pinned third-party libraries (python-dateutil, tomli, python-magic, html-to-markdown, numpy, sqlite-vec) so a version bump that changes behavior fails loudly. Each test asserts its pinned library version via `importlib.metadata.version()` (sqlite-vec via `SELECT vec_version()`).
+
 ## Initial State - 2026-07-15
 
 ### Added
