@@ -56,7 +56,9 @@ from internal.bot.models.enums import LLMMessageFormat
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import ChatMessageDict, ChatUserDict, MessageCategory
+from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
+from internal.services.llm.models import ExtraDataDict
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
 from lib.ai import LLMFunctionParameter, LLMParameterType
 
@@ -103,6 +105,42 @@ _CATEGORY_GROUPS: Dict[_CategoryGroup, List[MessageCategory]] = {
         MessageCategory.CHANNEL,
     ],
 }
+
+
+def _coerceToolBool(value: Any, default: bool = True) -> bool:
+    """Coerce an LLM-provided tool parameter to a real bool.
+
+    The model occasionally sends boolean tool arguments as JSON strings
+    (``"true"`` / ``"false"``). A naive ``bool(value)`` would treat any
+    non-empty string — including ``"false"`` — as truthy, which silently
+    flips the parameter's meaning. This helper normalises the common
+    shapes the tool layer can receive.
+
+    An explicit ``None`` / JSON ``null`` is treated as "parameter omitted"
+    and resolves to ``True`` — the default for the tool params that use
+    this helper (e.g. ``current_thread_only``) — rather than falling
+    through to ``bool(None)`` → ``False``.
+
+    Args:
+        value: Raw value from the model (bool, int, float, str, or
+            ``None`` for an explicit JSON null).
+
+    Returns:
+        The coerced boolean. ``None`` yields ``True`` (matches the
+        parameter default). Strings are matched case-insensitively
+        against ``{"true", "1", "yes", "y", "on"}`` (everything else is
+        ``False``), so e.g. ``"false"`` correctly yields ``False`` (unlike
+        ``bool("false")``).
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes", "y", "on"}
+    return bool(value)
 
 
 class ChatSearchHandler(BaseBotHandler):
@@ -201,7 +239,11 @@ class ChatSearchHandler(BaseBotHandler):
         # Register LLM tool: semantic search over chat history.
         self.llmService.registerTool(
             name=ToolName.SEARCH_MESSAGES,
-            description="Semantic search over chat history. Returns messages matching the query with relevance scores.",
+            description=(
+                "Search over chat history. Supports semantic search by query (requires embeddings) "
+                "and exact case-insensitive substring filtering. Results can be scoped to the current "
+                "thread (default)."
+            ),
             parameters=[
                 LLMFunctionParameter(
                     name="query",
@@ -229,6 +271,27 @@ class ChatSearchHandler(BaseBotHandler):
                 LLMFunctionParameter(
                     name="thread_message_id",
                     description="Restrict to thread rooted at this message ID",
+                    type=LLMParameterType.STRING,
+                    required=False,
+                ),
+                LLMFunctionParameter(
+                    name="current_thread_only",
+                    description=(
+                        "When true (default), restrict the search to the same thread/topic the current "
+                        "message belongs to. Set to false to search the whole chat. An explicit "
+                        "thread_message_id overrides this."
+                    ),
+                    type=LLMParameterType.BOOLEAN,
+                    required=False,
+                ),
+                LLMFunctionParameter(
+                    name="substring",
+                    description=(
+                        "Case-insensitive exact substring to match in message text "
+                        "(e.g. 'meeting' matches a message containing '...the Meeting was...'). "
+                        "When provided without a query, performs a pure text search with no semantic "
+                        "ranking and no embeddings required."
+                    ),
                     type=LLMParameterType.STRING,
                     required=False,
                 ),
@@ -278,10 +341,10 @@ class ChatSearchHandler(BaseBotHandler):
         # Register LLM tool: fetch full content of messages by ID.
         # Used by the model to read the originals underlying a condensed
         # summary (summaries carry ``coveredMessageIds``). Pure DB lookup —
-        # NOT gated on EMBEDDINGS_ENABLED (only on the handler's
-        # ``[search-history].enabled`` registration gate and the per-chat
-        # ``ALLOW_TOOLS_COMMANDS`` toggle; see §3.7 of the
-        # condensed-context-retrieval plan).
+        # NOT gated on EMBEDDINGS_ENABLED or ALLOW_TOOLS_COMMANDS (the latter
+        # gates slash commands only). Registered whenever the handler loads
+        # (``[search-history].enabled``) and sent to the model only when the
+        # chat's ``USE_TOOLS`` setting is true.
         self.llmService.registerTool(
             name=ToolName.GET_MESSAGES_BY_IDS,
             description=(
@@ -514,12 +577,14 @@ class ChatSearchHandler(BaseBotHandler):
 
     async def _llmToolSearchMessages(
         self,
-        extraData: Optional[Dict[str, Any]],
+        extraData: Optional[ExtraDataDict],
         query: str = "",
         limit: int = 5,
         max_age_days: Optional[int] = None,
         user_name: Optional[str] = None,
         thread_message_id: Optional[str] = None,
+        current_thread_only: bool = True,
+        substring: Optional[str] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
         """LLM tool: semantic search over chat history.
@@ -530,13 +595,38 @@ class ChatSearchHandler(BaseBotHandler):
         context. All errors are folded into the return dict — this
         method never raises.
 
+        Two search flavours compose:
+
+        - **Semantic** (``query`` provided): requires
+          ``EMBEDDINGS_ENABLED``. The query is embedded via
+          :meth:`LLMService.generateEmbedding` (which owns model
+          resolution and returns ``None`` on internal failure) and ranked
+          against chat history. If no vector is produced (``None``) or the
+          boundary itself raises, the tool returns an
+          ``Unable to generate query embedding`` error rather than
+          degrading to filter-only.
+        - **Substring / filter-only** (``query`` empty but
+          ``substring``/``user_name``/``max_age_days``/thread scoping
+          set): runs WITHOUT embeddings — the ``EMBEDDINGS_ENABLED``
+          gate is skipped so the tool stays useful in chats that have
+          not turned embeddings on.
+
         Args:
             extraData: Context dict with ``ensuredMessage`` key.
-            query: Search query text.
+            query: Search query text. When empty, the search falls
+                back to pure text/substring filtering (no embeddings).
             limit: Max results (default 5).
             max_age_days: Only messages newer than this many days.
             user_name: Filter by username (with or without @) or numeric user_id.
-            thread_message_id: Restrict to thread rooted at this message ID.
+            thread_message_id: Restrict to thread rooted at this message
+                ID. When provided, it overrides ``current_thread_only``.
+            current_thread_only: When ``True`` (default) and no explicit
+                ``thread_message_id`` resolves, restrict the search to
+                the thread/topic of the current message. Set to ``False``
+                to search the whole chat.
+            substring: Case-insensitive exact substring to match in
+                message text. Normalised (stripped) here; the repository
+                wraps it into ``%...%``.
             **kwargs: Additional keyword arguments (ignored).
 
         Returns:
@@ -549,6 +639,11 @@ class ChatSearchHandler(BaseBotHandler):
         ensuredMessage = extraData["ensuredMessage"]
         chatId = ensuredMessage.recipient.id
 
+        # Coerce ``current_thread_only`` to a real bool: the LLM may send a
+        # JSON string such as "false", which ``bool("false")`` would
+        # mis-handle (any non-empty string is truthy). Done before any use.
+        current_thread_only = _coerceToolBool(current_thread_only)
+
         # Clamp limit to prevent abuse (Issue 4).
         effectiveLimit = int(limit) if limit is not None else 5
         limit = max(1, min(effectiveLimit, 100))
@@ -559,9 +654,10 @@ class ChatSearchHandler(BaseBotHandler):
         except Exception:
             logger.exception("search_messages: failed to load chat settings for chat %d", chatId)
             return {"done": False, "error": "Unable to get chat settings"}
-        if not chatSettings[ChatSettingsKey.ALLOW_TOOLS_COMMANDS].toBool():
-            return {"done": False, "error": "Tools disabled for this chat"}
-        if not chatSettings[ChatSettingsKey.EMBEDDINGS_ENABLED].toBool():
+        # The embeddings gate applies only to semantic search. A pure
+        # substring/filter search works without embeddings so the tool
+        # stays useful in chats that have not enabled them.
+        if query and not chatSettings[ChatSettingsKey.EMBEDDINGS_ENABLED].toBool():
             return {"done": False, "error": "Semantic search disabled for this chat"}
 
         # Gate 2b: rate-limit before embedding generation.
@@ -584,17 +680,35 @@ class ChatSearchHandler(BaseBotHandler):
             except (ValueError, TypeError):
                 pass  # invalid value — skip thread filter
 
-        # Gate 5: generate query embedding.
-        embeddingModelName = chatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr()
-        if not embeddingModelName:
-            return {"done": False, "error": "Embeddings model is not configured properly"}
-        model = self.llmService.getLLMManager().getModel(embeddingModelName)
-        if model is None or not model.supportsEmbedding:
-            return {"done": False, "error": "Модель эмбеддингов недоступна"}
-        queryEmbedding: Optional[list[float]] = None
+        # Thread scoping: an explicit ``thread_message_id`` overrides
+        # ``current_thread_only``. Otherwise, when ``current_thread_only``
+        # is set (the default), restrict to the current message's
+        # thread/topic (``ensuredMessage.threadId`` falls back to the
+        # main thread id ``DEFAULT_THREAD_ID = 0`` when unset).
+        effectiveThreadId: Optional[int] = None
+        if threadMessageId is None and current_thread_only:
+            effectiveThreadId = ensuredMessage.threadId or DEFAULT_THREAD_ID
+
+        # Normalise the substring once: strip whitespace, treat empty as
+        # "no filter". The repository wraps the raw value into ``%...%``.
+        normalizedSubstring: Optional[str] = (
+            substring.strip() if isinstance(substring, str) and substring.strip() else None
+        )
+
+        # Gate 5: generate query embedding (semantic mode only).
+        # When ``query`` is empty the search runs in filter-only/substring
+        # mode and never touches the embedding model, so embedding-related
+        # settings and failures do not apply.
+        queryEmbedding: Optional[Tuple[str, List[float]]] = None
         if query:
             try:
-                queryEmbedding = await model.generateEmbeddings(query)
+                queryEmbedding = await self.llmService.generateEmbedding(
+                    query,
+                    chatId=ensuredMessage.recipient.id,
+                    chatSettings=chatSettings,
+                )
+                if queryEmbedding is None:
+                    raise Exception("Embedding generation failed")
             except Exception as e:
                 logger.exception(f"search_messages: failed to generate query embedding: {e}")
                 return {"done": False, "error": "Unable to generate query embedding"}
@@ -610,13 +724,15 @@ class ChatSearchHandler(BaseBotHandler):
         try:
             results = await self.db.chatSearch.searchChatMessages(
                 chatId=chatId,
-                queryEmbedding=queryEmbedding,
+                queryEmbedding=queryEmbedding[1] if queryEmbedding else None,
                 limit=limit,
                 userFilter=userId,
                 maxAgeDays=max_age_days,
                 rootMessageId=threadMessageId,
-                modelName=embeddingModelName,
+                modelName=queryEmbedding[0] if queryEmbedding else None,
                 maxMessages=maxMessages,
+                threadId=effectiveThreadId,
+                substring=normalizedSubstring,
             )
         except Exception as e:
             logger.error("search_messages: search failed")
@@ -655,7 +771,7 @@ class ChatSearchHandler(BaseBotHandler):
 
     async def _llmToolListUsers(
         self,
-        extraData: Optional[Dict[str, Any]],
+        extraData: Optional[ExtraDataDict],
         limit: int = 20,
         min_messages: Optional[int] = None,
         **kwargs: Any,
@@ -678,15 +794,6 @@ class ChatSearchHandler(BaseBotHandler):
         if extraData is None or "ensuredMessage" not in extraData:
             return {"done": False, "error": "Missing chat context"}
         chatId = extraData["ensuredMessage"].recipient.id
-
-        # Gate 2: check per-chat settings.
-        try:
-            chatSettings = await self.getChatSettings(chatId=chatId)
-        except Exception:
-            logger.exception("list_users: failed to load chat settings")
-            return {"done": False, "error": "Не удалось получить настройки чата"}
-        if not chatSettings[ChatSettingsKey.ALLOW_TOOLS_COMMANDS].toBool():
-            return {"done": False, "error": "Инструменты списка участников отключены в этом чате"}
 
         # Clamp limit to prevent abuse.
         effectiveLimit = int(limit) if limit is not None else 20
@@ -751,7 +858,7 @@ class ChatSearchHandler(BaseBotHandler):
 
     async def _llmToolGetThread(
         self,
-        extraData: Optional[Dict[str, Any]],
+        extraData: Optional[ExtraDataDict],
         message_id: str,
         **kwargs: Any,
     ) -> Dict[str, Any]:
@@ -774,22 +881,13 @@ class ChatSearchHandler(BaseBotHandler):
             return {"done": False, "error": "Missing chat context"}
         chatId = extraData["ensuredMessage"].recipient.id
 
-        # Gate 2: check per-chat settings.
-        try:
-            chatSettings = await self.getChatSettings(chatId=chatId)
-        except Exception:
-            logger.exception("get_thread: failed to load chat settings")
-            return {"done": False, "error": "Не удалось получить настройки чата"}
-        if not chatSettings[ChatSettingsKey.ALLOW_TOOLS_COMMANDS].toBool():
-            return {"done": False, "error": "Инструменты работы с тредами отключены в этом чате"}
-
-        # Gate 3: validate message ID.
+        # Gate 2: validate message ID.
         try:
             msgId = MessageId(message_id)
         except (ValueError, TypeError):
             return {"done": False, "error": "Неверный идентификатор сообщения"}
 
-        # Gate 4: fetch the thread.
+        # Gate 3: fetch the thread.
         try:
             thread = await self.db.chatMessages.getMessageThread(chatId=chatId, messageId=msgId)
         except Exception:
@@ -826,7 +924,7 @@ class ChatSearchHandler(BaseBotHandler):
 
     async def _llmToolGetMessagesByIds(
         self,
-        extraData: Optional[Dict[str, Any]],
+        extraData: Optional[ExtraDataDict],
         message_ids: Optional[List] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
@@ -836,17 +934,17 @@ class ChatSearchHandler(BaseBotHandler):
         ``extraData["ensuredMessage"]``). Intended for reading the
         original messages underlying a condensed summary — condensed
         summaries carry ``coveredMessageIds``, which the model passes
-        straight through here. Pure DB lookup: NOT gated on
-        ``EMBEDDINGS_ENABLED`` or any search-specific flag (available
-        whenever chat-search is enabled and ``ALLOW_TOOLS_COMMANDS`` is
-        on). Each returned message dict matches the JSON shape of regular
-        user messages (via :meth:`_formatMessageDict`).
+        straight through here. Pure DB lookup: each returned message dict
+        matches the JSON shape of regular user messages (via
+        :meth:`_formatMessageDict`).
 
-        Two-layer gating (condensed-context-retrieval plan §3.7):
-        (1) ``[search-history].enabled`` via handler registration, (2) NOT
-        gated on embeddings/search flags. Never raises — every failure
-        path returns ``{"done": False, "error": ...}`` (the whole body is
-        wrapped in a top-level ``try/except Exception``).
+        Gating: registered when ``[search-history].enabled`` loads this
+        handler, and sent to the model only when the chat's ``USE_TOOLS``
+        setting is true (the single chat-time LLM-tool gate). NOT gated on
+        ``ALLOW_TOOLS_COMMANDS`` (that setting gates slash commands of
+        ``CommandCategory.TOOLS`` only) or ``EMBEDDINGS_ENABLED``. Never
+        raises — every failure path returns ``{"done": False, "error": ...}``
+        (the whole body is wrapped in a top-level ``try/except Exception``).
 
         Args:
             extraData: Context dict with an ``ensuredMessage`` key used
@@ -864,8 +962,8 @@ class ChatSearchHandler(BaseBotHandler):
             shape to the real user messages the LLM sees) and
             ``notFound`` lists the requested IDs that did not resolve in
             this chat. Returns ``{"done": False, "error": "..."}`` on any
-            failure (missing chat context, tools disabled, bad input, or
-            any unexpected exception).
+            failure (missing chat context, bad input, or any unexpected
+            exception).
         """
         try:
             # Gate 1: validate chat context.
@@ -873,7 +971,7 @@ class ChatSearchHandler(BaseBotHandler):
                 return {"done": False, "error": "Missing chat context"}
             chatId = extraData["ensuredMessage"].recipient.id
 
-            # Gate 3: validate + clamp input. Dedup (preserve first-seen
+            # Gate 2: validate + clamp input. Dedup (preserve first-seen
             # order), drop blanks/None, coerce to str (the emitted schema
             # declares ``items: {"type": "string"}``, but the model can
             # violate it — str coercion keeps us never-raise), and clamp
