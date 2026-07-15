@@ -406,6 +406,56 @@ class LLMService:
                 logger.warning(f"Failed to decode JSON: {e}")
         return False
 
+    def _matchTextForToolCallTags(self, mlRunResult: ModelRunResult) -> bool:
+        """Detect a tool call embedded in ``<tool_call>...</tool_call>`` tags.
+
+        Some LLMs (notably certain chat models) wrap a tool-call JSON object in
+        ``<tool_call>`` / ``</tool_call>`` tags instead of using native tool-call
+        APIs or markdown code fences. This method extracts that JSON, checks
+        whether it contains a recognised tool name with dict-typed
+        arguments/parameters, and — if so — mutates *mlRunResult* in-place to
+        reflect a ``TOOL_CALLS`` status.
+
+        The match is only accepted when the ``<tool_call>`` block appears at
+        the **beginning or end** of the response (i.e. the non-tag prefix or
+        suffix is empty), to avoid false positives on responses that merely
+        happen to contain a tagged snippet. This begin/end-edge rule is
+        enforced by the shared :meth:`_tryApplyToolCallMatch` helper, not in
+        this method itself.
+
+        Args:
+            mlRunResult: The model run result to inspect and potentially mutate.
+
+        Returns:
+            True if a valid tool call was detected and *mlRunResult* was converted;
+            False otherwise.
+        """
+        resultText = mlRunResult.resultText.strip()
+        match = re.match(r"^(.*?)<tool_call>\s*({.*})\s*</tool_call>(.*)$", resultText, re.DOTALL | re.IGNORECASE)
+        if match is not None:
+            logger.debug(f"<tool_call> tags found: {match.groups()}")
+            try:
+                jsonStr = match.group(2)
+                jsonData, endPos = self._tryParseJson(jsonStr)
+                suffixStr = jsonStr[endPos:] + match.group(3)
+                logger.debug(f"<tool_call> JSON result: {jsonData}")
+                parameters = None
+                if "arguments" in jsonData:
+                    parameters = jsonData.get("arguments", None)
+                elif "parameters" in jsonData:
+                    parameters = jsonData.get("parameters", None)
+                return self._tryApplyToolCallMatch(
+                    mlRunResult,
+                    toolName=jsonData.get("name", ""),
+                    parameters=parameters,
+                    toolCallId=jsonData.get("callId", None),
+                    prefixStr=match.group(1),
+                    suffixStr=suffixStr,
+                )
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to decode <tool_call> JSON: {e}")
+        return False
+
     def _matchTextForToolCallStart(self, mlRunResult: ModelRunResult) -> bool:
         """Detect a tool call using the ``[TOOL_CALL_START]`` marker format.
 
@@ -488,6 +538,120 @@ class LLMService:
                 )
             except json.JSONDecodeError as e:
                 logger.warning(f"Failed to decode JSON: {e}")
+        return False
+
+    def _matchTextForBrokenKnownToolCall(self, mlRunResult: ModelRunResult) -> bool:
+        """Detect a broken-but-recognised tool call as a last-resort fallback.
+
+        This is the final healing strategy, run only after every proper matcher
+        (:meth:`_matchTextForJSONToolCall`, :meth:`_matchTextForToolCallTags`,
+        :meth:`_matchTextForToolCallStart`,
+        :meth:`_matchTextForToolCallSquareBracketsAndJson`) has failed. It
+        detects a **registered** tool name referenced inside a bracket-like
+        block at the **beginning or end** of the message that could not be
+        parsed as a real tool call (e.g. an unparseable pseudo-call such as
+        ``[Вызов функции `generate_and_send_image` с промтом: «...»]``).
+
+        Instead of healing the call into a real execution, it synthesises a
+        tool call carrying an ``errorMessage`` that asks the model to retry
+        with a proper tool call. The execution loop never invokes the handler
+        for such a call — it feeds the error back to the model.
+
+        The begin/end-edge constraint avoids firing on mid-prose mentions of a
+        tool name: the bracket block must be at the message start or end.
+
+        Args:
+            mlRunResult: The model run result to inspect and mutate.
+
+        Returns:
+            True if a registered tool name was found inside an edge bracket
+            block and *mlRunResult* was converted to ``TOOL_CALLS`` with a
+            retry ``errorMessage``; False otherwise.
+        """
+        resultText = mlRunResult.resultText.strip()
+        # A bracketed block (content may contain spaces) optionally followed by a
+        # {...} block, optionally wrapped in code fences — at the BEGINNING or
+        # END of the text.
+        match = re.match(
+            r"^(.*?)(?:```)?\s*\[(.+?)\]\s*(\{.*\})?\s*(?:```)?\s*(.*)$",
+            resultText,
+            re.DOTALL,
+        )
+        if match is None:
+            return False
+        prefixStr = match.group(1)
+        bracketContent = match.group(2)
+        bracesContent = match.group(3) or ""
+        suffixStr = match.group(4)
+        # Only accept when the bracket block is at an edge (prefix or suffix
+        # empty), consistent with the other matchers' begin/end rule.
+        if prefixStr.strip() and suffixStr.strip():
+            return False
+        # Accepted trade-off of this "bracket-at-edge + known name" heuristic: a
+        # bracket block at the message edge whose content word-boundary-matches a
+        # registered tool name is treated as a broken-call candidate, so a bare
+        # markdown link like ``[generate_and_send_image](url)`` as the
+        # whole/trailing response would also match. Tightening to require
+        # call-like markers (backticks / "function" / "вызов") would risk
+        # under-matching the real broken-call failures this exists to recover.
+        haystack = bracketContent + " " + bracesContent
+        knownToolName: Optional[str] = None
+        # If the bracket block contains more than one registered tool name, the
+        # first one found (toolsHandlers dict-iteration order) wins. This is
+        # acceptable by design: the handler is never executed for a broken call
+        # — only a generic "retry" error is emitted, naming whichever tool matched.
+        for toolName in self.toolsHandlers:
+            if re.search(rf"(?<![\w]){re.escape(toolName)}(?![\w])", haystack):
+                knownToolName = toolName
+                break
+        if knownToolName is None:
+            return False
+        # Synthesise a tool call that signals "broken, retry" WITHOUT executing
+        # the handler.
+        mlRunResult.status = ModelResultStatus.TOOL_CALLS
+        mlRunResult.resultText = (prefixStr + suffixStr).strip()
+        mlRunResult.toolCalls = [
+            LLMToolCall(
+                id=str(uuid.uuid4()),
+                name=knownToolName,
+                parameters={},
+                errorMessage=f"Found broken call of tool '{knownToolName}', retry with proper tool call",
+            )
+        ]
+        return True
+
+    def _tryHealToolCall(self, mlRunResult: ModelRunResult) -> bool:
+        """Try every known tool-call healing/recovery strategy on a FINAL model response, in priority order.
+
+        Each strategy (in order) inspects *mlRunResult* and, on success,
+        mutates it in-place (to ``TOOL_CALLS`` status) and short-circuits the
+        chain. The priority order is:
+
+        1. :meth:`_matchTextForJSONToolCall` — JSON inside markdown code fences.
+        2. :meth:`_matchTextForToolCallTags` — JSON inside ``<tool_call>`` tags.
+        3. :meth:`_matchTextForToolCallStart` — ``[TOOL_CALL_START]`` marker.
+        4. :meth:`_matchTextForToolCallSquareBracketsAndJson` — ``[name]\\n{json}``.
+        5. :meth:`_matchTextForBrokenKnownToolCall` — broken call of a known
+           tool, converted to a retry-error instead of an execution.
+
+        Args:
+            mlRunResult: The model run result to inspect and potentially mutate.
+
+        Returns:
+            True if any strategy was applied (``mlRunResult`` mutated to
+            ``TOOL_CALLS``); False if the response contains no recognisable
+            tool-call-like content.
+        """
+        if self._matchTextForJSONToolCall(mlRunResult):
+            return True
+        if self._matchTextForToolCallTags(mlRunResult):
+            return True
+        if self._matchTextForToolCallStart(mlRunResult):
+            return True
+        if self._matchTextForToolCallSquareBracketsAndJson(mlRunResult):
+            return True
+        if self._matchTextForBrokenKnownToolCall(mlRunResult):
+            return True
         return False
 
     async def generateTextViaLLM(
@@ -618,15 +782,8 @@ class LLMService:
             )
             logger.debug(f"LLM returned: {ret} for callId #{callId}")
             if ret.status == ModelResultStatus.FINAL and ret.resultText:
-                # First - check if it was really tool call
-                hasMatch = self._matchTextForJSONToolCall(ret)
-
-                if not hasMatch:
-                    hasMatch = self._matchTextForToolCallStart(ret)
-                if not hasMatch:
-                    hasMatch = self._matchTextForToolCallSquareBracketsAndJson(ret)
-
-                # TODO: In other cases do some conversion as well
+                # Try to heal/recover tool calls embedded in the text response.
+                self._tryHealToolCall(ret)
 
             if ret.status == ModelResultStatus.TOOL_CALLS:
                 if callback:
@@ -640,9 +797,13 @@ class LLMService:
                 newMessages = [ret.toModelMessage()]
 
                 for toolCall in ret.toolCalls:
-                    toolRet = ""
-                    # Check if tool is available
-                    if toolCall.name in filteredToolNames:
+                    toolRet: Union[str, Dict[str, Any]] = ""
+                    if toolCall.errorMessage is not None:
+                        # Synthesised from a broken-but-recognised tool call
+                        # (_matchTextForBrokenKnownToolCall): do NOT execute the
+                        # handler; tell the model to retry with a proper tool call.
+                        toolRet = {"done": False, "error": toolCall.errorMessage}
+                    elif toolCall.name in filteredToolNames:
                         toolRet = await self.toolsHandlers[toolCall.name].call(extraData, **toolCall.parameters)
                     else:
                         # If wrong tool called, return error about it.

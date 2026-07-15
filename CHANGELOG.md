@@ -9,6 +9,10 @@ process governing this file, see [docs/llm/changelog.md](docs/llm/changelog.md).
 ### Added
 - New `tests/dependencies/` suite of dependency-usage regression tests (79 tests) pinning the current behavior of pinned third-party libraries (python-dateutil, tomli, python-magic, html-to-markdown, numpy, sqlite-vec) so a version bump that changes behavior fails loudly. Each test asserts its pinned library version via `importlib.metadata.version()` (sqlite-vec via `SELECT vec_version()`).
 
+### Fixed
+- LLM tool-call healing now detects `<tool_call>{…}</tool_call>` tag-wrapped JSON calls (emitted by e.g. YC aliceai-llm) and converts them into real tool calls instead of leaking the raw tags to the user.
+- LLM tool-call healing now returns a retry-error to the model for unparseable calls that nonetheless reference a known registered tool, instead of leaking the broken pseudo-call text to the user.
+
 ## Initial State - 2026-07-15
 
 ### Added

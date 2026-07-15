@@ -1558,6 +1558,127 @@ class TestPhase4aJsonLogToolCounts:
         assert entry["searchCount"] == 1
         assert entry["deleteCount"] == 0
 
+    async def test_jsonLogExcludesSynthesisedBrokenCallFromHistory(
+        self, testDatabase: Database, tmp_path: Path
+    ) -> None:
+        """Synthesised broken-call markers in toolUsageHistory are not counted.
+
+        Regression: when the LLM emits a broken-but-recognisable tool call, the
+        LLM service synthesises a ``TOOL_CALLS`` result whose ``LLMToolCall``
+        carries a non-None ``errorMessage`` and is never executed (the model is
+        handed the error and retries). Counting that synthesised call would
+        double-count a single logical tool use — the broken attempt plus its
+        successful retry both seen as ``add_memory`` calls.
+
+        This test seeds the history branch with one synthesised broken
+        ``add_memory`` call (errorMessage set) and one real ``add_memory`` call,
+        then asserts ``addCount == 1`` (the real call only). Without the fix the
+        count is 2.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: Per-test temporary directory for the JSONL log file.
+        """
+        refineLogFile = str(tmp_path / "refine.jsonl")
+        handler = await _makeHandler(
+            testDatabase,
+            configManager=_makeUserMemoryConfigManager(
+                enabled=True,
+                jsonLogging={"enabled": True, "file": refineLogFile, "add-date-suffix": False},
+            ),
+        )
+        _stubGetChatSettings(handler, memoryRefinementEnabled=True, refineModel="test-refine-model")
+        handler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=self._resultWithToolHistory(
+                [
+                    # First turn: broken pseudo-call synthesised into a marker
+                    # (errorMessage set) — must NOT be counted.
+                    [
+                        LLMToolCall(
+                            id="broken1",
+                            name=ToolName.ADD_MEMORY.value,
+                            parameters={},
+                            errorMessage="malformed call: missing 'content' argument",
+                        ),
+                    ],
+                    # Second turn: model retries successfully — the one real use.
+                    [
+                        LLMToolCall(id="ok1", name=ToolName.ADD_MEMORY.value, parameters={"content": "x"}),
+                    ],
+                ]
+            )
+        )
+
+        chatId, userId, threadId = 490, 26, DEFAULT_THREAD_ID
+        await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user26", "Tina")
+        await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
+
+        await handler._runSingleRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+
+        entries = _readRefineLog(tmp_path / "refine.jsonl")
+        assert len(entries) == 1
+        entry = entries[0]
+        # The synthesised broken call is excluded; only the real retry counts.
+        assert entry["addCount"] == 1
+        assert entry["deleteCount"] == 0
+        assert entry["searchCount"] == 0
+
+    async def test_jsonLogExcludesSynthesisedBrokenCallFromFallback(
+        self, testDatabase: Database, tmp_path: Path
+    ) -> None:
+        """Synthesised broken-call markers in the elif fallback are not counted.
+
+        Same regression as the history-branch test, but exercised through the
+        single-turn ``elif result.toolCalls:`` branch
+        (``toolUsageHistory=None``): a synthesised broken ``add_memory`` marker
+        (errorMessage set) plus one real ``add_memory`` call in
+        ``result.toolCalls`` must yield ``addCount == 1``, not 2.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: Per-test temporary directory for the JSONL log file.
+        """
+        refineLogFile = str(tmp_path / "refine.jsonl")
+        handler = await _makeHandler(
+            testDatabase,
+            configManager=_makeUserMemoryConfigManager(
+                enabled=True,
+                jsonLogging={"enabled": True, "file": refineLogFile, "add-date-suffix": False},
+            ),
+        )
+        _stubGetChatSettings(handler, memoryRefinementEnabled=True, refineModel="test-refine-model")
+        handler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=ModelRunResult(
+                rawResult={},
+                status=ModelResultStatus.FINAL,
+                resultText="",
+                toolUsageHistory=None,
+                toolCalls=[
+                    LLMToolCall(
+                        id="broken1",
+                        name=ToolName.ADD_MEMORY.value,
+                        parameters={},
+                        errorMessage="malformed call: missing 'content' argument",
+                    ),
+                    LLMToolCall(id="ok1", name=ToolName.ADD_MEMORY.value, parameters={"content": "x"}),
+                ],
+            )
+        )
+
+        chatId, userId, threadId = 500, 27, DEFAULT_THREAD_ID
+        await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user27", "Mira")
+        await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
+
+        await handler._runSingleRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+
+        entries = _readRefineLog(tmp_path / "refine.jsonl")
+        assert len(entries) == 1
+        entry = entries[0]
+        # The synthesised broken call is excluded; only the real call counts.
+        assert entry["addCount"] == 1
+        assert entry["deleteCount"] == 0
+        assert entry["searchCount"] == 0
+
 
 # ---------------------------------------------------------------------------
 # Phase 2 — user-memory LLM tools (add_memory / delete_memory / search_memories)

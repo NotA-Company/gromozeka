@@ -6,6 +6,7 @@
 /*.db
 /bak/
 /*.json
+/*.jsonl
 /*.yaml
 /storage
 

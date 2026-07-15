@@ -410,13 +410,18 @@ class LLMToolCall:
         {"id": "call_123", "name": "get_weather", "parameters": {"location": "London"}}
     """
 
-    def __init__(self, id: str, name: str, parameters: Dict[str, Any]):
+    def __init__(self, id: str, name: str, parameters: Dict[str, Any], errorMessage: Optional[str] = None):
         """Initialize a tool call.
 
         Args:
             id: Unique identifier for the tool call.
             name: Name of the function to call.
             parameters: Dictionary of parameter names to values.
+            errorMessage: Internal plumbing flag, NOT serialized into API
+                requests. When set, the tool call was synthesised from a broken
+                but recognisable tool-call attempt and the handler must NOT be
+                executed; instead *errorMessage* is fed back to the model as a
+                retry error. Left as ``None`` for ordinary tool calls.
 
         Returns:
             None
@@ -424,6 +429,7 @@ class LLMToolCall:
         self.id = id
         self.name = name
         self.parameters = parameters
+        self.errorMessage = errorMessage
 
     def __str__(self) -> str:
         """Return a JSON string representation of the tool call.
