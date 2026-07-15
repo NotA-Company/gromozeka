@@ -57,7 +57,8 @@ from internal.bot.models import (
 )
 from internal.config.manager import ConfigManager
 from internal.database import Database
-from internal.database.models import MessageCategory
+from internal.database.bayes_storage import DatabaseBayesStorage
+from internal.database.models import CacheType, MessageCategory
 from internal.models import MessageId
 from internal.services.cache import CacheService
 from internal.services.queue_service import DelayedTask, DelayedTaskFunction, QueueService
@@ -87,6 +88,53 @@ from .weather import WeatherHandler
 from .yandex_search import YandexSearchHandler
 
 logger = logging.getLogger(__name__)
+
+# DB cache cleanup TTLs (in seconds). Applied by HandlersManager._cleanupOldData().
+CACHE_CLEANUP_DEFAULT_TTL_SECS = 60 * 60 * 24 * 365  # 365 days — default TTL floor for all cache namespaces
+CACHE_CLEANUP_AGGRESSIVE_TTL_SECS = 60 * 60 * 24 * 7  # 7 days — TTL for fast-staling cache namespaces
+DELAYED_TASKS_CLEANUP_TTL_SECS = 60 * 60 * 24 * 30  # 30 days — TTL for completed delayed tasks
+
+# Cache namespaces whose data goes stale quickly and should be purged on the
+# aggressive (7-day) TTL rather than the 365-day default floor.
+AGGRESSIVE_CLEANUP_CACHE_TYPES: Tuple[CacheType, ...] = (
+    CacheType.WEATHER,
+    CacheType.YANDEX_SEARCH,
+    CacheType.URL_CONTENT,
+    CacheType.URL_CONTENT_CONDENSED,
+)
+
+# Bayes token cleanup rules: (ttlSeconds, maxTotalCount). Tokens matching ANY
+# rule are purged from bayes_tokens by HandlersManager._cleanupOldData().
+# Tokens with total_count <= 1 older than 90 days, OR total_count <= 2 older
+# than 180 days.
+BAYES_TOKEN_CLEANUP_RULES: Tuple[Tuple[int, int], ...] = (
+    (60 * 60 * 24 * 90, 1),  # total_count <= 1, older than 90 days
+    (60 * 60 * 24 * 180, 2),  # total_count <= 2, older than 180 days
+    # (60 * 60 * 24 * 360, 3),  # total_count <= 3, older than 360 days
+)
+
+# Currently (2027-07-15) it looks like it:
+# sqlite> select total_count, count(*) as entries, min(updated_at), max(updated_at)
+#   from bayes_tokens where updated_at < '2026-01-01'
+#   group by total_count
+#   order by entries DESC, total_count ASC
+#   limit 10;
+# +-------------+---------+---------------------+---------------------+
+# | total_count | entries |   min(updated_at)   |   max(updated_at)   |
+# +-------------+---------+---------------------+---------------------+
+# |           1 |  300661 | 2025-10-15 22:37:19 | 2025-12-29 22:12:45 |
+# |           2 |   15925 | 2025-10-15 22:37:19 | 2025-12-29 22:12:45 |
+# |           3 |    4896 | 2025-10-15 22:37:19 | 2025-12-29 21:29:33 |
+# |           4 |    2486 | 2025-10-15 22:37:19 | 2025-12-29 21:29:33 |
+# |           5 |    1437 | 2025-10-15 22:37:43 | 2025-12-29 22:12:45 |
+# |           6 |    1021 | 2025-10-15 22:37:50 | 2025-12-29 20:54:25 |
+# |           7 |     669 | 2025-10-15 22:37:48 | 2025-12-29 21:29:33 |
+# |           8 |     502 | 2025-10-17 19:05:38 | 2025-12-29 22:12:45 |
+# |           9 |     399 | 2025-10-20 18:43:10 | 2025-12-29 20:12:27 |
+# |          10 |     352 | 2025-11-07 12:09:08 | 2025-12-29 20:12:27 |
+# +-------------+---------+---------------------+---------------------+
+# So it looks like worth to delete only tokens with total_count <= 2.
+# After year or two need to recheck to see if total_count 3+ is worth to be cleaned as well.
 
 
 class HandlerParallelism(IntEnum):
@@ -573,9 +621,10 @@ class HandlersManager(CommandHandlerGetterInterface):
         self._shutdownEvent = asyncio.Event()
 
     async def _dtOnExit(self, task: DelayedTask) -> None:
-        """Handle application exit by cleaning up old database cache entries.
+        """Handle application exit by delegating cleanup to _cleanupOldData().
 
-        Removes cache entries older than 90 days from the database.
+        The full set of periodic cleanup steps lives in
+        :meth:`_cleanupOldData`; this method simply forwards to it on exit.
 
         Args:
             task: DelayedTask instance containing task execution context
@@ -629,16 +678,27 @@ class HandlersManager(CommandHandlerGetterInterface):
     async def _cleanupOldData(self) -> None:
         """Clean up old data from the database.
 
-        Removes cache entries older than 90 days and completed delayed tasks
-        older than 30 days to prevent database bloat.
+        Applies a per-namespace TTL strategy for the cache:
+            - All namespaces are first purged with the default 365-day floor.
+            - Fast-staling namespaces (WEATHER, YANDEX_SEARCH, URL_CONTENT,
+              URL_CONTENT_CONDENSED) are then purged with an aggressive 7-day TTL.
+        Completed delayed tasks are purged with a 30-day TTL.
+        Old/rare bayes tokens are purged based on BAYES_TOKEN_CLEANUP_RULES
+        (age+count rules applied across all chats).
 
         Returns:
             None
         """
-        # Drop cache entries, that more than 3 month old
-        await self.db.cache.clearOldCacheEntries(ttl=60 * 60 * 24 * 90)
-        # Also drop completed tasks older than a month
-        await self.db.delayedTasks.cleanupOldCompletedDelayedTasks(ttl=60 * 60 * 24 * 30)
+        # Purge all namespaces with the default TTL floor first
+        await self.db.cache.clearOldCacheEntries(ttl=CACHE_CLEANUP_DEFAULT_TTL_SECS)
+        # Then purge fast-staling namespaces with the aggressive TTL
+        for cacheType in AGGRESSIVE_CLEANUP_CACHE_TYPES:
+            await self.db.cache.clearOldCacheEntries(ttl=CACHE_CLEANUP_AGGRESSIVE_TTL_SECS, cacheType=cacheType)
+        # Drop completed delayed tasks older than a month
+        await self.db.delayedTasks.cleanupOldCompletedDelayedTasks(ttl=DELAYED_TASKS_CLEANUP_TTL_SECS)
+        # Purge old/rare bayes tokens based on configurable age+count rules
+        bayesStorage = DatabaseBayesStorage(self.db)
+        await bayesStorage.cleanupOldTokens(BAYES_TOKEN_CLEANUP_RULES)
 
     async def initialize(self, bot: ExtBot | libMax.MaxBotClient) -> None:
         """Initialize the handlers manager by injecting bot instance into all registered handlers.

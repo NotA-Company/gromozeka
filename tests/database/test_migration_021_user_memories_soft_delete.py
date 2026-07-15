@@ -9,7 +9,7 @@ rollback.
 Approach: the shared ``testDatabase`` fixture auto-migrates to the latest
 version.  Because migration 021's ``down()`` is a no-op, simply rolling
 back 021 does not remove the column -- the test must reach the pre-020
-state (roll back 4 steps: 023, 022, 021, 020) and re-create
+state (roll back 5 steps: 024, 023, 022, 021, 020) and re-create
 ``user_memories`` via ``Migration020UserMemories().up()`` (the backfills
 are no-ops on the empty legacy tables left by the rollback).  This
 produces a ``user_memories`` table WITHOUT ``deleted_at`` -- the pre-021
@@ -39,7 +39,7 @@ USER_ID = 100
 async def _rollbackToPre020AndCreateUserMemories(provider: BaseSQLProvider) -> None:
     """Roll back to version 19 and re-create ``user_memories`` without ``deleted_at``.
 
-    Rolling back 4 steps (023, 022, 021, 020) drops ``user_memories`` and
+    Rolling back 5 steps (024, 023, 022, 021, 020) drops ``user_memories`` and
     re-creates an empty ``user_data`` table (via 022's ``down()``).  Then
     ``Migration020UserMemories().up()`` re-creates ``user_memories`` in its
     pre-021 shape (no ``deleted_at`` column).  The backfills are no-ops
@@ -53,7 +53,7 @@ async def _rollbackToPre020AndCreateUserMemories(provider: BaseSQLProvider) -> N
     """
     rollbackManager = MigrationManager()
     rollbackManager.loadMigrationsFromVersions()
-    await rollbackManager.rollback(steps=4, sqlProvider=provider)
+    await rollbackManager.rollback(steps=5, sqlProvider=provider)
     await Migration020UserMemories().up(provider)
 
 

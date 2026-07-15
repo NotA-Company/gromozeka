@@ -1,10 +1,11 @@
-"""Tests for the shutdown state-dump method of HandlersManager.
+"""Tests for HandlersManager shutdown and cleanup methods.
 
 Covers:
     - _dumpAllState skips empty chat queues and logs non-empty ones
     - _dumpAllState snapshots chatStates.values() under stateLock
     - _dumpAllState logs each rate limiter stats entry as JSON
     - shutdown() calls _dumpAllState() before draining queues
+    - _cleanupOldData orchestrates cache, delayed-task, and bayes token cleanup
 
 HandlersManager.__init__ instantiates the entire handler pipeline, so these
 tests build a minimal manager via ``HandlersManager.__new__`` and set only the
@@ -13,11 +14,20 @@ handler-construction concerns.
 """
 
 import asyncio
+from typing import Tuple
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from internal.bot.common.handlers.manager import ChatProcessingState, HandlersManager
+from internal.bot.common.handlers.manager import (
+    AGGRESSIVE_CLEANUP_CACHE_TYPES,
+    BAYES_TOKEN_CLEANUP_RULES,
+    CACHE_CLEANUP_AGGRESSIVE_TTL_SECS,
+    CACHE_CLEANUP_DEFAULT_TTL_SECS,
+    DELAYED_TASKS_CLEANUP_TTL_SECS,
+    ChatProcessingState,
+    HandlersManager,
+)
 
 
 def _mockRateLimiterManager(statsList: list) -> Mock:
@@ -223,3 +233,82 @@ class TestDumpAllState:
         await minimalManager.shutdown()
 
         minimalManager._dumpAllState.assert_awaited_once()
+
+
+class TestCleanupOldData:
+    """Tests for HandlersManager._cleanupOldData call orchestration.
+
+    _cleanupOldData wires together cache sweeps, delayed-task cleanup, and bayes
+    token cleanup. These tests verify the correct methods are called with the
+    correct TTL constants and cache types, without touching a real database.
+    """
+
+    @staticmethod
+    def _buildManager() -> Tuple[HandlersManager, Mock]:
+        """Build a minimal HandlersManager with a mocked db for _cleanupOldData.
+
+        Returns:
+            A ``(manager, mockDb)`` tuple. ``manager.db`` is set to ``mockDb``
+            whose ``cache.clearOldCacheEntries`` and
+            ``delayedTasks.cleanupOldCompletedDelayedTasks`` are AsyncMocks.
+            The mockDb is returned separately so callers get Mock-typed access
+            for assertions (HandlersManager.db is declared as Database, which
+            would shadow the mock type from pyright's perspective).
+        """
+        mgr = HandlersManager.__new__(HandlersManager)
+        mockDb = Mock()
+        mockDb.cache.clearOldCacheEntries = AsyncMock(return_value=True)
+        mockDb.delayedTasks.cleanupOldCompletedDelayedTasks = AsyncMock(return_value=True)
+        mgr.db = mockDb
+        return mgr, mockDb
+
+    async def testDefaultTtlAllNamespaceSweep(self) -> None:
+        """_cleanupOldData calls clearOldCacheEntries once with the 365-day default TTL."""
+        manager, mockDb = self._buildManager()
+
+        with patch("internal.bot.common.handlers.manager.DatabaseBayesStorage", return_value=AsyncMock()):
+            await manager._cleanupOldData()
+
+        mockDb.cache.clearOldCacheEntries.assert_any_call(ttl=CACHE_CLEANUP_DEFAULT_TTL_SECS)
+
+    async def testAggressivePerNamespaceSweeps(self) -> None:
+        """_cleanupOldData calls clearOldCacheEntries for each aggressive cache type.
+
+        Asserts one aggressive-TTL call per entry in AGGRESSIVE_CLEANUP_CACHE_TYPES,
+        plus the single default-TTL call, totalling 1 + len(types) calls.
+        """
+        manager, mockDb = self._buildManager()
+
+        with patch("internal.bot.common.handlers.manager.DatabaseBayesStorage", return_value=AsyncMock()):
+            await manager._cleanupOldData()
+
+        # One aggressive call per aggressive type
+        for cacheType in AGGRESSIVE_CLEANUP_CACHE_TYPES:
+            mockDb.cache.clearOldCacheEntries.assert_any_call(
+                ttl=CACHE_CLEANUP_AGGRESSIVE_TTL_SECS, cacheType=cacheType
+            )
+        # Total = 1 default + len(aggressive types)
+        expectedCallCount = 1 + len(AGGRESSIVE_CLEANUP_CACHE_TYPES)
+        assert mockDb.cache.clearOldCacheEntries.await_count == expectedCallCount
+
+    async def testDelayedTasksCleanup(self) -> None:
+        """_cleanupOldData calls delayedTasks.cleanupOldCompletedDelayedTasks with 30-day TTL."""
+        manager, mockDb = self._buildManager()
+
+        with patch("internal.bot.common.handlers.manager.DatabaseBayesStorage", return_value=AsyncMock()):
+            await manager._cleanupOldData()
+
+        mockDb.delayedTasks.cleanupOldCompletedDelayedTasks.assert_called_once_with(ttl=DELAYED_TASKS_CLEANUP_TTL_SECS)
+
+    async def testBayesTokenCleanup(self) -> None:
+        """_cleanupOldData constructs DatabaseBayesStorage and calls cleanupOldTokens with rules."""
+        manager, mockDb = self._buildManager()
+
+        with patch("internal.bot.common.handlers.manager.DatabaseBayesStorage") as mockBayesClass:
+            mockBayesInstance = AsyncMock()
+            mockBayesClass.return_value = mockBayesInstance
+
+            await manager._cleanupOldData()
+
+            mockBayesClass.assert_called_once_with(mockDb)
+            mockBayesInstance.cleanupOldTokens.assert_called_once_with(BAYES_TOKEN_CLEANUP_RULES)

@@ -5,8 +5,9 @@ This module provides a concrete implementation of the BayesStorageInterface
 using the existing Database from the Gromozeka project.
 """
 
+import datetime
 import logging
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from lib.bayes_filter.models import BayesModelStats, ClassStats, TokenStats
 from lib.bayes_filter.storage_interface import BayesStorageInterface
@@ -503,3 +504,40 @@ class DatabaseBayesStorage(BayesStorageInterface):
             logger.info(f"Removed rare tokens (min_count={minCount})")
         except Exception as e:
             logger.error(f"Failed to cleanup rare tokens: {e}")
+
+    async def cleanupOldTokens(self, rules: Sequence[Tuple[int, int]]) -> bool:
+        """Remove old, rare tokens from the bayes_tokens table based on age+count rules.
+
+        Each rule is a ``(ttlSeconds, maxCount)`` tuple. For every rule, all
+        tokens (regardless of chat_id) whose ``updated_at`` is older than
+        ``ttlSeconds`` AND whose ``total_count`` is at most ``maxCount`` are
+        deleted. One DELETE is executed per rule.
+
+        Args:
+            rules: Sequence of ``(ttlSeconds, maxCount)`` tuples. A token
+                matching ANY rule (old enough per that rule's TTL and rare
+                enough per that rule's max count) is purged.
+
+        Returns:
+            True if all rules were applied successfully, False if any
+            exception was caught during execution.
+        """
+        if not rules:
+            return True
+        try:
+            sqlProvider = await self.db.manager.getProvider(dataSource=self.dataSource, readonly=False)
+            for ttlSeconds, maxCount in rules:
+                cutoffTime = dbUtils.getCurrentTimestamp() - datetime.timedelta(seconds=ttlSeconds)
+                params = {"cutoffTime": cutoffTime, "maxCount": maxCount}
+                await sqlProvider.execute(
+                    """
+                    DELETE FROM bayes_tokens
+                    WHERE updated_at < :cutoffTime AND total_count <= :maxCount
+                    """,
+                    params,
+                )
+                logger.info(f"Purged bayes tokens for rule (ttl={ttlSeconds}s, maxCount={maxCount})")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to cleanup old tokens: {e}")
+            return False

@@ -17,9 +17,9 @@ Every assertion from the monolith is preserved across the split.
 
 Approach: the shared ``testDatabase`` fixture auto-migrates to the latest
 version (so ``user_memories`` exists, empty).  Each test rolls back
-migration 020 (four steps -- 023, 022, 021, 020 -- because 021/022/023
-sit above 020), seeds the legacy stores, then exercises ``up()`` /
-``down()`` directly.
+migration 020 (five steps -- 024, 023, 022, 021, 020 -- because
+021/022/023/024 sit above 020), seeds the legacy stores, then exercises
+``up()`` / ``down()`` directly.
 
 Idempotency note: migration 020's backfill helpers use a COUNT+diff guard
 (not a pure sentinel probe) so a crash mid-backfill resumes the remaining
@@ -53,16 +53,17 @@ async def _tableNames(provider: BaseSQLProvider) -> set[str]:
 
 
 async def _rollbackToPre020(provider: BaseSQLProvider) -> None:
-    """Roll back migrations 023..020 to reach the pre-020 state (version 19).
+    """Roll back migrations 024..020 to reach the pre-020 state (version 19).
 
-    Four steps are rolled back because migrations 023 (chat_settings key
-    rename), 022 (drop ``user_data``), and 021 (``user_memories.deleted_at``)
-    sit above 020:
+    Five steps are rolled back because migrations 024 (bayes_tokens index),
+    023 (chat_settings key rename), 022 (drop ``user_data``), and 021
+    (``user_memories.deleted_at``) sit above 020:
 
-    - Step 1: 023's ``down()`` (reverse key rename -- no-op on an empty DB).
-    - Step 2: 022's ``down()`` (re-creates an **empty** ``user_data`` table).
-    - Step 3: 021's ``down()`` (no-op -- nullable additive column left in place).
-    - Step 4: 020's ``down()`` (drops ``user_memories``).
+    - Step 1: 024's ``down()`` (drops the bayes_tokens index -- no-op on data).
+    - Step 2: 023's ``down()`` (reverse key rename -- no-op on an empty DB).
+    - Step 3: 022's ``down()`` (re-creates an **empty** ``user_data`` table).
+    - Step 4: 021's ``down()`` (no-op -- nullable additive column left in place).
+    - Step 5: 020's ``down()`` (drops ``user_memories``).
 
     After this, ``user_memories`` does not exist, ``user_data`` exists
     (empty), and ``chat_users`` is untouched.
@@ -75,7 +76,7 @@ async def _rollbackToPre020(provider: BaseSQLProvider) -> None:
     """
     rollbackManager = MigrationManager()
     rollbackManager.loadMigrationsFromVersions()
-    await rollbackManager.rollback(steps=4, sqlProvider=provider)
+    await rollbackManager.rollback(steps=5, sqlProvider=provider)
 
 
 async def _seedLegacyStores(provider: BaseSQLProvider) -> None:

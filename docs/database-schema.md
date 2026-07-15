@@ -163,6 +163,7 @@ Migrations are located in [`internal/database/migrations/versions/`](../internal
 | 21 | [`migration_021_user_memories_soft_delete.py`](../internal/database/migrations/versions/migration_021_user_memories_soft_delete.py:1) | Adds nullable `deleted_at` to [`user_memories`](#user_memories) for soft-delete semantics (`down()` is a no-op — portable `DROP COLUMN` unavailable) |
 | 22 | [`migration_022_drop_user_data.py`](../internal/database/migrations/versions/migration_022_drop_user_data.py:1) | DROP TABLE `user_data` (superseded by `user_memories`; backfilled in migration_020). No-op downgrade is intentional — re-creating the table would orphan the backfilled rows |
 | 23 | [`migration_023_rename_memory_injection_enabled_to_memory_enabled.py`](../internal/database/migrations/versions/migration_023_rename_memory_injection_enabled_to_memory_enabled.py:1) | Idempotent data migration: `UPDATE chat_settings SET key='memory-enabled' WHERE key='memory-injection-enabled'` (companion to the `MEMORY_INJECTION_ENABLED` → `MEMORY_ENABLED` enum rename) |
+| 24 | [`migration_024_add_bayes_tokens_updated_at_index.py`](../internal/database/migrations/versions/migration_024_add_bayes_tokens_updated_at_index.py:1) | Adds secondary index on `bayes_tokens` (`updated_at`) to optimize the age-based `cleanupOldTokens` DELETE |
 
 ### Creating New Migrations
 
@@ -612,6 +613,7 @@ Stores token statistics for Bayesian spam filtering.
 **Indexes**:
 - `bayes_tokens_chat_idx` on `chat_id`
 - `bayes_tokens_total_idx` on `total_count`
+- `idx_bayes_tokens_updated_at` on `updated_at` (added in `migration_024`; optimizes the age-based `cleanupOldTokens` DELETE)
 
 ---
 

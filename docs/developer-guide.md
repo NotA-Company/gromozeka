@@ -232,7 +232,7 @@ gromozeka/
 │   │       ├── base.py             # BaseMigration abstract class
 │   │       ├── manager.py          # MigrationManager - auto-discovery + apply
 │   │       ├── create_migration.py # Script to scaffold new migrations
-│   │       └── versions/           # Migration files (migration_001 to migration_023)
+│   │       └── versions/           # Migration files (migration_001 to migration_024)
 │   │
 │   ├── services/                   # Service layer (singletons)
 │   │   ├── cache/                  # Cache service
