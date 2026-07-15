@@ -10,7 +10,7 @@
 - [x] Search for tool_name in [] or {} + optional ``` end return some error if yes (to enforce proper tool call)
 - [ ] On web search\get-url-content, allow bot to add compaction prompt
 - [ ] more statistics thing (more sources, consolidation, export + cleanup of old statistics)
-- [ ] to message search add thread restriction (optionaly disabled) + search by substring
+- [x] to message search add thread restriction (optionaly disabled) + search by substring
 
 - [ ] Subagent with conversation history
 - [ ] Topic-level configs
