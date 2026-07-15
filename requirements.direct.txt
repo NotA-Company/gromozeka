@@ -2,20 +2,20 @@
 aiodocker==0.27.0
 aiohttp==3.14.1
 aiosqlite==0.22.1
-boto3==1.43.36
+boto3==1.43.48
 fastembed==0.8.0
-html-to-markdown==3.8.0
+html-to-markdown==3.8.3
 httpx[http2]==0.28.1
 httpx-socks[asyncio]==0.11.0
-numpy==2.5.0
-openai==2.44.0
+numpy==2.5.1
+openai==2.45.0
 packaging==26.2
 python-dateutil==2.9.0.post0
 python-magic==0.4.27
 python-telegram-bot==22.8
 sqlite-vec==0.1.9
 tomli==2.4.1
-yandex-ai-studio-sdk==0.21.0
+yandex-ai-studio-sdk==0.22.0
 
 sqlink @ git+https://git@git.sourcecraft.dev/notacompany/py-sqlink-client.git
 
