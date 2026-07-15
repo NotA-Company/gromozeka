@@ -20,6 +20,7 @@
 | Add or change TOML configuration | [`configuration.md`](configuration.md) |
 | Write or run tests, understand test fixtures | [`testing.md`](testing.md) |
 | Follow a step-by-step task workflow or avoid pitfalls | [`tasks.md`](tasks.md) |
+| Maintain `CHANGELOG.md` (when to update, entry style, semver) | [`changelog.md`](changelog.md) |
 | Reuse durable cross-task memory and repo gotchas | [`teamlead-memory.md`](teamlead-memory.md) |
 | Review large diffs that exceed single-pass agent budget | [`reviewing-large-changes.md`](reviewing-large-changes.md) |
 | Reuse archived task-specific memories for completed subsystems | [`memories/index.md`](memories/index.md) |
@@ -330,6 +331,7 @@ See [`teamlead-memory.md`](teamlead-memory.md) for the full pattern (`_llmTool*`
 - [`configuration.md`](configuration.md) — TOML config sections, ConfigManager methods
 - [`testing.md`](testing.md) — Test fixtures, pytest patterns, golden data framework
 - [`tasks.md`](tasks.md) — Step-by-step task workflows, anti-patterns
+- [`changelog.md`](changelog.md) — Canonical changelog process (Keep a Changelog, semver, entry style)
 - [`teamlead-memory.md`](teamlead-memory.md) — Durable cross-task memory, repo gotchas, workflow lessons
 - [`reviewing-large-changes.md`](reviewing-large-changes.md) — Methodology for reviewing diffs exceeding single-pass budget
 - [`memories/index.md`](memories/index.md) — Task-specific memory index for completed subsystems/features

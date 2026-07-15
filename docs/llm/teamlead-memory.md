@@ -73,6 +73,26 @@ Full index and one-line descriptions live in [`memories/index.md`](memories/inde
 - **`expectedTables`/`requiredTables` lists:** schema-creation tests (e.g. `testSchemaCreation`, `testAllRequiredTablesExist`) hardcode table names in expected-table lists. When dropping a table, grep tests for its name in these hardcoded assertions, not just in repo usage.
 - **`.discard()` over `.remove()` for set eviction:** when a set is populated by one async caller and evicted by another after an `await`, use `.discard()` — `.remove()` can `KeyError` if the element was evicted between pick and remove.
 
+## Opencode Slash-Command Mechanism
+
+- Slash-commands are markdown files in a `commands/` dir. Filename `<name>.md` → `/<name>`.
+- YAML frontmatter fields observed: `description`, `agent` (routes to a named agent from `agents/`), `subtask` (bool). Body = free-form prompt; `$ARGUMENTS` = args passed at invocation.
+- Global commands live in `~/.config/opencode/commands/` (2 existing: `caveman-compress.md`, `caveman-review.md`). Repo `.opencode/` has `agents/` but NO `commands/` dir yet — repo-local commands would go in `.opencode/commands/` (exact dir name to confirm against opencode docs, but `commands/` matches the global layout).
+- Repo `.opencode/opencode.json` sets `default_agent: "teamlead"`; per-subagent model tiers under `agent`. Global config is `~/.config/opencode/opencode.jsonc`.
+- Commands are discovered by filename, NOT registered via any `command`/`commands` key in config.
+- CHANGELOG.md now exists at repo root (created 2026-07-15). `TODO.md:7` is checked off (`- [x] changelog`). The full Keep-a-Changelog process spec lives at [`docs/llm/changelog.md`](changelog.md); `AGENTS.md` carries the compact summary.
+
+## Changelog Process (embedded 2026-07-15)
+
+- `CHANGELOG.md` at repo root uses Keep a Changelog: `## [Unreleased]` (always present, even empty) + dated sections. First section is a one-time `## Initial State - 2026-07-15` baseline snapshot (sanctioned exception documented in `docs/llm/changelog.md` §"Initial baseline") — NOT a semver release.
+- Canonical process spec: `docs/llm/changelog.md` (moved from `docs/plans/changelog-process.md`). `AGENTS.md` has a compact `## Changelog` summary; the two must stay consistent (canonical is authoritative).
+- **Entry style**: declarative, past tense, start with the thing that changed (NOT "Added"/"Fixed" — the category header conveys that); one capability per line; name the user-facing surface (command/config key/tool/path). NEVER imperative ("Add X").
+- **When to entry**: new feature/capability/config/command/API, bug fix, behavior change, schema/data migration, docs-only-when-new-feature.
+- **When NOT**: style/formatting fixes, internal refactors w/o user-visible effect, doc-only tweaks (unless new feature), dependency bumps w/o behavioral change, test-only changes.
+- **Triggers (3, all active)**: (1) teamlead-auto — docs-sync phase + Self-Verification Checklist require a `CHANGELOG.md` `[Unreleased]` entry for user-visible changes (`.opencode/agents/teamlead.md`); (2) `/changelog` slash-command (`.opencode/commands/changelog.md`, `agent: software-developer`, `subtask: true`, non-interactive — drafts from diff, or `cut <X.Y.Z>` for release); (3) `update-project-docs` skill (`.agents/skills/update-project-docs/SKILL.md` Step 6) — CHANGELOG mandatory for user-visible, root `README.md` staleness check conditional. `docs-writer` loads this skill, so docs-writer dispatches cover CHANGELOG automatically.
+- **Release cut**: rename `## [Unreleased]` → `## [X.Y.Z] - YYYY-MM-DD`, add fresh empty `## [Unreleased]` above. semver (patch/minor/major). `/changelog cut <version>` does this.
+- `/changelog` command is non-interactive (subtask): on ambiguous diff it makes a best-effort decision + states the assumption (never blocks/asks); `cut` w/o version aborts cleanly with guidance.
+
 ## Config & Tier System
 
 - **Config merge order for prod-telegram**: `00-defaults` → `common` → `prod` → `prod-telegram`. Deep-recursive merge in `ConfigManager._mergeConfigs()`: nested dicts merge recursively, scalars overwrite. Files within a dir sorted alphabetically.
@@ -287,6 +307,29 @@ Audit to identify candidate new skills/agents. **[COMPLETED 2026-07-11 — items
 **Automation gaps (Makefile):** ~~no link-checker target~~ **[DONE 2026-07-11]** `make check-docs` target live (`scripts/check_docs.py`); 376 broken links it found are **[RESOLVED 2026-07-11]** (see [`memories/doc-link-fix-campaign.md`](memories/doc-link-fix-campaign.md)). Still missing: TODO-gathering target, code-example-compile target, `make migrate`, migration-version-listing helper. `documentation-review-process.md` lists these as "automation opportunities".
 
 **Tech-debt hot spots (TODO markers, 63 total):** densest in handler layer — `llm_messages.py` (10), `spam.py` (7), `ensured_message.py` (6), `cache/service.py` (5), `bot.py` (4). `lib/` is clean.
+
+## Dependency-Usage Regression Tests (2026-07-15, planning done — execution pending)
+
+Task: add tests that lock in our *usage* of third-party libs so a dep-version bump can't silently break us. Scope = PURE libs + sqlite-vec; EXTERNAL libs deferred to golden follow-up.
+
+**Direct-dep classification (27 in `requirements.direct.txt`):**
+- **PURE (6):** `python-dateutil` 2.9.0.post0, `numpy` 2.5.1, `html-to-markdown` 3.8.3, `packaging` 26.2, `python-magic` 0.4.27, `tomli` 2.4.1.
+- **EXTERNAL (7, out of scope this round):** `openai`, `yandex-ai-studio-sdk`, `fastembed`, `aiodocker`, `boto3`, `httpx-socks`, `sqlink`.
+- **MIXED (5):** `aiosqlite`, `aiohttp`, `httpx`, `python-telegram-bot`, **`sqlite-vec` 0.1.9** (testable in-process — INCLUDED this round).
+- **DEV (9):** black/isort/flake8/pyright/pytest stack + `PyYAML` (debug scripts only).
+
+**Hidden transitive-direct imports (silent-break risk):** `google.protobuf.Struct` + `yandex.cloud.ai.foundation_models.v1.text_common_pb2` (`FunctionCall`/`ToolCall`/`ToolCallList`) in `lib/ai/providers/yc_sdk_provider.py:49-52` — protobuf major bumps (5.x→6.x happened) are a known breakage class. `typing_extensions.TypedDict` in `lib/aurumentation/types.py:15` (low-risk, stdlib shim).
+
+**Coverage status (reconciled from source + test exploration):**
+- **Already covered:** `packaging` via `TestValidatePackageSpec` (6 tests) — DROP from scope.
+- **Partial:** `python-dateutil` (only ISO via `tests/database/test_utils.py::TestConvertSqlResponseToTypeStrInput`; gap = `.tzinfo is None` UTC-forcing branch in `internal/database/utils.py:232-235` + LLM/human formats in `user_memories.py:1224` / `webhook_updates.py:95`); `python-magic` (only PNG via `tests/bot/test_sandbox.py::test_sandbox_send_file_mime_detection`; gap = more formats — libmagic-db output shifts on bump).
+- **Zero coverage (real gaps):** `html-to-markdown` (core handler `yandex_search.py:410-426`, `.content` can be None — load-bearing fallback; fast-moving lib); `numpy` cosine top-K (`internal/database/repositories/chat_search.py:404-424` — `np.argpartition` tie-breaking is UNSPECIFIED by numpy, float32 promotion changed across 2.x; affects which message IDs rank where); `sqlite-vec` vec0 (`user_memories.py:1188-1208` has literal `TODO: Test on latest sqlite-vec` on DELETE-by-metadata fallback); `tomli` (trivial, config-critical, low-risk).
+
+**Key convention finding:** NO "direct-lib" regression tests exist in the repo today. All real third-party coverage is INCIDENTAL — production code that happens to call the real lib unmocked (`sqlToCustomType`→dateutil, `validatePackageSpec`→packaging, sandbox→magic, golden replayers→openai SDK). Existing golden infra: `tests/lib/<svc>/golden/` with `input/scenarios.json` + `data/` + `collect.py` + `test_golden.py`; `OpenAIReplayerPatcher`/`GoldenDataReplayer` for httpx-transport replay.
+
+**User decisions (2026-07-15):** (1) Scope = PURE + sqlite-vec (packaging dropped — already covered). (2) Style = **through-production-code** where a clean wrapper exists; direct-lib fallback where prod path too deep (html-to-markdown in handler, tomli in config manager, magic is a one-liner). (3) Defer `yandex-ai-studio-sdk` + `fastembed` to golden-test follow-up (tracked, not actioned this round).
+
+**Deferred follow-ups (tracked):** golden-test coverage for `yandex-ai-studio-sdk` (entirely untested — biggest gap) and `fastembed` real ONNX inference (never run in CI). Both need the record-real-responses-once workflow.
 
 ## user-memory-v2 Pre-Merge Review (2026-07-14)
 

@@ -4,7 +4,7 @@
 - [ ] tests for direct dependencies (especially html-to-markdown)
 - [ ] refactor models
 - [ ] opencode commands for review and teamldead memory refinement
-- [ ] changelog
+- [x] changelog
 - [ ] Review all docs
 - [ ] Yandex AI Studio does not support webp images. Add config value + convert
 - [ ] Search for tool_name in [] or {} + optional ``` end return some error if yes (to enforce proper tool call)

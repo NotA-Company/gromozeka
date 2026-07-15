@@ -292,8 +292,8 @@ Task: [X.Y.Z]
 **Commit Message Integration:**
 - Use the summary section content for commit subject lines
 - Include task reference in all commit footers
-- Follow conventional commit format for automated tool integration
-- Ensure commit messages are suitable for changelog generation
+- Follow conventional commit format so commit messages stay consistent and self-describing
+- Update `CHANGELOG.md` under `## [Unreleased]` for any user-visible change, per `docs/llm/changelog.md`
 
 **Quality Standards:**
 - All deliverables must be linked and accessible
@@ -302,8 +302,8 @@ Task: [X.Y.Z]
 - All file changes must be categorized and explained
 - Summary must be suitable for commit messages and stakeholder communication
 
-**Automated Tool Integration:**
-- Commit messages should follow conventional format for automated changelog generation
+**Tooling Integration:**
+- For any user-visible change, add a manual `CHANGELOG.md` entry under `## [Unreleased]` (Keep a Changelog format; see `docs/llm/changelog.md`) — this project does NOT generate the changelog from commit messages
 - File change categorization enables automated impact analysis
 - Traceability matrix supports automated requirement tracking
 - Quality metrics enable automated quality reporting

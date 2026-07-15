@@ -49,6 +49,7 @@ A single change may match multiple rows. Apply all that match.
 | New subsystem-specific durable memory | Reusable discovery that belongs to one completed subsystem/feature |
 | Refactor | Renamed/moved files or symbols — path references in docs may be stale |
 | New test pattern | New fixture, new marker, new golden-data convention |
+| User-visible change | New feature / capability / config field / command / public API; behavior change; schema/data migration; user-facing bug fix |
 
 ## Step 2 — Update `docs/llm/` (the LLM-agent canon)
 
@@ -118,11 +119,39 @@ glob lib/ext_modules/*/README.md
 
 Open any that describe files, APIs, or behavior you touched and update them. Common candidates: `lib/cache/`, `lib/rate_limiter/`, `lib/openweathermap/`, `lib/geocode_maps/`, `lib/markdown/test/`, `internal/services/storage/`, `internal/database/migrations/`.
 
-## Step 6 — Update the human developer guide (only if it covers your change)
+## Step 6 — Update `CHANGELOG.md` and root `README.md` for user-visible changes
+
+User-facing docs at the repo root go stale quietly. After a code change, ask: would a **user or operator** (not just an agent reading `docs/llm/`) notice this change? If yes, add a `CHANGELOG.md` entry (mandatory) and run the root `README.md` staleness check below.
+
+### `CHANGELOG.md` (mandatory for user-visible changes)
+
+[`CHANGELOG.md`](../../../CHANGELOG.md) is the user-facing changelog, formatted per [Keep a Changelog](https://keepachangelog.com/). The **authoritative process and format spec is [`docs/llm/changelog.md`](../../../docs/llm/changelog.md)** — read it whenever you are unsure whether, where, or how to add an entry.
+
+Add a one-line entry under `## [Unreleased]` in the matching subsection:
+
+- `### Added` — new feature, capability, command, config field, public API, or new schema/migration that users will see.
+- `### Changed` — behavior change, renamed config key, schema/data migration altering existing semantics.
+- `### Fixed` — user-facing bug fix.
+
+Each entry: declarative and past tense per [`docs/llm/changelog.md`](../../../docs/llm/changelog.md) §Entry Style — describe the new state (e.g. "X now does Y"), never imperative. Do **not** start the line with "Added"/"Fixed"/"Changed" since the `### Added` / `### Fixed` / `### Changed` category header already conveys that. Keep entries one line and concrete (name the migration / config key / command so users can grep for it). Match the entry style documented in [`docs/llm/changelog.md`](../../../docs/llm/changelog.md).
+
+**When NOT to update `CHANGELOG.md`** (per `docs/llm/changelog.md`):
+
+- Style / formatting fixes, whitespace, comment typos.
+- Internal refactors with no user-visible effect (renames inside `internal/`, dead-code removal, perf tweaks invisible to users).
+- Doc-only changes — **unless** the change documents a brand-new user-facing feature.
+- Test-only changes.
+- Dependency pin bumps with no behavior change.
+
+### Root `README.md` (staleness check — not mandatory on every change)
+
+[`README.md`](../../../README.md) is user docs. Run a **staleness check**: if your change alters user-facing capabilities, commands, or configuration that `README.md` actually documents, update `README.md` so it does not go stale. If `README.md` does not mention the touched area, no update is needed. This is distinct from Step 5, which scans inline `lib/**/README.md` and `internal/**/README.md` — Step 6 concerns only the **repo-root** `README.md`. When in doubt, leave it alone rather than churn it.
+
+## Step 7 — Update the human developer guide (only if it covers your change)
 
 [`docs/developer-guide.md`](../../../docs/developer-guide.md) is human-oriented and partially redundant with `docs/llm/`. Find relevant sections **by heading**, not section number (numbers rot). Update when your change invalidates an example or description there.
 
-## Step 7 — Secrets discipline
+## Step 8 — Secrets discipline
 
 If your change introduces a new credentialed integration (new API key, new provider token):
 
@@ -130,7 +159,7 @@ If your change introduces a new credentialed integration (new API key, new provi
 - Reference the env var by name in docs; **never paste the secret, never commit `.env*`, never echo secrets in logs or reports.**
 - If you added a new `.env*` key, document the key name (not the value) in the relevant config doc.
 
-## Step 8 — Verification
+## Step 9 — Verification
 
 Before declaring docs complete:
 
@@ -143,6 +172,8 @@ Before declaring docs complete:
 - [ ] If you added a new file under `docs/llm/memories/`, both `docs/llm/memories/index.md` and `docs/llm/index.md` were updated.
 - [ ] New hard rules or load-bearing gotchas reflected in `AGENTS.md`.
 - [ ] `.agents/skills/` index updated if you added a skill.
+- [ ] **User-visible change** → `CHANGELOG.md` entry added under the correct `## [Unreleased]` subsection (`### Added` / `### Changed` / `### Fixed`), per `docs/llm/changelog.md`. Internal-only changes correctly skipped.
+- [ ] **Root `README.md` staleness check** run; updated only if user-facing capabilities/commands/config it documents actually changed.
 - [ ] `make format lint && make test` still green — this catches code examples that drifted.
 
 > **Note:** If you are `docs-writer` (or another agent restricted from running `make format`/`make test`), substitute `make lint && make check-docs` as your verification gate. The full `make format lint && make test` remains the canonical gate for agents that can run it (`software-developer`, `debugger`, etc.).
@@ -152,22 +183,26 @@ If any step fails, fix it before closing the task. Stale docs are worse than ver
 
 ## Quick reference matrix
 
-| Change | `docs/llm/` | Schema docs | `AGENTS.md` | Dev guide | READMEs |
-|---|---|---|---|---|---|
-| New handler | `handlers.md` (+ maybe `index.md` §4.5) | — | If new ordering invariant | If section covers handlers | Rare |
-| New service | `services.md`, `index.md` §4.3 | — | If new singleton discipline | If section covers services | If service has README |
-| Schema change | `database.md` (+ maybe `sql-portability-guide.md`) | All three | If new portability rule | If section covers DB | `internal/database/migrations/README.md` |
-| Config change | `configuration.md` | — | If new secrets rule | If section covers config | — |
-| New library | `libraries.md`, `index.md` §4.6 | — | — | If section covers libs | Library's own README |
-| New LLM provider | `libraries.md` | — | — | — | — |
-| New chat setting | `tasks.md` §4.1 only if the example list is now stale | — | — | — | — |
-| Architecture shift | `architecture.md` | — | If invariant changes | Possibly | — |
-| New gotcha | `tasks.md` (§2/§3/§4) | — | Only if load-bearing | — | — |
-| New repo-wide durable memory | `teamlead-memory.md` | — | Only if it becomes a hard rule | — | — |
-| New subsystem-specific durable memory | `docs/llm/memories/<topic>.md`, `docs/llm/memories/index.md`, maybe `index.md` | — | No | — | — |
-| New hard rule | Relevant `docs/llm/*.md` | — | Yes | Yes, if covered | — |
-| Refactor | Search all `docs/llm/**/*.md` for old paths | If schema paths moved | If anything it references moved | Same | Same |
-| New skill | — | — | Update "available skills" / references list | — | — |
+Columns `READMEs` and `CHANGELOG.md` and root `README.md` overlap in spirit but differ in scope: `READMEs` here means inline `lib/**/README.md` / `internal/**/README.md` (Step 5); `CHANGELOG.md` and root `README.md` are the Step 6 user-facing surfaces. `CHANGELOG.md` is **only** for user-visible changes — write "If user-visible" when the change could be invisible (internal).
+
+| Change | `docs/llm/` | Schema docs | `AGENTS.md` | Dev guide | READMEs (inline) | `CHANGELOG.md` |
+|---|---|---|---|---|---|---|
+| New handler | `handlers.md` (+ maybe `index.md` §4.5) | — | If new ordering invariant | If section covers handlers | Rare | If user-facing command/feature |
+| New service | `services.md`, `index.md` §4.3 | — | If new singleton discipline | If section covers services | If service has README | If user-facing capability |
+| Schema change | `database.md` (+ maybe `sql-portability-guide.md`) | All three | If new portability rule | If section covers DB | `internal/database/migrations/README.md` | Yes (name the migration) |
+| Config change | `configuration.md` | — | If new secrets rule | If section covers config | — | If new user-facing config field |
+| New library | `libraries.md`, `index.md` §4.6 | — | — | If section covers libs | Library's own README | If user-facing capability |
+| New LLM provider | `libraries.md` | — | — | — | — | If user-facing |
+| New chat setting | `tasks.md` §4.1 only if the example list is now stale | — | — | — | — | Yes (new setting) |
+| Architecture shift | `architecture.md` | — | If invariant changes | Possibly | — | If user-visible behavior change |
+| New gotcha | `tasks.md` (§2/§3/§4) | — | Only if load-bearing | — | — | No |
+| New repo-wide durable memory | `teamlead-memory.md` | — | Only if it becomes a hard rule | — | — | No |
+| New subsystem-specific durable memory | `docs/llm/memories/<topic>.md`, `docs/llm/memories/index.md`, maybe `index.md` | — | No | — | — | No |
+| New hard rule | Relevant `docs/llm/*.md` | — | Yes | Yes, if covered | — | Usually no (unless it changes user-facing behavior) |
+| Refactor | Search all `docs/llm/**/*.md` for old paths | If schema paths moved | If anything it references moved | Same | Same | If user-visible (e.g. renamed command/config) |
+| New skill | — | — | Update "available skills" / references list | — | — | No |
+
+For the **repo-root `README.md`** there is no matrix column — apply the Step 6 staleness check to it independently (only when user-facing capabilities/commands/config it documents change).
 
 ## Reminders
 

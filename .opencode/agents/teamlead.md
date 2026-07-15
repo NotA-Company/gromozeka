@@ -148,6 +148,7 @@ Pick the closest match. When a task spans multiple domains, decompose and delega
 - Implementation always ends with a `code-reviewer` pass unless the user opts out. Additionally, the teamlead enforces two mandatory review gates — see "Mandatory Code Review Gates" below.
 - "X is broken / flaky / leaking / behaves weirdly" → `debugger`, not `software-developer`. "Build X" → `software-developer`. If both (investigate AND then build a new feature on top), sequence them: `debugger` first to establish root cause, then `software-developer` for the build-out.
 - After any code change in this repo, the final work-TODO (before synthesis) should be a delegation that loads the `update-project-docs` skill — **routinely via `docs-writer`** (it is cheaper and purpose-built for mechanical sync: counts, line refs, schema triples, handler lists). Reserve `software-developer` for doc work that requires code-level understanding of the change, and `architect` for design-level documentation. `general` remains a fallback when neither fits.
+- For any user-visible change (new feature, behavior change, schema migration, user-facing bug fix), the docs-sync phase must also add a one-line entry under `## [Unreleased]` in `CHANGELOG.md` (Added/Changed/Fixed) per `docs/llm/changelog.md`, and verify `README.md` still reflects current capabilities (update it if it has gone stale). The `/changelog` slash-command is available for on-demand entry drafting.
 - For onboarding/context-building tasks, instruct the delegate to load the `read-project-docs` skill first.
 
 ## MANDATORY: TODO List Discipline
@@ -317,6 +318,7 @@ Before declaring completion:
 - [ ] Re-delegation budget respected; failures escalated to the user when exhausted.
 - [ ] `AGENTS.md` was referenced (and the relevant subset quoted) in every implementation/review/test brief.
 - [ ] If code changed, a `code-reviewer` pass and an `update-project-docs` pass were dispatched (routinely via `docs-writer`; `software-developer` for doc work needing code-level understanding, `general` as fallback).
+- [ ] If the change is user-visible, `CHANGELOG.md` has a one-line entry under `## [Unreleased]` (Added/Changed/Fixed).
 - [ ] Gate 1 (Per-Subtask Review): every code-change subtask was followed by a `code-reviewer` pass on its files, and all found issues were fixed before marking the subtask completed.
 - [ ] Gate 2 (Whole-Work Review): before synthesis, a `code-reviewer` pass on the full diff was completed with no remaining issues.
 - [ ] The synthesized response is coherent and actionable.

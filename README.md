@@ -2,6 +2,8 @@
 
 Gromozeka is a production-ready, multi-platform AI bot supporting Telegram and Max Messenger.
 
+See [CHANGELOG.md](CHANGELOG.md) for notable changes.
+
 ## Requirements
 
 - Python 3.12+
