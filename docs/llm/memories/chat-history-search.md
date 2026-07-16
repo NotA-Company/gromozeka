@@ -428,4 +428,30 @@ Five review findings addressed, then two further user decisions applied:
   files, be explicit about which files to NOT touch.
 - **`code-reviewer` subagent may return empty results** in some sessions. If it does twice, fall
   back to `general` agent for the review — use the same prompt structure, just route through
+
+## Post-Step-2 Enhancements — `search_messages` params (2026-07-15)
+
+Two optional parameters added to `_llmToolSearchMessages` and threaded through
+`ChatSearchRepository.searchChatMessages` / `_filterOnlySearch` / `_semanticSearch` /
+`_filterMessageIds` / `_nativeVectorSearch` (no schema change — `thread_id` and
+`message_text` columns already existed):
+
+- **`current_thread_only`** (BOOLEAN, default `true`): when no explicit `thread_message_id`
+  resolves, restricts results to `ensuredMessage.threadId or DEFAULT_THREAD_ID`. Set `false` to
+  search the whole chat. An explicit `thread_message_id` overrides it. A `_coerceToolBool`
+  helper normalises LLM-provided JSON-string booleans (`"false"` → `False`) because
+  `bool("false")` is truthy.
+- **`substring`** (STRING, optional): case-insensitive exact-text filter on `message_text`
+  via the portable `BaseSQLProvider.getLikeComparison` helper (`%...%`, AND-combined with other
+  filters). Stripped/normalised in the handler; the repository wraps it into `%...%`.
+
+**Embeddings-gate nuance (behavioural change)**: the unconditional
+`if not chatSettings[EMBEDDINGS_ENABLED]` gate was narrowed to `if query and not ...`.
+Semantic search (non-empty `query`) still requires `EMBEDDINGS_ENABLED`; a substring/filter-only
+call (empty `query`) now skips embedding generation entirely and runs without embeddings. This
+made the previously-stale "search_messages works regardless of EMBEDDINGS_ENABLED" claim
+*partially* correct (true only for the substring/filter path).
+
+The 2026-06-28 decision to "drop client-side keyword matching" (above) is **not** reversed —
+`substring` is a DB-side `LIKE` filter, not a post-search client-side filter.
   `general`.

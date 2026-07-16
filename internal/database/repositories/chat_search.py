@@ -95,6 +95,8 @@ class ChatSearchRepository(BaseRepository):
         modelName: Optional[str] = None,
         maxMessages: Optional[int] = None,
         dataSource: Optional[str] = None,
+        threadId: Optional[int] = None,
+        substring: Optional[str] = None,
     ) -> List[ChatMessageDict]:
         """Search chat messages, with optional semantic ranking.
 
@@ -144,6 +146,14 @@ class ChatSearchRepository(BaseRepository):
                 ``MAX_MESSAGES_FOR_SEMANTIC_SEARCH`` chat setting when
                 passed through by the caller.
             dataSource: Optional explicit data source.
+            threadId: Optional thread/topic id to restrict the search
+                to (``0`` = main thread). When ``None``, no thread
+                scoping is applied.
+            substring: Optional case-insensitive substring to match in
+                ``message_text``. When ``None``, no text filter is
+                applied. The repository wraps the raw value into
+                ``%...%`` and binds it via a portable ``LIKE``
+                comparison (see ``getLikeComparison``).
 
         Returns:
             List of :class:`ChatMessageDict` with message content,
@@ -162,7 +172,8 @@ class ChatSearchRepository(BaseRepository):
             f"userFilter={userFilter}, categoryFilter={categoryFilter}, "
             f"maxAgeDays={maxAgeDays}, rootMessageId={rootMessageId}, "
             f"modelName={modelName}, maxMessages={maxMessages}, "
-            f"dataSource={dataSource}, hasQueryEmbedding={queryEmbedding is not None}"
+            f"dataSource={dataSource}, threadId={threadId}, substring={substring}, "
+            f"hasQueryEmbedding={queryEmbedding is not None}"
         )
         if queryEmbedding is None:
             return await self._filterOnlySearch(
@@ -173,6 +184,8 @@ class ChatSearchRepository(BaseRepository):
                 maxAgeDays=maxAgeDays,
                 rootMessageId=rootMessageId,
                 dataSource=dataSource,
+                threadId=threadId,
+                substring=substring,
             )
         return await self._semanticSearch(
             chatId=chatId,
@@ -186,6 +199,8 @@ class ChatSearchRepository(BaseRepository):
             modelName=modelName,
             maxMessages=maxMessages,
             dataSource=dataSource,
+            threadId=threadId,
+            substring=substring,
         )
 
     ###
@@ -201,6 +216,8 @@ class ChatSearchRepository(BaseRepository):
         maxAgeDays: Optional[int],
         rootMessageId: Optional[MessageId],
         dataSource: Optional[str],
+        threadId: Optional[int] = None,
+        substring: Optional[str] = None,
     ) -> List[ChatMessageDict]:
         """Filter-only search path used by :meth:`searchChatMessages`.
 
@@ -212,6 +229,22 @@ class ChatSearchRepository(BaseRepository):
         ``limit`` follows the cross-RDBMS ``applyPagination`` contract:
         ``None`` means "no cap" (no ``LIMIT`` clause is appended), and
         an ``int`` means "cap to N rows".
+
+        Args:
+            chatId: Chat to search in.
+            limit: Max results to return. ``None`` means no cap.
+            userFilter: Optional user ID to narrow search.
+            categoryFilter: Optional message category filter.
+            maxAgeDays: Only consider messages newer than N days.
+            rootMessageId: Optional thread root to filter by.
+            dataSource: Optional explicit data source.
+            threadId: Optional thread/topic id filter (``0`` = main).
+            substring: Optional case-insensitive substring; bound as
+                ``%...%`` via ``getLikeComparison``.
+
+        Returns:
+            List of :class:`ChatMessageDict` with ``score=0.0``. Empty
+            list on failure.
         """
         try:
             cutoffTs: Optional[datetime.datetime] = None
@@ -224,6 +257,8 @@ class ChatSearchRepository(BaseRepository):
                 "rootMessageId": rootMessageId.asStr() if rootMessageId is not None else None,
                 "cutoffTs": cutoffTs,
                 "categoryFilter": None if categoryFilter is None else True,
+                "threadId": threadId,
+                "substring": f"%{substring}%" if substring else None,
             }
             categoryPlaceholders: list = []
             if categoryFilter:
@@ -243,6 +278,8 @@ class ChatSearchRepository(BaseRepository):
                     c.chat_id = :chatId
                     AND (:userFilter     IS NULL OR c.user_id = :userFilter)
                     AND (:rootMessageId  IS NULL OR c.root_message_id = :rootMessageId)
+                    AND (:threadId       IS NULL OR c.thread_id = :threadId)
+                    AND (:substring      IS NULL OR {sqlProvider.getLikeComparison("c.message_text", "substring")})
                     AND (:cutoffTs       IS NULL OR c.date > :cutoffTs)
                     AND (:categoryFilter IS NULL {categoryClause})
                 ORDER BY c.date DESC, c.message_id DESC
@@ -277,14 +314,17 @@ class ChatSearchRepository(BaseRepository):
         modelName: Optional[str],
         maxMessages: Optional[int],
         dataSource: Optional[str],
+        threadId: Optional[int] = None,
+        substring: Optional[str] = None,
     ) -> List[ChatMessageDict]:
         """Semantic search path used by :meth:`searchChatMessages`.
 
         1. Load all embeddings for the chat from ``message_embeddings``
            (filtered by the active model).
         2. Apply pre-filters (``userFilter``, ``categoryFilter``,
-           ``maxAgeDays``, ``rootMessageId``) over the loaded
-           ``messageIds`` to produce a small candidate set.
+           ``maxAgeDays``, ``rootMessageId``, ``threadId``,
+           ``substring``) over the loaded ``messageIds`` to produce a
+           small candidate set.
         3. Compute cosine similarity using ``numpy`` over the candidate
            matrix, take the top-K.
         4. Fetch full message data for the top-K and return as
@@ -306,6 +346,9 @@ class ChatSearchRepository(BaseRepository):
                 from ``message_embeddings``. Required for semantic mode.
             maxMessages: Cap on how many embedding rows to load.
             dataSource: Optional explicit data source.
+            threadId: Optional thread/topic id filter (``0`` = main).
+            substring: Optional case-insensitive substring; bound as
+                ``%...%`` via ``getLikeComparison``.
 
         Returns:
             List of :class:`ChatMessageDict` with message content,
@@ -349,6 +392,8 @@ class ChatSearchRepository(BaseRepository):
                         modelName=modelName,
                         maxMessages=maxMessages,
                         dimension=dimension,
+                        threadId=threadId,
+                        substring=substring,
                     )
                     if nativeResults:
                         return nativeResults
@@ -384,6 +429,8 @@ class ChatSearchRepository(BaseRepository):
                 categoryFilter=categoryFilter,
                 maxAgeDays=maxAgeDays,
                 rootMessageId=rootMessageId,
+                threadId=threadId,
+                substring=substring,
             )
             if not candidateMessageIds:
                 return []
@@ -515,12 +562,30 @@ class ChatSearchRepository(BaseRepository):
         categoryFilter: Optional[Sequence[MessageCategory]],
         maxAgeDays: Optional[int],
         rootMessageId: Optional[MessageId],
+        threadId: Optional[int] = None,
+        substring: Optional[str] = None,
     ) -> List[MessageId]:
         """Apply SQL filters to the candidate message-ID set.
 
         Returns the subset of ``candidateMessageIds`` that satisfy all
         supplied filters. An empty input produces an empty result
         without a round-trip to the DB.
+
+        Args:
+            sqlProvider: SQL provider to use.
+            chatId: Chat identifier.
+            candidateMessageIds: Candidate message ids to narrow.
+            userFilter: Optional user id filter.
+            categoryFilter: Optional message category filter.
+            maxAgeDays: Optional age-in-days filter.
+            rootMessageId: Optional thread root filter.
+            threadId: Optional thread/topic id filter (``0`` = main).
+            substring: Optional case-insensitive substring; bound as
+                ``%...%`` via ``getLikeComparison``.
+
+        Returns:
+            Subset of ``candidateMessageIds`` passing all filters, in
+            unspecified order.
 
         Note:
             Results are returned in unspecified order (deduplicated via
@@ -539,6 +604,8 @@ class ChatSearchRepository(BaseRepository):
             "userFilter": userFilter,
             "rootMessageId": rootMessageId.asStr() if rootMessageId is not None else None,
             "cutoffTs": cutoffTs,
+            "threadId": threadId,
+            "substring": f"%{substring}%" if substring else None,
         }
         if categoryFilter:
             for i, cat in enumerate(categoryFilter):
@@ -571,6 +638,8 @@ class ChatSearchRepository(BaseRepository):
                   AND c.message_id IN ({midPlaceholders})
                   AND (:userFilter IS NULL OR c.user_id = :userFilter)
                   AND (:rootMessageId IS NULL OR c.root_message_id = :rootMessageId)
+                  AND (:threadId IS NULL OR c.thread_id = :threadId)
+                  AND (:substring IS NULL OR {sqlProvider.getLikeComparison("c.message_text", "substring")})
                   AND (:cutoffTs IS NULL OR c.date > :cutoffTs)
             """
             if categoryFilter:
@@ -650,6 +719,8 @@ class ChatSearchRepository(BaseRepository):
         modelName: Optional[str],
         maxMessages: Optional[int],
         dimension: int,
+        threadId: Optional[int] = None,
+        substring: Optional[str] = None,
     ) -> List[ChatMessageDict]:
         """Semantic search using the provider's native vector search.
 
@@ -704,6 +775,9 @@ class ChatSearchRepository(BaseRepository):
             dimension: Embedding dimension (e.g. 384, 1024). Used to
                 construct the vec0 table name
                 ``f"vec_message_embeddings_{dimension}"``.
+            threadId: Optional thread/topic id filter (``0`` = main).
+            substring: Optional case-insensitive substring; bound as
+                ``%...%`` via ``getLikeComparison``.
 
         Returns:
             List of :class:`ChatMessageDict` with ``score`` set to the
@@ -788,7 +862,12 @@ class ChatSearchRepository(BaseRepository):
         # ``chat_messages`` (not the vec0 table), so they are applied as
         # a post-filter reusing the existing battle-tested batch logic.
         needsPostFilter: bool = (
-            userFilter is not None or categoryFilter is not None or maxAgeDays is not None or rootMessageId is not None
+            userFilter is not None
+            or categoryFilter is not None
+            or maxAgeDays is not None
+            or rootMessageId is not None
+            or threadId is not None
+            or substring is not None
         )
         if needsPostFilter:
             candidateIds = await self._filterMessageIds(
@@ -799,6 +878,8 @@ class ChatSearchRepository(BaseRepository):
                 categoryFilter=categoryFilter,
                 maxAgeDays=maxAgeDays,
                 rootMessageId=rootMessageId,
+                threadId=threadId,
+                substring=substring,
             )
             if not candidateIds:
                 return []

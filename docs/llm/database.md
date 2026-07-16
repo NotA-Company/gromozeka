@@ -53,8 +53,9 @@
 | `chatSettings` | `setChatSetting(chatId, key, value, *, updatedBy)` | `None` | Set a chat setting with audit trail |
 | `chatSettings` | `getChatSetting(chatId, setting)` | `Optional[str]` | Get single setting value |
 | `chatSettings` | `getChatSettings(chatId)` | `Dict[str, tuple[str, int]]` | Get all settings as (value, updated_by) |
-| `cache` | `clearOldCacheEntries(ttl)` | `None` | Cleanup stale cache |
-| `delayedTasks` | `cleanupOldCompletedDelayedTasks(ttl)` | `None` | Cleanup old tasks |
+| `cache` | `clearOldCacheEntries(ttl, cacheType=None)` | `bool` | Delete `cache` rows whose `updated_at < now − ttl`. `cacheType=None` purges ALL namespaces; pass a `CacheType` member to scope to one namespace. Driven by `HandlersManager._cleanupOldData()` on a per-namespace schedule (see `docs/llm/teamlead-memory.md` § "DB Cache Cleanup"): 365-day default floor for all namespaces, then a 7-day aggressive pass for `WEATHER`/`YANDEX_SEARCH`/`URL_CONTENT`/`URL_CONTENT_CONDENSED`. Constants live at the top of `internal/bot/common/handlers/manager.py` (`CACHE_CLEANUP_DEFAULT_TTL_SECS`, `CACHE_CLEANUP_AGGRESSIVE_TTL_SECS`, `AGGRESSIVE_CLEANUP_CACHE_TYPES`). Triggers: weekly cron (Monday 00:00 UTC via `_dtCronJob`) and on-shutdown (`_dtOnExit`) |
+| `delayedTasks` | `cleanupOldCompletedDelayedTasks(ttl)` | `bool` | Cleanup old completed delayed tasks. Called from `_cleanupOldData()` with `DELAYED_TASKS_CLEANUP_TTL_SECS` (30 days) |
+| `DatabaseBayesStorage` | `cleanupOldTokens(rules)` | `bool` | Delete old/rare rows from `bayes_tokens`. `rules` is a sequence of `(ttlSeconds, maxCount)` tuples; for each rule, runs `DELETE FROM bayes_tokens WHERE updated_at < :cutoffTime AND total_count <= :maxCount` across ALL tokens regardless of `chat_id` (one DELETE per rule). Returns `True` if all rules applied, `False` on any exception. NOTE: `DatabaseBayesStorage` is NOT a standard `self.db.<name>` repository — it's a separate class at [`internal/database/bayes_storage.py`](../../internal/database/bayes_storage.py), instantiated as `DatabaseBayesStorage(self.db)`. Called from `HandlersManager._cleanupOldData()` with `BAYES_TOKEN_CLEANUP_RULES` (defined near the top of `internal/bot/common/handlers/manager.py`; defaults: tokens with `total_count <= 1` older than 90 days, OR `total_count <= 2` older than 180 days). Sibling method `cleanupRareTokens(minCount, chatId=None)` is unrelated (no production caller in the cleanup path) |
 | `divinations` | `insertReading(...)` | `None` | Persist a tarot/runes reading row in `divinations` |
 | `divinations` | `getLayout(systemId, layoutName)` | `Optional[DivinationLayoutDict]` | Get cached layout with fuzzy search |
 | `divinations` | `saveLayout(...)` | `bool` | Save/update layout definition in cache |
@@ -710,7 +711,7 @@ success, value = sqlToCustomType("123", Union[int, str])
    - Validate that all historical migrations are accounted for
 
 **Known implemented migrations:**
-- `migration_001` to `migration_023` — Baseline migrations through latest schema updates
+- `migration_001` to `migration_024` — Baseline migrations through latest schema updates
 - `migration_010`: Adds `updated_by INTEGER NOT NULL` to `chat_settings` table (audit trail)
 - `migration_011` and `migration_012`: Additional schema improvements
 - `migration_013`: Removes `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns (explicit timestamp handling)
@@ -724,6 +725,7 @@ success, value = sqlToCustomType("123", Union[int, str])
 - `migration_021`: Adds the nullable `deleted_at` column to [`user_memories`](../../docs/database-schema-llm.md#user_memories) (soft-delete — `deleteMemory` sets `deleted_at` + drops vec0 + nulls provenance instead of hard-`DELETE`-ing the row, so historical messages referencing a deleted memory can still resolve its content via `getMemoriesByIds`). Every live read gains `AND deleted_at IS NULL`. Additive nullable column; `down()` is a no-op that logs (portable `DROP COLUMN` unavailable). Part of memory-compaction-v1 (see ADR-017 and [`docs/plans/memory-compaction-v1.md`](/docs/plans/memory-compaction-v1.md)).
 - `migration_022`: DROP TABLE `user_data` (superseded by `user_memories`; data was backfilled into `user_memories` in `migration_020`). The no-op `down()` is intentional — re-creating the table would orphan the rows already moved to `user_memories`.
 - `migration_023`: Idempotent data migration renaming the `chat_settings` key `memory-injection-enabled` → `memory-enabled` via `UPDATE chat_settings SET key='memory-enabled' WHERE key='memory-injection-enabled'`. Companion to the in-code `MEMORY_INJECTION_ENABLED` → `MEMORY_ENABLED` `ChatSettingsKey` enum rename.
+- `migration_024`: Adds `idx_bayes_tokens_updated_at` index on `bayes_tokens (updated_at)` — optimizes the age-based `DatabaseBayesStorage.cleanupOldTokens` DELETE (`WHERE updated_at < :cutoffTime AND total_count <= :maxCount`), which runs across ALL chats from `HandlersManager._cleanupOldData()` on a weekly cron and at shutdown. The existing `bayes_tokens_total_idx(total_count)` and `bayes_tokens_chat_idx(chat_id)` do not help that DELETE (no chat_id filter; `updated_at` is the selective range predicate).
 
 ---
 

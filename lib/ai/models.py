@@ -41,13 +41,115 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from enum import Enum, StrEnum
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from io import BytesIO
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import magic
+from PIL import Image
 
 import lib.utils as utils
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Image format conversion helper
+# ---------------------------------------------------------------------------
+
+#: Maps an image MIME type to the Pillow ``Image.save`` format string.
+#: Used by :func:`convertImageIfNeeded` to re-encode image bytes into a format
+#: the target LLM accepts as vision input.
+_MIME_TO_PIL_FORMAT: Dict[str, str] = {
+    "image/jpeg": "JPEG",
+    "image/png": "PNG",
+    "image/webp": "WEBP",
+    "image/gif": "GIF",
+}
+
+#: Maximum pixel count (width × height) for an image we are willing to
+#: re-encode for a vision request. Real vision inputs are never this large;
+#: the cap bounds memory use on crafted decompression bombs BEFORE the
+#: expensive decode runs. Pillow's own ``DecompressionBombError`` still fires
+#: above ~2× its threshold and is caught by the broad except below. Scoped to
+#: this function only — the global ``Image.MAX_IMAGE_PIXELS`` is left untouched
+#: so other Pillow users in the process (e.g. python-telegram-bot) are unaffected.
+MAX_VISION_IMAGE_PIXELS = 50_000_000  # 50 MP
+
+
+def convertImageIfNeeded(imageBytes: bytes, supportedFormats: Optional[List[str]]) -> Tuple[bytes, str]:
+    """Return image bytes in a MIME format the target model accepts, converting only when required.
+
+    Detects the current MIME type of *imageBytes*. When *supportedFormats* is
+    falsy (``None`` or empty) or already contains the detected MIME, the bytes
+    are returned unchanged (passthrough). Otherwise the bytes are re-encoded to
+    the FIRST entry in *supportedFormats* via Pillow.
+
+    This function NEVER raises: any conversion failure (unreadable bytes,
+    unknown target format, oversized image, Pillow error, or even a libmagic
+    failure during MIME detection) is logged and the ORIGINAL bytes are
+    returned unchanged so the caller can still attempt the request. When MIME
+    detection itself fails the returned type is ``application/octet-stream``
+    (honest about not knowing the type; the API will reject if it can't handle
+    it).
+
+    Args:
+        imageBytes: Raw image bytes in any format Pillow can open.
+        supportedFormats: Ordered list of acceptable input MIME types for the
+            target model, e.g. ``["image/jpeg", "image/png"]``. ``None`` or an
+            empty list disables conversion (passthrough). The first element is
+            used as the conversion target when the current MIME is absent.
+
+    Returns:
+        A ``(finalBytes, finalMimeType)`` tuple where *finalBytes* is the
+        (possibly converted) image bytes and *finalMimeType* is the MIME type
+        of those bytes.
+    """
+    try:
+        currentMime = magic.from_buffer(imageBytes, mime=True)
+    except Exception:  # noqa: BLE001 — libmagic failure on malformed bytes; never-raise contract
+        logger.error("Failed to detect image MIME for conversion; sending original bytes")
+        return (imageBytes, "application/octet-stream")
+    if not supportedFormats or currentMime in supportedFormats:
+        return (imageBytes, currentMime)
+
+    targetMime = supportedFormats[0]
+    pilFormat = _MIME_TO_PIL_FORMAT.get(targetMime)
+    if pilFormat is None:
+        logger.warning(
+            f"Cannot convert image to unsupported target MIME {targetMime!r} "
+            f"(current {currentMime!r}); sending original"
+        )
+        return (imageBytes, currentMime)
+    try:
+        logger.debug(
+            f"Got image in {currentMime} format. " f"Supported formats: {supportedFormats}; converting to {targetMime}"
+        )
+        with BytesIO(imageBytes) as inBuf:
+            img = Image.open(inBuf)
+            # Cheap header read has populated width/height before any decode;
+            # reject oversized images so the (memory-expensive) decode never
+            # runs. Scoped cap — the global Image.MAX_IMAGE_PIXELS is NOT mutated.
+            if img.width * img.height > MAX_VISION_IMAGE_PIXELS:
+                logger.error(
+                    f"Image too large to convert ({img.width}x{img.height}="
+                    f"{img.width * img.height} pixels > {MAX_VISION_IMAGE_PIXELS}); "
+                    f"current={currentMime!r} target={targetMime!r}"
+                )
+                return (imageBytes, currentMime)
+            # JPEG has no alpha channel; flatten onto an RGB canvas first so
+            # Pillow can encode transparency-bearing sources (PNG/WebP) into JPEG.
+            if targetMime == "image/jpeg":
+                img = img.convert("RGB")
+            with BytesIO() as outBuf:
+                img.save(outBuf, format=pilFormat)
+                converted = outBuf.getvalue()
+        return (converted, targetMime)
+    except Exception as e:  # noqa: BLE001 — graceful degradation is the contract
+        logger.error(
+            f"Failed to convert image from {currentMime!r} to {targetMime!r}: {e}; "
+            f"returning original bytes unchanged"
+        )
+        return (imageBytes, currentMime)
+
 
 # ---------------------------------------------------------------------------
 # __str__ rendering helpers for ModelRunResult
@@ -410,13 +512,18 @@ class LLMToolCall:
         {"id": "call_123", "name": "get_weather", "parameters": {"location": "London"}}
     """
 
-    def __init__(self, id: str, name: str, parameters: Dict[str, Any]):
+    def __init__(self, id: str, name: str, parameters: Dict[str, Any], errorMessage: Optional[str] = None):
         """Initialize a tool call.
 
         Args:
             id: Unique identifier for the tool call.
             name: Name of the function to call.
             parameters: Dictionary of parameter names to values.
+            errorMessage: Internal plumbing flag, NOT serialized into API
+                requests. When set, the tool call was synthesised from a broken
+                but recognisable tool-call attempt and the handler must NOT be
+                executed; instead *errorMessage* is fed back to the model as a
+                retry error. Left as ``None`` for ordinary tool calls.
 
         Returns:
             None
@@ -424,6 +531,7 @@ class LLMToolCall:
         self.id = id
         self.name = name
         self.parameters = parameters
+        self.errorMessage = errorMessage
 
     def __str__(self) -> str:
         """Return a JSON string representation of the tool call.
@@ -590,6 +698,7 @@ class ModelMessage:
         contentKey: Optional[str] = None,
         content: Optional[Any] = None,
         skipRole: bool = False,
+        supportedImageFormats: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Convert the message to a dictionary.
 
@@ -597,6 +706,11 @@ class ModelMessage:
             contentKey: Optional override for the content key (default: None, uses self.contentKey).
             content: Optional override for the content value (default: None, uses self.content).
             skipRole: If True, omit the role from the output (default: False).
+            supportedImageFormats: Optional list of acceptable input image MIME
+                types. Ignored by the base class; honoured by
+                :meth:`ModelImageMessage.toDict` to re-encode embedded images.
+                Accepted here so providers can pass it uniformly to every
+                message in a list regardless of concrete type.
 
         Returns:
             Dict[str, Any]: A dictionary representation of the message.
@@ -721,6 +835,7 @@ class ModelImageMessage(ModelMessage):
         contentKey: Optional[str] = None,
         content: Optional[Any] = None,
         skipRole: bool = False,
+        supportedImageFormats: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Convert the message to a dictionary with image content.
 
@@ -731,14 +846,23 @@ class ModelImageMessage(ModelMessage):
             contentKey: Optional override for the content key (default: None).
             content: Optional override for the content value (default: None).
             skipRole: If True, omit the role from the output (default: False).
+            supportedImageFormats: Optional ordered list of acceptable input
+                image MIME types for the target model. When the embedded image's
+                detected MIME is not in the list, it is re-encoded to the first
+                listed format (e.g. WebP -> JPEG). ``None`` or empty preserves
+                the original format. The conversion result is derived into a
+                LOCAL variable; ``self.image`` is never mutated, so repeated
+                serialisation (e.g. primary then fallback model) always starts
+                from the original bytes.
 
         Returns:
             Dict[str, Any]: A dictionary representation with the image embedded
                 as a base64 data URI.
 
         Note:
-            The image MIME type is automatically detected using the python-magic library.
-            Some providers may not support all image formats (e.g., YC AI doesn't support WebP).
+            The image MIME type is automatically detected using the python-magic
+            library. Conversion failures degrade gracefully: the original bytes
+            are sent unchanged (see :func:`convertImageIfNeeded`).
 
         Example:
             >>> message = ModelImageMessage(
@@ -751,9 +875,8 @@ class ModelImageMessage(ModelMessage):
             True
         """
         if content is None:
-            # TODO: YC AI does not support webp, think about converting it into PNG of JPEG
-            mimeType = magic.from_buffer(bytes(self.image), mime=True)
-            base64Image = base64.b64encode(self.image).decode("utf-8")
+            imageBytes, mimeType = convertImageIfNeeded(bytes(self.image), supportedImageFormats)
+            base64Image = base64.b64encode(imageBytes).decode("utf-8")
 
             content = []
             if self.content:
@@ -767,7 +890,6 @@ class ModelImageMessage(ModelMessage):
                     },
                 }
             )
-            # logger.debug(f"Image Content: {content}")
 
         return super().toDict(contentKey, content=content, skipRole=skipRole)
 
@@ -871,6 +993,7 @@ class ModelRunResult:
         "toolUsageHistory",
         "isFallback",
         "isToolsUsed",
+        "roundLimitHit",
         "inputTokens",
         "outputTokens",
         "totalTokens",
@@ -943,6 +1066,13 @@ class ModelRunResult:
 
         self.isFallback = False
         self.isToolsUsed = False
+        self.roundLimitHit = False
+        """bool: Whether the ``maxRounds`` round limit was reached during generation.
+        Set to ``True`` by :meth:`LLMService.generateTextViaLLM` when the
+        tool-calling loop terminated due to budget exhaustion (regardless of
+        the resulting status). Stays ``False`` for normal completion within
+        budget. Lets callers (e.g. the memory-refinement loop) detect that the
+        result may be incomplete."""
 
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens

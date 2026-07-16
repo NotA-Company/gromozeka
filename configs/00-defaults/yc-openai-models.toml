@@ -122,6 +122,7 @@ support_tools   = true
 support_text    = true
 support_images  = false
 support_structured_output = true
+input_image_format = ["image/png", "image/jpeg"]
 tier            = "paid"
 
 [models.models."aliceai-image-art"]

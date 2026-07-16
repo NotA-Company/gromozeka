@@ -34,14 +34,15 @@ live in :class:`TestFilterMessageIdsBatching`.
 # pyright: reportTypedDictNotRequiredAccess=false
 
 import datetime
-from unittest.mock import patch
+from typing import Optional
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from internal.database import Database
 from internal.database.models import MessageCategory
 from internal.database.providers.base import BaseSQLProvider
-from internal.database.repositories.chat_search import _MESSAGE_ID_FILTER_BATCH_SIZE
+from internal.database.repositories.chat_search import _MESSAGE_ID_FILTER_BATCH_SIZE, ChatSearchRepository
 from internal.models import MessageId
 
 
@@ -81,8 +82,22 @@ class TestSearchChatMessages:
         messageText: str,
         *,
         messageCategory: MessageCategory = MessageCategory.UNSPECIFIED,
+        threadId: Optional[int] = None,
+        rootMessageId: Optional[MessageId] = None,
     ) -> None:
-        """Insert a chat_users row and a chat_messages row for the test seed."""
+        """Insert a chat_users row and a chat_messages row for the test seed.
+
+        Args:
+            db: Database to seed.
+            chatId: Chat identifier.
+            userId: Author user id (a matching ``chat_users`` row is upserted).
+            messageId: Message id (numeric; wrapped in :class:`MessageId`).
+            messageText: Message body text.
+            messageCategory: Message category (default UNSPECIFIED).
+            threadId: Optional thread/topic id. ``None`` falls through to
+                :data:`DEFAULT_THREAD_ID` (``0`` = main) inside ``saveChatMessage``.
+            rootMessageId: Optional thread-root message id.
+        """
         await TestSearchChatMessages._seedUser(db, chatId=chatId, userId=userId)
         await db.chatMessages.saveChatMessage(
             date=datetime.datetime.now(datetime.timezone.utc),
@@ -91,6 +106,8 @@ class TestSearchChatMessages:
             messageId=MessageId(messageId),
             messageText=messageText,
             messageCategory=messageCategory,
+            threadId=threadId,
+            rootMessageId=rootMessageId,
         )
 
     async def test_filter_only_returns_matching_user(self, testDatabase: Database) -> None:
@@ -190,6 +207,263 @@ class TestSearchChatMessages:
         # Message 2 (embedding [0.0, 1.0]) is orthogonal to the query → score ≈ 0.0.
         assert results[1]["message_id"] == MessageId(2)
         assert results[1]["score"] == pytest.approx(0.0, abs=1e-6)
+
+    async def test_semanticModeThreadAndSubstringCombined(self, testDatabase: Database) -> None:
+        """Semantic mode forwards ``threadId`` AND ``substring`` through the post-filter.
+
+        Regression lock for the reviewer-flagged wiring gap: the ``threadId`` /
+        ``substring`` filters were previously exercised only in filter-only mode
+        (``queryEmbedding=None``). This test drives them THROUGH the semantic
+        machinery so a future refactor that drops either kwarg from a forwarding
+        call (``_semanticSearch`` → ``_nativeVectorSearch`` →
+        ``_filterMessageIds``, or the ``needsPostFilter`` guard) fails here.
+
+        With ``sqlite-vec`` available (the default in this repo's venv),
+        ``saveMessageEmbedding`` dual-writes the vec0 table, so the native
+        ``_nativeVectorSearch`` fast path runs and its ``needsPostFilter`` guard
+        + ``_filterMessageIds`` forwarding are exercised end-to-end. The
+        numpy-path forwarding is locked by the companion ``...NumpyPath`` test.
+
+        Seeds four messages across two threads (0 and 5) whose text
+        ``substring="foo"`` distinguishes:
+
+        - msg 1: thread 0, "foo bar"  — excluded by the ``threadId`` filter.
+        - msg 2: thread 5, "foo baz"  — kept (matches BOTH filters).
+        - msg 3: thread 5, "qux zap"  — excluded by the ``substring`` filter.
+        - msg 4: thread 0, "foo qux"  — excluded by the ``threadId`` filter.
+
+        Asserts ``threadId=5, substring="foo"`` returns ONLY msg 2.
+        """
+        chatId = 1
+        modelName = "test-model"
+        for messageId, messageText, threadId in (
+            (1, "foo bar", 0),
+            (2, "foo baz", 5),
+            (3, "qux zap", 5),
+            (4, "foo qux", 0),
+        ):
+            await self._seedMessage(
+                testDatabase,
+                chatId=chatId,
+                userId=100,
+                messageId=messageId,
+                messageText=messageText,
+                threadId=threadId,
+            )
+            await testDatabase.chatEmbeddings.saveMessageEmbedding(
+                chatId=chatId, messageId=MessageId(messageId), embedding=[1.0, 0.0], model=modelName
+            )
+
+        results = await testDatabase.chatSearch.searchChatMessages(
+            chatId=chatId,
+            queryEmbedding=[1.0, 0.0],
+            modelName=modelName,
+            threadId=5,
+            substring="foo",
+            limit=10,
+        )
+
+        assert {r["message_id"].asInt() for r in results} == {2}
+        assert results[0]["thread_id"] == 5
+        assert "foo" in results[0]["message_text"]
+
+    async def test_semanticModeThreadAndSubstringCombinedNumpyPath(self, testDatabase: Database) -> None:
+        """Semantic NUMPY path forwards ``threadId`` AND ``substring`` to ``_filterMessageIds``.
+
+        Companion to ``test_semanticModeThreadAndSubstringCombined``: forces the
+        numpy sub-path (``_semanticSearch`` → ``_loadEmbeddingsFromDb`` →
+        ``_filterMessageIds``) by short-circuiting ``_nativeVectorSearch`` to an
+        empty result, which makes ``_semanticSearch`` fall through to the numpy
+        ranking path. This is env-independent — it locks the numpy-path
+        forwarding regardless of whether ``sqlite-vec`` is installed — and shares
+        the same AND-combined seed/assertion. A refactor dropping ``threadId`` or
+        ``substring`` from the ``_filterMessageIds`` call inside
+        ``_semanticSearch`` fails here.
+        """
+        chatId = 1
+        modelName = "test-model"
+        for messageId, messageText, threadId in (
+            (1, "foo bar", 0),
+            (2, "foo baz", 5),
+            (3, "qux zap", 5),
+            (4, "foo qux", 0),
+        ):
+            await self._seedMessage(
+                testDatabase,
+                chatId=chatId,
+                userId=100,
+                messageId=messageId,
+                messageText=messageText,
+                threadId=threadId,
+            )
+            await testDatabase.chatEmbeddings.saveMessageEmbedding(
+                chatId=chatId, messageId=MessageId(messageId), embedding=[1.0, 0.0], model=modelName
+            )
+
+        # Force the numpy sub-path: an empty native result makes
+        # ``_semanticSearch`` fall through to ``_loadEmbeddingsFromDb`` + numpy.
+        with patch.object(ChatSearchRepository, "_nativeVectorSearch", new=AsyncMock(return_value=[])):
+            results = await testDatabase.chatSearch.searchChatMessages(
+                chatId=chatId,
+                queryEmbedding=[1.0, 0.0],
+                modelName=modelName,
+                threadId=5,
+                substring="foo",
+                limit=10,
+            )
+
+        assert {r["message_id"].asInt() for r in results} == {2}
+        assert results[0]["thread_id"] == 5
+        assert "foo" in results[0]["message_text"]
+
+    async def test_semanticNativeNeedsPostFilterGuardThreadAndSubstring(self, testDatabase: Database) -> None:
+        """``needsPostFilter`` guard in ``_nativeVectorSearch`` keeps each term.
+
+        The ``needsPostFilter`` boolean is an OR over every post-filter. The
+        companion ``...Combined`` test sets BOTH ``threadId`` and ``substring``,
+        so dropping a single term from the guard is masked by the other (the
+        guard stays True and ``_filterMessageIds`` still receives both kwargs).
+        This test closes that hole: it runs each filter on its own through the
+        native path (where the guard lives), so removing either
+        ``or threadId is not None`` or ``or substring is not None`` from the
+        guard collapses it to ``False``, skips the post-filter, and leaks
+        unfiltered candidates.
+
+        Same seed as the companion tests:
+
+        - msg 1: thread 0, "foo bar"
+        - msg 2: thread 5, "foo baz"
+        - msg 3: thread 5, "qux zap"
+        - msg 4: thread 0, "foo qux"
+
+        ``threadId=5`` alone must yield the two thread-5 messages; ``substring="foo"``
+        alone must yield the three "foo" messages.
+        """
+        chatId = 1
+        modelName = "test-model"
+        for messageId, messageText, threadId in (
+            (1, "foo bar", 0),
+            (2, "foo baz", 5),
+            (3, "qux zap", 5),
+            (4, "foo qux", 0),
+        ):
+            await self._seedMessage(
+                testDatabase,
+                chatId=chatId,
+                userId=100,
+                messageId=messageId,
+                messageText=messageText,
+                threadId=threadId,
+            )
+            await testDatabase.chatEmbeddings.saveMessageEmbedding(
+                chatId=chatId, messageId=MessageId(messageId), embedding=[1.0, 0.0], model=modelName
+            )
+
+        # threadId alone — a dropped ``or threadId is not None`` guard term
+        # would skip the post-filter and return all four candidates.
+        threadOnly = await testDatabase.chatSearch.searchChatMessages(
+            chatId=chatId, queryEmbedding=[1.0, 0.0], modelName=modelName, threadId=5, limit=10
+        )
+        assert {r["message_id"].asInt() for r in threadOnly} == {2, 3}
+
+        # substring alone — a dropped ``or substring is not None`` guard term
+        # would skip the post-filter and return all four candidates.
+        substringOnly = await testDatabase.chatSearch.searchChatMessages(
+            chatId=chatId, queryEmbedding=[1.0, 0.0], modelName=modelName, substring="foo", limit=10
+        )
+        assert {r["message_id"].asInt() for r in substringOnly} == {1, 2, 4}
+
+    async def test_filter_only_substring_case_insensitive(self, testDatabase: Database) -> None:
+        """Substring filter matches case-insensitively; ``None`` returns all.
+
+        Seeds three messages in one chat/user (text containing "MEETING",
+        unrelated text, and lowercase "meeting"). A ``substring="meeting"``
+        filter must return exactly the two messages whose text contains
+        "meeting" regardless of case (``LIKE`` is case-insensitive for ASCII
+        in SQLite). With ``substring=None`` all three are returned.
+        """
+        chatId = 1
+        await self._seedMessage(
+            testDatabase, chatId=chatId, userId=100, messageId=1, messageText="Team MEETING at noon"
+        )
+        await self._seedMessage(testDatabase, chatId=chatId, userId=100, messageId=2, messageText="standup notes")
+        await self._seedMessage(testDatabase, chatId=chatId, userId=100, messageId=3, messageText="meeting again")
+
+        matched = await testDatabase.chatSearch.searchChatMessages(
+            chatId=chatId, queryEmbedding=None, substring="meeting", limit=10
+        )
+        assert {r["message_id"].asInt() for r in matched} == {1, 3}
+
+        allRows = await testDatabase.chatSearch.searchChatMessages(
+            chatId=chatId, queryEmbedding=None, substring=None, limit=10
+        )
+        assert {r["message_id"].asInt() for r in allRows} == {1, 2, 3}
+
+    async def test_filter_only_thread_filter(self, testDatabase: Database) -> None:
+        """``threadId`` filter restricts to that thread; ``None`` returns all; ``0`` returns main only.
+
+        Seeds messages in the main thread (``thread_id=0``) and a topic
+        (``thread_id=5``). The null-semantics clause
+        ``(:threadId IS NULL OR c.thread_id = :threadId)`` means ``None``
+        applies no filter, ``5`` selects the topic, and ``0`` selects only
+        main-thread messages.
+        """
+        chatId = 1
+        await self._seedMessage(
+            testDatabase, chatId=chatId, userId=100, messageId=1, messageText="main one", threadId=0
+        )
+        await self._seedMessage(
+            testDatabase, chatId=chatId, userId=100, messageId=2, messageText="main two", threadId=0
+        )
+        await self._seedMessage(
+            testDatabase, chatId=chatId, userId=100, messageId=3, messageText="topic alpha", threadId=5
+        )
+        await self._seedMessage(
+            testDatabase, chatId=chatId, userId=100, messageId=4, messageText="topic beta", threadId=5
+        )
+
+        topic = await testDatabase.chatSearch.searchChatMessages(
+            chatId=chatId, queryEmbedding=None, threadId=5, limit=10
+        )
+        assert {r["message_id"].asInt() for r in topic} == {3, 4}
+        assert all(r["thread_id"] == 5 for r in topic)
+
+        allRows = await testDatabase.chatSearch.searchChatMessages(
+            chatId=chatId, queryEmbedding=None, threadId=None, limit=10
+        )
+        assert {r["message_id"].asInt() for r in allRows} == {1, 2, 3, 4}
+
+        mainOnly = await testDatabase.chatSearch.searchChatMessages(
+            chatId=chatId, queryEmbedding=None, threadId=0, limit=10
+        )
+        assert {r["message_id"].asInt() for r in mainOnly} == {1, 2}
+
+    async def test_filter_only_thread_and_substring_combined(self, testDatabase: Database) -> None:
+        """``threadId`` and ``substring`` compose with AND.
+
+        Seeds a thread-5 message containing "foo", a thread-5 message
+        without "foo", and a main-thread message containing "foo". Filtering
+        by ``threadId=5, substring="foo"`` returns only the thread-5 "foo"
+        message — the main-thread "foo" is excluded by the thread filter and
+        the thread-5 non-matching message is excluded by the substring filter.
+        """
+        chatId = 1
+        await self._seedMessage(
+            testDatabase, chatId=chatId, userId=100, messageId=1, messageText="foo in topic", threadId=5
+        )
+        await self._seedMessage(
+            testDatabase, chatId=chatId, userId=100, messageId=2, messageText="bar in topic", threadId=5
+        )
+        await self._seedMessage(
+            testDatabase, chatId=chatId, userId=100, messageId=3, messageText="foo in main", threadId=0
+        )
+
+        results = await testDatabase.chatSearch.searchChatMessages(
+            chatId=chatId, queryEmbedding=None, threadId=5, substring="foo", limit=10
+        )
+        assert {r["message_id"].asInt() for r in results} == {1}
+        assert results[0]["thread_id"] == 5
+        assert "foo" in results[0]["message_text"]
 
 
 class TestFilterMessageIdsBatching:

@@ -473,9 +473,10 @@ class BasicOpenAIModel(AbstractModel):
             kwargs["tools"] = [tool.toJson() for tool in tools]
             kwargs["tool_choice"] = "auto"
 
+        inputImageFormats = self._config.get("input_image_format")
         params: Dict[str, Any] = {
             "model": self._getModelId(),
-            "messages": [message.toDict("content") for message in messages],
+            "messages": [message.toDict("content", supportedImageFormats=inputImageFormats) for message in messages],
             "temperature": self.temperature,
             **kwargs,
         }
@@ -575,9 +576,10 @@ class BasicOpenAIModel(AbstractModel):
         """
         # --- build params (structured-specific) ---
         # No tools — structured and tool calls are mutually exclusive.
+        inputImageFormats = self._config.get("input_image_format")
         params: Dict[str, Any] = {
             "model": self._getModelId(),
-            "messages": [message.toDict("content") for message in messages],
+            "messages": [message.toDict("content", supportedImageFormats=inputImageFormats) for message in messages],
             "temperature": self.temperature,
         }
         # Add any extra parameters from subclasses (e.g. extra_headers for OpenRouter)
@@ -694,9 +696,10 @@ class BasicOpenAIModel(AbstractModel):
             raise NotImplementedError(f"Image generation isn't supported by {self.modelId}")
 
         # --- build params (image-specific) ---
+        inputImageFormats = self._config.get("input_image_format")
         params: Dict[str, Any] = {
             "model": self._getModelId(),
-            "messages": [message.toDict("content") for message in messages],
+            "messages": [message.toDict("content", supportedImageFormats=inputImageFormats) for message in messages],
             "temperature": self.temperature,
         }
         params.update(self._getExtraParams())

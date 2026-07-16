@@ -6,7 +6,15 @@ with tool calls. Supports fallback models and provides a unified interface for
 LLM operations.
 """
 
+from .constants import DEFAULT_MAX_ROUNDS, TOOLS_DEFAULT_DICT_KEY
 from .models import ExtraDataDict
 from .service import LLMService, LLMToolHandler, UseToolsType
 
-__all__ = ["LLMService", "LLMToolHandler", "UseToolsType", "ExtraDataDict"]
+__all__ = [
+    "LLMService",
+    "LLMToolHandler",
+    "UseToolsType",
+    "ExtraDataDict",
+    "DEFAULT_MAX_ROUNDS",
+    "TOOLS_DEFAULT_DICT_KEY",
+]

@@ -6,7 +6,7 @@
 **Database Class**: [`Database`](../internal/database/database.py:1)
 **Models**: [`internal/database/models.py`](../internal/database/models.py:1)
 **Repositories**: [`internal/database/repositories/`](../internal/database/repositories/)
-**Migrations**: 23 (up to `migration_023`)
+**Migrations**: 24 (up to `migration_024`)
 
 ---
 
@@ -259,7 +259,7 @@ CREATE TABLE bayes_tokens (
 )
 ```
 
-**Indexes**: `bayes_tokens_chat_idx`, `bayes_tokens_total_idx`
+**Indexes**: `bayes_tokens_chat_idx` (`chat_id`), `bayes_tokens_total_idx` (`total_count`), `idx_bayes_tokens_updated_at` (`updated_at`; added in `migration_024`, optimizes the age-based `cleanupOldTokens` DELETE)
 
 ---
 

@@ -7,9 +7,12 @@ This module tests the CacheRepository class including:
 - Cache clearing operations
 """
 
+import datetime
+
 import pytest
 
 from internal.database import Database
+from internal.database import utils as dbUtils
 from internal.database.manager import DatabaseManagerConfig
 from internal.database.models import CacheType
 
@@ -235,3 +238,118 @@ class TestCacheDataTypes:
         entry = await repo.getCacheEntry("key1", CacheType.WEATHER)
         assert entry is not None
         assert entry["data"] == specialData
+
+
+class TestClearOldCacheEntries:
+    """Tests for CacheRepository.clearOldCacheEntries.
+
+    Covers the age-based purge logic: default all-namespace sweep, per-namespace
+    aggressive TTL, ttl=0 nukes, recent-entry survival, and the bool return value.
+    """
+
+    @pytest.mark.asyncio
+    async def testDefaultTtlSweepAllNamespaces(self, db):
+        """Default 365-day sweep purges old entries across every namespace.
+
+        Args:
+            db: In-memory Database fixture.
+        """
+        repo = db.cache
+
+        # Insert entries in two namespaces
+        await repo.setCacheEntry("oldWeather", "data1", CacheType.WEATHER)
+        await repo.setCacheEntry("oldGeocoding", "data2", CacheType.GEOCODING)
+        await repo.setCacheEntry("recentWeather", "data3", CacheType.WEATHER)
+
+        # Back-date two of them beyond 365 days
+        provider = await db.manager.getProvider()
+        pastTimestamp = dbUtils.getCurrentTimestamp() - datetime.timedelta(days=400)
+        await provider.execute(
+            "UPDATE cache SET updated_at = :ts WHERE key IN ('oldWeather', 'oldGeocoding')",
+            {"ts": pastTimestamp},
+        )
+
+        result = await repo.clearOldCacheEntries(ttl=365 * 86400)
+
+        assert result is True
+        assert await repo.getCacheEntry("oldWeather", CacheType.WEATHER) is None
+        assert await repo.getCacheEntry("oldGeocoding", CacheType.GEOCODING) is None
+        assert await repo.getCacheEntry("recentWeather", CacheType.WEATHER) is not None
+
+    @pytest.mark.asyncio
+    async def testSpecificNamespaceAggressiveTtl(self, db):
+        """Aggressive per-namespace TTL only touches the named namespace.
+
+        Args:
+            db: In-memory Database fixture.
+        """
+        repo = db.cache
+
+        # Insert entries in two namespaces
+        await repo.setCacheEntry("key1", "data1", CacheType.WEATHER)
+        await repo.setCacheEntry("key2", "data2", CacheType.GEOCODING)
+
+        # Back-date both beyond 7 days
+        provider = await db.manager.getProvider()
+        pastTimestamp = dbUtils.getCurrentTimestamp() - datetime.timedelta(days=10)
+        await provider.execute("UPDATE cache SET updated_at = :ts", {"ts": pastTimestamp})
+
+        result = await repo.clearOldCacheEntries(ttl=7 * 86400, cacheType=CacheType.WEATHER)
+
+        assert result is True
+        assert await repo.getCacheEntry("key1", CacheType.WEATHER) is None
+        assert await repo.getCacheEntry("key2", CacheType.GEOCODING) is not None
+
+    @pytest.mark.asyncio
+    async def testTtlZeroDeletesEverything(self, db):
+        """ttl=0 (or None) removes every entry regardless of namespace.
+
+        Args:
+            db: In-memory Database fixture.
+        """
+        repo = db.cache
+
+        await repo.setCacheEntry("key1", "data1", CacheType.WEATHER)
+        await repo.setCacheEntry("key2", "data2", CacheType.GEOCODING)
+        await repo.setCacheEntry("key3", "data3", CacheType.YANDEX_SEARCH)
+
+        result = await repo.clearOldCacheEntries(ttl=0)
+
+        assert result is True
+        assert await repo.getCacheEntry("key1", CacheType.WEATHER) is None
+        assert await repo.getCacheEntry("key2", CacheType.GEOCODING) is None
+        assert await repo.getCacheEntry("key3", CacheType.YANDEX_SEARCH) is None
+
+    @pytest.mark.asyncio
+    async def testRecentEntriesSurviveAggressiveTtl(self, db):
+        """Entries younger than the aggressive TTL threshold survive.
+
+        Args:
+            db: In-memory Database fixture.
+        """
+        repo = db.cache
+
+        await repo.setCacheEntry("key1", "data1", CacheType.WEATHER)
+
+        # Back-date to 3 days — within the 7-day aggressive window
+        provider = await db.manager.getProvider()
+        recentTimestamp = dbUtils.getCurrentTimestamp() - datetime.timedelta(days=3)
+        await provider.execute("UPDATE cache SET updated_at = :ts", {"ts": recentTimestamp})
+
+        result = await repo.clearOldCacheEntries(ttl=7 * 86400, cacheType=CacheType.WEATHER)
+
+        assert result is True
+        assert await repo.getCacheEntry("key1", CacheType.WEATHER) is not None
+
+    @pytest.mark.asyncio
+    async def testReturnsTrueOnSuccess(self, db):
+        """clearOldCacheEntries returns True on a successful no-op sweep.
+
+        Args:
+            db: In-memory Database fixture.
+        """
+        repo = db.cache
+
+        result = await repo.clearOldCacheEntries(ttl=365 * 86400)
+
+        assert result is True

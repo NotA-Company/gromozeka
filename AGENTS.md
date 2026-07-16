@@ -33,6 +33,7 @@ make test               # MANDATORY after any change (wrapped in `timeout 5m`; p
 make test-failed        # re-run pytest --last-failed
 ./venv/bin/pytest path/to/test_x.py::TestClass::testFn -v   # single test
 make check-docs         # checks local markdown links resolve (read-only; exit 1 if broken)
+make ci                 # run the full CI pipeline locally in the Alpine container (mirrors .sourcecraft/ci.yaml); needs Docker
 ```
 
 ## Hard rules (enforced socially, not by tooling)
@@ -134,6 +135,22 @@ nothing is broken. This is mandatory - see docs/llm/index.md §3.5.
   `RateLimiterManager`) leak state across tests; reset `_instance = None` in
   fixtures or rely on the existing autouse reset.
 - Golden-data API tests live in per-service `golden/` subdirectories under `tests/lib/` — don't hit real APIs.
+
+## Changelog
+
+`CHANGELOG.md` is the user-visible record of what changed and why. After any
+feature, behavior change, schema migration, or user-facing bug fix, add a
+one-line entry under `## [Unreleased]` in `CHANGELOG.md` (Added / Changed /
+Fixed) **as part of the same change**, before committing. For the full format,
+entry-style rules, and "when / when-not to update" criteria, see
+[`docs/llm/changelog.md`](docs/llm/changelog.md).
+
+- Skip the changelog for style/formatting fixes, internal refactors with no
+  user-visible effect, doc-only tweaks (unless documenting a new feature),
+  dependency bumps with no behavioral change, and test-only changes.
+- The `/changelog` slash-command drafts an entry from the current diff on demand.
+- Cutting a release: rename `## [Unreleased]` to a dated version heading and
+  add a fresh empty `## [Unreleased]` section above it.
 
 ## Architecture cheatsheet
 

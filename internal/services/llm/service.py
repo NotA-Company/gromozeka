@@ -13,7 +13,6 @@ from collections.abc import Awaitable, Callable, MutableSequence, MutableSet, Se
 from threading import RLock
 from typing import Any, Dict, List, Optional, Set, Tuple, TypeAlias, Union
 
-from internal.bot.constants import TOOLS_DEFAULT_DICT_KEY
 from internal.bot.models.chat_settings import ChatSettingsDict, ChatSettingsKey
 from internal.bot.models.ensured_message import EnsuredMessage
 from internal.bot.models.message_metadata import CondensingDict, renderCondensedSummary
@@ -33,6 +32,7 @@ from lib.ai.models import (
 )
 from lib.rate_limiter.manager import RateLimiterManager
 
+from .constants import DEFAULT_MAX_ROUNDS, TOOLS_DEFAULT_DICT_KEY
 from .models import ExtraDataDict
 
 logger = logging.getLogger(__name__)
@@ -406,6 +406,56 @@ class LLMService:
                 logger.warning(f"Failed to decode JSON: {e}")
         return False
 
+    def _matchTextForToolCallTags(self, mlRunResult: ModelRunResult) -> bool:
+        """Detect a tool call embedded in ``<tool_call>...</tool_call>`` tags.
+
+        Some LLMs (notably certain chat models) wrap a tool-call JSON object in
+        ``<tool_call>`` / ``</tool_call>`` tags instead of using native tool-call
+        APIs or markdown code fences. This method extracts that JSON, checks
+        whether it contains a recognised tool name with dict-typed
+        arguments/parameters, and — if so — mutates *mlRunResult* in-place to
+        reflect a ``TOOL_CALLS`` status.
+
+        The match is only accepted when the ``<tool_call>`` block appears at
+        the **beginning or end** of the response (i.e. the non-tag prefix or
+        suffix is empty), to avoid false positives on responses that merely
+        happen to contain a tagged snippet. This begin/end-edge rule is
+        enforced by the shared :meth:`_tryApplyToolCallMatch` helper, not in
+        this method itself.
+
+        Args:
+            mlRunResult: The model run result to inspect and potentially mutate.
+
+        Returns:
+            True if a valid tool call was detected and *mlRunResult* was converted;
+            False otherwise.
+        """
+        resultText = mlRunResult.resultText.strip()
+        match = re.match(r"^(.*?)<tool_call>\s*({.*})\s*</tool_call>(.*)$", resultText, re.DOTALL | re.IGNORECASE)
+        if match is not None:
+            logger.debug(f"<tool_call> tags found: {match.groups()}")
+            try:
+                jsonStr = match.group(2)
+                jsonData, endPos = self._tryParseJson(jsonStr)
+                suffixStr = jsonStr[endPos:] + match.group(3)
+                logger.debug(f"<tool_call> JSON result: {jsonData}")
+                parameters = None
+                if "arguments" in jsonData:
+                    parameters = jsonData.get("arguments", None)
+                elif "parameters" in jsonData:
+                    parameters = jsonData.get("parameters", None)
+                return self._tryApplyToolCallMatch(
+                    mlRunResult,
+                    toolName=jsonData.get("name", ""),
+                    parameters=parameters,
+                    toolCallId=jsonData.get("callId", None),
+                    prefixStr=match.group(1),
+                    suffixStr=suffixStr,
+                )
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to decode <tool_call> JSON: {e}")
+        return False
+
     def _matchTextForToolCallStart(self, mlRunResult: ModelRunResult) -> bool:
         """Detect a tool call using the ``[TOOL_CALL_START]`` marker format.
 
@@ -490,6 +540,120 @@ class LLMService:
                 logger.warning(f"Failed to decode JSON: {e}")
         return False
 
+    def _matchTextForBrokenKnownToolCall(self, mlRunResult: ModelRunResult) -> bool:
+        """Detect a broken-but-recognised tool call as a last-resort fallback.
+
+        This is the final healing strategy, run only after every proper matcher
+        (:meth:`_matchTextForJSONToolCall`, :meth:`_matchTextForToolCallTags`,
+        :meth:`_matchTextForToolCallStart`,
+        :meth:`_matchTextForToolCallSquareBracketsAndJson`) has failed. It
+        detects a **registered** tool name referenced inside a bracket-like
+        block at the **beginning or end** of the message that could not be
+        parsed as a real tool call (e.g. an unparseable pseudo-call such as
+        ``[Вызов функции `generate_and_send_image` с промтом: «...»]``).
+
+        Instead of healing the call into a real execution, it synthesises a
+        tool call carrying an ``errorMessage`` that asks the model to retry
+        with a proper tool call. The execution loop never invokes the handler
+        for such a call — it feeds the error back to the model.
+
+        The begin/end-edge constraint avoids firing on mid-prose mentions of a
+        tool name: the bracket block must be at the message start or end.
+
+        Args:
+            mlRunResult: The model run result to inspect and mutate.
+
+        Returns:
+            True if a registered tool name was found inside an edge bracket
+            block and *mlRunResult* was converted to ``TOOL_CALLS`` with a
+            retry ``errorMessage``; False otherwise.
+        """
+        resultText = mlRunResult.resultText.strip()
+        # A bracketed block (content may contain spaces) optionally followed by a
+        # {...} block, optionally wrapped in code fences — at the BEGINNING or
+        # END of the text.
+        match = re.match(
+            r"^(.*?)(?:```)?\s*\[(.+?)\]\s*(\{.*\})?\s*(?:```)?\s*(.*)$",
+            resultText,
+            re.DOTALL,
+        )
+        if match is None:
+            return False
+        prefixStr = match.group(1)
+        bracketContent = match.group(2)
+        bracesContent = match.group(3) or ""
+        suffixStr = match.group(4)
+        # Only accept when the bracket block is at an edge (prefix or suffix
+        # empty), consistent with the other matchers' begin/end rule.
+        if prefixStr.strip() and suffixStr.strip():
+            return False
+        # Accepted trade-off of this "bracket-at-edge + known name" heuristic: a
+        # bracket block at the message edge whose content word-boundary-matches a
+        # registered tool name is treated as a broken-call candidate, so a bare
+        # markdown link like ``[generate_and_send_image](url)`` as the
+        # whole/trailing response would also match. Tightening to require
+        # call-like markers (backticks / "function" / "вызов") would risk
+        # under-matching the real broken-call failures this exists to recover.
+        haystack = bracketContent + " " + bracesContent
+        knownToolName: Optional[str] = None
+        # If the bracket block contains more than one registered tool name, the
+        # first one found (toolsHandlers dict-iteration order) wins. This is
+        # acceptable by design: the handler is never executed for a broken call
+        # — only a generic "retry" error is emitted, naming whichever tool matched.
+        for toolName in self.toolsHandlers:
+            if re.search(rf"(?<![\w]){re.escape(toolName)}(?![\w])", haystack):
+                knownToolName = toolName
+                break
+        if knownToolName is None:
+            return False
+        # Synthesise a tool call that signals "broken, retry" WITHOUT executing
+        # the handler.
+        mlRunResult.status = ModelResultStatus.TOOL_CALLS
+        mlRunResult.resultText = (prefixStr + suffixStr).strip()
+        mlRunResult.toolCalls = [
+            LLMToolCall(
+                id=str(uuid.uuid4()),
+                name=knownToolName,
+                parameters={},
+                errorMessage=f"Found broken call of tool '{knownToolName}', retry with proper tool call",
+            )
+        ]
+        return True
+
+    def _tryHealToolCall(self, mlRunResult: ModelRunResult) -> bool:
+        """Try every known tool-call healing/recovery strategy on a FINAL model response, in priority order.
+
+        Each strategy (in order) inspects *mlRunResult* and, on success,
+        mutates it in-place (to ``TOOL_CALLS`` status) and short-circuits the
+        chain. The priority order is:
+
+        1. :meth:`_matchTextForJSONToolCall` — JSON inside markdown code fences.
+        2. :meth:`_matchTextForToolCallTags` — JSON inside ``<tool_call>`` tags.
+        3. :meth:`_matchTextForToolCallStart` — ``[TOOL_CALL_START]`` marker.
+        4. :meth:`_matchTextForToolCallSquareBracketsAndJson` — ``[name]\\n{json}``.
+        5. :meth:`_matchTextForBrokenKnownToolCall` — broken call of a known
+           tool, converted to a retry-error instead of an execution.
+
+        Args:
+            mlRunResult: The model run result to inspect and potentially mutate.
+
+        Returns:
+            True if any strategy was applied (``mlRunResult`` mutated to
+            ``TOOL_CALLS``); False if the response contains no recognisable
+            tool-call-like content.
+        """
+        if self._matchTextForJSONToolCall(mlRunResult):
+            return True
+        if self._matchTextForToolCallTags(mlRunResult):
+            return True
+        if self._matchTextForToolCallStart(mlRunResult):
+            return True
+        if self._matchTextForToolCallSquareBracketsAndJson(mlRunResult):
+            return True
+        if self._matchTextForBrokenKnownToolCall(mlRunResult):
+            return True
+        return False
+
     async def generateTextViaLLM(
         self,
         messages: Sequence[ModelMessage],
@@ -508,6 +672,7 @@ class LLMService:
         condensingPromptKey: Optional[Union[str, ChatSettingsKey]] = None,
         condensingSystemPromptKey: Optional[Union[str, ChatSettingsKey]] = None,
         condensingModelKey: Optional[Union[AbstractModel, ChatSettingsKey]] = None,
+        maxRounds: Optional[int] = DEFAULT_MAX_ROUNDS,
     ) -> ModelRunResult:
         """Generate text using an LLM with automatic tool execution support.
 
@@ -545,6 +710,21 @@ class LLMService:
             condensingPromptKey: Optional key for the condensing prompt text
             condensingSystemPromptKey: Optional key for the condensing system prompt
             condensingModelKey: Optional model to use for summarizing messages
+            maxRounds: Maximum number of rounds the model is allowed to call
+                tools before the tool budget is considered exhausted. Defaults
+                to :data:`DEFAULT_MAX_ROUNDS` (32). Must be a non-negative
+                integer or ``None``. Once exhausted: tool schemas are dropped
+                (``tools=[]``), the ``filteredToolNames`` execution allowlist
+                is cleared (so even healed tool calls are blocked), tool-call
+                healing is disabled, a steering directive is injected, the loop
+                is forced to terminate within one additional round, and
+                ``ret.roundLimitHit`` is set to ``True``. A fallback answer is
+                synthesized only when the model produced no usable text AND the
+                status isn't a genuine error (empty FINAL, or post-budget
+                TOOL_CALLS); genuine error statuses (ERROR / CONTENT_FILTER /
+                UNKNOWN) propagate untouched so callers can detect the failure.
+                Pass ``None`` to disable the limit (unlimited rounds); ``0``
+                drops tools on the very first call.
 
         Returns:
             ModelRunResult containing the final LLM response, with toolsUsed flag set
@@ -552,6 +732,11 @@ class LLMService:
         """
         if callId is None:
             callId = str(uuid.uuid4())
+
+        # Fail fast on an invalid budget: a negative maxRounds would otherwise
+        # behave like 0 by accident (the ``>=`` guard fires immediately).
+        if maxRounds is not None and maxRounds < 0:
+            raise ValueError("maxRounds must be a non-negative integer or None")
 
         model = self.resolveModel(
             modelKey,
@@ -593,7 +778,17 @@ class LLMService:
         _messages: Sequence[ModelMessage] = messages
         toolsHistory: MutableSequence[ModelMessage] = []
 
+        roundN: int = 0
         while True:
+            # Once the tool-calling round budget is exhausted, force a final
+            # answer: stop offering tool schemas, clear the filteredToolNames
+            # allowlist so tool execution (including healed tool calls) is
+            # blocked, and steer the model toward answering now.
+            budgetExhausted: bool = maxRounds is not None and roundN >= maxRounds
+            if budgetExhausted:
+                tools = []
+                filteredToolNames = set()
+
             # First - condense context if needed
             maxTokens = int(model.contextSize * maxTokensCoeff)
             _messages, _ = await self.condenseContext(
@@ -607,6 +802,43 @@ class LLMService:
                 condensingSystemPrompt=condensingSystemPrompt,
             )
 
+            # Inject the steering directive AFTER condense (which returns a
+            # fresh sequence each iteration) and BEFORE generateText, so it
+            # actually reaches the model. Built as a fresh list to avoid
+            # mutating the caller's / condensed structures.
+            #
+            # Role choice (provider-safety): a mid-conversation ``role="system"``
+            # is accepted by the OpenAI-compatible providers (basic/custom/
+            # yc-openai/openrouter serialise ``{"role":..,"content":..}`` to
+            # /chat/completions, which permits system messages anywhere), but
+            # the YC SDK provider (``YcSdkProvider._convertMessages``) emits
+            # ``{"role":"system","text":..}`` straight to the SDK, which
+            # historically expects system only as the leading message and may
+            # ignore or mishandle a mid-stream one. To stay universally safe we
+            # fold the directive into the existing LEADING system message when
+            # one is present (condenseContext guarantees it stays at index 0);
+            # otherwise we fall back to ``role="user"``, which every provider
+            # accepts.
+            if budgetExhausted:
+                # Assumes a single post-budget iteration (loop is hard-bounded above);
+                # reintroducing multiple post-budget iterations would compound this
+                # steering text via condenseContext — re-evaluate.
+                steeringText = (
+                    "You have reached the maximum number of tool-use rounds."
+                    " Stop calling tools and provide your final answer to the"
+                    " user now, using only the information you have already gathered."
+                )
+                messagesList: List[ModelMessage] = [*_messages]
+                if messagesList and messagesList[0].role == "system":
+                    leadingSystem = messagesList[0]
+                    messagesList[0] = ModelMessage(
+                        role="system",
+                        content=f"{leadingSystem.content}\n\n{steeringText}",
+                    )
+                    _messages = messagesList
+                else:
+                    _messages = [*messagesList, ModelMessage(role="user", content=steeringText)]
+
             ret = await self.generateText(
                 _messages,
                 chatId=chatId,
@@ -616,19 +848,26 @@ class LLMService:
                 tools=tools,
                 doDebugLogging=False,
             )
+            roundN += 1
             logger.debug(f"LLM returned: {ret} for callId #{callId}")
-            if ret.status == ModelResultStatus.FINAL and ret.resultText:
-                # First - check if it was really tool call
-                hasMatch = self._matchTextForJSONToolCall(ret)
+            # Healing converts a FINAL text shaped like a tool call back into
+            # TOOL_CALLS. Post-budget that would re-arm the very execution we
+            # just disabled (filteredToolNames is empty, tools is []), so gate
+            # healing on a non-exhausted budget: post-budget FINAL text is
+            # treated as truly final.
+            if ret.status == ModelResultStatus.FINAL and ret.resultText and not budgetExhausted:
+                # Try to heal/recover tool calls embedded in the text response.
+                self._tryHealToolCall(ret)
 
-                if not hasMatch:
-                    hasMatch = self._matchTextForToolCallStart(ret)
-                if not hasMatch:
-                    hasMatch = self._matchTextForToolCallSquareBracketsAndJson(ret)
-
-                # TODO: In other cases do some conversion as well
-
-            if ret.status == ModelResultStatus.TOOL_CALLS:
+            # Execute tool calls only while the budget allows. Post-budget we
+            # must NOT enter this branch even on a native TOOL_CALLS: a
+            # glitching/loose provider may keep emitting TOOL_CALLS despite the
+            # empty ``tools=[]``, and entering here would append "tool not
+            # available" results and re-iterate forever. Requiring
+            # ``not budgetExhausted`` makes a post-budget TOOL_CALLS fall
+            # through to ``else: break``, bounding the loop to a single extra
+            # round regardless of provider behaviour.
+            if ret.status == ModelResultStatus.TOOL_CALLS and not budgetExhausted:
                 if callback:
                     await callback(ret, extraData)
 
@@ -640,9 +879,13 @@ class LLMService:
                 newMessages = [ret.toModelMessage()]
 
                 for toolCall in ret.toolCalls:
-                    toolRet = ""
-                    # Check if tool is available
-                    if toolCall.name in filteredToolNames:
+                    toolRet: Union[str, Dict[str, Any]] = ""
+                    if toolCall.errorMessage is not None:
+                        # Synthesised from a broken-but-recognised tool call
+                        # (_matchTextForBrokenKnownToolCall): do NOT execute the
+                        # handler; tell the model to retry with a proper tool call.
+                        toolRet = {"done": False, "error": toolCall.errorMessage}
+                    elif toolCall.name in filteredToolNames:
                         toolRet = await self.toolsHandlers[toolCall.name].call(extraData, **toolCall.parameters)
                     else:
                         # If wrong tool called, return error about it.
@@ -675,6 +918,37 @@ class LLMService:
                 _keepLastN = keepLastN + len(newMessages)
                 logger.debug(f"Tools used: {newMessages} for callId #{callId}")
             else:
+                # Loop terminates here for any non-(pre-budget TOOL_CALLS)
+                # status. When the round budget is exhausted the cap was hit:
+                # surface a programmatic signal (roundLimitHit) and log a
+                # service-level warning so the cap-hit is visible to operators
+                # for ALL callers, not just the memory-refinement loop.
+                if budgetExhausted:
+                    ret.roundLimitHit = True
+                    logger.warning(
+                        f"generateTextViaLLM hit maxRounds cap ({maxRounds}) for callId #{callId}; forcing termination"
+                    )
+                    # Synthesize a fallback ONLY when the model produced no
+                    # usable text AND the status is one where handing the
+                    # caller a fallback answer is appropriate: an empty FINAL
+                    # (model returned nothing useful) or a post-budget
+                    # TOOL_CALLS (a glitching model that ignored the empty
+                    # tools=[] and has no other useful answer). Genuine error
+                    # statuses (ERROR / CONTENT_FILTER / UNKNOWN / others) are
+                    # left untouched so the original status + empty text
+                    # propagate and callers can detect the failure.
+                    if not ret.resultText and ret.status in (ModelResultStatus.FINAL, ModelResultStatus.TOOL_CALLS):
+                        ret.resultText = (
+                            "I've reached the limit of tool-use steps for this"
+                            " request; here is my best answer with the information"
+                            " gathered so far."
+                        )
+                        ret.status = ModelResultStatus.FINAL
+                        # The synthesized FINAL must not carry stale unexecuted
+                        # tool calls (e.g. a native TOOL_CALLS the model
+                        # returned despite the empty tools=[]); a FINAL result
+                        # is text-only.
+                        ret.toolCalls = []
                 break
 
         if toolsUsed:

@@ -20,6 +20,7 @@
 | Add or change TOML configuration | [`configuration.md`](configuration.md) |
 | Write or run tests, understand test fixtures | [`testing.md`](testing.md) |
 | Follow a step-by-step task workflow or avoid pitfalls | [`tasks.md`](tasks.md) |
+| Maintain `CHANGELOG.md` (when to update, entry style, semver) | [`changelog.md`](changelog.md) |
 | Reuse durable cross-task memory and repo gotchas | [`teamlead-memory.md`](teamlead-memory.md) |
 | Review large diffs that exceed single-pass agent budget | [`reviewing-large-changes.md`](reviewing-large-changes.md) |
 | Reuse archived task-specific memories for completed subsystems | [`memories/index.md`](memories/index.md) |
@@ -34,7 +35,7 @@
 | Type | Multi-platform AI bot (Telegram + Max Messenger) |
 | Python | 3.12+ |
 | Architecture | Modular, async, singleton services |
-| Test count | 2653+ |
+| Test count | 3300+ |
 | Status | Production-ready, active development |
 
 ### Key Features
@@ -215,7 +216,7 @@ vanishingly rare in the Gromozeka codebase.
 | `configs/` | Configuration directory (TOML files) |
 | `internal/` | Internal application code |
 | `lib/` | Reusable library code |
-| `tests/` | Test suite — **all** tests live here, mirroring source structure (`lib/X/Y.py` → `tests/lib/X/test_Y.py`; `internal/X/Y.py` → `tests/X/test_Y.py`). No collocated tests in `lib/` or `internal/`. |
+| `tests/` | Test suite — **all** tests live here, mirroring source structure (`lib/X/Y.py` → `tests/lib/X/test_Y.py`; `internal/X/Y.py` → `tests/X/test_Y.py`). No collocated tests in `lib/` or `internal/`. **Sanctioned exception:** `tests/dependencies/` holds dependency-usage regression tests that pin pinned third-party library behavior (they map to libraries, not source files). |
 | `docs/` | Documentation |
 | `docs/llm/memories/` | Archived task-specific working memories for completed features/subsystems |
 
@@ -330,6 +331,7 @@ See [`teamlead-memory.md`](teamlead-memory.md) for the full pattern (`_llmTool*`
 - [`configuration.md`](configuration.md) — TOML config sections, ConfigManager methods
 - [`testing.md`](testing.md) — Test fixtures, pytest patterns, golden data framework
 - [`tasks.md`](tasks.md) — Step-by-step task workflows, anti-patterns
+- [`changelog.md`](changelog.md) — Canonical changelog process (Keep a Changelog, semver, entry style)
 - [`teamlead-memory.md`](teamlead-memory.md) — Durable cross-task memory, repo gotchas, workflow lessons
 - [`reviewing-large-changes.md`](reviewing-large-changes.md) — Methodology for reviewing diffs exceeding single-pass budget
 - [`memories/index.md`](memories/index.md) — Task-specific memory index for completed subsystems/features

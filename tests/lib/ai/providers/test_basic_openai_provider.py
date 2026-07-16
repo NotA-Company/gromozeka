@@ -18,6 +18,7 @@ Test Categories:
 
 import base64
 import json
+from io import BytesIO
 from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -33,11 +34,13 @@ from openai.types.chat.chat_completion_message_tool_call import (
 )
 from openai.types.completion_usage import CompletionUsage
 from openai.types.images_response import ImagesResponse
+from PIL import Image
 
 from lib.ai.models import (
     LLMFunctionParameter,
     LLMParameterType,
     LLMToolFunction,
+    ModelImageMessage,
     ModelMessage,
     ModelResultStatus,
     ModelStructuredResult,
@@ -1021,6 +1024,71 @@ async def testMessagesConversion(
     assert messages[0]["content"] == "You are a helpful assistant"
     assert messages[1]["role"] == "user"
     assert messages[1]["content"] == "Hello, how are you?"
+
+
+# ============================================================================
+# Image Format Threading Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def testProviderThreadingConvertsImagePerConfig(testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock) -> None:
+    """End-to-end: config ``input_image_format`` threads through to a converted data URL.
+
+    Locks the integration wire-up: ``_generateText`` reads
+    ``self._config.get("input_image_format")`` and forwards it as
+    ``supportedImageFormats`` to ``ModelImageMessage.toDict``, which re-encodes
+    an embedded WebP image into JPEG. Asserts the outgoing ``messages`` payload
+    carries a ``data:image/jpeg;base64,...`` URL — proving the conversion ran
+    because the model's config advertised only JPEG.
+
+    Args:
+        testModel: The test model instance (input_image_format set in-test).
+        mockAsyncOpenAI: The mock AsyncOpenAI client used to capture the request.
+
+    Raises:
+        AssertionError: If the outgoing image_url is not a JPEG data URL.
+    """
+    testModel._config["input_image_format"] = ["image/jpeg"]
+
+    # Build a tiny valid WebP image in-test (no external fixture file).
+    webpBuf = BytesIO()
+    Image.new("RGB", (4, 4), (0, 0, 255)).save(webpBuf, format="WEBP")
+    webpBytes = webpBuf.getvalue()
+
+    messages = [ModelImageMessage(role="user", content="describe this", image=bytearray(webpBytes))]
+
+    # Minimal mock response so generateText completes.
+    mockResponse = Mock(spec=ChatCompletion)
+    mockChoice = Mock(spec=Choice)
+    mockMessage = Mock(spec=ChatCompletionMessage)
+    mockMessage.content = "a blue square"
+    mockMessage.tool_calls = None
+    mockChoice.message = mockMessage
+    mockChoice.finish_reason = "stop"
+    mockResponse.choices = [mockChoice]
+
+    mockUsage = Mock(spec=CompletionUsage)
+    mockUsage.prompt_tokens = 5
+    mockUsage.completion_tokens = 5
+    mockUsage.total_tokens = 10
+    mockResponse.usage = mockUsage
+
+    mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
+
+    await testModel.generateText(messages)
+
+    # Inspect the captured outgoing request payload.
+    callKwargs = mockAsyncOpenAI.chat.completions.create.call_args.kwargs
+    sentMessages = callKwargs["messages"]
+    assert len(sentMessages) == 1
+    content = sentMessages[0]["content"]
+    assert isinstance(content, list)
+    imageBlock = next(block for block in content if isinstance(block, dict) and block.get("type") == "image_url")
+    url: str = imageBlock["image_url"]["url"]
+    assert url.startswith(
+        "data:image/jpeg;base64,"
+    ), f"expected JPEG data URL after config-driven conversion, got: {url[:40]!r}..."
 
 
 # ============================================================================

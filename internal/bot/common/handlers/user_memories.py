@@ -1318,6 +1318,13 @@ class UserMemoriesHandler(BaseBotHandler):
             )
 
             logger.debug(f"Result of refining memory for {chatId}:{userId}, thread:{threadId}: {result}")
+
+            # The round-limit cap is otherwise silent: the LLM returns what
+            # looks like a successful (but incomplete) curation. Surface a
+            # warning specific to memory refinement so incomplete batches are
+            # detectable in logs. The curation logic itself is unchanged.
+            if result.roundLimitHit:
+                logger.warning("Memory refinement hit the maxRounds cap; curation may be incomplete for this batch")
         except Exception as e:
             logger.error(f"Error during refining memory of {chatId}:{userId}##{threadId}: {e}")
             logger.exception(e)
@@ -1393,12 +1400,25 @@ class UserMemoriesHandler(BaseBotHandler):
         if history:
             for msg in history:
                 for tc in getattr(msg, "toolCalls", None) or []:
+                    # Synthesised broken-call markers (errorMessage is not None)
+                    # are bookkeeping only: the call was never executed — the
+                    # model was handed *errorMessage* and told to retry. Counting
+                    # them would double-count a single logical tool use (the
+                    # broken attempt + the successful retry). See
+                    # ``LLMService._matchTextForBrokenKnownToolCall`` /
+                    # ``LLMToolCall.errorMessage``.
+                    if getattr(tc, "errorMessage", None) is not None:
+                        continue
                     name = getattr(tc, "name", None)
                     if name:
                         counts[name] = counts.get(name, 0) + 1
         elif result.toolCalls:
             # Single-turn providers populate only the final-turn toolCalls.
             for tc in result.toolCalls:
+                # Same exclusion as the history walk above — synthesised
+                # broken-call markers must not count as real usage.
+                if tc.errorMessage is not None:
+                    continue
                 counts[tc.name] = counts.get(tc.name, 0) + 1
         return counts
 

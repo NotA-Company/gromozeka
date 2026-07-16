@@ -1,12 +1,11 @@
 # Our TODO list
+- [ ] script for moving chat to separate db
 - [ ] refactor models
 - [ ] opencode commands for review and teamldead memory refinement
-- [ ] changelog
 - [ ] Review all docs
-- [ ] Yandex AI Studio does not support webp images. Add config value + convert
-- [ ] Search for tool_name in [] or {} + optional ``` end return some error if yes (to enforce proper tool call)
-
 - [ ] On web search\get-url-content, allow bot to add compaction prompt
+- [ ] more statistics thing (more sources, consolidation, export + cleanup of old statistics)
+
 - [ ] Subagent with conversation history
 - [ ] Topic-level configs
 - [?] Support random-message sending function
@@ -44,6 +43,13 @@
 - [ ] Add replied message to context more close to message (maybe in message metadata)
 
 # Done:
+- [x] Yandex AI Studio does not support webp images. Add config value + convert
+- [x] memory refinement: hard limit on steps (constant, 32)
+- [x] cleanup of old unused bayes tokens
+- [x] tests for direct dependencies (especially html-to-markdown)
+- [x] changelog
+- [x] Search for tool_name in [] or {} + optional ``` end return some error if yes (to enforce proper tool call)
+- [x] to message search add thread restriction (optionaly disabled) + search by substring
 - [x] Sandboxed Python for LLM
 - [x] Sandboxed Python for Gromozeka
 - [x] jsonl log user bio change

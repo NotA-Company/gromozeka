@@ -10,6 +10,9 @@ ISORT = $(VENV_PATH)/bin/isort
 PYRIGHT = $(VENV_PATH)/bin/pyright
 PYTEST = $(VENV_PATH)/bin/pytest
 
+# CI image used by .sourcecraft/ci.yaml (kept here so `make ci` stays in sync with it).
+CI_IMAGE = docker.io/library/alpine:3.24
+
 ifdef V
 	ARGS := $(ARGS) -v
 endif
@@ -108,6 +111,31 @@ check: lint
 check-docs: venv
 	$(PYTHON) scripts/check_docs.py
 
+# Run the full CI pipeline locally inside the SAME Alpine container CI uses.
+# The in-container script (apk deps -> venv-alpine -> install -> packaging fix
+# -> check -> test) lives in scripts/ci.sh and is the SINGLE SOURCE OF TRUTH
+# shared with .sourcecraft/ci.yaml, so the two runners cannot drift apart.
+#
+# The repo is copied into the container from a read-only bind mount, so the host
+# ./venv is never touched: the container builds its own ./venv (Alpine/musl) in
+# its writable layer and discards it on exit (--rm). apk + pip install run fresh
+# every time (no cross-run caching), mirroring sourcecraft's clean-container run.
+ci:
+	docker run --rm \
+		-v "$(CURDIR):/src:ro" \
+		$(CI_IMAGE) \
+		sh -c '\
+			set -eo pipefail && \
+			apk add --no-cache git && \
+			mkdir -p /app && \
+			tar -C /src -cf - --exclude=./venv --exclude=./.git --exclude="./.env*" --exclude="*/__pycache__" --exclude="./lib/ext_modules/*" . | tar -C /app -xf - && \
+			rm -rf /app/venv && \
+			cd /app && \
+			git init . && \
+			git config --global --add safe.directory /app && \
+			sh scripts/ci.sh'
+	@echo "✅ CI pipeline completed, dood!"
+
 # Clean build files and cache
 clean:
 	rm -rf $(VENV_PATH)
@@ -133,9 +161,10 @@ help:
 	@echo "  coverage                    - Run tests with coverage report (Pass V=1 for verbose output)"
 	@echo "  check                       - Check code quality (lint + format)"
 	@echo "  check-docs                  - Check that local markdown links resolve"
+	@echo "  ci                          - Run the full CI pipeline locally in the Alpine container (mirrors .sourcecraft/ci.yaml); needs Docker"
 	@echo "  clean                       - Clean build files and cache"
 	@echo "  help                        - Show this help message"
 
 # Default target
-.PHONY: install activate freeze-requirements list-outdated-requirements run lint format test test-failed coverage check check-docs clean help venv-alpine
+.PHONY: install activate freeze-requirements list-outdated-requirements run lint format test test-failed coverage check check-docs ci clean help venv-alpine
 

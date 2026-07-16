@@ -25,7 +25,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from internal.bot.common.handlers.base import HandlerResultStatus
-from internal.bot.common.handlers.chat_search import ChatSearchHandler
+from internal.bot.common.handlers.chat_search import ChatSearchHandler, _coerceToolBool
 from internal.bot.constants import (
     BACKFILL_DEFAULT_BATCH_SIZE,
     MAX_GET_MESSAGES_BATCH,
@@ -44,6 +44,7 @@ from internal.bot.models import (
 )
 from internal.database.models import ChatMessageDict, MessageCategory
 from internal.models import MessageId
+from internal.services.llm.models import ExtraDataDict
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
 
 # ---------------------------------------------------------------------------
@@ -275,6 +276,48 @@ def _sampleRow(
 # ---------------------------------------------------------------------------
 # 1. Parser tests
 # ---------------------------------------------------------------------------
+
+
+class TestCoerceToolBool:
+    """Direct unit tests for :func:`_coerceToolBool`.
+
+    The helper was previously exercised only indirectly through the
+    ``_llmToolSearchMessages`` handler path, so every branch (real bools,
+    ints/floats, truthy/falsy strings, explicit ``None`` treated like the
+    parameter default, and the catch-all ``bool(value)`` fallback) is
+    driven directly here.
+    """
+
+    @pytest.mark.parametrize(
+        "value, expected",
+        [
+            (True, True),
+            (False, False),
+            ("true", True),
+            ("TRUE", True),
+            ("True", True),
+            ("false", False),
+            ("0", False),
+            ("yes", True),
+            ("on", True),
+            (1, True),
+            (0, False),
+            (0.0, False),
+            (3.14, True),
+            (None, True),  # explicit null treated like the default
+            ([], False),
+            ("", False),
+        ],
+    )
+    def test_coerceToolBool(self, value: Any, expected: bool) -> None:
+        """``_coerceToolBool`` coerces bool/int/float/str/None/other to the expected bool.
+
+        Args:
+            value: Raw input value (mirrors the shapes the LLM tool layer
+                can receive, including an explicit JSON ``null``).
+            expected: Expected coerced boolean.
+        """
+        assert _coerceToolBool(value) == expected
 
 
 class TestParseSearchArgs:
@@ -1613,6 +1656,12 @@ class TestSearchMessagesLLMTool:
         h.db = Mock()
         h.llmService = Mock()
         cast(Any, h).llmService.rateLimit = AsyncMock(return_value=None)
+        # ``_llmToolSearchMessages`` embeds the query via the ``LLMService``
+        # boundary (``generateEmbedding``), not the model boundary. Default to a
+        # successful ``(modelName, vector)`` tuple so every semantic-mode test
+        # has a working awaitable; tests that exercise degradation / failure
+        # override this explicitly.
+        cast(Any, h).llmService.generateEmbedding = AsyncMock(return_value=("text-embedding-3-small", [0.1, 0.2, 0.3]))
         h.sendMessage = AsyncMock()
         h.getChatSettings = AsyncMock()
         return h
@@ -1632,28 +1681,20 @@ class TestSearchMessagesLLMTool:
         """Chat settings with tools, embeddings, and model configured."""
         return _makeChatSettings(embeddingModel="text-embedding-3-small")
 
-    @pytest.fixture
-    def mockModel(self) -> Mock:
-        """A mock embedding model that supports embeddings."""
-        m = Mock()
-        m.supportsEmbedding = True
-        m.generateEmbeddings = AsyncMock(return_value=[0.1, 0.2, 0.3])
-        return m
-
-    def _stubModel(self, handler: ChatSearchHandler, model: Mock) -> Mock:
-        """Wire a mock embedding model into the handler's LLM service.
+    def _stubSearch(self, handler: ChatSearchHandler) -> AsyncMock:
+        """Wire a no-op async ``searchChatMessages`` into the handler's db mock.
 
         Args:
             handler: Handler under test.
-            model: Mock model instance.
 
         Returns:
-            The mock manager.
+            The ``AsyncMock`` backing ``db.chatSearch.searchChatMessages``
+            so the test can inspect ``.call_args``.
         """
-        mockManager = Mock()
-        mockManager.getModel = Mock(return_value=model)
-        cast(Any, handler).llmService.getLLMManager = Mock(return_value=mockManager)
-        return mockManager
+        cast(Any, handler).db.chatSearch = Mock()
+        searchMock = AsyncMock(return_value=[])
+        cast(Any, handler).db.chatSearch.searchChatMessages = searchMock
+        return searchMock
 
     async def test_search_messages_missing_extraData(self, handler: ChatSearchHandler) -> None:
         """extraData is None → returns error dict."""
@@ -1667,16 +1708,8 @@ class TestSearchMessagesLLMTool:
         assert result["done"] is False
         assert "Missing chat context" in result.get("error", "")
 
-    async def test_search_messages_tools_disabled(self, handler: ChatSearchHandler, extraData: Dict[str, Any]) -> None:
-        """ALLOW_TOOLS_COMMANDS=False → returns error dict."""
-        cs = _makeChatSettings(allowTools=False, embeddingModel="text-embedding-3-small")
-        handler.getChatSettings = AsyncMock(return_value=cs)
-        result = await handler._llmToolSearchMessages(extraData=extraData, query="test")
-        assert result["done"] is False
-        assert "tools disabled" in result.get("error", "").lower()
-
     async def test_search_messages_embeddings_disabled(
-        self, handler: ChatSearchHandler, extraData: Dict[str, Any]
+        self, handler: ChatSearchHandler, extraData: ExtraDataDict
     ) -> None:
         """EMBEDDINGS_ENABLED=False → returns error dict."""
         cs = _makeChatSettings(embeddingsEnabled=False, embeddingModel="text-embedding-3-small")
@@ -1685,26 +1718,35 @@ class TestSearchMessagesLLMTool:
         assert result["done"] is False
         assert "semantic search" in result.get("error", "").lower()
 
-    async def test_search_messages_no_model(
-        self, handler: ChatSearchHandler, extraData: Dict[str, Any], chatSettings: ChatSettingsDict
+    async def test_search_messages_embedding_returns_none_errors(
+        self, handler: ChatSearchHandler, extraData: ExtraDataDict, chatSettings: ChatSettingsDict
     ) -> None:
-        """EMBEDDING_MODEL is empty → returns error dict."""
-        cs = _makeChatSettings(embeddingModel="")
-        handler.getChatSettings = AsyncMock(return_value=cs)
-        result = await handler._llmToolSearchMessages(extraData=extraData, query="test")
+        """``generateEmbedding`` returns ``None`` → error dict, not a filter-only degrade.
+
+        A ``None`` embedding result is treated as a failure: the tool
+        returns ``{"done": False, "error": "Unable to generate query
+        embedding"}`` and never reaches the repository (it does NOT
+        degrade to filter-only).
+        """
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        cast(Any, handler).llmService.generateEmbedding = AsyncMock(return_value=None)
+        searchMock = self._stubSearch(handler)
+
+        result = await handler._llmToolSearchMessages(extraData=extraData, query="x")
+
         assert result["done"] is False
-        assert "not configured" in result.get("error", "").lower()
+        assert result["error"] == "Unable to generate query embedding"
+        # The repo must NOT be reached when embedding fails.
+        searchMock.assert_not_called()
 
     async def test_search_messages_success(
         self,
         handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
+        extraData: ExtraDataDict,
         chatSettings: ChatSettingsDict,
-        mockModel: Mock,
     ) -> None:
-        """Full happy path: returns results dict with done=True."""
+        """Full happy path: ``generateEmbedding`` tuple → vector + modelName forwarded, results returned."""
         handler.getChatSettings = AsyncMock(return_value=chatSettings)
-        self._stubModel(handler, mockModel)
         now = datetime.datetime(2026, 5, 5, 12, 0, 0, tzinfo=datetime.timezone.utc)
         rows = [
             {
@@ -1729,8 +1771,9 @@ class TestSearchMessagesLLMTool:
                 "score": 0.95,
             }
         ]
+        searchMock = AsyncMock(return_value=rows)
         cast(Any, handler).db.chatSearch = Mock()
-        cast(Any, handler).db.chatSearch.searchChatMessages = AsyncMock(return_value=rows)
+        cast(Any, handler).db.chatSearch.searchChatMessages = searchMock
 
         result = await handler._llmToolSearchMessages(extraData=extraData, query="hello")
 
@@ -1738,18 +1781,21 @@ class TestSearchMessagesLLMTool:
         assert result["count"] == 1
         assert result["results"][0]["text"] == "hello world"
         assert result["results"][0]["score"] == 0.95
-        mockModel.generateEmbeddings.assert_awaited_once()
+        # The ``(modelName, vector)`` tuple from ``generateEmbedding`` is split:
+        # the vector feeds ``queryEmbedding`` and the model name feeds
+        # ``modelName`` so the repository can match against stored vectors.
+        searchKwargs = searchMock.call_args.kwargs
+        assert searchKwargs["queryEmbedding"] == [0.1, 0.2, 0.3]
+        assert searchKwargs["modelName"] == "text-embedding-3-small"
 
     async def test_search_messages_with_user_filter(
         self,
         handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
+        extraData: ExtraDataDict,
         chatSettings: ChatSettingsDict,
-        mockModel: Mock,
     ) -> None:
         """user_name resolves to userId and is passed to searchChatMessages."""
         handler.getChatSettings = AsyncMock(return_value=chatSettings)
-        self._stubModel(handler, mockModel)
         cast(Any, handler).db.chatUsers = Mock()
         cast(Any, handler).db.chatUsers.getChatUserByUsername = AsyncMock(return_value={"user_id": 42})
         cast(Any, handler).db.chatSearch = Mock()
@@ -1763,20 +1809,210 @@ class TestSearchMessagesLLMTool:
     async def test_search_messages_embedding_failure(
         self,
         handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
+        extraData: ExtraDataDict,
         chatSettings: ChatSettingsDict,
     ) -> None:
-        """generateEmbeddings raises → returns error dict."""
+        """``generateEmbedding`` raises → defensive error dict.
+
+        In practice ``generateEmbedding`` swallows internal failures and
+        returns ``None`` (see
+        ``test_search_messages_embedding_returns_none_degrades_to_filter_only``),
+        so this path is rarely hit. The handler still wraps the call in a
+        try/except: if the boundary itself raises, the tool folds it into
+        ``{"done": False, "error": "Unable to generate query embedding"}``.
+        """
         handler.getChatSettings = AsyncMock(return_value=chatSettings)
-        badModel = Mock()
-        badModel.supportsEmbedding = True
-        badModel.generateEmbeddings = AsyncMock(side_effect=RuntimeError("API down"))
-        self._stubModel(handler, badModel)
+        cast(Any, handler).llmService.generateEmbedding = AsyncMock(side_effect=RuntimeError("embedding boom"))
 
         result = await handler._llmToolSearchMessages(extraData=extraData, query="hello")
 
         assert result["done"] is False
-        assert "embedding" in result.get("error", "").lower()
+        assert result["error"] == "Unable to generate query embedding"
+
+    async def test_search_messages_current_thread_only_default_scopes_to_thread(
+        self,
+        handler: ChatSearchHandler,
+        extraData: ExtraDataDict,
+        chatSettings: ChatSettingsDict,
+        ensMessage: EnsuredMessage,
+    ) -> None:
+        """Default ``current_thread_only=True`` (no thread_message_id) scopes to the current thread."""
+        ensMessage.threadId = 555
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        searchMock = self._stubSearch(handler)
+
+        await handler._llmToolSearchMessages(extraData=extraData, query="x")
+
+        assert searchMock.call_args.kwargs["threadId"] == 555
+
+    async def test_search_messages_current_thread_only_false_no_thread_scope(
+        self,
+        handler: ChatSearchHandler,
+        extraData: ExtraDataDict,
+        chatSettings: ChatSettingsDict,
+        ensMessage: EnsuredMessage,
+    ) -> None:
+        """``current_thread_only=False`` disables thread scoping (threadId is None)."""
+        ensMessage.threadId = 555
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        searchMock = self._stubSearch(handler)
+
+        await handler._llmToolSearchMessages(extraData=extraData, query="x", current_thread_only=False)
+
+        assert searchMock.call_args.kwargs["threadId"] is None
+
+    async def test_search_messages_thread_message_id_overrides_current_thread(
+        self,
+        handler: ChatSearchHandler,
+        extraData: ExtraDataDict,
+        chatSettings: ChatSettingsDict,
+        ensMessage: EnsuredMessage,
+    ) -> None:
+        """An explicit valid ``thread_message_id`` overrides ``current_thread_only``."""
+        ensMessage.threadId = 555
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        searchMock = self._stubSearch(handler)
+
+        await handler._llmToolSearchMessages(
+            extraData=extraData, query="x", thread_message_id="999", current_thread_only=True
+        )
+
+        kwargs = searchMock.call_args.kwargs
+        assert kwargs["rootMessageId"] == MessageId("999")
+        assert kwargs["threadId"] is None
+
+    async def test_search_messages_invalid_thread_message_id_falls_back_to_current_thread(
+        self,
+        handler: ChatSearchHandler,
+        extraData: ExtraDataDict,
+        chatSettings: ChatSettingsDict,
+        ensMessage: EnsuredMessage,
+    ) -> None:
+        """A ``thread_message_id`` that ``MessageId`` rejects falls back to current-thread scoping.
+
+        Exercises the handler's ``except (ValueError, TypeError)`` fallback
+        branch. NOTE: ``MessageId`` accepts any ``str`` (Max message IDs are
+        arbitrary strings), so a non-numeric *string* such as ``"not-a-number"``
+        does NOT raise and is instead treated as a valid root. The fallback is
+        only reachable when the value is not str/int (e.g. a float sent by a
+        misbehaving model), so a float is passed here via ``Any``. See the task
+        summary for the full rationale.
+        """
+        ensMessage.threadId = 7
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        searchMock = self._stubSearch(handler)
+
+        badThreadId: Any = 3.14  # MessageId(3.14) raises ValueError
+        await cast(Any, handler)._llmToolSearchMessages(
+            extraData=extraData, query="x", thread_message_id=badThreadId, current_thread_only=True
+        )
+
+        kwargs = searchMock.call_args.kwargs
+        assert kwargs["rootMessageId"] is None
+        assert kwargs["threadId"] == 7
+
+    async def test_search_messages_substring_passed_through(
+        self,
+        handler: ChatSearchHandler,
+        extraData: ExtraDataDict,
+        chatSettings: ChatSettingsDict,
+    ) -> None:
+        """A non-empty substring is passed through (stripped) to ``searchChatMessages``."""
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        searchMock = self._stubSearch(handler)
+
+        await handler._llmToolSearchMessages(extraData=extraData, query="x", substring="hello world")
+
+        assert searchMock.call_args.kwargs["substring"] == "hello world"
+
+    async def test_search_messages_empty_substring_becomes_none(
+        self,
+        handler: ChatSearchHandler,
+        extraData: ExtraDataDict,
+        chatSettings: ChatSettingsDict,
+    ) -> None:
+        """A whitespace-only substring normalises to ``None`` (no text filter)."""
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        searchMock = self._stubSearch(handler)
+
+        await handler._llmToolSearchMessages(extraData=extraData, query="x", substring="   ")
+
+        assert searchMock.call_args.kwargs["substring"] is None
+
+    async def test_search_messages_substring_only_skips_embedding(
+        self,
+        handler: ChatSearchHandler,
+        extraData: ExtraDataDict,
+        chatSettings: ChatSettingsDict,
+    ) -> None:
+        """Empty query + substring runs filter-only: no embedding call, ``queryEmbedding`` is None.
+
+        The ``LLMService.generateEmbedding`` boundary is wired (via the
+        ``handler`` fixture default) so this is a genuine regression guard:
+        if a future change made the empty-query path reach
+        ``generateEmbedding``, this test would catch it.
+        ``assert_not_awaited`` is the precise ``AsyncMock`` assertion.
+        """
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        searchMock = self._stubSearch(handler)
+
+        await handler._llmToolSearchMessages(extraData=extraData, query="", substring="foo")
+
+        cast(Any, handler).llmService.generateEmbedding.assert_not_awaited()
+        kwargs = searchMock.call_args.kwargs
+        assert kwargs["queryEmbedding"] is None
+        assert kwargs["substring"] == "foo"
+
+    async def test_search_messages_substring_only_works_with_embeddings_disabled(
+        self,
+        handler: ChatSearchHandler,
+        extraData: ExtraDataDict,
+    ) -> None:
+        """Substring-only search bypasses the ``EMBEDDINGS_ENABLED`` gate (relaxed gate)."""
+        cs = _makeChatSettings(embeddingsEnabled=False)
+        handler.getChatSettings = AsyncMock(return_value=cs)
+        searchMock = self._stubSearch(handler)
+
+        result = await handler._llmToolSearchMessages(extraData=extraData, query="", substring="foo")
+
+        assert result["done"] is True
+        searchMock.assert_awaited_once()
+
+    async def test_search_messages_current_thread_only_coerces_string_false(
+        self,
+        handler: ChatSearchHandler,
+        extraData: ExtraDataDict,
+        chatSettings: ChatSettingsDict,
+        ensMessage: EnsuredMessage,
+    ) -> None:
+        """A JSON-string ``"false"`` for ``current_thread_only`` coerces to ``False`` (no thread scope).
+
+        Without ``_coerceToolBool`` this would be ``True`` (``bool("false")`` is
+        truthy) and the search would be scoped to thread 555.
+        """
+        ensMessage.threadId = 555
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        searchMock = self._stubSearch(handler)
+
+        await cast(Any, handler)._llmToolSearchMessages(extraData=extraData, query="x", current_thread_only="false")
+
+        assert searchMock.call_args.kwargs["threadId"] is None
+
+    async def test_search_messages_current_thread_only_coerces_string_true(
+        self,
+        handler: ChatSearchHandler,
+        extraData: ExtraDataDict,
+        chatSettings: ChatSettingsDict,
+        ensMessage: EnsuredMessage,
+    ) -> None:
+        """A JSON-string ``"true"`` for ``current_thread_only`` coerces to ``True`` (thread scope)."""
+        ensMessage.threadId = 555
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        searchMock = self._stubSearch(handler)
+
+        await cast(Any, handler)._llmToolSearchMessages(extraData=extraData, query="x", current_thread_only="true")
+
+        assert searchMock.call_args.kwargs["threadId"] == 555
 
 
 # ---------------------------------------------------------------------------
@@ -1852,18 +2088,10 @@ class TestListUsersLLMTool:
         assert result["done"] is False
         assert "Missing chat context" in result.get("error", "")
 
-    async def test_list_users_tools_disabled(self, handler: ChatSearchHandler, extraData: Dict[str, Any]) -> None:
-        """ALLOW_TOOLS_COMMANDS=False → returns error dict."""
-        cs = _makeChatSettings(allowTools=False)
-        handler.getChatSettings = AsyncMock(return_value=cs)
-        result = await handler._llmToolListUsers(extraData=extraData)
-        assert result["done"] is False
-        assert "отключены" in result.get("error", "").lower()
-
     async def test_list_users_success(
         self,
         handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
+        extraData: ExtraDataDict,
         chatSettings: ChatSettingsDict,
         sampleUsers: List[Dict[str, Any]],
     ) -> None:
@@ -1884,7 +2112,7 @@ class TestListUsersLLMTool:
     async def test_list_users_empty(
         self,
         handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
+        extraData: ExtraDataDict,
         chatSettings: ChatSettingsDict,
     ) -> None:
         """Empty user list → done=True, users=[], count=0."""
@@ -1897,19 +2125,10 @@ class TestListUsersLLMTool:
         assert result["users"] == []
         assert result["count"] == 0
 
-    async def test_list_users_handles_getChatSettings_error(
-        self, handler: ChatSearchHandler, extraData: Dict[str, Any]
-    ) -> None:
-        """getChatSettings raises → returns error dict."""
-        handler.getChatSettings = AsyncMock(side_effect=RuntimeError("DB down"))
-        result = await handler._llmToolListUsers(extraData=extraData)
-        assert result["done"] is False
-        assert "настройки" in result.get("error", "")
-
     async def test_list_users_forwards_params(
         self,
         handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
+        extraData: ExtraDataDict,
         chatSettings: ChatSettingsDict,
     ) -> None:
         """limit and min_messages are forwarded to getChatUsers."""
@@ -1935,7 +2154,7 @@ class TestListUsersLLMTool:
     async def test_list_users_updated_at_none(
         self,
         handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
+        extraData: ExtraDataDict,
         chatSettings: ChatSettingsDict,
     ) -> None:
         """updated_at is None → last_active is '' not 'None'."""
@@ -1959,7 +2178,7 @@ class TestListUsersLLMTool:
     async def test_list_users_repo_raises(
         self,
         handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
+        extraData: ExtraDataDict,
         chatSettings: ChatSettingsDict,
     ) -> None:
         """Repository exception → error dict."""
@@ -2044,27 +2263,19 @@ class TestGetThreadLLMTool:
         assert result["done"] is False
         assert "Missing chat context" in result.get("error", "")
 
-    async def test_get_thread_tools_disabled(self, handler: ChatSearchHandler, extraData: Dict[str, Any]) -> None:
-        """ALLOW_TOOLS_COMMANDS=False → returns error dict."""
-        cs = _makeChatSettings(allowTools=False)
-        handler.getChatSettings = AsyncMock(return_value=cs)
-        result = await handler._llmToolGetThread(extraData=extraData, message_id="10")
-        assert result["done"] is False
-        assert "отключены" in result.get("error", "").lower()
-
     async def test_get_thread_invalid_message_id(
-        self, handler: ChatSearchHandler, extraData: Dict[str, Any], chatSettings: ChatSettingsDict
+        self, handler: ChatSearchHandler, extraData: ExtraDataDict, chatSettings: ChatSettingsDict
     ) -> None:
         """Invalid message_id value (None) → returns error dict."""
         handler.getChatSettings = AsyncMock(return_value=chatSettings)
         # Pass None — MessageId(None) raises ValueError/TypeError and is
-        # caught by Gate 3's except block, returning "неверный".
+        # caught by Gate 2's except block, returning "неверный".
         result = await cast(Any, handler)._llmToolGetThread(extraData=extraData, message_id=None)
         assert result["done"] is False
         assert "неверный" in result.get("error", "").lower()
 
     async def test_get_thread_not_found(
-        self, handler: ChatSearchHandler, extraData: Dict[str, Any], chatSettings: ChatSettingsDict
+        self, handler: ChatSearchHandler, extraData: ExtraDataDict, chatSettings: ChatSettingsDict
     ) -> None:
         """getMessageThread returns None → returns error dict."""
         handler.getChatSettings = AsyncMock(return_value=chatSettings)
@@ -2076,7 +2287,7 @@ class TestGetThreadLLMTool:
     async def test_get_thread_success(
         self,
         handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
+        extraData: ExtraDataDict,
         chatSettings: ChatSettingsDict,
         sampleMessage: ChatMessageDict,
     ) -> None:
@@ -2117,7 +2328,7 @@ class TestGetThreadLLMTool:
     async def test_get_thread_root_message_none(
         self,
         handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
+        extraData: ExtraDataDict,
         chatSettings: ChatSettingsDict,
         sampleMessage: ChatMessageDict,
     ) -> None:
@@ -2142,7 +2353,7 @@ class TestGetThreadLLMTool:
         assert len(result["thread_messages"]) == 1
 
     async def test_get_thread_getMessageThread_raises(
-        self, handler: ChatSearchHandler, extraData: Dict[str, Any], chatSettings: ChatSettingsDict
+        self, handler: ChatSearchHandler, extraData: ExtraDataDict, chatSettings: ChatSettingsDict
     ) -> None:
         """getMessageThread raises → returns error dict."""
         handler.getChatSettings = AsyncMock(return_value=chatSettings)
@@ -2150,15 +2361,6 @@ class TestGetThreadLLMTool:
         result = await handler._llmToolGetThread(extraData=extraData, message_id="10")
         assert result["done"] is False
         assert "тред" in result.get("error", "").lower()
-
-    async def test_get_thread_getChatSettings_raises(
-        self, handler: ChatSearchHandler, extraData: Dict[str, Any]
-    ) -> None:
-        """getChatSettings raises → returns error dict."""
-        handler.getChatSettings = AsyncMock(side_effect=RuntimeError("Settings error"))
-        result = await handler._llmToolGetThread(extraData=extraData, message_id="10")
-        assert result["done"] is False
-        assert "настройки" in result.get("error", "")
 
     async def test_get_thread_handles_chat_context_error(self, handler: ChatSearchHandler) -> None:
         """extraData has no ensuredMessage → returns error dict."""
@@ -2175,10 +2377,15 @@ class TestGetThreadLLMTool:
 class TestGetMessagesByIdsLLMTool:
     """Tests for :meth:`ChatSearchHandler._llmToolGetMessagesByIds`.
 
-    Covers the three-layer gating (chat-context, ``ALLOW_TOOLS_COMMANDS``,
-    NOT ``EMBEDDINGS_ENABLED``), the batch fetch + ``_formatMessageDict``
+    Covers chat-context validation, the batch fetch + ``_formatMessageDict``
     reuse, ``notFound`` computation, batch-cap clamping, never-raise, and
-    the emitted tool schema (``items: {"type": "string"}``).
+    the emitted tool schema (``items: {"type": "string"}``). Gating is
+    exercised indirectly: the tool rides the handler's
+    ``[search-history].enabled`` registration gate and the chat-time
+    ``USE_TOOLS`` setting (the registration half is asserted via
+    ``test_toolRegistered_whenSearchHistoryEnabled``); it is NOT gated on
+    ``ALLOW_TOOLS_COMMANDS`` or ``EMBEDDINGS_ENABLED`` (the latter is
+    pinned by ``test_notGatedOnEmbeddingsEnabled``).
     """
 
     @pytest.fixture
@@ -2256,7 +2463,7 @@ class TestGetMessagesByIdsLLMTool:
     async def test_allFound(
         self,
         handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
+        extraData: ExtraDataDict,
         chatSettings: ChatSettingsDict,
     ) -> None:
         """Request 3 ids, all present → 3 messages, empty notFound, count 3."""
@@ -2275,7 +2482,7 @@ class TestGetMessagesByIdsLLMTool:
     async def test_allNotFound(
         self,
         handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
+        extraData: ExtraDataDict,
         chatSettings: ChatSettingsDict,
     ) -> None:
         """Request ids absent from DB → empty messages, all in notFound."""
@@ -2292,7 +2499,7 @@ class TestGetMessagesByIdsLLMTool:
     async def test_mixedFoundAndNotFound(
         self,
         handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
+        extraData: ExtraDataDict,
         chatSettings: ChatSettingsDict,
     ) -> None:
         """Some ids resolve, some don't → correct split."""
@@ -2311,7 +2518,7 @@ class TestGetMessagesByIdsLLMTool:
     async def test_emptyInputNone(
         self,
         handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
+        extraData: ExtraDataDict,
         chatSettings: ChatSettingsDict,
     ) -> None:
         """message_ids=None → empty success result, repo not called."""
@@ -2328,7 +2535,7 @@ class TestGetMessagesByIdsLLMTool:
     async def test_emptyInputEmptyList(
         self,
         handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
+        extraData: ExtraDataDict,
         chatSettings: ChatSettingsDict,
     ) -> None:
         """message_ids=[] → empty success result, repo not called."""
@@ -2344,7 +2551,7 @@ class TestGetMessagesByIdsLLMTool:
     async def test_invalidIdsGoToNotFound_noException(
         self,
         handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
+        extraData: ExtraDataDict,
         chatSettings: ChatSettingsDict,
     ) -> None:
         """Garbage/blank/None id entries never raise and land in notFound.
@@ -2369,7 +2576,7 @@ class TestGetMessagesByIdsLLMTool:
     async def test_neverRaise_repoRaises(
         self,
         handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
+        extraData: ExtraDataDict,
         chatSettings: ChatSettingsDict,
     ) -> None:
         """Repository raises → returns error dict, no exception propagates."""
@@ -2396,7 +2603,7 @@ class TestGetMessagesByIdsLLMTool:
     async def test_notGatedOnEmbeddingsEnabled(
         self,
         handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
+        extraData: ExtraDataDict,
     ) -> None:
         """EMBEDDINGS_ENABLED=False but ALLOW_TOOLS_COMMANDS=True → tool works.
 
@@ -2417,7 +2624,7 @@ class TestGetMessagesByIdsLLMTool:
     async def test_batchCapClamping(
         self,
         handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
+        extraData: ExtraDataDict,
         chatSettings: ChatSettingsDict,
     ) -> None:
         """Requesting more than MAX_GET_MESSAGES_BATCH clamps to the cap."""
@@ -2435,7 +2642,7 @@ class TestGetMessagesByIdsLLMTool:
     async def test_dedup(
         self,
         handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
+        extraData: ExtraDataDict,
         chatSettings: ChatSettingsDict,
     ) -> None:
         """Duplicate ids are de-duplicated before the batch fetch."""
@@ -2454,7 +2661,7 @@ class TestGetMessagesByIdsLLMTool:
     async def test_intIdItemsCoercedToString(
         self,
         handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
+        extraData: ExtraDataDict,
         chatSettings: ChatSettingsDict,
     ) -> None:
         """A model passing ints (schema violation) is coerced to str, no crash."""
@@ -2472,7 +2679,7 @@ class TestGetMessagesByIdsLLMTool:
     async def test_formatFailure_notReportedAsNotFound(
         self,
         handler: ChatSearchHandler,
-        extraData: Dict[str, Any],
+        extraData: ExtraDataDict,
         chatSettings: ChatSettingsDict,
     ) -> None:
         """A DB-resolved row that fails to format is NOT reported as notFound.

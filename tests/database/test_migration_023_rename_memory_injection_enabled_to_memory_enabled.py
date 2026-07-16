@@ -6,9 +6,10 @@ module hold the exact before/after strings), accompanying the ``MEMORY_ENABLED``
 enum rename.
 
 Approach: the shared ``testDatabase`` fixture auto-migrates to the latest
-version (so ``chat_settings`` exists, empty). The test rolls back migration 023
-(one step — it is the newest) to reach the pre-rename state, seeds a row with
-the old key plus a couple of sibling rows with unrelated keys, then exercises
+version (so ``chat_settings`` exists, empty). The test rolls back the two
+newest migrations (024 and 023) to reach the pre-rename state, seeds a row
+with the old key plus a couple of sibling rows with unrelated keys, then
+exercises
 ``up()`` / ``down()`` directly and asserts:
 
 - The old-key row's ``key`` is renamed; its ``value`` is preserved verbatim.
@@ -81,11 +82,13 @@ async def test_migration_023_renamesKeyPreservingValue(testDatabase: Database) -
     """
     provider = await testDatabase.manager.getProvider(chatId=CHAT_ID, readonly=False)
 
-    # --- Roll back migration 023 (the newest) to reach the pre-rename state.
-    # One step: 023's down() is the reverse rename, a no-op on an empty DB.
+    # --- Roll back the two newest migrations (024, 023) to reach the
+    # pre-rename state. Two steps: 024's down() drops the bayes_tokens index
+    # (no-op on data) and 023's down() is the reverse rename (a no-op on an
+    # empty DB).
     rollbackManager = MigrationManager()
     rollbackManager.loadMigrationsFromVersions()
-    await rollbackManager.rollback(steps=1, sqlProvider=provider)
+    await rollbackManager.rollback(steps=2, sqlProvider=provider)
 
     # --- Seed: the target row under the OLD key, plus two sibling rows for
     # unrelated keys that must be left exactly as they were.
@@ -132,7 +135,7 @@ async def test_migration_023_downRevertsRename(testDatabase: Database) -> None:
 
     rollbackManager = MigrationManager()
     rollbackManager.loadMigrationsFromVersions()
-    await rollbackManager.rollback(steps=1, sqlProvider=provider)
+    await rollbackManager.rollback(steps=2, sqlProvider=provider)
 
     targetValue = "0"
     await _insertChatSetting(provider, CHAT_ID, OLD_KEY, targetValue)
@@ -167,7 +170,7 @@ async def test_migration_023_upIsIdempotent(testDatabase: Database) -> None:
 
     rollbackManager = MigrationManager()
     rollbackManager.loadMigrationsFromVersions()
-    await rollbackManager.rollback(steps=1, sqlProvider=provider)
+    await rollbackManager.rollback(steps=2, sqlProvider=provider)
 
     targetValue = "1"
     await _insertChatSetting(provider, CHAT_ID, OLD_KEY, targetValue)

@@ -86,10 +86,10 @@ Decision record: [`../architecture.md`](../architecture.md) ADR-019. Spec: [`../
 
 Registered in `ChatSearchHandler.__init__` ([`/internal/bot/common/handlers/chat_search.py`](/internal/bot/common/handlers/chat_search.py)); constant `ToolName.GET_MESSAGES_BY_IDS`, [`/internal/bot/constants.py`](/internal/bot/constants.py). Accepts a list of ID strings (`extra={"items": {"type": "string"}}` — forces strings because `MessageId` is `int|str`); input clamped to `MAX_GET_MESSAGES_BATCH = 32`. Returns `{messages:[...EnsuredMessage JSON...], notFound:[...], count:N}`, reusing `_formatMessageDict`. Whole body wrapped in try/except (never-raise).
 
-**Three-layer gating** (note: NO handler restructuring, NO `manager.py` change):
+**Two-layer gating** (note: NO handler restructuring, NO `manager.py` change):
 1. `[search-history].enabled` via `ChatSearchHandler`'s existing conditional registration (the tool rides the handler's gate).
-2. `ALLOW_TOOLS_COMMANDS` per-chat master toggle at tool-resolution time.
-3. **NOT** gated on `EMBEDDINGS_ENABLED` or any search-specific flag — pure DB lookup, available whenever chat-search is on (even with semantic search disabled).
+2. At chat time, gated solely by `USE_TOOLS` (the model is never sent the tool when `USE_TOOLS=false`). NOT gated by `ALLOW_TOOLS_COMMANDS` (which gates only slash commands of `CommandCategory.TOOLS`).
+3. Additionally **NOT** gated on `EMBEDDINGS_ENABLED` or any search-specific flag — pure DB lookup, available whenever chat-search is on (even with semantic search disabled).
 
 The config section is `[search-history]` (NOT `[chat-search]`), accessed via `configManager.getSearchHistoryConfig()`.
 

@@ -70,6 +70,18 @@ Added 2026-07-11. Drops all `vec_user_memories_{N}` virtual tables and nulls `em
 - Single transaction wraps all DROPs + UPDATE atomically.
 - 7 tests under `tests/scripts/`.
 
+## `/scripts/delete_stopwords.py`
+
+Added 2026-07-15. Deletes `bayes_tokens` rows whose `token` matches one of the tokenizer's default stopwords (`TokenizerConfig().getStopwords()` in [`lib/bayes_filter/tokenizer.py`](../../../lib/bayes_filter/tokenizer.py)). Purpose: after new stopwords are added to that default list, previously-learned tokens that are now stopwords keep lingering with their old `spam_count`/`ham_count` totals — this script purges them.
+
+- **Follows the `scripts/prune_unknown_chat_settings.py` precedent** (referenced in `docs/llm/configuration.md` and `docs/llm/memories/user-memories.md`): standalone script, positional `dbPath` arg, `--dry-run` / `-n` flag with `dest="dryRun"`.
+- **NOT pure-stdlib** — unlike `/scripts/clear_memory_refinement.py` and `/scripts/clear_memory_embeddings.py`, it imports `TokenizerConfig` from `lib.bayes_filter.tokenizer` so the stopword list is read live from the canonical source (no hardcoded words). Adds the repo root to `sys.path` first so `./venv/bin/python3 scripts/delete_stopwords.py` resolves the import.
+- Direct `sqlite3` access (raw `sqlite3.connect(..., isolation_level=None)` + hand-driven `BEGIN`/`COMMIT`/`ROLLBACK`), matching the established script-class pattern.
+- Guards against a missing `bayes_tokens` table (hard error, exit 1).
+- Builds `IN (?, ?, ...)` placeholders for the stopword set (well under SQLite's 999-variable cap).
+- **TOCTOU warning in the module docstring:** stop the bot before running — the `SELECT COUNT(*)` and the later `DELETE` are not atomic, so a concurrent bot write to a stopword row can desync the reported count. Read-then-act window by design.
+- Tokens in `bayes_tokens` are already lowercase (tokenizer lowercases before the stopword check), so an exact string match is sufficient.
+
 ## See also
 
 - `AGENTS.md` — camelCase, `./venv/bin/python3`, `StrEnum`, no-`Any`, docstring/type-hint rules.
