@@ -78,11 +78,6 @@ class ToolName(StrEnum):
     DO_RUNES_READING = "do_runes_reading"
 
 
-# Reserved key in useTools dict for fallback tool enablement
-TOOLS_DEFAULT_DICT_KEY: str = "default"
-"""Reserved key in the ``useTools`` dict used by ``_resolveTools`` for fallback tool
-enablement when no explicit per-tool entry exists."""
-
 # Emoji constants
 DUNNO_EMOJI: str = "🤷‍♂️"
 """Emoji used to indicate uncertainty or lack of knowledge."""

@@ -877,6 +877,7 @@ class ModelRunResult:
         "toolUsageHistory",
         "isFallback",
         "isToolsUsed",
+        "roundLimitHit",
         "inputTokens",
         "outputTokens",
         "totalTokens",
@@ -949,6 +950,13 @@ class ModelRunResult:
 
         self.isFallback = False
         self.isToolsUsed = False
+        self.roundLimitHit = False
+        """bool: Whether the ``maxRounds`` round limit was reached during generation.
+        Set to ``True`` by :meth:`LLMService.generateTextViaLLM` when the
+        tool-calling loop terminated due to budget exhaustion (regardless of
+        the resulting status). Stays ``False`` for normal completion within
+        budget. Lets callers (e.g. the memory-refinement loop) detect that the
+        result may be incomplete."""
 
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens

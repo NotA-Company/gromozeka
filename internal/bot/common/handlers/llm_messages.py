@@ -53,7 +53,7 @@ from internal.bot.models.message_metadata import mergeCondensingDicts
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import MessageCategory
-from internal.services.llm import ExtraDataDict, LLMService, UseToolsType
+from internal.services.llm import TOOLS_DEFAULT_DICT_KEY, ExtraDataDict, LLMService, UseToolsType
 from lib.ai import (
     ModelMessage,
     ModelResultStatus,
@@ -275,7 +275,7 @@ class LLMMessageHandler(BaseBotHandler):
             useTools = chatSettings[ChatSettingsKey.USE_TOOLS].toBool()
             if useTools:
                 useTools = {
-                    constants.TOOLS_DEFAULT_DICT_KEY: True,
+                    TOOLS_DEFAULT_DICT_KEY: True,
                     constants.ToolName.DELETE_MEMORY: False,
                 }
                 if not chatSettings[ChatSettingsKey.ALLOW_SANDBOX].toBool():

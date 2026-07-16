@@ -13,6 +13,8 @@ process governing this file, see [docs/llm/changelog.md](docs/llm/changelog.md).
 
 ### Changed
 - `search_messages`, `list_users`, and `get_thread` LLM tools no longer re-check the `ALLOW_TOOLS_COMMANDS` chat setting inside the tool handler; LLM tools are now gated solely by `USE_TOOLS` at chat time, while `ALLOW_TOOLS_COMMANDS` gates only slash commands of `CommandCategory.TOOLS`. (With `USE_TOOLS=true` + `ALLOW_TOOLS_COMMANDS=false`, the LLM can now call these tools.)
+- `LLMService.generateTextViaLLM` now bounds the tool-calling loop by default (`maxRounds=DEFAULT_MAX_ROUNDS`=32, in `internal/services/llm/constants.py`); once the budget is exhausted it drops tool schemas, clears the tool execution allowlist, disables tool-call healing, injects a steering directive, forces the loop to terminate within one additional round, sets `ModelRunResult.roundLimitHit=True`, and logs a service-level warning. A fallback answer is synthesized only for an empty `FINAL` or a post-budget `TOOL_CALLS` (a glitching model that ignored the empty tools); genuine error statuses (`ERROR`/`CONTENT_FILTER`/`UNKNOWN`) propagate untouched so callers can detect the failure. Pass `maxRounds=None` for unlimited rounds (legacy behavior).
+- The memory-refinement loop now detects a `roundLimitHit` result and logs a warning that curation may be incomplete for the batch (previously the cap fired silently and incomplete curation looked like success).
 
 ### Fixed
 - LLM tool-call healing now detects `<tool_call>{…}</tool_call>` tag-wrapped JSON calls (emitted by e.g. YC aliceai-llm) and converts them into real tool calls instead of leaking the raw tags to the user.

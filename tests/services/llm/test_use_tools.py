@@ -13,7 +13,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from internal.bot.constants import TOOLS_DEFAULT_DICT_KEY, ToolName
+from internal.bot.constants import ToolName
+from internal.services.llm import TOOLS_DEFAULT_DICT_KEY
 from internal.services.llm.service import LLMService
 from lib.ai.abstract import AbstractModel
 from lib.ai.manager import LLMManager

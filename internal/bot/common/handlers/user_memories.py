@@ -1318,6 +1318,13 @@ class UserMemoriesHandler(BaseBotHandler):
             )
 
             logger.debug(f"Result of refining memory for {chatId}:{userId}, thread:{threadId}: {result}")
+
+            # The round-limit cap is otherwise silent: the LLM returns what
+            # looks like a successful (but incomplete) curation. Surface a
+            # warning specific to memory refinement so incomplete batches are
+            # detectable in logs. The curation logic itself is unchanged.
+            if result.roundLimitHit:
+                logger.warning("Memory refinement hit the maxRounds cap; curation may be incomplete for this batch")
         except Exception as e:
             logger.error(f"Error during refining memory of {chatId}:{userId}##{threadId}: {e}")
             logger.exception(e)

@@ -40,6 +40,7 @@ the pattern used by the other handler tests under
 
 import datetime
 import json
+import logging
 import time
 import tomllib
 from pathlib import Path
@@ -744,6 +745,47 @@ class TestCronJobAndRefinement:
         userInfo = await testDatabase.chatUsers.getChatUser(chatId=chatId, userId=userId)
         metadata = handler.parseUserMetadata(userInfo)
         assert metadata.get("memoryRefinement", {}).get(str(threadId)) is None
+
+    async def test_runSingleRefinementWarnsWhenRoundLimitHit(
+        self, testDatabase: Database, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A ``roundLimitHit`` result logs a memory-refinement warning.
+
+        Gate-2 Decision 1(d): the maxRounds cap is otherwise silent — the LLM
+        returns what looks like a successful (but incomplete) curation. The
+        handler must detect ``result.roundLimitHit`` and emit a warning so
+        incomplete batches are visible in logs. Drives ``_runSingleRefinement``
+        directly with ``generateTextViaLLM`` mocked to return a FINAL result
+        carrying ``roundLimitHit=True``.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            caplog: pytest log-capture fixture.
+        """
+        handler = await _makeHandler(testDatabase, configManager=_makeUserMemoryConfigManager(enabled=True))
+        _stubGetChatSettings(handler, memoryRefinementEnabled=True)
+
+        refineResult = ModelRunResult(
+            rawResult={},
+            status=ModelResultStatus.FINAL,
+            resultText="partially curated",
+        )
+        refineResult.roundLimitHit = True
+        mockGenerate = AsyncMock(return_value=refineResult)
+        handler.llmService.generateTextViaLLM = mockGenerate  # type: ignore[method-assign]
+
+        chatId, userId, threadId = 360, 13, DEFAULT_THREAD_ID
+        await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user13", "Eve")
+        await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
+
+        with caplog.at_level(logging.WARNING, logger="internal.bot.common.handlers.user_memories"):
+            await handler._runSingleRefinement(chatId, userId, threadId)  # type: ignore[attr-defined]
+
+        # The cap-hit warning specific to memory refinement is emitted.
+        assert any(
+            rec.levelno == logging.WARNING and "maxRounds cap" in rec.message and "incomplete" in rec.message
+            for rec in caplog.records
+        )
 
     async def test_dtCronJobDispatchesNeverRefinedUserWhoBailsOnTooFewLifetimeMessages(
         self, testDatabase: Database
