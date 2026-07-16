@@ -218,6 +218,7 @@ enabled = true
 | `support_structured_output` | bool | `false` | Enable JSON schema output |
 | `image_generation_api` | str | unset | Image transport: `"openai-images"` for Images API, unset for chat-completions |
 | `image_options` | table | `{}` | Whitelisted image generation options |
+| `input_image_format` | array of str (full MIME) | unset | Supported **INPUT** (vision) image MIME formats, e.g. `["image/jpeg", "image/png"]`. Unset/empty = accept any format. When set, input images whose detected MIME is not in the list are converted to the FIRST listed format before being sent to the model (e.g. webp→jpeg). Distinct from `support_images` / `image_generation_api` / `image_options`, which all concern OUTPUT (image generation). Use when a model rejects certain input formats (e.g. YC `qwen3.6-35b-a3b` rejects webp). OpenAI-compatible providers only; on conversion failure (corrupt/unsupported/oversized image) the original is sent unchanged. |
 
 **Image generation configuration:**
 

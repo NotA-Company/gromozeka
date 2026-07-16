@@ -7,6 +7,7 @@ process governing this file, see [docs/llm/changelog.md](docs/llm/changelog.md).
 ## [Unreleased]
 
 ### Added
+- `input_image_format` per-model config key — declares the supported **input** (vision) image MIME formats; input images whose detected MIME is not in the list are auto-converted to the first listed format (e.g. webp→jpeg) before being sent to the model. Unset/empty = accept any format. OpenAI-compatible providers only; conversion failures (corrupt/unsupported/oversized images, including a decompression-bomb pixel cap) degrade gracefully by sending the original. Motivating case: YC `yc/qwen3.6-35b-a3b` (the image-parsing fallback) now declares `input_image_format = ["image/jpeg", "image/png"]` so webp Telegram stickers no longer get rejected.
 - New `tests/dependencies/` suite of dependency-usage regression tests (79 tests) pinning the current behavior of pinned third-party libraries (python-dateutil, tomli, python-magic, html-to-markdown, numpy, sqlite-vec) so a version bump that changes behavior fails loudly. Each test asserts its pinned library version via `importlib.metadata.version()` (sqlite-vec via `SELECT vec_version()`).
 - `search_messages` LLM tool gained a `current_thread_only` parameter (default true) that restricted results to the current thread/topic; an explicit `thread_message_id` overrode it.
 - `search_messages` LLM tool gained a `substring` parameter for case-insensitive exact-text filtering; substring-only searches (no `query`) skipped embedding generation and worked in chats without embeddings enabled.
