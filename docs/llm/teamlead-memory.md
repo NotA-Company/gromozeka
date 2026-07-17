@@ -90,10 +90,15 @@ Full index and one-line descriptions live in [`memories/index.md`](memories/inde
 
 - Slash-commands are markdown files in a `commands/` dir. Filename `<name>.md` → `/<name>`.
 - YAML frontmatter fields observed: `description`, `agent` (routes to a named agent from `agents/`), `subtask` (bool). Body = free-form prompt; `$ARGUMENTS` = args passed at invocation.
-- Global commands live in `~/.config/opencode/commands/` (2 existing: `caveman-compress.md`, `caveman-review.md`). Repo `.opencode/` has `agents/` but NO `commands/` dir yet — repo-local commands would go in `.opencode/commands/` (exact dir name to confirm against opencode docs, but `commands/` matches the global layout).
+- Global commands live in `~/.config/opencode/commands/` (2 existing: `caveman-compress.md`, `caveman-review.md`). Repo-local commands live in `.opencode/commands/` (3 existing):
+  - `changelog` — drafts a `CHANGELOG.md` entry from the current diff (see [`changelog.md`](changelog.md)).
+  - `refine-memory` — extracts task-specific deep-dive sections from this file into [`memories/`](memories/index.md) to keep the main file compact; routed to `teamlead` with `subtask: true`.
+  - `review-large` — runs the methodology in [`reviewing-large-changes.md`](reviewing-large-changes.md) for reviewing diffs >24 files (characterize → batch → per-batch review → integration → consolidated findings, stopping before remediation); routed to `teamlead`.
 - Repo `.opencode/opencode.json` sets `default_agent: "teamlead"`; per-subagent model tiers under `agent`. Global config is `~/.config/opencode/opencode.jsonc`.
 - Commands are discovered by filename, NOT registered via any `command`/`commands` key in config.
-- CHANGELOG.md now exists at repo root (created 2026-07-15). `TODO.md:7` is checked off (`- [x] changelog`). The full Keep-a-Changelog process spec lives at [`docs/llm/changelog.md`](changelog.md); `AGENTS.md` carries the compact summary.
+- **`make check-docs` excludes `.opencode/`** (`scripts/check_docs.py:70` `_EXCLUDED_DIR_NAMES`) — slashcommand files and agent configs under `.opencode/` are NOT validated by the markdown link checker. Manually verify any internal links in `.opencode/commands/*.md` against the actual target files; do not rely on `make check-docs` for them.
+- **`docs-writer` cannot edit/write under `.opencode/**` or `.agents/**`** (explicit denies in `.opencode/agents/docs-writer.md` on top of the `*.md`/`*.txt` allow). Slashcommand files MUST be written by `software-developer`; `docs-writer` can still edit `docs/llm/teamlead-memory.md`, `docs/llm/memories/index.md`, and `CHANGELOG.md`.
+- CHANGELOG.md exists at repo root (created 2026-07-15); `changelog` is checked off in `TODO.md`'s `# Done:` block. The full Keep-a-Changelog process spec lives at [`docs/llm/changelog.md`](changelog.md); `AGENTS.md` carries the compact summary.
 
 ## Changelog Process (embedded 2026-07-15)
 

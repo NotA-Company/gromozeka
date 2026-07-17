@@ -1,9 +1,7 @@
 # Our TODO list
 - [ ] script for moving chat to separate db
 - [ ] refactor models
-- [ ] opencode commands for review and teamldead memory refinement
 - [ ] Review all docs
-- [ ] On web search\get-url-content, allow bot to add compaction prompt
 - [ ] more statistics thing (more sources, consolidation, export + cleanup of old statistics)
 
 - [ ] Subagent with conversation history
@@ -43,6 +41,8 @@
 - [ ] Add replied message to context more close to message (maybe in message metadata)
 
 # Done:
+- [x] opencode commands for review and teamldead memory refinement
+- [x] On web search\get-url-content, allow bot to add compaction prompt
 - [x] Yandex AI Studio does not support webp images. Add config value + convert
 - [x] memory refinement: hard limit on steps (constant, 32)
 - [x] cleanup of old unused bayes tokens
