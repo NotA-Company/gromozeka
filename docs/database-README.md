@@ -2,6 +2,12 @@
 
 Welcome to the Gromozeka bot's database documentation. This directory contains comprehensive documentation for the database schema and operations.
 
+> **Canonical sources.** This file is a landing-page overview; for authoritative
+> schema details, see [`database-schema.md`](database-schema.md) (human-facing)
+> and [`database-schema-llm.md`](database-schema-llm.md) (LLM-facing). Counts
+> and method signatures are maintained as of the latest audit; when in doubt
+> against code, the schema docs are authoritative.
+
 
 ## 📚 Documentation Files
 
@@ -60,8 +66,11 @@ A streamlined reference optimized for LLM consumption, featuring:
 #### Statistics Tables
 - [`chat_stats`](database-schema.md#chat_stats) - Daily chat statistics
 - [`chat_user_stats`](database-schema.md#chat_user_stats) - Daily per-user statistics
+- [`stat_events`](database-schema.md#stat_events) - Raw stat events
+- [`stat_aggregates`](database-schema.md#stat_aggregates) - Aggregated statistics
 
 #### Media Tables
+- [`media_groups`](database-schema.md#media_groups) - Media group metadata
 - [`media_attachments`](database-schema.md#media_attachments) - Media file information
 
 #### User Memory Tables
@@ -73,10 +82,21 @@ A streamlined reference optimized for LLM consumption, featuring:
 - [`bayes_tokens`](database-schema.md#bayes_tokens) - Bayesian filter token statistics
 - [`bayes_classes`](database-schema.md#bayes_classes) - Bayesian filter class statistics
 
+#### Divination Tables
+- [`divinations`](database-schema.md#divinations) - Tarot/runes divination readings
+- [`divination_layouts`](database-schema.md#divination_layouts) - Cached divination layout definitions
+
+#### Chat Search Tables
+- [`message_embeddings`](database-schema.md#message_embeddings) - Per-message embedding vectors
+- [`vec_message_embeddings_N`](database-schema.md#vec_message_embeddings_n-virtual-table) - vec0 virtual tables (one per embedding dimension)
+
+#### Webhook Tables
+- [`webhook_updates`](database-schema.md#webhook_updates) - Max webhook payload buffer (two-process webhook mode)
+
 #### Cache Tables
 - [`chat_summarization_cache`](database-schema.md#chat_summarization_cache) - Cached summaries
 - [`cache_storage`](database-schema.md#cache_storage) - Generic key-value cache
-- [Dynamic Cache Tables](database-schema.md#dynamic-cache-tables) - API response caching
+- [`cache`](database-schema.md#cache) - Per-type cache entries
 
 #### Task Management Tables
 - [`delayed_tasks`](database-schema.md#delayed_tasks) - Scheduled task execution
@@ -114,11 +134,11 @@ A streamlined reference optimized for LLM consumption, featuring:
 
 ### SQL Portability
 The database system is designed for cross-RDBMS compatibility, supporting multiple database backends:
-- **Multiple providers**: SQLite, MySQL, PostgreSQL, and SQLink
+- **Registered providers**: SQLite (`sqlite3`) and SQLink (`sqlink`) — the only two wired into the `getSqlProvider` factory today (see [`internal/database/providers/__init__.py`](../internal/database/providers/__init__.py:90))
+- **Implemented, not yet selectable**: MySQL and PostgreSQL provider classes exist at [`internal/database/providers/mysql.py`](../internal/database/providers/mysql.py) and [`internal/database/providers/postgresql.py`](../internal/database/providers/postgresql.py) but are not registered in the factory. SQL must still stay portable so they can be turned on without rewrites.
 - **Provider abstraction**: Common interface through `BaseSQLProvider` class
 - **Portable operations**: Provider-specific methods handle SQL dialect differences
 - **Type safety**: Consistent TypedDict models across all providers
-- **Easy migration**: Switch between databases with minimal code changes
 
 Learn more: [SQL Portability Guide](sql-portability-guide.md)
 
@@ -161,27 +181,31 @@ The Gromozeka database system is designed to work with multiple relational datab
 
 #### SQLite (Default)
 - **Provider**: [`SQLite3Provider`](../internal/database/providers/sqlite3.py:1)
-- **Library**: `sqlite3` (Python standard library)
+- **Library**: `aiosqlite` (async wrapper over Python's `sqlite3` stdlib module)
 - **Use case**: Embedded databases, development, testing, small to medium deployments
-- **Features**: Zero configuration, file-based, ACID compliant
+- **Features**: Zero configuration, file-based, ACID compliant, optional `sqlite-vec` extension for native vector search
+- **Status**: Registered in `getSqlProvider` factory
 
 #### MySQL
 - **Provider**: [`MySQLProvider`](../internal/database/providers/mysql.py:1)
 - **Library**: `aiomysql` (async MySQL driver)
 - **Use case**: Production deployments, high concurrency, large datasets
 - **Features**: Connection pooling, async operations, enterprise-grade
+- **Status**: Implemented but **not yet registered** in the `getSqlProvider` factory; cannot be selected via config today
 
 #### PostgreSQL
 - **Provider**: [`PostgreSQLProvider`](../internal/database/providers/postgresql.py:1)
 - **Library**: `asyncpg` (async PostgreSQL driver)
 - **Use case**: Production deployments, complex queries, advanced features
 - **Features**: Connection pooling, async operations, rich data types
+- **Status**: Implemented but **not yet registered** in the `getSqlProvider` factory; cannot be selected via config today
 
 #### SQLink
 - **Provider**: [`SQLinkProvider`](../internal/database/providers/sqlink.py:1)
-- **Library**: `sqlink` (SQLite with async support)
-- **Use case**: Async SQLite operations, better performance than sqlite3
-- **Features**: Async operations, SQLite compatibility
+- **Library**: `sqlink` (HTTP client for a remote SQLink database server)
+- **Use case**: Remote database operations via a SQLink HTTP server (with optional HTTP/HTTPS proxy)
+- **Features**: Async operations, HTTP-based remote access, proxy support
+- **Status**: Registered in `getSqlProvider` factory
 
 ### Provider Methods
 
@@ -234,9 +258,9 @@ Get a complete SQL LIKE expression for case-insensitive pattern matching. Takes 
 ```python
 # Case-insensitive fuzzy search
 expression = provider.getLikeComparison('name', 'search')
-# Returns: "LOWER(name) LIKE LOWER(:search)" for SQLite
-# Returns: "LOWER(name) LIKE LOWER(:search)" for MySQL
-# Returns: "LOWER(name) LIKE LOWER(:search)" for PostgreSQL (or ILIKE)
+# Returns: "LOWER(name) LIKE LOWER(:search)" for SQLite / SQLink / MySQL / PostgreSQL
+# (All current implementations use the LOWER/LIKE shape; PostgreSQL does NOT use ILIKE,
+# to keep the expression portable across providers.)
 ```
 
 **Use cases:**
@@ -259,8 +283,8 @@ Apply pagination to a query with provider-specific syntax.
 # Paginated query
 query = "SELECT * FROM chat_messages WHERE chatId = ?"
 paginatedQuery = provider.applyPagination(query, limit=50, offset=100)
-# Returns: 'SELECT * FROM chat_messages WHERE chatId = ? LIMIT 50 OFFSET 100' for SQLite/PostgreSQL
-# Returns: 'SELECT * FROM chat_messages WHERE chatId = ? LIMIT 100, 50' for MySQL
+# Returns: 'SELECT * FROM chat_messages WHERE chatId = ? LIMIT 50 OFFSET 100' for SQLite/SQLink/MySQL/PostgreSQL
+# (All current implementations use the same 'LIMIT {limit} OFFSET {offset}' shape.)
 ```
 
 #### `getTextType()`
@@ -269,9 +293,8 @@ Get the appropriate text data type for the provider.
 ```python
 # Schema migrations
 textType = provider.getTextType()
-# Returns: 'TEXT' for SQLite
-# Returns: 'VARCHAR(255)' for MySQL
-# Returns: 'TEXT' for PostgreSQL
+# Returns: 'TEXT' for SQLite / SQLink / PostgreSQL
+# Returns: 'TEXT' for MySQL (or 'MEDIUMTEXT' / 'LONGTEXT' when maxLength exceeds 64KB / 16MB)
 ```
 
 ### The `ExcludedValue` Class
@@ -294,54 +317,56 @@ update_expressions = {
 
 ### Configuration Examples
 
+> **Schema note.** The configuration key is `[database.providers.<name>]`
+> (not `sources`), with a `provider = "..."` field selecting the provider
+> class and a `[database.providers.<name>.parameters]` sub-table for
+> constructor kwargs. See `configs/00-defaults/00-config.toml` for the
+> live default.
+
 #### MySQL Configuration
 
 ```toml
-[database.sources.mysql_primary]
-type = "mysql"
+[database.providers.mysql_primary]
+provider = "mysql"
 host = "localhost"
 port = 3306
 user = "gromozeka"
 password = "your_password"
 database = "gromozeka_db"
-readonly = false
-pool-size = 10
-timeout = 30
+readOnly = false
 
-[database.sources.mysql_primary.parameters]
+[database.providers.mysql_primary.parameters]
 keepConnection = false  # Connect on demand (default for MySQL)
 ```
 
 #### PostgreSQL Configuration
 
 ```toml
-[database.sources.postgres_primary]
-type = "postgresql"
+[database.providers.postgres_primary]
+provider = "postgresql"
 host = "localhost"
 port = 5432
 user = "gromozeka"
 password = "your_password"
 database = "gromozeka_db"
-readonly = false
-pool-size = 10
-timeout = 30
+readOnly = false
 
-[database.sources.postgres_primary.parameters]
+[database.providers.postgres_primary.parameters]
 keepConnection = false  # Connect on demand (default for PostgreSQL)
 ```
 
 #### SQLite Configuration (Default)
 
 ```toml
-[database.sources.sqlite_primary]
-type = "sqlite3"
-path = "bot.db"
-readonly = false
-pool-size = 10
+[database.providers.sqlite_primary]
+provider = "sqlite3"
+# Constructor kwargs go under [parameters]; key names match SQLite3Provider.__init__:
+#   dbPath, readOnly, useWal, timeout, enableForeignKeys, keepConnection, vectorExtensionPath
+[database.providers.sqlite_primary.parameters]
+dbPath = "bot.db"
+readOnly = false
 timeout = 30
-enable_foreign_keys = true  # SQLite-specific option
-
-[database.sources.sqlite_primary.parameters]
+enableForeignKeys = true
 keepConnection = false  # Connect on demand (default for file-based SQLite)
 # For in-memory SQLite, use: keepConnection = true
 ```
@@ -349,28 +374,28 @@ keepConnection = false  # Connect on demand (default for file-based SQLite)
 ### Database-Specific Considerations
 
 #### SQLite
-- **Foreign keys**: Must be enabled with `PRAGMA foreign_keys = ON` (handled by `enable_foreign_keys` parameter)
-- **Date/time**: Uses `datetime("now")` for current timestamp
-- **Case sensitivity**: Uses `LIKE` for case-insensitive comparison
-- **Pagination**: Uses `LIMIT ? OFFSET ?` syntax
+- **Foreign keys**: Must be enabled with `PRAGMA foreign_keys = ON` (handled by `enableForeignKeys` parameter, defaults to `True`)
+- **Date/time**: Application code sets timestamps explicitly (no `DEFAULT CURRENT_TIMESTAMP` — see [SQL Portability Guide](sql-portability-guide.md))
+- **Case sensitivity**: `getCaseInsensitiveComparison()` uses `LOWER(column) = LOWER(:param)` (not `COLLATE NOCASE`)
+- **Pagination**: Uses `LIMIT {limit} OFFSET {offset}` syntax
 - **Upsert**: Uses `INSERT ... ON CONFLICT DO UPDATE` syntax
-- **Connection management**: In-memory databases (`:memory:`) default to `keepConnection=true` to prevent data loss
+- **Connection management**: In-memory databases (`:memory:`) default to `keepConnection=True` to prevent data loss
 
 #### MySQL
 - **Connection pooling**: Uses `aiomysql.Pool` for connection management
-- **Date/time**: Uses `NOW()` for current timestamp
-- **Case sensitivity**: Uses `LIKE` for case-insensitive comparison
-- **Pagination**: Uses `LIMIT ?, ?` syntax (offset, limit)
+- **Date/time**: Application code sets timestamps explicitly (no `DEFAULT CURRENT_TIMESTAMP`)
+- **Case sensitivity**: `getCaseInsensitiveComparison()` uses `column COLLATE utf8mb4_general_ci = :param`; `getLikeComparison()` uses `LOWER(column) LIKE LOWER(:param)`
+- **Pagination**: Uses `LIMIT {limit} OFFSET {offset}` syntax (same shape as the other providers; not MySQL's positional `LIMIT offset, limit` form)
 - **Upsert**: Uses `INSERT ... ON DUPLICATE KEY UPDATE` syntax
-- **Connection management**: Defaults to `keepConnection=false` (connect on demand)
+- **Connection management**: Defaults to `keepConnection=False` (connect on demand)
 
 #### PostgreSQL
 - **Connection pooling**: Uses `asyncpg.Pool` for connection management
-- **Date/time**: Uses `NOW()` for current timestamp
-- **Case sensitivity**: Uses `ILIKE` for case-insensitive comparison
-- **Pagination**: Uses `LIMIT ? OFFSET ?` syntax
+- **Date/time**: Application code sets timestamps explicitly (no `DEFAULT CURRENT_TIMESTAMP`)
+- **Case sensitivity**: `getCaseInsensitiveComparison()` and `getLikeComparison()` use `LOWER(column) [LIKE] LOWER(:param)` (not `ILIKE`, for cross-provider portability)
+- **Pagination**: Uses `LIMIT {limit} OFFSET {offset}` syntax
 - **Upsert**: Uses `INSERT ... ON CONFLICT DO UPDATE` syntax
-- **Connection management**: Defaults to `keepConnection=false` (connect on demand)
+- **Connection management**: Defaults to `keepConnection=False` (connect on demand)
 
 ### Migration Between Providers
 
@@ -477,6 +502,23 @@ The database system uses a repository pattern with 15 specialized repositories, 
     - `getLayout()` - Retrieve a cached layout definition
     - `saveLayout()` - Cache a layout definition
     - `saveNegativeCache()` - Cache negative result (layout not found)
+
+14. **[`userMemories`](../internal/database/repositories/user_memories.py:1)** - Unified per-(chat, user, thread) structured memory store
+    - `addMemory()` - Store a memory entry (permanent or ephemeral)
+    - `getMemory()` - Fetch a single memory by id
+    - `getPermanentMemories()` - List permanent memories for a (chat, user, thread)
+    - `getLatestMemories()` - List most-recent memories
+    - `searchMemories()` - Search memories (filter-only or semantic)
+    - `deleteMemory()` - Soft-delete a memory entry
+    - `saveMemoryEmbedding()` - Store a memory embedding vector
+    - `getMemoriesWithoutEmbeddings()` - Backfill helper for missing embeddings
+
+15. **[`webhookUpdates`](../internal/database/repositories/webhook_updates.py:1)** - Max webhook payload buffer (two-process webhook mode; see ADR-013)
+    - `addUpdate()` - Enqueue an incoming webhook payload
+    - `getUnprocessedUpdates()` - Pull pending payloads for consumption
+    - `markProcessed()` - Mark payloads as consumed
+    - `markProcessedBeforeMarker()` - Bulk-mark up to a marker
+    - `deleteProcessedOlderThan()` - Reap old processed payloads
 
 #### Accessing Repositories
 
@@ -634,30 +676,30 @@ await db.chatMessages.saveChatMessage(
 #### Provider-Specific Configuration
 ```toml
 # SQLite with foreign keys enabled
-[database.sources.sqlite]
-type = "sqlite3"
-path = "bot.db"
-enable_foreign_keys = true  # SQLite-specific option
+[database.providers.sqlite]
+provider = "sqlite3"
 
-# MySQL with connection pooling
-[database.sources.mysql]
-type = "mysql"
+[database.providers.sqlite.parameters]
+dbPath = "bot.db"
+enableForeignKeys = true  # SQLite-specific option
+
+# MySQL (provider class exists; not yet selectable in getSqlProvider)
+[database.providers.mysql]
+provider = "mysql"
 host = "localhost"
 port = 3306
 user = "gromozeka"
 password = "password"
 database = "gromozeka_db"
-pool-size = 10
 
-# PostgreSQL with connection pooling
-[database.sources.postgres]
-type = "postgresql"
+# PostgreSQL (provider class exists; not yet selectable in getSqlProvider)
+[database.providers.postgres]
+provider = "postgresql"
 host = "localhost"
 port = 5432
 user = "gromozeka"
 password = "password"
 database = "gromozeka_db"
-pool-size = 10
 ```
 
 ## 🔗 Related Documentation
@@ -666,9 +708,9 @@ pool-size = 10
 - **Database Manager**: [`internal/database/manager.py`](../internal/database/manager.py:1)
 - **Repository Base Class**: [`internal/database/repositories/base.py`](../internal/database/repositories/base.py:1)
 - **Database Models**: [`internal/database/models.py`](../internal/database/models.py:1)
-- **Migration Manager**: [`internal/database/migrations/manager.py`](../internal/database/migrations/manager.py:25)
-- **Migration Base Class**: [`internal/database/migrations/base.py`](../internal/database/migrations/base.py:7)
-- **Chat Settings Keys**: [`internal/bot/models/chat_settings.py`](../internal/bot/models/chat_settings.py:41)
+- **Migration Manager**: [`internal/database/migrations/manager.py`](../internal/database/migrations/manager.py:59)
+- **Migration Base Class**: [`internal/database/migrations/base.py`](../internal/database/migrations/base.py:41)
+- **Chat Settings Keys**: [`internal/bot/models/chat_settings.py`](../internal/bot/models/chat_settings.py:281)
 
 ## 🛠️ Development Guidelines
 
@@ -693,13 +735,17 @@ See: [Best Practices](database-schema.md#best-practices)
 
 ## 📊 Database Statistics
 
-- **Total Tables**: 20+ (including dynamic cache tables)
-- **Core Tables**: 5 (messages, users, info, topics, settings)
-- **Cache Tables**: 7+ (dynamic based on CacheType enum)
-- **Spam Detection Tables**: 4 (spam, ham, tokens, classes)
-- **Statistics Tables**: 2 (chat stats, user stats)
-- **Current Migration Version**: 23
-- **Total Repositories**: 15 specialized repositories
+> These counts drift easily. For the canonical, up-to-date table list see
+> [`database-schema.md`](database-schema.md); for migration files see
+> [`internal/database/migrations/versions/`](../internal/database/migrations/versions/).
+
+- **Total Tables**: 25+ base tables (plus dynamic vec0 tables per embedding dimension and per-`CacheType` cache tables)
+- **Core Tables**: 5 (`chat_messages`, `chat_users`, `chat_info`, `chat_topics`, `chat_settings`)
+- **Cache Tables**: 3 explicit (`chat_summarization_cache`, `cache_storage`, `cache`) plus dynamic per-`CacheType` tables
+- **Spam Detection Tables**: 4 (`spam_messages`, `ham_messages`, `bayes_tokens`, `bayes_classes`)
+- **Statistics Tables**: 4 (`chat_stats`, `chat_user_stats`, `stat_events`, `stat_aggregates`)
+- **Current Migration Version**: 24
+- **Total Repositories**: 15 specialised repositories on the `Database` class
 
 ## 🤝 Contributing
 
@@ -719,6 +765,6 @@ This documentation is part of the Gromozeka bot project.
 
 ---
 
-**Last Updated**: 2026-06-28
-**Database Version**: 18
-**Documentation Version**: 2.3
+**Last Updated**: 2026-07-18
+**Database Version**: 24
+**Documentation Version**: 2.4

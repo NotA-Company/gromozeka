@@ -16,14 +16,14 @@ How to use this file:
 - Pre-existing import issue: `from lib.sandbox.storage import sessionHash` reported in `filesystem.py` was investigated and NOT reproducible. Likely stale `.pyc` cache.
 - Docker `MemorySwap` is the TOTAL memory+swap limit (not just swap). Setting it equal to `Memory` disables swap.
 - `SandboxBackend` protocol gained a `removeImage()` method to support rollback on partial `prepareRuntime()` failure.
-- SandboxManager for bot integration: inject config in handler `__init__` before any `getInstance()` call. Check the config section exists first — an empty section crashes `fromDict()`. Session model: `sessionId = str(chatId)`, auto-created by `runCode()`.
+- SandboxManager for bot integration: inject config in handler `__init__` before any `getInstance()` call. Check the config section exists first — an empty section crashes `fromDict()`. Session model: `sessionId = f"chat#{chatId}"` (see `SandboxHandler.getSessionId`), auto-created by `runCode()`.
 
 ## Review Fix Session (2026-05-20)
 
 ### Sandbox-Specific Gotchas
 
 - Sandbox error class is `SandboxRuntimeError` (not `RuntimeError`). Subclasses: `UnknownRuntime`, `MissingDependenciesError`.
-- `RunResult.timedOut` checks BOTH `exitCode == 124` AND `signal == "SIGKILL"` — not just exit code.
+- `RunResult.timedOut` is set when `outcome.exitCode == 124 OR outcome.signal == "SIGKILL"` (either condition, not both — see `SandboxManager.runCode`).
 - `ResourceLimits.fromDict()` clamps `timeoutSeconds` to minimum 30, logging a warning if the configured value is below 30.
 - `SessionLockRegistry` now uses `asyncio.Lock` + waiter counter (`_SessionState`), not `asyncio.Semaphore`.
 - Docker `hasImage()` now uses targeted `client.images.inspect(imageTag)` in try/except `DockerError` — not `client.images.list()` with list comprehension.
@@ -40,7 +40,7 @@ How to use this file:
 
 - The `asyncio.Semaphore` → `asyncio.Lock` + waiter counter rewrite is the right model for `1 active + N queued` semantics. Key shape: `_SessionState` dataclass with `lock`, `waiters`, `cancelled`.
 - `forceCancel()` cascade: release the lock once; the woken callback checks `cancelled`, releases the lock, and raises `SessionDropped`. This cascades through all waiters.
-- `dropSession(force=True)` lock interaction is tricky: `forceCancel()` sets `cancelled=True`, then `acquire()` raises `SessionDropped` before incrementing `waiters`. Track with a `lockAcquired` flag to avoid an unpaired `release()` that corrupts the counter.
+- `dropSession(force=True)` lock interaction is tricky: `forceCancel()` sets `cancelled=True`, then `acquire()` raises `SessionDropped`. Current implementation increments `waiters` BEFORE `await state.lock.acquire()` and wraps the whole block in `try/except BaseException` that decrements `waiters` on any error — no separate `lockAcquired` flag is needed (an earlier design used one, but the try/except pattern superseded it).
 - `except BaseException` is needed in Docker container cleanup (not just `except Exception`) because `asyncio.CancelledError` inherits from `BaseException` in Python 3.12+.
 - Defensive `waiters <= 0` guard in `release()` helps diagnose unpaired-release bugs at runtime.
 

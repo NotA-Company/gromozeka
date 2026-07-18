@@ -2,7 +2,7 @@
 
 **Task**: Add native vector similarity search to `BaseSQLProvider`, with SQLite (`sqlite-vec`) as the primary backend.
 **Date**: 2026-06-28
-**Status**: Implemented (see `docs/llm/teamlead-memory.md` § "Vector Search — Native Implementation")
+**Status**: SQLite path implemented; pgvector/MySQL/SQLink interfaces forward-looking (see `docs/llm/memories/vector-search.md` § "Native Implementation"; teamlead framing in `docs/llm/teamlead-memory.md` "Docs Archive Layout")
 
 ---
 
@@ -10,7 +10,7 @@
 
 ### 1.1 Problem Statement
 
-Semantic search in Gromozeka currently loads ALL embeddings for a `(chatId, modelName)` pair into Python memory and computes cosine similarity via numpy. The hot path in `ChatSearchRepository._semanticSearch()` (`internal/database/repositories/chat_search.py:266-389`) is:
+Semantic search in Gromozeka currently loads ALL embeddings for a `(chatId, modelName)` pair into Python memory and computes cosine similarity via numpy. The hot path in `ChatSearchRepository._semanticSearch()` (`internal/database/repositories/chat_search.py:303`) is:
 
 1. `SELECT me.message_id, me.embedding FROM message_embeddings ...` -- fetches every matching BLOB.
 2. Deserialise each BLOB: `list(array.array("f", row["embedding"]))`.
@@ -94,31 +94,34 @@ Factory: `internal/database/providers/__init__.py:getSqlProvider()`.
 Add to `internal/database/providers/base.py`:
 
 ```python
-from typing import TypedDict
+from typing import Any, TypedDict
 
 class VectorSearchResult(TypedDict):
     """A single row from a native vector similarity search.
 
     Attributes:
-        rowKey: Mapping of column name to string value for each
-            requested return column. For composite primary keys,
-            all key columns are present (e.g. ``{"chat_id": "42",
+        rowKey: Mapping of column name to value for each requested
+            return column. For composite primary keys, all key
+            columns are present (e.g. ``{"chat_id": "42",
             "message_id": "abc"}``). For single-column keys, the
-            dict has one entry.
+            dict has one entry. Typed as ``dict[str, Any]`` for
+            provider flexibility; runtime values are strings
+            (providers build the dict via
+            ``{col: str(row[col]) for col in returnColumns}``).
         distance: Raw distance/dissimilarity score from the database
             engine. Lower is more similar for cosine distance. Callers
             convert to similarity via ``1.0 - distance`` when the
             metric is cosine.
     """
 
-    rowKey: dict[str, str]
+    rowKey: dict[str, Any]
     """Column-name-to-value mapping for the requested return columns."""
     distance: float
     """Distance score (metric-dependent; lower = more similar for cosine)."""
 ```
 
 Design notes:
-- `rowKey` is a `dict[str, str]` mapping column names to their string values for all columns listed in ``returnColumns``. This supports both single-column keys (``{"message_id": "abc"}``) and composite keys (``{"chat_id": "42", "message_id": "abc"}``).
+- `rowKey` is a `dict[str, Any]` mapping column names to their values for all columns listed in ``returnColumns``. Providers populate it with stringified values (``{col: str(row[col]) for col in returnColumns}``), so runtime values are strings, but the static type is ``dict[str, Any]`` to allow provider-specific flexibility (e.g. a future provider that returns native typed values without stringification). This supports both single-column keys (``{"message_id": "abc"}``) and composite keys (``{"chat_id": "42", "message_id": "abc"}``).
 - `distance` is the *raw* value from the database. For `sqlite-vec` cosine distance, this is `1.0 - cosine_similarity` (range 0..2). The caller converts.
 - Keeping it minimal (two fields) avoids coupling the provider to any particular table schema.
 
@@ -127,7 +130,7 @@ Design notes:
 Add to `BaseSQLProvider` as a concrete (non-abstract) method with a default:
 
 ```python
-def isVectorSearchSupported(self) -> bool:
+async def isVectorSearchSupported(self) -> bool:
     """Check if this provider supports native vector similarity search.
 
     Providers that load a vector extension (e.g. sqlite-vec, pgvector)
@@ -140,7 +143,7 @@ def isVectorSearchSupported(self) -> bool:
     return False
 ```
 
-Not `async` because the check should be cached at connect-time and returned synchronously. The provider sets a private flag (`_vectorSearchAvailable: bool`) during `connect()` (initialized to `False` in `__init__`, set to `True` in `connect()`).
+Marked `async` so providers that lazily connect (e.g. `SQLite3Provider` with `keepConnection=false`) can auto-connect on first check. The provider sets a private flag (`_vectorSearchAvailable: bool`) during `connect()` (initialized to `False` in `__init__`, set to `True` in `connect()`); the override reads that flag after ensuring a connection exists.
 
 ### 3.3 `vectorSearch()`
 
@@ -453,13 +456,21 @@ paths) raises ``AttributeError``.
 ### 4.2 `isVectorSearchSupported()` Override
 
 ```python
-def isVectorSearchSupported(self) -> bool:
+async def isVectorSearchSupported(self) -> bool:
     """Check if sqlite-vec extension is loaded and operational.
+
+    Auto-connects on first call if the provider uses lazy connections
+    (``keepConnection=false``), so the check works regardless of
+    connection lifecycle.
 
     Returns:
         ``True`` if ``sqlite-vec`` was successfully loaded during
         :meth:`connect`, ``False`` otherwise.
     """
+    if self._connection is None:
+        await self.connect()
+        if not self.keepConnection:
+            await self.disconnect()
     return self._vectorSearchAvailable
 ```
 
@@ -720,7 +731,7 @@ use the table matching the current model's dimension.
 
 ### 5.1 Changes to `ChatSearchRepository._semanticSearch()`
 
-The method at `internal/database/repositories/chat_search.py:266` gains a fast path:
+The method at `internal/database/repositories/chat_search.py:303` gains a fast path:
 
 ```python
 async def _semanticSearch(self, ...) -> List[ChatMessageDict]:
@@ -730,7 +741,7 @@ async def _semanticSearch(self, ...) -> List[ChatMessageDict]:
         )
 
         # --- NEW: native vector search fast path ---
-        if sqlProvider.isVectorSearchSupported():
+        if await sqlProvider.isVectorSearchSupported():
             try:
                 # Dimension is inferred from the query vector length,
                 # avoiding dependency on model introspection APIs that
@@ -1022,35 +1033,61 @@ This trade-off is acceptable because:
 
 When a chat's embedding model changes (e.g. from 384-dim to 1024-dim),
 old embeddings from the previous model linger in the old vec0 tables.
-The CRON job (``ChatSearchHandler._dtCronJob()``) handles cleanup.
+The CRON job (``ChatSearchHandler._dtCronJob()``) handles cleanup,
+delegating to
+``ChatEmbeddingsRepository.deleteObsoleteModelEmbeddings()``.
 
-**Mechanism**: Stateless, idempotent cleanup that runs on every CRON
-tick for chats with embeddings enabled. On each tick, discover all
-vec0 tables and delete rows whose model does not match the current
-model. This avoids in-memory state (which would be empty after
-restart) and handles model changes even when they occurred before the
-last restart.
+**Mechanism (shipped)**: Stateful, in-memory tracking via
+``_embeddingModelTracker: Dict[int, str]`` (chatId → ``modelKey``) on
+the handler. ``modelKey`` is ``modelName`` alone when the model does
+not expose embedding dimensions, or ``f"{modelName}:{dimensions}"``
+when it does (e.g. ``FastembedModel.embeddingDimensions``). On each
+CRON tick, the handler compares the tracker's stored ``modelKey`` for
+the chat against the current one; cleanup only fires when they differ
+(i.e. once per model switch, not on every tick).
 
 ```python
 # In ChatSearchHandler._dtCronJob(), within the per-chat loop
 # for each chat with embeddings enabled:
-currentModelName = ...  # from chat settings
-tables = await sqlProvider.listTables("vec_message_embeddings_%")
-for table in tables:
-    await sqlProvider.execute(
-        f"DELETE FROM {table} "
-        f"WHERE chat_id = :chatId AND model != :currentModel",
-        {"chatId": chatId, "currentModel": currentModelName},
-    )
+currentDims = await model.getDimensions()
+modelKey = modelName
+if currentDims is not None:
+    modelKey = f"{modelName}:{currentDims}"
+if self._embeddingModelTracker.get(chatId) != modelKey:
+    # Repository deletes from BOTH message_embeddings (authoritative)
+    # AND all vec_message_embeddings_{N} tables, skipping the
+    # current-dimension vec0 table (its rows are not stale).
+    if await self.db.chatEmbeddings.deleteObsoleteModelEmbeddings(
+        chatId=chatId,
+        currentModel=modelName,
+        currentDimensions=currentDims,
+    ):
+        # Only update the tracker on success — a failed cleanup is
+        # retried on the next tick rather than treated as complete.
+        self._embeddingModelTracker[chatId] = modelKey
 ```
 
-This is cheap on the common path (model unchanged): the DELETE
-matches zero rows. No tracking dict is needed.
+**Why stateful, not stateless**: The earlier draft of this section
+proposed a stateless, idempotent ``DELETE ... WHERE model != :currentModel``
+on every tick. That was replaced by the in-memory tracker because
+running the DELETE unconditionally on every tick does redundant work
+across the entire vec0 table on the common path (model unchanged). The
+tracker makes the common path a cheap dict lookup; cleanup only runs
+when the model actually changed. The trade-off is that the tracker is
+empty after a restart, so the first tick after restart triggers one
+cleanup pass per chat (which is a no-op ``DELETE`` when the model has
+not changed) — acceptable since the DELETE matches zero rows on the
+no-op path.
 
-The ``date`` column also handles staleness indirectly: older embeddings
-naturally age out via the ``maxMessages`` pre-filter. But explicit cleanup
-at model-switch time is more precise and prevents cross-model pollution
-of search results even when the old model's dimension happens to match.
+**Repository-side scope**: ``deleteObsoleteModelEmbeddings()`` cleans
+**both** ``message_embeddings`` (authoritative) **and** all
+``vec_message_embeddings_{N}`` tables discovered via
+``listTables("vec_message_embeddings_%")``. It skips the vec0 table
+matching ``currentDimensions`` (its rows are not stale). vec0 shadow
+tables (``*_info``, ``*_chunks``) are filtered out via regex
+(``^vec_message_embeddings_\d+$``). Returns ``bool`` — ``True`` on
+success, ``False`` on failure (handler does not update the tracker on
+``False``).
 
 **Important design note**: The ``listTables`` approach inspects the actual
 database rather than relying on a hardcoded set of tables, so it is
@@ -1124,6 +1161,15 @@ No configuration key is needed. The provider auto-detects ``sqlite-vec`` availab
 The new methods (``listTables``, ``createVectorTable``) are also
 provider-specific and require no configuration. ``listTables`` queries
 database introspection and ``createVectorTable`` creates tables on demand.
+
+**Escape hatch (added during implementation)**: When the ``sqlite-vec``
+pip package is unavailable (e.g. Alpine Linux with no musl wheel) but
+the extension was built from source, set
+``vectorExtensionPath = "/usr/local/lib/vec0.so"`` under
+``[database.providers.<name>.parameters]`` in TOML. The provider loads
+vec0 from that path instead of ``sqlite_vec.loadable_path()``. Commented
+example at ``configs/00-defaults/00-config.toml`` (around line 59). The
+pip package takes priority when both are present.
 
 ---
 
@@ -1477,7 +1523,7 @@ fallback continues to work transparently.
 ## 10. Implementation Plan
 
 ### Step 1: Add `sqlite-vec` Dependency
-- Add `sqlite-vec==0.1.10a4` (or latest) to `requirements.direct.txt` under `# Runtime`.
+- Add `sqlite-vec==0.1.9` (pinned) to `requirements.direct.txt` under `# Runtime`.
 - Re-freeze `requirements.txt`.
 - Verify `make install` succeeds.
 
@@ -1521,7 +1567,7 @@ Dispatch `update-project-docs` skill. Docs to update:
 
 ### 11.1 sqlite-vec Maturity
 
-`sqlite-vec` is at v0.1.10-alpha. The ``vec0`` virtual table API may evolve before v1.0. **Mitigation**: The vec0 schema is ephemeral (virtual table backed by the physical ``message_embeddings`` table). If the vec0 API changes, the virtual table can be recreated via a migration. The authoritative data always resides in ``message_embeddings``. If vec0 stability is a concern, the provider can fall back to scalar functions on the physical table (see Section 4.6).
+`sqlite-vec` is at v0.1.9 (pinned in `requirements.direct.txt`). The ``vec0`` virtual table API may evolve before v1.0. **Mitigation**: The vec0 schema is ephemeral (virtual table backed by the physical ``message_embeddings`` table). If the vec0 API changes, the virtual table can be recreated via a migration. The authoritative data always resides in ``message_embeddings``. If vec0 stability is a concern, the provider can fall back to scalar functions on the physical table (see Section 4.6).
 
 ### 11.2 macOS Extension Loading
 

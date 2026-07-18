@@ -14,19 +14,19 @@ How to use this file:
 - **Config hierarchy:** Global `[proxy]` section + per-service `use-proxy` (kebab-case) + optional `[service.proxy]` overrides. Master kill-switch `[proxy].enabled = false`.
 - **Proxied services:** Telegram bot, Max client, all OpenAI-compatible AI providers, Yandex Search API, web-fetch, OpenWeatherMap, Geocode Maps, sqlink database provider.
 - **Out of scope:** YC SDK (gRPC), sandbox (container networking), S3 storage (separate proxy story).
-- **SOCKS5:** `httpx-socks[asyncio]>=0.10.0` in requirements.txt. Conditional import at module level.
-- **Tests:** `tests/lib/test_proxy.py` — 41 tests.
+- **SOCKS5:** `httpx-socks[asyncio]==0.11.0` pinned in `requirements.direct.txt` (frozen into `requirements.txt`). Conditional import at module level (empty `except` + `_HTTPX_SOCKS_AVAILABLE` flag — see AGENTS.md).
+- **Tests:** `tests/lib/test_proxy.py` — 54 tests (as of 2026-07-18).
 - **Security:** `ProxyConfig.getProxyURL(maskPassword=True)` for logging (password -> `REDACTED`). URL building uses `quote()` for credential encoding.
 
 ## Key Files
 
-`lib/proxy/__init__.py` (package), `lib/ai/abstract.py` (aclose), `lib/ai/providers/basic_openai_provider.py` (proxy + aclose), `internal/bot/telegram/application.py` (PTB proxy), `lib/max_bot/client.py`, `lib/openweathermap/client.py`, `lib/geocode_maps/client.py`, `lib/yandex_search/client.py`, `internal/bot/common/handlers/yandex_search.py`, `internal/bot/common/handlers/weather.py`, `internal/database/providers/sqlink.py`, `internal/database/providers/__init__.py` (sqlink proxy resolution), `main.py` (`ProxyHelper.getInstance().setGlobalProxyConfig()`).
+`lib/proxy/__init__.py` (package), `lib/ai/abstract.py` (aclose), `lib/ai/providers/basic_openai_provider.py` (proxy + aclose), `internal/bot/telegram/application.py` (PTB proxy), `lib/max_bot/client.py`, `lib/openweathermap/client.py`, `lib/geocode_maps/client.py`, `lib/yandex_search/client.py`, `internal/bot/common/handlers/yandex_search.py`, `internal/bot/common/handlers/weather.py`, `internal/database/providers/sqlink.py`, `internal/database/providers/__init__.py` (sqlink proxy resolution), `main.py` (`ProxyService.getInstance().initialize(configManager.getProxyConfig(), loop=loop)` at line 78). Note: `main.py` no longer calls `ProxyHelper.setGlobalProxyConfig()` directly — that call now lives inside `ProxyService.initialize()` at `internal/services/proxy/service.py:103`. See `proxy-lifecycle.md` for the ProxyService layer.
 
 ## Proxy-Specific Conventions
 
 - `lib/proxy` is a package (`lib/proxy/__init__.py`), not a single file. Internal modules can be added under `lib/proxy/` in the future.
-- `ProxyKwargs` TypedDict for proxy kwargs (instead of generic `Dict[str, Any]`): `class ProxyKwargs(TypedDict, total=False): proxy: str; transport: Any`.
-- Global proxy storage: `setGlobalProxyConfig()` called once from `main.py`; `getGlobalProxyConfig()` used by all services. No threading through constructors.
+- `ProxyKwargs` TypedDict for proxy kwargs (instead of generic `Dict[str, Any]`): `class ProxyKwargs(TypedDict, total=False): proxy: str; transport: "AsyncProxyTransport"`. The `transport` field uses a **string forward reference** so the annotation is safe even when `httpx_socks` is not installed (pyright resolves from the `try` branch; runtime access is gated by the `_HTTPX_SOCKS_AVAILABLE` flag).
+- Global proxy storage: `setGlobalProxyConfig()` is called once at startup — historically from `main.py`, now invoked inside `ProxyService.initialize()` (`internal/services/proxy/service.py:103`), which `main.py:78` triggers via `ProxyService.getInstance().initialize(...)`. `getGlobalProxyConfig()` is used by all services. No threading through constructors.
 - Config key for per-service proxy overrides is `proxy` (not `proxy-override`). Example: `[bot.proxy]`, `[yandex-search.proxy]`.
 
 ## fromServiceConfig Behavior — Per-Service Override Semantics
@@ -64,16 +64,16 @@ address = "${OWM_PROXY_ADDRESS}"  # IGNORED
 
 ## __repr__ / __str__ — Password Masking
 
-`ProxyConfig.__repr__()` (and `__str__`, which delegates to `__repr__`) masks non-empty passwords in its output. A non-empty password renders as `'***'`:
+`ProxyConfig.__repr__()` (and `__str__`, which delegates to `__repr__`) masks non-empty passwords in its output. A non-empty password renders as `'REDACTED'`:
 
 ```python
 >>> cfg = ProxyConfig(proxyType=ProxyType.HTTP, address="http://proxy:8080",
 ...                   user="user", password="secret")
 >>> repr(cfg)
-"ProxyConfig(proxyType='http', address='http://proxy:8080', user='user', password='***', enabled=True)"
+"ProxyConfig(proxyType=<ProxyType.HTTP: 'http'>, address='http://proxy:8080', user='user', password='REDACTED', enabled=True, lifecycle=None)"
 ```
 
-When password is `None` or empty string, it renders verbatim (as `None` or `''`). This is safe for logging/debugging output while preventing accidental credential leaks through repr/str.
+When password is `None` or empty string, it renders verbatim (as `None` or `''`) — the masking uses truthiness (`'REDACTED' if self.password else self.password!r`). Safe for logging/debugging output while preventing accidental credential leaks through repr/str.
 
 This is separate from `getProxyURL(maskPassword=True)` which replaces the password with `"REDACTED"` in the built URL string.
 
@@ -86,7 +86,7 @@ This is separate from `getProxyURL(maskPassword=True)` which replaces the passwo
 3. The resolved URL is passed as the `proxy` parameter to `sqlink.asyncConnect()`.
 
 This lazy resolution is important because:
-- The global proxy config is set by `main.py` (via `ProxyHelper.getInstance().setGlobalProxyConfig()`) **before** any database connections are established — so the resolution order is correct.
+- The global proxy config is set at startup via `ProxyService.initialize()` (which internally calls `ProxyHelper.getInstance().setGlobalProxyConfig()` at `internal/services/proxy/service.py:103`) **before** any database connections are established — so the resolution order is correct.
 - If the proxy URL were resolved in `__init__`, the global config might not yet be available.
 
 ## SQLink Proxy Config Nesting
@@ -119,6 +119,8 @@ The `use-proxy` key and optional `proxy` sub-table must be inside `parameters` b
 - **Never add `__dict__` to `__slots__` as a test-mocking workaround.** Adding `"__dict__"` to `__slots__` completely defeats the purpose. Instead, mock at the class level (`patch.object(ClassName, "_method", ...)` rather than `patch.object(instance, "_method", ...)`). Class-level mocking works on slotted classes without `__dict__`.
 
 ## Complete HTTP Client Inventory (from 2026-05-23 audit)
+
+> **Note:** line numbers below are from the 2026-05-23 audit and have drifted (e.g. `basic_openai_provider.py` proxy calls are now around lines 893 and 1090, not 826/969). The set of services in scope is still accurate. Re-grep `fromServiceConfig\|toKwargs\|getProxyURL` for current line numbers before relying on these.
 
 **In scope (all need proxy):**
 

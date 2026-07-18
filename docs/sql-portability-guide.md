@@ -8,7 +8,7 @@ This document provides a comprehensive analysis of SQL query portability issues 
 
 - **Total Files Analyzed**: 12 repository files
 - **Total SQL Queries Examined**: 85+ queries
-- **Compatibility Issues Identified**: 12 critical issues
+- **Compatibility Issues Identified**: 13 issues (see Issues #1–#13 below)
 - **Affected Tables**: 15+ database tables
 - **Target RDBMS**: MySQL 8.0+, PostgreSQL 14+
 
@@ -16,9 +16,10 @@ This document provides a comprehensive analysis of SQL query portability issues 
 
 | Severity | Count | Description |
 |----------|-------|-------------|
-| **Critical** | 4 | Requires immediate attention - will cause runtime errors |
-| **High** | 5 | Significant functionality impact - requires modification |
-| **Medium** | 3 | Minor compatibility issues - should be addressed |
+| **Critical** | 1 | Requires immediate attention - will cause runtime errors |
+| **High** | 3 | Significant functionality impact - requires modification |
+| **Medium** | 6 | Minor compatibility issues - should be addressed |
+| **Low** | 3 | Negligible impact - documented for completeness |
 
 ### Current State
 
@@ -38,7 +39,8 @@ The database layer currently uses SQLite-specific syntax that is not directly co
 
 **Severity**: Critical  
 **Files Affected**: 8 files  
-**Impact**: All upsert operations will fail
+**Impact**: All upsert operations will fail  
+**Status**: ✅ **RESOLVED** - Portable `upsert()` method implemented on `BaseSQLProvider` (and every concrete provider). All repositories route through `provider.upsert(...)` instead of hand-written `ON CONFLICT`.
 
 #### Problem Description
 
@@ -107,7 +109,9 @@ class ExcludedValue:
         return f"ExcludedValue({self.column})"
 ```
 
-**Provider Implementations**:
+**Provider Implementations** (illustrative — see
+[`internal/database/providers/`](/internal/database/providers/) for the real
+code; parameter names match the `BaseSQLProvider.upsert` camelCase signature):
 
 ```python
 # internal/database/providers/sqlite3.py
@@ -115,16 +119,16 @@ async def upsert(
     self,
     table: str,
     values: Dict[str, Any],
-    conflict_columns: List[str],
-    update_expressions: Optional[Dict[str, Any]] = None
+    conflictColumns: List[str],
+    updateExpressions: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """Execute SQLite-specific upsert operation.
     
     Args:
         table: Table name
         values: Dictionary of column names and values to insert
-        conflict_columns: List of columns that define the conflict target
-        update_expressions: Optional dict of column -> expression for UPDATE clause.
+        conflictColumns: List of columns that define the conflict target
+        updateExpressions: Optional dict of column -> expression for UPDATE clause.
                           If None, all non-conflict columns are updated with their values.
                           Supports complex expressions like "messages_count = messages_count + 1"
                           or ExcludedValue() to set to excluded value.
@@ -132,28 +136,28 @@ async def upsert(
     Returns:
         True if successful
     """
-    if update_expressions is None:
-        update_expressions = {col: ExcludedValue() for col in values.keys() if col not in conflict_columns}
+    if updateExpressions is None:
+        updateExpressions = {col: ExcludedValue() for col in values.keys() if col not in conflictColumns}
     
     # Translate ExcludedValue to SQLite syntax
-    translated_expressions = {}
-    for col, expr in update_expressions.items():
+    translatedExpressions = {}
+    for col, expr in updateExpressions.items():
         if isinstance(expr, ExcludedValue):
-            column_name = expr.column if expr.column else col
-            translated_expressions[col] = f"excluded.{column_name}"
+            columnName = expr.column if expr.column else col
+            translatedExpressions[col] = f"excluded.{columnName}"
         else:
-            translated_expressions[col] = expr
+            translatedExpressions[col] = expr
     
-    cols_str = ", ".join(values.keys())
+    colsStr = ", ".join(values.keys())
     placeholders = ", ".join([f":{col}" for col in values.keys()])
-    conflict_str = ", ".join(conflict_columns)
-    update_str = ", ".join([f"{col} = {expr}" for col, expr in translated_expressions.items()])
+    conflictStr = ", ".join(conflictColumns)
+    updateStr = ", ".join([f"{col} = {expr}" for col, expr in translatedExpressions.items()])
     
     query = f"""
-        INSERT INTO {table} ({cols_str})
+        INSERT INTO {table} ({colsStr})
         VALUES ({placeholders})
-        ON CONFLICT({conflict_str}) DO UPDATE SET
-            {update_str}
+        ON CONFLICT({conflictStr}) DO UPDATE SET
+            {updateStr}
     """
     
     return await self.execute(query, values)
@@ -163,16 +167,16 @@ async def upsert(
     self,
     table: str,
     values: Dict[str, Any],
-    conflict_columns: List[str],
-    update_expressions: Optional[Dict[str, Any]] = None
+    conflictColumns: List[str],
+    updateExpressions: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """Execute MySQL-specific upsert operation.
     
     Args:
         table: Table name
         values: Dictionary of column names and values to insert
-        conflict_columns: List of columns that define the conflict target (must be UNIQUE/PRIMARY key)
-        update_expressions: Optional dict of column -> expression for UPDATE clause.
+        conflictColumns: List of columns that define the conflict target (must be UNIQUE/PRIMARY key)
+        updateExpressions: Optional dict of column -> expression for UPDATE clause.
                           If None, all non-conflict columns are updated with their values.
                           Supports complex expressions like "messages_count = messages_count + 1"
                           or ExcludedValue() to set to excluded value.
@@ -180,27 +184,27 @@ async def upsert(
     Returns:
         True if successful
     """
-    if update_expressions is None:
-        update_expressions = {col: ExcludedValue() for col in values.keys() if col not in conflict_columns}
+    if updateExpressions is None:
+        updateExpressions = {col: ExcludedValue() for col in values.keys() if col not in conflictColumns}
     
     # Translate ExcludedValue to MySQL syntax
-    translated_expressions = {}
-    for col, expr in update_expressions.items():
+    translatedExpressions = {}
+    for col, expr in updateExpressions.items():
         if isinstance(expr, ExcludedValue):
-            column_name = expr.column if expr.column else col
-            translated_expressions[col] = f"VALUES({column_name})"
+            columnName = expr.column if expr.column else col
+            translatedExpressions[col] = f"VALUES({columnName})"
         else:
-            translated_expressions[col] = expr
+            translatedExpressions[col] = expr
     
-    cols_str = ", ".join(values.keys())
+    colsStr = ", ".join(values.keys())
     placeholders = ", ".join([f":{col}" for col in values.keys()])
-    update_str = ", ".join([f"{col} = {expr}" for col, expr in translated_expressions.items()])
+    updateStr = ", ".join([f"{col} = {expr}" for col, expr in translatedExpressions.items()])
     
     query = f"""
-        INSERT INTO {table} ({cols_str})
+        INSERT INTO {table} ({colsStr})
         VALUES ({placeholders})
         ON DUPLICATE KEY UPDATE
-            {update_str}
+            {updateStr}
     """
     
     return await self.execute(query, values)
@@ -210,16 +214,16 @@ async def upsert(
     self,
     table: str,
     values: Dict[str, Any],
-    conflict_columns: List[str],
-    update_expressions: Optional[Dict[str, Any]] = None
+    conflictColumns: List[str],
+    updateExpressions: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """Execute PostgreSQL-specific upsert operation.
     
     Args:
         table: Table name
         values: Dictionary of column names and values to insert
-        conflict_columns: List of columns that define the conflict target
-        update_expressions: Optional dict of column -> expression for UPDATE clause.
+        conflictColumns: List of columns that define the conflict target
+        updateExpressions: Optional dict of column -> expression for UPDATE clause.
                           If None, all non-conflict columns are updated with their values.
                           Supports complex expressions like "messages_count = messages_count + 1"
                           or ExcludedValue() to set to excluded value.
@@ -227,28 +231,28 @@ async def upsert(
     Returns:
         True if successful
     """
-    if update_expressions is None:
-        update_expressions = {col: ExcludedValue() for col in values.keys() if col not in conflict_columns}
+    if updateExpressions is None:
+        updateExpressions = {col: ExcludedValue() for col in values.keys() if col not in conflictColumns}
     
     # Translate ExcludedValue to PostgreSQL syntax
-    translated_expressions = {}
-    for col, expr in update_expressions.items():
+    translatedExpressions = {}
+    for col, expr in updateExpressions.items():
         if isinstance(expr, ExcludedValue):
-            column_name = expr.column if expr.column else col
-            translated_expressions[col] = f"EXCLUDED.{column_name}"
+            columnName = expr.column if expr.column else col
+            translatedExpressions[col] = f"EXCLUDED.{columnName}"
         else:
-            translated_expressions[col] = expr
+            translatedExpressions[col] = expr
     
-    cols_str = ", ".join(values.keys())
+    colsStr = ", ".join(values.keys())
     placeholders = ", ".join([f":{col}" for col in values.keys()])
-    conflict_str = ", ".join(conflict_columns)
-    update_str = ", ".join([f"{col} = {expr}" for col, expr in translated_expressions.items()])
+    conflictStr = ", ".join(conflictColumns)
+    updateStr = ", ".join([f"{col} = {expr}" for col, expr in translatedExpressions.items()])
     
     query = f"""
-        INSERT INTO {table} ({cols_str})
+        INSERT INTO {table} ({colsStr})
         VALUES ({placeholders})
-        ON CONFLICT({conflict_str}) DO UPDATE SET
-            {update_str}
+        ON CONFLICT({conflictStr}) DO UPDATE SET
+            {updateStr}
     """
     
     return await self.execute(query, values)
@@ -260,15 +264,17 @@ async def upsert(
 from internal.database.providers.base import ExcludedValue
 
 # Simple upsert - update all non-conflict columns with excluded values
+# NOTE: kwargs are camelCase (conflictColumns / updateExpressions) to match
+# the BaseSQLProvider.upsert signature. Snake_case will raise TypeError.
 await sqlProvider.upsert(
     table="cache_storage",
     values={
         "namespace": namespace,
         "key": key,
         "value": value,
-        "updated_at": datetime.datetime.now()
+        "updated_at": datetime.datetime.now(datetime.UTC),
     },
-    conflict_columns=["namespace", "key"]
+    conflictColumns=["namespace", "key"],
 )
 
 # Complex upsert with custom expressions and ExcludedValue
@@ -279,14 +285,14 @@ await sqlProvider.upsert(
         "user_id": userId,
         "username": username,
         "full_name": fullName,
-        "updated_at": datetime.datetime.now()
+        "updated_at": datetime.datetime.now(datetime.UTC),
     },
-    conflict_columns=["chat_id", "user_id"],
-    update_expressions={
+    conflictColumns=["chat_id", "user_id"],
+    updateExpressions={
         "messages_count": "messages_count + 1",  # Custom expression
         "updated_at": ExcludedValue(),  # Use excluded value for this column
-        "username": ExcludedValue("username")  # Explicit column name
-    }
+        "username": ExcludedValue("username"),  # Explicit column name
+    },
 )
 
 # Mix of excluded values and custom expressions
@@ -296,15 +302,15 @@ await sqlProvider.upsert(
         "namespace": namespace,
         "key": key,
         "value": value,
-        "updated_at": datetime.datetime.now(),
-        "access_count": 0
+        "updated_at": datetime.datetime.now(datetime.UTC),
+        "access_count": 0,
     },
-    conflict_columns=["namespace", "key"],
-    update_expressions={
+    conflictColumns=["namespace", "key"],
+    updateExpressions={
         "value": ExcludedValue(),  # Update with new value
         "updated_at": ExcludedValue(),  # Update with new timestamp
-        "access_count": "access_count + 1"  # Increment counter
-    }
+        "access_count": "access_count + 1",  # Increment counter
+    },
 )
 ```
 
@@ -879,7 +885,8 @@ def getJsonExtractFunction(self, column: str, path: str) -> str:
 
 **Severity**: High  
 **Files Affected**: Migration files  
-**Impact**: Schema creation failures
+**Impact**: Schema creation failures  
+**Status**: ✅ **RESOLVED** - No migration in the current tree uses `AUTOINCREMENT` / `AUTO_INCREMENT` / `SERIAL`. Every primary key is either a composite natural key, a single natural key, or an app-generated UUID/ULID stored as `TEXT PRIMARY KEY NOT NULL`.
 
 #### Problem Description
 
@@ -889,15 +896,15 @@ Auto-incrementing primary keys use different syntax:
 - **MySQL**: `INT AUTO_INCREMENT`
 - **PostgreSQL**: `SERIAL` or `BIGSERIAL`
 
+Because all three dialects spell it differently, `AUTOINCREMENT` is **forbidden** in Gromozeka migrations.
+
 #### Affected Locations
 
-| File | Line | Context |
-|------|------|---------|
-| [`internal/database/migrations/versions/migration_001_initial_schema.py`](/internal/database/migrations/versions/migration_001_initial_schema.py) | Various | Schema definitions |
+All migration files under [`internal/database/migrations/versions/`](/internal/database/migrations/versions/) were audited. The current `migration_001_initial_schema.py` defines every table with one of the portable PK shapes below — no `AUTOINCREMENT` appears anywhere in the migration tree.
 
 #### Example Code
 
-**Current (SQLite)**:
+**Forbidden (SQLite-only, breaks MySQL/PostgreSQL)**:
 ```sql
 CREATE TABLE chat_users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -907,30 +914,29 @@ CREATE TABLE chat_users (
 )
 ```
 
-**Recommended Solution**:
-
-Create a schema abstraction layer:
-
-```python
-# internal/database/providers/base.py
-def getAutoIncrementType(self, data_type: str = "INTEGER") -> str:
-    """Get RDBMS-specific auto-increment type."""
-    provider_type = self.getProviderType()
-    
-    if provider_type == "sqlite":
-        return f"{data_type} PRIMARY KEY AUTOINCREMENT"
-    elif provider_type == "mysql":
-        return f"{data_type} AUTO_INCREMENT PRIMARY KEY"
-    elif provider_type == "postgresql":
-        if data_type == "INTEGER":
-            return "SERIAL PRIMARY KEY"
-        elif data_type == "BIGINT":
-            return "BIGSERIAL PRIMARY KEY"
-        else:
-            raise ValueError(f"Unsupported data type for auto-increment: {data_type}")
-    else:
-        raise ValueError(f"Unsupported provider type: {provider_type}")
+**Current portable shape (composite natural key)** — actual `migration_001_initial_schema.py`:
+```sql
+CREATE TABLE chat_users (
+    chat_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    ...
+    PRIMARY KEY (chat_id, user_id)
+)
 ```
+
+#### Recommended Solution
+
+No `getAutoIncrementType()` helper is provided on `BaseSQLProvider` — by design. Pick a portable PK strategy instead (in order of preference):
+
+1. **Composite natural key** from columns the app already has — e.g.
+   `PRIMARY KEY (chat_id, message_id)`, `PRIMARY KEY (namespace, key)`,
+   `PRIMARY KEY (chat_id, user_id)`. This is the dominant pattern.
+2. **Single natural key** when the row is identified by one external ID
+   (e.g. `file_unique_id TEXT PRIMARY KEY`, `chat_id INTEGER PRIMARY KEY`).
+3. **Application-generated UUID / ULID** stored as
+   `TEXT PRIMARY KEY NOT NULL` (see `delayed_tasks.id` in `migration_001`
+   / `migration_013`). Generate the value in Python before insert; never
+   delegate ID generation to the database.
 
 ---
 
@@ -1059,7 +1065,7 @@ Add a parameter to all SQLite-based providers to enable foreign key constraints,
 
 ```python
 # internal/database/providers/sqlite3.py
-class SQLite3Provider(BaseProvider):
+class SQLite3Provider(BaseSQLProvider):
     def __init__(self, connection_string: str, enable_foreign_keys: bool = False):
         """Initialize SQLite3 provider.
         
@@ -1078,7 +1084,7 @@ class SQLite3Provider(BaseProvider):
             await self.execute("PRAGMA foreign_keys = ON")
 
 # internal/database/providers/sqlink.py
-class SqlinkProvider(BaseProvider):
+class SqlinkProvider(BaseSQLProvider):
     def __init__(self, connection_string: str, enable_foreign_keys: bool = False):
         """Initialize Sqlink provider.
         
@@ -1233,6 +1239,91 @@ The migration system now relies on the provider's `keepConnection` parameter for
 - **Readonly replicas**: Use `keepConnection=true` for faster query response
 - **Production MySQL/PostgreSQL**: Use `keepConnection=false` to avoid unnecessary connections
 - **Development/testing**: Use `keepConnection=true` for immediate feedback
+
+---
+
+## Native Vector Search Portability
+
+**Status**: ✅ Implemented on `BaseSQLProvider` (default implementations raise `NotImplementedError`; providers with vector extensions override)
+
+Native vector similarity search is exposed through four hooks on
+[`BaseSQLProvider`](/internal/database/providers/base.py) plus a small type
+surface. Providers that load a vector extension (e.g. sqlite-vec, pgvector)
+override these; providers without vector support inherit the default
+`NotImplementedError`-raising implementations.
+
+### API Surface
+
+All of the following live in `internal/database/providers/base.py`:
+
+| Member | Kind | Notes |
+|--------|------|-------|
+| `isVectorSearchSupported()` | `async` method | Default returns `False`. Override to return `True` after confirming the extension is operational. |
+| `vectorSearch(*, table, vectorColumn, returnColumns, queryVector, k, filterClause="", filterParams=None, distanceMetric=COSINE)` | `async` method | Provider-specific KNN query. Returns `list[VectorSearchResult]` ordered by distance ascending. |
+| `listTables(likePattern="%")` | `async` method | Native introspection. Used to discover vec0 tables for cleanup and to check dimension-specific tables. |
+| `createVectorTable(tableName, columns)` | `async` method | Maps `VectorColumnDef` list to native DDL. At least one column must have `columnType=VECTOR`. |
+| `VectorSearchResult` | `TypedDict` | `{rowKey: dict[str, Any], distance: float}`. |
+| `VectorDistanceMetric` | `StrEnum` | `COSINE`, `L2`. |
+| `VectorColumnType` | `StrEnum` | `TEXT`, `INTEGER`, `FLOAT`, `BLOB`, `VECTOR`. |
+| `VectorColumnDef` | `TypedDict` | `{name, columnType, isPartitionKey?, vectorDimension?, distanceMetric?}`. |
+
+### Portability Contracts
+
+1. **Capability check first.** Always gate calls with
+   `await sqlProvider.isVectorSearchSupported()` — never assume a provider
+   supports vector search.
+2. **`queryVector` is raw bytes**, pre-serialised to the provider's expected
+   binary format (e.g. `array.array("f", floats).tobytes()` for sqlite-vec
+   float32). This avoids an extra copy/conversion inside the provider.
+3. **`filterClause` must use `:named` placeholders** referencing keys in
+   `filterParams` — same portability rule as every other query in this guide.
+   Example: `"chat_id = :chatId AND model = :modelName"`.
+4. **`distanceMetric` is validated at call time**; unsupported metrics raise
+   `ValueError`, not `NotImplementedError`.
+5. **`returnColumns` populate `VectorSearchResult.rowKey`**, not raw row data
+   — the dict maps each requested return column to its string value. For
+   composite primary keys, all key columns are present.
+
+### Usage Example
+
+```python
+from internal.database.providers.base import VectorDistanceMetric
+
+if not await sqlProvider.isVectorSearchSupported():
+    raise RuntimeError("Provider does not support native vector search")
+
+import array
+queryVec = array.array("f", embeddingFloats).tobytes()
+
+results = await sqlProvider.vectorSearch(
+    table="vec_message_embeddings_384",
+    vectorColumn="embedding",
+    returnColumns=["chat_id", "message_id"],
+    queryVector=queryVec,
+    k=10,
+    filterClause="chat_id = :chatId AND model = :modelName",
+    filterParams={"chatId": chatId, "modelName": modelName},
+    distanceMetric=VectorDistanceMetric.COSINE,
+)
+
+for hit in results:
+    # hit["rowKey"] == {"chat_id": "42", "message_id": "abc"}
+    # hit["distance"]  == raw cosine distance (lower = more similar)
+    similarity = 1.0 - hit["distance"]
+    ...
+```
+
+### What This Means for MySQL / PostgreSQL
+
+- **PostgreSQL**: when the `postgresql` provider is wired up, it should
+  delegate to `pgvector` (`<=>` operator for cosine, `<->` for L2).
+- **MySQL**: MySQL 9.0+ adds a native `VECTOR` type; until then MySQL
+  remains `isVectorSearchSupported() == False`.
+- **SQLite**: the only backend wired up in production today; the sqlite-vec
+  extension provides the vec0 virtual table.
+
+See [`docs/llm/architecture.md`](llm/architecture.md) (vector search ADR) for
+the higher-level design and the chat-embeddings consumer that drives this API.
 
 ---
 
@@ -1463,33 +1554,60 @@ async def test_cache_entry_ttl(db_manager):
 #### Provider Layer Tests
 
 ```python
-# tests/database/providers/test_base_provider.py
-import pytest
-from internal.database.providers.base import BaseProvider
+# tests/database/providers/test_sqlite3_provider.py
+# NOTE: asyncio_mode = "auto" in pyproject.toml — no @pytest.mark.asyncio needed.
+from internal.database.providers.base import BaseSQLProvider, ExcludedValue
+from internal.database.providers.sqlite3 import SQLite3Provider
 
-@pytest.mark.asyncio
-async def test_execute_upsert(sqlite_provider):
-    """Test upsert operation."""
-    result = await sqlite_provider.executeUpsert(
-        table="test_table",
-        columns=["id", "name", "value"],
-        values={"id": 1, "name": "test", "value": "data"},
-        conflict_columns=["id"],
-        update_columns=["name", "value"]
-    )
-    assert result is True
 
-@pytest.mark.asyncio
-async def test_get_current_timestamp(sqlite_provider):
-    """Test current timestamp generation."""
-    timestamp_expr = sqlite_provider.getCurrentTimestamp()
-    assert "datetime('now')" in timestamp_expr
+async def test_execute_upsert(testDatabase):
+    """Test upsert operation via the provider's portable upsert() method."""
+    provider = SQLite3Provider(database=":memory:")
+    await provider.connect()
+    try:
+        # kwargs are camelCase to match BaseSQLProvider.upsert signature
+        result = await provider.upsert(
+            table="test_table",
+            values={"id": 1, "name": "test", "value": "data"},
+            conflictColumns=["id"],
+            updateExpressions={
+                "name": ExcludedValue(),
+                "value": ExcludedValue(),
+            },
+        )
+        assert result is True
+    finally:
+        await provider.disconnect()
 
-@pytest.mark.asyncio
-async def test_case_insensitive_comparison(sqlite_provider):
+
+async def test_case_insensitive_comparison(testDatabase):
     """Test case-insensitive comparison."""
-    comparison = sqlite_provider.getCaseInsensitiveComparison("username", "username")
-    assert "LOWER(username)" in comparison
+    provider = SQLite3Provider(database=":memory:")
+    await provider.connect()
+    try:
+        comparison = provider.getCaseInsensitiveComparison("username", "username")
+        assert "LOWER(username)" in comparison
+    finally:
+        await provider.disconnect()
+```
+
+**Note on `getCurrentTimestamp()`**: it is a **module-level function** in
+[`internal/database/utils.py`](/internal/database/utils.py), not a method on
+the provider, and returns a `datetime.datetime` (UTC) — not a SQL expression.
+Use it to populate bind parameters, never to inline into a query string:
+
+```python
+from internal.database import utils as dbUtils
+
+# ✅ Correct: bind a Python timestamp
+now = dbUtils.getCurrentTimestamp()  # -> datetime.datetime in UTC
+await sqlProvider.execute(
+    "INSERT INTO events (ts) VALUES (:ts)",
+    {"ts": now},
+)
+
+# ❌ Wrong: there is no provider.getCurrentTimestamp() method, and it does
+#          not return a SQL fragment like "datetime('now')".
 ```
 
 ### Integration Testing Strategy
@@ -1629,27 +1747,29 @@ await sqlProvider.execute(
 
 **✅ Prefer**:
 ```python
-# Use provider-specific upsert method
+# Use provider-specific upsert method. Kwargs are camelCase.
+from internal.database.providers.base import ExcludedValue
+
 await sqlProvider.upsert(
     table="users",
-    values={"id": user_id, "name": user_name},
-    conflict_columns=["id"]
+    values={"id": userId, "name": userName},
+    conflictColumns=["id"],
 )
 
-# With complex expressions
+# With complex expressions — use ExcludedValue(), not raw "excluded.col" strings
 await sqlProvider.upsert(
     table="chat_users",
     values={
         "chat_id": chatId,
         "user_id": userId,
         "username": username,
-        "updated_at": datetime.datetime.now()
+        "updated_at": datetime.datetime.now(datetime.UTC),
     },
-    conflict_columns=["chat_id", "user_id"],
-    update_expressions={
-        "messages_count": "messages_count + 1",
-        "updated_at": "excluded.updated_at"
-    }
+    conflictColumns=["chat_id", "user_id"],
+    updateExpressions={
+        "messages_count": "messages_count + 1",   # custom SQL expression
+        "updated_at": ExcludedValue(),              # translated to excluded.updated_at / VALUES(updated_at) per provider
+    },
 )
 ```
 
@@ -1782,7 +1902,7 @@ This SQL portability guide provides a comprehensive analysis of compatibility is
 
 ### Key Takeaways
 
-1. **12 critical compatibility issues** have been identified and documented
+1. **13 compatibility issues** have been identified and documented (Issues #1–#13), plus the native vector search portability section
 2. **Abstraction layer** is essential for handling RDBMS-specific operations
 3. **Standardized approach** to SQL queries ensures cross-RDBMS compatibility
 4. **Code portability** enables future deployment flexibility without immediate migration
@@ -1802,7 +1922,7 @@ For questions or clarifications regarding this portability guide, please contact
 
 ---
 
-**Document Version**: 1.0  
-**Last Updated**: 2026-05-02  
+**Document Version**: 1.1  
+**Last Updated**: 2026-07-11  
 **Author**: Database Team  
-**Status**: Ready for Review
+**Status**: Audited — provider API claims re-verified against `internal/database/providers/base.py`; vector search section added; upsert examples corrected to actual camelCase signature.

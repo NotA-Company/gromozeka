@@ -972,10 +972,14 @@ class ChatSearchHandler(BaseBotHandler):
             chatId = extraData["ensuredMessage"].recipient.id
 
             # Gate 2: validate + clamp input. Dedup (preserve first-seen
-            # order), drop blanks/None, coerce to str (the emitted schema
-            # declares ``items: {"type": "string"}``, but the model can
-            # violate it — str coercion keeps us never-raise), and clamp
-            # to MAX_GET_MESSAGES_BATCH to cap abuse.
+            # order), drop blanks/None, coerce to str (the ``extra=
+            # {"items": {"type": "string"}}`` override on the emitted schema
+            # is COMMENTED OUT at the tool registration site — see the
+            # ``message_ids`` parameter near ``_llmToolGetMessagesByIds``
+            # registration — so the model can return non-string items; the
+            # ``str(mid).strip()`` + ``MessageId(midStr)`` coercion below is
+            # the actual never-raise safety net), and clamp to
+            # MAX_GET_MESSAGES_BATCH to cap abuse.
             notFound: List[str] = []
             messageIdList: List[MessageId] = []
             if message_ids:

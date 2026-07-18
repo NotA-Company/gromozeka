@@ -37,9 +37,9 @@ When reading archived files, be aware of these known architectural changes:
 
 ```
 archive/
-├── design/          # Historical design docs and ADRs (22 docs)
+├── design/          # Historical design docs and ADRs (23 archived docs + 1 README)
 ├── llm-sessions/    # Frozen LLM session snapshots (1 doc)
-├── plans/           # Implementation plans, some superseded (55 docs)
+├── plans/           # Implementation plans, some superseded (66 archived docs + 1 README)
 ├── reports/         # Phase reports and analysis (40+ historical reports)
 ├── review/          # Frozen code/design review records (1 doc)
 └── README.md        # This file
@@ -48,7 +48,7 @@ archive/
 ### Subdirectories
 
 #### `design/`
-Contains design documents, ADRs (Architecture Decision Records), and early architectural explorations (22 design docs). See [`design/README.md`](design/README.md) for specific file status notes.
+Contains design documents, ADRs (Architecture Decision Records), and early architectural explorations (23 archived design docs + 1 README). See [`design/README.md`](design/README.md) for specific file status notes.
 
 #### `llm-sessions/`
 Frozen LLM session snapshots. Historical records; internal paths not maintained.
@@ -56,7 +56,7 @@ Frozen LLM session snapshots. Historical records; internal paths not maintained.
 - [`lib-stats-gpt-5.5-decision.md`](llm-sessions/lib-stats-gpt-5.5-decision.md) — GPT-5.5 decision session for the `lib/stats/` library.
 
 #### `plans/`
-Implementation plans for features (55 plan docs). Some were completed (e.g., divination handler, sandboxing), some were superseded by architectural changes (e.g., DatabaseWrapper cleanup), some remain aspirational. See [`plans/README.md`](plans/README.md) for the recently-archived index.
+Implementation plans for features (66 archived plan docs + 1 README). Some were completed (e.g., divination handler, sandboxing), some were superseded by architectural changes (e.g., DatabaseWrapper cleanup), some remain aspirational. See [`plans/README.md`](plans/README.md) for the recently-archived index.
 
 **Status verification:** Before implementing from an archived plan:
 1. Check if the feature already exists (run `grep -r "class Handler" internal/bot/common/handlers/`)
@@ -121,5 +121,5 @@ If you find a broken link from an active doc pointing into `archive/`, update th
 
 ---
 
-*Last updated: 2026-07-04*
+*Last updated: 2026-07-18*
 *Archive policy: Historical records only — no active guidance*

@@ -4,7 +4,7 @@
 >
 > **Audience**: Developers, maintainers, and contributors who need to review, update, or create documentation.
 >
-> **Last Updated**: 2026-05-08
+> **Last Updated**: 2026-07-18
 >
 > **Context**: This document codifies the process used during the comprehensive documentation review on 2026-05-08 that analyzed 80 files, archived 35 outdated files, and consolidated 67+ TODO items.
 
@@ -119,7 +119,7 @@
    1. Read the file first (required by edit tool)
    2. Apply targeted edits using the edit tool
    3. Run `make format lint test` after changes
-   4. Verify links and cross-references
+   4. Verify links and cross-references via `make check-docs`
    5. Update related documents
    ```
 
@@ -144,7 +144,7 @@
 
 1. **Complete quality gates**
    - Run `make format lint test` (see [Quality Gates](#quality-gates))
-   - Verify all links work
+   - Run `make check-docs` to verify all local markdown links resolve
    - Check for broken cross-references
    - Ensure code examples are accurate
 
@@ -414,8 +414,8 @@ make format lint
 # Step 2: Run tests
 make test
 
-# Step 3: Verify no broken links (optional but recommended)
-# Use markdown-link-check or similar tool if available
+# Step 3: Verify local markdown links resolve (mandatory)
+make check-docs
 ```
 
 ### Documentation-Specific Checks
@@ -426,6 +426,7 @@ make test
 - [ ] All file paths exist and are accurate
 - [ ] No hardcoded tokens, secrets, or credentials
 - [ ] Cross-references resolve and are appropriate
+- [ ] `make check-docs` runs clean (no broken local markdown links)
 - [ ] Document includes last updated date and context
 - [ ] `update-project-docs` skill used for behavior/schema/config changes
 
@@ -456,7 +457,7 @@ Ensure documentation adheres to AGENTS.md hard rules:
 - **Import organization**: No inside-function imports unless documented as exception
 - **No pydantic**: Examples use raw dicts + TypedDict + hand-typed classes
 - **SQL portability**: Database examples use provider methods, not raw sqlite3
-- **Workflow**: Documentation includes `make format lint test` sequence
+- **Workflow**: Documentation includes `make format lint test` sequence and `make check-docs` for link verification
 
 ---
 
@@ -539,6 +540,9 @@ make format lint
 
 # Step 3: Final verification
 make test
+
+# Step 4: Verify local markdown links resolve
+make check-docs
 ```
 
 **Lesson**: Documentation is code and should be tested like code. Examples must work.
@@ -552,7 +556,7 @@ make test
 1. **Update docs with code changes**
    - Always load the `update-project-docs` skill after code changes
    - Update relevant docs immediately, not "later"
-   - Run `make format lint test` before committing doc updates
+   - Run `make format lint test` and `make check-docs` before committing doc updates
 
 2. **Use the `update-project-docs` skill**
    ```
@@ -587,12 +591,12 @@ make test
 
 ### Automation Opportunities
 
-1. **Automated link checking**
+1. **Automated link checking** — ✅ IMPLEMENTED (2026-07-11)
    ```bash
-   # Add to CI pipeline (recommended)
-   # Find broken markdown links
-   markdown-link-check docs/**/*.md
+   # The project's local-link checker is live (scripts/check_docs.py)
+   make check-docs    # exits 1 on any broken local markdown link
    ```
+   See [`docs/llm/memories/doc-link-fix-campaign.md`](llm/memories/doc-link-fix-campaign.md) for the conventions this campaign locked in: leading-slash path style, exclusion prefixes (`docs/archive/`, `docs/templates/`, `lib/ext_modules/`), and the off-by-one relative-depth gotcha. Still NOT automated: external-link HTTP checking, code-example extraction/compilation, TODO gathering, doc-coverage tracking.
 
 2. **Code example extraction**
    ```bash
@@ -661,8 +665,8 @@ rg "TODO|FIXME|XXX" --type py -n
 # Search for TODOs in documentation
 rg -i "todo|note|improvement" docs/ --type md -n
 
-# Check for broken links (requires markdown-link-check)
-markdown-link-check docs/**/*.md
+# Check for broken local markdown links (built-in)
+make check-docs
 
 # Verify Python code examples compile
 # Extract Python blocks and run through venv/bin/python3 -m py_compile
@@ -742,6 +746,11 @@ git grep -w "old-file-name" docs/
 - [`AGENTS.md`](../AGENTS.md) — Project hard rules and conventions
 - [`docs/llm/index.md`](llm/index.md) — LLM agent guide index
 - [`update-project-docs` skill](../.agents/skills/update-project-docs/SKILL.md) — Post-change documentation workflow
+- [`read-project-docs` skill](../.agents/skills/read-project-docs/SKILL.md) — Onboarding / context-building before non-trivial work
+- [`run-quality-gates` skill](../.agents/skills/run-quality-gates/SKILL.md) — Exact `./venv/bin/python3` / `make format lint` / `make test` / `make check-docs` workflow
+- [`docs/llm/memories/doc-link-fix-campaign.md`](llm/memories/doc-link-fix-campaign.md) — `make check-docs` conventions: leading-slash paths, exclusion prefixes, depth gotchas
+- `/changelog` slash command — drafts a CHANGELOG.md entry from the current diff on demand
+- `/review-large` slash command — runs the [`docs/llm/reviewing-large-changes.md`](llm/reviewing-large-changes.md) methodology on a branch
 - Consolidated action items from reviews (tracked per review cycle)
 
 ### Appendix C: Glossary
@@ -755,7 +764,7 @@ git grep -w "old-file-name" docs/
 
 ---
 
-**Document Version**: 1.0
+**Document Version**: 1.1
 **Created**: 2026-05-08
-**Last Updated**: 2026-05-08
+**Last Updated**: 2026-07-18
 **Review Cycle**: Recommended quarterly or after major changes

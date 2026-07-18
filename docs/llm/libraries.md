@@ -42,6 +42,8 @@ from lib.ai.models import (
 )
 ```
 
+`LLMToolCall(id: str, name: str, parameters: Dict[str, Any], errorMessage: Optional[str] = None)` is the tool-call payload the model emits. The `errorMessage` field is **internal plumbing** — it is NOT serialised by `__str__` / `toDict()` and is NOT sent back to the provider. When set, the call was synthesised from a malformed but recognisable tool-call attempt and the handler must NOT be executed; instead `errorMessage` is fed back to the model as a retry error. Left as `None` for ordinary tool calls.
+
 **Key classes:**
 
 | Class | File | Purpose |
@@ -49,27 +51,29 @@ from lib.ai.models import (
 | [`LLMManager`](../../lib/ai/manager.py:49) | `lib/ai/manager.py` | Registry for providers and models |
 | [`AbstractModel`](../../lib/ai/abstract.py:47) | `lib/ai/abstract.py` | ABC for all LLM models |
 | [`AbstractLLMProvider`](../../lib/ai/abstract.py) | `lib/ai/abstract.py` | ABC for LLM providers |
-| [`ModelMessage`](../../lib/ai/models.py) | `lib/ai/models.py` | Standard text message for LLM |
+| [`ModelMessage`](../../lib/ai/models.py:550) | `lib/ai/models.py` | Standard text message for LLM. `__slots__ = (role, content, contentKey, toolCalls, toolCallId, weight, source)` — `source` is an optional passthrough for the originating handler message (used by the llm-messages-handler to round-trip provenance, see [`memories/llm-messages-handler.md`](memories/llm-messages-handler.md)) |
 | [`ModelImageMessage`](../../lib/ai/models.py) | `lib/ai/models.py` | Message with embedded image |
-| [`ModelRunResult`](../../lib/ai/models.py) | `lib/ai/models.py` | LLM response container |
+| [`ModelRunResult`](../../lib/ai/models.py:965) | `lib/ai/models.py` | LLM response container. `__slots__` add `isFallback`, `isToolsUsed`, `roundLimitHit` (set by `LLMService.generateTextViaLLM` when the `maxRounds` tool-loop budget is exhausted, regardless of resulting status — see [`memories/user-memory-refinement.md`](memories/user-memory-refinement.md)) |
 | [`ModelStructuredResult`](../../lib/ai/models.py) | `lib/ai/models.py` | Structured-output result; adds `data: Optional[Dict]` |
 | [`ModelResultStatus`](../../lib/ai/models.py) | `lib/ai/models.py` | `FINAL`, `ERROR`, `TIMEOUT`, etc. |
-| [`LLMToolFunction`](../../lib/ai/models.py:243) | `lib/ai/models.py` | Tool/function definition for LLM |
-| [`LLMFunctionParameter`](../../lib/ai/models.py:175) | `lib/ai/models.py` | Tool parameter definition |
-| [`LLMParameterType`](../../lib/ai/models.py:151) | `lib/ai/models.py` | `STRING`, `NUMBER`, `BOOLEAN`, `ARRAY`, `OBJECT` |
+| [`LLMToolFunction`](../../lib/ai/models.py:345) | `lib/ai/models.py` | Tool/function definition for LLM |
+| [`LLMFunctionParameter`](../../lib/ai/models.py:277) | `lib/ai/models.py` | Tool parameter definition |
+| [`LLMParameterType`](../../lib/ai/models.py:253) | `lib/ai/models.py` | `STRING`, `NUMBER`, `BOOLEAN`, `ARRAY`, `OBJECT` |
 
 **Key methods on `AbstractModel`:**
 ```python
 model.generateText(
     messages: Sequence[ModelMessage],
-    tools=None,
+    tools: Optional[Sequence[LLMAbstractTool]] = None,
     *,
-    fallbackModels: Optional[List[AbstractModel]] = None,
+    fallbackModels: Optional[Sequence[AbstractModel]] = None,
+    consumerId: Optional[str] = None,
 ) -> ModelRunResult
 model.generateImage(
     messages: Sequence[ModelMessage],
     *,
-    fallbackModels: Optional[List[AbstractModel]] = None,
+    fallbackModels: Optional[Sequence[AbstractModel]] = None,
+    consumerId: Optional[str] = None,
 ) -> ModelRunResult
 model.generateStructured(
     messages: Sequence[ModelMessage],
@@ -77,13 +81,22 @@ model.generateStructured(
     *,
     schemaName: str = "response",
     strict: bool = True,
-    fallbackModels: Optional[List[AbstractModel]] = None,
+    fallbackModels: Optional[Sequence[AbstractModel]] = None,
+    consumerId: Optional[str] = None,
 ) -> ModelStructuredResult
-model.getEstimateTokensCount(messages: list) -> int
+model.generateEmbeddings(
+    text: str,
+    *,
+    attempts: int = 3,
+    consumerId: Optional[str] = None,
+) -> list[float]
+model.getEstimateTokensCount(data: Any) -> int
 model.contextSize  # int
 model.temperature  # float
 model.modelId      # str
 ```
+
+`consumerId` (typically `str(chatId)`) is forwarded by `LLMService` to every generation method and used as the stats-storage partition key — see [`services.md`](services.md). Embeddings have **no** `fallbackModels` parameter: vectors from different models live in incompatible spaces, so swapping mid-stream would silently corrupt downstream cosine scores.
 
 **Fallback mechanism:**
 All three public generation methods (`generateText`, `generateImage`, `generateStructured`)
@@ -327,7 +340,7 @@ The vector is a plain `list[float]` — same shape every embedding backend in th
 
 **Default model:** `local/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (384-dim, ~0.22 GB, ~50 languages, 512 token context) is the per-chat default for the `EMBEDDING_MODEL` chat setting via `embedding-model = "local/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"` under `[bot.defaults]` in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml). Both this model and the larger alternative `local/jinaai/jina-embeddings-v3` (1024-dim, ~2.24 GB, ~100 languages, 1024 token context) are registered in [`configs/00-defaults/fastembed-models.toml`](../../configs/00-defaults/fastembed-models.toml). The model resolution chain in `ChatSearchHandler._dtCronJob` (backfill) and the `MessagePreprocessorHandler` embedding dispatch is single-tier: the per-chat `EMBEDDING_MODEL` setting provides the value, and an empty / unresolvable model is a silent no-op for that chat on that tick. The server-wide `[search-history.embeddings].model` and `[search-history.embeddings].on-save` config keys were removed — the per-chat default already provides the model name, and the on-save dispatch is now unconditional whenever `[search-history].enabled` and `EMBEDDINGS_ENABLED` are both on. See [`configuration.md`](configuration.md) for the full `[search-history]` reference.
 
-**Proxy support:** `LLMManager.__init__()` accepts an optional `proxyConfig` keyword argument containing the global `[proxy]` config dict. This is passed through to `BasicOpenAIProvider.__init__()`, which creates a `ProxyConfig` via `ProxyConfig.fromServiceConfig()` and calls `ProxyConfig.toKwargs()` in `_initClient()` to configure a custom `httpx.AsyncClient` for the OpenAI SDK. Image download (`_generateImageViaImagesApi`) and OpenRouter `listRemoteModels()` also resolve proxy.
+**Proxy support:** `LLMManager.__init__()` itself does not take a proxy argument — proxy is resolved per-provider from each provider's own service config. `BasicOpenAIProvider._initClient()` calls `ProxyConfig.fromServiceConfig(self.config)` then `ProxyConfig.toKwargs()` to construct a custom `httpx.AsyncClient` for the OpenAI SDK (stored on `self._proxyHttpClient`). Image download (`BasicOpenAIModel._generateImageViaImagesApi`) and OpenRouter `listRemoteModels()` likewise call `ProxyConfig.fromServiceConfig(self.config).toKwargs()` to wire the proxy into their ad-hoc HTTP clients.
 
 ---
 
@@ -426,7 +439,7 @@ from lib.max_bot import MaxBotClient, MAX_MESSAGE_LENGTH
 
 **API endpoint:** [`API_BASE_URL`](../../lib/max_bot/constants.py) = `https://platform-api2.max.ru` (Max API v2; migrated from the deprecated `platform-api.max.ru` and legacy `botapi.max.ru`, both kept as comments only). Deadline: 2026-07-19.
 
-**TLS / Минцифры CA certs:** the v2 endpoint is signed by the Russian Ministry of Digital Development (Минцифры) root CA, which is not in the system bundle. `libMax.utils.buildMaxSslContext(caBundlePath)` loads the additional PEM files from the `[bot].max-ca-bundle` directory into an `ssl.SSLContext`. The path resolves relative to the current working directory at call time (same convention as every other project path); the default value is `"../certs/max"`, which — because `application.root-dir` is `"storage"` — resolves to `<repo-root>/certs/max/`. The `caBundlePath` is passed to `MaxBotClient(caBundlePath=...)`, which builds the SSL context internally via `buildMaxSslContext()` and forwards it to `httpx.AsyncClient(verify=...)` in `_getHttpClient`. When the key is empty/unset, httpx falls back to its default CA bundle. SOCKS5 proxy caveat: httpx ignores the top-level `verify=` when a custom `transport=` is supplied, so the SSL context is threaded into the transport via `ProxyConfig.toKwargs(verify=self._sslContext)` (which calls `AsyncProxyTransport.from_url(url, verify=sslContext)` for SOCKS5); the `"transport" not in clientKwargs` guard then skips the redundant client-level `verify=`.
+**TLS / Минцифры CA certs:** the v2 endpoint is signed by the Russian Ministry of Digital Development (Минцифры) root CA, which is not in the system bundle. `libMax.utils.buildMaxSslContext(caBundlePath)` loads the additional PEM files from the `[bot].max-ca-bundle` directory into an `ssl.SSLContext`. The path resolves relative to the current working directory at call time (same convention as every other project path); the default value is `"../certs/max"`, which — because `application.root-dir` is `"storage"` — resolves to `<repo-root>/certs/max/`. The `caBundlePath` is passed to `MaxBotClient(caBundlePath=...)`, which builds the SSL context internally via `buildMaxSslContext()` and forwards it to `httpx.AsyncClient(verify=...)` in `_getHttpClient`. When the key is empty/unset, httpx falls back to its default CA bundle. SOCKS5 proxy caveat: httpx ignores the top-level `verify=` when a custom `transport=` is supplied, so the SSL context is threaded into the transport via `ProxyConfig.toKwargs(verify=self._sslContext)` (which calls `AsyncProxyTransport.from_url(url, verify=sslContext)` for SOCKS5); the `"transport" not in proxyKwargs` guard then skips the redundant client-level `verify=` (see [`MaxBotClient._getHttpClient`](../../lib/max_bot/client.py)).
 
 **Key constants:**
 - `MAX_MESSAGE_LENGTH` — max message length for Max platform
@@ -446,11 +459,11 @@ Animated stickers have stub URLs, not real images. Always check `url.startswith(
 
 **Proxy support:** `MaxBotClient.__init__()` accepts an optional `proxyKwargs` keyword argument (dict to spread into `httpx.AsyncClient`). When proxy is enabled for the bot, `MaxBotApplication._runPolling()` creates a `ProxyConfig` via `ProxyConfig.fromServiceConfig()` and passes the resulting kwargs from `ProxyConfig.toKwargs()`.
 
-**SSL support:** `MaxBotClient.__init__()` also accepts an optional `caBundlePath: Optional[str]` keyword argument. When provided, the client builds an `ssl.SSLContext` internally via `buildMaxSslContext(caBundlePath)` and forwards it to `httpx.AsyncClient(verify=...)`. For SOCKS5 proxies the context is threaded into the transport via `ProxyConfig.toKwargs(verify=self._sslContext)` (so `AsyncProxyTransport.from_url(url, verify=sslContext)` is used); the client-level `verify=` is then skipped via the `"transport" not in clientKwargs` guard. The `caBundlePath` value comes from the `max-ca-bundle` config key — see TLS note above. When `buildMaxSslContext()` cannot load a cert (typically the GOST certs on a non-GOST OpenSSL build) it is skipped with a warning; if any are skipped a summary warning is logged (`Loaded N CA cert(s) but M were skipped ... TLS to platform-api2.max.ru may fail if the chain requires them`) so operators can tell a skipped-cert failure from a missing-bundle failure.
+**SSL support:** `MaxBotClient.__init__()` also accepts an optional `caBundlePath: Optional[str]` keyword argument. When provided, the client builds an `ssl.SSLContext` internally via `buildMaxSslContext(caBundlePath)` and forwards it to `httpx.AsyncClient(verify=...)`. For SOCKS5 proxies the context is threaded into the transport via `ProxyConfig.toKwargs(verify=self._sslContext)` (so `AsyncProxyTransport.from_url(url, verify=sslContext)` is used); the client-level `verify=` is then skipped via the `"transport" not in proxyKwargs` guard. The `caBundlePath` value comes from the `max-ca-bundle` config key — see TLS note above. When `buildMaxSslContext()` cannot load a cert (typically the GOST certs on a non-GOST OpenSSL build) it is skipped with a warning; if any are skipped a summary warning is logged (`Loaded N CA cert(s) but M were skipped ... TLS to platform-api2.max.ru may fail if the chain requires them`) so operators can tell a skipped-cert failure from a missing-bundle failure.
 
 **Webhook-mode polling:** when `basePollingUrl` is set (Max webhook receiver mode — see [`architecture.md`](architecture.md) ADR-013), `getUpdates()` does not hit `platform-api2.max.ru`; instead it routes through `_makeLocalRequest()` to the receiver's `GET /updates`. Three consequences of that routing: (1) the `lastEventId` marker is widened to `Optional[Union[int, str]]` — the real API uses an int marker, but the local receiver returns a compound string marker `"{received_at}|{rowId}"` that the bot echoes back on its next poll (and returns `null` in immediate/at-most-once mode); (2) a dedicated, reusable `httpx.AsyncClient` (`_localHttpClient`, created lazily on first poll and closed in `aclose()`) handles the local polls so connection pooling is reused across the polling loop, bypassing the main client's base URL / proxy / TLS settings; (3) a non-JSON 200 body from the receiver (e.g. a crash mid-response) is caught and re-raised as `NetworkError` rather than letting `json.JSONDecodeError` escape the polling loop.
 
-**Deprecated:** `MaxBotClient.getChats()` (`GET /chats`) is deprecated on platform-api2 — see the `getChats()` docstring. Prefer subscription-based chat discovery.
+**Chat discovery:** the client intentionally exposes no `getChats()` wrapper. The Max server's `GET /chats` endpoint is deprecated on `platform-api2.max.ru`, so chat discovery is subscription-based only (see `ENDPOINT_SUBSCRIPTIONS = "/subscriptions"` in [`constants.py`](../../lib/max_bot/constants.py) and the bot's subscription handlers).
 
 ---
 
@@ -458,11 +471,16 @@ Animated stickers have stub URLs, not real images. Always check `url.startswith(
 
 **Import:**
 ```python
-from lib.bayes_filter.bayes_filter import BayesFilter, BayesConfig
+from lib.bayes_filter.bayes_filter import NaiveBayesFilter, BayesConfig
 from lib.bayes_filter.models import SpamScore
 ```
 
-**Key class:** `BayesFilter` — Naive Bayes classifier
+**Key class:** `NaiveBayesFilter` — Naive Bayes classifier (the public name is `NaiveBayesFilter`; the module path is `lib/bayes_filter/bayes_filter.py` and it is re-exported from `lib/bayes_filter/__init__.py`)
+
+**Constructor:**
+```python
+NaiveBayesFilter(storage: BayesStorageInterface, config: Optional[BayesConfig] = None)
+```
 
 **Config fields:**
 ```python
@@ -476,7 +494,7 @@ BayesConfig(
 )
 ```
 
-**Multi-source database support:** `BayesFilter` supports `dataSource` parameter for multi-source routing
+**Multi-source storage:** the filter is storage-agnostic — pass any implementation of `BayesStorageInterface` (`lib/bayes_filter/storage_interface.py`). The production backend is `DatabaseBayesStorage` in [`internal/database/bayes_storage.py`](../../internal/database/bayes_storage.py); per-chat vs. global routing is controlled by `BayesConfig.perChatStats`, not by a constructor argument.
 
 ---
 
@@ -489,14 +507,15 @@ from lib.openweathermap.client import OpenWeatherMapClient
 
 **Key methods:**
 ```python
-client = OpenWeatherMapClient(apiKey="...", cacheTtl=3600)
-weather = await client.getCurrentWeather(lat=55.75, lon=37.62)
-geocoding = await client.geocode(cityName="Moscow")
+client = OpenWeatherMapClient(apiKey="...")
+coords = await client.getCoordinates(city="Moscow")              # GeocodingResult
+weather = await client.getWeather(lat=55.75, lon=37.62)          # WeatherData (One Call API)
+weather = await client.getWeatherByCity(city="Moscow")           # convenience: geocode + getWeather
 ```
 
 **Tests:** Uses golden data framework in `tests/lib/openweathermap/test_weather_client.py`
 
-**Proxy support:** `OpenWeatherMapClient.__init__()` accepts an optional `proxyKwargs` keyword argument (dict to spread into `httpx.AsyncClient`). The `WeatherHandler` creates a `ProxyConfig` via `ProxyConfig.fromServiceConfig(openWeatherMapConfig)`, calls `ProxyConfig.getCombined()` to merge with the global config, then `ProxyConfig.toKwargs()` and passes the result to the client constructor.
+**Proxy support:** `OpenWeatherMapClient.__init__()` accepts an optional `proxyConfig: Optional[ProxyConfig]` keyword argument (a `ProxyConfig` instance, NOT a kwargs dict). `WeatherHandler` resolves it via `ProxyService.getInstance().resolveProxy(openWeatherMapConfig, "openweathermap")` (which internally calls `ProxyConfig.fromServiceConfig()` and registers any per-service lifecycle) and passes the resulting `ProxyConfig` directly to the client constructor.
 
 ---
 
@@ -510,13 +529,16 @@ from lib.geocode_maps.client import GeocodeMapsClient
 **Key methods:**
 ```python
 client = GeocodeMapsClient(apiKey="...")
-result = await client.geocode(address="Moscow, Russia")
-result = await client.reverseGeocode(lat=55.75, lon=37.62)
+results  = await client.search("Moscow, Russia")             # forward geocode  -> Optional[SearchResponse]
+location = await client.reverse(55.75, 37.62)                # reverse geocode  -> Optional[ReverseResponse]
+places   = await client.lookup(["R2623018", "N107775"])      # OSM lookup by ID -> Optional[LookupResponse]
 ```
+
+`search()` and `lookup()` return lists (cast to `SearchResponse` / `LookupResponse`); `reverse()` returns a single object. All three return `None` on any HTTP / parse / API error — the client logs and swallows exceptions rather than raising.
 
 **Config:** Configured via `[geocode-maps]` TOML section, accessed via `configManager.getGeocodeMapsConfig()`
 
-**Proxy support:** `GeocodeMapsClient.__init__()` accepts an optional `proxyKwargs` keyword argument (dict to spread into `httpx.AsyncClient`). The `WeatherHandler` creates a `ProxyConfig` via `ProxyConfig.fromServiceConfig(geocodeMapsConfig)`, calls `ProxyConfig.getCombined()` to merge with the global config, then `ProxyConfig.toKwargs()` and passes the result to the client constructor.
+**Proxy support:** `GeocodeMapsClient.__init__()` accepts an optional `proxyConfig: Optional[ProxyConfig]` keyword argument (a `ProxyConfig` instance, NOT a kwargs dict). `WeatherHandler` resolves it via `ProxyService.getInstance().resolveProxy(geocodeMapsConfig, "geocode-maps")` (which internally calls `ProxyConfig.fromServiceConfig()` and registers any per-service lifecycle) and passes the resulting `ProxyConfig` directly to the client constructor. The client internally calls `proxyConfig.toKwargs()` once per request when constructing each `httpx.AsyncClient`.
 
 ---
 
@@ -604,15 +626,14 @@ Pure-logic library for tarot and rune divination. Depends ONLY on `lib/ai` (no b
 
 **Boundary rule:** `lib/divination/` is consumed by `internal/bot/common/handlers/divination.py`; the library itself must never import from `internal/`. A boundary-import test enforces this
 
-**Usage from a handler:**
+**Usage from a handler:** `TarotSystem` / `RunesSystem` inherit classmethods from `BaseDivinationSystem` — no instances are needed. `resolveLayout(name)` and `draw(layout)` operate on the class-level deck and layouts.
 ```python
 from lib.divination.tarot import TarotSystem
-from lib.divination.layouts import resolveLayout
-from lib.divination.drawing import drawSymbols
 
-system = TarotSystem()
-layout = resolveLayout(system, "three_card")
-reading = drawSymbols(system, layout, question="What about my career?")
+layout = TarotSystem.resolveLayout("three_card")  # case/separator-insensitive -> Optional[Layout]
+if layout is None:
+    raise ValueError("Unknown layout")
+draws = TarotSystem.draw(layout)  # -> Tuple[DrawnSymbol, ...]; uses random.SystemRandom by default
 ```
 
 ---

@@ -1,7 +1,7 @@
 # Gromozeka — Service Integration Patterns
 
 > **Audience:** LLM agents  
-> **Purpose:** Complete reference for using CacheService, QueueService, LLMService, StorageService, and RateLimiterManager  
+> **Purpose:** Complete reference for using CacheService, QueueService, LLMService, StorageService, RateLimiterManager, and ProxyService  
 > **Self-contained:** Everything needed for service integration is here
 
 ---
@@ -13,13 +13,14 @@
 3. [LLMService](#3-llmservice)
 4. [StorageService](#4-storageservice)
 5. [RateLimiterManager](#5-ratelimitermanager)
-6. [Service Singleton Pattern](#6-service-singleton-pattern)
+6. [ProxyService](#6-proxyservice)
+7. [Service Singleton Pattern](#7-service-singleton-pattern)
 
 ---
 
 ## 1. CacheService
 
-**File:** [`internal/services/cache/service.py:193`](../../internal/services/cache/service.py:193)  
+**File:** [`internal/services/cache/service.py:195`](../../internal/services/cache/service.py:195)  
 **Import:** `from internal.services.cache import CacheService`
 
 ```python
@@ -71,7 +72,7 @@ cache.invalidateChatUser(chatId=chatId, userId=userId)  # sync; pops userInfo on
 
 **`chat_users` row cache (ADR-015):** the `CHAT_USERS` namespace (keyed `f"{chatId}:{userId}"`, `MEMORY_ONLY`) holds both the `user_data` blob (`data` field) and the `chat_users` row (`userInfo` field, lazily loaded). `getChatUser` is an LRU read with DB fallback on miss; `updateChatUser`/`updateUserMetadata` are write-through. Single-row `(chatId, userId)` reads/writes in handlers MUST go through `self.cache.*` — not `self.db.chatUsers.*` — so the cache stays consistent.
 
-**`messages_count` is best-effort stale** on a cached row: the column is incremented by a raw SQL `UPDATE` inside `ChatMessagesRepository.saveChatMessage` (`internal/database/repositories/chat_messages.py:154`), bypassing this cache. Callers needing an accurate count SHOULD prefer the conditional-refresh helper `SpamHandler._getUserInfoFreshIfMessagesLessThan(chatId, userId, threshold)` over a blanket `refresh=True` — it refreshes only when the cached count is strictly below the threshold (a monotonic at-or-above value stays valid), so established users don't pay a per-message DB hit. The two spam gates use it with gate-direction-appropriate thresholds (`checkSpam` `>=` passes the threshold unchanged; `markAsSpam` strict `>` passes `threshold + 1` to refresh the boundary case). A direct `getChatUser(..., refresh=True)` is still available when an unconditional refresh is genuinely required. `updateChatUser` skips the DB upsert when `username`/`full_name` are unchanged, so `updated_at` no longer refreshes on a no-op call; on a cache miss it leaves the cache cold (no warming re-read). `updateUserMetadata` performs a **full-dict replace with NO merge** — callers writing a nested sub-dict (e.g. `memoryRefinement`) must read-modify-write the whole metadata dict. See [`architecture.md`](architecture.md) ADR-015 for the full decision and the nested-write safety invariant.
+**`messages_count` is best-effort stale** on a cached row: the column is incremented by a raw SQL `UPDATE` inside `ChatMessagesRepository.saveChatMessage` (`internal/database/repositories/chat_messages.py:158`), bypassing this cache. Callers needing an accurate count SHOULD prefer the conditional-refresh helper `SpamHandler._getUserInfoFreshIfMessagesLessThan(chatId, userId, threshold)` over a blanket `refresh=True` — it refreshes only when the cached count is strictly below the threshold (a monotonic at-or-above value stays valid), so established users don't pay a per-message DB hit. The two spam gates use it with gate-direction-appropriate thresholds (`checkSpam` `>=` passes the threshold unchanged; `markAsSpam` strict `>` passes `threshold + 1` to refresh the boundary case). A direct `getChatUser(..., refresh=True)` is still available when an unconditional refresh is genuinely required. `updateChatUser` skips the DB upsert when `username`/`full_name` are unchanged, so `updated_at` no longer refreshes on a no-op call; on a cache miss it leaves the cache cold (no warming re-read). `updateUserMetadata` performs a **full-dict replace with NO merge** — callers writing a nested sub-dict (e.g. `memoryRefinement`) must read-modify-write the whole metadata dict. See [`architecture.md`](architecture.md) ADR-015 for the full decision and the nested-write safety invariant.
 
 **Key types from** [`internal/services/cache/types.py`](../../internal/services/cache/types.py):
 - `HCChatCacheDict` — per-chat cache
@@ -117,7 +118,7 @@ emptyTask: asyncio.Task = makeEmptyAsyncTask()
 
 ## 3. LLMService
 
-**File:** [`internal/services/llm/service.py:52`](../../internal/services/llm/service.py:52)  
+**File:** [`internal/services/llm/service.py:144`](../../internal/services/llm/service.py:144)  
 **Import:** `from internal.services.llm import LLMService`
 
 ```python
@@ -213,7 +214,7 @@ Resolution happens in the private `_resolveTools(useTools)` method, which return
 **Generate structured (JSON-Schema) output:**
 ```python
 result: ModelStructuredResult = await llmService.generateStructured(
-    prompt,                      # Union[str, Sequence[ModelMessage]]
+    prompt,                      # Sequence[ModelMessage]
     schema,                      # Dict[str, Any] — JSON Schema
     chatId=chatId,
     chatSettings=chatSettings,
@@ -232,7 +233,7 @@ if result.status == ModelResultStatus.FINAL:
 ```python
 async def generateStructured(
     self,
-    prompt: Union[str, Sequence[ModelMessage]],
+    prompt: Sequence[ModelMessage],
     schema: Dict[str, Any],
     *,
     chatId: Optional[int],
@@ -263,25 +264,28 @@ limiting for non-`None` `chatId`, then delegates to
 from lib.ai import ModelStructuredResult
 ```
 
-**`ModelResultStatus` values:**
-- `FINAL` — successful response
-- `ERROR` — LLM error
-- `TIMEOUT` — request timed out
-- `EMPTY` — empty response
+**`ModelResultStatus` values** (from [`lib/ai/models.py`](../../lib/ai/models.py); see `ERROR_STATUSES` frozenset there for the failure subset):
+- `FINAL` — complete, final response (the success case callers usually check)
+- `TRUNCATED_FINAL` — truncated but still considered final (text usable)
+- `TOOL_CALLS` — model is requesting tool calls (handled inside `generateTextViaLLM`'s loop)
+- `ERROR` — execution error
+- `CONTENT_FILTER` — response filtered by provider content policy
+- `UNSPECIFIED` / `PARTIAL` / `UNKNOWN` — other non-final / failure states
+
+There is no `TIMEOUT` and no `EMPTY` status. Callers wanting "did we get usable text?" should check `status == ModelResultStatus.FINAL` (or also accept `TRUNCATED_FINAL`); callers wanting "did it fail?" should check `status in ERROR_STATUSES`.
 
 **IMPORTANT:** `LLMService` has an `initialized` guard (singleton init runs once). Never check `initialized` directly in new code
 
 **Proxy config flow:** Proxy configuration flows from `ConfigManager.getProxyConfig()` → `ProxyHelper.getInstance().setGlobalProxyConfig()` in `main.py`. Services create `ProxyConfig` via `ProxyConfig.fromServiceConfig()` with their service-level config, then call `ProxyConfig.getCombined()` to merge with the global config, and `ProxyConfig.toKwargs()` to get `httpx.AsyncClient` kwargs. `LLMManager` stores a `proxyConfig` attribute. `BasicOpenAIProvider._initClient()` creates a custom `httpx.AsyncClient` for the OpenAI SDK. Image download and OpenRouter `listRemoteModels()` also resolve proxy.
 
-### `internal/services/llm/utils.py`
+### Message reconstruction: `ModelMessage.fromDictList`
 
-Shared LLM utility functions used by both bot handlers and CLI scripts.
+There is no `internal/services/llm/utils.py` and no standalone `reconstructMessages` helper — message reconstruction from serialised request data is a classmethod on `ModelMessage` itself:
 
-#### `reconstructMessages(requestData: List[Dict[str, Any]]) -> List[ModelMessage]`
-
-Reconstructs `ModelMessage` objects from serialized request data (dicts with `role`, `content`, optional `tool_calls` and `tool_call_id`). Used by:
-- `scripts/run_llm_debug_query.py` -- CLI debug replay
-- `DevCommandsHandler.llmReplayCommand` -- `/llm_replay` bot command
+- `ModelMessage.fromDictList(dictList: List[Dict[str, Any]]) -> List[ModelMessage]` (defined in [`lib/ai/models.py`](../../lib/ai/models.py)). Accepts dicts with `role`, `content`, optional `tool_calls` and `tool_call_id`. Used by:
+  - `scripts/run_llm_debug_query.py` — CLI debug replay (`entry["request"]` → `ModelMessage.fromDictList`).
+  - `DevCommandsHandler.llmReplayCommand` — the `/llm_replay` bot command.
+  - `LLMMessageHandler` and `ResenderHandler` for the same purpose on the hot path.
 
 ---
 
@@ -320,7 +324,7 @@ keys: List[str] = storage.list(prefix="attachments/", limit=100)
 
 ## 5. RateLimiterManager
 
-**File:** [`lib/rate_limiter/manager.py:37`](../../lib/rate_limiter/manager.py:37)  
+**File:** [`lib/rate_limiter/manager.py:57`](../../lib/rate_limiter/manager.py:57)  
 **Import:** `from lib.rate_limiter import RateLimiterManager`
 
 ```python
@@ -359,7 +363,7 @@ openweathermap = "<limiter-name>"
 ```python
 proxyService = ProxyService.getInstance()
 
-# Initialize (called once from main.py after setGlobalProxyConfig)
+# Initialize (called once from main.py; this calls setGlobalProxyConfig internally)
 proxyService.initialize(configManager.getProxyConfig(), loop=loop)
 
 # Resolve proxy for a service (replaces direct ProxyConfig.fromServiceConfig)
@@ -370,7 +374,7 @@ proxyConfig = proxyService.resolveProxy(serviceConfig, "my-service")
 
 | Method | Returns | Purpose |
 |---|---|---|
-| `initialize(proxyConfig, loop)` | `None` | Idempotent init. Reads global proxy config, creates `ProxyLifecycle` for global proxy if lifecycle section present, registers CRON_JOB/DO_EXIT handlers. Global proxy start command runs immediately via the shared event loop (`loop.run_until_complete()`). |
+| `initialize(proxyConfigDict, loop)` | `None` | Idempotent init. Calls `ProxyHelper.setGlobalProxyConfig()` with the supplied dict, creates `ProxyLifecycle` for the global proxy if a lifecycle section is present, registers CRON_JOB/DO_EXIT handlers. Global proxy start command runs immediately via the shared event loop (`loop.run_until_complete()`). |
 | `resolveProxy(serviceConfig, serviceLabel)` | `ProxyConfig` | Wraps `ProxyConfig.fromServiceConfig()`. Creates a `ProxyLifecycle` if the service config has a `proxy.lifecycle` sub-section. Deduplicates by `serviceLabel`. |
 
 **`ProxyLifecycle`** (non-singleton, one per proxy config):
@@ -462,4 +466,4 @@ class MyService:
 ---
 
 *This guide is auto-maintained and should be updated whenever service integration patterns change*  
-*Last updated: 2026-06-26*
+*Last updated: 2026-07-18*

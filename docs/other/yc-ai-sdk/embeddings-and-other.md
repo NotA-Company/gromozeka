@@ -3,6 +3,25 @@
 All remaining SDK domains beyond completions, image generation, tools, speech,
 and chat.
 
+> **Version drift (2026-07-18 audit):** API shapes below were captured against
+> SDK **v0.20.2**; the current pin is `yandex-ai-studio-sdk==0.22.0`
+> ([`requirements.direct.txt`](../../../requirements.direct.txt)). See the
+> bundle-level note in [`index.md`](index.md) -- treat every signature, type,
+> URI scheme, and parameter name in this file as **unverified against 0.22.0**
+> until re-captured.
+>
+> **Production usage: NONE of the domains documented here are wired in.** The
+> YC SDK provider ([`lib/ai/providers/yc_sdk_provider.py`](../../../lib/ai/providers/yc_sdk_provider.py))
+> uses the SDK only for `sdk.models.completions` and `sdk.models.image_generation`
+> (see [Completions](completions.md), [Image Generation](image-generation.md));
+> the embedding codepath on `YcAIModel` raises `NotImplementedError`. The
+> production embedding path is local ONNX via
+> [`lib/ai/providers/fastembed_provider.py`](../../../lib/ai/providers/fastembed_provider.py)
+> (`fastembed`), **not** `sdk.models.text_embeddings` / `sdk.chat.text_embeddings`.
+> Text Classifiers, Search API, Search Indexes, Tuning, Datasets, and Batch are
+> entirely unused -- see [`gap-analysis.md`](gap-analysis.md). This file is a
+> reference for what the SDK exposes, not a guide to wired functionality.
+
 ## Text Embeddings
 
 ### Creating an Embedding Model

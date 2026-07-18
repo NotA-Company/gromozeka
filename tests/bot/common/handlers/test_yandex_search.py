@@ -1,7 +1,7 @@
 """Regression tests for :class:`YandexSearchHandler` condensing-prompt behaviour.
 
 Covers Phase 2 of the ``condensing_prompt`` tool-parameter feature
-(`docs/plans/condensing-prompt-tool-param.md`):
+(`docs/archive/plans/condensing-prompt-tool-param.md`):
 
 * :class:`TestNormalizeCondensingPrompt` — unit cases for the
   :meth:`YandexSearchHandler._normalizeCondensingPrompt` static helper

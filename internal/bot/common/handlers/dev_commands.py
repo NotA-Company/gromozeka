@@ -839,7 +839,8 @@ class DevCommandsHandler(BaseBotHandler):
         """Replay an LLM conversation from an attached JSON file for debugging
 
         Reads a JSON log entry from an attached document, reconstructs the
-        message list using :py:func:`reconstructMessages`, and runs it through
+        message list using :py:meth:`lib.ai.models.ModelMessage.fromDictList`,
+        and runs it through
         :py:meth:`LLMService.generateTextViaLLM` with the specified model and
         all registered tools. Intermediate tool-call results are sent back to
         the chat as they arrive, mirroring the :py:class:`LLMMessageHandler`

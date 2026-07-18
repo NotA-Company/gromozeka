@@ -3,7 +3,7 @@
 This migration introduces ``user_memories`` — the single source of truth
 for durable per-(chat, user, thread) facts, preferences, events,
 relationships, and high-level bio notes about a user (see
-``docs/plans/user-memories-v1.md``). It unifies and retires two legacy
+``docs/archive/plans/user-memories-v1.md``). It unifies and retires two legacy
 stores:
 
 - ``user_data`` (key-value facts) → permanent cross-thread

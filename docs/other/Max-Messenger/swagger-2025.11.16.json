@@ -10,7 +10,8 @@
   },
   "servers": [
     {
-      "url": "https://platform-api.max.ru"
+      "url": "https://platform-api.max.ru",
+      "description": "DEPRECATED host (snapshot captured 2025-11-16). This platform-api.max.ru endpoint was the first-generation Max Bot API host and was retired on 2026-07-19. The current production host is https://platform-api2.max.ru — see lib/max_bot/constants.py. This swagger file is a frozen historical reference; the server URL above and the platform-api.max.ru references inside info.description and the /uploads operation are preserved verbatim from the original snapshot."
     }
   ],
   "security": [

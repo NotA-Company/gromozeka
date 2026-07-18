@@ -13,6 +13,23 @@ design-rationale reference, not as current implementation guidance. Before actin
 on any plan here, verify the feature's current state against the live codebase
 and [`docs/llm/`](../../llm/).
 
+## Recently Archived (2026-07-18 docs audit)
+
+These implemented plans were moved out of `docs/plans/` during the 2026-07-18 docs audit because their features are shipped. They remain here as historical record.
+
+- [`condensed-context-retrieval-plan-v1.md`](condensed-context-retrieval-plan-v1.md) — Condensed-Context Retrieval v1 (IMPLEMENTED 2026-07-12; canonical memory: [`docs/llm/memories/condensed-context-retrieval.md`](../../llm/memories/condensed-context-retrieval.md))
+- [`condensing-prompt-tool-param.md`](condensing-prompt-tool-param.md) — `condensing_prompt` LLM tool parameter (`web_search`/`get_url_content`) — feature shipped same day as plan was drafted (commit d25a73c, 2026-07-17). Plan is retained as the historical design reference.
+- [`input-image-format.md`](input-image-format.md) — per-model input_image_format conversion (IMPLEMENTED)
+- [`max-bot-client-generation-brief.md`](max-bot-client-generation-brief.md) — Original LLM brief that initiated `lib/max_bot/` implementation (was `docs/other/Max-Messenger/llm-client-generation-request.md`, renamed on archive). Sits with the six companion `max-bot-phase{1-6}` plans already archived here.
+- [`memories-context-dedup-plan-v1.md`](memories-context-dedup-plan-v1.md) — Memories Context Dedup v1 (IMPLEMENTED; superseded by v2)
+- [`memories-context-dedup-plan-v2.md`](memories-context-dedup-plan-v2.md) — Memories Context Dedup v2 (IMPLEMENTED 2026-07-11; ADR-018; canonical memory: [`docs/llm/memories/memories-context-dedup.md`](../../llm/memories/memories-context-dedup.md))
+- [`memory-compaction-v1.md`](memory-compaction-v1.md) — Memory Compaction v1 (IMPLEMENTED 2026-07-09)
+- [`memory-refine-plan-v0.md`](memory-refine-plan-v0.md) — User Memory Refinement v0 brainstorm notes (superseded by v1)
+- [`memory-refine-plan-v1.md`](memory-refine-plan-v1.md) — User Memory Refinement v1 (IMPLEMENTED 2026-07-04)
+- [`random-answer-context-v1.md`](random-answer-context-v1.md) — Random-answer context awareness + model abstention (IMPLEMENTED 2026-07-05)
+- [`user-info-cache-plan-v1.md`](user-info-cache-plan-v1.md) — Write-through chat_users cache (IMPLEMENTED 2026-07-05; ADR-015; canonical memory: [`docs/llm/memories/chat-users-cache.md`](../../llm/memories/chat-users-cache.md))
+- [`user-memories-v1.md`](user-memories-v1.md) — User Memories v1 (IMPLEMENTED; canonical memory: [`docs/llm/memories/user-memories.md`](../../llm/memories/user-memories.md))
+
 ## Recently Archived (2026-07-04)
 
 These plans were moved out of `docs/plans/` once their features shipped or the
@@ -29,7 +46,6 @@ plan was superseded:
 - [`media-group-completion-detection.md`](media-group-completion-detection.md) — Implemented in `resender.py` + media attachments repo.
 - [`test-reorganization.md`](test-reorganization.md) — Completed 2026-05-21; all tests now under `tests/`.
 - [`llm-replay-and-yaml-conversion.md`](llm-replay-and-yaml-conversion.md) — `/llm_replay` command + `convert_readable_to_llm_log.py` shipped.
-- [`memory-refine-plan-v0.md`](memory-refine-plan-v0.md) — Abandoned brainstorm stub ("I want following").
 - [`internal-lib-docstring-processing-plan.md`](internal-lib-docstring-processing-plan.md) — Completed docstring pass (stages 1-8).
 - [`max-api-migration.md`](max-api-migration.md) — Implemented; Max API migrated to `platform-api2.max.ru`.
 - [`max-webhook-support.md`](max-webhook-support.md) — Implemented; two-process webhook mode (ADR-013).
@@ -57,5 +73,5 @@ plan was superseded:
 
 ---
 
-*Last updated: 2026-07-04*
+*Last updated: 2026-07-18*
 *Plans archive maintained for historical context only*

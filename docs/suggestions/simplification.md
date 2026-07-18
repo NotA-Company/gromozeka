@@ -6,6 +6,14 @@
 >
 > **Scope:** Based on analysis of the actual code in the repository as of 2026-04-18
 > **Status review:** 2026-05-02
+>
+> **Audit 2026-07-18:** Per-item/appendix spot-check performed. The 2026-05-02 status
+> review is **stale** — see annotations on individual items and the appendix table.
+> At minimum: items #4 and #16 have substantive code drift (described in-place), and
+> two appendix quick wins (the `lib/ai/manager.py` f-string and the
+> `addMessageToChatQueue` docstring TODO) have been **completed** since the last review.
+> All other items remain pending; line-number references may be stale but the underlying
+> issues are unchanged unless flagged.
 
 ---
 
@@ -32,6 +40,14 @@
 | 17 | [ ] | [Remove unused `forceRecalc` parameters](#17-remove-unused-forcrecalc-parameters) | Low | S | Parameters that are never passed as True |
 
 > **Status Review Note (2026-05-02):** All 17 simplification suggestions remain pending. The appendix quick wins are also all still present in the codebase. The deprecated `mediaId`/`mediaContent`/`mediaPrompt` fields in `EnsuredMessage` (#8) are still actively used throughout the code. The `asyncio.run()` in `GromozekBot.__init__` (#16) is still present at [`main.py:50`](../../main.py:50). The `forceRecalc` params (#17) still exist unchanged. The `canProcess = False; pass` quick win bug at manager.py:640-641 is also still present.
+>
+> **Audit update 2026-07-18:** The `asyncio.run()` claim for #16 is **stale** —
+> `GromozekBot.__init__` now receives a shared `loop: asyncio.AbstractEventLoop`
+> argument and calls `loop.run_until_complete(...)` for the rate-limiter config load
+> (see [main.py](../../main.py)). The literal `asyncio.run()` call is gone, though the
+> broader "drive the event loop from inside the constructor" concern partially remains.
+> Two appendix quick wins are also now resolved (see appendix table). All other items
+> in this note were re-verified as still present.
 
 ---
 
@@ -267,6 +283,17 @@ Medium refactoring effort — need to define the adapter interface and create tw
 ## 4. Remove the universal handler constructor signature repetition
 
 **Priority:** Medium | **Effort:** S
+
+> **Audit 2026-07-18:** The doc below shows handlers taking **4** args
+> (`configManager`, `database`, `llmManager`, `botProvider`). The `llmManager`
+> argument has since been **removed** from every handler constructor — current
+> handlers take **3** args: `configManager`, `database`, `botProvider` (all
+> keyword-only; see e.g. [`llm_messages.py:114`](../../internal/bot/common/handlers/llm_messages.py:114),
+> [`spam.py:80`](../../internal/bot/common/handlers/spam.py:80),
+> [`configure.py:74`](../../internal/bot/common/handlers/configure.py:74)).
+> The core observation still holds — the same 3-arg signature is repeated across
+> 15+ handlers and threaded through `HandlersManager.__init__` — but the count
+> and the `HandlerContext` field list below need adjusting before this is acted on.
 
 ### Current Complexity
 
@@ -1036,6 +1063,18 @@ Medium refactor effort. Splitting into multiple namespaces requires more LRUCach
 
 **Priority:** High | **Effort:** S
 
+> **Audit 2026-07-18 — partially addressed.** The literal `asyncio.run()` call is
+> **gone**. `GromozekBot.__init__` now receives `loop: asyncio.AbstractEventLoop`
+> from `main()` (which creates the loop itself) and drives the rate-limiter config
+> load via `loop.run_until_complete(self.rateLimiterManager.loadConfig(...))`
+> (see [`main.py:99`](../../main.py:99)). This avoids creating/destroying a fresh
+> event loop, and the loop is now owned by `main()` rather than the constructor.
+> The residual smell the item points at — running the loop from inside `__init__`
+> to perform async work — still exists, but the worst part of the original
+> anti-pattern has been removed. Re-prioritise accordingly; effort is closer to
+> **M** than **S** if pursued further (touches `main()` and the bot-application
+> `run()` paths).
+
 ### Current Complexity
 
 [`main.py`](/main.py:50) calls `asyncio.run()` **inside a class constructor**, which is an async/sync mixing anti-pattern
@@ -1163,15 +1202,16 @@ None. The IDs are strings computed from already-available fields
 
 These don't need a full section but are worth noting:
 
-| Location | Issue | Fix |
-|---|---|---|
-| [`internal/bot/common/bot.py:75`](/internal/bot/common/bot.py:75) | Typo: `"tgBot need to be providen if botProvider is Telegram"` — says Telegram even for Max case | Fix the error message |
-| [`internal/bot/common/handlers/manager.py:616`](/internal/bot/common/handlers/manager.py:616) | `canProcess = False; pass` — `pass` after `canProcess = False` is dead code | Remove `pass` |
-| [`internal/bot/models/ensured_message.py:1111`](/internal/bot/models/ensured_message.py:1111) | `raise RuntimeError("Unreacible code has been reached")` after exhaustive match | Fix typo "Unreacible" + this IS reachable if `format` is some unknown value |
-| [`lib/ai/manager.py:51-53`](/lib/ai/manager.py:51) | ⚠️ VERIFIED STILL PRESENT (2026-05-08): f-string without f prefix: `"Provider type is not specified for provider {provider_name}"` | Add `f` prefix |
-| [`internal/bot/common/handlers/manager.py:447`](/internal/bot/common/handlers/manager.py:447) | `TODO: Write docstring` on `addMessageToChatQueue` | Write it or remove comment |
+| Location | Issue | Fix | Status |
+|---|---|---|---|
+| [`internal/bot/common/bot.py:90`](../../internal/bot/common/bot.py:90) and [`:94`](../../internal/bot/common/bot.py:94) | Typo: `"tgBot need to be providen if botProvider is Telegram"` and `"maxBot need to be providen if botProvider is Telegram"` — second message says "Telegram" even for the Max case, and both have typo "providen" | Fix the error messages | **Still present** (was line 75; line refs drifted) |
+| [`internal/bot/common/handlers/manager.py:993-994`](../../internal/bot/common/handlers/manager.py:993) | `canProcess = False; pass` — `pass` after `canProcess = False` is dead code (in the `case _:` arm of the category match) | Remove `pass` | **Still present** (was line 616; line ref drifted) |
+| [`internal/bot/models/ensured_message.py:1190`](../../internal/bot/models/ensured_message.py:1190) | `raise RuntimeError("Unreacible code has been reached")` after exhaustive match | Fix typo "Unreacible" + this IS reachable if `format` is some unknown value | **Still present** (was line 1111; line ref drifted) |
+| [`lib/ai/manager.py:130`](../../lib/ai/manager.py:130) | ⚠️ ~~VERIFIED STILL PRESENT (2026-05-08)~~ — f-string without f prefix: `"Provider type is not specified for provider {provider_name}"` | Add `f` prefix | **✅ DONE (2026-07-18 audit).** Now reads `f"Provider type is not specified for provider {provider_name}"` with the correct prefix (was line 51-53; line ref drifted) |
+| [`internal/bot/common/handlers/manager.py:811`](../../internal/bot/common/handlers/manager.py:811) | `TODO: Write docstring` on `addMessageToChatQueue` | Write it or remove comment | **✅ DONE (2026-07-18 audit).** `addMessageToChatQueue` now has a full `Args:`/`Returns:` docstring (was line 447; line ref drifted) |
 
 ---
 
 *Document created 2026-04-18 Analysis based on codebase snapshot at that date.*
 *Status review updated: 2026-05-02*
+*Audit pass: 2026-07-18 (spot-check only; see header and appendix annotations)*

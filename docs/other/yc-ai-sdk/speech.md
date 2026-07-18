@@ -3,6 +3,20 @@
 Audio capabilities via the `sdk.speechkit` domain, powered by Yandex
 SpeechKit.
 
+> **Scope and status.** This is a reference for the SDK surface only; the
+> production codebase does **not** use SpeechKit (no callers of
+> `sdk.speechkit`, `text_to_speech`, `speech_to_text`, `tts`, or `stt` in
+> `internal/` or `lib/`). See `gap-analysis.md` (TTS and STT rows: "Not
+> used / Low priority"). Treat this page as a forward-reference for
+> hypothetical voice features, not a description of integrated behavior.
+>
+> **Version drift.** This reference was originally written against SDK
+> **0.20.2**; the project currently pins
+> `yandex-ai-studio-sdk==0.22.0` (see `requirements.direct.txt`). The
+> public surface documented below has been re-verified against 0.22.0 and
+> the surgical corrections are marked inline. Re-verify before relying on
+> any code sample here.
+
 ## Text-to-Speech (TTS)
 
 ### Creating a TTS Model
@@ -36,7 +50,7 @@ tts.configure(speed=1.5, volume=0.7)
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `audio_format` | `AudioFormat` | UNDEFINED | Output format. `WAV`, `MP3`, `OGG_OPUS`, `PCM16(sample_rate, channels=1)` |
+| `audio_format` | `AudioFormat` | UNDEFINED | Output format. `WAV`, `MP3`, `OGG_OPUS`, `PCM16(sample_rate_hertz, channels=1)` |
 | `voice` | `str \| None` | UNDEFINED | Voice name, e.g., `"oksana"`, `"alice"`, `"ermil"` |
 | `role` | `str \| None` | UNDEFINED | Voice role/character |
 | `speed` | `float \| None` | UNDEFINED | Speech speed. Default 1.0 |
@@ -248,10 +262,10 @@ Performs complete recognition on the provided audio.
 ```python
 async for event in await stt.run_stream(audio_bytes, timeout=60):
     # event: SpeechToTextStreamingEvent
-    if event.final:
-        print(f"Final: {event.alternatives[0].text}")
-    else:
-        print(f"Partial: {event.alternatives[0].text}")
+    if event.final is not None:
+        print(f"Final: {event.final.text}")
+    elif event.partial is not None:
+        print(f"Partial: {event.partial.text}")
 ```
 
 Returns a stream of recognition events with partial and final results.
@@ -290,8 +304,18 @@ default is 600s (10 minutes).
 
 #### `get_recognition_result()` -- Get Deferred Result
 
+> **Drift correction (0.22.0).** `get_recognition_result` is defined on
+> the speechkit *factory function* (`sdk.speechkit.speech_to_text` / its
+> `stt` alias), **not** on a configured STT model instance. Calling it on
+> the model (`stt.get_recognition_result(...)`) raises `AttributeError`.
+
 ```python
-result = await stt.get_recognition_result(operation_id="...", timeout=60)
+# Call on the factory, passing the deferred operation's id
+result = await sdk.speechkit.speech_to_text.get_recognition_result(
+    operation_id="...", timeout=60
+)
+# Equivalently via the alias:
+# result = await sdk.speechkit.stt.get_recognition_result(operation_id="...", timeout=60)
 ```
 
 Retrieve the result of a deferred recognition operation by ID.
@@ -319,15 +343,35 @@ class Utterance:
 
 ### SpeechToTextStreamingEvent
 
-Individual events in the streaming recognition output:
+Individual events in the streaming recognition output. The `event_type`
+field (a `SpeechToTextStreamingEventType` str-enum: `partial`, `final`,
+`final_refinement`, `eou_update`, `status_code`, `classifier_update`,
+`speaker_analysis`, `conversation_analysis`, `llm_post_process_result`,
+`sdk_unknown`) determines which of the optional payload fields is set.
+
+> **Drift correction (0.22.0).** Earlier versions of this table invented
+> an `alternatives: tuple` field and typed `final` as `bool`. Neither is
+> accurate: recognition text arrives via `partial` and `final`
+> (`Alternatives | None`), and `final` is set (non-`None`) when the event
+> is a stable final result -- it is not a boolean flag.
 
 | Field | Type | Description |
 |---|---|---|
-| `event_type` | str | Type of recognition event |
-| `alternatives` | tuple | Recognition alternatives |
-| `final` | bool | Whether this is a final (stable) result |
-| `final_refinement` | ... | Refined final result |
-| `classifiers` | ... | Classification results |
+| `event_type` | `SpeechToTextStreamingEventType` | Kind of recognition event (see enum values above) |
+| `response_wall_time_ms` | `int` | Server wall-clock time the event was emitted |
+| `audio_cursors` | `AudioCursors` | Stream progress (received, partial, final, final_refinement times) |
+| `channel_tag` | `str` | Tag identifying the audio channel |
+| `partial` | `Alternatives \| None` | Partial (non-stable) recognition for the current segment |
+| `final` | `Alternatives \| None` | Stable final recognition. Non-`None` on `event_type="final"` |
+| `final_refinement` | `FinalRefinement \| None` | Normalized/refined final result |
+| `eou_update_ms` | `float \| None` | End-of-utterance timestamp in ms |
+| `status_code` | `StatusCode \| None` | Server keep-alive status |
+| `classifier_update` | `ClassifierUpdate \| None` | Triggered-classifier update |
+| `speaker_analysis` | `SpeakerAnalysis \| None` | Per-speaker statistics |
+
+Convenience properties: `.partial_text`, `.final_text`,
+`.final_refinement_text`, and `.text` (returns the first non-`None` of
+refinement → final → partial).
 
 ### Complete STT Example
 
@@ -349,15 +393,20 @@ stt = sdk.speechkit.stt(
 with open("recording.wav", "rb") as f:
     audio_bytes = f.read()
 
-# Real-time recognition
+# Real-time recognition.
+# SpeechToTextResult is a Sequence over ChannelResult (one per audio channel);
+# each ChannelResult.utterances is a tuple of Utterance. For the common
+# single-channel case, result.text returns the joined text directly.
 result = await stt.run(audio_bytes, timeout=60)
-for utterance in result:
-    print(f"Recognized: {utterance.text}")
+print(f"Recognized: {result.text}")
+for channel in result:
+    for utterance in channel.utterances:
+        print(f"  channel={channel.tag}: {utterance.text}")
 
 # Streaming recognition
 async for event in await stt.run_stream(audio_bytes, timeout=60):
-    if event.final:
-        print(f"Final: {event.alternatives[0].text}")
+    if event.final is not None:
+        print(f"Final: {event.final.text}")
 
 # Deferred recognition (for long audio)
 operation = await stt.run_deferred(audio_bytes, timeout=60)
@@ -366,11 +415,20 @@ deferred_result = await operation
 
 ### Method Availability
 
-| Method | Available | Timeout (default) | Input Type |
+> **Drift correction (0.22.0).** The table below lists methods on the
+> STT **model instance** (i.e. what you get from
+> `stt = sdk.speechkit.stt(...)`). `get_recognition_result` is **not** on
+> the model -- it is on the speechkit factory function and is therefore
+> listed separately.
+
+| Method (on STT model) | Available | Timeout (default) | Input Type |
 |---|---|---|---|
 | `run()` | Yes | 60s | `bytes \| Sequence[bytes \| int]` |
 | `run_stream()` | Yes | 60s | `bytes \| Sequence[bytes \| int]` |
 | `run_deferred()` | Yes | 60s | `str (S3 URL) \| bytes` |
 | `attach_deferred()` | Yes | 60s | `str (operation_id)` |
-| `get_recognition_result()` | Yes | 60s | `str (operation_id)` |
 | `create_bistream()` | Yes | 600s | N/A |
+
+| Method (on speechkit factory) | Available | Timeout (default) | Input Type |
+|---|---|---|---|
+| `sdk.speechkit.speech_to_text.get_recognition_result(...)` (alias: `.stt`) | Yes | 60s | `str (operation_id)` |

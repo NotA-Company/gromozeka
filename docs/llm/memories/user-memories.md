@@ -2,13 +2,13 @@
 
 Durable implementation notes for the **unified per-`(chat, user, thread)`
 structured memory system** that replaced the legacy rolling-bio summary.
-Implemented from [`docs/plans/user-memories-v1.md`](../../plans/user-memories-v1.md)
+Implemented from [`docs/archive/plans/user-memories-v1.md`](../../archive/plans/user-memories-v1.md)
 (authoritative spec). This doc is the canonical durable summary; the plan is
 the implementation record and [`../architecture.md`](../architecture.md)
 ADR-016 carries the architecture decision (the unified store + vec0 + tools),
 building on ADR-014's refinement machinery (cron + global lock). The
 memory-compaction-v1 change (compact per-message storage + by-id cache +
-soft-delete) is recorded in [`../../plans/memory-compaction-v1.md`](../../plans/memory-compaction-v1.md)
+soft-delete) is recorded in [`../../archive/plans/memory-compaction-v1.md`](../../archive/plans/memory-compaction-v1.md)
 and ADR-017.
 
 This system **supersedes** the rolling-bio subsystem documented in
@@ -388,18 +388,22 @@ Truly-empty messages (no text + no media) format to empty and skip embedding.
      `EMBEDDINGS_ENABLED` off / empty text / `generateEmbedding`
      returned `None` due to no model, rate limit, or provider error) →
      `getLatestMemories` (cap `EPHEMERAL_RETRIEVAL_LIMIT = 5`, ephemeral-only).
-4. The ephemeral rows are slimmed to `SingleMemoryDict` via
-   `convertDBMemoryToSingleMemoryDict` (drops DB plumbing keys, keeps
-   `type`/`content`/`tags`/`score`).
-5. **Write compact IDs to `metadata["memories"]` (no cache warming).**
-   Both permanent and short-term memories are converted via
-   `convertDBMemoryToSingleMemoryDict(..., keepId=True)` so each entry carries
-   its `id`. Then `injectMemories` writes the compact `CompactMemoryIdsDict`
+4. **Write compact IDs to `metadata["memories"]` (no cache warming).**
+   `injectMemories` writes the compact `CompactMemoryIdsDict`
    `{"permanentIds": [...], "shortTermIds": [...]}` directly into
-   `metadata["memories"]` (extracting the `id` from each entry; entries without
-   a usable `id` are silently dropped). `injectMemories()` writes compact memory
-   IDs into `ensuredMessage.metadata["memories"]` only (no cache warming); the
-   by-id cache is populated lazily (cache-aside) on the first `formatForLLM` call
+   `ensuredMessage.metadata["memories"]`, extracting the id of each entry:
+   permanent entries come from the permanent-memories cache already shaped as
+   `SingleMemoryDict` (the cache loader runs
+   `convertDBMemoryToSingleMemoryDict(..., keepId=True)`, so each entry carries
+   its `id`) and are read via `m.get("id")` — entries without a usable `id`
+   are silently dropped; short-term entries are raw `UserMemoryDict` rows
+   straight from `getLatestMemories` / `searchMemories` and are read via
+   `m["memory_id"]`. No slimming happens inside `injectMemories` itself — the
+   DB→`SingleMemoryDict` conversion for the by-id resolution path is deferred
+   to `cache.getMemoriesByIds` at render time (see below).
+   `injectMemories()` writes compact memory IDs into
+   `ensuredMessage.metadata["memories"]` only (no cache warming); the by-id
+   cache is populated lazily (cache-aside) on the first `formatForLLM` call
    via `cache.getMemoriesByIds`. The fetched content is NOT hung off the
    message — there is no `userMemories` content field any more (resolution is
    lazy, in `formatForLLM`; see "Render-time resolution (lazy + dedup)"). The
@@ -410,7 +414,7 @@ Truly-empty messages (no text + no media) format to empty and skip embedding.
 the compact IDs are then re-persisted via a separate
 `db.chatMessages.updateChatMessageMetadata(...)` call so they ride per message in
 `chat_messages.metadata`. This is the memory-compaction-v1 change (see
-[`docs/plans/memory-compaction-v1.md`](../../plans/memory-compaction-v1.md) and
+[`docs/archive/plans/memory-compaction-v1.md`](../../archive/plans/memory-compaction-v1.md) and
 [`../architecture.md`](../architecture.md) ADR-017): instead of persisting a
 ~2–3 KB full content snapshot per message (the permanent block being
 byte-identical across a whole thread), each message carries just the UUID
@@ -420,11 +424,12 @@ memory renders once — see "Render-time resolution (lazy + dedup)".
 
 > **TypedDict note:** the compact ID shape is typed as
 > `CompactMemoryIdsDict` (`internal/bot/models/message_metadata.py`) —
-> `{permanentIds: list[str], shortTermIds: list[str]}`. `MetadataDict.memories`
-> is `CompactMemoryIdsDict | UserMemoriesDict` with **compact first** in the
-> union, so `sqlToCustomType` tries the common compact shape first and avoids
-> a spurious ERROR log. This eliminated the `# type: ignore[assignment]`
-> annotations that previously guarded the compact-metadata writes.
+> `{permanentIds: list[str], shortTermIds: list[str]}`.
+> `MetadataDict.memories` is typed as `CompactMemoryIdsDict` (the legacy
+> `UserMemoriesDict` content-shape union member was removed once every live
+> write path had migrated to compact IDs), so `sqlToCustomType` no longer
+> needs to try multiple shapes and the `# type: ignore[assignment]`
+> annotations that previously guarded the compact-metadata writes are gone.
 
 ### Render-time resolution (lazy + dedup)
 
@@ -605,7 +610,7 @@ write-path `injectMemories`).
 ## Deferred (memory-compaction-v1 scope boundaries)
 
 Two follow-up features are explicitly out of scope and noted as known
-limitations (see [`docs/plans/memory-compaction-v1.md`](../../plans/memory-compaction-v1.md)
+limitations (see [`docs/archive/plans/memory-compaction-v1.md`](../../archive/plans/memory-compaction-v1.md)
 §8):
 
 - **Prompt hoisting** (permanent block → a single system message). This change
@@ -634,9 +639,10 @@ skipped rule, the bail-path TS reset.
   fetched before the LLM call and rendered via `_formatMemoriesBlockRaw`
   into the `{existingMemories}` prompt placeholder (failures tolerated →
   empty list, so a transient DB error can't abort the run). Replaces the
-  old `{existingUserData}` / `{existingSummary}` placeholders (kept as
-  backward-compat aliases so a per-chat override referencing them still
-  formats without `KeyError`).
+  old `{existingUserData}` / `{existingSummary}` placeholders — those are
+  **no longer supported**; a deployed per-chat override still carrying them
+  raises `KeyError` (caught by the outer try/except, refinement stops for
+  that user this tick).
 - **Manages memories via tools** — `useTools` enables `ADD_MEMORY`,
   `DELETE_MEMORY`, `SEARCH_MEMORIES`, `SEARCH_MESSAGES`,
   `GET_CURRENT_DATETIME`. `extraData["isRefinement"] = True` so `add_memory`
@@ -648,7 +654,7 @@ skipped rule, the bail-path TS reset.
   the call (still via the read-modify-write + `chatUserMetadataLock()`
   pattern — see ADR-014/015). The `userSummary` field / `applyUserMetadata`
   reader / `formatForLLM` key were removed entirely in Phase 4b (no
-  remaining writers/readers — see [`../../plans/user-memories-v1.md`](../../plans/user-memories-v1.md) §9.3).
+  remaining writers/readers — see [`../../archive/plans/user-memories-v1.md`](../../archive/plans/user-memories-v1.md) §9.3).
 - **Refinement now requires memory embeddings** — the scan gate is
   `MEMORY_REFINEMENT_ENABLED && MEMORY_ENABLED && EMBEDDINGS_ENABLED`;
   the dispatch re-checks all three per candidate and candidates failing
@@ -744,7 +750,7 @@ documenting the `userSummary` JSON field was dropped in the same phase). The
 stale rolling-bio blob in `chat_users.metadata` is left unread — the
 per-message compact memory IDs (injected at arrival time and persisted in
 `chat_messages.metadata.memories`) fully replace it. See
-[`../../plans/user-memories-v1.md`](../../plans/user-memories-v1.md) §9.3 for
+[`../../archive/plans/user-memories-v1.md`](../../archive/plans/user-memories-v1.md) §9.3 for
 the decision record.
 
 ## Post-v2 cleanup & deploy migrations
@@ -782,14 +788,14 @@ consolidation landed, three deploy artifacts cleaned up the legacy surface:
 
 ## Cross-references
 
-- [`../../plans/user-memories-v1.md`](../../plans/user-memories-v1.md) —
+- [`../../archive/plans/user-memories-v1.md`](../../archive/plans/user-memories-v1.md) —
   authoritative implementation spec (planning document, amended post-impl).
-- [`../../plans/memory-compaction-v1.md`](../../plans/memory-compaction-v1.md)
+- [`../../archive/plans/memory-compaction-v1.md`](../../archive/plans/memory-compaction-v1.md)
   — the compact-ID storage + by-id cache + soft-delete change (status:
   IMPLEMENTED). This doc's "Injection" / "Render-time resolution (lazy + dedup)"
   / "By-id resolution cache" sections summarise it; see ADR-017 for the decision.
-  [`../../plans/memories-context-dedup-plan-v1.md`](../../plans/memories-context-dedup-plan-v1.md)
-  / [`memories-context-dedup-plan-v2.md`](../../plans/memories-context-dedup-plan-v2.md)
+  [`../../archive/plans/memories-context-dedup-plan-v1.md`](../../archive/plans/memories-context-dedup-plan-v1.md)
+  / [`memories-context-dedup-plan-v2.md`](../../archive/plans/memories-context-dedup-plan-v2.md)
   — the lazy-resolution + per-context-dedup change (status: IMPLEMENTED); see
   ADR-018.
 - [`../architecture.md`](../architecture.md) ADR-016 — unified

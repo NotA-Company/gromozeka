@@ -32,7 +32,7 @@ class ExtraDataDict(TypedDict, total=False):
             background memory-refinement pass (not a live chat turn). Read by
             ``_llmToolAddMemory`` to decide whether the grey-zone dedup
             threshold returns ``similar_exists`` (refinement) or folds to
-            ``duplicate`` (chat-time). See docs/plans/user-memories-v1.md §8.3/D5.
+            ``duplicate`` (chat-time). See docs/archive/plans/user-memories-v1.md §8.3/D5.
     """
 
     ensuredMessage: "EnsuredMessage"

@@ -14,7 +14,7 @@
 4. [Per-Batch Review Execution](#4-per-batch-review-execution)
 5. [Integration Pass (Whole-Work Review)](#5-integration-pass-whole-work-review)
 6. [Remediation Workflow (for teamlead)](#6-remediation-workflow-for-teamlead)
-7. [Appendix: Example -- Current Batch (20 commits, 77 files, master..HEAD)](#7-appendix-example----current-batch-20-commits-77-files-masterhead)
+7. [Appendix: Example Batch Walkthrough (N commits, M files, base..HEAD)](#7-appendix-example-batch-walkthrough-n-commits-m-files-basehead)
 
 ---
 
@@ -154,7 +154,7 @@ Each batch is reviewed by dispatching one `code-reviewer` invocation. The brief 
 
 ### 4.2 Parallel Execution
 
-Independent batches (those whose file lists are disjoint and have no data dependency) can and should be reviewed **in parallel**. The `code-reviewer` agent is read-only (no `edit`, `write`, or `task` permissions), so parallel reviews cannot conflict.
+Independent batches (those whose file lists are disjoint and have no data dependency) can and should be reviewed **in parallel**. The `code-reviewer` agent is read-only (`edit` and `write` denied; the `task` tool is restricted to read-only `code-analyst` investigations), so parallel reviews cannot conflict.
 
 ### 4.2.1 Real-World Example
 
@@ -164,7 +164,7 @@ Execution order:
 1. **Parallel:** Batches A1 (chat-search-repos, 15 files), A2 (chat-search-handler, 15 files), B (proxy-lifecycle, 17 files), C (fastembed-provider, 4 files), D (llm-abstraction, 7 files), E (shared-config-docs, 20 files) — all dispatched simultaneously.
 2. **Sequential after all per-batch reviews:** Integration pass (full 78-file diff).
 
-6 parallel reviews completed with zero critical issues found across the entire diff.
+The reviews surfaced a mix of [IMPORTANT], [RECOMMEND], and [NIT] findings (no [CRITICAL] blockers). The orchestrator consolidated these into 22 auto-fix items + 16 user-decision items, dispatched as 7 parallel `software-developer` fix groups with zero file conflicts. See Section 6 for the full remediation workflow.
 
 Only sequence batches when one has a genuine data dependency on another:
 
@@ -420,4 +420,4 @@ Given the volume (M files across N batches — illustrative; actual counts vary 
 ---
 
 *This guide should be consulted whenever a diff exceeds ~24 files, or when a single feature domain within a diff exceeds ~20 files.*
-*Last updated: 2026-06-28*
+*Last updated: 2026-07-18*

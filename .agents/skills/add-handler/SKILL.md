@@ -25,7 +25,7 @@ description: >
 
 - The new command logically belongs on an **existing** handler — add a method there instead.
 - The feature is purely platform-specific UI (inline keyboards, sticker sets) with no shared logic — platform-specific code may live in `internal/bot/telegram/` or `internal/bot/max/`, but the common path is almost always `internal/bot/common/handlers/`.
-- You're loading handlers dynamically via config — see [`docs/custom-modules-design.md`](../../../docs/custom-modules-design.md) instead of writing a built-in.
+- You're loading handlers dynamically via config — see [Custom Handler Modules design](../../../docs/design/custom-modules-design.md) for the complete design — live code at [`internal/bot/common/handlers/module_loader.py`](../../../internal/bot/common/handlers/module_loader.py).
 
 ## Prerequisites
 

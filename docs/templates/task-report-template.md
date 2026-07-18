@@ -13,11 +13,9 @@
 
 **Commit Message Summary:**
 ```
-<type>(<scope>): <subject>
+<imperative-mood subject line matching existing repo style>
 
-[Brief body describing what was implemented and why]
-
-Task: [X.Y.Z]
+[Optional body describing what was implemented and why, if non-obvious]
 ```
 
 ## Details
@@ -77,6 +75,14 @@ Task: [X.Y.Z]
   - **Test Coverage:** [Coverage metrics]
   - **Test Results:** [Results summary]
   - **Test Files:** [`path/to/test/file2_test.ext`](path/to/test/file2_test.ext)
+
+### Regression Tests (required for bug fixes)
+Per AGENTS.md hard rule: every bug fix ships with a regression test that FAILS before the fix and PASSES after it. Skip this subsection only for pure feature/refactor work.
+- [ ] **[Regression Test 1]:** [Bug being locked down]
+  - **Fails Before Fix:** [Confirmed — paste failing assertion/output summary]
+  - **Passes After Fix:** [Confirmed]
+  - **Edge Cases Covered:** [e.g. None handling, Union conversion, schema column mismatch]
+  - **Test File:** [`path/to/test_regression.ext`](path/to/test_regression.ext)
 
 ### Integration Testing
 - [ ] **[Integration Test 1]:** [Description of integration testing performed]
@@ -152,6 +158,10 @@ Task: [X.Y.Z]
 - [ ] **Documentation:**
   - [ ] Docstrings with `Args:` and `Returns:` on all modules/classes/methods/functions
   - [ ] Type hints present on all function/method parameters and returns
+
+- [ ] **Type Discipline:**
+  - [ ] No `Any` type — use the concrete type (singletons imported directly, not typed as `Any`)
+  - [ ] String enums use `StrEnum` (from `enum`), not `Literal["a", "b"]`
 
 ### Handler Integration Verification (conditional - only if handler changes made)
 - [ ] LLMMessageHandler ordering verified as last entry in handler list
@@ -281,7 +291,7 @@ Task: [X.Y.Z]
 4. **Use consistent formatting** - maintain checkbox format and link structure
 5. **Validate file links** - ensure all linked files exist and are accessible
 6. **Update commit references** - verify all commit hashes are correct and accessible
-7. **Follow commit message format** - use the standardized conventional commit format
+7. **Match repo commit style** - imperative mood, free-form subject (see `git log`); this project does not use conventional commits or commit footers
 
 **Status Indicators:**
 - ✅ = Completed successfully
@@ -291,8 +301,7 @@ Task: [X.Y.Z]
 
 **Commit Message Integration:**
 - Use the summary section content for commit subject lines
-- Include task reference in all commit footers
-- Follow conventional commit format so commit messages stay consistent and self-describing
+- Match existing repo commit-message style (imperative mood, free-form subject — see `git log`); this project does **not** use conventional commits or commit footers
 - Update `CHANGELOG.md` under `## [Unreleased]` for any user-visible change, per `docs/llm/changelog.md`
 
 **Quality Standards:**
@@ -303,7 +312,7 @@ Task: [X.Y.Z]
 - Summary must be suitable for commit messages and stakeholder communication
 
 **Tooling Integration:**
-- For any user-visible change, add a manual `CHANGELOG.md` entry under `## [Unreleased]` (Keep a Changelog format; see `docs/llm/changelog.md`) — this project does NOT generate the changelog from commit messages
+- For any user-visible change, add a manual `CHANGELOG.md` entry under `## [Unreleased]` (Keep a Changelog format; see `docs/llm/changelog.md`) — this project does NOT generate the changelog from commit messages. The `/changelog` slash command drafts an entry from the current diff on demand; `/review-large` runs the large-diff review methodology ([`docs/llm/reviewing-large-changes.md`](../llm/reviewing-large-changes.md)) on a branch.
 - File change categorization enables automated impact analysis
 - Traceability matrix supports automated requirement tracking
 - Quality metrics enable automated quality reporting

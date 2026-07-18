@@ -51,7 +51,8 @@
 | `defaults` | dict | Default chat settings for all chats |
 | `private-defaults` | dict | Default settings for private chats |
 | `group-defaults` | dict | Default settings for group chats |
-| `tier-defaults` | dict | Tier-specific default settings |
+| `channel-defaults` | dict | Default settings for channel (broadcast) chats |
+| `tier-defaults` | dict | Tier-specific default settings (`[bot.tier-defaults.<tier>]`, e.g. `free`, `free-personal`, `friend`, `banned`) |
 
 **IMPORTANT:** `bot_owners` can be username OR int ID — both are valid. Handle both types in owner checks
 
@@ -430,13 +431,14 @@ When invoked via LLM tool, the handler **does not send a text bot message**. The
 | `DIVINATION_REPLY_TEMPLATE` | `divination-reply-template` | `BOT_OWNER_SYSTEM` | Template for the user-visible reply on the **slash-command path only** (`/taro`, `/runes`). Placeholders: `{layoutName}`, `{drawnSymbolsBlock}`, `{interpretation}`. The LLM-tool path still returns the bare interpretation in JSON and does not use this template. |
 | `DIVINATION_DISCOVERY_SYSTEM_PROMPT` | `divination-discovery-system-prompt` | `BOT_OWNER_SYSTEM` | System instruction for layout discovery (both web search and parsing LLM calls) |
 | `DIVINATION_DISCOVERY_INFO_PROMPT` | `divination-discovery-info-prompt` | `BOT_OWNER_SYSTEM` | Prompt for web search LLM call (finds layout info via web_search tool) |
-| `DIVINATION_DISCOVERY_STRUCTURE_PROMPT` | `divination-discovery-structure-prompt` | `BOT_OWNER_SYSTEM` | Prompt for structured JSON parsing LLM call (converts description to schema) |
+| `DIVINATION_PARSE_STRUCTURE_SYSTEM_PROMPT` | `divination-parse-structure-system-prompt` | `BOT_OWNER_SYSTEM` | System instruction for the structured-JSON parsing LLM call (instructs the model how to convert a layout description into a schema; enforces hard rules on position extraction) |
+| `DIVINATION_PARSE_STRUCTURE_PROMPT` | `divination-parse-structure-prompt` | `BOT_OWNER_SYSTEM` | User-prompt template for the structured-JSON parsing LLM call (converts the discovery-description into a schema). Placeholders: `{systemId}`, `{layoutName}`, `{description}`. |
 
 User-template placeholders: `{userName}`, `{question}`, `{layoutName}`, `{positionsBlock}`, `{cardsBlock}`.
 Image-template placeholders: `{layoutName}`, `{spreadDescription}`, `{styleHint}`.
 Reply-template placeholders: `{layoutName}` (Russian layout name), `{drawnSymbolsBlock}` (numbered list of drawn symbols with position, name, and reversal flag), `{interpretation}` (raw LLM-generated text).
 Discovery-info-template placeholders: `{systemId}`, `{layoutName}`.
-Discovery-structure-template placeholders: `{description}` (from web search results).
+Parse-structure-template placeholders: `{systemId}`, `{layoutName}`, `{description}` (the description returned by the prior discovery-info call).
 
 ---
 
@@ -457,7 +459,7 @@ Chat-history semantic search configuration. Defaults live in [`configs/00-defaul
 
 | Key | Type | Default | Purpose |
 |---|---|---|---|
-| `enabled` | bool | `false` | Master switch — operator must flip to register `ChatSearchHandler` and enable the `search_messages`, `list_users`, `get_thread` LLM tools |
+| `enabled` | bool | `false` | Master switch — operator must flip to register `ChatSearchHandler` and enable the `search_messages`, `list_users`, `get_thread`, `get_messages_by_ids` LLM tools |
 
 #### `[search-history.embeddings]`
 
@@ -473,7 +475,7 @@ The `MessagePreprocessorHandler.newMessageHandler` always schedules a background
 
 | Key | Type | Default | Purpose |
 |---|---|---|---|
-| `max-results` | int | `10` | Default `limit` passed to `chatMessages.searchChatMessages` by the `/search` command |
+| `max-results` | int | `10` | Default `limit` passed to `chatSearch.searchChatMessages` by the `/search` command (lives on `ChatSearchRepository` in [`internal/database/repositories/chat_search.py`](../../internal/database/repositories/chat_search.py), not on `chatMessages`) |
 | `default-days` | int | `30` | Default `maxAgeDays` for the `/search` command when `days:` is not specified |
 
 **Chat settings keys** (defined in [`internal/bot/models/chat_settings.py`](../../internal/bot/models/chat_settings.py); defaults under `[bot.defaults]` in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml)):
@@ -481,8 +483,8 @@ The `MessagePreprocessorHandler.newMessageHandler` always schedules a background
 | `ChatSettingsKey` enum | Setting key | Page | Type | Notes |
 |---|---|---|---|---|
 | `EMBEDDING_MODEL` | `embedding-model` | `BOT_OWNER` | `STRING` | Per-chat embedding model override. Resolved by `ChatSearchHandler._dtCronJob` (backfill) and the `MessagePreprocessorHandler` embedding dispatch from the per-chat `EMBEDDING_MODEL` setting (default `"local/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"` from `bot-defaults.toml`). `STRING` rather than `MODEL` because the existing `MODEL` picker does not filter on `support_embeddings` |
-| `EMBEDDINGS_ENABLED` | `embeddings-enabled` | `BOT_OWNER` | `BOOL` | Per-chat kill-switch. Required for `MessagePreprocessorHandler` to embed a message after save. Required by the `search_messages` LLM tool for **semantic** search (non-empty `query`); substring/filter-only `search_messages` calls (no `query`) and the `list_users` / `get_thread` tools work regardless (they only read `chat_messages`, not `message_embeddings`) |
-| `MAX_MESSAGES_FOR_SEMANTIC_SEARCH` | `max-messages-for-semantic-search` | `BOT_OWNER` | `INT` | Cap on per-chat backfill volume. Read by `ChatSearchHandler._dtCronJob`; falls back to `100_000` on missing / unparsable / non-positive values |
+| `EMBEDDINGS_ENABLED` | `embeddings-enabled` | `LLM_PAID` | `BOOL` | Per-chat kill-switch. Required for `MessagePreprocessorHandler` to embed a message after save. Required by the `search_messages` LLM tool for **semantic** search (non-empty `query`); substring/filter-only `search_messages` calls (no `query`) and the `list_users` / `get_thread` tools work regardless (they only read `chat_messages`, not `message_embeddings`) |
+| `MAX_MESSAGES_FOR_SEMANTIC_SEARCH` | `max-messages-for-semantic-search` | `BOT_OWNER_SYSTEM` | `INT` | Cap on per-chat backfill volume. Read by `ChatSearchHandler._dtCronJob`; falls back to `100_000` on missing / unparsable / non-positive values |
 
 **Slash command** (category `CommandCategory.TOOLS`, permission `CommandPermission.DEFAULT`):
 - `/search [args]` — parse a small DSL of `key: value` filters, then return matching messages as a raw, human-readable list (no LLM summary). Arguments:
@@ -502,9 +504,10 @@ The `MessagePreprocessorHandler.newMessageHandler` always schedules a background
   - Example: `/users`, `/users limit=20 min_messages=100`.
 
 **LLM tools** (always registered when `ChatSearchHandler` is constructed, gated only by the handler-level `[search-history].enabled` switch, and gated at chat time solely by the chat's `USE_TOOLS` setting — the model is never sent any LLM tool when `USE_TOOLS=false`. They are NOT gated by `ALLOW_TOOLS_COMMANDS`, which gates only slash commands of `CommandCategory.TOOLS`):
-- `search_messages(query, limit?, max_age_days?, user_name?, thread_message_id?, current_thread_only?, substring?)` — semantic search over chat history. Uses embeddings to find messages similar to `query`. `limit` defaults to `[search-history.defaults].max-results` (10). `max_age_days` defaults to `[search-history.defaults].default-days` (30). `user_name` filters by username (with or without `@`) or numeric `user_id` (when the identifier is purely numeric, it is treated as a `user_id` with no DB lookup). `thread_message_id` restricts to a thread; when provided it overrides `current_thread_only`. `current_thread_only` (default `true`) scopes results to the current message's thread/topic (`ensuredMessage.threadId` or `DEFAULT_THREAD_ID`); set to `false` to search the whole chat. `substring` is a case-insensitive exact-text filter on `message_text` (portable `LIKE '%...%'`), AND-combined with the other filters. When `query` is empty but `substring` (or any other filter) is set, embedding generation is skipped and the search runs as a pure text/filter lookup — this works WITHOUT `EMBEDDINGS_ENABLED` (the embeddings gate applies only when `query` is non-empty). Returns matching message texts with metadata.
-- `list_users(limit?, min_messages?)` — list chat participants with activity statistics. `limit` defaults to 50, `min_messages` defaults to 1. Returns username, display name, and message count per user.
+- `search_messages(query, limit?, max_age_days?, user_name?, thread_message_id?, current_thread_only?, substring?)` — semantic search over chat history. Uses embeddings to find messages similar to `query`. `limit` defaults to `5` (hardcoded in the handler signature; the `[search-history.defaults].max-results` config key feeds only the `/search` slash command — these are independent defaults). `max_age_days` defaults to `None` (no time filter; the `[search-history.defaults].default-days` config key feeds only the `/search` slash command). `user_name` filters by username (with or without `@`) or numeric `user_id` (when the identifier is purely numeric, it is treated as a `user_id` with no DB lookup). `thread_message_id` restricts to a thread; when provided it overrides `current_thread_only`. `current_thread_only` (default `true`) scopes results to the current message's thread/topic (`ensuredMessage.threadId` or `DEFAULT_THREAD_ID`); set to `false` to search the whole chat. `substring` is a case-insensitive exact-text filter on `message_text` (portable `LIKE '%...%'`), AND-combined with the other filters. When `query` is empty but `substring` (or any other filter) is set, embedding generation is skipped and the search runs as a pure text/filter lookup — this works WITHOUT `EMBEDDINGS_ENABLED` (the embeddings gate applies only when `query` is non-empty). Returns matching message texts with metadata.
+- `list_users(limit?, min_messages?)` — list chat participants with activity statistics. `limit` defaults to `20` (clamped to `1..200`), `min_messages` defaults to `None` (no minimum). Returns username, display name, message count, and last-active timestamp per user. (Distinct from the `/users` slash command, whose own `limit` default is `50`.)
 - `get_thread(message_id)` — retrieve full conversation thread for a given root message. Returns all messages in chronological order.
+- `get_messages_by_ids(message_ids)` — retrieve the full content of one or more chat messages by their IDs. Used by the model to read the originals underlying a condensed summary (summaries carry `coveredMessageIds`). Pure DB lookup — NOT gated on `EMBEDDINGS_ENABLED` or `ALLOW_TOOLS_COMMANDS`. `message_ids` is a list of message-ID strings (e.g. `["100", "101"]`). Returns each message in the same JSON shape as regular user messages, plus a `notFound` list for IDs that did not resolve. Messages are scoped to the current chat.
 
 **Per-chat backfill:** `ChatSearchHandler._dtCronJob` runs every 60s and round-robins over an in-memory `self._trackedChats: MutableSet[int]`. The set is populated by `newMessageHandler` — when it sees a message in a chat with `EMBEDDINGS_ENABLED=true`, it adds that chat id to `_trackedChats`; the cron then re-validates that setting per tick and evicts (one-way, via `.discard()`) any chat whose gate has since flipped to false. Backfill always runs whenever `EMBEDDINGS_ENABLED` is on (there is no separate one-shot regen trigger). **Cold-start tradeoff (intentional):** `_trackedChats` is empty on restart and only grows from live inbound messages, so a chat with a pre-existing backlog that stays quiet after a restart is not backfilled until a new message arrives; re-enabling embeddings on a chat does not re-add it until the next qualifying message. Per-tick batch size is capped at `[search-history.embeddings].reindex-batch-size` (default 100 messages) with a small inter-message sleep (`BACKFILL_INTER_MESSAGE_DELAY_SECS = 0.1`) so a long pass does not monopolise the asyncio loop; the next tick picks up where the previous one stopped, so a backlog naturally walks down minute by minute. There is no separate `BackfillWorker` class — the backfill duty lives in `ChatSearchHandler`. (The previous DB-scan discovery — the deleted `ChatSettingsRepository` method that queried `chat_settings` for `EMBEDDINGS_ENABLED` — was removed.)
 
@@ -736,6 +739,8 @@ Max Messenger webhook receiver configuration. Defaults live in [`configs/00-defa
 
 **Secrets discipline:** `secret` uses `${MAX_WEBHOOK_SECRET}` substitution. Document the env var name only — never paste the value. See [`docs/llm/tasks.md`](tasks.md) and root `AGENTS.md` for the project's secrets rules.
 
+**Default alignment (resolved 2026-07-18):** the code default for `unregister-webhook` in `MaxBotApplication.postStop` is now `False` (`webhookConfig.get("unregister-webhook", False)` at [`internal/bot/max/application.py:127`](../../internal/bot/max/application.py)), matching this config file's shipped `unregister-webhook = false`. Both surfaces now uniformly default to `false`. **Historical context:** previously the code default was `True` while the config default was `false`, a divergence that was dormant under the default `webhook-receiver.enabled = false` deployment (the bot only consults this key when `enabled = true`, gated by `self._webhookMode`) but caused an operator who flipped `enabled = true` without explicitly setting the key to get the code's `True` (tear down on shutdown) rather than the config's `false`. The fix landed during the docs-audit follow-up pass; see [`architecture.md`](architecture.md) ADR-013 for the two-process model.
+
 **Restart required:** Config is loaded at startup. Changing it requires restarting the receiver process (and the bot, for the bot-side keys).
 
 ---
@@ -797,18 +802,18 @@ The refinement prompts are **per-chat settings** (not `[user-memory.prompts]` co
 
 | `ChatSettingsKey` enum | Setting key | Type | Page | Purpose |
 |---|---|---|---|---|
-| `MEMORY_REFINE_SYSTEM_PROMPT` | `memory-refine-system-prompt` | STRING | `FRIEND` | System instruction for the refinement LLM call (tool-curation model — instructs the model to manage memories via `add_memory`/`delete_memory`/`search_memories`, maintain one permanent `type=bio` summary, and emit tool calls rather than a summary paragraph) |
-| `MEMORY_REFINE_USER_PROMPT_TEMPLATE` | `memory-refine-user-prompt-template` | STRING | `FRIEND` | User message template. Placeholders: `{existingMemories}` (rendered permanent+recent block), `{messages}` (recent chat messages). Legacy aliases `{existingUserData}` / `{existingSummary}` still format but are no longer populated by the rewrite |
+| `MEMORY_REFINE_SYSTEM_PROMPT` | `memory-refine-system-prompt` | STRING | `BOT_OWNER_SYSTEM` | System instruction for the refinement LLM call (tool-curation model — instructs the model to manage memories via `add_memory`/`delete_memory`/`search_memories`, maintain one permanent `type=bio` summary, and emit tool calls rather than a summary paragraph) |
+| `MEMORY_REFINE_USER_PROMPT_TEMPLATE` | `memory-refine-user-prompt-template` | STRING | `BOT_OWNER_SYSTEM` | User message template. Placeholders: `{existingMemories}` (rendered permanent+recent block), `{messages}` (recent chat messages). Legacy aliases `{existingUserData}` / `{existingSummary}` still format but are no longer populated by the rewrite |
 
 **Related `[bot.defaults]` keys** (in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml)) — all are `ChatSettingsKey` defaults wired via the four-site convention:
 
 | `ChatSettingsKey` enum | Setting key | Type | Page | Purpose |
 |---|---|---|---|---|
-| `MEMORY_REFINEMENT_ENABLED` | `memory-refinement-enabled` | BOOL | `FRIEND` | Per-chat gate for the refinement cron. Default `false`. Enabled for the friend tier via the local config overlay (`configs/common/` is gitignored — same model as `allow-sandbox`; see [`teamlead-memory.md`](teamlead-memory.md) "Configs Tracking Gotcha"). **Prerequisite:** the refinement scan gate is `MEMORY_REFINEMENT_ENABLED && MEMORY_ENABLED && EMBEDDINGS_ENABLED` — the dispatch re-checks all three per candidate because refinement's `search_memories` LLM tool is semantic and returns nothing without embeddings (memory embeddings are active only when `MEMORY_ENABLED && EMBEDDINGS_ENABLED`). A chat with this `true` but memory/embeddings off will not refine. **Intentional asymmetry:** `_runSingleRefinement`'s own runtime re-check is `MEMORY_REFINEMENT_ENABLED`-only — it does NOT re-check the memory/embeddings gates (those are enforced once at per-candidate scan time) |
-| `MEMORY_REFINE_MODEL` | `memory-refine-model` | MODEL | `FRIEND` | Primary LLM for refinement runs (default `"openrouter/free"`) |
-| `MEMORY_REFINE_FALLBACK_MODEL` | `memory-refine-fallback-model` | MODEL | `FRIEND` | Fallback when the primary fails (default `"aliceai-llm-flash"`) |
-| `MEMORY_REFINE_SYSTEM_PROMPT` | `memory-refine-system-prompt` | STRING | `FRIEND` | System prompt for the refinement call (default in `bot-defaults.toml`) |
-| `MEMORY_REFINE_USER_PROMPT_TEMPLATE` | `memory-refine-user-prompt-template` | STRING | `FRIEND` | User-prompt template with `{existingMemories}`/`{messages}` placeholders (legacy `{existingUserData}`/`{existingSummary}` aliases kept for backward-compat) |
+| `MEMORY_REFINEMENT_ENABLED` | `memory-refinement-enabled` | BOOL | `LLM_PAID` | Per-chat gate for the refinement cron. Default `false`. Enabled for the friend tier via the local config overlay (`configs/common/` is gitignored — same model as `allow-sandbox`; see [`teamlead-memory.md`](teamlead-memory.md) "Configs Tracking Gotcha"). **Prerequisite:** the refinement scan gate is `MEMORY_REFINEMENT_ENABLED && MEMORY_ENABLED && EMBEDDINGS_ENABLED` — the dispatch re-checks all three per candidate because refinement's `search_memories` LLM tool is semantic and returns nothing without embeddings (memory embeddings are active only when `MEMORY_ENABLED && EMBEDDINGS_ENABLED`). A chat with this `true` but memory/embeddings off will not refine. **Intentional asymmetry:** `_runSingleRefinement`'s own runtime re-check is `MEMORY_REFINEMENT_ENABLED`-only — it does NOT re-check the memory/embeddings gates (those are enforced once at per-candidate scan time) |
+| `MEMORY_REFINE_MODEL` | `memory-refine-model` | MODEL | `LLM_PAID` | Primary LLM for refinement runs (default `"openrouter/free"`) |
+| `MEMORY_REFINE_FALLBACK_MODEL` | `memory-refine-fallback-model` | MODEL | `LLM_PAID` | Fallback when the primary fails (default `"aliceai-llm-flash"`) |
+| `MEMORY_REFINE_SYSTEM_PROMPT` | `memory-refine-system-prompt` | STRING | `BOT_OWNER_SYSTEM` | System prompt for the refinement call (default in `bot-defaults.toml`) |
+| `MEMORY_REFINE_USER_PROMPT_TEMPLATE` | `memory-refine-user-prompt-template` | STRING | `BOT_OWNER_SYSTEM` | User-prompt template with `{existingMemories}`/`{messages}` placeholders (legacy `{existingUserData}`/`{existingSummary}` aliases kept for backward-compat) |
 
 #### Memory chat settings (master per-chat gate)
 
@@ -816,13 +821,13 @@ One `ChatSettingsKey` default under `[bot.defaults]`, `page = FRIEND`, wired via
 
 | `ChatSettingsKey` enum | Setting key | Type | Page | Default | Purpose |
 |---|---|---|---|---|---|
-| `MEMORY_ENABLED` | `memory-enabled` | BOOL | `FRIEND` | `false` | Master per-chat gate for ALL memory features. Gates `MessagePreprocessorHandler.injectMemories()` (the message-arrival injection of compact memory IDs into `EnsuredMessage.metadata.memories`) AND the chat-time availability of the `add_memory` / `search_memories` tools (the chat LLM can only call them when this is on); `delete_memory` is always forced off at chat time (D3 gating). **Memory embeddings are active when `MEMORY_ENABLED && EMBEDDINGS_ENABLED`** (derived — there is no separate memory-embeddings flag): semantic memory retrieval (`searchMemories` driven by `LLMService.generateEmbedding`) runs only when both are on, otherwise retrieval is `latest` (`getLatestMemories`), with a runtime semantic→latest fallback preserved on embedding-generation failure. The memory-embedding regen cron admits/evicts a chat on `MEMORY_ENABLED && EMBEDDINGS_ENABLED` (round-robins over the in-memory `_trackedChats` set populated by `newMessageHandler`, NOT a DB scan — the old `ChatSettingsRepository` discovery method was removed). `EMBEDDING_MODEL` is shared across both message-search and user-memory vectors. Cold-start note: `_trackedChats` is empty on restart and only grows from live messages, so a backlog in a quiet chat is not backfilled until the next message arrives (intentional). The rename is backed by data migration 023 (idempotent, down-reversible); run `scripts/prune_unknown_chat_settings.py` afterward (with the bot stopped) to drop persisted rows for the removed keys |
+| `MEMORY_ENABLED` | `memory-enabled` | BOOL | `LLM_BASE` | `false` | Master per-chat gate for ALL memory features. Gates `MessagePreprocessorHandler.injectMemories()` (the message-arrival injection of compact memory IDs into `EnsuredMessage.metadata.memories`) AND the chat-time availability of the `add_memory` / `search_memories` tools (the chat LLM can only call them when this is on); `delete_memory` is always forced off at chat time (D3 gating). **Memory embeddings are active when `MEMORY_ENABLED && EMBEDDINGS_ENABLED`** (derived — there is no separate memory-embeddings flag): semantic memory retrieval (`searchMemories` driven by `LLMService.generateEmbedding`) runs only when both are on, otherwise retrieval is `latest` (`getLatestMemories`), with a runtime semantic→latest fallback preserved on embedding-generation failure. The memory-embedding regen cron admits/evicts a chat on `MEMORY_ENABLED && EMBEDDINGS_ENABLED` (round-robins over the in-memory `_trackedChats` set populated by `newMessageHandler`, NOT a DB scan — the old `ChatSettingsRepository` discovery method was removed). `EMBEDDING_MODEL` is shared across both message-search and user-memory vectors. Cold-start note: `_trackedChats` is empty on restart and only grows from live messages, so a backlog in a quiet chat is not backfilled until the next message arrives (intentional). The rename is backed by data migration 023 (idempotent, down-reversible); run `scripts/prune_unknown_chat_settings.py` afterward (with the bot stopped) to drop persisted rows for the removed keys |
 
 ---
 
 ## 3. ConfigManager Methods
 
-**File:** [`internal/config/manager.py:59`](../../internal/config/manager.py:59)
+**File:** [`internal/config/manager.py`](../../internal/config/manager.py) — class `ConfigManager` (singleton instantiated from `main.py`). The module-level `substituteEnvVars(value: T) -> T` helper performs the recursive `${VAR}` substitution and is called once from `ConfigManager.__init__`; `__init__` also calls `os.chdir(rootDir)` when `application.root-dir` is set.
 
 | Method | Returns | Purpose |
 |---|---|---|
@@ -838,7 +843,7 @@ One `ChatSettingsKey` default under `[bot.defaults]`, `page = FRIEND`, wired via
 | `getStorageConfig()` | `Dict[str, Any]` | `[storage]` section |
 | `getGeocodeMapsConfig()` | `Dict[str, Any]` | `[geocode-maps]` section |
 | `getStatsConfig()` | `Dict[str, Any]` | `[stats]` section |
-| `getProxyConfig()` | `Dict[str, Any]` | `[proxy]` section |
+| `getProxyConfig()` | `ProxyConfigDict` | `[proxy]` section (typed `TypedDict` from [`lib/proxy`](../../lib/proxy/__init__.py)) |
 | `getSearchHistoryConfig()` | `Dict[str, Any]` | `[search-history]` section (returns `{}` when missing) |
 
 ---
@@ -847,7 +852,7 @@ One `ChatSettingsKey` default under `[bot.defaults]`, `page = FRIEND`, wired via
 
 ### Step 1: Add getter to ConfigManager
 
-**File:** [`internal/config/manager.py`](../../internal/config/manager.py:180)
+**File:** [`internal/config/manager.py`](../../internal/config/manager.py) — add a new method on the `ConfigManager` class:
 
 ```python
 def getMyFeatureConfig(self) -> Dict[str, Any]:
@@ -900,4 +905,4 @@ apiKey: str = myConfig.get("api-key", "")
 ---
 
 *This guide is auto-maintained and should be updated whenever configuration sections change*
-*Last updated: 2026-06-26*
+*Last updated: 2026-07-18*

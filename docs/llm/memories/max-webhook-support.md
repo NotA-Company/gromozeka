@@ -8,7 +8,7 @@ Plan: `docs/archive/plans/max-webhook-support.md` (updated to local-API-proxy ar
 
 ### Key architecture decisions:
 - `basePollingUrl` (not `baseUrl`) — overrides only `/updates` endpoint, not all API calls
-- `_makeLocalRequest()` — separate httpx client, no proxy/TLS, fresh per poll
+- `_makeLocalRequest()` — separate httpx client, no proxy/TLS, persistent `_localHttpClient` (lazy-create, reused across polls, closed in `aclose()`)
 - `localReceiverToken` — optional auth for GET /updates (separate from bot token; bot token never leaked to receiver)
 - Webhook registration (`POST /subscriptions`) owned by bot, configurable via `register-webhook`; shutdown unregistration (`DELETE /subscriptions`) gated by separate `unregister-webhook` key (independent of registration)
 - `_webhookMode` flag on `MaxBotApplication` — gating, no new polling method
@@ -32,9 +32,9 @@ Plan: `docs/archive/plans/max-webhook-support.md` (updated to local-API-proxy ar
 - `internal/database/repositories/__init__.py` — export
 - `internal/database/database.py` — wiring (5 locations: import, __slots__, annotation, docstring, init)
 
-### Tests (5 files, 51 tests, all pass):
+### Tests (5 files, 59 tests, all pass):
 - `tests/database/repositories/test_webhook_updates.py` — 14 CRUD + marker tests
-- `tests/max_webhook_receiver/test_app.py` — 19 endpoint tests (deferred/immediate modes, datasource, cleanup)
+- `tests/max_webhook_receiver/test_app.py` — 22 endpoint tests (deferred/immediate modes, datasource, cleanup)
 - `tests/max_webhook_receiver/test_main.py` — 3 secret-guard tests
 - `tests/lib/max_bot/test_client_webhook.py` — 6 client routing tests
 - `tests/bot/max/test_webhook_mode.py` — 14 config gating tests (unregister-webhook split)
@@ -45,7 +45,6 @@ Plan: `docs/archive/plans/max-webhook-support.md` (updated to local-API-proxy ar
 - `getUpdates` type: `lastEventId: Optional[int]` → `Optional[Union[int, str]]` for compound string marker from local receiver.
 - `_makeLocalRequest`: catches `json.JSONDecodeError` around `response.json()`; persistent `_localHttpClient` (lazy-create, reuse across polls, closed in `aclose()`).
 - Secret validation moved to webhook-mode block: fires whenever `enabled=true`, not just on `register-webhook=true`. Empty secret rejected.
-- `unregister-webhook` code default aligned with config default: `True` → `False`.
 - `toKwargs` docstring cross-references `MaxBotClient._getHttpClient()` for SSL context routing.
 - `buildMaxSslContext`: GOST skip counter + louder warning (TLS may fail if chain requires skipped certs).
 - `from dateutil import parser` (was bare `import dateutil`) in `webhook_updates.py`.
@@ -58,3 +57,6 @@ Plan: `docs/archive/plans/max-webhook-support.md` (updated to local-API-proxy ar
 - `types` query param ignored by GET /updates (filtering at Max→receiver subscription layer)
 - No deployment wiring (no `run.sh` / systemd config for receiver process)
 - Unsubstituted `${MAX_WEBHOOK_SECRET}` placeholder rejected by guards in both `__main__.py` and `application.py`
+
+## Resolved (2026-07-18):
+- **`unregister-webhook` defaults now aligned**: previously the code default in `MaxBotApplication.postStop` was `True` (`webhookConfig.get("unregister-webhook", True)` in `internal/bot/max/application.py`), while the config default in `configs/00-defaults/webhook-receiver.toml` was `false`. The divergence was dormant in the default `webhook-receiver.enabled = false` deployment (the bot only unregisters when `enabled = true`, gated by `self._webhookMode`), but the two defaults have now been reconciled — the code default was changed from `True` to `False` at `internal/bot/max/application.py:127`, so both surfaces uniformly default to `false`. Landed during the docs-audit follow-up pass.

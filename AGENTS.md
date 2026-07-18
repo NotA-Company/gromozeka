@@ -124,7 +124,7 @@ nothing is broken. This is mandatory - see docs/llm/index.md §3.5.
 - `pyproject.toml` sets `testpaths = ["tests", "lib", "internal"]`, but all test files now live exclusively under `tests/` — `lib/` and `internal/` have no collocated tests. Test directories mirror source structure:
   - Tests for `lib/X/Y.py` go in `tests/lib/X/test_Y.py`.
   - Tests for `internal/X/Y.py` go in `tests/X/test_Y.py` (strip `internal/`).
-  - **No new collocated tests in `lib/` or `internal/`.** All new test files MUST go under `tests/`.
+  - **No new collocated tests in `lib/` or `internal/`.** All new test files MUST go under `tests/`. **Exception:** `lib/ext_modules/*/tests/` (vendored subpackages with their own `pyproject.toml`) are sanctioned-collocated — see `docs/llm/testing.md` §1.
 - `asyncio_mode = "auto"` → write `async def test_…` with no decorator.
 - Custom markers exist (`slow`, `performance`, `benchmark`, `memory`,
   `stress`, `profile`); none are auto-skipped, deselect with `-m "not slow"`.

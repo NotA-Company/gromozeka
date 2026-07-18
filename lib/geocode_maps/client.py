@@ -11,7 +11,7 @@ The client supports three main operations:
 All operations support:
 - Automatic caching with configurable TTL
 - Rate limiting through RateLimiterManager
-- Type-safe responses using Pydantic models
+- Type-safe responses using TypedDict models
 - Configurable language preferences
 - Detailed error handling and logging
 

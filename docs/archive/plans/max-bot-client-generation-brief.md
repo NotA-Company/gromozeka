@@ -1,3 +1,19 @@
+# Max Bot Client — Generation Request Brief
+
+> **Status:** ✅ COMPLETED — original brief that initiated the `lib/max_bot/` client.
+> **Audience:** historical record only; the feature is shipped, see live code at
+> [`lib/max_bot/`](../../../lib/max_bot/) and the PR report at
+> [`docs/archive/reports/pr-25.11.21-max-messenger-support.md`](../reports/pr-25.11.21-max-messenger-support.md).
+> **Companion plans (also archived):**
+> [`max-bot-phase1-core-infrastructure.md`](max-bot-phase1-core-infrastructure.md),
+> [`max-bot-phase2-models-data-structures.md`](max-bot-phase2-models-data-structures.md),
+> [`max-bot-attachments-implementation-plan.md`](max-bot-attachments-implementation-plan.md).
+>
+> ---
+>
+> *Original brief follows verbatim. Note: the `swagger.json` path below is stale —
+> the spec shipped as `docs/other/Max-Messenger/swagger-2025.11.16.json`.*
+
 Yo We need to add Max Messenger bot client as lib.max_bot using `httpx` as client
 There is OpenAPI 3.0 specification:
 `docs/other/Max-Messenger/swagger.json`

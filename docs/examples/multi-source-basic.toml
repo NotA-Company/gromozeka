@@ -18,7 +18,7 @@ keepConnection = true  # Connect on creation and keep connection open
 
 # Archive database - old/inactive chats (readonly for safety)
 [database.providers.archive]
-provider = "sqlink"
+provider = "sqlite3"
 
 [database.providers.archive.parameters]
 dbPath = "archive.db"

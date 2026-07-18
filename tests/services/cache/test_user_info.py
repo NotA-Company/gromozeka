@@ -446,7 +446,7 @@ async def test_nestedWriteSafety_shallowMergeDoesNotWipeNested(
     """
     await _seedRow(testDatabase, chatId=1, userId=2, username="bob", fullName="Bob")
 
-    # 1) _persistMemoryEntry-style nested write.
+    # 1) _runSingleRefinement-style (formerly _persistMemoryEntry) nested write.
     metadata = await cacheService.getUserMetadata(chatId=1, userId=2)
     threadId = 5
     metadata.setdefault("memoryRefinement", {})[str(threadId)] = {"lastProcessedMessageId": "msg-123"}

@@ -4,7 +4,7 @@ Durable record of the 2026-07-11 doc-link fix campaign and the conventions it lo
 
 ## Headline outcome
 
-Fixed ALL 376 broken local markdown links `make check-docs` reported: **105 files / 1526 links → 97 files / 1423 links, 0 broken** (as of 2026-07-11; counts drift as docs land). `make check-docs` exits 0. Gate 2 whole-work review PASS (0 critical findings after remediation). The `test_noBrokenLinks_inRealRepo` test (formerly `@pytest.mark.xfail(strict=True)`) is now a normal passing regression guard — the suite in [`tests/scripts/test_check_docs.py`](/tests/scripts/test_check_docs.py) is 22 tests, lint green.
+Fixed ALL 376 broken local markdown links `make check-docs` reported: **105 files / 1526 links → 97 files / 1423 links, 0 broken** (as of 2026-07-11; counts drift as docs land). `make check-docs` exited 0 at campaign end — later doc work (e.g. the 2026-07-18 Phase 2 docs-audit move) has since reintroduced a handful of breaks, so always re-run before trusting a "clean" verdict. Gate 2 whole-work review PASS (0 critical findings after remediation). The `test_noBrokenLinks_inRealRepo` test (formerly `@pytest.mark.xfail(strict=True)`) is now a normal passing regression guard — the suite in [`tests/scripts/test_check_docs.py`](/tests/scripts/test_check_docs.py) is 22 tests, lint green.
 
 ## Repo convention LOCKED: leading-slash `/X`
 
@@ -29,7 +29,7 @@ _EXCLUDED_PATH_PREFIXES: frozenset[tuple[str, str]] = frozenset(
 ## Excluded-directories rationale
 
 - `docs/templates/` — intentional `path/to/…` placeholder paths in PR/task templates (not real references).
-- `lib/ext_modules/` — vendored nested git repo, **NOT a submodule.** [`.gitignore`](/.gitignore) line 49 is `lib/ext_modules/*/`; `git ls-files` returns 0 tracked files there, so any fixes in that subtree are invisible to the main-repo PR.
+- `lib/ext_modules/` — vendored nested git repo, **NOT a submodule.** [`.gitignore`](/.gitignore) line 50 is `lib/ext_modules/*/`; `git ls-files lib/ext_modules/` returns only the `__init__.py` package marker (1 file) — the nested submodule trees (e.g. `grabliarium/`) are untracked, so any fixes in that subtree are invisible to the main-repo PR.
 - `docs/archive/` — frozen historical snapshots (already excluded before this campaign).
 
 ## DEPTH GOTCHA (load-bearing)
@@ -93,4 +93,4 @@ The campaign diff picked up pre-existing uncommitted checkbox toggles in `TODO.m
 
 - [`scripts/check_docs.py`](/scripts/check_docs.py) — the link checker (`_EXCLUDED_PATH_PREFIXES` at line 82, `_resolveTarget` leading-slash semantics, `_INLINE_LINK_RE`).
 - [`tests/scripts/test_check_docs.py`](/tests/scripts/test_check_docs.py) — 22-test suite; `test_noBrokenLinks_inRealRepo` is the regression guard (line 304).
-- [`Makefile`](/Makefile) — the `check-docs` target at line 108 (depends on `venv`, runs `$(PYTHON) scripts/check_docs.py`).
+- [`Makefile`](/Makefile) — the `check-docs` target at line 111 (depends on `venv`, runs `$(PYTHON) scripts/check_docs.py`).

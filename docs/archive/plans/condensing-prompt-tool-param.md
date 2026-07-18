@@ -1,10 +1,22 @@
 # `condensing_prompt` — per-call condensing instructions for `web_search` / `get_url_content`
 
-- **Status:** Draft
+- **Status:** IMPLEMENTED (2026-07-17) — feature shipped same day this plan was drafted. Archived 2026-07-18 from `docs/plans/`; this file is the retained design reference.
 - **Date:** 2026-07-17
 - **Author:** teamlead / architect
-- **Type:** Design + documentation (no code changes in this document)
+- **Type:** Design + documentation (was a no-code design draft on creation; the design body below is the historical proposal, NOT a description of current code)
 - **Scope:** `internal/bot/common/handlers/yandex_search.py` (and tests)
+
+> **Archival note (2026-07-18).** The design below was implemented verbatim in commit `d25a73c` ("Add ability to pass condensing prompt to web-search\web-fetch tools"). Verified shipped against current source:
+>
+> - Both tool registrations carry the new `condensing_prompt` `LLMFunctionParameter`, and `web_search` additionally gained `max_size` (`internal/bot/common/handlers/yandex_search.py:187-197` and `:225-236`).
+> - Both handler signatures match §5.3 (`yandex_search.py:264`, `:418`), `_normalizeCondensingPrompt` exists, and the cache ctor is `JsonKeyGenerator[Dict[str, Any]](hash=True)` (`yandex_search.py:250`).
+> - The condensing block uses the `effectivePrompt = normalizedCustomPrompt if not None else chatSettings[DOCUMENT_CONDENSING_PROMPT].toStr()` pattern from §5.5 (`yandex_search.py:511-515`); cache-key dict is `{"url", "max_size", "condensing_prompt"}` (`yandex_search.py:459-463`).
+> - The `web_search → _llmToolGetUrlContent` forwarding gap is closed: both `max_size` and `condensing_prompt` are forwarded per-page (`yandex_search.py:305-306`).
+> - Tests shipped at `tests/bot/common/handlers/test_yandex_search.py` (14 tests across `TestNormalizeCondensingPrompt`, `TestCondensingPrompt`, `TestWebSearchForwarding`); CHANGELOG entry under `## [Unreleased]` → Added.
+>
+> One cosmetic deviation from §5.2: the `get_url_content` description string shipped without the trailing "Empty or whitespace-only falls back to the default condensing behaviour" clause (the `web_search` description shipped without it too). The behaviour itself is implemented as specified; only the user-facing description text is shorter than proposed.
+>
+> The plan body below is preserved unchanged as the historical design proposal. File-path references are repo-root-relative and remain valid from this new location.
 
 ---
 

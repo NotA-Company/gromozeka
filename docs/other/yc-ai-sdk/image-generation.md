@@ -1,5 +1,17 @@
 # Image Generation -- YandexART
 
+> **Version drift -- 2026-07-18 audit:** See the bundle-level drift note in
+> [`index.md`](index.md) -- this bundle targets SDK **v0.20.2**, while
+> [`requirements.direct.txt`](../../../requirements.direct.txt) pins
+> `yandex-ai-studio-sdk==0.22.0`. The image-generation API surface documented
+> below (config fields, result fields, `run_deferred()` / `attach_deferred()`
+> availability and default timeouts, message TypedDict) was **re-verified
+> against the installed 0.22.0** during this audit and remains accurate; no
+> 0.20.2 -> 0.22.0 drift was found in this file. The model-name table
+> (`yandex-art`, `yandex-art-2.0`) and the `yc.ai.imageGeneration.execute`
+> scope are server-side facts not checkable from the SDK wheel and remain
+> unverified. Production consumer: [`YcAIModel._generateImage`](../../../lib/ai/providers/yc_sdk_provider.py).
+
 Image generation via the `models.image_generation` domain using the YandexART
 model family.
 
@@ -216,12 +228,23 @@ except AioRpcError as e:
 
 ## Comparison with Our Current Implementation
 
-Our `YcAIModel._generateImage()` method already correctly uses:
+There are **two parallel image-generation paths** in production; this document
+describes the SDK surface consumed by the first one only.
+
+| Path | Provider class | Configured model(s) | Transport |
+|---|---|---|---|
+| **YC SDK direct** | `YcAIModel` ([`yc_sdk_provider.py`](../../../lib/ai/providers/yc_sdk_provider.py)) | `yandex-art` ([`yc-sdk-models.toml`](../../../configs/00-defaults/yc-sdk-models.toml)) | gRPC `ImageGenerationAsyncServiceStub` via this SDK |
+| **OpenAI-compat Images API** | `BasicOpenAIModel._generateImageViaImagesApi` ([`basic_openai_provider.py`](../../../lib/ai/providers/basic_openai_provider.py)) | `aliceai-image-art` ([`yc-openai-models.toml`](../../../configs/00-defaults/yc-openai-models.toml) with `image_generation_api = "openai-images"`) | `client.images.generate(...)` -- does **not** use this SDK at all |
+
+### YC SDK direct path (`YcAIModel._generateImage`)
+
+Already correctly uses:
 
 - `run_deferred()` for async image generation
 - `message.toDict("text", skipRole=True)` for role-stripped messages
-- `AioRpcError` detection for content filter violations
-- `operation.wait()` for waiting on the deferred result
+- `AioRpcError` detection (via `_handleSDKError()` matching against the
+  `ETHIC_DETAILS` list) for content filter violations
+- `await operation.wait()` for waiting on the deferred result
 
 Not yet used but available:
 

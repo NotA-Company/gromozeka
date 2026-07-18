@@ -71,6 +71,7 @@ that spans multiple lines.
 - Lines indented by 4+ spaces
 - Preserve exact indentation beyond the 4-space prefix
 - Continue until non-indented line or end of document
+- Disabled by default; enable via the `ignore_indented_code_blocks: false` parser option. Even when enabled, list markers take precedence over indented code at the same indentation.
 
 **Fenced Code Blocks**:
 - Start with 3+ backticks (`) or tildes (~)
@@ -177,6 +178,8 @@ Inline elements provide text formatting within block elements.
 **Bold**: Surrounded by double `**` or `__`
 **Bold Italic**: Surrounded by triple `***` or `___`
 **Strikethrough**: Surrounded by double `~~`
+**Underline**: Surrounded by double `++`
+**Spoiler**: Surrounded by double `||`
 
 
 **Rules**:
@@ -264,9 +267,7 @@ __also bold__
 
 ### Character Escaping
 
-**Backslash Escaping**: Use `\` to escape special characters.
-
-**Escapable Characters**: `\`*_{}[]()#+-.!`
+**Backslash Escaping**: Use `\` to escape the next character. The inline parser treats `\` followed by any single character as that literal character (matching `escape_pattern = "\\(.)"`). Escaping is most useful for characters that would otherwise start an inline element: `*`, `_`, `~`, `` ` ``, `[`, `]`, `(`, `)`, `<`, `>`, `!`, `+`, `|`, `\`.
 
 **Examples**:
 ```markdown
@@ -276,17 +277,24 @@ __also bold__
 
 ### Precedence Rules
 
-1. **Code spans and code blocks** have highest precedence
-2. **HTML entities** are processed early
-3. **Links** are processed before emphasis
-4. **Emphasis** is processed left-to-right, longest match first
-5. **Autolinks** have lower precedence than explicit links
+Block-level parsing (stage 2) runs before inline parsing (stage 3); a code block's contents are never re-parsed as inline Markdown. Within inline content, elements are tried at each position in this order:
+
+1. **Code spans** (highest precedence; backtick-delimited)
+2. **Autolinks** (`<url>`, `<email>`)
+3. **Images** (`![alt](url)`)
+4. **Links** (`[text](url)`); link text is parsed for inline elements except nested links
+5. **Emphasis** (`*`, `_`, `~`, `+`, `|`); asterisk emphasis is unrestricted, underscore emphasis requires word boundaries
+6. **Escaped characters** (`\c`)
+7. **Regular text** (lowest precedence)
+
+HTML entity processing is not performed at any stage.
 
 ### Line Ending Handling
 
-- **Hard breaks**: Two spaces at end of line
-- **Soft breaks**: Single line breaks become spaces
-- **Paragraph breaks**: Blank lines separate paragraphs
+- **Soft breaks**: Single line breaks within a paragraph become spaces by default. With `preserve_soft_line_breaks: true` they are preserved as newlines.
+- **Paragraph breaks**: Blank lines separate paragraphs.
+
+Hard line breaks (two trailing spaces) are not specially recognised; trailing whitespace is stripped during paragraph parsing.
 
 ## Extension Points
 
@@ -318,14 +326,26 @@ The specification provides extension points for future features:
 Input → Tokenizer → Token Stream → Block Parser → AST → Renderer → Output
 ```
 
-### Recommended Token Types
+### Token Types
+
+The tokenizer (`lib/markdown/tokenizer.py`) emits the following token types:
+
 - `TEXT`: Regular text content
-- `NEWLINE`: Line breaks
-- `SPACE`: Whitespace
-- `SPECIAL`: Special characters (`*`, `_`, `[`, etc.)
-- `CODE_FENCE`: Code block delimiters
-- `HEADER_MARKER`: `#` characters
-- `LIST_MARKER`: List indicators
+- `NEWLINE`: Line break
+- `SPACE`: Whitespace (spaces and tabs)
+- `SPECIAL`: Special markdown characters
+- `CODE_FENCE`: Code block delimiter with optional language
+- `HEADER_MARKER`: `#` characters (1–6)
+- `LIST_MARKER`: List item indicator (`-`, `*`, `+`, or `N.`)
+- `BLOCKQUOTE_MARKER`: `>` character
+- `HORIZONTAL_RULE`: Thematic break marker
+- `EMPHASIS_MARKER`: Emphasis delimiter
+- `LINK_START` / `LINK_END`: `[` and `](url)`
+- `IMAGE_START`: `![`
+- `CODE_SPAN`: Inline code span
+- `AUTOLINK_START` / `AUTOLINK_END`: `<` and `>` for autolinks
+- `ESCAPE`: Backslash escape sequence
+- `EOF`: End of input
 
 ### AST Node Types
 - `MDDocument`: Root node
@@ -335,11 +355,23 @@ Input → Tokenizer → Token Stream → Block Parser → AST → Renderer → O
 - `MDBlockQuote`: Quote block
 - `MDList`: Ordered/unordered list
 - `MDListItem`: Individual list item
-- `MDEmphasis`: Bold/italic text
+- `MDHorizontalRule`: Thematic break
+- `MDEmphasis`: Bold/italic/strikethrough/underline/spoiler text
 - `MDLink`: Link with URL and title
 - `MDImage`: Image with alt text
 - `MDCodeSpan`: Inline code
 - `MDText`: Plain text content
+- `MDAutolink`: Auto-detected URL or email
+
+### Renderers
+
+The parser exposes three renderers that convert the parsed AST to output formats. Each can be configured through the parser constructor (`html_options`, `markdown_options`, `markdownv2_options`) or used directly.
+
+- **HTMLRenderer** — `parser.parse_to_html(text)` / `markdown_to_html(text)`: HTML5 output with optional HTML escaping, configurable code-class prefix (`language-` by default), and tight-list `<p>` stripping.
+- **MarkdownRenderer** — `parser.parse_to_markdown(text)` / `normalize_markdown(text)`: Normalized Markdown with configurable header style (`atx`/`setext`), emphasis style (`asterisk`/`underscore`), and unordered-list marker.
+- **MarkdownV2Renderer** — `parser.parse_to_markdownv2(text)` / `markdownToMarkdownV2(text)`: Telegram MarkdownV2 output. Escapes the Telegram special-character set `_*[]()~`>#+-=|{}.!` per context (`general`, `pre_code`, `link_url`). Translates headers to escaped `#` literals and horizontal rules to escaped dashes, converts unordered list items to bullet glyphs (`•`), and rewrites emphasis to Telegram's syntax: `*bold*`, `_italic_`, `*_bold-italic_*`, `~strike~`, `__underline__`, `||spoiler||`.
+
+The convenience function `markdownToMarkdownV2(text)` is the primary entry point for bot output: it constructs a `MarkdownParser` with `preserve_leading_spaces` and `preserve_soft_line_breaks` enabled by default for Telegram-friendly rendering.
 
 ### Error Handling
 - **Graceful degradation**: Invalid syntax renders as plain text

@@ -1,5 +1,16 @@
 # Yandex Cloud AI Studio SDK Reference (v0.20.2)
 
+> **Version drift — 2026-07-18 audit:** This bundle references SDK **v0.20.2**
+> (captured 2026-05-13), but [`requirements.direct.txt`](../../../requirements.direct.txt)
+> now pins `yandex-ai-studio-sdk==0.22.0` (two minor versions ahead). This is a
+> **version-pinned API reference**, not a tree-sync index like
+> [`docs/llm/index.md`](../../llm/index.md) — it needs a **full revision pass on
+> SDK upgrade**, not routine maintenance. Treat any constructor signature, auth
+> class, domain accessor, exception, or `RetryPolicy` field below as
+> unverified against 0.22.0 until re-captured. Production consumer:
+> [`lib/ai/providers/yc_sdk_provider.py`](../../../lib/ai/providers/yc_sdk_provider.py)
+> (protobuf imports at lines 49-52).
+
 Complete documentation of the `yandex-ai-studio-sdk` Python package, version
 **0.20.2**. This reference covers every public API surface and is intended to
 guide a refactoring of our existing YC SDK provider at

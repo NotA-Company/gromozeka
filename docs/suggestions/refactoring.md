@@ -3,7 +3,13 @@
 > **Purpose:** Structural improvements for better maintainability, testability, and SOLID adherence.
 > These are NOT feature additions — pure code quality improvements
 >
-> **Generated:** 2026-04-18
+> **Generated:** 2026-04-18 · **Status review:** 2026-05-02 · **Line-ref audit:** 2026-07-18
+>
+> **⚠ Stale line numbers — navigate by symbol, not line.** The source has been refactored
+> since generation. `manager.py` line refs in items #3, #6, #7, #13, #14, #21 were refreshed in
+> the 2026-07-18 audit; inline line refs in other files (`base.py`, `bot.py`, `service.py`,
+> `llm_messages.py`, `client.py`, `application.py`, `main.py`, `database.py`, `utils.py`) were
+> not swept and may lag the current source.
 
 ---
 
@@ -304,7 +310,7 @@ class TheBot:
 
 - [`internal/bot/common/bot.py`](/internal/bot/common/bot.py) — major rewrite
 - `internal/bot/platform/` — new directory
-- [`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py:389) — `injectBot` factory
+- [`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py:703) — `HandlersManager.initialize` factory (bot creation + owner resolution; was named `injectBot` at generation time)
 - All tests mocking `TheBot`
 
 ---
@@ -439,7 +445,7 @@ class CacheService:
 
 #### Current Problem
 
-[`HandlersManager.__init__`](/internal/bot/common/handlers/manager.py:185) directly instantiates all 14+ concrete handler classes inline (lines 249–313). This means:
+[`HandlersManager.__init__`](/internal/bot/common/handlers/manager.py:416) directly instantiates all 14+ concrete handler classes inline (lines 478–612). This means:
 
 - Adding any new handler requires modifying `HandlersManager`
 - Conditional handler loading (`WeatherHandler`, `YandexSearchHandler`, `ResenderHandler`) embeds feature-toggle logic deep inside the constructor
@@ -526,7 +532,7 @@ self.handlers = factory.buildHandlers(
 
 #### Current Problem
 
-[`HandlersManager`](/internal/bot/common/handlers/manager.py:177) mixes two very different responsibilities: handler chain orchestration AND per-chat message queue state management (`chatStates`, `addMessageToChatQueue`, `_dtCronJob` for stale-state cleanup). The `ChatProcessingState` and `MessageQueueRecord` classes (lines 77–174) are essentially a mini queue subsystem embedded inside the manager
+[`HandlersManager`](/internal/bot/common/handlers/manager.py:382) mixes two very different responsibilities: handler chain orchestration AND per-chat message queue state management (`chatStates`, `addMessageToChatQueue`, `_dtCronJob` for stale-state cleanup). The `ChatProcessingState` and `MessageQueueRecord` classes (lines 158–380) are essentially a mini queue subsystem embedded inside the manager
 
 #### Proposed Solution
 
@@ -873,12 +879,12 @@ class BaseBotApplication(ABC):
 
 #### Current Problem
 
-[`HandlersManager.injectBot`](/internal/bot/common/handlers/manager.py:389) does two very different things: it creates a `TheBot` instance AND resolves bot-owner usernames to user IDs by querying the database This username→ID resolution is a cross-cutting concern that should be separate:
+[`HandlersManager.initialize`](/internal/bot/common/handlers/manager.py:703) (named `injectBot` at generation time; not to be confused with `BaseBotHandler.injectBot` at `base.py:178`, which only sets `self._bot`) does two very different things: it creates a `TheBot` instance AND resolves bot-owner usernames to user IDs by querying the database This username→ID resolution is a cross-cutting concern that should be separate:
 
 ```python
-# lines 411–413 in manager.py
+# lines 731–733 in manager.py
 for botOwner in theBot.botOwnersUsername:
-    for userId in self.db.getUserIdByUserName(botOwner.lower()):
+    for userId in await self.db.chatUsers.getUserIdByUserName(botOwner.lower()):
         theBot.botOwnersId.add(userId)
 ```
 
@@ -912,7 +918,7 @@ class BotOwnerResolver:
 
 #### Affected Files
 
-- [`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py:389)
+- [`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py:703)
 - `internal/bot/bot_owner_resolver.py` — new
 
 ---
@@ -969,7 +975,7 @@ class TaskTracker:
 #### Affected Files
 
 - [`internal/services/queue_service/service.py`](/internal/services/queue_service/service.py)
-- [`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py:430)
+- [`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py:738) — `HandlersManager.shutdown`
 - [`internal/bot/max/application.py`](/internal/bot/max/application.py:85)
 
 ---
@@ -1306,7 +1312,7 @@ class BotConfig:
 
 #### Current Problem
 
-[`MessageQueueRecord.awaitStepDone`](/internal/bot/common/handlers/manager.py:110) uses a busy-wait loop:
+[`MessageQueueRecord.awaitStepDone`](/internal/bot/common/handlers/manager.py:236) uses a busy-wait loop:
 
 ```python
 async def awaitStepDone(self, step: int) -> None:
@@ -1314,7 +1320,7 @@ async def awaitStepDone(self, step: int) -> None:
         await asyncio.sleep(0.1)
 ```
 
-And similarly [`ChatProcessingState.messageProcessed`](/internal/bot/common/handlers/manager.py:149) has another polling loop:
+And similarly [`ChatProcessingState.messageProcessed`](/internal/bot/common/handlers/manager.py:330) has another polling loop:
 
 ```python
 while self.queue and self.queue[0].getId() != messageId:
@@ -1362,7 +1368,7 @@ class MessageQueueRecord:
 
 #### Affected Files
 
-- [`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py:110)
+- [`internal/bot/common/handlers/manager.py`](/internal/bot/common/handlers/manager.py:236) — `MessageQueueRecord.awaitStepDone` (class at `:158`)
 
 ---
 
@@ -1406,3 +1412,4 @@ Phase 5 (Config & misc):
 
 *Generated by code analysis of Gromozeka source — 2026-04-18*
 *Status review updated: 2026-05-02*
+*Line-ref audit (manager.py refs): 2026-07-18 — see header note; non-manager.py line refs not swept*

@@ -11,7 +11,7 @@ Use these files as companions to [`../teamlead-memory.md`](../teamlead-memory.md
 
 ## Available Files
 
-- [`any-type-cleanup.md`](any-type-cleanup.md) — durable notes for the `Any` type cleanup: patterns established, files changed, genuine patterns preserved.
+- [`any-type-cleanup.md`](any-type-cleanup.md) — durable notes from the 2026-06-28 repo-wide `Any`-type cleanup **campaign** (61 usages audited → 25 narrowed, 36 kept as genuine): patterns established, files changed, genuine patterns preserved. Campaign record only, not a live registry — for the standing anti-`Any` rule see [`../teamlead-memory.md`](../teamlead-memory.md).
 - [`bot-answer-probability.md`](bot-answer-probability.md) — durable notes for the bot answer probability feature: gating logic, detection heuristic, test coverage.
 - [`chat-history-search.md`](chat-history-search.md) — durable notes for the chat history search feature: implementation decisions, anti-patterns learned (20 items), Step 2 gotchas, embedding pipeline, and all review fix rounds.
 - [`chat-users-cache.md`](chat-users-cache.md) — ADR-015 write-through `chat_users` cache in `CacheService`: `_chatUsersMetadataLock`, `messages_count` staleness hazard.
@@ -23,8 +23,8 @@ Use these files as companions to [`../teamlead-memory.md`](../teamlead-memory.md
 - [`dependency-usage-tests.md`](dependency-usage-tests.md) — Durable notes for the `tests/dependencies/` dep-usage regression test suite: PURE/EXTERNAL/MIXED/DEV classification, version-pinning convention, behavioral findings (dateutil, html-to-markdown, numpy, sqlite-vec).
 - [`doc-link-fix-campaign.md`](doc-link-fix-campaign.md) — `make check-docs` link checker + 376-broken-link fix campaign; leading-slash link convention, exclusion prefixes, depth gotchas.
 - [`documentation-audit.md`](documentation-audit.md) — Durable notes from the 2026-06-28 documentation audit: drift-pattern taxonomy, highest/medium/low-drift doc lists, common drift failure modes.
-- [`docs-reorg-lessons.md`](docs-reorg-lessons.md) — Durable lessons from the 2026-07-04 docs bulk-reorg: sibling-relative-link gap inside moved files, source-tree README/codedoc references, config-comment doc-path references.
-- [`llm-empty-truncated-final.md`](llm-empty-truncated-final.md) — Empty `TRUNCATED_FINAL` production bug (Qwen3 budget exhaustion → empty content → `BadRequest`); Item 1 observability dump shipped.
+- [`docs-reorg-lessons.md`](docs-reorg-lessons.md) — Durable lessons from the 2026-07-04 docs bulk-reorg: sibling-relative-link gap inside moved files, code-doc references to moved docs in `*.py` docstrings / migration modules + `tests/**` golden-doc files (hotspots `internal/**/*.py` + `tests/**`; `lib/` is clean), config-comment doc-path references.
+- [`llm-empty-truncated-final.md`](llm-empty-truncated-final.md) — Empty `TRUNCATED_FINAL` production bug (Qwen3 budget exhaustion → empty content → `BadRequest`): Item 1 observability dump + handler-level `SKIPPED_BY_MODEL` silent-drop mitigation shipped; Option A provider downgrade, `bot.py` empty-string guard, and regression tests still pending.
 - [`large-review-campaign.md`](large-review-campaign.md) — Durable lessons from the 2026-06-28 78-file/6-batch parallel review campaign: batch sizing (15–20 sweet spot), integration pass, documentation drift as the top cross-batch failure mode.
 - [`llm-max-rounds.md`](llm-max-rounds.md) — Durable notes for the `LLMService.generateTextViaLLM(maxRounds=...)` budget/round-limit feature: `budgetExhausted` gates, `roundLimitHit` flag, steering fold-in, layering of `internal/services/llm/constants.py`.
 - [`llm-messages-handler.md`](llm-messages-handler.md) — Durable anchors for `internal/bot/common/handlers/llm_messages.py` (`_sendLLMChatMessage`, `handleReply`/`handleMention`/`handleRandomMessage`, abstention sentinel, `<media-description>` extraction, chat-settings symbol locations).

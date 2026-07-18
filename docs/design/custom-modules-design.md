@@ -1,6 +1,6 @@
 # Custom Handler Modules — Design Document
 
-> **Status:** Implemented  
+> **Status:** Implemented (living design reference for `internal/bot/common/handlers/module_loader.py`)  
 > **Date:** 2026-03-29 (design), 2026-05-08 (implementation)  
 > **Scope:** Dynamic loading of custom handler modules via TOML configuration
 

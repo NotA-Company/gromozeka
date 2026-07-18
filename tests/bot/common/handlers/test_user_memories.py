@@ -25,7 +25,7 @@ Phase 7b — the CRON refinement loop (``_dtCronJob`` / ``_runSingleRefinement``
 
 Phase 2 — the three user-memory LLM tools (``add_memory`` / ``delete_memory`` /
 ``search_memories``) with dedup state machine (see
-docs/plans/user-memories-v1.md §8.3-8.5, §14.2). The ``db.userMemories``
+docs/archive/plans/user-memories-v1.md §8.3-8.5, §14.2). The ``db.userMemories``
 repository is replaced with a ``Mock`` per test, and the embedding model is
 stubbed on the shared ``LLMService`` singleton so dedup search behaviour is
 deterministic without hitting vec0 or a real embedding API.
@@ -815,7 +815,8 @@ class TestCronJobAndRefinement:
         must NOT have been called (bail happens before the LLM call), the
         counter must be consumed to 0 (key popped, since 3 − 3 = 0),
         ``_lastRefinedTS[key]`` must be a recent int (bail-path reset), and no
-        memory entry must be persisted (bail returns before
+        memory entry must be persisted (bail returns before the inlined
+        cursor-persist in ``_runSingleRefinement``, formerly
         ``_persistMemoryEntry``).
 
         Args:
@@ -852,7 +853,8 @@ class TestCronJobAndRefinement:
         lastRefined = handler._lastRefinedTS.get(key)  # type: ignore[attr-defined]
         assert isinstance(lastRefined, int)
         assert abs(int(time.time()) - lastRefined) < 10
-        # No memory entry persisted — the bail returns before _persistMemoryEntry.
+        # No memory entry persisted — the bail returns before the inlined
+        # cursor-persist in _runSingleRefinement (formerly _persistMemoryEntry).
         userInfo = await testDatabase.chatUsers.getChatUser(chatId=chatId, userId=userId)
         metadata = handler.parseUserMetadata(userInfo)
         assert metadata.get("memoryRefinement", {}).get(str(threadId)) is None
@@ -1211,7 +1213,7 @@ def _readRefineLog(path: Path) -> List[Dict[str, Any]]:
 # Phase 4a — refinement prompt rewrite + memory pre-load + JSONL tool counts
 # ---------------------------------------------------------------------------
 #
-# See docs/plans/user-memories-v1.md §10, §10.2(a)/(d), §13 Phase 4. The
+# See docs/archive/plans/user-memories-v1.md §10, §10.2(a)/(d), §13 Phase 4. The
 # refinement LLM no longer produces a rolling text summary; it curates the
 # ``user_memories`` store via add_memory / delete_memory / search_memories.
 # ``_runSingleRefinement`` therefore: pre-loads permanent + recent memories into
@@ -1726,7 +1728,7 @@ class TestPhase4aJsonLogToolCounts:
 # Phase 2 — user-memory LLM tools (add_memory / delete_memory / search_memories)
 # ---------------------------------------------------------------------------
 #
-# See docs/plans/user-memories-v1.md §8.3-8.5, §14.2 for the full spec. The
+# See docs/archive/plans/user-memories-v1.md §8.3-8.5, §14.2 for the full spec. The
 # ``db.userMemories`` repository is replaced with a ``Mock`` per test (the repo
 # itself has round-trip tests in ``tests/database/repositories/``), and the
 # embedding model is stubbed on the shared ``LLMService`` singleton so dedup

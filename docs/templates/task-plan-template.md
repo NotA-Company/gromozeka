@@ -183,7 +183,7 @@
 - [ ] Rollback procedures are documented (if applicable)
 
 ### Gromozeka Project Convention Requirements
-- [ ] Python 3.12 only (pyright/black target = py312)
+- [ ] Python 3.12 or newer (pyright/black target = py312)
 - [ ] All code uses camelCase for variables/args/fields/functions, PascalCase for classes, UPPER_CASE for constants
 - [ ] Run `make format lint` before and after all edits
 - [ ] Run `make test` to verify all tests pass (or document failures with justification)
@@ -194,14 +194,14 @@
 - [ ] All imports at top of file (inside-function imports only for genuine cycles)
 
 ### Gromozeka Testing Standards
-- [ ] Tests collocated in `lib/` and `internal/` (not just `tests/`)
+- [ ] All test files go under `tests/` following source-mirror convention (no collocated tests in `lib/` or `internal/`; `lib/ext_modules/*/tests/` is the only sanctioned exception)
 - [ ] Shared fixtures from `tests/conftest.py` reused where appropriate
 - [ ] Run via `make test` (full suite), `make test-failed`, or `./venv/bin/pytest path::Class::test -v`
 - [ ] Async tests use `async def test_…` without decorator (asyncio_mode = "auto")
 - [ ] Singletons reset with `_instance = None` in fixtures as needed
 
 ### Database Schema Changes (conditional - only if DB changes made)
-- [ ] Migration uses next sequential number from `ls internal/database/migrations/versions/`
+- [ ] Migration uses next sequential number from `ls -1 internal/database/migrations/versions/ | grep migration_ | sort -V | tail -1`
 - [ ] SQL is portable via provider abstraction (BaseSQLProvider)
 - [ ] No AUTOINCREMENT - use composite keys or app-generated UUIDs
 - [ ] No `DEFAULT CURRENT_TIMESTAMP` - set timestamps in application code

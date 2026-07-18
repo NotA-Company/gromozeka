@@ -3,6 +3,29 @@
 Text generation via the gRPC-based `models.completions` domain. This is the
 primary interface for YandexGPT family models.
 
+> **Version drift — 2026-07-18 audit:** Captured against SDK **v0.20.2**;
+> [`requirements.direct.txt`](../../../requirements.direct.txt) now pins
+> `yandex-ai-studio-sdk==0.22.0`. The gRPC completions surface was
+> **re-verified against the 0.22.0 install** during this audit. Drift items
+> resolved: `TextMessage` is **not** a top-level export (corrected import
+> path); the `FunctionResultMessageDict` example used OpenAI-compat
+> `{"name", "content"}` shape instead of the SDK's `{"role", "tool_results":
+> [...]}` shape; `ReasoningMode` integer values were off-by-one
+> (`DISABLED=1`, `ENABLED_HIDDEN=2`, plus the missing `REASONING_MODE_UNSPECIFIED=0`);
+> `AlternativeStatus.UNKNOWN` / `USAGE` are SDK-only sentinels with ids
+> `-1` / `-2` (not `6` / `7`); `tune_deferred()` / `tune()` gained
+> `description`, `labels`, `tuning_type`, `scheduler`, `optimizer` and
+> `tune_deferred()` does **not** take `poll_*` args; and `.configure()` is
+> **immutable** in 0.22.0 (returns a new instance via `_config._replace`).
+>
+> Production consumer:
+> [`lib/ai/providers/yc_sdk_provider.py`](../../../lib/ai/providers/yc_sdk_provider.py)
+> (`YcAIModel._getModel` / `_generateText` / `_generateStructured` /
+> `_convertTools` / `_convertMessages`); orchestration loop in
+> [`internal/services/llm/service.py`](../../../internal/services/llm/service.py)
+> `generateTextViaLLM`. The exercised subset is `models.completions(...)`,
+> `.configure(...)`, `run_deferred()`, `operation.wait()`, and `tokenize()`.
+
 See also: [Chat (OpenAI Compat)](chat-openai-compat.md) for the HTTP-based
 alternative.
 
@@ -106,20 +129,39 @@ model = sdk.models.completions("yandexgpt").configure(
 
 ### Reasoning Mode
 
-| Value | Description |
-|---|---|
-| `ReasoningMode.DISABLED` (or `0`) | No chain-of-thought |
-| `ReasoningMode.ENABLED_HIDDEN` (or `1`) | Chain-of-thought enabled but hidden from output |
+Defined on `yandex_ai_studio_sdk._models.completions.config.ReasoningMode`
+(a `ProtoEnumBase, Enum`). Integer values come from the upstream protobuf
+`ReasoningOptions.ReasoningMode`:
+
+| Value | Int | Description |
+|---|---|---|
+| `ReasoningMode.REASONING_MODE_UNSPECIFIED` (or `0`) | 0 | Mode not set (treated as no reasoning) |
+| `ReasoningMode.DISABLED` (or `1`) | 1 | No chain-of-thought |
+| `ReasoningMode.ENABLED_HIDDEN` (or `2`) | 2 | Chain-of-thought enabled but hidden from output |
+
+`reasoning_mode` accepts `int | str | ReasoningMode` (the `ReasoningModeType`
+alias); the SDK coerces strings by name, so
+`.configure(reasoning_mode="ENABLED_HIDDEN")` works equivalently to passing
+the enum member.
 
 On the chat domain, reasoning is expressed as effort levels: `"low"`,
 `"medium"`, `"high"` -- see [Chat (OpenAI Compat)](chat-openai-compat.md).
 
-### Critical: `.configure()` Mutates the Shared Object
+### Note: `.configure()` Is Immutable in 0.22.0
 
-`.configure()` mutates the model instance in place and returns it. If the same
-model object is shared across concurrent callers, re-configuring it between
-requests creates a race condition. This is the core issue blocking structured
-output in our current provider -- see [Gap Analysis](gap-analysis.md).
+`.configure()` does **not** mutate the receiver: it calls
+`self._config._replace(**kwargs)` (frozen dataclass `_replace`, which returns a
+new config) and constructs a **new** model instance via `self.__class__(...)`
+(see `_types/model.py::BaseModel.configure`). The original model is left
+untouched.
+
+The "`.configure()` mutates the shared object" hazard described in earlier
+versions of this doc applied to pre-0.22 SDK behavior and is what originally
+drove our provider's per-request `_getModel()` pattern. The mutation risk is
+gone, but the production pattern (`lib/ai/providers/yc_sdk_provider.py`) is
+retained defensively: every `_generateText` / `_generateStructured` /
+`_generateImage` call still builds a fresh model, so per-call overrides never
+leak across requests even if the SDK regresses. See [Gap Analysis](gap-analysis.md).
 
 ## Execution Methods
 
@@ -185,33 +227,53 @@ Returns a tuple of `Token` dataclass instances. Each token has:
 
 ### `tune_deferred()` and `tune()` -- Fine-Tuning
 
+`tune_deferred()` returns an `AsyncTuningTask[AsyncGPTModel]` immediately and
+does **not** poll -- it has no `poll_timeout` / `poll_interval` arguments
+(those belong to the blocking `tune()` variant). Both methods gained
+`description`, `labels`, `tuning_type`, `scheduler`, `optimizer` parameters
+in SDK 0.22.0.
+
 ```python
-# Async tuning
-tuning_task: AsyncTuningTask = await model.tune_deferred(
+# Async tuning -- returns immediately, caller polls/awaits the task
+tuningTask: AsyncTuningTask = await model.tune_deferred(
     train_datasets,
-    validation_datasets=None,
-    name=None,
-    seed=None,
-    lr=None,
-    n_samples=None,
-    additional_arguments=None,
-    poll_timeout=259200,
-    poll_interval=60,
+    validation_datasets=UNDEFINED,
+    name=UNDEFINED,
+    description=UNDEFINED,
+    labels=UNDEFINED,
+    seed=UNDEFINED,
+    lr=UNDEFINED,
+    n_samples=UNDEFINED,
+    additional_arguments=UNDEFINED,
+    tuning_type=UNDEFINED,
+    scheduler=UNDEFINED,
+    optimizer=UNDEFINED,
+    timeout=60,
 )
 
-# Blocking tuning (polls until complete)
+# Blocking tuning (polls until complete, then returns a fresh tuned model)
 tuned_model = await model.tune(
     train_datasets,
-    validation_datasets=None,
-    name=None,
-    seed=None,
-    lr=None,
-    n_samples=None,
-    additional_arguments=None,
-    poll_timeout=259200,
+    validation_datasets=UNDEFINED,
+    name=UNDEFINED,
+    description=UNDEFINED,
+    labels=UNDEFINED,
+    seed=UNDEFINED,
+    lr=UNDEFINED,
+    n_samples=UNDEFINED,
+    additional_arguments=UNDEFINED,
+    tuning_type=UNDEFINED,
+    scheduler=UNDEFINED,
+    optimizer=UNDEFINED,
+    timeout=60,
+    poll_timeout=259200,   # 72h; class default is 72 * 60 * 60
     poll_interval=60,
 )
 ```
+
+Sentinel defaults are `UNDEFINED` (from `yandex_ai_studio_sdk._types.misc`),
+not `None` -- `None` would clear an existing value, `UNDEFINED` means "not
+passed". Omitting the kwarg is equivalent to passing `UNDEFINED`.
 
 See [Embeddings & Other](embeddings-and-other.md) for dataset preparation.
 
@@ -231,8 +293,8 @@ lc_model = model.langchain(model_type="chat", timeout=60)
 | `run_deferred()` | `await` | blocking | 60s |
 | `attach_deferred()` | `await` | blocking | 60s |
 | `tokenize()` | `await` | blocking | 60s |
-| `tune_deferred()` | `await` | blocking | 60s |
-| `tune()` | `await` | blocking | poll_timeout=259200s |
+| `tune_deferred()` | `await` | blocking | 60s (no `poll_*` args; returns `AsyncTuningTask`) |
+| `tune()` | `await` | blocking | 60s request, `poll_timeout=259200s`, `poll_interval=60s` |
 | `langchain()` | -- | -- | 60s |
 
 ## Message Format
@@ -247,8 +309,11 @@ result = await model.run("Tell me a joke")
 
 ### TextMessage Object
 
+`TextMessage` lives at `yandex_ai_studio_sdk._types.message.TextMessage` -- it
+is **not** re-exported from the top-level package.
+
 ```python
-from yandex_ai_studio_sdk import TextMessage
+from yandex_ai_studio_sdk._types.message import TextMessage
 
 result = await model.run([
     TextMessage(role="system", text="You are a helpful assistant"),
@@ -267,13 +332,29 @@ result = await model.run([
 
 ### FunctionResultMessageDict (Tool Results)
 
+The gRPC completions domain expects tool results bundled under a `tool_results`
+key on a single user-role message (the YC SDK awaits all tool calls in one
+message, unlike the OpenAI-compat API where each result is its own message).
+Each entry is a `ToolResultDictType` = `{"name": str, "content": str,
+"type"?: str}`. This is the shape the production provider builds in
+`YcAIModel._convertMessages()`.
+
 ```python
 result = await model.run([
     {"role": "user", "text": "What is the weather?"},
-    # ... assistant response with tool_calls ...
-    {"name": "get_weather", "content": "22C, sunny"},
+    # ... assistant response with tool_calls (TextMessageWithToolCallsProtocol) ...
+    {
+        "role": "user",
+        "tool_results": [
+            {"name": "get_weather", "content": "22C, sunny"},
+        ],
+    },
 ])
 ```
+
+The `FunctionResultMessageDict` TypedDict itself is
+`{role: NotRequired[str], tool_results: Required[Iterable[ToolResultDictType]]}`
+(see `_models/completions/message.py`).
 
 ## GPTModelResult
 
@@ -309,6 +390,11 @@ Each alternative in `.alternatives` has:
 
 ### AlternativeStatus
 
+Defined on `_models/completions/result.py`. Values `UNSPECIFIED`..`TOOL_CALLS`
+mirror the protobuf `Alternative.ALTERNATIVE_STATUS_*` enum (ints 0-5).
+`UNKNOWN` and `USAGE` are **SDK-only sentinels** with negative ids -- they do
+**not** come from the proto and must not be used as wire values.
+
 | Value | Int | Description |
 |---|---|---|
 | `UNSPECIFIED` | 0 | Status not set |
@@ -317,8 +403,8 @@ Each alternative in `.alternatives` has:
 | `FINAL` | 3 | Complete final result |
 | `CONTENT_FILTER` | 4 | Content policy violation |
 | `TOOL_CALLS` | 5 | Model is requesting tool calls |
-| `UNKNOWN` | 6 | Unknown status |
-| `USAGE` | 7 | Usage info only |
+| `UNKNOWN` | -1 | SDK sentinel: status code did not match any known proto value |
+| `USAGE` | -2 | SDK sentinel: message carries only usage data (no alternative) |
 
 ### CompletionUsage
 
@@ -357,11 +443,11 @@ await operation.cancel(timeout=60)
 
 | Method | Description |
 |---|---|
-| `await operation` | Wait for completion (default poll_interval=10s, poll_timeout=3600s) |
-| `operation.wait(poll_interval=, poll_timeout=)` | Explicit wait with polling control |
-| `operation.get_status(timeout=60)` | Get current operation status |
-| `operation.get_result(timeout=60)` | Get result (if completed) |
-| `operation.cancel(timeout=60)` | Cancel the operation |
+| `await operation` | Wait for completion (default `timeout=60`, `poll_interval=10s`, `poll_timeout=3600s`) |
+| `operation.wait(*, timeout=60, poll_timeout=, poll_interval=)` | Explicit wait with polling control |
+| `operation.get_status(*, timeout=60)` | Get current operation status |
+| `operation.get_result(*, timeout=60)` | Get result (if completed); raises `RunError` if failed, `WrongAsyncOperationStatusError` if still running |
+| `operation.cancel(*, timeout=60)` | Cancel the operation |
 
 ## Gaps vs OpenAI API
 

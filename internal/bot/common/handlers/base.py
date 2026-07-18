@@ -1171,7 +1171,10 @@ class BaseBotHandler(CommandHandlerMixin):
             spam-flag/leftChat use cases (flat boolean flags). For NESTED sub-dicts
             (e.g. ``memoryRefinement``) do NOT use this method; perform an explicit
             full-read + nested-mutate + full-write via ``cache.getUserMetadata`` /
-            ``cache.updateUserMetadata`` (see ``UserMemoriesHandler._persistMemoryEntry``).
+            ``cache.updateUserMetadata`` (see ``UserMemoriesHandler._runSingleRefinement``'s
+            inlined cursor-persist block, formerly the standalone ``_persistMemoryEntry``
+            method — see ``docs/llm/memories/user-memory-refinement.md`` and
+            ``docs/llm/memories/chat-users-cache.md``).
         """
         async with self.cache.chatUserMetadataLock():
             if isUpdate:

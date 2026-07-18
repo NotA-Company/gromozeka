@@ -1,5 +1,18 @@
 # Tools & Structured Output
 
+> **Version drift — 2026-07-18 audit:** Captured against SDK **v0.20.2**;
+> [`requirements.direct.txt`](../../../requirements.direct.txt) now pins
+> `yandex-ai-studio-sdk==0.22.0`. The `sdk.tools.*`, `tool_choice`, and
+> `response_format` surfaces described here were **re-verified against the
+> 0.22.0 install** during this audit (see "Audit findings" at the bottom).
+> Production consumer:
+> [`lib/ai/providers/yc_sdk_provider.py`](../../../lib/ai/providers/yc_sdk_provider.py)
+> (`_convertTools`, `_convertMessages`, `_generateStructured`); tool-call
+> healing loop in
+> [`internal/services/llm/service.py`](../../../internal/services/llm/service.py)
+> `generateTextViaLLM` + `_tryHealToolCall` (see
+> [`docs/llm/memories/llm-tool-call-healing.md`](../../llm/memories/llm-tool-call-healing.md)).
+
 Tool calling and structured output via `response_format`. These features are
 available in both the gRPC `models.completions` domain and the HTTP
 `sdk.chat.completions` domain.
@@ -61,8 +74,8 @@ search_tool = sdk.tools.function(
 sdk.tools.function(
     parameters,           # JSON Schema dict | pydantic BaseModel class | pydantic dataclass
     *,
-    name=None,            # str | UNDEFINED  -- auto-inferred from pydantic class name
-    description=None,     # str | UNDEFINED  -- auto-inferred from pydantic class docstring
+    name=None,            # str | UNDEFINED  -- auto-inferred from JSON Schema "title" (pydantic class name)
+    description=None,     # str | UNDEFINED  -- auto-inferred from JSON Schema "description" field if present
     strict=None,          # bool | UNDEFINED  -- strict schema validation
 ) -> FunctionTool
 ```
@@ -86,7 +99,7 @@ result = await model.run([
 if result.tool_calls:
     for call in result.tool_calls:
         print(f"Tool: {call.function.name}")
-        print(f"Args:  {call.function.arguments}")
+        print(f"Args:  {call.function.arguments}")  # already a dict, not a JSON string
         print(f"ID:    {call.id}")
 ```
 
@@ -103,7 +116,15 @@ if result.tool_calls:
 ### Feeding Tool Results Back
 
 After receiving tool calls, execute the functions locally and feed the results
-back as messages:
+back as messages. **The two domains differ in the message shape** — pick the
+one for the domain you actually call:
+
+**gRPC `models.completions` domain (the production path):** all tool results
+for a turn are bundled into a single `{"role": "user", "tool_results": [...]}`
+message. Each entry is a `{"name": str, "content": str}` dict. The SDK's
+`message_to_proto` rejects dicts without a `text` or `tool_results` key, so
+the OpenAI-style "one `tool` message per result" pattern does **not** work
+here.
 
 ```python
 # First call: model requests tools
@@ -111,23 +132,34 @@ result = await model.run([
     {"role": "user", "text": "What's the weather in Moscow?"},
 ])
 
-# Execute tool calls locally
+# Execute tool calls locally. call.function.arguments is already a dict —
+# no json.loads() needed (BaseFunctionCall._from_proto / _from_json both
+# return a parsed object).
 tool_results = []
 for call in result.tool_calls:
     if call.function.name == "get_weather":
-        weather_data = get_weather_from_api(json.loads(call.function.arguments))
+        weather_data = get_weather_from_api(call.function.arguments)
         tool_results.append({
             "name": call.function.name,
             "content": json.dumps(weather_data),
         })
 
-# Feed results back
+# Feed results back as a single bundled user message.
 final_result = await model.run([
     {"role": "user", "text": "What's the weather in Moscow?"},
-    {"role": "assistant", "text": result.text},
-    *tool_results,
+    # The assistant turn that requested the tools must be preserved so the
+    # model can correlate the request with the results. In production this
+    # is `_ModelMessageWToolCalls(...)` (see yc_sdk_provider.py) — a plain
+    # dict cannot carry the protobuf tool_call_list, so the SDK's own
+    # protocol object is required here.
+    assistantTurnWithToolCalls,
+    {"role": "user", "tool_results": tool_results},
 ])
 ```
+
+**HTTP `sdk.chat.completions` domain (OpenAI-compatible):** one
+`{"role": "tool", "tool_call_id": ..., "content": ...}` message per result,
+matching the OpenAI Chat Completions wire format.
 
 ## Search Index Tool
 
@@ -292,23 +324,99 @@ if result.tool_calls:
     call = result.tool_calls[0]
     assert call.function.name == "CalculatorParams"
 
-    # Execute the tool locally
-    import json, ast
-    args = json.loads(call.function.arguments)
+    # Execute the tool locally. call.function.arguments is already a dict.
+    args = call.function.arguments
     answer = eval(args["expression"])  # In production, use a safe evaluator
 
-    # Step 3: Feed result back
+    # Step 3: Feed result back (gRPC completions domain: bundled tool_results)
     final_result = await model.run([
         {"role": "user", "text": "What is 15 * 37 + 42?"},
-        {"name": call.function.name, "content": str(answer)},
+        assistantTurnWithToolCalls,  # preserve the assistant turn that carried the tool_call
+        {"role": "user", "tool_results": [{"name": call.function.name, "content": str(answer)}]},
     ])
     print(final_result.text)  # "The answer is 597"
 ```
 
-## Important: `.configure()` Concurrency Issue
+## Note: `.configure()` Concurrency — RESOLVED in production
 
-Because `.configure()` mutates the shared model instance, you cannot safely
-re-configure between requests if the model is shared across concurrent
-callers. This is the critical issue blocking structured output and tool
-calling in our current provider. See [Gap Analysis](gap-analysis.md) for
-mitigation strategies.
+`.configure()` mutates the shared model instance in place and returns it. If a
+single SDK model object were reused across concurrent callers needing different
+configurations (e.g. one request wants `response_format='json'`, another wants
+`tools=[...]`), the calls would race and clobber each other.
+
+**Resolution (already shipped):** `YcAIModel._getModel(**configOverrides)` in
+[`lib/ai/providers/yc_sdk_provider.py`](../../../lib/ai/providers/yc_sdk_provider.py)
+creates a **fresh** SDK model per request, configures it for that one call, and
+discards it. There is no shared mutable model state between concurrent
+requests, so structured output and tool calling are both unblocked. See
+[Gap Analysis](gap-analysis.md) §".configure() Mutation — RESOLVED" for the
+historical context.
+
+---
+
+## Audit findings (2026-07-18)
+
+Re-verified against the installed `yandex-ai-studio-sdk==0.22.0` source under
+`venv/lib/python*/site-packages/yandex_ai_studio_sdk/`. Findings:
+
+**API surfaces confirmed unchanged in 0.22.0** (no edit needed):
+
+- `sdk.tools.function(parameters, *, name, description, strict)` signature —
+  `_tools/function.py:22-29`.
+- `FunctionTool(name, description, parameters, strict)` shape —
+  `_tools/tool.py:83-103`.
+- `sdk.tools.search_index(indexes, *, max_num_results, rephraser, call_strategy)`
+  — `_tools/domain.py:83-120`.
+- `sdk.tools.generative_search(*, description, site, host, url, enable_nrfm_docs,
+  search_filters)`; `site`/`host`/`url` mutually exclusive; delegates to
+  `sdk.search_api.generative(...).as_tool(description=...)` —
+  `_tools/domain.py:122-170`.
+- `tool_choice` accepts `"none" | "auto" | "required"` (any casing),
+  `{"type": "function", "function": {"name": ...}}` dict, or a `FunctionTool`
+  instance — `_types/tools/tool_choice.py`.
+- `GPTModelConfig` fields `temperature`, `max_tokens`, `reasoning_mode`,
+  `response_format`, `tools`, `parallel_tool_calls`, `tool_choice` —
+  `_models/completions/config.py:39-59`.
+- `ChatModelConfig` inherits `GPTModelConfig` (so all structured-output and
+  tool modes work in the chat domain too) —
+  `_chat/completions/config.py:46-61`.
+- `result.tool_calls` returns `ToolCallList | None`; iterable; each item has
+  `.id`, `.function.name`, `.function.arguments` —
+  `_models/completions/result.py:148-149`, `_tools/tool_call.py:28-47`,
+  `_tools/function_call.py:21-46`.
+
+**Drift fixed in place:**
+
+1. **`call.function.arguments` was treated as a JSON string.** Both
+   `_from_proto` (`MessageToDict(proto.arguments)`) and `_from_json`
+   (`json.loads(raw_arguments)`) return a parsed `dict`. Removed the
+   `json.loads(call.function.arguments)` calls in the "Using Tools with a
+   Model" example, the "Feeding Tool Results Back" example, and the
+   "Complete Example". Matches production `yc_sdk_provider.py:480`
+   (`parameters=call.function.arguments` assigned directly).
+2. **"Feeding Tool Results Back" used the OpenAI-style separate-message
+   pattern** (`*tool_results` unpacked as `{"name", "content"}` dicts).
+   `_models/completions/message.py:message_to_proto` rejects dicts without a
+   `text` or `tool_results` key — the gRPC completions domain requires a
+   single bundled `{"role": "user", "tool_results": [...]}` message (the
+   production `_convertMessages` path in `yc_sdk_provider.py:330-370`).
+   Rewrote the example to show the gRPC shape and added a one-liner for the
+   chat-domain wire format.
+3. **`description` auto-inference** was documented as "from pydantic class
+   docstring". The SDK actually reads it from `schema.get('description')`
+   (`_tools/function.py:49-52`), which pydantic does not populate from the
+   class docstring by default. Corrected the comment.
+4. **Closing "`.configure()` Concurrency Issue" section was stale.** It
+   claimed the issue "is the critical issue blocking structured output and
+   tool calling in our current provider"; `gap-analysis.md` records this as
+   RESOLVED via per-request model creation in `YcAIModel._getModel()`.
+   Rewrote to reflect the shipped resolution.
+5. **Complete Example's feed-back step** had the same broken
+   `{"name", "content"}` shape as #2; fixed to the bundled `tool_results`
+   form for internal consistency.
+
+**Surfaces NOT exercised by production** (kept as-is, low verification
+priority): `sdk.tools.search_index`, `sdk.tools.generative_search`, and the
+chat-domain tool-call wire format are documented but not used by
+`yc_sdk_provider.py`. Treat their examples as SDK reference only, not as
+battle-tested patterns.

@@ -66,9 +66,9 @@ class _MetadataAction(StrEnum):
 Added 2026-07-11. Drops all `vec_user_memories_{N}` virtual tables and nulls `embedding_model`/`embedding_dimensions` in `user_memories` to trigger a full re-embedding.
 
 - Same standalone stdlib-only pattern as `/scripts/clear_memory_refinement.py`.
-- Regex `^vec_user_memories_\d+$` (matches production `user_memories.py:1227`) filters real vec0 tables from shadow tables.
+- Regex `^vec_user_memories_\d+$` (matches the production `internal/database/repositories/user_memories.py` regex used in `deleteMemoryEmbedding` and the memory-delete path) filters real vec0 tables from shadow tables.
 - Single transaction wraps all DROPs + UPDATE atomically.
-- 7 tests under `tests/scripts/`.
+- 9 tests under `tests/scripts/test_clear_memory_embeddings.py`.
 
 ## `/scripts/delete_stopwords.py`
 
@@ -85,4 +85,4 @@ Added 2026-07-15. Deletes `bayes_tokens` rows whose `token` matches one of the t
 ## See also
 
 - `AGENTS.md` — camelCase, `./venv/bin/python3`, `StrEnum`, no-`Any`, docstring/type-hint rules.
-- `teamlead-memory.md` — source of this extracted memory (provenance).
+- [`teamlead-memory.md`](../teamlead-memory.md) — source of this extracted memory (provenance).

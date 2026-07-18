@@ -1,5 +1,26 @@
 # Chat -- OpenAI-Compatible HTTP API
 
+> **Version drift — 2026-07-18 audit:** Captured against SDK **v0.20.2**;
+> [`requirements.direct.txt`](../../../requirements.direct.txt) now pins
+> `yandex-ai-studio-sdk==0.22.0`. The project does **not** consume the
+> `sdk.chat.*` HTTP surface directly — production uses the raw `openai`
+> Python SDK against YC's OpenAI-compatible endpoint, in
+> [`lib/ai/providers/yc_openai_provider.py`](../../../lib/ai/providers/yc_openai_provider.py)
+> (subclass of
+> [`basic_openai_provider.py`](../../../lib/ai/providers/basic_openai_provider.py)).
+> Verified against that path this audit: endpoint URL,
+> `gpt://{folder}/{model}/{version}` URI scheme, `tool_choice="auto"`,
+> `tools=[...]`, `"content"` message-key, and `api_key` auth all match.
+> Items only exercisable through `sdk.chat.*` (`ChatReasoningMode` /
+> `reasoning_effort` mapping, `extra_query` merge semantics,
+> `ChatModelResult` shape, `model.list()` / `run_stream()` /
+> `sdk.chat.text_embeddings()` signatures, and the open-source model
+> catalogue below) remain **unverified against 0.22.0** until re-captured.
+> The OpenAI-SDK interop example further down also omits the
+> `OpenAI-Project` header that production injects via the
+> `project=<folder_id>` client constructor arg (required for YC's
+> OpenAI-compatible Images API; see `yc_openai_provider.py _getClientParams`).
+
 The `sdk.chat` domain provides an OpenAI-compatible HTTP API for text
 generation and embeddings. This is an alternative to the gRPC-based
 `sdk.models.completions` domain.
@@ -182,6 +203,13 @@ response = client.chat.completions.create(
     ],
 )
 ```
+
+> **Note (production divergence):** [`yc_openai_provider.py`](../../../lib/ai/providers/yc_openai_provider.py)
+> additionally passes `project=<folder_id>` to the `OpenAI(...)` /
+> `AsyncOpenAI(...)` constructor, which sets the `OpenAI-Project` header on
+> every request. This is **required for YC's OpenAI-compatible Images API**
+> and harmless for chat completions. The example above omits it for brevity;
+> copy-paste it for any image-generation work.
 
 ### Compatible Tools
 

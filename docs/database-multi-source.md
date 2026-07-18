@@ -40,7 +40,7 @@ The multi-source database architecture allows Gromozeka to work with multiple SQ
 
 ## Configuration Structure
 
-Multi-source configuration is provided via a dictionary passed to [`Database.__init__()`](../internal/database/database.py:92):
+Multi-source configuration is provided via a dictionary passed to [`Database.__init__()`](../internal/database/database.py:180):
 
 ```python
 from internal.database import Database
@@ -53,7 +53,7 @@ config = {
             "parameters": {
                 "dbPath": "bot.db",
                 "readOnly": False,
-                "timeout": 30.0
+                "timeout": 30
             }
         },
         "archive": {
@@ -61,7 +61,7 @@ config = {
             "parameters": {
                 "dbPath": "archive.db",
                 "readOnly": True,
-                "timeout": 30.0
+                "timeout": 30
             }
         }
     },
@@ -88,7 +88,7 @@ provider = "sqlite3"
 [database.providers.primary.parameters]
 dbPath = "bot.db"
 readOnly = false
-timeout = 30.0
+timeout = 30
 
 [database.providers.archive]
 provider = "sqlite3"
@@ -96,7 +96,7 @@ provider = "sqlite3"
 [database.providers.archive.parameters]
 dbPath = "archive.db"
 readOnly = true
-timeout = 30.0
+timeout = 30
 
 [database.chatMapping]
 -1001234567890 = "archive"
@@ -121,12 +121,25 @@ Each data provider requires specific configuration parameters:
   - `true`: Only SELECT queries allowed, writes raise `ValueError`
   - `false`: Full read/write access
   
-- **`parameters.timeout`**: Connection timeout in seconds (default: 30.0)
+- **`parameters.timeout`**: Connection timeout in seconds (default: `30`)
   - How long to wait for database lock before failing
   
-- **`parameters.useWal`**: Enable WAL mode for better concurrency (default: `true`)
+- **`parameters.useWal`**: Enable WAL mode for better concurrency (default: `false`)
   - `true`: Better concurrent read/write performance
   - `false`: Standard journaling mode
+
+- **`parameters.keepConnection`**: Keep the connection open across operations (default: `None`)
+  - `None`: treated as `false`, except `true` for in-memory (`:memory:`) databases
+  - `true`: Connect on first use and keep the connection open
+  - `false`: Connect/disconnect around each operation
+
+- **`parameters.enableForeignKeys`**: Enable foreign-key constraints (default: `true`)
+
+> **Provider selectability:** Only `sqlite3` and `sqlink` are registered in the
+> provider factory today (`MySQLProvider` / `PostgreSQLProvider` exist in the
+> codebase but are not yet selectable). `sqlink` is a remote-server client and
+> requires a different parameter set (`url`, `user`, `password`, `database`),
+> shown in the SQLink examples below.
 
 ### Provider Configuration Examples
 
@@ -145,7 +158,7 @@ Each data provider requires specific configuration parameters:
     "parameters": {
         "dbPath": "archive.db",
         "readOnly": True,
-        "timeout": 10.0,
+        "timeout": 10,
         "useWal": True
     }
 }
@@ -156,7 +169,7 @@ Each data provider requires specific configuration parameters:
     "parameters": {
         "dbPath": "/shared/other_bot.db",
         "readOnly": True,
-        "timeout": 5.0
+        "timeout": 5
     }
 }
 ```
@@ -191,13 +204,13 @@ Example:
 
 ```python
 # Uses archive provider (from chatMapping)
-messages = db.chatMessages.getMessages(chatId=-1001234567890)
+messages = db.chatMessages.getChatMessagesSince(chatId=-1001234567890)
 
 # Overrides mapping, uses primary provider explicitly
-messages = db.chatMessages.getMessages(chatId=-1001234567890, dataSource="primary")
+messages = db.chatMessages.getChatMessagesSince(chatId=-1001234567890, dataSource="primary")
 
 # No chatId, uses default provider
-settings = db.chatSettings.getSettings()
+settings = db.common.getSettings()
 ```
 
 ## Connection Management
@@ -244,11 +257,10 @@ Readonly providers provide safe access to databases that should not be modified.
 
 ```python
 # This will raise ValueError
-db.chatMessages.addMessage(chatId=-1001234567890, ...)  # If chat mapped to readonly provider
+db.chatMessages.saveChatMessage(date=..., chatId=-1001234567890, userId=..., messageId=...)  # If chat mapped to readonly provider
 
 # Error message:
-# ValueError: Cannot perform write operation on readonly source 'archive'.
-# This source is configured as readonly.
+# ValueError: Cannot perform write operation on readonly source 'archive'. This source is configured as readonly.
 ```
 
 ## Migration Guide
@@ -269,7 +281,7 @@ config = {
             "parameters": {
                 "dbPath": "bot.db",
                 "readOnly": False,
-                "timeout": 30.0
+                "timeout": 30
             }
         }
     }
@@ -290,7 +302,7 @@ config = {
             "parameters": {
                 "dbPath": "bot.db",  # Same database file
                 "readOnly": False,
-                "timeout": 30.0
+                "timeout": 30
             }
         }
     }
@@ -310,7 +322,7 @@ config = {
             "parameters": {
                 "dbPath": "bot.db",
                 "readOnly": False,
-                "timeout": 30.0
+                "timeout": 30
             }
         },
         "archive": {
@@ -318,7 +330,7 @@ config = {
             "parameters": {
                 "dbPath": "archive.db",
                 "readOnly": True,
-                "timeout": 30.0
+                "timeout": 30
             }
         }
     },
@@ -390,11 +402,15 @@ Select the appropriate provider for your use case:
     }
 }
 
-# SQLink provider (alternative implementation)
+# SQLink provider (remote database server — requires url/user/password/database)
 "secondary": {
     "provider": "sqlink",
     "parameters": {
-        "dbPath": "secondary.db"
+        "url": "https://sqlink.example.com",
+        "user": "gromozeka",
+        "password": "secret",
+        "database": "gromozeka_prod",
+        "timeout": 30
     }
 }
 ```
@@ -405,10 +421,10 @@ When querying specific providers, be explicit:
 
 ```python
 # Query archive explicitly
-old_messages = db.chatMessages.getMessages(chatId=123, dataSource="archive")
+old_messages = db.chatMessages.getChatMessagesSince(chatId=123, dataSource="archive")
 
 # Query all providers
-all_chats = db.chatInfo.getAllGroupChats(dataSource=None)  # Aggregates from all providers
+all_chats = db.chatUsers.getAllGroupChats(dataSource=None)  # Aggregates from all providers
 ```
 
 ### 5. Monitor and Adjust
@@ -436,8 +452,9 @@ all_chats = db.chatInfo.getAllGroupChats(dataSource=None)  # Aggregates from all
 if chatId in db.manager.config["chatMapping"]:
     print(f"Chat {chatId} mapped to: {db.manager.config['chatMapping'][chatId]}")
 
-# Override mapping
-db.chatMessages.addMessage(chatId=chatId, dataSource="primary", ...)
+# Repository write methods route by chatId and do not accept dataSource.
+# To write to a different provider, remap the chat in chatMapping (or call
+# with a chatId that routes to a writable provider).
 ```
 
 #### Issue: "Source 'name' not found in configuration"
@@ -468,7 +485,7 @@ print(f"Available providers: {list(db.manager.config['providers'].keys())}")
     "provider": "sqlite3",
     "parameters": {
         "dbPath": "bot.db",
-        "timeout": 60.0,   # Increase from 30.0
+        "timeout": 60,   # Increase from 30
         "useWal": True     # Enable WAL mode
     }
 }
@@ -486,10 +503,10 @@ print(f"Available providers: {list(db.manager.config['providers'].keys())}")
 
 ```python
 # Instead of querying all providers
-messages = db.chatMessages.getMessages(chatId=123)  # Queries mapped provider
+messages = db.chatMessages.getChatMessagesSince(chatId=123)  # Queries mapped provider
 
 # Be explicit when needed
-messages = db.chatMessages.getMessages(chatId=123, dataSource="primary")
+messages = db.chatMessages.getChatMessagesSince(chatId=123, dataSource="primary")
 ```
 
 ## Examples
@@ -514,7 +531,7 @@ config = {
             "parameters": {
                 "dbPath": "bot.db",
                 "readOnly": False,
-                "timeout": 30.0
+                "timeout": 30
             }
         },
         "archive": {
@@ -522,7 +539,7 @@ config = {
             "parameters": {
                 "dbPath": "archive.db",
                 "readOnly": True,
-                "timeout": 30.0
+                "timeout": 30
             }
         }
     },
@@ -534,16 +551,16 @@ config = {
 db = Database(config=config)
 
 # Read from primary (default)
-messages = db.chatMessages.getMessages(chatId=-1009876543210)
+messages = db.chatMessages.getChatMessagesSince(chatId=-1009876543210)
 
 # Read from archive (via mapping)
-old_messages = db.chatMessages.getMessages(chatId=-1001234567890)
+old_messages = db.chatMessages.getChatMessagesSince(chatId=-1001234567890)
 
 # Read from specific provider (explicit)
-backup_messages = db.chatMessages.getMessages(chatId=123, dataSource="archive")
+backup_messages = db.chatMessages.getChatMessagesSince(chatId=123, dataSource="archive")
 
 # Cross-provider aggregation
-all_chats = db.chatInfo.getAllGroupChats()  # Queries all providers, deduplicates results
+all_chats = db.chatUsers.getAllGroupChats()  # Queries all providers, deduplicates results
 ```
 
 ## API Reference
@@ -592,24 +609,27 @@ All repository methods accept an optional `dataSource` parameter for explicit pr
 
 ```python
 # Examples using repositories
-db.chatMessages.getMessages(chatId, dataSource="archive")
+db.chatMessages.getChatMessagesSince(chatId, dataSource="archive")
 db.chatInfo.getChatInfo(chatId, dataSource="primary")
 db.chatUsers.getUserChats(userId, dataSource=None)  # Queries all providers
-db.chatInfo.getAllGroupChats(dataSource="primary")
-db.mediaAttachments.getAttachment(mediaId, dataSource="backup")
+db.chatUsers.getAllGroupChats(dataSource="primary")
+db.mediaAttachments.getMediaAttachment(mediaId, dataSource="backup")
 ```
 
 ### Write Methods
 
-Write methods use routing but validate against readonly providers:
+Write methods route by `chatId` (chatMapping → default) and raise `ValueError`
+when routed to a readonly provider. Repository write methods do not expose a
+`dataSource` keyword — routing is driven by `chatId`:
 
 ```python
-# Routed based on chatId mapping
-db.chatMessages.addMessage(chatId=123, ...)  # Uses mapping or default
-
-# Explicit provider (must be writable)
-db.chatMessages.addMessage(chatId=123, dataSource="primary", ...)
+# Routed based on chatId mapping (or default when the chat is unmapped)
+db.chatMessages.saveChatMessage(date=..., chatId=123, userId=..., messageId=...)
 ```
+
+> The underlying `DatabaseManager.getProvider(*, dataSource=..., readonly=False)`
+> does accept an explicit `dataSource` for writes, but repository write methods
+> (e.g. `saveChatMessage`) do not forward it.
 
 ## Security Considerations
 
@@ -647,11 +667,14 @@ db.chatMessages.addMessage(chatId=123, dataSource="primary", ...)
     }
 }
 
-# SQLink for alternative implementation
+# SQLink for remote database server
 "secondary": {
     "provider": "sqlink",
     "parameters": {
-        "dbPath": "secondary.db"
+        "url": "https://sqlink.example.com",
+        "user": "gromozeka",
+        "password": "secret",
+        "database": "gromozeka_prod"
     }
 }
 ```
@@ -660,10 +683,10 @@ db.chatMessages.addMessage(chatId=123, dataSource="primary", ...)
 
 ```python
 # Good: Explicit provider for known location
-messages = db.chatMessages.getMessages(chatId=123, dataSource="primary")
+messages = db.chatMessages.getChatMessagesSince(chatId=123, dataSource="primary")
 
 # Less efficient: Cross-provider aggregation
-all_messages = db.chatMessages.getMessages(chatId=123)  # Checks mapping, may query multiple providers
+all_messages = db.chatMessages.getChatMessagesSince(chatId=123)  # Checks mapping, queries the mapped/default provider
 ```
 
 ### Timeout Tuning
@@ -674,7 +697,7 @@ all_messages = db.chatMessages.getMessages(chatId=123)  # Checks mapping, may qu
     "provider": "sqlite3",
     "parameters": {
         "dbPath": "local.db",
-        "timeout": 5.0
+        "timeout": 5
     }
 }
 
@@ -683,7 +706,7 @@ all_messages = db.chatMessages.getMessages(chatId=123)  # Checks mapping, may qu
     "provider": "sqlite3",
     "parameters": {
         "dbPath": "/shared/network.db",
-        "timeout": 60.0
+        "timeout": 60
     }
 }
 
@@ -692,7 +715,7 @@ all_messages = db.chatMessages.getMessages(chatId=123)  # Checks mapping, may qu
     "provider": "sqlite3",
     "parameters": {
         "dbPath": "archive.db",
-        "timeout": 30.0
+        "timeout": 30
     }
 }
 ```
@@ -753,7 +776,7 @@ config = {
 }
 
 # Read from other bot
-other_messages = db.chatMessages.getMessages(chatId=123, dataSource="other_bot")
+other_messages = db.chatMessages.getChatMessagesSince(chatId=123, dataSource="other_bot")
 ```
 
 ### Use Case 3: Test/Production Segregation
@@ -805,10 +828,12 @@ config = {
         "db3": {
             "provider": "sqlink",
             "parameters": {
-                "dbPath": "db3.db"
+                "url": "https://sqlink.example.com",
+                "user": "gromozeka",
+                "password": "secret",
+                "database": "gromozeka_db3"
             }
-        }
-    },
+        },
     "chatMapping": {
         # Distribute chats across databases
         -1001111111111: "db1",
@@ -839,7 +864,7 @@ config = {"providers": {}}
 
 # Error: Default provider doesn't exist
 config = {"default": "missing", "providers": {"primary": {"provider": "sqlite3", "parameters": {"dbPath": "bot.db"}}}}
-# ValueError: Default source 'missing' not found in configuration, please check your configuration and try again.
+# ValueError: Default source 'missing' not found in configuration, please check your configuration and try again
 
 # Error: Provider missing required fields
 config = {"providers": {"primary": {"parameters": {"dbPath": "bot.db"}}}}
