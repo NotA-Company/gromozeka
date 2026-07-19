@@ -17,6 +17,7 @@ How to use this file:
 - Prefers parallel batching for independent subtasks (e.g., 6 files at once).
 - Docstring improvement passes should follow one-file-per-task pattern with gate reviews between batches.
 - Responses must be in English.
+- **Anonymize identifiable third-party content in tests**, even for regression tests that reproduce a specific production failure. Keep the STRUCTURAL shape that exercises the bug (bracket positions, character classes, regex-relevant punctuation, JSON block layout) but replace real article text, real site names, and real URLs with placeholders (e.g. `[Новостный сайт](https://news.ru/1/2/3)`). The bot's own prompts/tool-call payloads that don't identify third parties can be inlined verbatim (precedent: `FAILED_0703_TEXT`, `FAILED_0710_TEXT` inline Russian image-generation prompts verbatim). When a brief says "verbatim" for failure-log test data, default to anonymized unless the user explicitly asks for the real text. Do NOT claim "round-trip-verified identical" if you sanitized — say so explicitly so the teamlead can verify the structural shape is preserved.
 - **`.opencode/memory.jsonl` is OpenCode's own auto-managed session memory store.** It is auto-appended/modified by OpenCode on every task, is expected to show as modified in `git status` during any session, and IS normally committed as part of regular flow — do NOT exclude it from commits. The rule is HANDS-OFF, not exclude-from-git: NEVER read, edit, or manually touch it (don't `cat`, don't explicitly stage, don't flag as a stray/unrelated change, don't include its contents in reports/diffs). When staging a doc/cleanup commit, just let it ride with whatever else is being committed; don't single it out.
 
 ## Task-Specific Memory Files
@@ -187,7 +188,7 @@ See [`memories/test-suite-speedup.md`](memories/test-suite-speedup.md) — imple
 
 ## LLM Tool-Call Healing (internal/services/llm/service.py) — implemented 2026-07-15
 
-See [`memories/llm-tool-call-healing.md`](memories/llm-tool-call-healing.md) — durable notes for the tool-call healing subsystem: `_tryHealToolCall` orchestrator + 5 matchers (JSON-fence, `<tool_call>`, TOOL_CALL_START, `[name]{json}`, broken-known-tool fallback), `LLMToolCall.errorMessage` consumer-audit gotcha, failure-log JSONL corpus.
+See [`memories/llm-tool-call-healing.md`](memories/llm-tool-call-healing.md) — durable notes for the tool-call healing subsystem: `_tryHealToolCall` orchestrator + 5 matchers (JSON-fence, `<tool_call>`, TOOL_CALL_START, `[name]{json}`, broken-known-tool fallback: as of 2026-07-19 scans ALL brackets via finditer and accepts at edge OR when the suffix is a fenced JSON params block (`hasJsonParams`), fixing two root-cause misses — wrong-bracket matching when a markdown link appears earlier, and over-strict edge constraint; same date: JSON-fence and `<tool_call>` matchers also accept `"function"` key as tool-name fallback when `"name"` is absent/empty), `LLMToolCall.errorMessage` consumer-audit gotcha, failure-log JSONL corpus.
 
 ## LLM maxRounds round-limit (`generateTextViaLLM`) — added 2026-07-16
 

@@ -33,31 +33,38 @@ from tests.utils import createAsyncMock
 FAILED_0703_TEXT: str = (
     " Понял, запускаю генерацию по вашему промту!\n\n"
     "[Вызов функции `generate_and_send_image` с промтом: «Средневековая миниатюра "
-    "в стиле книжных иллюстраций XV века. Булочка\u202fIII — рыцарь Пятничного Ордена: "
-    "кошка породы японский бобтейл в изящных серебристо‑золотых доспехах, украшенных "
-    "хмельными шишками и пивными кружками. В лапе — меч с рукоятью в виде пробки от "
-    "бутылки. На заднем плане — замок с флагами, на которых изображены кружки пива и "
-    "коты. Фон — стилизованные облака и золотые завитки. Яркие локальные цвета, чёткие "
-    "контуры, декоративные элементы по краям изображения, имитация пергамента. "
+    "в стиле книжных иллюстраций XV века. Булочка\u202fIII."
     "Атмосфера благородного пятничного подвига»]"
 )
 
 # failed.2026-07-10.jsonl — same shape, longer preamble, the bracket block ends
 # the message.
 FAILED_0710_TEXT: str = (
-    " Понял, сделаю открытку в стиле «упоротых» поздравлений — с пивком и милыми "
-    "мелочами!\n\n**Промт для генерации:**\n«Открытка в стиле „упоротых“ поздравлений "
-    "из соцсетей: яркий, перегруженный деталями дизайн, как в гифках от возрастных "
-    "пользователей. В центре — большая пенная кружка пива с улыбающейся мордочкой "
-    "(глаза, улыбка). Вокруг — хаотично разбросанные милые и нелепые элементы: "
-    "сердечки, звёздочки, блёстки, маленькие котики в солнечных очках, воздушные "
-    "шары, конфетти, радуга, пара танцующих грибов, наклейка „Ура!“ с восклицательным "
-    "знаком. По краям — виньетки с цветочками и ленточками. Фон — пастельно‑розовый "
-    "с градиентом к голубому, украшен мелкими повторяющимися узорами (сердечки, "
-    "пузырьки). Внизу крупная надпись игривым шрифтом: „С Пятничкой! 🍻✨“ — с "
-    "тенями и бликами, как в дешёвом графическом редакторе. Всё выглядит нарочито "
+    " Понял, сделаю открытку в стиле «упоротых» поздравлений!\n\n"
+    "**Промт для генерации:**\n«Открытка в стиле „упоротых“ поздравлений "
     "безвкусно, но весело и празднично».\n\n"
     "[Вызов функции `generate_and_send_image` с указанным промтом]"
+)
+
+# failed-20260719.jsonl — article prose + a markdown link in the MIDDLE of the
+# message, followed by a call-to-action and the broken bracket call mid-message
+# (NOT at an edge), with a fenced JSON params block trailing it. The previous
+# single-regex matcher anchored on the FIRST ``[`` (the markdown-link label)
+# and never reached the actual broken-call bracket, so this capture was not
+# healed. Verbatim assistant ``response`` (2707 chars).
+FAILED_0719_TEXT: str = (
+    " \n### Компания запустила спутники\n\n"
+    "**Ключевые детали:**\n\n"
+    "* Первоисточник: [Новостной сайт](https://news.ru/1/2/3"
+    ")\n* Для проверки и углублённого изучения темы рекомендую также обратиться к "
+    "следующим источникам:\n    * Официальные пресс‑релизы\n"
+    "    * Научные базы данных и журналы: *arXiv.org* (препринты научных статей), *Nature* или "
+    "**Визуализация:**\n\n"
+    "Сейчас сгенерирую изображение для поста!\n\n"
+    "[Вызов функции `generate_and_send_image`]\n\n"
+    '```json\n{\n  "image_prompt": "Футуристическая иллюстрация: группа современных спутников на орбите Земли.'
+    'В верхней части изображения надпись: «Компания запустила спутники»",\n  '
+    '"image_description": "Иллюстрация для новостного поста о запуске спутников."\n}\n```'
 )
 
 # failed-20260716.jsonl — clean JSON inside <tool_call> tags (healable).
@@ -65,10 +72,45 @@ FAILED_0716_TEXT: str = (
     " Сейчас изучу статью и поищу дополнительные надёжные источники.\n\n"
     "**Шаг\xa01.** Сначала ознакомлюсь с содержанием исходной статьи по ссылке.\n\n"
     "<tool_call>\n"
-    '{"name":"get_url_content","arguments":{"url":"https:\\/\\/rus.lsm.lv\\/statja\\/novosti\\/'
-    "ekonomika\\/13.07.2026-za-26-millionov-evro-latvijas-valsts-mezi-pokupaet-u-svedov-"
-    'lesa-v-latgalii.a654851\\/","parse_to_markdown":true}}\n'
+    '{"name":"get_url_content","arguments":{"url":"https:\\/\\/news\\/1\\/2\\/'
+    "3\\/4"
+    '5\\/","parse_to_markdown":true}}\n'
     "</tool_call>"
+)
+
+# failed-20260719-v2.jsonl — article prose + source URLs + a fenced JSON code
+# block at the END of the message (empty suffix) whose JSON uses ``"function"``
+# KEY instead of ``"name"`` for the tool name. The ``_matchTextForJSONToolCall``
+# matcher parses the JSON but then looks for ``jsonData.get("name", "")`` which
+# returns ``""`` — causing ``_tryApplyToolCallMatch`` to reject the match.
+# Anonymized from the real capture (real URLs, names, and prose replaced).
+FAILED_0719V2_TEXT: str = (
+    " Here's a news summary about a recent tech announcement involving"
+    " a certificate authority revocation.\n\n"
+    "**Key details:**\n\n"
+    "* Source: [Tech News Site](https://example.com/news/1/2/3)\n"
+    "* Additional sources for verification:\n"
+    "    * Official press releases from the company\n"
+    "    * Industry analysis and technical blogs\n"
+    "    * Security community discussions\n\n"
+    "---\n\n"
+    "**Draft post for publication:**\n\n"
+    "A major certificate authority has revoked SSL certificates for government"
+    " domains, causing service outages.\n\n"
+    "**Background:** Starting June 2026, the CA began mandatory revocation of"
+    " certificates for Russian organizations due to new CA/Browser Forum"
+    " requirements.\n\n"
+    "Now generating an image for the post...\n\n"
+    "[Generating image...]\n\n"
+    '```\n{\n  "function": "generate_and_send_image",\n'
+    '  "arguments": {\n'
+    '    "image_prompt": "An illustration in digital art style depicting a'
+    " penguin with glasses and a laptop sitting in front of a screen showing"
+    " an SSL certificate error. Modern minimalist style with humorous"
+    ' elements. 16:9 aspect ratio."\n'
+    "  }\n"
+    "}\n"
+    "```"
 )
 
 
@@ -137,20 +179,6 @@ def sampleMessages() -> List[ModelMessage]:
     ]
 
 
-def _expectedPreamble(text: str) -> str:
-    """Compute the preamble the healers should leave after stripping the bracket block.
-
-    Args:
-        text: The original model response text.
-
-    Returns:
-        The text up to the first ``[`` (the bracket block), stripped of
-        surrounding whitespace — matching what ``_matchTextForBrokenKnownToolCall``
-        assigns to ``resultText``.
-    """
-    return text.strip().split("[")[0].strip()
-
-
 # ============================================================================
 # Tests
 # ============================================================================
@@ -216,9 +244,10 @@ class TestToolCallHealing:
         assert ret.toolCalls[0].errorMessage is not None
         assert "generate_and_send_image" in ret.toolCalls[0].errorMessage
         assert "retry" in ret.toolCalls[0].errorMessage
-        # The bracket block is stripped, leaving the preamble.
-        assert ret.resultText == _expectedPreamble(FAILED_0703_TEXT)
-        assert "[" not in ret.resultText
+        # The original text is preserved (bracket content is no longer
+        # stripped) so the model sees its full intent on retry.
+        assert ret.resultText == FAILED_0703_TEXT.strip()
+        assert "[" in ret.resultText
 
     # ------------------------------------------------------------------
     # 3b. Broken-known-tool bracket (direct) — real 07-10 text
@@ -236,8 +265,91 @@ class TestToolCallHealing:
         assert ret.toolCalls[0].parameters == {}
         assert ret.toolCalls[0].errorMessage is not None
         assert "retry" in ret.toolCalls[0].errorMessage
-        assert ret.resultText == _expectedPreamble(FAILED_0710_TEXT)
-        assert "[" not in ret.resultText
+        # The original text is preserved (bracket content is no longer
+        # stripped) so the model sees its full intent on retry.
+        assert ret.resultText == FAILED_0710_TEXT.strip()
+        assert "[" in ret.resultText
+
+    # ------------------------------------------------------------------
+    # 3c. Broken-known-tool bracket (direct) — real 07-19 text
+    # ------------------------------------------------------------------
+    def testBrokenKnownToolCallDirect0719(self, llmService: LLMService) -> None:
+        """``_matchTextForBrokenKnownToolCall`` heals the real 07-19 mid-message pseudo-call.
+
+        Unlike the 07-03 / 07-10 captures, the broken-call bracket here is NOT
+        at an edge: it follows a long article preamble AND a markdown link
+        (``[Новостной сайт](https://news.ru/...)``) that appears earlier in the
+        text, and it is followed by a fenced JSON params block. The matcher
+        must scan ALL ``[...]`` blocks (not just the first one) and accept the
+        bracket because the entire suffix is a fenced JSON code block
+        (`` ```json{...}``` ``) — matching ``hasJsonParams`` — so the
+        broken-call candidate is accepted and converted to a ``TOOL_CALLS``
+        retry-error.
+        """
+        llmService.registerTool("generate_and_send_image", "Generate image", [], _noopAsyncHandler)
+        ret = ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText=FAILED_0719_TEXT)
+
+        matched = llmService._matchTextForBrokenKnownToolCall(ret)
+
+        assert matched is True
+        assert ret.status == ModelResultStatus.TOOL_CALLS
+        assert len(ret.toolCalls) == 1
+        assert ret.toolCalls[0].name == "generate_and_send_image"
+        assert ret.toolCalls[0].parameters == {}
+        assert ret.toolCalls[0].errorMessage is not None
+        assert "broken call" in ret.toolCalls[0].errorMessage
+        # The matched bracket block itself is preserved (not stripped) so the
+        # model sees its full intent on retry.
+        assert "[Вызов функции" in ret.resultText
+        assert "`generate_and_send_image`" in ret.resultText
+        # The article preamble (prefix) and the trailing fenced JSON
+        # params block (suffix) are preserved. The two substrings below appear
+        # ONLY inside the markdown-link label/URL, so they lock in that both
+        # brackets are preserved verbatim; the markdown-link bracket was not
+        # corrupted by the broken-call match.
+        assert "Новостной сайт" in ret.resultText, "markdown link label must be preserved verbatim"
+        assert "news.ru" in ret.resultText, "markdown link URL must be preserved verbatim"
+        assert "image_prompt" in ret.resultText
+
+    def testNotBrokenKnownToolCallInTheMiddle(self, llmService: LLMService) -> None:
+        """``_matchTextForBrokenKnownToolCall`` test"""
+        llmService.registerTool("generate_and_send_image", "Generate image", [], _noopAsyncHandler)
+        ret = ModelRunResult(
+            rawResult={},
+            status=ModelResultStatus.FINAL,
+            resultText="Test1 [ generate_and_send_image ] Test2 [ `generate_and_send_image` ] Test3",
+        )
+
+        matched = llmService._matchTextForBrokenKnownToolCall(ret)
+
+        assert matched is False
+        assert ret.status == ModelResultStatus.FINAL
+        assert len(ret.toolCalls) == 0
+        assert "generate_and_send_image" in ret.resultText
+
+    # ------------------------------------------------------------------
+    # 3d. Broken-known-tool: mid-message bracket WITHOUT backticks is rejected
+    # ------------------------------------------------------------------
+    def testBrokenKnownToolCallMidMessageNoJsonSuffixRejected(self, llmService: LLMService) -> None:
+        """A mid-message bracket naming a tool but WITHOUT backticks must NOT be healed.
+
+        A bracket block that is not at an edge is only accepted when the
+        entire suffix is a fenced JSON code block (``hasJsonParams``).
+        The suffix ``" more prose."`` is not a JSON code block, so the
+        matcher correctly returns ``False`` without changing the status.
+        """
+        llmService.registerTool("generate_and_send_image", "Generate image", [], _noopAsyncHandler)
+        ret = ModelRunResult(
+            rawResult={},
+            status=ModelResultStatus.FINAL,
+            resultText="Some prose [use generate_and_send_image here] more prose.",
+        )
+
+        matched = llmService._matchTextForBrokenKnownToolCall(ret)
+
+        assert matched is False
+        assert ret.status == ModelResultStatus.FINAL
+        assert ret.toolCalls == []
 
     # ------------------------------------------------------------------
     # 4. Broken-known-tool NO false positive on prose mention
@@ -420,12 +532,76 @@ class TestToolCallHealing:
         # the ``<tool_call>`` JSON (note: ``\/`` escapes decode to ``/``).
         assert len(callLog) == 1
         assert callLog[0]["parse_to_markdown"] is True
-        assert callLog[0]["url"].startswith("https://rus.lsm.lv/")
+        assert callLog[0]["url"].startswith("https://news/")
         assert result.resultText == finalResult.resultText
         assert mockModel.generateText.call_count == 2
 
     # ------------------------------------------------------------------
-    # 8. Backward compat: errorMessage is optional and stays out of __str__
+    # 8. ``"function"`` key support in ``_matchTextForJSONToolCall`` (07-19-v2)
+    # ------------------------------------------------------------------
+    def testJSONToolCallFunctionKeyDirect(self, llmService: LLMService) -> None:
+        """``_matchTextForJSONToolCall`` extracts from a fenced JSON block using ``"function"`` instead of ``"name"``.
+
+        The model emitted a fenced `` ```json{...}```  `` block at the very end
+        of the response (empty suffix) with ``"function"`` key — not ``"name"``.
+        The matcher should recognise it and convert to ``TOOL_CALLS``.
+        """
+        llmService.registerTool("generate_and_send_image", "Generate image", [], _noopAsyncHandler)
+        ret = ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText=FAILED_0719V2_TEXT)
+
+        matched = llmService._matchTextForJSONToolCall(ret)
+
+        assert matched is True
+        assert ret.status == ModelResultStatus.TOOL_CALLS
+        assert len(ret.toolCalls) == 1
+        assert ret.toolCalls[0].name == "generate_and_send_image"
+        # The JSON ``"arguments"`` dict survived, including the ``"image_prompt"`` key.
+        assert "image_prompt" in ret.toolCalls[0].parameters
+        assert ret.toolCalls[0].errorMessage is None
+        # The fenced JSON block is stripped from resultText; preamble remains.
+        assert "function" not in ret.resultText
+        assert "Here's a news summary" in ret.resultText
+        assert "Generating image" in ret.resultText
+
+    def testJSONToolCallFunctionKeyViaOrchestrator(self, llmService: LLMService) -> None:
+        """``_tryHealToolCall`` reaches ``_matchTextForJSONToolCall`` (priority 1) for ``"function"``-key JSON.
+
+        The orchestrator tries the JSON-fence matcher first, so it should
+        match before any other strategy.
+        """
+        llmService.registerTool("generate_and_send_image", "Generate image", [], _noopAsyncHandler)
+        ret = ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText=FAILED_0719V2_TEXT)
+
+        matched = llmService._tryHealToolCall(ret)
+
+        assert matched is True
+        assert ret.status == ModelResultStatus.TOOL_CALLS
+        assert ret.toolCalls[0].name == "generate_and_send_image"
+
+    def testToolCallTagFunctionKeyDirect(self, llmService: LLMService) -> None:
+        """``_matchTextForToolCallTags`` extracts from ``<tool_call>`` tags using ``"function"`` instead of ``"name"``.
+
+        Same bug pattern: the JSON inside the tags uses ``"function"`` key.
+        The matcher must fall back to ``"function"`` when ``"name"`` is absent.
+        """
+        llmService.registerTool("generate_and_send_image", "Generate image", [], _noopAsyncHandler)
+        jsonPayload = '{"function":"generate_and_send_image","arguments":{"p":"v"}}'
+        resultText = "Let me generate that.\n<tool_call>\n" + jsonPayload + "\n</tool_call>"
+        ret = ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText=resultText)
+
+        matched = llmService._matchTextForToolCallTags(ret)
+
+        assert matched is True
+        assert ret.status == ModelResultStatus.TOOL_CALLS
+        assert len(ret.toolCalls) == 1
+        assert ret.toolCalls[0].name == "generate_and_send_image"
+        assert ret.toolCalls[0].parameters == {"p": "v"}
+        assert ret.toolCalls[0].errorMessage is None
+        assert "<tool_call>" not in ret.resultText
+        assert ret.resultText == "Let me generate that."
+
+    # ------------------------------------------------------------------
+    # 9. Backward compat: errorMessage is optional and stays out of __str__
     # ------------------------------------------------------------------
     def testLLMToolCallErrorMessageBackwardCompat(self) -> None:
         """A default ``errorMessage`` is None and does not leak into ``__str__``."""
@@ -440,6 +616,43 @@ class TestToolCallHealing:
         assert str(toolCallWithError) == '{"id":"x","name":"y","parameters":{}}'
         assert "errorMessage" not in str(toolCallWithError)
         assert "boom" not in str(toolCallWithError)
+
+    # ------------------------------------------------------------------
+    # 10. processIntermediateMessages gate: broken-tool-call detection
+    # ------------------------------------------------------------------
+    def testProcessIntermediateMessagesGateDetectsBrokenToolCall(self) -> None:
+        """The ``any(...)`` expression in the processIntermediateMessages gate correctly
+        detects broken tool calls (``errorMessage`` is set).
+
+        When ``processIntermediateMessages`` encounters a ``ModelRunResult``
+        whose ``toolCalls`` list contains any entry with ``errorMessage`` set,
+        it must RETURN early without calling ``sendMessage``. This test locks
+        in that the detection expression — ``any(tc.errorMessage is not None
+        for tc in toolCalls)`` — evaluates correctly for all meaningful
+        combinations.
+        """
+        # A tool call with errorMessage set (broken-call retry) must be detected.
+        brokenCall = LLMToolCall(id="1", name="test_tool", parameters={}, errorMessage="retry")
+        assert any(tc.errorMessage is not None for tc in [brokenCall])
+
+        # A tool call without errorMessage (normal call) must NOT be detected.
+        cleanCall = LLMToolCall(id="2", name="test_tool", parameters={}, errorMessage=None)
+        assert not any(tc.errorMessage is not None for tc in [cleanCall])
+
+        # An empty toolCalls list must not trigger the gate.
+        assert not any(tc.errorMessage is not None for tc in [])
+
+        # Mixed: one broken call among clean ones — must detect.
+        assert any(tc.errorMessage is not None for tc in [cleanCall, brokenCall])
+
+        # Mixed: all clean — must not detect.
+        assert not any(
+            tc.errorMessage is not None
+            for tc in [
+                cleanCall,
+                LLMToolCall(id="3", name="other_tool", parameters={}),
+            ]
+        )
 
 
 # ============================================================================

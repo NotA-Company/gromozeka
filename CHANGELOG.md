@@ -16,13 +16,15 @@ process governing this file, see [docs/llm/changelog.md](docs/llm/changelog.md).
 - `web_search` and `get_url_content` LLM tools gained an optional `condensing_prompt` parameter that overrides the default document-condensing prompt per call when fetched page content exceeds `max_size`; empty/whitespace-only falls back to the per-chat `DOCUMENT_CONDENSING_PROMPT` default. `web_search` also gained a `max_size` parameter (forwarded per-page to `get_url_content`, closing a pre-existing gap where every batch page silently used the default `10240`).
 
 ### Changed
+- Broken-tool-call retries preserve the original bracket text in `resultText` for model context and suppress intermediate retry prose from being sent to the user.
 - `search_messages`, `list_users`, and `get_thread` LLM tools no longer re-check the `ALLOW_TOOLS_COMMANDS` chat setting inside the tool handler; LLM tools are now gated solely by `USE_TOOLS` at chat time, while `ALLOW_TOOLS_COMMANDS` gates only slash commands of `CommandCategory.TOOLS`. (With `USE_TOOLS=true` + `ALLOW_TOOLS_COMMANDS=false`, the LLM can now call these tools.)
 - `LLMService.generateTextViaLLM` now bounds the tool-calling loop by default (`maxRounds=DEFAULT_MAX_ROUNDS`=32, in `internal/services/llm/constants.py`); once the budget is exhausted it drops tool schemas, clears the tool execution allowlist, disables tool-call healing, injects a steering directive, forces the loop to terminate within one additional round, sets `ModelRunResult.roundLimitHit=True`, and logs a service-level warning. A fallback answer is synthesized only for an empty `FINAL` or a post-budget `TOOL_CALLS` (a glitching model that ignored the empty tools); genuine error statuses (`ERROR`/`CONTENT_FILTER`/`UNKNOWN`) propagate untouched so callers can detect the failure. Pass `maxRounds=None` for unlimited rounds (legacy behavior).
 - The memory-refinement loop now detects a `roundLimitHit` result and logs a warning that curation may be incomplete for the batch (previously the cap fired silently and incomplete curation looked like success).
 
 ### Fixed
 - LLM tool-call healing now detects `<tool_call>{…}</tool_call>` tag-wrapped JSON calls (emitted by e.g. YC aliceai-llm) and converts them into real tool calls instead of leaking the raw tags to the user.
-- LLM tool-call healing now returns a retry-error to the model for unparseable calls that nonetheless reference a known registered tool, instead of leaking the broken pseudo-call text to the user.
+- LLM tool-call healing now scans every ``[...]`` block in the response (not just the first) and accepts mid-message brackets when followed by a fenced JSON params block, so a markdown link earlier in the response no longer shadows the actual broken-call bracket.
+- JSON tool-call healing now also accepts `"function"` key as a tool-name source (fallback when `"name"` is absent or empty), so models that emit `{"function": "tool_name", "arguments": {...}}` are healed correctly.
 
 ## Initial State - 2026-07-15
 

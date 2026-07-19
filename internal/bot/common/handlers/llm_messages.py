@@ -172,7 +172,9 @@ class LLMMessageHandler(BaseBotHandler):
 
             This callback function is called during streaming LLM responses to send
             intermediate results back to the user. It applies prefixes for fallback
-            and tool usage, and sends typing indicators.
+            and tool usage, and sends typing indicators. Intermediate messages are
+            suppressed when the result contains a synthesised broken-tool-call (a
+            ``LLMToolCall`` with ``errorMessage`` set).
 
             Args:
                 mRet (ModelRunResult): The intermediate LLM result containing generated text.
@@ -182,6 +184,11 @@ class LLMMessageHandler(BaseBotHandler):
                 None
             """
             if mRet.resultText.strip() and sendIntermediateMessages:
+                # Don't send intermediate messages when the result contains a
+                # synthesised broken-tool-call (errorMessage is set) — this is an
+                # internal retry directive, not user-visible content.
+                if mRet.toolCalls and any(tc.errorMessage is not None for tc in mRet.toolCalls):
+                    return
                 try:
                     logger.debug(f"Sending intermediate message. LLM Result status is: {mRet.status}")
                     prefixStr = chatSettings[ChatSettingsKey.INTERMEDIATE_MESSAGE_PREFIX].toStr()
