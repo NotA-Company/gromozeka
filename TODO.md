@@ -4,6 +4,7 @@
 - [ ] refactor models
 - [x] Review all docs
 - [ ] more statistics thing (more sources, consolidation, export + cleanup of old statistics)
+- [ ] tool for navigating thru documentation (rag + markdown parser )
 
 - [ ] Subagent with conversation history
 - [ ] Topic-level configs

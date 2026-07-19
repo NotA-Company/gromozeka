@@ -397,7 +397,7 @@ class LLMService:
                     parameters = jsonData.get("parameters", None)
                 return self._tryApplyToolCallMatch(
                     mlRunResult,
-                    toolName=jsonData.get("name", ""),
+                    toolName=jsonData.get("name", "") or jsonData.get("function", ""),
                     parameters=parameters,
                     toolCallId=jsonData.get("callId", None),
                     prefixStr=match.group(1),
@@ -447,7 +447,7 @@ class LLMService:
                     parameters = jsonData.get("parameters", None)
                 return self._tryApplyToolCallMatch(
                     mlRunResult,
-                    toolName=jsonData.get("name", ""),
+                    toolName=jsonData.get("name", "") or jsonData.get("function", ""),
                     parameters=parameters,
                     toolCallId=jsonData.get("callId", None),
                     prefixStr=match.group(1),
@@ -549,77 +549,118 @@ class LLMService:
         :meth:`_matchTextForToolCallStart`,
         :meth:`_matchTextForToolCallSquareBracketsAndJson`) has failed. It
         detects a **registered** tool name referenced inside a bracket-like
-        block at the **beginning or end** of the message that could not be
-        parsed as a real tool call (e.g. an unparseable pseudo-call such as
-        ``[Вызов функции `generate_and_send_image` с промтом: «...»]``).
+        block that could not be parsed as a real tool call (e.g. an unparseable
+        pseudo-call such as ``[Вызов функции `generate_and_send_image` с
+        промтом: «...»]``).
 
         Instead of healing the call into a real execution, it synthesises a
         tool call carrying an ``errorMessage`` that asks the model to retry
         with a proper tool call. The execution loop never invokes the handler
         for such a call — it feeds the error back to the model.
 
-        The begin/end-edge constraint avoids firing on mid-prose mentions of a
-        tool name: the bracket block must be at the message start or end.
+        Unlike other healers, ``resultText`` is **preserved** as-is (the
+        matched bracket is not stripped). This gives the model the full
+        context (including its original intent/prompt inside the bracket)
+        when it retries.
+
+        Every ``[...]`` block in the text is scanned (not just the first one),
+        so a markdown link (``[label](url)``) appearing earlier in the message
+        does not shadow the actual broken-call bracket. The first bracket (in
+        text order) that satisfies the acceptance rule wins. Only the bracket
+        content is searched for a registered tool name; a trailing ``{...}``
+        JSON block is not consulted (use
+        :meth:`_matchTextForToolCallSquareBracketsAndJson` for parseable
+        ``[name]{{json}}`` forms).
+
+        Acceptance rule — a bracket block containing a registered tool name is
+        accepted when EITHER:
+
+        - **Edge case.** The bracket is at the beginning or end of the message
+          (the non-whitespace prefix OR the non-whitespace suffix is empty,
+          treating surrounding triple-backtick fences as edge markers).
+          This preserves the original begin/end-edge heuristic and avoids
+          firing on mid-prose mentions.
+        - **Mid-message + JSON params suffix.** The entire suffix (text after
+          the bracket) is an optional fenced JSON code block — i.e. the regex
+           ``^\\s*`*(json)?\\s*{.*}\\s*`*\\s*$`` matches the whole suffix
+          (whitespace + optional triple-backtick fence + optional ``json``
+          language tag + a JSON object + optional closing fence + whitespace).
+          This captures the structural shape "broken-call bracket immediately
+          followed by its would-be parameters block" — a fingerprint real
+          prose mentions do not produce. An accepted one-round-trip false
+          positive is possible if prose happens to end in
+          ``[registered_tool_name]`` followed by a standalone JSON code block,
+          but this is rare in practice.
 
         Args:
             mlRunResult: The model run result to inspect and mutate.
 
         Returns:
-            True if a registered tool name was found inside an edge bracket
-            block and *mlRunResult* was converted to ``TOOL_CALLS`` with a
-            retry ``errorMessage``; False otherwise.
+            True if a registered tool name was found inside an accepted
+            bracket block and *mlRunResult* was converted to ``TOOL_CALLS``
+            with a retry ``errorMessage``; False otherwise.
         """
         resultText = mlRunResult.resultText.strip()
-        # A bracketed block (content may contain spaces) optionally followed by a
-        # {...} block, optionally wrapped in code fences — at the BEGINNING or
-        # END of the text.
-        match = re.match(
-            r"^(.*?)(?:```)?\s*\[(.+?)\]\s*(\{.*\})?\s*(?:```)?\s*(.*)$",
-            resultText,
-            re.DOTALL,
-        )
-        if match is None:
-            return False
-        prefixStr = match.group(1)
-        bracketContent = match.group(2)
-        bracesContent = match.group(3) or ""
-        suffixStr = match.group(4)
-        # Only accept when the bracket block is at an edge (prefix or suffix
-        # empty), consistent with the other matchers' begin/end rule.
-        if prefixStr.strip() and suffixStr.strip():
-            return False
-        # Accepted trade-off of this "bracket-at-edge + known name" heuristic: a
-        # bracket block at the message edge whose content word-boundary-matches a
-        # registered tool name is treated as a broken-call candidate, so a bare
-        # markdown link like ``[generate_and_send_image](url)`` as the
-        # whole/trailing response would also match. Tightening to require
-        # call-like markers (backticks / "function" / "вызов") would risk
-        # under-matching the real broken-call failures this exists to recover.
-        haystack = bracketContent + " " + bracesContent
-        knownToolName: Optional[str] = None
-        # If the bracket block contains more than one registered tool name, the
-        # first one found (toolsHandlers dict-iteration order) wins. This is
-        # acceptable by design: the handler is never executed for a broken call
-        # — only a generic "retry" error is emitted, naming whichever tool matched.
-        for toolName in self.toolsHandlers:
-            if re.search(rf"(?<![\w]){re.escape(toolName)}(?![\w])", haystack):
-                knownToolName = toolName
-                break
-        if knownToolName is None:
-            return False
-        # Synthesise a tool call that signals "broken, retry" WITHOUT executing
-        # the handler.
-        mlRunResult.status = ModelResultStatus.TOOL_CALLS
-        mlRunResult.resultText = (prefixStr + suffixStr).strip()
-        mlRunResult.toolCalls = [
-            LLMToolCall(
-                id=str(uuid.uuid4()),
-                name=knownToolName,
-                parameters={},
-                errorMessage=f"Found broken call of tool '{knownToolName}', retry with proper tool call",
-            )
-        ]
-        return True
+        # Scan every ``[...]`` block in the text. A single-regex anchored on
+        # the first ``[`` would mis-match when a markdown link or any other
+        # bracket appears before the actual broken-call bracket — exactly the
+        # shape of the real failure captures that carry article prose with
+        # markdown links above the broken call.
+        for bracketMatch in re.finditer(r"\[(.+?)\]", resultText, re.DOTALL):
+            bracketContent = bracketMatch.group(1)
+            # Find a registered tool name inside this bracket (word-boundary
+            # match; ``\w`` includes ``_`` so underscore-bearing names match
+            # cleanly without partial-word hits).
+            knownToolName: Optional[str] = None
+            for toolName in self.toolsHandlers:
+                if re.search(rf"(?<![\w]){re.escape(toolName)}(?![\w])", bracketContent):
+                    knownToolName = toolName
+                    break
+            if knownToolName is None:
+                continue
+            bracketStart = bracketMatch.start(0)
+            bracketEnd = bracketMatch.end(0)
+            prefixStr = resultText[:bracketStart]
+            suffixStr = resultText[bracketEnd:]
+            # Acceptance rule. (a) Edge case: the bracket sits at the beginning
+            # or end of the message (the prefix OR suffix, after stripping
+            # whitespace and surrounding triple-backtick fences, is empty —
+            # preserving the legacy ```` ```\n[name]\n``` ```` shape that the
+            # old single-regex matcher accepted). (b) Mid-message + JSON params
+            # suffix: the entire suffix is an optional fenced JSON code block
+            # (whitespace + optional ``` fence + optional ``json`` tag + JSON
+            # object + optional closing fence), matching the structural shape
+            # "broken-call bracket followed by its would-be parameters block".
+            atEdge = (not prefixStr.strip().strip("`").strip()) or (not suffixStr.strip().strip("`").strip())
+            # '\n\n```json\n{...}\n```'
+            hasJsonParams = re.match(r"^\s*`*(json)?\s*{.*}\s*`*\s*$", suffixStr, re.DOTALL) is not None
+            if not (atEdge or hasJsonParams):
+                continue
+            # Accepted trade-off of this "bracket + known name" heuristic: a
+            # bracket block whose content word-boundary-matches a registered
+            # tool name is treated as a broken-call candidate, so a bare
+            # markdown link like ``[generate_and_send_image](url)`` at the
+            # message edge would also match. Tightening to require call-like
+            # markers would risk under-matching the real broken-call failures
+            # this exists to recover.
+            # Synthesise a tool call that signals "broken, retry" WITHOUT
+            # executing the handler.
+            mlRunResult.status = ModelResultStatus.TOOL_CALLS
+            # Keep the original text intact — the model needs to see its own
+            # broken-call bracket as context for the retry. The bracket is
+            # still part of the model's natural-language response; stripping
+            # it would lose the intent/prompt.
+            mlRunResult.resultText = resultText
+            mlRunResult.toolCalls = [
+                LLMToolCall(
+                    id=str(uuid.uuid4()),
+                    name=knownToolName,
+                    parameters={},
+                    errorMessage=f"Found broken call of tool '{knownToolName}', retry with proper tool call",
+                )
+            ]
+            return True
+        return False
 
     def _tryHealToolCall(self, mlRunResult: ModelRunResult) -> bool:
         """Try every known tool-call healing/recovery strategy on a FINAL model response, in priority order.
