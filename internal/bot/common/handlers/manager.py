@@ -489,7 +489,9 @@ class HandlersManager(CommandHandlerGetterInterface):
                 HandlerParallelism.SEQUENTIAL,
             ),
             # # Next - Handlers, which uses `newMessageHandler` for setting settings
-            # Should be before MessagePreprocessorHandler to not save configuration answers
+            # Registered AFTER MessagePreprocessorHandler (so incoming messages
+            # are already saved to history before any /configure reply is sent);
+            # ordering intentional. Parallel — independent of preprocessor state.
             (
                 ConfigureCommandHandler(configManager=configManager, database=database, botProvider=botProvider),
                 HandlerParallelism.PARALLEL,

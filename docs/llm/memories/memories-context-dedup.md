@@ -17,10 +17,26 @@ notes that don't fit in the canonical doc.
 Shipped end-to-end via the 6-phase plan below (P1–P6); 3088 tests green at
 merge; Gate-2 whole-work review PASSED. Final shape:
 
-- `cache`/`excludeMemoryIds` are **REQUIRED keyword-only** params on
-  `formatForLLM`/`toModelMessage`/`toModelMessageList` (NO defaults — the v1
-  "default `None`" idea was overridden at go-time; pyright enforces every
-  caller so a forgotten `cache=` is a type error, not a silent memory drop).
+- `cache` is a **REQUIRED keyword-only** param on
+  `formatForLLM`/`toModelMessage`/`toModelMessageList` (NO default — pyright
+  enforces every caller so a forgotten `cache=` is a type error, not a silent
+  memory drop). `excludeMemoryIds` is keyword-only with `= None` default
+  (body normalises to `set()`) — see the [CORRECTION] below.
+
+  > **[CORRECTION]** The original go-time decision (and several historical
+  > sections below: "Final user decisions" §1, "Phase 2 DONE", "CRITICAL
+  > lesson — D1") describe BOTH `cache` AND `excludeMemoryIds` as required
+  > keyword-only with no defaults. That held at ship time, but
+  > `excludeMemoryIds` later regained an `= None` default (current signature:
+  `excludeMemoryIds: Optional[Set[str]] = None`, normalised to `set()` in the
+  > body). Only `cache` remains truly required. Consequence for the D1 lesson:
+  > pyright STILL catches a forgotten `cache=` (the actual silent-memory-drop
+  > vector), but does NOT catch a forgotten `excludeMemoryIds=` — the latter
+  > just disables dedup for that caller (renders all memories), a much milder
+  > failure mode that was apparently deemed acceptable when the default was
+  > re-added. The same staleness exists in ADR-018 in
+  > [`../architecture.md`](../architecture.md) §"Components" / §"Consequences
+  > → Signature enforcement" (out of scope for this memory file).
 - `computeMemoryExcludes` shipped as a module-level fn in `base.py` for
   reuse/clarity (later DELETED post-shipping — see "Post-shipping revisions").
 - `setUserMemories` was **REMOVED outright** (not repurposed) — `injectMemories`
@@ -89,7 +105,7 @@ Plan to eliminate per-message duplication of user-memories JSON in LLM context
 verbatim → ~N× repetition of permanent memories across a thread; storage
 already compacted to IDs in `metadata["memories"]`, but rendered output still
 repeats full content). Plan doc:
-[`../../plans/memories-context-dedup-plan-v1.md`](../../plans/memories-context-dedup-plan-v1.md).
+[`../../archive/plans/memories-context-dedup-plan-v1.md`](../../archive/plans/memories-context-dedup-plan-v1.md).
 Locked design decisions (agreed with user):
 
 - **Drop `EnsuredMessage.userMemories` field** (attribute + `__slots__`).
@@ -134,7 +150,7 @@ Locked design decisions (agreed with user):
 ## v2 detailed plan + architect review (2026-07-11)
 
 Detailed plan:
-[`../../plans/memories-context-dedup-plan-v2.md`](../../plans/memories-context-dedup-plan-v2.md)
+[`../../archive/plans/memories-context-dedup-plan-v2.md`](../../archive/plans/memories-context-dedup-plan-v2.md)
 — implementation-ready after architect review. Verified findings (code-analyst):
 `resolveMemories` has TWO callers (`fromDBChatMessage` + the `handleMention`
 text-reply bypass, which sets `metadata` directly then resolves before
@@ -274,7 +290,11 @@ and is **SUPERSEDED here**:
   `toModelMessage`/`toModelMessageList` got `*` only before the new params —
   INCONSISTENCY, normalize in Phase 4.
 
-### Phase 5 MUST-DO items (deferred from Gate-1 Phase-2 review — DO NOT FORGET)
+### Phase 5 MUST-DO items (deferred from Gate-1 Phase-2 review — ADDRESSED POST-SHIP)
+
+> **[UPDATE 2026-07-18 audit]** All four items below are now DONE or MOOT.
+> Verified against current code (see annotations). The original list is
+> retained as a historical record of the Gate-1 review backlog.
 
 1. [`/tests/test_memory_resolution_coverage.py`](/tests/test_memory_resolution_coverage.py)
    AST guard Check-1 now checks the DEAD `fromDBChatMessage cache=` invariant
@@ -282,13 +302,31 @@ and is **SUPERSEDED here**:
    REPURPOSE it to scan the render methods
    (`toModelMessage`/`toModelMessageList`/`formatForLLM`) for required
    `cache=`/`excludeMemoryIds=` kwargs.
+   **[DONE-MOOT]** Check-1 was REMOVED entirely (not repurposed); only
+   Check-2 (the `setUserMemories` metadata-bypass ban) remains, kept as a
+   vacuous regression guard. The test module's docstring documents this
+   explicitly. Note: with `excludeMemoryIds` having regained an `= None`
+   default (see [CORRECTION] under "Shipped outcome" above), a Check-1-style
+   AST scan for required `excludeMemoryIds=` would no longer be valid; only
+   `cache=` is still required-keyword-only.
 2. Rename/delete `test_fromDBChatMessage_withCache_resolvesMemoriesInternally`
    (name contradicts its first assertion `msg.userMemories is None`).
+   **[DONE]** Test no longer exists in
+   `tests/bot/models/test_ensured_message.py` (renamed/removed).
 3. Drop vestigial `await newMsg.resolveMemories(cache)` calls in
    `TestFormatForLLMMemoriesResolution` parity tests (now no-ops).
+   **[DONE]** `resolveMemories` is gone from the entire codebase (verified
+   via repo-wide grep — zero `.py` matches outside docstrings/comments). The
+   test class itself was renamed `TestFormatForLLMMemoryResolution`
+   ("Memories" → "Memory").
 4. Document stale-ID behavioral delta: when all referenced IDs fail to
    resolve, `userMemories` key is now OMITTED (previously emitted empty-cohort
    dict `{"permanent":[],"shortTerm":[]}`).
+   **[DONE]** Covered by `TestFormatForLLMMemoryResolution.test_*` in
+   `tests/bot/models/test_ensured_message.py` (explicit assertions that
+   `"userMemories" not in parsed` when all IDs resolve to `None`); also
+   documented in ADR-018 §"Consequences → Stale-ID behavioral delta" in
+   [`../architecture.md`](../architecture.md).
 
 ## Cross-references
 
@@ -297,8 +335,8 @@ and is **SUPERSEDED here**:
   by-id `MEMORIES` cache, the root-exemption trade-off).
 - [`../architecture.md`](../architecture.md) ADR-018 — architecture decision
   record for the context-deduplication change.
-- [`../../plans/memories-context-dedup-plan-v1.md`](../../plans/memories-context-dedup-plan-v1.md)
+- [`../../archive/plans/memories-context-dedup-plan-v1.md`](../../archive/plans/memories-context-dedup-plan-v1.md)
   — v1 plan doc (historical, pre-architect-review).
-- [`../../plans/memories-context-dedup-plan-v2.md`](../../plans/memories-context-dedup-plan-v2.md)
+- [`../../archive/plans/memories-context-dedup-plan-v2.md`](../../archive/plans/memories-context-dedup-plan-v2.md)
   — v2 detailed plan + architect review (historical; §5.2/§5.4/§7 SUPERSEDED
   by the final user decisions above).

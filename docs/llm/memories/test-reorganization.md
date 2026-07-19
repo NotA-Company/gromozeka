@@ -18,7 +18,7 @@ How to use this file:
 - `lib/X/Y.py` -> `tests/lib/X/test_Y.py` (full `tests/lib/` prefix).
 - Cross-cutting tests stay at `tests/integration/`, `tests/verification/`.
 - `testpaths` stays `["tests", "lib", "internal"]` (lib/ and internal/ now have no test files; harmless).
-- Non-test files (`lib/markdown/test/run_tests.sh`, `README.md`, `MarkdownV2_demo.py`) remain in place under `lib/markdown/test/`.
+- Non-test artifacts that originally stayed under `lib/markdown/test/` (`run_tests.sh`, `README.md`, `MarkdownV2_demo.py`) were dropped the same day as the reorg in commit `075e4d5` (2026-05-21, "Drop some obsoleted lib/markdown files"); the `lib/markdown/test/` directory no longer exists. All markdown tests now live under `tests/lib/markdown/`.
 
 ## Cleanup
 

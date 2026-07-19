@@ -39,7 +39,8 @@ git diff $(git merge-base master HEAD) --stat
 ```
 
 ### Files Modified
-```git diff $(git merge-base master HEAD) --stat
+```text
+git diff $(git merge-base master HEAD) --stat
 path/to/file1.py                    | 45 +++++++++++++++++++++++++++++++++++++++++
 path/to/file2.py                    | 23 +++++++++++++--------
 path/to/file3.py                    | 12 +++++------
@@ -78,7 +79,8 @@ git log master..HEAD --pretty=format:"%h - %an, %ai : %s"
 ```
 
 ### Commits
-```git log master..HEAD --pretty=format:"%h - %an, %ai : %s"
+```text
+git log master..HEAD --pretty=format:"%h - %an, %ai : %s"
 a1b2c3d feat(module): add new feature implementation
 e4f5g6h fix(handler): resolve edge case in error handling
 i7j8k9l docs(readme): update installation instructions
@@ -184,7 +186,8 @@ q3r4s5t refactor(utils): improve code readability
 ## Testing Performed
 
 [Put result of `make test` here]
-```make test
+```text
+$ make test
 
 ...
 tests/services/cache/test_cache_service.py .....................................                                                                        [100%]
@@ -226,14 +229,19 @@ tests/services/cache/test_cache_service.py .....................................
 When reviewing this PR, please check:
 
 ### Core Quality Gates
+
+> Canonical rules live in [`AGENTS.md`](../../AGENTS.md) (repo root). The compact checklist below mirrors it; when in doubt, defer to AGENTS.md.
+
 - [ ] `make format lint` passes clean before and after edits
 - [ ] `make test` passes all tests (or explicitly documents any failures with justification)
+- [ ] `make check-docs` passes when the PR touches any `*.md` file (verifies local markdown links resolve)
 - [ ] All code uses camelCase for variables/args/fields/functions, PascalCase for classes, UPPER_CASE for constants
 - [ ] Docstrings present on all modules/classes/methods/functions with `Args:` and `Returns:` sections
 - [ ] Type hints present on all function/method parameters and returns
 - [ ] Python invoked via `./venv/bin/python3` (not `python` or `python3`)
 - [ ] No pydantic usage - using raw dicts + TypedDict + hand-rolled typed classes
 - [ ] Singletons accessed via `getInstance()` only (LLMService, CacheService, QueueService, StorageService, RateLimiterManager)
+- [ ] For user-visible changes: `CHANGELOG.md` entry added under `## [Unreleased]` (Added/Changed/Fixed), per [`docs/llm/changelog.md`](../llm/changelog.md) and AGENTS.md §Changelog — or N/A explicitly justified
 
 ### Database & Handler Specifics (if applicable)
 - [ ] SQL changes are portable across SQLite/PostgreSQL/MySQL (see `docs/sql-portability-guide.md`)
@@ -262,7 +270,7 @@ When reviewing this PR, please check:
 5. **Complete the checklist** before requesting review
 6. **Link all files** using relative paths for easy navigation
 7. **Follow commit message format** using conventional commits
- 8. Delete all `How to fill this section` sections after. Those sections are present to help filling template, they shouldn't be in reporting document
+8. **Delete all `How to fill this section` blocks** after filling — those blocks exist only to help fill the template; they must not appear in the final report
 9. **Ensure no \[placeholders\] left** - ALL placeholders should be filled with actual content or deleted if no content needed
 
 **Git Commands Reference:**

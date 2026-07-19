@@ -18,7 +18,7 @@
 | `locks.py` | Per-session mutex registry with bounded waiters and force-cancel, global run semaphore, pool flock |
 | `storage.py` | Workspace path resolution, atomic JSON writes, directory layout |
 | `gc.py` | Garbage collector for expired sessions, orphan workspaces, run records |
-| `backends/docker.py` | Docker backend via `aiodocker==0.26.0` |
+| `backends/docker.py` | Docker backend via `aiodocker==0.27.0` |
 | `runtimes/python/runtime.py` | Python runtime with `timeout` wrapper and artifact detection |
 | `metadata/filesystem.py` | Filesystem-backed metadata store (JSON) |
 
@@ -31,6 +31,7 @@ SandboxHandler (`internal/bot/common/handlers/sandbox.py`) provides slash comman
 - `/sandbox files [path]` — List files in sandbox workspace
 - `/sandbox read <path>` — Read a file from sandbox workspace
 - `/sandbox status` — Show sandbox session status
+- `/sandbox packages` — List installed Python packages
 - `/sandbox install <packages...>` — Install Python packages (admin only)
 
 **LLM tools:**
@@ -117,9 +118,9 @@ All config keys in TOML use kebab-case. Each config dataclass has a `fromDict()`
 
 ### Octal permission values
 
-Storage permission fields (`dirMode`, `fileMode`) use `int(val, 0)` for parsing:
+Storage permission fields (`dirMode`, `fileMode`) use `int(val, 0)` for parsing. The literal MUST include the `0o` prefix — bare `"0700"` raises `ValueError` under `base=0` in Python 3:
 ```python
-dirMode = int(data.get("dir-mode", "0700"), 0)  # base 0 auto-detects octal
+dirMode = int(data.get("dir-mode", "0o700"), 0)  # base 0 auto-detects the 0o prefix as octal
 ```
 **NEVER** use a non-zero base like `int(val, 0o770)` — that's the base, not the mask.
 
@@ -205,7 +206,7 @@ The `SandboxBackend` protocol requires a `close()` method. Never use `hasattr(ba
 
 ### 8. Docker backend: connector close order
 
-In aiodocker 0.26.0, the `Docker` class stores `aiohttp.ClientSession` as the **public** `self.session` attribute (NOT `self._session`). When closing:
+In aiodocker 0.27.0, the `Docker` class stores `aiohttp.ClientSession` as the **public** `self.session` attribute (NOT `self._session`). When closing:
 1. Close `self._client.session.connector` FIRST (before `client.close()` nulls the session)
 2. Then call `self._client.close()`
 
@@ -225,7 +226,7 @@ async def close(self) -> None:
         self._client = None
 ```
 
-**NEVER** use `self._client._session` — the underscore attribute doesn't exist in aiodocker 0.26.0.
+**NEVER** use `self._client._session` — the underscore attribute doesn't exist in aiodocker 0.27.0.
 
 ### 9. shutdown() must cancel active runs
 
@@ -234,7 +235,7 @@ async def close(self) -> None:
 ### 10. aiodocker version must be pinned
 
 ```text
-aiodocker==0.26.0
+aiodocker==0.27.0
 ```
 
 Not `>=0.21.0` — version ranges are forbidden.
@@ -283,7 +284,7 @@ If an exception (including `CancelledError`) occurs during container creation, s
 
 ### 17. readFile output is bounded
 
-`readFile()` accepts a `maxBytes` parameter. When provided, only `maxBytes` bytes are read, and a `truncated` flag is set if the file exceeds the limit. The sandbox handler always passes `maxBytes=3000` when reading stdout/stderr to avoid overwhelming message delivery. Never call `readFile()` without `maxBytes` on untrusted container output.
+`readFile()` accepts a `maxBytes` parameter. When provided, only `maxBytes` bytes are read, and a `truncated` flag is set if the file exceeds the limit. The sandbox handler always passes `maxBytes=4096` when reading stdout/stderr (both from the `run_python` LLM tool and the `/run` slash command) to avoid overwhelming message delivery. The `/sandbox read` slash command uses `maxBytes=3000`. Never call `readFile()` without `maxBytes` on untrusted container output.
 
 ---
 
@@ -311,15 +312,16 @@ make test
 ```
 
 ### Docker integration tests
-Docker tests require Colima/Docker running and two env vars:
+Docker tests require Colima/Docker running and the `DOCKER_AVAILABLE=1` env var. Point `DOCKER_HOST` at your local daemon socket:
 ```bash
-DOCKER_HOST="unix:///Users/vgoshev/.colima/default/docker.sock" DOCKER_AVAILABLE=1 \
-./venv/bin/pytest tests/lib/sandbox/ -v -m slow
+DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock" DOCKER_AVAILABLE=1 \
+./venv/bin/pytest tests/lib/sandbox/backends/test_docker.py -v -m slow
 ```
 
-- 19 Docker integration tests across `test_docker.py`, `test_manager_runs_integration.py`, `test_manager_libs_integration.py`
-- All gated by `@pytest.mark.slow` and `pytestmark = [pytest.mark.slow, pytest.mark.skipif(not DOCKER_AVAILABLE, ...)]`
-- Workspace uses `~/.gromozeka-tests/` (not `tmp_path`) because Docker doesn't share macOS temp dirs
+- 10 Docker integration tests in `tests/lib/sandbox/backends/test_docker.py` (class `TestDockerBackendIntegration`)
+- Gated at the class level with `@skipUnlessDocker` (= `pytest.mark.skipif(not DOCKER_AVAILABLE, ...)`) plus `@pytest.mark.slow`
+- Other classes in the same file (`TestGetClientClientSessionLeak`, `TestRunOneshotContainerCleanup`) are mocked unit tests — they run without Docker
+- `~/.gromozeka-tests/` is used by `tests/scripts/test_sandbox_bootstrap.py` (bootstrap integration tests), not by the Docker backend tests
 - After tests, verify NO "Unclosed connector" warnings in output
 
 ### Singleton state in tests
@@ -330,10 +332,10 @@ SandboxManager._configInstance = None
 ```
 
 ### Test config construction
-When building config dicts in tests, use kebab-case keys:
+When building config dicts in tests, use kebab-case keys (octal permission values require the `0o` prefix under `int(val, 0)`):
 ```python
 configDict = {
-    "storage": {"root-dir": "/tmp/test", "dir-mode": "0700", "file-mode": "0600"},
+    "storage": {"root-dir": "/tmp/test", "dir-mode": "0o700", "file-mode": "0o600"},
     "backend": {"name": "docker", "docker": {"base-url": "unix:///..."}},
     ...
 }

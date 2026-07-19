@@ -1,7 +1,13 @@
-# Completions -- Text Generation
+# Yandex Cloud AI Studio SDK Reference — Completions (gRPC) (verified against pinned v0.22.0, 2026-07-18)
 
 Text generation via the gRPC-based `models.completions` domain. This is the
 primary interface for YandexGPT family models.
+
+> **Verified against pinned SDK v0.22.0** (re-captured 2026-07-18 from
+> `venv/lib/python3.14/site-packages/yandex_ai_studio_sdk/`). Production
+> consumer: `lib/ai/providers/yc_sdk_provider.py` (gRPC completions path).
+> Claims marked with ⚠ are server-side facts not checkable from the SDK
+> source.
 
 See also: [Chat (OpenAI Compat)](chat-openai-compat.md) for the HTTP-based
 alternative.
@@ -31,6 +37,11 @@ If the `model_name` already contains `://`, it is used verbatim (no prefix
 construction).
 
 ### Available Models
+
+⚠ The tables below are server-side facts (catalogue names, context sizes,
+expiry dates). The SDK itself keeps no well-known-names registry —
+`_get_model_uri` only inspects the literal `model_name` string for `://`. Any
+of these names may drift on the server without the SDK noticing.
 
 #### YandexGPT Family (gRPC and Chat)
 
@@ -68,11 +79,14 @@ construction).
 
 #### Fine-Tuned Models
 
-Fine-tuned models use a suffix-based URI:
+Fine-tuned models use a suffix-based URI. The `@<tuning-suffix>` must be
+passed as part of a **full URI** (with `://`) so the SDK's `_get_model_uri`
+takes the passthrough branch; the short form would otherwise get prefixed and
+have `/latest` appended after the suffix, producing a malformed URI.
 
 ```python
-# Fine-tuned model
-model = sdk.models.completions("yandexgpt-lite/latest@<tuning-suffix>")
+# Fine-tuned model -- full URI passthrough (the only correct form)
+model = sdk.models.completions("gpt://<fid>/yandexgpt-lite/latest@<tuning-suffix>")
 ```
 
 ## Model Configuration
@@ -106,20 +120,39 @@ model = sdk.models.completions("yandexgpt").configure(
 
 ### Reasoning Mode
 
-| Value | Description |
-|---|---|
-| `ReasoningMode.DISABLED` (or `0`) | No chain-of-thought |
-| `ReasoningMode.ENABLED_HIDDEN` (or `1`) | Chain-of-thought enabled but hidden from output |
+Defined on `yandex_ai_studio_sdk._models.completions.config.ReasoningMode`
+(a `ProtoEnumBase, Enum`). Integer values come from the upstream protobuf
+`ReasoningOptions.ReasoningMode`:
+
+| Value | Int | Description |
+|---|---|---|
+| `ReasoningMode.REASONING_MODE_UNSPECIFIED` (or `0`) | 0 | Mode not set (treated as no reasoning) |
+| `ReasoningMode.DISABLED` (or `1`) | 1 | No chain-of-thought |
+| `ReasoningMode.ENABLED_HIDDEN` (or `2`) | 2 | Chain-of-thought enabled but hidden from output |
+
+`reasoning_mode` accepts `int | str | ReasoningMode` (the `ReasoningModeType`
+alias); the SDK coerces strings by name, so
+`.configure(reasoning_mode="ENABLED_HIDDEN")` works equivalently to passing
+the enum member.
 
 On the chat domain, reasoning is expressed as effort levels: `"low"`,
 `"medium"`, `"high"` -- see [Chat (OpenAI Compat)](chat-openai-compat.md).
 
-### Critical: `.configure()` Mutates the Shared Object
+### Note: `.configure()` Is Immutable in 0.22.0
 
-`.configure()` mutates the model instance in place and returns it. If the same
-model object is shared across concurrent callers, re-configuring it between
-requests creates a race condition. This is the core issue blocking structured
-output in our current provider -- see [Gap Analysis](gap-analysis.md).
+`.configure()` does **not** mutate the receiver: it calls
+`self._config._replace(**kwargs)` (frozen dataclass `_replace`, which returns a
+new config) and constructs a **new** model instance via `self.__class__(...)`
+(see `_types/model.py::BaseModel.configure`). The original model is left
+untouched.
+
+The "`.configure()` mutates the shared object" hazard described in earlier
+versions of this doc applied to pre-0.22 SDK behavior and is what originally
+drove our provider's per-request `_getModel()` pattern. The mutation risk is
+gone, but the production pattern (`lib/ai/providers/yc_sdk_provider.py`) is
+retained defensively: every `_generateText` / `_generateStructured` /
+`_generateImage` call still builds a fresh model, so per-call overrides never
+leak across requests even if the SDK regresses. See [Gap Analysis](gap-analysis.md).
 
 ## Execution Methods
 
@@ -136,15 +169,22 @@ Blocks until the model finishes generating. Returns a `GPTModelResult`.
 
 ### `run_stream()` -- Streaming Generation
 
+> **Drift correction (0.22.0).** `run_stream` is an *async generator*
+> (`async def` + `yield`), not a coroutine. Iterate it directly with
+> `async for` — do **not** `await` it (`await` on an async generator
+> raises `TypeError: object async_generator can't be used in 'await'
+> expression`).
+
 ```python
-async for chunk in await model.run_stream(messages, *, timeout=180):
+async for chunk in model.run_stream(messages, *, timeout=180):
     # chunk: GPTModelResult (partial)
     print(chunk.text, end="", flush=True)
 ```
 
 Returns an `AsyncIterator[GPTModelResult]`. Each chunk contains a partial
 alternative with `status=PARTIAL`, except the final chunk which has
-`status=FINAL`.
+`status=FINAL`. ⚠ The `PARTIAL`/`FINAL` streaming sequence is server-side
+behaviour; the SDK only maps the status code from each `CompletionResponse`.
 
 ### `run_deferred()` -- Deferred (Background) Generation
 
@@ -185,33 +225,53 @@ Returns a tuple of `Token` dataclass instances. Each token has:
 
 ### `tune_deferred()` and `tune()` -- Fine-Tuning
 
+`tune_deferred()` returns an `AsyncTuningTask[AsyncGPTModel]` immediately and
+does **not** poll -- it has no `poll_timeout` / `poll_interval` arguments
+(those belong to the blocking `tune()` variant). Both methods gained
+`description`, `labels`, `tuning_type`, `scheduler`, `optimizer` parameters
+in SDK 0.22.0.
+
 ```python
-# Async tuning
-tuning_task: AsyncTuningTask = await model.tune_deferred(
+# Async tuning -- returns immediately, caller polls/awaits the task
+tuningTask: AsyncTuningTask = await model.tune_deferred(
     train_datasets,
-    validation_datasets=None,
-    name=None,
-    seed=None,
-    lr=None,
-    n_samples=None,
-    additional_arguments=None,
-    poll_timeout=259200,
-    poll_interval=60,
+    validation_datasets=UNDEFINED,
+    name=UNDEFINED,
+    description=UNDEFINED,
+    labels=UNDEFINED,
+    seed=UNDEFINED,
+    lr=UNDEFINED,
+    n_samples=UNDEFINED,
+    additional_arguments=UNDEFINED,
+    tuning_type=UNDEFINED,
+    scheduler=UNDEFINED,
+    optimizer=UNDEFINED,
+    timeout=60,
 )
 
-# Blocking tuning (polls until complete)
+# Blocking tuning (polls until complete, then returns a fresh tuned model)
 tuned_model = await model.tune(
     train_datasets,
-    validation_datasets=None,
-    name=None,
-    seed=None,
-    lr=None,
-    n_samples=None,
-    additional_arguments=None,
-    poll_timeout=259200,
+    validation_datasets=UNDEFINED,
+    name=UNDEFINED,
+    description=UNDEFINED,
+    labels=UNDEFINED,
+    seed=UNDEFINED,
+    lr=UNDEFINED,
+    n_samples=UNDEFINED,
+    additional_arguments=UNDEFINED,
+    tuning_type=UNDEFINED,
+    scheduler=UNDEFINED,
+    optimizer=UNDEFINED,
+    timeout=60,
+    poll_timeout=259200,   # 72h; class default is 72 * 60 * 60
     poll_interval=60,
 )
 ```
+
+Sentinel defaults are `UNDEFINED` (from `yandex_ai_studio_sdk._types.misc`),
+not `None` -- `None` would clear an existing value, `UNDEFINED` means "not
+passed". Omitting the kwarg is equivalent to passing `UNDEFINED`.
 
 See [Embeddings & Other](embeddings-and-other.md) for dataset preparation.
 
@@ -231,8 +291,8 @@ lc_model = model.langchain(model_type="chat", timeout=60)
 | `run_deferred()` | `await` | blocking | 60s |
 | `attach_deferred()` | `await` | blocking | 60s |
 | `tokenize()` | `await` | blocking | 60s |
-| `tune_deferred()` | `await` | blocking | 60s |
-| `tune()` | `await` | blocking | poll_timeout=259200s |
+| `tune_deferred()` | `await` | blocking | 60s (no `poll_*` args; returns `AsyncTuningTask`) |
+| `tune()` | `await` | blocking | 60s request, `poll_timeout=259200s`, `poll_interval=60s` |
 | `langchain()` | -- | -- | 60s |
 
 ## Message Format
@@ -247,8 +307,11 @@ result = await model.run("Tell me a joke")
 
 ### TextMessage Object
 
+`TextMessage` lives at `yandex_ai_studio_sdk._types.message.TextMessage` -- it
+is **not** re-exported from the top-level package.
+
 ```python
-from yandex_ai_studio_sdk import TextMessage
+from yandex_ai_studio_sdk._types.message import TextMessage
 
 result = await model.run([
     TextMessage(role="system", text="You are a helpful assistant"),
@@ -267,13 +330,29 @@ result = await model.run([
 
 ### FunctionResultMessageDict (Tool Results)
 
+The gRPC completions domain expects tool results bundled under a `tool_results`
+key on a single user-role message (the YC SDK awaits all tool calls in one
+message, unlike the OpenAI-compat API where each result is its own message).
+Each entry is a `ToolResultDictType` = `{"name": str, "content": str,
+"type"?: str}`. This is the shape the production provider builds in
+`YcAIModel._convertMessages()`.
+
 ```python
 result = await model.run([
     {"role": "user", "text": "What is the weather?"},
-    # ... assistant response with tool_calls ...
-    {"name": "get_weather", "content": "22C, sunny"},
+    # ... assistant response with tool_calls (TextMessageWithToolCallsProtocol) ...
+    {
+        "role": "user",
+        "tool_results": [
+            {"name": "get_weather", "content": "22C, sunny"},
+        ],
+    },
 ])
 ```
+
+The `FunctionResultMessageDict` TypedDict itself is
+`{role: NotRequired[str], tool_results: Required[Iterable[ToolResultDictType]]}`
+(see `_models/completions/message.py`).
 
 ## GPTModelResult
 
@@ -309,6 +388,11 @@ Each alternative in `.alternatives` has:
 
 ### AlternativeStatus
 
+Defined on `_models/completions/result.py`. Values `UNSPECIFIED`..`TOOL_CALLS`
+mirror the protobuf `Alternative.ALTERNATIVE_STATUS_*` enum (ints 0-5).
+`UNKNOWN` and `USAGE` are **SDK-only sentinels** with negative ids -- they do
+**not** come from the proto and must not be used as wire values.
+
 | Value | Int | Description |
 |---|---|---|
 | `UNSPECIFIED` | 0 | Status not set |
@@ -317,8 +401,8 @@ Each alternative in `.alternatives` has:
 | `FINAL` | 3 | Complete final result |
 | `CONTENT_FILTER` | 4 | Content policy violation |
 | `TOOL_CALLS` | 5 | Model is requesting tool calls |
-| `UNKNOWN` | 6 | Unknown status |
-| `USAGE` | 7 | Usage info only |
+| `UNKNOWN` | -1 | SDK sentinel: status code did not match any known proto value |
+| `USAGE` | -2 | SDK sentinel: message carries only usage data (no alternative) |
 
 ### CompletionUsage
 
@@ -357,11 +441,11 @@ await operation.cancel(timeout=60)
 
 | Method | Description |
 |---|---|
-| `await operation` | Wait for completion (default poll_interval=10s, poll_timeout=3600s) |
-| `operation.wait(poll_interval=, poll_timeout=)` | Explicit wait with polling control |
-| `operation.get_status(timeout=60)` | Get current operation status |
-| `operation.get_result(timeout=60)` | Get result (if completed) |
-| `operation.cancel(timeout=60)` | Cancel the operation |
+| `await operation` | Wait for completion (default `timeout=60`, `poll_interval=10s`, `poll_timeout=3600s`) |
+| `operation.wait(*, timeout=60, poll_timeout=, poll_interval=)` | Explicit wait with polling control |
+| `operation.get_status(*, timeout=60)` | Get current operation status |
+| `operation.get_result(*, timeout=60)` | Get result (if completed); raises `RunError` if failed, `WrongAsyncOperationStatusError` if still running |
+| `operation.cancel(*, timeout=60)` | Cancel the operation |
 
 ## Gaps vs OpenAI API
 
@@ -375,7 +459,7 @@ The YandexGPT completions API does **not** support these OpenAI parameters:
 | `presence_penalty` | None | Not available |
 | `logprobs` | None | Not available |
 | `seed` | None (text gen) | Available for image gen only |
-| `n` | None | Single alternative only |
+| `n` | None | ⚠ No parameter to control alternative count. The SDK's `GPTModelResult.alternatives: tuple[Alternative, ...]` can hold more than one, but how many the server emits is server-side and not configurable. |
 | `user` | None | Not available |
 
 The `reasoning_mode` parameter is YandexGPT-specific (no direct OpenAI

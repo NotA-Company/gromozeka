@@ -14,7 +14,7 @@ This module provides:
 - Telegram MarkdownV2 rendering
 
 Usage:
-    from lib.markdown import MarkdownParser, markdown_to_markdownv2
+    from lib.markdown import MarkdownParser, markdownToMarkdownV2
 
     # Basic HTML rendering
     parser = MarkdownParser()
@@ -24,7 +24,7 @@ Usage:
     markdownv2 = parser.parse_to_markdownv2("# Hello World\n\nThis is **bold** text.")
 
     # Convenience function
-    markdownv2 = markdown_to_markdownv2("**Bold** and *italic* text")
+    markdownv2 = markdownToMarkdownV2("**Bold** and *italic* text")
 
 MarkdownV2 Features:
 - Converts standard Markdown to Telegram's MarkdownV2 format

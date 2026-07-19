@@ -6,7 +6,8 @@ fast-moving library whose conversion flavoring (list markers, heading style,
 table whitespace) and result-object shape (``.content``, ``.warnings``)
 change between minors/majors.
 
-Production usage (``internal/bot/common/handlers/yandex_search.py:410-426``)::
+Production usage (the ``html_to_markdown.convert(...)`` block in
+``_llmToolGetUrlContent``, ``internal/bot/common/handlers/yandex_search.py``)::
 
     convertResult = html_to_markdown.convert(
         content,
@@ -46,7 +47,7 @@ import pytest
 #: against every pin in this file before shipping.
 PINNED_VERSION: str = "3.8.3"
 
-# The EXACT ConversionOptions production (yandex_search.py:412-415) uses.
+# The EXACT ConversionOptions production (the ``_llmToolGetUrlContent`` block in yandex_search.py) uses.
 # Constructed once and shared; treated as immutable in spirit.
 PRODUCTION_OPTIONS: html_to_markdown.ConversionOptions = html_to_markdown.ConversionOptions(
     extract_metadata=False,
@@ -185,7 +186,7 @@ class TestHtmlToMarkdownConversion:
     def testContentIsStrNeverNoneForEmptyOrStrippedInputs(self, html: str) -> None:
         """Pin that ``.content`` is a ``str`` (never ``None``) in 3.8.3.
 
-        Production (``yandex_search.py:417``) guards against
+        Production (the ``_llmToolGetUrlContent`` block in yandex_search.py) guards against
         ``convertResult.content is None`` with a raw-HTML fallback. In the
         pinned 3.8.3 binding, ``.content`` is a Rust-backed ``str`` that is
         **never** ``None`` for any string input — these inputs all yield ``''``.

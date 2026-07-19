@@ -468,6 +468,27 @@ def _modelRunResult(resultText: str) -> ModelRunResult:
     return ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText=resultText)
 
 
+def _modelRunResultWithStatus(status: ModelResultStatus, resultText: str = "") -> ModelRunResult:
+    """Build a :class:`ModelRunResult` with an explicit status and text.
+
+    Unlike :func:`_modelRunResult` (which hardcodes ``FINAL``), this helper lets
+    tests assert behaviour for non-FINAL success-like statuses such as
+    ``TRUNCATED_FINAL`` — the original empty-response bug surface from
+    ``docs/plans/llm-empty-truncated-final-handling-v1.md``.
+
+    Args:
+        status: The ``ModelResultStatus`` to set on the result.
+        resultText: The ``resultText`` the mocked LLM "returned". Defaults to
+            ``""`` (the empty-output case the guard at ``llm_messages.py:394``
+            is designed to catch).
+
+    Returns:
+        A ``ModelRunResult`` with ``isFallback``/``isToolsUsed`` False and no
+        tool-usage history.
+    """
+    return ModelRunResult(rawResult={}, status=status, resultText=resultText)
+
+
 def _imageRunResult() -> ModelRunResult:
     """Build a :class:`ModelRunResult` simulating a successful image generation.
 
@@ -836,6 +857,161 @@ class TestRandomAnswerPromptAndSkipSentinel:
 
         assert result is True
         liveHandler.sendMessage.assert_awaited_once()  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Tests: handler-level empty-text abstention guard (llm_messages.py:394)
+# ---------------------------------------------------------------------------
+
+
+class TestLLMEmptyResponseGuard:
+    """Pin the handler-level empty-text abstention guard at ``llm_messages.py:394``.
+
+    Covers the ``""`` branch of the ``lmRetText.strip().strip("`").strip() in
+    ("<skip>", "")`` check in ``_sendLLMChatMessage`` — the handler-half of
+    Option B from ``docs/plans/llm-empty-truncated-final-handling-v1.md``
+    (shipped in commit ``7e2b5501``). The existing
+    :class:`TestRandomAnswerPromptAndSkipSentinel` covers only the ``<skip>``
+    branch; this class pins the bare-empty-``""`` branch and its edge cases
+    (whitespace-only, backtick-wrapped, ``TRUNCATED_FINAL`` vs ``FINAL``), plus
+    a no-regression guard that legitimate non-empty text still passes through.
+
+    All tests call ``_sendLLMChatMessage`` directly (like the ``<skip>`` and
+    ``<media-description>`` tests) with only ``llmService.generateTextViaLLM``
+    mocked to return the empty/edge-case ``ModelRunResult``.
+    """
+
+    async def testTruncatedFinalWithEmptyTextReturnsSkippedByModel(self, liveHandler: LLMMessageHandler) -> None:
+        """Empty ``TRUNCATED_FINAL`` (the original bug surface) → ``SKIPPED_BY_MODEL``.
+
+        Pins the primary regression: a reasoning-budget-exhaustion completion
+        (``finish_reason="length"``, empty content) surfaces from the provider
+        as ``status=TRUNCATED_FINAL, resultText=""``. The handler-half guard at
+        ``llm_messages.py:394`` must catch it and return
+        ``LLMReplyOutcome.SKIPPED_BY_MODEL`` so the empty text never reaches
+        ``sendMessage`` (which would raise ``BadRequest: Message text is
+        empty``). No image generation must be triggered.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResultWithStatus(ModelResultStatus.TRUNCATED_FINAL, "")
+        )
+        em = _liveEnsuredMessage()
+        messagesHistory = [ModelMessage(role="system", content="sys")]
+        typingManager = AsyncMock()
+
+        outcome = await liveHandler._sendLLMChatMessage(em, messagesHistory, typingManager=typingManager)
+
+        assert outcome == LLMReplyOutcome.SKIPPED_BY_MODEL
+        liveHandler.sendMessage.assert_not_awaited()  # type: ignore[attr-defined]
+        liveHandler.llmService.generateImage.assert_not_awaited()  # type: ignore[attr-defined]
+
+    async def testWhitespaceOnlyTextReturnsSkippedByModel(self, liveHandler: LLMMessageHandler) -> None:
+        """Whitespace-only ``resultText`` → ``SKIPPED_BY_MODEL``.
+
+        ``lmRetText = mlRet.resultText.strip()`` (line 326) collapses
+        whitespace-only output to ``""`` before the guard runs, so the
+        ``in ("<skip>", "")`` check matches. ``sendMessage`` must not be called.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResultWithStatus(ModelResultStatus.FINAL, "   \n\t  ")
+        )
+        em = _liveEnsuredMessage()
+        messagesHistory = [ModelMessage(role="system", content="sys")]
+        typingManager = AsyncMock()
+
+        outcome = await liveHandler._sendLLMChatMessage(em, messagesHistory, typingManager=typingManager)
+
+        assert outcome == LLMReplyOutcome.SKIPPED_BY_MODEL
+        liveHandler.sendMessage.assert_not_awaited()  # type: ignore[attr-defined]
+        liveHandler.llmService.generateImage.assert_not_awaited()  # type: ignore[attr-defined]
+
+    async def testFinalStatusWithEmptyTextReturnsSkippedByModel(self, liveHandler: LLMMessageHandler) -> None:
+        """Empty ``FINAL`` (no tool calls) → ``SKIPPED_BY_MODEL`` via the handler guard.
+
+        Behaviour assertion (plan Test Plan item 3): the service-layer
+        post-budget synthesizer at ``service.py:926-951`` is a SIBLING
+        mitigation that fires ONLY when ``budgetExhausted=True`` (the tool-call
+        round cap is hit). For a single-shot empty ``FINAL`` from a no-tools
+        call, ``budgetExhausted`` is never set, so the synthesizer does NOT
+        kick in and the empty ``FINAL`` propagates to the handler. The
+        handler-half guard at ``llm_messages.py:394`` is what catches it — this
+        test pins that the handler guard is the defence for single-shot empty
+        ``FINAL``, NOT the service synthesizer.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResultWithStatus(ModelResultStatus.FINAL, "")
+        )
+        em = _liveEnsuredMessage()
+        messagesHistory = [ModelMessage(role="system", content="sys")]
+        typingManager = AsyncMock()
+
+        outcome = await liveHandler._sendLLMChatMessage(em, messagesHistory, typingManager=typingManager)
+
+        assert outcome == LLMReplyOutcome.SKIPPED_BY_MODEL
+        liveHandler.sendMessage.assert_not_awaited()  # type: ignore[attr-defined]
+        liveHandler.llmService.generateImage.assert_not_awaited()  # type: ignore[attr-defined]
+
+    @pytest.mark.parametrize("backtickInput", ["``", "`", "  `  "])
+    async def testBacktickWrappedEmptyTextReturnsSkippedByModel(
+        self, liveHandler: LLMMessageHandler, backtickInput: str
+    ) -> None:
+        """Backtick-wrapped empty text → ``SKIPPED_BY_MODEL``.
+
+        The guard applies ``.strip().strip("`").strip()`` before the ``in
+        ("<skip>", "")`` membership test, so backtick-only or
+        whitespace-plus-backtick outputs collapse to ``""`` and abstain. This
+        covers models that emit a degenerate single/double-backtick response.
+        Parametrised over double backtick, single backtick, and
+        whitespace-padded single backtick.
+
+        Args:
+            liveHandler: Live handler fixture.
+            backtickInput: The backtick-only ``resultText`` variant.
+        """
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResultWithStatus(ModelResultStatus.FINAL, backtickInput)
+        )
+        em = _liveEnsuredMessage()
+        messagesHistory = [ModelMessage(role="system", content="sys")]
+        typingManager = AsyncMock()
+
+        outcome = await liveHandler._sendLLMChatMessage(em, messagesHistory, typingManager=typingManager)
+
+        assert outcome == LLMReplyOutcome.SKIPPED_BY_MODEL
+        liveHandler.sendMessage.assert_not_awaited()  # type: ignore[attr-defined]
+        liveHandler.llmService.generateImage.assert_not_awaited()  # type: ignore[attr-defined]
+
+    async def testNonEmptyTextPassesThroughNormally(self, liveHandler: LLMMessageHandler) -> None:
+        """Non-empty text → ``SENT`` (no-regression: guard does not false-positive).
+
+        Pins that the empty-text guard does NOT trip on legitimate text. A
+        normal ``FINAL`` with non-empty ``resultText`` flows past the guard,
+        reaches ``sendMessage``, and returns ``SENT``.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        liveHandler.llmService.generateTextViaLLM = AsyncMock(  # type: ignore[method-assign]
+            return_value=_modelRunResultWithStatus(ModelResultStatus.FINAL, "Hello there!")
+        )
+        em = _liveEnsuredMessage()
+        messagesHistory = [ModelMessage(role="system", content="sys")]
+        typingManager = AsyncMock()
+
+        outcome = await liveHandler._sendLLMChatMessage(em, messagesHistory, typingManager=typingManager)
+
+        assert outcome == LLMReplyOutcome.SENT
+        liveHandler.sendMessage.assert_awaited_once()  # type: ignore[attr-defined]
+        liveHandler.llmService.generateImage.assert_not_awaited()  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------

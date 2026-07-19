@@ -1,5 +1,6 @@
 # Possible YC Models: https://aistudio.yandex.ru/docs/ru/ai-studio/concepts/generation/models.html
 [models.models."yandex-art"]
+enabled = false # Deprecated on July of 2026
 provider = "yc-sdk"
 model_id = "yandex-art"
 model_version = "latest"

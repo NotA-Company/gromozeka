@@ -1,6 +1,6 @@
 # Chat Users Cache (ADR-015)
 
-Write-through `chat_users` cache in `CacheService`, eliminating 2–5 redundant `chat_users` reads per inbound message (memory-summary reads during LLM history reconstruction, spam `checkSpam`, per-message `updateChatUser` upsert, internal metadata-read inside `setUserMetadata`). Read this file when working on `CacheService` chat-user methods, `SpamHandler._getUserInfoFreshIfMessagesLessThan`, any `chat_users.metadata` writer, or the `chatUserMetadataLock()` concurrency contract. Canonical decision: ADR-015 in [`../architecture.md`](../architecture.md); plan of record: [`../../plans/user-info-cache-plan-v1.md`](../../plans/user-info-cache-plan-v1.md). For the nested-write hazard as it affects the refinement path, see the companion [`user-memory-refinement.md`](user-memory-refinement.md); for the structured-memory rewrite that still relies on this cache for the message-cursor persist, see [`user-memories.md`](user-memories.md).
+Write-through `chat_users` cache in `CacheService`, eliminating 2–5 redundant `chat_users` reads per inbound message (memory-summary reads during LLM history reconstruction, spam `checkSpam`, per-message `updateChatUser` upsert, internal metadata-read inside `setUserMetadata`). Read this file when working on `CacheService` chat-user methods, `SpamHandler._getUserInfoFreshIfMessagesLessThan`, any `chat_users.metadata` writer, or the `chatUserMetadataLock()` concurrency contract. Canonical decision: ADR-015 in [`../architecture.md`](../architecture.md); plan of record: [`../../archive/plans/user-info-cache-plan-v1.md`](../../archive/plans/user-info-cache-plan-v1.md). For the nested-write hazard as it affects the refinement path, see the companion [`user-memory-refinement.md`](user-memory-refinement.md); for the structured-memory rewrite that still relies on this cache for the message-cursor persist, see [`user-memories.md`](user-memories.md).
 
 ## Cache design
 
@@ -75,12 +75,12 @@ Mitigation: `logger.warning` fires when `len(messages) >= _memoryMaxMessagesPerR
 
 ## Line-number drift notes
 
-Line numbers drift with edits — verify before relying. Authoritative current locations (as of the 2026-07-05 review):
+Line numbers drift with edits — verify before relying. Authoritative current locations (as of the 2026-07-18 audit):
 
 - `chat_settings.py` is at [`/internal/bot/models/chat_settings.py`](/internal/bot/models/chat_settings.py) (NOT `internal/bot/common/`).
-- `setUserMetadata` @ `base.py:1157-1184` (re-verified 2026-07-14; re-locate by symbol if it drifts again).
-- `spam.py` `_getUserInfoFreshIfMessagesLessThan` @ **202-243** (not 199-241 as an earlier review reported).
-- `chat_messages.py:154` — the raw SQL `messages_count` increment bypass site.
+- `setUserMetadata` @ `base.py:1154-1181` (re-verified 2026-07-18; re-locate by symbol if it drifts again).
+- `spam.py` `_getUserInfoFreshIfMessagesLessThan` @ **202-248** (not 199-241 / 202-243 as earlier reviews reported).
+- `chat_messages.py:154` — the raw SQL `messages_count` increment bypass site (the "Update chat users message count" comment sits at 154; the UPDATE itself spans 155-167).
 
 ## Tests
 
@@ -91,7 +91,7 @@ Line numbers drift with edits — verify before relying. Authoritative current l
 ## Cross-references
 
 - ADR-015 in [`../architecture.md`](../architecture.md) — canonical decision.
-- [`../../plans/user-info-cache-plan-v1.md`](../../plans/user-info-cache-plan-v1.md) — plan of record (§16 supersedes §3/§14/§15 for the post-review contract).
+- [`../../archive/plans/user-info-cache-plan-v1.md`](../../archive/plans/user-info-cache-plan-v1.md) — plan of record (§16 supersedes §3/§14/§15 for the post-review contract).
 - [`user-memory-refinement.md`](user-memory-refinement.md) — companion: nested-write hazard and `chatUserMetadataLock()` as used by the refinement path.
 - [`user-memories.md`](user-memories.md) — companion: structured-memory rewrite that still relies on this cache for the message-cursor persist.
 - [`../tasks.md`](../tasks.md) §3 — reusable gotchas (`setUserMetadata(isUpdate=True)` shallow-merge hazard, cached `messages_count` staleness).

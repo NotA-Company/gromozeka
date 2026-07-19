@@ -25,24 +25,45 @@ useWal = true
 keepConnection = true  # Connect on creation and keep connection open
 
 # Archive database - old/inactive chats from 2023 and earlier
+# Served via a remote SQLink database server. SQLinkProvider is an HTTP client
+# for a remote DB service, so it takes url/user/password/database (not dbPath).
+# It also has no client-side readOnly flag — readonly access is enforced by the
+# server-side database ACL (see SQLinkProvider.isReadOnly, which inspects
+# db.access == "ro"). A stray readOnly key would be silently swallowed by the
+# provider's **kwargs, so it is intentionally omitted here.
 [database.providers.archive_2023]
 provider = "sqlink"
 
 [database.providers.archive_2023.parameters]
-dbPath = "archive_2023.db"
-readOnly = true  # Readonly for data integrity
+url = "https://sqlink-archive.example.com"
+user = "gromozeka_reader"
+password = "archive_reader_password"
+database = "archive_2023"
 timeout = 10
 keepConnection = true  # Connect immediately (good for readonly replicas)
 
 # Archive database - old/inactive chats from 2024
+# Same remote-server pattern as archive_2023, plus the optional `proxy` kwarg
+# (ProxyConfigDict) from SQLinkProvider.__init__ — routes the outbound SQLink
+# HTTP connection through a SOCKS5 proxy. Demonstrates the advanced per-provider
+# proxy override.
 [database.providers.archive_2024]
 provider = "sqlink"
 
 [database.providers.archive_2024.parameters]
-dbPath = "archive_2024.db"
-readOnly = true
+url = "https://sqlink-archive.example.com"
+user = "gromozeka_reader"
+password = "archive_reader_password"
+database = "archive_2024"
 timeout = 10
 keepConnection = true  # Connect immediately (good for readonly replicas)
+
+[database.providers.archive_2024.parameters.proxy]
+enabled = true
+type = "socks5"
+address = "socks5://proxy.internal:1080"
+user = "proxy_user"
+password = "proxy_password"
 
 # External bot database - read from another bot instance
 [database.providers.other_bot]
@@ -159,9 +180,10 @@ keepConnection = true  # Connect immediately (good for readonly replicas)
 # ============================================================================
 
 # Timeout Guidelines:
-# - Local databases (primary, archives, test): 30 seconds (standard)
-# - External databases (other_bot): 10 seconds (faster failure for unavailable sources)
-# - Backup storage: 60 seconds (may be on slower storage)
+# - Local SQLite databases (primary, test): 30 seconds (standard)
+# - Remote SQLink archives (archive_2023, archive_2024): 10 seconds (fail fast on network issues)
+# - External SQLite databases (other_bot): 10 seconds (faster failure for unavailable sources)
+# - Backup storage (backup): 60 seconds (may be on slower storage)
 
 # Configuration Notes:
 # - useWal (Write-Ahead Logging): Improves concurrency for SQLite databases
@@ -190,9 +212,10 @@ keepConnection = true  # Connect immediately (good for readonly replicas)
 # ============================================================================
 
 # This configuration demonstrates mixing different database providers:
-# - SQLite: primary, archives, test, backup (file-based, embedded)
-# - MySQL: mysql_production (client-server, high concurrency)
-# - PostgreSQL: postgres_production, postgres_replica (client-server, complex queries)
+# - SQLite3: primary, other_bot, test, backup (file-based, embedded)
+# - SQLink: archive_2023, archive_2024 (remote HTTP database server)
+# - MySQL: mysql_production (commented out — provider not yet selectable)
+# - PostgreSQL: postgres_production (commented out — provider not yet selectable)
 
 # Benefits of cross-provider setup:
 # - Use SQLite for development and testing (zero configuration)
@@ -202,7 +225,8 @@ keepConnection = true  # Connect immediately (good for readonly replicas)
 # - Seamless switching between providers with minimal code changes
 
 # Provider-specific features:
-# - SQLite: Zero configuration, file-based, perfect for development
+# - SQLite3: Zero configuration, file-based, perfect for development
+# - SQLink: Remote HTTP database server, optional per-provider proxy routing
 # - MySQL: Connection pooling, async operations, enterprise-grade
 # - PostgreSQL: Advanced data types, full-text search, read replicas
 

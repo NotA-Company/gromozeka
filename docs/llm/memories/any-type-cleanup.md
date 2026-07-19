@@ -37,5 +37,18 @@ Full audit and fix of `Any` type annotations in production code. 61 usages found
 - `rawResult: Any` for provider-agnostic LLM responses
 - `jsonDumps(data: Any)` — `default=str` fallback makes it genuinely any
 - `convertToSQLite(data: Any)` — dispatches on type with `str()` fallback
-- `ConfigManager.get(key, default=Any) -> Any` — generic config access
-- `Dict[str, Any]` — JSON-like dicts (~20 files, excluded from audit scope)
+- `ConfigManager.get(key, default: Any = None) -> Any` — generic config access
+- `Dict[str, Any]` — JSON-like dicts (75 files as of 2026-07-18, up from ~20 at audit time; excluded from audit scope)
+
+## Verification log
+
+- **2026-07-18** — Re-verified against current code (commit `0e8ebe3`). All 15
+  production files listed above still carry the narrowed types from the
+  original `4a80904` campaign; the table is exhaustive for production code
+  (the campaign commit also touched `docs/llm/teamlead-memory.md` and
+  `.opencode/memory.jsonl`, which is why the summary says "16 files"). The 4
+  patterns established and 6 GENUINE-pattern bullets were each spot-checked
+  and remain accurate. Codebase has since grown: 700 `Any` occurrences across
+  95 files in `internal/`+`lib/` (vs. 61/24 at audit time) — the audit was a
+  one-time snapshot, not a standing invariant, so the growth is expected and
+  not itself drift.

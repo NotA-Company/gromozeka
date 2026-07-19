@@ -26,23 +26,22 @@ CREATE TABLE chat_messages (
     thread_id INTEGER NOT NULL DEFAULT 0,
     root_message_id TEXT,
     message_text TEXT NOT NULL,
-    message_type TEXT NOT NULL DEFAULT 'text',
-    message_category TEXT NOT NULL DEFAULT 'user',
+    message_type TEXT DEFAULT 'text' NOT NULL,
+    message_category TEXT DEFAULT 'user' NOT NULL,
     quote_text TEXT,
     media_id TEXT,
     media_group_id TEXT,
-    markup TEXT NOT NULL DEFAULT '',
-    metadata TEXT NOT NULL DEFAULT '',
+    markup TEXT DEFAULT '' NOT NULL,
+    metadata TEXT DEFAULT '' NOT NULL,
     created_at TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP NOT NULL,
-    PRIMARY KEY (chat_id, message_id),
-    FOREIGN KEY (chat_id, user_id) REFERENCES chat_users(chat_id, user_id),
-    FOREIGN KEY (media_id) REFERENCES media_attachments(file_unique_id)
+    PRIMARY KEY (chat_id, message_id)
 )
 ```
 
+Schema above is the post-`migration_013` shape (the canonical form with no `DEFAULT CURRENT_TIMESTAMP`). Columns `markup`/`metadata` were added by `migration_007`; `media_group_id` by `migration_008`. **No `updated_at` column** — only `created_at`. **No SQL `FOREIGN KEY` declarations** — the relationships below are logical (enforced by the application, not by DDL).
+
 **TypedDict**: [`ChatMessageDict`](../internal/database/models.py:108)
-**Relationships**: References [`chat_users`](#chat_users), [`media_attachments`](#media_attachments), [`media_groups`](#media_groups)
+**Relationships**: References [`chat_users`](#chat_users) (logical, via `(chat_id, user_id)`), [`media_attachments`](#media_attachments) (logical, via `media_id`), [`media_groups`](#media_groups) (logical, via `media_group_id`).
 
 **Note**: The `media_group_id` column links messages that are part of a media group (album of photos/videos sent together).
 
@@ -142,26 +141,26 @@ CREATE TABLE chat_settings (
 )
 ```
 
-**Available Keys**: See [`ChatSettingsKey`](../internal/bot/models/chat_settings.py:41) enum
+**Available Keys**: See [`ChatSettingsKey`](../internal/bot/models/chat_settings.py:281) enum
 
 ---
 
-### media_group
+### media_groups
 **Purpose**: Media group relationships for grouped media messages
 **Primary Key**: `(media_group_id, media_id)`
 
 ```sql
-CREATE TABLE media_group (
+CREATE TABLE media_groups (
     media_group_id TEXT NOT NULL,
     media_id TEXT NOT NULL,
     created_at TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP NOT NULL,
-    PRIMARY KEY (media_group_id, media_id),
-    FOREIGN KEY (media_id) REFERENCES media_attachments(file_unique_id)
+    PRIMARY KEY (media_group_id, media_id)
 )
 ```
 
-**Relationships**: References [`media_attachments`](#media_attachments), referenced by [`chat_messages`](#chat_messages)
+Schema above is the post-`migration_013` shape. Created by `migration_008`. **No `updated_at`** and **no SQL `FOREIGN KEY`** — the relationship to [`media_attachments`](#media_attachments) is logical (enforced by the application).
+
+**Relationships**: Logically references [`media_attachments`](#media_attachments) via `media_id`; logically referenced by [`chat_messages`](#chat_messages) via `media_group_id`.
 
 **Note**: This table tracks which media items belong to the same media group (album). Multiple messages can share the same `media_group_id` when media is sent as an album.
 
@@ -217,7 +216,7 @@ CREATE TABLE spam_messages (
 )
 ```
 
-**TypedDict**: [`SpamMessageDict`](../internal/database/models.py:303)
+**TypedDict**: [`SpamMessageDict`](../internal/database/models.py:325)
 
 ---
 
@@ -336,7 +335,7 @@ CREATE TABLE chat_summarization_cache (
 )
 ```
 
-**TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:326)
+**TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:348)
 **Indexes**: `chat_summarization_cache_ctfl_index`
 
 ---
@@ -355,7 +354,7 @@ CREATE TABLE cache_storage (
 )
 ```
 
-**TypedDict**: [`CacheStorageDict`](../internal/database/models.py:364)
+**TypedDict**: [`CacheStorageDict`](../internal/database/models.py:386)
 
 ---
 
@@ -371,9 +370,9 @@ CREATE TABLE divinations (
     system_id      TEXT    NOT NULL,                          -- 'tarot' | 'runes'
     deck_id        TEXT    NOT NULL,                          -- e.g. 'rws', 'elder_futhark'
     layout_id      TEXT    NOT NULL,                          -- e.g. 'three_card', 'three_runes'
-    question       TEXT    NOT NULL DEFAULT '',
+    question       TEXT    NOT NULL,                          -- may be empty string at app layer
     draws_json     TEXT    NOT NULL,                          -- JSON list of drawn symbols
-    interpretation TEXT    NOT NULL DEFAULT '',
+    interpretation TEXT    NOT NULL,                          -- may be empty string at app layer
     image_prompt   TEXT,
     invoked_via    TEXT    NOT NULL,                          -- 'command' | 'llm_tool'
     created_at     TIMESTAMP NOT NULL,
@@ -383,7 +382,7 @@ CREATE TABLE divinations (
 
 **Indexes**: `idx_divinations_user_created` on `(chat_id, user_id, created_at)`
 
-**Repository**: `db.divinations.insertReading(...)`
+**Repository**: `db.divinations.insertReading(...)` (class `DivinationsRepository`)
 
 **Notes**: Only populated when `[divination] enabled = true`. No foreign-key relationship to other tables; image media is resolved via the normal message-history pipeline.
 
@@ -410,13 +409,13 @@ CREATE TABLE divination_layouts (
 
 **Indexes**: `idx_divination_layouts_system` on `system_id`
 
-**Repository**: `DivinationLayoutsRepository`
+**Repository**: `DivinationsRepository` (accessed as `db.divinations`) — there is no separate `DivinationLayoutsRepository` class; layout CRUD was merged into `DivinationsRepository` (the same class that owns `insertReading`). Layout-specific methods: `getLayout`, `saveLayout`, `saveNegativeCache`, `isNegativeCacheEntry`.
 
 **Usage**:
 - Caches discovered layouts from LLM + web search
-- Negative cache entries prevent repeated failed discoveries (`name_en=''`, `n_symbols=0`)
-- Retrieved via `DivinationLayoutsRepository.getLayout()`
-- Saved via `DivinationLayoutsRepository.saveLayout()`
+- Negative cache entries prevent repeated failed discoveries (`name_en=''`, `n_symbols=0`, `positions='[]'`)
+- Retrieved via `DivinationsRepository.getLayout()`
+- Saved via `DivinationsRepository.saveLayout()`
 
 **Note**: Only populated when `[divination] enabled = true`. Negative cache pattern stores failed discoveries with empty `name_en` and `n_symbols=0`.
 
@@ -447,12 +446,12 @@ CREATE TABLE message_embeddings (
 - `getMessagesWithoutEmbeddings(chatId, limit, modelName) -> list[ChatMessageDict]` — used by `ChatSearchHandler._dtCronJob` (backfill). Returns full `ChatMessageDict` rows (joined with `chat_users` for `username`/`full_name`); the `message_embeddings` table is only used as a `NOT EXISTS` filter, not selected from. When `modelName` is set, rows whose existing embedding was made by a different model are also surfaced.
 - `deleteChatEmbeddings(chatId)` — drop all embeddings for a chat (e.g. on model switch).
 
-**Public dispatcher** (`ChatMessagesRepository`):
-- `searchChatMessages(chatId, queryEmbedding=..., ...) -> list[SearchResultDict]` — combined filter + (optional) semantic search; cosine similarity over the embedding blob when `queryEmbedding` is provided. Embeddings are re-loaded fresh from `message_embeddings` on every call. The semantic path delegates to `ChatEmbeddingsRepository._semanticSearch` via a private back-reference.
+**Public dispatcher** (`ChatSearchRepository`, accessed as `db.chatSearch`):
+- `searchChatMessages(chatId, queryEmbedding=..., ...) -> list[ChatMessageDict]` — combined filter + (optional) semantic search; cosine similarity over the embedding blob when `queryEmbedding` is provided. Embeddings are re-loaded fresh from `message_embeddings` on every call. The semantic path delegates to `ChatSearchRepository._semanticSearch` (private helper on the same class).
 
-**In-memory cache**: `ChatMessagesRepository` does NOT keep a per-chat `TTLDict` of decoded float matrices — the previous `_embeddingCache` and the `[search-history.embeddings].cache-ttl-seconds` / `cache-max-chats` settings were removed. Caching decoded vectors belongs in the handler layer (via `CacheService`) and is intentionally not implemented at the repository level.
+**In-memory cache**: `ChatSearchRepository` does NOT keep a per-chat `TTLDict` of decoded float matrices — the previous `_embeddingCache` and the `[search-history.embeddings].cache-ttl-seconds` / `cache-max-chats` settings were removed. Caching decoded vectors belongs in the handler layer (via `CacheService`) and is intentionally not implemented at the repository level.
 
-**Note**: No foreign-key to `chat_messages` — messages can be deleted from `chat_messages` without cascading (embeddings become orphans and are eventually overwritten by a future re-embed pass). The `model` column lets a chat switch `EMBEDDING_MODEL` cleanly: `getMessagesWithoutEmbeddings(chatId, ..., modelName=newModel)` skips rows already produced by `newModel`, so the `ChatSearchHandler._dtCronJob` backfill re-uses compatible rows.
+**Note**: No foreign-key to `chat_messages` — messages can be deleted from `chat_messages` without cascading (embeddings become orphans and are eventually overwritten by a future re-embed pass). The `model` column lets a chat switch `EMBEDDING_MODEL` cleanly: `ChatEmbeddingsRepository.getMessagesWithoutEmbeddings(chatId, ..., modelName=newModel)` skips rows already produced by `newModel`, so the `ChatSearchHandler._dtCronJob` backfill re-uses compatible rows.
 
 ---
 
@@ -620,15 +619,17 @@ CREATE TABLE user_memories (
 
 **Enum**: [`MemoryType`](../internal/database/models.py:473) (`BIO`/`PREFERENCE`/`FACT`/`EVENT`/`RELATIONSHIP`); [`UserMemorySource`](../internal/database/models.py:515) (`REFINEMENT`/`CHAT`/`MIGRATION`/`USER`).
 
-**Repository** (`UserMemoriesRepository`, accessed as `db.userMemories`) — 10 public methods; all SQL goes through `BaseSQLProvider`:
+**Repository** (`UserMemoriesRepository`, accessed as `db.userMemories`) — 12 public methods; all SQL goes through `BaseSQLProvider`:
 - `addMemory(chatId, userId, memoryId, *, type, content, tags, permanent, source, embedding=None, embeddingModel=None, threadId=None) -> None` — INSERT (caller generates the UUID). `source` is a `UserMemorySource`; `threadId` is keyword-only; when both `embedding` (`List[float]`) and `embeddingModel` are provided the row is embedded during add.
 - `deleteMemory(chatId, userId, memoryId) -> bool` — SOFT DELETE: sets `deleted_at` + bumps `updated_at`, drops the vec0 row, nulls `embedding_model`/`embedding_dimensions`. Unrestricted (may target permanent). Row survives for historical reads; never raises.
 - `getPermanentMemories(chatId, userId, threadId, *, limit=10) -> List[UserMemoryDict]` — merges cross-thread permanent (`thread_id IS NULL`) AND this-thread permanent. Filters `deleted_at IS NULL`.
 - `getLatestMemories(chatId, userId, threadId, *, limit=5) -> List[UserMemoryDict]` — thread-scoped newest-first, **ephemeral-only** (`permanent = 0`); permanent memories are served by `getPermanentMemories`. Filters `deleted_at IS NULL`.
-- `getMemoriesByIds(memoryIds: List[str], *, chatId: Optional[int] = None, dataSource: Optional[str] = None) -> List[UserMemoryDict]` — the single read that does NOT filter `deleted_at`: resolves UUIDs to content for historical message reconstruction (compact-ID storage). No `chatId`/`userId` scoping in the WHERE clause (UUIDs globally unique); `chatId`/`dataSource` are routing-only (forwarded to `getProvider(..., readonly=True)`); default `None` → default DB.
+- `getMemory(chatId, userId, memoryId, *, dataSource=None) -> Optional[UserMemoryDict]` — single-row read by the full PK `(chatId, userId, memoryId)`; backs the `/memory_config` wizard's per-memory detail view. Unrestricted by `permanent`/`thread_id`. Filters `deleted_at IS NULL`.
+- `getMemoriesByIds(memoryIds: List[str], *, chatId: Optional[int] = None, dataSource: Optional[str] = None) -> List[UserMemoryDict]` — the single read that does NOT filter `deleted_at`: resolves UUIDs to content for historical message reconstruction (compact-ID storage). No `chatId`/`userId` scoping in the WHERE clause (UUIDs globally unique); `chatId`/`dataSource` are routing-only (forwarded to `getProvider(..., readonly=True)`); default `None` → default DB. Auto-chunked in batches of `MAX_SQL_VARIABLES`.
+- `getDistinctTags(chatId, userId, memoryType=None, *, dataSource=None) -> List[str]` — sorted distinct tag strings across the user's (live) memories; backs the wizard's tag-filter picker. Optional `memoryType` filter.
 - `searchMemories(chatId, userId, queryEmbedding=None, *, threadId=None, type=None, tags=None, permanent=None, limit=20, embeddingModel, offset=0) -> List[UserMemoryDict]` — filter-only (`queryEmbedding is None`) or semantic (vec0 KNN, `score = 1.0 - distance`). `queryEmbedding` is `Optional[List[float]]`; `embeddingModel` (required, pass `None` for filter-only) replaces the old `dimensions` arg and is part of the vec0 `model` partition filter. `tags` applied as a portable SQL `LIKE '%"tagN"%'` filter (ANY-match) against the JSON-TEXT `tags` column. Both modes filter `deleted_at IS NULL`.
 - `saveMemoryEmbedding(chatId, userId, memoryId, embedding, embeddingModel) -> bool` — lazy-create `vec_user_memories_{dim}` + upsert the vector (`embedding` is `List[float]`, `embeddingModel` the model name) + set provenance. Its internal row SELECT also filters `deleted_at IS NULL` (defense-in-depth).
-- `deleteMemoryEmbedding(chatId, userId, memoryId) -> None` — best-effort vec0 DELETE; never raises.
+- `deleteMemoryEmbedding(chatId, userId, memoryId, vecOnly=False) -> bool` — best-effort vec0 DELETE; never raises. When `vecOnly=False` (default), also nulls `embedding_model`/`embedding_dimensions` provenance on the relational row and bumps `updated_at`. Returns `True` when a vec0 row was deleted OR no vec0 table existed; `False` when tables existed but the `memory_id` was absent.
 - `getMemoriesWithoutEmbeddings(chatId, *, limit=50, modelName=None, dimensions=None, dataSource=None) -> List[UserMemoryDict]` — stale detection (NULL or mismatched `embedding_model`/`embedding_dimensions`); backs the regen cron + initial backfill. Filters `deleted_at IS NULL` (so a soft-deleted memory is never re-embedded).
 - `deleteObsoleteMemoryEmbeddings(chatId, currentModel, currentDimensions) -> int` — model-drift cleanup.
 
@@ -705,7 +706,7 @@ UNBAN = "unban"
 ---
 
 ### CacheType
-**Location**: [`internal/database/models.py:377`](../internal/database/models.py:377)
+**Location**: [`internal/database/models.py:399`](../internal/database/models.py:399)
 
 ```python
 WEATHER = "weather"
@@ -732,15 +733,16 @@ db.chatMessages.saveChatMessage(
     userId: int,
     messageId: MessageId,
     replyId: Optional[MessageId] = None,
-    threadId: Optional[int] = None,
+    threadId: Optional[int] = None,           # None → DEFAULT_THREAD_ID (0)
     messageText: str = "",
     messageType: MessageType = MessageType.TEXT,
     messageCategory: MessageCategory = MessageCategory.UNSPECIFIED,
     rootMessageId: Optional[MessageId] = None,
     quoteText: Optional[str] = None,
     mediaId: Optional[str] = None,
-    markup: str = "",
-    metadata: str = ""
+    markup: Optional[Sequence[Mapping[str, Any]]] = None,   # None → []
+    metadata: Optional[Mapping[str, Any]] = None,           # None → {}
+    mediaGroupId: Optional[str] = None
 ) -> bool
 ```
 
@@ -753,6 +755,8 @@ db.chatMessages.getChatMessagesSince(
     threadId: Optional[int] = None,
     limit: Optional[int] = None,
     messageCategory: Optional[Sequence[MessageCategory]] = None,
+    userId: Optional[int] = None,
+    *,
     dataSource: Optional[str] = None
 ) -> List[ChatMessageDict]
 ```
@@ -762,9 +766,21 @@ db.chatMessages.getChatMessagesSince(
 db.chatMessages.getChatMessageByMessageId(
     chatId: int,
     messageId: MessageId,
+    *,
     dataSource: Optional[str] = None
 ) -> Optional[ChatMessageDict]
 ```
+
+**Get Messages by IDs (batch)**
+```python
+db.chatMessages.getChatMessagesByMessageIds(
+    chatId: int,
+    messageIds: Sequence[MessageId],
+    *,
+    dataSource: Optional[str] = None
+) -> List[ChatMessageDict]
+```
+Auto-chunked into batches of `MAX_SQL_VARIABLES` to stay under the engine's bound-parameter limit; ordered ascending by `date`.
 
 **Get Messages by Root ID**
 ```python
@@ -772,6 +788,7 @@ db.chatMessages.getChatMessagesByRootId(
     chatId: int,
     rootMessageId: MessageId,
     threadId: Optional[int] = None,
+    *,
     dataSource: Optional[str] = None
 ) -> List[ChatMessageDict]
 ```
@@ -782,8 +799,20 @@ db.chatMessages.getChatMessagesByUser(
     chatId: int,
     userId: int,
     limit: int = 100,
+    *,
     dataSource: Optional[str] = None
 ) -> List[ChatMessageDict]
+```
+
+**Get First Message by Media Group ID**
+```python
+db.chatMessages.getFirstChatMessageByMediaGroupId(
+    chatId: int,
+    mediaGroupId: str,
+    threadId: Optional[int] = None,
+    *,
+    dataSource: Optional[str] = None
+) -> Optional[ChatMessageDict]
 ```
 
 **Update Message Category**
@@ -795,29 +824,86 @@ db.chatMessages.updateChatMessageCategory(
 ) -> bool
 ```
 
+**Update Message Metadata**
+```python
+db.chatMessages.updateChatMessageMetadata(
+    chatId: int,
+    messageId: MessageId,
+    metadata: str | Any
+) -> bool
+```
+
+**Get Thread Context**
+```python
+db.chatMessages.getMessageThread(
+    chatId: int,
+    messageId: MessageId,
+    *,
+    dataSource: Optional[str] = None
+) -> Optional[ThreadResultDict]
+```
+Returns `None` if the target message does not exist. Otherwise returns a `ThreadResultDict` with `root_message` (None when the target is itself a root), `target_message`, and `thread_messages` (chronological, includes the target).
+
+---
+
+### Search Operations
+
+**Unified chat-message search** (`db.chatSearch`, class `ChatSearchRepository`):
+```python
+db.chatSearch.searchChatMessages(
+    chatId: int,
+    queryEmbedding: Optional[List[float]] = None,
+    *,
+    limit: Optional[int] = 10,
+    topK: int = 100,
+    userFilter: Optional[int] = None,
+    categoryFilter: Optional[Sequence[MessageCategory]] = None,
+    maxAgeDays: Optional[int] = None,
+    rootMessageId: Optional[MessageId] = None,
+    modelName: Optional[str] = None,
+    maxMessages: Optional[int] = None,
+    dataSource: Optional[str] = None,
+    threadId: Optional[int] = None,
+    substring: Optional[str] = None
+) -> List[ChatMessageDict]
+```
+Two modes: filter-only (`queryEmbedding is None`, sorted by `date DESC`, `score=0.0`) or semantic (cosine similarity over `message_embeddings`, `score = similarity`). See [`message_embeddings`](#message_embeddings) for the storage side and vec0 native-search fast path.
+
 ---
 
 ### User Operations
 
 **Save/Update User**
 ```python
-db.chatUsers.saveChatUser(
+db.chatUsers.updateChatUser(
     chatId: int,
     userId: int,
     username: str,
-    fullName: str,
-    timezone: Optional[str] = None
+    fullName: str
 ) -> bool
 ```
+Upsert — inserts a new `chat_users` row or refreshes `username` / `fullName` / `updated_at` on conflict. `timezone` is **not** settable via this method (the column exists in the schema but is populated through other paths).
 
 **Get User**
 ```python
 db.chatUsers.getChatUser(
     chatId: int,
     userId: int,
+    *,
     dataSource: Optional[str] = None
 ) -> Optional[ChatUserDict]
 ```
+
+**Get User by Username**
+```python
+db.chatUsers.getChatUserByUsername(
+    chatId: int,
+    username: str,
+    *,
+    dataSource: Optional[str] = None
+) -> Optional[ChatUserDict]
+```
+Case-insensitive exact match on `username` (portable `LOWER(...) = LOWER(...)` via the provider hook).
 
 **Get All Users**
 ```python
@@ -827,22 +913,21 @@ db.chatUsers.getChatUsers(
     minMessages: Optional[int] = None,
     lastActiveDays: Optional[int] = None,
     seenSince: Optional[datetime.datetime] = None,
+    *,
     dataSource: Optional[str] = None,
 ) -> List[ChatUserDict]
 ```
-
-Default mode (no `minMessages` / `lastActiveDays`): orders by `updated_at DESC`.
-Activity-filtered mode (any of `minMessages` / `lastActiveDays` set): orders by
-`messages_count DESC` and applies both filters.
+`seenSince` and `lastActiveDays` both apply to `updated_at`; when both are passed `lastActiveDays` wins (the relative window is more specific). Ordered by `updated_at DESC`. `limit=None` returns every matching row.
 
 **Update User Metadata**
 ```python
-db.chatUsers.updateChatUserMetadata(
+db.chatUsers.updateUserMetadata(
     chatId: int,
     userId: int,
     metadata: str
 ) -> bool
 ```
+Shallow top-level write — see the [`chat_users` metadata convention](#chat_users) for the read-modify-write rule (`CacheService.updateUserMetadata()` is the safe path; this repo method does NOT merge).
 
 ---
 
@@ -850,31 +935,33 @@ db.chatUsers.updateChatUserMetadata(
 
 **Save/Update Chat Info**
 ```python
-db.chatInfo.saveChatInfo(
+db.chatInfo.updateChatInfo(
     chatId: int,
+    type: str,
     title: Optional[str] = None,
     username: Optional[str] = None,
-    chatType: str = "private",
-    isForum: bool = False
+    isForum: Optional[bool] = False
 ) -> bool
 ```
+Note the parameter order: `type` is **required** and positional (no default); `title` / `username` / `isForum` are optional. Upsert keyed on `chat_id`.
 
 **Get Chat Info**
 ```python
 db.chatInfo.getChatInfo(
     chatId: int,
+    *,
     dataSource: Optional[str] = None
 ) -> Optional[ChatInfoDict]
 ```
 
-**Save Topic**
+**Save/Update Topic**
 ```python
-db.chatInfo.saveChatTopic(
+db.chatInfo.updateChatTopicInfo(
     chatId: int,
     topicId: int,
-    name: Optional[str] = None,
     iconColor: Optional[int] = None,
-    iconCustomEmojiId: Optional[str] = None
+    customEmojiId: Optional[str] = None,
+    topicName: Optional[str] = None        # None → "Default"
 ) -> bool
 ```
 
@@ -882,6 +969,7 @@ db.chatInfo.saveChatTopic(
 ```python
 db.chatInfo.getChatTopics(
     chatId: int,
+    *,
     dataSource: Optional[str] = None
 ) -> List[ChatTopicInfoDict]
 ```
@@ -894,18 +982,20 @@ db.chatInfo.getChatTopics(
 ```python
 db.chatSettings.getChatSetting(
     chatId: int,
-    key: str,
-    default: Optional[str] = None,
+    setting: str,
+    *,
     dataSource: Optional[str] = None
 ) -> Optional[str]
 ```
+Returns `None` if the key is unset (there is **no `default` parameter** at this layer — callers that need a default can use `Optional[str]` and fall back themselves, or use the handler-layer `getChatSettings()` which returns `ChatSettingsValue` objects with `.toStr()` / `.toBool()` / etc.).
 
 **Get All Chat Settings**
 ```python
 db.chatSettings.getChatSettings(
     chatId: int,
+    *,
     dataSource: Optional[str] = None
-) -> Dict[str, tuple[str, int]]  # Returns tuple: (value, updated_by)
+) -> Dict[str, tuple[str, int]]  # value → (value, updated_by)
 ```
 
 **Set Chat Setting**
@@ -913,9 +1003,16 @@ db.chatSettings.getChatSettings(
 db.chatSettings.setChatSetting(
     chatId: int,
     key: str,
-    value: str,
-    updatedBy: int  # REQUIRED keyword-only argument - user ID who changed the setting
+    value: Any,
+    *,
+    updatedBy: int  # REQUIRED keyword-only — user ID who changed the setting
 ) -> bool
+```
+
+**Unset / Clear**
+```python
+db.chatSettings.unsetChatSetting(chatId: int, key: str) -> bool
+db.chatSettings.clearChatSettings(chatId: int) -> bool
 ```
 
 **Get Global Setting**
@@ -923,6 +1020,7 @@ db.chatSettings.setChatSetting(
 db.common.getSetting(
     key: str,
     default: Optional[str] = None,
+    *,
     dataSource: Optional[str] = None
 ) -> Optional[str]
 ```
@@ -932,175 +1030,290 @@ db.common.getSetting(
 db.common.setSetting(
     key: str,
     value: str,
+    *,
     dataSource: Optional[str] = None
 ) -> bool
+```
+
+**Get All Global Settings**
+```python
+db.common.getSettings(
+    *,
+    dataSource: Optional[str] = None
+) -> Dict[str, str]
 ```
 
 ---
 
 ### Media Operations
 
-**Save Media Attachment**
+**Add Media Attachment**
 ```python
-db.mediaAttachments.saveMediaAttachment(
+db.mediaAttachments.addMediaAttachment(
+    *,
     fileUniqueId: str,
-    fileId: Optional[str] = None,
+    fileId: str,
     fileSize: Optional[int] = None,
-    mediaType: str = "photo",
-    metadata: str = "",
-    status: MediaStatus = MediaStatus.PENDING,
+    mediaType: MessageType = MessageType.IMAGE,
     mimeType: Optional[str] = None,
+    metadata: str | Dict[str, Any] = "{}",
+    status: MediaStatus = MediaStatus.NEW,
     localUrl: Optional[str] = None,
     prompt: Optional[str] = None,
     description: Optional[str] = None
 ) -> bool
 ```
+Note: **all parameters are keyword-only**, the default `status` is `MediaStatus.NEW` (not `PENDING`), and `fileId` is **required** (no default).
+
+**Update Media Attachment (unified partial update)**
+```python
+db.mediaAttachments.updateMediaAttachment(
+    mediaId: str,                            # file_unique_id
+    *,
+    fileSize: Optional[int] = None,
+    status: Optional[MediaStatus] = None,
+    metadata: Optional[str | Dict[str, Any]] = None,
+    mimeType: Optional[str] = None,
+    localUrl: Optional[str] = None,
+    description: Optional[str] = None,
+    prompt: Optional[str] = None
+) -> bool
+```
+Single method that updates any subset of fields (only non-`None` fields are written). Replaces the older separate `updateMediaStatus` / `updateMediaDescription` methods that no longer exist.
 
 **Get Media Attachment**
 ```python
 db.mediaAttachments.getMediaAttachment(
-    fileUniqueId: str,
+    mediaId: str,
+    *,
     dataSource: Optional[str] = None
 ) -> Optional[MediaAttachmentDict]
 ```
 
-**Update Media Status**
+**Get Media Attachments by Group ID**
 ```python
-db.mediaAttachments.updateMediaStatus(
-    fileUniqueId: str,
-    status: MediaStatus
-) -> bool
+db.mediaAttachments.getMediaAttachmentsByGroupId(
+    mediaGroupId: str,
+    *,
+    dataSource: Optional[str] = None
+) -> List[MediaAttachmentDict]
+```
+JOINs `media_groups` to `media_attachments`.
+
+**Get Media Group Last Updated At**
+```python
+db.mediaAttachments.getMediaGroupLastUpdatedAt(
+    mediaGroupId: str,
+    *,
+    dataSource: Optional[str] = None
+) -> Optional[datetime.datetime]
 ```
 
-**Update Media Description**
+**Ensure Media in Group**
 ```python
-db.mediaAttachments.updateMediaDescription(
-    fileUniqueId: str,
-    description: str
+db.mediaAttachments.ensureMediaInGroup(
+    *,
+    mediaId: str,
+    mediaGroupId: str
 ) -> bool
 ```
+Idempotent upsert into `media_groups` (`ON CONFLICT DO NOTHING`).
 
 ---
 
 ### Spam Detection Operations
 
-**Save Spam Message**
+`db.spam` (`SpamRepository`) only owns the **message-log** side of spam/ham training (rows in `spam_messages` / `ham_messages`). The Bayes-model statistics live in `bayes_tokens` / `bayes_classes` and are exposed through a **separate** class, `DatabaseBayesStorage` (`internal/database/bayes_storage.py`) — see [Bayes Statistics Operations](#bayes-statistics-operations) below.
+
+**Add Spam Message**
 ```python
-db.spam.saveSpamMessage(
+db.spam.addSpamMessage(
     chatId: int,
     userId: int,
     messageId: MessageId,
-    text: str,
-    reason: SpamReason,
-    score: float
+    messageText: str,
+    spamReason: SpamReason,
+    score: float,
+    confidence: float
 ) -> bool
 ```
 
-**Save Ham Message**
+**Add Ham Message**
 ```python
-db.spam.saveHamMessage(
+db.spam.addHamMessage(
     chatId: int,
     userId: int,
     messageId: MessageId,
-    text: str,
-    reason: str,
-    score: float
+    messageText: str,
+    spamReason: SpamReason,
+    score: float,
+    confidence: float
 ) -> bool
 ```
 
-**Get Spam Messages**
+**Get Spam Messages (paginated list)**
 ```python
 db.spam.getSpamMessages(
+    limit: int = 1000,
+    *,
+    dataSource: Optional[str] = None
+) -> List[SpamMessageDict]
+```
+Returns ALL spam messages across ALL chats (there is **no `chatId` filter** here — pass one of the chat-scoped variants below for that), ordered by insertion order, capped by `limit`. `dataSource` is keyword-only.
+
+**Get Spam Messages by Text (case-insensitive)**
+```python
+db.spam.getSpamMessagesByText(
+    text: str,
+    *,
+    dataSource: Optional[str] = None
+) -> List[SpamMessageDict]
+```
+Portable `LOWER(...) = LOWER(...)` match via `provider.getCaseInsensitiveComparison(...)`.
+
+**Get Spam Messages by User**
+```python
+db.spam.getSpamMessagesByUserId(
     chatId: int,
-    limit: int = 100,
+    userId: int,
+    *,
     dataSource: Optional[str] = None
 ) -> List[SpamMessageDict]
 ```
 
-**Update Bayes Token**
+**Delete Spam Messages by User**
 ```python
-db.spam.updateBayesToken(
-    token: str,
-    chatId: Optional[int],
-    spamCount: int,
-    hamCount: int
-) -> bool
-```
-
-**Get Bayes Token**
-```python
-db.spam.getBayesToken(
-    token: str,
-    chatId: Optional[int] = None,
-    dataSource: Optional[str] = None
-) -> Optional[Dict[str, Any]]
-```
-
-**Update Bayes Class**
-```python
-db.spam.updateBayesClass(
-    chatId: Optional[int],
-    isSpam: bool,
-    messageCount: int,
-    tokenCount: int
+db.spam.deleteSpamMessagesByUserId(
+    chatId: int,
+    userId: int
 ) -> bool
 ```
 
 ---
 
+### Bayes Statistics Operations
+
+Bayes-filter statistics are NOT on `db.spam`. They live on a separate `DatabaseBayesStorage` instance (`internal/database/bayes_storage.py`, implements `lib.bayes_filter.storage_interface.BayesStorageInterface`) which is constructed with a `Database` handle and an optional `dataSource`:
+
+```python
+from internal.database.bayes_storage import DatabaseBayesStorage
+
+storage = DatabaseBayesStorage(db, dataSource=None)
+```
+
+All methods take an optional `chatId: Optional[int] = None`. `chatId=None` targets the **global** model (`chat_id IS NULL`); an int targets a chat-local model.
+
+**Token statistics**
+```python
+storage.getTokenStats(tokens: Iterable[str], chatId: Optional[int] = None) -> Dict[str, TokenStats]
+storage.updateTokenStats(token: str, is_spam: bool, increment: int = 1, chat_id: Optional[int] = None) -> bool
+storage.batchUpdateTokens(tokenUpdates: List[Dict[str, Any]], chatId: Optional[int] = None) -> bool
+storage.getAllTokens(chatId: Optional[int] = None) -> List[str]
+storage.getVocabularySize(chatId: Optional[int] = None) -> int
+storage.getTopSpamTokens(limit: int = 10, chatId: Optional[int] = None) -> List[TokenStats]
+storage.getTopHamTokens(limit: int = 10, chatId: Optional[int] = None) -> List[TokenStats]
+```
+
+**Class statistics**
+```python
+storage.getClassStats(is_spam: bool, chat_id: Optional[int] = None) -> ClassStats
+storage.updateClassStats(isSpam: bool, messageIncrement: int = 1, tokenIncrement: int = 0, chatId: Optional[int] = None) -> bool
+```
+
+**Aggregate / maintenance**
+```python
+storage.getModelStats(chatId: Optional[int] = None) -> BayesModelStats
+storage.clearStats(chatId: Optional[int] = None) -> bool
+storage.cleanupRareTokens(minCount: int = 2, chatId: Optional[int] = None) -> None
+storage.cleanupOldTokens(rules: Sequence[Tuple[int, int]]) -> bool   # each rule = (ttlSeconds, maxCount)
+```
+
+Note the asymmetric parameter names: `getTokenStats` / `getClassStats` use `chatId`, but `updateTokenStats` uses `chat_id` (and `is_spam` snake_case) — these come straight from the `BayesStorageInterface`. `updateClassStats` is camelCased. The underlying tables (`bayes_tokens`, `bayes_classes`) were added by `migration_006`.
+
+---
+
 ### Cache Operations
 
-**Get Cache**
+The `db.cache` repository (`CacheRepository`) owns **two** distinct tables — `cache` (typed entries with TTL) and `cache_storage` (simple namespace/key/value). All methods take a keyword-only `dataSource: Optional[str] = None`.
+
+**Get Cache Entry (TTL-aware)**
 ```python
-db.cache.getCache(
-    cacheType: CacheType,
+db.cache.getCacheEntry(
     key: str,
+    cacheType: CacheType,
+    ttl: Optional[int] = None,
+    *,
     dataSource: Optional[str] = None
 ) -> Optional[CacheDict]
 ```
+Returns `None` immediately (without querying) when `ttl is not None and ttl <= 0`. When `ttl > 0`, only rows whose `updated_at >= now - ttl seconds` match. Note parameter order: `key` first, `cacheType` second.
 
-**Set Cache**
+**Set Cache Entry**
 ```python
-db.cache.setCache(
-    cacheType: CacheType,
+db.cache.setCacheEntry(
     key: str,
-    data: str
+    data: str,
+    cacheType: CacheType,
+    *,
+    dataSource: Optional[str] = None
 ) -> bool
 ```
+Upsert keyed on `(namespace=cacheType, key)`; on conflict `data` and `updated_at` are refreshed (`created_at` stays).
 
-**Get Cache Storage**
+**Clear Entire Cache Type**
 ```python
-db.cache.getCacheStorage(
-    namespace: str,
-    key: str,
+db.cache.clearCache(
+    cacheType: CacheType,
+    *,
     dataSource: Optional[str] = None
-) -> Optional[CacheStorageDict]
+) -> None
 ```
 
-**Set Cache Storage**
+**Clear Old Cache Entries**
+```python
+db.cache.clearOldCacheEntries(
+    ttl: Optional[int],
+    cacheType: Optional[CacheType] = None,
+    *,
+    dataSource: Optional[str] = None
+) -> bool
+```
+`ttl=None` or `0` removes **all** entries of the matching type(s). `cacheType=None` applies the cleanup across every namespace.
+
+**Get Cache Storage Entries (list all)**
+```python
+db.cache.getCacheStorage(
+    *,
+    dataSource: Optional[str] = None
+) -> List[CacheStorageDict]
+```
+There is **no namespace/key filter** — this returns every `cache_storage` row, ordered by `updated_at DESC`.
+
+**Set Cache Storage Entry**
 ```python
 db.cache.setCacheStorage(
     namespace: str,
     key: str,
-    value: str
+    value: str,
+    *,
+    dataSource: Optional[str] = None
 ) -> bool
 ```
 
-**Get Summarization Cache**
+**Unset Cache Storage Entry**
 ```python
-db.chatSummarization.getChatSummarizationCache(
-    chatId: int,
-    topicId: Optional[int],
-    firstMessageId: MessageId,
-    lastMessageId: MessageId,
-    prompt: str,
-    dataSource: Optional[str] = None
-) -> Optional[ChatSummarizationCacheDict]
+db.cache.unsetCacheStorage(namespace: str, key: str) -> bool
 ```
 
-**Set Summarization Cache**
+---
+
+### Summarization Operations
+
+`db.chatSummarization` (`ChatSummarizationRepository`) is the cache for chat-history summaries, keyed by a SHA-512 `csid` over `(chatId, topicId, firstMessageId, lastMessageId, prompt)`. Upsert semantics — re-summarising the same range with the same prompt refreshes the row in place.
+
+**Add / Refresh Summarization**
 ```python
-db.chatSummarization.setChatSummarizationCache(
+db.chatSummarization.addChatSummarization(
     chatId: int,
     topicId: Optional[int],
     firstMessageId: MessageId,
@@ -1110,34 +1323,64 @@ db.chatSummarization.setChatSummarizationCache(
 ) -> bool
 ```
 
+**Get Summarization (cache lookup)**
+```python
+db.chatSummarization.getChatSummarization(
+    chatId: int,
+    topicId: Optional[int],
+    firstMessageId: MessageId,
+    lastMessageId: MessageId,
+    prompt: str,
+    *,
+    dataSource: Optional[str] = None
+) -> Optional[ChatSummarizationCacheDict]
+```
+`dataSource` is keyword-only. The write path (`addChatSummarization`) routes via `chatId` and has no `dataSource` override.
+
 ---
 
 ### Task Operations
 
-**Save Delayed Task**
+`db.delayedTasks` (`DelayedTasksRepository`). Tasks are application-generated UUID strings (no DB-side `AUTOINCREMENT`); `kwargs` is a JSON-serialised string the caller builds.
+
+**Add Delayed Task**
 ```python
-db.delayedTasks.saveDelayedTask(
+db.delayedTasks.addDelayedTask(
     taskId: str,
-    delayedTs: int,
     function: str,
-    kwargs: str
+    kwargs: str,
+    delayedTS: int
 ) -> bool
 ```
+Parameter order: `taskId, function, kwargs, delayedTS` (not `delayedTS, function, kwargs`). Writes to the default source only; no `chatId`/`dataSource` override.
+
+**Update Delayed Task (mark done / reset)**
+```python
+db.delayedTasks.updateDelayedTask(
+    id: str,
+    isDone: bool
+) -> bool
+```
+Generic completion-flag mutator — pass `isDone=True` to mark done, `isDone=False` to re-arm. Bumps `updated_at`. There is no dedicated `markDelayedTaskDone` method.
 
 **Get Pending Tasks**
 ```python
 db.delayedTasks.getPendingDelayedTasks(
-    currentTs: int,
+    *,
     dataSource: Optional[str] = None
 ) -> List[DelayedTaskDict]
 ```
+Returns every row with `is_done = FALSE` (there is **no `currentTs` parameter** — callers filter `delayed_ts` against the current time themselves). `dataSource` is keyword-only.
 
-**Mark Task Done**
+**Cleanup Old Completed Tasks**
 ```python
-db.delayedTasks.markDelayedTaskDone(
-    taskId: str
+db.delayedTasks.cleanupOldCompletedDelayedTasks(
+    ttl: Optional[int],
+    *,
+    dataSource: Optional[str] = None
 ) -> bool
 ```
+Deletes rows with `is_done = TRUE AND updated_at < now - ttl`. `ttl=None` or `0` removes every completed task regardless of age.
 
 ---
 
@@ -1177,13 +1420,13 @@ timeout = 10
 
 ```python
 # Explicit routing (Tier 1)
-db.chatMessages.getChatMessages(chatId=123, dataSource="archive")
+db.chatMessages.getChatMessagesSince(chatId=123, dataSource="archive")
 
 # Chat mapping routing (Tier 2)
-db.chatMessages.getChatMessages(chatId=-1001234567890)  # Routes to "archive"
+db.chatMessages.getChatMessagesSince(chatId=-1001234567890)  # Routes to "archive"
 
 # Default routing (Tier 3)
-db.chatMessages.getChatMessages(chatId=456)  # Routes to "default"
+db.chatMessages.getChatMessagesSince(chatId=456)  # Routes to "default"
 ```
 
 ---
@@ -1220,17 +1463,18 @@ use_tools = settings.get('use-tools', ('false', 0))[0] == 'true'
 
 ### Cache API Response
 ```python
-# Set cache
-db.cache.setCache(
-    cacheType=CacheType.WEATHER,
+# Set cache (note: positional order is key, data, cacheType)
+db.cache.setCacheEntry(
     key=f"{lat},{lon}",
-    data=json.dumps(weather_data)
+    data=json.dumps(weather_data),
+    cacheType=CacheType.WEATHER
 )
 
-# Get cache
-cached = db.cache.getCache(
+# Get cache (TTL in seconds; pass ttl=None for "no expiry")
+cached = db.cache.getCacheEntry(
+    key=f"{lat},{lon}",
     cacheType=CacheType.WEATHER,
-    key=f"{lat},{lon}"
+    ttl=3600
 )
 if cached:
     weather_data = json.loads(cached['data'])

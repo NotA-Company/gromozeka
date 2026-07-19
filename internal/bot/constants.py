@@ -62,7 +62,7 @@ class ToolName(StrEnum):
     SANDBOX_SEND_FILE = "sandbox_send_file"
     SANDBOX_LIST_LIBRARIES = "sandbox_list_libraries"
 
-    # User Memories (Phase 2 — see docs/plans/user-memories-v1.md §8)
+    # User Memories (Phase 2 — see docs/archive/plans/user-memories-v1.md §8)
     ADD_MEMORY = "add_memory"
     DELETE_MEMORY = "delete_memory"
     SEARCH_MEMORIES = "search_memories"
@@ -165,7 +165,7 @@ MEMORY_MAX_REFINES_PER_TICK: int = 3
 """Upper bound on refinement LLM calls per 60s cron tick."""
 
 # Memory dedup thresholds (user-memories dedup / search tuning — see
-# docs/plans/user-memories-v1.md §8.2).
+# docs/archive/plans/user-memories-v1.md §8.2).
 MEMORY_DEDUP_DUPLICATE_THRESHOLD: float = 0.95
 """Cosine similarity at/above which ``add_memory`` treats the new memory as a
 duplicate of an existing one (no-op insert)."""

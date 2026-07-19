@@ -35,7 +35,7 @@
 | Type | Multi-platform AI bot (Telegram + Max Messenger) |
 | Python | 3.12+ |
 | Architecture | Modular, async, singleton services |
-| Test count | 3300+ |
+| Test count | 3390+ (as of 2026-07-18; verify with `./venv/bin/pytest --collect-only -q`) |
 | Status | Production-ready, active development |
 
 ### Key Features
@@ -222,56 +222,56 @@ vanishingly rare in the Gromozeka codebase.
 
 ### 4.2 Entry Points
 
-| File | Class/Function | Line | Purpose |
-|---|---|---|---|
-| [`main.py`](../../main.py:37) | [`GromozekBot`](../../main.py:37) | 37 | Top-level orchestrator |
-| [`main.py`](../../main.py:297) | [`main()`](../../main.py:297) | 297 | CLI entry point |
-| [`internal/bot/telegram/application.py`](../../internal/bot/telegram/application.py) | `TelegramBotApplication` | — | Telegram runner |
-| [`internal/bot/max/application.py`](../../internal/bot/max/application.py) | `MaxBotApplication` | — | Max Messenger runner |
+| File | Class/Function | Purpose |
+|---|---|---|
+| [`main.py`](../../main.py) | `GromozekBot` | Top-level orchestrator |
+| [`main.py`](../../main.py) | `main()` | CLI entry point |
+| [`internal/bot/telegram/application.py`](../../internal/bot/telegram/application.py) | `TelegramBotApplication` | Telegram runner |
+| [`internal/bot/max/application.py`](../../internal/bot/max/application.py) | `MaxBotApplication` | Max Messenger runner |
 
 ### 4.3 Key Singleton Services (import + get instance)
 
 | Service | Import | `getInstance()` call |
 |---|---|---|
-| [`CacheService`](../../internal/services/cache/service.py:193) | `from internal.services.cache import CacheService` | `CacheService.getInstance()` |
-| [`QueueService`](../../internal/services/queue_service/service.py:56) | `from internal.services.queue_service import QueueService` | `QueueService.getInstance()` |
-| [`LLMService`](../../internal/services/llm/service.py:52) | `from internal.services.llm import LLMService` | `LLMService.getInstance()` |
-| [`StorageService`](../../internal/services/storage/service.py:24) | `from internal.services.storage import StorageService` | `StorageService.getInstance()` |
-| [`RateLimiterManager`](../../lib/rate_limiter/manager.py:37) | `from lib.rate_limiter import RateLimiterManager` | `RateLimiterManager.getInstance()` |
-| [`ProxyService`](../../internal/services/proxy/service.py:23) | `from internal.services.proxy import ProxyService` | `ProxyService.getInstance()` |
-| [`SandboxManager`](../../lib/sandbox/manager.py:59) | `from lib.sandbox import SandboxManager` | `SandboxManager.getInstance()` |
-| [`ProxyHelper`](../../lib/proxy/__init__.py:469) | `from lib.proxy import ProxyHelper` | `ProxyHelper.getInstance()` |
+| [`CacheService`](../../internal/services/cache/service.py) | `from internal.services.cache import CacheService` | `CacheService.getInstance()` |
+| [`QueueService`](../../internal/services/queue_service/service.py) | `from internal.services.queue_service import QueueService` | `QueueService.getInstance()` |
+| [`LLMService`](../../internal/services/llm/service.py) | `from internal.services.llm import LLMService` | `LLMService.getInstance()` |
+| [`StorageService`](../../internal/services/storage/service.py) | `from internal.services.storage import StorageService` | `StorageService.getInstance()` |
+| [`RateLimiterManager`](../../lib/rate_limiter/manager.py) | `from lib.rate_limiter import RateLimiterManager` | `RateLimiterManager.getInstance()` |
+| [`ProxyService`](../../internal/services/proxy/service.py) | `from internal.services.proxy import ProxyService` | `ProxyService.getInstance()` |
+| [`SandboxManager`](../../lib/sandbox/manager.py) | `from lib.sandbox import SandboxManager` | `SandboxManager.getInstance()` |
+| [`ProxyHelper`](../../lib/proxy/__init__.py) | `from lib.proxy import ProxyHelper` | `ProxyHelper.getInstance()` |
 
-### 4.4 Critical File Paths (with approximate line counts)
+### 4.4 Critical File Paths
 
-| Path | Lines | Purpose |
-|---|---|---|
-| [`main.py`](../../main.py) | 336 | App entry, `GromozekBot`, daemon mode |
-| [`internal/bot/common/bot.py`](../../internal/bot/common/bot.py) | 1076 | `TheBot` – platform-agnostic bot ops |
-| [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) | 1974 | `BaseBotHandler`, `HandlerResultStatus` |
-| [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) | 1198 | `HandlersManager` – handler chain |
-| [`internal/database/database.py`](../../internal/database/database.py) | 315 | `Database` – all DB operations with repository pattern |
-| [`internal/config/manager.py`](../../internal/config/manager.py) | 536 | `ConfigManager` – TOML loading |
-| [`internal/services/cache/service.py`](../../internal/services/cache/service.py) | 1333 | `CacheService` singleton |
-| [`internal/services/llm/service.py`](../../internal/services/llm/service.py) | 982 | `LLMService` singleton |
-| [`internal/services/queue_service/service.py`](../../internal/services/queue_service/service.py) | 465 | `QueueService` singleton |
-| [`internal/services/storage/service.py`](../../internal/services/storage/service.py) | 304 | `StorageService` singleton |
-| [`lib/ai/abstract.py`](../../lib/ai/abstract.py) | 1082 | `AbstractModel`, `AbstractLLMProvider` |
-| [`lib/ai/manager.py`](../../lib/ai/manager.py) | 267 | `LLMManager` – provider + model registry |
+| Path | Purpose |
+|---|---|
+| [`main.py`](../../main.py) | App entry, `GromozekBot`, daemon mode |
+| [`internal/bot/common/bot.py`](../../internal/bot/common/bot.py) | `TheBot` – platform-agnostic bot ops |
+| [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) | `BaseBotHandler`, `HandlerResultStatus` |
+| [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) | `HandlersManager` – handler chain |
+| [`internal/database/database.py`](../../internal/database/database.py) | `Database` – all DB operations with repository pattern |
+| [`internal/config/manager.py`](../../internal/config/manager.py) | `ConfigManager` – TOML loading |
+| [`internal/services/cache/service.py`](../../internal/services/cache/service.py) | `CacheService` singleton |
+| [`internal/services/llm/service.py`](../../internal/services/llm/service.py) | `LLMService` singleton |
+| [`internal/services/queue_service/service.py`](../../internal/services/queue_service/service.py) | `QueueService` singleton |
+| [`internal/services/storage/service.py`](../../internal/services/storage/service.py) | `StorageService` singleton |
+| [`lib/ai/abstract.py`](../../lib/ai/abstract.py) | `AbstractModel`, `AbstractLLMProvider` |
+| [`lib/ai/manager.py`](../../lib/ai/manager.py) | `LLMManager` – provider + model registry |
 
 ### 4.5 `internal/` Directory
 
  | Path | Purpose |
 |---|---|
 | [`internal/bot/common/bot.py`](../../internal/bot/common/bot.py) | `TheBot` — platform-agnostic bot API |
-  | [`internal/bot/common/handlers/`](../../internal/bot/common/handlers/) | All 20+ handler implementations (incl. `DivinationHandler` for `/taro` & `/runes`, `SandboxHandler` for code execution, `ChatSearchHandler` for `/search` command and `search_messages`/`list_users`/`get_thread` LLM tools, plus base/manager/module_loader, tests, examples, and 15+ functional handlers) |
+  | [`internal/bot/common/handlers/`](../../internal/bot/common/handlers/) | All 20+ handler implementations (incl. `DivinationHandler` for `/taro` & `/runes`, `SandboxHandler` for code execution, `ChatSearchHandler` for `/search` command and `search_messages`/`list_users`/`get_thread`/`get_messages_by_ids` LLM tools, plus base/manager/module_loader, tests, examples, and 15+ functional handlers) |
 | [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) | `BaseBotHandler` — handler base class |
 | [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) | `HandlersManager` — handler chain |
 | [`internal/bot/telegram/application.py`](../../internal/bot/telegram/application.py) | Telegram-specific bot application |
 | [`internal/bot/max/application.py`](../../internal/bot/max/application.py) | Max Messenger bot application |
 | [`internal/bot/models/`](../../internal/bot/models/) | Bot model types (EnsuredMessage, ChatSettings, etc.) |
 | [`internal/config/manager.py`](../../internal/config/manager.py) | `ConfigManager` — TOML config loading |
-| [`internal/database/database.py`](../../internal/database/database.py) | `Database` — all DB operations with repository pattern (323 lines) |
+| [`internal/database/database.py`](../../internal/database/database.py) | `Database` — all DB operations with repository pattern |
 | [`internal/database/migrations/`](../../internal/database/migrations/) | `MigrationManager`, `BaseMigration`, version files |
 | [`internal/models/`](../../internal/models/) | Shared types (`MessageId` class, `MessageType` enum) |
 | [`internal/services/cache/service.py`](../../internal/services/cache/service.py) | `CacheService` singleton |
@@ -339,4 +339,4 @@ See [`teamlead-memory.md`](teamlead-memory.md) for the full pattern (`_llmTool*`
 ---
 
 *This guide is auto-maintained and should be updated whenever significant architectural changes are made*
-*Last updated: 2026-06-28*
+*Last updated: 2026-07-18*

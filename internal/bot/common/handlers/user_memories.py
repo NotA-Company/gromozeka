@@ -182,7 +182,7 @@ class UserMemoriesHandler(BaseBotHandler):
 
         # Single global lock serializing ALL refinement runs so a slow LLM call
         # (>60s) blocks the next tick instead of spawning a concurrent one and
-        # flooding the provider. See docs/plans/memory-refine-plan-v1.md §4/§5.
+        # flooding the provider. See docs/archive/plans/memory-refine-plan-v1.md §4/§5.
         self._refineLock = asyncio.Lock()
 
         # Cache the [user-memory] config ONCE at construction so the cron hot
@@ -205,7 +205,7 @@ class UserMemoriesHandler(BaseBotHandler):
         """Upper bound on refinement LLM calls per 60s cron tick."""
 
         # Memory-embedding regeneration config (Phase 3b — see
-        # docs/plans/user-memories-v1.md §5.6). The regen pass shares the
+        # docs/archive/plans/user-memories-v1.md §5.6). The regen pass shares the
         # 60s CRON_JOB tick with refinement but runs INDEPENDENTLY of the
         # refinement lock: it is read/embed/write on ``user_memories``,
         # not LLM-tool-driven, so the two do not contend. Cached once at
@@ -255,7 +255,7 @@ class UserMemoriesHandler(BaseBotHandler):
         # controlled via ``useTools`` in ``_sendLLMChatMessage``
         # (``DELETE_MEMORY: False`` — D3 enforcement) and, in Phase 3, the
         # ``MEMORY_ENABLED`` setting. See
-        # docs/plans/user-memories-v1.md §8.3 / §13 Phase 2.
+        # docs/archive/plans/user-memories-v1.md §8.3 / §13 Phase 2.
         if self._memoryRefineEnabled:
             self.llmService.registerTool(
                 name=ToolName.ADD_MEMORY,
@@ -393,7 +393,7 @@ class UserMemoriesHandler(BaseBotHandler):
     # LLM Tool-Calling handlers (User Memories — Phase 2)
     ###
     #
-    # See docs/plans/user-memories-v1.md §8.3-8.5 for the authoritative spec.
+    # See docs/archive/plans/user-memories-v1.md §8.3-8.5 for the authoritative spec.
     # Contract (§3.4): async, never raises (errors → {"done": False, "error": ...}),
     # chat context resolved from extraData["ensuredMessage"].
 
@@ -804,7 +804,7 @@ class UserMemoriesHandler(BaseBotHandler):
         sharing the same tick. The two operations share the tick but NOT
         the lock (regen is read/embed/write on ``user_memories``;
         refinement is LLM-tool-driven) — see
-        docs/plans/user-memories-v1.md §5.6.
+        docs/archive/plans/user-memories-v1.md §5.6.
 
         Args:
             None (uses ``self.db`` / ``self.llmService`` and the cached
@@ -990,7 +990,7 @@ class UserMemoriesHandler(BaseBotHandler):
         acts as accidental backoff during a provider outage, but means every
         active user pays the cost simultaneously on recovery (their counters are
         all zeroed, so they must re-cross the count/time threshold to be refined
-        again). See docs/plans/memory-refine-plan-v1.md.
+        again). See docs/archive/plans/memory-refine-plan-v1.md.
 
         Args:
             task (DelayedTask): The delayed-task payload (unused).
@@ -999,7 +999,7 @@ class UserMemoriesHandler(BaseBotHandler):
             return  # global kill switch off
 
         # Memory-embedding regeneration (Phase 3b — see
-        # docs/plans/user-memories-v1.md §5.6). Runs every tick, INDEPENDENT
+        # docs/archive/plans/user-memories-v1.md §5.6). Runs every tick, INDEPENDENT
         # of the refinement body: it shares the 60s CRON_JOB but NOT the
         # ``_refineLock`` (regen is read/embed/write on ``user_memories``,
         # refinement is LLM-tool-driven; they do not contend). The method
@@ -1167,7 +1167,7 @@ class UserMemoriesHandler(BaseBotHandler):
                     if preCount >= self._memoryMaxMessagesPerRun:
                         logger.warning(
                             "Refinement fetch hit the per-run cap (%d messages) for chatId=%s userId=%s threadId=%s; "
-                            "older overflow messages will be skipped. See docs/plans/memory-refine-plan-v1.md.",
+                            "older overflow messages will be skipped. See docs/archive/plans/memory-refine-plan-v1.md.",
                             self._memoryMaxMessagesPerRun,
                             chatId,
                             userId,

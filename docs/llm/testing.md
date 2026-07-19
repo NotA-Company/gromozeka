@@ -33,7 +33,9 @@ The mirror layout is the only valid location for test files:
 
 Example: to test `lib/ai/manager.py`, create `tests/lib/ai/test_manager.py` — never `lib/ai/test_manager.py`.
 
-**Sanctioned exception — `tests/dependencies/`:** This directory is the home for **dependency-usage regression tests** that pin the *current* behavior of pinned third-party libraries (`python-dateutil`, `tomli`, `python-magic`, `html-to-markdown`, `numpy`, `sqlite-vec`) so that a version bump silently changing behavior fails loudly. Each file asserts its pinned library version via `importlib.metadata.version()` (sqlite-vec via `SELECT vec_version()`). These tests map to **libraries, not source files**, so the mirror-layout convention does not apply — but they still live under `tests/`, so the "no collocated tests" rule is honored.
+**Sanctioned exception — `tests/dependencies/`:** This directory is the home for **dependency-usage regression tests** that pin the *current* behavior of pinned third-party libraries (`python-dateutil`, `tomli`, `python-magic`, `html-to-markdown`, `numpy`, `sqlite-vec`) so that a version bump silently changing behavior fails loudly. 79 tests across 6 files; each asserts its pinned library version via `importlib.metadata.version()` (sqlite-vec via `SELECT vec_version()`). These tests map to **libraries, not source files**, so the mirror-layout convention does not apply — but they still live under `tests/`, so the "no collocated tests" rule is honored.
+
+**Sanctioned exception — `lib/ext_modules/grabliarium/tests/`:** The `lib/ext_modules/` subtree holds vendored extension subpackages (e.g. `grabliarium`) that ship with their own `pyproject.toml` and a collocated `tests/` directory *inside* the subpackage. This carve-out is intentional: each subpackage is treated as a self-contained unit, which is also why `make format` iterates `lib/ext_modules/*/` separately rather than auto-traversing them (see `AGENTS.md`). New vendored subpackages added under `lib/ext_modules/` may follow the same pattern.
 
 ```
 tests/
@@ -41,6 +43,7 @@ tests/
 ├── utils.py                                 # Test helper functions
 ├── bot/                                     # Bot handler tests
 │   ├── common/handlers/
+│   ├── max/                                 # Max platform adapter tests
 │   ├── models/
 │   ├── test_divination_discovery.py
 │   ├── test_divination_handler.py
@@ -63,12 +66,14 @@ tests/
 │   ├── divination/                          # Divination tests + golden data
 │   ├── geocode_maps/                        # Geocoding tests + golden data
 │   ├── markdown/
-│   ├── openweathermap/                       # Weather tests + golden data
+│   ├── max_bot/                             # MaxBotClient tests
+│   ├── openweathermap/                      # Weather tests + golden data
 │   ├── rate_limiter/
 │   ├── sandbox/
 │   ├── stats/
 │   ├── utils/
-│   └── yandex_search/                        # Search tests + golden data
+│   └── yandex_search/                       # Search tests + golden data
+├── max_webhook_receiver/                    # Max webhook receiver process tests
 ├── models/                                  # Model tests
 ├── scripts/                                 # Script tests
 ├── services/                                # Service tests
@@ -80,7 +85,7 @@ tests/
 └── verification/                            # Cross-cutting verification tests
 ```
 
-**Test discovery** (from [`pyproject.toml`](../../pyproject.toml:59)):
+**Test discovery** (from `[tool.pytest.ini_options]` in [`pyproject.toml`](../../pyproject.toml)):
 - `testpaths = ["tests", "lib", "internal"]` — only `tests/` contains test files; `lib/` and `internal/` are kept in config for pytest collection compatibility but have no collocated test files. New tests must never be added inside `lib/` or `internal/`.
 
 ---
@@ -103,11 +108,12 @@ From [`tests/conftest.py`](../../tests/conftest.py):
 | `mockCallbackQuery` | function | `Mock` | Mocked callback query |
 | `mockConfigManager` | function | `Mock` | Mocked `ConfigManager` |
 | `mockQueueService` | function | `Mock` | Mocked `QueueService` |
-| `mockLlmService` | function | `Mock` | Mocked `LLMService` |
+| `mockLlmService` | function | `Mock` | Mocked `LLMService` (pre-stubs `generateText` as AsyncMock, `registerTool` and `getTool` as Mock) |
 | `mockCacheService` | function | `Mock` | Mocked `CacheService` |
 | `mockLlmManager` | function | `Mock` | Mocked `LLMManager` (use via `mockLlmService.getLLMManager`) |
 | `resetLlmServiceSingleton` | function (autouse) | `None` | Resets LLMService singleton |
 | `resetProxyServiceSingleton` | function (autouse) | `None` | Resets ProxyService singleton |
+| `resetProxyHelperSingleton` | function (autouse) | `None` | Resets ProxyHelper singleton + global proxy config (disabled) |
 | `sampleChatSettings` | function | `dict` | Sample chat settings |
 | `sampleUserData` | function | `dict` | Sample user data |
 | `sampleMessages` | function | `list` | Sample message list |
@@ -117,7 +123,7 @@ From [`tests/conftest.py`](../../tests/conftest.py):
 
 ## 3. Pytest Configuration
 
-**Config:** [`pyproject.toml:59`](../../pyproject.toml:59)
+**Config:** `[tool.pytest.ini_options]` in [`pyproject.toml`](../../pyproject.toml)
 
 ```toml
 [tool.pytest.ini_options]
@@ -128,24 +134,31 @@ python_functions = ["test_*", "test*"]
 asyncio_mode = "auto"  # All async tests run automatically
 ```
 
-**Test markers:**
-- `@pytest.mark.slow` — slow tests
+**Test markers** (registered in `pyproject.toml` under `markers = [...]`; none are auto-skipped):
+- `@pytest.mark.slow` — slow tests (deselect with `-m "not slow"`)
 - `@pytest.mark.performance` — performance tests
 - `@pytest.mark.benchmark` — benchmark tests
 - `@pytest.mark.memory` — memory profiling tests
 - `@pytest.mark.stress` — stress tests
 - `@pytest.mark.profile` — profiling tests
 
-**Running tests:**
+**Running tests** (`make test` wraps `pytest` in `time timeout 5m`; pass `V=1` to add `-v`):
 ```bash
-# Run all tests
+# Run all tests (5-minute hard timeout via the Makefile; V=1 enables -v)
 make test
+
+# Re-run only the tests that failed on the last run
+make test-failed
 
 # Run single test file
 ./venv/bin/pytest tests/database/test_db_wrapper.py -v
 
-# Run specific test class
+# Run a specific test class / test function
 ./venv/bin/pytest tests/bot/common/handlers/test_some_handler.py::TestSomeHandler -v
+./venv/bin/pytest tests/bot/common/handlers/test_some_handler.py::TestSomeHandler::testFn -v
+
+# Deselect slow / benchmark markers
+./venv/bin/pytest -m "not slow"
 
 # Run with coverage
 ./venv/bin/pytest --cov=internal --cov-report=html
@@ -333,7 +346,7 @@ class TestOpenWeatherMapClient:
         client = OpenWeatherMapClient(apiKey="test_key", cache=None)
 
         # Make request - replayed from golden data
-        weatherData = await client.getCurrentWeather(lat=53.9, lon=27.57)
+        weatherData = await client.getWeather(lat=53.9, lon=27.57)
 
         # Validate response
         assert weatherData is not None
@@ -429,8 +442,11 @@ class TestMyFeature:
 
     def testSingletonReset(self):
         """Test singleton reset"""
-        # Use the autouse fixture from conftest.py — resetLlmServiceSingleton
-        # OR manually reset for non-LLM services:
+        # The autouse `resetLlmServiceSingleton` fixture in conftest.py
+        # handles `LLMService` automatically. Other leaky singletons —
+        # `CacheService`, `QueueService`, `StorageService`,
+        # `RateLimiterManager` — must be reset manually in the fixture
+        # (or test body) by setting `_instance = None` before/after:
         from internal.services.cache import CacheService
         CacheService._instance = None
         try:
@@ -462,4 +478,4 @@ class TestMyFeature:
 ---
 
 *This guide is auto-maintained and should be updated whenever testing patterns change*  
-*Last updated: 2026-06-26*
+*Last updated: 2026-07-18*

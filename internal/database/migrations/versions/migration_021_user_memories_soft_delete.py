@@ -1,7 +1,7 @@
 """Add the ``deleted_at`` soft-delete column to ``user_memories``.
 
 This migration is Phase 1 of the memory-compaction-v1 plan
-(``docs/plans/memory-compaction-v1.md`` §2). It introduces a nullable
+(``docs/archive/plans/memory-compaction-v1.md`` §2). It introduces a nullable
 ``deleted_at TIMESTAMP`` column on ``user_memories`` so that
 :meth:`UserMemoriesRepository.deleteMemory` can SOFT-DELETE a memory (set
 ``deleted_at``) instead of hard-``DELETE``-ing the row. The content row

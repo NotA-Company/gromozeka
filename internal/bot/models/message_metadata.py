@@ -285,8 +285,13 @@ def mergeCondensingDicts(dictList: Iterable[CondensingDict]) -> CondensingDict:
     Performs a field-wise union of the inputs:
 
     - ``text``: ``"\\n".join`` of each input's ``text`` (order preserved).
-    - ``messageIds``: concatenation of all inputs' ``messageIds`` lists.
-    - ``participants``: sorted-unique union of all inputs' ``participants``.
+    - ``messageIds``: concatenation of all inputs' ``messageIds`` lists (plain
+      ``list.extend`` at the implementation site — NO de-dup; duplicates are
+      preserved if present in the inputs).
+    - ``participants``: set-unique union of all inputs' ``participants`` (the
+      implementation accumulates into a ``MutableSet[str]`` then emits
+      ``list(participants)`` — iteration order is UNSPECIFIED, NOT sorted;
+      callers must not rely on any particular ordering).
     - ``dateRange``: ``{"from": min(all froms), "to": max(all tos)}`` —
       omitted entirely when no input carries a ``dateRange``.
     - ``messageCount``: arithmetic sum of all inputs' ``messageCount``.

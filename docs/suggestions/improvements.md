@@ -3,7 +3,7 @@
 > **Scope:** New features, performance optimizations, reliability improvements, observability, DX, security, scalability, testing, and UX enhancements  
 > **NOT in scope:** Structural refactoring → see [`docs/suggestions/refactoring.md`](refactoring.md) | Complexity reduction → see [`docs/suggestions/simplification.md`](simplification.md)  
 > **Last updated:** 2026-04-18
-> **Status review:** 2026-05-02
+> **Status review:** 2026-05-02 *(statuses may be stale — see 2026-07-18 audit note at bottom)*
 
 ---
 
@@ -21,7 +21,7 @@
 | 8 | [ ] | [LLM Response Streaming](#8-llm-response-streaming) | Feature / UX | High | L |
 | 9 | [ ] | [Per-User Rate Limiting](#9-per-user-rate-limiting) | Security | High | M |
 | 10 | [ ] | [Admin Command Permission Hardening](#10-admin-command-permission-hardening) | Security | High | M |
-| 11 | [ ] | [Secrets in Environment Variables](#11-secrets-in-environment-variables) | Security | Critical | S |
+| 11 | [x] | [Secrets in Environment Variables](#11-secrets-in-environment-variables) — **IMPLEMENTED** | Security | Critical | S |
 | 12 | [ ] | [User Preferences & Per-Chat Personas](#12-user-preferences--per-chat-personas) | Feature | Medium | L |
 | 13 | [ ] | [Scheduled Messages & Reminders](#13-scheduled-messages--reminders) | Feature | Medium | M |
 | 14 | [ ] | [Bot Usage Analytics Dashboard](#14-bot-usage-analytics-dashboard) | Observability | Medium | L |
@@ -511,6 +511,11 @@ Create a migration for each batch
 
 ### 11. Secrets in Environment Variables
 
+> **Status: IMPLEMENTED (verified 2026-07-18).** `substituteEnvVars()` in
+> [`internal/config/manager.py`](/internal/config/manager.py) resolves `${VAR}`
+> placeholders at load time, and shipped configs use it (`providers.toml`,
+> `storage.toml`, `webhook-receiver.toml`). Kept below for historical reference.
+
 **Category:** Security  
 **Priority:** Critical  
 **Effort:** S (hours)
@@ -566,6 +571,14 @@ Update example configs to use `${BOT_TOKEN}` placeholders
 ---
 
 ### 9. Per-User Rate Limiting
+
+> **Status note (2026-07-18):** Partially done at the infrastructure layer —
+> [`RateLimiterManager.applyLimit(queue, key)`](/lib/rate_limiter/manager.py:303)
+> now accepts a `key` argument for per-key windows within a queue, and
+> [`getStats(queue, key)`](/lib/rate_limiter/manager.py:327) mirrors it. The
+> remaining work is wiring `key=str(userId)` into the weather / yandex-search /
+> LLM handlers (none of them pass it yet), so the user-visible behaviour this
+> suggestion targets is still not in place.
 
 **Category:** Security  
 **Priority:** High  
@@ -792,9 +805,6 @@ Chat settings exist via [`ChatSettingsKey`](/internal/bot/models/chat_settings.p
 
 Add a `UserPreferences` data store (new DB table + cache layer) and a `/preferences` command
 
-// Add schema validation tests
-  - Add a `UserPreferences` data store (new DB table + cache layer) and a `/preferences` command
-
 ```python
 # New table: user_preferences
 # Fields: user_id, key, value, updated_at
@@ -994,7 +1004,7 @@ def seedDatabase(dbPath: str = "./dev_data.db") -> None:
     """Populate dev database with test fixtures"""
     db = DatabaseWrapper(...)
     for chat in SEED_CHATS:
-        db.saveChatInfo(...)
+        db.updateChatInfo(...)
     for user in SEED_USERS:
         db.updateChatUser(...)
     for message in SEED_MESSAGES:
@@ -1017,6 +1027,11 @@ Add `make seed` and `make reset-dev` targets to [`Makefile`](/Makefile)
 ---
 
 ### 25. Makefile: Watch Mode & Parallel CI Jobs
+
+> **Status note (2026-07-18):** A `make ci` target now exists, but it runs the
+> full CI pipeline inside an Alpine container (mirroring `.sourcecraft/ci.yaml`)
+> rather than the parallel lint+test variant proposed here. `make watch` and
+> `make typecheck` are still absent. Update the proposal accordingly if revisited.
 
 **Category:** DX  
 **Priority:** Low  
@@ -1420,3 +1435,37 @@ Simple read-only panel that connects to the existing SQLite file via the `readon
 
 > **Status Review Note (2026-05-02):** All 27 improvement suggestions remain pending. No new features from this list have been implemented. However, references to `DatabaseWrapper` in suggestions #5, #6, #10, #12, and #21 should be updated to reference the new [`Database`](../../internal/database/database.py) class and its repositories, since the `wrapper.py` file no longer exists. The `f-string without f prefix` quick win referenced in the simplification doc's appendix (at [`lib/ai/manager.py:51`](../../lib/ai/manager.py:51)) is still present.
 *Status review updated: 2026-05-02*
+
+> **Audit Note (2026-07-18):** Re-verified code references and per-item status
+> against the current repository. Changes applied to this file:
+> - **#11 Secrets in Environment Variables — IMPLEMENTED.** `substituteEnvVars()`
+>   is live in [`internal/config/manager.py`](/internal/config/manager.py) and
+>   shipped configs use `${...}` placeholders (`providers.toml`, `storage.toml`,
+>   `webhook-receiver.toml`). Marked `[x]` in the summary table.
+> - **#9 Per-User Rate Limiting — partial.** `RateLimiterManager.applyLimit()`
+>   and `getStats()` now take a `key` arg; handler wiring still missing.
+> - **#25 Makefile — partial.** `make ci` exists but runs the Alpine-container
+>   CI pipeline (not the parallel lint+test variant proposed). `watch` /
+>   `typecheck` still absent.
+> - **#16 code-reference drift fixed:** the seed-script example called
+>   `db.saveChatInfo(...)`, which is not a real method. Corrected to
+>   `db.updateChatInfo(...)` (defined in
+>   [`internal/database/repositories/chat_info.py`](../../internal/database/repositories/chat_info.py)
+>   and exposed via [`BaseBotHandler.updateChatInfo()`](/internal/bot/common/handlers/base.py)).
+>   `db.saveChatMessage(...)` and `db.updateChatUser(...)` in the same example
+>   were verified against `chat_messages.py` / `chat_users.py` and are correct.
+> - **Editorial fix in #12:** removed a duplicated paragraph + stray
+>   `// Add schema validation tests` comment line.
+> - **Items spot-checked and confirmed still pending:** #1 (no
+>   `prometheus_client` in the tree), #3 (no `/health` route in production
+>   code), #7 (none of the four proposed composite indexes exist in
+>   `internal/database/migrations/versions/`), #26 (no `renovate.json` or
+>   `.github/dependabot.yml`).
+> - **Outbound links:** all file-path references (root-absolute `/...` and
+>   relative `../../...`) resolve; summary-table anchors match section headings.
+>
+> A full per-item re-audit was not performed; only obvious drift and obviously
+> shipped items were touched. Other suggestions' line-number anchors (e.g.
+> `manager.py:256`, `service.py:80`) have drifted since 2026-04-18 — the file
+> paths are still correct, but treat the line numbers as illustrative.
+*Audit updated: 2026-07-18*

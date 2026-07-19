@@ -124,7 +124,7 @@ class MaxBotApplication:
         # Unregister webhook if configured
         if self._webhookMode and self.maxBot is not None:
             webhookConfig = self.configManager.config.get("webhook-receiver", {})
-            if webhookConfig.get("unregister-webhook", True):
+            if webhookConfig.get("unregister-webhook", False):
                 try:
                     webhookUrl = webhookConfig.get("webhook-url", "")
                     if webhookUrl:

@@ -8,6 +8,6 @@ Durable notes from the DeleteFromUserMessageHandler implementation (2026-07-02).
 
 ## Telegram Author Extraction Gotcha
 
-- `_getMessageAuthor` is duplicated verbatim between `react_on_user.py` and `delete_from_user.py`. No shared utility yet. If a third handler copies it, extract to `internal/bot/common/handlers/_author_utils.py`.
+- `_getMessageAuthor` is duplicated **near-verbatim** between `react_on_user.py` and `delete_from_user.py` — identical except the `MessageOriginUser` branch (line 72 in both files): `delete_from_user.py` uses `forwardOrigin.sender_user.name or ""`, whereas `react_on_user.py` uses `forwardOrigin.sender_user.name or forwardOrigin.sender_user.username or ""` (extra `.username` fallback). The two handlers can therefore emit different usernames for the same forwarded user-origin message. No shared utility yet — if a third handler copies it, extract to `internal/bot/common/handlers/_author_utils.py` (and reconcile the User-branch divergence).
 - `MessageSender.fromTelegramUser` reads `user.name` (not `user.username`). In production, PTB's `User.name` returns `@username` when a username is set. Tests mocking `from_user.name` should use `"@TestUser"` to match real behavior.
 - `MessageSender.fromTelegramChat` prefixes username with `@` itself (`f"@{chat.username}"`). Mock `sender_chat.username` without `@`.

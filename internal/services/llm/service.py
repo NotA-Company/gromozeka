@@ -75,9 +75,10 @@ def generateCondensingDict(text: str, messages: Sequence[ModelMessage]) -> Conde
     - ``dict`` source (a pre-existing ``CondensingDict`` being re-condensed)
       → union the existing ``messageIds`` / ``participants`` / ``dateRange``
       / ``messageCount`` fields (re-condense cascade).
-    - ``None`` source → log a warning and skip (an auxiliary tool-history
-      emission, not an original message — carries no extractable metadata
-      and is not counted toward ``messageCount``).
+    - ``None`` source → log a warning and still increment ``messageCount``
+      (the running total is bumped unconditionally); only metadata extraction
+      (``messageId`` / ``sender.username`` / ``date``) is skipped, since this
+      is an auxiliary tool-history emission, not an original message.
 
     The returned dict always carries ``text``; ``messageIds``,
     ``dateRange``, ``participants``, and ``messageCount`` are populated

@@ -134,7 +134,7 @@ The project is organized in a strict layered architecture where each layer only 
 |---|---|---|
 | Singleton | [`CacheService`](/internal/services/cache/service.py:88), [`QueueService`](/internal/services/queue_service/service.py), [`RateLimiterManager`](/lib/rate_limiter/manager.py:12) | Shared state across handlers |
 | Abstract Base Class | [`AbstractModel`](/lib/ai/abstract.py:47), [`AbstractLLMProvider`](/lib/ai/abstract.py:904), [`CacheInterface`](/lib/cache/interface.py:15), [`BaseMigration`](/internal/database/migrations/base.py:9) | Type-safe extensibility |
-| Chain of Responsibility | Handler pipeline in [`HandlersManager`](/internal/bot/common/handlers/manager.py:177) | Sequential/parallel message processing |
+| Chain of Responsibility | Handler pipeline in [`HandlersManager`](/internal/bot/common/handlers/manager.py:382) | Sequential/parallel message processing |
 | Multi-source Router | [`Database`](/internal/database/database.py) | Chat-to-database routing |
 | Decorator-based Discovery | `@commandHandlerV2` decorator, [`CommandHandlerMixin`](/internal/bot/models) | Auto-discovery of bot commands |
 | Golden Data Testing | [`tests/`](/tests/) | Deterministic API test replay |
@@ -182,7 +182,11 @@ gromozeka/
 │   │   │   │   ├── yandex_search.py# Yandex search integration handler
 │   │   │   │   ├── topic_manager.py# Telegram topic management handler
 │   │   │   │   ├── react_on_user.py# User reaction handler
+│   │   │   │   ├── delete_from_user.py  # Delete messages on user request (Telegram only)
 │   │   │   │   ├── resender.py     # Message forwarding handler
+│   │   │   │   ├── divination.py   # /taro and /runes divination handler (if divination.enabled)
+│   │   │   │   ├── sandbox.py      # Sandboxed code execution handler (if sandbox.enabled)
+│   │   │   │   ├── chat_search.py  # /search + message search LLM tools (if search-history.enabled)
 │   │   │   │   ├── common.py       # Common shared handler logic
 │   │   │   │   ├── help_command.py # /help command handler
 │   │   │   │   ├── module_loader.py# Dynamic custom handler loader
@@ -223,10 +227,14 @@ gromozeka/
 │   │   │   ├── chat_settings.py    # Chat settings repository
 │   │   │   ├── chat_summarization.py # Chat summarization repository
 │   │   │   ├── chat_users.py       # Chat users repository
-│   │   │   ├── common.py           # Common repository
+│   │   │   ├── common.py           # Common functions repository
 │   │   │   ├── delayed_tasks.py    # Delayed tasks repository
 │   │   │   ├── media_attachments.py # Media attachments repository
 │   │   │   ├── spam.py             # Spam repository
+│   │   │   ├── chat_search.py      # Chat search (filter + semantic) repository
+│   │   │   ├── chat_embeddings.py  # Message embeddings repository
+│   │   │   ├── divinations.py      # Divination readings + layout discovery repository
+│   │   │   ├── webhook_updates.py  # Max webhook payload repository
 │   │   │   └── user_memories.py    # User memories repository
 │   │   └── migrations/             # Migration system
 │   │       ├── base.py             # BaseMigration abstract class
@@ -594,11 +602,11 @@ The database layer uses a repository pattern with 15 specialized repositories Ea
 | [`ChatSettingsRepository`](/internal/database/repositories/chat_settings.py) | `chat_settings.py` | Chat settings operations |
 | [`ChatSummarizationRepository`](/internal/database/repositories/chat_summarization.py) | `chat_summarization.py` | Chat summarization operations |
 | [`ChatUsersRepository`](/internal/database/repositories/chat_users.py) | `chat_users.py` | Per-chat user metadata operations |
-| [`CommonRepository`](/internal/database/repositories/common.py) | `common.py` | Common database operations |
+| [`CommonFunctionsRepository`](/internal/database/repositories/common.py) | `common.py` | Common database operations |
 | [`DelayedTasksRepository`](/internal/database/repositories/delayed_tasks.py) | `delayed_tasks.py` | Background task queue operations |
 | [`ChatSearchRepository`](/internal/database/repositories/chat_search.py) | `chat_search.py` | Message search and user listing operations |
 | [`ChatEmbeddingsRepository`](/internal/database/repositories/chat_embeddings.py) | `chat_embeddings.py` | Message embedding operations |
-| [`DivinationRepository`](/internal/database/repositories/divinations.py) | `divinations.py` | Tarot/runes readings and layout discovery operations |
+| [`DivinationsRepository`](/internal/database/repositories/divinations.py) | `divinations.py` | Tarot/runes readings and layout discovery operations |
 | [`MediaAttachmentsRepository`](/internal/database/repositories/media_attachments.py) | `media_attachments.py` | Media metadata operations |
 | [`SpamRepository`](/internal/database/repositories/spam.py) | `spam.py` | Spam detection operations |
 | [`UserMemoriesRepository`](/internal/database/repositories/user_memories.py) | `user_memories.py` | Per-(chat, user, thread) structured memory operations (permanent + ephemeral, vec0-backed) |
@@ -725,7 +733,7 @@ cp internal/database/migrations/versions/migration_012_unify_cache_tables.py \
 
 ## 6. Handler System
 
-The handler system is the core of message processing All incoming messages go through a pipeline of handlers managed by [`HandlersManager`](/internal/bot/common/handlers/manager.py:177)
+The handler system is the core of message processing All incoming messages go through a pipeline of handlers managed by [`HandlersManager`](/internal/bot/common/handlers/manager.py:382)
 
 ### Handler Lifecycle
 
@@ -765,9 +773,10 @@ Incoming Message
         ├── DevCommandsHandler
         ├── MediaHandler
         ├── CommonHandler
-        ├── HelpHandler
-        ├── ReactOnUserMessageHandler (Telegram only)
-        ├── TopicManagerHandler (Telegram only)
+         ├── HelpHandler
+         ├── DeleteFromUserMessageHandler (Telegram only)
+         ├── ReactOnUserMessageHandler (Telegram only)
+         ├── TopicManagerHandler (Telegram only)
         ├── WeatherHandler (if enabled)
         ├── YandexSearchHandler (if enabled)
         ├── ResenderHandler (if enabled)
@@ -878,6 +887,7 @@ async def myCommandHandler(
 | `MediaHandler` | [`media.py`](/internal/bot/common/handlers/media.py) | Image/file/sticker processing |
 | `CommonHandler` | [`common.py`](/internal/bot/common/handlers/common.py) | Shared command handling |
 | `HelpHandler` | [`help_command.py`](/internal/bot/common/handlers/help_command.py) | `/help` command |
+| `DeleteFromUserMessageHandler` | [`delete_from_user.py`](/internal/bot/common/handlers/delete_from_user.py) | Delete messages matching user-triggered criteria (Telegram only; runs before reaction) |
 | `ReactOnUserMessageHandler` | [`react_on_user.py`](/internal/bot/common/handlers/react_on_user.py) | User join/leave reactions |
 | `TopicManagerHandler` | [`topic_manager.py`](/internal/bot/common/handlers/topic_manager.py) | Forum topic management |
 | `WeatherHandler` | [`weather.py`](/internal/bot/common/handlers/weather.py) | Weather query handler |
@@ -978,7 +988,7 @@ class MyNewHandler(BaseBotHandler):
         )
 ```
 
-**Step 2**: Register the handler in [`HandlersManager`](/internal/bot/common/handlers/manager.py:249)
+**Step 2**: Register the handler in [`HandlersManager`](/internal/bot/common/handlers/manager.py:478)
 
 ```python
 # In internal/bot/common/handlers/manager.py, add import:
@@ -1003,7 +1013,7 @@ order = 10
 enabled = true
 ```
 
-See [`custom-modules-design.md`](../../custom-modules-design.md) for the complete custom handler loading system documentation.
+See [Custom Handler Modules design](../design/custom-modules-design.md) for the complete custom handler loading system design, and `internal/bot/common/handlers/module_loader.py` for the live `CustomHandlerLoader` implementation.
 
 ### 6.1 Divination Layout Discovery
 
@@ -1104,8 +1114,10 @@ cache = CacheService.getInstance()
 cache.injectDatabase(db)
 
 # Chat settings (most common use case)
-settings = cache.getChatSettings(chatId=123)
-cache.setChatSettings(chatId=123, key=ChatSettingsKey.CHAT_MODEL, value="my-model")
+settings = await cache.getChatSettings(chatId=123)
+await cache.setChatSetting(
+    chatId=123, key=ChatSettingsKey.CHAT_MODEL, value=ChatSettingsValue("my-model"), userId=456
+)
 
 # User data
 cache.setUserData(chatId=123, userId=456, key="points", value=100)
@@ -2311,11 +2323,11 @@ All sandbox settings live in [`configs/00-defaults/sandbox.toml`](configs/00-def
 
 ## 14. Common Development Tasks
 
-### 13.1 Adding a New Handler
+### 14.1 Adding a New Handler
 
 1. **Create the handler file** See [Section 6 - Creating a New Handler](#how-to-create-a-new-handler) for the complete template.
 
-2. **Register in [`HandlersManager`](/internal/bot/common/handlers/manager.py:249)**
+2. **Register in [`HandlersManager`](/internal/bot/common/handlers/manager.py:478)**
 
 ```python
 # In internal/bot/common/handlers/manager.py
@@ -2336,7 +2348,7 @@ make format lint
 make test
 ```
 
-### 13.2 Adding a New API Integration
+### 14.2 Adding a New API Integration
 
 Let's say you want to integrate the "CoolAPI" service
 
@@ -2461,11 +2473,11 @@ coolapi = "coolapi"
 
 **Step 5**: Add a `getCoolApiConfig()` method to [`ConfigManager`](/internal/config/manager.py:59).
 
-**Step 6**: Create a handler that uses the client and register it in [`HandlersManager`](/internal/bot/common/handlers/manager.py:177).
+**Step 6**: Create a handler that uses the client and register it in [`HandlersManager`](/internal/bot/common/handlers/manager.py:382).
 
 **Step 7**: Write tests using the golden data fixture pattern
 
-### 13.3 Adding a New LLM Provider
+### 14.3 Adding a New LLM Provider
 
 **Step 1**: Create the provider file
 
@@ -2616,7 +2628,7 @@ support_tools = false
 tier = "free"
 ```
 
-### 13.4 Adding a Database Migration
+### 14.4 Adding a Database Migration
 
 > ⚠️ **Critical**: Always verify the current highest version before creating a migration
 
@@ -2678,7 +2690,7 @@ class Migration(BaseMigration):
 
 **Step 5**: Update any schema documentation in `docs/`
 
-### 13.5 Adding a New Chat Setting
+### 14.5 Adding a New Chat Setting
 
 Chat settings are key-value pairs stored per-chat and cached in [`CacheService`](/internal/services/cache/service.py:88)
 
@@ -2703,7 +2715,8 @@ my-new-setting = "default_value"
 
 ```python
 settings = self.getChatSettings(chatId=ensuredMessage.recipient.id)
-myValue: str = settings.get(ChatSettingsKey.MY_NEW_SETTING, "default_value")
+# Production code subscripts settings directly and uses the typed accessor:
+myValue: str = settings[ChatSettingsKey.MY_NEW_SETTING].toStr()
 ```
 
 ---
@@ -2719,7 +2732,7 @@ myValue: str = settings.get(ChatSettingsKey.MY_NEW_SETTING, "default_value")
 | Multi-platform bot client | [`internal/bot/common/bot.py:31`](/internal/bot/common/bot.py:31) → `TheBot` |
 | Base handler class | [`internal/bot/common/handlers/base.py:110`](/internal/bot/common/handlers/base.py:110) → `BaseBotHandler` |
 | Handler result enum | [`internal/bot/common/handlers/base.py:82`](/internal/bot/common/handlers/base.py:82) → `HandlerResultStatus` |
-| Handler manager | [`internal/bot/common/handlers/manager.py:177`](/internal/bot/common/handlers/manager.py:177) → `HandlersManager` |
+| Handler manager | [`internal/bot/common/handlers/manager.py:382`](/internal/bot/common/handlers/manager.py:382) → `HandlersManager` |
 | Config manager | [`internal/config/manager.py:59`](/internal/config/manager.py:59) → `ConfigManager` |
 | Database | [`internal/database/database.py`](/internal/database/database.py) → `Database` |
 | Database source config | [`internal/database/database.py`](/internal/database/database.py) → `SourceConfig` |

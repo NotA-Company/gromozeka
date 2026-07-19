@@ -22,7 +22,7 @@ keepConnection = true  # Connect immediately (good for readonly replicas)
 
 # Archive database (readonly access)
 [database.providers.archive_readonly]
-provider = "sqlink"
+provider = "sqlite3"
 
 [database.providers.archive_readonly.parameters]
 dbPath = "/shared/archive.db"
@@ -42,7 +42,7 @@ keepConnection = true  # Connect immediately (good for readonly replicas)
 
 # Analytics database (readonly access)
 [database.providers.analytics_readonly]
-provider = "sqlink"
+provider = "sqlite3"
 
 [database.providers.analytics_readonly.parameters]
 dbPath = "/shared/analytics.db"
@@ -84,11 +84,11 @@ keepConnection = true  # Connect immediately (good for readonly replicas)
 # ============================================================================
 
 # Timeout Guidelines:
-# - Local databases (primary, archive, analytics): 30 seconds (standard)
-# - External databases (bot2): 10 seconds (faster failure for unavailable sources)
+# - Primary database: 30 seconds (most-queried, tolerate longer lock waits)
+# - Archive / bot2 / analytics: 10 seconds (faster failure for unavailable sources)
 
 # Configuration Notes:
 # - All providers marked as readOnly = true
 # - keepConnection = true for all readonly providers (connect immediately)
-# - Use sqlink for better async performance on readonly databases
+# - All sources are local SQLite3 files opened in query_only mode (PRAGMA query_only = ON)
 # - No write operations allowed - enforced at provider level

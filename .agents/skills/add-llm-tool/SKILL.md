@@ -350,7 +350,7 @@ override must always run when `useTools` is truthy. This regression is pinned by
 > **Memory-refinement tools: a 5th coordinated enablement site.** The memory
 > refinement pass builds its **own** `useTools` dict in
 > [`user_memories.py`](../../../internal/bot/common/handlers/user_memories.py)
-> `_runMemoryRefinement` (~line 1306), and it explicitly sets
+> `_runMemoryRefinement`, and it explicitly sets
 > `ToolName.DELETE_MEMORY: True` (plus `ADD_MEMORY`, `SEARCH_MEMORIES`, etc.) —
 > bypassing the chat-time gate above by design, so the refinement LLM can mutate
 > memories. A **new** memory tool that you gate `False` at chat time must ALSO be

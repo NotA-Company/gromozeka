@@ -26,7 +26,7 @@
 |---|---|---|
 | [`base.py`](../../internal/bot/common/handlers/base.py) | `BaseBotHandler` | Abstract base for all handlers |
 | [`manager.py`](../../internal/bot/common/handlers/manager.py) | `HandlersManager` | Orchestrates all handlers |
-| [`message_preprocessor.py`](../../internal/bot/common/handlers/message_preprocessor.py) | `MessagePreprocessorHandler` | First in chain; saves message + processes media. Also owns **memory injection** — `injectMemories()` runs inside `newMessageHandler` **after** `saveChatMessage(...)` to load permanent memories (via `cache.getChatUserPermanentMemories`) + ephemeral memories (`getLatestMemories`, or `searchMemories` driven by `LLMService.generateEmbedding` when memory embeddings are on — i.e. `MEMORY_ENABLED && EMBEDDINGS_ENABLED`). Since the context-dedup change (ADR-018) it writes **compact memory IDs** directly into `metadata["memories"]` (`{"permanentIds": [...], "shortTermIds": [...]}`) — no `setUserMemories` setter and no per-message `userMemories` content field (both removed). It performs **no cache warming**: the by-id cache populates lazily (cache-aside) on the first `formatForLLM` read via `cache.getMemoriesByIds`. Because `injectMemories()` mutates `metadata` after the row was already saved, the compact IDs are re-persisted to `chat_messages.metadata` via a separate `db.chatMessages.updateChatMessageMetadata(...)` call. Resolution is lazy: each render site calls `toModelMessage(..., cache=self.cache, excludeMemoryIds=...)` and `formatForLLM` resolves IDs → content on-demand via `cache.getMemoriesByIds`; in `getThreadByMessageForLLM` and `handleRandomMessage` dedup is applied inline newest→oldest (an accumulating exclude-set per call site; no shared helper). Enforcement of the required `cache=`/`excludeMemoryIds=` kwargs is structural: they are **required keyword-only** params on every render method, so pyright errors on any caller that omits either (no AST value-checking guard — value-correctness, i.e. `cache=self.cache` on chat paths vs `cache=None` on non-chat/TEXT paths, is upheld by the call-site audit and the test suite). Gated by `MEMORY_ENABLED`; see [`memories/user-memories.md`](memories/user-memories.md) "Injection" / "Render-time resolution (lazy + dedup)" |
+| [`message_preprocessor.py`](../../internal/bot/common/handlers/message_preprocessor.py) | `MessagePreprocessorHandler` | First in chain; saves message + processes media. Also owns **memory injection** — `injectMemories()` runs inside `newMessageHandler` **after** `saveChatMessage(...)` to load permanent memories (via `cache.getChatUserPermanentMemories`) + ephemeral memories (`getLatestMemories`, or `searchMemories` driven by `LLMService.generateEmbedding` when memory embeddings are on — i.e. `MEMORY_ENABLED && EMBEDDINGS_ENABLED`). Since the context-dedup change (ADR-018) it writes **compact memory IDs** directly into `metadata["memories"]` (`{"permanentIds": [...], "shortTermIds": [...]}`) — no `setUserMemories` setter and no per-message `userMemories` content field (both removed). It performs **no cache warming**: the by-id cache populates lazily (cache-aside) on the first `formatForLLM` read via `cache.getMemoriesByIds`. Because `injectMemories()` mutates `metadata` after the row was already saved, the compact IDs are re-persisted to `chat_messages.metadata` via a separate `db.chatMessages.updateChatMessageMetadata(...)` call. Resolution is lazy: each render site calls `toModelMessage(..., cache=self.cache, excludeMemoryIds=...)` and `formatForLLM` resolves IDs → content on-demand via `cache.getMemoriesByIds`; in `getThreadByMessageForLLM` and `handleRandomMessage` dedup is applied inline newest→oldest (an accumulating exclude-set per call site; no shared helper). Enforcement is split: `cache=` is a **required keyword-only** param on every render method (no default — pyright errors on any caller that omits it), while `excludeMemoryIds: Optional[Set[str]] = None` carries an `= None` default and is coerced to `set()` in the method body, so pyright does **not** enforce its presence (intentional — every dedup call site passes it explicitly, but incidental render paths may omit it). There is no AST value-checking guard — value-correctness (i.e. `cache=self.cache` on chat paths vs `cache=None` on non-chat/TEXT paths) is upheld by the call-site audit and the test suite. Gated by `MEMORY_ENABLED`; see [`memories/user-memories.md`](memories/user-memories.md) "Injection" / "Render-time resolution (lazy + dedup)" |
 | [`spam.py`](../../internal/bot/common/handlers/spam.py) | `SpamHandler` | Spam detection (runs after preprocessor) |
 | [`configure.py`](../../internal/bot/common/handlers/configure.py) | `ConfigureCommandHandler` | Chat settings configuration |
 | [`summarization.py`](../../internal/bot/common/handlers/summarization.py) | `SummarizationHandler` | Chat summarization |
@@ -40,7 +40,7 @@
 | [`topic_manager.py`](../../internal/bot/common/handlers/topic_manager.py) | `TopicManagerHandler` | Telegram forum topics |
 | [`weather.py`](../../internal/bot/common/handlers/weather.py) | `WeatherHandler` | Weather commands (if enabled). Proxy: resolves proxy separately for `OpenWeatherMapClient` and `GeocodeMapsClient` in `__init__()`, using the `[openweathermap]` and `[geocode-maps]` config sections respectively. |
 | [`yandex_search.py`](../../internal/bot/common/handlers/yandex_search.py) | `YandexSearchHandler` | Yandex Search (if enabled). Proxy: resolves proxy in `__init__()` for both the Yandex Search client and the `_downloadUrl()` web-fetch method. The former `TODO: add proxy support via config` comment was removed from `_downloadUrl()`. When SOCKS5 is active, HTTP/2 is automatically disabled for web-fetch. |
-| [`resender.py`](../../internal/bot/common/handlers/resender.py) | `ResenderHandler` | Message resending (if enabled) |
+| [`resender.py`](../../internal/bot/common/handlers/resender.py) | `ResenderHandler` | Message resending (if enabled). Architecturally distinct: a **cron-only** handler — does **not** override `newMessageHandler`, has no slash commands, no LLM tools. Operates entirely from `_dtCronJob` (≈60s tick via `QueueService`), passively scanning for new messages with `getChatMessagesSince()`. Registers `DO_EXIT` (`_dtOnExit`) to flip `isExiting = True` on shutdown. |
 | [`divination.py`](../../internal/bot/common/handlers/divination.py) | `DivinationHandler` | `/taro` & `/runes` readings (if `divination.enabled`) — includes layout discovery via LLM + web search |
 | [`sandbox.py`](../../internal/bot/common/handlers/sandbox.py) | `SandboxHandler` | Sandboxed Python code execution (if `sandbox.enabled` and `allow-sandbox` chat setting). Commands: `/run <code>` (alias: `/python`), `/sandbox files|read|status|install`. LLM tools: `run_python(code)`, `sandbox_list_files`, `sandbox_read_file`, `sandbox_send_file`, `sandbox_list_libraries`. Lifecycle: registers `CRON_JOB` (periodic GC) and `DO_EXIT` (graceful shutdown) delayed-task handlers; performs one-time `SandboxManager.recover()` on first cron tick to reconcile stale containers after restarts. |
 | [`chat_search.py`](../../internal/bot/common/handlers/chat_search.py) | `ChatSearchHandler` | Chat-history search (if `[search-history].enabled`). Commands: `/search [args]` (DSL of `keywords` / `user` / `days` / `category` / `thread` filters) — returns the matching messages as a raw, human-readable list (no LLM summary); `/users [limit=N] [min_messages=N] [last_active=N]` — lists chat participants with activity statistics. LLM tools: `search_messages(query, limit, max_age_days, user_name, thread_message_id, current_thread_only, substring)` — semantic search over chat history; when `query` is empty the search degrades to a substring/filter-only lookup that runs WITHOUT `EMBEDDINGS_ENABLED` (no embedding generated); `current_thread_only` (default `true`) scopes results to the current thread/topic and is overridden by an explicit `thread_message_id`; `substring` is a case-insensitive exact-text filter; `list_users(limit, min_messages)` — list participants with stats; `get_thread(message_id)` — retrieve full conversation thread; `get_messages_by_ids(message_ids)` — batch-fetch full content of messages by ID (`ToolName.GET_MESSAGES_BY_IDS`, returns `{messages:[...], notFound:[...], count:N}`; reuses `_formatMessageDict`; never-raise). Used by the model to read the originals underlying a condensed summary (summaries render their `coveredMessageIds` — see [`architecture.md`](architecture.md) ADR-019). **Two-layer gating**: (1) `[search-history].enabled` via the handler's conditional registration (the tool is a normal `registerTool(...)` in `__init__` — *no manager.py change*); (2) at chat time, all four LLM tools (`search_messages`, `list_users`, `get_thread`, `get_messages_by_ids`) are gated solely by `USE_TOOLS` — the model is never sent the tools when `USE_TOOLS=false`. They are NOT gated by `ALLOW_TOOLS_COMMANDS` (which gates only slash commands of `CommandCategory.TOOLS`). `get_messages_by_ids` is additionally **NOT** gated on `EMBEDDINGS_ENABLED` — it is a pure DB lookup (available whenever chat-search is on, even with semantic search disabled). Accepts a list of ID strings (`extra={"items": {"type": "string"}}`); input clamped to `MAX_GET_MESSAGES_BATCH` (32). `newMessageHandler` is pass-through (`SKIPPED`); work runs via the command. Lifecycle: registers `CRON_JOB` (`_dtCronJob` — embedding backfill for chats with `EMBEDDINGS_ENABLED=true`, round-robin across enabled chats, default batch `BACKFILL_DEFAULT_BATCH_SIZE` messages) delayed-task handlers. There is no separate `BackfillWorker` class — backfill duty lives in this handler. |
@@ -141,7 +141,7 @@ Use the skeleton from [Section 3](#3-handler-skeleton-template)
 
 ### Step 2: Register handler in `HandlersManager`
 
-**File:** [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py:366)
+**File:** [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) (`HandlersManager.__init__`, the `self.handlers: List[HandlerTuple] = [...]` literal)
 
 See [Section 5](#5-registering-handlers-in-handlersmanager) for registration code
 
@@ -187,7 +187,7 @@ Full details in the [add-handler skill](../../.agents/skills/add-handler/SKILL.m
 
 ### Step 6: Write tests
 
-**Path:** `tests/bot/test_my_handler.py`
+**Path:** `tests/bot/common/handlers/test_my_handler.py` (mirrors the source path `internal/bot/common/handlers/my_handler.py` — strip `internal/`, keep the rest)
 
 See [`testing.md`](testing.md) for test patterns
 
@@ -202,7 +202,7 @@ make test
 
 - [ ] Docstring on class and all methods
 - [ ] Type hints on all method arguments and returns
-- [ ] Added handler to `HandlersManager.__init__()` if it's a new built-in handler ([`manager.py:428`](../../internal/bot/common/handlers/manager.py:428))
+- [ ] Added handler to `HandlersManager.__init__()` if it's a new built-in handler (the `self.handlers = [...]` literal in [`manager.py`](../../internal/bot/common/handlers/manager.py))
 - [ ] OR configured as custom handler via TOML if it's a plugin
 - [ ] Added tests in `tests/bot/` directory
 - [ ] If handler registers LLM tools: `ToolName` member added, `registerTool(name=ToolName.XXX, ...)` used, gated on feature flag.
@@ -394,7 +394,7 @@ async def myCommandMethod(
 
 ## 5. Registering Handlers in HandlersManager
 
-**File:** [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py:428)
+**File:** [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) — `HandlersManager.__init__` builds the `self.handlers: List[HandlerTuple] = [...]` literal (the `LLMMessageHandler` tuple is appended **after** any conditional/custom handlers to preserve the must-stay-last invariant).
 
 ```python
 # At top of file, add import:
@@ -428,7 +428,7 @@ Shutdown diagnostics are emitted by `HandlersManager._dumpAllState()` — a para
 1. **Per-chat queue state** — snapshots `chatStates.values()` under `stateLock` (avoids `RuntimeError` from concurrent modification), then inspects each chat's queue under its own per-chat lock. Empty queues are skipped. For each non-empty queue it logs `chat_id=%d.%s pending_messages=%d` — the `%s` is `threadId`, so a `None` thread renders as the literal string `None`. Per-chat errors are isolated via try/except + `logger.warning(..., exc_info=True)`.
 2. **Rate limiter state** — calls `RateLimiterManager.getInstance().dumpAllStats()` (see [services.md §5](services.md#5-ratelimitermanager)), which **returns** a `List[RateLimiterStatsEntry]` (one entry per queue across all limiters; the method itself does not log). Each returned entry is logged at INFO via `logger.info(utils.jsonDumps(entry, indent=2))`.
 
-To add new shutdown diagnostics, extend `_dumpAllState()` (or add another step to `shutdown()`). There is no hook registry for this — the DO_EXIT delayed-task mechanism (`queueService.registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, ...)`) is used by other subsystems (`SandboxHandler`, `ProxyService`, `_dtOnExit`) but is not involved in the state dump.
+To add new shutdown diagnostics, extend `_dumpAllState()` (or add another step to `shutdown()`). There is no hook registry for this — the DO_EXIT delayed-task mechanism (`queueService.registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, ...)`) is used by other subsystems (`SandboxHandler`, `ProxyService`, `ResenderHandler`, plus `HandlersManager._dtOnExit` itself which forwards to `_cleanupOldData`) but is not involved in the state dump.
 
 ---
 
@@ -465,7 +465,7 @@ Full chain:
 
 ## 7. HandlerResultStatus Reference
 
-**File:** [`internal/bot/common/handlers/base.py:81`](../../internal/bot/common/handlers/base.py:81)
+**File:** [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) — `class HandlerResultStatus(Enum)` (exported via `__all__`).
 
 | Status | Meaning | Chain effect |
 |---|---|---|
@@ -496,4 +496,4 @@ Full chain:
 ---
 
 *This guide is auto-maintained and should be updated whenever significant handler changes are made*  
-*Last updated: 2026-07-12*
+*Last updated: 2026-07-18*

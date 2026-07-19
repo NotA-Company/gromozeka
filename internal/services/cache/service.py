@@ -1134,10 +1134,12 @@ class CacheService:
         """Async context manager serializing chat_users.metadata read-modify-write windows.
 
         Callers that do read-modify-write of ``chat_users.metadata`` (e.g.
-        ``setUserMetadata(isUpdate=True)`` and ``UserMemoriesHandler._persistMemoryEntry``)
-        MUST hold this lock across the full RMW to avoid lost-update races between
-        concurrent writers. Plain reads (``getUserMetadata``) and full-replace writes
-        (``updateUserMetadata`` with no preceding read) do NOT need it.
+        ``setUserMetadata(isUpdate=True)`` and the cursor-persist block inlined
+        into ``UserMemoriesHandler._runSingleRefinement`` (formerly
+        ``_persistMemoryEntry``) MUST hold this lock across the full RMW to
+        avoid lost-update races between concurrent writers. Plain reads
+        (``getUserMetadata``) and full-replace writes (``updateUserMetadata``
+        with no preceding read) do NOT need it.
 
         The lock is intentionally process-global rather than per-(chat, user); metadata
         writes are infrequent (spam-flag flips, per-thread refinement every >=5 messages

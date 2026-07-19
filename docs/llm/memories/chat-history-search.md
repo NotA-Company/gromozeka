@@ -22,7 +22,7 @@ How to use this file:
   `bot-defaults.toml` under `[bot.defaults]`
 - **Alternative model**: `local/jinaai/jina-embeddings-v3` (1024d, ~2.24 GB, ~100 languages, 1024
   token context) in `fastembed-models.toml`
-- **Version**: `fastembed==0.8.0` pinned in `requirements.direct.txt`; `numpy==2.4.6` in
+- **Version**: `fastembed==0.8.0` pinned in `requirements.direct.txt`; `numpy==2.5.1` in
   requirements
 - **Key repositories**:
   - `ChatEmbeddingsRepository` — embedding CRUD (all embedding methods + semantic search moved
@@ -48,11 +48,16 @@ How to use this file:
   backfilled only after it receives a new message — i.e., once it is known to
   still be active.
 - **Method `embedAndSaveMessage`**: re-homed as a method
-  `ChatSearchHandler.embedAndSaveMessage` at
-  `internal/bot/common/handlers/chat_search.py:450` (the former shared helper
-  module `internal/bot/common/embedding_utils.py` was deleted). Takes
-  `EnsuredMessage`, resolves `LLMService` via `getInstance()`
-- **Config cached**: `_searchEnabled`, `_reindexBatchSize` in handler `__init__`
+  `ChatSearchHandler.embedAndSaveMessage` in
+  `internal/bot/common/handlers/chat_search.py` (the former shared helper
+  module `internal/bot/common/embedding_utils.py` was deleted). Signature:
+  `async def embedAndSaveMessage(self, ensuredMessage: EnsuredMessage) -> bool`
+  — resolves `LLMService`/`Database` via `self`; passes `chatId=None` to
+  `generateEmbedding` so background backfill does NOT consume per-chat rate
+  budget. Never raises (any exception is logged and returns `False`).
+- **Config cached**: `_reindexBatchSize` and `_maxResults` in
+  `ChatSearchHandler.__init__`. (`_searchEnabled` is NOT here — it lives on
+  `MessagePreprocessorHandler.__init__`; see "Post-Review Fixes — Round 1".)
 - **`DO_EXIT` registration is OPTIONAL** — not required by `QueueService`.
   `QueueService.startDelayedScheduler` already registers its own built-in `DO_EXIT` handler
   (`_doExitHandler`) that performs the actual graceful-shutdown bookkeeping. `ChatSearchHandler`
@@ -84,6 +89,11 @@ construction time) and `EMBEDDINGS_ENABLED` are both on.
 | `search_messages` | LLM tool | `chat_search.py` |
 | `list_users` | LLM tool | `chat_search.py` |
 | `get_thread` | LLM tool | `chat_search.py` |
+| `get_messages_by_ids` | LLM tool | `chat_search.py` (added later for ADR-019 condensed-context; see [`condensed-context-retrieval.md`](condensed-context-retrieval.md)) |
+
+> The handler registers **four** LLM tools total (`search_messages`,
+> `list_users`, `get_thread`, `get_messages_by_ids`). The fourth is a pure
+> DB lookup, NOT gated on `EMBEDDINGS_ENABLED` or `ALLOW_TOOLS_COMMANDS`.
 
 ## Implementation Decisions (2026-06-20 / 2026-06-21)
 
@@ -246,7 +256,7 @@ These mistakes were made during Step 1 implementation and fixed. Don't repeat th
     identical embed+save code. Originally extracted to a shared helper in
     `internal/bot/common/embedding_utils.py`; that module was later deleted and
     the logic re-homed as the method `ChatSearchHandler.embedAndSaveMessage`
-    (`internal/bot/common/handlers/chat_search.py:450`).
+    (in `internal/bot/common/handlers/chat_search.py`).
 
 17. **No redundant guard checks.** `supportsEmbedding` was checked in both `abstract.py` (public
     method) and `basic_openai_provider.py` (private method). The provider check is redundant —
@@ -280,12 +290,16 @@ optimization). Key changes:
   code was removed from `_dtCronJob`.
 - **Rate-limit gate moved**: `self.llmService.rateLimit()` now inside `if keywords:` block only
   — filter-only `/search` queries don't consume LLM budget.
-- **`embedAndSaveMessage` signature preserved**: The function MUST accept `EnsuredMessage` — the
-  user needs access to attachment data for embedding content. The signature remains
-  `(ensuredMessage: EnsuredMessage, modelName: str, db: Database) -> bool`. The background-task
-  race condition (review recommendation #6) is accepted: the risk of a downstream handler mutating
-  `ensuredMessage.messageText` before the task reads it is theoretical and low. Do NOT change this
-  signature in the future without explicit approval.
+- **`embedAndSaveMessage` signature evolved**: Originally
+  `(ensuredMessage, modelName, db) -> bool` so the background task had
+  explicit deps. Simplified to
+  `async def embedAndSaveMessage(self, ensuredMessage: EnsuredMessage) -> bool`
+  — resolves `LLMService`/`Database` via `self`, reads `EMBEDDING_MODEL`
+  from chat settings internally, and passes `chatId=None` to
+  `generateEmbedding` so backfill doesn't consume per-chat rate budget.
+  The function MUST accept `EnsuredMessage` — the user needs access to
+  attachment data for embedding content. Do NOT change this signature in
+  the future without explicit approval.
 - **`saveMessageEmbedding` exception propagation**: Removed try/except — exceptions propagate to
   `embedAndSaveMessage` which already has its own error boundary.
 - **Zero-vector warning**: `logger.warning` in `chat_search.py` repo when
@@ -309,18 +323,21 @@ optimization). Key changes:
   same private method that delegates to `getChatUsers()`. `/users` formats as Markdown;
   `list_users` returns JSON dict.
 - **`_formatMessageDict` helper**: Async instance method on `ChatSearchHandler`. Converts
-  `ChatMessageDict` rows to JSON-safe dicts with documented snake_case keys: `message_id`,
-  `message_text`, `username`, `full_name`, `date`, `reply_id`, `thread_id`. Does NOT use
-  `formatForLLM(JSON)` — returns its own dict shape. Handles `None` `reply_id` correctly (returns
-  `None`, not `"None"`). Used by `get_thread` LLM tool.
-- **`_llmToolSearchMessages` bug (fixed 2026-06-27)**: Missing `formatted.append(retMsg)` — loop
-  computed results but never appended them. Output was always `[]` and `count` 0. Now fixed.
-  Results use `formatForLLM(JSON)` keys (camelCase: `text`, `messageId`) — different from
-  `_formatMessageDict` snake_case contract.
+  `ChatMessageDict` rows to JSON-safe dicts by delegating to
+  `EnsuredMessage.formatForLLM(format=LLMMessageFormat.JSON)` and parsing the
+  result — so its output shape tracks the canonical `formatForLLM` contract,
+  not a hand-rolled dict. Output keys: `message_id`, `message_text`,
+  `username`, `full_name`, `date`, `reply_id`, `thread_id`. Used by
+  `get_thread` LLM tool.
+- **`_llmToolSearchMessages` results use `formatForLLM(JSON)` keys** (camelCase:
+  `text`, `messageId`) — different from `_formatMessageDict`'s snake_case output
+  shape. (Bug fixed 2026-06-27: the loop previously computed results but never
+  appended them — `formatted.append(retMsg)` was missing, so output was always
+  `[]` and `count` 0.)
 - **`_relativeTime` static method**: Formats a `datetime` to short relative strings (`<1m ago`,
   `5m ago`, `1h ago`, `yesterday`, `5d ago`, `>1w ago`).
-- **LLM tool registrations in `__init__`**: All 3 tools (`search_messages`, `list_users`,
-  `get_thread`) registered after `CRON_JOB` registration, using
+- **LLM tool registrations in `__init__`**: All 4 tools (`search_messages`, `list_users`,
+  `get_thread`, `get_messages_by_ids`) registered after `CRON_JOB` registration, using
   `self.llmService.registerTool(name, description, [LLMFunctionParameter(...)], handler=self._llmTool*)`.
 - **Imports**: `from lib.ai import LLMFunctionParameter, LLMParameterType` added to
   `chat_search.py`.
@@ -414,9 +431,13 @@ Five review findings addressed, then two further user decisions applied:
 - **Self-reset placement bug** (historical): The initial fix placed the reset AFTER
   `if not pendingMessagesList: return`, making it unreachable. Lesson: place cleanup logic BEFORE
   early-return guards. (Moot after revert but the pattern is general.)
-- **Dynamic batch size**: The `_MESSAGE_ID_FILTER_BATCH_SIZE = 500` constant must account for
-  non-mid params. Use `perBatchCount = min(BATCH_SIZE, 990 - baseParamCount)` to stay under
-  SQLite's 999 limit.
+- **Dynamic batch size**: The `_MESSAGE_ID_FILTER_BATCH_SIZE = 1024` constant must account for
+  non-mid params and the real SQLite parameter ceiling. Current code uses
+  `perBatchCount = min(_MESSAGE_ID_FILTER_BATCH_SIZE, 32766 - baseParamCount)`
+  to stay under the active ceiling. (Was previously 500 / `990 - baseParamCount`
+  when the ceiling was estimated at 999; both the constant and the ceiling
+  estimate were revised upward — verify against the current code before
+  relying on either number.)
 - **Stale anti-patterns in memory**: Anti-pattern #14 was written when the plan said "discover by
   REGENERATE_EMBEDDINGS". The implementation switched to EMBEDDINGS_ENABLED because the former
   defaults to true and is rarely in the DB. When implementation contradicts a recorded "lesson",

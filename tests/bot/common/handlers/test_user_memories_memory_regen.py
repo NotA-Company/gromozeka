@@ -1,7 +1,7 @@
 """Tests for memory-embedding regeneration in :meth:`UserMemoriesHandler._dtCronJob`.
 
 Covers the Phase 3b regeneration mechanism (see
-docs/plans/user-memories-v1.md §5.6, §13 Phase 3, §14.7), which mirrors the
+docs/archive/plans/user-memories-v1.md §5.6, §13 Phase 3, §14.7), which mirrors the
 chat-history backfill cron (``ChatSearchHandler._dtCronJob`` at
 ``chat_search.py:284-445``) adapted for the ``user_memories`` store.
 

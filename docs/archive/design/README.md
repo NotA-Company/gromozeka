@@ -9,6 +9,12 @@
 
 This directory contains **historical design documents** and Architecture Decision Records (ADRs) from various phases of the project. These documents capture the design reasoning and historical context but may not reflect the current implementation.
 
+## Recently Archived (2026-07-18 docs audit)
+
+These shipped-feature design docs were moved out of `docs/` during the 2026-07-18 docs audit because their features are fully implemented. They remain here as historical record.
+
+- [`sandbox-improvements-design.md`](sandbox-improvements-design.md) — Sandbox Improvements design (IMPLEMENTED; tools `sandbox_list_files`, `sandbox_read_file`, per-run `workDir` all live)
+
 ## File Status Summary
 
 | File | Status | Notes |
@@ -88,5 +94,5 @@ For current architecture, design patterns, and ADRs:
 
 ---
 
-*Last updated: 2026-07-04*
+*Last updated: 2026-07-18*
 *Design archive maintained for historical context only*

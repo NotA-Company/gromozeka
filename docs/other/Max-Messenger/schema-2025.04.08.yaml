@@ -254,6 +254,7 @@ info:
     To see changelog for older versions visit our [GitHub](https://github.com/max-messenger/max-bot-api-schema/releases).
 servers:
   - url: 'https://botapi.max.ru'
+    description: 'DEPRECATED host (snapshot captured 2025-04-08). This botapi.max.ru endpoint was the legacy Max Bot API host and was retired on 2026-07-19. The current production host is https://platform-api2.max.ru — see lib/max_bot/constants.py. This schema file is a frozen historical reference; the server URL above and the botapi.max.ru references inside info.description and the /uploads operation are preserved verbatim from the original snapshot.'
 security:
   - access_token: []
 tags:

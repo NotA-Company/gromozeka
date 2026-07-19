@@ -33,7 +33,7 @@ condenseContext(messages, model, *, keepFirstN=0, keepLastN=1,
 
 ### Path B — Random-answer `randomContext` (PERSISTENT)
 
-`handleRandomAnswer` ([`/internal/bot/common/handlers/llm_messages.py`](/internal/bot/common/handlers/llm_messages.py)), when context exceeds `MAX_RANDOM_CONTEXT_MESSAGES`, calls `condenseContext(force=True)`, unpacks `condensedRet, condensingDictMap = ...`, and — if `condensingDictMap` is non-empty — writes `ensuredMessage.metadata["randomContext"] = mergeCondencingDicts(condensingDictMap.values())`. The write is SKIPPED when the map is empty (nothing meaningful to persist). Subsequent loops stop walking older context when they hit a `randomContext` boundary.
+`handleRandomMessage` ([`/internal/bot/common/handlers/llm_messages.py`](/internal/bot/common/handlers/llm_messages.py)), when context exceeds `MAX_RANDOM_CONTEXT_MESSAGES`, calls `condenseContext(force=True)`, unpacks `condensedRet, condensingDictMap = ...`, and — if `condensingDictMap` is non-empty — writes `ensuredMessage.metadata["randomContext"] = mergeCondencingDicts(condensingDictMap.values())`. The write is SKIPPED when the map is empty (nothing meaningful to persist). Subsequent loops stop walking older context when they hit a `randomContext` boundary.
 
 ### Path C — Service-level auto-condense (TRANSIENT)
 
@@ -52,7 +52,7 @@ Both persisted paths inject summaries as `role="user"` messages — there is NO 
 
 ## ADR-019 feature (IMPLEMENTED 2026-07-12 → SIMPLIFIED 2026-07-13)
 
-Decision record: [`../architecture.md`](../architecture.md) ADR-019. Spec: [`../../plans/condensed-context-retrieval-plan-v1.md`](../../plans/condensed-context-retrieval-plan-v1.md).
+Decision record: [`../architecture.md`](../architecture.md) ADR-019. Spec: [`../../archive/plans/condensed-context-retrieval-plan-v1.md`](../../archive/plans/condensed-context-retrieval-plan-v1.md).
 
 **Feature:** record which message IDs each condensed summary covers + structured metadata (participants / dateRange / messageCount) + render summaries as JSON (fixing the latent raw-text asymmetry) + add `get_messages_by_ids` LLM tool for on-demand retrieval of condensed originals.
 
@@ -66,15 +66,15 @@ Decision record: [`../architecture.md`](../architecture.md) ADR-019. Spec: [`../
   - `MetadataDict.randomContext` widened `str → Union[str, CondensingDict]`.
   - `CondensedSummaryKind(StrEnum)` — `CONDENSED = "condensed"`, deliberately separate from `MessageType` (a render-only construct; the JSON shape is structurally disjoint from real user messages, so the shared `"type"` key never collides).
   - `renderCondensedSummary(data: CondensingDict) -> str` — JSON renderer; `CondensingDict`-only signature (legacy `str` rows are pre-wrapped by the read site before calling). Output shape: `{type:"condensed", coveredMessageIds:[...], participants:[...], dateRange:{"from":<ISO>,"to":<ISO>}, messageCount:N, summary:"..."}`; falsy-drop mirrors `formatForLLM` (empty/absent fields omitted, never `null`); `type` + `summary` always present.
-  - `mergeCondensingDicts(dictList) -> CondensingDict` — unions multiple dicts (`text` = `"\n".join`; `messageIds` concat de-duped via `asStr()` first-seen order; `participants` sorted-unique; `dateRange` min/max; `messageCount` sum). Used by Path B.
+  - `mergeCondensingDicts(dictList: Iterable[CondensingDict]) -> CondensingDict` — unions multiple dicts (`text` = `"\n".join`; `messageIds` plain concat — **no de-dup** (the source docstring claims de-dup via `asStr()` first-seen but the code at `message_metadata.py:314-315` just `extend`s); `participants` set-unique but **NOT sorted** (`list(participants)` from a `MutableSet[str]` at `:331`, iteration order unspecified); `dateRange` min/max; `messageCount` sum). Used by Path B. *(Doc-drift note: the source docstring of `mergeCondensingDicts` itself carries the same stale "de-duped" / "sorted-unique" wording; ADR-019 §725 in `architecture.md` repeats it.)*
 
 - **[`/internal/services/llm/service.py`](/internal/services/llm/service.py):**
-  - `generateCondensingDict(text, messages) -> CondensingDict` (module fn) — the coverage producer. Walks the batch `ModelMessage`s and reads `.source`: `EnsuredMessage` → extract messageId / username / `date.timestamp()`; `dict` / `CondensingDict` → union (re-condense cascade); `None` → `logger.warning` + skip (NOT counted in `messageCount`). Returns `CondensingDict` with `text` + conditionally-populated `messageIds` / `participants` / `dateRange` (`{from:min ts, to:max ts}`, omitted if none) / `messageCount`. Does NOT set `tillMessageId` / `tillTS`. Wrapped in try/except → fallback `CondensingDict(text=respText)` on failure (summary preserved, coverage dropped).
+  - `generateCondensingDict(text, messages) -> CondensingDict` (module fn) — the coverage producer. Walks the batch `ModelMessage`s and reads `.source`: `EnsuredMessage` → extract messageId / username / `date.timestamp()`; `dict` / `CondensingDict` → union (re-condense cascade); `None` → `logger.warning` + skip metadata extraction (but the position IS still counted toward `messageCount` per `service.py:107-108` — `messageCount += 1` runs unconditionally in the `None` branch; the source docstring of `generateCondensingDict` itself claims "NOT counted" — that docstring is stale). Returns `CondensingDict` with `text` + conditionally-populated `messageIds` / `participants` / `dateRange` (`{from:min ts, to:max ts}`, omitted if none) / `messageCount`. Does NOT set `tillMessageId` / `tillTS`. Wrapped in try/except → fallback `CondensingDict(text=respText)` on failure (summary preserved, coverage dropped).
   - `condenseContext` **always** returns `Tuple[Sequence[ModelMessage], Dict[int, CondensingDict]]` (no `returnCoverage` kwarg); coverage computed inside via `generateCondensingDict`; Path C unpacks `_messages, _`.
 
 - **[`/internal/bot/common/handlers/base.py`](/internal/bot/common/handlers/base.py)** (`getThreadByMessageForLLM`): TWO `condenseContext` call sites (initial condense + re-condense cascade); unpacks `condensedRet, condensingDictMap`; `condenseCache.extend(condensingDictMap.values())` (or `= list(...)` for the cascade); injection site calls `renderCondensedSummary(condensedMessage)`.
 
-- **[`/internal/bot/common/handlers/llm_messages.py`](/internal/bot/common/handlers/llm_messages.py)** (`handleRandomAnswer`): unpacks `condensedRet, condensingDictMap`; if non-empty writes `mergeCondensingDicts(condensingDictMap.values())` to `randomContext`. The read site in `ensured_message.py` (`toModelMessageList`) pre-wraps legacy `str` into `CondensingDict(text=...)` → `renderCondensedSummary(...)`.
+- **[`/internal/bot/common/handlers/llm_messages.py`](/internal/bot/common/handlers/llm_messages.py)** (`handleRandomMessage`): unpacks `condensedRet, condensingDictMap`; if non-empty writes `mergeCondensingDicts(condensingDictMap.values())` to `randomContext`. The read site in `ensured_message.py` (`toModelMessageList`) pre-wraps legacy `str` into `CondensingDict(text=...)` → `renderCondensedSummary(...)`.
 
 - **[`/internal/bot/common/handlers/chat_search.py`](/internal/bot/common/handlers/chat_search.py)**: `get_messages_by_ids` tool (registered in `ChatSearchHandler.__init__` as a normal `registerTool(...)` alongside the other search tools; reuses `_formatMessageDict`; never-raise; batch fetch). Constant `ToolName.GET_MESSAGES_BY_IDS` + `MAX_GET_MESSAGES_BATCH = 32` (plan §3.8 proposed 50; implementation chose 32) in [`/internal/bot/constants.py`](/internal/bot/constants.py).
 
@@ -84,7 +84,7 @@ Decision record: [`../architecture.md`](../architecture.md) ADR-019. Spec: [`../
 
 ### `get_messages_by_ids` LLM tool
 
-Registered in `ChatSearchHandler.__init__` ([`/internal/bot/common/handlers/chat_search.py`](/internal/bot/common/handlers/chat_search.py)); constant `ToolName.GET_MESSAGES_BY_IDS`, [`/internal/bot/constants.py`](/internal/bot/constants.py). Accepts a list of ID strings (`extra={"items": {"type": "string"}}` — forces strings because `MessageId` is `int|str`); input clamped to `MAX_GET_MESSAGES_BATCH = 32`. Returns `{messages:[...EnsuredMessage JSON...], notFound:[...], count:N}`, reusing `_formatMessageDict`. Whole body wrapped in try/except (never-raise).
+Registered in `ChatSearchHandler.__init__` ([`/internal/bot/common/handlers/chat_search.py`](/internal/bot/common/handlers/chat_search.py)); constant `ToolName.GET_MESSAGES_BY_IDS`, [`/internal/bot/constants.py`](/internal/bot/constants.py). Parameter declared as plain `ARRAY` — the `extra={"items": {"type": "string"}}` schema-forcing line is **commented out** at `chat_search.py:363` (was intended to force strings because `MessageId` is `int|str`, but never landed in the emitted schema). The implementation compensates with `str(mid).strip()` + `MessageId(midStr)` runtime coercion (never-raise when the model violates the implicit schema). Input is de-duped via a `seen: set[str]` (first-seen order), blank/`None` entries dropped, clamped to `MAX_GET_MESSAGES_BATCH = 32`. Returns `{"done": True, "messages": [...EnsuredMessage JSON...], "notFound": [...], "count": N}` on success, or `{"done": False, "error": "..."}` on any failure; reuses `_formatMessageDict`. Whole body wrapped in try/except (never-raise). *(Doc-drift note: ADR-019 §729 in `architecture.md` and the source docstring at `chat_search.py:975-977` still describe `extra={"items": ...}` as live — both stale.)*
 
 **Two-layer gating** (note: NO handler restructuring, NO `manager.py` change):
 1. `[search-history].enabled` via `ChatSearchHandler`'s existing conditional registration (the tool rides the handler's gate).
@@ -111,7 +111,7 @@ The config section is `[search-history]` (NOT `[chat-search]`), accessed via `co
 ## Cross-references
 
 - [`../architecture.md`](../architecture.md) ADR-019 — decision record (coverage tracking + lazy JSON render + `get_messages_by_ids` tool). Linked to the file, not a deep anchor.
-- [`../../plans/condensed-context-retrieval-plan-v1.md`](../../plans/condensed-context-retrieval-plan-v1.md) — authoritative implementation spec.
+- [`../../archive/plans/condensed-context-retrieval-plan-v1.md`](../../archive/plans/condensed-context-retrieval-plan-v1.md) — authoritative implementation spec.
 - [`user-memories.md`](user-memories.md) — `getThreadByMessageForLLM` (Path A host) and the ADR-018 lazy-render discipline this feature mirrors.
 - [`chat-history-search.md`](chat-history-search.md) — `ChatSearchHandler`, `/search`, and the `search_messages` / `list_users` / `get_thread` tools alongside which `get_messages_by_ids` is registered.
 - [`../handlers.md`](../handlers.md) — `ChatSearchHandler` row; [`../configuration.md`](../configuration.md) §`[search-history]`; [`../database.md`](../database.md) `getChatMessagesByMessageIds` row.

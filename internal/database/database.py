@@ -26,7 +26,7 @@ Example:
     >>> config = DatabaseManagerConfig(...)
     >>> async with Database(config) as db:
     ...     # Access repositories
-    ...     messages = await db.chatMessages.getMessages(chatId=123)
+    ...     messages = await db.chatMessages.getChatMessagesSince(chatId=123)
     ...     users = await db.chatUsers.getUsers(chatId=123)
 """
 
@@ -84,11 +84,12 @@ class Database:
         chatSettings: Repository for chat-specific settings and configurations.
         chatInfo: Repository for chat metadata and information.
         chatSummarization: Repository for chat summarization data.
+        userMemories: Repository for the unified ``user_memories`` table
+            (durable per-(chat, user, thread) facts/bios/events).
         mediaAttachments: Repository for media attachment storage and management.
         spam: Repository for spam detection and filtering data.
         delayedTasks: Repository for delayed task scheduling and management.
         divinations: Repository for tarot/runes divination readings.
-        divinationLayouts: Repository for divination layout definitions cache.
         cache: Repository for caching operations.
         webhookUpdates: Repository for Max webhook payload storage and consumption.
         _migrationManager: Internal migration manager for schema versioning and updates.
@@ -100,7 +101,7 @@ class Database:
         >>> config = DatabaseManagerConfig(...)
         >>> async with Database(config) as db:
         ...     # Access repositories
-        ...     messages = await db.chatMessages.getMessages(chatId=123)
+        ...     messages = await db.chatMessages.getChatMessagesSince(chatId=123)
         ...     users = await db.chatUsers.getUsers(chatId=123)
     """
 

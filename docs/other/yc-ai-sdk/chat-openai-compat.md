@@ -1,4 +1,22 @@
-# Chat -- OpenAI-Compatible HTTP API
+# Yandex Cloud AI Studio SDK Reference — OpenAI-Compatible HTTP API (verified against pinned v0.22.0, 2026-07-18)
+
+> **Mostly verified against pinned SDK v0.22.0** (re-captured 2026-07-18 from
+> `venv/lib/python3.14/site-packages/yandex_ai_studio_sdk/`). Claims marked
+> with ⚠ were not re-verified (typically server-side facts not checkable from
+> the SDK source). Production consumers:
+> [`lib/ai/providers/{yc_openai,basic_openai}_provider.py`](../../../lib/ai/providers/).
+>
+> The project does **not** consume the `sdk.chat.*` HTTP surface directly —
+> production uses the raw `openai` Python SDK against YC's OpenAI-compatible
+> endpoint (`basic_openai_provider.py` → `openai.AsyncOpenAI`). The
+> `sdk.chat.*` surface documented below is re-verified here for completeness
+> so the OpenAI-compat path can be reasoned about from either side.
+>
+> **Endpoint discrepancy to be aware of:** production
+> (`yc_openai_provider.py _getBaseUrl`) uses `https://ai.api.cloud.yandex.net/v1`,
+> while the SDK itself (`_utils/http.py`) resolves `http_completions` to
+> `https://llm.api.cloud.yandex.net/v1/`. Both are YC aliases for the same
+> service; production's `ai.` spelling is the one exercised in this repo.
 
 The `sdk.chat` domain provides an OpenAI-compatible HTTP API for text
 generation and embeddings. This is an alternative to the gRPC-based
@@ -25,6 +43,7 @@ generation and embeddings. This is an alternative to the gRPC-based
 
 ```python
 from yandex_ai_studio_sdk import AsyncAIStudio
+from yandex_ai_studio_sdk.auth import APIKeyAuth
 
 sdk = AsyncAIStudio(folder_id="b1g...", auth=APIKeyAuth("..."))
 
@@ -101,15 +120,21 @@ model = sdk.chat.completions("yandexgpt-5.1").configure(
 result: ChatModelResult = await model.run(messages, timeout=180)
 
 # Streaming generation
-async for chunk in await model.run_stream(messages, timeout=180):
+async for chunk in model.run_stream(messages, timeout=180):
     print(chunk.text, end="", flush=True)
 ```
 
 ### Listing Available Models
 
+`list()` lives on the **domain** (`sdk.chat.completions`), not on a model
+instance — verified in `_chat/completions/function.py` (`AsyncChatCompletions.list`,
+v0.22.0). It issues `GET /models` with `OpenAI-Project: <folder_id>` and
+returns model objects whose `id` starts with `gpt://`:
+
 ```python
-models = await model.list(timeout=60, filters=None)
-# Returns tuple of available model info
+models = await sdk.chat.completions.list(timeout=60, filters=None)
+# Returns tuple[AsyncChatModel, ...] — model objects with .uri and .owner
+# (NOT raw info dicts). Filter by attribute, e.g. filters={'owner': '...'}.
 ```
 
 ### Message Format
@@ -133,30 +158,46 @@ result = await model.run([
 
 ### ChatModelResult
 
-Same structure as `GPTModelResult`:
+Verified against `yandex_ai_studio_sdk/_chat/completions/result.py`
+(`ChatModelResult`, v0.22.0). Note: this is **not** the same shape as the
+gRPC `GPTModelResult` — chat uses OpenAI-style `choices`/`created`/`model`/`id`
+fields rather than `alternatives`/`model_version`:
 
 ```python
 @dataclass(frozen=True)
 class ChatModelResult:
-    alternatives: tuple[Alternative, ...]
-    usage: CompletionUsage
-    model_version: str
+    choices: tuple[ChatChoice, ...]       # OpenAI-style "choices"
+    usage: ChatUsage | None               # prompt_tokens / completion_tokens / total_tokens
+    created: datetime.datetime            # server-side creation timestamp
+    model: str                            # model URI echoed back by the API
+    id: str                               # completion request id (debugging)
 ```
 
-With the same convenience properties (`.text`, `.role`, `.status`,
-`.tool_calls`).
+`ChatChoice` exposes `.text`, `.content` (alias for `.text`), `.role`,
+`.status` (`AlternativeStatus`), `.finish_reason` (`FinishReason` enum:
+`stop`/`length`/`content_filter`/`tool_calls`/`null`/`usage`),
+`.tool_calls` (`HttpToolCallList | None`), `.reasoning_text` and its alias
+`.reasoning_content`.
+
+`ChatModelResult` itself provides shortcut properties that delegate to
+`choices[0]`: `.text`, `.content`, `.role`, `.status`, `.finish_reason`,
+`.tool_calls`, `.reasoning_text`, `.reasoning_content`. There is also an
+`.alternatives` property as a synonym for `.choices` (for
+`sdk.models.completions` naming compatibility) — but it is a property, not a
+dataclass field.
 
 ## Chat Text Embeddings
 
 ```python
-model = sdk.chat.text_embeddings("doc")
+model = sdk.chat.text_embeddings("text-search-doc")
 result = await model.run("Hello, world!", timeout=60)
 # Same result as gRPC embeddings
 ```
 
 ## OpenAI-Compatible Endpoint
 
-The chat domain uses the following endpoint:
+The chat domain uses the following endpoint (verified against
+`yc_openai_provider.py:280 _getBaseUrl`, v0.22.0):
 
 ```
 https://ai.api.cloud.yandex.net/v1
@@ -164,6 +205,11 @@ https://ai.api.cloud.yandex.net/v1
 
 This endpoint is compatible with the OpenAI Python SDK and other
 OpenAI-compatible tools:
+
+> Note: the SDK itself resolves its internal `http_completions` service to
+> `https://llm.api.cloud.yandex.net/v1/` (`_utils/http.py`, v0.22.0) — a YC
+> alias for the same service. Production uses the `ai.` spelling above; both
+> work. See the banner at the top of this doc.
 
 ### Using the OpenAI Python SDK
 
@@ -183,7 +229,17 @@ response = client.chat.completions.create(
 )
 ```
 
+> **Note (production divergence):** [`yc_openai_provider.py`](../../../lib/ai/providers/yc_openai_provider.py)
+> additionally passes `project=<folder_id>` to the `OpenAI(...)` /
+> `AsyncOpenAI(...)` constructor, which sets the `OpenAI-Project` header on
+> every request. This is **required for YC's OpenAI-compatible Images API**
+> and harmless for chat completions. The example above omits it for brevity;
+> copy-paste it for any image-generation work.
+
 ### Compatible Tools
+
+> ⚠ Third-party tool compatibility entries below are external/runtime facts,
+> not checkable from the SDK source.
 
 | Tool | Compatibility |
 |---|---|
@@ -196,6 +252,14 @@ response = client.chat.completions.create(
 
 These open-source models are **only** accessible through the chat domain (or
 OpenAI-compatible endpoint), not through gRPC completions:
+
+> ⚠ Server-side facts — not checkable from the SDK source. The catalogue and
+> context sizes below are YC backend config; verify against the live
+> `GET /models` endpoint (or the YC docs) before relying on them. The one
+> partial exception: `qwen3-235b-a22b-fp8` is referenced by name in the SDK's
+> streaming code (`_chat/completions/model.py`, v0.22.0) because its SSE
+> chunks need special handling — so that model id at least is confirmed to
+> exist, though its context size here is still a server-side claim.
 
 | Model | Context Size | Notes |
 |---|---|---|
@@ -242,7 +306,7 @@ print(f"Key points: {summary.key_points}")
 print(f"Word count: {summary.word_count}")
 
 # Streaming
-async for chunk in await model.run_stream([
+async for chunk in model.run_stream([
     {"role": "user", "content": "Tell me about YandexGPT"},
 ]):
     print(chunk.text, end="", flush=True)
@@ -262,4 +326,4 @@ async for chunk in await model.run_stream([
 | Tokenization | Yes | No |
 | Fine-tuning | Yes | No |
 | Open-source models | No | Yes |
-| `.configure()` mutation | Same issue | Same issue |
+| `.configure()` immutability | Returns new instance | Returns new instance |

@@ -15,7 +15,8 @@
 5. [Database Models Reference](#5-database-models-reference)
 6. [Adding Methods to Database](#6-adding-methods-to-database)
 7. [Provider Helper Methods](#7-provider-helper-methods)
-8. [Migration Documentation Protocol](#8-migration-documentation-protocol)
+8. [Utility Functions](#8-utility-functions)
+9. [Migration Documentation Protocol](#9-migration-documentation-protocol)
 
 ---
 
@@ -35,7 +36,7 @@
 | `chatMessages` | `getChatMessagesSince(chatId, sinceDateTime?, tillDateTime?, threadId?, limit?, messageCategory?, userId?, *, dataSource?)` | `List[ChatMessageDict]` | Messages newer than `sinceDateTime` (ordered date DESC). The additive `userId` filter (`AND (:userId IS NULL OR c.user_id = :userId)`) scopes results to one sender — used by the memory-refinement cron to fetch a user's recent messages |
 | `chatMessages` | `updateChatMessageCategory(chatId, messageId, category)` | `None` | Update message category |
 | `chatMessages` | `updateChatMessageMetadata(chatId, messageId, metadata)` | `None` | Update message metadata |
-| `chatMessages` | `searchChatMessages(chatId, queryEmbedding?, userFilter?, categoryFilter?, maxAgeDays?, rootMessageId?, limit?, dataSource?)` | `List[SearchResultDict]` | Combined filter + (optional) semantic search via cosine similarity over `message_embeddings`. When `queryEmbedding` is `None` results are returned in date order with `score=0.0` |
+| `chatSearch` | `searchChatMessages(chatId, queryEmbedding=None, *, limit?, topK?, userFilter?, categoryFilter?, maxAgeDays?, rootMessageId?, modelName?, maxMessages?, threadId?, substring?, dataSource?)` | `List[ChatMessageDict]` | Combined filter + (optional) semantic search via cosine similarity over `message_embeddings`. When `queryEmbedding` is `None` results are returned in date order with `score=0.0`. Lives on the `chatSearch` repo (not `chatMessages`) — moved when `ChatSearchRepository` was split out to remove the old `_embeddingsRepo` back-reference. `SearchResultDict` was deleted; `ChatMessageDict` now carries an optional `score: NotRequired[float]` field populated by the search path |
 | `chatEmbeddings` | `saveMessageEmbedding(chatId, messageId, embedding, model)` | `None` | Upsert a float32 vector blob for `(chat_id, message_id)`. `dimensions` is derived from `len(embedding)` |
 | `chatEmbeddings` | `getMessageEmbedding(chatId, messageId)` | `Optional[MessageEmbeddingDict]` | Fetch a single embedding as a `MessageEmbeddingDict` with `message_id`, `embedding`, `dimensions`, `model`, `created_at`, `updated_at` (no JOIN against `chat_messages` — `message_text` is not included) |
 | `chatEmbeddings` | `getMessagesWithoutEmbeddings(chatId, *, limit, modelName?, dimensions?, dataSource?)` | `List[ChatMessageDict]` | Used by `ChatSearchHandler._dtCronJob` to find messages missing an embedding for `modelName`/`dimensions`. Returns full `ChatMessageDict` rows (joined with `chat_users` for `username`/`full_name`); the embedding table is only used as a `NOT EXISTS` filter, not selected from. The `dimensions` filter scopes the NOT-EXISTS check by dimensionality so model-drift re-embedding only surfaces rows embedded under a different (model, dimensions) tuple |
@@ -72,7 +73,7 @@
 | `userMemories` | `getMemoriesWithoutEmbeddings(chatId, *, limit=50, modelName=None, dimensions=None, dataSource=None)` | `List[UserMemoryDict]` | Backfill/regen-cron input — rows whose `embedding_model`/`embedding_dimensions` is NULL or differs from the active value (single-table stale detection; also serves the initial backfill) |
 | `userMemories` | `saveMemoryEmbedding(chatId, userId, memoryId, embedding, embeddingModel)` | `bool` | Lazy-create `vec_user_memories_{dim}` (if missing) + upsert the vector (`embedding` is `List[float]`, `embeddingModel` the model name) + set `embedding_model`/`embedding_dimensions` on the row (vec0 write must succeed before provenance is set) |
 
-The full `UserMemoriesRepository` has 10 public methods (the remainder are `deleteMemory` (soft-delete), `deleteMemoryEmbedding`, `deleteObsoleteMemoryEmbeddings`, `getMemory`/`getDistinctTags` wizard helpers, and `getMemoriesByIds` — the single read that skips the `deleted_at` filter to resolve soft-deleted memories for historical reconstruction); see [`docs/llm/memories/user-memories.md`](memories/user-memories.md) "Repository" and the schema docs for the complete list. There is no in-place content-PATCH method (`updateMemory` was removed — zero production callers; content changes go through `deleteMemory` + `addMemory`). All SQL goes through `BaseSQLProvider`. Embeddings (regen cron + the memory tools) are produced via `LLMService.generateEmbedding`.
+The full `UserMemoriesRepository` has 12 public methods (the remainder are `deleteMemory` (soft-delete), `deleteMemoryEmbedding`, `deleteObsoleteMemoryEmbeddings`, `getMemory`/`getDistinctTags` wizard helpers, and `getMemoriesByIds` — the single read that skips the `deleted_at` filter to resolve soft-deleted memories for historical reconstruction); see [`docs/llm/memories/user-memories.md`](memories/user-memories.md) "Repository" and the schema docs for the complete list. There is no in-place content-PATCH method (`updateMemory` was removed — zero production callers; content changes go through `deleteMemory` + `addMemory`). All SQL goes through `BaseSQLProvider`. Embeddings (regen cron + the memory tools) are produced via `LLMService.generateEmbedding`.
 
 ---
 
@@ -84,11 +85,13 @@ Chat settings are stored in the cache layer (not directly in DB for hot path):
 # Get settings (from cache, falls back to DB)
 chatSettings: ChatSettingsDict = self.db.chatSettings.getChatSettings(chatId)
 
-# Set a setting (updatedBy is REQUIRED keyword-only arg)
+# Set a setting (updatedBy is REQUIRED keyword-only arg).
+# At the DB-repo layer, value is a plain str — the ChatSettingsValue wrapper
+# lives at the handler layer (BaseBotHandler.setChatSetting).
 self.db.chatSettings.setChatSetting(
     chatId=chatId,
     key=ChatSettingsKey.CHAT_MODEL,
-    value=ChatSettingsValue("gpt-4"),
+    value="gpt-4",
     updatedBy=messageSender.id,
 )
 
@@ -96,7 +99,7 @@ self.db.chatSettings.setChatSetting(
 self.db.chatSettings.unsetChatSetting(chatId=chatId, key=ChatSettingsKey.CHAT_MODEL)
 ```
 
-**IMPORTANT:** `getChatSettings(chatId)` returns `Dict[str, tuple[str, int]]` where each value is a `(value, updated_by)` tuple. Always index `[0]` to get the value. The `updated_by` field is the user ID who last changed the setting (0 for system changes).
+**IMPORTANT:** `getChatSettings(chatId)` returns `Dict[str, tuple[str, int]]` where each value is a `(value, updated_by)` tuple. Always index `[0]` to get the value. The `updated_by` field is the user ID who last changed the setting (0 for system changes). Note the keyword-only argument shape differs by layer: the **repository's** `setChatSetting(..., *, updatedBy: int)` takes an int user ID, while the **handler's** `BaseBotHandler.setChatSetting(..., *, user: MessageSender)` takes a `MessageSender` object.
 
 ---
 
@@ -213,7 +216,7 @@ db.chatMessages.saveChatMessage(..., dataSource="readonly")  # ERROR!
    ```bash
    ls -1 internal/database/migrations/versions/ | grep migration_ | sort -V | tail -1
    ```
-   If the last is `migration_015_*.py`, the next is `016`.
+   If the last is `migration_024_*.py`, the next is `025`. Never reuse a version number — `migration_016` is already taken by `migration_016_add_stat_tables.py`, so the example below uses `025`.
 
 2. **Create the migration file** with the pattern `migration_{version:03d}_{description}.py`
 
@@ -228,19 +231,19 @@ from ...providers import BaseSQLProvider, ParametrizedQuery
 from ..base import BaseMigration
 
 
-class Migration016AddUserPreferences(BaseMigration):
+class Migration025AddUserPreferences(BaseMigration):
     """Add user preferences table.
 
     Attributes:
-        version: Migration version number (16).
+        version: Migration version number (25).
         description: Human-readable description.
     """
 
-    version: int = 16
+    version: int = 25
     description: str = "Add user preferences table"
 
     async def up(self, sqlProvider: BaseSQLProvider) -> None:
-        """Create user_preferences table, dood.
+        """Create user_preferences table.
 
         Args:
             sqlProvider: SQL provider abstraction; do NOT use raw sqlite3.
@@ -264,7 +267,7 @@ class Migration016AddUserPreferences(BaseMigration):
         )
 
     async def down(self, sqlProvider: BaseSQLProvider) -> None:
-        """Drop user_preferences table, dood.
+        """Drop user_preferences table.
 
         Args:
             sqlProvider: SQL provider abstraction.
@@ -276,12 +279,12 @@ class Migration016AddUserPreferences(BaseMigration):
 
 
 def getMigration() -> Type[BaseMigration]:
-    """Return the migration class for auto-discovery, dood.
+    """Return the migration class for auto-discovery.
 
     Returns:
         Type[BaseMigration]: The migration class for this module.
     """
-    return Migration016AddUserPreferences
+    return Migration025AddUserPreferences
 ```
 
 **Migration pattern requirements:**
@@ -290,8 +293,10 @@ def getMigration() -> Type[BaseMigration]:
 2. **No `AUTOINCREMENT`** — use composite natural keys or app-generated IDs (see AGENTS.md)
 3. **No `DEFAULT CURRENT_TIMESTAMP`** — application sets timestamps explicitly
 4. **Use `ParametrizedQuery`** for DDL and `batchExecute` for multiple statements
-5. **Provide `getMigration()` function** for auto-discovery
-6. **Always implement both `up()` and `down()`** for rollback support
+5. **Use `:named` placeholders** for any parametrised DDL/DML (never `?` or `%s`)
+6. **For backfill upserts**, call `sqlProvider.upsert(table, values, conflictColumns, updateExpressions=...)` with the `ExcludedValue` marker from `internal.database.providers.base` rather than hand-writing `ON CONFLICT … DO UPDATE` — the marker translates to `excluded.col` on SQLite/PostgreSQL and `VALUES(col)` on MySQL
+7. **Provide `getMigration()` function** for auto-discovery
+8. **Always implement both `up()` and `down()`** for rollback support (a no-op `down()` that logs is acceptable when a portable `DROP COLUMN` is unavailable — see `migration_021`)
 
 **Primary key strategies (ordered by preference):**
 
@@ -311,16 +316,28 @@ def getMigration() -> Type[BaseMigration]:
 
 ### Key TypedDicts
 
+All defined in `internal/database/models.py`. Dict keys are snake_case to mirror DB columns (repository *method parameters* stay camelCase per AGENTS.md); the universal converter `dbUtils.sqlToTypedDict` maps columns to keys directly.
+
 | TypedDict | Purpose |
 |---|---|
-| `ChatMessageDict` | Stored message |
+| `ChatMessageDict` | Stored message (with optional `score: NotRequired[float]` populated by `chatSearch.searchChatMessages`) |
 | `ChatInfoDict` | Chat metadata |
+| `ChatTopicInfoDict` | Chat topic / forum thread metadata |
 | `ChatUserDict` | User in chat |
 | `MediaAttachmentDict` | Media file record |
 | `DelayedTaskDict` | Delayed task record |
-| `CacheDict` | Cached data entry |
-| `SearchResultDict` | Row returned by `chatMessages.searchChatMessages` — message + user + score |
+| `CacheDict` | Row from the `cache` table (single-namespace weather-style cache) |
+| `CacheStorageDict` | Row from the `cache_storage` table (multi-namespace key/value cache) |
+| `MessageEmbeddingDict` | Row from `message_embeddings` (no JOIN — `message_text` is NOT included; callers fetch it separately) |
+| `WebhookUpdatesRow` | Row from `webhook_updates` (Max webhook payload store; `processed` is int 0/1) |
+| `SpamMessageDict` | Row from `spam_messages` |
+| `ChatSummarizationCacheDict` | Row from the chat-summarization cache table |
+| `DivinationLayoutDict` | Cached layout definition (composite PK `(system_id, layout_id)`) |
+| `UserMemoryDict` | Row from `user_memories` (per-(chat, user, thread) memory store; carries optional `score: NotRequired[float]` from semantic `searchMemories`) |
 | `ThreadResultDict` | Row returned by `chatMessages.getMessageThread` — root + target + chronological thread |
+| `VectorSearchResult` | Row from `BaseSQLProvider.vectorSearch` (`rowKey` dict + `distance: float`; lives in `internal/database/providers/base.py`) |
+
+> **Note on `SearchResultDict`:** this TypedDict was **deleted**. `chatSearch.searchChatMessages` now returns `List[ChatMessageDict]` with `score: NotRequired[float]` set to `0.0` in filter-only mode and the cosine similarity (0.0–1.0) in semantic mode. The same `ChatMessageDict` (minus `score`) is returned by every other chat-message repository method.
 
 ### Key Enums
 
@@ -353,7 +370,24 @@ def getMigration() -> Type[BaseMigration]:
 
 #### `SpamReason`
 
-Various spam classification reasons — used by `SpamHandler`
+| Value | Meaning |
+|---|---|
+| `AUTO` | Automatically detected spam |
+| `USER` | User reported spam |
+| `ADMIN` | Admin marked as spam |
+| `UNBAN` | User was unbanned |
+
+#### `CacheType`
+
+Namespaces for the `cache` table. Members: `WEATHER`, `GEOCODING`, `YANDEX_SEARCH`, `URL_CONTENT`, `URL_CONTENT_CONDENSED`, `GM_SEARCH`, `GM_REVERSE`, `GM_LOOKUP`. Used by `cache.clearOldCacheEntries(ttl, cacheType=...)` to scope cleanup (see §1) and by `CacheService` for hot-path access.
+
+#### `MemoryType`
+
+Closed set of `user_memories.type` column values: `BIO`, `PREFERENCE`, `FACT`, `EVENT`, `RELATIONSHIP`. Lives in the database layer (not `internal.bot.models`) to avoid a circular import — `internal.database` initialises before `internal.bot`. Freeform categorisation beyond these is handled by the JSON `tags` column.
+
+#### `UserMemorySource`
+
+Provenance of a `user_memories` row: `REFINEMENT` (background refinement cron), `CHAT` (inline during a conversation), `MIGRATION` (backfilled from legacy `user_data` by `migration_020`), `USER` (explicitly authored/imported by the user). Stored as the TEXT `source` column.
 
 ---
 
@@ -373,7 +407,7 @@ Sidecar table created by `migration_017`. Stores one float32 embedding per `(cha
 | `created_at` | TIMESTAMP | No | Set by application code (no DB default — matches `migration_013` rules) |
 | `updated_at` | TIMESTAMP | No | Set by application code |
 
-**Indexes:** None. Composite PK lookup is the only access pattern; per-chat enumeration uses `WHERE chat_id = ?`.
+**Indexes:** `idx_message_embeddings_chat_model` on `(chat_id, model)` — added by `migration_018`. The composite PK already indexes `chat_id` as the leftmost prefix, but the semantic-search loader (`ChatSearchRepository._loadEmbeddingsFromDb`) filters on both `chat_id` and `model`; the secondary index lets the engine seek directly to the active model's rows after a model switch instead of scanning the full chat.
 
 **Portability notes:**
 - `BLOB` is portable across SQLite, PostgreSQL (`BYTEA`), and MySQL (`BLOB`).
@@ -426,85 +460,158 @@ await db.chatEmbeddings.deleteChatEmbeddings(chatId=chatId)
 
 ## 6. Adding Methods to `Database`
 
-**Repository Pattern:** Database operations are organized into specialized repositories in `internal/database/repositories/`
+**Repository Pattern:** Database operations are organized into specialized repositories in `internal/database/repositories/`. Every repository inherits from `BaseRepository` (takes a `DatabaseManager`, NOT a `Database`) and goes through `BaseSQLProvider` for every query — never raw `sqlite3`, never `cursor.execute(..., ?)`, never `with self.db._getConnection()`. Those patterns predate the async refactor and the SQL-portability rules in AGENTS.md; they are NOT valid in new code.
 
-**Available Repositories:**
-- `chatMessages` — Message operations
-- `chatUsers` — User operations
-- `chatSettings` — Settings operations
-- `mediaAttachments` — Media operations
-- `cache` — Cache operations
-- `delayedTasks` — Task operations
-- `divinations` — Tarot/runes reading persistence (`insertReading(...)`)
-- `webhookUpdates` — Max webhook payload storage and consumption (backs the webhook-receiver / GET /updates flow; see [`architecture.md`](architecture.md))
-- And 7 more specialized repositories
+**Available Repositories** (15 total — all wired as attributes on the `Database` wrapper in [`internal/database/database.py`](../../internal/database/database.py)):
 
-**Adding methods to existing repository:**
+| Attribute | Class | File |
+|---|---|---|
+| `common` | `CommonFunctionsRepository` | `common.py` (settings key/value) |
+| `chatMessages` | `ChatMessagesRepository` | `chat_messages.py` |
+| `chatEmbeddings` | `ChatEmbeddingsRepository` | `chat_embeddings.py` |
+| `chatSearch` | `ChatSearchRepository` | `chat_search.py` (owns `searchChatMessages`) |
+| `chatUsers` | `ChatUsersRepository` | `chat_users.py` |
+| `chatSettings` | `ChatSettingsRepository` | `chat_settings.py` |
+| `chatInfo` | `ChatInfoRepository` | `chat_info.py` |
+| `chatSummarization` | `ChatSummarizationRepository` | `chat_summarization.py` |
+| `userMemories` | `UserMemoriesRepository` | `user_memories.py` |
+| `mediaAttachments` | `MediaAttachmentsRepository` | `media_attachments.py` |
+| `spam` | `SpamRepository` | `spam.py` |
+| `delayedTasks` | `DelayedTasksRepository` | `delayed_tasks.py` |
+| `divinations` | `DivinationsRepository` | `divinations.py` (reading rows + cached layout definitions) |
+| `cache` | `CacheRepository` | `cache.py` |
+| `webhookUpdates` | `WebhookUpdatesRepository` | `webhook_updates.py` |
+
+> `DatabaseBayesStorage` (`internal/database/bayes_storage.py`) and `DatabaseStatsStorage` (`internal/database/stats_storage.py`) are sibling classes that wrap a `Database` (not `DatabaseManager`) and are NOT exposed as `db.<name>` attributes — see §1 for the cleanup-path usage of the Bayes one.
+
+**Adding a method to an existing repository:**
 
 1. Open the appropriate repository file in `internal/database/repositories/`
-2. Add your method following the repository pattern:
+2. Add an `async` method that resolves a provider via `self.manager.getProvider(...)` and goes through `BaseSQLProvider`:
+
 ```python
-def myNewDbMethod(self, chatId: int, value: str) -> Optional[SomeDict]:
-    """Short description
+from typing import List, Optional
+
+from .. import utils as dbUtils
+from ..models import SomeDict
+
+
+async def myNewDbMethod(self, chatId: int, value: str) -> Optional[SomeDict]:
+    """Short description.
 
     Args:
-        chatId: Chat ID to query
-        value: Value to insert/update
+        chatId: Chat ID to query (also used for source routing).
+        value: Value to match.
 
     Returns:
-        SomeDict if found, None otherwise
+        SomeDict if found, None otherwise.
     """
-    with self.db._getConnection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT * FROM some_table WHERE chat_id = ?",
-            (chatId,)
+    try:
+        sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=True)
+        row = await sqlProvider.executeFetchOne(
+            """
+            SELECT * FROM some_table
+            WHERE chat_id = :chatId AND value = :value
+            """,
+            {"chatId": chatId, "value": value},
         )
-        row = cursor.fetchone()
-        if row is None:
-            return None
-        return dict(row)
+        return dbUtils.sqlToTypedDict(row, SomeDict) if row else None
+    except Exception as e:
+        logger.error(f"Failed myNewDbMethod for chat {chatId}: {e}")
+        return None
 ```
 
-**For read-only methods, pass `readonly=True`:**
+**For read-only methods, take an optional `dataSource: Optional[str] = None`** so callers can pin a source explicitly:
+
 ```python
-def getMyData(self, chatId: int, dataSource: Optional[str] = None) -> Optional[SomeDict]:
-    """Get data for chat
+async def getMyData(
+    self,
+    chatId: int,
+    *,
+    dataSource: Optional[str] = None,
+) -> Optional[SomeDict]:
+    """Get data for chat.
 
     Args:
-        chatId: Chat ID to query
-        dataSource: Optional explicit data source name
+        chatId: Chat ID to query.
+        dataSource: Optional explicit data source name.
 
     Returns:
-        SomeDict if found, None otherwise
+        SomeDict if found, None otherwise.
     """
-    with self.db._getConnection(chatId=chatId, dataSource=dataSource, readonly=True) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM my_table WHERE chat_id = ?", (chatId,))
-        row = cursor.fetchone()
-        return dict(row) if row else None
+    try:
+        sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)
+        row = await sqlProvider.executeFetchOne(
+            """
+            SELECT * FROM my_table WHERE chat_id = :chatId
+            """,
+            {"chatId": chatId},
+        )
+        return dbUtils.sqlToTypedDict(row, SomeDict) if row else None
+    except Exception as e:
+        logger.error(f"Failed getMyData for chat {chatId}: {e}")
+        return None
 ```
+
+**Useful `BaseSQLProvider` methods** (see §7 for the full list):
+- `execute(query, params=None, fetchType=FetchType.NO_FETCH)` — write or no-return DDL/DML
+- `executeFetchOne(query, params=None) -> dict | None` — single-row read
+- `executeFetchAll(query, params=None) -> list[dict]` — multi-row read
+- `batchExecute([ParametrizedQuery(...), ...])` — multiple statements in one transaction
+- `upsert(table, values, conflictColumns, updateExpressions=...)` — portable upsert with `ExcludedValue` markers
+- `applyPagination(query, limit, offset)` / `getTextType(maxLength)` / `getCaseInsensitiveComparison(column, param)` / `getLikeComparison(column, param)` — dialect-portable helpers
 
 **Creating a new repository:**
 
 1. Create new file in `internal/database/repositories/my_repository.py`
-2. Inherit from `BaseRepository`:
+2. Inherit from `BaseRepository` (constructor takes a `DatabaseManager`, NOT a `Database`):
 ```python
-from internal.database.repositories.base import BaseRepository
+import logging
+from typing import Optional
+
+from .. import utils as dbUtils
+from ..manager import DatabaseManager
+from ..models import SomeDict
+from .base import BaseRepository
+
+logger = logging.getLogger(__name__)
+
 
 class MyRepository(BaseRepository):
-    """Repository for my_table operations"""
-    
-    def __init__(self, db: 'Database'):
-        super().__init__(db)
-    
-    def myMethod(self, chatId: int) -> Optional[SomeDict]:
-        """Method description"""
-        with self.db._getConnection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM my_table WHERE chat_id = ?", (chatId,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
+    """Repository for my_table operations."""
+
+    __slots__ = ()
+
+    def __init__(self, manager: DatabaseManager) -> None:
+        """Initialize the repository.
+
+        Args:
+            manager: DatabaseManager instance for provider access.
+
+        Returns:
+            None
+        """
+        super().__init__(manager)
+
+    async def myMethod(self, chatId: int) -> Optional[SomeDict]:
+        """Method description.
+
+        Args:
+            chatId: Chat ID to query.
+
+        Returns:
+            SomeDict if found, None otherwise.
+        """
+        try:
+            sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=True)
+            row = await sqlProvider.executeFetchOne(
+                """SELECT * FROM my_table WHERE chat_id = :chatId""",
+                {"chatId": chatId},
+            )
+            return dbUtils.sqlToTypedDict(row, SomeDict) if row else None
+        except Exception as e:
+            logger.error(f"Failed myMethod for chat {chatId}: {e}")
+            return None
 ```
 
 3. Register in `internal/database/database.py`:
@@ -512,17 +619,21 @@ class MyRepository(BaseRepository):
 from internal.database.repositories.my_repository import MyRepository
 
 class Database:
-    def __init__(self, ...):
+    def __init__(self, config: DatabaseManagerConfig) -> None:
         # ... existing code ...
-        self.myRepository = MyRepository(self)
+        self.myRepository = MyRepository(self.manager)  # pass the MANAGER, not self
 ```
 
+Also export the new class from `internal/database/repositories/__init__.py` and add the attribute to `Database.__slots__` plus a class-level type annotation (every existing repo follows this pattern).
+
 **Checklist after modifying `Database`:**
-- [ ] Method has docstring
-- [ ] Method has type hints
-- [ ] Uses context manager `with self.db._getConnection()`
+- [ ] Method is `async`
+- [ ] Method has docstring with `Args:` / `Returns:`
+- [ ] Method has type hints on every parameter and the return
+- [ ] Goes through `BaseSQLProvider` (no raw `sqlite3`, no `_getConnection()`, no `cursor.execute`)
+- [ ] Uses `:named` placeholders (not `?` or `%s`)
 - [ ] Migration created if schema changed
-- [ ] Tests in `tests/database/test_db_wrapper.py`
+- [ ] Tests in `tests/database/` (mirror layout: `tests/database/repositories/test_my_repository.py`)
 - [ ] Ran `make format lint` and `make test`
 
 ---
@@ -540,8 +651,9 @@ Get RDBMS-specific case-insensitive comparison for exact matches.
 ```python
 # Exact case-insensitive match
 query = sqlProvider.getCaseInsensitiveComparison("name", "userName")
-# Returns: 'LOWER(name) = LOWER(:userName)' for SQLite/MySQL
-# Returns: 'LOWER(name) = LOWER(:userName)' for PostgreSQL (or could use ILIKE)
+# Returns: 'LOWER(name) = LOWER(:userName)' on every concrete provider today
+# (PostgreSQL could use ILIKE, but the LOWER() shape is what all three providers
+# emit — never write `COLLATE NOCASE` by hand; that's SQLite-only.)
 ```
 
 **Use cases:**
@@ -597,7 +709,7 @@ async def getLayout(self, systemId: str, layoutName: str) -> Optional[Divination
 | `applyPagination(query, limit, offset)` | Add RDBMS-specific LIMIT/OFFSET clause |
 | `getTextType(maxLength)` | Get appropriate TEXT type for schema migrations |
 | `upsert(table, values, conflictColumns, updateExpressions)` | Portable upsert operation |
-| `isReadOnly()` | Check if provider is in read-only mode |
+| `await isReadOnly()` | Check if provider is in read-only mode (async — declared `async def isReadOnly(self) -> bool` on `BaseSQLProvider`) |
 | `isVectorSearchSupported() -> bool` | Concrete (default `False`); providers with a loaded vector extension override to return `True` after confirming the extension is operational. Checked synchronously — the provider sets a private `_vectorSearchAvailable` flag during `connect()` (initialized to `False` in `__init__`). `SQLite3Provider` returns `True` when `sqlite-vec` loaded successfully. |
 | `vectorSearch(*, table, vectorColumn, returnColumns, queryVector: bytes, k, filterClause, filterParams, distanceMetric) -> list[VectorSearchResult]` | Native KNN vector similarity search. `queryVector` is raw bytes (caller pre-serialises, e.g. `array.array("f", vec).tobytes()`). `filterClause` is a raw SQL WHERE fragment with `:named` params (built by trusted repository code). Returns rows ordered by distance ascending. Default implementation raises `NotImplementedError`. |
 | `listTables(likePattern: str = "%") -> list[str]` | List table names matching a SQL LIKE pattern via native introspection. SQLite: `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE :pattern`. Default raises `NotImplementedError`. Used to discover `vec_message_embeddings_%` tables for model-change cleanup. |
@@ -634,7 +746,7 @@ CREATE VIRTUAL TABLE vec_message_embeddings_384 USING vec0(
 
 ---
 
-## 9. Utility Functions
+## 8. Utility Functions
 
 **File:** [`internal/database/utils.py`](../../internal/database/utils.py)
 
@@ -676,7 +788,7 @@ success, value = sqlToCustomType("123", Union[int, str])
 
 ---
 
-## 10. Migration Documentation Protocol
+## 9. Migration Documentation Protocol
 
 **Critical lesson from migration_009 documentation error**
 
@@ -722,7 +834,7 @@ success, value = sqlToCustomType("123", Union[int, str])
 - `migration_018`: Adds `idx_message_embeddings_chat_model` index on `message_embeddings (chat_id, model)` — speeds up `_loadEmbeddingsFromDb` by letting SQLite seek directly to the active model's rows instead of scanning the full chat
 - `migration_019`: Adds the [`webhook_updates`](../../docs/database-schema-llm.md#webhook_updates) table (`id TEXT PRIMARY KEY`) for Max webhook ingestion — raw webhook payloads are written here by the standalone webhook receiver and consumed via the `webhookUpdates` repository. Plus `idx_webhook_updates_unprocessed` on `(processed, received_at)` to back the unprocessed-rows query
 - `migration_020`: Adds the [`user_memories`](../../docs/database-schema-llm.md#user_memories) table (composite PK `(chat_id, user_id, memory_id)`) — the unified per-(chat, user, thread) memory store that retires `user_data` (table subsequently dropped in `migration_022`) and the rolling-bio JSON blob. Three indexes (`idx_user_memories_chat_user_thread`, `idx_user_memories_chat_user_permanent`, `idx_user_memories_type`). Backfills `user_data` rows into permanent cross-thread `type='fact'` memories and `chat_users.metadata.memoryRefinement` rolling-bio entries into permanent thread-scoped `type='bio'` memories. The vec0 virtual table (`vec_user_memories_{dim}`) is **not** created by the migration — it is created lazily at runtime on first write (mirrors `message_embeddings`). Schema/ADR: [`docs/llm/memories/user-memories.md`](memories/user-memories.md) and ADR-016.
-- `migration_021`: Adds the nullable `deleted_at` column to [`user_memories`](../../docs/database-schema-llm.md#user_memories) (soft-delete — `deleteMemory` sets `deleted_at` + drops vec0 + nulls provenance instead of hard-`DELETE`-ing the row, so historical messages referencing a deleted memory can still resolve its content via `getMemoriesByIds`). Every live read gains `AND deleted_at IS NULL`. Additive nullable column; `down()` is a no-op that logs (portable `DROP COLUMN` unavailable). Part of memory-compaction-v1 (see ADR-017 and [`docs/plans/memory-compaction-v1.md`](/docs/plans/memory-compaction-v1.md)).
+- `migration_021`: Adds the nullable `deleted_at` column to [`user_memories`](../../docs/database-schema-llm.md#user_memories) (soft-delete — `deleteMemory` sets `deleted_at` + drops vec0 + nulls provenance instead of hard-`DELETE`-ing the row, so historical messages referencing a deleted memory can still resolve its content via `getMemoriesByIds`). Every live read gains `AND deleted_at IS NULL`. Additive nullable column; `down()` is a no-op that logs (portable `DROP COLUMN` unavailable). Part of memory-compaction-v1 (see ADR-017 and [`docs/archive/plans/memory-compaction-v1.md`](/docs/archive/plans/memory-compaction-v1.md)).
 - `migration_022`: DROP TABLE `user_data` (superseded by `user_memories`; data was backfilled into `user_memories` in `migration_020`). The no-op `down()` is intentional — re-creating the table would orphan the rows already moved to `user_memories`.
 - `migration_023`: Idempotent data migration renaming the `chat_settings` key `memory-injection-enabled` → `memory-enabled` via `UPDATE chat_settings SET key='memory-enabled' WHERE key='memory-injection-enabled'`. Companion to the in-code `MEMORY_INJECTION_ENABLED` → `MEMORY_ENABLED` `ChatSettingsKey` enum rename.
 - `migration_024`: Adds `idx_bayes_tokens_updated_at` index on `bayes_tokens (updated_at)` — optimizes the age-based `DatabaseBayesStorage.cleanupOldTokens` DELETE (`WHERE updated_at < :cutoffTime AND total_count <= :maxCount`), which runs across ALL chats from `HandlersManager._cleanupOldData()` on a weekly cron and at shutdown. The existing `bayes_tokens_total_idx(total_count)` and `bayes_tokens_chat_idx(chat_id)` do not help that DELETE (no chat_id filter; `updated_at` is the selective range predicate).
@@ -742,4 +854,4 @@ success, value = sqlToCustomType("123", Union[int, str])
 ---
 
 *This guide is auto-maintained and should be updated whenever significant database changes are made*
-*Last updated: 2026-07-12*
+*Last updated: 2026-07-18*

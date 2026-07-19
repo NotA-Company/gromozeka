@@ -174,6 +174,27 @@ class YandexSearchHandler(BaseBotHandler):
                     type=LLMParameterType.NUMBER,
                     required=False,
                 ),
+                LLMFunctionParameter(
+                    name="max_size",
+                    description=(
+                        "Max size of returned content PER PAGE. Each fetched page is independently "
+                        "condensed if it exceeds this size. Only relevant when "
+                        "return_page_content is true. (Default: 10240)"
+                    ),
+                    type=LLMParameterType.NUMBER,
+                    required=False,
+                ),
+                LLMFunctionParameter(
+                    name="condensing_prompt",
+                    description=(
+                        "Optional instructions that override the default condensing prompt for "
+                        "each fetched page that exceeds max_size (only relevant when "
+                        "return_page_content is true). Lets you tailor what the condenser keeps, "
+                        "e.g. 'extract only the recipe and ingredients'."
+                    ),
+                    type=LLMParameterType.STRING,
+                    required=False,
+                ),
             ],
             handler=self._llmToolWebSearch,
         )
@@ -201,6 +222,18 @@ class YandexSearchHandler(BaseBotHandler):
                     type=LLMParameterType.NUMBER,
                     required=False,
                 ),
+                LLMFunctionParameter(
+                    name="condensing_prompt",
+                    description=(
+                        "Optional instructions that override the default condensing prompt when "
+                        "the page content exceeds max_size. Use this to tailor what the condenser "
+                        "keeps (e.g. 'extract only the recipe and ingredients', "
+                        "'summarize the financial figures'). Ignored when content fits within "
+                        "max_size."
+                    ),
+                    type=LLMParameterType.STRING,
+                    required=False,
+                ),
             ],
             handler=self._llmToolGetUrlContent,
         )
@@ -214,7 +247,7 @@ class YandexSearchHandler(BaseBotHandler):
         self.urlContentCondensedCache = GenericDatabaseCache(
             database,
             namespace=CacheType.URL_CONTENT_CONDENSED,
-            keyGenerator=JsonKeyGenerator[Dict[str, Any]](hash=False),
+            keyGenerator=JsonKeyGenerator[Dict[str, Any]](hash=True),
             valueConverter=StringValueConverter(),
         )
         self.urlContentCacheTTL = 60 * 60  # 1 Hour
@@ -228,7 +261,9 @@ class YandexSearchHandler(BaseBotHandler):
         return_page_content: bool,
         enable_content_filter: bool = False,
         max_results: int = 5,
-        **kwargs,
+        condensing_prompt: Optional[str] = None,
+        max_size: int = 10240,
+        **kwargs: Any,
     ) -> str:
         """Perform web search using Yandex Search API.
 
@@ -242,6 +277,14 @@ class YandexSearchHandler(BaseBotHandler):
             return_page_content: Whether to download and parse content of found pages
             enable_content_filter: Whether to enable family-safe content filtering
             max_results: Maximum number of results to return (clamped between 1 and 10)
+            condensing_prompt: Optional instructions overriding the default condensing
+                prompt for each fetched page that exceeds max_size (only relevant when
+                return_page_content is true). Empty/whitespace-only falls back to the
+                per-chat DOCUMENT_CONDENSING_PROMPT default. Forwarded as-is to each
+                per-page fetch, which normalizes it defensively.
+            max_size: Max size of returned content per page; each fetched page is
+                independently condensed if it exceeds this size (only relevant when
+                return_page_content is true).
             **kwargs: Additional keyword arguments
 
         Returns:
@@ -255,7 +298,13 @@ class YandexSearchHandler(BaseBotHandler):
                 for url in urls:
                     if not url:
                         continue
-                    content = await self._llmToolGetUrlContent(extraData=extraData, url=url, parse_to_markdown=True)
+                    content = await self._llmToolGetUrlContent(
+                        extraData=extraData,
+                        url=url,
+                        parse_to_markdown=True,
+                        max_size=max_size,
+                        condensing_prompt=condensing_prompt,
+                    )
                     if content and content[0] != "{":
                         # Check that there is any result and it isn't json
                         return {"url": url, "content": content}
@@ -338,6 +387,27 @@ class YandexSearchHandler(BaseBotHandler):
             logger.error(f"Error searching web: {e}")
             return utils.jsonDumps({"done": False, "error": str(e)})
 
+    @staticmethod
+    def _normalizeCondensingPrompt(prompt: Optional[str]) -> Optional[str]:
+        """Normalize a caller-supplied condensing prompt.
+
+        Treats ``None``, the empty string, and whitespace-only strings as
+        "use the default" (returns ``None``). Otherwise returns the stripped
+        prompt. This guards against models emitting whitespace or an empty
+        string for an optional string parameter.
+
+        Args:
+            prompt: The raw condensing prompt from the tool call (may be ``None``).
+
+        Returns:
+            The stripped prompt, or ``None`` when the caller did not supply a
+            usable prompt.
+        """
+        if prompt is None:
+            return None
+        stripped = prompt.strip()
+        return stripped or None
+
     async def _llmToolGetUrlContent(
         self,
         extraData: Optional[Dict[str, Any]],
@@ -345,7 +415,8 @@ class YandexSearchHandler(BaseBotHandler):
         url: str,
         parse_to_markdown: bool = True,
         max_size: int = 10240,
-        **kwargs,
+        condensing_prompt: Optional[str] = None,
+        **kwargs: Any,
     ) -> str:
         """LLM tool handler to fetch content from a URL.
 
@@ -360,6 +431,10 @@ class YandexSearchHandler(BaseBotHandler):
             parse_to_markdown: Whether to parse HTML content to Markdown format
             max_size: Maximum size of returned content in bytes. If page content
                 exceeds this size, it will be condensed via LLM
+            condensing_prompt: Optional instructions overriding the default condensing
+                prompt used when content exceeds max_size. None, empty, or
+                whitespace-only falls back to the per-chat DOCUMENT_CONDENSING_PROMPT
+                default. Normalized via _normalizeCondensingPrompt before use.
             **kwargs: Additional keyword arguments
 
         Returns:
@@ -380,7 +455,12 @@ class YandexSearchHandler(BaseBotHandler):
                 f"ensuredMessage should be instance of EnsuredMessage but got {type(ensuredMessage).__name__}"
             )
 
-        condensedCacheKey = {"url": url, "max_size": max_size}
+        normalizedCustomPrompt = self._normalizeCondensingPrompt(condensing_prompt)
+        condensedCacheKey = {
+            "url": url,
+            "max_size": max_size,
+            "condensing_prompt": normalizedCustomPrompt,
+        }
         content = await self.urlContentCondensedCache.get(condensedCacheKey, self.urlContentCacheTTL)
         if content is not None:
             return content
@@ -428,10 +508,15 @@ class YandexSearchHandler(BaseBotHandler):
             if len(content) >= max_size:
                 logger.debug(f"Content length is {len(content)} > {max_size}, condensing...")
                 chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
+                effectivePrompt = (
+                    normalizedCustomPrompt
+                    if normalizedCustomPrompt is not None
+                    else chatSettings[ChatSettingsKey.DOCUMENT_CONDENSING_PROMPT].toStr()
+                )
                 prompt = [
                     ModelMessage(
                         role="system",
-                        content=chatSettings[ChatSettingsKey.DOCUMENT_CONDENSING_PROMPT].toStr(),
+                        content=effectivePrompt,
                     ),
                     ModelMessage(role="user", content=content),
                 ]

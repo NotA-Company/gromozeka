@@ -361,13 +361,13 @@ Stores per-chat configuration settings.
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
 | `chat_id` | INTEGER | No | - | Telegram chat identifier |
-| `key` | TEXT | No | - | Setting key (see [`ChatSettingsKey`](../internal/bot/models/chat_settings.py:41)) |
+| `key` | TEXT | No | - | Setting key (see [`ChatSettingsKey`](../internal/bot/models/chat_settings.py:281)) |
 | `value` | TEXT | Yes | NULL | Setting value (stored as string) |
-| `updated_by` | INTEGER | No | - | User ID who last updated the setting |
+| `updated_by` | INTEGER | No | 0 | User ID who last updated the setting |
 | `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
-**Available Settings**: See [`ChatSettingsKey`](../internal/bot/models/chat_settings.py:41) enum for all available settings including:
+**Available Settings**: See [`ChatSettingsKey`](../internal/bot/models/chat_settings.py:281) enum for all available settings including:
 - LLM model selection (`chat-model`, `summary-model`, etc.)
 - Prompts (`chat-prompt`, `summary-prompt`, etc.)
 - Feature flags (`use-tools`, `parse-images`, `detect-spam`, etc.)
@@ -504,13 +504,12 @@ Stores media group relationships for messages with multiple media items sent tog
 | `media_group_id` | TEXT | No | - | Telegram media group identifier |
 | `media_id` | TEXT | No | - | Foreign key to [`media_attachments.file_unique_id`](#media_attachments) |
 | `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
-| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
 **Relationships**:
 - References [`media_attachments`](#media_attachments) via `media_id`
 - Referenced by [`chat_messages`](#chat_messages) via `media_group_id`
 
-**Note**: Media groups allow tracking multiple media items (photos, videos, documents) sent together in a single message or album.
+**Note**: Media groups allow tracking multiple media items (photos, videos, documents) sent together in a single message or album. Created by `migration_008`; the table has only `created_at` (no `updated_at`) because rows are append-only and never updated.
 
 ---
 
@@ -570,7 +569,7 @@ Stores messages identified as spam for training and analysis.
 | `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
-**TypedDict**: [`SpamMessageDict`](../internal/database/models.py:303)
+**TypedDict**: [`SpamMessageDict`](../internal/database/models.py:325)
 
 ---
 
@@ -604,9 +603,9 @@ Stores token statistics for Bayesian spam filtering.
 |--------|------|----------|---------|-------------|
 | `token` | TEXT | No | - | Token (word or n-gram) |
 | `chat_id` | INTEGER | Yes | NULL | Chat identifier (NULL for global stats) |
-| `spam_count` | INTEGER | No | 0 | Occurrences in spam messages |
-| `ham_count` | INTEGER | No | 0 | Occurrences in ham messages |
-| `total_count` | INTEGER | No | 0 | Total occurrences |
+| `spam_count` | INTEGER | Yes | 0 | Occurrences in spam messages |
+| `ham_count` | INTEGER | Yes | 0 | Occurrences in ham messages |
+| `total_count` | INTEGER | Yes | 0 | Total occurrences |
 | `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
@@ -627,8 +626,8 @@ Stores class statistics for Bayesian spam filtering.
 |--------|------|----------|---------|-------------|
 | `chat_id` | INTEGER | Yes | NULL | Chat identifier (NULL for global stats) |
 | `is_spam` | BOOLEAN | No | - | Whether this is spam class (TRUE) or ham class (FALSE) |
-| `message_count` | INTEGER | No | 0 | Number of messages in this class |
-| `token_count` | INTEGER | No | 0 | Total tokens in this class |
+| `message_count` | INTEGER | Yes | 0 | Number of messages in this class |
+| `token_count` | INTEGER | Yes | 0 | Total tokens in this class |
 | `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
@@ -660,7 +659,7 @@ Caches chat message summaries to avoid regenerating them.
 **Indexes**:
 - `chat_summarization_cache_ctfl_index` on `(chat_id, topic_id, first_message_id, last_message_id, prompt)`
 
-**TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:326)
+**TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:348)
 
 **Cache Key Generation**: Implemented in the chatMessages repository
 
@@ -679,7 +678,10 @@ Generic key-value cache storage with namespace support.
 | `value` | TEXT | No | - | Cached value (JSON-serialized) |
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
-**TypedDict**: [`CacheStorageDict`](../internal/database/models.py:364)
+**Indexes**:
+- `idx_cache_namespace` on `namespace` — for faster lookups by namespace (created by `migration_004`)
+
+**TypedDict**: [`CacheStorageDict`](../internal/database/models.py:386)
 
 ---
 
@@ -701,7 +703,7 @@ Unified cache table for all cache types (replaces separate cache tables from mig
 - `idx_cache_namespace_key` on `(namespace, key)`
 - `idx_cache_updated_at` on `updated_at` (for TTL cleanup)
 
-**TypedDict**: [`CacheDict`](../internal/database/models.py:351)
+**TypedDict**: [`CacheDict`](../internal/database/models.py:373)
 
 **Available Namespaces**: See [`CacheType`](#cachetype) enum for all available cache namespaces including:
 - `WEATHER` - Weather API responses
@@ -753,9 +755,9 @@ Stores tarot and rune readings produced by `DivinationHandler` (see [`internal/b
 | `system_id` | TEXT | No | - | Divination system (`tarot`, `runes`) |
 | `deck_id` | TEXT | No | - | Deck identifier (e.g. `rws`, `elder_futhark`) |
 | `layout_id` | TEXT | No | - | Layout identifier (e.g. `three_card`, `celtic_cross`, `three_runes`) |
-| `question` | TEXT | No | `''` | User's question (may be empty) |
+| `question` | TEXT | No | - | User's question (may be empty) |
 | `draws_json` | TEXT | No | - | JSON-serialized list of drawn symbols with positions and reversed flags |
-| `interpretation` | TEXT | No | `''` | LLM-generated interpretation of the reading |
+| `interpretation` | TEXT | No | - | LLM-generated interpretation of the reading |
 | `image_prompt` | TEXT | Yes | NULL | Image prompt sent to image generator (when `image-generation = true`) |
 | `invoked_via` | TEXT | No | - | Either `'command'` (slash command) or `'llm_tool'` |
 | `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
@@ -795,10 +797,10 @@ Caches layout definitions discovered via LLM for reuse in divination readings.
 
 **Usage Examples**:
 ```python
-from internal.database.repositories import DivinationLayoutsRepository
+from internal.database.repositories import DivinationsRepository
 
 # Get a layout from cache
-repo = DivinationLayoutsRepository(db.manager)
+repo = DivinationsRepository(db.manager)
 layout = await repo.getLayout(systemId='tarot', layoutId='three_card')
 
 # Save a discovered layout
@@ -836,7 +838,7 @@ await repo.saveLayout(
 
 ### message_embeddings
 
-Stores one float32 embedding vector per `(chat_id, message_id)` to enable semantic ranking of chat-history search results. Produced by the `MessagePreprocessorHandler` (real-time, post-`saveChatMessage`) and the `ChatSearchHandler._dtCronJob` backfill `CRON_JOB` (catches up un-embedded rows; backfill runs whenever the per-chat `EMBEDDINGS_ENABLED` setting is on — there is no separate one-shot regen trigger); consumed by `ChatMessagesRepository.searchChatMessages` for cosine-similarity ranking. See [`docs/llm/database.md`](llm/database.md) §5.5 for repository usage, and [`docs/llm/configuration.md`](llm/configuration.md) for `[search-history]` config. There is no separate `BackfillWorker` class — backfill duty lives in `ChatSearchHandler`.
+Stores one float32 embedding vector per `(chat_id, message_id)` to enable semantic ranking of chat-history search results. Produced by the `MessagePreprocessorHandler` (real-time, post-`saveChatMessage`) and the `ChatSearchHandler._dtCronJob` backfill `CRON_JOB` (catches up un-embedded rows; backfill runs whenever the per-chat `EMBEDDINGS_ENABLED` setting is on — there is no separate one-shot regen trigger); consumed by `ChatSearchRepository.searchChatMessages` (accessed as `db.chatSearch.searchChatMessages`) for cosine-similarity ranking. See [`docs/llm/database.md`](llm/database.md) §5.5 for repository usage, and [`docs/llm/configuration.md`](llm/configuration.md) for `[search-history]` config. There is no separate `BackfillWorker` class — backfill duty lives in `ChatSearchHandler`.
 
 **Primary Key**: `(chat_id, message_id)`
 
@@ -922,7 +924,7 @@ Stores raw incoming Max Messenger webhook payloads awaiting consumption by the b
 
 ### user_memories
 
-Unified per-(chat, user, thread) memory store — durable facts, preferences, events, relationships, and high-level bio notes about a user. Retires the legacy `user_data` key-value table (dropped in `migration_022`) and the rolling-bio JSON blob (`chat_users.metadata.memoryRefinement`); both were backfilled into this table by `migration_020`. See [`docs/llm/memories/user-memories.md`](llm/memories/user-memories.md) (canonical durable summary) and [`docs/plans/user-memories-v1.md`](plans/user-memories-v1.md).
+Unified per-(chat, user, thread) memory store — durable facts, preferences, events, relationships, and high-level bio notes about a user. Retires the legacy `user_data` key-value table (dropped in `migration_022`) and the rolling-bio JSON blob (`chat_users.metadata.memoryRefinement`); both were backfilled into this table by `migration_020`. See [`docs/llm/memories/user-memories.md`](llm/memories/user-memories.md) (canonical durable summary) and [`docs/archive/plans/user-memories-v1.md`](archive/plans/user-memories-v1.md).
 
 Semantic search runs over a vec0 virtual table (`vec_user_memories_{dim}`, cosine distance) that is **not** created by the migration — it is created lazily at runtime on first write (mirrors `message_embeddings` / `vec_message_embeddings_{dim}`). Unlike chat-history search there is no BLOB side table: `embedding_model` / `embedding_dimensions` are tracked on `user_memories` itself and vec0 is the sole embedding store. When vec0 is unavailable, `searchMemories` returns `[]` (no numpy fallback).
 
@@ -1055,7 +1057,7 @@ Indicates why a message was marked as spam.
 
 Defines available cache types for dynamic cache tables.
 
-**Defined in**: [`internal/database/models.py:377`](../internal/database/models.py:377)
+**Defined in**: [`internal/database/models.py:399`](../internal/database/models.py:399)
 
 | Value | Description |
 |-------|-------------|
@@ -1082,11 +1084,12 @@ All database queries return strongly-typed dictionaries defined in [`internal/da
 | [`ChatTopicInfoDict`](../internal/database/models.py:234) | Forum topic information | Lines 234-252 |
 | [`MediaAttachmentDict`](../internal/database/models.py:255) | Media attachment details | Lines 255-281 |
 | [`DelayedTaskDict`](../internal/database/models.py:284) | Delayed task information | Lines 284-300 |
-| [`SpamMessageDict`](../internal/database/models.py:303) | Spam message details | Lines 303-323 |
-| [`WebhookUpdatesRow`](../internal/database/models.py:303) | Max webhook payload awaiting consumption | - |
-| [`ChatSummarizationCacheDict`](../internal/database/models.py:326) | Cached summary information | Lines 326-348 |
-| [`CacheDict`](../internal/database/models.py:351) | Generic cache entry | Lines 351-361 |
-| [`CacheStorageDict`](../internal/database/models.py:364) | Cache storage entry | Lines 364-374 |
+| [`SpamMessageDict`](../internal/database/models.py:325) | Spam message details | Lines 325-347 |
+| [`WebhookUpdatesRow`](../internal/database/models.py:303) | Max webhook payload awaiting consumption | Lines 303-324 |
+| [`ChatSummarizationCacheDict`](../internal/database/models.py:348) | Cached summary information | Lines 348-372 |
+| [`CacheDict`](../internal/database/models.py:373) | Generic cache entry | Lines 373-385 |
+| [`CacheStorageDict`](../internal/database/models.py:386) | Cache storage entry | Lines 386-398 |
+| [`UserMemoryDict`](../internal/database/models.py:551) | Per-(chat, user, thread) memory row (with optional `score` from semantic search) | Lines 551-599 |
 
 These TypedDict models provide:
 - **Type safety**: IDE autocomplete and type checking

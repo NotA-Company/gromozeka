@@ -400,3 +400,38 @@ class TestMaxBotApplicationWebhookMode:
         await app.postStop()
 
         mockedDeps["maxBotClient"].deleteWebhook.assert_not_called()
+
+    async def testPostStopUnregisterWebhookKeyAbsentDefaultsToFalse(self, mockedDeps: Dict[str, Any]) -> None:
+        """Omitting ``unregister-webhook`` from config defaults to False (no delete).
+
+        The default for ``webhookConfig.get("unregister-webhook", False)``
+        changed from ``True`` to ``False`` so a bot restart no longer tears
+        down the Max subscription unless the operator explicitly opts in. The
+        existing tests
+        (:meth:`testPostStopUnregisterWebhookTrueCallsDeleteWebhook` /
+        :meth:`testPostStopUnregisterWebhookFalseSkipsDeleteWebhook`) construct
+        the config with the key set explicitly, so they don't exercise the
+        default. This test OMITS the key to pin that the ``get(...``)`` default
+        is ``False`` and ``deleteWebhook`` is NOT called on shutdown.
+
+        Args:
+            mockedDeps: Patched collaborators (provides ``maxBotClient``).
+
+        Returns:
+            None
+        """
+        configManager = makeConfigManager(
+            webhookConfig={
+                "enabled": True,
+                "register-webhook": True,
+                # unregister-webhook deliberately OMITTED to exercise the default.
+                "webhook-url": "https://example.com/webhook",
+            }
+        )
+        app = buildApp(configManager)
+        app._webhookMode = True
+        app.maxBot = mockedDeps["maxBotClient"]
+
+        await app.postStop()
+
+        mockedDeps["maxBotClient"].deleteWebhook.assert_not_called()

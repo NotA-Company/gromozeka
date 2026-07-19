@@ -19,7 +19,7 @@
 | **Rate limiting** | Sliding-window, configurable | Good luck |
 | **Config** | Hierarchical TOML, env-aware | Flat YAML spaghetti |
 | **Database** | SQLite with PG/MySQL escape hatches | "It works on my DB" |
-| **Tests** | 1185+ and counting | lmaooo |
+| **Tests** | 3300+ and counting | lmaooo |
 
 ---
 
@@ -30,10 +30,12 @@
 Plug in OpenRouter, OpenAI, YandexCloud, or spin up your own OpenAI-compatible endpoint. Gromozeka routes to the model you pick and **auto-fails over** if the primary goes down. You don't lift a finger — your users never see an error.
 
 ```toml
-[[ai.models]]
-group = "gpt4"
-apiType = "openai"
-modelId = "gpt-4o"
+[models.models.my-gpt4]
+provider        = "openrouter"
+model_id        = "openai/gpt-4o"
+model_version   = "latest"
+support_tools   = true
+support_text    = true
 ```
 
 ### AI That Does Things, Not Just Talks
@@ -85,9 +87,9 @@ Every handler is isolated. Every service is a singleton. Every message flows thr
 | Runtime | Python 3.12+, async, single-process |
 | Messaging | `python-telegram-bot` + custom `lib/max_bot` |
 | AI | Multi-provider abstraction: `LLMManager` → `AbstractModel` |
-| DB | SQLite with provider abstraction (PG/MySQL escape hatches), 16 versioned migrations |
+| DB | SQLite with provider abstraction (PG/MySQL escape hatches), 24 versioned migrations |
 | Config | Hierarchical TOML with `${ENV}` substitution |
-| Quality | `black` (120 cols), `isort`, `flake8`, `pyright`, 1185+ tests |
+| Quality | `black` (120 cols), `isort`, `flake8`, `pyright`, 3300+ tests |
 | License | BSD 3-Clause — do whatever you want |
 
 ---
@@ -118,7 +120,7 @@ Boom. Your bot is online. Telegram, Max, or both. With AI, weather, search, spam
 
 Other bots give you ChatGPT. Gromozeka gives you **an AI platform**.
 
-You pick the model. You pick the platform. You pick the features. The code is tested (1185+ tests), the architecture is clean (singleton services, ordered handler pipeline), and the database is portable (SQLite today, PostgreSQL or MySQL when you need it).
+You pick the model. You pick the platform. You pick the features. The code is tested (3300+ tests), the architecture is clean (singleton services, ordered handler pipeline), and the database is portable (SQLite today, PostgreSQL or MySQL when you need it).
 
 No vendor lock-in. No "sorry, the API is down." No black boxes.
 
