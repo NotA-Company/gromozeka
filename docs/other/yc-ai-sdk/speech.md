@@ -1,21 +1,9 @@
-# Speech -- Text-to-Speech and Speech-to-Text
+# Yandex Cloud AI Studio SDK Reference — Speech (TTS + STT) (verified against pinned v0.22.0, 2026-07-18)
 
 Audio capabilities via the `sdk.speechkit` domain, powered by Yandex
 SpeechKit.
 
-> **Scope and status.** This is a reference for the SDK surface only; the
-> production codebase does **not** use SpeechKit (no callers of
-> `sdk.speechkit`, `text_to_speech`, `speech_to_text`, `tts`, or `stt` in
-> `internal/` or `lib/`). See `gap-analysis.md` (TTS and STT rows: "Not
-> used / Low priority"). Treat this page as a forward-reference for
-> hypothetical voice features, not a description of integrated behavior.
->
-> **Version drift.** This reference was originally written against SDK
-> **0.20.2**; the project currently pins
-> `yandex-ai-studio-sdk==0.22.0` (see `requirements.direct.txt`). The
-> public surface documented below has been re-verified against 0.22.0 and
-> the surgical corrections are marked inline. Re-verify before relying on
-> any code sample here.
+> **Verified against pinned SDK v0.22.0** (re-captured 2026-07-18 from `venv/lib/python3.14/site-packages/yandex_ai_studio_sdk/`). **TTS and STT are entirely unused in production** — see `gap-analysis.md`. Claims marked with ⚠ are server-side facts not checkable from the SDK source.
 
 ## Text-to-Speech (TTS)
 
@@ -51,7 +39,7 @@ tts.configure(speed=1.5, volume=0.7)
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `audio_format` | `AudioFormat` | UNDEFINED | Output format. `WAV`, `MP3`, `OGG_OPUS`, `PCM16(sample_rate_hertz, channels=1)` |
-| `voice` | `str \| None` | UNDEFINED | Voice name, e.g., `"oksana"`, `"alice"`, `"ermil"` |
+| `voice` | `str \| None` | UNDEFINED | Voice name, e.g., `"oksana"`, `"alice"`, `"ermil"` ⚠ (available voices are a server-side roster, not enumerated in the SDK source) |
 | `role` | `str \| None` | UNDEFINED | Voice role/character |
 | `speed` | `float \| None` | UNDEFINED | Speech speed. Default 1.0 |
 | `volume` | `float \| None` | UNDEFINED | Volume. MAX_PEAK: (0,1] default 0.7; LUFS: [-145, 0) default -19 |
@@ -98,8 +86,14 @@ Synthesizes the full text and returns the complete audio.
 
 #### `run_stream()` -- Streaming Synthesis
 
+> **Drift correction (0.22.0).** `run_stream` is an *async generator*
+> (`async def` + `yield`), not a coroutine. Iterate it directly with
+> `async for` — do **not** `await` it (`await` on an async generator
+> raises `TypeError: object async_generator can't be used in 'await'
+> expression`). The same applies to `stt.run_stream`.
+
 ```python
-async for chunk in await tts.run_stream("Hello, world!", timeout=60):
+async for chunk in tts.run_stream("Hello, world!", timeout=60):
     # chunk: TextToSpeechResult
     audio_data = chunk.data
     text = chunk.text
@@ -172,7 +166,7 @@ with open("output.mp3", "wb") as f:
 print(f"Generated {result.size_bytes} bytes, {result.length_ms}ms duration")
 
 # Streaming synthesis
-async for chunk in await tts.run_stream("A longer text that benefits from streaming"):
+async for chunk in tts.run_stream("A longer text that benefits from streaming"):
     # Write each chunk to a buffer or stream to a client
     audio_buffer.extend(chunk.data)
 ```
@@ -260,7 +254,7 @@ Performs complete recognition on the provided audio.
 #### `run_stream()` -- Streaming Recognition
 
 ```python
-async for event in await stt.run_stream(audio_bytes, timeout=60):
+async for event in stt.run_stream(audio_bytes, timeout=60):
     # event: SpeechToTextStreamingEvent
     if event.final is not None:
         print(f"Final: {event.final.text}")
@@ -288,7 +282,7 @@ For long audio files. Returns `AsyncOperation[DeferredSpeechToTextResult]`.
 #### `attach_deferred()` -- Attach to Existing Operation
 
 ```python
-operation = stt.attach_deferred(operation_id="...", timeout=60)
+operation = await stt.attach_deferred(operation_id="...", timeout=60)
 result = await operation
 ```
 
@@ -337,8 +331,8 @@ class Utterance:
 
     # Properties:
     # .final_text: str  -- the final recognized text
-    # .final_refinement_text: str
-    # .text: str  -- same as final_text
+    # .final_refinement_text: str | None  -- None when no final_refinement events arrived
+    # .text: str  -- final_refinement_text or final_text (always str)
 ```
 
 ### SpeechToTextStreamingEvent
@@ -404,7 +398,7 @@ for channel in result:
         print(f"  channel={channel.tag}: {utterance.text}")
 
 # Streaming recognition
-async for event in await stt.run_stream(audio_bytes, timeout=60):
+async for event in stt.run_stream(audio_bytes, timeout=60):
     if event.final is not None:
         print(f"Final: {event.final.text}")
 

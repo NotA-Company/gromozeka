@@ -1,25 +1,37 @@
-# Yandex Cloud AI Studio SDK Reference (v0.20.2)
+# Yandex Cloud AI Studio SDK Reference (verified against pinned v0.22.0, 2026-07-18)
 
-> **Version drift — 2026-07-18 audit:** This bundle references SDK **v0.20.2**
-> (captured 2026-05-13), but [`requirements.direct.txt`](../../../requirements.direct.txt)
-> now pins `yandex-ai-studio-sdk==0.22.0` (two minor versions ahead). This is a
-> **version-pinned API reference**, not a tree-sync index like
-> [`docs/llm/index.md`](../../llm/index.md) — it needs a **full revision pass on
-> SDK upgrade**, not routine maintenance. Treat any constructor signature, auth
-> class, domain accessor, exception, or `RetryPolicy` field below as
-> unverified against 0.22.0 until re-captured. Production consumer:
-> [`lib/ai/providers/yc_sdk_provider.py`](../../../lib/ai/providers/yc_sdk_provider.py)
-> (protobuf imports at lines 49-52).
+> **Verified against pinned SDK v0.22.0** (re-captured 2026-07-18 from
+> `venv/lib/python3.14/site-packages/yandex_ai_studio_sdk/`). All API surface
+> claims in this bundle have been systematically re-verified against the
+> installed SDK source. Claims marked with ⚠ (typically server-side facts:
+> model catalogue, context sizes, required scopes) are not checkable from the
+> SDK source. Per-file banner gloss: files marked **"Verified"** have all
+> SDK-source-checkable claims re-verified; **"Mostly verified"** covers
+> entirely-unwired domains or files that include non-server-side claims not
+> individually re-verified (marked with ⚠). Production consumers: gRPC path →
+> `lib/ai/providers/yc_sdk_provider.py`; OpenAI-compat path →
+> `lib/ai/providers/{yc_openai,basic_openai}_provider.py`; embeddings →
+> `lib/ai/providers/fastembed_provider.py` (NOT YC SDK); all other domains
+> (classifiers/search/tuning/datasets/batch/TTS/STT) are unused.
 
-Complete documentation of the `yandex-ai-studio-sdk` Python package, version
-**0.20.2**. This reference covers every public API surface and is intended to
-guide a refactoring of our existing YC SDK provider at
-`lib/ai/providers/yc_sdk_provider.py`.
+Reference documentation for the `yandex-ai-studio-sdk` Python package, version
+**0.22.0**, focused on the SDK surfaces this codebase consumes (gRPC
+completions, image generation, and the OpenAI-compatible chat API) plus the
+neighbouring domains the SDK exposes (embeddings, classifiers, search,
+tuning, datasets, batch, speech) for completeness. This is a
+**version-pinned API reference** — captured by hand from the installed SDK
+source, then systematically re-verified against the pinned version on
+2026-07-18. It is **not** auto-generated from the package and does not track
+SDK releases automatically; bump the pin in
+[`requirements.direct.txt`](../../../requirements.direct.txt) and re-run the
+verification pass when upgrading. For an internal analysis of which SDK
+surfaces our providers actually use versus what the SDK exposes, see
+[Gap Analysis](gap-analysis.md).
 
 ## Installation
 
 ```bash
-pip install yandex-ai-studio-sdk==0.20.2
+pip install yandex-ai-studio-sdk==0.22.0
 ```
 
 ## Main Entry Points

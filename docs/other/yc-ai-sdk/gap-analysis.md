@@ -1,8 +1,8 @@
 # Gap Analysis -- Current Provider vs SDK Capabilities
 
 Comparison of what our existing YC SDK provider (`lib/ai/providers/yc_sdk_provider.py`)
-uses versus what the SDK (v0.20.2) makes available. Intended to guide the
-refactoring effort.
+uses versus what the SDK (verified against pinned v0.22.0, 2026-07-18) makes
+available. Intended to guide the refactoring effort.
 
 ## Capability Matrix
 
@@ -31,7 +31,11 @@ The single most important architectural issue for the refactoring.
 
 ### The Problem (Historical)
 
-`.configure()` **mutates the shared model object in place** and returns it. If
+`.configure()` **mutated the shared model object in place** and returned it
+(pre-0.22 SDK behaviour; v0.22.0's `.configure()` is immutable — it calls
+`self._config._replace(...)` and returns a fresh model via
+`self.__class__(...)`, verified at `_types/model.py::BaseModel.configure`. See
+[Completions §".configure() Is Immutable in 0.22.0"](completions.md)). If
 the same model instance is shared across concurrent callers (which it was in
 our old provider -- one `YcAIModel` instance per model name, serving all requests),
 re-configuring between requests creates a race condition:
@@ -170,7 +174,7 @@ provider. Adding it would enable:
 - Better UX for long responses
 
 ```python
-async for chunk in await model.run_stream(messages, timeout=180):
+async for chunk in model.run_stream(messages, timeout=180):
     yield chunk.text  # Stream to client
 ```
 

@@ -1,17 +1,12 @@
-# Tools & Structured Output
+# Yandex Cloud AI Studio SDK Reference — Tools & Structured Output (verified against pinned v0.22.0, 2026-07-18)
 
-> **Version drift — 2026-07-18 audit:** Captured against SDK **v0.20.2**;
-> [`requirements.direct.txt`](../../../requirements.direct.txt) now pins
-> `yandex-ai-studio-sdk==0.22.0`. The `sdk.tools.*`, `tool_choice`, and
-> `response_format` surfaces described here were **re-verified against the
-> 0.22.0 install** during this audit (see "Audit findings" at the bottom).
-> Production consumer:
-> [`lib/ai/providers/yc_sdk_provider.py`](../../../lib/ai/providers/yc_sdk_provider.py)
-> (`_convertTools`, `_convertMessages`, `_generateStructured`); tool-call
-> healing loop in
-> [`internal/services/llm/service.py`](../../../internal/services/llm/service.py)
-> `generateTextViaLLM` + `_tryHealToolCall` (see
-> [`docs/llm/memories/llm-tool-call-healing.md`](../../llm/memories/llm-tool-call-healing.md)).
+> **Verified against pinned SDK v0.22.0** (re-captured 2026-07-18 from
+> `venv/lib/python3.14/site-packages/yandex_ai_studio_sdk/`). Production
+> consumers: `lib/ai/providers/yc_sdk_provider.py` (tool-call extraction in
+> `_generateText`/`_convertMessages`/`_convertTools`);
+> `internal/services/llm/service.py::_tryHealToolCall` (orchestrator-side
+> healing loop, see `docs/llm/memories/llm-tool-call-healing.md`). Claims
+> marked with ⚠ are server-side facts not checkable from the SDK source.
 
 Tool calling and structured output via `response_format`. These features are
 available in both the gRPC `models.completions` domain and the HTTP
@@ -76,7 +71,7 @@ sdk.tools.function(
     *,
     name=None,            # str | UNDEFINED  -- auto-inferred from JSON Schema "title" (pydantic class name)
     description=None,     # str | UNDEFINED  -- auto-inferred from JSON Schema "description" field if present
-    strict=None,          # bool | UNDEFINED  -- strict schema validation
+    strict=None,          # bool | UNDEFINED  -- ⚠ strict schema validation (server-side enforcement; the SDK only forwards the flag)
 ) -> FunctionTool
 ```
 
@@ -175,12 +170,13 @@ search_tool = sdk.tools.search_index(
 )
 ```
 
-The model will automatically query these indexes when relevant to the user's
-question.
+⚠ The model will automatically query these indexes when relevant to the user's
+question (server-side routing; not checkable from the SDK source).
 
 ## Generative Search Tool
 
-AI-summarized answers with source citations, backed by Yandex Search:
+⚠ AI-summarized answers with source citations, backed by Yandex Search
+(server-side behaviour; not checkable from the SDK source):
 
 ```python
 gen_search_tool = sdk.tools.generative_search(
@@ -201,8 +197,9 @@ Internally delegates to `sdk.search_api.generative(...).as_tool(description=...)
 
 ### `response_format='json'` -- JSON Mode
 
-Sets `json_object=True` in the request. The model will output valid JSON.
-You **must** mention JSON in the prompt for best results:
+Sets `json_object=True` in the request. ⚠ The model will output valid JSON
+(server-side). You **must** mention JSON in the prompt for best results
+(server-side guidance, not enforced by the SDK):
 
 ```python
 model = sdk.models.completions("yandexgpt").configure(
@@ -275,13 +272,17 @@ result = await model.run([
 data = ColorList.model_validate_json(result.text)
 ```
 
+The SDK also accepts a pydantic **dataclass** here (handled by the same
+code path — see `_types/schemas.py:124-152`). Behaviour is identical to the
+`BaseModel` case.
+
 ### Structured Output in Chat Domain
 
 All structured output modes are also available via the chat domain:
 
 ```python
 model = sdk.chat.completions("yandexgpt").configure(
-    response_format=ColorList,  # same options: "json", schema dict, pydantic
+    response_format=ColorList,  # same options: "json", schema dict, pydantic BaseModel, pydantic dataclass
     temperature=0.3,
 )
 
@@ -337,18 +338,24 @@ if result.tool_calls:
     print(final_result.text)  # "The answer is 597"
 ```
 
-## Note: `.configure()` Concurrency — RESOLVED in production
+## Note: `.configure()` Immutability — historical concern resolved
 
-`.configure()` mutates the shared model instance in place and returns it. If a
-single SDK model object were reused across concurrent callers needing different
-configurations (e.g. one request wants `response_format='json'`, another wants
-`tools=[...]`), the calls would race and clobber each other.
+`.configure()` returns a **new** model instance with the updated config; it does
+**not** mutate the receiver. The mechanism (verified at
+`_types/model.py::BaseModel.configure`, v0.22.0) is
+`self._config._replace(**kwargs)` (frozen dataclass `_replace`, which returns a
+new config) followed by construction of a fresh model via
+`self.__class__(...)`. The original model is left untouched. See
+[Completions §".configure() Is Immutable in 0.22.0"](completions.md#note-configure-is-immutable-in-0220)
+for the full mechanism.
 
-**Resolution (already shipped):** `YcAIModel._getModel(**configOverrides)` in
-[`lib/ai/providers/yc_sdk_provider.py`](../../../lib/ai/providers/yc_sdk_provider.py)
-creates a **fresh** SDK model per request, configures it for that one call, and
-discards it. There is no shared mutable model state between concurrent
-requests, so structured output and tool calling are both unblocked. See
+The historical "`.configure()` mutates the shared object" hazard described in
+earlier versions of this doc applied to pre-0.22 SDK behaviour and is what
+originally drove our provider's per-request `_getModel()` pattern. The mutation
+risk is gone, but the production pattern (`lib/ai/providers/yc_sdk_provider.py`)
+is retained defensively: every `_generateText` / `_generateStructured` /
+`_generateImage` call still builds a fresh model, so per-call overrides never
+leak across requests even if the SDK regresses. See
 [Gap Analysis](gap-analysis.md) §".configure() Mutation — RESOLVED" for the
 historical context.
 
@@ -420,3 +427,90 @@ priority): `sdk.tools.search_index`, `sdk.tools.generative_search`, and the
 chat-domain tool-call wire format are documented but not used by
 `yc_sdk_provider.py`. Treat their examples as SDK reference only, not as
 battle-tested patterns.
+
+---
+
+## Re-verification pass (2026-07-18, Wave 12)
+
+Walked through every residual concrete API claim not already touched by the
+five Wave-11 fixes above, against the v0.22.0 source. Outcome:
+
+**All previously-listed "API surfaces confirmed unchanged" entries
+re-confirmed** — line numbers from the Wave-11 audit match the v0.22.0
+install byte-for-byte:
+
+- `sdk.tools.function` signature — `_tools/function.py:22-29`.
+- `FunctionTool(name, description, parameters, strict)` dataclass —
+  `_tools/tool.py:83-103` (fields at 96-103).
+- `sdk.tools.search_index(indexes, *, max_num_results, rephraser,
+  call_strategy)` — `_tools/domain.py:83-90` (return at 115-120).
+- `sdk.tools.generative_search(*, description, site, host, url,
+  enable_nrfm_docs, search_filters)` — `_tools/domain.py:122-131`.
+- `site`/`host`/`url` mutual exclusion — docstring at `_tools/domain.py:143`
+  **plus** runtime assertion at `_tools/generative_search.py:73`
+  (`assert bool(kwargs.get('host')) + bool(kwargs.get('site')) +
+  bool(kwargs.get('url')) <= 1`).
+- Delegation to `sdk.search_api.generative(...).as_tool(description=...)` —
+  `_tools/domain.py:163-170`. `as_tool()` itself lives at
+  `_search_api/generative/generative.py:155-174` and returns a
+  `GenerativeSearchTool`.
+- `tool_choice` — `_types/tools/tool_choice.py:16-22, 28-47`. String form
+  accepts any casing of `none`/`auto`/`required`; dict form
+  `{"type": "function", "function": {"name": str[, "instruction": str]}}`
+  (validated by `_types/tools/function.py:18-29`); `FunctionTool` instance
+  form supported.
+- `GPTModelConfig` 7 fields — `_models/completions/config.py:39-59`.
+- `ChatModelConfig(GPTModelConfig)` inheritance —
+  `_chat/completions/config.py:46-61`. Note: it **overrides** `reasoning_mode`
+  (chat uses `low`/`medium`/`high`, not the completions enum) and `tools`
+  (`tuple[CompletionTool, ...] | None` — narrower than the parent's
+  `Sequence | CompletionTool | None`), and adds `extra_query`. Tool/structured-
+  output modes still pass through.
+- `result.tool_calls` returns `ToolCallList | None`, iterable via
+  `TupleSequence`; each item exposes `.id: str | None`, `.function.name: str`,
+  `.function.arguments: JsonObject` — `_models/completions/result.py:148-149`,
+  `_tools/tool_call.py:28-47` (fields 42-45),
+  `_tools/function_call.py:21-46` (fields 29-32).
+- `_from_proto` for `BaseToolCall` sets `id=None` unconditionally in 0.22.0
+  (`_tools/tool_call.py:60-64`); the gRPC completions wire does not carry a
+  server-issued tool-call id in this SDK version. Production
+  `yc_sdk_provider.py:478` falls back to `uuid.uuid4()` when `call.id` is
+  falsy.
+- Chat-domain tool-result wire format
+  `{"role": "tool", "tool_call_id": str, "content": str}` (one message per
+  result) — `_chat/completions/message.py:119-126`. The chat-domain converter
+  also accepts the bundled `tool_results` shape and explodes it into
+  per-result `tool` messages, mapping `name` → previously-seen
+  `tool_call_id` (`_chat/completions/message.py:142-164`).
+- `FunctionResultMessageDict = {role?: str, tool_results: [...]}` —
+  `_models/completions/message.py:27-33`.
+- Each tool-result entry is `ToolResultDictType = FunctionResultDict =
+  {name: str, content: str, type?: str}` — `_tools/tool_result.py:38-48`.
+  `tool_result_to_proto` (`_tools/tool_result.py:63-93`) requires both
+  `name` and `content`; `type` defaults to `"function"` and is the only
+  accepted value in this version.
+- `_convertMessages` line range cited in fix #2 above (`yc_sdk_provider.py:
+  330-370`) is still accurate.
+
+**Newly added in this pass:**
+
+- `response_format` also accepts a pydantic **dataclass** (same code path as
+  `BaseModel`, `_types/schemas.py:124-152`). Previously undocumented;
+  added a one-line note in the "Pydantic Model" subsection and updated the
+  chat-domain options comment.
+
+**Surfaces marked ⚠ in this pass** (server-side facts not verifiable from
+the SDK source):
+
+- "The model will automatically query these indexes when relevant" (search
+  index RAG routing).
+- "AI-summarized answers with source citations, backed by Yandex Search"
+  (generative search output shape).
+- "You must mention JSON in the prompt for best results" (json-mode server-
+  side guidance; the SDK only sets `json_object=True`).
+- "strict schema validation" semantics (the SDK forwards the `strict` flag
+  only — `_tools/function.py:46`, `_tools/tool.py:136-147` — actual
+  enforcement is server-side; for `sdk.assistants` the flag is not yet
+  wired at all and raises `ValueError` if set).
+
+No further code-level drift was found beyond the five Wave-11 fixes.

@@ -1,30 +1,13 @@
-# Completions -- Text Generation
+# Yandex Cloud AI Studio SDK Reference — Completions (gRPC) (verified against pinned v0.22.0, 2026-07-18)
 
 Text generation via the gRPC-based `models.completions` domain. This is the
 primary interface for YandexGPT family models.
 
-> **Version drift — 2026-07-18 audit:** Captured against SDK **v0.20.2**;
-> [`requirements.direct.txt`](../../../requirements.direct.txt) now pins
-> `yandex-ai-studio-sdk==0.22.0`. The gRPC completions surface was
-> **re-verified against the 0.22.0 install** during this audit. Drift items
-> resolved: `TextMessage` is **not** a top-level export (corrected import
-> path); the `FunctionResultMessageDict` example used OpenAI-compat
-> `{"name", "content"}` shape instead of the SDK's `{"role", "tool_results":
-> [...]}` shape; `ReasoningMode` integer values were off-by-one
-> (`DISABLED=1`, `ENABLED_HIDDEN=2`, plus the missing `REASONING_MODE_UNSPECIFIED=0`);
-> `AlternativeStatus.UNKNOWN` / `USAGE` are SDK-only sentinels with ids
-> `-1` / `-2` (not `6` / `7`); `tune_deferred()` / `tune()` gained
-> `description`, `labels`, `tuning_type`, `scheduler`, `optimizer` and
-> `tune_deferred()` does **not** take `poll_*` args; and `.configure()` is
-> **immutable** in 0.22.0 (returns a new instance via `_config._replace`).
->
-> Production consumer:
-> [`lib/ai/providers/yc_sdk_provider.py`](../../../lib/ai/providers/yc_sdk_provider.py)
-> (`YcAIModel._getModel` / `_generateText` / `_generateStructured` /
-> `_convertTools` / `_convertMessages`); orchestration loop in
-> [`internal/services/llm/service.py`](../../../internal/services/llm/service.py)
-> `generateTextViaLLM`. The exercised subset is `models.completions(...)`,
-> `.configure(...)`, `run_deferred()`, `operation.wait()`, and `tokenize()`.
+> **Verified against pinned SDK v0.22.0** (re-captured 2026-07-18 from
+> `venv/lib/python3.14/site-packages/yandex_ai_studio_sdk/`). Production
+> consumer: `lib/ai/providers/yc_sdk_provider.py` (gRPC completions path).
+> Claims marked with ⚠ are server-side facts not checkable from the SDK
+> source.
 
 See also: [Chat (OpenAI Compat)](chat-openai-compat.md) for the HTTP-based
 alternative.
@@ -54,6 +37,11 @@ If the `model_name` already contains `://`, it is used verbatim (no prefix
 construction).
 
 ### Available Models
+
+⚠ The tables below are server-side facts (catalogue names, context sizes,
+expiry dates). The SDK itself keeps no well-known-names registry —
+`_get_model_uri` only inspects the literal `model_name` string for `://`. Any
+of these names may drift on the server without the SDK noticing.
 
 #### YandexGPT Family (gRPC and Chat)
 
@@ -91,11 +79,14 @@ construction).
 
 #### Fine-Tuned Models
 
-Fine-tuned models use a suffix-based URI:
+Fine-tuned models use a suffix-based URI. The `@<tuning-suffix>` must be
+passed as part of a **full URI** (with `://`) so the SDK's `_get_model_uri`
+takes the passthrough branch; the short form would otherwise get prefixed and
+have `/latest` appended after the suffix, producing a malformed URI.
 
 ```python
-# Fine-tuned model
-model = sdk.models.completions("yandexgpt-lite/latest@<tuning-suffix>")
+# Fine-tuned model -- full URI passthrough (the only correct form)
+model = sdk.models.completions("gpt://<fid>/yandexgpt-lite/latest@<tuning-suffix>")
 ```
 
 ## Model Configuration
@@ -178,15 +169,22 @@ Blocks until the model finishes generating. Returns a `GPTModelResult`.
 
 ### `run_stream()` -- Streaming Generation
 
+> **Drift correction (0.22.0).** `run_stream` is an *async generator*
+> (`async def` + `yield`), not a coroutine. Iterate it directly with
+> `async for` — do **not** `await` it (`await` on an async generator
+> raises `TypeError: object async_generator can't be used in 'await'
+> expression`).
+
 ```python
-async for chunk in await model.run_stream(messages, *, timeout=180):
+async for chunk in model.run_stream(messages, *, timeout=180):
     # chunk: GPTModelResult (partial)
     print(chunk.text, end="", flush=True)
 ```
 
 Returns an `AsyncIterator[GPTModelResult]`. Each chunk contains a partial
 alternative with `status=PARTIAL`, except the final chunk which has
-`status=FINAL`.
+`status=FINAL`. ⚠ The `PARTIAL`/`FINAL` streaming sequence is server-side
+behaviour; the SDK only maps the status code from each `CompletionResponse`.
 
 ### `run_deferred()` -- Deferred (Background) Generation
 
@@ -461,7 +459,7 @@ The YandexGPT completions API does **not** support these OpenAI parameters:
 | `presence_penalty` | None | Not available |
 | `logprobs` | None | Not available |
 | `seed` | None (text gen) | Available for image gen only |
-| `n` | None | Single alternative only |
+| `n` | None | ⚠ No parameter to control alternative count. The SDK's `GPTModelResult.alternatives: tuple[Alternative, ...]` can hold more than one, but how many the server emits is server-side and not configurable. |
 | `user` | None | Not available |
 
 The `reasoning_mode` parameter is YandexGPT-specific (no direct OpenAI
