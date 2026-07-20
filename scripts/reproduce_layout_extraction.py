@@ -71,8 +71,8 @@ from internal.services.cache import CacheService  # noqa: E402
 from internal.services.llm.service import LLMService  # noqa: E402
 from lib.ai import ModelMessage  # noqa: E402
 from lib.ai.manager import LLMManager  # noqa: E402
-from lib.proxy import ProxyHelper  # noqa: E402
 from lib.rate_limiter import RateLimiterManager  # noqa: E402
+from scripts._lib.bootstrap import bootstrapProxy  # noqa: E402
 
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
@@ -305,8 +305,10 @@ async def main() -> int:
         dotEnvFile=args.dotenv_file,
     )
 
-    # Store and register global proxy config for all services
-    ProxyHelper.getInstance().setGlobalProxyConfig(configManager.getProxyConfig())
+    # Initialise the global ProxyHelper singleton before any proxy-consuming
+    # service is built (Database with sqlink, LLMManager, httpx clients).
+    # See scripts/_lib/bootstrap.py for the rationale.
+    bootstrapProxy(configManager)
 
     db = Database(
         configManager.getDatabaseConfig(),  # pyright: ignore[reportArgumentType]

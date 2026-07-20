@@ -79,6 +79,7 @@ from lib.ai import (  # noqa: E402
     ModelResultStatus,
     ModelRunResult,
 )
+from scripts._lib.bootstrap import bootstrapProxy  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -902,6 +903,12 @@ async def main() -> int:
         configDirs=configDirs,
         dotEnvFile=args.dotenv_file,
     )
+
+    # Initialise the global ProxyHelper singleton before constructing
+    # LLMManager: each BasicOpenAIProvider._initClient() resolves proxy via
+    # ProxyConfig.getCombined() and raises TypeError if the singleton has
+    # not been initialised. See scripts/_lib/bootstrap.py for the rationale.
+    bootstrapProxy(configManager)
 
     llmManager = LLMManager(configManager.getModelsConfig())
 

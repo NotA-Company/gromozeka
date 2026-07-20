@@ -49,6 +49,7 @@ from lib.ai.providers.custom_openai_provider import CustomOpenAIProvider  # noqa
 from lib.ai.providers.openrouter_provider import OpenrouterProvider  # noqa: E402
 from lib.ai.providers.yc_openai_provider import YcOpenaiProvider  # noqa: E402
 from lib.ai.providers.yc_sdk_provider import YcAIProvider  # noqa: E402
+from scripts._lib.bootstrap import bootstrapProxy  # noqa: E402
 
 _DEFAULT_CONFIG_DIRS: List[str] = ["configs/00-defaults", "configs/local"]
 
@@ -120,6 +121,13 @@ async def main() -> int:
         configDirs=configDirs,
         dotEnvFile=args.dotenv_file,
     )
+
+    # Initialise the global ProxyHelper singleton before instantiating any
+    # provider: each BasicOpenAIProvider._initClient() resolves proxy via
+    # ProxyConfig.getCombined() and raises TypeError if the singleton has
+    # not been initialised. Same applies to OpenrouterProvider.listRemoteModels().
+    # See scripts/_lib/bootstrap.py for the rationale.
+    bootstrapProxy(configManager)
 
     modelsConfig: Dict[str, Any] = configManager.getModelsConfig()
 

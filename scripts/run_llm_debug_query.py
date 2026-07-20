@@ -49,6 +49,7 @@ logging.getLogger("openai._base_client").setLevel(logging.ERROR)
 
 from internal.config.manager import ConfigManager  # noqa: E402
 from lib.ai import AbstractModel, LLMManager, ModelMessage, ModelResultStatus  # noqa: E402
+from scripts._lib.bootstrap import bootstrapProxy  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -400,6 +401,12 @@ async def main() -> int:
         configDirs=configDirs,
         dotEnvFile=args.dotenv_file,
     )
+
+    # Initialise the global ProxyHelper singleton before constructing
+    # LLMManager: each BasicOpenAIProvider._initClient() resolves proxy via
+    # ProxyConfig.getCombined() and raises TypeError if the singleton has
+    # not been initialised. See scripts/_lib/bootstrap.py for the rationale.
+    bootstrapProxy(configManager)
 
     # Initialize LLM manager
     llmManager = LLMManager(configManager.getModelsConfig())
