@@ -92,7 +92,7 @@ model.generateEmbeddings(
 ) -> list[float]
 model.getEstimateTokensCount(data: Any) -> int
 model.contextSize  # int
-model.temperature  # float
+model.getInfo()["customParams"]  # Dict[str, Any] — per-model request params (temperature, top_p, ...)
 model.modelId      # str
 ```
 
@@ -229,7 +229,7 @@ image-generation transports:
 | Method | Class | Purpose |
 |--------|-------|---------|
 | `_getImageModelId()` | `BasicOpenAIModel` | Returns model ID for Images API. Override to use a different ID (e.g., YC uses `art://...`). |
-| `_getImageRequestOptions()` | `BasicOpenAIModel` | Returns whitelisted options from `image_options` config. Prevents arbitrary config injection. |
+| `_getImageRequestOptions()` | `BasicOpenAIModel` | Returns `dict(self._customParams)` verbatim — no whitelist — to be merged into the OpenAI Images-API request. All image-API params (`size`, `quality`, `output_format`, `moderation`, ...) flow through the model's `customParams.*` TOML namespace. |
 | `_getClientParams()` | `BasicOpenAIProvider` | Returns extra params for OpenAI client init (applied to all requests). YC overrides it to return `{"project": folderId}`, which is required by YC's Images API and also present on text calls via the `OpenAI-Project` header. |
 
 **Yandex Cloud OpenAI image models:** YC uses a distinct URI scheme for image
@@ -308,7 +308,7 @@ from lib.ai import ModelStructuredResult
 | Provider name | `fastembed` |
 | Backend | `fastembed` (ONNX-based, no PyTorch). Optional dependency — `ImportError` raised at provider init when not installed |
 | Model class | `FastembedModel` — extends `AbstractModel`; overrides `_generateEmbeddings` only |
-| Extra-config keys | `support_embeddings` (required `true`), `support_text` (set `false`), `embedding_dimensions` (optional), plus any fastembed kwargs (`cache_dir`, `threads`, `max_length`, ...) |
+| Extra-config keys | `support_embeddings` (required `true`), `support_text` (set `false`), `embedding_dimensions` (optional). Fastembed kwargs (`cache_dir`, `threads`, `max_length`, ...) go under `customParams.*`, NOT `extraConfig` — they are forwarded verbatim to `TextEmbedding(...)` via `**customParams` |
 | Concurrency | `asyncio.to_thread` wraps the sync `TextEmbedding.embed` so the event loop stays unblocked; per-model `threading.Lock` serialises lazy model construction |
 | Text / image gen | `NotImplementedError` — local embeddings are embedding-only |
 
@@ -322,7 +322,6 @@ type = "fastembed"
 provider = "fastembed"
 model_id = "sentence-transformers/all-MiniLM-L6-v2"
 model_version = "latest"
-temperature = 0.0
 context = 0
 support_text = false
 support_embeddings = true
@@ -330,6 +329,12 @@ embedding_dimensions = 384
 tier = "free"
 enabled = true
 ```
+
+Fastembed-specific kwargs (`cache_dir`, `threads`, `max_length`, ...) go under
+`customParams.*` and are forwarded verbatim to
+`TextEmbedding(model_name=..., **customParams)` on first use — there is no
+`_CONSUMED_EXTRA_KEYS` filter anymore, so only put keys that
+`TextEmbedding.__init__` actually accepts.
 
 ```python
 model = llmManager.getModel("local-minilm")

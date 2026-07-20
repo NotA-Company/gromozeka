@@ -41,7 +41,7 @@ def mockModel():
     model = Mock(spec=AbstractModel)
     model.modelId = "test-model"
     model.modelVersion = "1.0"
-    model.temperature = 0.7
+    model._customParams = {"temperature": 0.7}
     model.contextSize = 4096
     model.getEstimateTokensCount = Mock(return_value=100)
     return model
@@ -53,7 +53,7 @@ def mockFallbackModel():
     model = Mock(spec=AbstractModel)
     model.modelId = "fallback-model"
     model.modelVersion = "1.0"
-    model.temperature = 0.7
+    model._customParams = {"temperature": 0.7}
     model.contextSize = 4096
     model.getEstimateTokensCount = Mock(return_value=100)
     return model

@@ -91,7 +91,7 @@ def openrouterModel(openrouterProvider: OpenrouterProvider, mockAsyncOpenAI: Moc
         provider=openrouterProvider,
         modelId="anthropic/claude-3-opus",
         modelVersion="latest",
-        temperature=0.7,
+        customParams={"temperature": 0.7},
         contextSize=200000,
         statsStorage=NullStatsStorage(),
         openAiClient=mockAsyncOpenAI,
@@ -204,7 +204,7 @@ def testAddOpenrouterModel(openrouterProvider: OpenrouterProvider, mockAsyncOpen
         name="claude-opus",
         modelId="anthropic/claude-3-opus",
         modelVersion="latest",
-        temperature=0.7,
+        customParams={"temperature": 0.7},
         contextSize=200000,
         statsStorage=NullStatsStorage(),
         extraConfig={"support_tools": True},
@@ -214,7 +214,7 @@ def testAddOpenrouterModel(openrouterProvider: OpenrouterProvider, mockAsyncOpen
     assert isinstance(model, OpenrouterModel)
     assert "claude-opus" in openrouterProvider.models
     assert model.modelId == "anthropic/claude-3-opus"
-    assert model.temperature == 0.7
+    assert model._customParams["temperature"] == 0.7
     assert model.contextSize == 200000
 
 
@@ -234,7 +234,7 @@ def testAddMultipleOpenrouterModels(openrouterProvider: OpenrouterProvider, mock
         name="claude-opus",
         modelId="anthropic/claude-3-opus",
         modelVersion="latest",
-        temperature=0.7,
+        customParams={"temperature": 0.7},
         contextSize=200000,
         statsStorage=NullStatsStorage(),
     )
@@ -243,7 +243,7 @@ def testAddMultipleOpenrouterModels(openrouterProvider: OpenrouterProvider, mock
         name="gpt-4",
         modelId="openai/gpt-4-turbo",
         modelVersion="latest",
-        temperature=0.5,
+        customParams={"temperature": 0.5},
         contextSize=128000,
         statsStorage=NullStatsStorage(),
     )
@@ -271,7 +271,7 @@ def testAddOpenrouterModelWithoutClient() -> None:
             "test",
             modelId="model",
             modelVersion="1.0",
-            temperature=0.7,
+            customParams={"temperature": 0.7},
             contextSize=4096,
             statsStorage=NullStatsStorage(),
         )
@@ -293,7 +293,7 @@ def testCreateModelInstance(openrouterProvider: OpenrouterProvider, mockAsyncOpe
         name="test-model",
         modelId="test/model",
         modelVersion="1.0",
-        temperature=0.8,
+        customParams={"temperature": 0.8},
         contextSize=4096,
         statsStorage=NullStatsStorage(),
         extraConfig={"support_tools": False},
@@ -322,7 +322,7 @@ def testOpenrouterModelInitialization(openrouterProvider: OpenrouterProvider, mo
         provider=openrouterProvider,
         modelId="anthropic/claude-3-opus",
         modelVersion="latest",
-        temperature=0.7,
+        customParams={"temperature": 0.7},
         contextSize=200000,
         statsStorage=NullStatsStorage(),
         openAiClient=mockAsyncOpenAI,
@@ -332,7 +332,7 @@ def testOpenrouterModelInitialization(openrouterProvider: OpenrouterProvider, mo
     assert model.provider == openrouterProvider
     assert model.modelId == "anthropic/claude-3-opus"
     assert model.modelVersion == "latest"
-    assert model.temperature == 0.7
+    assert model._customParams["temperature"] == 0.7
     assert model.contextSize == 200000
     assert model._client == mockAsyncOpenAI
     assert model._supportTools is True  # type: ignore[attr-defined]
@@ -503,7 +503,7 @@ async def testOpenrouterGenerateTextWithDifferentModels(
         name="claude",
         modelId="anthropic/claude-3-opus",
         modelVersion="latest",
-        temperature=0.7,
+        customParams={"temperature": 0.7},
         contextSize=200000,
         statsStorage=NullStatsStorage(),
     )
@@ -513,7 +513,7 @@ async def testOpenrouterGenerateTextWithDifferentModels(
         name="gpt4",
         modelId="openai/gpt-4-turbo",
         modelVersion="latest",
-        temperature=0.5,
+        customParams={"temperature": 0.5},
         contextSize=128000,
         statsStorage=NullStatsStorage(),
     )
@@ -709,7 +709,7 @@ async def testOpenrouterFullWorkflow(openrouterProvider: OpenrouterProvider, moc
         name="test-model",
         modelId="anthropic/claude-3-opus",
         modelVersion="latest",
-        temperature=0.7,
+        customParams={"temperature": 0.7},
         contextSize=200000,
         statsStorage=NullStatsStorage(),
     )
@@ -761,7 +761,7 @@ def testOpenrouterProviderModelManagement(openrouterProvider: OpenrouterProvider
         name="claude",
         modelId="anthropic/claude-3-opus",
         modelVersion="latest",
-        temperature=0.7,
+        customParams={"temperature": 0.7},
         contextSize=200000,
         statsStorage=NullStatsStorage(),
     )
@@ -769,7 +769,7 @@ def testOpenrouterProviderModelManagement(openrouterProvider: OpenrouterProvider
         name="gpt4",
         modelId="openai/gpt-4-turbo",
         modelVersion="latest",
-        temperature=0.5,
+        customParams={"temperature": 0.5},
         contextSize=128000,
         statsStorage=NullStatsStorage(),
     )
@@ -789,7 +789,7 @@ def testOpenrouterProviderModelManagement(openrouterProvider: OpenrouterProvider
     info = openrouterProvider.getModelInfo("claude")
     assert info is not None
     assert info["model_id"] == "anthropic/claude-3-opus"
-    assert info["temperature"] == 0.7
+    assert info["customParams"]["temperature"] == 0.7
     assert info["context_size"] == 200000
 
     # Test deleteModel
@@ -846,7 +846,7 @@ def testOpenrouterModelWithCustomExtraConfig(openrouterProvider: OpenrouterProvi
         name="custom-model",
         modelId="test/model",
         modelVersion="1.0",
-        temperature=0.8,
+        customParams={"temperature": 0.8},
         contextSize=4096,
         statsStorage=NullStatsStorage(),
         extraConfig=extraConfig,

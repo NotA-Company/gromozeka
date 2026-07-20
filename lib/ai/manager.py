@@ -23,7 +23,7 @@ Example:
             "gpt-4": {
                 "provider": "yc-provider",
                 "model_id": "gpt-4",
-                "temperature": 0.7
+                "customParams": {"temperature": 0.7}
             }
         }
     }
@@ -150,7 +150,9 @@ class LLMManager:
         - provider: Name of the provider to use
         - model_id: Model identifier for the provider
         - model_version: Optional model version (default: "latest")
-        - temperature: Optional temperature setting (default: 0.5)
+        - customParams: Optional dict of parameters passed through to the
+            underlying LLM API call (temperature, top_p, max_tokens, etc.).
+            Defaults to an empty dict.
         - context: Optional context size (default: 32768)
         - enabled: Whether the model is enabled (default: True)
         """
@@ -170,7 +172,7 @@ class LLMManager:
                 providerName: str = modelConfig["provider"]
                 modelId: str = modelConfig["model_id"]
                 modelVersion: str = modelConfig.get("model_version", "latest")
-                temperature: float = modelConfig.get("temperature", 0.5)
+                customParams: Dict[str, Any] = modelConfig.get("customParams", {})
                 contextSize: int = modelConfig.get("context", 32768)
 
                 if providerName not in self.providers:
@@ -182,7 +184,7 @@ class LLMManager:
                     name=modelName,
                     modelId=modelId,
                     modelVersion=modelVersion,
-                    temperature=temperature,
+                    customParams=customParams,
                     contextSize=contextSize,
                     statsStorage=self.statsStorage,
                     extraConfig=modelConfig,

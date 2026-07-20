@@ -56,7 +56,13 @@ class AbstractModel(ABC):
         provider: The LLM provider instance that created this model.
         modelId: Unique identifier for the model.
         modelVersion: Version string for the model.
-        temperature: Temperature setting for text generation (0.0 to 2.0).
+        customParams: Per-model custom parameters passed through to the
+            underlying LLM API call. Common keys: ``temperature`` (float,
+            default 0.5), ``top_p``, ``max_tokens``, ``frequency_penalty``,
+            ``presence_penalty``, ``stop``, etc. Image-API keys (``size``,
+            ``quality``, ``n``, ...) are sent as-is when using image
+            generation. Provider-specific extensions (e.g. OpenRouter's
+            ``extra_headers``) are merged in by provider overrides.
         contextSize: Maximum context size in tokens.
         tiktokenEncoding: The tiktoken encoding name used for tokenization.
         tokensCountCoeff: Coefficient for token count estimation (default: 1.1).
@@ -81,10 +87,10 @@ class AbstractModel(ABC):
         modelId: str,
         *,
         modelVersion: str,
-        temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
         extraConfig: Optional[Dict[str, Any]] = None,
+        customParams: Optional[Dict[str, Any]] = None,
     ):
         """Initialize model with provider and configuration.
 
@@ -92,14 +98,19 @@ class AbstractModel(ABC):
             provider: The LLM provider instance that manages this model.
             modelId: Unique identifier for the model (e.g., "gpt-4", "yandexgpt").
             modelVersion: Version string for the model (e.g., "latest", "v1").
-            temperature: Temperature setting for generation (0.0 = deterministic,
-                2.0 = very creative).
             contextSize: Maximum context size in tokens.
             statsStorage: StatsStorage instance for recording LLM usage statistics.
             extraConfig: Additional configuration options for the model.
+            customParams: Per-model custom parameters passed through to the
+                underlying LLM API call. Common keys: ``temperature`` (float,
+                default 0.5), ``top_p``, ``max_tokens``, ``frequency_penalty``,
+                ``presence_penalty``, ``stop``, etc. Image-API keys (``size``,
+                ``quality``, ``n``, ...) are sent as-is when using image
+                generation. Provider-specific extensions (e.g. OpenRouter's
+                ``extra_headers``) are merged in by provider overrides. When
+                ``None`` (default), an empty dict is stored.
 
         Raises:
-            ValueError: If temperature is not between 0.0 and 2.0.
             ValueError: If contextSize is negative.
         """
         self._config: Dict[str, Any] = extraConfig or {}
@@ -107,7 +118,7 @@ class AbstractModel(ABC):
         self.provider = provider
         self.modelId = modelId
         self.modelVersion = modelVersion
-        self.temperature = temperature
+        self._customParams: Dict[str, Any] = dict(customParams) if customParams is not None else {}
         self.contextSize = contextSize
 
         self.tiktokenEncoding = "o200k_base"
@@ -703,14 +714,15 @@ class AbstractModel(ABC):
         """Get model information and configuration.
 
         Returns a dictionary containing the model's metadata including provider,
-        model ID, version, temperature, context size, and capabilities.
+        model ID, version, custom parameters, context size, and capabilities.
 
         Returns:
             Dictionary with model metadata containing:
                 - provider: Provider class name
                 - model_id: Model identifier
                 - model_version: Model version
-                - temperature: Temperature setting
+                - customParams: Per-model custom parameters passed through to
+                    the underlying LLM API call (temperature, top_p, etc.)
                 - context_size: Maximum context size
                 - support_tools: Whether the model supports tools
                 - support_text: Whether the model supports text generation
@@ -726,7 +738,7 @@ class AbstractModel(ABC):
                 'provider': 'OpenAIProvider',
                 'model_id': 'gpt-4',
                 'model_version': 'latest',
-                'temperature': 0.7,
+                'customParams': {'temperature': 0.7},
                 'context_size': 8192,
                 'support_tools': True,
                 'support_text': True,
@@ -741,7 +753,7 @@ class AbstractModel(ABC):
             "provider": self.provider.__class__.__name__,
             "model_id": self.modelId,
             "model_version": self.modelVersion,
-            "temperature": self.temperature,
+            "customParams": dict(self._customParams),
             "context_size": self.contextSize,
             "support_tools": self._config.get("support_tools", False),
             "support_text": self._config.get("support_text", True),
@@ -936,10 +948,10 @@ class AbstractLLMProvider(ABC):
 
     Example:
         class CustomProvider(AbstractLLMProvider):
-            def addModel(self, name, modelId, modelVersion, temperature,
-                        contextSize, extraConfig={}):
-                model = CustomModel(self, modelId, modelVersion, temperature,
-                                   contextSize, extraConfig)
+            def addModel(self, name, modelId, modelVersion, contextSize,
+                        extraConfig={}, customParams=None):
+                model = CustomModel(self, modelId, modelVersion, contextSize,
+                                   extraConfig, customParams=customParams)
                 self.models[name] = model
                 return model
     """
@@ -966,10 +978,10 @@ class AbstractLLMProvider(ABC):
         *,
         modelId: str,
         modelVersion: str,
-        temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
         extraConfig: Dict[str, Any] = {},
+        customParams: Optional[Dict[str, Any]] = None,
     ) -> AbstractModel:
         """Add a model to this provider.
 
@@ -980,10 +992,13 @@ class AbstractLLMProvider(ABC):
             name: Human-readable name for the model (used as key in models dict).
             modelId: Provider-specific model identifier (e.g., "gpt-4", "yandexgpt").
             modelVersion: Version string for the model (e.g., "latest", "v1").
-            temperature: Temperature setting for generation (0.0 to 2.0).
             contextSize: Maximum context size in tokens.
             statsStorage: StatsStorage instance for recording LLM usage statistics.
             extraConfig: Additional configuration options for the model.
+            customParams: Per-model custom parameters passed through to the
+                underlying LLM API call (temperature, top_p, max_tokens,
+                etc.). See :attr:`AbstractModel._customParams` for the full
+                key inventory.
 
         Returns:
             The created AbstractModel instance.

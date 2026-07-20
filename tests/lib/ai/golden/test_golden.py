@@ -63,7 +63,7 @@ async def test_yc_openai_basic(goldenDataProvider):
             name="yandexgpt",
             modelId="yandexgpt",
             modelVersion="latest",
-            temperature=0.7,
+            customParams={"temperature": 0.7},
             contextSize=8192,
             extraConfig={},
             statsStorage=NullStatsStorage(),
@@ -119,7 +119,7 @@ async def test_openrouter_basic(goldenDataProvider):
             name="qwen/qwen-turbo",
             modelId="qwen/qwen-turbo",
             modelVersion="latest",
-            temperature=0.3,
+            customParams={"temperature": 0.3},
             contextSize=131000,
             extraConfig={
                 "support_text": True,
@@ -194,7 +194,7 @@ async def test_openrouter_structured(goldenDataProvider: Any) -> None:
             name="qwen/qwen-turbo",
             modelId="qwen/qwen-turbo",
             modelVersion="latest",
-            temperature=0.3,
+            customParams={"temperature": 0.3},
             contextSize=131000,
             extraConfig={
                 "support_text": True,
@@ -256,7 +256,7 @@ async def test_yc_openai_structured(goldenDataProvider: Any) -> None:
             name="yandexgpt",
             modelId="yandexgpt",
             modelVersion="latest",
-            temperature=0.7,
+            customParams={"temperature": 0.7},
             contextSize=8192,
             extraConfig={
                 "support_structured_output": True,

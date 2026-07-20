@@ -267,11 +267,15 @@ class DivinationScenarioRunner:
         # Providers expect plain ``dict`` (mutated internally), so make a copy.
         self.provider: AbstractLLMProvider = providerCls(dict(providerConfig))
         self.modelName: str = modelName
+        # ``temperature`` is plumbed through ``customParams`` per the Phase 1
+        # customParams refactor (the ``temperature=`` kwarg on ``addModel`` is
+        # gone). The runner still accepts ``temperature`` as a scalar init_kwarg
+        # so existing scenarios.json entries keep working unchanged.
         self.provider.addModel(
             name=modelName,
             modelId=modelId,
             modelVersion=modelVersion,
-            temperature=temperature,
+            customParams={"temperature": temperature},
             contextSize=contextSize,
             statsStorage=NullStatsStorage(),
             extraConfig=dict(extraConfig) if extraConfig is not None else {},

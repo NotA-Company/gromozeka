@@ -11,7 +11,7 @@ Classes:
     BasicOpenAIProvider: Base class for OpenAI-compatible provider implementations.
 
 The module supports:
-- Text generation with configurable temperature and context size
+- Text generation with configurable custom parameters (including temperature) and context size
 - Image generation for compatible models
 - Tool/function calling capabilities
 - Token usage tracking
@@ -174,10 +174,12 @@ class BasicOpenAIModel(AbstractModel):
         provider: The provider instance that created this model.
         modelId: The identifier of the model to use in API calls.
         modelVersion: The version string of the model.
-        temperature: The sampling temperature for generation (0.0 to 2.0).
         contextSize: The maximum context window size in tokens.
         openAiClient: The OpenAI async client instance.
         extraConfig: Additional configuration options for the model.
+        customParams: Per-model custom parameters passed through to the
+            underlying OpenAI API call (temperature, top_p, max_tokens,
+            etc.). See :attr:`AbstractModel._customParams`.
     """
 
     def __init__(
@@ -186,10 +188,10 @@ class BasicOpenAIModel(AbstractModel):
         modelId: str,
         *,
         modelVersion: str,
-        temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
         extraConfig: Optional[Dict[str, Any]] = None,
+        customParams: Optional[Dict[str, Any]] = None,
         openAiClient: openai.AsyncOpenAI,
     ) -> None:
         """Initialize a basic OpenAI model instance.
@@ -198,10 +200,12 @@ class BasicOpenAIModel(AbstractModel):
             provider: The provider instance that created this model.
             modelId: The identifier of the model to use in API calls.
             modelVersion: The version string of the model.
-            temperature: The sampling temperature for generation (0.0 to 2.0).
             contextSize: The maximum context window size in tokens.
             openAiClient: The OpenAI async client instance.
             extraConfig: Additional configuration options for the model.
+            customParams: Per-model custom parameters passed through to the
+                underlying OpenAI API call (temperature, top_p, max_tokens,
+                etc.). See :attr:`AbstractModel._customParams`.
 
         Raises:
             ValueError: If required configuration is missing.
@@ -210,10 +214,10 @@ class BasicOpenAIModel(AbstractModel):
             provider,
             modelId,
             modelVersion=modelVersion,
-            temperature=temperature,
             contextSize=contextSize,
             statsStorage=statsStorage,
             extraConfig=extraConfig,
+            customParams=customParams,
         )
         self._client = openAiClient
         self._supportTools = self._config.get("support_tools", False)
@@ -242,36 +246,47 @@ class BasicOpenAIModel(AbstractModel):
         return self._getModelId()
 
     def _getImageRequestOptions(self) -> Dict[str, Any]:
-        """Get whitelisted image generation options from model extraConfig.
+        """Get image generation options from customParams.
 
-        Reads ``self._config["image_options"]`` and returns only known,
-        explicitly supported keys. This prevents arbitrary config keys from
-        being forwarded to the OpenAI Images API.
+        Returns the full ``customParams`` dict verbatim — no whitelist —
+        so any keys the caller put there (``size``, ``quality``,
+        ``output_format``, ``background``, ``moderation``, ``n``,
+        ``response_format``, ``user``, ...) are forwarded to the OpenAI
+        Images API. The caller is responsible for providing
+        provider-compatible keys.
+
+        Note:
+            This is the same dict used for chat-completion params via
+            :meth:`_getExtraParams`, so chat-only keys (``temperature``,
+            ``top_p``, ``max_tokens``, ``frequency_penalty``,
+            ``presence_penalty``, ``stop``) will also be forwarded to the
+            Images API if present. Either keep image-generation models on a
+            separate model entry, or ensure ``customParams`` only carries
+            keys valid for both transports.
 
         Returns:
-            A dictionary of sanitized image generation request parameters.
+            A copy of ``self._customParams`` to be merged into the Images
+            API request params.
         """
-        options = self._config.get("image_options", {})
-        if not isinstance(options, dict):
-            return {}
-
-        result: Dict[str, Any] = {}
-        for key in ("size", "quality", "output_format", "background", "moderation", "n", "response_format", "user"):
-            if key in options:
-                result[key] = options[key]
-        return result
+        return dict(self._customParams)
 
     def _getExtraParams(self) -> Dict[str, Any]:
         """Get extra parameters for the API call.
 
-        This method can be overridden in subclasses to add provider-specific
-        parameters to the API request, such as custom headers, special options,
-        or provider-specific features.
+        Returns the full ``customParams`` dict so that every user-specified
+        key (``temperature``, ``top_p``, ``max_tokens``,
+        ``frequency_penalty``, ``presence_penalty``, ``stop``, etc.) is
+        forwarded to ``chat.completions.create``. Subclasses extend this
+        by merging in provider-specific defaults (e.g. OpenRouter's
+        ``extra_headers``); user-supplied ``customParams`` keys take
+        precedence over those defaults via ``{**providerDefaults,
+        **super()._getExtraParams()}`` ordering in the override.
 
         Returns:
-            A dictionary of extra parameters to include in the API call.
+            A copy of ``self._customParams`` to merge into the API call
+            params via ``params.update(...)``.
         """
-        return {}
+        return dict(self._customParams)
 
     async def _executeChatCompletion(self, params: Dict[str, Any]) -> _OpenAICallOutcome:
         """Call the OpenAI-compatible API and decode the response envelope.
@@ -477,7 +492,6 @@ class BasicOpenAIModel(AbstractModel):
         params: Dict[str, Any] = {
             "model": self._getModelId(),
             "messages": [message.toDict("content", supportedImageFormats=inputImageFormats) for message in messages],
-            "temperature": self.temperature,
             **kwargs,
         }
         params.update(self._getExtraParams())
@@ -580,7 +594,6 @@ class BasicOpenAIModel(AbstractModel):
         params: Dict[str, Any] = {
             "model": self._getModelId(),
             "messages": [message.toDict("content", supportedImageFormats=inputImageFormats) for message in messages],
-            "temperature": self.temperature,
         }
         # Add any extra parameters from subclasses (e.g. extra_headers for OpenRouter)
         params.update(self._getExtraParams())
@@ -700,7 +713,6 @@ class BasicOpenAIModel(AbstractModel):
         params: Dict[str, Any] = {
             "model": self._getModelId(),
             "messages": [message.toDict("content", supportedImageFormats=inputImageFormats) for message in messages],
-            "temperature": self.temperature,
         }
         params.update(self._getExtraParams())
         # Add modalities AFTER extra params so it is never clobbered
@@ -768,8 +780,11 @@ class BasicOpenAIModel(AbstractModel):
         configured for this transport should use it.
 
         Extracts a plain-text prompt from ``messages``, builds a request with
-        whitelisted options from model ``image_options`` config, calls the
-        OpenAI Images API, and maps the response into a :class:`ModelRunResult`.
+        options from ``customParams`` (via :meth:`_getImageRequestOptions`),
+        calls the OpenAI Images API, and maps the response into a
+        :class:`ModelRunResult`. There is no whitelist — all ``customParams``
+        keys are forwarded as-is, so the caller is responsible for providing
+        Images-API-compatible keys.
 
         Supports both ``b64_json`` and URL-based responses (downloads with
         ``httpx`` if needed). Uses only the first image when multiple are
@@ -806,9 +821,9 @@ class BasicOpenAIModel(AbstractModel):
             "response_format": "b64_json",
         }
 
-        # Apply whitelisted options
-        imageOptions = self._getImageRequestOptions()
-        requestParams.update(imageOptions)
+        # Apply customParams options
+        imageCustomParams = self._getImageRequestOptions()
+        requestParams.update(imageCustomParams)
 
         logger.info(
             f"Calling images.generate with model={requestParams['model']}, "
@@ -863,7 +878,7 @@ class BasicOpenAIModel(AbstractModel):
             totalTokens = response.usage.total_tokens
 
         # Determine MIME type from output_format or default to png
-        outputFormat = imageOptions.get("output_format", "png")
+        outputFormat = imageCustomParams.get("output_format", "png")
         mimeTypes: Dict[str, str] = {
             "png": "image/png",
             "jpeg": "image/jpeg",
@@ -1111,10 +1126,10 @@ class BasicOpenAIProvider(AbstractLLMProvider):
         *,
         modelId: str,
         modelVersion: str,
-        temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
         extraConfig: Optional[Dict[str, Any]] = None,
+        customParams: Optional[Dict[str, Any]] = None,
     ) -> AbstractModel:
         """Create a model instance.
 
@@ -1125,9 +1140,10 @@ class BasicOpenAIProvider(AbstractLLMProvider):
             name: The name to assign to the model instance.
             modelId: The identifier of the model to use.
             modelVersion: The version string of the model.
-            temperature: The sampling temperature for generation.
             contextSize: The maximum context window size in tokens.
             extraConfig: Additional configuration options for the model.
+            customParams: Per-model custom parameters passed through to the
+                underlying LLM API call. See :attr:`AbstractModel._customParams`.
 
         Returns:
             An AbstractModel instance configured with the provided parameters.
@@ -1175,10 +1191,10 @@ class BasicOpenAIProvider(AbstractLLMProvider):
         *,
         modelId: str,
         modelVersion: str,
-        temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
         extraConfig: Optional[Dict[str, Any]] = None,
+        customParams: Optional[Dict[str, Any]] = None,
     ) -> AbstractModel:
         """Add an OpenAI-compatible model to the provider.
 
@@ -1191,12 +1207,14 @@ class BasicOpenAIProvider(AbstractLLMProvider):
                 to retrieve the model later from the provider.
             modelId: The identifier of the model to use in API calls.
             modelVersion: The version string of the model.
-            temperature: The sampling temperature for generation (0.0 to 2.0).
             contextSize: The maximum context window size in tokens.
             extraConfig: Additional configuration options for the model, such as:
                 - support_tools: Boolean indicating tool support
                 - support_images: Boolean indicating image generation support
                 - Other provider-specific options
+            customParams: Per-model custom parameters passed through to the
+                underlying LLM API call (temperature, top_p, max_tokens,
+                etc.). See :attr:`AbstractModel._customParams`.
 
         Returns:
             The created or existing AbstractModel instance.
@@ -1217,10 +1235,10 @@ class BasicOpenAIProvider(AbstractLLMProvider):
                 name,
                 modelId=modelId,
                 modelVersion=modelVersion,
-                temperature=temperature,
                 contextSize=contextSize,
                 statsStorage=statsStorage,
                 extraConfig=extraConfig,
+                customParams=customParams,
             )
 
             self.models[name] = model

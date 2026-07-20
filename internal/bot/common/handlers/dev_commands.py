@@ -167,7 +167,7 @@ class DevCommandsHandler(BaseBotHandler):
 
         Model Information Displayed:
             - Model ID and version
-            - Temperature setting
+            - Custom parameters
             - Context size
             - Provider name
             - Tool support capability
@@ -191,7 +191,7 @@ class DevCommandsHandler(BaseBotHandler):
             modelKeyI18n = {
                 "model_id": "ID Модели",
                 "model_version": "Версия",
-                "temperature": "Температура",
+                "customParams": "Кастомные параметры",
                 "context_size": "Размер контекста",
                 "provider": "Провайдер",
                 "support_tools": "Поддержка вызова инструментов",
@@ -200,7 +200,7 @@ class DevCommandsHandler(BaseBotHandler):
             }
             replyText += f"**Модель: {modelName}**\n```{modelName}\n"
             for k, v in modelData.items():
-                if k == "extra":
+                if k in ("extra", "customParams"):
                     v = utils.jsonDumps(v, indent=2)
                 replyText += f"{modelKeyI18n.get(k, k)}: {v}\n"
 

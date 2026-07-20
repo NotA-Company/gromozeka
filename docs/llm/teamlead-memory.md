@@ -45,7 +45,7 @@ See [`memories/db-cache-cleanup.md`](memories/db-cache-cleanup.md) — durable n
 - LLM tool handler signature: `async def _llmTool*(self, extraData: Optional[Dict[str, Any]], param1, ..., **kwargs: Any) -> Dict[str, Any]`. Return a dict with `{"done": bool, ...}` — the LLM service handles JSON serialization. NEVER raise. Get chat context from `extraData["ensuredMessage"]`.
 - LLM tool handlers can return dicts directly (not JSON strings). This is cleaner — no `json.dumps()`/`jsonDumps()` needed. The LLM service serializes the dict.
 - `lib/ai/providers/basic_openai_provider.py`: `BasicOpenAIModel` has two image-generation transports: (1) `_generateImage()` using `chat.completions.create` with `modalities=["image", "text"]`, (2) `_generateImageViaImagesApi()` using `client.images.generate()`. Models opt into the second via `image_generation_api = "openai-images"` in `extraConfig`.
-- Hook methods available for subclasses: `_getModelId()` (text models), `_getImageModelId()` (image models), `_getExtraParams()`, `_getImageRequestOptions()` (whitelisted image API params), `_getClientParams()` (extra AsyncOpenAI constructor kwargs).
+- Hook methods available for subclasses: `_getModelId()` (text models), `_getImageModelId()` (image models), `_getExtraParams()` (returns `dict(self._customParams)` — the canonical seam for per-request inference params; subclass overrides merge provider-specific defaults with `customParams`, user `customParams` wins), `_getImageRequestOptions()` (returns `dict(self._customParams)` — NO whitelist since the 2026-07-20 customParams refactor; all keys pass through), `_getClientParams()` (extra AsyncOpenAI constructor kwargs).
 - `YcOpenaiModel` uses `gpt://...` URIs for text and `art://...` URIs for images -- two different URI schemes from the same provider.
 - `YcOpenaiProvider._folderId` is set **before** `super().__init__()` so `_getClientParams()` (called during `_initClient()`) can access it. This ordering is critical.
 - `_getClientParams()` affects ALL requests through the OpenAI client (text, images, tools), not just the API it was added for.
@@ -193,6 +193,28 @@ See [`memories/llm-tool-call-healing.md`](memories/llm-tool-call-healing.md) —
 ## LLM maxRounds round-limit (`generateTextViaLLM`) — added 2026-07-16
 
 See [`memories/llm-max-rounds.md`](memories/llm-max-rounds.md) — durable notes for the `maxRounds` budget/round-limit feature: `budgetExhausted` gates (tools=[] alone insufficient — must also clear `filteredToolNames` + gate healing + gate TOOL_CALLS execute-branch), `ModelRunResult.roundLimitHit` flag, steering fold-in, `internal/services/llm/constants.py` layering.
+
+## LLM customParams Refactor (lib/ai, 2026-07-20)
+
+`AbstractModel` (and every concrete model/provider) takes `customParams: Optional[Dict[str, Any]] = None` instead of the old explicit `temperature: float` ctor arg. Stored as `self._customParams: Dict[str, Any]` (defensive copy). `DEFAULT_TEMPERATURE = 0.5` module constant in `lib/ai/abstract.py` is the fallback when the dict doesn't carry `temperature`.
+
+**Architecture (LOCKED):**
+- **5 concrete model classes** inherit from `AbstractModel`: `BasicOpenAIModel` (with `YcOpenaiModel`, `OpenrouterModel` subclasses), `YcAIModel` (direct), `FastembedModel` (direct).
+- **5 concrete provider classes** inherit from `AbstractLLMProvider`: `BasicOpenAIProvider` (abstract base; `YcOpenaiProvider`, `OpenrouterProvider`, `CustomOpenAIProvider` subclasses), `YcAIProvider` (direct), `FastembedProvider` (direct).
+- Per-request param flow: `_getExtraParams()` base returns `dict(self._customParams)` — this is THE seam for inference params. Three text-generation sites in `basic_openai_provider.py` build `params = {...}` then `params.update(self._getExtraParams())` (last-wins).
+- Subclass `_getExtraParams()` overrides MERGE: shape is `{**providerDefaults, **super()._getExtraParams()}` so user `customParams` wins. Example: `OpenrouterModel` returns `{"extra_headers": {...}, **super()._getExtraParams()}`.
+- `_getImageRequestOptions()` returns `dict(self._customParams)` — NO whitelist (whitelist removed 2026-07-20). All `customParams` keys are sent to the OpenAI Images API; caller's responsibility to use keys valid for the transport.
+- `YcAIModel._getModel(**configOverrides)` text path: `kwargs = dict(self._customParams); kwargs.update(configOverrides)`. Image path: same seed, then YC-specific `mime_type`/`width_ratio`/`height_ratio`/`seed` from `self._config` override customParams, then `configOverrides` win. Structured-output override at `yc_sdk_provider.py` uses `min(self._customParams.get("temperature", DEFAULT_TEMPERATURE), 0.3)`.
+- `FastembedModel` passes `**self._customParams` directly to `TextEmbedding(...)` — `_CONSUMED_EXTRA_KEYS` filter is GONE. Fastembed library kwargs (cache_dir, threads, max_length, etc.) now live under `customParams.*` in TOML.
+- `LLMManager._initModels` reads `customParams=modelConfig.get("customParams", {})` from per-model TOML. Still also passes the whole `modelConfig` as `extraConfig` (capability flags + provider wiring).
+- `getInfo()` returns `"customParams": dict(self._customParams)` (defensive copy on read too). The `temperature` key is GONE.
+- `dev_commands.py` `/models` command: i18n label `"customParams": "Кастомные параметры"`; display loop renders the dict via `utils.jsonDumps(v, indent=2)` (same treatment as the `"extra"` key).
+
+**TOML shape (under `configs/00-defaults/*-models.toml`):** dotted-key form `customParams.temperature = 0.3`, NOT nested table headers. Image-API keys (`size`, `quality`, `n`, `output_format`, `moderation`) flatten into `customParams.*` (the old `[models.models.X.image_options]` sub-table is gone). Fastembed TOML has no `customParams` block at all if there are no library kwargs.
+
+**Test patterns:** ctor `Model(..., customParams={"temperature": X})` (not `temperature=X`); attribute read/write via `model._customParams["temperature"]`; on `Mock(spec=AbstractModel)`, use `model._customParams = {"temperature": X}` (the `temperature` attribute is rejected by spec-restriction). Import `DEFAULT_TEMPERATURE` from `lib.ai.abstract` for fallback reads.
+
+**Gitignored overlay configs to migrate manually (NOT in `configs/00-defaults/`):** `configs/common/01-opencode-go.toml` (8 entries), `configs/common/00-config.toml` (1 entry), `configs/prod/01-ollama.toml` (2 commented). User handles these per-deployment.
 
 ## LLM User-Message Format (verified 2026-07-11)
 

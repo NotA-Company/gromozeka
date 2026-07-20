@@ -29,11 +29,13 @@ class _StubProvider(AbstractLLMProvider):
     def addModel(
         self,
         name: str,
+        *,
         modelId: str,
         modelVersion: str,
-        temperature: float,
         contextSize: int,
+        statsStorage: StatsStorage,
         extraConfig: Dict[str, Any] = {},
+        customParams: Optional[Dict[str, Any]] = None,
     ) -> AbstractModel:
         """Add a model stub.
 
@@ -41,9 +43,10 @@ class _StubProvider(AbstractLLMProvider):
             name: Model name.
             modelId: Model identifier.
             modelVersion: Model version.
-            temperature: Temperature setting.
             contextSize: Context window size.
+            statsStorage: Stats storage instance.
             extraConfig: Extra configuration.
+            customParams: Per-model custom parameters (temperature, etc.).
 
         Returns:
             AbstractModel stub instance.
@@ -143,7 +146,7 @@ def _makeModel(
         provider=_StubProvider(config={}),
         modelId="test-model",
         modelVersion="1.0",
-        temperature=0.5,
+        customParams={"temperature": 0.5},
         contextSize=contextSize,
         extraConfig=config,
         mockResult=mockResult,

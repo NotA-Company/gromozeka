@@ -184,11 +184,19 @@ type = "yc-openai"  # or "openrouter", "yc-sdk", "custom-openai"
 provider = "<provider-name>"
 model_id = "gpt-4o"
 model_version = "latest"
-temperature = 0.5
+customParams.temperature = 0.5
 context = 32768
 tier = "free"  # "free", "paid", etc.
 enabled = true
 ```
+
+Inference / request parameters (`temperature`, `top_p`, `max_tokens`, image-API
+keys like `size`/`quality`/`output_format`, provider extensions like
+OpenRouter's `extra_headers`, fastembed kwargs like `cache_dir`, etc.) are all
+nested under the `customParams.*` dotted-key namespace. There is no
+top-level `temperature` key anymore and no `image_options` sub-table — see
+the `customParams` row below and the migration note at the end of this
+section.
 
 **Provider types:**
 - `yc-openai` — Yandex Cloud OpenAI-compatible API
@@ -209,7 +217,7 @@ enabled = true
 | `provider` | str | required | Provider name from `[models.providers]` |
 | `model_id` | str | required | Model identifier for API calls |
 | `model_version` | str | `"latest"` | Model version string |
-| `temperature` | float | required | Sampling temperature (0.0–2.0) |
+| `customParams.*` | dotted-key (mixed) | `{}` | Per-model parameters forwarded to the underlying API call. Common text keys: `temperature` (float, default `0.5` when unset — see `DEFAULT_TEMPERATURE` in [`lib/ai/abstract.py`](../../lib/ai/abstract.py)), `top_p`, `max_tokens`, `frequency_penalty`, `presence_penalty`, `stop`, OpenRouter's `extra_headers`, etc. Image-API keys (`size`, `quality`, `output_format`, `background`, `moderation`, `n`, `response_format`, `user`) flow through the same namespace when `image_generation_api = "openai-images"` (no separate whitelist). Fastembed forwards the entire `customParams` dict as `**kwargs` to `TextEmbedding(model_name=..., **customParams)`. User-supplied keys always reach the API verbatim; provider overrides (`YcOpenaiModel`, `OpenrouterModel`) only *add* provider-specific defaults via `_getExtraParams()` — `customParams` wins on key collision. |
 | `context` | int | required | Max context window in tokens |
 | `tier` | str | `"free"` | Access tier for rate limiting |
 | `enabled` | bool | `true` | Whether model is available |
@@ -218,8 +226,7 @@ enabled = true
 | `support_images` | bool | `false` | Enable image generation |
 | `support_structured_output` | bool | `false` | Enable JSON schema output |
 | `image_generation_api` | str | unset | Image transport: `"openai-images"` for Images API, unset for chat-completions |
-| `image_options` | table | `{}` | Whitelisted image generation options |
-| `input_image_format` | array of str (full MIME) | unset | Supported **INPUT** (vision) image MIME formats, e.g. `["image/jpeg", "image/png"]`. Unset/empty = accept any format. When set, input images whose detected MIME is not in the list are converted to the FIRST listed format before being sent to the model (e.g. webp→jpeg). Distinct from `support_images` / `image_generation_api` / `image_options`, which all concern OUTPUT (image generation). Use when a model rejects certain input formats (e.g. YC `qwen3.6-35b-a3b` rejects webp). OpenAI-compatible providers only; on conversion failure (corrupt/unsupported/oversized image) the original is sent unchanged. |
+| `input_image_format` | array of str (full MIME) | unset | Supported **INPUT** (vision) image MIME formats, e.g. `["image/jpeg", "image/png"]`. Unset/empty = accept any format. When set, input images whose detected MIME is not in the list are converted to the FIRST listed format before being sent to the model (e.g. webp→jpeg). Distinct from `support_images` / `image_generation_api` / `customParams` (image-output keys), which all concern OUTPUT (image generation). Use when a model rejects certain input formats (e.g. YC `qwen3.6-35b-a3b` rejects webp). OpenAI-compatible providers only; on conversion failure (corrupt/unsupported/oversized image) the original is sent unchanged. |
 
 **Image generation configuration:**
 
@@ -235,8 +242,11 @@ subclass) can use ``image_generation_api = "openai-images"`` by setting it in th
 model config. Providers that don't set it continue using the chat-completions
 image path by default.
 
-When `image_generation_api = "openai-images"`, the `image_options` table provides
-model-level defaults for image requests. Only whitelisted keys are forwarded:
+When `image_generation_api = "openai-images"`, image-API request parameters
+are read from the model's `customParams.*` namespace (the same namespace
+that carries `temperature`, `top_p`, etc. for text calls). There is **no
+whitelist** — every key under `customParams` is forwarded to
+`client.images.generate()`:
 
 | Key | Type | Example | Purpose |
 |-----|------|---------|---------|
@@ -255,7 +265,9 @@ model-level defaults for image requests. Only whitelisted keys are forwarded:
 provider                 = "yc-openai"
 model_id                 = "aliceai-image-art-3.0"
 model_version            = "latest"
-temperature              = 0.2
+customParams.temperature = 0.2
+customParams.size        = "1024x1024"
+customParams.output_format = "png"
 context                  = 500
 support_tools            = false
 support_text             = false
@@ -263,15 +275,19 @@ support_images           = true
 support_structured_output = false
 image_generation_api     = "openai-images"
 tier                     = "paid"
-
-[models.models."aliceai-image-art".image_options]
-size           = "1024x1024"
-output_format  = "png"
 ```
 
-**Security note:** The `image_options` table is whitelisted to prevent arbitrary
-config keys from being forwarded to the API. Only the keys listed above are
-recognized; unknown keys are silently ignored.
+**Migration note (from the `image_options` sub-table):** the previous
+`[models.models.<name>.image_options]` sub-table and its whitelist filter
+have been removed. Move each key under the model's `customParams.*` (e.g.
+`image_options.size = "1024x1024"` → `customParams.size = "1024x1024"`).
+The previous whitelist (`size`, `quality`, `output_format`,
+`background`, `moderation`, `n`, `response_format`, `user`) is now
+advisory-only — the table above lists the OpenAI Images-API keys known
+to be honoured, but any key you put under `customParams` is forwarded
+verbatim, so do not put unrelated chat-completion keys there on a
+model whose only job is image generation (or use a dedicated model
+entry for image generation, as in the example above).
 
 ### `[ratelimiter]`
 

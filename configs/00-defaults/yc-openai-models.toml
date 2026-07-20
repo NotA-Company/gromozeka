@@ -4,119 +4,118 @@ enabled         = true
 provider        = "yc-openai"
 model_id        = "aliceai-llm"
 model_version   = "latest"
-temperature     = 0.2
 context         = 65536
 support_tools   = true
 support_text    = true
 support_images  = false
 support_structured_output = true
 tier            = "paid"
+customParams.temperature = 0.2
 
 [models.models.aliceai-llm-flash]
 enabled         = true
 provider        = "yc-openai"
 model_id        = "aliceai-llm"
 model_version   = "latest"
-temperature     = 0.2
 context         = 65536
 support_tools   = true
 support_text    = true
 support_images  = false
 support_structured_output = true
 tier            = "paid"
+customParams.temperature = 0.2
 
 [models.models.yandexgpt]
 enabled         = false # Worse and more expensive than Alice AI
 provider        = "yc-openai"
 model_id        = "yandexgpt-5.1"
 model_version   = "latest"
-temperature     = 0.3
 context         = 32768
 support_tools   = true
 support_text    = true
 support_images  = false
 support_structured_output = true
 tier            = "friend"
+customParams.temperature = 0.3
 
 [models.models.yandexgpt-lite]
 enabled         = false # Worse and more expensive than Alice AI Flash
 provider        = "yc-openai"
 model_id        = "yandexgpt-lite"
 model_version   = "latest"
-temperature     = 0.3
 context         = 32768
 support_tools   = true
 support_text    = true
 support_images  = false
 support_structured_output = true
 tier            = "paid"
+customParams.temperature = 0.3
 
 [models.models."yc/gpt-oss-120b"]
 provider        = "yc-openai"
 model_id        = "gpt-oss-120b"
 model_version   = "latest"
-temperature     = 0.3
 context         = 131072
 support_tools   = true
 support_text    = true
 support_images  = false
 support_structured_output = true
 tier            = "paid"
+customParams.temperature = 0.3
 
 [models.models."yc/deepseek-v32"]
 enabled         = false # Will be decomissioned in 2026.06
 provider        = "yc-openai"
 model_id        = "deepseek-v32"
 model_version   = "latest"
-temperature     = 0.3
 context         = 131072
 support_tools   = true
 support_text    = true
 support_images  = false
 support_structured_output = true
 tier            = "paid"
+customParams.temperature = 0.3
 
 [models.models."yc/deepseek-v4-flash"]
 provider        = "yc-openai"
 model_id        = "deepseek-v4-flash"
 model_version   = "latest"
-temperature     = 0.3
 context         = 1048576
 support_tools   = true
 support_text    = true
 support_images  = false
 support_structured_output = true
 tier            = "paid"
+customParams.temperature = 0.3
 
 [models.models."yc/gpt-oss-20b"]
 provider        = "yc-openai"
 model_id        = "gpt-oss-20b"
 model_version   = "latest"
-temperature     = 0.1
 context         = 131072
 support_tools   = true
 support_text    = true
 support_images  = false
 support_structured_output = true
 tier            = "paid"
+customParams.temperature = 0.1
 
 [models.models."yc/qwen3-235b-a22b-fp8"]
 provider        = "yc-openai"
 model_id        = "qwen3-235b-a22b-fp8"
 model_version   = "latest"
-temperature     = 0.3
 context         = 262144
 support_tools   = true
 support_text    = true
 support_images  = false
 support_structured_output = true
 tier            = "friend"
+customParams.temperature = 0.3
 
 [models.models."yc/qwen3.6-35b-a3b"]
 provider        = "yc-openai"
 model_id        = "qwen3.6-35b-a3b"
 model_version   = "latest"
-temperature     = 0.3
 context         = 262144
 support_tools   = true
 support_text    = true
@@ -124,12 +123,12 @@ support_images  = false
 support_structured_output = true
 input_image_format = ["image/png", "image/jpeg"]
 tier            = "paid"
+customParams.temperature = 0.3
 
 [models.models."aliceai-image-art"]
 provider        = "yc-openai"
 model_id        = "aliceai-image-art-3.0"
 model_version   = "latest"
-temperature     = 0.2
 context         = 500
 support_tools   = false
 support_text    = false
@@ -137,9 +136,8 @@ support_images  = true
 support_structured_output   = false
 image_generation_api        = "openai-images"
 tier            = "paid"
-
-[models.models."aliceai-image-art".image_options]
-size            = "1024x1024"
-output_format   = "png"
-moderation      = "low"
+customParams.temperature = 0.2
+customParams.size = "1024x1024"
+customParams.output_format = "png"
+customParams.moderation = "low"
 

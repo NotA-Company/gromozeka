@@ -27,7 +27,7 @@ Fixtures:
 
 import logging
 from collections.abc import Sequence
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from unittest.mock import patch
 
 import pytest
@@ -53,7 +53,7 @@ class MockModel(AbstractModel):
         provider: The parent provider instance
         modelId: The model identifier
         modelVersion: The model version string
-        temperature: The temperature parameter for generation
+        _customParams: Per-model custom parameters (temperature, top_p, etc.)
         contextSize: The maximum context window size
         extraConfig: Additional configuration parameters
     """
@@ -145,10 +145,10 @@ class MockProvider(AbstractLLMProvider):
         *,
         modelId: str,
         modelVersion: str,
-        temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
         extraConfig: Dict[str, Any] = {},
+        customParams: Optional[Dict[str, Any]] = None,
     ) -> AbstractModel:
         """Add a mock model to the provider.
 
@@ -156,10 +156,13 @@ class MockProvider(AbstractLLMProvider):
             name: The unique name for the model
             modelId: The model identifier
             modelVersion: The model version string
-            temperature: The temperature parameter for generation
             contextSize: The maximum context window size
             statsStorage: Stats storage instance
             extraConfig: Additional configuration parameters (default: {})
+            customParams: Per-model custom parameters passed through to the
+                underlying LLM API call (temperature, top_p, max_tokens, etc.).
+                See :attr:`AbstractModel._customParams`. When ``None`` (default),
+                an empty dict is stored.
 
         Returns:
             AbstractModel: The created or existing MockModel instance
@@ -171,7 +174,7 @@ class MockProvider(AbstractLLMProvider):
             provider=self,
             modelId=modelId,
             modelVersion=modelVersion,
-            temperature=temperature,
+            customParams=customParams,
             contextSize=contextSize,
             extraConfig=extraConfig,
             statsStorage=statsStorage,
@@ -216,7 +219,7 @@ def singleProviderConfig() -> Dict[str, Any]:
                 "provider": "test-provider",
                 "model_id": "gpt-4",
                 "model_version": "1.0",
-                "temperature": 0.7,
+                "customParams": {"temperature": 0.7},
                 "context": 4096,
                 "enabled": True,
             }
@@ -252,21 +255,21 @@ def multiProviderConfig() -> Dict[str, Any]:
                 "provider": "provider1",
                 "model_id": "gpt-4",
                 "model_version": "1.0",
-                "temperature": 0.7,
+                "customParams": {"temperature": 0.7},
                 "context": 4096,
             },
             "model2": {
                 "provider": "provider2",
                 "model_id": "claude-3",
                 "model_version": "1.0",
-                "temperature": 0.5,
+                "customParams": {"temperature": 0.5},
                 "context": 8192,
             },
             "model3": {
                 "provider": "provider3",
                 "model_id": "yandex-gpt",
                 "model_version": "latest",
-                "temperature": 0.8,
+                "customParams": {"temperature": 0.8},
                 "context": 2048,
             },
         },
@@ -293,7 +296,7 @@ def configWithDisabledModel() -> Dict[str, Any]:
                 "provider": "test-provider",
                 "model_id": "gpt-4",
                 "model_version": "1.0",
-                "temperature": 0.7,
+                "customParams": {"temperature": 0.7},
                 "context": 4096,
                 "enabled": True,
             },
@@ -301,7 +304,7 @@ def configWithDisabledModel() -> Dict[str, Any]:
                 "provider": "test-provider",
                 "model_id": "gpt-3.5",
                 "model_version": "1.0",
-                "temperature": 0.5,
+                "customParams": {"temperature": 0.5},
                 "context": 2048,
                 "enabled": False,
             },
@@ -609,8 +612,8 @@ def testGetModelInfoSuccess(singleProviderConfig: Dict[str, Any], mockProviderCl
         assert info is not None
         assert "model_id" in info
         assert info["model_id"] == "gpt-4"
-        assert "temperature" in info
-        assert info["temperature"] == 0.7
+        assert "customParams" in info
+        assert info["customParams"]["temperature"] == 0.7
 
 
 def testGetModelInfoNotFound(emptyConfig: Dict[str, Any]) -> None:
@@ -742,7 +745,7 @@ def testModelInitializationWithMissingProvider(
                 "provider": "nonexistent-provider",
                 "model_id": "gpt-4",
                 "model_version": "1.0",
-                "temperature": 0.7,
+                "customParams": {"temperature": 0.7},
                 "context": 4096,
             }
         },
@@ -787,7 +790,7 @@ def testModelInitializationWithException(
                 "provider": "failing-provider",
                 "model_id": "gpt-4",
                 "model_version": "1.0",
-                "temperature": 0.7,
+                "customParams": {"temperature": 0.7},
                 "context": 4096,
             }
         },
@@ -835,7 +838,9 @@ def testModelInitializationWithDefaultValues(mockProviderClasses: Dict[str, type
         model = manager.getModel("minimal-model")
         assert model is not None
         assert model.modelVersion == "latest"
-        assert model.temperature == 0.5
+        # When config provides no customParams, _customParams is empty and the
+        # effective default temperature resolves to DEFAULT_TEMPERATURE (0.5).
+        assert model._customParams == {}
         assert model.contextSize == 32768
 
 
@@ -896,14 +901,14 @@ def testDuplicateModelNamesAcrossProviders(mockProviderClasses: Dict[str, type])
                 "provider": "provider1",
                 "model_id": "gpt-4",
                 "model_version": "1.0",
-                "temperature": 0.7,
+                "customParams": {"temperature": 0.7},
                 "context": 4096,
             },
             "duplicate-name-2": {
                 "provider": "provider2",
                 "model_id": "claude-3",
                 "model_version": "1.0",
-                "temperature": 0.5,
+                "customParams": {"temperature": 0.5},
                 "context": 8192,
             },
         },
@@ -1078,7 +1083,7 @@ def testModelWithExtraConfig(mockProviderClasses: Dict[str, type]) -> None:
                 "provider": "test-provider",
                 "model_id": "gpt-4",
                 "model_version": "1.0",
-                "temperature": 0.7,
+                "customParams": {"temperature": 0.7},
                 "context": 4096,
                 "support_tools": True,
                 "support_images": False,
@@ -1125,7 +1130,7 @@ def testGetModelInfoIncludesStructuredOutputFlag(mockProviderClasses: Dict[str, 
                 "provider": "test-provider",
                 "model_id": "gpt-4",
                 "model_version": "1.0",
-                "temperature": 0.7,
+                "customParams": {"temperature": 0.7},
                 "context": 4096,
                 "support_structured_output": True,
             }
@@ -1163,7 +1168,7 @@ def testGetModelInfoStructuredOutputDefaultsFalse(mockProviderClasses: Dict[str,
                 "provider": "test-provider",
                 "model_id": "gpt-4",
                 "model_version": "1.0",
-                "temperature": 0.7,
+                "customParams": {"temperature": 0.7},
                 "context": 4096,
             }
         },
@@ -1194,7 +1199,7 @@ async def testMockModelGenerateStructuredHappyPath() -> None:
         provider=provider,
         modelId="mock-model",
         modelVersion="latest",
-        temperature=0.5,
+        customParams={"temperature": 0.5},
         contextSize=4096,
         extraConfig={"support_structured_output": True},
         statsStorage=NullStatsStorage(),
@@ -1225,7 +1230,7 @@ async def testMockModelGenerateStructuredFlagFalse() -> None:
         provider=provider,
         modelId="mock-model",
         modelVersion="latest",
-        temperature=0.5,
+        customParams={"temperature": 0.5},
         contextSize=4096,
         extraConfig={},
         statsStorage=NullStatsStorage(),

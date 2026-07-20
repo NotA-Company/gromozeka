@@ -84,10 +84,10 @@ class MockOpenAIProvider(BasicOpenAIProvider):
         *,
         modelId: str,
         modelVersion: str,
-        temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
         extraConfig: Dict[str, Any] = {},
+        customParams: Optional[Dict[str, Any]] = None,
     ) -> BasicOpenAIModel:
         """Create a new model instance for this provider.
 
@@ -95,10 +95,12 @@ class MockOpenAIProvider(BasicOpenAIProvider):
             name: The name to assign to the model.
             modelId: The model identifier (e.g., "gpt-4").
             modelVersion: The version of the model.
-            temperature: The sampling temperature for generation.
             contextSize: The maximum context window size in tokens.
             statsStorage: StatsStorage instance for recording LLM usage statistics.
             extraConfig: Additional configuration options for the model.
+            customParams: Per-model custom parameters passed through to the
+                underlying OpenAI API call (temperature, top_p, max_tokens,
+                etc.). See :attr:`AbstractModel._customParams`.
 
         Returns:
             BasicOpenAIModel: A new model instance configured with the provided parameters.
@@ -107,11 +109,11 @@ class MockOpenAIProvider(BasicOpenAIProvider):
             provider=self,
             modelId=modelId,
             modelVersion=modelVersion,
-            temperature=temperature,
             contextSize=contextSize,
             statsStorage=statsStorage,
             openAiClient=self._client,  # type: ignore[arg-type]
             extraConfig=extraConfig,
+            customParams=customParams,
         )
 
 
@@ -182,7 +184,7 @@ def testModel(testProvider: MockOpenAIProvider, mockAsyncOpenAI: Mock) -> BasicO
         provider=testProvider,
         modelId="test-model",
         modelVersion="1.0",
-        temperature=0.7,
+        customParams={"temperature": 0.7},
         contextSize=4096,
         statsStorage=NullStatsStorage(),
         openAiClient=mockAsyncOpenAI,
@@ -315,7 +317,7 @@ def testProviderCreateModelInstanceNotImplemented() -> None:
             name="test",
             modelId="model-id",
             modelVersion="1.0",
-            temperature=0.7,
+            customParams={"temperature": 0.7},
             contextSize=4096,
             statsStorage=NullStatsStorage(),
         )
@@ -342,7 +344,7 @@ def testAddModelSuccess(testProvider: MockOpenAIProvider, mockAsyncOpenAI: Mock)
         name="test-model",
         modelId="gpt-4",
         modelVersion="1.0",
-        temperature=0.7,
+        customParams={"temperature": 0.7},
         contextSize=8192,
         statsStorage=NullStatsStorage(),
         extraConfig={"support_tools": True},
@@ -352,7 +354,7 @@ def testAddModelSuccess(testProvider: MockOpenAIProvider, mockAsyncOpenAI: Mock)
     assert "test-model" in testProvider.models
     assert testProvider.models["test-model"] == model
     assert model.modelId == "gpt-4"
-    assert model.temperature == 0.7
+    assert model._customParams["temperature"] == 0.7
     assert model.contextSize == 8192
 
 
@@ -372,7 +374,7 @@ def testAddModelDuplicate(testProvider: MockOpenAIProvider, mockAsyncOpenAI: Moc
         name="test-model",
         modelId="gpt-4",
         modelVersion="1.0",
-        temperature=0.7,
+        customParams={"temperature": 0.7},
         contextSize=4096,
         statsStorage=NullStatsStorage(),
     )
@@ -380,7 +382,7 @@ def testAddModelDuplicate(testProvider: MockOpenAIProvider, mockAsyncOpenAI: Moc
         name="test-model",
         modelId="gpt-3.5",
         modelVersion="1.0",
-        temperature=0.5,
+        customParams={"temperature": 0.5},
         contextSize=2048,
         statsStorage=NullStatsStorage(),
     )
@@ -405,7 +407,7 @@ def testAddModelWithoutClient() -> None:
             name="test",
             modelId="model",
             modelVersion="1.0",
-            temperature=0.7,
+            customParams={"temperature": 0.7},
             contextSize=4096,
             statsStorage=NullStatsStorage(),
         )
@@ -433,7 +435,7 @@ def testAddModelWithExtraConfig(testProvider: MockOpenAIProvider, mockAsyncOpenA
         name="configured-model",
         modelId="gpt-4",
         modelVersion="1.0",
-        temperature=0.8,
+        customParams={"temperature": 0.8},
         contextSize=4096,
         statsStorage=NullStatsStorage(),
         extraConfig=extraConfig,
@@ -462,7 +464,7 @@ def testModelInitialization(testProvider: MockOpenAIProvider, mockAsyncOpenAI: M
         provider=testProvider,
         modelId="test-model",
         modelVersion="1.0",
-        temperature=0.7,
+        customParams={"temperature": 0.7},
         contextSize=4096,
         statsStorage=NullStatsStorage(),
         openAiClient=mockAsyncOpenAI,
@@ -472,7 +474,7 @@ def testModelInitialization(testProvider: MockOpenAIProvider, mockAsyncOpenAI: M
     assert model.provider == testProvider
     assert model.modelId == "test-model"
     assert model.modelVersion == "1.0"
-    assert model.temperature == 0.7
+    assert model._customParams["temperature"] == 0.7
     assert model.contextSize == 4096
     assert model._client == mockAsyncOpenAI
     assert model._supportTools is True  # type: ignore[attr-defined]
@@ -491,15 +493,20 @@ def testModelGetModelId(testModel: BasicOpenAIModel) -> None:
 
 
 def testModelGetExtraParams(testModel: BasicOpenAIModel) -> None:
-    """Test _getExtraParams returns empty dict by default.
+    """Test _getExtraParams returns the model's customParams dict.
+
+    After the customParams refactor, ``_getExtraParams`` forwards
+    ``self._customParams`` verbatim — there is no longer a separate
+    ``temperature`` attribute. The ``testModel`` fixture sets
+    ``customParams={"temperature": 0.7}``, so that is what must come back.
 
     Args:
         testModel: The test model instance.
 
     Raises:
-        AssertionError: If extra params are not empty by default.
+        AssertionError: If extra params do not match the fixture's customParams.
     """
-    assert testModel._getExtraParams() == {}
+    assert testModel._getExtraParams() == {"temperature": 0.7}
 
 
 # ============================================================================
@@ -1273,7 +1280,7 @@ async def testFullWorkflowAddModelAndGenerate(testProvider: MockOpenAIProvider, 
         name="workflow-test",
         modelId="gpt-4",
         modelVersion="1.0",
-        temperature=0.7,
+        customParams={"temperature": 0.7},
         contextSize=4096,
         statsStorage=NullStatsStorage(),
     )
@@ -1321,7 +1328,7 @@ def testProviderModelManagement(testProvider: MockOpenAIProvider, mockAsyncOpenA
         name="model1",
         modelId="gpt-4",
         modelVersion="1.0",
-        temperature=0.7,
+        customParams={"temperature": 0.7},
         contextSize=4096,
         statsStorage=NullStatsStorage(),
     )
@@ -1329,7 +1336,7 @@ def testProviderModelManagement(testProvider: MockOpenAIProvider, mockAsyncOpenA
         name="model2",
         modelId="gpt-3.5",
         modelVersion="1.0",
-        temperature=0.5,
+        customParams={"temperature": 0.5},
         contextSize=2048,
         statsStorage=NullStatsStorage(),
     )
@@ -1349,7 +1356,7 @@ def testProviderModelManagement(testProvider: MockOpenAIProvider, mockAsyncOpenA
     info = testProvider.getModelInfo("model1")
     assert info is not None
     assert info["model_id"] == "gpt-4"
-    assert info["temperature"] == 0.7
+    assert info["customParams"]["temperature"] == 0.7
 
     # Test deleteModel
     deleted = testProvider.deleteModel("model1")
@@ -1728,7 +1735,7 @@ async def testExecuteChatCompletionHappyPath(
     params: Dict[str, Any] = {
         "model": testModel._getModelId(),
         "messages": [m.toDict("content") for m in sampleMessages],  # type: ignore
-        "temperature": testModel.temperature,
+        "temperature": testModel._customParams["temperature"],
     }
     outcome = await testModel._executeChatCompletion(params)
 
@@ -1771,7 +1778,7 @@ async def testExecuteChatCompletionBadRequestErrorReturnsOutcome(
     params: Dict[str, Any] = {
         "model": testModel._getModelId(),
         "messages": [m.toDict("content") for m in sampleMessages],  # type: ignore
-        "temperature": testModel.temperature,
+        "temperature": testModel._customParams["temperature"],
     }
     outcome = await testModel._executeChatCompletion(params)
 
@@ -1804,7 +1811,7 @@ async def testExecuteChatCompletionOtherExceptionRaises(
     params: Dict[str, Any] = {
         "model": testModel._getModelId(),
         "messages": [m.toDict("content") for m in sampleMessages],  # type: ignore
-        "temperature": testModel.temperature,
+        "temperature": testModel._customParams["temperature"],
     }
 
     with pytest.raises(RuntimeError, match="network failure"):
@@ -1833,7 +1840,7 @@ async def testExecuteChatCompletionUnknownFinishReason(
     params: Dict[str, Any] = {
         "model": testModel._getModelId(),
         "messages": [m.toDict("content") for m in sampleMessages],  # type: ignore
-        "temperature": testModel.temperature,
+        "temperature": testModel._customParams["temperature"],
     }
     outcome = await testModel._executeChatCompletion(params)
 
@@ -1987,7 +1994,9 @@ async def testGenerateImageViaImagesApiWithImageOptions(
         AssertionError: If image options are not passed correctly.
     """
     testModel._config["support_images"] = True
-    testModel._config["image_options"] = {"size": "1024x1024", "output_format": "jpeg", "n": 1}
+    # Phase 1 moved image-generation options from `_config["image_options"]` into
+    # `customParams` (forwarded verbatim to images.generate via _getImageRequestOptions).
+    testModel._customParams.update({"size": "1024x1024", "output_format": "jpeg", "n": 1})
 
     mockResponse = _makeImagesResponse(
         [{"b64_json": base64.b64encode(b"testimg").decode(), "url": None, "revised_prompt": None}]
@@ -2078,7 +2087,11 @@ async def testGenerateImageViaImagesApiUnknownFormat(
         AssertionError: If MIME type does not default to image/png.
     """
     testModel._config["support_images"] = True
-    testModel._config["image_options"] = {"output_format": "tiff"}
+    # Phase 1 moved image-generation options from `_config["image_options"]` into
+    # `customParams`. Setting output_format="tiff" here actually exercises the
+    # unknown-format -> png fallback in _generateImageViaImagesApi (previously
+    # this assertion passed for the wrong reason: tiff was never forwarded at all).
+    testModel._customParams.update({"output_format": "tiff"})
 
     mockResponse = _makeImagesResponse(
         [{"b64_json": base64.b64encode(b"testimg").decode(), "url": None, "revised_prompt": None}]
@@ -2276,8 +2289,15 @@ async def testGenerateImageViaImagesApiBadRequestError(
     assert result.error is badReqError
 
 
-def testGetImageRequestOptionsNonDict(testModel: BasicOpenAIModel) -> None:
-    """Test _getImageRequestOptions returns empty dict for non-dict image_options.
+def testGetImageRequestOptionsEmpty(testModel: BasicOpenAIModel) -> None:
+    """Test _getImageRequestOptions returns empty dict when customParams is empty.
+
+    Phase 1 removed the ``_config["image_options"]`` config key entirely;
+    ``_getImageRequestOptions`` now returns ``dict(self._customParams)`` with
+    no non-dict guard (the abstract base guarantees ``_customParams`` is
+    always a dict). The closest new-architecture analog of the old "non-dict
+    image_options -> empty dict" test is "empty ``_customParams`` -> empty
+    dict".
 
     Args:
         testModel: The test model instance.
@@ -2285,7 +2305,7 @@ def testGetImageRequestOptionsNonDict(testModel: BasicOpenAIModel) -> None:
     Raises:
         AssertionError: If result is not empty dict.
     """
-    testModel._config["image_options"] = "invalid"
+    testModel._customParams = {}
     assert testModel._getImageRequestOptions() == {}
 
 

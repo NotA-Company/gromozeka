@@ -30,8 +30,8 @@ Example:
         name="custom-model",
         modelId="custom-llm-v1",
         modelVersion="latest",
-        temperature=0.7,
         contextSize=4096,
+        customParams={"temperature": 0.7},
     )
 
     model = provider.getModel("custom-model")
@@ -82,8 +82,8 @@ class CustomOpenAIProvider(BasicOpenAIProvider):
             name="custom-model",
             modelId="custom-llm-v1",
             modelVersion="latest",
-            temperature=0.7,
             contextSize=4096,
+            customParams={"temperature": 0.7},
         )
         ```
     """
@@ -146,10 +146,10 @@ class CustomOpenAIProvider(BasicOpenAIProvider):
         *,
         modelId: str,
         modelVersion: str,
-        temperature: float,
         contextSize: int,
         statsStorage: StatsStorage,
         extraConfig: Optional[Dict[str, Any]] = None,
+        customParams: Optional[Dict[str, Any]] = None,
     ) -> AbstractModel:
         """Create a custom OpenAI model instance.
 
@@ -161,11 +161,12 @@ class CustomOpenAIProvider(BasicOpenAIProvider):
             name: The name identifier for the model instance.
             modelId: The model identifier to use in API calls (e.g., "custom-llm-v1").
             modelVersion: The version string of the model (e.g., "latest", "v1").
-            temperature: The sampling temperature for text generation (0.0 to 2.0).
-                Lower values make output more deterministic, higher values more creative.
             contextSize: The maximum context window size in tokens.
             extraConfig: Additional configuration options for the model.
                 May include provider-specific settings or custom parameters.
+            customParams: Per-model custom parameters passed through to the
+                underlying OpenAI-compatible API call (temperature, top_p,
+                max_tokens, etc.). See :attr:`AbstractModel._customParams`.
 
         Returns:
             A BasicOpenAIModel instance configured for the custom OpenAI-compatible API.
@@ -179,9 +180,9 @@ class CustomOpenAIProvider(BasicOpenAIProvider):
                 name="custom-model",
                 modelId="custom-llm-v1",
                 modelVersion="latest",
-                temperature=0.7,
                 contextSize=4096,
                 extraConfig={"custom_param": "value"},
+                customParams={"temperature": 0.7},
             )
             ```
         """
@@ -192,9 +193,9 @@ class CustomOpenAIProvider(BasicOpenAIProvider):
             provider=self,
             modelId=modelId,
             modelVersion=modelVersion,
-            temperature=temperature,
             contextSize=contextSize,
             statsStorage=statsStorage,
             extraConfig=extraConfig,
+            customParams=customParams,
             openAiClient=self._client,
         )

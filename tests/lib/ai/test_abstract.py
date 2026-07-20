@@ -28,7 +28,7 @@ import pytest
 
 from lib.ai.abstract import AbstractLLMProvider, AbstractModel
 from lib.ai.models import ModelMessage, ModelResultStatus, ModelRunResult, ModelStructuredResult
-from lib.stats import NullStatsStorage
+from lib.stats import NullStatsStorage, StatsStorage
 
 # ============================================================================
 # Minimal concrete subclasses for testing
@@ -46,11 +46,13 @@ class _StubProvider(AbstractLLMProvider):
     def addModel(
         self,
         name: str,
+        *,
         modelId: str,
         modelVersion: str,
-        temperature: float,
         contextSize: int,
+        statsStorage: StatsStorage,
         extraConfig: Dict[str, Any] = {},
+        customParams: Optional[Dict[str, Any]] = None,
     ) -> AbstractModel:
         """Add a model stub.
 
@@ -58,9 +60,10 @@ class _StubProvider(AbstractLLMProvider):
             name: Model name.
             modelId: Model identifier.
             modelVersion: Model version.
-            temperature: Temperature setting.
             contextSize: Context window size.
+            statsStorage: Stats storage instance.
             extraConfig: Extra configuration.
+            customParams: Per-model custom parameters (temperature, etc.).
 
         Returns:
             AbstractModel stub instance.
@@ -148,7 +151,7 @@ def _makeNoStructuredModel(contextSize: int = 4096) -> _NoStructuredModel:
         provider=_makeProvider(),
         modelId="no-struct",
         modelVersion="1.0",
-        temperature=0.5,
+        customParams={"temperature": 0.5},
         contextSize=contextSize,
         statsStorage=NullStatsStorage(),
         extraConfig={"support_structured_output": False},
@@ -168,7 +171,7 @@ def _makeStructuredModel(contextSize: int = 4096) -> _StructuredSupportedModel:
         provider=_makeProvider(),
         modelId="struct-model",
         modelVersion="1.0",
-        temperature=0.5,
+        customParams={"temperature": 0.5},
         contextSize=contextSize,
         statsStorage=NullStatsStorage(),
         extraConfig={"support_structured_output": True},
@@ -192,7 +195,7 @@ def _makeEmbeddingModel(supportEmbeddings: bool = True) -> _NoStructuredModel:
         provider=_makeProvider(),
         modelId="emb-model",
         modelVersion="1.0",
-        temperature=0.5,
+        customParams={"temperature": 0.5},
         contextSize=4096,
         statsStorage=NullStatsStorage(),
         extraConfig={"support_embeddings": supportEmbeddings},

@@ -516,7 +516,7 @@ folder-id = "${YC_FOLDER_ID}"
 [models.models.my-model]
 provider = "openrouter"
 model_id = "mistralai/mistral-7b-instruct"
-temperature = 0.7
+customParams.temperature = 0.7
 context = 32768
 enabled = true
 # Capability flags
@@ -1230,7 +1230,7 @@ llmManager = LLMManager(config={
         "my-model": {
             "provider": "openrouter",
             "model_id": "mistralai/mistral-7b-instruct",
-            "temperature": 0.7,
+            "customParams": {"temperature": 0.7},
             "context": 32768,
         }
     }
@@ -1997,7 +1997,7 @@ api-key = "YOUR_OPENROUTER_KEY"
 [models.models.main]
 provider = "openrouter"
 model_id = "mistralai/mistral-7b-instruct"
-temperature = 0.7
+customParams.temperature = 0.7
 context = 32768
 enabled = true
 EOF
@@ -2489,6 +2489,7 @@ from typing import Any, Dict, Optional, Sequence
 
 from lib.ai.abstract import AbstractLLMProvider, AbstractModel
 from lib.ai.models import LLMAbstractTool, ModelMessage, ModelResultStatus, ModelRunResult
+from lib.stats import StatsStorage
 
 
 class MyProviderModel(AbstractModel):
@@ -2498,22 +2499,34 @@ class MyProviderModel(AbstractModel):
         provider: The parent provider instance
         modelId: Unique model identifier
         modelVersion: Model version string
-        temperature: Sampling temperature
         contextSize: Max context tokens
         extraConfig: Additional configuration dict
+        customParams: Per-model custom parameters passed through to the
+            underlying API call (temperature, top_p, max_tokens, ...).
+            Defaults to an empty dict.
     """
 
     def __init__(
         self,
         provider: "MyProvider",
         modelId: str,
+        *,
         modelVersion: str,
-        temperature: float,
         contextSize: int,
-        extraConfig: Dict[str, Any] = {},
+        statsStorage: StatsStorage,
+        extraConfig: Optional[Dict[str, Any]] = None,
+        customParams: Optional[Dict[str, Any]] = None,
     ):
         """Initialize the model"""
-        super().__init__(provider, modelId, modelVersion, temperature, contextSize, extraConfig)
+        super().__init__(
+            provider,
+            modelId,
+            modelVersion=modelVersion,
+            contextSize=contextSize,
+            statsStorage=statsStorage,
+            extraConfig=extraConfig,
+            customParams=customParams,
+        )
 
     async def _generateText(
         self,
@@ -2569,10 +2582,12 @@ class MyProvider(AbstractLLMProvider):
         self,
         name: str,
         modelId: str,
+        *,
         modelVersion: str,
-        temperature: float,
         contextSize: int,
-        extraConfig: Dict[str, Any] = {},
+        statsStorage: StatsStorage,
+        extraConfig: Optional[Dict[str, Any]] = None,
+        customParams: Optional[Dict[str, Any]] = None,
     ) -> AbstractModel:
         """Add a model to this provider
 
@@ -2580,14 +2595,24 @@ class MyProvider(AbstractLLMProvider):
             name: Human-readable model name for registry
             modelId: Provider-specific model ID
             modelVersion: Model version string
-            temperature: Sampling temperature
             contextSize: Maximum context token count
+            statsStorage: StatsStorage instance for recording LLM usage statistics
             extraConfig: Additional model configuration
+            customParams: Per-model custom parameters forwarded to the
+                underlying API call (temperature, top_p, max_tokens, ...).
 
         Returns:
             Newly created model instance
         """
-        model = MyProviderModel(self, modelId, modelVersion, temperature, contextSize, extraConfig)
+        model = MyProviderModel(
+            self,
+            modelId,
+            modelVersion=modelVersion,
+            contextSize=contextSize,
+            statsStorage=statsStorage,
+            extraConfig=extraConfig,
+            customParams=customParams,
+        )
         self.models[name] = model
         return model
 ```
@@ -2620,7 +2645,7 @@ base-url = "https://api.myllm.example.com"
 provider = "my-llm"
 model_id = "myllm-v1"
 model_version = "latest"
-temperature = 0.5
+customParams.temperature = 0.5
 context = 16384
 enabled = true
 support_images = false
