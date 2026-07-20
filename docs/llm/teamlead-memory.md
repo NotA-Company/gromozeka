@@ -77,6 +77,39 @@ See [`memories/db-cache-cleanup.md`](memories/db-cache-cleanup.md) — durable n
 - **Semantic-search test path selection** (`tests/database/repositories/test_chat_search*.py`): `sqlite-vec` is installed (v0.1.9, `requirements.direct.txt`), so `saveMessageEmbedding` dual-writes the vec0 table and the **native** vector path runs by default — the **numpy** path is skipped. To test the numpy path deterministically, stub `_nativeVectorSearch` to return `[]` (forces the fall-through). To lock in an OR-style `needsPostFilter` guard term-by-term, you need SINGLE-filter tests (a combined-filter test is structurally immune to single-term removal because the other filter keeps the OR `True`).
 - **`tests/dependencies/test_sqlite_vec.py` skip-on-missing behavior** (added 2026-07-16): the file uses module-level `sqlite_vec = pytest.importorskip("sqlite_vec")` so the WHOLE module is SKIPPED (not failed) when the `sqlite_vec` package is not importable. Distinct from the separate failure mode where the wheel IS installed but its bundled native binary won't load — that path is caught by the `RuntimeError` raised inside the file's `loadVecConnection()` helper (production load path mirror). So: missing package → skip; broken binary → fail loudly (RuntimeError). Both are intentional. `numpy` is NOT importorskip-guarded (always present as a portable wheel dep) — only sqlite-vec, the genuinely environment-fragile native extension, is.
 
+## Embedding Model-Lookup Refactor (plan APPROVED 2026-07-20)
+
+Plan: [`docs/plans/embedding-model-lookup-refactor-v1.md`](../plans/embedding-model-lookup-refactor-v1.md) — Status **APPROVED**, all design decisions resolved, awaiting Phase 1 implementation dispatch. Decisions D1–D10 ratified.
+
+**Current state captured by 4 parallel exploration agents (pre-refactor snapshot — will be stale once Phase 1 lands):**
+- 4 embedding stores: `message_embeddings` (regular BLOB table, `migration_017`, indexed `migration_018`), `user_memories` (regular, no BLOB — provenance cols only, `migration_020`+`021`), `vec_message_embeddings_{N}` (vec0, lazy at `chat_embeddings.py:166-263`), `vec_user_memories_{N}` (vec0, lazy at `user_memories.py:1162-1186`).
+- Numpy fallback in `ChatSearchRepository._semanticSearch` (`internal/database/repositories/chat_search.py:303-483`); `import numpy as np` at line 32; body 410-480 (load via `_loadEmbeddingsFromDb` 485-553 + numpy cosine). Triggered by: vec0 unsupported OR raises OR returns `[]`. Always-on safety net.
+- Last additional numpy use: `user_memories.py:52` import + `:872` `numpy.linalg.norm` for query-vector norm guard (NOT a fallback).
+- No `chat_messages` embedding columns today (PK `(chat_id, message_id)`, 15 cols, last recreation in `migration_013`). `message_embeddings` is a sidecar joined by the same natural key.
+- Two different col-naming conventions for the same concept: `message_embeddings.{model,dimensions}` vs `user_memories.{embedding_model,embedding_dimensions}`. Both vec0 tables use `model TEXT PARTITION KEY`.
+- Model name sourced from `chatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr()` (read back from setting, not model instance). Dimensions derived from `len(embedding)` at write time. `AbstractModel.getDimensions()` (`lib/ai/abstract.py:589-605`) seeded from `extraConfig["embedding_dimensions"]` or lazily probed.
+- Production callers all in `internal/bot/common/handlers/{message_preprocessor,chat_search,user_memories}.py` — no `lib/` callers. Plus `scripts/clear_memory_embeddings.py` (raw SQL bypass).
+- Dead-in-prod methods: `getMessageEmbedding`, `deleteChatEmbeddings` (tests only).
+
+**Target state per the plan:**
+- New `models(model_id INTEGER PK NOT NULL, model TEXT, dimensions INTEGER, created_at TIMESTAMP, UNIQUE(model, dimensions))` — **D7 INTEGER PK deviation from AGENTS.md preference #3 (TEXT UUID) is user-ratified** for compactness as vec0 partition key + O(1) cached allocation.
+- New `ModelsRepository.getOrCreateModelId(model, dimensions) -> int` with process-local `{(model,dims):id}` cache + `INSERT OR IGNORE` (portability R5: needs `BaseSQLProvider.insertOrIgnore` helper — doesn't exist yet).
+- `chat_messages` += `model_id INTEGER NULL` (backfilled via JOIN to `message_embeddings`→`models`).
+- `user_memories` drops `embedding_model`/`embedding_dimensions`, += `model_id INTEGER NULL`.
+- Drop `message_embeddings` table entirely; drop both vec0 families (lazily recreated with `model_id INTEGER PARTITION KEY`).
+- `_semanticSearch` collapses from 3-rung ladder to "vec0 or `[]`".
+- numpy fully retired from production code (D8); `numpy==2.5.1` removed from `requirements.direct.txt`; `requirements.txt` regenerated; `tests/dependencies/test_numpy.py` deleted.
+- Single migration `migration_025_embedding_model_lookup.py` does it all (temp-table swap pattern from `migration_013`).
+- **D6 (handler-layer signature stability):** repos continue to accept model NAME strings at their public boundary; resolution to `model_id` happens inside the repo. Handler call sites change zero lines for the common case. Exception: `/search` slash-command caller (`chat_search.py:~1322`) bypasses `LLMService.generateEmbedding` and must resolve explicitly (Risk R2).
+- **D10 (cross-repo access):** constructor-inject `modelIdResolver: Callable[[str, int], Awaitable[int]]` into `ChatEmbeddingsRepository`/`UserMemoriesRepository`. Caveat flagged: `ChatEmbeddingsRepository` has `__slots__ = ()` at line 59 — must add `_modelIdResolver` slot at Phase 3.
+
+**Migration precedent (the ONLY temp-table swap in the repo):** `migration_013_remove_timestamp_defaults.py` — `<name>_new → INSERT...SELECT → DROP → RENAME` in a single `sqlProvider.batchExecute([ParametrizedQuery(...)])` call. Used to remove `DEFAULT CURRENT_TIMESTAMP` from 19 tables (SQLite can't ALTER COLUMN). Migration template: `async def up(self, sqlProvider: BaseSQLProvider)` / `async def down(...)`, `def getMigration() -> Type[BaseMigration]`.
+
+**Implementation phasing (per plan §11):** P1 new `models` repo + tests; P2 migration `025`; P3 slim `chat_embeddings.py` + `user_memories.py` + vec0 DDL; P4 drop numpy entirely (chat_search.py + user_memories.py:872 + requirements.direct.txt + test_numpy.py); P5 handler wiring + script + remaining tests; P6 docs sync (database-schema.md, database-schema-llm.md, llm/architecture.md, design/vector-search-native.md, CHANGELOG.md).
+
+**Verification (when implementation lands):** test-rollback step counts bump (any test rolling back N migrations must bump `steps=` to N+1 for migration_025); `expectedTables`/`requiredTables` hardcoded lists in schema-creation tests need `models` added and `message_embeddings` removed; `test_numpy.py` deleted; `rg "import numpy" internal/ lib/` returns 0 matches.
+
+
 ## Opencode Slash-Command Mechanism
 
 - Slash-commands are markdown files in a `commands/` dir. Filename `<name>.md` → `/<name>`.
@@ -226,7 +259,7 @@ See [`memories/llm-messages-handler.md`](memories/llm-messages-handler.md) — d
 
 ## Docs Archive Layout (2026-07-04)
 
-- `docs/plans/` holds active/retained design refs only. After the 2026-07-18 full `/docs` audit it contains 2 files: `python-sandboxing-v1.md` (retained design ref for `lib/sandbox/`, status `implemented`) and `llm-empty-truncated-final-handling-v1.md` (status `PARTIALLY IMPLEMENTED` — Option B handler-half shipped at `llm_messages.py:394`, Option A + `bot.py` empty-string guard + regression tests still pending).
+- `docs/plans/` holds active/retained design refs only. After the 2026-07-20 addition of `embedding-model-lookup-refactor-v1.md` it contains 3 files: `python-sandboxing-v1.md` (retained design ref for `lib/sandbox/`, status `implemented`), `llm-empty-truncated-final-handling-v1.md` (status `PARTIALLY IMPLEMENTED` — Option B handler-half shipped at `llm_messages.py:394`, Option A + `bot.py` empty-string guard + regression tests still pending), and `embedding-model-lookup-refactor-v1.md` (status `APPROVED` 2026-07-20, all design decisions resolved, awaiting Phase 1 implementation dispatch).
 - `docs/design/` holds 2 retained docs: `markdown-specification.md` (living grammar spec) and `vector-search-native.md` (forward-looking pgvector/MySQL/SQLink contract; SQLite path implemented).
 - `docs/database-multi-source.md` (at docs/ root, NOT in plans/) is the relocated operational reference for the multi-source DB architecture (was `docs/plans/database-multi-source-configuration.md`).
 - `docs/archive/plans/README.md` and `docs/archive/design/README.md` are the authoritative indexes of archived docs with one-line descriptions. Update them when archiving new docs.
