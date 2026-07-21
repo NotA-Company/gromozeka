@@ -38,9 +38,7 @@ import asyncio
 import logging
 from collections.abc import Sequence
 from threading import Lock
-from typing import Any, Dict, List, Optional
-
-import numpy as np
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from lib.stats import StatsStorage
 
@@ -54,6 +52,8 @@ try:
 except ImportError:
     _FASTEMBED_AVAILABLE = False
 
+if TYPE_CHECKING:
+    from numpy import ndarray
 
 logger = logging.getLogger(__name__)
 
@@ -263,7 +263,7 @@ class FastembedProvider(AbstractLLMProvider):
             self._embeddingModels[modelId] = embedding
             return embedding
 
-    async def embedOne(self, modelId: str, text: str, **kwargs: Any) -> "np.ndarray":
+    async def embedOne(self, modelId: str, text: str, **kwargs: Any) -> "ndarray":
         """Embed a single text using the named FastEmbed model.
 
         Runs the (sync) fastembed call in a thread pool so the event loop

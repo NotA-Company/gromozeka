@@ -749,7 +749,7 @@ class UserMemoriesHandler(BaseBotHandler):
     #   message cursor (no summary) to
     #   chat_users.metadata.memoryRefinement[threadId]. The embedding-regen
     #   cron (_runMemoryEmbeddingRegen, outside _refineLock) re-embeds stale
-    #   memories whose embedding_model / dimensions drifted.
+    #   memories whose ``model_id`` drifted.
 
     async def _runMemoryEmbeddingRegen(self) -> None:
         """Process one batch of memory-embedding regeneration per CRON tick.
@@ -757,9 +757,9 @@ class UserMemoriesHandler(BaseBotHandler):
         Mirrors ``ChatSearchHandler._dtCronJob``
         (``chat_search.py:284-445``) one-to-one, adapted for the
         ``user_memories`` store. Because there is no BLOB table, model /
-        dimension tracking lives on ``user_memories`` itself
-        (``embedding_model`` / ``embedding_dimensions``), so stale detection
-        is a single-table query (no vec0 JOIN). Per tick:
+        dimension tracking lives on ``user_memories.model_id`` (the
+        ``models`` lookup-table FK), so stale detection is a single-table
+        query (no vec0 JOIN). Per tick:
 
         1. **Chat discovery (in-memory)**: round-robin over
            ``self._trackedChats``, a ``MutableSet[int]`` populated by
@@ -860,7 +860,7 @@ class UserMemoriesHandler(BaseBotHandler):
         # exception yields 0, indistinguishable from "no stale rows". The
         # tracker is therefore advanced unconditionally after the call so
         # cleanup does not re-fire every tick for the same model. A silent
-        # cleanup failure leaves stale rows with their old ``embedding_model``,
+        # cleanup failure leaves stale rows with their old ``model_id``,
         # which ``getMemoriesWithoutEmbeddings`` still surfaces for
         # re-embedding below — so the embed path self-heals even when the
         # vec0 cleanup did not (the only residual is orphaned old-dim vec0
@@ -880,7 +880,7 @@ class UserMemoriesHandler(BaseBotHandler):
 
         # 6. Stale detection. ``modelName`` and ``dimensions`` are forwarded
         # so rows embedded under a different model or dimensionality (e.g.
-        # after a model swap) are re-surfaced. A NULL ``embedding_model``
+        # after a model swap) are re-surfaced. A NULL ``model_id``
         # (never-embedded memory) surfaces here too, so this same query
         # serves the initial backfill.
         staleMemories: List[UserMemoryDict] = []

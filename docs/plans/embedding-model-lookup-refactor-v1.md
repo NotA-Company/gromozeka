@@ -49,7 +49,7 @@ phasing in §11 by dispatching `software-developer` (code) and `docs-writer`
    unavailable, raises, or returns `[]`. It forces a second embedding store
    (`message_embeddings` BLOB), doubles write load, and pins a heavy direct
    dependency (`numpy==2.5.1`) plus a brittle tie-break contract pinned in
-   [`tests/dependencies/test_numpy.py`](../../tests/dependencies/test_numpy.py).
+   `tests/dependencies/test_numpy.py`.
    Memories never had this fallback; messages should not either.
 
 3. **Unify the storage story.** After this refactor, vec0 is the sole vector
@@ -1506,7 +1506,7 @@ lands above the rollback target):
 
 Dependency-usage regression tests:
 
-- [`tests/dependencies/test_numpy.py`](../../tests/dependencies/test_numpy.py)
+- `tests/dependencies/test_numpy.py`
   — this file pins the numpy cosine-ranking contract that lived in
   `chat_search.py` lines ~403-424. Once the numpy block is deleted, this
   test file is **deleted unconditionally** (Decision D8 — numpy fully

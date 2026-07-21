@@ -8,9 +8,9 @@ inserts a row against it to confirm.
 ``up()`` is idempotent (``DROP TABLE IF EXISTS``).
 
 Approach: the shared ``testDatabase`` fixture auto-migrates to the latest
-version.  Each test rolls back 3 steps (024, 023, 022) to reach the pre-022
-state (version 21): ``user_data`` exists, re-created empty by 022's
-``down()`` during the rollback.  The test then exercises ``up()`` /
+version.  Each test rolls back 4 steps (025, 024, 023, 022) to reach the
+pre-022 state (version 21): ``user_data`` exists, re-created empty by
+022's ``down()`` during the rollback.  The test then exercises ``up()`` /
 ``down()`` directly.
 """
 
@@ -42,11 +42,12 @@ async def _tableExists(provider: BaseSQLProvider, tableName: str) -> bool:
 
 
 async def _rollbackToPre022(provider: BaseSQLProvider) -> None:
-    """Roll back migrations 024, 023 and 022 to reach the pre-022 state (version 21).
+    """Roll back migrations 025, 024, 023 and 022 to reach the pre-022 state (version 21).
 
-    Three steps: 024's ``down()`` (drops the bayes_tokens index -- no-op on
-    data), 023's ``down()`` (reverse key rename -- no-op on an empty DB) and
-    022's ``down()`` (re-creates an **empty** ``user_data`` table).
+    Four steps: 025's ``down()`` (restores the pre-refactor embedding
+    schema), 024's ``down()`` (drops the bayes_tokens index -- no-op on
+    data), 023's ``down()`` (reverse key rename -- no-op on an empty DB)
+    and 022's ``down()`` (re-creates an **empty** ``user_data`` table).
     After this, ``user_data`` exists (empty) and is ready to be dropped by
     ``up()``.
 
@@ -58,7 +59,7 @@ async def _rollbackToPre022(provider: BaseSQLProvider) -> None:
     """
     rollbackManager = MigrationManager()
     rollbackManager.loadMigrationsFromVersions()
-    await rollbackManager.rollback(steps=3, sqlProvider=provider)
+    await rollbackManager.rollback(steps=4, sqlProvider=provider)
 
 
 async def _insertUserData(provider: BaseSQLProvider, chatId: int, userId: int, key: str, data: str) -> None:

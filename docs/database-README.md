@@ -87,8 +87,8 @@ A streamlined reference optimized for LLM consumption, featuring:
 - [`divination_layouts`](database-schema.md#divination_layouts) - Cached divination layout definitions
 
 #### Chat Search Tables
-- [`message_embeddings`](database-schema.md#message_embeddings) - Per-message embedding vectors
-- [`vec_message_embeddings_N`](database-schema.md#vec_message_embeddings_n-virtual-table) - vec0 virtual tables (one per embedding dimension)
+- [`models`](database-schema.md#models) - Embedding-model provenance registry (model name + dimensions → `model_id`); backing store for `chat_messages.model_id`, `user_memories.model_id`, and both vec0 families
+- [`vec_message_embeddings_N`](database-schema.md#vec_message_embeddings_n-virtual-table) - vec0 virtual tables (one per embedding dimension; partition key = `model_id`)
 
 #### Webhook Tables
 - [`webhook_updates`](database-schema.md#webhook_updates) - Max webhook payload buffer (two-process webhook mode)
@@ -167,7 +167,7 @@ All database operations use TypedDict models:
 - **Type safety**: IDE autocomplete and type checking
 - **Documentation**: Clear field names and types
 - **Validation**: Runtime validation for data integrity
-- **Repository pattern**: Organized access through 15 specialized repositories
+- **Repository pattern**: Organized access through 16 specialized repositories
 
 Learn more: [TypedDict Models](database-schema.md#typeddict-models)
 
@@ -425,7 +425,7 @@ To switch between database providers:
 
 ### Repository Pattern Architecture
 
-The database system uses a repository pattern with 15 specialized repositories, each responsible for a specific domain of data operations:
+The database system uses a repository pattern with 16 specialized repositories, each responsible for a specific domain of data operations:
 
 #### Available Repositories
 
@@ -492,33 +492,37 @@ The database system uses a repository pattern with 15 specialized repositories, 
     - `searchChatMessages()` - Search messages (filter-only or semantic)
 
 12. **[`chatEmbeddings`](../internal/database/repositories/chat_embeddings.py:1)** - Message embedding vectors
-    - `saveMessageEmbedding()` - Store message embedding
-    - `getMessageEmbedding()` - Retrieve message embedding
-    - `deleteChatEmbeddings()` - Remove all embeddings for a chat
-    - `getMessagesWithoutEmbeddings()` - Find messages needing embeddings
+   - `saveMessageEmbedding()` - Store message embedding (writes vec0 row only; the model provenance is recorded in `chat_messages.model_id` via the injected `modelIdResolver`)
+   - `deleteObsoleteModelEmbeddings()` - Drop stale vec0 families for a model that no longer has any embeddings
+   - `getMessagesWithoutEmbeddings()` - Find messages needing embeddings
 
 13. **[`divinations`](../internal/database/repositories/divinations.py:1)** - Divination readings and layouts
-    - `insertReading()` - Save a divination reading
-    - `getLayout()` - Retrieve a cached layout definition
-    - `saveLayout()` - Cache a layout definition
-    - `saveNegativeCache()` - Cache negative result (layout not found)
+   - `insertReading()` - Save a divination reading
+   - `getLayout()` - Retrieve a cached layout definition
+   - `saveLayout()` - Cache a layout definition
+   - `saveNegativeCache()` - Cache negative result (layout not found)
 
 14. **[`userMemories`](../internal/database/repositories/user_memories.py:1)** - Unified per-(chat, user, thread) structured memory store
-    - `addMemory()` - Store a memory entry (permanent or ephemeral)
-    - `getMemory()` - Fetch a single memory by id
-    - `getPermanentMemories()` - List permanent memories for a (chat, user, thread)
-    - `getLatestMemories()` - List most-recent memories
-    - `searchMemories()` - Search memories (filter-only or semantic)
-    - `deleteMemory()` - Soft-delete a memory entry
-    - `saveMemoryEmbedding()` - Store a memory embedding vector
-    - `getMemoriesWithoutEmbeddings()` - Backfill helper for missing embeddings
+   - `addMemory()` - Store a memory entry (permanent or ephemeral)
+   - `getMemory()` - Fetch a single memory by id
+   - `getPermanentMemories()` - List permanent memories for a (chat, user, thread)
+   - `getLatestMemories()` - List most-recent memories
+   - `searchMemories()` - Search memories (filter-only or semantic)
+   - `deleteMemory()` - Soft-delete a memory entry
+   - `saveMemoryEmbedding()` - Store a memory embedding vector (model provenance resolved internally to `model_id` via the injected `modelIdResolver`; handler signature stays model-agnostic)
+   - `getMemoriesWithoutEmbeddings()` - Backfill helper for missing embeddings
 
 15. **[`webhookUpdates`](../internal/database/repositories/webhook_updates.py:1)** - Max webhook payload buffer (two-process webhook mode; see ADR-013)
-    - `addUpdate()` - Enqueue an incoming webhook payload
-    - `getUnprocessedUpdates()` - Pull pending payloads for consumption
-    - `markProcessed()` - Mark payloads as consumed
-    - `markProcessedBeforeMarker()` - Bulk-mark up to a marker
-    - `deleteProcessedOlderThan()` - Reap old processed payloads
+   - `addUpdate()` - Enqueue an incoming webhook payload
+   - `getUnprocessedUpdates()` - Pull pending payloads for consumption
+   - `markProcessed()` - Mark payloads as consumed
+   - `markProcessedBeforeMarker()` - Bulk-mark up to a marker
+   - `deleteProcessedOlderThan()` - Reap old processed payloads
+
+16. **[`embedding_models`](../internal/database/repositories/embedding_models.py:1)** - Embedding-model provenance lookup (process-local cache; injected as `modelIdResolver` into `chatEmbeddings`, `chatSearch`, and `userMemories`)
+   - `getOrCreateModelId()` - Resolve `(model, dimensions)` to a stable `model_id`, inserting a row on first sight
+   - `getModelById()` - Reverse lookup `model_id` → `ModelDict`
+   - `listModels()` - Enumerate all registered models
 
 #### Accessing Repositories
 
@@ -744,8 +748,8 @@ See: [Best Practices](database-schema.md#best-practices)
 - **Cache Tables**: 3 explicit (`chat_summarization_cache`, `cache_storage`, `cache`) plus dynamic per-`CacheType` tables
 - **Spam Detection Tables**: 4 (`spam_messages`, `ham_messages`, `bayes_tokens`, `bayes_classes`)
 - **Statistics Tables**: 4 (`chat_stats`, `chat_user_stats`, `stat_events`, `stat_aggregates`)
-- **Current Migration Version**: 24
-- **Total Repositories**: 15 specialised repositories on the `Database` class
+- **Current Migration Version**: 25
+- **Total Repositories**: 16 specialised repositories on the `Database` class
 
 ## 🤝 Contributing
 
@@ -765,6 +769,6 @@ This documentation is part of the Gromozeka bot project.
 
 ---
 
-**Last Updated**: 2026-07-18
-**Database Version**: 24
+**Last Updated**: 2026-07-21
+**Database Version**: 25
 **Documentation Version**: 2.4

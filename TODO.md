@@ -3,6 +3,7 @@
 - [ ] script for moving chat to separate db
 - [ ] refactor models
 - [ ] more statistics thing (more sources, consolidation, export + cleanup of old statistics)
+- [ ] reorder config options - models on one page, prompts in other page, llm-settings in third page
 
 
 - [ ] Subagent with conversation history

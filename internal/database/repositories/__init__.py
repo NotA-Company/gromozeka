@@ -62,6 +62,7 @@ from .chat_users import ChatUsersRepository
 from .common import CommonFunctionsRepository
 from .delayed_tasks import DelayedTasksRepository
 from .divinations import DivinationsRepository
+from .embedding_models import EmbeddingModelsRepository
 from .media_attachments import MediaAttachmentsRepository
 from .spam import SpamRepository
 from .user_memories import UserMemoriesRepository
@@ -80,6 +81,7 @@ __all__ = [
     "CommonFunctionsRepository",
     "DelayedTasksRepository",
     "DivinationsRepository",
+    "EmbeddingModelsRepository",
     "MediaAttachmentsRepository",
     "SpamRepository",
     "UserMemoriesRepository",

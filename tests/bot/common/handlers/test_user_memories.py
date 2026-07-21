@@ -1846,8 +1846,7 @@ def _makeMemoryDict(
         tags=[],
         permanent=permanent,
         source=UserMemorySource.CHAT,
-        embedding_model="test-embed-model",
-        embedding_dimensions=3,
+        model_id=1,
         created_at=datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc),
         updated_at=datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc),
         score=score,
@@ -3317,7 +3316,7 @@ class TestKnowledgeConfigWizard:
 
         Full free-text flow (seed state → send message), then asserts the
         persisted memory has ``permanent is False``, ``source ==
-        UserMemorySource.USER``, and ``embedding_model is None``.
+        UserMemorySource.USER``, and ``model_id is None``.
 
         Args:
             testDatabase: Fresh in-memory database fixture.
@@ -3359,7 +3358,7 @@ class TestKnowledgeConfigWizard:
         mem = memories[0]
         assert mem["permanent"] is False
         assert mem["source"] == UserMemorySource.USER
-        assert mem["embedding_model"] is None
+        assert mem["model_id"] is None
 
 
 class TestGetMyDataCommand:

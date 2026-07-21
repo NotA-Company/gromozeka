@@ -1910,6 +1910,7 @@ class TestMigrationAndSchema:
             "cache",
             "cache_storage",
             "chat_summarization_cache",
+            "models",
         ]
 
         provider = await inMemoryDb.manager.getProvider(readonly=True)

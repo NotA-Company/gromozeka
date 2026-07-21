@@ -8,8 +8,7 @@ helper each live in their own focused repositories:
 - The public ``searchChatMessages`` dispatcher and both of its modes
   live in :class:`ChatSearchRepository` (``chat_search.py``); its
   tests are in ``tests/database/repositories/test_chat_search.py``.
-- Embedding CRUD (``saveMessageEmbedding``, ``getMessageEmbedding``,
-  ``deleteChatEmbeddings``) and the backfill helper
+- Embedding writes (``saveMessageEmbedding``) and the backfill helper
   (``getMessagesWithoutEmbeddings``) live in
   :class:`ChatEmbeddingsRepository`; their tests are in
   ``tests/database/repositories/test_chat_embeddings.py``.
