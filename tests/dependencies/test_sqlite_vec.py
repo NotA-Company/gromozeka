@@ -419,7 +419,8 @@ class TestScoreMapping:
             assert abs(productionScore - expectedCosine) < 1e-5
             # Explicit pinned literal (observed under 0.1.9): vec0's distance comes from a fixed native
             # C extension (deterministic per version), so the exact literal IS meaningful here — contrast
-            # test_numpy.py, where accumulation order is NOT deterministic and only tolerance is pinned.
+            # a pure-numpy cosine pipeline, where accumulation order is NOT deterministic and only
+            # tolerance would be pinned.
             assert abs(productionScore - 0.800000011920929) < 1e-6
         finally:
             conn.close()

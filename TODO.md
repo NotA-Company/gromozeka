@@ -2,9 +2,9 @@
 - [ ] per-chat settings - how often to do memory-refinement
 - [ ] script for moving chat to separate db
 - [ ] refactor models
-- [x] Review all docs
 - [ ] more statistics thing (more sources, consolidation, export + cleanup of old statistics)
-- [ ] tool for navigating thru documentation (rag + markdown parser )
+- [ ] reorder config options - models on one page, prompts in other page, llm-settings in third page
+
 
 - [ ] Subagent with conversation history
 - [ ] Topic-level configs
@@ -21,6 +21,7 @@
 - [ ] Add some decorator for LLM functions
 - [ ] Some proper framework/mock for telegram (like: we have some amount of users, some of them are admins, one is bot owner. We have some amount of chats)
 - [ ] Meta wizard to guide through all commands
+- [ ] migrations squashing?
 # Vector search: 
 - [x] Tool for last messages, last discussion messages, user messages
 - [x] Add support for embeddings + Vector search on chat's database

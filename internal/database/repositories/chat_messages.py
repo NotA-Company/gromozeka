@@ -6,9 +6,8 @@ updating messages with their associated metadata.
 
 The public chat-message search dispatcher (``searchChatMessages``) and
 both of its modes (filter-only SQL and semantic embedding) live in
-:class:`ChatSearchRepository` (``chat_search.py``). Embedding CRUD
-(``saveMessageEmbedding``, ``getMessageEmbedding``,
-``deleteChatEmbeddings``) and the backfill helper
+:class:`ChatSearchRepository` (``chat_search.py``). Embedding writes
+(``saveMessageEmbedding``) and the backfill helper
 (``getMessagesWithoutEmbeddings``) live in
 :class:`ChatEmbeddingsRepository` (``chat_embeddings.py``).
 """

@@ -112,6 +112,7 @@ async def test_fresh_database() -> None:
             "chat_messages",
             "chat_users",
             "chat_info",
+            "models",
         ]
 
         for table in expectedTables:
@@ -558,6 +559,7 @@ async def test_database_auto_discovery() -> None:
             "chat_messages",
             "chat_users",
             "chat_info",
+            "models",
         ]
 
         for table in expectedTables:

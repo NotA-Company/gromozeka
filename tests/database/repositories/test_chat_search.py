@@ -8,20 +8,19 @@ dispatcher :meth:`ChatSearchRepository.searchChatMessages`:
   ``maxAgeDays`` / ``rootMessageId`` directly against
   ``chat_messages`` joined to ``chat_users``, ordered by ``date``
   descending.
-- **Semantic mode** (``queryEmbedding is not None``): would compute
-  cosine similarity over the embeddings via ``numpy`` — not exercised
-  end-to-end here (requires populating ``message_embeddings`` BLOB
-  rows, which has its own dedicated test coverage in
-  ``tests/database/repositories/test_chat_embeddings.py``).
+- **Semantic mode** (``queryEmbedding is not None``): delegates
+  cosine ranking to the provider's native vec0 virtual table
+  (``vec_message_embeddings_{N}``). Post-``migration_025`` there is
+  NO numpy in-process fallback — when vec0 is unavailable, raises,
+  or yields no matches, semantic search returns ``[]`` (Decision D8).
 
 The repository was split out of :class:`ChatMessagesRepository` and
 :class:`ChatEmbeddingsRepository` so the search surface is cohesive
 and free of cross-repository back-references. Embedding CRUD
-(``saveMessageEmbedding``, ``getMessageEmbedding``,
-``deleteChatEmbeddings``) and the backfill helper
+(``saveMessageEmbedding``) and the backfill helper
 (``getMessagesWithoutEmbeddings``) live in
 :class:`ChatEmbeddingsRepository`; this repository only consumes the
-embeddings for ranking.
+stored vectors for ranking.
 
 Uses the shared ``testDatabase`` fixture from ``tests/conftest.py`` so
 each test gets a fresh in-memory SQLite database with all migrations
@@ -42,6 +41,7 @@ import pytest
 from internal.database import Database
 from internal.database.models import MessageCategory
 from internal.database.providers.base import BaseSQLProvider
+from internal.database.providers.sqlite3 import _SQLITE_VEC_AVAILABLE
 from internal.database.repositories.chat_search import _MESSAGE_ID_FILTER_BATCH_SIZE, ChatSearchRepository
 from internal.models import MessageId
 
@@ -49,14 +49,11 @@ from internal.models import MessageId
 class TestSearchChatMessages:
     """End-to-end tests for ``ChatSearchRepository.searchChatMessages``.
 
-    Pins the filter-only-mode contract (the only mode covered
-    end-to-end here without populating the embeddings table). The
-    semantic-mode behaviour (numpy cosine similarity over
-    ``message_embeddings``) is covered indirectly via
-    ``tests/database/repositories/test_chat_embeddings.py`` (the
-    ``message_embeddings`` CRUD round-trips) plus the handler-level
-    tests in ``tests/bot/common/handlers/test_chat_search.py`` (the
-    full ``/search`` command path).
+    Pins the filter-only-mode contract and the semantic-mode vec0
+    contract. The vec0-dispatch internals (resolver wiring, vec0 filter
+    shape, post-filter composition, ``maxMessages`` cutoff query) are
+    covered in ``test_chat_search_native.py``; this file drives the
+    full repo through the real Database fixture.
 
     Uses the shared ``testDatabase`` fixture from ``tests/conftest.py``
     so each test gets a fresh in-memory SQLite database with all
@@ -168,7 +165,7 @@ class TestSearchChatMessages:
         assert {r["message_category"] for r in results} == {MessageCategory.BOT}
 
     async def test_semantic_mode_ranking(self, testDatabase: Database) -> None:
-        """Semantic mode (``queryEmbedding`` provided) ranks by cosine similarity.
+        """Semantic mode (``queryEmbedding`` provided) ranks by cosine similarity via vec0.
 
         Seeds two messages with known embeddings:
         - Message 1: embedding ``[1.0, 0.0]``
@@ -177,6 +174,9 @@ class TestSearchChatMessages:
         Query embedding ``[1.0, 0.0]`` should rank message 1 first with score
         ≈ 1.0 (identical), then message 2 with score ≈ 0.0 (orthogonal).
         """
+        if not _SQLITE_VEC_AVAILABLE:
+            pytest.skip("sqlite-vec not installed")
+
         chatId = 1
         modelName = "test-model"
 
@@ -185,7 +185,7 @@ class TestSearchChatMessages:
         await self._seedMessage(testDatabase, chatId=chatId, userId=100, messageId=1, messageText="apple")
         await self._seedMessage(testDatabase, chatId=chatId, userId=200, messageId=2, messageText="banana")
 
-        # Save embeddings for both messages.
+        # Save embeddings for both messages (dual-writes to vec0 when supported).
         await testDatabase.chatEmbeddings.saveMessageEmbedding(
             chatId=chatId, messageId=MessageId(1), embedding=[1.0, 0.0], model=modelName
         )
@@ -221,8 +221,7 @@ class TestSearchChatMessages:
         With ``sqlite-vec`` available (the default in this repo's venv),
         ``saveMessageEmbedding`` dual-writes the vec0 table, so the native
         ``_nativeVectorSearch`` fast path runs and its ``needsPostFilter`` guard
-        + ``_filterMessageIds`` forwarding are exercised end-to-end. The
-        numpy-path forwarding is locked by the companion ``...NumpyPath`` test.
+        + ``_filterMessageIds`` forwarding are exercised end-to-end.
 
         Seeds four messages across two threads (0 and 5) whose text
         ``substring="foo"`` distinguishes:
@@ -234,6 +233,9 @@ class TestSearchChatMessages:
 
         Asserts ``threadId=5, substring="foo"`` returns ONLY msg 2.
         """
+        if not _SQLITE_VEC_AVAILABLE:
+            pytest.skip("sqlite-vec not installed")
+
         chatId = 1
         modelName = "test-model"
         for messageId, messageText, threadId in (
@@ -267,54 +269,78 @@ class TestSearchChatMessages:
         assert results[0]["thread_id"] == 5
         assert "foo" in results[0]["message_text"]
 
-    async def test_semanticModeThreadAndSubstringCombinedNumpyPath(self, testDatabase: Database) -> None:
-        """Semantic NUMPY path forwards ``threadId`` AND ``substring`` to ``_filterMessageIds``.
+    async def test_semanticModeReturnsEmptyWhenVec0Raises(self, testDatabase: Database) -> None:
+        """Semantic search returns ``[]`` when ``_nativeVectorSearch`` raises (no fallback).
 
-        Companion to ``test_semanticModeThreadAndSubstringCombined``: forces the
-        numpy sub-path (``_semanticSearch`` → ``_loadEmbeddingsFromDb`` →
-        ``_filterMessageIds``) by short-circuiting ``_nativeVectorSearch`` to an
-        empty result, which makes ``_semanticSearch`` fall through to the numpy
-        ranking path. This is env-independent — it locks the numpy-path
-        forwarding regardless of whether ``sqlite-vec`` is installed — and shares
-        the same AND-combined seed/assertion. A refactor dropping ``threadId`` or
-        ``substring`` from the ``_filterMessageIds`` call inside
-        ``_semanticSearch`` fails here.
+        Post-``migration_025`` contract (Decision D8): the legacy numpy
+        fallback is gone. When vec0 raises, semantic search must return
+        ``[]`` — it must NOT attempt any in-process fallback.
+
+        This forces the contract by patching ``_nativeVectorSearch`` to
+        raise; an empty list is the only acceptable result.
         """
         chatId = 1
         modelName = "test-model"
-        for messageId, messageText, threadId in (
-            (1, "foo bar", 0),
-            (2, "foo baz", 5),
-            (3, "qux zap", 5),
-            (4, "foo qux", 0),
+        await self._seedMessage(testDatabase, chatId=chatId, userId=100, messageId=1, messageText="apple")
+        await testDatabase.chatEmbeddings.saveMessageEmbedding(
+            chatId=chatId, messageId=MessageId(1), embedding=[1.0, 0.0], model=modelName
+        )
+
+        with patch.object(
+            ChatSearchRepository, "_nativeVectorSearch", new=AsyncMock(side_effect=RuntimeError("vec0 boom"))
         ):
-            await self._seedMessage(
-                testDatabase,
+            results = await testDatabase.chatSearch.searchChatMessages(
                 chatId=chatId,
-                userId=100,
-                messageId=messageId,
-                messageText=messageText,
-                threadId=threadId,
-            )
-            await testDatabase.chatEmbeddings.saveMessageEmbedding(
-                chatId=chatId, messageId=MessageId(messageId), embedding=[1.0, 0.0], model=modelName
+                queryEmbedding=[1.0, 0.0],
+                modelName=modelName,
+                limit=10,
             )
 
-        # Force the numpy sub-path: an empty native result makes
-        # ``_semanticSearch`` fall through to ``_loadEmbeddingsFromDb`` + numpy.
+        assert results == []
+
+    async def test_semanticModeReturnsEmptyWhenNativeReturnsEmpty(self, testDatabase: Database) -> None:
+        """Semantic search returns ``[]`` when ``_nativeVectorSearch`` yields no matches.
+
+        Mirrors the vec0-empty case (table exists, no rows match the
+        partition-key filter): the dispatcher returns ``[]`` rather than
+        falling back to numpy.
+        """
+        chatId = 1
+        modelName = "test-model"
+        await self._seedMessage(testDatabase, chatId=chatId, userId=100, messageId=1, messageText="apple")
+        await testDatabase.chatEmbeddings.saveMessageEmbedding(
+            chatId=chatId, messageId=MessageId(1), embedding=[1.0, 0.0], model=modelName
+        )
+
         with patch.object(ChatSearchRepository, "_nativeVectorSearch", new=AsyncMock(return_value=[])):
             results = await testDatabase.chatSearch.searchChatMessages(
                 chatId=chatId,
                 queryEmbedding=[1.0, 0.0],
                 modelName=modelName,
-                threadId=5,
-                substring="foo",
                 limit=10,
             )
 
-        assert {r["message_id"].asInt() for r in results} == {2}
-        assert results[0]["thread_id"] == 5
-        assert "foo" in results[0]["message_text"]
+        assert results == []
+
+    async def test_semanticModeReturnsEmptyWhenModelNameIsNone(self, testDatabase: Database) -> None:
+        """Semantic search with ``modelName=None`` short-circuits to ``[]``.
+
+        The repo cannot resolve a ``model_id`` without a model name, so
+        ``_nativeVectorSearch`` returns ``[]`` immediately. This is the
+        pre-refactor behaviour (``modelName is None`` was always a no-op
+        for semantic search) and it is preserved.
+        """
+        chatId = 1
+        await self._seedMessage(testDatabase, chatId=chatId, userId=100, messageId=1, messageText="apple")
+
+        results = await testDatabase.chatSearch.searchChatMessages(
+            chatId=chatId,
+            queryEmbedding=[1.0, 0.0],
+            modelName=None,
+            limit=10,
+        )
+
+        assert results == []
 
     async def test_semanticNativeNeedsPostFilterGuardThreadAndSubstring(self, testDatabase: Database) -> None:
         """``needsPostFilter`` guard in ``_nativeVectorSearch`` keeps each term.
@@ -339,6 +365,9 @@ class TestSearchChatMessages:
         ``threadId=5`` alone must yield the two thread-5 messages; ``substring="foo"``
         alone must yield the three "foo" messages.
         """
+        if not _SQLITE_VEC_AVAILABLE:
+            pytest.skip("sqlite-vec not installed")
+
         chatId = 1
         modelName = "test-model"
         for messageId, messageText, threadId in (

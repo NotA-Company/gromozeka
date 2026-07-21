@@ -11,6 +11,17 @@ How to use this file:
   [`../teamlead-memory.md`](../teamlead-memory.md).
 - Never store secrets, tokens, `.env` values, or raw logs.
 
+## Post-migration_025 update (2026-07-21)
+
+The embedding-model-lookup refactor reshaped the chat-history embedding storage:
+
+- **No BLOB sidecar.** Chat embeddings are now stored as `chat_messages.model_id` (FK into the new `models` lookup table) + vec0 only — the `message_embeddings` BLOB table (and its index + both vec0 families) was DROPPED. Pre-existing vec0 tables were dropped lazily and recreated with `model_id INTEGER PARTITION KEY` (was TEXT `model`).
+- **Single-write.** The previous dual-write (BLOB + vec0) is retired. The write path is now `UPDATE chat_messages.model_id` + vec0 INSERT (lazy-create on dimension).
+- **numpy fallback retired in chat-search scope.** `_loadEmbeddingsFromDb` was DELETED (no BLOB to load from); `_semanticSearch` collapsed to vec0-or-`[]`. numpy is no longer a direct dep (`numpy==2.5.1` removed from `requirements.direct.txt`; still transitive via `fastembed`).
+- **`EmbeddingModelsRepository`** (`internal/database/repositories/embedding_models.py`, process-local cache) backs the lookup. The three refactored repos take a constructor-injected `modelIdResolver` (D10) that translates `(modelName, dimensions) -> model_id`. Handler signatures are unchanged (D6).
+
+The historical decision/anti-pattern notes below describe the pre-migration architecture and remain accurate for the design intent; storage-shape specifics (BLOB table, dual-write, numpy fallback) are superseded by migration_025.
+
 ## Overview
 
 - **Implementation plan**: `docs/archive/plans/chat-history-search-plan.md`
@@ -22,8 +33,7 @@ How to use this file:
   `bot-defaults.toml` under `[bot.defaults]`
 - **Alternative model**: `local/jinaai/jina-embeddings-v3` (1024d, ~2.24 GB, ~100 languages, 1024
   token context) in `fastembed-models.toml`
-- **Version**: `fastembed==0.8.0` pinned in `requirements.direct.txt`; `numpy==2.5.1` in
-  requirements
+- **Version**: `fastembed==0.8.0` pinned in `requirements.direct.txt`; numpy is a transitive dep via fastembed (no longer a direct dep after `migration_025_embedding_model_lookup`)
 - **Key repositories**:
   - `ChatEmbeddingsRepository` — embedding CRUD (all embedding methods + semantic search moved
     here from `ChatMessagesRepository`)

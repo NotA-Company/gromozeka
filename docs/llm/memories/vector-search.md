@@ -2,6 +2,17 @@
 
 Durable notes from the vector search design and native sqlite-vec implementation (2026-06-28/29). Read this when working on `ChatSearchRepository`, `ChatEmbeddingsRepository`, `SQLite3Provider`, or vector search infrastructure.
 
+## Post-migration_025 update (2026-07-21)
+
+The embedding-model-lookup refactor (`migration_025_embedding_model_lookup`) unified the storage shape across chat-history search and user memories:
+
+- **Dual-write retired.** The `message_embeddings` BLOB table (and its index + both vec0 families) was DROPPED. Embeddings now live ONLY in vec0. The chat-history write path is now single-write: `UPDATE chat_messages.model_id` + vec0 INSERT (lazy-create on dimension).
+- **numpy fallback retired in chat-search scope.** `_semanticSearch` in `internal/database/repositories/chat_search.py` collapsed to vec0-or-`[]` (the inline cosine + `np.argpartition` top-K path was deleted). `_loadEmbeddingsFromDb` was deleted (no BLOB table to load from). Same for `user_memories.py`'s numpy import. numpy is no longer a direct dep (`numpy==2.5.1` removed from `requirements.direct.txt`; still transitive via `fastembed`).
+- **vec0 partition key changed.** Both vec0 families (`vec_message_embeddings_{N}`, `vec_user_memories_{N}`) now use `model_id INTEGER PARTITION KEY` (was TEXT `model`). The `model_id` INTEGER is an FK into the new `models` lookup table. Existing vec0 tables were dropped lazily and recreated on the next write.
+- **`EmbeddingModelsRepository`** (`internal/database/repositories/embedding_models.py`, process-local cache) backs the new lookup table. The three refactored repos (`ChatMessagesRepository`, `ChatSearchRepository`, `UserMemoriesRepository`) take a constructor-injected `modelIdResolver` (D10) that translates `(modelName, dimensions) -> model_id`.
+
+The pre-migration design notes below are preserved as the historical record; they describe the dual-write + numpy-fallback architecture that migration_025 retired.
+
 ## Design
 
 Design document: [`docs/design/vector-search-native.md`](../../design/vector-search-native.md) — produced 2026-06-28, reviewed and corrected through 5 review cycles.

@@ -55,8 +55,7 @@ time (see "Injection"). Schema: `migration_020_user_memories`. Repository:
 | `tags` | TEXT NOT NULL DEFAULT `'[]'` | JSON-encoded list of freeform tag strings. |
 | `permanent` | INTEGER NOT NULL DEFAULT `0` | Boolean-as-int (`0`/`1`). |
 | `source` | TEXT NOT NULL DEFAULT `'refinement'` | Provenance: `refinement` \| `chat` \| `migration` \| `user`. |
-| `embedding_model` | TEXT | `NULL` = not yet embedded. |
-| `embedding_dimensions` | INTEGER | `NULL` = not yet embedded. |
+| `model_id` | INTEGER | `NULL` = not yet embedded. FK into the `models` lookup table (`migration_025_embedding_model_lookup`); replaces the former `embedding_model`/`embedding_dimensions` pair — the model name + dimensions are resolved once via the constructor-injected `modelIdResolver` and cached on the `model_id` side. |
 | `created_at` | TIMESTAMP NOT NULL | Set application-side (no `DEFAULT CURRENT_TIMESTAMP`). |
 | `updated_at` | TIMESTAMP NOT NULL | Set application-side; bumped on every write. |
 | `deleted_at` | TIMESTAMP NULL | Soft-delete timestamp (migration 021). Set application-side in `deleteMemory` via `dbUtils.getCurrentTimestamp()` (no DB default). `NULL` = live; non-`NULL` = soft-deleted (row survives for historical reads; every live read filters `AND deleted_at IS NULL`). |
@@ -70,10 +69,7 @@ time (see "Injection"). Schema: `migration_020_user_memories`. Repository:
   `idx_user_memories_chat_user_permanent`
   `(chat_id, user_id, permanent, updated_at DESC)`,
   `idx_user_memories_type` `(chat_id, user_id, type)`.
-- **No BLOB embeddings table.** Unlike chat-history search, embeddings live
-  **only** in vec0; `embedding_model`/`embedding_dimensions` are tracked on
-  `user_memories` itself. Semantic search is vec0-only (no numpy fallback) —
-  when vec0 is unavailable, `searchMemories` returns `[]`.
+- **No BLOB embeddings table.** Since `migration_025_embedding_model_lookup`, both `user_memories` AND `chat_messages` share this property — the `message_embeddings` BLOB side table was dropped. Embeddings live **only** in vec0; the embedding model is tracked via `model_id` (FK into the `models` lookup table) on `user_memories` itself (the chat-search side stores `model_id` on `chat_messages`). Semantic search is vec0-only (no numpy fallback) — when vec0 is unavailable, `searchMemories` returns `[]`.
 
 ### vec0 virtual table `vec_user_memories_{dim}`
 
@@ -81,17 +77,18 @@ time (see "Injection"). Schema: `migration_020_user_memories`. Repository:
   `UserMemoriesRepository._upsertVecMemoryEmbedding` on first write of a
   given dimension (mirror of `_upsertVecMessageEmbedding` in
   `chat_embeddings.py`). **NOT created by the migration.**
-- Carries denormalised metadata columns (`chat_id`, `user_id`, `model`
+- Carries denormalised metadata columns (`chat_id`, `user_id`, `model_id`
   partition keys, `permanent`) plus the `embedding`
-  vector column with cosine distance metric. The `model` partition key
-  scopes vectors per embedding model so a model swap does not pollute one
-  model's vector space with another's.
+  vector column with cosine distance metric. The `model_id` partition key
+  (INTEGER FK into the `models` lookup table added in `migration_025`; was
+  TEXT `model` pre-migration) scopes vectors per embedding model so a model
+  swap does not pollute one model's vector space with another's.
 - `thread_id` and `type` are deliberately NOT carried in vec0 (they
   were previously written as denormalised copies but never read back for
   filtering, search, or deletion). The JOIN step in
   `_semanticSearchMemories` applies both filters on the authoritative
   `user_memories` columns. `permanent` is immutable post-creation so it
-  is pushed into the vec0 filter directly; `model` is a partition key and
+  is pushed into the vec0 filter directly; `model_id` is a partition key and
   is always part of the vec0 filter clause.
 
 ## Repository — `UserMemoriesRepository`
@@ -107,8 +104,7 @@ dict keys are snake_case to match columns.
   `embeddingModel: Optional[str]`, and `source: UserMemorySource`; `threadId`
   is keyword-only; embeds during add when both `embedding` and `embeddingModel`
   are provided), `deleteMemory` (SOFT DELETE — sets `deleted_at` + bumps
-  `updated_at`, drops the vec0 row, nulls `embedding_model`/
-  `embedding_dimensions`; unrestricted — may target a permanent memory). There
+  `updated_at`, drops the vec0 row, nulls `model_id`; unrestricted — may target a permanent memory). There
   is no in-place PATCH: content changes go through `deleteMemory` + `addMemory`
   (the dedup state machine in `add_memory` already handles the "similar exists →
   delete-old + re-add-updated" path via the refinement LLM).
@@ -128,26 +124,30 @@ dict keys are snake_case to match columns.
   SQL scan, `score = 0.0`) and semantic (`queryEmbedding` is a `List[float]`,
   vec0 native, `score = 1.0 - distance`). `embeddingModel: str` is required
   (keyword-only — pass `None` for filter-only mode); it replaces the old
-  `dimensions: int` arg. Always scoped to
+  `dimensions: int` arg. Internally the `(modelName, dimensions)` pair is
+  resolved to a `model_id` via the constructor-injected `modelIdResolver`
+  (D10 — handler-facing signatures are unchanged). Always scoped to
   `chat_id = :chatId AND user_id = :userId` — no cross-user leaks. The vec0
-  filter clause includes `model = :modelName` (per-model scoping) plus the
+  filter clause includes `model_id = :modelId` (per-model scoping) plus the
   immutable `permanent` flag. `tags` is applied as a portable SQL `LIKE`
   filter (`tags LIKE '%"tagN"%'`, ANY-match) — the `tags` column is stored as
   JSON TEXT via provider auto-serialization of the Python list. In semantic
   mode `threadId` / `type` are re-applied in a JOIN step on the authoritative
   `user_memories` columns (which also filters `deleted_at IS NULL`).
 - **Embedding persistence:** `saveMemoryEmbedding` (takes `embeddingModel: str`
-  + `List[float]`; lazy vec0 upsert + provenance UPDATE; vec0 write must
-  succeed before provenance is set — a failure leaves `embedding_model = NULL`
+  + `List[float]`; resolves the model name to `model_id` via the injected
+  `modelIdResolver`, lazy vec0 upsert + provenance UPDATE; vec0 write must
+  succeed before provenance is set — a failure leaves `model_id = NULL`
   so the regen cron retries), `deleteMemoryEmbedding` (best-effort, iterates
   every `vec_user_memories_{N}`, never raises).
 - **Model-drift regen helpers:** `getMemoriesWithoutEmbeddings` (single-table
   stale detection — also serves the initial backfill since a `NULL`
-  `embedding_model` surfaces here; takes keyword-only `dimensions:
+  `model_id` surfaces here; takes keyword-only `dimensions:
   Optional[int] = None` so rows embedded under a different dimensionality are
-  re-surfaced), `deleteObsoleteMemoryEmbeddings` (resets provenance to `NULL`
-  + drops stale vec0 rows for rows whose model/dimensions drifted; returns
-  `int` and swallows exceptions → a silent failure mode). The two are a
+  re-surfaced — the dimensions arg is resolved internally to the candidate
+  `model_id` set via `modelIdResolver`), `deleteObsoleteMemoryEmbeddings`
+  (resets `model_id` to `NULL` + drops stale vec0 rows for rows whose model
+  drifted; returns `int` and swallows exceptions → a silent failure mode). The two are a
   **complementary belt-and-suspenders pair**: `deleteObsoleteMemoryEmbeddings`
   is the destructive cleanup (regen step 5), and
   `getMemoriesWithoutEmbeddings(dimensions=currentDims)` (step 6) is the
@@ -163,8 +163,7 @@ dict keys are snake_case to match columns.
 `deleteMemory` runs `UPDATE user_memories SET deleted_at = :deletedAt,
 updated_at = :updatedAt WHERE ... AND deleted_at IS NULL` and then calls
 `deleteMemoryEmbedding(..., vecOnly=False)` — which drops the vec0 row AND
-nulls `embedding_model`/`embedding_dimensions` (so the regen cron never
-re-embeds a deleted memory and it is never a semantic-search hit). The content
+nulls `model_id` (so the regen cron never re-embeds a deleted memory and it is never a semantic-search hit). The content
 row survives with `deleted_at` set so `getMemoriesByIds` (no `deleted_at`
 filter) can still resolve it for historical reads. A re-delete of an
 already-soft-deleted `memory_id` returns `False` (the existence pre-check is
@@ -273,12 +272,12 @@ one-to-one, adapted for the single-store model:
 5. **Stale cleanup (model-drift detection)** — when the in-memory
    `_memoryEmbeddingModelTracker[chatId]` differs from the resolved
    `modelKey` (`"modelName"` or `"modelName:dimensions"`), call
-   `deleteObsoleteMemoryEmbeddings` (resets stale rows' provenance to
+   `deleteObsoleteMemoryEmbeddings` (resets stale rows' `model_id` to
    `NULL`); advance the tracker unconditionally so cleanup fires once per
    model switch.
  6. **Stale detection** — `getMemoriesWithoutEmbeddings` (forwards
     `modelName` and `dimensions` so rows embedded under a different model or
-    dimensionality are re-surfaced; `NULL` `embedding_model` rows surface
+    dimensionality are re-surfaced; `NULL` `model_id` rows surface
     here too, serving the initial backfill).
 7. **Re-embed loop** — each `UserMemoryDict` re-embedded via
    `LLMService.generateEmbedding` (returns `(modelName, List[float])` or

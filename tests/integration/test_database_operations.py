@@ -454,6 +454,7 @@ async def testSchemaCreation(inMemoryDb):
         "ham_messages",
         "media_attachments",
         "media_groups",
+        "models",
         "settings",
         "spam_messages",
     ]

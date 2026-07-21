@@ -800,11 +800,11 @@ async with httpx.AsyncClient(**proxyKwargs, timeout=30) as client:
 
 ## 14. `sqlite-vec` — Native Vector Search Extension
 
-**Pinned dependency:** `sqlite-vec==0.1.9` (in `requirements.direct.txt` under `# Runtime`). Optional at runtime — the `SQLite3Provider` guards the import with a module-level `try/except ImportError` and an `_SQLITE_VEC_AVAILABLE` flag; if absent, `isVectorSearchSupported()` returns `False` and semantic search falls back to the numpy path.
+**Pinned dependency:** `sqlite-vec==0.1.9` (in `requirements.direct.txt` under `# Runtime`). Optional at runtime — the `SQLite3Provider` guards the import with a module-level `try/except ImportError` and an `_SQLITE_VEC_AVAILABLE` flag; if absent, `isVectorSearchSupported()` returns `False` and semantic search returns `[]` (no numpy fallback — the previous numpy fallback path in `chat_search.py` / `user_memories.py` was retired in `migration_025_embedding_model_lookup`).
 
 **Purpose:** provides the `vec0` virtual table module for native cosine-similarity KNN search inside the SQLite process, eliminating the transfer of all embedding BLOBs to Python on every search. Loaded by `SQLite3Provider.connect()` via aiosqlite's `enable_load_extension` / `load_extension` / `enable_load_extension(False)` (wrapped in `try/finally`).
 
-**Used by:** `internal/database/providers/sqlite3.py` (`SQLite3Provider`), `internal/database/repositories/chat_embeddings.py` (dual-write to `vec_message_embeddings_{N}`), `internal/database/repositories/chat_search.py` (`_nativeVectorSearch`). See [`database.md`](database.md) §7 "Vector search types" for the provider interface and the vec0 schema, and [`docs/design/vector-search-native.md`](../design/vector-search-native.md) for the design.
+**Used by:** `internal/database/providers/sqlite3.py` (`SQLite3Provider`), `internal/database/repositories/chat_embeddings.py` (writes to `vec_message_embeddings_{N}`; the previous dual-write to the `message_embeddings` BLOB table was retired in `migration_025` — embeddings now live only in vec0 with the model tracked via `chat_messages.model_id`), `internal/database/repositories/chat_search.py` (`_nativeVectorSearch`). See [`database.md`](database.md) §7 "Vector search types" for the provider interface and the vec0 schema, and [`docs/design/vector-search-native.md`](../design/vector-search-native.md) for the design.
 
 **No config key** — auto-detected at connect time. To disable native search: `pip uninstall sqlite-vec`.
 

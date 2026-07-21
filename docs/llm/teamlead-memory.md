@@ -77,6 +77,76 @@ See [`memories/db-cache-cleanup.md`](memories/db-cache-cleanup.md) — durable n
 - **Semantic-search test path selection** (`tests/database/repositories/test_chat_search*.py`): `sqlite-vec` is installed (v0.1.9, `requirements.direct.txt`), so `saveMessageEmbedding` dual-writes the vec0 table and the **native** vector path runs by default — the **numpy** path is skipped. To test the numpy path deterministically, stub `_nativeVectorSearch` to return `[]` (forces the fall-through). To lock in an OR-style `needsPostFilter` guard term-by-term, you need SINGLE-filter tests (a combined-filter test is structurally immune to single-term removal because the other filter keeps the OR `True`).
 - **`tests/dependencies/test_sqlite_vec.py` skip-on-missing behavior** (added 2026-07-16): the file uses module-level `sqlite_vec = pytest.importorskip("sqlite_vec")` so the WHOLE module is SKIPPED (not failed) when the `sqlite_vec` package is not importable. Distinct from the separate failure mode where the wheel IS installed but its bundled native binary won't load — that path is caught by the `RuntimeError` raised inside the file's `loadVecConnection()` helper (production load path mirror). So: missing package → skip; broken binary → fail loudly (RuntimeError). Both are intentional. `numpy` is NOT importorskip-guarded (always present as a portable wheel dep) — only sqlite-vec, the genuinely environment-fragile native extension, is.
 
+## Embedding Model-Lookup Refactor (COMPLETE 2026-07-21)
+
+Plan: [`docs/plans/embedding-model-lookup-refactor-v1.md`](../plans/embedding-model-lookup-refactor-v1.md) — APPROVED + architect-self-reviewed, 1893 lines. Decisions D1–D10 ratified. **All phases complete + repo renamed + dataSource plumbing added.** `make test` = 3468 passed / 11 skipped (pre-existing); `make format lint` = 0/0/0; `make check-docs` = 0 broken.
+
+**User-driven simplification pass (2026-07-21):** the user simplified the refactor substantially beyond the original plan, and the teamlead dispatched doc-sync to match:
+- **Migration Step 2 (`_backfillModels`) DELETED entirely** — `models` table now created EMPTY; allocation is lazy via `getOrCreateModelId` on first embed. R6 invariant (probe-then-insert idempotency for migration-time backfill) is GONE — the runtime `getOrCreateModelId` still uses probe-then-insert against UNIQUE constraint, but the migration-side R6 section is stale.
+- **Migration Step 3 (`user_memories` swap) no longer backfills `model_id`** — sets NULL constant. Same data-correctness pattern as `chat_messages`: prevents the latent bug where rows are marked "embedded" while vec0 is dropped.
+- **Migration `down()` Step 3** now uses NULL constants instead of LEFT JOIN to `models` (logically equivalent since `up()` doesn't populate `model_id`).
+- **Production code simplified to single-branch predicate** — `deleteObsoleteModelEmbeddings`, `getMessagesWithoutEmbeddings`, `deleteObsoleteMemoryEmbeddings`, `getMemoriesWithoutEmbeddings` all use ONE branch (resolve `model_id` from `(currentModel, currentDimensions)`; predicate is `model_id != currentModelId`). The 3-branch resolution (with dimensions-unknown pre-resolve-list fallback) was REMOVED.
+- **`currentDimensions` reverted to `int`** (was widened to `Optional[int]` during recovery). Keyword-only `*` marker also removed on `deleteObsoleteModelEmbeddings`. Dead `keepIds` variable removed. Dead `if currentDimensions is not None:` guard removed from `user_memories.py:~1608`.
+- **8 tests removed** (5 migration backfill tests + 3 repo regression tests including `test_deleteObsoleteMemoryEmbeddings_regression_currentDimensionsNonePreResolvesKeepIds`). Test count: 3460 passed / 11 skipped.
+- **Known unguarded edge case (user's conscious decision):** production callers at `chat_search.py:476` and `user_memories.py:874` pass `currentDimensions=currentDims` where `currentDims = await model.getDimensions()` (annotated `-> int` but theoretically can yield None for OpenAI-style models with no `embedding_dimensions` config + failed probe). Pre-existing risk; the deleted regression test guarded it. If `currentDims=None` ever occurs at runtime, the single-branch code will crash.
+
+**Migration simplification (2026-07-21, prior):** `migration_025` Step 4 (chat_messages) was reduced from 4-statement temp-table swap to a single `ALTER TABLE chat_messages ADD COLUMN model_id INTEGER`. **Side-effect correctness fix:** the old temp-table backfill set `model_id` from `message_embeddings` provenance, but Step 5 drops message_embeddings and Step 6 drops vec0 — so a backfilled `model_id` would mark rows as "embedded" while every actual vector is gone, causing `getMessagesWithoutEmbeddings` to never re-surface them → silent search data loss. Plain `ADD COLUMN` leaves `model_id` NULL, which is correct (forces re-embed via cron).
+
+**LESSON LEARNED — git stash disaster (2026-07-21):** An implementer ran `git stash` (without `-u`) on a tree with extensive uncommitted refactor work, then `git stash drop`'d after a conflicted pop. Recovery was possible because the dangling commit was preserved (`git fsck --lost-found` found it); `git stash apply <dangling-hash>` restored everything. **Going forward: never `git stash` on trees with substantial uncommitted work — `git commit -m WIP` is always safer. Add `-u` if you must stash. Never `git stash drop` after a conflicted pop — `git stash apply` first, then drop explicitly after verifying recovery.** Even after successful recovery, subsequent commits may not contain all the recovered work — verify `git diff HEAD --stat` shows expected files before declaring recovery complete.
+
+**Repository renamed (2026-07-21):** `ModelsRepository` → `EmbeddingModelsRepository`; file `models.py` → `embedding_models.py`; test file `test_models.py` → `test_embedding_models.py`; Database accessor `self.models` → `self.embeddingModels`; `db.models` → `db.embeddingModels` in docs; `testDatabase.models` → `testDatabase.embeddingModels` in tests. **DB table `models` STAYS** (would require another migration; user explicitly scoped rename to repository only). Note: `from ..models import ModelDict` import inside `embedding_models.py` is the disambiguation goal — refers to the TypedDicts module at `internal/database/models.py`, NOT the repo file.
+
+**dataSource plumbing added (2026-07-21):** All 3 `EmbeddingModelsRepository` methods now take `*, dataSource: Optional[str] = None` keyword-only, threaded into `getProvider(dataSource=dataSource, ...)`. The `_resolveModelId` helpers in the 3 consuming repos (`chat_embeddings.py`, `chat_search.py`, `user_memories.py`) accept + forward `dataSource`. The 4 enclosing-method call sites that already had `dataSource` forward it through. The `modelIdResolver` type widened from `Callable[[str, int], Awaitable[int]]` → `Callable[..., Awaitable[int]]`. The other 4 call sites (no `dataSource` in enclosing method) leave it as None. Documentation: `docs/llm/database.md` §3 + §6 tightened to MUST/SHOULD/MAY rule; `BaseRepository` class docstring has a one-liner pointer.
+
+**Bug fixes found via the recovery investigation (2026-07-21):** 2 pre-existing bugs in `user_memories.py` that prior Gate 1 reviews missed:
+1. `deleteObsoleteMemoryEmbeddings` signature was `currentDimensions: int` but its production caller at `internal/bot/common/handlers/user_memories.py:874` passes `currentDims` which is `Optional[int]`. Fixed to `currentDimensions: Optional[int] = None`.
+2. Both `getMemoriesWithoutEmbeddings` and `deleteObsoleteMemoryEmbeddings` were missing the "dimensions unknown" pre-resolve-list branch (their docstrings described it, sibling `chat_embeddings.py` implemented it, but these methods didn't). Restructured into 3 branches matching sibling pattern.
+Regression test added: `test_deleteObsoleteMemoryEmbeddings_regression_currentDimensionsNonePreResolvesKeepIds` (TDD-verified).
+
+**What landed:**
+- NEW `models(model_id INTEGER PK NOT NULL, model TEXT, dimensions INTEGER, created_at TIMESTAMP, UNIQUE(model, dimensions))` table via `migration_025_embedding_model_lookup`.
+- `chat_messages` += `model_id INTEGER NULL`; `user_memories` swapped `embedding_model`/`embedding_dimensions` → `model_id INTEGER NULL` (both via temp-table swap pattern from `migration_013`).
+- DROPPED `message_embeddings` table + `idx_message_embeddings_chat_model` + both vec0 families (lazily recreated with `model_id INTEGER PARTITION KEY` DDL).
+- NEW `EmbeddingModelsRepository` (`internal/database/repositories/embedding_models.py`): `getOrCreateModelId/getModelById/listModels`; process-local `{(model,dims):id}` cache; uses `provider.upsert(..., conflictColumns=["model","dimensions"], updateExpressions={})` for portable INSERT-OR-IGNORE.
+- NEW `ModelDict` TypedDict; `ChatMessageDict` += `model_id`; `UserMemoryDict` swapped columns; DELETED `MessageEmbeddingDict`.
+- 3 consuming repos (`ChatEmbeddingsRepository`, `ChatSearchRepository`, `UserMemoriesRepository`) refactored with D10 constructor-injected `modelIdResolver: Callable[..., Awaitable[int]]`; `__slots__ = ("_modelIdResolver",)`; identical `_resolveModelId` thin-wrapper (now accepts dataSource kwarg).
+- ALL handler-facing repo signatures UNCHANGED (D6 extended) — resolution to `model_id` is internal.
+- 4 drift-detection methods use three-branch predicate: both-known → resolved-id inequality; model-only → pre-resolved Python list with concrete `NOT IN (:id1, ...)` placeholders (vec0 portability); model-None → `IS NULL` / clear-all.
+- `_loadEmbeddingsFromDb` DELETED; `_semanticSearch` collapsed from 3-rung ladder to vec0-or-`[]` (3 explicit conditions return `[]`: vec0 unsupported / raises / returns empty).
+- DROPPED `getMessageEmbedding` + `deleteChatEmbeddings` (no production callers).
+- numpy fully removed from `chat_search.py` + `user_memories.py`. `numpy==2.5.1` removed from `requirements.direct.txt` (still transitive via fastembed). User also manually edited `lib/ai/providers/fastembed_provider.py` to drop its runtime `import numpy as np` (TYPE_CHECKING-only annotation import now).
+- DELETED `tests/dependencies/test_numpy.py` (21 tests removed).
+- `scripts/clear_memory_embeddings.py` updated to `UPDATE user_memories SET model_id = NULL`.
+
+**D7 INTEGER PK deviation from AGENTS.md preference #3 (TEXT UUID) is user-ratified** for compactness as vec0 partition key + O(1) cached allocation.
+
+**Gate 1 + Gate 2 reviews:** Phase 1 Gate 1 clean (1 Important + 5 minor all fixed); Phase 2+3 Gate 1 clean (0 Critical/0 Important + 5 cleanups all fixed); Gate 2 clean (0 Critical/2 Important both fixed); rename Gate 1 clean (0 Critical + 1 Recommend + 1 Nit applied). dataSource Gate 1: initial review was empty; fallback review found Critical (lint) + Important (Any) + Recommend (tests) — all fixed during recovery. **No fresh Gate 1 review since the recovery applied 2 production bug fixes + 1 regression test.** That's an open follow-up if the user wants it.
+
+**R6 load-bearing invariant:** migration framework does NOT wrap `up()` in a transaction (`manager.py:285-300`); backfill uses probe-then-insert (`SELECT … WHERE model AND dimensions` → skip if present, else `COALESCE(MAX(model_id),0)+1` + plain INSERT), NOT plain INSERT against UNIQUE constraint.
+
+**Migration precedent (the ONLY temp-table swap in the repo before this work):** `migration_013_remove_timestamp_defaults.py` — `<name>_new → INSERT...SELECT → DROP → RENAME` in a single `sqlProvider.batchExecute([ParametrizedQuery(...)])` call. Migration template: `async def up(self, sqlProvider: BaseSQLProvider)` / `async def down(...)`, `def getMigration() -> Type[BaseMigration]`.
+
+**Side-effect of `make freeze-requirements`:** 12 packages added beyond numpy that were pre-existing venv/lockfile drift (includes `sqlite-vec`, `onnxruntime`, `weasyprint` + deps). No version drift on existing pins.
+
+**Follow-up TODOs (non-blocking):**
+- A commit `8acd881` (message: `"1"`) appeared during recovery session — not created by the implementer; contains the 50+ files of refactor work. User should review + amend the message before pushing. The recovery's regression test + production bug fixes are NOT in that commit (they remain unstaged in the working tree).
+- Gate 1 review on the recovery's production bug fixes (the 3-branch restructure + signature widening in `user_memories.py`) has not been run.
+- `internal/database/repositories/__init__.py` module docstring "Key Components" list still omits `EmbeddingModelsRepository` (rename Gate 1 observation).
+- Migration `_backfillModels` uses `assert idRow is not None` while runtime `EmbeddingModelsRepository.getOrCreateModelId` uses `raise RuntimeError(...)` for the same contract — stylistic inconsistency.
+- `scripts/clear_memory_embeddings.py:179` has a dead `assert extension is not None` after a None-guard return.
+
+**Architect self-review (2026-07-20) catches to remember:**
+- Migration framework does NOT wrap `up()` in a transaction (`manager.py:285-300` sets version only after `up()` returns) — backfill must use probe-then-insert (`SELECT … WHERE model AND dimensions` → skip if present) NOT plain INSERT against UNIQUE constraint. Risk R6.
+- `provider.upsert(table, values, conflictColumns, updateExpressions={})` is the portable INSERT-OR-IGNORE (`sqlite3.py:426-439` — `ON CONFLICT … DO NOTHING` shape). Use it instead of dialect-specific `INSERT OR IGNORE`. Risk R5 closed.
+- `chat_search.py:793` has a SECOND numpy use (`np.linalg.norm(np.asarray(...))`) inside `_nativeVectorSearch` — easy to miss when removing the cosine block at lines 410-480 + the `user_memories.py:872` use.
+- `ChatEmbeddingsRepository` (`chat_embeddings.py:59`), `UserMemoriesRepository`, AND `ChatSearchRepository` all need `__slots__` extended with `_modelIdResolver` per D10 — concrete edit, not deferral.
+- Handler callers DO pass `embeddingModel=` to `addMemory` (e.g. `user_memories.py:533-545`) — `addMemory` signature kept stable per extended D6.
+- `_loadEmbeddingsFromDb` is patched in `tests/database/repositories/test_chat_search_native.py:65,93` — will `AttributeError` once the method is deleted; rewrite those patches.
+- `models` table DDL: `model_id INTEGER PRIMARY KEY NOT NULL, model TEXT NOT NULL, dimensions INTEGER NOT NULL, created_at TIMESTAMP NOT NULL, UNIQUE(model, dimensions)`.
+
+**Verification (when implementation lands):** test-rollback step counts bump (any test rolling back N migrations must bump `steps=` to N+1 for migration_025); `expectedTables`/`requiredTables` hardcoded lists in schema-creation tests need `models` added and `message_embeddings` removed; `test_numpy.py` deleted; `rg "import numpy" internal/ lib/` returns 0 matches.
+
+
 ## Opencode Slash-Command Mechanism
 
 - Slash-commands are markdown files in a `commands/` dir. Filename `<name>.md` → `/<name>`.
@@ -226,7 +296,7 @@ See [`memories/llm-messages-handler.md`](memories/llm-messages-handler.md) — d
 
 ## Docs Archive Layout (2026-07-04)
 
-- `docs/plans/` holds active/retained design refs only. After the 2026-07-18 full `/docs` audit it contains 2 files: `python-sandboxing-v1.md` (retained design ref for `lib/sandbox/`, status `implemented`) and `llm-empty-truncated-final-handling-v1.md` (status `PARTIALLY IMPLEMENTED` — Option B handler-half shipped at `llm_messages.py:394`, Option A + `bot.py` empty-string guard + regression tests still pending).
+- `docs/plans/` holds active/retained design refs only. After the 2026-07-20 addition of `embedding-model-lookup-refactor-v1.md` it contains 3 files: `python-sandboxing-v1.md` (retained design ref for `lib/sandbox/`, status `implemented`), `llm-empty-truncated-final-handling-v1.md` (status `PARTIALLY IMPLEMENTED` — Option B handler-half shipped at `llm_messages.py:394`, Option A + `bot.py` empty-string guard + regression tests still pending), and `embedding-model-lookup-refactor-v1.md` (status `APPROVED` 2026-07-20, all design decisions resolved, awaiting Phase 1 implementation dispatch).
 - `docs/design/` holds 2 retained docs: `markdown-specification.md` (living grammar spec) and `vector-search-native.md` (forward-looking pgvector/MySQL/SQLink contract; SQLite path implemented).
 - `docs/database-multi-source.md` (at docs/ root, NOT in plans/) is the relocated operational reference for the multi-source DB architecture (was `docs/plans/database-multi-source-configuration.md`).
 - `docs/archive/plans/README.md` and `docs/archive/design/README.md` are the authoritative indexes of archived docs with one-line descriptions. Update them when archiving new docs.
