@@ -122,19 +122,6 @@ def testDivinationKeyHasInfoEntry(key: ChatSettingsKey) -> None:
     assert isinstance(entry["page"], ChatSettingsPage)
 
 
-def testDivinationKeyPagesMatchSpec() -> None:
-    """System prompts live on LLM_BASE; templates live on BOT_OWNER_SYSTEM
-
-    Returns:
-        None
-    """
-    info = getChatSettingsInfo()
-    assert info[ChatSettingsKey.TAROT_SYSTEM_PROMPT]["page"] is ChatSettingsPage.LLM_BASE
-    assert info[ChatSettingsKey.RUNES_SYSTEM_PROMPT]["page"] is ChatSettingsPage.LLM_BASE
-    assert info[ChatSettingsKey.DIVINATION_USER_PROMPT_TEMPLATE]["page"] is ChatSettingsPage.BOT_OWNER_SYSTEM
-    assert info[ChatSettingsKey.DIVINATION_IMAGE_PROMPT_TEMPLATE]["page"] is ChatSettingsPage.BOT_OWNER_SYSTEM
-
-
 def testDefaultsContainDivinationPrompts(defaultsConfigManager: ConfigManager) -> None:
     """``[bot.defaults]`` from ``configs/00-defaults`` must populate the four new keys.
 

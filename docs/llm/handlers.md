@@ -97,7 +97,7 @@ Developer/debug commands available only to `BOT_OWNER` users.
 
 `handleRandomMessage` (the `RANDOM_ANSWER_PROBABILITY` gate) is structurally different from `handleReply` / `handleMention`: the bot is joining an ongoing chat, not being directly addressed. Two pieces let the model behave accordingly:
 
-1. **`RANDOM_ANSWER_PROMPT` suffix.** In **both** system-message assembly paths inside `handleRandomMessage` the `RANDOM_ANSWER_PROMPT` chat setting (TOML key `random-answer-prompt`, page `LLM_BASE`; default in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml)) is appended to the existing `CHAT_PROMPT` + `CHAT_PROMPT_SUFFIX` system message:
+1. **`RANDOM_ANSWER_PROMPT` suffix.** In **both** system-message assembly paths inside `handleRandomMessage` the `RANDOM_ANSWER_PROMPT` chat setting (TOML key `random-answer-prompt`, page `LLM_PROMPTS`; default in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml)) is appended to the existing `CHAT_PROMPT` + `CHAT_PROMPT_SUFFIX` system message:
    - **Thread path** — after `getThreadByMessageForLLM(...)` returns, the leading system `ModelMessage` is rebuilt with the fragment appended (the returned list is fresh and not shared, so it is rebuilt rather than mutated).
    - **Non-thread path** — the inline `ModelMessage(role="system", ...)` is constructed with `CHAT_PROMPT + CHAT_PROMPT_SUFFIX + RANDOM_ANSWER_PROMPT` in one content string.
 

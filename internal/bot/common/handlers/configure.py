@@ -244,7 +244,7 @@ class ConfigureCommandHandler(BaseBotHandler):
         """Display configuration settings page for a specific chat.
 
         Shows all available settings for the selected chat, organized by page
-        (STANDART, ADVANCED, etc.). Each setting is displayed with its current
+        (STANDARD, EXTENDED, etc.). Each setting is displayed with its current
         status and whether it differs from the default value.
 
         Args:
@@ -288,7 +288,8 @@ class ConfigureCommandHandler(BaseBotHandler):
             chatTier = ChatTier.FREE  # By default treat user as free user
         defaultChatSettings = await self.getChatSettings(None, chatType=ChatType(chatInfo["type"]), chatTier=chatTier)
 
-        page = ChatSettingsPage(data.get(ButtonDataKey.Page, ChatSettingsPage.STANDART))
+        page = ChatSettingsPage(data.get(ButtonDataKey.Page, ChatSettingsPage.STANDARD))
+        # Advance past pages whose minTier exceeds the chat's tier (e.g. FREE user opening a PAID page)
         while not chatTier.isBetterOrEqualThan(page.minTier()):
             page = page.next()
             if page is None:

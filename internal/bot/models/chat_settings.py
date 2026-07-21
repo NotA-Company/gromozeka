@@ -164,14 +164,16 @@ class ChatSettingsPage(IntEnum):
     Each page has a minimum tier requirement for access.
     """
 
-    STANDART = auto()
+    STANDARD = auto()
     """Standard settings page for basic chat configuration."""
     EXTENDED = auto()
     """Extended settings page for advanced chat configuration."""
     SPAM = auto()
     """Spam detection and management settings page."""
-    LLM_BASE = auto()
-    """Base LLM configuration settings page."""
+    LLM_MODELS = auto()
+    """LLM model selection settings page."""
+    LLM_PROMPTS = auto()
+    """LLM prompt configuration settings page."""
     LLM_PAID = auto()
     """Premium LLM configuration settings page."""
     PAID = auto()
@@ -190,14 +192,16 @@ class ChatSettingsPage(IntEnum):
             str: Human-readable name of the page in Russian.
         """
         match self:
-            case ChatSettingsPage.STANDART:
+            case ChatSettingsPage.STANDARD:
                 return "Стандартные настройки"
             case ChatSettingsPage.EXTENDED:
                 return "Расширенные настройки"
             case ChatSettingsPage.SPAM:
                 return "Настройки работы со СПАМом"
-            case ChatSettingsPage.LLM_BASE:
-                return "Базовые настройки LLM"
+            case ChatSettingsPage.LLM_MODELS:
+                return "Выбор LLM моделей"
+            case ChatSettingsPage.LLM_PROMPTS:
+                return "Настройка промптов"
             case ChatSettingsPage.LLM_PAID:
                 return "Премиум настройки LLM ⭐️"
             case ChatSettingsPage.PAID:
@@ -221,13 +225,15 @@ class ChatSettingsPage(IntEnum):
             NotImplementedError: If the page has no minimum tier configured.
         """
         match self:
-            case ChatSettingsPage.STANDART:
+            case ChatSettingsPage.STANDARD:
                 return ChatTier.FREE
             case ChatSettingsPage.EXTENDED:
                 return ChatTier.FREE
             case ChatSettingsPage.SPAM:
                 return ChatTier.FREE
-            case ChatSettingsPage.LLM_BASE:
+            case ChatSettingsPage.LLM_MODELS:
+                return ChatTier.FREE
+            case ChatSettingsPage.LLM_PROMPTS:
                 return ChatTier.FREE
             case ChatSettingsPage.LLM_PAID:
                 return ChatTier.PAID
@@ -623,74 +629,86 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "type": ChatSettingsType.MODEL,
         "short": "LLM-Модель для общения в чате",
         "long": "Какую LLM модель использовать для общения в чате",
-        "page": ChatSettingsPage.LLM_BASE,
+        "page": ChatSettingsPage.LLM_MODELS,
     },
     ChatSettingsKey.FALLBACK_MODEL: {
         "type": ChatSettingsType.MODEL,
         "short": "Запасная LLM-Модель для общения в чате",
         "long": "Какую LLM модель использовать для общения в чат если основная не справилась",
-        "page": ChatSettingsPage.LLM_PAID,
+        "page": ChatSettingsPage.LLM_MODELS,
     },
     ChatSettingsKey.SUMMARY_MODEL: {
         "type": ChatSettingsType.MODEL,
         "short": "LLM-Модель для суммаризации",
         "long": "Какую LLM модель использовать для суммаризации сообщений",
-        "page": ChatSettingsPage.LLM_BASE,
+        "page": ChatSettingsPage.LLM_MODELS,
     },
     ChatSettingsKey.SUMMARY_FALLBACK_MODEL: {
         "type": ChatSettingsType.MODEL,
         "short": "Запасная LLM-Модель для суммаризации",
         "long": "Какую LLM модель использовать для суммаризации сообщений если основная не справилась",
-        "page": ChatSettingsPage.LLM_PAID,
+        "page": ChatSettingsPage.LLM_MODELS,
     },
     ChatSettingsKey.IMAGE_PARSING_MODEL: {
         "type": ChatSettingsType.MODEL,
         "short": "LLM-Модель для обработки изображений",
         "long": "Какую LLM модель использовать для обработки изображений",
-        "page": ChatSettingsPage.LLM_BASE,
+        "page": ChatSettingsPage.LLM_MODELS,
     },
     ChatSettingsKey.IMAGE_PARSING_FALLBACK_MODEL: {
         "type": ChatSettingsType.MODEL,
         "short": "Запасная LLM-Модель для обработки изображений",
         "long": "Какую LLM модель использовать для обработки изображений если основная не справилась",
-        "page": ChatSettingsPage.LLM_PAID,
+        "page": ChatSettingsPage.LLM_MODELS,
     },
     ChatSettingsKey.IMAGE_GENERATION_MODEL: {
         "type": ChatSettingsType.IMAGE_MODEL,
         "short": "LLM-Модель для создания изображений",
         "long": "Какую LLM модель использовать для создания изображений",
-        "page": ChatSettingsPage.FRIEND,
+        "page": ChatSettingsPage.LLM_MODELS,
     },
     ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL: {
         "type": ChatSettingsType.IMAGE_MODEL,
         "short": "Запасная LLM-Модель для создания изображений",
         "long": "Какую LLM модель использовать для обработки создания если основная не справилась",
-        "page": ChatSettingsPage.FRIEND,
+        "page": ChatSettingsPage.LLM_MODELS,
     },
     ChatSettingsKey.CONDENSING_MODEL: {
         "type": ChatSettingsType.MODEL,
         "short": "LLM-Модель для сжатия контекста",
         "long": "Какую LLM модель использовать для сжатия слишком большого контекста",
-        "page": ChatSettingsPage.LLM_BASE,
+        "page": ChatSettingsPage.LLM_MODELS,
+    },
+    ChatSettingsKey.MEMORY_REFINE_MODEL: {
+        "type": ChatSettingsType.MODEL,
+        "short": "LLM-Модель для обновления памяти",
+        "long": "Какую LLM модель использовать для обновления памяти о пользователе",
+        "page": ChatSettingsPage.LLM_MODELS,
+    },
+    ChatSettingsKey.MEMORY_REFINE_FALLBACK_MODEL: {
+        "type": ChatSettingsType.MODEL,
+        "short": "Запасная LLM-Модель для обновления памяти пользователя",
+        "long": "Какую LLM модель использовать для обновления памяти о пользователе если основная не справилась",
+        "page": ChatSettingsPage.LLM_MODELS,
     },
     # # Prompts for different actions
     ChatSettingsKey.SUMMARY_PROMPT: {
         "type": ChatSettingsType.STRING,
         "short": "Промпт для суммаризации",
         "long": "Промпт по умолчанию для скммаризации сообщений \n" "(можно изменить во время суммаризации)).",
-        "page": ChatSettingsPage.LLM_BASE,
+        "page": ChatSettingsPage.LLM_PROMPTS,
     },
     ChatSettingsKey.PARSE_IMAGE_PROMPT: {
         "type": ChatSettingsType.STRING,
         "short": "Промпт для анализа изображений",
         "long": "Промпт, используемый для анализа изображений.",
-        "page": ChatSettingsPage.LLM_BASE,
+        "page": ChatSettingsPage.LLM_PROMPTS,
     },
     ChatSettingsKey.CHAT_PROMPT: {
         "type": ChatSettingsType.STRING,
         "short": "Системный промпт для чата",
         "long": 'Влияет на "личность" бота.',
-        "page": ChatSettingsPage.LLM_BASE,
+        "page": ChatSettingsPage.LLM_PROMPTS,
     },
     ChatSettingsKey.CHAT_PROMPT_SUFFIX: {
         "type": ChatSettingsType.STRING,
@@ -703,39 +721,39 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "short": "Дополнительный промпт для случайных ответов",
         "long": "Фрагмент системного промпта, добавляемый только в handleRandomMessage. "
         "Объясняет модели, что к ней не обращаются напрямую, и задаёт sentinel <skip> для воздержания от ответа.",
-        "page": ChatSettingsPage.LLM_BASE,
+        "page": ChatSettingsPage.LLM_PROMPTS,
     },
     ChatSettingsKey.CONDENSING_SYSTEM_PROMPT: {
         "type": ChatSettingsType.STRING,
         "short": "Системный промпт для сжатия контекста",
         "long": "Системный промпт, задающий роль и правила модели при сжатии контекста. "
         "Заменяет персональный промпт чата на время компактинга.",
-        "page": ChatSettingsPage.LLM_BASE,
+        "page": ChatSettingsPage.LLM_PROMPTS,
     },
     ChatSettingsKey.CONDENSING_PROMPT: {
         "type": ChatSettingsType.STRING,
         "short": "Промпт для сжатия контекста",
         "long": "Промпт, используемый для сжатия контекста.",
-        "page": ChatSettingsPage.LLM_BASE,
+        "page": ChatSettingsPage.LLM_PROMPTS,
     },
     ChatSettingsKey.DOCUMENT_CONDENSING_PROMPT: {
         "type": ChatSettingsType.STRING,
         "short": "Промпт для сжатия документов (например веб-страниц)",
         "long": "Промпт, используемый для сжатия различных слишком больших документов (например, веб-страниц).",
-        "page": ChatSettingsPage.LLM_BASE,
+        "page": ChatSettingsPage.LLM_PROMPTS,
     },
     # # Divination prompts (tarot & runes readings)
     ChatSettingsKey.TAROT_SYSTEM_PROMPT: {
         "type": ChatSettingsType.STRING,
         "short": "Системный промпт для расклада Таро",
         "long": "Промпт, инструктирующий LLM, как интерпретировать расклад Таро.",
-        "page": ChatSettingsPage.LLM_BASE,
+        "page": ChatSettingsPage.LLM_PROMPTS,
     },
     ChatSettingsKey.RUNES_SYSTEM_PROMPT: {
         "type": ChatSettingsType.STRING,
         "short": "Системный промпт для рунического расклада",
         "long": "Промпт, инструктирующий LLM, как интерпретировать рунический расклад.",
-        "page": ChatSettingsPage.LLM_BASE,
+        "page": ChatSettingsPage.LLM_PROMPTS,
     },
     ChatSettingsKey.DIVINATION_USER_PROMPT_TEMPLATE: {
         "type": ChatSettingsType.STRING,
@@ -794,6 +812,21 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
             "Промпт для LLM, который превращает описание расклада в структурированный JSON формат. "
             "Используется после получения информации через divination-discovery-info-prompt."
         ),
+        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
+    },
+    ChatSettingsKey.MEMORY_REFINE_SYSTEM_PROMPT: {
+        "type": ChatSettingsType.STRING,
+        "short": "Системный промпт для обновления памяти",
+        "long": (
+            "Системный промпт, задающий роль и правила модели при фоновом обновлении "
+            "(актуализации) памяти о пользователе."
+        ),
+        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
+    },
+    ChatSettingsKey.MEMORY_REFINE_USER_PROMPT_TEMPLATE: {
+        "type": ChatSettingsType.STRING,
+        "short": "Шаблон пользовательского сообщения для обновления памяти",
+        "long": "Шаблон, в который подставляются {existingMemories} и {messages}.",
         "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
     },
     # # Some system settings
@@ -896,33 +929,6 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         ),
         "page": ChatSettingsPage.LLM_PAID,
     },
-    ChatSettingsKey.MEMORY_REFINE_MODEL: {
-        "type": ChatSettingsType.MODEL,
-        "short": "LLM-Модель для обновления памяти",
-        "long": "Какую LLM модель использовать для обновления памяти о пользователе",
-        "page": ChatSettingsPage.LLM_PAID,
-    },
-    ChatSettingsKey.MEMORY_REFINE_FALLBACK_MODEL: {
-        "type": ChatSettingsType.MODEL,
-        "short": "Запасная LLM-Модель для обновления памяти пользователя",
-        "long": "Какую LLM модель использовать для обновления памяти о пользователе если основная не справилась",
-        "page": ChatSettingsPage.LLM_PAID,
-    },
-    ChatSettingsKey.MEMORY_REFINE_SYSTEM_PROMPT: {
-        "type": ChatSettingsType.STRING,
-        "short": "Системный промпт для обновления памяти",
-        "long": (
-            "Системный промпт, задающий роль и правила модели при фоновом обновлении "
-            "(актуализации) памяти о пользователе."
-        ),
-        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
-    },
-    ChatSettingsKey.MEMORY_REFINE_USER_PROMPT_TEMPLATE: {
-        "type": ChatSettingsType.STRING,
-        "short": "Шаблон пользовательского сообщения для обновления памяти",
-        "long": "Шаблон, в который подставляются {existingMemories} и {messages}.",
-        "page": ChatSettingsPage.BOT_OWNER_SYSTEM,
-    },
     # User-memories v1 — master per-chat gate.
     ChatSettingsKey.MEMORY_ENABLED: {
         "type": ChatSettingsType.BOOL,
@@ -936,33 +942,33 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
             "воспоминания. Также управляет фоновой регенерацией эмбеддингов "
             "памяти и доступностью обновления памяти."
         ),
-        "page": ChatSettingsPage.LLM_BASE,
+        "page": ChatSettingsPage.EXTENDED,
     },
     ChatSettingsKey.DELETE_DENIED_COMMANDS: {
         "type": ChatSettingsType.BOOL,
         "short": "Удалять запрещенные команды",
         "long": "Должен ли бот удалять сообщения с командами, которые не разрешены в настройках чата "
         "(полезно для предотвращения флуда нечайными кликами на команду)",
-        "page": ChatSettingsPage.STANDART,
+        "page": ChatSettingsPage.STANDARD,
     },
     # # Allowing different reactions in chat (to mention/reply/random)
     ChatSettingsKey.ALLOW_MENTION: {
         "type": ChatSettingsType.BOOL,
         "short": "Реагировать на упоминания",
         "long": "Должен ли бот реагировать на его упоминания в чате",
-        "page": ChatSettingsPage.STANDART,
+        "page": ChatSettingsPage.STANDARD,
     },
     ChatSettingsKey.ALLOW_REPLY: {
         "type": ChatSettingsType.BOOL,
         "short": "Реагировать на ответы",
         "long": "Должен ли бот реагировать на ответы на его сообщения",
-        "page": ChatSettingsPage.STANDART,
+        "page": ChatSettingsPage.STANDARD,
     },
     ChatSettingsKey.RANDOM_ANSWER_PROBABILITY: {
         "type": ChatSettingsType.FLOAT,
         "short": "Вероятность случайного ответа",
         "long": "(0-1) Вероятность, что бот решит ответить на произвольное сообщение в чате",
-        "page": ChatSettingsPage.STANDART,
+        "page": ChatSettingsPage.STANDARD,
     },
     ChatSettingsKey.BOT_ANSWER_PROBABILITY: {
         "type": ChatSettingsType.FLOAT,
@@ -1109,13 +1115,13 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "type": ChatSettingsType.BOOL,
         "short": "Удалять сообщение о присоединении пользователя",
         "long": "Удалять сообщение о присоединении пользователя к чату.",
-        "page": ChatSettingsPage.STANDART,
+        "page": ChatSettingsPage.STANDARD,
     },
     ChatSettingsKey.DELETE_LEFT_MESSAGES: {
         "type": ChatSettingsType.BOOL,
         "short": "Удалять сообщение о выходе пользователя",
         "long": "Удалять сообщение о выходе пользователя из чата.",
-        "page": ChatSettingsPage.STANDART,
+        "page": ChatSettingsPage.STANDARD,
     },
     # Embedding / search settings
     ChatSettingsKey.EMBEDDING_MODEL: {

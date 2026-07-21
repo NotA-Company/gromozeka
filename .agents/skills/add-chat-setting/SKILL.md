@@ -79,17 +79,17 @@ Controls which `/settings` page surfaces the setting, and implicitly the minimum
 
 | `ChatSettingsPage` | Intent |
 |---|---|
-| `STANDART` *(sic)* | Basic, any tier |
+| `STANDARD` | Basic, any tier |
 | `EXTENDED` | Power-user settings |
 | `SPAM` | Spam/moderation |
-| `LLM_BASE` | Core LLM config (free tier) |
-| `LLM_PAID` | LLM fallbacks / premium |
+| `LLM_MODELS` | All non-embedding LLM model pickers |
+| `LLM_PROMPTS` | All LLM prompt strings |
+| `LLM_PAID` | LLM premium settings |
 | `PAID` | Paid features |
 | `FRIEND` | Friend-tier features |
 | `BOT_OWNER` | Owner-only |
 | `BOT_OWNER_SYSTEM` | System internals — "do not modify unless necessary" |
 
-Don't fix the `STANDART` spelling — it's baked into the codebase.
 
 ## Site 3 — Add the default value in the right TOML file
 

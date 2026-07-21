@@ -149,15 +149,15 @@ The hook is guarded by `if self._refineLogEnabled:` so no work happens when disa
 
 ## Chat settings (four-site convention)
 
-All five are `page = ChatSettingsPage.FRIEND` in `_chatSettingsInfo` (`internal/bot/models/chat_settings.py`):
+All five live in `_chatSettingsInfo` (`internal/bot/models/chat_settings.py`); pages are tier-mixed (not all on one page):
 
-| `ChatSettingsKey` | TOML key | Type |
-|---|---|---|
-| `MEMORY_REFINEMENT_ENABLED` | `memory-refinement-enabled` | BOOL |
-| `MEMORY_REFINE_MODEL` | `memory-refine-model` | MODEL |
-| `MEMORY_REFINE_FALLBACK_MODEL` | `memory-refine-fallback-model` | MODEL |
-| `MEMORY_REFINE_SYSTEM_PROMPT` | `memory-refine-system-prompt` | STRING |
-| `MEMORY_REFINE_USER_PROMPT_TEMPLATE` | `memory-refine-user-prompt-template` | STRING |
+| `ChatSettingsKey` | TOML key | Type | Page |
+|---|---|---|---|
+| `MEMORY_REFINEMENT_ENABLED` | `memory-refinement-enabled` | BOOL | `LLM_PAID` |
+| `MEMORY_REFINE_MODEL` | `memory-refine-model` | MODEL | `LLM_MODELS` |
+| `MEMORY_REFINE_FALLBACK_MODEL` | `memory-refine-fallback-model` | MODEL | `LLM_MODELS` |
+| `MEMORY_REFINE_SYSTEM_PROMPT` | `memory-refine-system-prompt` | STRING | `BOT_OWNER_SYSTEM` |
+| `MEMORY_REFINE_USER_PROMPT_TEMPLATE` | `memory-refine-user-prompt-template` | STRING | `BOT_OWNER_SYSTEM` |
 
 New tool: ~~`ToolName.DELETE_USER_DATA = "delete_user_data"` (`internal/bot/constants.py`), registered alongside the existing `ADD_USER_DATA`.~~ **[SUPERSEDED]** — both `add_user_data` and `delete_user_data` were retired; the new tools are `add_memory` / `delete_memory` / `search_memories` (see [`user-memories.md`](user-memories.md) "LLM tools").
 
