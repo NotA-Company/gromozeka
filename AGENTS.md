@@ -150,7 +150,11 @@ entry-style rules, and "when / when-not to update" criteria, see
   dependency bumps with no behavioral change, and test-only changes.
 - The `/changelog` slash-command drafts an entry from the current diff on demand.
 - Cutting a release: rename `## [Unreleased]` to a dated version heading and
-  add a fresh empty `## [Unreleased]` section above it.
+  add a fresh empty `## [Unreleased]` section above it, then bump
+  `[project].version` in `pyproject.toml` to match, commit as a single atomic
+  `Release v<X.Y.Z>` commit, and create+push an annotated `v<X.Y.Z>` tag. See
+  [`docs/llm/changelog.md`](docs/llm/changelog.md) §Release operations for the
+  full sequence (and the `/generate-release` slash-command for automation).
 
 ## Architecture cheatsheet
 

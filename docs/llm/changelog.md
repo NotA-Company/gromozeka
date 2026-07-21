@@ -129,6 +129,47 @@ After:
 
 A project's first `CHANGELOG.md` may begin with a one-time dated baseline section, `## Initial State - YYYY-MM-DD` (with `### Added`), to snapshot capabilities that already exist before the first versioned release. This deliberately deviates from the `## [X.Y.Z] - YYYY-MM-DD` heading format so an existing-but-unreleased project can be captured without inventing a fake semver tag. Once that baseline exists, the first versioned release (and every release after) follows the standard bracketed format above.
 
+## Release operations (version bump, commit, tag, push)
+
+The heading cut described above (rename `## [Unreleased]` → `## [X.Y.Z] - YYYY-MM-DD`, insert a fresh empty `## [Unreleased]` above it) is only the first step of cutting a release. The full release procedure is the cut **plus** the three operations below. Do them in order, as a single atomic unit of work.
+
+### (a) Bump the version field
+
+Update `version` under `[project]` in `pyproject.toml` to match the new `## [X.Y.Z] - YYYY-MM-DD` heading:
+
+```toml
+[project]
+name = "gromozeka"
+version = "1.0.0"
+```
+
+`pyproject.toml`'s `[project].version` is the **canonical machine-readable** version source; the CHANGELOG release heading is the **human-readable** mirror. The two MUST stay in sync — anyone tooling off the project (build scripts, packaging, release tooling) reads `pyproject.toml`, anyone reading release notes reads the CHANGELOG.
+
+### (b) Commit the release
+
+Stage and commit the release as a single atomic commit including:
+
+- `CHANGELOG.md` — the cut (renamed heading + fresh empty `## [Unreleased]`).
+- `pyproject.toml` — the version bump.
+- Any other files modified as part of the release prep (migration scripts, README updates, dep bumps, etc.) — review `git status` and include anything thematically part of the release.
+
+Suggested commit message: `Release v<X.Y.Z>` (e.g. `Release v1.0.0`).
+
+### (c) Tag and push
+
+Create an **annotated** git tag and push it:
+
+```bash
+git tag -a v<X.Y.Z> -m "Release v<X.Y.Z>"
+git push origin v<X.Y.Z>
+```
+
+Annotated tags (`-a`) are preferred over lightweight tags for releases — they record tagger, date, and message per git convention, and `git describe` / release tooling relies on them.
+
+### Automation
+
+The `/generate-release <version>` slash-command (see `.opencode/commands/generate-release.md`) automates the whole sequence end-to-end: heading cut, version bump, commit, annotated tag, push. Use it when the release is straightforward; fall back to the manual steps above when you need to stage additional files or split the work. `/generate-release <X.Y.Z>` is the full release sequence (cut + version bump + commit + tag + push); `/changelog cut <X.Y.Z>` does only the CHANGELOG heading rename (a subset of the full sequence) and is useful when you want to stage the cut separately from the rest of the release operations.
+
 ## Versioning
 
 Use [semver](https://semver.org/) (`MAJOR.MINOR.PATCH`):
@@ -139,7 +180,7 @@ Use [semver](https://semver.org/) (`MAJOR.MINOR.PATCH`):
 | **minor** | New features, new config fields, new commands, additive schema changes |
 | **major** | Breaking changes, removed features, schema changes requiring data reset |
 
-If the project doesn't publish to a registry, version bumps are still useful for tracking — keep `package.json` (or equivalent) version in sync with the changelog heading.
+This project does not publish to a registry, but version bumps are still useful for tracking. The canonical machine-readable version source is `[project].version` in `pyproject.toml`; the CHANGELOG release heading is the human-readable mirror. The two MUST stay in sync — see [Release operations](#release-operations-version-bump-commit-tag-push) above.
 
 ## Agent Instructions
 
