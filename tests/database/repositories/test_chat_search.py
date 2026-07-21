@@ -41,6 +41,7 @@ import pytest
 from internal.database import Database
 from internal.database.models import MessageCategory
 from internal.database.providers.base import BaseSQLProvider
+from internal.database.providers.sqlite3 import _SQLITE_VEC_AVAILABLE
 from internal.database.repositories.chat_search import _MESSAGE_ID_FILTER_BATCH_SIZE, ChatSearchRepository
 from internal.models import MessageId
 
@@ -173,6 +174,9 @@ class TestSearchChatMessages:
         Query embedding ``[1.0, 0.0]`` should rank message 1 first with score
         ≈ 1.0 (identical), then message 2 with score ≈ 0.0 (orthogonal).
         """
+        if not _SQLITE_VEC_AVAILABLE:
+            pytest.skip("sqlite-vec not installed")
+
         chatId = 1
         modelName = "test-model"
 
@@ -229,6 +233,9 @@ class TestSearchChatMessages:
 
         Asserts ``threadId=5, substring="foo"`` returns ONLY msg 2.
         """
+        if not _SQLITE_VEC_AVAILABLE:
+            pytest.skip("sqlite-vec not installed")
+
         chatId = 1
         modelName = "test-model"
         for messageId, messageText, threadId in (
@@ -358,6 +365,9 @@ class TestSearchChatMessages:
         ``threadId=5`` alone must yield the two thread-5 messages; ``substring="foo"``
         alone must yield the three "foo" messages.
         """
+        if not _SQLITE_VEC_AVAILABLE:
+            pytest.skip("sqlite-vec not installed")
+
         chatId = 1
         modelName = "test-model"
         for messageId, messageText, threadId in (

@@ -153,6 +153,9 @@ class TestChatEmbeddingsRepository:
         ``chat_messages.model_id`` is set to the id allocated by the
         resolver (the real :class:`EmbeddingModelsRepository`).
         """
+        if not _SQLITE_VEC_AVAILABLE:
+            pytest.skip("sqlite-vec not installed")
+
         await self._seedMessage(testDatabase, chatId=1, userId=100, messageId=1, messageText="hi")
 
         # Sanity: model_id starts NULL (fresh row).
@@ -223,6 +226,9 @@ class TestChatEmbeddingsRepository:
         resolver with the exact ``(model, len(embedding))`` tuple it
         receives from the caller.
         """
+        if not _SQLITE_VEC_AVAILABLE:
+            pytest.skip("sqlite-vec not installed")
+
         resolverMock = AsyncMock(return_value=99)
         repo = ChatEmbeddingsRepository(testDatabase.manager, modelIdResolver=resolverMock)
 
@@ -250,6 +256,9 @@ class TestChatEmbeddingsRepository:
         resolver's cache dict and by patching ``getProvider`` on the
         second call to a strict mock that raises if awaited.
         """
+        if not _SQLITE_VEC_AVAILABLE:
+            pytest.skip("sqlite-vec not installed")
+
         repo = testDatabase.chatEmbeddings
         resolver = testDatabase.embeddingModels
 
@@ -307,6 +316,9 @@ class TestChatEmbeddingsRepository:
         cleanup with the current model, only the matching row retains
         its ``model_id``; the other two are NULLed.
         """
+        if not _SQLITE_VEC_AVAILABLE:
+            pytest.skip("sqlite-vec not installed")
+
         await self._seedMessage(testDatabase, chatId=1, userId=100, messageId=1, messageText="current")
         await self._seedMessage(testDatabase, chatId=1, userId=100, messageId=2, messageText="stale-A")
         await self._seedMessage(testDatabase, chatId=1, userId=100, messageId=3, messageText="stale-B")
@@ -334,6 +346,9 @@ class TestChatEmbeddingsRepository:
         this distinguishes the dimensions-known branch from the
         dimensions-unknown subquery branch.
         """
+        if not _SQLITE_VEC_AVAILABLE:
+            pytest.skip("sqlite-vec not installed")
+
         # Three rows with three distinct model_id values.
         await self._seedMessage(testDatabase, chatId=1, userId=100, messageId=1, messageText="current")
         await self._seedMessage(testDatabase, chatId=1, userId=100, messageId=2, messageText="stale")
