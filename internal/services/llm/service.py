@@ -541,6 +541,52 @@ class LLMService:
                 logger.warning(f"Failed to decode JSON: {e}")
         return False
 
+    def _matchTextForInlineCodeToolNameAndJson(self, mlRunResult: ModelRunResult) -> bool:
+        """Detect an inline-code tool name followed by fenced JSON arguments.
+
+        Some models emit a registered tool name in an inline-code block and put
+        only its argument object in the following fenced JSON block instead of
+        using a native tool call. The complete response must have this exact
+        shape so ordinary prose that happens to mention a tool remains text.
+
+        Args:
+            mlRunResult: The model run result to inspect and potentially mutate.
+
+        Returns:
+            True if a valid tool call was detected and *mlRunResult* was converted;
+            False otherwise.
+        """
+        resultText = mlRunResult.resultText.strip()
+        match = re.match(
+            r"^`(\S+?)`\s*```(?:json\s*)?\s*({.*})\s*```$",
+            resultText,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if match is not None:
+            try:
+                logger.debug(f"inline-code tool name + {{json}} found: {match.groups()}")
+                toolArgsStr = match.group(2)
+                toolArgs, _ = self._tryParseJson(toolArgsStr)
+                # ``_tryParseJson`` uses raw_decode and can repair ``\'`` by
+                # removing one character, so its offset may not refer to the
+                # original string. Parse the full block separately to reject
+                # trailing content without rejecting repaired arguments.
+                try:
+                    json.loads(toolArgsStr)
+                except json.JSONDecodeError:
+                    json.loads(re.sub(r"(?<=[^\\])\\'", r"'", toolArgsStr))
+                return self._tryApplyToolCallMatch(
+                    mlRunResult,
+                    toolName=match.group(1),
+                    parameters=toolArgs,
+                    toolCallId=None,
+                    prefixStr="",
+                    suffixStr="",
+                )
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to decode JSON: {e}")
+        return False
+
     def _matchTextForBrokenKnownToolCall(self, mlRunResult: ModelRunResult) -> bool:
         """Detect a broken-but-recognised tool call as a last-resort fallback.
 
@@ -673,7 +719,9 @@ class LLMService:
         2. :meth:`_matchTextForToolCallTags` — JSON inside ``<tool_call>`` tags.
         3. :meth:`_matchTextForToolCallStart` — ``[TOOL_CALL_START]`` marker.
         4. :meth:`_matchTextForToolCallSquareBracketsAndJson` — ``[name]\\n{json}``.
-        5. :meth:`_matchTextForBrokenKnownToolCall` — broken call of a known
+        5. :meth:`_matchTextForInlineCodeToolNameAndJson` — inline-code tool
+           name followed by fenced JSON arguments.
+        6. :meth:`_matchTextForBrokenKnownToolCall` — broken call of a known
            tool, converted to a retry-error instead of an execution.
 
         Args:
@@ -691,6 +739,8 @@ class LLMService:
         if self._matchTextForToolCallStart(mlRunResult):
             return True
         if self._matchTextForToolCallSquareBracketsAndJson(mlRunResult):
+            return True
+        if self._matchTextForInlineCodeToolNameAndJson(mlRunResult):
             return True
         if self._matchTextForBrokenKnownToolCall(mlRunResult):
             return True

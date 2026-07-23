@@ -1,4 +1,5 @@
 # Our TODO list
+- [ ] On llm-tool-call-fix save wrong + fixed call to file
 - [ ] per-chat settings - how often to do memory-refinement
 - [ ] script for moving chat to separate db
 - [ ] refactor models

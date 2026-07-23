@@ -275,7 +275,7 @@ See [`memories/test-suite-speedup.md`](memories/test-suite-speedup.md) — imple
 
 ## LLM Tool-Call Healing (internal/services/llm/service.py) — implemented 2026-07-15
 
-See [`memories/llm-tool-call-healing.md`](memories/llm-tool-call-healing.md) — durable notes for the tool-call healing subsystem: `_tryHealToolCall` orchestrator + 5 matchers (JSON-fence, `<tool_call>`, TOOL_CALL_START, `[name]{json}`, broken-known-tool fallback: as of 2026-07-19 scans ALL brackets via finditer and accepts at edge OR when the suffix is a fenced JSON params block (`hasJsonParams`), fixing two root-cause misses — wrong-bracket matching when a markdown link appears earlier, and over-strict edge constraint; same date: JSON-fence and `<tool_call>` matchers also accept `"function"` key as tool-name fallback when `"name"` is absent/empty), `LLMToolCall.errorMessage` consumer-audit gotcha, failure-log JSONL corpus.
+See [`memories/llm-tool-call-healing.md`](memories/llm-tool-call-healing.md) — durable notes for the tool-call healing subsystem: `_tryHealToolCall` orchestrator + 6 matchers (JSON-fence, `<tool_call>`, TOOL_CALL_START, `[name]{json}`, inline-code `` `name` `` + fenced JSON arguments, broken-known-tool fallback: as of 2026-07-19 scans ALL brackets via finditer and accepts at edge OR when the suffix is a fenced JSON params block (`hasJsonParams`), fixing two root-cause misses — wrong-bracket matching when a markdown link appears earlier, and over-strict edge constraint; same date: JSON-fence and `<tool_call>` matchers also accept `"function"` key as tool-name fallback when `"name"` is absent/empty), `LLMToolCall.errorMessage` consumer-audit gotcha, failure-log JSONL corpus.
 
 ## LLM maxRounds round-limit (`generateTextViaLLM`) — added 2026-07-16
 

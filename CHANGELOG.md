@@ -6,6 +6,9 @@ process governing this file, see [docs/llm/changelog.md](docs/llm/changelog.md).
 
 ## [Unreleased]
 
+### Fixed
+- Markdown-formatted inline tool names followed by JSON arguments now execute as tool calls instead of being sent as plain text.
+
 ## [1.0.0] - 2026-07-21
 
 ### Added

@@ -113,6 +113,17 @@ FAILED_0719V2_TEXT: str = (
     "```"
 )
 
+# fail-2026-07-23.jsonl — a tool name in an inline-code block followed by a
+# fenced JSON object containing only the tool arguments. The existing JSON
+# matcher requires a name/function field inside the object, so it misses this
+# otherwise unambiguous call shape.
+FAILED_0723_TEXT: str = (
+    " `generate_and_send_image`\n\n"
+    "```\n{\n"
+    '  "image_prompt": "A colourful surreal creature in a pastel bathroom."\n'
+    "}\n```"
+)
+
 
 # ============================================================================
 # Fixtures (mirror tests/services/llm/test_llm_service.py).
@@ -536,6 +547,57 @@ class TestToolCallHealing:
         assert result.resultText == finalResult.resultText
         assert mockModel.generateText.call_count == 2
 
+    async def testIntegrationInlineCodeToolNameAndJsonArgumentsThenHandlerCalled(
+        self,
+        llmService: LLMService,
+        mockModel: Mock,
+        mockFallbackModel: Mock,
+        sampleMessages: List[ModelMessage],
+        mockChatSettings: Mock,
+    ) -> None:
+        """An inline-code tool name and JSON arguments execute the registered handler.
+
+        Args:
+            llmService: LLM service under test.
+            mockModel: Primary model returning the pseudo-call then final text.
+            mockFallbackModel: Fallback model supplied to the service.
+            sampleMessages: Initial conversation messages.
+            mockChatSettings: Settings required by the service.
+        """
+        callLog: List[Dict[str, Any]] = []
+
+        async def imageHandler(extraData: Any = None, **kwargs: Any) -> Dict[str, Any]:
+            """Record image-generation arguments for the test.
+
+            Args:
+                extraData: Extra context supplied to tool handlers.
+                **kwargs: Tool arguments supplied by the model.
+
+            Returns:
+                A successful image-generation result.
+            """
+            callLog.append(dict(kwargs))
+            return {"done": True}
+
+        llmService.registerTool("generate_and_send_image", "Generate image", [], imageHandler)
+        pseudoCallResult = ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText=FAILED_0723_TEXT)
+        finalResult = ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="Image generated.")
+        mockModel.generateText.side_effect = [pseudoCallResult, finalResult]
+
+        result = await llmService.generateTextViaLLM(
+            messages=sampleMessages,
+            chatId=None,
+            chatSettings=mockChatSettings,
+            modelKey=mockModel,
+            fallbackModelKey=mockFallbackModel,
+            useTools=True,
+            extraData={},
+        )
+
+        assert callLog == [{"image_prompt": "A colourful surreal creature in a pastel bathroom."}]
+        assert result.resultText == finalResult.resultText
+        assert mockModel.generateText.call_count == 2
+
     # ------------------------------------------------------------------
     # 8. ``"function"`` key support in ``_matchTextForJSONToolCall`` (07-19-v2)
     # ------------------------------------------------------------------
@@ -599,6 +661,105 @@ class TestToolCallHealing:
         assert ret.toolCalls[0].errorMessage is None
         assert "<tool_call>" not in ret.resultText
         assert ret.resultText == "Let me generate that."
+
+    def testInlineCodeToolNameAndJsonArgumentsDirect(self, llmService: LLMService) -> None:
+        """Heal an inline-code tool name followed by a fenced JSON argument object.
+
+        Args:
+            llmService: Service with the image-generation tool registered.
+        """
+        llmService.registerTool("generate_and_send_image", "Generate image", [], _noopAsyncHandler)
+        ret = ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText=FAILED_0723_TEXT)
+
+        matched = llmService._tryHealToolCall(ret)
+
+        assert matched is True
+        assert ret.status == ModelResultStatus.TOOL_CALLS
+        assert len(ret.toolCalls) == 1
+        assert ret.toolCalls[0].name == "generate_and_send_image"
+        assert ret.toolCalls[0].parameters == {"image_prompt": "A colourful surreal creature in a pastel bathroom."}
+        assert ret.toolCalls[0].errorMessage is None
+        assert ret.resultText == ""
+
+    def testInlineCodeToolNameAndJsonArgumentsWithPreambleRejected(self, llmService: LLMService) -> None:
+        """Do not execute an inline-code tool mention embedded in ordinary prose.
+
+        Args:
+            llmService: Service with the image-generation tool registered.
+        """
+        llmService.registerTool("generate_and_send_image", "Generate image", [], _noopAsyncHandler)
+        ret = ModelRunResult(
+            rawResult={},
+            status=ModelResultStatus.FINAL,
+            resultText="I would call `generate_and_send_image` with:\n\n```json\n{}\n```",
+        )
+
+        matched = llmService._tryHealToolCall(ret)
+
+        assert matched is False
+        assert ret.status == ModelResultStatus.FINAL
+
+    def testInlineCodeToolNameAndJsonArgumentsWithJsonFenceLabelDirect(self, llmService: LLMService) -> None:
+        """Heal the same pseudo-call when its fenced arguments use the ``json`` label.
+
+        Args:
+            llmService: Service with the image-generation tool registered.
+        """
+        llmService.registerTool("generate_and_send_image", "Generate image", [], _noopAsyncHandler)
+        ret = ModelRunResult(
+            rawResult={},
+            status=ModelResultStatus.FINAL,
+            resultText='`generate_and_send_image`\n\n```json\n{"image_prompt": "A test image."}\n```',
+        )
+
+        matched = llmService._tryHealToolCall(ret)
+
+        assert matched is True
+        assert ret.toolCalls[0].parameters == {"image_prompt": "A test image."}
+
+    def testInlineCodeToolNameAndJsonArgumentsWithEscapedApostropheDirect(self, llmService: LLMService) -> None:
+        """Heal arguments containing the common invalid escaped-apostrophe form.
+
+        Args:
+            llmService: Service with the image-generation tool registered.
+        """
+        llmService.registerTool("generate_and_send_image", "Generate image", [], _noopAsyncHandler)
+        ret = ModelRunResult(
+            rawResult={},
+            status=ModelResultStatus.FINAL,
+            resultText='`generate_and_send_image`\n\n```\n{"image_prompt": "It\\\'s surreal."}\n```',
+        )
+
+        matched = llmService._tryHealToolCall(ret)
+
+        assert matched is True
+        assert ret.toolCalls[0].parameters == {"image_prompt": "It's surreal."}
+
+    @pytest.mark.parametrize(
+        "resultText",
+        (
+            "`unknown_tool`\n\n```\n{}\n```",
+            "`generate_and_send_image`\n\n```\n{\n```",
+            "`generate_and_send_image`\n\n```\n{}\n{}\n```",
+        ),
+    )
+    def testInlineCodeToolNameAndJsonArgumentsInvalidPayloadRejected(
+        self, llmService: LLMService, resultText: str
+    ) -> None:
+        """Reject unknown tools, malformed JSON, and trailing JSON objects.
+
+        Args:
+            llmService: Service with the image-generation tool registered.
+            resultText: Invalid pseudo-call response to reject.
+        """
+        llmService.registerTool("generate_and_send_image", "Generate image", [], _noopAsyncHandler)
+        ret = ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText=resultText)
+
+        matched = llmService._tryHealToolCall(ret)
+
+        assert matched is False
+        assert ret.status == ModelResultStatus.FINAL
+        assert ret.resultText == resultText
 
     # ------------------------------------------------------------------
     # 9. Backward compat: errorMessage is optional and stays out of __str__
