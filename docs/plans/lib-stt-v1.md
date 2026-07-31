@@ -627,6 +627,21 @@ conservative defaults (§5 caps) stay well below the 60 MB boundary. Quality-by-
    reduce the default result retention. Cleanup failure logs a warning but **never** discards a
    successful transcript.
 
+   > **Implementation note (delete-timing refinement).** The implementation runs the
+   > best-effort DELETE in a `finally` block that covers the fetch — i.e. it runs **after the
+   > fetch succeeded but before parse**, and also when the submit/poll path raised (no fetch
+   > happened, but an operation was created). This is an intentional refinement of the
+   > "after fetch" intent above, not a contradiction of it: the recognised bytes are already in
+   > memory so the operation object is no longer needed for correctness regardless of parse
+   > outcome; the DELETE is best-effort and idempotent (a redundant delete on an
+   > already-deleted/erroring operation is a no-op); and parse cannot fail catastrophically
+   > because the parser honours the never-raise guard (contract #2). Do **not** "fix" the
+   > `finally`-based ordering to match a literal reading of "after a successful fetch **and**
+   > parse" — the load-bearing comment at
+   > [`lib/stt/providers/yandex_speechkit.py`](../../lib/stt/providers/yandex_speechkit.py)
+   > (~lines 313–331) documents this. The intent (reduce retention; never discard a successful
+   > transcript) is unchanged.
+
 Use **one persistent `httpx.AsyncClient`** configured with the injected resolved `ProxyConfig`
 (spread via `proxyConfig.toKwargs()`); `STTManager.aclose()` closes it. Resolve the proxy in the
 main/service layer via `ProxyService.resolveProxy(sttConfig, "stt")`
