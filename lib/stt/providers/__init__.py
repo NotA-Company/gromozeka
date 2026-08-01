@@ -13,6 +13,6 @@ provider directly) and surfaced at the :mod:`lib.stt` top level.
 
 from typing import List
 
-from lib.stt.providers.yandex_speechkit import YandexSpeechKitProvider
+from .yandex_speechkit import YandexSpeechKitProvider
 
 __all__: List[str] = ["YandexSpeechKitProvider"]

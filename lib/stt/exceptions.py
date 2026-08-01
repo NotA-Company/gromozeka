@@ -12,7 +12,7 @@ NOT import this module (the dependency runs one way only — see the dependency
 firewall in ``docs/plans/lib-stt-v1.md`` §1).
 """
 
-from lib.stt.models import STTErrorCode
+from .models import STTErrorCode
 
 
 class STTExtractionError(Exception):

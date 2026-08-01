@@ -41,8 +41,9 @@ from typing import Dict, Optional, Tuple
 import httpx
 
 from lib.proxy import ProxyConfig, ProxyKwargs
-from lib.stt.abstract import AbstractSTTProvider
-from lib.stt.models import (
+
+from ..abstract import AbstractSTTProvider
+from ..models import (
     AudioFormatSpec,
     ExtractedAudio,
     STTAudioContainerType,
@@ -50,7 +51,7 @@ from lib.stt.models import (
     STTResultStatus,
     TranscriptionResult,
 )
-from lib.stt.providers.yandex_events import DEFAULT_MAX_RESULT_BYTES, parseRecognitionEvents
+from .yandex_events import DEFAULT_MAX_RESULT_BYTES, parseRecognitionEvents
 
 logger = logging.getLogger(__name__)
 """Module logger (mirrors :mod:`lib.yandex_search.client` — no logger injection)."""

@@ -22,7 +22,7 @@ service, not this function, gates ERROR handling.
 
 from collections.abc import Sequence
 
-from lib.stt.models import TranscriptionResult, TranscriptionSegment
+from .models import TranscriptionResult, TranscriptionSegment
 
 #: Untrusted-data header prepended to every non-empty persisted transcript.
 #:

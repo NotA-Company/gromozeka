@@ -17,10 +17,9 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 
-from lib.stt.exceptions import STTExtractionError
-from lib.stt.models import AudioFormatSpec, ExtractedAudio, STTErrorCode, STTResultStatus, TranscriptionResult
-
 from . import audio
+from .exceptions import STTExtractionError
+from .models import AudioFormatSpec, ExtractedAudio, STTErrorCode, STTResultStatus, TranscriptionResult
 
 logger = logging.getLogger(__name__)
 """Module logger for the never-raise defense-in-depth boundary in :meth:`stt`."""

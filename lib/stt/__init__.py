@@ -17,16 +17,16 @@ SpeechKit v3 provider
 provider is held directly by the integration layer (the future STTService).
 """
 
-from lib.stt.abstract import AbstractSTTProvider
-from lib.stt.audio import extractAudio
-from lib.stt.exceptions import (
+from .abstract import AbstractSTTProvider
+from .audio import extractAudio
+from .exceptions import (
     AudioDecodeError,
     EncoderError,
     NoAudioTrackError,
     STTExtractionError,
 )
-from lib.stt.formatter import UNTRUSTED_TRANSCRIPT_HEADER, formatTranscript
-from lib.stt.models import (
+from .formatter import UNTRUSTED_TRANSCRIPT_HEADER, formatTranscript
+from .models import (
     AudioFormatSpec,
     ExtractedAudio,
     STTAudioContainerType,
@@ -36,7 +36,7 @@ from lib.stt.models import (
     TranscriptionSegment,
     TranscriptionWord,
 )
-from lib.stt.providers.yandex_speechkit import YandexSpeechKitProvider
+from .providers.yandex_speechkit import YandexSpeechKitProvider
 
 __all__ = [
     # Abstract interface

@@ -44,7 +44,7 @@ import json
 import math
 from typing import Dict, FrozenSet, List, Optional, Tuple, cast
 
-from lib.stt.models import (
+from ..models import (
     STTErrorCode,
     STTResultStatus,
     TranscriptionResult,

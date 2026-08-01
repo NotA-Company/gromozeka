@@ -39,12 +39,12 @@ import av.error
 from av.audio.stream import AudioStream
 from av.container import InputContainer
 
-from lib.stt.exceptions import (
+from .exceptions import (
     AudioDecodeError,
     EncoderError,
     NoAudioTrackError,
 )
-from lib.stt.models import (
+from .models import (
     AudioFormatSpec,
     ExtractedAudio,
     STTAudioContainerType,
