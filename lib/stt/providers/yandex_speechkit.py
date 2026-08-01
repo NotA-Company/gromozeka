@@ -35,6 +35,7 @@ Authoritative references:
 import asyncio
 import base64
 import logging
+from collections.abc import Sequence
 from typing import Dict, Optional, Tuple
 
 import httpx
@@ -255,8 +256,7 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
             timeout=httpx.Timeout(requestTimeoutSeconds),
         )
 
-    @property
-    def supportedInputFormats(self) -> Tuple[AudioFormatSpec, ...]:
+    def supportedInputFormats(self) -> Sequence[AudioFormatSpec]:
         """Ordered accepted input containers, OGG_OPUS first (preferred transcode target).
 
         Consumed by ``audio.py`` for pass-through/transcode negotiation. The FIRST entry
@@ -264,7 +264,7 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
         describe recognition quality (quality-by-format is UNVERIFIED, §10(b)).
 
         Returns:
-            Tuple[AudioFormatSpec, ...]: ``(OGG_OPUS, MP3, WAV)``.
+            Sequence[AudioFormatSpec]: ``(OGG_OPUS, MP3, WAV)``.
         """
         return _SUPPORTED_INPUT_FORMATS
 
@@ -348,8 +348,9 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
     async def aclose(self) -> None:
         """Close the persistent httpx client (graceful shutdown).
 
-        Called by ``STTManager.aclose()`` after the queue has drained in-flight STT
-        workers (parent §11.3). Safe to call multiple times (httpx ``aclose`` is
+        Called by the service layer (the future STTService) during graceful shutdown,
+        after in-flight STT workers have drained (parent §11.3). Safe to call multiple
+        times (httpx ``aclose`` is
         idempotent). Calling :meth:`transcribe` after ``aclose`` returns an ERROR result
         rather than raising (the never-raise boundary maps the closed-client
         ``RuntimeError`` to PROVIDER_ERROR).
@@ -421,7 +422,7 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
             "recognition_model": {
                 "model": self._model,
                 "audio_format": {
-                    "container_audio": {"container_audio_type": audio.container.value},
+                    "container_audio": {"container_audio_type": audio.container.toYandexSpeechKit()},
                 },
                 "language_restriction": {
                     "restriction_type": "WHITELIST",

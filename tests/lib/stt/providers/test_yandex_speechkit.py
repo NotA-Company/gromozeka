@@ -476,7 +476,7 @@ async def testSubmitContainerAudioTypeTracksExtractedAudio(container: STTAudioCo
     assert isinstance(audioFormat, dict)
     containerAudio = audioFormat["container_audio"]
     assert isinstance(containerAudio, dict)
-    assert containerAudio["container_audio_type"] == container.value
+    assert containerAudio["container_audio_type"] == container.toYandexSpeechKit()
     # The base64 content is present and decodes back to the audio bytes.
     encodedContent = capturedBody["content"]
     assert isinstance(encodedContent, str)
@@ -557,7 +557,7 @@ def testSupportedInputFormatsOggOpusFirst() -> None:
     with patch("lib.stt.providers.yandex_speechkit.httpx.AsyncClient") as mockCtor:
         mockCtor.return_value = AsyncMock()
         provider = YandexSpeechKitProvider(apiKey="k", folderId="f")
-    formats = provider.supportedInputFormats
+    formats = provider.supportedInputFormats()
     assert [f.container for f in formats] == [
         STTAudioContainerType.OGG_OPUS,
         STTAudioContainerType.MP3,

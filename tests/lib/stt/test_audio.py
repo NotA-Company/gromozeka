@@ -1,26 +1,17 @@
 """Unit tests for lib.stt.audio (PyAV extraction + format negotiation).
 
-Covers (per ``docs/plans/lib-stt-v1.md`` §5 / §9):
-- Probe success across voice/audio/video containers and mono/stereo sources.
+Covers:
+- Probe success across voice and audio containers and mono/stereo sources.
 - No-audio-track and corrupt-source failure modes.
-- Caps enforcement: source bytes, decoded duration (pass-through reject), and the
-  channel-aware decoded-buffer cap.
 - Channel preservation through BOTH the pass-through and transcode paths.
-- Path selection: supported-container pass-through, unsupported-container
-  transcode, and inline-payload-cap-driven transcode.
+- Path selection: supported-container pass-through vs. unsupported-container
+  transcode (and out-of-spec channel/rate routing to transcode).
 - PyAV container close on every path (success, each exception type, and
   cancellation) via a close-tracking proxy.
-
-All audio fixtures are synthesised in-test with PyAV (a short sine tone encoded
-to WAV / OGG_OPUS / MP3 / mono / stereo, plus a video-only and a corrupt blob);
-no binary audio blobs are committed. PyAV is installed, so the
-``_PYAV_AVAILABLE = False`` runtime guard is not directly exercised here (it is a
-startup-error path per §2/§11.2).
 """
 
-import asyncio
 import io
-from typing import Callable, List, Optional, Tuple, cast
+from typing import Callable, List, Tuple, cast
 
 import av
 import numpy as np
@@ -31,35 +22,18 @@ from lib.stt import audio as audioMod
 from lib.stt.audio import extractAudio
 from lib.stt.exceptions import (
     AudioDecodeError,
-    AudioTooLargeError,
-    DurationExceededError,
     EncoderError,
     NoAudioTrackError,
-    SourceTooLargeError,
 )
 from lib.stt.models import (
     AudioFormatSpec,
     ExtractedAudio,
     STTAudioContainerType,
-    STTLoaderResult,
-    STTMediaLoader,
 )
 
 # ============================================================================
-# Constants — caps and a Yandex-like provider format surface
+# Constants — a Yandex-like provider format surface
 # ============================================================================
-
-#: Source-bytes cap (64 MiB), per §5 caps table.
-_MAX_SOURCE_BYTES = 64 * 1024 * 1024
-
-#: Duration cap in seconds, per §5 caps table.
-_MAX_DURATION_SECONDS = 600
-
-#: Decoded-buffer cap (20 MiB), per §5 caps table.
-_MAX_AUDIO_BYTES = 20 * 1024 * 1024
-
-#: Inline-payload cap (40 MiB), per §5 caps table.
-_MAX_INLINE_BYTES = 40 * 1024 * 1024
 
 #: A Yandex-like ordered format surface: OGG_OPUS first (the preferred transcode
 #: target), then MP3, then a mono-only 8–16 kHz WAV spec. OGG_OPUS/MP3 accept
@@ -301,65 +275,23 @@ def _makeMultiChannelWav(channels: int = 3, seconds: float = 0.5) -> bytes:
     return buffer.getvalue()
 
 
-def _loader(data: bytes, fileSize: Optional[int] = None) -> STTMediaLoader:
-    """Build a stub :data:`STTMediaLoader` returning fixed bytes.
-
-    Args:
-        data: The source bytes the loader returns.
-        fileSize: The ``fileSize`` to report (defaults to ``len(data)``); set
-            larger than ``len(data)`` to exercise the source-byte recheck.
-
-    Returns:
-        STTMediaLoader: An async loader closing over ``data``/``fileSize``.
-    """
-    reportedSize = len(data) if fileSize is None else fileSize
-    mimeType = "audio/ogg"
-
-    async def load(maxBytes: int) -> STTLoaderResult:
-        """Return the canned loader result, ignoring ``maxBytes``.
-
-        Args:
-            maxBytes: The byte bound (ignored by the stub).
-
-        Returns:
-            STTLoaderResult: The canned result.
-        """
-        return STTLoaderResult(data=data, fileSize=reportedSize, mimeType=mimeType)
-
-    return load
-
-
 async def _extract(
     data: bytes,
     *,
     formats: Tuple[AudioFormatSpec, ...] = _YANDEX_FORMATS,
-    maxSourceBytes: int = _MAX_SOURCE_BYTES,
-    maxDurationSeconds: int = _MAX_DURATION_SECONDS,
-    maxAudioBytes: int = _MAX_AUDIO_BYTES,
-    maxInlineBytes: int = _MAX_INLINE_BYTES,
-    fileSize: Optional[int] = None,
 ) -> ExtractedAudio:
-    """Call :func:`extractAudio` with the given source and (overridable) caps.
+    """Call :func:`extractAudio` with the given source and provider format surface.
 
     Args:
         data: The source container bytes.
         formats: The provider format surface (defaults to the Yandex-like set).
-        maxSourceBytes: Source-bytes cap.
-        maxDurationSeconds: Duration cap in seconds.
-        maxAudioBytes: Decoded-buffer cap in bytes.
-        maxInlineBytes: Inline-payload cap in bytes.
-        fileSize: Reported ``fileSize`` (defaults to ``len(data)``).
 
     Returns:
         ExtractedAudio: The negotiated audio.
     """
     return await extractAudio(
-        _loader(data, fileSize=fileSize),
+        data,
         formats,
-        maxSourceBytes,
-        maxDurationSeconds,
-        maxAudioBytes,
-        maxInlineBytes,
     )
 
 
@@ -554,95 +486,6 @@ async def testCorruptBytesRaiseAudioDecodeError() -> None:
     assert excInfo.value.errorCode.value == "provider-error"
 
 
-async def testSourceByteRecheckFlagsFileSizeOverCap() -> None:
-    """The source-byte recheck flags a fileSize exceeding the cap even when len(data) is small.
-
-    Returns:
-        None
-    """
-    data = _makeOggOpus(channels=1)
-    with pytest.raises(SourceTooLargeError):
-        await _extract(data, maxSourceBytes=len(data), fileSize=len(data) + 1)
-
-
-# ============================================================================
-# Caps enforcement
-# ============================================================================
-
-
-async def testSourceTooLargeRaisesSourceTooLargeError() -> None:
-    """A reported fileSize over the source-bytes cap raises SourceTooLargeError.
-
-    Returns:
-        None
-    """
-    data = _makeOggOpus(channels=1)
-    with pytest.raises(SourceTooLargeError) as excInfo:
-        await _extract(data, maxSourceBytes=len(data) - 1)
-    assert excInfo.value.errorCode.value == "source-too-large"
-
-
-async def testSourceDataLengthOverCapRaisesSourceTooLargeError() -> None:
-    """``len(data)`` over the source-bytes cap also raises SourceTooLargeError.
-
-    Returns:
-        None
-    """
-    data = _makeOggOpus(channels=1)
-    with pytest.raises(SourceTooLargeError):
-        await _extract(data, maxSourceBytes=len(data) - 1, fileSize=1)
-
-
-async def testDurationExceededOnPassthroughRaisesDurationExceededError() -> None:
-    """An over-cap duration on the pass-through path raises DurationExceededError.
-
-    Compressed audio cannot be truncated without a re-encode, so the pass-through
-    path rejects rather than silently truncating.
-
-    Returns:
-        None
-    """
-    # A 2-second OGG_OPUS source on the pass-through path with a 1-second cap.
-    data = _makeOggOpus(channels=1, seconds=2.0)
-    with pytest.raises(DurationExceededError) as excInfo:
-        await _extract(data, maxDurationSeconds=1)
-    assert excInfo.value.errorCode.value == "duration-exceeded"
-
-
-async def testDecodedBufferCapIsChannelAware() -> None:
-    """A stereo source that fits the mono decoded budget exceeds the channel-aware one.
-
-    Same-duration mono (passes) vs stereo (exceeds) at the same
-    ``maxAudioBytes`` proves the decoded-buffer cap scales with channels.
-
-    Returns:
-        None
-    """
-    # 2 s of Opus decodes to ~96k samples; mono ~192 kB, stereo ~384 kB. A 300 kB
-    # cap sits between them: mono passes, stereo is rejected.
-    mono = _makeOggOpus(channels=1, seconds=2.0)
-    stereo = _makeOggOpus(channels=2, seconds=2.0)
-    channelAwareCap = 300_000
-
-    monoResult = await _extract(mono, maxAudioBytes=channelAwareCap)
-    assert monoResult.channels == 1
-
-    with pytest.raises(AudioTooLargeError):
-        await _extract(stereo, maxAudioBytes=channelAwareCap)
-
-
-async def testDecodedBufferCapRejectsLargeMonoSource() -> None:
-    """A mono source whose decoded PCM exceeds the cap raises AudioTooLargeError.
-
-    Returns:
-        None
-    """
-    data = _makeOggOpus(channels=1, seconds=2.0)
-    with pytest.raises(AudioTooLargeError) as excInfo:
-        await _extract(data, maxAudioBytes=1000)
-    assert excInfo.value.errorCode.value == "audio-too-large"
-
-
 # ============================================================================
 # Path selection
 # ============================================================================
@@ -726,55 +569,6 @@ async def testSupportedButStereoWavTranscodesBecauseOutOfWavSpec() -> None:
     assert result.container is STTAudioContainerType.OGG_OPUS
     assert result.data != data
     assert result.channels == 2  # channel-preserving
-
-
-async def testSupportedOverInlineCapTranscodes() -> None:
-    """A supported container whose payload exceeds the inline cap falls through to transcode.
-
-    A mono WAV matches the provider's WAV spec, but forcing the inline cap just
-    under its (uncompressed PCM) size routes it to transcode. PCM -> Opus is
-    deterministically smaller, so the transcoded payload fits the same cap and
-    the container becomes OGG_OPUS (the provider's first compressed target) — a
-    realistic shrink case, unlike opus -> opus.
-
-    Returns:
-        None
-    """
-    data = _makeWav(channels=1)
-    # Inline cap just under the WAV (PCM) size forces transcode; the transcoded
-    # Opus payload is far smaller and fits the same cap.
-    inlineCap = len(data) - 1
-    result = await _extract(data, maxInlineBytes=inlineCap)
-    assert result.container is STTAudioContainerType.OGG_OPUS
-    assert result.data != data
-    assert len(result.data) <= inlineCap
-
-
-async def testTranscodedPayloadOverInlineCapRaisesAudioTooLargeError() -> None:
-    """A transcoded payload that still exceeds the inline cap raises AudioTooLargeError.
-
-    Returns:
-        None
-    """
-    data = _makeOggOpus(channels=1)
-    # An inline cap far too small for even the transcoded output.
-    with pytest.raises(AudioTooLargeError):
-        await _extract(data, maxInlineBytes=10)
-
-
-async def testTranscodeStopsAtDurationCap() -> None:
-    """An over-cap source on the transcode path is truncated, not rejected.
-
-    Returns:
-        None
-    """
-    # Stereo WAV transcodes (out of WAV mono spec); a 1 s cap truncates the
-    # 2 s source instead of rejecting it.
-    data = _makeWav(channels=2, seconds=2.0)
-    result = await _extract(data, maxDurationSeconds=1)
-    assert result.container is STTAudioContainerType.OGG_OPUS
-    assert result.channels == 2
-    assert result.durationMs <= 1000  # stop-at-cap
 
 
 async def testUnderCapTranscodeDurationApproximatesSource() -> None:
@@ -913,182 +707,9 @@ async def testTruncatedButOpenableSourceRaisesAudioDecodeError(monkeypatch: pyte
     _assertAllClosed(opened)
 
 
-async def testContainersClosedOnDurationExceeded(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The container is closed when DurationExceededError is raised on pass-through.
-
-    Args:
-        monkeypatch: The pytest monkeypatch fixture.
-
-    Returns:
-        None
-    """
-    data = _makeOggOpus(channels=1, seconds=2.0)  # build before the spy
-    opened = _installCloseSpy(monkeypatch)
-    with pytest.raises(DurationExceededError):
-        await _extract(data, maxDurationSeconds=1)
-    assert len(opened) == 2  # probe + pass-through duration measurement
-    _assertAllClosed(opened)
-
-
-async def testContainersClosedOnAudioTooLarge(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The container is closed when AudioTooLargeError is raised (decoded-buffer cap).
-
-    Args:
-        monkeypatch: The pytest monkeypatch fixture.
-
-    Returns:
-        None
-    """
-    data = _makeOggOpus(channels=1, seconds=2.0)  # build before the spy
-    opened = _installCloseSpy(monkeypatch)
-    with pytest.raises(AudioTooLargeError):
-        await _extract(data, maxAudioBytes=1000)
-    _assertAllClosed(opened)
-
-
-async def testContainersClosedOnSourceTooLarge(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No PyAV container is opened before the source-byte recheck rejects.
-
-    The source-byte recheck runs before any PyAV work, so no container is opened
-    by ``extractAudio``.
-
-    Args:
-        monkeypatch: The pytest monkeypatch fixture.
-
-    Returns:
-        None
-    """
-    data = _makeOggOpus(channels=1)  # build before the spy patches av.open
-    opened = _installCloseSpy(monkeypatch)
-    with pytest.raises(SourceTooLargeError):
-        await _extract(data, maxSourceBytes=len(data) - 1)
-    assert opened == []  # nothing opened by extractAudio before the recheck
-    _assertAllClosed(opened)
-
-
-async def testCancellationDuringLoaderAwaitPropagatesCleanly(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Cancelling extractAudio while awaiting the loader propagates CancelledError cleanly.
-
-    Per §5, ``asyncio.to_thread`` cancellation does not stop native decoding once
-    the thread has started; this test cancels at the loader await (before any PyAV
-    work), which is the deterministically cancellable seam. Cancelling during
-    native decode is a documented §5 limitation (the thread runs to completion and
-    its ``finally`` still closes containers — exercised by the exception-path
-    cleanup tests above), not something a unit test can interrupt.
-
-    Args:
-        monkeypatch: The pytest monkeypatch fixture.
-
-    Returns:
-        None
-    """
-    opened = _installCloseSpy(monkeypatch)
-    blocker = asyncio.Event()
-
-    async def blockingLoader(maxBytes: int) -> STTLoaderResult:
-        """A loader that blocks until set, so the task can be cancelled mid-await.
-
-        Args:
-            maxBytes: The byte bound (ignored).
-
-        Returns:
-            STTLoaderResult: Never returns in this test (cancelled first).
-        """
-        await blocker.wait()
-        return STTLoaderResult(data=_makeOggOpus(channels=1), fileSize=0)
-
-    task = asyncio.create_task(
-        extractAudio(
-            blockingLoader,
-            _YANDEX_FORMATS,
-            _MAX_SOURCE_BYTES,
-            _MAX_DURATION_SECONDS,
-            _MAX_AUDIO_BYTES,
-            _MAX_INLINE_BYTES,
-        )
-    )
-    # Let the task reach the loader await.
-    await asyncio.sleep(0)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    # No PyAV container was opened (cancel happened before to_thread).
-    assert opened == []
-    _assertAllClosed(opened)
-
-
-# ============================================================================
-# Loader receives the source-byte cap (dependency-firewall seam #2)
-# ============================================================================
-
-
-async def testLoaderReceivesMaxSourceBytes() -> None:
-    """The loader is called with ``maxSourceBytes`` as its byte bound.
-
-    Returns:
-        None
-    """
-    received: List[int] = []
-
-    async def recordingLoader(maxBytes: int) -> STTLoaderResult:
-        """Record the byte bound and return a valid source.
-
-        Args:
-            maxBytes: The byte bound passed by extractAudio.
-
-        Returns:
-            STTLoaderResult: A valid OGG_OPUS source.
-        """
-        received.append(maxBytes)
-        return STTLoaderResult(data=_makeOggOpus(channels=1), fileSize=0)
-
-    cap = 12_345_678
-    await extractAudio(
-        recordingLoader, _YANDEX_FORMATS, cap, _MAX_DURATION_SECONDS, _MAX_AUDIO_BYTES, _MAX_INLINE_BYTES
-    )
-    assert received == [cap]
-
-
 # ============================================================================
 # Guarded-import and encoder-failure paths
 # ============================================================================
-
-
-async def testUnavailablePyAVRaisesAudioDecodeError(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When ``_PYAV_AVAILABLE`` is False, extractAudio raises AudioDecodeError early.
-
-    The guard is the documented runtime fallback for environments without PyAV
-    (§2); a startup check normally prevents reaching it when STT is enabled
-    (§11.2). The loader must NOT be called when the guard trips.
-
-    Args:
-        monkeypatch: The pytest monkeypatch fixture.
-
-    Returns:
-        None
-    """
-    monkeypatch.setattr(audioMod, "_PYAV_AVAILABLE", False)
-
-    async def mustNotBeCalled(maxBytes: int) -> STTLoaderResult:
-        """A loader that fails if the guard fails to short-circuit.
-
-        Args:
-            maxBytes: The byte bound.
-
-        Returns:
-            STTLoaderResult: Never returned.
-        """
-        raise AssertionError("loader must not be called when PyAV is unavailable")
-
-    with pytest.raises(AudioDecodeError):
-        await extractAudio(
-            mustNotBeCalled,
-            _YANDEX_FORMATS,
-            _MAX_SOURCE_BYTES,
-            _MAX_DURATION_SECONDS,
-            _MAX_AUDIO_BYTES,
-            _MAX_INLINE_BYTES,
-        )
 
 
 async def testNoCompressedTranscodeTargetRaisesEncoderError() -> None:

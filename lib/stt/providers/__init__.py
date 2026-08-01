@@ -6,9 +6,9 @@ v1; its isolated event parser lives in :mod:`lib.stt.providers.yandex_events`
 (readiness correction #2 / ``docs/plans/lib-stt-v1.md`` §3).
 
 This package MUST NOT import ``internal.bot``, ``internal.database``, or any
-singleton service (the ``lib/stt`` dependency firewall, §1). Public re-exports are
-consumed by :class:`~lib.stt.manager.STTManager`'s integration layer and surfaced at
-the :mod:`lib.stt` top level.
+singleton service (the ``lib/stt`` dependency firewall, §1). Public re-exports
+are consumed by the integration layer (the future STTService, which holds the
+provider directly) and surfaced at the :mod:`lib.stt` top level.
 """
 
 from typing import List

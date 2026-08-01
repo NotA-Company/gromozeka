@@ -20,7 +20,7 @@ empty segments would otherwise yield the no-speech sentinel — that is why the
 service, not this function, gates ERROR handling.
 """
 
-from typing import List, Tuple
+from collections.abc import Sequence
 
 from lib.stt.models import TranscriptionResult, TranscriptionSegment
 
@@ -104,7 +104,7 @@ def formatTranscript(result: TranscriptionResult, maxTranscriptChars: int) -> st
     return header + head + marker + tail
 
 
-def _buildBody(segments: Tuple[TranscriptionSegment, ...]) -> str:
+def _buildBody(segments: Sequence[TranscriptionSegment]) -> str:
     """Build the escaped, timestamped transcript body from segments.
 
     Iterates ``segments`` in the given order (no re-sorting), skipping any whose
@@ -125,7 +125,7 @@ def _buildBody(segments: Tuple[TranscriptionSegment, ...]) -> str:
     Returns:
         str: The joined body, or the empty string when every segment is empty.
     """
-    lines: List[str] = []
+    lines: list[str] = []
     for segment in segments:
         normalizedText = segment.text.strip()
         if not normalizedText:

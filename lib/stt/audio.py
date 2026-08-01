@@ -1,19 +1,12 @@
 """PyAV-based audio extraction with provider-driven format negotiation for lib.stt.
 
-This module owns the only runtime raise-point inside ``lib/stt``
-(load-bearing contract #2, ``docs/plans/lib-stt-v1.md`` §4/§5): the coroutine
-:func:`extractAudio`. It downloads nothing itself — it invokes the
-service-supplied typed :data:`~lib.stt.models.STTMediaLoader` to obtain the
-source bytes, then probes them with PyAV, negotiates one of three paths
-(pass-through / transcode / reject) against the provider's
-``supportedInputFormats`` and the caps, and returns an
-:class:`~lib.stt.models.ExtractedAudio`.
+This module owns the only runtime raise-point inside ``lib/stt`` (the coroutine
+:func:`extractAudio`). ``extractAudio`` downloads nothing — it receives the
+already-downloaded source bytes, probes them with PyAV, negotiates one of three
+paths (pass-through / transcode / reject) against the provider's
+``supportedInputFormats``, and returns an :class:`~lib.stt.models.ExtractedAudio`.
 
-Key invariants (all from §5):
-- **Caps are parameters, not config.** ``extractAudio`` receives
-  ``maxSourceBytes``, ``maxDurationSeconds``, ``maxAudioBytes`` and
-  ``maxInlineBytes``; it never reads ``[stt]`` config (the dependency firewall,
-  §1; caps ownership, contract #3).
+Key invariants:
 - **Always preserve source channels; never downmix** (hard rule). Both the
   pass-through and transcode paths carry the source channel count unchanged.
 - **Duration is measured from the actual sample count**, not container metadata
@@ -22,52 +15,45 @@ Key invariants (all from §5):
   block closes BOTH the input and output PyAV containers on every path —
   success, exception, and cancellation.
 - Each typed exception maps 1:1 to an :class:`~lib.stt.models.STTErrorCode`
-  (via the class-level ``errorCode``) so ``STTService`` can map the failure
-  category without re-mapping.
+  (via the class-level ``errorCode``) so the caller can map the failure category
+  without re-mapping.
 
-Guarded import (load-bearing contract #6, §2): PyAV is imported with the
-project-approved module-level ``try/except ImportError`` and a private
-``_PYAV_AVAILABLE`` flag. When STT is enabled, a missing PyAV is a startup error
-handled by ``STTService`` (§11.2); if :func:`extractAudio` is nonetheless
-reached without PyAV it raises :class:`~lib.stt.exceptions.AudioDecodeError`.
+.. note::
+   This module does NOT bound decoded PCM memory — a large/long source can
+   decode to hundreds of MB of PCM during probing/measurement/transcoding. The
+   caller (the future STTService) is responsible for bounding source bytes and
+   duration BEFORE calling :func:`extractAudio`; decoded-memory bounding is
+   intentionally not enforced here (an accepted trade-off for simplicity).
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from dataclasses import dataclass
 from io import BytesIO
-from typing import Dict, Optional, Tuple, cast
+from typing import Dict, Optional, cast
 
-try:
-    import av
-    import av.error
-    from av.audio.stream import AudioStream
-    from av.container import InputContainer
-
-    _PYAV_AVAILABLE = True
-except ImportError:
-    _PYAV_AVAILABLE = False
+import av
+import av.error
+from av.audio.stream import AudioStream
+from av.container import InputContainer
 
 from lib.stt.exceptions import (
     AudioDecodeError,
-    AudioTooLargeError,
-    DurationExceededError,
     EncoderError,
     NoAudioTrackError,
-    SourceTooLargeError,
 )
 from lib.stt.models import (
     AudioFormatSpec,
     ExtractedAudio,
     STTAudioContainerType,
-    STTMediaLoader,
 )
 
 #: Compressed container targets the transcode path may encode to, in preference
 #: order. The transcode path picks the provider's first ``supportedInputFormats``
 #: entry whose container is in this tuple (OGG_OPUS for Yandex).
-_COMPRESSED_TARGETS: Tuple[STTAudioContainerType, ...] = (
+_COMPRESSED_TARGETS: Sequence[STTAudioContainerType] = (
     STTAudioContainerType.OGG_OPUS,
     STTAudioContainerType.MP3,
 )
@@ -90,10 +76,6 @@ _FORMAT_FOR_CONTAINER: Dict[STTAudioContainerType, str] = {
 #: encoder resamples internally); the output ``ExtractedAudio.sampleRate`` reports
 #: this native rate for an OGG_OPUS transcode target.
 _OPUS_NATIVE_RATE = 48000
-
-#: Number of bytes per decoded PCM sample per channel (signed 16-bit, the format
-#: the decoded-buffer cap formula assumes: ``duration * channels * sampleRate * 2``).
-_BYTES_PER_SAMPLE_PER_CHANNEL = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,96 +102,54 @@ class _ProbeInfo:
 
 
 async def extractAudio(
-    loader: STTMediaLoader,
-    supportedInputFormats: Tuple[AudioFormatSpec, ...],
-    maxSourceBytes: int,
-    maxDurationSeconds: int,
-    maxAudioBytes: int,
-    maxInlineBytes: int,
+    data: bytes,
+    supportedInputFormats: Sequence[AudioFormatSpec],
 ) -> ExtractedAudio:
     """Extract and negotiate audio for a provider.
 
-    Invokes the service-supplied ``loader`` (which closes over the platform
-    identifiers and receives ``maxSourceBytes`` as its byte bound), defensively
-    rechecks the returned source size, then runs the blocking PyAV probe +
-    negotiation in :func:`asyncio.to_thread`. Raises a typed
-    :class:`~lib.stt.exceptions.STTExtractionError` (each mapping 1:1 to an
-    :class:`~lib.stt.models.STTErrorCode`) for every expected extraction failure;
-    never returns ``None``.
+    Runs the blocking PyAV probe + negotiation in :func:`asyncio.to_thread`.
+    Raises a typed :class:`~lib.stt.exceptions.STTExtractionError` (each mapping
+    1:1 to an :class:`~lib.stt.models.STTErrorCode`) for every expected
+    extraction failure; never returns ``None``.
+
+    .. note::
+       This function does NOT bound decoded PCM memory — a large/long source can
+       decode to hundreds of MB. The caller (the future STTService) is
+       responsible for bounding source bytes and duration BEFORE calling this;
+       decoded-memory bounding is intentionally not enforced here (accepted
+       trade-off for simplicity).
 
     Args:
-        loader: The service-supplied bounded media loader
-            (:data:`~lib.stt.models.STTMediaLoader`). It receives ``maxSourceBytes``
-            and returns the source bytes; ``lib/stt`` never imports platform
-            download code (dependency-firewall seam #2).
+        data: The source audio bytes to extract and negotiate.
         supportedInputFormats: The provider's ordered accepted input formats (the
             negotiation surface consumed here). The FIRST compressed entry
             (OGG_OPUS/MP3) is the transcode target.
-        maxSourceBytes: Source-container byte cap (defensive recheck at entry).
-        maxDurationSeconds: Decoded-duration cap in seconds. Rejects
-            (``DurationExceededError``) on the pass-through path; stop-at-cap on
-            the transcode path.
-        maxAudioBytes: Decoded in-memory PCM cap in bytes
-            (``duration * channels * sampleRate * 2``), enforced during every
-            decode step (channel-aware).
-        maxInlineBytes: Inline-payload cap in bytes bounding ``ExtractedAudio.data``
-            (base64-expanded into the submit body). Drives the pass-through-vs-
-            transcode decision and the post-encode check.
 
     Returns:
         ExtractedAudio: The negotiated, format-aware audio handed to the provider.
 
     Raises:
-        SourceTooLargeError: The returned source byte length exceeds
-            ``maxSourceBytes``.
         NoAudioTrackError: The source has no decodable audio stream.
         AudioDecodeError: The source is corrupt/truncated or PyAV is unavailable.
-        DurationExceededError: Measured duration exceeds ``maxDurationSeconds`` on
-            the pass-through path (compressed audio cannot be truncated without a
-            re-encode).
-        AudioTooLargeError: The decoded in-memory buffer exceeds
-            ``maxAudioBytes``, or a transcoded payload exceeds ``maxInlineBytes``.
         EncoderError: No compressed transcode target is available, or the
             encoder/muxer failed.
     """
-    if not _PYAV_AVAILABLE:
-        raise AudioDecodeError("PyAV (av) is not available; cannot extract audio")
-
-    # The loader closes over platform identifiers and receives the byte bound;
-    # it is awaited outside the thread because it is itself async.
-    loaderResult = await loader(maxSourceBytes)
-
-    # Step 1: defensive source-byte recheck (the primary bound is owned by the
-    # STTService loader/admission; this is the lib/stt backstop).
-    sourceBytes = loaderResult.data
-    if loaderResult.fileSize > maxSourceBytes or len(sourceBytes) > maxSourceBytes:
-        raise SourceTooLargeError(f"source size {loaderResult.fileSize} bytes exceeds maxSourceBytes {maxSourceBytes}")
-
     return await asyncio.to_thread(
         _extractBlocking,
-        sourceBytes,
+        data,
         supportedInputFormats,
-        maxDurationSeconds,
-        maxAudioBytes,
-        maxInlineBytes,
     )
 
 
 def _extractBlocking(
     sourceBytes: bytes,
-    supportedInputFormats: Tuple[AudioFormatSpec, ...],
-    maxDurationSeconds: int,
-    maxAudioBytes: int,
-    maxInlineBytes: int,
+    supportedInputFormats: Sequence[AudioFormatSpec],
 ) -> ExtractedAudio:
     """Run the probe + negotiation + path execution in a worker thread.
 
     Args:
-        sourceBytes: The downloaded source container bytes (already rechecked).
+        sourceBytes: The source container bytes.
         supportedInputFormats: The provider's ordered accepted input formats.
-        maxDurationSeconds: Decoded-duration cap in seconds.
-        maxAudioBytes: Decoded in-memory PCM cap in bytes.
-        maxInlineBytes: Inline-payload cap in bytes.
 
     Returns:
         ExtractedAudio: The negotiated audio.
@@ -220,19 +160,17 @@ def _extractBlocking(
     probe = _probe(sourceBytes)
 
     matchedSpec = _matchFormatSpec(probe.container, probe.channels, probe.sampleRate, supportedInputFormats)
-    inlineFits = len(sourceBytes) <= maxInlineBytes
 
-    if matchedSpec is not None and inlineFits:
-        # Step 4 — pass-through path: container supported, channels/rate in range,
-        # and the source payload fits the inline cap.
-        return _passthrough(sourceBytes, probe, maxDurationSeconds, maxAudioBytes)
+    if matchedSpec is not None:
+        # Pass-through path: container supported and channels/rate in range.
+        return _passthrough(sourceBytes, probe)
 
-    # Step 4 — transcode path: source container unsupported, or supported but the
-    # payload exceeds the inline cap. Stop-at-duration-cap instead of rejecting.
+    # Transcode path: source container unsupported, or supported but channels/rate
+    # out of range.
     target = _chooseTranscodeTarget(supportedInputFormats)
     if target is None:
         raise EncoderError("no compressed transcode target available in supportedInputFormats")
-    return _transcode(sourceBytes, probe, target, maxDurationSeconds, maxAudioBytes, maxInlineBytes)
+    return _transcode(sourceBytes, probe, target)
 
 
 def _probe(sourceBytes: bytes) -> _ProbeInfo:
@@ -283,22 +221,16 @@ def _probe(sourceBytes: bytes) -> _ProbeInfo:
 def _passthrough(
     sourceBytes: bytes,
     probe: _ProbeInfo,
-    maxDurationSeconds: int,
-    maxAudioBytes: int,
 ) -> ExtractedAudio:
     """Pass-through path: return the source bytes in their original container.
 
     Decodes the source purely to measure duration from the actual sample count
-    (§5 step 3 — not container metadata alone) and to enforce the decoded-buffer
-    and duration caps. Compressed audio cannot be truncated without a re-encode,
-    so an over-cap duration is rejected (``DurationExceededError``) rather than
-    silently truncated. Source channels and sample rate are preserved unchanged.
+    (not container metadata alone). Source channels and sample rate are
+    preserved unchanged.
 
     Args:
         sourceBytes: The original source container bytes (returned verbatim).
         probe: The header probe result (container, channels, sample rate).
-        maxDurationSeconds: Decoded-duration cap in seconds.
-        maxAudioBytes: Decoded in-memory PCM cap in bytes.
 
     Returns:
         ExtractedAudio: The source bytes wrapped with the source container,
@@ -306,14 +238,11 @@ def _passthrough(
 
     Raises:
         AudioDecodeError: The source is corrupt/truncated mid-decode.
-        AudioTooLargeError: The decoded buffer exceeds ``maxAudioBytes``.
-        DurationExceededError: The measured duration exceeds ``maxDurationSeconds``.
     """
-    durationMs, exceeded = _measureDurationAndEnforceCaps(
-        sourceBytes, probe.channels, probe.sampleRate, maxDurationSeconds, maxAudioBytes
+    durationMs = _measureDuration(
+        sourceBytes,
+        probe.sampleRate,
     )
-    if exceeded:
-        raise DurationExceededError(f"measured duration exceeds the {maxDurationSeconds}s cap on the pass-through path")
     assert probe.container is not None  # pass-through only runs when container matched a spec
     return ExtractedAudio(
         container=probe.container,
@@ -328,34 +257,25 @@ def _transcode(
     sourceBytes: bytes,
     probe: _ProbeInfo,
     target: STTAudioContainerType,
-    maxDurationSeconds: int,
-    maxAudioBytes: int,
-    maxInlineBytes: int,
 ) -> ExtractedAudio:
     """Transcode path: decode the source and re-encode to a compressed container.
 
     Encodes to ``target`` (the provider's first supported compressed format —
-    OGG_OPUS for Yandex), **channel-preserving** (no downmix), stopping at the
-    duration cap during encode so an over-cap source is truncated rather than
-    rejected. Enforces the decoded-buffer cap during decode. After encode, the
-    inline-payload cap is rechecked (a transcoded payload may still exceed it).
+    OGG_OPUS for Yandex), **channel-preserving** (no downmix). Decoded-memory
+    bounding is intentionally not enforced here (see the module note on the
+    accepted decoded-memory gap).
 
     Args:
         sourceBytes: The source container bytes.
         probe: The header probe result (container, channels, sample rate).
         target: The transcode target container (OGG_OPUS or MP3).
-        maxDurationSeconds: Decoded-duration cap in seconds (stop-at-cap).
-        maxAudioBytes: Decoded in-memory PCM cap in bytes.
-        maxInlineBytes: Inline-payload cap in bytes (post-encode check).
 
     Returns:
         ExtractedAudio: The re-encoded bytes with the target container, preserved
-        source channel count, the target sample rate, and the (capped) duration.
+        source channel count, the target sample rate, and the measured duration.
 
     Raises:
         AudioDecodeError: The source is corrupt/truncated mid-decode.
-        AudioTooLargeError: The decoded buffer exceeds ``maxAudioBytes``, or the
-            transcoded payload exceeds ``maxInlineBytes``.
         EncoderError: The encoder/muxer failed.
     """
     outCodec = _CODEC_FOR_CONTAINER[target]
@@ -388,15 +308,9 @@ def _transcode(
             raise EncoderError(f"failed to configure {outCodec} encoder: {exc}") from exc
 
         encodedSamples = 0
-        capSamples = maxDurationSeconds * probe.sampleRate
         try:
             for frame in inContainer.decode(audio=0):
-                # Stop-at-duration-cap: do not encode past the cap.
-                if encodedSamples + frame.samples > capSamples:
-                    break
-                # Enforce the decoded-buffer cap during decode (channel-aware).
-                if (encodedSamples + frame.samples) * probe.channels * _BYTES_PER_SAMPLE_PER_CHANNEL > maxAudioBytes:
-                    raise AudioTooLargeError(f"decoded buffer exceeds maxAudioBytes {maxAudioBytes} during transcode")
+                # Encode every decoded frame (channel-preserving).
                 try:
                     for packet in outStream.encode(frame):
                         outContainer.mux(packet)
@@ -431,14 +345,8 @@ def _transcode(
         if inContainer is not None:
             inContainer.close()
 
-    # Post-encode inline-payload cap (§5 caps table: drives the decision AND the
-    # post-encode check).
-    if len(outBytes) > maxInlineBytes:
-        raise AudioTooLargeError(f"transcoded payload {len(outBytes)} bytes exceeds maxInlineBytes {maxInlineBytes}")
-
     # durationMs from the actual encoded sample count (the source-rate samples we
-    # fed to the encoder, capped). stoppedAtCap means we hit the duration cap, so
-    # the reported duration is the capped portion.
+    # fed to the encoder).
     durationMs = int(round(encodedSamples * 1000 / probe.sampleRate))
 
     return ExtractedAudio(
@@ -450,39 +358,27 @@ def _transcode(
     )
 
 
-def _measureDurationAndEnforceCaps(
+def _measureDuration(
     sourceBytes: bytes,
-    channels: int,
     sampleRate: int,
-    maxDurationSeconds: int,
-    maxAudioBytes: int,
-) -> Tuple[int, bool]:
-    """Decode-count source samples to measure duration, enforcing caps.
+) -> int:
+    """Decode-count source samples to measure an accurate duration.
 
     Used by the pass-through path (which returns the original compressed bytes
-    but still needs an accurate, sample-count-derived duration). Frames are
-    discarded as they are counted, so no large PCM buffer accumulates; the
-    decoded-buffer cap is enforced incrementally as a channel-aware policy bound
-    (§5 step 5). Counting stops as soon as the duration cap is crossed (returns
-    ``exceeded=True``) since the caller rejects over-cap durations anyway.
+    but still needs a sample-count-derived duration, not container metadata
+    alone). Frames are discarded as they are counted, so no large PCM buffer
+    accumulates.
 
     Args:
         sourceBytes: The source container bytes.
-        channels: Source channel count.
         sampleRate: Source sample rate in Hz.
-        maxDurationSeconds: Decoded-duration cap in seconds.
-        maxAudioBytes: Decoded in-memory PCM cap in bytes.
 
     Returns:
-        Tuple[int, bool]: ``(durationMs, exceeded)`` where ``durationMs`` is the
-        measured (or cap-crossing) duration in milliseconds and ``exceeded`` is
-        ``True`` iff the source had more samples than the duration cap allows.
+        int: The measured duration in milliseconds.
 
     Raises:
         AudioDecodeError: The source is corrupt/truncated mid-decode.
-        AudioTooLargeError: The decoded-buffer cap is exceeded.
     """
-    capSamples = maxDurationSeconds * sampleRate
     container = None
     try:
         try:
@@ -492,20 +388,11 @@ def _measureDurationAndEnforceCaps(
 
         sampleCount = 0
         try:
-            for frame in container.decode(audio=0):
-                sampleCount += frame.samples
-                # Decoded-buffer cap (channel-aware, §5 step 5).
-                if sampleCount * channels * _BYTES_PER_SAMPLE_PER_CHANNEL > maxAudioBytes:
-                    raise AudioTooLargeError(f"decoded buffer exceeds maxAudioBytes {maxAudioBytes}")
-                # Duration cap: reject only when strictly OVER the cap (§5 step 4 —
-                # "over the cap"). The decoded-buffer cap above already uses strict
-                # `>`; this matches it so a source exactly at the cap is accepted.
-                if sampleCount > capSamples:
-                    return (int(round(sampleCount / sampleRate * 1000)), True)
+            sampleCount = sum([frame.samples for frame in container.decode(audio=0)])
         except av.error.FFmpegError as exc:
             raise AudioDecodeError(f"source decode failed: {exc}") from exc
 
-        return (int(round(sampleCount / sampleRate * 1000)), False)
+        return int(round(sampleCount / sampleRate * 1000))
     finally:
         if container is not None:
             container.close()
@@ -565,7 +452,7 @@ def _matchFormatSpec(
     container: Optional[STTAudioContainerType],
     channels: int,
     sampleRate: int,
-    formats: Tuple[AudioFormatSpec, ...],
+    formats: Sequence[AudioFormatSpec],
 ) -> Optional[AudioFormatSpec]:
     """Find the provider spec matching the source container AND channel/rate range.
 
@@ -591,7 +478,7 @@ def _matchFormatSpec(
     return None
 
 
-def _chooseTranscodeTarget(formats: Tuple[AudioFormatSpec, ...]) -> Optional[STTAudioContainerType]:
+def _chooseTranscodeTarget(formats: Sequence[AudioFormatSpec]) -> Optional[STTAudioContainerType]:
     """Pick the transcode target: the provider's first supported compressed format.
 
     The provider's preferred transcode target is the first ``supportedInputFormats``

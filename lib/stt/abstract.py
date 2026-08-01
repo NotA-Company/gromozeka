@@ -1,20 +1,29 @@
 """Abstract provider-neutral STT provider interface for lib.stt.
 
 Defines :class:`AbstractSTTProvider`, the interface every concrete Speech-to-Text
-provider (e.g. ``YandexSpeechKitProvider``) implements. It is consumed by
-``STTManager`` (which selects the single configured provider) and by
-``audio.py`` (which reads :attr:`AbstractSTTProvider.supportedInputFormats` to
-negotiate pass-through vs. transcode).
+provider (e.g. ``YandexSpeechKitProvider``) implements. It is held directly by
+the integration layer (the future STTService, which owns the single configured
+provider and its lifecycle) and consumed by ``audio.py`` (which reads
+:attr:`AbstractSTTProvider.supportedInputFormats` to negotiate pass-through vs.
+transcode).
 
-This module imports only the standard library (``abc``, ``typing``) and
-:mod:`lib.stt.models` — no ``internal.*`` or singleton-service imports (the
-``lib/stt`` dependency firewall, ``docs/plans/lib-stt-v1.md`` §1).
+This module imports only the standard library (``abc``, ``logging``,
+``collections.abc``) and :mod:`lib.stt.models` / :mod:`lib.stt.exceptions` — no
+``internal.*`` or singleton-service imports (the ``lib/stt`` dependency firewall,
+``docs/plans/lib-stt-v1.md`` §1).
 """
 
+import logging
 from abc import ABC, abstractmethod
-from typing import Tuple
+from collections.abc import Sequence
 
-from lib.stt.models import AudioFormatSpec, ExtractedAudio, TranscriptionResult
+from lib.stt.exceptions import STTExtractionError
+from lib.stt.models import AudioFormatSpec, ExtractedAudio, STTErrorCode, STTResultStatus, TranscriptionResult
+
+from . import audio
+
+logger = logging.getLogger(__name__)
+"""Module logger for the never-raise defense-in-depth boundary in :meth:`stt`."""
 
 
 class AbstractSTTProvider(ABC):
@@ -39,9 +48,8 @@ class AbstractSTTProvider(ABC):
     ``transcribe``.
     """
 
-    @property
     @abstractmethod
-    def supportedInputFormats(self) -> Tuple[AudioFormatSpec, ...]:
+    def supportedInputFormats(self) -> Sequence[AudioFormatSpec]:
         """Ordered container formats this provider accepts inline.
 
         Consumed by ``audio.py`` for pass-through/transcode negotiation. The
@@ -50,7 +58,7 @@ class AbstractSTTProvider(ABC):
         (quality-by-format is UNVERIFIED, §10(b)).
 
         Returns:
-            Tuple[AudioFormatSpec, ...]: The provider's ordered accepted input
+            Sequence[AudioFormatSpec]: The provider's ordered accepted input
             container formats.
         """
 
@@ -79,12 +87,43 @@ class AbstractSTTProvider(ABC):
             :class:`~lib.stt.models.STTErrorCode` for an expected failure.
         """
 
+    async def stt(self, data: bytes) -> TranscriptionResult:
+        """High-level never-raise entry: extract + transcribe.
+
+        Wraps :func:`lib.stt.audio.extractAudio` so that any extraction failure
+        (a typed :class:`~lib.stt.exceptions.STTExtractionError` or an unexpected
+        exception) is mapped to a ``TranscriptionResult(status=ERROR, …)`` instead
+        of propagating, then delegates to :meth:`transcribe` (which is itself
+        never-raise). This is the integration layer's convenience entry point and
+        NEVER raises for any expected or unexpected failure.
+
+        Args:
+            data: The source audio bytes to extract and transcribe.
+
+        Returns:
+            TranscriptionResult: FINAL/NO_SPEECH on success, or ERROR with an
+            :class:`~lib.stt.models.STTErrorCode` for any extraction or
+            transcription failure (NO_AUDIO / PROVIDER_ERROR from extraction;
+            PROVIDER_ERROR / PROTOCOL_ERROR from the provider).
+        """
+        try:
+            audioData = await audio.extractAudio(
+                data,
+                supportedInputFormats=self.supportedInputFormats(),
+            )
+            return await self.transcribe(audioData)
+        except STTExtractionError as exc:
+            return TranscriptionResult(status=STTResultStatus.ERROR, segments=(), errorCode=exc.errorCode)
+        except Exception:  # noqa: BLE001 — never-raise boundary (defense-in-depth)
+            logger.exception("Unexpected STT failure")
+            return TranscriptionResult(status=STTResultStatus.ERROR, segments=(), errorCode=STTErrorCode.PROVIDER_ERROR)
+
     @abstractmethod
     async def aclose(self) -> None:
         """Release provider resources (e.g. close the persistent httpx client).
 
-        Called by ``STTManager.aclose()`` during graceful shutdown, after the
-        queue has drained in-flight STT workers (parent §11.3).
+        Called by the service layer (the future STTService) during graceful
+        shutdown, after in-flight STT workers have drained (parent §11.3).
 
         Returns:
             None

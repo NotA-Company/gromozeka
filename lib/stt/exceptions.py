@@ -55,36 +55,6 @@ class NoAudioTrackError(STTExtractionError):
     errorCode = STTErrorCode.NO_AUDIO
 
 
-class SourceTooLargeError(STTExtractionError):
-    """Raised when the downloaded source byte recheck fails the source-bytes cap.
-
-    Maps to :attr:`STTErrorCode.SOURCE_TOO_LARGE`.
-    """
-
-    errorCode = STTErrorCode.SOURCE_TOO_LARGE
-
-
-class DurationExceededError(STTExtractionError):
-    """Raised when probed/decoded duration is over the cap on the pass-through path.
-
-    Compressed audio cannot be truncated without a re-encode, so the
-    pass-through path rejects over-cap durations rather than silently
-    truncating; the transcode path stops at the cap instead of raising. Maps to
-    :attr:`STTErrorCode.DURATION_EXCEEDED`.
-    """
-
-    errorCode = STTErrorCode.DURATION_EXCEEDED
-
-
-class AudioTooLargeError(STTExtractionError):
-    """Raised when the decoded in-memory buffer or inline payload exceeds its cap.
-
-    Maps to :attr:`STTErrorCode.AUDIO_TOO_LARGE`.
-    """
-
-    errorCode = STTErrorCode.AUDIO_TOO_LARGE
-
-
 class AudioDecodeError(STTExtractionError):
     """Raised on a corrupt/truncated source or a decoder failure during probing.
 

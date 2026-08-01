@@ -1,30 +1,25 @@
-"""Unit tests for lib.stt Phase 1 foundation: models + exceptions.
+"""Unit tests for lib.stt foundation: models + exceptions.
 
-Covers (per ``docs/plans/lib-stt-v1.md`` §4/§5):
-- Enum membership and exact string values, including the wire-fixed
-  ``STTAudioContainerType`` labels.
+Covers:
+- Enum membership and exact string values (``STTResultStatus``,
+  ``STTErrorCode``, ``STTAudioContainerType``), including the
+  ``STTAudioContainerType.toYandexSpeechKit()`` wire-label mapping.
 - Frozen/slot record construction and immutability (``setattr`` raises
   ``dataclasses.FrozenInstanceError``).
-- Default-value behaviour for ``TranscriptionResult.errorCode`` and
-  ``STTLoaderResult.mimeType``.
+- Default-value behaviour for ``TranscriptionResult.errorCode``.
 - The typed extraction-exception taxonomy: the 1:1 (and shared) exception →
   ``STTErrorCode`` mapping and the ``isinstance`` relationship to
   ``STTExtractionError``.
-- ``STTMediaLoader`` usability as a type hint.
 """
 
 import dataclasses
-import typing
 
 import pytest
 
 from lib.stt.exceptions import (
     AudioDecodeError,
-    AudioTooLargeError,
-    DurationExceededError,
     EncoderError,
     NoAudioTrackError,
-    SourceTooLargeError,
     STTExtractionError,
 )
 from lib.stt.models import (
@@ -32,8 +27,6 @@ from lib.stt.models import (
     ExtractedAudio,
     STTAudioContainerType,
     STTErrorCode,
-    STTLoaderResult,
-    STTMediaLoader,
     STTResultStatus,
     TranscriptionResult,
     TranscriptionSegment,
@@ -60,7 +53,7 @@ def testSTTResultStatusMembershipAndValues() -> None:
 
 
 def testSTTErrorCodeMembershipAndValues() -> None:
-    """STTErrorCode exposes exactly the nine named categories with their values.
+    """STTErrorCode exposes exactly the eight shared failure-category members.
 
     Returns:
         None
@@ -71,7 +64,6 @@ def testSTTErrorCodeMembershipAndValues() -> None:
         "SOURCE_TOO_LARGE": "source-too-large",
         "SOURCE_SIZE_UNKNOWN": "source-size-unknown",
         "NO_AUDIO": "no-audio",
-        "AUDIO_TOO_LARGE": "audio-too-large",
         "DURATION_EXCEEDED": "duration-exceeded",
         "DOWNLOAD_ERROR": "download-error",
         "PROVIDER_ERROR": "provider-error",
@@ -79,31 +71,40 @@ def testSTTErrorCodeMembershipAndValues() -> None:
     }
 
 
-def testSTTAudioContainerTypeWireFixedValues() -> None:
-    """STTAudioContainerType values are the exact protobuf-JSON wire labels.
+@pytest.mark.parametrize(
+    "container, expectedLabel",
+    [
+        (STTAudioContainerType.WAV, "WAV"),
+        (STTAudioContainerType.OGG_OPUS, "OGG_OPUS"),
+        (STTAudioContainerType.MP3, "MP3"),
+    ],
+)
+def testToYandexSpeechKitWireLabels(container: STTAudioContainerType, expectedLabel: str) -> None:
+    """Each STTAudioContainerType maps to its Yandex SpeechKit proto wire label.
 
-    These labels are written verbatim into ``container_audio.container_audio_type``
-    and are a wire contract, so casing is load-bearing.
-
-    Returns:
-        None
-    """
-    assert STTAudioContainerType.WAV == "WAV"
-    assert STTAudioContainerType.OGG_OPUS == "OGG_OPUS"
-    assert STTAudioContainerType.MP3 == "MP3"
-    members = {member.name: member.value for member in STTAudioContainerType}
-    assert members == {"WAV": "WAV", "OGG_OPUS": "OGG_OPUS", "MP3": "MP3"}
-
-
-def testStrEnumStringIdentity() -> None:
-    """StrEnum members compare equal to their plain string values.
+    Args:
+        container: The container member to convert.
+        expectedLabel: The expected Yandex wire label string.
 
     Returns:
         None
     """
-    assert STTResultStatus.FINAL == "final"
-    assert STTErrorCode.NO_AUDIO == "no-audio"
-    assert STTAudioContainerType.OGG_OPUS == "OGG_OPUS"
+    assert container.toYandexSpeechKit() == expectedLabel
+
+
+def testToYandexSpeechKitInvalidValueRaisesValueError() -> None:
+    """The defensive fallthrough raises ValueError for a non-member value.
+
+    STTAudioContainerType is a StrEnum with exactly three members, so the
+    ``case _`` branch is unreachable for a real member. It is exercised here by
+    calling the underlying function with a bare string (a non-member), which
+    fails every enum-member pattern and hits the fallthrough.
+
+    Returns:
+        None
+    """
+    with pytest.raises(ValueError):
+        STTAudioContainerType.toYandexSpeechKit("bogus")  # type: ignore[arg-type]
 
 
 # ============================================================================
@@ -141,18 +142,6 @@ def testTranscriptionResultErrorCodeDefaultsToNone() -> None:
     """
     result = TranscriptionResult(status=STTResultStatus.ERROR, segments=())
     assert result.errorCode is None
-
-
-def testSTTLoaderResultMimeTypeDefaultsToNone() -> None:
-    """STTLoaderResult.mimeType defaults to None when omitted.
-
-    Returns:
-        None
-    """
-    loaderResult = STTLoaderResult(data=b"\x00\x01", fileSize=2)
-    assert loaderResult.mimeType is None
-    assert loaderResult.fileSize == 2
-    assert loaderResult.data == b"\x00\x01"
 
 
 def testAudioFormatSpecAndExtractedAudioConstruct() -> None:
@@ -209,15 +198,14 @@ def testAudioFormatSpecAndExtractedAudioConstruct() -> None:
             ),
             "container",
         ),
-        (STTLoaderResult(data=b"", fileSize=0), "data"),
     ],
 )
 def testFrozenRecordsAreImmutable(instance: object, field: str) -> None:
     """Every frozen record raises FrozenInstanceError on attribute assignment.
 
     Each case mutates a REAL field declared on that record. The previous form
-    mutated ``.text`` uniformly, which ``AudioFormatSpec`` / ``ExtractedAudio`` /
-    ``STTLoaderResult`` do not even declare — it only passed because frozen
+    mutated ``.text`` uniformly, which ``AudioFormatSpec`` / ``ExtractedAudio``
+    do not even declare — it only passed because frozen
     ``__setattr__`` raises before checking attribute existence, so the intent was
     unclear. The value is irrelevant (frozen ``__setattr__`` raises before the
     assignment completes), so a uniform ``"mutated"`` sentinel is used.
@@ -242,9 +230,6 @@ def testFrozenRecordsAreImmutable(instance: object, field: str) -> None:
     "excType, expectedCode",
     [
         (NoAudioTrackError, STTErrorCode.NO_AUDIO),
-        (SourceTooLargeError, STTErrorCode.SOURCE_TOO_LARGE),
-        (DurationExceededError, STTErrorCode.DURATION_EXCEEDED),
-        (AudioTooLargeError, STTErrorCode.AUDIO_TOO_LARGE),
         (AudioDecodeError, STTErrorCode.PROVIDER_ERROR),
         (EncoderError, STTErrorCode.PROVIDER_ERROR),
     ],
@@ -279,9 +264,6 @@ def testAudioDecodeAndEncoderShareProviderErrorCode() -> None:
     "excType",
     [
         NoAudioTrackError,
-        SourceTooLargeError,
-        DurationExceededError,
-        AudioTooLargeError,
         AudioDecodeError,
         EncoderError,
     ],
@@ -320,46 +302,3 @@ def testExceptionCarriesMessage() -> None:
     instance = NoAudioTrackError(message)
     assert str(instance) == message
     assert instance.args == (message,)
-
-
-# ============================================================================
-# STTMediaLoader type alias — usable as a type hint
-# ============================================================================
-
-
-def testSTTMediaLoaderUsableAsTypeHint() -> None:
-    """A function annotated with STTMediaLoader resolves the alias via get_type_hints.
-
-    Returns:
-        None
-    """
-
-    async def sampleLoader(maxBytes: int) -> STTLoaderResult:
-        """A loader matching the STTMediaLoader signature.
-
-        Args:
-            maxBytes: The download byte bound.
-
-        Returns:
-            STTLoaderResult: The loaded bytes.
-        """
-        return STTLoaderResult(data=b"abc", fileSize=3)
-
-    def consume(loader: STTMediaLoader) -> STTMediaLoader:
-        """Echo the loader to exercise the alias on both parameter and return.
-
-        Args:
-            loader: A media loader callable.
-
-        Returns:
-            STTMediaLoader: The same loader, unchanged.
-        """
-        return loader
-
-    hints = typing.get_type_hints(consume)
-    assert hints["loader"] is STTMediaLoader
-    assert hints["return"] is STTMediaLoader
-
-    # The alias is the expected Callable form, and a matching callable is accepted.
-    assert STTMediaLoader == typing.Callable[[int], typing.Awaitable[STTLoaderResult]]
-    assert consume(sampleLoader) is sampleLoader

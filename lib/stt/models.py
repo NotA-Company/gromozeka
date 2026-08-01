@@ -23,9 +23,10 @@ Key components:
 See ``docs/plans/lib-stt-v1.md`` §4 for the authoritative prose on every type.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Awaitable, Callable, Optional, Tuple, TypeAlias
+from typing import Optional
 
 
 class STTResultStatus(StrEnum):
@@ -45,48 +46,53 @@ class STTErrorCode(StrEnum):
     """Stable, provider-neutral failure categories.
 
     Not every code is produced inside lib/stt; see the raise/return contract
-    in ``docs/plans/lib-stt-v1.md`` §4 for which codes are raised (audio.py),
-    returned by the Yandex provider, or produced only by STTService/loader.
+    in ``docs/plans/lib-stt-v1.md`` §4 for which codes are surfaced by ``stt()``
+    (wrapping audio-extraction exceptions), returned by the Yandex provider, or
+    produced only by STTService/loader.
     """
 
     ADMISSION_TIMEOUT = "admission-timeout"
     """Admission wait elapsed before a worker was acquired.
 
-    Produced by STTService; never raised inside lib/stt.
+    Service-layer vocabulary: produced by STTService; never produced inside lib/stt.
     """
 
     SOURCE_TOO_LARGE = "source-too-large"
     """Downloaded source byte length exceeded the source-bytes cap on recheck.
 
-    Raised by audio.py.
+    Service-layer vocabulary: produced by STTService; never produced inside lib/stt.
     """
 
     SOURCE_SIZE_UNKNOWN = "source-size-unknown"
     """Source size could not be determined before download.
 
-    Produced by STTService/loader; never raised inside lib/stt.
+    Service-layer vocabulary: produced by STTService/loader; never produced inside lib/stt.
     """
 
     NO_AUDIO = "no-audio"
-    """Source contained no decodable audio stream. Raised by audio.py."""
+    """Source contained no decodable audio stream.
 
-    AUDIO_TOO_LARGE = "audio-too-large"
-    """Decoded in-memory PCM buffer or inline payload exceeded its cap. Raised by audio.py."""
+    Surfaced by ``stt()`` from an audio-extraction failure (``NoAudioTrackError``).
+    """
 
     DURATION_EXCEEDED = "duration-exceeded"
-    """Probed/decoded duration exceeded the cap on the pass-through path. Raised by audio.py."""
+    """Decoded duration exceeded the configured duration cap.
+
+    Service-layer vocabulary: produced by STTService; never produced inside lib/stt.
+    """
 
     DOWNLOAD_ERROR = "download-error"
     """Media download failed.
 
-    Produced by STTService/loader; never raised inside lib/stt.
+    Service-layer vocabulary: produced by STTService/loader; never produced inside lib/stt.
     """
 
     PROVIDER_ERROR = "provider-error"
     """Provider operation error, exhausted auth/429/5xx/timeout, or a decoder/muxer failure.
 
-    Returned by the Yandex provider and raised by audio.py via
-    AudioDecodeError/EncoderError.
+    Returned by the Yandex provider and surfaced by ``stt()`` from an
+    audio-extraction failure (``AudioDecodeError`` / ``EncoderError``) or an
+    unexpected exception.
     """
 
     PROTOCOL_ERROR = "protocol-error"
@@ -97,27 +103,27 @@ class STTErrorCode(StrEnum):
 
 
 class STTAudioContainerType(StrEnum):
-    """Audio containers a provider accepts inline.
+    """Audio containers a provider accepts inline."""
 
-    Mirrors the Yandex SpeechKit v3 ``ContainerAudio.ContainerAudioType`` proto
-    enum, which has exactly three members: WAV, OGG_OPUS, MP3 (there is no
-    AIFF/AC3/FLAC in the enum). ``RawAudio`` / ``LINEAR16_PCM`` is intentionally
-    not modelled here: v1 always submits a container, not headerless raw PCM.
-
-    Unlike the two enums above, the string values here are the exact
-    protobuf-JSON labels the Yandex provider writes into
-    ``container_audio.container_audio_type``; they are fixed by the wire
-    contract, not freely chosen by the implementer.
-    """
-
-    WAV = "WAV"
+    WAV = "wav"
     """WAV container (PCM with a RIFF header)."""
 
-    OGG_OPUS = "OGG_OPUS"
+    OGG_OPUS = "ogg-opus"
     """Ogg container with an Opus codec (Telegram VOICE native shape)."""
 
-    MP3 = "MP3"
+    MP3 = "mp3"
     """MPEG-1/2 Audio Layer III container (common AUDIO shape)."""
+
+    def toYandexSpeechKit(self) -> str:
+        match self:
+            case STTAudioContainerType.WAV:
+                return "WAV"
+            case STTAudioContainerType.OGG_OPUS:
+                return "OGG_OPUS"
+            case STTAudioContainerType.MP3:
+                return "MP3"
+            case _:
+                raise ValueError(f"Unsupported STTAudioContainerType: {self}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,7 +156,7 @@ class TranscriptionSegment:
     text: str
     startMs: int
     endMs: int
-    words: Tuple[TranscriptionWord, ...]
+    words: Sequence[TranscriptionWord]
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,7 +170,7 @@ class TranscriptionResult:
     """
 
     status: STTResultStatus
-    segments: Tuple[TranscriptionSegment, ...]
+    segments: Sequence[TranscriptionSegment]
     errorCode: Optional[STTErrorCode] = None
 
 
@@ -222,29 +228,3 @@ class ExtractedAudio:
     sampleRate: int
     data: bytes
     durationMs: int
-
-
-@dataclass(frozen=True, slots=True)
-class STTLoaderResult:
-    """Result of the service-supplied bounded media loader.
-
-    Attributes:
-        data: The downloaded source bytes.
-        fileSize: The actual number of bytes downloaded (post-check). Lets
-            STTService update row metadata after download.
-        mimeType: Detected MIME type, if any. Informational only; PyAV decides
-            whether the bytes contain a decodable audio stream.
-    """
-
-    data: bytes
-    fileSize: int
-    mimeType: Optional[str] = None
-
-
-STTMediaLoader: TypeAlias = Callable[[int], Awaitable[STTLoaderResult]]
-"""Service-supplied async loader. Receives maxBytes; returns STTLoaderResult.
-
-Closes over platform identifiers and current SAVE_ATTACHMENTS behavior; lives
-entirely outside lib/stt (``docs/plans/lib-stt-v1.md`` §1, dependency-firewall
-seam #2).
-"""
