@@ -1,0 +1,20 @@
+[stt]
+enabled = false
+provider = "yandex-speechkit"
+use-proxy = false
+api-key = "${YC_API_KEY}"
+folder-id = "${YC_FOLDER_ID}"
+model = "general"
+language = "ru-RU"
+max-source-bytes = 67108864
+max-duration-seconds = 600
+max-transcript-chars = 48000
+max-concurrency = 2
+admission-timeout = 20
+request-timeout = 30
+operation-timeout = 180
+poll-initial-delay = 2
+poll-max-delay = 10
+max-result-bytes = 5242880
+chat-ratelimiter-queue = "stt-chat"
+global-ratelimiter-queue = "stt-global"

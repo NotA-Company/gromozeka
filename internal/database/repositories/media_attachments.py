@@ -294,6 +294,72 @@ class MediaAttachmentsRepository(BaseRepository):
             logger.error(f"Failed to get media attachment: {e}")
             return None
 
+    async def setStatusVerified(
+        self,
+        mediaId: str,
+        *,
+        expected: MediaStatus,
+        target: MediaStatus,
+        description: Optional[str] = None,
+    ) -> Optional[MediaAttachmentDict]:
+        """Atomically transition a media attachment's status by compare-and-set.
+
+        Performs a true atomic compare-and-set via a single
+        ``UPDATE ... WHERE status = :expected RETURNING`` statement.  The
+        UPDATE itself returns the affected row iff the WHERE matched
+        (exactly one row updated); returns ``None`` if no row matched
+        (expected-status mismatch or row missing).  The description is
+        always written on a successful transition (``None`` for FAILED /
+        null-description terminal writes).
+
+        Args:
+            mediaId: The file_unique_id key.
+            expected: The status the row must currently be in for the
+                transition to apply.
+            target: The status to set.
+            description: The transcript text for DONE, or None for FAILED.
+
+        Returns:
+            The updated MediaAttachmentDict iff the row was in ``expected``
+            status and the transition applied (exactly one row updated);
+            ``None`` if no row matched.
+
+        Note:
+            Writes to default source.  Cannot write to readonly sources.
+            Uses ``RETURNING`` which requires SQLite ≥ 3.35.0 (Python 3.12
+            bundles ≥ 3.42; PostgreSQL and MySQL 8.0.22+ also support it).
+        """
+        try:
+            now = dbUtils.getCurrentTimestamp()
+            sqlProvider = await self.manager.getProvider(readonly=False)
+            row = await sqlProvider.executeFetchOne(
+                """
+                UPDATE media_attachments
+                SET
+                    status = :target,
+                    description = :description,
+                    updated_at = :now
+                WHERE
+                    file_unique_id = :mediaId
+                    AND status = :expected
+                RETURNING
+                    file_unique_id, file_id, file_size, media_type,
+                    metadata, status, mime_type, local_url, prompt,
+                    description, created_at, updated_at
+                """,
+                {
+                    "mediaId": mediaId,
+                    "expected": expected,
+                    "target": target,
+                    "description": description,
+                    "now": now,
+                },
+            )
+            return dbUtils.sqlToTypedDict(row, MediaAttachmentDict) if row else None
+        except Exception as e:
+            logger.error(f"Failed to set status verified: {e}")
+            return None
+
     async def getMediaAttachmentsByGroupId(
         self, mediaGroupId: str, *, dataSource: Optional[str] = None
     ) -> List[MediaAttachmentDict]:

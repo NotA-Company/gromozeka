@@ -22,6 +22,7 @@ from internal.database.stats_storage import DatabaseStatsStorage
 from internal.services.llm import LLMService
 from internal.services.proxy import ProxyService
 from internal.services.queue_service import QueueService
+from internal.services.stt import STTService
 from lib.ai.manager import LLMManager
 from lib.logging_utils import initLogging
 from lib.rate_limiter import RateLimiterManager
@@ -98,6 +99,9 @@ class GromozekBot:
         self.rateLimiterManager = RateLimiterManager.getInstance()
         loop.run_until_complete(self.rateLimiterManager.loadConfig(self.configManager.getRateLimiterConfig()))
 
+        # Initialize STT service (default-OFF; constructs/skips the provider)
+        STTService.getInstance().initialize(self.configManager, self.database)
+
         # Initialize bot application
         botConfig = self.configManager.getBotConfig()
         self.botMode = BotProvider(botConfig.get("mode", BotProvider.TELEGRAM))
@@ -146,6 +150,13 @@ class GromozekBot:
             logger.info("LLM manager closed...")
         except Exception:
             logger.exception("Error closing LLM manager during shutdown")
+
+        try:
+            logger.info("Step 2.4b: Closing STT provider...")
+            await STTService.getInstance().aclose()
+            logger.info("STT provider closed...")
+        except Exception:
+            logger.exception("Error closing STT provider during shutdown")
 
         try:
             logger.info("Step 2.5: Closing database...")

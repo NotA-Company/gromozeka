@@ -537,3 +537,20 @@ class ConfigManager:
             ``defaults`` keys.
         """
         return self.config.get("search-history", {})
+
+    def getSttConfig(self) -> Dict[str, Any]:
+        """Get Speech-to-Text (STT) service configuration.
+
+        Returns:
+            A dictionary containing STT service configuration including
+            enabled flag, provider settings, API credentials, and
+            operational parameters (timeouts, caps, concurrency).
+            Returns an empty dict if not configured.
+
+        Example:
+            >>> config_manager = ConfigManager()
+            >>> stt_config = config_manager.getSttConfig()
+            >>> print(stt_config.get("enabled"))
+            False
+        """
+        return self.get("stt", {})

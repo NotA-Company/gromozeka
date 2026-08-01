@@ -534,7 +534,7 @@ Stores information about media attachments (images, documents, etc.).
 | `mime_type` | TEXT | Yes | NULL | MIME type of the file |
 | `local_url` | TEXT | Yes | NULL | Local file path if downloaded |
 | `prompt` | TEXT | Yes | NULL | Prompt used for image generation |
-| `description` | TEXT | Yes | NULL | AI-generated description of media |
+| `description` | TEXT | Yes | NULL | AI-generated description of media. Also carries the formatted Speech-to-Text transcript for transcribed media (persisted by `STTService` via the atomic `setStatusVerified` compare-and-set — see [`docs/llm/architecture.md`](llm/architecture.md) ADR-020 and [`docs/llm/services.md`](llm/services.md) §7). Reuses the existing column; **no migration** was added for STT. |
 | `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
@@ -542,6 +542,8 @@ Stores information about media attachments (images, documents, etc.).
 - Referenced by [`chat_messages`](#chat_messages) via `media_id`
 
 **TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:255)
+
+**STT (media-transcription) semantics:** `STTService` ([ADR-020](llm/architecture.md#adr-020-sttservice--synchronous-stt-pipeline-and-dependency-firewall)) reuses this table — **no migration**. The `status` column carries the transcription lifecycle (`NEW → PENDING → DONE|FAILED`) and the formatted transcript is persisted in `description`. All transitions go through `MediaAttachmentsRepository.setStatusVerified(mediaId, *, expected, target, description=None)` — a portable atomic compare-and-set (`UPDATE ... WHERE file_unique_id = :id AND status = :expected RETURNING <all columns>`) so concurrent workers cannot clobber each other. The service is default-off and unwired until the handler round lands.
 
 ---
 

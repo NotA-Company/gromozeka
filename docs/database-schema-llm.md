@@ -177,7 +177,7 @@ CREATE TABLE media_attachments (
     file_id TEXT,
     file_size INTEGER,
     media_type TEXT NOT NULL,
-    metadata TEXT NOT NULL DEFAULT '',
+    metadata TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     mime_type TEXT,
     local_url TEXT,
@@ -189,6 +189,10 @@ CREATE TABLE media_attachments (
 ```
 
 **TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:255)
+
+**STT (media-transcription) semantics:** `STTService` ([ADR-020](llm/architecture.md#adr-020-sttservice--synchronous-stt-pipeline-and-dependency-firewall)) reuses this table — **no migration**. The `status` column carries the transcription lifecycle (`NEW → PENDING → DONE|FAILED`) and the formatted transcript is persisted in `description`. All transitions go through `MediaAttachmentsRepository.setStatusVerified(mediaId, *, expected, target, description=None)` — a portable atomic compare-and-set (`UPDATE ... WHERE file_unique_id = :id AND status = :expected RETURNING <all columns>`). The service is default-off and unwired until the handler round lands.
+
+**Note on `metadata`:** `migration_013` declares `metadata TEXT NOT NULL` (no `DEFAULT ''`) for cross-RDBMS portability — application code always supplies the value.
 
 ---
 

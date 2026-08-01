@@ -822,6 +822,36 @@ async with httpx.AsyncClient(**proxyKwargs, timeout=30) as client:
 
 ---
 
+## 16. `lib/stt` — Provider-neutral Speech-to-Text
+
+Provider-neutral Speech-to-Text library: PyAV-based audio extraction with container-driven format negotiation (probe → pass-through / transcode, channel-preserving), a typed extraction-exception taxonomy, transcript formatting, an abstract provider exposing a **never-raise** `stt(data)` entry, and a single concrete provider (Yandex SpeechKit v3). It owns no DB rows, no bot state, no admission/concurrency policy, no caps, and no config reading.
+
+**Authoritative spec:** [`docs/plans/lib-stt-v1.md`](../plans/lib-stt-v1.md) — this section is a quick-reference; the plan is the single source of truth for `lib/stt` internals (contracts, module layout, test matrix). **Integration status** (now wired via `STTService`) lives in [`docs/plans/stt-next-steps.md`](../plans/stt-next-steps.md) and [`services.md`](services.md) §7.
+
+**Dependency firewall (load-bearing):** `lib/stt` is bot-free — it must never import `internal.bot`, `internal.database`, or any singleton service. The proxy is **injected** into the provider constructor (never resolved inside `lib/stt`); the audio bytes are a plain `bytes` argument to `extractAudio` / `stt` (never a bot download callable). Sits alongside other bot-free libraries (`lib/ai/`, `lib/yandex_search/`, `lib/openweathermap/`).
+
+**Key modules:**
+
+| Module | Purpose |
+|--------|---------|
+| [`abstract.py`](../../lib/stt/abstract.py) | `AbstractSTTProvider`: `supportedInputFormats()` method, async `transcribe(ExtractedAudio)` (never-raise), concrete async `stt(data: bytes)` never-raise entry (wraps extract + transcribe), `aclose()` |
+| [`audio.py`](../../lib/stt/audio.py) | PyAV probe + container-only format negotiation (pass-through/transcode); channel-preserving (never downmix); unconditional `import av`. **No caps** — the caller bounds source bytes + duration before calling |
+| [`models.py`](../../lib/stt/models.py) | `STTResultStatus`, `STTErrorCode` (shared failure vocabulary — 8 members), `STTAudioContainerType` (+ `toYandexSpeechKit()`), `TranscriptionWord`/`TranscriptionSegment`/`TranscriptionResult`/`AudioFormatSpec`/`ExtractedAudio` (frozen, slots) |
+| [`exceptions.py`](../../lib/stt/exceptions.py) | Typed extraction exceptions (`STTExtractionError` base → `NoAudioTrackError`/`AudioDecodeError`/`EncoderError`), each mapping 1:1 to an `STTErrorCode` via a class attribute |
+| [`formatter.py`](../../lib/stt/formatter.py) | Pure `TranscriptionResult -> str` formatter; `UNTRUSTED_TRANSCRIPT_HEADER` constant; deterministic head/tail truncation to `maxTranscriptChars`; `[No speech detected]` sentinel |
+| [`providers/yandex_speechkit.py`](../../lib/stt/providers/yandex_speechkit.py) | Yandex SpeechKit v3 wire protocol (submit / poll / get / best-effort delete + retry); `supportedInputFormats()` returns `(OGG_OPUS, MP3, WAV)`; held directly by `STTService` (no manager indirection) |
+| [`providers/yandex_events.py`](../../lib/stt/providers/yandex_events.py) | `getRecognition` streaming-JSON event parser (PROVISIONAL framing — see gate-1 in [`stt-next-steps.md`](../plans/stt-next-steps.md) §4) |
+
+**Never-raise contract:** `AbstractSTTProvider.stt(data: bytes)` is the integration entry point. It wraps `extractAudio` + `transcribe` and catches every failure — a typed `STTExtractionError` maps to `TranscriptionResult(ERROR, errorCode=exc.errorCode)`; any other exception maps to `TranscriptionResult(ERROR, PROVIDER_ERROR)`. So calling `stt(data)` can never raise for any expected or unexpected failure. The only runtime raise-point inside `lib/stt` is `audio.extractAudio()` when called **directly** (not via `stt()`); constructors may raise `ValueError` on startup config validation. The downstream `STTService` is the final never-raise boundary — see [ADR-020](architecture.md#adr-020-sttservice--synchronous-stt-pipeline-and-dependency-firewall).
+
+**Accepted decoded-memory gap (load-bearing):** `extractAudio` does **NOT** bound decoded PCM memory — a large/long source can decode to hundreds of MB during probe/measure/transcode. This is an accepted simplification: the owning service (`STTService`) bounds source bytes AND duration BEFORE calling `stt(data)`. If RSS gate-5 ([`stt-next-steps.md`](../plans/stt-next-steps.md) §4) fails at release, the ratified fallback is to restore a decoded-buffer cap inside `extractAudio`, not a service-side change. Documented in the `extractAudio` docstring and [`docs/plans/lib-stt-v1.md`](../plans/lib-stt-v1.md) §5.
+
+**PyAV prerequisite:** pins `av==18.0.0` (parent §8.4). The `import av` is now **unconditional** — the pre-simplification `_PYAV_AVAILABLE` guarded-import pattern is gone, so any `import lib.stt.*` hard-requires PyAV at import time (latent breakage only, since `av` is always in the frozen env).
+
+**Tests:** `tests/lib/stt/` mirroring source paths, plus a golden-data suite under `tests/lib/stt/golden/`. `async def test_...` with no decorator (`asyncio_mode = "auto"`). Mock transport only — no real network. (The library has no singletons, so no singleton-reset fixtures are needed.)
+
+---
+
 ## See Also
 
 - [`index.md`](index.md) — Project overview, lib/ directory map
