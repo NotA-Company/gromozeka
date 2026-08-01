@@ -19,6 +19,7 @@
 | Use or modify the sandbox library | [`sandbox.md`](sandbox.md) |
 | Add or change TOML configuration | [`configuration.md`](configuration.md) |
 | Write or run tests, understand test fixtures | [`testing.md`](testing.md) |
+| Maintain or extend the golden-data record/replay library (`lib/aurumentation`) | [`aurumentation.md`](aurumentation.md) |
 | Follow a step-by-step task workflow or avoid pitfalls | [`tasks.md`](tasks.md) |
 | Maintain `CHANGELOG.md` (when to update, entry style, semver) | [`changelog.md`](changelog.md) |
 | Reuse durable cross-task memory and repo gotchas | [`teamlead-memory.md`](teamlead-memory.md) |
@@ -330,6 +331,7 @@ See [`teamlead-memory.md`](teamlead-memory.md) for the full pattern (`_llmTool*`
 - [`sandbox.md`](sandbox.md) — Sandbox coding patterns, configuration, and anti-patterns
 - [`configuration.md`](configuration.md) — TOML config sections, ConfigManager methods
 - [`testing.md`](testing.md) — Test fixtures, pytest patterns, golden data framework
+- [`aurumentation.md`](aurumentation.md) — `lib/aurumentation` internals: HTTP record/replay transports, masking, the consumer suite pattern, gotchas
 - [`tasks.md`](tasks.md) — Step-by-step task workflows, anti-patterns
 - [`changelog.md`](changelog.md) — Canonical changelog process (Keep a Changelog, semver, entry style)
 - [`teamlead-memory.md`](teamlead-memory.md) — Durable cross-task memory, repo gotchas, workflow lessons
