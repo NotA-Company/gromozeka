@@ -1,21 +1,19 @@
 """Tests for STTService lifecycle (Phase 2 — singleton, init, close).
 
 Covers: singleton identity, disabled no-op, enabled provider construction
-with proxy resolution, validation errors (missing creds, unresolved vars,
-unknown provider, non-positive caps), idempotent initialization,
-isEnabled after failed init, full provider kwarg forwarding, cross-field
-poll-delay validation, and aclose behaviour.
+with proxy resolution, idempotent initialization, isEnabled after failed
+init, full provider kwarg forwarding, aclose behaviour, unknown-provider
+validation, and provider ValueError propagation.
 """
 
 from __future__ import annotations
 
-import re
 from typing import Generator
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-from internal.services.stt.service import STTService
+from internal.services.stt.service import STT_PROVIDERS_MAP, STTService
 
 
 def _validSttConfig() -> dict:
@@ -36,11 +34,10 @@ def _validSttConfig() -> dict:
         "max-duration-seconds": 600,
         "max-transcript-chars": 48000,
         "max-concurrency": 2,
-        "admission-timeout": 20,
-        "request-timeout": 30,
-        "operation-timeout": 180,
-        "poll-initial-delay": 2,
-        "poll-max-delay": 10,
+        "request-timeout-seconds": 30.0,
+        "operation-budget-seconds": 2400.0,
+        "poll-interval-seconds": 3.0,
+        "max-poll-interval-seconds": 20.0,
         "max-result-bytes": 5242880,
         "chat-ratelimiter-queue": "stt-chat",
         "global-ratelimiter-queue": "stt-global",
@@ -73,15 +70,6 @@ def _makeConfigManager(sttConfig: dict) -> Mock:
     mockCm = Mock()
     mockCm.getSttConfig = Mock(return_value=sttConfig)
     return mockCm
-
-
-def _makeDatabase() -> Mock:
-    """Build a mock Database handle.
-
-    Returns:
-        Mock: Mocked Database instance.
-    """
-    return Mock()
 
 
 # -----------------------------------------------------------------------
@@ -117,19 +105,19 @@ class TestDisabledConstructsNoProvider:
     def test_isEnabledFalse(self) -> None:
         """isEnabled() returns False when enabled=false."""
         svc = STTService.getInstance()
-        svc.initialize(_makeConfigManager({"enabled": False}), _makeDatabase())
+        svc.initialize(_makeConfigManager({"enabled": False}))
         assert svc.isEnabled() is False
 
     def test_providerIsNone(self) -> None:
         """_provider is None when disabled."""
         svc = STTService.getInstance()
-        svc.initialize(_makeConfigManager({"enabled": False}), _makeDatabase())
+        svc.initialize(_makeConfigManager({"enabled": False}))
         assert svc._provider is None
 
     async def test_acloseNoException(self) -> None:
         """aclose() does not raise when disabled."""
         svc = STTService.getInstance()
-        svc.initialize(_makeConfigManager({"enabled": False}), _makeDatabase())
+        svc.initialize(_makeConfigManager({"enabled": False}))
         await svc.aclose()  # should not raise
 
 
@@ -141,16 +129,17 @@ class TestDisabledConstructsNoProvider:
 class TestEnabledValidConstructsProviderWithResolvedProxy:
     """When enabled=true with valid config, provider is constructed."""
 
-    @patch("internal.services.stt.service.YandexSpeechKitProvider")
     @patch("internal.services.stt.service.ProxyService")
-    def test_providerConstructed(self, mockProxyServiceCls: Mock, mockProviderCls: Mock) -> None:
+    def test_providerConstructed(self, mockProxyServiceCls: Mock) -> None:
         """Provider is constructed when enabled with valid config."""
         mockProxyService = MagicMock()
         mockProxyService.resolveProxy = Mock(return_value=MagicMock())
         mockProxyServiceCls.getInstance = Mock(return_value=mockProxyService)
 
-        svc = STTService.getInstance()
-        svc.initialize(_makeConfigManager(_validSttConfig()), _makeDatabase())
+        mockProviderCls = MagicMock()
+        with patch.dict(STT_PROVIDERS_MAP, {"yandex-speechkit": mockProviderCls}):
+            svc = STTService.getInstance()
+            svc.initialize(_makeConfigManager(_validSttConfig()))
 
         assert svc.isEnabled() is True
         mockProviderCls.assert_called_once()
@@ -158,9 +147,8 @@ class TestEnabledValidConstructsProviderWithResolvedProxy:
         assert callKwargs["apiKey"] == "test-api-key"
         assert callKwargs["folderId"] == "test-folder-id"
 
-    @patch("internal.services.stt.service.YandexSpeechKitProvider")
     @patch("internal.services.stt.service.ProxyService")
-    def test_resolveProxyCalledWithLabel(self, mockProxyServiceCls: Mock, mockProviderCls: Mock) -> None:
+    def test_resolveProxyCalledWithLabel(self, mockProxyServiceCls: Mock) -> None:
         """ProxyService.resolveProxy is called with label 'stt'."""
         mockProxyService = MagicMock()
         mockResolvedProxy = MagicMock()
@@ -168,79 +156,32 @@ class TestEnabledValidConstructsProviderWithResolvedProxy:
         mockProxyServiceCls.getInstance = Mock(return_value=mockProxyService)
 
         configManager = _makeConfigManager(_validSttConfig())
-        svc = STTService.getInstance()
-        svc.initialize(configManager, _makeDatabase())
+        mockProviderCls = MagicMock()
+        with patch.dict(STT_PROVIDERS_MAP, {"yandex-speechkit": mockProviderCls}):
+            svc = STTService.getInstance()
+            svc.initialize(configManager)
 
         mockProxyService.resolveProxy.assert_called_once_with(configManager.getSttConfig(), "stt")
 
-    @patch("internal.services.stt.service.YandexSpeechKitProvider")
     @patch("internal.services.stt.service.ProxyService")
-    def test_proxyConfigPassedToProvider(self, mockProxyServiceCls: Mock, mockProviderCls: Mock) -> None:
+    def test_proxyConfigPassedToProvider(self, mockProxyServiceCls: Mock) -> None:
         """The resolved ProxyConfig is passed as provider's proxyConfig kwarg."""
         mockProxyService = MagicMock()
         mockResolvedProxy = MagicMock()
         mockProxyService.resolveProxy = Mock(return_value=mockResolvedProxy)
         mockProxyServiceCls.getInstance = Mock(return_value=mockProxyService)
 
-        svc = STTService.getInstance()
-        svc.initialize(_makeConfigManager(_validSttConfig()), _makeDatabase())
+        mockProviderCls = MagicMock()
+        with patch.dict(STT_PROVIDERS_MAP, {"yandex-speechkit": mockProviderCls}):
+            svc = STTService.getInstance()
+            svc.initialize(_makeConfigManager(_validSttConfig()))
 
         callKwargs = mockProviderCls.call_args[1]
         assert callKwargs["proxyConfig"] is mockResolvedProxy
 
 
 # -----------------------------------------------------------------------
-# 4. Enabled + missing api-key → ValueError
-# -----------------------------------------------------------------------
-
-
-class TestEnabledMissingCredsRaisesValueError:
-    """When enabled=true but api-key is empty/missing, ValueError."""
-
-    def test_missingApiKey(self) -> None:
-        """Empty api-key raises ValueError."""
-        config = _validSttConfig()
-        config["api-key"] = ""
-        svc = STTService.getInstance()
-        with pytest.raises(ValueError, match="api-key"):
-            svc.initialize(_makeConfigManager(config), _makeDatabase())
-
-    def test_missingFolderId(self) -> None:
-        """Empty folder-id raises ValueError."""
-        config = _validSttConfig()
-        config["folder-id"] = ""
-        svc = STTService.getInstance()
-        with pytest.raises(ValueError, match="folder-id"):
-            svc.initialize(_makeConfigManager(config), _makeDatabase())
-
-
-# -----------------------------------------------------------------------
-# 5. Enabled + unresolved ${...} → ValueError
-# -----------------------------------------------------------------------
-
-
-class TestEnabledUnresolvedEnvVarRaisesValueError:
-    """Literal ${...} placeholder in credentials raises ValueError."""
-
-    def test_unresolvedApiKey(self) -> None:
-        """api-key with unresolved ${VAR} raises ValueError."""
-        config = _validSttConfig()
-        config["api-key"] = "${YC_API_KEY}"
-        svc = STTService.getInstance()
-        with pytest.raises(ValueError, match="unresolved"):
-            svc.initialize(_makeConfigManager(config), _makeDatabase())
-
-    def test_unresolvedFolderId(self) -> None:
-        """folder-id with unresolved ${VAR} raises ValueError."""
-        config = _validSttConfig()
-        config["folder-id"] = "${YC_FOLDER_ID}"
-        svc = STTService.getInstance()
-        with pytest.raises(ValueError, match="unresolved"):
-            svc.initialize(_makeConfigManager(config), _makeDatabase())
-
-
-# -----------------------------------------------------------------------
-# 6. Enabled + unknown provider → ValueError
+# 4. Enabled + unknown provider → ValueError (service-level validation)
 # -----------------------------------------------------------------------
 
 
@@ -253,53 +194,43 @@ class TestEnabledUnknownProviderRaisesValueError:
         config["provider"] = "foo"
         svc = STTService.getInstance()
         with pytest.raises(ValueError, match="unknown provider"):
-            svc.initialize(_makeConfigManager(config), _makeDatabase())
+            svc.initialize(_makeConfigManager(config))
 
 
 # -----------------------------------------------------------------------
-# 7. Enabled + non-positive cap → ValueError
+# 5. initialize propagates provider ValueError (e.g. missing apiKey)
 # -----------------------------------------------------------------------
 
 
-class TestEnabledNonPositiveCapRaisesValueError:
-    """Non-positive numeric caps raise ValueError."""
+class TestInitializePropagatesProviderValidationError:
+    """initialize propagates ValueError from the provider constructor."""
 
-    @pytest.mark.parametrize(
-        "key,value",
-        [
-            ("max-source-bytes", 0),
-            ("max-source-bytes", -1),
-            ("max-duration-seconds", 0),
-            ("max-transcript-chars", -1),
-            ("max-concurrency", 0),
-            ("admission-timeout", 0),
-            ("request-timeout", 0),
-            ("operation-timeout", -1),
-            ("poll-initial-delay", 0),
-            ("poll-max-delay", 0),
-            ("max-result-bytes", 0),
-        ],
-    )
-    def test_nonPositiveCap(self, key: str, value: int) -> None:
-        """Non-positive value for {key} raises ValueError."""
-        config = _validSttConfig()
-        config[key] = value
-        svc = STTService.getInstance()
-        with pytest.raises(ValueError, match=re.escape(key)):
-            svc.initialize(_makeConfigManager(config), _makeDatabase())
+    @patch("internal.services.stt.service.ProxyService")
+    def test_initializePropagatesProviderValidationError(self, mockProxyServiceCls: Mock) -> None:
+        """Provider constructor raising ValueError (missing apiKey) propagates through initialize."""
+        mockProxyService = MagicMock()
+        mockProxyService.resolveProxy = Mock(return_value=MagicMock())
+        mockProxyServiceCls.getInstance = Mock(return_value=mockProxyService)
+
+        mockProviderCls = MagicMock(side_effect=ValueError("apiKey must be a non-empty string"))
+        with patch.dict(STT_PROVIDERS_MAP, {"yandex-speechkit": mockProviderCls}):
+            config = _validSttConfig()
+            config["api-key"] = ""
+            svc = STTService.getInstance()
+            with pytest.raises(ValueError, match="apiKey"):
+                svc.initialize(_makeConfigManager(config))
 
 
 # -----------------------------------------------------------------------
-# 8. aclose closes provider exactly once
+# 6. aclose closes provider exactly once
 # -----------------------------------------------------------------------
 
 
 class TestAcloseClosesProviderOnceWhenEnabled:
     """aclose() delegates to provider.aclose() exactly once."""
 
-    @patch("internal.services.stt.service.YandexSpeechKitProvider")
     @patch("internal.services.stt.service.ProxyService")
-    async def test_acloseCallsProviderAcloseOnce(self, mockProxyServiceCls: Mock, mockProviderCls: Mock) -> None:
+    async def test_acloseCallsProviderAcloseOnce(self, mockProxyServiceCls: Mock) -> None:
         """aclose() calls provider.aclose() exactly once."""
         mockProxyService = MagicMock()
         mockProxyService.resolveProxy = Mock(return_value=MagicMock())
@@ -307,17 +238,16 @@ class TestAcloseClosesProviderOnceWhenEnabled:
 
         mockProvider = MagicMock()
         mockProvider.aclose = AsyncMock()
-        mockProviderCls.return_value = mockProvider
-
-        svc = STTService.getInstance()
-        svc.initialize(_makeConfigManager(_validSttConfig()), _makeDatabase())
+        mockProviderCls = MagicMock(return_value=mockProvider)
+        with patch.dict(STT_PROVIDERS_MAP, {"yandex-speechkit": mockProviderCls}):
+            svc = STTService.getInstance()
+            svc.initialize(_makeConfigManager(_validSttConfig()))
 
         await svc.aclose()
         mockProvider.aclose.assert_awaited_once()
 
-    @patch("internal.services.stt.service.YandexSpeechKitProvider")
     @patch("internal.services.stt.service.ProxyService")
-    async def test_acloseSwallowsException(self, mockProxyServiceCls: Mock, mockProviderCls: Mock) -> None:
+    async def test_acloseSwallowsException(self, mockProxyServiceCls: Mock) -> None:
         """aclose() never raises even if provider.aclose() raises."""
         mockProxyService = MagicMock()
         mockProxyService.resolveProxy = Mock(return_value=MagicMock())
@@ -325,17 +255,17 @@ class TestAcloseClosesProviderOnceWhenEnabled:
 
         mockProvider = MagicMock()
         mockProvider.aclose = AsyncMock(side_effect=RuntimeError("boom"))
-        mockProviderCls.return_value = mockProvider
-
-        svc = STTService.getInstance()
-        svc.initialize(_makeConfigManager(_validSttConfig()), _makeDatabase())
+        mockProviderCls = MagicMock(return_value=mockProvider)
+        with patch.dict(STT_PROVIDERS_MAP, {"yandex-speechkit": mockProviderCls}):
+            svc = STTService.getInstance()
+            svc.initialize(_makeConfigManager(_validSttConfig()))
 
         # Should not raise
         await svc.aclose()
 
 
 # -----------------------------------------------------------------------
-# 9. No circular import
+# 7. No circular import
 # -----------------------------------------------------------------------
 
 
@@ -348,7 +278,7 @@ class TestNoCircularImport:
 
 
 # -----------------------------------------------------------------------
-# 10. isEnabled() is False after a failed initialize (I1)
+# 8. isEnabled() is False after a failed initialize
 # -----------------------------------------------------------------------
 
 
@@ -358,26 +288,25 @@ class TestIsEnabledFalseAfterFailedInitialize:
     def test_isEnabledFalseAfterFailedInitialize(self) -> None:
         """isEnabled() returns False and _provider is None after ValueError."""
         config = _validSttConfig()
-        config["api-key"] = "${UNRESOLVED}"
+        config["provider"] = "nonexistent"
         svc = STTService.getInstance()
-        with pytest.raises(ValueError, match="unresolved"):
-            svc.initialize(_makeConfigManager(config), _makeDatabase())
+        with pytest.raises(ValueError, match="unknown provider"):
+            svc.initialize(_makeConfigManager(config))
         assert svc.isEnabled() is False
         assert svc._provider is None
 
 
 # -----------------------------------------------------------------------
-# 11. Full provider kwarg forwarding with value + type (I2)
+# 9. Full provider kwarg forwarding with value + type
 # -----------------------------------------------------------------------
 
 
 class TestEnabledValidForwardsAllProviderKwargs:
-    """All 10 provider kwargs are forwarded with correct value and type."""
+    """All provider kwargs are forwarded with correct value and type."""
 
-    @patch("internal.services.stt.service.YandexSpeechKitProvider")
     @patch("internal.services.stt.service.ProxyService")
-    def test_enabledValidForwardsAllProviderKwargs(self, mockProxyServiceCls: Mock, mockProviderCls: Mock) -> None:
-        """All provider constructor kwargs have correct value and type."""
+    def test_enabledValidForwardsAllProviderKwargs(self, mockProxyServiceCls: Mock) -> None:
+        """All provider constructor kwargs are forwarded with correct values and types."""
         mockProxyService = MagicMock()
         mockResolvedProxy = MagicMock()
         mockProxyService.resolveProxy = Mock(return_value=mockResolvedProxy)
@@ -385,12 +314,15 @@ class TestEnabledValidForwardsAllProviderKwargs:
 
         svc = STTService.getInstance()
         config = _validSttConfig()
-        config["request-timeout"] = 45
-        config["operation-timeout"] = 300
-        config["poll-initial-delay"] = 3
-        config["poll-max-delay"] = 20
+        config["request-timeout-seconds"] = 45.0
+        config["operation-budget-seconds"] = 300.0
+        config["poll-interval-seconds"] = 5.0
+        config["max-poll-interval-seconds"] = 25.0
         config["max-result-bytes"] = 10485760
-        svc.initialize(_makeConfigManager(config), _makeDatabase())
+
+        mockProviderCls = MagicMock()
+        with patch.dict(STT_PROVIDERS_MAP, {"yandex-speechkit": mockProviderCls}):
+            svc.initialize(_makeConfigManager(config))
 
         callKwargs = mockProviderCls.call_args[1]
 
@@ -407,7 +339,6 @@ class TestEnabledValidForwardsAllProviderKwargs:
         assert isinstance(callKwargs["language"], str)
 
         assert callKwargs["proxyConfig"] is mockResolvedProxy
-        # proxyConfig type checked via identity, not isinstance (it's a Mock).
 
         assert callKwargs["requestTimeoutSeconds"] == 45.0
         assert isinstance(callKwargs["requestTimeoutSeconds"], float)
@@ -415,10 +346,10 @@ class TestEnabledValidForwardsAllProviderKwargs:
         assert callKwargs["operationBudgetSeconds"] == 300.0
         assert isinstance(callKwargs["operationBudgetSeconds"], float)
 
-        assert callKwargs["pollIntervalSeconds"] == 3.0
+        assert callKwargs["pollIntervalSeconds"] == 5.0
         assert isinstance(callKwargs["pollIntervalSeconds"], float)
 
-        assert callKwargs["maxPollIntervalSeconds"] == 20.0
+        assert callKwargs["maxPollIntervalSeconds"] == 25.0
         assert isinstance(callKwargs["maxPollIntervalSeconds"], float)
 
         assert callKwargs["maxResultBytes"] == 10485760
@@ -426,41 +357,24 @@ class TestEnabledValidForwardsAllProviderKwargs:
 
 
 # -----------------------------------------------------------------------
-# 12. Cross-field: poll-max-delay < poll-initial-delay → ValueError (R1)
-# -----------------------------------------------------------------------
-
-
-class TestEnabledPollMaxBelowInitialRaisesValueError:
-    """poll-max-delay < poll-initial-delay raises ValueError."""
-
-    def test_enabledPollMaxBelowInitialRaisesValueError(self) -> None:
-        """poll-max-delay < poll-initial-delay raises ValueError."""
-        config = _validSttConfig()
-        config["poll-initial-delay"] = 20
-        config["poll-max-delay"] = 10
-        svc = STTService.getInstance()
-        with pytest.raises(ValueError, match="poll-max-delay"):
-            svc.initialize(_makeConfigManager(config), _makeDatabase())
-
-
-# -----------------------------------------------------------------------
-# 13. initialize is idempotent (R2)
+# 10. initialize is idempotent
 # -----------------------------------------------------------------------
 
 
 class TestInitializeIsIdempotent:
     """Second initialize() call is a no-op; provider constructed once."""
 
-    @patch("internal.services.stt.service.YandexSpeechKitProvider")
     @patch("internal.services.stt.service.ProxyService")
-    def test_initializeIsIdempotent(self, mockProxyServiceCls: Mock, mockProviderCls: Mock) -> None:
+    def test_initializeIsIdempotent(self, mockProxyServiceCls: Mock) -> None:
         """Provider is constructed exactly once despite two initialize calls."""
         mockProxyService = MagicMock()
         mockProxyService.resolveProxy = Mock(return_value=MagicMock())
         mockProxyServiceCls.getInstance = Mock(return_value=mockProxyService)
 
-        svc = STTService.getInstance()
-        svc.initialize(_makeConfigManager(_validSttConfig()), _makeDatabase())
-        svc.initialize(_makeConfigManager(_validSttConfig()), _makeDatabase())
+        mockProviderCls = MagicMock()
+        with patch.dict(STT_PROVIDERS_MAP, {"yandex-speechkit": mockProviderCls}):
+            svc = STTService.getInstance()
+            svc.initialize(_makeConfigManager(_validSttConfig()))
+            svc.initialize(_makeConfigManager(_validSttConfig()))
 
         assert mockProviderCls.call_count == 1

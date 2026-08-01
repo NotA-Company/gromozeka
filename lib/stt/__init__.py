@@ -8,8 +8,7 @@ no config reading; it sits alongside other bot-free libraries (``lib/ai``,
 
 Public surface (complete per ``docs/plans/lib-stt-v1.md`` §3): data models
 (:mod:`lib.stt.models`), the typed extraction exception taxonomy
-(:mod:`lib.stt.exceptions`), the pure transcript formatter
-(:mod:`lib.stt.formatter`), the abstract provider interface
+(:mod:`lib.stt.exceptions`), the abstract provider interface
 (:mod:`lib.stt.abstract`), the PyAV-based audio extraction with format
 negotiation (:func:`lib.stt.audio.extractAudio`), and the concrete Yandex
 SpeechKit v3 provider
@@ -25,7 +24,6 @@ from .exceptions import (
     NoAudioTrackError,
     STTExtractionError,
 )
-from .formatter import UNTRUSTED_TRANSCRIPT_HEADER, formatTranscript
 from .models import (
     AudioFormatSpec,
     ExtractedAudio,
@@ -60,7 +58,4 @@ __all__ = [
     "TranscriptionResult",
     "AudioFormatSpec",
     "ExtractedAudio",
-    # Formatter
-    "formatTranscript",
-    "UNTRUSTED_TRANSCRIPT_HEADER",
 ]

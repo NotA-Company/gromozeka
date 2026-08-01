@@ -1,40 +1,66 @@
 # STT Feature — Next Steps
 
-> **Status:** `lib/stt` implemented + simplified; **`STTService` IMPLEMENTED**
-> (default-off, unwired — no handler yet). Remaining: handler + chat setting +
-> bounded platform download + user-visible docs/CHANGELOG.
+> **Status:** `lib/stt` implemented + simplified; **`STTService` IMPLEMENTED as a
+> stateless service** (default-off, unwired — no handler yet). Remaining: handler
+> (owns the full `media_attachments` row lifecycle) + chat setting + bounded
+> platform download + prompt-injection mitigation + user-visible docs/CHANGELOG.
 >
 > Scope: this is a working roadmap for completing the Speech-to-Text feature.
 > It tracks what is done, what is in flight, and what remains. Reference docs:
 > the [parent plan](media-transcription-stt-v1.md) (product decisions D1–D8,
 > integration §11/§12, manual release gates §13.3) and the [lib/stt spec](lib-stt-v1.md)
-> (library contracts, currently being rewritten to match the simplified shape).
+> (library contracts).
 
 ---
 
 ## 1. Current state
 
 - `lib/stt/` is a provider-neutral Speech-to-Text library: **implemented, lint-clean,
-  and test-green**, default-off everywhere.
-- **`STTService` is IMPLEMENTED** (default-off, unwired — no handler yet): the full
-  `transcribeMedia` pipeline is in place at `internal/services/stt/service.py`
-  (singleton, `STTService.getInstance()`), wired to `[stt]` config and
-  `ProxyService.resolveProxy(...)`, but no bot handler triggers it yet. See ADR-020
-  in [`architecture.md`](../llm/architecture.md) for the synchronous-pipeline +
-  dependency-firewall decision.
+  and test-green**, default-off everywhere. The transcript formatter moved out of
+  `lib/stt` to a thin [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py)
+  (`lib/stt/formatter.py` was deleted; the old header/escape/truncate/sentinel
+  contracts were shed — see [`lib-stt-v1.md`](lib-stt-v1.md) §6).
+- **`STTService` is IMPLEMENTED as a stateless service** (default-off, unwired —
+  no handler yet) at `internal/services/stt/service.py` (singleton,
+  `STTService.getInstance()`). It owns ONLY the provider lifecycle and a thin
+  never-raise transcription entry, `async transcribeMedia(data: bytes, *, chatId) -> STTOutcome`.
+  It is wired to `[stt]` config and `ProxyService.resolveProxy(...)`, but performs
+  **NO DB I/O** — no row read/insert/cache/claim/persist/reclaim. No bot handler
+  triggers it yet. See ADR-020 in [`architecture.md`](../llm/architecture.md) for
+  the stateless-pipeline + dependency-firewall decision.
 - Work lives on branch `add-audio-transcribation-v2`.
-- The library was **simplified** before the service landed:
+- The 2026-08-02 simplification reshaped both the library and the service:
   - Dropped `STTManager` — the configured provider is now held directly by
     `STTService`.
-  - Removed caps from `extractAudio` — caps are now the **service's** responsibility
-    (admission + bounded download).
+  - Removed caps from `extractAudio` — source-byte bounding is now the service's
+    responsibility (post-download, on caller-supplied `bytes`); duration bounding
+    is deferred to the handler round.
   - Made `AbstractSTTProvider.stt(data)` the **never-raise** entry point: it wraps
     extract + transcribe and converts any extraction exception into a
     `TranscriptionResult(ERROR, …)`.
+  - **Stateless service:** the DB-backed 11-step pipeline (read/insert/cache/claim/
+    persist/reclaim) was removed. `STTService.transcribeMedia` now takes raw
+    `bytes` + a `chatId` keyword and returns an `STTOutcome`; the future handler
+    owns the full `media_attachments` row lifecycle (read/cache-hit, claim/orphan-
+    reclaim to `PENDING`, persist via the existing `setStatusVerified` CAS,
+    terminalize). `STTMediaRequest` was REMOVED (dead).
+  - **Thin formatter:** `lib/stt/formatter.py` deleted; reborn at
+    `internal/services/stt/formatter.py`. Emits `[HH:MM:SS.mmm] text` lines only
+    (no untrusted-data header, no XML escaping, no truncation, no
+    `[No speech detected]` sentinel). `NO_SPEECH` → `DONE` with `description=""`.
+    Prompt-injection mitigation (the dropped header) is now the handler's job —
+    see §3.
+  - **Unbounded admission:** `async with self._semaphore` with NO `asyncio.timeout`.
+    The admission-timeout was removed; `ADMISSION_TIMEOUT` was renamed →
+    `STT_DISABLED` (produced when `[stt].enabled = false`). The handler bounds the
+    originating turn via its pipeline timeout.
+  - **Provider-owned validation:** `STTService.initialize(configManager)` (no
+    `database` arg) validates only the provider name; `YandexSpeechKitProvider.__init__`
+    owns cred / `${...}`-placeholder / cap-positivity / cross-field validation.
 
-## 2. lib/stt cleanup (in progress / just-applied)
+## 2. lib/stt cleanup (DONE)
 
-Post-simplification cleanup being applied to `lib/stt/`:
+Post-simplification cleanup applied to `lib/stt/`:
 
 - [x] `stt(data)` made never-raise (wraps `extractAudio`; extraction exceptions →
       `TranscriptionResult(ERROR)`).
@@ -45,77 +71,89 @@ Post-simplification cleanup being applied to `lib/stt/`:
 - [x] Added `toYandexSpeechKit()` test; aligned return type.
 - [x] **Accepted trade-off (user decision):** `extractAudio` does **NOT** bound
       decoded PCM memory — a large/long source can decode to hundreds of MB. The
-      `STTService` MUST bound source bytes **and** duration BEFORE calling
-      `extractAudio`. Documented in the `extractAudio` docstring.
-- [ ] `docs/plans/lib-stt-v1.md` being rewritten to match the simplified shape
-      (§1/§2/§3/§4/§5/§8/§8.1/§9 were stale — manager removed, caps moved out,
-      `stt()` is the never-raise entry point).
+      owning layer MUST bound source bytes before calling `extractAudio`. (For the
+      service that is `max-source-bytes`; duration bounding is the handler's job.)
+      Documented in the `extractAudio` docstring.
+- [x] `docs/plans/lib-stt-v1.md` updated to match the simplified shape (incl. §6
+      formatter-moved-out note). NOTE: minor docstring drift in
+      `lib/stt/__init__.py` is flagged for a separate tiny pass.
 
 ## 3. STTService integration
 
-`STTService` is **IMPLEMENTED** (default-off). The service-level pipeline is
-complete and test-green (~55 service tests: `tests/services/stt/test_service_lifecycle.py`
-(31) + `tests/services/stt/test_transcribe.py` (24); full suite ~3705 passed).
-Per [parent §11.3](media-transcription-stt-v1.md) + §11 config + §12 handler.
+`STTService` is **IMPLEMENTED as a stateless service** (default-off). The
+service-level pipeline is complete and test-green. Per [parent §11.3](media-transcription-stt-v1.md)
++ §11 config + §12 handler.
 
 What remains for the feature to become user-visible is the **handler round**
 (§3.3 / §3.4 / §3.5 below).
 
 ### 3.1 Service — `internal/services/stt/` — DONE
 
-Singleton `STTService` (`internal/services/stt/service.py`). It owns:
+Stateless singleton `STTService` (`internal/services/stt/service.py`). It owns:
 
-- [x] **Admission** (parent §8.2): bounded concurrency + the source-byte/duration
-      caps that `lib/stt` no longer enforces. Emits `STTErrorCode.ADMISSION_TIMEOUT`
-      / `SOURCE_TOO_LARGE` / `SOURCE_SIZE_UNKNOWN` as appropriate.
-- [x] **Media download** (parent §8.3): bounded platform download (current upper
-      bound enforced here), producing the raw `bytes` for `extractAudio`. Emits
-      `STTErrorCode.DOWNLOAD_ERROR` on failure. *(A bounded
-      `downloadAttachment(maxBytes=…)` platform extension is still a remaining
-      item — see §3.3.)*
+- [x] **`transcribeMedia(data, *, chatId) -> STTOutcome`** — the never-raise
+      stateless entry. Pipeline: `STT_DISABLED` (when not enabled) →
+      `SOURCE_TOO_LARGE` (when `len(data) > maxSourceBytes`) → per-chat/global
+      rate limiters → `async with self._semaphore` (NO timeout) →
+      `await provider.stt(data)` → `_mapOutcome` (FINAL/NO_SPEECH → `DONE` +
+      `formatTranscript`; ERROR → `FAILED` + provider errorCode). Only
+      `asyncio.CancelledError` propagates.
 - [x] **Proxy resolution**: resolve the `stt` proxy via
       `ProxyService.resolveProxy(sttConfig, "stt")`; construct the
       `YandexSpeechKitProvider` with the resolved `ProxyConfig`. (Proxy is
       injected, never resolved inside `lib/stt` — see [lib/stt spec §1](lib-stt-v1.md).)
-- [x] **Transcription**: call `provider.stt(data)` (never-raise →
-      `TranscriptionResult`).
-- [x] **Formatting** via `formatTranscript` — FINAL/NO_SPEECH only; ERROR →
-      FAILED + null description.
-- [x] **Persistence**: writes the transcript into `media_attachments.description`
-      via the repo helper `setStatusVerified` (existing column, **no migration**
-      per D4/D5). Verified terminal states persist via a compare-and-set so a
-      gate-off / already-verified row returns `DONE` with `description=None`
-      without clobbering a real transcript.
+- [x] **Provider-owned validation**: the service validates ONLY the provider name
+      via `STT_PROVIDERS_MAP`; `YandexSpeechKitProvider.__init__` owns
+      cred/`${...}`/cap-positivity/cross-field validation (different providers
+      have different params, so each validates its own).
 - [x] **Lifecycle**: owns `provider.aclose()` on shutdown — best-effort, must not
-      block shutdown. (The deleted `STTManager`'s defensiveness moved here.)
+      block shutdown.
 - [x] **Config + skeleton + singleton + lifecycle + provider injection**: the
       `[stt]` TOML section, the `STTService` class, `getInstance()`, startup/
       shutdown hooks, and the `YandexSpeechKitProvider` injection are all in
       place (see [`docs/llm/configuration.md`](../llm/configuration.md) `[stt]`
       and [`docs/llm/services.md`](../llm/services.md) §7).
+- [x] **No DB I/O**: the service does not touch `media_attachments`. The row
+      lifecycle is the handler round's responsibility (§3.3).
 
 ### 3.2 Config — `[stt]` section — DONE
 
-- [x] Wired the TOML config: enabled flag, `api-key`, `folder-id`, `model`, and
-      the source/duration/inline caps the service now owns.
+- [x] Wired the flat TOML config: `enabled`, `provider`, `api-key`, `folder-id`,
+      `model`, `language`, `max-source-bytes` (default raised to 1 GiB),
+      `max-concurrency`, the `*-seconds` timeout/poll keys, `max-result-bytes`,
+      and the two rate-limiter queue names. DELETED: `max-duration-seconds`,
+      `max-transcript-chars`, `admission-timeout`, and the old non-`-seconds`
+      spellings (`request-timeout`, `operation-timeout`, `poll-initial-delay`,
+      `poll-max-delay`).
 - [x] TOML shape: parent §11.1 (`configs/00-defaults/stt.toml`).
 - [x] Validation (parent §11.2): `enabled=false` ⇒ do not instantiate the
-      provider / load PyAV / validate credentials; `enabled=true` ⇒ fail startup
-      on missing creds, unresolved `${...}`, unknown provider, non-positive
-      limits, missing PyAV, missing rate-limiter queue mappings.
+      provider / load PyAV / validate credentials; `enabled=true` ⇒ the service
+      validates the provider name, the provider constructor validates its own
+      params (creds/`${...}`/caps/cross-field), and `ProxyService.resolveProxy`
+      may raise.
 
 ### 3.3 Handler — REMAINING (next round)
 
 - [ ] Register a new `STTHandler` in `internal/bot/common/handlers/`, gated on
       `TRANSCRIBE_MEDIA` (friend tier) **and** `[stt].enabled`. Intercepts
-      inbound voice/audio/video, triggers the service, renders the transcript.
-      (Parent §12.) **Must be registered before `LLMMessageHandler`** (the
-      catch-all) — load the [`add-handler`](../../.agents/skills/add-handler/SKILL.md)
-      skill when this lands.
+      inbound voice/audio/video, **owns the full `media_attachments` row
+      lifecycle** (read/cache-hit, claim/orphan-reclaim to `PENDING`, persist the
+      `STTOutcome` via the existing `setStatusVerified` CAS, terminalize),
+      renders the transcript into the multi-attachment TEXT content. (Parent §12.)
+      **Must be registered before `LLMMessageHandler`** (the catch-all) — load
+      the [`add-handler`](../../.agents/skills/add-handler/SKILL.md) skill when
+      this lands.
 - [ ] **Bounded `downloadAttachment(maxBytes=…)` platform extension** — the
-      service currently bounds total downloaded bytes itself; promote the bound
-      into a `maxBytes=` arg on the platform download path so the limit is
-      enforced at the socket, not after the full body is buffered.
+      handler builds the raw `bytes` for `transcribeMedia`; promote the
+      `max-source-bytes` bound into a `maxBytes=` arg on the platform download
+      path so the limit is enforced at the socket, not after the full body is
+      buffered. (Emits `SOURCE_SIZE_UNKNOWN` / `DOWNLOAD_ERROR` on failure —
+      these codes are reserved on the enum for the handler.)
+- [ ] **Prompt-injection mitigation** (accepted trade-off from the thin formatter
+      — ADR-020 decision 7): the untrusted-data header that the old `lib/stt`
+      formatter dropped is now the handler / prompt-construction layer's
+      responsibility. Wire it when the handler ships (e.g. the untrusted-data
+      label + never-system-role injection per parent §6.1/§12).
 - [ ] **TEXT media rendering must reuse the already-computed multi-attachment
       content** (readiness correction #3) — do not recompute and lose Max
       per-item descriptions.
@@ -193,15 +231,20 @@ headers may be stored in smoke-test artifacts.
 - **Guarded import removed.** `import lib.stt` now hard-requires PyAV (`av` is
   always installed, so the breakage is latent). If a future module wants `lib/stt`
   types without PyAV, restore the `_PYAV_AVAILABLE` guard pattern.
-- **Enum disposition.** `STTErrorCode` keeps service-layer codes
-  (`ADMISSION_TIMEOUT` / `SOURCE_TOO_LARGE` / `SOURCE_SIZE_UNKNOWN` /
-  `DOWNLOAD_ERROR` / `DURATION_EXCEEDED`) as shared vocabulary; `AUDIO_TOO_LARGE`
-  was **deleted**. **Confirmed in `STTService`:** `ADMISSION_TIMEOUT`,
-  `SOURCE_TOO_LARGE`, `SOURCE_SIZE_UNKNOWN`, and `DOWNLOAD_ERROR` are now
-  produced by the service pipeline (admission + bounded download paths).
-  `DURATION_EXCEEDED` is **reserved but not yet produced** — there is no
-  upstream duration signal wired into the service, so duration gating remains
-  deferred (open item: see §3.3 handler round / a future duration probe).
+- **Enum disposition (8 members).** `STTErrorCode` ownership post-simplification:
+  - **Service-produced** (produced ONLY by `STTService`): `STT_DISABLED`, `SOURCE_TOO_LARGE`.
+    (`PROVIDER_ERROR` is also produced by the service as the catch-all fallback
+    for unexpected exceptions — structured logs distinguish a service-caught
+    fallback from a provider-returned `PROVIDER_ERROR`.)
+  - **Provider-produced** (returned inside a `TranscriptionResult(ERROR, …)` from
+    `provider.stt()`): `NO_AUDIO`, `PROVIDER_ERROR`, `PROTOCOL_ERROR`.
+  - **Reserved for the future handler** (not currently produced): `SOURCE_SIZE_UNKNOWN`,
+    `DOWNLOAD_ERROR`, `DURATION_EXCEEDED`. The handler round owns the bounded
+    download (`SOURCE_SIZE_UNKNOWN` / `DOWNLOAD_ERROR`) and any duration gating
+    (`DURATION_EXCEEDED`); until it lands these are vocabulary only.
+  - `ADMISSION_TIMEOUT` was **renamed → `STT_DISABLED`** (the admission-timeout
+    was removed; admission is unbounded). `AUDIO_TOO_LARGE` was **deleted** in
+    the earlier lib/stt simplification.
 - **§7.2 delete-ordering.** The provider runs its best-effort `DELETE` in
   `finally` (before parse) — an intentional refinement of "after fetch and
   parse". Documented in [lib/stt spec §7.2](lib-stt-v1.md) + a load-bearing code

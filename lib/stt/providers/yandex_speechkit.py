@@ -146,11 +146,11 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
     def __init__(
         self,
         *,
+        proxyConfig: Optional[ProxyConfig] = None,
         apiKey: str,
         folderId: str,
         model: str = "general",
-        language: str = "ru-RU",
-        proxyConfig: Optional[ProxyConfig] = None,
+        language: str | Sequence[str] = "ru-RU",
         requestTimeoutSeconds: float = 30.0,
         operationBudgetSeconds: float = 180.0,
         pollIntervalSeconds: float = 2.0,
@@ -159,6 +159,7 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
         maxRetries: int = 3,
         retryBackoffSeconds: float = 1.0,
         maxResultBytes: int = DEFAULT_MAX_RESULT_BYTES,
+        **extraKwargs,
     ) -> None:
         """Initialize the provider, validating startup config and building the client.
 
@@ -196,9 +197,11 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
                 5 MiB default).
 
         Raises:
-            ValueError: If required credentials are missing/empty, or any numeric limit
-                is non-positive/contradictory (startup validation, load-bearing
-                contract #2).
+            ValueError: If required credentials are missing/empty, any required string
+                parameter contains an unresolved ``${…}`` placeholder (indicating a
+                missing environment variable), any numeric limit is non-positive, or
+                ``maxPollIntervalSeconds < pollIntervalSeconds``
+                (startup validation, load-bearing contract #2).
 
         Returns:
             None
@@ -211,6 +214,11 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
             raise ValueError("model must be a non-empty string")
         if not language or not isinstance(language, str):
             raise ValueError("language must be a non-empty string")
+
+        for name, value in (("apiKey", apiKey), ("folderId", folderId), ("model", model), ("language", language)):
+            if value.startswith("${") and value.endswith("}"):
+                raise ValueError(f"{name} contains an unresolved placeholder: {value!r}")
+
         if requestTimeoutSeconds <= 0:
             raise ValueError("requestTimeoutSeconds must be positive")
         if operationBudgetSeconds <= 0:
@@ -231,7 +239,7 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
         self._apiKey: str = apiKey
         self._folderId: str = folderId
         self._model: str = model
-        self._language: str = language
+        self._language: Sequence[str] = [language] if isinstance(language, str) else list(language)
         self._proxyConfig: Optional[ProxyConfig] = proxyConfig
         self._operationBudgetSeconds: float = operationBudgetSeconds
         self._pollIntervalSeconds: float = pollIntervalSeconds
@@ -427,7 +435,7 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
                 },
                 "language_restriction": {
                     "restriction_type": "WHITELIST",
-                    "language_code": [self._language],
+                    "language_code": self._language,
                 },
                 "text_normalization": {"literature_text": True},
             },

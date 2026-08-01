@@ -60,7 +60,7 @@ def testSTTErrorCodeMembershipAndValues() -> None:
     """
     members = {member.name: member.value for member in STTErrorCode}
     assert members == {
-        "ADMISSION_TIMEOUT": "admission-timeout",
+        "STT_DISABLED": "stt-disabled",
         "SOURCE_TOO_LARGE": "source-too-large",
         "SOURCE_SIZE_UNKNOWN": "source-size-unknown",
         "NO_AUDIO": "no-audio",

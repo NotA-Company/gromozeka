@@ -843,35 +843,36 @@ One `ChatSettingsKey` default under `[bot.defaults]`, `page = FRIEND`, wired via
 
 ### `[stt]`
 
-Speech-to-Text (media transcription) configuration. Defaults live in [`configs/00-defaults/stt.toml`](../../configs/00-defaults/stt.toml). The section is flat (no sub-tables beyond the optional `[stt.proxy]` override). The service is **shipped default-off** (`enabled = false`); when disabled, no provider is constructed, PyAV is not loaded for STT, and no credentials are validated. The service is owned by `STTService` (see [`services.md`](services.md) §7 and [ADR-020](architecture.md#adr-020-sttservice--synchronous-stt-pipeline-and-dependency-firewall)).
+Speech-to-Text (media transcription) configuration. Defaults live in [`configs/00-defaults/stt.toml`](../../configs/00-defaults/stt.toml). The section is flat (no sub-tables beyond the optional `[stt.proxy]` override). The service is **shipped default-off** (`enabled = false`); when disabled, no provider is constructed, PyAV is not loaded for STT, and no credentials are validated. The service is owned by the stateless `STTService` (see [`services.md`](services.md) §7 and [ADR-020](architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall)).
 
-> **Status (2026-08-02):** the service is implemented + tested but **DEFAULT-OFF and UNWIRED** — there is no handler yet, so even with `enabled = true` no media is transcribed until the handler round lands (`STTHandler` + `TRANSCRIBE_MEDIA` chat setting; see [`docs/plans/stt-next-steps.md`](../plans/stt-next-steps.md)). No `CHANGELOG.md` entry ships until the handler round.
+> **Status (2026-08-02):** the service is implemented + tested but **DEFAULT-OFF and UNWIRED** — there is no handler yet, so even with `enabled = true` no media is transcribed until the handler round lands (`STTHandler` + `TRANSCRIBE_MEDIA` chat setting + bounded `downloadAttachment(maxBytes)` + prompt-injection mitigation; see [`docs/plans/stt-next-steps.md`](../plans/stt-next-steps.md)). No `CHANGELOG.md` entry ships until the handler round.
+
+> **Validation lives in the provider constructor, not the service.** `STTService.initialize(configManager)` (no `database` arg) validates ONLY the provider name via `STT_PROVIDERS_MAP`. Each provider validates its own parameters (different providers have different params): `YandexSpeechKitProvider.__init__` owns cred / unresolved `${...}`-placeholder / cap-positivity / cross-field (`maxPollIntervalSeconds ≥ pollIntervalSeconds`) validation and raises `ValueError` on failure; `ProxyService.resolveProxy` `ValueError`s are also propagated.
 
 | Key | Type | Default | Purpose |
 |---|---|---|---|
-| `enabled` | bool | `false` | Master switch. When `false`, `STTService.initialize()` leaves the provider `None` and `isEnabled()` returns `False`. When `true`, credentials/provider/limits are validated at startup (`ValueError` on missing creds, unresolved `${...}`, unknown provider, non-positive numeric caps, or `poll-max-delay < poll-initial-delay`). |
-| `provider` | str | `"yandex-speechkit"` | Provider name. Only `"yandex-speechkit"` is supported. |
+| `enabled` | bool | `false` | Master switch. When `false`, `STTService.initialize()` leaves the provider `None` and `isEnabled()` returns `False`. When `true`, the provider is constructed (which validates its own params — see the note above). |
+| `provider` | str | `"yandex-speechkit"` | Provider name. Only `"yandex-speechkit"` is supported (NOTE: no hyphen between "speech" and "kit"). |
 | `use-proxy` | bool | `false` | Route STT HTTP traffic through the global proxy (requires `[proxy].enabled = true`). Proxy is resolved by `ProxyService.resolveProxy(sttConfig, "stt")` and **injected** into the provider; `lib/stt` never resolves a proxy itself (ADR-020 decision 4). |
-| `api-key` | str | `"${YC_API_KEY}"` | Yandex Cloud API key. Uses `${YC_API_KEY}` env-var substitution. Required when `enabled = true`; an unresolved `${...}` placeholder fails startup. Document the env-var name only — never paste the secret. |
+| `api-key` | str | `"${YC_API_KEY}"` | Yandex Cloud API key. Uses `${YC_API_KEY}` env-var substitution. Required when `enabled = true`; an unresolved `${...}` placeholder fails startup (validated by the provider constructor). Document the env-var name only — never paste the secret. |
 | `folder-id` | str | `"${YC_FOLDER_ID}"` | Yandex Cloud folder ID. Uses `${YC_FOLDER_ID}` env-var substitution. Same validation rules as `api-key`. |
 | `model` | str | `"general"` | Yandex recognition model (passed to the provider constructor). |
 | `language` | str | `"ru-RU"` | BCP-47 language code for recognition. |
-| `max-source-bytes` | int | `67108864` (64 MiB) | Max downloadable source size in bytes. Bounds the download BEFORE the provider call (ADR-020 decision 3) — `lib/stt` does not bound decoded memory. Pre-admission rejection on `declaredSize` and post-download rejection on `len(data)` both map to `STTErrorCode.SOURCE_TOO_LARGE`. |
-| `max-duration-seconds` | int | `600` (10 min) | Best-effort upstream duration bound per the accepted decoded-memory gap. NOT yet enforced at runtime (`DURATION_EXCEEDED` is reserved on the enum but not produced — there is no upstream duration signal before the provider call). |
-| `max-transcript-chars` | int | `48000` | Max persisted transcript length in characters. Forwarded to `formatTranscript`; deterministic head/tail truncation around a marker. |
-| `max-concurrency` | int | `2` | Max in-flight transcriptions (the `asyncio.Semaphore` size for admission). |
-| `admission-timeout` | int | `20` | Seconds to wait for a semaphore slot + rate-limiter admission before rejecting with `ADMISSION_TIMEOUT`. |
-| `request-timeout` | int | `30` | Per-HTTP-request timeout (seconds) inside the Yandex provider. |
-| `operation-timeout` | int | `180` | Wall-clock budget (seconds) for the whole submit + poll + result-fetch operation inside the provider. |
-| `poll-initial-delay` | int | `2` | Initial operation-poll delay (seconds). |
-| `poll-max-delay` | int | `10` | Max operation-poll delay (seconds). Must be ≥ `poll-initial-delay`. |
+| `max-source-bytes` | int | `1073741824` (1 GiB) | Max caller-supplied source size in bytes. `transcribeMedia` rejects `len(data) > maxSourceBytes` with `STTErrorCode.SOURCE_TOO_LARGE` (post-download bounding — the caller supplies the bytes; the download itself is the handler's responsibility). Default raised to 1 GiB in the 2026-08-02 simplification. |
+| `max-concurrency` | int | `2` | Max in-flight transcriptions (the `asyncio.Semaphore` size). Admission is **unbounded** — there is no admission timeout (the handler bounds the turn). |
+| `request-timeout-seconds` | int | `30` | Per-HTTP-request timeout (seconds) inside the Yandex provider. |
+| `operation-budget-seconds` | int | `2400` | Wall-clock budget (seconds) for the whole submit + poll + result-fetch operation inside the provider. |
+| `poll-interval-seconds` | int | `2` | Initial operation-poll delay (seconds). |
+| `max-poll-interval-seconds` | int | `10` | Max operation-poll delay (seconds). Must be ≥ `poll-interval-seconds` (cross-field validation owned by the provider constructor). |
 | `max-result-bytes` | int | `5242880` (5 MiB) | Cap on the `getRecognition` streamed result body enforced inside `yandex_events.py` (the one surviving module-level cap inside `lib/stt`). Exceeding → `PROTOCOL_ERROR`. |
 | `chat-ratelimiter-queue` | str | `"stt-chat"` | Per-chat rate-limiter queue name. The named queue must be registered under `[ratelimiter.queues]` (see below). |
 | `global-ratelimiter-queue` | str | `"stt-global"` | Global rate-limiter queue name. Must also be registered under `[ratelimiter.queues]`. |
 
+> **Deleted keys (2026-08-02 simplification):** `max-duration-seconds`, `max-transcript-chars`, `admission-timeout`, and the old non-`-seconds` spellings (`request-timeout`, `operation-timeout`, `poll-initial-delay`, `poll-max-delay`) were removed. The transcript formatter is now thin (no `max-transcript-chars` truncation); duration bounding is the handler's job; admission is unbounded.
+
 **Optional `[stt.proxy]` sub-table:** a per-service proxy override (same `type`/`address`/`user`/`password` keys as `[proxy]`). Follows the standard [`ProxyConfig.fromServiceConfig`](libraries.md#13-libproxy--proxy-resolution) semantics — include `enabled = true` inside the sub-table for the override to take effect; otherwise it inherits the global `[proxy]`.
 
-**Rate-limiter queues (registered in [`configs/00-defaults/00-config.toml`](../../configs/00-defaults/00-config.toml)):** the `stt-chat` and `stt-global` queues map to `SlidingWindow` limiters under `[ratelimiter.ratelimiters]`. When `chat-ratelimiter-queue` / `global-ratelimiter-queue` are set, `STTService._admit` applies both (per-chat keyed by `str(chatId)`, global unkeyed) inside the `admission-timeout` window before acquiring the concurrency semaphore.
+**Rate-limiter queues (registered in [`configs/00-defaults/00-config.toml`](../../configs/00-defaults/00-config.toml)):** the `stt-chat` and `stt-global` queues map to `SlidingWindow` limiters under `[ratelimiter.ratelimiters]`. When `chat-ratelimiter-queue` / `global-ratelimiter-queue` are set, `transcribeMedia` applies both (per-chat keyed by `str(chatId)`, global unkeyed) before acquiring the concurrency semaphore. There is no admission timeout wrapping this (admission is unbounded).
 
 ```toml
 [stt]
@@ -879,14 +880,18 @@ enabled = false                      # shipped default-off
 provider = "yandex-speechkit"
 api-key = "${YC_API_KEY}"            # env-var substitution
 folder-id = "${YC_FOLDER_ID}"
-max-source-bytes = 67108864          # bounds the download BEFORE the provider call
-max-duration-seconds = 600           # best-effort upstream bound (not yet enforced)
-max-transcript-chars = 48000         # forwarded to formatTranscript
+max-source-bytes = 1073741824        # 1 GiB; post-download bound
+max-concurrency = 2
+request-timeout-seconds = 30
+operation-budget-seconds = 2400
+poll-interval-seconds = 2
+max-poll-interval-seconds = 10
+max-result-bytes = 5242880
 chat-ratelimiter-queue = "stt-chat"
 global-ratelimiter-queue = "stt-global"
 ```
 
-**Secrets discipline:** `api-key` and `folder-id` use `${...}` env-var substitution. Document the env-var names (`YC_API_KEY`, `YC_FOLDER_ID`) only — never paste the values, never commit `.env*`. An unresolved `${...}` placeholder fails startup when `enabled = true` (it would otherwise be sent verbatim as a credential).
+**Secrets discipline:** `api-key` and `folder-id` use `${...}` env-var substitution. Document the env-var names (`YC_API_KEY`, `YC_FOLDER_ID`) only — never paste the values, never commit `.env*`. An unresolved `${...}` placeholder fails startup when `enabled = true` (the provider constructor rejects it; it would otherwise be sent verbatim as a credential).
 
 ---
 

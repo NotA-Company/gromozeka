@@ -36,7 +36,7 @@
 | Type | Multi-platform AI bot (Telegram + Max Messenger) |
 | Python | 3.12+ |
 | Architecture | Modular, async, singleton services |
-| Test count | ~3700 (as of 2026-08-02; verify with `./venv/bin/pytest --collect-only -q`) |
+| Test count | ~3661 (as of 2026-08-02; verify with `./venv/bin/pytest --collect-only -q`) |
 | Status | Production-ready, active development |
 
 ### Key Features
@@ -309,7 +309,7 @@ vanishingly rare in the Gromozeka codebase.
 | [`lib/ext_modules/`](../../lib/ext_modules/) | External custom modules (Grabliarium etc.) |
 | [`lib/divination/`](../../lib/divination/) | Tarot & runes pure-logic library (decks, layouts, drawing); used by `DivinationHandler` |
 | [`lib/sandbox/`](../../lib/sandbox/) | Sandboxed code execution (Docker + Python); `SandboxManager` singleton |
-| [`lib/stt/`](../../lib/stt/) | Provider-neutral Speech-to-Text library — data models, typed extraction exceptions, pure `formatTranscript`, abstract `AbstractSTTProvider` (never-raise `provider.stt(data)` entry), PyAV `extractAudio`, and the concrete Yandex SpeechKit v3 provider (`YandexSpeechKitProvider`). Held directly by `STTService`; owns no DB/bot/config. Spec: [`docs/plans/lib-stt-v1.md`](../plans/lib-stt-v1.md); golden suite: [`aurumentation.md`](aurumentation.md) (`tests/lib/stt/golden/`) |
+| [`lib/stt/`](../../lib/stt/) | Provider-neutral Speech-to-Text library — data models/enums (`STTErrorCode`, `TranscriptionResult`, etc.), typed extraction exceptions, `AbstractSTTProvider` (never-raise `stt(data)` entry), PyAV `extractAudio`, and the concrete Yandex SpeechKit v3 provider (`YandexSpeechKitProvider`). The transcript formatter moved to `internal/services/stt/formatter.py` (thin). Held directly by the stateless `STTService`; owns no DB/bot/config. Spec: [`docs/plans/lib-stt-v1.md`](../plans/lib-stt-v1.md); golden suite: [`aurumentation.md`](aurumentation.md) (`tests/lib/stt/golden/`) |
 | [`lib/utils/`](../../lib/utils/) | Utilities: `TTLDict` (TTL-enabled dict), `getAgeInSecs`, `parseDelay`, `jsonDumps`, `packDict`/`unpackDict` |
 | [`lib/logging_utils.py`](../../lib/logging_utils.py) | `initLogging()` helper |
 

@@ -406,103 +406,88 @@ def resetProxyServiceSingleton():
 ## 7. STTService
 
 **File:** [`internal/services/stt/service.py`](../../internal/services/stt/service.py)  
-**Import:** `from internal.services.stt import STTService, STTMediaRequest, STTOutcome`
+**Import:** `from internal.services.stt import STTService, STTOutcome`
 
-`STTService` is the singleton that wires the provider-neutral [`lib/stt`](../../lib/stt/) library into the bot — it owns the provider lifecycle (construction, proxy resolution, `aclose()`), the source/duration bounding that `lib/stt` deliberately does **not** perform (see [ADR-020](architecture.md#adr-020-sttservice--synchronous-stt-pipeline-and-dependency-firewall)), the verified-terminal DB persistence, and the never-raise boundary for the whole feature. It mirrors `ProxyService` exactly: class-level `_instance` / `_lock`, `getInstance()`, `hasattr(self, 'initialized')` guard, separate `initialize(...)`.
+`STTService` is a **stateless** singleton that owns the STT provider lifecycle (construction, proxy resolution, `aclose()`) and the never-raise transcription entry. It mirrors `ProxyService` exactly: class-level `_instance` / `_lock`, `getInstance()`, `hasattr(self, 'initialized')` guard, separate `initialize(...)`. **It does NOT touch the database** — no row read, insert, cache, claim, persist, or reclaim. The full `media_attachments` row lifecycle (read / cache-hit, claim / orphan-reclaim to `PENDING`, persist the outcome via the existing `setStatusVerified` CAS, terminalize) is owned by the **future handler round** (see [`docs/plans/stt-next-steps.md`](../plans/stt-next-steps.md) §3).
 
-**Status (2026-08-02):** implemented and tested (~55 tests across `tests/services/stt/test_service_lifecycle.py` + `tests/services/stt/test_transcribe.py`), but **DEFAULT-OFF and UNWIRED** — the `[stt] enabled = false` default ships the service as a no-op, and there is no handler yet (the `STTHandler` + `TRANSCRIBE_MEDIA` chat setting + bounded `downloadAttachment(maxBytes)` + `CHANGELOG.md` entry are a deferred round; see [`docs/plans/stt-next-steps.md`](../plans/stt-next-steps.md)).
+**Status (2026-08-02):** implemented and tested, but **DEFAULT-OFF and UNWIRED** — the `[stt] enabled = false` default ships the service as a no-op, and there is no handler yet (the `STTHandler` + `TRANSCRIBE_MEDIA` chat setting + bounded `downloadAttachment(maxBytes=…)` platform extension + prompt-injection mitigation + `CHANGELOG.md` entry are a deferred round).
 
 ```python
-from internal.services.stt import STTService, STTMediaRequest, STTOutcome
+from internal.services.stt import STTService, STTOutcome
 
 # Initialize (called once from main.py AFTER proxy + rate-limiter init,
-# BEFORE the bot application):
-STTService.getInstance().initialize(configManager, database)
+# BEFORE the bot application). NO database argument:
+STTService.getInstance().initialize(configManager)
 
 # Cheap gate check before any per-message work (handlers call this):
 if not STTService.getInstance().isEnabled():
     return HandlerResultStatus.NEXT
 
-# Synchronous transcription entry (NEVER raises except asyncio.CancelledError):
-request = STTMediaRequest(
-    mediaId=fileUniqueId,        # media_attachments.file_unique_id
-    fileId=platformFileId,
-    mediaType=MessageType.VOICE, # VIDEO / VIDEO_NOTE / VOICE / AUDIO
-    chatId=chatId,
-    declaredSize=optionalInt,    # platform-declared size, or None
-    loader=someAsyncLoader,      # Callable[[int], Awaitable[Optional[bytes]]]
-)
+# Stateless transcription entry (NEVER raises except asyncio.CancelledError).
+# The handler supplies the already-downloaded raw bytes:
 outcome: STTOutcome = await STTService.getInstance().transcribeMedia(
-    request, gateEnabled=chatGateOn
+    audioBytes, chatId=chatId
 )
 # outcome.status is MediaStatus.DONE or MediaStatus.FAILED.
-# outcome.description: the formatted transcript on DONE (may be None on gate-off
-#   short-circuit); None on FAILED.
+# outcome.description: the formatted transcript on DONE ("" when NO_SPEECH —
+#   the thin formatter emits [HH:MM:SS.mmm] text lines, no header/sentinel);
+#   None on FAILED.
 # outcome.errorCode: an STTErrorCode on FAILED; None on DONE.
 
-# Shutdown (main.py Step 2.4b, best-effort try/except, after LLM close,
+# Shutdown (main.py Step 2.5, best-effort try/except, after LLM close,
 # before DB close):
 await STTService.getInstance().aclose()
 ```
 
-### `transcribeMedia` — the synchronous pipeline
+### `transcribeMedia` — the stateless pipeline
 
-**Signature:** `async def transcribeMedia(self, request: STTMediaRequest, *, gateEnabled: bool) -> STTOutcome`.
+**Signature:** `async def transcribeMedia(self, data: bytes, *, chatId: Optional[int]) -> STTOutcome`.
 
-This is the **synchronous handler-time** entry (ADR-020 decision 1): it awaits the full pipeline inline. The originating turn is bounded to ≤ `admission-timeout` (20 s) + `operation-timeout` (180 s) ≈ < 200 s. There is no async in-flight registry and no cross-turn coordination — the single-process assumption makes the synchronous model sufficient.
+This is a **thin, stateless** entry (ADR-020 decision 1). It performs no DB I/O. Admission is **unbounded** — there is no `asyncio.timeout` around the semaphore; the **handler bounds the originating turn** (via its pipeline timeout).
 
-**Never-raise boundary:** `transcribeMedia` is the FINAL never-raise boundary for the STT feature. Every failure path maps to a terminal `FAILED` row + a log; `asyncio.CancelledError` propagates. `provider.stt(bytes)` (the `lib/stt` never-raise entry) never raises either, so `STTService` is the layer that converts every outcome into a terminal DB transition.
+**Never-raise boundary:** `transcribeMedia` is the FINAL never-raise boundary for the STT feature. Every failure path returns an `STTOutcome(FAILED, …)` + a structured log; only `asyncio.CancelledError` propagates. `provider.stt(data)` (the `lib/stt` never-raise entry) never raises either, so `STTService` is the layer that converts every outcome into a typed `STTOutcome` for the handler to persist.
 
-**Pipeline (11 steps):**
+**Pipeline:**
 
-1. Read row; insert a minimal `NEW` row if missing; re-read (handles concurrent-insert race).
-2. **Cache-hit short-circuit** — if `status == DONE` with a non-null `description`, return `STTOutcome(DONE, description)` immediately (no claim, no persist).
-3. **Gate-off normalize** — if `gateEnabled` is false and the description is null, set the row to `DONE`/null via verified compare-and-set and return `STTOutcome(DONE, None)`.
-4. **Claim / orphan-reclaim → PENDING** — try `setStatusVerified(expected=<one of NEW/PENDING/FAILED/DONE>, target=PENDING)` in that order; the first hit wins.
-5. **Admission** — `asyncio.timeout(admission-timeout)` wrapping: per-chat rate limiter (`chat-ratelimiter-queue`), global rate limiter (`global-ratelimiter-queue`), then `asyncio.Semaphore(max-concurrency)`. On timeout → terminal `FAILED` + `ADMISSION_TIMEOUT` (semaphore NOT held).
-6. **Bounded download** — call `request.loader(maxSourceBytes)`; `None` → `SOURCE_SIZE_UNKNOWN`; raised → `DOWNLOAD_ERROR`; `len > maxSourceBytes` → `SOURCE_TOO_LARGE`. (Source bytes are bounded BEFORE the provider call — see ADR-020 decision 3.)
-7. Duration bound is reserved (`DURATION_EXCEEDED` is in the enum but not produced yet — there is no upstream duration signal before the provider call).
-8. `await self._provider.stt(downloadedBytes)` — the `lib/stt` provider's extract+transcribe never-raise entry (ADR-020 decision 2). An unexpected raise is caught defense-in-depth → `PROVIDER_ERROR`.
-9. **mapOutcome** — `FINAL`/`NO_SPEECH` → `formatTranscript(result, maxTranscriptChars)` → `DONE` + description; `ERROR` → `FAILED` + the provider's `errorCode`.
-10. **Verified terminal persist** — `setStatusVerified(expected=PENDING, target=outcome.status, description=...)` with ≤ 3 retries + short backoff. On exhaustion → CRITICAL log and the row is left `PENDING` for reclaim (never silently dropped).
-11. Return the `STTOutcome`.
+1. **`STT_DISABLED`** — early return when `not self._enabled` (i.e. `[stt] enabled = false`).
+2. **`SOURCE_TOO_LARGE`** — early return when `len(data) > self._maxSourceBytes` (source bytes are caller-supplied — bounding is post-download; `max-source-bytes` default is 1 GiB).
+3. **Rate limiters** — per-chat (`chat-ratelimiter-queue`, keyed by `str(chatId)`) then global (`global-ratelimiter-queue`), applied when configured and `chatId is not None`. (Duration bounding is the handler's job — see ADR-020 decision 3.)
+4. **`async with self._semaphore`** — concurrency limiter (`max-concurrency` size). **No `asyncio.timeout`** (admission is unbounded; the handler bounds the turn).
+5. **`await self._provider.stt(data)`** — the `lib/stt` provider's extract + transcribe never-raise entry (ADR-020 decision 2). An unexpected raise is caught defense-in-depth → `FAILED` + `PROVIDER_ERROR`.
+6. **`_mapOutcome`** — `FINAL`/`NO_SPEECH` → `DONE` + `formatTranscript(result)` (the thin formatter at [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py) — `[HH:MM:SS.mmm] text` lines, no header/escape/truncate/sentinel; `NO_SPEECH` yields `DONE` with `description=""`); `ERROR` → `FAILED` + the provider's `errorCode`.
+7. Return the `STTOutcome`.
 
-The admission semaphore is released in a `finally` that wraps steps 6–11, so it is always released on every path after a successful `_admit`.
+A broad outer `except Exception` (never-raise boundary) catches anything else → `FAILED` + `PROVIDER_ERROR` (the service's catch-all fallback; structured logs distinguish service-caught vs provider-returned `PROVIDER_ERROR`).
 
 ### `STTErrorCode` ownership
 
-The shared [`STTErrorCode`](../../lib/stt/models.py) enum is the stable failure vocabulary, but its members are produced at different layers:
+The shared [`STTErrorCode`](../../lib/stt/models.py) enum (8 members) is the stable failure vocabulary, but its members are produced at different layers:
 
-- **Service-layer codes** (produced ONLY by `STTService`): `ADMISSION_TIMEOUT`, `SOURCE_TOO_LARGE`, `SOURCE_SIZE_UNKNOWN`, `DOWNLOAD_ERROR`. (`DURATION_EXCEEDED` is reserved — defined on the enum but not produced yet.)
-- **Provider codes** (come back inside a `TranscriptionResult(ERROR, …)` from `provider.stt()`): `NO_AUDIO`, `PROVIDER_ERROR`, `PROTOCOL_ERROR`.
+- **Service-produced** (produced ONLY by `STTService`): `STT_DISABLED`, `SOURCE_TOO_LARGE`. (`PROVIDER_ERROR` is also produced by the service as the catch-all fallback for unexpected exceptions — structured logs distinguish a service-caught fallback from a provider-returned `PROVIDER_ERROR`.)
+- **Provider-produced** (returned inside a `TranscriptionResult(ERROR, …)` from `provider.stt()`): `NO_AUDIO`, `PROVIDER_ERROR`, `PROTOCOL_ERROR`.
+- **Reserved for the future handler** (not currently produced): `SOURCE_SIZE_UNKNOWN`, `DOWNLOAD_ERROR`, `DURATION_EXCEEDED`. (The handler round owns the bounded download and any duration gating; until it lands these codes are vocabulary only.)
 
-See [ADR-020](architecture.md#adr-020-sttservice--synchronous-stt-pipeline-and-dependency-firewall) and [`docs/plans/lib-stt-v1.md`](../plans/lib-stt-v1.md) §4 for the full raise/return contract.
+See [ADR-020](architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall) and [`docs/plans/lib-stt-v1.md`](../plans/lib-stt-v1.md) §4 for the full raise/return contract.
 
 ### Lifecycle & proxy injection
 
-- **`initialize(configManager, database)`** — reads `[stt]`; when `enabled = false` (the default) the provider stays `None` and the service is a no-op. When `enabled = true`, validates credentials (rejects unresolved `${...}` placeholders and missing creds with `ValueError` — the only permitted raise site), resolves the proxy via `ProxyService.resolveProxy(sttConfig, "stt")`, constructs `YandexSpeechKitProvider`, and caches the Phase-3 caps. Idempotent.
+- **`initialize(configManager)`** (NO `database` arg) — reads `[stt]`; when `enabled = false` (the default) the provider stays `None` and the service is a no-op. When `enabled = true`, the service validates ONLY the provider name via `STT_PROVIDERS_MAP`; the chosen provider's constructor (e.g. `YandexSpeechKitProvider.__init__`) owns cred / unresolved `${...}`-placeholder / cap-positivity / cross-field (`maxPollIntervalSeconds ≥ pollIntervalSeconds`) validation and may raise `ValueError` (propagated). `ProxyService.resolveProxy(sttConfig, "stt")` `ValueError`s are also propagated. Idempotent.
 - **Proxy firewall (ADR-020 decision 4):** `STTService` resolves the proxy and **injects** it into the provider; it never resolves a proxy itself inside `lib/stt`, and `lib/stt` never imports `internal.*`.
-- **Construction order in `main.py`:** `STTService.getInstance().initialize(...)` runs AFTER proxy + rate-limiter init, BEFORE the bot application.
-- **`aclose()`** — best-effort close of the provider's persistent HTTP client. Called from `main.py` shutdown Step 2.4b (after LLM close, before DB close), wrapped in `try/except`. Never raises.
-- **`isEnabled()`** — cheap gate; returns `_enabled`. Handlers should call this before building an `STTMediaRequest`.
+- **Construction order in `main.py`:** `STTService.getInstance().initialize(configManager)` runs AFTER proxy + rate-limiter init, BEFORE the bot application.
+- **`aclose()`** — best-effort close of the provider's persistent HTTP client. Called from `main.py` shutdown Step 2.5 (after LLM close, before DB close), wrapped in `try/except`. Never raises.
+- **`isEnabled()`** — cheap gate; returns `_enabled`. Handlers should call this before doing any per-message STT work.
 
-### Integration-boundary dataclasses
+### Integration-boundary dataclass
 
-`STTMediaRequest` and `STTOutcome` are frozen, slot dataclasses re-exported from [`internal.services.stt`](../../internal/services/stt/__init__.py):
+`STTOutcome` is a frozen, slot dataclass re-exported from [`internal.services.stt`](../../internal/services/stt/__init__.py). (`STTMediaRequest` was REMOVED in the 2026-08-02 simplification — `transcribeMedia` now takes raw `bytes` + a `chatId` keyword.)
 
 | Dataclass | Field | Type | Notes |
 |---|---|---|---|
-| `STTMediaRequest` | `mediaId` | `str` | `media_attachments.file_unique_id` (DB PK) |
-| | `fileId` | `str` | Platform file ID / URL for the loader |
-| | `mediaType` | `MessageType` | `VIDEO` / `VIDEO_NOTE` / `VOICE` / `AUDIO` |
-| | `chatId` | `int` | Used for per-chat rate limiting |
-| | `declaredSize` | `Optional[int]` | Platform-declared size; `None` if unknown; used for pre-admission rejection |
-| | `loader` | `Callable[[int], Awaitable[Optional[bytes]]]` | `(maxBytes) -> bytes | None`; `None` = download failed |
 | `STTOutcome` | `status` | `MediaStatus` | `DONE` or `FAILED` |
-| | `description` | `Optional[str]` | Formatted transcript on `DONE` (may be `None` on gate-off short-circuit); `None` on `FAILED` |
+| | `description` | `Optional[str]` | Formatted transcript on `DONE` (`""` for `NO_SPEECH`); `None` on `FAILED` |
 | | `errorCode` | `Optional[STTErrorCode]` | Present iff `status == FAILED` |
 
-**Database:** NO migration. The transcript is persisted in the existing `media_attachments.description` column; the `status` column carries the `NEW → PENDING → DONE|FAILED` lifecycle. See [`database.md`](database.md) (media attachments) and [ADR-020](architecture.md#adr-020-sttservice--synchronous-stt-pipeline-and-dependency-firewall).
+**Database:** NO migration, and the service itself does NO DB I/O. The future handler round owns the `media_attachments` row lifecycle (read/cache/claim/persist/reclaim via the existing `setStatusVerified` CAS); the service just returns an `STTOutcome`. See [`database.md`](database.md) (media attachments) and [ADR-020](architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall).
 
 **See also:** [`docs/plans/media-transcription-stt-v1.md`](../plans/media-transcription-stt-v1.md) (parent product decisions D1–D8), [`docs/plans/stt-next-steps.md`](../plans/stt-next-steps.md) (integration roadmap), [`docs/plans/lib-stt-v1.md`](../plans/lib-stt-v1.md) (`lib/stt` library spec).
 
@@ -562,7 +547,7 @@ class MyService:
 ## See Also
 
 - [`index.md`](index.md) — Project overview, singleton services quick reference
-- [`architecture.md`](architecture.md) — ADR-001 (singleton services), ADR-020 (STTService boundary), service initialization order
+- [`architecture.md`](architecture.md) — ADR-001 (singleton services), ADR-020 (stateless STTService boundary), service initialization order
 - [`handlers.md`](handlers.md) — Using services from handler methods
 - [`database.md`](database.md) — CacheService for DB hot-path access
 - [`libraries.md`](libraries.md) — Low-level lib/ai, lib/cache, lib/rate_limiter APIs

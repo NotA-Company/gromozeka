@@ -45,60 +45,66 @@ class STTResultStatus(StrEnum):
 class STTErrorCode(StrEnum):
     """Stable, provider-neutral failure categories.
 
-    Not every code is produced inside lib/stt; see the raise/return contract
-    in ``docs/plans/lib-stt-v1.md`` §4 for which codes are surfaced by ``stt()``
-    (wrapping audio-extraction exceptions), returned by the Yandex provider, or
-    produced only by STTService/loader.
+    Ownership after the stateless-Service refactor:
+
+    - **STTService** produces: ``STT_DISABLED``, ``SOURCE_TOO_LARGE``.
+    - **Provider** returns inside ``TranscriptionResult(ERROR, …)``:
+      ``NO_AUDIO``, ``PROVIDER_ERROR``, ``PROTOCOL_ERROR``.
+    - **Reserved for the future handler round** (STTService is now stateless
+      and does not download/bound duration):
+      ``SOURCE_SIZE_UNKNOWN``, ``DOWNLOAD_ERROR``, ``DURATION_EXCEEDED``.
     """
 
-    ADMISSION_TIMEOUT = "admission-timeout"
-    """Admission wait elapsed before a worker was acquired.
+    STT_DISABLED = "stt-disabled"
+    """STT is disabled for this chat (``[stt].enabled = false``).
 
-    Service-layer vocabulary: produced by STTService; never produced inside lib/stt.
+    Produced by STTService; never produced inside lib/stt.
     """
 
     SOURCE_TOO_LARGE = "source-too-large"
-    """Downloaded source byte length exceeded the source-bytes cap on recheck.
+    """Source byte length (``len(data)``) exceeded ``maxSourceBytes``.
 
-    Service-layer vocabulary: produced by STTService; never produced inside lib/stt.
+    Produced by STTService; never produced inside lib/stt.
     """
 
     SOURCE_SIZE_UNKNOWN = "source-size-unknown"
     """Source size could not be determined before download.
 
-    Service-layer vocabulary: produced by STTService/loader; never produced inside lib/stt.
+    Reserved for the future handler round — STTService is stateless and does
+    not download media.
     """
 
     NO_AUDIO = "no-audio"
     """Source contained no decodable audio stream.
 
-    Surfaced by ``stt()`` from an audio-extraction failure (``NoAudioTrackError``).
+    Produced by the provider (returned inside ``TranscriptionResult(ERROR, …)``).
     """
 
     DURATION_EXCEEDED = "duration-exceeded"
     """Decoded duration exceeded the configured duration cap.
 
-    Service-layer vocabulary: produced by STTService; never produced inside lib/stt.
+    Reserved for the future handler round — STTService is stateless and does
+    not measure duration.
     """
 
     DOWNLOAD_ERROR = "download-error"
     """Media download failed.
 
-    Service-layer vocabulary: produced by STTService/loader; never produced inside lib/stt.
+    Reserved for the future handler round — STTService is stateless and does
+    not download media.
     """
 
     PROVIDER_ERROR = "provider-error"
-    """Provider operation error, exhausted auth/429/5xx/timeout, or a decoder/muxer failure.
+    """Provider operation error (auth/429/5xx/timeout) or decoder/muxer failure.
 
-    Returned by the Yandex provider and surfaced by ``stt()`` from an
-    audio-extraction failure (``AudioDecodeError`` / ``EncoderError``) or an
-    unexpected exception.
+    Produced by the provider.  Also serves as STTService's catch-all fallback
+    for unexpected exceptions.
     """
 
     PROTOCOL_ERROR = "protocol-error"
     """Malformed provider response, trailing garbage, or streamed result body over the result-byte cap.
 
-    Returned by the Yandex provider.
+    Produced by the provider.
     """
 
 

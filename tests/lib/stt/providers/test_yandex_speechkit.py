@@ -838,6 +838,8 @@ def testConstructorRejectsMissingFolderId() -> None:
         ({"maxRetries": -1}, "maxRetries"),
         ({"maxResultBytes": 0}, "maxResultBytes"),
         ({"maxPollIntervalSeconds": 1, "pollIntervalSeconds": 2}, "maxPollIntervalSeconds"),
+        ({"pollIntervalSeconds": -1}, "pollIntervalSeconds"),
+        ({"retryBackoffSeconds": -1}, "retryBackoffSeconds"),
     ],
 )
 def testConstructorRejectsNonPositiveOrContradictoryLimits(kwargs: Dict[str, object], match: str) -> None:
@@ -855,6 +857,54 @@ def testConstructorRejectsNonPositiveOrContradictoryLimits(kwargs: Dict[str, obj
     with pytest.raises(ValueError, match=match):
         with patch("lib.stt.providers.yandex_speechkit.httpx.AsyncClient"):
             YandexSpeechKitProvider(**base)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "kwargs, match",
+    [
+        ({"apiKey": "${YC_API_KEY}"}, "apiKey"),
+        ({"folderId": "${YC_FOLDER_ID}"}, "folderId"),
+        ({"model": "${STT_MODEL}"}, "model"),
+        ({"language": "${STT_LANGUAGE}"}, "language"),
+    ],
+)
+def testConstructorRejectsUnresolvedPlaceholders(kwargs: Dict[str, object], match: str) -> None:
+    """Unresolved ${...} placeholders in string params raise ValueError.
+
+    Args:
+        kwargs: The constructor overrides to apply (one param with a placeholder).
+        match: The expected error-message fragment (the param name).
+
+    Returns:
+        None
+    """
+    base: Dict[str, object] = {"apiKey": "k", "folderId": "f", "model": "general", "language": "ru-RU", **_FAST_TIMINGS}
+    base.update(kwargs)
+    with pytest.raises(ValueError, match=match):
+        with patch("lib.stt.providers.yandex_speechkit.httpx.AsyncClient"):
+            YandexSpeechKitProvider(**base)  # type: ignore[arg-type]
+
+
+def testConstructorRejectsMissingModel() -> None:
+    """A missing model raises ValueError (startup validation).
+
+    Returns:
+        None
+    """
+    with pytest.raises(ValueError, match="model"):
+        with patch("lib.stt.providers.yandex_speechkit.httpx.AsyncClient"):
+            YandexSpeechKitProvider(apiKey="k", folderId="f", model="")
+
+
+def testConstructorRejectsMissingLanguage() -> None:
+    """A missing language raises ValueError (startup validation).
+
+    Returns:
+        None
+    """
+    with pytest.raises(ValueError, match="language"):
+        with patch("lib.stt.providers.yandex_speechkit.httpx.AsyncClient"):
+            YandexSpeechKitProvider(apiKey="k", folderId="f", language="")
 
 
 # ============================================================================

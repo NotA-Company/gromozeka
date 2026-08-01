@@ -100,7 +100,7 @@ class GromozekBot:
         loop.run_until_complete(self.rateLimiterManager.loadConfig(self.configManager.getRateLimiterConfig()))
 
         # Initialize STT service (default-OFF; constructs/skips the provider)
-        STTService.getInstance().initialize(self.configManager, self.database)
+        STTService.getInstance().initialize(self.configManager)
 
         # Initialize bot application
         botConfig = self.configManager.getBotConfig()
@@ -152,14 +152,14 @@ class GromozekBot:
             logger.exception("Error closing LLM manager during shutdown")
 
         try:
-            logger.info("Step 2.4b: Closing STT provider...")
+            logger.info("Step 2.5: Closing STT provider...")
             await STTService.getInstance().aclose()
             logger.info("STT provider closed...")
         except Exception:
             logger.exception("Error closing STT provider during shutdown")
 
         try:
-            logger.info("Step 2.5: Closing database...")
+            logger.info("Step 2.6: Closing database...")
             await self.database.manager.closeAll()
             logger.info("Database closed...")
         except Exception:

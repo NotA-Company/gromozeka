@@ -48,7 +48,7 @@
 | `mediaAttachments` | `addMediaAttachment(...)` | `None` | Add media attachment record |
 | `mediaAttachments` | `getMediaAttachment(mediaId)` | `Optional[MediaAttachmentDict]` | Get media by unique ID |
 | `mediaAttachments` | `updateMediaAttachment(mediaId, ...)` | `None` | Update media record |
-| `mediaAttachments` | `setStatusVerified(mediaId, *, expected, target, description=None)` | `Optional[MediaAttachmentDict]` | Portable atomic compare-and-set: `UPDATE media_attachments SET status=:target, description=:description WHERE file_unique_id=:id AND status=:expected RETURNING <all columns>`. Returns the updated row on success, `None` when the row was no longer in `expected` (e.g. claimed by a concurrent worker). Backs the `STTService` claim / orphan-reclaim / verified-terminal-persist steps (ADR-020). `expected`/`target` are `MediaStatus` members. |
+| `mediaAttachments` | `setStatusVerified(mediaId, *, expected, target, description=None)` | `Optional[MediaAttachmentDict]` | Portable atomic compare-and-set: `UPDATE media_attachments SET status=:target, description=:description WHERE file_unique_id=:id AND status=:expected RETURNING <all columns>`. Returns the updated row on success, `None` when the row was no longer in `expected` (e.g. claimed by a concurrent worker). Backs the **handler round's** claim / orphan-reclaim / verified-terminal-persist steps (ADR-020) — `STTService` is stateless and does not call this. `expected`/`target` are `MediaStatus` members. |
 | `mediaAttachments` | `ensureMediaInGroup(mediaId, mediaGroupId)` | `None` | Ensure media in group |
 | `mediaAttachments` | `getMediaGroupLastUpdatedAt(mediaGroupId)` | `Optional[datetime]` | Get MAX(created_at) from media_groups |
 | `chatSettings` | `setChatSetting(chatId, key, value, *, updatedBy)` | `None` | Set a chat setting with audit trail |
@@ -374,7 +374,7 @@ All defined in `internal/database/models.py`. Dict keys are snake_case to mirror
 | `DONE` | Successfully processed |
 | `FAILED` | Processing failed |
 
-**STT (media-transcription) semantics:** `STTService` (ADR-020) reuses the existing `media_attachments` table — **no migration**. The `status` column carries the transcription lifecycle (`NEW → PENDING → DONE|FAILED`) and the transcript text is persisted in the existing `description` column. All transitions go through `setStatusVerified` (atomic compare-and-set) so concurrent workers cannot clobber each other. See [`database-schema.md`](../database-schema.md) `media_attachments` and [`services.md`](services.md) §7.
+**STT (media-transcription) semantics:** the existing `media_attachments` table is reused — **no migration**. The `status` column carries the transcription lifecycle (`NEW → PENDING → DONE|FAILED`) and the transcript text is persisted in the existing `description` column. `STTService` is **stateless** — it performs no DB I/O; the **handler round** owns the row lifecycle (read / cache-hit short-circuit / claim / persist / reclaim via `setStatusVerified`). `setStatusVerified` is the atomic compare-and-set that keeps concurrent workers from clobbering each other; it remains a `MediaAttachmentsRepository` method (and is still unit-tested). See [`database-schema.md`](../database-schema.md) `media_attachments`, [`services.md`](services.md) §7, and ADR-020.
 
 #### `SpamReason`
 
