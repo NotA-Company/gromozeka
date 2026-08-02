@@ -1,251 +1,110 @@
-# STT Feature — Next Steps
+# STT Feature — Next Steps (Handler Round)
 
-> **Status:** `lib/stt` implemented + simplified; **`STTService` IMPLEMENTED as a
-> stateless service** (default-off, unwired — no handler yet). Remaining: handler
-> (owns the full `media_attachments` row lifecycle) + chat setting + bounded
-> platform download + prompt-injection mitigation + user-visible docs/CHANGELOG.
+> **Start here.** `lib/stt` (provider-neutral STT library), `STTService`
+> (stateless singleton), and the `TRANSCRIBE_MEDIA` chat setting (3 of 4
+> sites DONE) are all implemented + green and living **uncommitted** on the
+> working tree of branch `add-audio-transcribation-v2` (user's `eb4827e`
+> STTService-simplify commit + the A1/A2/A3 code/test catch-up + the
+> aurumentation/doc work + the `TRANSCRIBE_MEDIA` addition). All green:
+> ~3662 tests, `make lint` 0/0/0, `make check-docs` 0 broken.
 >
-> Scope: this is a working roadmap for completing the Speech-to-Text feature.
-> It tracks what is done, what is in flight, and what remains. Reference docs:
-> the [parent plan](media-transcription-stt-v1.md) (product decisions D1–D8,
-> integration §11/§12, manual release gates §13.3) and the [lib/stt spec](lib-stt-v1.md)
-> (library contracts).
+> **The next step is the handler round** — wire the feature into the bot so
+> it becomes user-visible (still default-off). This doc is the actionable
+> checklist for that round.
+>
+> **Key files to load first:**
+> - [`internal/services/stt/service.py`](../../internal/services/stt/service.py) — the stateless `STTService.transcribeMedia(data: bytes, *, chatId: Optional[int]) -> STTOutcome` entry the handler will call.
+> - [`internal/bot/models/chat_settings.py`](../../internal/bot/models/chat_settings.py) — `ChatSettingsKey.TRANSCRIBE_MEDIA` (line 393) + `_chatSettingsInfo` entry (line 924, BOOL / `ChatSettingsPage.FRIEND`). Already defined — the handler only READS it.
+> - [`lib/stt/`](../../lib/stt/) — provider-neutral library; see [`docs/plans/lib-stt-v1.md`](lib-stt-v1.md) for contracts.
+> - [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py) — the THIN formatter (`[HH:MM:SS.mmm] text` only; no header/escape/truncate/sentinel). Prompt-injection mitigation was deliberately shed here.
+> - [`internal/database/repositories/media_attachments.py`](../../internal/database/repositories/media_attachments.py) — `setStatusVerified(mediaId, *, expected, target, description=None)` atomic CAS (line 297); the handler owns the row lifecycle.
+> - [`tests/lib/stt/golden/`](../../tests/lib/stt/golden/) — aurumentation golden suite with RECORDED TTS-generated fixtures (see [`docs/llm/aurumentation.md`](../llm/aurumentation.md)).
+> - [ADR-020](../llm/architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall) — the stateless-service + dependency-firewall decision.
+> - Reference docs: the [parent plan](media-transcription-stt-v1.md) (product decisions D1–D8, §6 state machine, §11 config, §12 handler contract, §13.3 manual gates) and the [lib/stt spec](lib-stt-v1.md) (library contracts, §6 formatter-moved-out, §10(b) gates).
 
 ---
 
-## 1. Current state
+## 1. Current state (the launchpad)
 
-- `lib/stt/` is a provider-neutral Speech-to-Text library: **implemented, lint-clean,
-  and test-green**, default-off everywhere. The transcript formatter moved out of
-  `lib/stt` to a thin [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py)
-  (`lib/stt/formatter.py` was deleted; the old header/escape/truncate/sentinel
-  contracts were shed — see [`lib-stt-v1.md`](lib-stt-v1.md) §6).
-- **`STTService` is IMPLEMENTED as a stateless service** (default-off, unwired —
-  no handler yet) at `internal/services/stt/service.py` (singleton,
-  `STTService.getInstance()`). It owns ONLY the provider lifecycle and a thin
-  never-raise transcription entry, `async transcribeMedia(data: bytes, *, chatId) -> STTOutcome`.
-  It is wired to `[stt]` config and `ProxyService.resolveProxy(...)`, but performs
-  **NO DB I/O** — no row read/insert/cache/claim/persist/reclaim. No bot handler
-  triggers it yet. See ADR-020 in [`architecture.md`](../llm/architecture.md) for
-  the stateless-pipeline + dependency-firewall decision.
-- Work lives on branch `add-audio-transcribation-v2`.
-- The 2026-08-02 simplification reshaped both the library and the service:
-  - Dropped `STTManager` — the configured provider is now held directly by
-    `STTService`.
-  - Removed caps from `extractAudio` — source-byte bounding is now the service's
-    responsibility (post-download, on caller-supplied `bytes`); duration bounding
-    is deferred to the handler round.
-  - Made `AbstractSTTProvider.stt(data)` the **never-raise** entry point: it wraps
-    extract + transcribe and converts any extraction exception into a
-    `TranscriptionResult(ERROR, …)`.
-  - **Stateless service:** the DB-backed 11-step pipeline (read/insert/cache/claim/
-    persist/reclaim) was removed. `STTService.transcribeMedia` now takes raw
-    `bytes` + a `chatId` keyword and returns an `STTOutcome`; the future handler
-    owns the full `media_attachments` row lifecycle (read/cache-hit, claim/orphan-
-    reclaim to `PENDING`, persist via the existing `setStatusVerified` CAS,
-    terminalize). `STTMediaRequest` was REMOVED (dead).
-  - **Thin formatter:** `lib/stt/formatter.py` deleted; reborn at
-    `internal/services/stt/formatter.py`. Emits `[HH:MM:SS.mmm] text` lines only
-    (no untrusted-data header, no XML escaping, no truncation, no
-    `[No speech detected]` sentinel). `NO_SPEECH` → `DONE` with `description=""`.
-    Prompt-injection mitigation (the dropped header) is now the handler's job —
-    see §3.
-  - **Unbounded admission:** `async with self._semaphore` with NO `asyncio.timeout`.
-    The admission-timeout was removed; `ADMISSION_TIMEOUT` was renamed →
-    `STT_DISABLED` (produced when `[stt].enabled = false`). The handler bounds the
-    originating turn via its pipeline timeout.
-  - **Provider-owned validation:** `STTService.initialize(configManager)` (no
-    `database` arg) validates only the provider name; `YandexSpeechKitProvider.__init__`
-    owns cred / `${...}`-placeholder / cap-positivity / cross-field validation.
+- **`lib/stt/`** — provider-neutral Speech-to-Text library: implemented, lint-clean, test-green, default-off everywhere. `AbstractSTTProvider.stt(data: bytes) -> TranscriptionResult` is the never-raise extract+transcribe entry. `STTErrorCode` has **8 values** with documented ownership:
+  - **Service-produced:** `STT_DISABLED`, `SOURCE_TOO_LARGE`. (`PROVIDER_ERROR` is also produced by the service as the defense-in-depth catch-all.)
+  - **Provider-produced** (returned inside `TranscriptionResult(ERROR, …)`): `NO_AUDIO`, `PROVIDER_ERROR`, `PROTOCOL_ERROR`.
+  - **Reserved for the handler** (not currently produced): `SOURCE_SIZE_UNKNOWN`, `DOWNLOAD_ERROR`, `DURATION_EXCEEDED`.
+- **`STTService`** ([`internal/services/stt/service.py`](../../internal/services/stt/service.py)) — STATELESS singleton; `async transcribeMedia(data: bytes, *, chatId: Optional[int]) -> STTOutcome`. Thin never-raise pipeline: `STT_DISABLED` → `SOURCE_TOO_LARGE` (when `len(data) > maxSourceBytes`) → per-chat/global rate limiters → `async with self._semaphore` (NO timeout) → `await provider.stt(data)` → `_mapOutcome` (FINAL/NO_SPEECH → `DONE` + `formatTranscript`; ERROR → `FAILED` + provider `errorCode`) → return. Only `asyncio.CancelledError` propagates. Config `[stt]` in [`configs/00-defaults/stt.toml`](../../configs/00-defaults/stt.toml) (default `enabled = false`; `${YC_API_KEY}`/`${YC_FOLDER_ID}`). Validation lives in the provider (`YandexSpeechKitProvider.__init__`). Lifecycle wired into [`main.py`](../../main.py). Design recorded in [ADR-020](../llm/architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall).
+- **`TRANSCRIBE_MEDIA` chat setting — DEFINED (3 of 4 sites DONE):**
+  - [x] Site 1 — `ChatSettingsKey.TRANSCRIBE_MEDIA = "transcribe-media"` ([`chat_settings.py:393`](../../internal/bot/models/chat_settings.py)).
+  - [x] Site 2 — `_chatSettingsInfo` entry: BOOL / `ChatSettingsPage.FRIEND` ([`chat_settings.py:924`](../../internal/bot/models/chat_settings.py)).
+  - [x] Site 3 — default `transcribe-media = false` under `[bot.defaults]` ([`configs/00-defaults/bot-defaults.toml:92`](../../configs/00-defaults/bot-defaults.toml)).
+  - [ ] **Site 4 (consumer) is the ONLY remaining setting site** — the handler reads `chatSettings[ChatSettingsKey.TRANSCRIBE_MEDIA].toBool()`. (See handler checklist below.)
+- **`setStatusVerified`** ([`media_attachments.py:297`](../../internal/database/repositories/media_attachments.py)) — `setStatusVerified(mediaId, *, expected, target, description=None)` exists + is unit-tested (true atomic CAS via `UPDATE … WHERE file_unique_id = :id AND status = :expected RETURNING <all columns>`). `STTService` does NOT use it (stateless) — it is ready for the HANDLER to own the row lifecycle.
+- **Aurumentation golden suite** ([`tests/lib/stt/golden/`](../../tests/lib/stt/golden/)) — TTS-generated example fixtures committed (`yandex_basic_transcription_ru.json`, `yandex_english_transcription_en.json`); see [`docs/llm/aurumentation.md`](../llm/aurumentation.md). Actionable for gate-1 (below).
+- **Branch / commit state:** branch `add-audio-transcribation-v2`; user's `eb4827e` STTService-simplify commit + the catch-up + aurumentation/doc work + the `TRANSCRIBE_MEDIA` addition are all **uncommitted in the working tree**. Review/commit before or during the handler round (see §4).
 
-## 2. lib/stt cleanup (DONE)
+---
 
-Post-simplification cleanup applied to `lib/stt/`:
+## 2. Handler round checklist
 
-- [x] `stt(data)` made never-raise (wraps `extractAudio`; extraction exceptions →
-      `TranscriptionResult(ERROR)`).
-- [x] Deleted dead cap-exception classes + the `AUDIO_TOO_LARGE` enum value
-      (caps removed → never raised from `lib/stt`).
-- [x] Rewrote stale docstrings (`extractAudio` no longer claims caps); fixed 4
-      `STTManager` docstring references.
-- [x] Added `toYandexSpeechKit()` test; aligned return type.
-- [x] **Accepted trade-off (user decision):** `extractAudio` does **NOT** bound
-      decoded PCM memory — a large/long source can decode to hundreds of MB. The
-      owning layer MUST bound source bytes before calling `extractAudio`. (For the
-      service that is `max-source-bytes`; duration bounding is the handler's job.)
-      Documented in the `extractAudio` docstring.
-- [x] `docs/plans/lib-stt-v1.md` updated to match the simplified shape (incl. §6
-      formatter-moved-out note). NOTE: minor docstring drift in
-      `lib/stt/__init__.py` is flagged for a separate tiny pass.
+Each item is a checkbox + a one-line scope + the relevant skill / load-bearing note.
 
-## 3. STTService integration
+- [ ] **`STTHandler`** in `internal/bot/common/handlers/` — friend-gated on `TRANSCRIBE_MEDIA` (the setting is ALREADY defined across sites 1–3 — just READ it: `chatSettings[ChatSettingsKey.TRANSCRIBE_MEDIA].toBool()`) **and** config-gated on `[stt].enabled`. **Must be registered BEFORE `LLMMessageHandler`** (the catch-all invariant). **Load the [`add-handler`](../../.agents/skills/add-handler/SKILL.md) skill** when this lands. (Parent plan §12.)
 
-`STTService` is **IMPLEMENTED as a stateless service** (default-off). The
-service-level pipeline is complete and test-green. Per [parent §11.3](media-transcription-stt-v1.md)
-+ §11 config + §12 handler.
+- [ ] **Own the FULL `media_attachments` row lifecycle** (the stateless service shed ALL of this — the handler re-owns it):
+  - **read / cache-hit:** a row already at `DONE` with a description → reuse, do NOT re-transcribe;
+  - **claim / orphan-reclaim to `PENDING`** via `setStatusVerified(mediaId, expected=NEW_or_PENDING, target=PENDING)` (the atomic CAS already exists + is unit-tested);
+  - **persist the `STTOutcome`:** `setStatusVerified(mediaId, expected=PENDING, target=DONE, description=formatTranscript(...))` on success, or `setStatusVerified(mediaId, expected=PENDING, target=FAILED, description=None)` on failure;
+  - **terminalize** every path — never leave a row stranded in `PENDING`.
+  - Reference: parent plan [§6 state machine](media-transcription-stt-v1.md) + the existing [`setStatusVerified` CAS](../../internal/database/repositories/media_attachments.py).
 
-What remains for the feature to become user-visible is the **handler round**
-(§3.3 / §3.4 / §3.5 below).
+- [ ] **Bounded `downloadAttachment(maxBytes=…)` platform extension** — the handler downloads the media, bounds it by `[stt].max-source-bytes`, and passes the resulting `data: bytes` to `transcribeMedia(data, chatId=…)`. Promote the bound into a `maxBytes=` arg on the platform download path so the limit is enforced at the socket, not after the full body is buffered. Emits `SOURCE_SIZE_UNKNOWN` (download returned no size) / `DOWNLOAD_ERROR` (download raised) — both codes are reserved for the handler on the enum. (Per the accepted decoded-memory gap: source bytes are bounded BEFORE the provider decodes.)
 
-### 3.1 Service — `internal/services/stt/` — DONE
+- [ ] **Prompt-injection mitigation — OPEN DESIGN ITEM (must be decided this round).** The thin formatter ([`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py)) deliberately dropped the untrusted-data header / XML-escape / truncation (see ADR-020 decision 7 + [`lib-stt-v1.md`](lib-stt-v1.md) §6). **Before any transcript reaches an LLM prompt, an untrusted-content label MUST be re-added.** Decide WHERE this round: handler wraps the transcript string? a shared prompt-builder helper? restore the header in the formatter? Flag this prominently — it is a security-relevant decision, not a cosmetic one. (Parent plan §6.1 / §12.)
 
-Stateless singleton `STTService` (`internal/services/stt/service.py`). It owns:
+- [ ] **Multi-attachment TEXT rendering reuses the already-computed multi-attachment content** (readiness correction #3) — do not recompute and lose Max per-item descriptions when stitching the transcript into the message TEXT.
 
-- [x] **`transcribeMedia(data, *, chatId) -> STTOutcome`** — the never-raise
-      stateless entry. Pipeline: `STT_DISABLED` (when not enabled) →
-      `SOURCE_TOO_LARGE` (when `len(data) > maxSourceBytes`) → per-chat/global
-      rate limiters → `async with self._semaphore` (NO timeout) →
-      `await provider.stt(data)` → `_mapOutcome` (FINAL/NO_SPEECH → `DONE` +
-      `formatTranscript`; ERROR → `FAILED` + provider errorCode). Only
-      `asyncio.CancelledError` propagates.
-- [x] **Proxy resolution**: resolve the `stt` proxy via
-      `ProxyService.resolveProxy(sttConfig, "stt")`; construct the
-      `YandexSpeechKitProvider` with the resolved `ProxyConfig`. (Proxy is
-      injected, never resolved inside `lib/stt` — see [lib/stt spec §1](lib-stt-v1.md).)
-- [x] **Provider-owned validation**: the service validates ONLY the provider name
-      via `STT_PROVIDERS_MAP`; `YandexSpeechKitProvider.__init__` owns
-      cred/`${...}`/cap-positivity/cross-field validation (different providers
-      have different params, so each validates its own).
-- [x] **Lifecycle**: owns `provider.aclose()` on shutdown — best-effort, must not
-      block shutdown.
-- [x] **Config + skeleton + singleton + lifecycle + provider injection**: the
-      `[stt]` TOML section, the `STTService` class, `getInstance()`, startup/
-      shutdown hooks, and the `YandexSpeechKitProvider` injection are all in
-      place (see [`docs/llm/configuration.md`](../llm/configuration.md) `[stt]`
-      and [`docs/llm/services.md`](../llm/services.md) §7).
-- [x] **No DB I/O**: the service does not touch `media_attachments`. The row
-      lifecycle is the handler round's responsibility (§3.3).
+- [ ] **`CHANGELOG.md` `Added` entry + handler docs** — the user-visible feature ships with the handler. Add one `Added` entry under `## [Unreleased]` in [`CHANGELOG.md`](../../CHANGELOG.md) (see [`docs/llm/changelog.md`](../llm/changelog.md) for format); add the `STTHandler` row to [`docs/llm/handlers.md`](../llm/handlers.md); run the [`README.md`](../../README.md) staleness check (parent plan §14). Load the [`update-project-docs`](../../.agents/skills/update-project-docs/SKILL.md) skill for the full pass.
 
-### 3.2 Config — `[stt]` section — DONE
+- [ ] **Per-deployment friend-tier enable** — `transcribe-media = true` under `[bot.tier-defaults.friend]` in the **gitignored** `configs/common/01-bot-defaults.toml`. NOTE: this file is gitignored, so it is a **manual per-deployment step, NOT a commit** — document it in the handler docs, do not stage it.
 
-- [x] Wired the flat TOML config: `enabled`, `provider`, `api-key`, `folder-id`,
-      `model`, `language`, `max-source-bytes` (default raised to 1 GiB),
-      `max-concurrency`, the `*-seconds` timeout/poll keys, `max-result-bytes`,
-      and the two rate-limiter queue names. DELETED: `max-duration-seconds`,
-      `max-transcript-chars`, `admission-timeout`, and the old non-`-seconds`
-      spellings (`request-timeout`, `operation-timeout`, `poll-initial-delay`,
-      `poll-max-delay`).
-- [x] TOML shape: parent §11.1 (`configs/00-defaults/stt.toml`).
-- [x] Validation (parent §11.2): `enabled=false` ⇒ do not instantiate the
-      provider / load PyAV / validate credentials; `enabled=true` ⇒ the service
-      validates the provider name, the provider constructor validates its own
-      params (creds/`${...}`/caps/cross-field), and `ProxyService.resolveProxy`
-      may raise.
+- [ ] **Regression tests for the handler** — load the [`write-regression-test`](../../.agents/skills/write-regression-test/SKILL.md) skill. Cover at least: gate-off no-op, cache-hit reuse, claim race (CAS returns `None`), persist `DONE`/`FAILED`, terminalization on every error code. Reset `STTService._instance = None` in fixtures (singleton).
 
-### 3.3 Handler — REMAINING (next round)
+---
 
-- [ ] Register a new `STTHandler` in `internal/bot/common/handlers/`, gated on
-      `TRANSCRIBE_MEDIA` (friend tier) **and** `[stt].enabled`. Intercepts
-      inbound voice/audio/video, **owns the full `media_attachments` row
-      lifecycle** (read/cache-hit, claim/orphan-reclaim to `PENDING`, persist the
-      `STTOutcome` via the existing `setStatusVerified` CAS, terminalize),
-      renders the transcript into the multi-attachment TEXT content. (Parent §12.)
-      **Must be registered before `LLMMessageHandler`** (the catch-all) — load
-      the [`add-handler`](../../.agents/skills/add-handler/SKILL.md) skill when
-      this lands.
-- [ ] **Bounded `downloadAttachment(maxBytes=…)` platform extension** — the
-      handler builds the raw `bytes` for `transcribeMedia`; promote the
-      `max-source-bytes` bound into a `maxBytes=` arg on the platform download
-      path so the limit is enforced at the socket, not after the full body is
-      buffered. (Emits `SOURCE_SIZE_UNKNOWN` / `DOWNLOAD_ERROR` on failure —
-      these codes are reserved on the enum for the handler.)
-- [ ] **Prompt-injection mitigation** (accepted trade-off from the thin formatter
-      — ADR-020 decision 7): the untrusted-data header that the old `lib/stt`
-      formatter dropped is now the handler / prompt-construction layer's
-      responsibility. Wire it when the handler ships (e.g. the untrusted-data
-      label + never-system-role injection per parent §6.1/§12).
-- [ ] **TEXT media rendering must reuse the already-computed multi-attachment
-      content** (readiness correction #3) — do not recompute and lose Max
-      per-item descriptions.
+## 3. Manual release gates (block ENABLING, not code completion)
 
-### 3.4 Friend gate — REMAINING (next round)
+These are manual/operational gates that must pass before STT is **enabled in production**. Per [parent §13.3](media-transcription-stt-v1.md) + [lib/stt spec §10(b)](lib-stt-v1.md), automated `lib/stt` + integration can be code-complete **and default-off** while these remain open — STT ships behind `[stt].enabled = false` + per-chat `TRANSCRIBE_MEDIA` (both off by default), so green code does not enable any billable behavior until an operator turns it on.
 
-- [ ] `TRANSCRIBE_MEDIA` chat setting — `ChatSettingsPage.FRIEND`, default-off.
-      Wire across all four sites (enum value, `_chatSettingsInfo`, default TOML,
-      consumer). **Load the [`add-chat-setting`](../../.agents/skills/add-chat-setting/SKILL.md)
-      skill** when this lands — missing any of the four sites leaves the setting
-      half-wired and non-functional.
+Carried forward (the two most actionable called out, then the rest):
 
-### 3.5 User-visible docs (entry belongs HERE, when the handler ships — NOT with the service skeleton)
+- [ ] **gate-1 — live-wire `getRecognition` framing.** lib/stt §7.3 is **PROVISIONAL**. Actionable NOW via the aurumentation golden suite's recorded fixtures: inspect the real response framing in [`tests/lib/stt/golden/data/*.json`](../../tests/lib/stt/golden/data) vs `_resolveEnvelope` in [`lib/stt/providers/yandex_events.py`](../../lib/stt/providers/yandex_events.py), adjust if needed. **This is the single highest-risk known-unknown.**
 
-- [ ] `CHANGELOG.md` — one user-visible `Added` entry under `Unreleased`
-      (STTService is default-off/unwired, so the entry is intentionally deferred
-      to the handler round).
-- [ ] `docs/llm/handlers.md` — add the `STTHandler` row when it lands.
-- [ ] `README.md` per parent §14 (load `update-project-docs` for the full pass).
+- [ ] **gate-5 — RSS / decoded-memory budget.** Tied to the accepted decoded-memory gap (§4): `lib/stt` does NOT bound decoded PCM memory; the service bounds source bytes + the handler bounds duration BEFORE the provider decodes. Measure the real spike under those caps. **If gate-5 fails, revisit restoring a decoded-buffer cap INSIDE `lib/stt` (the one cap that can only live in the decode path).**
 
-## 4. Manual release gates (block ENABLING, not code-completion)
+- [ ] **gate-2** — model confirmation (`general` vs `deferred-general` for this workload).
+- [ ] **gate-3** — inline-limit semantics (confirm 60 MB inline vs base64 expansion; product stays at the conservative default regardless).
+- [ ] **gate-4** — 10-min end-to-end latency. If p95 processing exceeds the existing media poll, reduce default duration or redesign originating-turn waiting — **never** attach an unbounded worker task.
+- [ ] **gate-6** — graceful shutdown during a max-size decode; verify the deployment supervisor's external hard-kill grace policy for a simulated native hang.
+- [ ] **gate-7** — `make ci` Alpine-wheel proof (pinned PyAV wheel works in the Alpine container).
+- [ ] **gate-8** — PyAV encoder availability (`libopus` / `libmp3lame` present in the `av==18.0.0` wheel on every target platform). *(Already verified present.)*
+- [ ] **gate-9** — quality-by-format (UNVERIFIED): one clip recognized pass-through (OGG_OPUS) and transcoded, compared. Proven win is size/traffic, not quality.
 
-These are manual/operational gates that must pass before STT is **enabled in
-production**. Per parent §16/§13.3, automated `lib/stt` + integration can be
-code-complete **and default-off** while these remain open — STT ships behind
-`[stt].enabled = false` + per-chat `TRANSCRIBE_MEDIA` (both off by default), so
-green code does not enable any billable behavior until an operator turns it on.
+Plus SpeechKit auth smoke + end-to-end smoke — see parent §13.3 for the full operational list. No secrets, full audio, full transcripts, or authorization headers may be stored in smoke-test artifacts.
 
-Gate numbering follows the [lib/stt spec §10(b)](lib-stt-v1.md) (which expands
-parent §13.3's 7 gates to 9 by splitting out encoder availability and
-quality-by-format):
+---
 
-- [ ] **gate-1 — live-wire `getRecognition` framing.** lib/stt §7.3 is
-      **PROVISIONAL** — verify the transport framing/content-type against real
-      Yandex responses and adjust `yandex_events.py` if needed. (This is the
-      single highest-risk known-unknown.)
-- [ ] **gate-2 — model confirmation.** `general` vs `deferred-general` for this
-      workload.
-- [ ] **gate-3 — inline-limit semantics.** Confirm 60 MB inline vs base64
-      expansion; product stays at the conservative 40 MiB default regardless.
-- [ ] **gate-4 — 10-min end-to-end latency.** If p95 processing exceeds the
-      existing 300 s media poll, reduce default duration or redesign
-      originating-turn waiting — **never** attach an unbounded worker task.
-- [ ] **gate-5 — RSS/memory budget.** ⚠️ **Note:** decoded memory is now
-      **UNBOUNDED** in `lib/stt` per the accepted gap in §2 — measure the real
-      spike under the service's source/duration caps. Reduce
-      source/duration/concurrency defaults if the deployment budget can't absorb
-      it.
-- [ ] **gate-6 — graceful shutdown.** Exercise shutdown during a max-size
-      decode; verify the deployment supervisor's external hard-kill grace policy
-      for a simulated native hang.
-- [ ] **gate-7 — `make ci` Alpine-wheel proof.** Pinned PyAV wheel works in the
-      Alpine container.
-- [ ] **gate-8 — PyAV encoder availability.** `libopus` / `libmp3lame` present in
-      the `av==18.0.0` wheel on every target platform. *(Already verified
-      present.)*
-- [ ] **gate-9 — quality-by-format (UNVERIFIED).** One clip recognized
-      pass-through (OGG_OPUS) and transcoded, compared. Proven win is
-      size/traffic, not quality — treat any difference as observation, not
-      design assumption.
+## 4. Open design notes / deferred nits
 
-Plus SpeechKit auth smoke + end-to-end smoke — see parent §13.3 for the full
-operational list. No secrets, full audio, full transcripts, or authorization
-headers may be stored in smoke-test artifacts.
+- **Prompt-injection mitigation placement** — the OPEN DESIGN above (handler wraps? shared prompt-builder helper? restore in the formatter?). Decision required this round; the thin formatter deliberately shed it (ADR-020 decision 7).
 
-## 5. Open design notes / deferred decisions
+- **Accepted decoded-memory gap.** `lib/stt` does not bound decoded PCM; `STTService` bounds source bytes (`max-source-bytes`, post-download) and the handler bounds duration BEFORE calling `stt()`. Revisit (restore a decoded-buffer cap inside `lib/stt`'s decode path) **if gate-5 fails**. Documented in the `extractAudio` docstring + [`lib-stt-v1.md`](lib-stt-v1.md).
 
-- **Decoded-memory gap (accepted).** `lib/stt` does not bound decoded PCM; the
-  service bounds source + duration instead. If RSS **gate-5** fails, revisit —
-  i.e. restore a decoded-buffer cap inside `extractAudio`.
-- **`maxInlineBytes` routing change.** Removing it changed pass-through-vs-
-  transcode routing to container-only: large supported containers are now sent
-  inline → more traffic / potential vendor 60 MB rejections. Monitor; restore
-  inline-cap-driven routing if traffic/rejections become a problem.
-- **Guarded import removed.** `import lib.stt` now hard-requires PyAV (`av` is
-  always installed, so the breakage is latent). If a future module wants `lib/stt`
-  types without PyAV, restore the `_PYAV_AVAILABLE` guard pattern.
-- **Enum disposition (8 members).** `STTErrorCode` ownership post-simplification:
-  - **Service-produced** (produced ONLY by `STTService`): `STT_DISABLED`, `SOURCE_TOO_LARGE`.
-    (`PROVIDER_ERROR` is also produced by the service as the catch-all fallback
-    for unexpected exceptions — structured logs distinguish a service-caught
-    fallback from a provider-returned `PROVIDER_ERROR`.)
-  - **Provider-produced** (returned inside a `TranscriptionResult(ERROR, …)` from
-    `provider.stt()`): `NO_AUDIO`, `PROVIDER_ERROR`, `PROTOCOL_ERROR`.
-  - **Reserved for the future handler** (not currently produced): `SOURCE_SIZE_UNKNOWN`,
-    `DOWNLOAD_ERROR`, `DURATION_EXCEEDED`. The handler round owns the bounded
-    download (`SOURCE_SIZE_UNKNOWN` / `DOWNLOAD_ERROR`) and any duration gating
-    (`DURATION_EXCEEDED`); until it lands these are vocabulary only.
-  - `ADMISSION_TIMEOUT` was **renamed → `STT_DISABLED`** (the admission-timeout
-    was removed; admission is unbounded). `AUDIO_TOO_LARGE` was **deleted** in
-    the earlier lib/stt simplification.
-- **§7.2 delete-ordering.** The provider runs its best-effort `DELETE` in
-  `finally` (before parse) — an intentional refinement of "after fetch and
-  parse". Documented in [lib/stt spec §7.2](lib-stt-v1.md) + a load-bearing code
-  comment. Do not "fix" it to match a literal reading.
+- **`**extraKwargs` config-typo-swallow in `YandexSpeechKitProvider.__init__`** ([`yandex_speechkit.py:162`](../../lib/stt/providers/yandex_speechkit.py)) — the constructor accepts arbitrary kwargs, so a misspelled `[stt]` key (e.g. `folde-id`) is silently swallowed instead of raising at startup. A deferred nit — could filter explicitly against the known key set, or drop `**extraKwargs` and let unexpected keys raise. Not blocking.
+
+- **`transcribe-media` enum↔TOML-key invariant is intentionally NOT covered by a dedicated test (accepted trade-off).** The dedicated `TRANSCRIBE_MEDIA` unit tests (existence + enum↔TOML-key invariant) were deliberately deleted as low-value — the setting is exercised end-to-end by its `STTHandler` consumer (`chatSettings[ChatSettingsKey.TRANSCRIBE_MEDIA].toBool()`), which surfaces any wiring drift at handler time. This is an accepted trade-off (no dedicated drift-guard test), not a gap to fill.
+
+- **Uncommitted working tree.** Everything above (lib/stt simplified + STTService stateless + `TRANSCRIBE_MEDIA` 3-of-4 sites + aurumentation/doc work) is **uncommitted** on `add-audio-transcribation-v2`. Review/commit before or during the handler round so the handler round starts from a clean base.
+
+- **§7.2 delete-ordering (load-bearing, do not "fix").** The provider runs its best-effort `DELETE` in `finally` (before parse) — an intentional refinement of "after fetch and parse". Documented in [lib/stt spec §7.2](lib-stt-v1.md) + a load-bearing code comment.
+
+---
+
+*Sibling plan docs (same directory): [parent plan](media-transcription-stt-v1.md), [lib/stt spec](lib-stt-v1.md).*
