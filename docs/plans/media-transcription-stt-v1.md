@@ -276,8 +276,18 @@ whether the bytes contain a decodable audio stream.
 
 ### 6.2 State decision table
 
-`STTService.dispatchTranscription()` evaluates this table inside a short-lived
-per-media critical section before the legacy image-state early returns. Use a
+> **Design pivot (2026-08-02):** There is no standalone `STTHandler`. The STT
+> branch lives inside `BaseBotHandler._processMediaV2` in
+> `internal/bot/common/handlers/base.py`. The timing is **background task**
+> (like image parsing): `_processMediaV2` claims the row to `PENDING` via the
+> `setStatusVerified` atomic CAS, schedules a background transcription task,
+> and returns immediately. The LLM's `EnsuredMessage.updateMediaContent` polls
+> the DB (~300 s) for the description. The background task persists the
+> terminal transition (`DONE` or `FAILED`). This matches the existing image-
+> parsing pattern and does not block the preprocessor.
+
+`_processMediaV2` evaluates this table during its existing per-attachment
+read/insert/update flow, before the legacy image-state early returns. Use a
 bounded set of lock stripes (for example, 64 `asyncio.Lock` instances selected
 by media ID) so the same ID is serialized without leaking per-ID locks; an
 occasional collision only serializes brief DB state decisions.
@@ -286,11 +296,12 @@ occasional collision only serializes brief DB state decisions.
 |---|---:|---:|---|
 | Unsupported `MessageType` | any | any | Follow the existing image/general path unchanged. |
 | Any transcribable row | yes | either | Await the registry entry's status-ready future, create no duplicate worker, and return a completed dispatch task so the caller polls DB. |
-| Terminal row with a non-empty description | no | either | Normalize to `DONE` if needed and reuse it without cost. This includes the no-speech sentinel. |
-| Missing row, `NEW`, `FAILED`, or `DONE` without description | no | off | Ensure/normalize the row to `DONE` with no description; create no worker. |
-| Orphaned `PENDING` | no | off | Normalize to `DONE` with no description; create no worker. |
-| Missing row, `NEW`, `FAILED`, or `DONE` without description | no | on | Ensure the row, then atomically get-or-create a keyed worker. |
-| Orphaned `PENDING` | no | on | Reclaim immediately in the current single-process model and get-or-create a keyed worker. |
+| Terminal row with a non-empty description | no | either | Cache-hit: normalize to `DONE` if needed and reuse the description without cost. This includes the no-speech sentinel. |
+| `DONE` without description | no | either | Gate-off: normalize to `DONE` with no description; create no worker. |
+| Missing row, `NEW`, or `FAILED` | no | off | Gate-off: ensure/normalize the row to `DONE` with no description; create no worker. |
+| Orphaned `PENDING` | no | off | Gate-off: normalize to `DONE` with no description; create no worker. |
+| Missing row, `NEW`, or `FAILED` | no | on | Claim: ensure the row exists, then atomically CAS to `PENDING` via `setStatusVerified`, and schedule a background transcription task. |
+| Orphaned `PENDING` | no | on | Reclaim: CAS to `PENDING` via `setStatusVerified` (re-confirming ownership), then schedule a background transcription task. |
 
 For a missing row, insert it as `NEW`, then always re-read it. The current
 `addMediaAttachment()` boolean conflates duplicate conflicts and operational
@@ -299,9 +310,10 @@ the table; interpret `False + no row` as an operational failure and create no
 worker. Treat `True + no observable row` the same safe way. Preserve the
 existing media-type consistency check for a reused `file_unique_id`.
 
-The worker performs `PENDING` as its first DB transition, before admission. It
-must re-read and verify that the row exists with `status=PENDING` before
-resolving readiness or making a provider call; the existing repository's
+`setStatusVerified` is the atomic CAS caller — the FIRST CAS caller in this
+path. It sets `PENDING` inside `_processMediaV2` before the background task
+is scheduled. The background task must re-read and verify that the row exists
+with `status=PENDING` before making a provider call; the existing repository's
 `True` result alone does not prove that an UPDATE matched a row. This can be a
 small verified-transition repository method or update-plus-reread in the
 service, but it must remain provider-portable. Every exit after a verified
@@ -315,7 +327,7 @@ transition must be caught and persisted:
 
 `FAILED` is retryable when a later message has the effective gate enabled.
 v1 is user-silent: failures are operator-visible through bounded structured
-logs, not a “clean error reply” to the user.
+logs, not a "clean error reply" to the user.
 
 Terminal writes are update-plus-reread verified and use at most three attempts
 with short bounded backoff for transient DB failures; they never resubmit to
@@ -534,6 +546,21 @@ counted inside the cap). Transcript text is **never** placed in a system-role
 message; the default-off friend gate, untrusted label, and escaping are the v1
 prompt-injection controls.
 
+> **Prompt-injection mitigation — RESOLVED (2026-08-02):** The transcript is
+> delivered to the LLM as a structured JSON `mediaDescription` field (inside
+> `media_attachments.description`, rendered by the default
+> `LLM_MESSAGE_FORMAT = "smart"` format). This is the **same mechanism already
+> used for image descriptions today** — the transcript reaches the model as a
+> top-level key in a structured JSON user message, providing strong structural
+> isolation from prompt-injection vectors. **No separate text header or
+> XML-escape wrapper is needed** for the LLM delivery path. The XML-escaping
+> in `formatTranscript` remains a defense-in-depth measure for the persisted
+> text and any future TEXT-format consumers.
+>
+> The earlier open item about prompt-injection mitigation (a separate
+> `<media-description>` header or XML-escape wrapper for the LLM path) is
+> **closed** by this decision.
+
 > **Authoritative contract:** [`lib-stt-v1.md` §6](./lib-stt-v1.md) — make changes there, not here. This section summarizes it only.
 
 ## 11. Configuration and lifecycle
@@ -656,32 +683,91 @@ catch circular imports.
 
 ## 12. Handler integration contract
 
-Refactor the relevant portion of `_processMediaV2` by explicit action/state,
-not by layering more MIME booleans onto the current early-return chain:
+> **Design pivot (2026-08-02):** There is **no standalone `STTHandler`**. The
+> STT branch is an extension of `BaseBotHandler._processMediaV2` in
+> `internal/bot/common/handlers/base.py`. The earlier framing of a separate
+> handler class is superseded. No new handler registration is needed, and the
+> "register before `LLMMessageHandler`" invariant is **moot** — `_processMediaV2`
+> is already invoked from `MessagePreprocessorHandler.newMessageHandler`, which
+> is registered FIRST/SEQUENTIAL before `LLMMessageHandler`.
 
-1. Keep media-group association and media-type consistency checks.
-2. Read chat settings before `DONE`/`PENDING` early returns for transcribable
-   types and pass the chat gate plus declared platform size to the service.
-3. For every transcribable type, call the service so it can apply §6's
-   serialized state table independently of `PARSE_ATTACHMENTS`; a false gate
-   prevents creation but does not prevent joining an existing worker.
-4. Let the service re-read every insert outcome; no observable row means an
-   operational failure, not an assumed duplicate.
-5. Build a loader that performs one bounded download, optional storage using
-   the existing `SAVE_ATTACHMENTS`/`SAVE_PREFIX` semantics, MIME detection, and
-   DB file metadata update.
-6. Call `STTService.dispatchTranscription()` for all transcribable attachments.
-   The service atomically observes-or-starts according to the effective gate,
-   registers only a newly created worker with `QueueService`, and waits for its
-   status-ready handshake.
-7. Set `MediaProcessingInfo.task` to `makeEmptyAsyncTask()` for STT, including
-   active-duplicate paths, so `updateMediaContent()` uses its bounded DB poll.
-8. Leave image parsing and unsupported-media behavior unchanged.
+### 12.1 Location and gating
+
+The STT branch lives inside `_processMediaV2` (`base.py`), between the existing
+status decision logic and the DB write. For each attachment, the branch
+evaluates:
+
+```text
+transcribeMedia = sttEnabled(cached at handler init)
+               AND chatSettings[ChatSettingsKey.TRANSCRIBE_MEDIA].toBool()
+mediaType ∈ {VIDEO, VIDEO_NOTE, VOICE, AUDIO}
+```
+
+Both gates default to off. When the effective gate is off, transcribable
+attachments are terminalized to `DONE` without description (gate-off in §6.2).
+When on, the branch proceeds to the row-lifecycle logic.
+
+### 12.2 Row lifecycle in _processMediaV2
+
+The branch fits into `_processMediaV2`'s existing read/insert/update flow:
+
+- **Cache-hit**: existing `DONE` row with non-empty description → reuse
+  immediately, no new work.
+- **Gate-off**: `DONE` without description, or gate is off → normalize to `DONE`
+  with no description, no-op.
+- **Claim**: `NEW`, `FAILED`, `DONE` without description, or orphaned `PENDING`
+  → atomically CAS to `PENDING` via `setStatusVerified`, then schedule a
+  background transcription task.
+- **Background task persists**: the scheduled task performs download, extraction,
+  provider call, formatting, and writes the terminal transition
+  (`DONE`+description or `FAILED`) to the DB.
+- **Terminalize every path**: orphan-reclaim handles task cancellation; the
+  background task catches all exceptions and writes a terminal state.
+
+`setStatusVerified` is the FIRST CAS caller in this path — the atomic
+compare-and-set that transitions the row to `PENDING` before the background
+task is scheduled.
+
+### 12.3 Background-task scheduling
+
+`_processMediaV2` sets `MediaProcessingInfo.task` to `makeEmptyAsyncTask()`
+for STT (including active-duplicate paths), so `updateMediaContent()` uses its
+bounded DB poll (~300 s) to wait for the description. This matches the existing
+image-parsing pattern: the preprocessor returns immediately; the LLM's media
+poll observes the `PENDING` row and waits until the background task writes
+`DONE` or `FAILED`. If the poll times out, the transcript is still cached for
+later messages.
+
+### 12.4 Bounded download
+
+The platform extensions (`TelegramBotClient`, `MaxBotClient`) gain a bounded
+`downloadAttachment(mediaId, fileId, maxBytes=sttMaxSourceBytes)` method.
+Currently the download path is unbounded. The method emits structured outcomes:
+`SOURCE_SIZE_UNKNOWN`, `DOWNLOAD_ERROR`, or `SOURCE_TOO_LARGE`. This is called
+by the background task (not by `_processMediaV2` itself).
+
+### 12.5 Transcript delivery to the LLM
+
+The transcript is written to `media_attachments.description` by the background
+task. The existing media refresh and formatting path delivers it to the LLM as
+a structured JSON `mediaDescription` field — the **same mechanism used for
+image descriptions today**. When the default `LLM_MESSAGE_FORMAT = "smart"`
+format renders user messages as JSON, the transcript (in
+`media_attachments.description`) appears as a top-level `mediaDescription` key
+in the structured user message. This provides strong structural isolation for
+prompt-injection mitigation (see §10). No separate text header or XML-escape
+wrapper is needed for the LLM delivery path.
+
+Multi-attachment rendering dissolves naturally: each attachment gets its own
+row and its own `mediaDescription` list entry.
+
+### 12.6 Existing behavior preserved
 
 Telegram and Max routing already pass all four selected `MessageType`s through
-this method ([`base.py:1507-1724`](../../internal/bot/common/handlers/base.py)).
+`_processMediaV2` ([`base.py:1507-1724`](../../internal/bot/common/handlers/base.py)).
 Max multi-attachment uses `setMediaId=False`; test per-item `media.content`
-injection rather than only the primary `mediaContent` field.
+injection rather than only the primary `mediaContent` field. Image parsing
+and unsupported-media behavior remain unchanged.
 
 ## 13. Implementation plan and verification
 
@@ -773,24 +859,41 @@ shape.
 These require credentials or platform/runtime behavior and cannot be proven by
 static review:
 
-1. Run one short real recognition and capture only redacted structural output
-   to confirm submit, operation, event framing, refinement ordering, and delete.
-2. Confirm whether `general` or `deferred-general` is the appropriate production
-   model for this workload; retain the configured model either way.
-3. Confirm the provider's inline-limit semantics (60 MB inline vs. base64
-   expansion). The product stays at the conservative 40 MiB inline-payload
-   default even if the vendor accepts more.
-4. Test representative 10-minute media end to end. If p95 processing does not
-   complete within the existing 300-second media poll, reduce default duration
-   or redesign originating-turn waiting before release; never solve it by
-   attaching an unbounded worker task.
-5. Measure peak RSS and CPU with two 64 MiB source files and worst-case decoded
-   output on deployment-equivalent hardware, including enabled attachment
-   storage.
-6. Exercise graceful shutdown during a maximum-size decode and verify the
-   deployment supervisor's external hard-kill grace policy for a simulated
-   native hang.
-7. Run `make ci` to prove the pinned PyAV wheel works in the Alpine container.
+- **gate-1 — live-wire `getRecognition` framing.** ✅ PASS (2026-08-02).
+  `_resolveEnvelope` in `lib/stt/providers/yandex_events.py` correctly matches
+  the real Yandex SpeechKit v3 framing in both aurumentation fixtures. No code
+  changes. Coverage-gap caveat: clean TTS single-utterance clips don't exercise
+  multi-chunk / `NO_SPEECH` / `ERROR` / bare-envelope / missing-`finalRefinement`
+  branches — dedicated fixtures needed before release.
+- **gate-2 — model confirmation.** Confirm `general` vs `deferred-general` is the
+  appropriate production model for this workload; retain the configured model
+  either way.
+- **gate-3 — inline-limit semantics.** Confirm the provider's inline limit (60 MB
+  inline vs base64 expansion). The product stays at the conservative 40 MiB
+  inline-payload default regardless.
+- **gate-4 — 10-min end-to-end latency.** Test representative 10-minute media
+  end to end. If p95 processing exceeds the existing 300-second media poll,
+  reduce default duration or redesign originating-turn waiting — **never**
+  attach an unbounded worker task.
+- **gate-5 — RSS / decoded-memory budget.** Measure peak RSS and CPU with two
+  64 MiB source files and worst-case decoded output on deployment-equivalent
+  hardware. Tied to the accepted decoded-memory gap: `lib/stt` does NOT bound
+  decoded PCM; the service bounds source bytes and the `_processMediaV2` branch
+  bounds duration before the provider decodes. **If gate-5 fails, revisit
+  restoring a decoded-buffer cap inside `lib/stt`'s decode path.**
+- **gate-6 — graceful shutdown.** Exercise graceful shutdown during a
+  maximum-size decode; verify the deployment supervisor's external hard-kill
+  grace policy for a simulated native hang.
+- **gate-7 — `make ci` Alpine-wheel proof.** Run `make ci` to prove the pinned
+  PyAV wheel works in the Alpine container.
+- **gate-8 — PyAV encoder availability.** `libopus` / `libmp3lame` present in
+  the `av==18.0.0` wheel on every target platform. *(Already verified present.)*
+- **gate-9 — quality-by-format (UNVERIFIED).** One clip recognized pass-through
+  (OGG_OPUS) and transcoded, compared. Proven win is size/traffic, not quality.
+
+Plus SpeechKit auth smoke + end-to-end smoke — run one short real recognition
+and capture only redacted structural output to confirm submit, operation, event
+framing, refinement ordering, and delete.
 
 No secrets, full audio, full transcripts, or authorization headers may be
 stored in smoke-test artifacts.
