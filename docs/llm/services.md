@@ -408,9 +408,9 @@ def resetProxyServiceSingleton():
 **File:** [`internal/services/stt/service.py`](../../internal/services/stt/service.py)  
 **Import:** `from internal.services.stt import STTService, STTOutcome`
 
-`STTService` is a **stateless** singleton that owns the STT provider lifecycle (construction, proxy resolution, `aclose()`) and the never-raise transcription entry. It mirrors `ProxyService` exactly: class-level `_instance` / `_lock`, `getInstance()`, `hasattr(self, 'initialized')` guard, separate `initialize(...)`. **It does NOT touch the database** — no row read, insert, cache, claim, persist, or reclaim. The full `media_attachments` row lifecycle (read / cache-hit, claim / orphan-reclaim to `PENDING`, persist the outcome via the existing `setStatusVerified` CAS, terminalize) is owned by the **`BaseBotHandler._processMediaV2` STT branch + its `_transcribeMedia` background task** in [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) (see [`docs/plans/stt-next-steps.md`](../plans/stt-next-steps.md) §2).
+`STTService` is a **stateless** singleton that owns the STT provider lifecycle (construction, proxy resolution, `aclose()`) and the never-raise transcription entry. It mirrors `ProxyService` exactly: class-level `_instance` / `_lock`, `getInstance()`, `hasattr(self, 'initialized')` guard, separate `initialize(...)`. **It does NOT touch the database** — no row read, insert, cache, claim, persist, or reclaim. The full `media_attachments` row lifecycle (read / cache-hit short-circuit / claim / persist the outcome via plain `updateMediaAttachment` / terminalize) is owned by the **`BaseBotHandler._processMediaV2` STT branch + its `_transcribeMedia` background task** in [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) (see [`docs/plans/stt-next-steps.md`](../plans/stt-next-steps.md) §2). Single attachments have no concurrent writes, so last-write semantics via `updateMediaAttachment` are sufficient — there is no CAS.
 
-**Status (2026-08-03):** implemented, tested, and **wired into `BaseBotHandler._processMediaV2`** — the `_transcribeMedia` background task consumes `STTService.getInstance().transcribeMedia(data, chatId=...)` and terminalizes the row via `setStatusVerified`. The feature remains **DEFAULT-OFF** — both gates (`[stt] enabled = false` config default + the per-chat `TRANSCRIBE_MEDIA` setting, default `false`) must be flipped on before any media is transcribed.
+**Status (2026-08-03):** implemented, tested, and **wired into `BaseBotHandler._processMediaV2`** — the `_transcribeMedia` background task consumes `STTService.getInstance().transcribeMedia(data, chatId=...)` (the bytes are downloaded synchronously inside `_processMediaV2` and passed in as `data`) and terminalizes the row via `updateMediaAttachment`. The feature remains **DEFAULT-OFF** — all four gates (`[stt] enabled = false` config default + eligible media type + the per-chat `PARSE_ATTACHMENTS` and `TRANSCRIBE_MEDIA` settings, both default `false`) must be satisfied before any media is transcribed.
 
 ```python
 from internal.services.stt import STTService, STTOutcome
@@ -428,11 +428,11 @@ if not STTService.getInstance().isEnabled():
 outcome: STTOutcome = await STTService.getInstance().transcribeMedia(
     audioBytes, chatId=chatId
 )
-# outcome.status is MediaStatus.DONE or MediaStatus.FAILED.
-# outcome.description: the formatted transcript on DONE ("" when NO_SPEECH —
-#   the thin formatter emits [HH:MM:SS.mmm] text lines, no header/sentinel);
-#   None on FAILED.
-# outcome.errorCode: an STTErrorCode on FAILED; None on DONE.
+# outcome.success is True when a transcript was produced.
+# outcome.description: the formatted transcript when success is True ("" when
+#   NO_SPEECH — the thin formatter emits [HH:MM:SS.mmm] text lines, no
+#   header/sentinel); None when success is False.
+# outcome.errorCode: an STTErrorCode when success is False; None otherwise.
 
 # Shutdown (main.py Step 2.5, best-effort try/except, after LLM close,
 # before DB close):
@@ -454,7 +454,7 @@ This is a **thin, stateless** entry (ADR-020 decision 1). It performs no DB I/O.
 3. **Rate limiters** — per-chat (`chat-ratelimiter-queue`, keyed by `str(chatId)`) then global (`global-ratelimiter-queue`), applied when configured and `chatId is not None`. (Duration bounding is the handler's job — see ADR-020 decision 3.)
 4. **`async with self._semaphore`** — concurrency limiter (`max-concurrency` size). **No `asyncio.timeout`** (admission is unbounded; the handler bounds the turn).
 5. **`await self._provider.stt(data)`** — the `lib/stt` provider's extract + transcribe never-raise entry (ADR-020 decision 2). An unexpected raise is caught defense-in-depth → `FAILED` + `PROVIDER_ERROR`.
-6. **`_mapOutcome`** — `FINAL`/`NO_SPEECH` → `DONE` + `formatTranscript(result)` (the thin formatter at [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py) — `[HH:MM:SS.mmm] text` lines, no header/escape/truncate/sentinel; `NO_SPEECH` yields `DONE` with `description=""`); `ERROR` → `FAILED` + the provider's `errorCode`.
+6. **`_mapOutcome`** — `FINAL`/`NO_SPEECH` → `success=True` + `formatTranscript(result)` (the thin formatter at [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py) — `[HH:MM:SS.mmm] text` lines, no header/escape/truncate/sentinel; `NO_SPEECH` yields `success=True` with `description=""`); `ERROR` → `success=False` + the provider's `errorCode`.
 7. Return the `STTOutcome`.
 
 A broad outer `except Exception` (never-raise boundary) catches anything else → `FAILED` + `PROVIDER_ERROR` (the service's catch-all fallback; structured logs distinguish service-caught vs provider-returned `PROVIDER_ERROR`).
@@ -483,11 +483,11 @@ See [ADR-020](architecture.md#adr-020-sttservice--synchronous-stateless-stt-serv
 
 | Dataclass | Field | Type | Notes |
 |---|---|---|---|
-| `STTOutcome` | `status` | `MediaStatus` | `DONE` or `FAILED` |
-| | `description` | `Optional[str]` | Formatted transcript on `DONE` (`""` for `NO_SPEECH`); `None` on `FAILED` |
-| | `errorCode` | `Optional[STTErrorCode]` | Present iff `status == FAILED` |
+| `STTOutcome` | `success` | `bool` | `True` when a transcript was produced |
+| | `description` | `Optional[str]` | Formatted transcript when `success is True` (`""` for `NO_SPEECH`); `None` when `success is False` |
+| | `errorCode` | `Optional[STTErrorCode]` | Present iff `success is False` |
 
-**Database:** NO migration, and the service itself does NO DB I/O. The `BaseBotHandler._processMediaV2` STT branch + its `_transcribeMedia` background task own the `media_attachments` row lifecycle (read/cache/claim/persist/reclaim via the existing `setStatusVerified` CAS); the service just returns an `STTOutcome`. See [`database.md`](database.md) (media attachments) and [ADR-020](architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall).
+**Database:** NO migration, and the service itself does NO DB I/O. The `BaseBotHandler._processMediaV2` STT branch + its `_transcribeMedia` background task own the `media_attachments` row lifecycle (download synchronously inside `_processMediaV2`, then read/cache/claim/persist/terminalize via plain `updateMediaAttachment` — single attachments have no concurrent writes, so last-write semantics suffice; there is no CAS); the service just returns an `STTOutcome`. See [`database.md`](database.md) (media attachments) and [ADR-020](architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall).
 
 **See also:** [`docs/plans/media-transcription-stt-v1.md`](../plans/media-transcription-stt-v1.md) (parent product decisions D1–D8), [`docs/plans/stt-next-steps.md`](../plans/stt-next-steps.md) (integration roadmap), [`docs/plans/lib-stt-v1.md`](../plans/lib-stt-v1.md) (`lib/stt` library spec).
 

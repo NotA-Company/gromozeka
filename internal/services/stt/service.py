@@ -21,7 +21,6 @@ from typing import Any, Dict, Optional
 
 import lib.utils as libUtils
 from internal.config.manager import ConfigManager
-from internal.database.models import MediaStatus
 from internal.services.proxy.service import ProxyService
 from lib.proxy import ProxyConfig
 from lib.rate_limiter.manager import RateLimiterManager
@@ -55,15 +54,15 @@ class STTOutcome:
     handler to decide how to update the media-attachment row.
 
     Attributes:
-        status: ``MediaStatus.DONE`` when a transcript was produced,
-            ``MediaStatus.FAILED`` on any error.
-        description: The formatted transcript text when ``status`` is
-            ``DONE``; ``None`` when ``FAILED``.
-        errorCode: Present iff ``status == FAILED``; identifies the
+        success: ``True`` when a transcript was produced,
+            ``False`` on any error.
+        description: The formatted transcript text when ``success`` is
+            ``True``; ``None`` when ``False``.
+        errorCode: Present iff ``success`` is ``False``; identifies the
             failure category from :class:`~lib.stt.models.STTErrorCode`.
     """
 
-    status: MediaStatus
+    success: bool
     description: Optional[str] = None
     errorCode: Optional[STTErrorCode] = None
 
@@ -269,9 +268,9 @@ class STTService:
             asyncio.CancelledError: Propagated, never caught.
         """
         if not self._enabled:
-            return STTOutcome(status=MediaStatus.FAILED, description=None, errorCode=STTErrorCode.STT_DISABLED)
+            return STTOutcome(success=False, description=None, errorCode=STTErrorCode.STT_DISABLED)
         if len(data) > self._maxSourceBytes:
-            return STTOutcome(status=MediaStatus.FAILED, description=None, errorCode=STTErrorCode.SOURCE_TOO_LARGE)
+            return STTOutcome(success=False, description=None, errorCode=STTErrorCode.SOURCE_TOO_LARGE)
 
         try:
             # ------------------------------------------------------------------
@@ -293,9 +292,7 @@ class STTService:
                     result: TranscriptionResult = await self._provider.stt(data)
                 except Exception:  # noqa: BLE001 — provider never-raise defense-in-depth
                     logger.exception("transcribeMedia: unexpected provider exception")
-                    return STTOutcome(
-                        status=MediaStatus.FAILED, description=None, errorCode=STTErrorCode.PROVIDER_ERROR
-                    )
+                    return STTOutcome(success=False, description=None, errorCode=STTErrorCode.PROVIDER_ERROR)
 
                 # --------------------------------------------------------------
                 # Step 9: mapOutcome
@@ -304,7 +301,7 @@ class STTService:
 
         except Exception:  # noqa: BLE001 — never-raise boundary
             logger.exception("Unexpected exception in transcribeMedia")
-            return STTOutcome(status=MediaStatus.FAILED, description=None, errorCode=STTErrorCode.PROVIDER_ERROR)
+            return STTOutcome(success=False, description=None, errorCode=STTErrorCode.PROVIDER_ERROR)
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -324,6 +321,6 @@ class STTService:
             with the provider's error code.
         """
         if result.status == STTResultStatus.ERROR:
-            return STTOutcome(status=MediaStatus.FAILED, description=None, errorCode=result.errorCode)
+            return STTOutcome(success=False, description=None, errorCode=result.errorCode)
         description = formatTranscript(result)
-        return STTOutcome(status=MediaStatus.DONE, description=description)
+        return STTOutcome(success=True, description=description)

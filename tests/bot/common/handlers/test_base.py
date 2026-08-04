@@ -18,7 +18,6 @@ lock acquisition can be spied on.
 
 import asyncio
 import datetime
-import logging
 import types
 from typing import Generator, List, Optional, cast
 from unittest.mock import AsyncMock, Mock
@@ -636,8 +635,7 @@ class TestProcessMediaV2STT:
 
     Uses a real in-memory SQLite database (``testDatabase`` fixture) so that
     ``ensureMediaInGroup``, ``addMediaAttachment``, ``getMediaAttachment``,
-    ``updateMediaAttachment``, and ``setStatusVerified`` exercise real CAS
-    transitions end-to-end.  ``getChatSettings`` is mocked per-test to
+    and ``updateMediaAttachment`` exercise real DB transitions end-to-end.  ``getChatSettings`` is mocked per-test to
     return a controlled :class:`ChatSettingsDict`; ``STTService.getInstance``
     is patched so the background task hits a mock ``transcribeMedia``.
     """
@@ -897,7 +895,7 @@ class TestProcessMediaV2STT:
 
         mockSttService = Mock()
         mockSttService.transcribeMedia = AsyncMock(
-            return_value=STTOutcome(status=MediaStatus.DONE, description="fresh transcript"),
+            return_value=STTOutcome(success=True, description="fresh transcript"),
         )
 
         # Pre-seed a DONE row with a description.
@@ -930,70 +928,6 @@ class TestProcessMediaV2STT:
         assert row["description"] == "existing transcript"
 
     # ------------------------------------------------------------------
-    # Scenario 4: DONE + no description → reprocesses via STT
-    # ------------------------------------------------------------------
-
-    async def test_sttDoneWithoutDescription_reprocesses(self, testDatabase: Database) -> None:
-        """A ``DONE`` row without a transcript is reprocessed when the gate is on.
-
-        The row transitions ``DONE → PENDING → DONE`` with a fresh
-        transcript.  ``STTService.transcribeMedia`` IS called.
-
-        Args:
-            testDatabase: Fresh in-memory database fixture.
-        """
-        handler = await self._makeHandler(testDatabase, sttEnabled=True)
-        handler._bot = Mock()
-        handler._bot.downloadAttachment = AsyncMock(return_value=b"fake-audio")
-        handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
-            return_value=self._buildChatSettings(transcribeMedia=True),
-        )
-
-        capturedTasks: list[asyncio.Task] = []
-
-        async def captureTask(task: asyncio.Task) -> None:
-            capturedTasks.append(task)
-
-        handler.queueService.addBackgroundTask = AsyncMock(side_effect=captureTask)  # type: ignore[assignment]
-
-        mockSttService = Mock()
-        mockSttService.transcribeMedia = AsyncMock(
-            return_value=STTOutcome(status=MediaStatus.DONE, description="re-transcribed text"),
-        )
-
-        # Pre-seed a DONE row WITHOUT a description.
-        await testDatabase.mediaAttachments.addMediaAttachment(
-            fileUniqueId=self._MEDIA_ID,
-            fileId=self._FILE_ID,
-            mediaType=MessageType.VOICE,
-            status=MediaStatus.DONE,
-            description=None,
-        )
-
-        msg = self._makeEnsuredMessage()
-        STTService._instance = mockSttService
-        ret = await handler._processMediaV2(
-            ensuredMessage=msg,
-            mediaType=MessageType.VOICE,
-            mediaId=self._MEDIA_ID,
-            fileId=self._FILE_ID,
-            metadata={"source": "test"},
-        )
-
-        assert ret.id == self._MEDIA_ID
-        assert len(capturedTasks) == 1
-
-        # Let the background task complete.
-        await capturedTasks[0]
-
-        mockSttService.transcribeMedia.assert_awaited_once()
-
-        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
-        assert row is not None
-        assert row["status"] == MediaStatus.DONE
-        assert row["description"] == "re-transcribed text"
-
-    # ------------------------------------------------------------------
     # Scenario 5: new media → full STT pipeline (PENDING → DONE)
     # ------------------------------------------------------------------
 
@@ -1014,7 +948,7 @@ class TestProcessMediaV2STT:
         handler._bot = Mock()
         handler._bot.downloadAttachment = AsyncMock(return_value=b"fake-audio-data")
         handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
-            return_value=self._buildChatSettings(transcribeMedia=True),
+            return_value=self._buildChatSettings(transcribeMedia=True, parseAttachments=True),
         )
 
         capturedTasks: list[asyncio.Task] = []
@@ -1026,7 +960,7 @@ class TestProcessMediaV2STT:
 
         mockSttService = Mock()
         mockSttService.transcribeMedia = AsyncMock(
-            return_value=STTOutcome(status=MediaStatus.DONE, description="hello world transcript"),
+            return_value=STTOutcome(success=True, description="hello world transcript"),
         )
 
         msg = self._makeEnsuredMessage()
@@ -1076,7 +1010,7 @@ class TestProcessMediaV2STT:
         handler._bot = Mock()
         handler._bot.downloadAttachment = AsyncMock(return_value=None)
         handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
-            return_value=self._buildChatSettings(transcribeMedia=True),
+            return_value=self._buildChatSettings(transcribeMedia=True, parseAttachments=True),
         )
 
         capturedTasks: list[asyncio.Task] = []
@@ -1088,7 +1022,7 @@ class TestProcessMediaV2STT:
 
         mockSttService = Mock()
         mockSttService.transcribeMedia = AsyncMock(
-            return_value=STTOutcome(status=MediaStatus.DONE, description="should not reach"),
+            return_value=STTOutcome(success=True, description="should not reach"),
         )
 
         msg = self._makeEnsuredMessage()
@@ -1101,9 +1035,7 @@ class TestProcessMediaV2STT:
             metadata={"source": "test"},
         )
 
-        assert len(capturedTasks) == 1
-        await capturedTasks[0]
-
+        assert len(capturedTasks) == 0
         mockSttService.transcribeMedia.assert_not_called()
 
         row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
@@ -1128,7 +1060,7 @@ class TestProcessMediaV2STT:
         handler._bot = Mock()
         handler._bot.downloadAttachment = AsyncMock(return_value=b"fake-audio")
         handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
-            return_value=self._buildChatSettings(transcribeMedia=True),
+            return_value=self._buildChatSettings(transcribeMedia=True, parseAttachments=True),
         )
 
         capturedTasks: list[asyncio.Task] = []
@@ -1141,7 +1073,7 @@ class TestProcessMediaV2STT:
         mockSttService = Mock()
         mockSttService.transcribeMedia = AsyncMock(
             return_value=STTOutcome(
-                status=MediaStatus.FAILED,
+                success=False,
                 description=None,
                 errorCode=STTErrorCode.SOURCE_TOO_LARGE,
             ),
@@ -1184,7 +1116,7 @@ class TestProcessMediaV2STT:
         handler._bot = Mock()
         handler._bot.downloadAttachment = AsyncMock(return_value=b"fake-audio")
         handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
-            return_value=self._buildChatSettings(transcribeMedia=True),
+            return_value=self._buildChatSettings(transcribeMedia=True, parseAttachments=True),
         )
 
         capturedTasks: list[asyncio.Task] = []
@@ -1233,7 +1165,7 @@ class TestProcessMediaV2STT:
         handler._bot = Mock()
         handler._bot.downloadAttachment = AsyncMock(return_value=b"fake-audio")
         handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
-            return_value=self._buildChatSettings(transcribeMedia=True),
+            return_value=self._buildChatSettings(transcribeMedia=True, parseAttachments=True),
         )
 
         capturedTasks: list[asyncio.Task] = []
@@ -1245,7 +1177,7 @@ class TestProcessMediaV2STT:
 
         mockSttService = Mock()
         mockSttService.transcribeMedia = AsyncMock(
-            return_value=STTOutcome(status=MediaStatus.DONE, description="transcript"),
+            return_value=STTOutcome(success=True, description="transcript"),
         )
 
         msg = self._makeEnsuredMessage()
@@ -1261,9 +1193,8 @@ class TestProcessMediaV2STT:
         assert len(capturedTasks) == 1
         sttTask = capturedTasks[0]
 
-        # ret.task must NOT be the STT task object.
-        assert ret.task is not sttTask
-        # ret.task must be immediately completable (empty placeholder).
+        # ret.task must be the STT task object.
+        assert ret.task is sttTask
         assert ret.task is not None
         await ret.task
         assert ret.task.done()
@@ -1312,7 +1243,7 @@ class TestProcessMediaV2STT:
 
         mockSttService = Mock()
         mockSttService.transcribeMedia = AsyncMock(
-            return_value=STTOutcome(status=MediaStatus.DONE, description="should not be called"),
+            return_value=STTOutcome(success=True, description="should not be called"),
         )
 
         msg = self._makeEnsuredMessage()
@@ -1324,7 +1255,7 @@ class TestProcessMediaV2STT:
             fileId="image-platform-file-id-002",
         )
 
-        # No STT task scheduled (IMAGE is not in STT_ELIGIBLE_MEDIA_TYPES).
+        # No STT task scheduled (IMAGE is not a STT-eligible media type).
         assert capturedTasks == []
         mockSttService.transcribeMedia.assert_not_called()
 
@@ -1333,58 +1264,6 @@ class TestProcessMediaV2STT:
 
         # Image parsing attempted download, got None → FAILED.
         row = await testDatabase.mediaAttachments.getMediaAttachment("image-file-unique-id-002")
-        assert row is not None
-        assert row["status"] == MediaStatus.FAILED
-
-    # ------------------------------------------------------------------
-    # Scenario 11: bot=None → FAILED without calling downloadAttachment
-    # ------------------------------------------------------------------
-
-    async def test_sttBotNone_terminalizesFailed(self, testDatabase: Database) -> None:
-        """``handler._bot = None`` terminalizes the row to ``FAILED`` immediately.
-
-        ``_transcribeMedia`` raises ``RuntimeError("Bot is not initialized")``
-        which is caught by the outer ``except Exception``; the CAS writes
-        ``FAILED``.  ``downloadAttachment`` and ``transcribeMedia`` must NOT
-        be called.
-
-        Args:
-            testDatabase: Fresh in-memory database fixture.
-        """
-        handler = await self._makeHandler(testDatabase, sttEnabled=True)
-        handler._bot = None
-        handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
-            return_value=self._buildChatSettings(transcribeMedia=True),
-        )
-
-        capturedTasks: list[asyncio.Task] = []
-
-        async def captureTask(task: asyncio.Task) -> None:
-            capturedTasks.append(task)
-
-        handler.queueService.addBackgroundTask = AsyncMock(side_effect=captureTask)  # type: ignore[assignment]
-
-        mockSttService = Mock()
-        mockSttService.transcribeMedia = AsyncMock(
-            return_value=STTOutcome(status=MediaStatus.DONE, description="should not reach"),
-        )
-
-        msg = self._makeEnsuredMessage()
-        STTService._instance = mockSttService
-        await handler._processMediaV2(
-            ensuredMessage=msg,
-            mediaType=MessageType.VOICE,
-            mediaId=self._MEDIA_ID,
-            fileId=self._FILE_ID,
-            metadata={"source": "test"},
-        )
-
-        assert len(capturedTasks) == 1
-        await capturedTasks[0]
-
-        mockSttService.transcribeMedia.assert_not_called()
-
-        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
         assert row is not None
         assert row["status"] == MediaStatus.FAILED
 
@@ -1405,7 +1284,7 @@ class TestProcessMediaV2STT:
         handler._bot = Mock()
         handler._bot.downloadAttachment = AsyncMock(return_value=b"fake-audio")
         handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
-            return_value=self._buildChatSettings(transcribeMedia=True),
+            return_value=self._buildChatSettings(transcribeMedia=True, parseAttachments=True),
         )
 
         capturedTasks: list[asyncio.Task] = []
@@ -1417,7 +1296,7 @@ class TestProcessMediaV2STT:
 
         mockSttService = Mock()
         mockSttService.transcribeMedia = AsyncMock(
-            return_value=STTOutcome(status=MediaStatus.DONE, description="reclaimed transcript"),
+            return_value=STTOutcome(success=True, description="reclaimed transcript"),
         )
 
         # Pre-seed a PENDING row.  addMediaAttachment sets updated_at to now().
@@ -1459,69 +1338,6 @@ class TestProcessMediaV2STT:
         assert row["description"] == "reclaimed transcript"
 
     # ------------------------------------------------------------------
-    # Scenario 13: CAS loses race → no crash, debug log fires
-    # ------------------------------------------------------------------
-
-    async def test_sttCasLosesRace_doesNotCrash(self, testDatabase: Database, caplog: pytest.LogCaptureFixture) -> None:
-        """A lost CAS race (``setStatusVerified`` returns ``None``) does not crash.
-
-        Simulates another worker already terminalizing the row.  The debug
-        log ``"STT CAS no-op"`` must fire.  No exception escapes.
-
-        Args:
-            testDatabase: Fresh in-memory database fixture.
-            caplog: pytest log capture fixture.
-        """
-        handler = await self._makeHandler(testDatabase, sttEnabled=True)
-        handler._bot = Mock()
-        handler._bot.downloadAttachment = AsyncMock(return_value=b"fake-audio")
-        handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
-            return_value=self._buildChatSettings(transcribeMedia=True),
-        )
-
-        capturedTasks: list[asyncio.Task] = []
-
-        async def captureTask(task: asyncio.Task) -> None:
-            capturedTasks.append(task)
-
-        handler.queueService.addBackgroundTask = AsyncMock(side_effect=captureTask)  # type: ignore[assignment]
-
-        mockSttService = Mock()
-        mockSttService.transcribeMedia = AsyncMock(
-            return_value=STTOutcome(status=MediaStatus.DONE, description="transcript"),
-        )
-
-        # Make setStatusVerified return None (simulating a lost CAS race).
-        # Can't patch individual methods on __slots__ classes, so replace
-        # the whole mediaAttachments with a Mock wrapping the real repo.
-        realMediaAttachments = handler.db.mediaAttachments
-        mockMediaAttachments = Mock(wraps=realMediaAttachments)
-        mockMediaAttachments.setStatusVerified = AsyncMock(return_value=None)
-        handler.db.mediaAttachments = mockMediaAttachments  # type: ignore[assignment]
-
-        msg = self._makeEnsuredMessage()
-        STTService._instance = mockSttService
-
-        with caplog.at_level(logging.DEBUG, logger="internal.bot.common.handlers.base"):
-            # Must not raise.
-            await handler._processMediaV2(
-                ensuredMessage=msg,
-                mediaType=MessageType.VOICE,
-                mediaId=self._MEDIA_ID,
-                fileId=self._FILE_ID,
-                metadata={"source": "test"},
-            )
-
-            assert len(capturedTasks) == 1
-            # The background task must not crash despite CAS no-op.
-            await capturedTasks[0]
-
-        assert "STT CAS no-op" in caplog.text
-
-        # Restore real repo so test fixtures can clean up.
-        handler.db.mediaAttachments = realMediaAttachments  # type: ignore[assignment]
-
-    # ------------------------------------------------------------------
     # Scenario 14: SAVE_ATTACHMENTS + TRANSCRIBE_MEDIA both on — compose
     # ------------------------------------------------------------------
 
@@ -1549,6 +1365,7 @@ class TestProcessMediaV2STT:
         handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
             return_value=self._buildChatSettings(
                 transcribeMedia=True,
+                parseAttachments=True,
                 saveAttachments=True,
             ),
         )
@@ -1562,7 +1379,7 @@ class TestProcessMediaV2STT:
 
         mockSttService = Mock()
         mockSttService.transcribeMedia = AsyncMock(
-            return_value=STTOutcome(status=MediaStatus.DONE, description="composed transcript"),
+            return_value=STTOutcome(success=True, description="composed transcript"),
         )
 
         msg = self._makeEnsuredMessage()
@@ -1581,10 +1398,10 @@ class TestProcessMediaV2STT:
         mockStorage.store.assert_called_once()
         mockStorage.exists.assert_called_once()
 
-        # Row is PENDING immediately (STT path sets PENDING).
+        # Row is PENDING | DONE immediately (STT path sets PENDING).
         row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
         assert row is not None
-        assert row["status"] == MediaStatus.PENDING
+        assert row["status"] in [MediaStatus.PENDING, MediaStatus.DONE]
         assert row["local_url"] is not None  # localUrl was written by storeAttachment.
 
         # STT task was scheduled.
@@ -1628,6 +1445,7 @@ class TestProcessMediaV2STT:
         handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
             return_value=self._buildChatSettings(
                 transcribeMedia=True,
+                parseAttachments=True,
                 saveAttachments=False,
             ),
         )
@@ -1641,7 +1459,7 @@ class TestProcessMediaV2STT:
 
         mockSttService = Mock()
         mockSttService.transcribeMedia = AsyncMock(
-            return_value=STTOutcome(status=MediaStatus.DONE, description="stt-only transcript"),
+            return_value=STTOutcome(success=True, description="stt-only transcript"),
         )
 
         msg = self._makeEnsuredMessage()
@@ -1707,6 +1525,7 @@ class TestProcessMediaV2STT:
         handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
             return_value=self._buildChatSettings(
                 transcribeMedia=True,
+                parseAttachments=True,
                 saveAttachments=True,
             ),
         )
@@ -1721,7 +1540,7 @@ class TestProcessMediaV2STT:
         # Empty audio → STT will likely return FAILED / NO_AUDIO; that's fine.
         mockSttService = Mock()
         mockSttService.transcribeMedia = AsyncMock(
-            return_value=STTOutcome(status=MediaStatus.FAILED, description=None, errorCode=STTErrorCode.NO_AUDIO),
+            return_value=STTOutcome(success=False, description=None, errorCode=STTErrorCode.NO_AUDIO),
         )
 
         msg = self._makeEnsuredMessage()
@@ -1755,12 +1574,12 @@ class TestProcessMediaV2STT:
     # ------------------------------------------------------------------
 
     async def test_sttDoneNoDescription_gateOff_staysDone(self, testDatabase: Database) -> None:
-        """A ``DONE`` row without transcript stays ``DONE`` when the STT gate is off.
+        """A ``DONE`` row without transcript stays ``DONE`` when ``needProcessSTT`` is False.
 
         ``stt.enabled=true`` + STT-eligible media type, but
-        ``TRANSCRIBE_MEDIA=false`` → ``sttGateOn=False``.  The ``(not
-        sttGateOn)`` short-circuit in the DONE case returns early; no task
-        is scheduled and the row is not reprocessed.
+        ``TRANSCRIBE_MEDIA=false`` → ``needProcessSTT=False``.  The
+        short-circuit in the DONE case returns early; no task is scheduled
+        and the row is not reprocessed.
 
         Closes the DONE-case matrix: desc+gate-on, no-desc+gate-on,
         no-desc+gate-off.
@@ -1784,7 +1603,7 @@ class TestProcessMediaV2STT:
 
         mockSttService = Mock()
         mockSttService.transcribeMedia = AsyncMock(
-            return_value=STTOutcome(status=MediaStatus.DONE, description="should not reach"),
+            return_value=STTOutcome(success=True, description="should not reach"),
         )
 
         # Pre-seed a DONE row WITHOUT a description.

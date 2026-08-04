@@ -279,12 +279,14 @@ whether the bytes contain a decodable audio stream.
 > **Design pivot (2026-08-02):** There is no standalone `STTHandler`. The STT
 > branch lives inside `BaseBotHandler._processMediaV2` in
 > `internal/bot/common/handlers/base.py`. The timing is **background task**
-> (like image parsing): `_processMediaV2` claims the row to `PENDING` via the
-> `setStatusVerified` atomic CAS, schedules a background transcription task,
-> and returns immediately. The LLM's `EnsuredMessage.updateMediaContent` polls
-> the DB (~300 s) for the description. The background task persists the
-> terminal transition (`DONE` or `FAILED`). This matches the existing image-
-> parsing pattern and does not block the preprocessor.
+> (like image parsing): `_processMediaV2` sets the row to `PENDING` via plain
+> `updateMediaAttachment` (single attachments have no concurrent writes, so
+> last-write semantics suffice — there is no CAS), schedules a background
+> transcription task, and returns immediately. The LLM's `EnsuredMessage.updateMediaContent`
+> awaits the task then confirms via the DB poll (~300 s) for the description.
+> The background task persists the terminal transition (`DONE` or `FAILED`).
+> This matches the existing image-parsing pattern and does not block the
+> preprocessor.
 
 `_processMediaV2` evaluates this table during its existing per-attachment
 read/insert/update flow, before the legacy image-state early returns. Use a
@@ -296,12 +298,11 @@ occasional collision only serializes brief DB state decisions.
 |---|---:|---:|---|
 | Unsupported `MessageType` | any | any | Follow the existing image/general path unchanged. |
 | Any transcribable row | yes | either | Await the registry entry's status-ready future, create no duplicate worker, and return a completed dispatch task so the caller polls DB. |
-| Terminal row with a non-empty description | no | either | Cache-hit: normalize to `DONE` if needed and reuse the description without cost. This includes the no-speech sentinel. |
-| `DONE` without description | no | either | Gate-off: normalize to `DONE` with no description; create no worker. |
+| `DONE` row (with or without description) | no | either | Cache-hit / early-return: a `DONE` row always early-returns and is **never** re-transcribed, even if the gate has since flipped off→on. Reuse the existing description if present. |
 | Missing row, `NEW`, or `FAILED` | no | off | Gate-off: ensure/normalize the row to `DONE` with no description; create no worker. |
 | Orphaned `PENDING` | no | off | Gate-off: normalize to `DONE` with no description; create no worker. |
-| Missing row, `NEW`, or `FAILED` | no | on | Claim: ensure the row exists, then atomically CAS to `PENDING` via `setStatusVerified`, and schedule a background transcription task. |
-| Orphaned `PENDING` | no | on | Reclaim: CAS to `PENDING` via `setStatusVerified` (re-confirming ownership), then schedule a background transcription task. |
+| Missing row, `NEW`, or `FAILED` | no | on | Claim: ensure the row exists, then set it to `PENDING` via `updateMediaAttachment`, and schedule a background transcription task. |
+| Orphaned `PENDING` | no | on | Reclaim: re-stamp the row to `PENDING` via `updateMediaAttachment`, then schedule a background transcription task. |
 
 For a missing row, insert it as `NEW`, then always re-read it. The current
 `addMediaAttachment()` boolean conflates duplicate conflicts and operational
@@ -310,14 +311,13 @@ the table; interpret `False + no row` as an operational failure and create no
 worker. Treat `True + no observable row` the same safe way. Preserve the
 existing media-type consistency check for a reused `file_unique_id`.
 
-`setStatusVerified` is the atomic CAS caller — the FIRST CAS caller in this
-path. It sets `PENDING` inside `_processMediaV2` before the background task
-is scheduled. The background task must re-read and verify that the row exists
-with `status=PENDING` before making a provider call; the existing repository's
-`True` result alone does not prove that an UPDATE matched a row. This can be a
-small verified-transition repository method or update-plus-reread in the
-service, but it must remain provider-portable. Every exit after a verified
-transition must be caught and persisted:
+`updateMediaAttachment` is the terminalization helper used by
+`_transcribeMedia`. Single attachments have no concurrent writes (one row per
+`file_unique_id`, one in-flight task at a time), so plain last-write semantics
+suffice — there is **no CAS** (the earlier `setStatusVerified` CAS design was
+dropped when the design was simplified and the method was removed from the
+repository). The background task writes the terminal transition directly.
+Every exit after the provider call must be caught and persisted:
 
 | Outcome | Status | Description |
 |---|---|---|
@@ -691,12 +691,16 @@ status decision logic and the DB write. For each attachment, the branch
 evaluates:
 
 ```text
-transcribeMedia = sttEnabled(cached at handler init)
+transcribeMedia = sttEnabled (cached at handler init as _sttEnabled)
+               AND mediaType ∈ {VIDEO, VIDEO_NOTE, VOICE, AUDIO}
+               AND chatSettings[ChatSettingsKey.PARSE_ATTACHMENTS].toBool()
                AND chatSettings[ChatSettingsKey.TRANSCRIBE_MEDIA].toBool()
-mediaType ∈ {VIDEO, VIDEO_NOTE, VOICE, AUDIO}
 ```
 
-Both gates default to off. When the effective gate is off, transcribable
+`PARSE_ATTACHMENTS` is the general attachment-processing gate (it gates any
+attachment processing in `_processMediaV2`, not just image parsing);
+`TRANSCRIBE_MEDIA` is the additional opt-in for the expensive STT sub-feature.
+All four gates default to off. When the effective gate is off, transcribable
 attachments are terminalized to `DONE` without description (gate-off in §6.2).
 When on, the branch proceeds to the row-lifecycle logic.
 
@@ -704,38 +708,45 @@ When on, the branch proceeds to the row-lifecycle logic.
 
 The branch fits into `_processMediaV2`'s existing read/insert/update flow:
 
-- **Cache-hit**: existing `DONE` row with non-empty description → reuse
-  immediately, no new work.
-- **Gate-off**: `DONE` without description, or gate is off → normalize to `DONE`
-  with no description, no-op.
-- **Claim**: `NEW`, `FAILED`, `DONE` without description, or orphaned `PENDING`
-  → atomically CAS to `PENDING` via `setStatusVerified`, then schedule a
-  background transcription task.
-- **Background task persists**: the scheduled task performs download, extraction,
-  provider call, formatting, and writes the terminal transition
-  (`DONE`+description or `FAILED`) to the DB.
-- **Terminalize every path**: orphan-reclaim handles task cancellation; the
-  background task catches all exceptions and writes a terminal state.
+- **Cache-hit**: existing `DONE` row → reuse immediately, no new work. A `DONE`
+  row **always** early-returns and is never re-transcribed, even if it has no
+  description and the gate has since flipped off→on.
+- **Gate-off**: gate is off → normalize to `DONE` with no description, no-op.
+- **Claim**: `NEW`, `FAILED`, or orphaned `PENDING` → set to `PENDING` via
+  `updateMediaAttachment`, then schedule a background transcription task.
+- **Background task persists**: the scheduled `_transcribeMedia(mediaId, chatId, data)`
+  task calls `STTService.transcribeMedia(data, chatId=...)` and writes the
+  terminal transition (`DONE`+description or `FAILED`) to the DB via
+  `updateMediaAttachment`. It does **not** download — the bytes are downloaded
+  synchronously inside `_processMediaV2` (shared download block) and passed in
+  as `data`.
+- **Terminalize every path**: the background task catches every `Exception` and
+  writes a terminal state; `asyncio.CancelledError` propagates (it is a
+  `BaseException`, not caught by `except Exception`) and leaves the row
+  `PENDING` for the orphan-reclaim path on a later delivery.
 
-`setStatusVerified` is the FIRST CAS caller in this path — the atomic
-compare-and-set that transitions the row to `PENDING` before the background
-task is scheduled.
+`updateMediaAttachment` is the terminalization helper — plain last-write
+semantics. Single attachments have no concurrent writes (one row per
+`file_unique_id`, one in-flight task at a time), so there is **no CAS** (the
+former `setStatusVerified` CAS helper was removed when the design was
+simplified).
 
 ### 12.3 Background-task scheduling
 
-`_processMediaV2` sets `MediaProcessingInfo.task` to `makeEmptyAsyncTask()`
-for STT (including active-duplicate paths), so `updateMediaContent()` uses its
-bounded DB poll (~300 s) to wait for the description. The preprocessor returns
-immediately and the LLM's media poll observes the `PENDING` row until the
-background task writes `DONE` or `FAILED`. If the poll times out, the transcript
-is still cached for later messages.
+`_processMediaV2` sets `MediaProcessingInfo.task` to the live STT background
+task (`ret.task = sttTask`) for STT — **mirroring the image-parsing pattern**
+(`ret.task = parseTask`). `updateMediaContent()` awaits the task and then
+confirms via its bounded DB poll (~300 s); the end-to-end wait is equivalent
+either way, so consistency with image parsing is preferred. The preprocessor
+returns immediately and the LLM's media poll observes the `PENDING` row until
+the background task writes `DONE` or `FAILED`. If the poll times out, the
+transcript is still cached for later messages.
 
-> **Deliberate divergence from image parsing (2026-08-03):** image parsing sets
-> `ret.task = parseTask` (the LLM awaits the parse task directly). STT instead
-> sets `ret.task = makeEmptyAsyncTask()` and lets the LLM poll the DB — it does
-> **not** await the STT task. `STTService` can run minutes
-> (`operation-budget-seconds = 2400`), so awaiting the task directly would be
-> uncapped. Do not "fix" this to match the image-parsing shape.
+> **Mirrors image parsing (2026-08-03):** image parsing sets
+> `ret.task = parseTask` and the LLM awaits the parse task directly. STT does
+> the same — `ret.task = sttTask`. The earlier "uncapped await" concern is
+> retired: `updateMediaContent` awaits the STT task **and** confirms via the DB
+> poll, so the wait is bounded by the poll cap either way.
 
 ### 12.4 Download (simplified, 2026-08-03)
 
@@ -745,11 +756,16 @@ is still cached for later messages.
 > `TheBot.downloadAttachment(mediaId, fileId) -> Optional[bytes]` — no new
 > method, no `maxBytes` parameter.
 
-The background task calls `TheBot.downloadAttachment(mediaId, fileId)`. Two
-outcomes:
+The download is **synchronous inside `_processMediaV2`** (the shared download
+block), so the bytes are fetched exactly once when both `SAVE_ATTACHMENTS` and
+the STT branch need them. `_transcribeMedia(self, mediaId, chatId, data)`
+receives the already-downloaded `data` as a positional argument and does **NOT**
+download itself. Two outcomes from the synchronous download:
 
-- **`None`** (download failure) → `FAILED` + `STTErrorCode.DOWNLOAD_ERROR`.
-- **`data: bytes`** → passed to `STTService.transcribeMedia(data, chatId=…)`.
+- **`None`** (download failure) → terminalize via `updateMediaAttachment` to
+  `FAILED` (`STTErrorCode.DOWNLOAD_ERROR`).
+- **`data: bytes`** → passed through to the background `_transcribeMedia` task,
+  which calls `STTService.transcribeMedia(data, chatId=…)`.
 
 `STTService.transcribeMedia` enforces the source-byte cap **post-download**:
 `len(data) > max-source-bytes` → `SOURCE_TOO_LARGE` (this check already exists

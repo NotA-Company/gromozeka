@@ -19,7 +19,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from internal.database.models import MediaStatus
 from internal.services.stt.service import STTOutcome, STTService
 from lib.stt.abstract import AbstractSTTProvider
 from lib.stt.models import (
@@ -189,7 +188,7 @@ class TestProviderErrorMapsToFailed:
 
         outcome: STTOutcome = await svc.transcribeMedia(b"\x00" * 64, chatId=100)
 
-        assert outcome.status == MediaStatus.FAILED
+        assert outcome.success is False
         assert outcome.errorCode == STTErrorCode.PROVIDER_ERROR
         assert provider.sttCallCount == 1
 
@@ -211,7 +210,7 @@ class TestProtocolErrorMapsToFailed:
 
         outcome: STTOutcome = await svc.transcribeMedia(b"\x00" * 64, chatId=100)
 
-        assert outcome.status == MediaStatus.FAILED
+        assert outcome.success is False
         assert outcome.errorCode == STTErrorCode.PROTOCOL_ERROR
 
 
@@ -232,7 +231,7 @@ class TestNoAudioMapsToFailed:
 
         outcome: STTOutcome = await svc.transcribeMedia(b"\x00" * 64, chatId=100)
 
-        assert outcome.status == MediaStatus.FAILED
+        assert outcome.success is False
         assert outcome.errorCode == STTErrorCode.NO_AUDIO
 
 
@@ -251,7 +250,7 @@ class TestNeverRaisesOnUnexpectedProviderException:
 
         outcome: STTOutcome = await svc.transcribeMedia(b"\x00" * 64, chatId=100)
 
-        assert outcome.status == MediaStatus.FAILED
+        assert outcome.success is False
         assert outcome.errorCode == STTErrorCode.PROVIDER_ERROR
 
 
@@ -281,7 +280,7 @@ class TestFinalTranscriptionProducesDone:
 
         outcome: STTOutcome = await svc.transcribeMedia(b"\x00" * 64, chatId=100)
 
-        assert outcome.status == MediaStatus.DONE
+        assert outcome.success is True
         assert outcome.description is not None
         # Special chars are NOT escaped in the thin formatter.
         assert "<world>" in outcome.description
@@ -310,7 +309,7 @@ class TestNoSpeechYieldsDoneEmpty:
 
         outcome: STTOutcome = await svc.transcribeMedia(b"\x00" * 64, chatId=100)
 
-        assert outcome.status == MediaStatus.DONE
+        assert outcome.success is True
         assert outcome.description == ""
 
 
@@ -332,7 +331,7 @@ class TestFinalUnderCapYieldsDone:
 
         outcome: STTOutcome = await svc.transcribeMedia(b"\x00" * 64, chatId=100)
 
-        assert outcome.status == MediaStatus.DONE
+        assert outcome.success is True
         assert outcome.description is not None
         assert "[00:00:00]" in outcome.description
         assert "short text" in outcome.description
@@ -366,7 +365,7 @@ class TestFormatTranscriptBugNeverRaises:
         with patch("internal.services.stt.service.formatTranscript", side_effect=RuntimeError("fmt boom")):
             outcome: STTOutcome = await svc.transcribeMedia(b"\x00" * 64, chatId=100)
 
-        assert outcome.status == MediaStatus.FAILED
+        assert outcome.success is False
         assert outcome.errorCode == STTErrorCode.PROVIDER_ERROR
 
 
@@ -398,6 +397,6 @@ class TestRateLimitersAppliedDuringAdmission:
         with patch("lib.rate_limiter.manager.RateLimiterManager.getInstance", return_value=mockManager):
             outcome: STTOutcome = await svc.transcribeMedia(b"\x00" * 64, chatId=42)
 
-        assert outcome.status == MediaStatus.DONE
+        assert outcome.success is True
         mockManager.applyLimit.assert_any_call("stt-chat", key="42")
         mockManager.applyLimit.assert_any_call("stt-global")
