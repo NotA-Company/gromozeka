@@ -2,14 +2,14 @@
 
 Defines the exception hierarchy raised by ``lib.stt.audio.extractAudio()`` —
 the only runtime raise-point inside ``lib/stt`` (load-bearing contract #2 in
-``docs/plans/lib-stt-v1.md`` §4/§5). Each concrete exception sets a class-level
+``docs/design/lib-stt-v1.md`` §4/§5). Each concrete exception sets a class-level
 ``errorCode`` (an :class:`~lib.stt.models.STTErrorCode`) that identifies the
 failure category, so ``STTService`` can map the exception to the correct
 ``FAILED`` category without re-mapping.
 
 This module imports :mod:`lib.stt.models` (for ``STTErrorCode``); ``models`` MUST
 NOT import this module (the dependency runs one way only — see the dependency
-firewall in ``docs/plans/lib-stt-v1.md`` §1).
+firewall in ``docs/design/lib-stt-v1.md`` §1).
 """
 
 from .models import STTErrorCode

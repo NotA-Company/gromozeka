@@ -10,7 +10,7 @@ transcode).
 This module imports only the standard library (``abc``, ``logging``,
 ``collections.abc``) and :mod:`lib.stt.models` / :mod:`lib.stt.exceptions` — no
 ``internal.*`` or singleton-service imports (the ``lib/stt`` dependency firewall,
-``docs/plans/lib-stt-v1.md`` §1).
+``docs/design/lib-stt-v1.md`` §1).
 """
 
 import logging

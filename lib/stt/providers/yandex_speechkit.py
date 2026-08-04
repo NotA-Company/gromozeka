@@ -6,7 +6,7 @@ persistent :class:`httpx.AsyncClient` (configured with the injected, already-res
 :class:`~lib.proxy.ProxyConfig`) and drives the Yandex SpeechKit v3 deferred-recognition
 lifecycle end to end: submit → poll → getRecognition → delete.
 
-Per ``docs/plans/lib-stt-v1.md`` §7 (the authoritative wire spec) and §1 (the dependency
+Per ``docs/design/lib-stt-v1.md`` §7 (the authoritative wire spec) and §1 (the dependency
 firewall):
 
 - **Proxy is injected** (dependency-firewall seam #1). The provider receives an
@@ -26,7 +26,7 @@ firewall):
 Authoritative references:
 - §7.1 (authentication + submit URL/body/headers), §7.2 (operation lifecycle),
   §7.3 (event parsing — delegated to :mod:`lib.stt.providers.yandex_events`),
-  §7.4 (retry policy) of ``docs/plans/lib-stt-v1.md``.
+  §7.4 (retry policy) of ``docs/design/lib-stt-v1.md``.
 - [async v3 guide](https://aistudio.yandex.ru/docs/en/speechkit/stt/api/transcribation-api-v3.html),
   [v3 service proto](https://github.com/yandex-cloud/cloudapi/blob/master/yandex/cloud/ai/stt/v3/stt_service.proto),
   [SpeechKit limits](https://aistudio.yandex.ru/docs/en/speechkit/concepts/limits).

@@ -1,7 +1,7 @@
 """getRecognition streaming-JSON event parser for the Yandex SpeechKit v3 provider.
 
 This module is the isolated live-wire parser (readiness correction #2,
-``docs/plans/lib-stt-v1.md`` §3/§7.3): a PURE, sync function that takes the raw
+``docs/design/lib-stt-v1.md`` §3/§7.3): a PURE, sync function that takes the raw
 ``getRecognition`` response body (the provisional streaming-JSON event stream the
 provider fetches) and turns it into a provider-neutral
 :class:`~lib.stt.models.TranscriptionResult`. It performs no HTTP, no async I/O,
@@ -21,7 +21,7 @@ semantics) and treat the wrapper as provisional.
 
 Authoritative references:
 - §7.3 (event parsing) and §8.1 (result-body cap = 5 MiB, owned here) of
-  ``docs/plans/lib-stt-v1.md``.
+  ``docs/design/lib-stt-v1.md``.
 - v3 message proto ``yandex/cloud/ai/stt/v3/stt.proto``: ``StreamingResponse``
   carries the oneof ``Event`` with ``final`` (an ``AlternativeUpdate``) and
   ``final_refinement`` (a ``FinalRefinement`` whose ``normalized_text`` is an

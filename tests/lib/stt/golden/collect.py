@@ -12,7 +12,7 @@ which only reads files under ``data/`` and never makes network calls.
 
 Recording this data resolves the STT feature's **release gate-1** (capture the
 real ``getRecognition`` wire framing — the highest-risk PROVISIONAL
-known-unknown, ``docs/plans/lib-stt-v1.md`` §7.3 / §13.3). After recording,
+known-unknown, ``docs/design/lib-stt-v1.md`` §7.3 / §13.3). After recording,
 inspect the recorded ``getRecognition`` response bytes in the ``data/*.json``
 fixtures vs ``_resolveEnvelope`` in ``lib/stt/providers/yandex_events.py``.
 If the real framing differs from the PROVISIONAL assumption (the optional

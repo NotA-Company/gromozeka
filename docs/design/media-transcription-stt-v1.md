@@ -1,11 +1,11 @@
-# Plan: Media Transcription (Speech-to-Text) v1
+# Design: Media Transcription (Speech-to-Text) v1
 
 Status: **REVIEWED** — implementation-ready; release is gated by the smoke tests in §13.3  
 Date: 2026-07-27  
 Owner: TBD  
 Companion docs: [`architecture.md`](../llm/architecture.md), [`services.md`](../llm/services.md), [`libraries.md`](../llm/libraries.md), [`configuration.md`](../llm/configuration.md), [`handlers.md`](../llm/handlers.md)
 
-> This is a design and implementation plan only. It does not add STT behavior.
+> This is a design document and implementation spec only. It does not add STT behavior.
 > Implementation must use `software-developer`; the final documentation pass
 > must load the `update-project-docs` skill. The product decisions in §2 were
 > confirmed by the user on 2026-07-27.

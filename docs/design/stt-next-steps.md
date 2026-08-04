@@ -33,7 +33,7 @@
 > - [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) — `_processMediaV2` is the method to extend; the STT branch lives here (gated on TRANSCRIBE_MEDIA + `[stt].enabled`, filtered to VIDEO/VIDEO_NOTE/VOICE/AUDIO, background-task timing like image parsing).
 > - [`internal/services/stt/service.py`](../../internal/services/stt/service.py) — the stateless `STTService.transcribeMedia(data: bytes, *, chatId: Optional[int]) -> STTOutcome` entry the background task will call.
 > - [`internal/bot/models/chat_settings.py`](../../internal/bot/models/chat_settings.py) — `ChatSettingsKey.TRANSCRIBE_MEDIA` (line 393) + `_chatSettingsInfo` entry (line 924, BOOL / `ChatSettingsPage.FRIEND`). Already defined — the `_processMediaV2` STT branch only READS it.
-> - [`lib/stt/`](../../lib/stt/) — provider-neutral library; see [`docs/plans/lib-stt-v1.md`](lib-stt-v1.md) for contracts.
+> - [`lib/stt/`](../../lib/stt/) — provider-neutral library; see [`docs/design/lib-stt-v1.md`](lib-stt-v1.md) for contracts.
 > - [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py) — the THIN formatter (`[HH:MM:SS.mmm] text` only; no header/escape/truncate/sentinel). Prompt-injection mitigation was deliberately shed here — and is no longer needed at this layer (see §2 RESOLVED below).
 > - [`internal/database/repositories/media_attachments.py`](../../internal/database/repositories/media_attachments.py) — row terminalization is via `MediaAttachmentsRepository.updateMediaAttachment` (plain update, no CAS; single attachments have no concurrent writes); the `_processMediaV2` STT branch owns the row lifecycle.
 > - [`internal/bot/common/handlers/llm_messages.py`](../../internal/bot/common/handlers/llm_messages.py) — `LLMMessageHandler`'s JSON `mediaDescription` delivery path: default `LLM_MESSAGE_FORMAT = "smart"` renders user messages as JSON; `media_attachments.description` reaches the model as a structured top-level `mediaDescription` key (same mechanism already used for image descriptions).
@@ -114,6 +114,8 @@ Carried forward (the two most actionable called out, then the rest):
 - [ ] **gate-9** — quality-by-format (UNVERIFIED): one clip recognized pass-through (OGG_OPUS) and transcoded, compared. Proven win is size/traffic, not quality.
 
 Plus SpeechKit auth smoke + end-to-end smoke — see parent §13.3 for the full operational list. No secrets, full audio, full transcripts, or authorization headers may be stored in smoke-test artifacts.
+
+> **gate-3 / gate-4 code design:** [`docs/design/stt-v1.1.md`](stt-v1.1.md) designs the code behind gate-3 (Object-Storage routing for clips over the inline threshold) and gate-4 (per-transcription statistics recording in `lib/stt`). The manual confirmation parts of both gates remain smoke-test activities; gates 2/5/6/7/8/9 need no v1.1 code.
 
 ---
 

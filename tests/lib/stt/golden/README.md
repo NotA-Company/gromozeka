@@ -9,7 +9,7 @@ deterministic) on every `make test`.
 
 This resolves the STT feature's **release gate-1**: capture the real
 `getRecognition` wire framing — the highest-risk PROVISIONAL known-unknown
-(see `docs/plans/lib-stt-v1.md` §7.3 / §13.3).
+(see `docs/design/lib-stt-v1.md` §7.3 / §13.3).
 
 ## How it works
 

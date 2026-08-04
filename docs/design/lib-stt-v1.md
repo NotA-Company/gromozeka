@@ -1,11 +1,11 @@
-# Plan: lib/stt v1 (first implementation step)
+# Design: lib/stt v1 (first implementation step)
 
 Status: **IMPLEMENTED (simplified shape) — lib/stt built; integration pending**  
 Date: 2026-08-01  
 Owner: TBD  
 Companion docs: [`media-transcription-stt-v1.md`](./media-transcription-stt-v1.md) (parent), [`stt-next-steps.md`](./stt-next-steps.md) (integration roadmap + accepted gaps), [`architecture.md`](../llm/architecture.md), [`libraries.md`](../llm/libraries.md), [`configuration.md`](../llm/configuration.md), [`services.md`](../llm/services.md)
 
-> Companion to and extracted from [`docs/plans/media-transcription-stt-v1.md`](./media-transcription-stt-v1.md);
+> Companion to and extracted from [`docs/design/media-transcription-stt-v1.md`](./media-transcription-stt-v1.md);
 > ratifies its D1–D8. The `lib/stt` library described here is **implemented** (and has since been
 > **simplified**: no `STTManager`, no caps inside `extractAudio`, a never-raise `stt(data)` entry). This
 > document is the single source of truth for `lib/stt` internals; where it previously described the
@@ -550,7 +550,7 @@ accepted trade-off of the simplification — prompt-injection mitigation (the
 untrusted-data label, XML escaping, never-system-role injection) becomes the
 **handler / prompt-construction layer's responsibility** when the handler round
 ships. See ADR-020 decision 7 in [`docs/llm/architecture.md`](../llm/architecture.md)
-and [`docs/plans/stt-next-steps.md`](stt-next-steps.md) §3.3. This is a tracked
+and [`docs/design/stt-next-steps.md`](stt-next-steps.md) §3.3. This is a tracked
 handler-round TODO, not an accident.
 
 ## 7. Yandex SpeechKit v3 provider

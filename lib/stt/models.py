@@ -6,7 +6,7 @@ STT pipeline. It deliberately imports only the standard library (``enum``,
 ``dataclasses``, ``typing``) and MUST NOT import ``internal.bot``,
 ``internal.database``, any singleton service, or ``lib.stt.exceptions`` (the
 exception module imports this one, not the reverse — see the dependency
-firewall in ``docs/plans/lib-stt-v1.md`` §1).
+firewall in ``docs/design/lib-stt-v1.md`` §1).
 
 Key components:
 - STTResultStatus / STTErrorCode: outcome category and stable failure categories.
@@ -20,7 +20,7 @@ Key components:
 - STTLoaderResult + STTMediaLoader: the typed async loader boundary passed in
   by ``STTService`` (dependency-firewall seam #2).
 
-See ``docs/plans/lib-stt-v1.md`` §4 for the authoritative prose on every type.
+See ``docs/design/lib-stt-v1.md`` §4 for the authoritative prose on every type.
 """
 
 from collections.abc import Sequence
@@ -186,7 +186,7 @@ class AudioFormatSpec:
 
     Describes the negotiation surface used by ``audio.py`` to decide pass-through
     vs. transcode. Does NOT describe recognition quality — quality-by-format is
-    UNVERIFIED (see ``docs/plans/lib-stt-v1.md`` §10(b)); the proven win is
+    UNVERIFIED (see ``docs/design/lib-stt-v1.md`` §10(b)); the proven win is
     payload size/traffic.
 
     Attributes:
@@ -195,7 +195,7 @@ class AudioFormatSpec:
         maxChannels: Maximum accepted channel count (inclusive). SpeechKit
             accepts multi-channel async audio, but the exact ceiling is
             unpublished; set a generous value here and let the decoded-buffer
-            cap (``docs/plans/lib-stt-v1.md`` §5) bound the actual multi-channel
+            cap (``docs/design/lib-stt-v1.md`` §5) bound the actual multi-channel
             cost.
         minSampleRate: Minimum accepted sample rate in Hz (inclusive).
         maxSampleRate: Maximum accepted sample rate in Hz (inclusive).
@@ -215,7 +215,7 @@ class ExtractedAudio:
     The container is whatever the negotiation decided — the source container on
     a pass-through path, or the transcode target (OGG_OPUS for Yandex) on a
     transcode path. ``channels`` is ALWAYS the source channel count; it is never
-    downmixed (hard rule, ``docs/plans/lib-stt-v1.md`` §5).
+    downmixed (hard rule, ``docs/design/lib-stt-v1.md`` §5).
 
     Attributes:
         container: The container of ``data`` (WAV / OGG_OPUS / MP3).

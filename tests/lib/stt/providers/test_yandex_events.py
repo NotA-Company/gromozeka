@@ -1,6 +1,6 @@
 """Golden-data unit tests for lib.stt.providers.yandex_events (§7.3 event parser).
 
-Covers (per ``docs/plans/lib-stt-v1.md`` §7.3 / §9):
+Covers (per ``docs/design/lib-stt-v1.md`` §7.3 / §9):
 - A single final event → FINAL with one segment.
 - Multiple final events → FINAL with several segments, sorted by start time.
 - Top-alternative selection (only ``alternatives[0]`` is consumed).

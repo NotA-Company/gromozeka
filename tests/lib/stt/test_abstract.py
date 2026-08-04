@@ -1,6 +1,6 @@
 """Light unit tests for lib.stt.abstract (AbstractSTTProvider interface).
 
-Covers (per ``docs/plans/lib-stt-v1.md`` §8):
+Covers (per ``docs/design/lib-stt-v1.md`` §8):
 - ``AbstractSTTProvider`` cannot be instantiated directly (abstract members
   present → ``TypeError``).
 - A minimal concrete stub implementing all three abstract members CAN be

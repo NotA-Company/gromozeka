@@ -1,6 +1,6 @@
 """Golden-HTTP tests for the Yandex SpeechKit v3 provider (§7 / §9).
 
-Covers (per ``docs/plans/lib-stt-v1.md`` §7.1/§7.2/§7.4 and the §9 test matrix) the
+Covers (per ``docs/design/lib-stt-v1.md`` §7.1/§7.2/§7.4 and the §9 test matrix) the
 provider's full submit→poll→getRecognition→delete lifecycle using ``httpx.MockTransport``
 ONLY — no real network (§9). The fixtures assert the parsing/wire LOGIC (event
 semantics, dynamic ``container_audio_type``, never-retry submit, idempotent-GET retry,

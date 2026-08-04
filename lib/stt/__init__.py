@@ -4,9 +4,9 @@ This package owns no DB rows, no bot state, no admission/concurrency policy, and
 no config reading; it sits alongside other bot-free libraries (``lib/ai``,
 ``lib/markdown``, ``lib/yandex_search``) and MUST NOT import ``internal.bot``,
 ``internal.database``, or any singleton service. See
-``docs/plans/lib-stt-v1.md`` §1 for the dependency firewall.
+``docs/design/lib-stt-v1.md`` §1 for the dependency firewall.
 
-Public surface (complete per ``docs/plans/lib-stt-v1.md`` §3): data models
+Public surface (complete per ``docs/design/lib-stt-v1.md`` §3): data models
 (:mod:`lib.stt.models`), the typed extraction exception taxonomy
 (:mod:`lib.stt.exceptions`), the abstract provider interface
 (:mod:`lib.stt.abstract`), the PyAV-based audio extraction with format
