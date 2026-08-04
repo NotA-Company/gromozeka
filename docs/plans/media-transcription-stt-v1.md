@@ -163,7 +163,7 @@ do not copy it into new documentation.
 ```text
 internal/bot/common/handlers/base.py
   - evaluates type and the chat gate
-  - supplies declared size and a bounded platform-specific media loader
+  - supplies declared size and invokes the existing platform download
   - preserves image/general-media behavior
                  |
                  v
@@ -214,7 +214,7 @@ database, rate limiter, queue-compatible tasks, and `lib/stt`.
 sequenceDiagram
     participant H as _processMediaV2
     participant S as STTService
-    participant D as Bounded loader
+    participant B as TheBot (download)
     participant A as PyAV extractor
     participant Y as SpeechKit provider
     participant DB as media_attachments
@@ -226,8 +226,8 @@ sequenceDiagram
     S-->>H: Worker reference after status-ready handshake
     H-->>E: MediaProcessingInfo with completed dispatch task
     S->>S: bounded rate/admission + semaphore
-    S->>D: load(maxSourceBytes)
-    D-->>S: source bytes + MIME/size metadata
+    S->>B: downloadAttachment(mediaId, fileId)
+    B-->>S: source bytes (or None → DOWNLOAD_ERROR)
     S->>A: negotiate format + extract (pass-through/transcode, channel-preserving)
     A-->>S: ExtractedAudio(data, durationMs)
     S->>Y: transcribe(format-aware ExtractedAudio)
@@ -323,7 +323,7 @@ transition must be caught and persisted:
 |---|---|---|
 | One or more non-empty final segments | `DONE` | Formatted, escaped, bounded transcript |
 | Valid recognition with no speech | `DONE` | `[No speech detected]` |
-| Source too large/unknown, no audio track, corrupt media, duration/output cap, admission timeout, download error, provider/operation/protocol error | `FAILED` | Remains null |
+| Source too large, no audio track, corrupt media, duration/output cap, admission timeout, download error, provider/operation/protocol error | `FAILED` | Remains null |
 
 `FAILED` is retryable when a later message has the effective gate enabled.
 v1 is user-silent: failures are operator-visible through bounded structured
@@ -387,13 +387,12 @@ startup config validation.
 **`STTMediaRequest` (service-side integration boundary).** The internal
 `STTMediaRequest` carries media/chat IDs, optional platform `declaredSize`, and
 a loader. The loader result contains source `data`, actual `fileSize`, and
-optional detected `mimeType`; the loader is an async typed callable receiving
-`maxBytes` that closes over platform identifiers and the current
-`SAVE_ATTACHMENTS` behavior. This keeps bot-specific download/storage code out
-of `lib/stt` while allowing known oversize rejection before admission and all
-expensive work after admission. `STTService` remains the final never-raise
-boundary for background work and maps any unexpected exception to a terminal
-`FAILED` row.
+optional detected `mimeType`; the loader is an async typed callable that closes
+over platform identifiers and the current `SAVE_ATTACHMENTS` behavior.
+Download is performed by the existing unbounded `TheBot.downloadAttachment` (see
+§12.4); size enforcement is post-download inside `STTService`.
+`STTService` remains the final never-raise boundary for background work and maps
+any unexpected exception to a terminal `FAILED` row.
 
 ## 8. Resource safety and audio extraction
 
@@ -403,7 +402,7 @@ Defaults deliberately stay below SpeechKit's vendor maximum:
 
 | Guard | Default | Purpose |
 |---|---:|---|
-| Source container | 67,108,864 bytes (64 MiB) | Bound platform download and source buffer. |
+| Source container | 1,073,741,824 bytes (1 GiB; `max-source-bytes`) | Bound platform download and source buffer. User-configurable; currently defaults to 1 GiB per the accepted residual Max-unbounded-download risk (user decision 2026-08-03 — a large Max attachment fully materializes before `STTService` rejects it; Telegram is platform-capped ~20 MB by the bot API `getFile` limit). |
 | Decoded buffer | `duration × channels × sampleRate × 2` bytes; bounded by `max-audio-bytes` (20 MiB default) | Bound in-memory decoded PCM during PyAV processing. Channel-aware; replaces the old mono "20 MiB WAV" output bound. |
 | Inline payload | 41,943,040 bytes (40 MiB; `max-inline-bytes`) | Bound `ExtractedAudio.data` (pass-through source or transcode output); base64-expanded must stay below the 60 MB vendor **inline** limit with headroom. |
 | Decoded duration | 600 seconds | Bound CPU and billed duration. Stop-at-cap on the transcode path; reject on the pass-through path. Bounded upstream by the 300 s media-poll; far below the 4 h vendor ceiling. |
@@ -433,11 +432,11 @@ For a newly created worker:
 2. Reject a known `STTMediaRequest.declaredSize` over the cap.
 3. Within the 20-second admission budget, apply the per-chat limiter, apply the
    global vendor limiter, and acquire the global semaphore.
-4. Under the semaphore, perform any lightweight Telegram `get_file` size probe;
-   fail closed before body download if size is still unknown. Then perform
-   bounded download, optional storage, MIME detection, PyAV extraction,
-   provider submission, and result mapping. Max may stream safely without a
-   declared/`Content-Length` size because its cumulative chunk cap is hard.
+4. Under the semaphore, perform the unbounded platform download via the
+   existing `TheBot.downloadAttachment`; `None` → `FAILED` +
+   `DOWNLOAD_ERROR`. On success, `STTService.transcribeMedia` enforces the
+   source-byte cap post-download. Then perform optional storage, MIME
+   detection, PyAV extraction, provider submission, and result mapping.
 5. Persist a terminal state and release the semaphore.
 
 The current rate limiter sleeps rather than rejects
@@ -446,18 +445,12 @@ admission timeout is what creates a terminal timeout result. Applying two
 blocking limiters can conservatively consume one permit if the subsequent
 wait times out; this reduces throughput but cannot exceed a quota.
 
-### 8.3 Bounded platform download
+### 8.3 Platform download (simplified, 2026-08-03)
 
-Extend the existing interfaces with optional keyword-only `maxBytes`; callers
-that omit it retain current behavior.
-
-- Telegram: check attachment metadata before `get_file`, then require/check
-  `File.file_size` before materializing the download, and post-check actual
-  bytes. For the STT path, unknown size fails closed instead of risking an
-  unbounded allocation.
-- Max: check `Content-Length` when present, use `httpx` streaming, count every
-  chunk, abort immediately above `maxBytes`, call `raise_for_status()`, and
-  post-check the assembled bytes.
+> **Design simplification (2026-08-03):** The earlier bounded-download platform
+> extension (`downloadAttachment(mediaId, fileId, maxBytes=…)`) is **dropped**.
+> STT uses the **existing unbounded** `TheBot.downloadAttachment(mediaId, fileId)
+> -> Optional[bytes]`. See §12.4 for the full model.
 
 For transcribable types, move download, optional `storeAttachment`, MIME
 detection, and their DB metadata updates into the admitted loader. Do not
@@ -575,7 +568,7 @@ enabled = false
 provider = "yandex-speechkit"
 use-proxy = false
 
-max-source-bytes = 67108864
+max-source-bytes = 1073741824  # 1 GiB (user decision 2026-08-03; see §8.1)
 max-audio-bytes = 20971520
 max-inline-bytes = 41943040
 max-duration-seconds = 600
@@ -732,19 +725,43 @@ task is scheduled.
 
 `_processMediaV2` sets `MediaProcessingInfo.task` to `makeEmptyAsyncTask()`
 for STT (including active-duplicate paths), so `updateMediaContent()` uses its
-bounded DB poll (~300 s) to wait for the description. This matches the existing
-image-parsing pattern: the preprocessor returns immediately; the LLM's media
-poll observes the `PENDING` row and waits until the background task writes
-`DONE` or `FAILED`. If the poll times out, the transcript is still cached for
-later messages.
+bounded DB poll (~300 s) to wait for the description. The preprocessor returns
+immediately and the LLM's media poll observes the `PENDING` row until the
+background task writes `DONE` or `FAILED`. If the poll times out, the transcript
+is still cached for later messages.
 
-### 12.4 Bounded download
+> **Deliberate divergence from image parsing (2026-08-03):** image parsing sets
+> `ret.task = parseTask` (the LLM awaits the parse task directly). STT instead
+> sets `ret.task = makeEmptyAsyncTask()` and lets the LLM poll the DB — it does
+> **not** await the STT task. `STTService` can run minutes
+> (`operation-budget-seconds = 2400`), so awaiting the task directly would be
+> uncapped. Do not "fix" this to match the image-parsing shape.
 
-The platform extensions (`TelegramBotClient`, `MaxBotClient`) gain a bounded
-`downloadAttachment(mediaId, fileId, maxBytes=sttMaxSourceBytes)` method.
-Currently the download path is unbounded. The method emits structured outcomes:
-`SOURCE_SIZE_UNKNOWN`, `DOWNLOAD_ERROR`, or `SOURCE_TOO_LARGE`. This is called
-by the background task (not by `_processMediaV2` itself).
+### 12.4 Download (simplified, 2026-08-03)
+
+> **Design simplification (2026-08-03):** The bounded-download platform
+> extension (`downloadAttachment(mediaId, fileId, maxBytes=…)`) described in
+> earlier drafts is **dropped**. STT uses the **existing unbounded**
+> `TheBot.downloadAttachment(mediaId, fileId) -> Optional[bytes]` — no new
+> method, no `maxBytes` parameter.
+
+The background task calls `TheBot.downloadAttachment(mediaId, fileId)`. Two
+outcomes:
+
+- **`None`** (download failure) → `FAILED` + `STTErrorCode.DOWNLOAD_ERROR`.
+- **`data: bytes`** → passed to `STTService.transcribeMedia(data, chatId=…)`.
+
+`STTService.transcribeMedia` enforces the source-byte cap **post-download**:
+`len(data) > max-source-bytes` → `SOURCE_TOO_LARGE` (this check already exists
+in `STTService`; it is not new). `SOURCE_SIZE_UNKNOWN` is **never produced**
+by this path (no pre-download size check is performed); it remains a reserved
+value in the `STTErrorCode` enum.
+
+**Accepted residual risk:** the Max download is unbounded into memory — a large
+Max attachment is fully materialized before `STTService` rejects it. Telegram
+is inherently platform-capped (~20 MB, the bot API `getFile` limit). The
+`max-source-bytes` default remains **1 GiB** (`configs/00-defaults/stt.toml`,
+user decision 2026-08-03).
 
 ### 12.5 Transcript delivery to the LLM
 
@@ -779,7 +796,7 @@ and unsupported-media behavior remain unchanged.
 | 2 | Add provider-neutral models, errors, transcript formatter, and PyAV extractor. | Focused model/audio tests, including limits and resource cleanup. |
 | 3 | Add `AbstractSTTProvider`, exact Yandex provider, golden fixtures, and `STTManager`. | Mock-transport provider suite; no real network in automated tests. |
 | 4 | Add typed config, STT defaults, two limiter mappings, proxy injection, singleton service, lifecycle, admission, and registry. | Config/service/main lifecycle tests; singleton isolation. |
-| 5 | Add bounded Telegram/Max download behavior, offload attachment storage, and add finite S3 transport/retry settings while preserving uncapped callers and best-effort storage semantics. | Platform/storage adapter tests with declared, missing, lying, streamed, delayed, and failed backends. |
+| 5 | Add attachment storage offload and finite S3 transport/retry settings while preserving uncapped callers and best-effort storage semantics. (The bounded-download platform extension was dropped 2026-08-03; STT uses the existing unbounded `downloadAttachment`.) | Platform/storage adapter tests with declared, missing, lying, streamed, delayed, and failed backends. |
 | 6 | Refactor `_processMediaV2`, add chat setting, expected terminal handling, and auto-injection tests. | Real-DB state/race tests plus unchanged-image regression tests. |
 | 7 | Run manual SpeechKit and resource/latency smoke tests from §13.3. | Record redacted request/result shapes and measured latency/RSS. |
 | 8 | Update all docs in §14, add the changelog entry, and run the complete quality gates. | `make check-docs`, `make format lint`, `make test`, and `make ci`. |
@@ -837,10 +854,13 @@ shape.
 - Insert-conflict reread and concurrent first insert with provider-called-once.
 - Download/storage/MIME failure becomes verified `FAILED` when the DB is
   writable; mocked terminal-write failure follows the documented orphan
-  recovery instead of claiming an impossible guarantee.
+  recovery instead of claiming an impossible guarantee. (The bounded-download
+  platform extension was dropped 2026-08-03; download uses the existing
+  unbounded `downloadAttachment`.)
 - `PARSE_ATTACHMENTS=false` and `true` legacy behavior remains correct for
   unsupported types; image parsing remains unchanged.
-- Telegram and Max bounded-download behavior.
+- Telegram and Max download behavior (unbounded `downloadAttachment`; the
+  bounded-download extension was dropped 2026-08-03).
 - A delayed synchronous storage backend runs off-loop (verify with an unrelated
   event-loop heartbeat); S3 timeout/retry config is passed to botocore; optional
   storage failure leaves `localUrl` unset but does not suppress transcription.
@@ -876,11 +896,12 @@ static review:
   reduce default duration or redesign originating-turn waiting — **never**
   attach an unbounded worker task.
 - **gate-5 — RSS / decoded-memory budget.** Measure peak RSS and CPU with two
-  64 MiB source files and worst-case decoded output on deployment-equivalent
-  hardware. Tied to the accepted decoded-memory gap: `lib/stt` does NOT bound
-  decoded PCM; the service bounds source bytes and the `_processMediaV2` branch
-  bounds duration before the provider decodes. **If gate-5 fails, revisit
-  restoring a decoded-buffer cap inside `lib/stt`'s decode path.**
+  max-size (1 GiB) source files and worst-case decoded output on
+  deployment-equivalent hardware. Tied to the accepted decoded-memory gap:
+  `lib/stt` does NOT bound decoded PCM; the service bounds source bytes
+  (`max-source-bytes`, currently 1 GiB) and the `_processMediaV2` branch bounds
+  duration before the provider decodes. **If gate-5 fails, revisit restoring a
+  decoded-buffer cap inside `lib/stt`'s decode path.**
 - **gate-6 — graceful shutdown.** Exercise graceful shutdown during a
   maximum-size decode; verify the deployment supervisor's external hard-kill
   grace policy for a simulated native hang.

@@ -873,10 +873,10 @@ static review (full detail in parent §13.3):
 4. **10-minute end-to-end latency** — test representative 10-minute media end to end; if p95
    processing does not complete within the existing 300-second media poll, reduce default duration or
    redesign originating-turn waiting before release (never attach an unbounded worker task).
-5. **Peak RSS** — measure peak RSS and CPU with two 64 MiB source files and worst-case decoded output
+5. **Peak RSS** — measure peak RSS and CPU with two max-size (1 GiB) source files and worst-case decoded output
    on deployment-equivalent hardware, including enabled attachment storage. ⚠️ Decoded memory is now
-   **unbounded in `lib/stt`** (§5 accepted gap) — the service's source + duration caps bound it
-   indirectly; measure the real spike and reduce source/duration/concurrency defaults if the deployment
+   **unbounded in `lib/stt`** (§5 accepted gap) — the service's source (`max-source-bytes`, currently 1 GiB)
+   + duration caps bound it indirectly; measure the real spike and reduce source/duration/concurrency defaults if the deployment
    memory budget cannot absorb it (see [`stt-next-steps.md`](./stt-next-steps.md) §5).
 6. **Graceful shutdown** — exercise graceful shutdown during a maximum-size decode and verify the
    deployment supervisor's external hard-kill grace policy for a simulated native hang.
@@ -911,7 +911,7 @@ reaches `lib/stt`, or reaches it unbounded).
 
 | Guard | Default | Enforced by (cap ownership) |
 |---|---:|---|
-| Source container | 67,108,864 bytes (64 MiB) | **STTService** — bounds the platform media download before `extractAudio` is called; the bytes that reach `lib/stt` are already bounded. (The §5 decoded-memory gap means a 64 MiB compressed source can still decode to hundreds of MB — `lib/stt` does not re-check.) |
+| Source container | 1,073,741,824 bytes (1 GiB; `max-source-bytes`) | **STTService** — bounds the platform media download before `extractAudio` is called; the bytes that reach `lib/stt` are already bounded. (The §5 decoded-memory gap means a 1 GiB compressed source can still decode to multiple GB — `lib/stt` does not re-check.) User-configurable; currently defaults to 1 GiB per the accepted residual Max-unbounded-download risk (user decision 2026-08-03; Telegram is platform-capped ~20 MB by the bot API). |
 | Decoded buffer | (removed) | **gone** — `lib/stt` does not bound decoded PCM (§5 accepted gap). The service's source + duration caps bound it indirectly. If parent §13.3 gate-5 fails, restore a decoded-buffer cap inside `extractAudio`. |
 | Inline payload | 41,943,040 bytes (40 MiB; `maxInlineBytes`) | **STTService** — bounds the *source* before it reaches `lib/stt`; `lib/stt` no longer routes pass-through vs. transcode on payload size (container-only routing, §5). A large supported container is now sent inline. The service keeps the conservative 40 MiB default so base64-expanded requests stay under the 60 MB vendor limit. |
 | Decoded duration | 600 seconds | **STTService** — bounds admission before `extractAudio` is called; `lib/stt` no longer rejects or stop-at-caps on duration. Bounded upstream by the 300 s media-poll (parent §13.3 gate-4); do not relax toward the 4 h vendor ceiling. |

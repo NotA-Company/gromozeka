@@ -845,7 +845,7 @@ One `ChatSettingsKey` default under `[bot.defaults]`, `page = FRIEND`, wired via
 
 Speech-to-Text (media transcription) configuration. Defaults live in [`configs/00-defaults/stt.toml`](../../configs/00-defaults/stt.toml). The section is flat (no sub-tables beyond the optional `[stt.proxy]` override). The service is **shipped default-off** (`enabled = false`); when disabled, no provider is constructed, PyAV is not loaded for STT, and no credentials are validated. The service is owned by the stateless `STTService` (see [`services.md`](services.md) §7 and [ADR-020](architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall)).
 
-> **Status (2026-08-02):** the service is implemented + tested but **DEFAULT-OFF and UNWIRED** — there is no handler yet, so even with `enabled = true` no media is transcribed until the handler round lands (`STTHandler` + `TRANSCRIBE_MEDIA` chat setting + bounded `downloadAttachment(maxBytes)` + prompt-injection mitigation; see [`docs/plans/stt-next-steps.md`](../plans/stt-next-steps.md)). No `CHANGELOG.md` entry ships until the handler round.
+> **Status (2026-08-03):** the service is implemented + tested and **wired into `BaseBotHandler._processMediaV2`**, but remains **DEFAULT-OFF** — both gates (`[stt].enabled = false` and the per-chat `TRANSCRIBE_MEDIA` setting, default `false`) must be flipped on before any media is transcribed. See [`docs/plans/stt-next-steps.md`](../plans/stt-next-steps.md) for the integration roadmap and manual release gates.
 
 > **Validation lives in the provider constructor, not the service.** `STTService.initialize(configManager)` (no `database` arg) validates ONLY the provider name via `STT_PROVIDERS_MAP`. Each provider validates its own parameters (different providers have different params): `YandexSpeechKitProvider.__init__` owns cred / unresolved `${...}`-placeholder / cap-positivity / cross-field (`maxPollIntervalSeconds ≥ pollIntervalSeconds`) validation and raises `ValueError` on failure; `ProxyService.resolveProxy` `ValueError`s are also propagated.
 
@@ -892,6 +892,12 @@ global-ratelimiter-queue = "stt-global"
 ```
 
 **Secrets discipline:** `api-key` and `folder-id` use `${...}` env-var substitution. Document the env-var names (`YC_API_KEY`, `YC_FOLDER_ID`) only — never paste the values, never commit `.env*`. An unresolved `${...}` placeholder fails startup when `enabled = true` (the provider constructor rejects it; it would otherwise be sent verbatim as a credential).
+
+**Chat settings keys** (defined in [`internal/bot/models/chat_settings.py`](../../internal/bot/models/chat_settings.py); defaults under `[bot.defaults]` in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml)) — the per-chat gate that, together with `[stt].enabled`, controls whether `_processMediaV2` transcribes an eligible attachment:
+
+| `ChatSettingsKey` enum | Setting key | Page | Type | Default | Purpose |
+|---|---|---|---|---|---|
+| `TRANSCRIBE_MEDIA` | `transcribe-media` | `FRIEND` | `BOOL` | `false` | Per-chat opt-in for media transcription (`VIDEO`/`VIDEO_NOTE`/`VOICE`/`AUDIO`). Read by `_processMediaV2` as `chatSettings[ChatSettingsKey.TRANSCRIBE_MEDIA].toBool()` AND-gated with `[stt].enabled`. Friend-tier only — non-friend chats cannot enable transcription. Default off; both gates must be on for transcription to fire. |
 
 ---
 

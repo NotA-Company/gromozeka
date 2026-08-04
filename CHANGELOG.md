@@ -6,6 +6,9 @@ process governing this file, see [docs/llm/changelog.md](docs/llm/changelog.md).
 
 ## [Unreleased]
 
+### Added
+- Media transcription (speech-to-text) for `VIDEO`/`VIDEO_NOTE`/`VOICE`/`AUDIO` attachments inside `BaseBotHandler._processMediaV2`, double-gated by `[stt].enabled` config and the per-chat `TRANSCRIBE_MEDIA` setting (both default off); the transcript is persisted to `media_attachments.description` and delivered to the LLM as a structured JSON `mediaDescription` field via the existing media-render path.
+
 ### Fixed
 - Markdown-formatted inline tool names followed by JSON arguments now execute as tool calls instead of being sent as plain text.
 

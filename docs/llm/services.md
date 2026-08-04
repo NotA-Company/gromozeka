@@ -408,9 +408,9 @@ def resetProxyServiceSingleton():
 **File:** [`internal/services/stt/service.py`](../../internal/services/stt/service.py)  
 **Import:** `from internal.services.stt import STTService, STTOutcome`
 
-`STTService` is a **stateless** singleton that owns the STT provider lifecycle (construction, proxy resolution, `aclose()`) and the never-raise transcription entry. It mirrors `ProxyService` exactly: class-level `_instance` / `_lock`, `getInstance()`, `hasattr(self, 'initialized')` guard, separate `initialize(...)`. **It does NOT touch the database** — no row read, insert, cache, claim, persist, or reclaim. The full `media_attachments` row lifecycle (read / cache-hit, claim / orphan-reclaim to `PENDING`, persist the outcome via the existing `setStatusVerified` CAS, terminalize) is owned by the **future handler round** (see [`docs/plans/stt-next-steps.md`](../plans/stt-next-steps.md) §3).
+`STTService` is a **stateless** singleton that owns the STT provider lifecycle (construction, proxy resolution, `aclose()`) and the never-raise transcription entry. It mirrors `ProxyService` exactly: class-level `_instance` / `_lock`, `getInstance()`, `hasattr(self, 'initialized')` guard, separate `initialize(...)`. **It does NOT touch the database** — no row read, insert, cache, claim, persist, or reclaim. The full `media_attachments` row lifecycle (read / cache-hit, claim / orphan-reclaim to `PENDING`, persist the outcome via the existing `setStatusVerified` CAS, terminalize) is owned by the **`BaseBotHandler._processMediaV2` STT branch + its `_transcribeMedia` background task** in [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) (see [`docs/plans/stt-next-steps.md`](../plans/stt-next-steps.md) §2).
 
-**Status (2026-08-02):** implemented and tested, but **DEFAULT-OFF and UNWIRED** — the `[stt] enabled = false` default ships the service as a no-op, and there is no handler yet (the `STTHandler` + `TRANSCRIBE_MEDIA` chat setting + bounded `downloadAttachment(maxBytes=…)` platform extension + prompt-injection mitigation + `CHANGELOG.md` entry are a deferred round).
+**Status (2026-08-03):** implemented, tested, and **wired into `BaseBotHandler._processMediaV2`** — the `_transcribeMedia` background task consumes `STTService.getInstance().transcribeMedia(data, chatId=...)` and terminalizes the row via `setStatusVerified`. The feature remains **DEFAULT-OFF** — both gates (`[stt] enabled = false` config default + the per-chat `TRANSCRIBE_MEDIA` setting, default `false`) must be flipped on before any media is transcribed.
 
 ```python
 from internal.services.stt import STTService, STTOutcome
@@ -465,7 +465,7 @@ The shared [`STTErrorCode`](../../lib/stt/models.py) enum (8 members) is the sta
 
 - **Service-produced** (produced ONLY by `STTService`): `STT_DISABLED`, `SOURCE_TOO_LARGE`. (`PROVIDER_ERROR` is also produced by the service as the catch-all fallback for unexpected exceptions — structured logs distinguish a service-caught fallback from a provider-returned `PROVIDER_ERROR`.)
 - **Provider-produced** (returned inside a `TranscriptionResult(ERROR, …)` from `provider.stt()`): `NO_AUDIO`, `PROVIDER_ERROR`, `PROTOCOL_ERROR`.
-- **Reserved for the future handler** (not currently produced): `SOURCE_SIZE_UNKNOWN`, `DOWNLOAD_ERROR`, `DURATION_EXCEEDED`. (The handler round owns the bounded download and any duration gating; until it lands these codes are vocabulary only.)
+- **Reserved / partially-produced at the handler layer** (not produced by the service or provider): `SOURCE_SIZE_UNKNOWN`, `DOWNLOAD_ERROR`, `DURATION_EXCEEDED`. The bounded-download platform extension that would have produced `SOURCE_SIZE_UNKNOWN` was **dropped** (user decision 2026-08-03 — the wired `_transcribeMedia` task uses the existing unbounded `downloadAttachment`); `DOWNLOAD_ERROR` is emitted only as a structured log label by `_transcribeMedia` when `downloadAttachment` returns `None` (it is not persisted — there is no `errorCode` column); `DURATION_EXCEEDED` remains vocabulary-only (no duration gating in v1). These codes stay reserved on the enum as the stable failure vocabulary.
 
 See [ADR-020](architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall) and [`docs/plans/lib-stt-v1.md`](../plans/lib-stt-v1.md) §4 for the full raise/return contract.
 
@@ -487,7 +487,7 @@ See [ADR-020](architecture.md#adr-020-sttservice--synchronous-stateless-stt-serv
 | | `description` | `Optional[str]` | Formatted transcript on `DONE` (`""` for `NO_SPEECH`); `None` on `FAILED` |
 | | `errorCode` | `Optional[STTErrorCode]` | Present iff `status == FAILED` |
 
-**Database:** NO migration, and the service itself does NO DB I/O. The future handler round owns the `media_attachments` row lifecycle (read/cache/claim/persist/reclaim via the existing `setStatusVerified` CAS); the service just returns an `STTOutcome`. See [`database.md`](database.md) (media attachments) and [ADR-020](architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall).
+**Database:** NO migration, and the service itself does NO DB I/O. The `BaseBotHandler._processMediaV2` STT branch + its `_transcribeMedia` background task own the `media_attachments` row lifecycle (read/cache/claim/persist/reclaim via the existing `setStatusVerified` CAS); the service just returns an `STTOutcome`. See [`database.md`](database.md) (media attachments) and [ADR-020](architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall).
 
 **See also:** [`docs/plans/media-transcription-stt-v1.md`](../plans/media-transcription-stt-v1.md) (parent product decisions D1–D8), [`docs/plans/stt-next-steps.md`](../plans/stt-next-steps.md) (integration roadmap), [`docs/plans/lib-stt-v1.md`](../plans/lib-stt-v1.md) (`lib/stt` library spec).
 
