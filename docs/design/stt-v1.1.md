@@ -60,22 +60,22 @@ The following are facts verified against source, not assumptions:
   access. The proxy is injected as an already-resolved `ProxyConfig`
   ([`yandex_speechkit.py:146-266`](../../lib/stt/providers/yandex_speechkit.py));
   `YandexSpeechKitProvider` cannot import or call `StorageService` directly.
-- S3 support already exists and is reusable:
+- An S3 backend exists for **attachment storage** but is **not** reused by STT.
   [`internal/services/storage/backends/s3.py`](../../internal/services/storage/backends/s3.py)
-  `S3StorageBackend(endpoint, region, keyId, keySecret, bucket, prefix=...)` with
-  `store(key, data)` (`:113-135`), `delete(key)` (`:191-215`), and custom-endpoint
-  support (`:85-91`). `StorageService` (`internal/services/storage/service.py`) is a
-  singleton wrapping one backend. boto3 is already pinned.
-- **A concrete `StatsStorage` exists and is wired.**
-  [`internal/database/stats_storage.py`](../../internal/database/stats_storage.py)
-  `DatabaseStatsStorage` subclasses `lib.stats.StatsStorage`
-  (`stats_storage.py:39`). It is constructed in [`main.py`](../../main.py) at lines
-  82-94: when `[stats].enabled`, a `DatabaseStatsStorage(db, eventType="llm_request",
-  dataSource=...)` is built and passed to `LLMManager(statsStorage=...)`; otherwise
-  `None`, which `LLMManager` defaults to `NullStatsStorage`
-  ([`lib/ai/manager.py:88`](../../lib/ai/manager.py)). `lib/ai` records via
-  `_recordAttemptStats` ([`lib/ai/abstract.py:850-887`](../../lib/ai/abstract.py)).
-  See §5.1 for the implication on STT.
+  `S3StorageBackend` wraps one boto3 client for the general `[storage.s3]` backend
+  (whose default endpoint is AWS `https://s3.amazonaws.com`, see
+  [`configs/00-defaults/storage.toml`](../../configs/00-defaults/storage.toml)) —
+  that backend may point at a different provider/bucket/credentials than SpeechKit
+  can read. boto3 is already a pinned project dependency (`boto3==1.43.48`), but it
+  is **new to `lib/`** (zero `lib/` boto3 imports today); the co-located helper
+  imports it guarded (§3.1). STT does **not** reuse `S3StorageBackend` — it has its
+  own Yandex-specific helper next to the provider (§3.1, §12).
+- **A concrete `StatsStorage` exists and is wired** for `lib/ai`
+  ([`internal/database/stats_storage.py`](../../internal/database/stats_storage.py)
+  `DatabaseStatsStorage`, constructed in [`main.py`](../../main.py):82-94; `lib/ai`
+  records via `_recordAttemptStats`,
+  [`lib/ai/abstract.py:850-887`](../../lib/ai/abstract.py)). See §5.1 for the full
+  finding and the implication for STT.
 
 ## 2. Scope
 
@@ -84,11 +84,16 @@ The following are facts verified against source, not assumptions:
 1. Route clips below `max-inline-bytes` inline (unchanged) and clips at/above the
    threshold through Yandex Object Storage via the `uri` field, without breaking the
    `lib/stt` dependency firewall.
-2. Reuse the existing `S3StorageBackend` / `StorageService` infrastructure; do not
-   design a new S3 client.
+2. Co-locate a Yandex-Object-Storage-specific helper **next to** the Yandex SpeechKit
+   provider (`lib/stt/providers/yandex_object_storage.py`), used directly by the
+   provider; do **not** reuse `S3StorageBackend` or the `[storage.s3]`
+   attachment-storage backend (SpeechKit consumes Yandex Object Storage specifically,
+   and the SpeechKit SA must be able to read the bucket — see §3.1 and §3.2).
 3. Define a complete object lifecycle (upload → submit(uri) → poll → fetch → delete
    operation → delete object) with best-effort cleanup that never invalidates a
-   successful transcript.
+   successful transcript; leaked objects (e.g. a bot crash after upload) are
+   reclaimed by the Yandex Object Storage bucket lifecycle TTL (operator-configured,
+   no bot sweep — §3.3).
 4. Add per-transcription statistics recording to `lib/stt`, mirroring `lib/ai`, so
    the gate-4 latency question can be answered from data.
 5. Keep every new behavior default-off so a green v1.1 does not enable any billable
@@ -108,109 +113,155 @@ The following are facts verified against source, not assumptions:
 - A killable-subprocess decode path or in-process hard shutdown deadline (gate-6;
   deferred as in v1).
 
-## 3. The firewall tension and its resolution (Enhancement 1, core decision)
+## 3. The Object-Storage integration — a co-located Yandex-specific helper (Enhancement 1, core decision)
 
-### 3.1 The tension
+Object-Storage routing is a *provider transport* concern: it decides how the
+extracted bytes reach Yandex (inline in the POST body vs via a `uri`). The routing
+decision needs `len(audio.data)`, which only exists inside the provider after
+`extractAudio()` — so the routing, the upload, the `uri` submit-body shape, and the
+object delete all belong in the Yandex provider.
 
-Object-Storage routing is fundamentally a *provider transport* concern: it decides
-how the extracted bytes reach Yandex (inline in the POST body vs via a `uri`). But
-the routing decision needs `len(audio.data)`, and `audio.data` is produced by
-`extractAudio()` **inside `lib/stt`** — it does not exist at the service boundary.
-The service hands the provider raw `bytes`, and only the provider (after extraction)
-knows the payload size that would be base64'd or uploaded.
+v1.1 therefore co-locates a small Yandex-Object-Storage-specific helper **next to**
+the Yandex SpeechKit provider in `lib/stt/providers/` and lets the provider use it
+directly. The helper lives in `lib/stt` (not `internal.*`), so the `lib/stt`
+dependency firewall — specifically about zero `internal.*` imports — is intact; boto3
+is a new *external* dependency for `lib/stt`'s import graph and is imported guarded
+(§3.1). Earlier revisions (service-layer client, injected `uploadFn`/`deleteFn`
+callables, bot TTL sweep) are rejected — see §12 for the trade-off analysis.
 
-Meanwhile `lib/stt` cannot import `StorageService` (the firewall), and cap values
-are service-owned.
+### 3.1 The co-located helper — `lib/stt/providers/yandex_object_storage.py`
 
-### 3.2 Options considered
+A new module `lib/stt/providers/yandex_object_storage.py` (referenced as a code
+span, not a link — it does not exist yet; implementation is a later round, §9)
+defines a `YandexObjectStorage` class. It is **Yandex-Object-Storage-specific**: the
+endpoint (`https://storage.yandexcloud.net`) and region (`ru-central1`) are Yandex
+constants baked into the helper, not config knobs. There is no provider abstraction
+over Object Storage because only the Yandex provider uses it.
 
-**(a) Inject a storage callable into the provider (chosen).** The service passes the
-threshold value plus two async callables at provider construction:
-`maxInlineBytes: int`, `uploadFn: Callable[[bytes], Awaitable[str]]` (uploads bytes,
-returns the Object-Storage URI), and `deleteFn: Callable[[str], Awaitable[None]]`
-(deletes by the same URI). The provider's `transcribe()` evaluates
-`len(audio.data) >= maxInlineBytes` and routes accordingly. The provider owns the
-routing logic; the service owns the threshold value and the storage capability.
+**Why co-located and Yandex-specific.**
 
-**(b) Service-side upload.** `STTService` decides + uploads, then passes either bytes
-or a URI to the provider; the provider's `_buildSubmitBody` branches on input type.
+- Only `YandexSpeechKitProvider` needs Object Storage; co-locating the helper in
+  `lib/stt/providers/` keeps every Yandex wire detail (URI scheme, `content` vs
+  `uri` submit body, operation/object delete ordering) in one place.
+- boto3 is a *new* import for `lib/stt`. It is already a pinned project dependency
+  ([`requirements.direct.txt`](../../requirements.direct.txt):6, `boto3==1.43.48`,
+  used by attachment storage at
+  [`internal/services/storage/backends/s3.py`](../../internal/services/storage/backends/s3.py)),
+  but `lib/` has zero boto3 imports today. It is therefore a **guarded import**: a
+  module-level `try/except ImportError` setting a `_BOTO3_AVAILABLE` flag, per the
+  AGENTS.md optional-dependency convention (the same shape as the
+  `_HTTPX_SOCKS_AVAILABLE` guard). If boto3 is absent, the module imports cleanly;
+  construction-time behavior when Object Storage is then requested is specified in
+  §6.3 (startup `ValueError`, not a silent fallback).
+- The `lib/stt` dependency firewall is about `internal.*`; boto3 is external, so
+  importing it in `lib/stt` does not violate the firewall. The provider still has
+  **zero `internal.*` imports**.
 
-### 3.3 Decision: Option (a)
-
-Option (a) is chosen. Justification:
-
-- **Firewall integrity.** The provider never imports `internal.*`. It receives the
-  storage capability as injected callables — the same seam pattern as the injected
-  `ProxyConfig` (dependency-firewall seam #1,
-  [`lib-stt-v1.md`](./lib-stt-v1.md) §1) and the (now-removed) typed loader seam.
-  The provider stays independently unit-testable with mock callables (no real S3).
-- **Correct measurement point.** The routing decision can only be made where
-  `audio.data` exists — inside `transcribe()`. Option (b) cannot evaluate
-  `len(audio.data)` at the service boundary without either (b1) routing on
-  `len(data)` (source bytes), which is semantically wrong (the threshold applies to
-  the *extracted* payload; on the transcode path `audio.data` can be far smaller than
-  `data`), or (b2) splitting the never-raise `stt(data)` entry so the service
-  inspects `ExtractedAudio` between extraction and transcription — breaking the clean
-  boundary and pushing Yandex-specific URI construction into the service.
-- **Provider owns its wire protocol.** The `uri` submit-body shape, the
-  `container_audio_type` question for the `uri` path, and the operation/object
-  delete ordering are Yandex wire details. They belong in the provider, not the
-  service. Option (b) leaks them upward.
-- **Cap ownership is preserved.** The threshold *value* is read from `[stt]` config
-  and validated by the service, then injected — exactly like `requestTimeoutSeconds`,
-  `operationBudgetSeconds`, and `maxResultBytes` are already injected provider caps
-  ([`yandex_speechkit.py:146-250`](../../lib/stt/providers/yandex_speechkit.py)). The
-  statement "caps live in `STTService`" refers to caps that gate *before* extraction
-  (source bytes, duration, decoded buffer). The inline-routing threshold is
-  categorically different: it can only be evaluated *after* extraction, so the check
-  must run in the provider while the value remains service-supplied. This mirrors how
-  `maxResultBytes` is injected into `parseRecognitionEvents` today.
-
-### 3.4 The injected abstraction
-
-New types live in `lib/stt` (the provider's contract surface; no `internal.*`
-imports):
+**Construction.** The helper is constructed by
+`YandexSpeechKitProvider.__init__` from the flat `[stt]` Object-Storage params (§6)
+when a bucket is configured, and held as `self._objectStorage:
+Optional[YandexObjectStorage]`. When Object Storage is not configured
+(`object-storage-bucket` unset), `self._objectStorage is None` and the provider is
+inline-only (§4.2). The boto3 client is built once, with a bounded
+`botocore.config.Config` carrying finite `connect_timeout` / `read_timeout` and a
+bounded retry count — so a wedged Object Storage endpoint cannot hold an STT
+semaphore slot indefinitely. This folds the v1 parent plan §8.3 transport-timeout
+concern into the helper as an intrinsic property (it is new code, so the timeouts
+land here rather than as a retrofit of `S3StorageBackend`):
 
 ```python
-from typing import Awaitable, Callable
+from botocore.config import Config
 
-#: Upload extracted audio bytes to Object Storage; return the URI SpeechKit consumes.
-STTObjectUpload = Callable[[bytes], Awaitable[str]]
-
-#: Delete the object identified by the URI returned by the matching STTObjectUpload.
-#: Best-effort: must treat a missing object as a no-op (return without raising).
-STTObjectDelete = Callable[[str], Awaitable[None]]
+_STT_S3_CONFIG = Config(
+    connect_timeout=5,      # seconds
+    read_timeout=30,        # seconds; bounds put_object / delete_object
+    retries={"max_attempts": 3, "mode": "standard"},
+)
 ```
 
-`YandexSpeechKitProvider.__init__` gains three optional keyword parameters:
+**Methods** (both raise on infrastructure failure; the provider wraps them
+best-effort, §4.3):
 
-```python
-def __init__(
-    self,
-    *,
-    proxyConfig: Optional[ProxyConfig] = None,
-    apiKey: str,
-    folderId: str,
-    # ... existing caps ...
-    maxResultBytes: int = DEFAULT_MAX_RESULT_BYTES,
-    # --- v1.1 additions ---
-    maxInlineBytes: int = 41_943_040,        # 40 MiB default; routing threshold
-    uploadFn: Optional[STTObjectUpload] = None,
-    deleteFn: Optional[STTObjectDelete] = None,
-    statsStorage: "Optional[StatsStorage]" = None,   # §5
-    **extraKwargs,
-) -> None: ...
-```
+- `upload(data: bytes) -> str` — generate a unique key (`{prefix}{uuid}`),
+  `put_object`, and return the URI SpeechKit consumes. The helper owns the URI
+  scheme (a smoke item, §11); `upload` returns whatever shape SpeechKit expects.
+- `delete(uri: str) -> None` — recover the key from the URI and `delete_object`.
+  **A missing object is a no-op** (catch `NoSuchKey` / 404, return without raising)
+  — the same idempotent-delete contract attachment storage has, re-implemented in
+  the helper rather than reused (§12).
 
-The pairing is deliberate: `uploadFn` and `deleteFn` are both-or-neither. The service
-constructs them as a matched pair sharing key-derivation logic (the service owns the
-URI format, so `deleteFn(uri)` can deterministically recover the object key). The
-provider holds the URI returned by `uploadFn` and passes it back to `deleteFn`;
-`lib/stt` never parses S3 keys or knows the URI scheme.
+**Lifecycle.** The helper's boto3 client is closed by the provider's `aclose()`,
+which `STTService.aclose` already calls
+([`internal/services/stt/service.py`](../../internal/services/stt/service.py):234).
+`STTService.aclose` manages no Object-Storage-specific task — there is no sweep and
+no shutdown drain; reclamation of leaked objects is delegated to the Yandex Object
+Storage bucket lifecycle (§3.3).
 
-When `uploadFn is None` (Object Storage disabled), the provider is inline-only —
-behaviorally identical to v1 for every clip below the threshold (see §4.2 for the
-over-threshold failure).
+### 3.2 Service-account / authorization model
+
+SpeechKit reads staged objects from **Yandex Object Storage under the service
+account (SA) tied to the STT credentials** (`[stt].api-key` / `[stt].folder-id`).
+For SpeechKit to read a staged object, **that SA must have read access** to the
+bucket.
+
+**One SA for both SpeechKit and Object Storage (recommended, user-confirmed).** Use
+the *same* Yandex service account for SpeechKit operations and for the STT bucket's
+read/write. Grant it `storage.editor` on the STT bucket (covers upload + delete);
+SpeechKit — running as the same SA — inherits read for free. This keeps the auth
+model to a single principal.
+
+**Cannot reuse the SpeechKit `api-key` for S3 — use the same SA's static access
+keys.** The `[stt].api-key` is an **IAM API key** (`Authorization: Api-Key …`) used
+to call SpeechKit and other Yandex Cloud APIs. Object Storage (S3-compatible)
+authenticates with a **static access-key pair** via SigV4 — a different credential
+type. One API key cannot satisfy both. The resolution: for the *same* SA, create a
+**static access key** (Yandex Cloud console or `yc iam access-key create`); its
+`key-id` / `key-secret` become the `[stt].object-storage-key-id` /
+`object-storage-key-secret` config (§6). So one SA holds both credential types (an
+API key for SpeechKit; a static access-key pair for Object Storage), and the S3
+credentials and SpeechKit credentials are different objects issued to the same
+principal — which is what guarantees the same SA can access both services.
+
+- **Public-read is NOT acceptable.** Do not grant anonymous / `allUsers` read on the
+  bucket; the objects are user-supplied audio and must stay private to the SA.
+- **Alternative: separate SAs.** If org policy forbids one SA holding both SpeechKit
+  and storage roles, use two SAs (the bucket SA with the static access keys, granted
+  `storage.editor`; the SpeechKit SA granted `storage.viewer` on the same bucket).
+  This adds a role assignment but no bot code.
+
+**Deployment prerequisite (call out alongside the release gates).** Before
+configuring `object-storage-bucket`, the operator must:
+
+1. Create (or designate) the STT bucket in Yandex Object Storage.
+2. Create a static access key for the SpeechKit SA and grant it `storage.editor` on
+   the bucket.
+3. Confirm the SpeechKit SA can read objects under the configured `prefix` (the §11
+   smoke verifies a round-trip end to end).
+
+This is a deployment-time concern, not startup validation: the bot cannot verify IAM
+roles, and a startup credential check only proves the static keys authenticate, not
+that SpeechKit can read the bucket. Startup validation (§6.3) covers the
+config-shape prerequisites; §3.2 covers the IAM prerequisite.
+
+### 3.3 Object TTL — Yandex Object Storage native lifecycle (no bot sweep)
+
+The per-request `finally` delete (§4.3) is best-effort: if the bot crashes or is
+killed between `upload` and the `finally`, the staged object leaks. v1.1 does **not**
+add a bot-enforced TTL sweep. Per user direction ("Yandex Object Store supports ttl
+to drop old objects automatically"), leaked objects are reclaimed by **Yandex Object
+Storage's native bucket lifecycle rule**, operator-configured in the Yandex Cloud
+console or Terraform: expire objects under `prefix` after a TTL.
+
+**Deployment recommendation: TTL = 86400 s (24 h).** This is comfortably longer than
+the SpeechKit operation budget (default 2400 s, §4.3) plus poll/fetch, so a live
+transcription is never expired mid-flight, while bounding accumulated leaks to about
+a day. This figure is **deployment guidance only** — it is operator-configured on
+the bucket, not a `[stt]` key (the bot enforces no TTL), and it is carried into the
+deployment-prerequisite checklist (§6.3, §11). The integer-seconds unit matches
+every other TTL in the repo (`CACHE_CLEANUP_DEFAULT_TTL_SECS`,
+`DELAYED_TASKS_CLEANUP_TTL_SECS`, `max_webhook_receiver.CLEANUP_TTL_SECONDS`), which
+keeps the documented figure consistent with the repo's other TTLs even though the
+bot no longer enforces it.
 
 ## 4. Enhancement 1 — gate-3: inline vs Object Storage routing
 
@@ -226,7 +277,7 @@ A source up to 1 GiB remains admissible. If its extracted form is below
 extracted form is at/above `max-inline-bytes`, it routes to Object Storage (when
 enabled). The vendor ceilings: 60 MB inline (base64-expanded), 1 GB Object-Storage
 (raw), 4 h duration — v1.1 defaults stay conservative on all three, exactly as v1
-([`lib-stt-v1.md`](./lib-stt-v1.md) §8.1).
+([`media-transcription-stt-v1.md`](./media-transcription-stt-v1.md) §8.1).
 
 The default `max-inline-bytes = 40 MiB` matches the v1 product cap
 ([`media-transcription-stt-v1.md`](./media-transcription-stt-v1.md) §8.1). v1.1
@@ -236,10 +287,10 @@ inline-only v1 never needed to act on it).
 
 ### 4.2 Object Storage disabled + over-threshold clip
 
-When `uploadFn is None` (Object Storage not configured) and
-`len(audio.data) >= maxInlineBytes`, the clip cannot be transcribed: inlining it
-would exceed the 60 MB vendor ceiling after base64 expansion, and there is no Object
-Storage fallback.
+When `self._objectStorage is None` (Object Storage not configured —
+`object-storage-bucket` unset) and `len(audio.data) >= maxInlineBytes`, the clip
+cannot be transcribed: inlining it would exceed the 60 MB vendor ceiling after base64
+expansion, and there is no Object Storage fallback.
 
 **Decision:** the provider returns `TranscriptionResult(status=ERROR,
 errorCode=SOURCE_TOO_LARGE)`. This reuses the existing `SOURCE_TOO_LARGE` code with
@@ -258,12 +309,12 @@ transcribe(audio):
     objectUri = None
     # Staging (OUTSIDE the operation budget — upload is prep, not a SpeechKit op step).
     if len(audio.data) >= maxInlineBytes:
-        if uploadFn is None:
-            return ERROR(SOURCE_TOO_LARGE)          # §4.2
+        if self._objectStorage is None:
+            return ERROR(SOURCE_TOO_LARGE)                       # §4.2
         try:
-            objectUri = await uploadFn(audio.data)   # upload to OS, get URI
+            objectUri = await self._objectStorage.upload(audio.data)  # stage in OS
         except Exception:
-            return ERROR(OBJECT_STORAGE_ERROR)       # §4.5
+            return ERROR(OBJECT_STORAGE_ERROR)                    # §4.5
     # SpeechKit operation (INSIDE the operation budget, unchanged from v1).
     try:
         async with asyncio.timeout(operationBudgetSeconds):
@@ -273,36 +324,41 @@ transcribe(audio):
         return ERROR(...)                              # existing mapping
     finally:
         if operationId is not None:
-            await bestEffortDeleteOperation(operationId)   # existing (§7.2)
+            await bestEffortDeleteOperation(operationId)   # existing (lib-stt-v1.md §7.2)
         if objectUri is not None:
-            await bestEffortDeleteObject(objectUri)        # NEW: best-effort, never raises
+            await self._bestEffortDeleteObject(objectUri)  # NEW: best-effort, never raises
     return parse(recognitionBytes)                      # existing
 ```
 
 Key lifecycle rules:
 
-- **Upload is outside the operation budget.** The 180 s (configurable) budget "starts
+- **Upload is outside the operation budget.** The 2400 s (configurable,
+  `operation-budget-seconds`) budget "starts
   immediately before submit and includes submit, polling, and the successful result
   fetch" ([`lib-stt-v1.md`](./lib-stt-v1.md) §7.4). The upload is staging, not a
-  SpeechKit operation step; it is bounded by the S3 client's own transport timeouts
-  (see §6.4). Keeping the upload outside the budget preserves the budget's semantics
+  SpeechKit operation step; it is bounded by the helper's own transport timeouts
+  (see §3.1). Keeping the upload outside the budget preserves the budget's semantics
   unchanged.
 - **Object delete is best-effort and never invalidates a successful transcript** —
   the same contract as the existing operation delete
   ([`yandex_speechkit.py:575-595`](../../lib/stt/providers/yandex_speechkit.py)).
-  `bestEffortDeleteObject` wraps `deleteFn` in `try/except`, logs a warning on
-  failure, and returns. It runs in the `finally` block after the operation delete.
-- **Idempotency of delete on a missing object.** `deleteFn` (service-bound to
-  `S3StorageBackend.delete`) must treat a missing object as a no-op.
-  `S3StorageBackend.delete` already returns `False` for a missing key instead of
-  raising ([`s3.py:191-215`](../../internal/services/storage/backends/s3.py)); the
-  service's `deleteFn` closure preserves this, and the provider's
-  `try/except` is defense-in-depth.
+  `_bestEffortDeleteObject` wraps `self._objectStorage.delete` in `try/except`,
+  logs a warning on failure, and returns. It runs in the `finally` block after the
+  operation delete.
+- **Idempotency of delete on a missing object.** `self._objectStorage.delete`
+  (§3.1) treats a missing object as a no-op — the same idempotent-delete contract
+  attachment storage has, re-implemented in the co-located helper. The provider's
+  `try/except` around it is defense-in-depth.
 - **Upload failure → `OBJECT_STORAGE_ERROR`** (§4.5), returned before any submit. No
   operation is created, so no operation delete is needed; the `finally` skips the
   object delete because `objectUri` was never assigned.
 - **Operation failure after a successful upload** still triggers the object delete in
   `finally` — the staged object must not leak just because recognition failed.
+- **Stats recording wraps both outcomes.** `_recordStats` (§5.3) records on the
+  success result and on every `ERROR` result, best-effort and never raising, so it
+  cannot interfere with the `finally` cleanup. It is omitted from the pseudocode
+  above (which focuses on the Object-Storage lifecycle); the call ordering is shown
+  in §7.
 
 ### 4.4 Submit body shape (content vs uri)
 
@@ -323,7 +379,7 @@ differs:
 
 // Object-Storage path (new)
 {
-  "uri": "<URI returned by uploadFn>",
+  "uri": "<URI returned by self._objectStorage.upload (§3.1)>",
   "recognition_model": { /* identical to the inline block above */ }
 }
 ```
@@ -333,18 +389,18 @@ uploaded bytes are in a known container — the extracted audio's container). Wh
 SpeechKit *requires* or *ignores* it on the `uri` path is a verification point for
 the smoke test (§11); including correct metadata is the safe default. The exact URI
 scheme SpeechKit expects (`s3://bucket/key` vs an HTTPS URL) is likewise a smoke
-verification item — the service constructs the URI, so the format is operator-facing
-config, not a `lib/stt` concern.
+verification item — the co-located helper constructs the URI (it owns the URI
+scheme, smoke-verified §11); the format is not a service-layer concern.
 
 ### 4.5 Error codes
 
 Two error-code changes accompany Object-Storage routing:
 
 1. **New: `OBJECT_STORAGE_ERROR`** (provider-owned group, alongside
-   `PROVIDER_ERROR` / `PROTOCOL_ERROR`). Surfaced by the provider when `uploadFn` or
-   `deleteFn` raises (upload failure before submit; or — if a non-best-effort
-   surface ever needs it — a delete failure that escapes the best-effort wrapper).
-   Rationale: a distinct, actionable category. "Couldn't stage the clip in Object
+   `PROVIDER_ERROR` / `PROTOCOL_ERROR`). Surfaced by the provider when the
+   co-located helper's `upload()` raises before submit (§4.3); a delete failure is
+   swallowed by the best-effort wrapper and does not surface as this code.
+   Rationale: a distinct, actionable category — "couldn't stage the clip in Object
    Storage" has a different operator remedy (bucket/credentials/network/roles) than
    "SpeechKit recognition failed" (`PROVIDER_ERROR`) or "clip too large, OS not
    enabled" (`SOURCE_TOO_LARGE`). The v1 enum had exactly eight members; v1.1 adds a
@@ -357,11 +413,7 @@ Two error-code changes accompany Object-Storage routing:
    "produced by `STTService` (source-byte cap) and surfaced by the Yandex provider
    (inline-threshold exceeded without Object-Storage fallback)."
 
-   **Minimal alternative (rejected):** reuse `PROVIDER_ERROR` for both cases and
-   avoid touching the enum. Rejected because it collapses three distinct operator
-   remedies into one opaque code, defeating the observability goal of gate-4. If the
-   team prefers to avoid any enum growth, `PROVIDER_ERROR` is the fallback — but the
-   design recommends the two changes above.
+   A minimal alternative (reuse `PROVIDER_ERROR`) is rejected — see §12.
 
 ## 5. Enhancement 2 — gate-4: statistics recording in lib/stt
 
@@ -384,14 +436,15 @@ DB-backed `StatsStorage` exists and is wired for `lib/ai`.**
 **Implication for STT:** v1.1 reuses the same `DatabaseStatsStorage` class with a
 distinct `eventType="stt_request"` discriminator, so STT events stay separate from
 LLM events in `stat_events` without a new table or migration. The stats gate is a
-dedicated `[stt].stats-enabled` flag (§6.3), independent of `[stats].enabled`, so
+dedicated `[stt].stats-enabled` flag (§6.2), independent of `[stats].enabled`, so
 operators can measure STT latency in isolation for gate-4 without collecting all LLM
 stats.
 
 ### 5.2 Injection and recording point
 
-`StatsStorage` is injected into `YandexSpeechKitProvider.__init__` (§3.4), defaulting
-to `NullStatsStorage` when not supplied — identical to the `lib/ai` injection pattern
+`StatsStorage` is injected into `YandexSpeechKitProvider.__init__` alongside the
+Object-Storage params (§3.1), defaulting to `NullStatsStorage` when not supplied —
+identical to the `lib/ai` injection pattern
 ([`lib/ai/abstract.py:91-133`](../../lib/ai/abstract.py)). The wiring path:
 
 1. [`main.py`](../../main.py) constructs `sttStatsStorage` (a
@@ -474,70 +527,69 @@ async def _recordStats(
 
 ## 6. Configuration
 
+All Object-Storage knobs are **flat keys in `[stt]`**, alongside the existing
+`api-key` / `folder-id` / `model` / `language` — there is no Object-Storage
+subsection. Object Storage is **implicitly enabled when `object-storage-bucket` is
+configured** (with both access keys); TTL is delegated to Yandex Object Storage's
+native bucket lifecycle (§3.3, a deployment recommendation, not a `[stt]` key). The
+Yandex endpoint / region are constants baked into the helper, not config (§3.1).
+
 ### 6.1 `[stt]` additions
 
 Added to [`configs/00-defaults/stt.toml`](../../configs/00-defaults/stt.toml):
 
 ```toml
 [stt]
-# ... existing keys unchanged ...
+# ... existing keys (enabled, api-key, folder-id, model, language, provider,
+#     max-source-bytes, max-concurrency, ...) unchanged ...
 
 # v1.1 — gate-3 routing threshold (made explicit + enforced).
 # Clips whose extracted form (len(audio.data)) is below this go inline;
-# at/above this they route to Object Storage (when enabled). Default 40 MiB
+# at/above this they route to Object Storage (when configured). Default 40 MiB
 # keeps base64-expanded requests under the 60 MB vendor inline ceiling.
 max-inline-bytes = 41943040
 
-# v1.1 — gate-3 Object Storage enable flag. When false (default), STT is
-# inline-only; clips whose extracted form >= max-inline-bytes fail with
-# SOURCE_TOO_LARGE. When true, such clips are uploaded and submitted via uri.
-object-storage-enabled = false
+# v1.1 — gate-3 Object Storage (Yandex Object Storage, S3-compatible).
+# Implicitly enabled when object-storage-bucket is set together with both keys;
+# when the bucket is unset, STT is inline-only and clips whose extracted form
+# >= max-inline-bytes fail with SOURCE_TOO_LARGE (§4.2). All three are REQUIRED
+# together; no [storage.s3] fallback. endpoint/region are helper constants (§3.1).
+# Unresolved ${...} placeholders → startup fail (same rule as api-key/folder-id).
+object-storage-bucket  = "stt-clips"          # REQUIRED (with the two keys) to enable
+object-storage-prefix  = "stt/"               # optional; default "stt/"
+object-storage-key-id     = "${YC_STT_S3_KEY_ID}"
+object-storage-key-secret = "${YC_STT_S3_SECRET_KEY}"
 
 # v1.1 — gate-4 statistics enable flag. Independent of [stats].enabled.
 # When true, per-transcription stats are recorded (eventType="stt_request").
 stats-enabled = false
 ```
 
-### 6.2 `[stt.object-storage]` subsection (optional override)
+**How the keys reach the provider.** `STTService.initialize` already spreads the
+`[stt]` section into the provider constructor via `kebabToCamelCase`
+([`internal/services/stt/service.py`](../../internal/services/stt/service.py):201-208),
+so `object-storage-bucket` → `objectStorageBucket`,
+`object-storage-key-id` → `objectStorageKeyId`, etc. land as provider kwargs with no
+special-cased extraction. The provider declares them as named `__init__` params (and
+validates them, load-bearing contract #2) and constructs the `YandexObjectStorage`
+helper when `objectStorageBucket` is present (§3.1). `stats-enabled` is consumed by
+[`main.py`](../../main.py) to decide whether to build an `sttStatsStorage` (§6.2); it
+is **not** a provider param and must be added to the filtered-out keys in the
+`kebabToCamelCase` spread
+([`internal/services/stt/service.py`](../../internal/services/stt/service.py):206,
+currently `("enabled", "use-proxy", "proxy-config", "provider")`) so it is not
+forwarded to the provider. `YandexSpeechKitProvider.__init__` declares `**extraKwargs`,
+so a leaked `statsEnabled` key would be **silently swallowed** (not raised); the filter
+is still the correct discipline — don't leak unknown keys, and don't let
+`stats-enabled` collide with a future provider param of the same camelCased name.
 
-By default, when `object-storage-enabled = true` and `[stt.object-storage]` is
-**absent**, STT reuses the shared `StorageService` backend (i.e. `[storage.s3]`,
-requiring `[storage].type = "s3"`). This is the minimal-surprise path for simple
-deployments: one S3 backend, already configured.
+**Required vs. defaulted keys.** `object-storage-bucket`, `object-storage-key-id`,
+`object-storage-key-secret` are **all-or-nothing** (all three present + non-empty +
+free of unresolved `${...}` when the feature is on; all three absent → inline-only).
+`object-storage-prefix` defaults to `"stt/"`. `max-inline-bytes` defaults to
+`41943040`.
 
-When STT must use a **different bucket** than attachment storage (the common case —
-STT clips are short-lived and large; attachment storage is long-lived), an explicit
-`[stt.object-storage]` subsection overrides it. The keys mirror `[storage.s3]`:
-
-```toml
-[stt.object-storage]
-# Present only when STT uses a dedicated S3 bucket. Omit to reuse [storage.s3].
-endpoint = "https://storage.yandexcloud.net"
-region = "ru-central1"
-key-id = "${YC_S3_KEY_ID}"
-key-secret = "${YC_S3_SECRET_KEY}"
-bucket = "stt-clips"
-prefix = "stt/"          # isolates STT objects in a shared/dedicated bucket
-```
-
-Resolution in `STTService.initialize`:
-
-- `object-storage-enabled = false` → `uploadFn = deleteFn = None` (inline-only).
-- `object-storage-enabled = true` + `[stt.object-storage]` present → construct a
-  dedicated `S3StorageBackend` from the subsection (REUSE the existing class; no new
-  S3 client) and build the `uploadFn` / `deleteFn` closures bound to it.
-- `object-storage-enabled = true` + `[stt.object-storage]` absent → use
-  `StorageService.getInstance()` (the shared backend) and build the closures bound to
-  it. Requires `[storage].type = "s3"`; startup validation rejects the combination
-  "OS enabled, no subsection, non-S3 shared backend" with a clear error.
-
-The `uploadFn` closure generates a unique object key (UUID-based), applies the
-configured `prefix`, calls `backend.store(key, audio.data)`, and returns the URI.
-The `deleteFn` closure recovers the key from the URI (the service owns the URI
-format, so the mapping is deterministic) and calls `backend.delete(key)`. The
-`prefix` isolates STT objects from attachment storage in a shared bucket.
-
-### 6.3 `stats-enabled` flag
+### 6.2 `stats-enabled` flag
 
 `[stt].stats-enabled` (default `false`) is **independent of `[stats].enabled`**.
 Rationale: gate-4 is specifically about measuring STT latency; an operator should be
@@ -549,36 +601,46 @@ dataSource=<from [stats].llm-stats-data-source or default>)` and passes it to
 `NullStatsStorage` (no-op). The `eventType="stt_request"` discriminator keeps STT
 events separate from `llm_request` events without a new table.
 
-### 6.4 Validation
+### 6.3 Validation and deployment prerequisites
 
-Startup validation (in `STTService.initialize` and/or the provider constructor,
-following the v1 pattern in [`yandex_speechkit.py:209-237`](../../lib/stt/providers/yandex_speechkit.py)):
+Startup validation (in `STTService.initialize`, consistent with how it validates
+`provider` and resolves the proxy; the provider additionally validates the params it
+receives before constructing the helper, following the existing pattern in
+[`yandex_speechkit.py`](../../lib/stt/providers/yandex_speechkit.py):209-237):
 
 - `max-inline-bytes` positive and `<= 60_000_000` (the vendor inline ceiling is 60 MB
-  *base64-expanded*; 40 MiB raw → ~53 MB base64, safely under). Reject a default
-  above the safe inline ceiling.
-- When `object-storage-enabled = true`:
-  - If `[stt.object-storage]` present: required keys `endpoint`, `region`, `key-id`,
-    `key-secret`, `bucket` non-empty and free of unresolved `${...}` placeholders.
-  - If `[stt.object-storage]` absent: `[storage].type == "s3"` (reject otherwise).
-- Unresolved `${...}` placeholders in any Object-Storage credential → startup fail
-  (same rule as the existing Yandex credential validation).
+  *base64-expanded*; 40 MiB raw → ~53 MB base64, safely under). Reject a value above
+  the safe inline ceiling.
+- **Object-Storage all-or-nothing.** If `object-storage-bucket` is set, require
+  `object-storage-key-id` **and** `object-storage-key-secret` (reject partial config
+  with a clear error). All three must be non-empty and free of unresolved `${...}`
+  placeholders (same rule as `api-key` / `folder-id`). There is **no**
+  `[storage.s3]` fallback. If `object-storage-bucket` is unset → Object Storage
+  disabled (inline-only, §4.2); the keys, if present without a bucket, are also
+  rejected (partial config).
+- **boto3 presence.** If `object-storage-bucket` is set but the guarded import
+  reports `_BOTO3_AVAILABLE = False` (boto3 not installed), the provider raises
+  `ValueError` at construction. Object Storage was explicitly requested but its
+  dependency is absent — treated as misconfiguration (same severity as a partial key
+  set), not a silent inline-only fallback, so large clips do not later fail opaquely
+  with `SOURCE_TOO_LARGE`.
 - `stats-enabled` requires no extra validation (`NullStatsStorage` is the safe
   default; a missing `stat_events` table would surface as a best-effort log error,
   never a transcription failure).
 
-**S3 transport timeouts (dependency note).** `S3StorageBackend` currently constructs
-the boto3 client without a `botocore.config.Config` (no explicit connect/read
-timeouts or retry caps). The v1 parent plan §8.3 proposed adding
-`connect-timeout-seconds` / `read-timeout-seconds` / `total-max-attempts` to
-`[storage.s3]`. v1.1's STT uploads are bounded in practice by the provider's
-best-effort handling (upload failure → `OBJECT_STORAGE_ERROR`, never a hang that
-blocks shutdown beyond the accepted v1 native-hang limitation), but **properly
-bounded S3 timeouts should land alongside or before v1.1** so a wedged Object
-Storage endpoint cannot hold a semaphore slot indefinitely. If the §8.3 storage
-timeout proposal has not landed, v1.1 should extend `S3StorageBackend` (or the
-`[stt.object-storage]` client construction) with a `botocore.config.Config` carrying
-finite connect/read timeouts and bounded attempts.
+**Transport timeouts are intrinsic to the helper** (§3.1), not a configurable knob;
+this supersedes the v1 parent plan §8.3 `[storage.s3]` timeout proposal for the STT
+path (that proposal, if it lands, governs only attachment storage).
+
+**Deployment prerequisites (operator-side, call out alongside the release gates):**
+
+1. Create (or designate) the STT bucket in Yandex Object Storage.
+2. Create a static access key for the SpeechKit SA and grant it `storage.editor` on
+   the bucket (§3.2).
+3. **Configure a bucket lifecycle rule** expiring objects under `prefix` after a TTL
+   of **86400 s (24 h)** — this is the primary reclamation mechanism for objects that
+   survive the best-effort per-request delete (§3.3). The bot does **not** run a
+   sweep; without this rule, leaked objects accumulate.
 
 ## 7. Object lifecycle — sequence (Object-Storage path)
 
@@ -586,13 +648,13 @@ finite connect/read timeouts and bounded attempts.
 sequenceDiagram
     participant S as STTService
     participant P as YandexSpeechKitProvider
-    participant OS as uploadFn/deleteFn (service-bound S3)
+    participant OS as YandexObjectStorage (co-located helper, §3.1)
     participant Y as SpeechKit v3
 
     S->>P: stt(data, consumerId)
     P->>P: extractAudio(data) → ExtractedAudio
-    Note over P: len(audio.data) >= maxInlineBytes && uploadFn set
-    P->>OS: uploadFn(audio.data)
+    Note over P: len(audio.data) >= maxInlineBytes && self._objectStorage set
+    P->>OS: self._objectStorage.upload(audio.data)
     OS-->>P: objectUri
     P->>Y: POST recognizeFileAsync { uri: objectUri }
     Y-->>P: operationId
@@ -600,14 +662,17 @@ sequenceDiagram
     P->>Y: GET getRecognition (fetch)
     Y-->>P: recognition bytes
     P->>P: parse → TranscriptionResult
-    P->>P: _recordStats(consumerId, audio, result, elapsed)
-    P-->>S: TranscriptionResult
-    Note over P: finally (best-effort, never raises)
+    Note over P: finally (best-effort, never raises) — runs before return
     P->>Y: DELETE deleteRecognition (existing)
-    P->>OS: deleteFn(objectUri)  (NEW)
+    P->>OS: self._objectStorage.delete(objectUri)  (NEW, best-effort)
+    P->>P: _recordStats(consumerId, audio, result, elapsed)  (best-effort, §5.3)
+    P-->>S: TranscriptionResult
 ```
 
-The inline path omits the upload/delete-object steps and is otherwise identical.
+The inline path omits the upload/delete-object steps and is otherwise identical. The
+ERROR paths (`OBJECT_STORAGE_ERROR` on upload failure, `SOURCE_TOO_LARGE` when over
+threshold without Object Storage — §4.2/§4.5) also build a result, record stats, and
+run the `finally` cleanup; only the happy Object-Storage path is drawn above.
 
 ## 8. Release-gate scope (what v1.1 does and does not touch)
 
@@ -644,37 +709,50 @@ the `run-quality-gates` skill); bug fixes must load `write-regression-test`.
 | Step | Work | Verification |
 |---:|---|---|
 | 1 | Add `OBJECT_STORAGE_ERROR` to `STTErrorCode` and update its ownership docstring; extend `SOURCE_TOO_LARGE` ownership docstring. | Enum membership tests; ownership-docstring assertions in `tests/lib/stt/test_models.py`. |
-| 2 | Add `STTObjectUpload` / `STTObjectDelete` types and the three new constructor params (`maxInlineBytes`, `uploadFn`, `deleteFn`, `statsStorage`) to `YandexSpeechKitProvider`. | Provider construction tests (inline-only default; OS-enabled wiring). |
-| 3 | Extend `_buildSubmitBody` to branch `content` vs `uri`; extend `transcribe()` with the §4.3 lifecycle (upload outside budget; object delete in `finally`). | Golden-HTTP tests for the `uri` body shape + lifecycle; mock-callable upload/delete (no real S3). Assert upload failure → `OBJECT_STORAGE_ERROR`; OS-disabled + over-threshold → `SOURCE_TOO_LARGE`; object delete never raises / never invalidates a success. |
+| 2 | Create `lib/stt/providers/yandex_object_storage.py` (new module — the `YandexObjectStorage` helper, §3.1): guarded `boto3` import (module-level `try/except ImportError` + `_BOTO3_AVAILABLE`, the AGENTS.md optional-dependency convention), `botocore.config.Config` with bounded connect/read timeouts + retry cap, `upload(data) -> str` (key `{prefix}{uuid}`, `put_object`, returns the SpeechKit URI), `delete(uri) -> None` (missing object = no-op). Add the corresponding constructor params to `YandexSpeechKitProvider` (`maxInlineBytes`, `objectStorageBucket`, `objectStoragePrefix`, `objectStorageKeyId`, `objectStorageKeySecret`, `statsStorage`); the provider constructs `self._objectStorage` when the bucket is present and validates the params (load-bearing contract #2). | Helper unit tests with mocked boto3 (mirror [`tests/services/storage/test_s3_backend.py`](../../tests/services/storage/test_s3_backend.py)): upload key generation + URI shape; delete missing-object no-op; guarded-import path when `_BOTO3_AVAILABLE` is false. Provider construction tests: inline-only default (`self._objectStorage is None`); helper constructed when bucket + keys present; partial-config rejected. |
+| 3 | Extend `_buildSubmitBody` to branch `content` vs `uri`; extend `transcribe()` with the §4.3 lifecycle (upload outside budget; object delete in `finally`, via `self._objectStorage`). | Golden-HTTP tests for the `uri` body shape + lifecycle with the helper mocked (no real S3). Assert upload failure → `OBJECT_STORAGE_ERROR`; helper-disabled + over-threshold → `SOURCE_TOO_LARGE`; object delete never raises / never invalidates a success. |
 | 4 | Add `_recordStats` + thread `consumerId` through `stt()`/`transcribe()`; inject `statsStorage` (default `NullStatsStorage`). | Stats-recording tests with a recording fake `StatsStorage`; assert best-effort (never raises); assert `NullStatsStorage` default is a no-op. |
-| 5 | Extend `STTService.initialize(configManager, statsStorage=...)`: read `max-inline-bytes`/`object-storage-enabled`/`stats-enabled`; build `uploadFn`/`deleteFn` from `StorageService` or a dedicated `S3StorageBackend`; pass threshold + callables + stats into the provider. | Service tests: inline-only when OS disabled; dedicated-vs-shared backend selection; closure key isolation; stats-on/stats-off. |
-| 6 | Update [`configs/00-defaults/stt.toml`](../../configs/00-defaults/stt.toml) with the §6.1 keys; update [`main.py`](../../main.py) to construct `sttStatsStorage` and pass it to `STTService.initialize`. | Config print/validate tests; startup-without-credentials tests; disabled-STT starts without S3/PyAV. |
+| 5 | Extend `STTService.initialize(configManager, statsStorage=...)` (§6.1): validate the flat `[stt]` Object-Storage keys are all-or-nothing (bucket set → both keys required; no `[storage.s3]` fallback) and free of unresolved `${...}`; reject when `object-storage-bucket` is set but `_BOTO3_AVAILABLE` is false (§6.3); add `stats-enabled` to the filtered-out keys in the `kebabToCamelCase` spread (`service.py`:206) so it is not forwarded to the provider; pass `statsStorage` (§5). `STTService.aclose` is unchanged (§3.1). | Service tests: inline-only when `object-storage-bucket` unset; partial-config → startup `ValueError`; boto3-absent + bucket set → startup `ValueError`; stats-on/stats-off; `stats-enabled` is not forwarded to the provider. No boto3 client is constructed when STT or Object Storage is disabled. |
+| 6 | Update [`configs/00-defaults/stt.toml`](../../configs/00-defaults/stt.toml) with the §6.1 flat keys (`max-inline-bytes`; `object-storage-bucket` / `-prefix` / `-key-id` / `-key-secret`; `stats-enabled`); update [`main.py`](../../main.py) to construct `sttStatsStorage` and pass it to `STTService.initialize`. | Config print/validate tests; startup-without-credentials tests; disabled-STT starts without S3/PyAV. |
 | 7 | Run the §11 smoke verifications against live SpeechKit + Object Storage. | Record only redacted structural output (URI scheme, container_audio behavior, latency). No secrets/audio/transcripts stored. |
 | 8 | Documentation pass (§10) + `CHANGELOG.md` `Added`/`Changed` entries. | `make check-docs`, `make format lint`, `make test`, `make ci`. |
 
-Dependency note: if bounded S3 timeouts (§6.4) are not yet in `S3StorageBackend`,
-step 5/6 must add them (or depend on the v1 §8.3 proposal landing first).
+Dependency note: v1.1 does **not** depend on the v1 §8.3 `[storage.s3]` timeout
+proposal landing — transport timeouts are intrinsic to the helper (§3.1), and that
+proposal, if it lands, governs only attachment storage.
 
 ## 10. Documentation impact
 
 After implementation, load `update-project-docs` and update:
 
-- [`docs/llm/libraries.md`](../llm/libraries.md): `lib/stt` gains Object-Storage
-  routing (the injected callable seam) and stats recording.
+- [`docs/llm/libraries.md`](../llm/libraries.md): `lib/stt` gains the co-located
+  `YandexObjectStorage` helper (`lib/stt/providers/yandex_object_storage.py`,
+  guarded `boto3` import) + Object-Storage routing + stats recording.
 - [`docs/design/lib-stt-v1.md`](./lib-stt-v1.md): §4 (`STTErrorCode` — add
   `OBJECT_STORAGE_ERROR`, extend `SOURCE_TOO_LARGE` ownership), §7.1 (the `uri` body
   shape), §8 (`transcribe` signature gains keyword-only `consumerId`; "takes
-  ExtractedAudio only" caveat), §8.1 cap table (`max-inline-bytes` now enforced;
-  Object-Storage row).
+  ExtractedAudio only" caveat), the §10 inherited-limits table (`max-inline-bytes`
+  now enforced; Object-Storage row); note the new co-located helper and the guarded
+  `boto3` dependency new to `lib/`. **Operation-budget reconciliation DONE:**
+  §7.4 and the §10 inherited-limits table now both ship 2400 s, matching
+  [`configs/00-defaults/stt.toml`](../../configs/00-defaults/stt.toml) (the
+  earlier "still say 180 s" item is obsolete).
 - [`docs/llm/services.md`](../llm/services.md): `STTService.initialize` signature
-  change; Object-Storage backend selection; stats wiring.
-- [`docs/llm/configuration.md`](../llm/configuration.md): `[stt]` new keys,
-  `[stt.object-storage]` subsection, `stats-enabled` flag.
+  change (adds `statsStorage`); the flat `[stt]` Object-Storage keys ride the
+  existing `kebabToCamelCase` spread into the provider (no service-layer Object
+  Storage client, no sweep); stats wiring.
+- [`docs/llm/configuration.md`](../llm/configuration.md): `[stt]` new flat keys
+  (`max-inline-bytes`, `object-storage-bucket`, `object-storage-prefix`,
+  `object-storage-key-id`, `object-storage-key-secret`, `stats-enabled`); no
+  Object-Storage subsection (flat `[stt]` keys only); the Yandex Object Storage
+  bucket lifecycle TTL (86400 s) as a deployment recommendation.
 - [`docs/design/stt-next-steps.md`](./stt-next-steps.md): mark gate-3/gate-4 code as
   delivered (manual confirmation parts remain).
-- [`docs/llm/architecture.md`](../llm/architecture.md): note the injected-storage
-  seam in the `lib/stt` firewall description (a third seam alongside proxy +
-  raw-bytes).
+- [`docs/llm/architecture.md`](../llm/architecture.md): note the co-located
+  `YandexObjectStorage` helper in `lib/stt/providers/` (`boto3` is a guarded
+  external import; the `lib/stt` firewall — zero `internal.*` imports — is intact, so
+  this is **not** a new dependency-firewall seam). STT has no Object Storage client
+  at the service layer and no sweep task.
 - `CHANGELOG.md`: one `Added` entry (Object-Storage routing) and one `Changed` entry
   (STT stats recording), under `## [Unreleased]`.
 
@@ -685,16 +763,16 @@ static review. They do **not** block the design — the code is shaped to make t
 config/smoke confirmations, not architectural dependencies.
 
 1. **URI scheme.** Whether SpeechKit consumes `s3://bucket/key`, an HTTPS URL, or a
-   `https://storage.yandexcloud.net/bucket/key` form. The service constructs the URI
-   (operator-facing), so this is a config/format confirmation, not a `lib/stt`
-   change.
+   `https://storage.yandexcloud.net/bucket/key` form. The co-located helper
+   constructs the URI (§3.1), so this is a format confirmation in `lib/stt`.
 2. **`container_audio_type` on the `uri` path.** Whether SpeechKit requires, ignores,
    or rejects the `audio_format.container_audio` block when input is a `uri`. The
    design includes it (safe default); the smoke confirms.
-3. **Service-account roles.** Object Storage upload/delete needs `storage.editor`
-   (or uploader + deleter) for the bot's credentials; SpeechKit reading the object
-   needs the folder's service account to have read access (`storage.viewer` or a
-   bucket ACL). Deployment/verification concern.
+3. **Service-account access (deployment prerequisite — see §3.2).** Confirm the
+   SpeechKit SA can read objects under the configured `prefix`, using the **same
+   SA's static access keys** (`object-storage-key-id` / `-key-secret`) granted
+   `storage.editor` on the bucket — the `api-key` cannot be reused for S3 (§3.2).
+   The §11 smoke round-trip verifies this implicitly end-to-end.
 4. **1 GB Object-Storage limit semantics.** Confirmed raw (not base64); the smoke
    should confirm a large (but `< max-source-bytes`) clip round-trips.
 5. **gate-3 inline confirmation (carried from v1).** Confirm the 60 MB inline ceiling
@@ -703,6 +781,11 @@ config/smoke confirmations, not architectural dependencies.
 6. **gate-4 latency measurement.** Using the new stats, measure p95 `elapsed_time`
    for representative 10-minute media and decide whether the duration default or the
    originating-turn wait needs adjustment (per parent §13.3 gate-4).
+7. **Bucket lifecycle TTL (deployment recommendation — see §3.3, §6.3).** Configure
+   the Yandex Object Storage bucket lifecycle rule to expire objects under `prefix`
+   after 86400 s (24 h); confirm an object that is uploaded but never deleted (a
+   simulated leak) is reaped within ~24 h. The bot runs no sweep, so this rule is
+   the primary reclamation mechanism.
 
 No secrets, full audio, full transcripts, or authorization headers may be stored in
 smoke-test artifacts.
@@ -711,10 +794,15 @@ smoke-test artifacts.
 
 | Alternative | Decision |
 |---|---|
-| Service-side upload (Option (b) in §3) | Rejected. Cannot evaluate `len(audio.data)` at the service boundary without splitting the never-raise `stt(data)` entry or routing on the wrong byte count; leaks Yandex wire details into the service. |
-| New S3 client inside `lib/stt` | Rejected. Violates the firewall and duplicates `S3StorageBackend`. v1.1 reuses the existing backend via injected callables. |
-| Dedicated `[stt.object-storage]` only (no `[storage.s3]` reuse) | Rejected as the sole option. Reuse-by-default with optional override is less surprising for simple deployments. |
+| **Co-located S3 client inside `lib/stt/providers/`** | **Chosen.** `boto3` is external (not `internal.*`), so the `lib/stt` firewall is intact; co-locating the `YandexObjectStorage` helper next to `YandexSpeechKitProvider` keeps every Yandex wire detail (URI scheme, `content` vs `uri` body, object delete) in one place (§3.1). |
+| Inject `uploadFn` / `deleteFn` callables into the provider (first-revision design) | **Rejected (user direction — "too difficult").** The injected-seam indirection is unnecessary now that the client is allowed inside `lib/stt`; the provider uses the helper directly. |
+| Service-layer `STTObjectStorage` client (first-revision design) | **Rejected (user direction).** Object Storage is only needed for the Yandex provider; a service-layer client + injected callables added machinery for no benefit. The helper is co-located and Yandex-specific (§3.1). |
+| Service-side upload (service decides + uploads, hands a URI to the provider) | Rejected. Cannot evaluate `len(audio.data)` at the service boundary without splitting the never-raise `stt(data)` entry or routing on the wrong byte count; leaks Yandex wire details into the service. |
+| Reuse `[storage.s3]` attachment-storage backend for STT | **Rejected (user direction).** SpeechKit consumes Yandex Object Storage specifically, and the SpeechKit SA must be able to read the bucket; `[storage.s3]` may point at a different provider/bucket/credentials (its default endpoint is AWS). STT uses its own flat `[stt]` Object-Storage keys (§6.1). |
+| Reuse the `S3StorageBackend` class for the STT client | **Rejected.** The co-located `YandexObjectStorage` helper keeps STT decoupled from attachment-storage evolution and makes bounded timeouts intrinsic to the new code (§3.1); only the Yandex provider needs it. |
+| **TTL via Yandex Object Storage native bucket lifecycle (no bot sweep)** | **Chosen (user direction — "Yandex Object Store supports ttl to drop old objects automatically").** Recommended TTL = 86400 s (§3.3); the bot runs no sweep. |
+| Bot-enforced TTL sweep loop (first-revision design) | **Rejected (user direction).** Removed machinery (`_objectStorageSweepLoop`, `sweep-interval-seconds`, `ttl` bot config, shutdown drain); the Yandex native lifecycle covers reclamation without bot code. |
 | Reuse `[stats].enabled` for STT stats (no dedicated flag) | Rejected. gate-4 wants STT latency in isolation; a dedicated `stats-enabled` avoids forcing full LLM stats on. |
 | Reuse `PROVIDER_ERROR` for upload/delete failures (no new enum member) | Rejected as primary (collapses operator remedies); documented as the acceptable minimal fallback. |
 | Record stats in `stt()` (abstract base) to capture extraction failures | Deferred. The base lacks provider metadata (`model`); v1.1 scopes stats to the concrete provider's `transcribe()` and documents the boundary (§5.2). |
-| Bound the upload inside the SpeechKit operation budget | Rejected. The budget covers submit/poll/fetch by definition (§7.4); upload is staging and is bounded by S3 transport timeouts (§6.4). |
+| Bound the upload inside the SpeechKit operation budget | Rejected. The budget covers submit/poll/fetch by definition (§7.4); upload is staging and is bounded by the helper's transport timeouts (§3.1). |

@@ -11,7 +11,7 @@ Covers (per ``docs/design/lib-stt-v1.md`` §8):
 
 import inspect
 from collections.abc import Sequence
-from typing import Tuple
+from typing import Optional, Tuple
 
 import pytest
 
@@ -76,11 +76,12 @@ class _StubProvider(AbstractSTTProvider):
         """
         return self._formats
 
-    async def transcribe(self, audio: ExtractedAudio) -> TranscriptionResult:
+    async def transcribe(self, audio: ExtractedAudio, *, consumerId: Optional[str] = None) -> TranscriptionResult:
         """Return a NO_SPEECH result for any input (stub never errors).
 
         Args:
             audio: The extracted audio to transcribe (ignored by the stub).
+            consumerId: Ignored by the stub.
 
         Returns:
             TranscriptionResult: A NO_SPEECH result with no segments.
@@ -250,11 +251,12 @@ class _RaisingTranscribeProvider(_StubProvider):
     ``supportedInputFormats`` / ``aclose`` from :class:`_StubProvider`.
     """
 
-    async def transcribe(self, audio: ExtractedAudio) -> TranscriptionResult:
+    async def transcribe(self, audio: ExtractedAudio, *, consumerId: Optional[str] = None) -> TranscriptionResult:
         """Raise an unexpected RuntimeError instead of returning a result.
 
         Args:
             audio: The extracted audio (ignored).
+            consumerId: Ignored.
 
         Returns:
             TranscriptionResult: Never returns; always raises RuntimeError.

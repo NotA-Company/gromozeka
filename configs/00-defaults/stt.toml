@@ -17,3 +17,25 @@ operation-budget-seconds = 2400
 poll-interval-seconds = 2
 max-poll-interval-seconds = 10
 max-result-bytes = 5242880
+
+# v1.1 — gate-3 routing threshold (made explicit + enforced).
+# Clips whose extracted form (len(audio.data)) is below this go inline;
+# at/above this they route to Object Storage (when configured). Default 40 MiB
+# keeps base64-expanded requests under the 60 MB vendor inline ceiling.
+max-inline-bytes = 41943040
+
+# v1.1 — gate-4 statistics enable flag. Independent of [stats].enabled.
+# When true, per-transcription stats are recorded (eventType="stt_request").
+stats-enabled = false
+
+# v1.1 — gate-3 Object Storage (Yandex Object Storage, S3-compatible).
+# Implicitly enabled when object-storage-bucket is set together with both keys;
+# when the bucket is unset, STT is inline-only and clips whose extracted form
+# >= max-inline-bytes fail with SOURCE_TOO_LARGE. All three are REQUIRED
+# together; no [storage.s3] fallback. endpoint/region are helper constants.
+# Unresolved ${...} placeholders → startup fail (same rule as api-key/folder-id).
+# To enable: uncomment all four keys and set real values or resolved ${...}.
+#object-storage-bucket = "stt-clips"
+#object-storage-prefix = "stt/"
+#object-storage-key-id = "${YC_STT_S3_KEY_ID}"
+#object-storage-key-secret = "${YC_STT_S3_SECRET_KEY}"

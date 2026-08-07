@@ -411,7 +411,7 @@ Defaults deliberately stay below SpeechKit's vendor maximum:
 | Global workers | 2 | Bound simultaneous download/decode/request memory. |
 | Admission wait | 20 seconds | Convert prolonged throttling/contention into terminal `FAILED`. |
 | HTTP request | 30 seconds | Bound each network request. |
-| SpeechKit operation | 180 seconds | Cap submit/poll/get and preserve part of the 300-second media-poll budget. |
+| SpeechKit operation | 2400 seconds | Cap submit/poll/get for the SpeechKit operation itself. This is the full SpeechKit operation budget (`operation-budget-seconds`), not a media-poll budget; it sits well inside the 4 h vendor duration ceiling. |
 | Poll interval | 2 seconds initially, 10 seconds maximum | Stay below operation polling quota. |
 
 **Vendor ceilings vs. v1 defaults.** SpeechKit async ceilings: **60 MB inline request** (used by v1),
@@ -511,7 +511,7 @@ result retention — all authenticated with `Authorization: Api-Key` and
 dynamically from `ExtractedAudio.container` (one of `WAV`/`OGG_OPUS`/`MP3`). The
 retry policy is load-bearing: **never auto-retry the submit `POST`** (a timeout
 can occur after Yandex has accepted a billable operation); the idempotent
-poll/fetch `GET`s retry 429/5xx with bounded backoff inside the 180-second
+poll/fetch `GET`s retry 429/5xx with bounded backoff inside the 2400-second
 operation budget, and each `getRecognition` attempt is atomic (no segments
 committed from a partial stream). The `getRecognition` event
 framing/content-type is a **live-wire known-unknown**: parsing is provisional and
@@ -577,7 +577,7 @@ max-transcript-chars = 48000
 max-concurrency = 2
 admission-timeout = 20
 request-timeout = 30
-operation-timeout = 180
+operation-timeout = 2400
 poll-initial-delay = 2
 poll-max-delay = 10
 chat-ratelimiter-queue = "stt-chat"

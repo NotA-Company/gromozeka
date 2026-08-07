@@ -53,7 +53,7 @@ def testSTTResultStatusMembershipAndValues() -> None:
 
 
 def testSTTErrorCodeMembershipAndValues() -> None:
-    """STTErrorCode exposes exactly the eight shared failure-category members.
+    """STTErrorCode exposes exactly the nine shared failure-category members.
 
     Returns:
         None
@@ -68,6 +68,7 @@ def testSTTErrorCodeMembershipAndValues() -> None:
         "DOWNLOAD_ERROR": "download-error",
         "PROVIDER_ERROR": "provider-error",
         "PROTOCOL_ERROR": "protocol-error",
+        "OBJECT_STORAGE_ERROR": "object-storage-error",
     }
 
 
@@ -302,3 +303,51 @@ def testExceptionCarriesMessage() -> None:
     instance = NoAudioTrackError(message)
     assert str(instance) == message
     assert instance.args == (message,)
+
+
+# ============================================================================
+# STT v1.1 — Object Storage error code + ownership docstrings
+# ============================================================================
+
+
+def testObjectStorageErrorIsMember() -> None:
+    """OBJECT_STORAGE_ERROR is a member of STTErrorCode with the correct value.
+
+    Returns:
+        None
+    """
+    assert STTErrorCode.OBJECT_STORAGE_ERROR.value == "object-storage-error"
+
+
+def testObjectStorageErrorDocstringMentionsUpload() -> None:
+    """STTErrorCode class docstring references OBJECT_STORAGE_ERROR in the provider group.
+
+    Per-member docstrings on StrEnum are source-only (not accessible via
+    ``member.__doc__``, which returns the class docstring).  The class
+    docstring is the runtime-accessible surface that documents ownership.
+
+    Returns:
+        None
+    """
+    doc = STTErrorCode.__doc__
+    assert doc is not None
+    assert "OBJECT_STORAGE_ERROR" in doc
+
+
+def testSourceTooLargeDocstringMentionsProviderCase() -> None:
+    """STTErrorCode class docstring mentions the provider-surfaced SOURCE_TOO_LARGE case.
+
+    The extended ownership: the provider also surfaces ``SOURCE_TOO_LARGE``
+    when the extracted payload exceeds the inline threshold and Object
+    Storage is disabled (design §4.2/§4.5).  This is documented in the
+    class-level ownership docstring.
+
+    Returns:
+        None
+    """
+    doc = STTErrorCode.__doc__
+    assert doc is not None
+    assert "provider" in doc.lower()
+    assert "SOURCE_TOO_LARGE" in doc
+    # The class docstring mentions the provider surfaces SOURCE_TOO_LARGE.
+    assert "surfaces" in doc.lower()

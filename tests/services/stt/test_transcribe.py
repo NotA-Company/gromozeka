@@ -23,6 +23,7 @@ from internal.services.stt.service import STTOutcome, STTService
 from lib.stt.abstract import AbstractSTTProvider
 from lib.stt.models import (
     AudioFormatSpec,
+    ExtractedAudio,
     STTAudioContainerType,
     STTErrorCode,
     STTResultStatus,
@@ -42,6 +43,7 @@ class FakeProvider(AbstractSTTProvider):
         _result: The TranscriptionResult to return from stt().
         _shouldRaise: Optional exception class to raise instead of returning.
         sttCallCount: Number of times stt() was called.
+        lastConsumerId: The ``consumerId`` kwarg from the most recent stt() call.
     """
 
     def __init__(
@@ -59,6 +61,7 @@ class FakeProvider(AbstractSTTProvider):
         self._result = result or TranscriptionResult(status=STTResultStatus.ERROR, segments=())
         self._shouldRaise = shouldRaise
         self.sttCallCount: int = 0
+        self.lastConsumerId: Optional[str] = None
 
     def supportedInputFormats(self) -> Sequence[AudioFormatSpec]:
         """Return a single WAV format spec.
@@ -76,11 +79,12 @@ class FakeProvider(AbstractSTTProvider):
             )
         ]
 
-    async def transcribe(self, audio) -> TranscriptionResult:  # type: ignore[override]
+    async def transcribe(self, audio: ExtractedAudio, *, consumerId: Optional[str] = None) -> TranscriptionResult:
         """Return the configured result or raise.
 
         Args:
             audio: The extracted audio data (unused by fake).
+            consumerId: Optional consumer identifier (unused by fake).
 
         Returns:
             The configured TranscriptionResult.
@@ -92,11 +96,12 @@ class FakeProvider(AbstractSTTProvider):
             raise self._shouldRaise
         return self._result
 
-    async def stt(self, data: bytes) -> TranscriptionResult:
+    async def stt(self, data: bytes, *, consumerId: Optional[str] = None) -> TranscriptionResult:
         """Override base stt() to bypass extractAudio and count calls.
 
         Args:
             data: The source audio bytes.
+            consumerId: Optional consumer identifier passed through from the caller.
 
         Returns:
             The configured TranscriptionResult.
@@ -105,6 +110,7 @@ class FakeProvider(AbstractSTTProvider):
             Exception: If shouldRaise was configured.
         """
         self.sttCallCount += 1
+        self.lastConsumerId = consumerId
         if self._shouldRaise is not None:
             raise self._shouldRaise
         return self._result
@@ -400,3 +406,38 @@ class TestRateLimitersAppliedDuringAdmission:
         assert outcome.success is True
         mockManager.applyLimit.assert_any_call("stt-chat", key="42")
         mockManager.applyLimit.assert_any_call("stt-global")
+
+
+# ---------------------------------------------------------------------------
+# Regression: transcribeMedia passes consumerId to provider.stt()
+# ---------------------------------------------------------------------------
+
+
+class TestConsumerIdPlumbedToProvider:
+    """Regression: transcribeMedia threads ``chatId`` as ``consumerId``
+    (``str(chatId)`` or ``None``) to ``provider.stt()``.
+
+    Without this, the per-consumer STT stats rollup in ``_recordStats``
+    receives ``consumerId=None`` for every call — the feature ships dead.
+    """
+
+    @pytest.mark.parametrize("chatId,expectedConsumerId", [(42, "42"), (0, "0"), (None, None)])
+    async def test_consumerIdPassedThrough(self, chatId: Optional[int], expectedConsumerId: Optional[str]) -> None:
+        """transcribeMedia forwards ``str(chatId)`` (or None) as ``consumerId`` to the provider.
+
+        Args:
+            chatId: Chat ID passed to transcribeMedia.
+            expectedConsumerId: Expected ``consumerId`` received by the provider.
+        """
+        provider = FakeProvider(
+            result=TranscriptionResult(
+                status=STTResultStatus.FINAL,
+                segments=(TranscriptionSegment(text="hello", startMs=0, endMs=1000, words=()),),
+            ),
+        )
+        svc = _buildService(provider=provider)
+
+        outcome: STTOutcome = await svc.transcribeMedia(b"\x00" * 64, chatId=chatId)
+
+        assert outcome.success is True
+        assert provider.lastConsumerId == expectedConsumerId

@@ -16,6 +16,7 @@ This module imports only the standard library (``abc``, ``logging``,
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from typing import Optional
 
 from . import audio
 from .exceptions import STTExtractionError
@@ -62,7 +63,7 @@ class AbstractSTTProvider(ABC):
         """
 
     @abstractmethod
-    async def transcribe(self, audio: ExtractedAudio) -> TranscriptionResult:
+    async def transcribe(self, audio: ExtractedAudio, *, consumerId: Optional[str] = None) -> TranscriptionResult:
         """Transcribe format-aware ExtractedAudio.
 
         Accepts :class:`~lib.stt.models.ExtractedAudio` ONLY — no separate
@@ -78,6 +79,10 @@ class AbstractSTTProvider(ABC):
                 negotiation (the source container on a pass-through path, or the
                 transcode target — e.g. ``OGG_OPUS`` — on a transcode path).
                 ``channels`` is always the source channel count (no downmix).
+            consumerId: Optional consumer identifier for per-consumer statistics
+                rollup (e.g. ``str(chatId)``). When ``None``, stats aggregate to
+                the global rollup only. Keyword-only, backward-compatible default
+                (design §5.2).
 
         Returns:
             TranscriptionResult: The provider-neutral outcome. FINAL with the
@@ -86,7 +91,7 @@ class AbstractSTTProvider(ABC):
             :class:`~lib.stt.models.STTErrorCode` for an expected failure.
         """
 
-    async def stt(self, data: bytes) -> TranscriptionResult:
+    async def stt(self, data: bytes, *, consumerId: Optional[str] = None) -> TranscriptionResult:
         """High-level never-raise entry: extract + transcribe.
 
         Wraps :func:`lib.stt.audio.extractAudio` so that any extraction failure
@@ -98,6 +103,10 @@ class AbstractSTTProvider(ABC):
 
         Args:
             data: The source audio bytes to extract and transcribe.
+            consumerId: Optional consumer identifier forwarded to
+                :meth:`transcribe` for per-consumer statistics rollup. When
+                ``None``, stats aggregate to the global rollup only. Keyword-only,
+                backward-compatible default (design §5.2).
 
         Returns:
             TranscriptionResult: FINAL/NO_SPEECH on success, or ERROR with an
@@ -110,7 +119,7 @@ class AbstractSTTProvider(ABC):
                 data,
                 supportedInputFormats=self.supportedInputFormats(),
             )
-            return await self.transcribe(audioData)
+            return await self.transcribe(audioData, consumerId=consumerId)
         except STTExtractionError as exc:
             return TranscriptionResult(status=STTResultStatus.ERROR, segments=(), errorCode=exc.errorCode)
         except Exception:  # noqa: BLE001 — never-raise boundary (defense-in-depth)

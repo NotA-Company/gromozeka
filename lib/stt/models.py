@@ -49,7 +49,10 @@ class STTErrorCode(StrEnum):
 
     - **STTService** produces: ``STT_DISABLED``, ``SOURCE_TOO_LARGE``.
     - **Provider** returns inside ``TranscriptionResult(ERROR, …)``:
-      ``NO_AUDIO``, ``PROVIDER_ERROR``, ``PROTOCOL_ERROR``.
+      ``NO_AUDIO``, ``PROVIDER_ERROR``, ``PROTOCOL_ERROR``,
+      ``OBJECT_STORAGE_ERROR``.
+    - **Provider also surfaces** ``SOURCE_TOO_LARGE`` when the extracted
+      payload exceeds the inline threshold and Object Storage is disabled.
     - **Reserved for the future handler round** (STTService is now stateless
       and does not download/bound duration):
       ``SOURCE_SIZE_UNKNOWN``, ``DOWNLOAD_ERROR``, ``DURATION_EXCEEDED``.
@@ -62,9 +65,13 @@ class STTErrorCode(StrEnum):
     """
 
     SOURCE_TOO_LARGE = "source-too-large"
-    """Source byte length (``len(data)``) exceeded ``maxSourceBytes``.
+    """Source byte length (``len(data)``) exceeded ``maxSourceBytes``, or
+    extracted payload (``len(audio.data)``) exceeded ``maxInlineBytes`` with
+    Object Storage disabled.
 
-    Produced by STTService; never produced inside lib/stt.
+    Produced by ``STTService`` (source-byte cap) and surfaced by the Yandex
+    provider when ``len(audio.data) >= maxInlineBytes`` and Object Storage is
+    disabled (design §4.2/§4.5).
     """
 
     SOURCE_SIZE_UNKNOWN = "source-size-unknown"
@@ -105,6 +112,16 @@ class STTErrorCode(StrEnum):
     """Malformed provider response, trailing garbage, or streamed result body over the result-byte cap.
 
     Produced by the provider.
+    """
+
+    OBJECT_STORAGE_ERROR = "object-storage-error"
+    """Object Storage upload failure (bucket/credentials/network).
+
+    Provider-owned group (alongside ``PROVIDER_ERROR`` / ``PROTOCOL_ERROR``).
+    Surfaced by the Yandex provider when the co-located
+    ``YandexObjectStorage.upload()`` raises before submit (design §4.3/§4.5).
+    A best-effort delete failure does NOT surface as this code (swallowed by
+    the wrapper).
     """
 
 

@@ -29,21 +29,24 @@ maxPolls exhaustion is therefore mapped to PROVIDER_ERROR (not ADMISSION_TIMEOUT
 following §4 over the looser wording in the phase task's test-matrix bullet.
 """
 
+import asyncio
 import base64
 import json
-from typing import Callable, Dict, List
-from unittest.mock import AsyncMock, patch
+from typing import Any, Callable, Dict, List, Optional
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
 from lib.proxy import ProxyConfig, ProxyHelper, ProxyType
+from lib.stats.stats_storage import StatsStorage
 from lib.stt.models import (
     ExtractedAudio,
     STTAudioContainerType,
     STTErrorCode,
     STTResultStatus,
 )
+from lib.stt.providers.yandex_object_storage import YandexObjectStorage
 from lib.stt.providers.yandex_speechkit import YandexSpeechKitProvider
 
 # Fast lifecycle timings so no test waits on real wall-clock backoff. The operation
@@ -944,3 +947,957 @@ async def testSubmitUsesCorrectUrlAndHeaders() -> None:
     assert request.headers["Authorization"] == "Api-Key test-key"
     assert request.headers["x-folder-id"] == "test-folder"
     assert request.headers["Content-Type"] == "application/json"
+
+
+# ============================================================================
+# Phase 2: Object Storage construction wiring (design §3.1, §6.1, §6.3)
+# ============================================================================
+
+
+def _constructProvider(**overrides: object) -> YandexSpeechKitProvider:
+    """Construct a provider with patched httpx client and given overrides.
+
+    Args:
+        **overrides: Extra constructor kwargs merged over the base credentials.
+
+    Returns:
+        YandexSpeechKitProvider: A constructed provider (httpx client is a mock).
+    """
+    base: Dict[str, object] = {"apiKey": "test-key", "folderId": "test-folder", **_FAST_TIMINGS}
+    base.update(overrides)
+    with patch("lib.stt.providers.yandex_speechkit.httpx.AsyncClient") as mockCtor:
+        mockCtor.return_value = AsyncMock()
+        provider = YandexSpeechKitProvider(**base)  # type: ignore[arg-type]
+    return provider
+
+
+async def testInlineOnlyDefaultObjectStorageNone() -> None:
+    """With no OS params, the provider is inline-only and _objectStorage is None.
+
+    Returns:
+        None
+    """
+    provider = _constructProvider()
+    try:
+        assert provider._objectStorage is None
+        assert provider._maxInlineBytes == 41943040
+    finally:
+        await provider.aclose()
+
+
+async def testObjectStorageHelperConstructedWhenBucketSet() -> None:
+    """With bucket + both keys, _objectStorage is a YandexObjectStorage with correct attrs.
+
+    boto3.client is patched so the real helper logic runs without a real S3 endpoint.
+
+    Returns:
+        None
+    """
+    with patch("lib.stt.providers.yandex_object_storage.boto3") as mockBoto3:
+        mockClient = MagicMock()
+        mockBoto3.client.return_value = mockClient
+        provider = _constructProvider(
+            objectStorageBucket="test-bucket",
+            objectStorageKeyId="test-key-id",
+            objectStorageKeySecret="test-key-secret",
+        )
+    try:
+        assert provider._objectStorage is not None
+        assert isinstance(provider._objectStorage, YandexObjectStorage)
+        # Verify boto3.client was called with the right S3 args (endpoint, region,
+        # credentials). The Config object is constructed at import time before the
+        # patch, so we check the non-Config kwargs precisely.
+        mockBoto3.client.assert_called_once()
+        callKwargs = mockBoto3.client.call_args.kwargs
+        assert callKwargs["endpoint_url"] == "https://storage.yandexcloud.net"
+        assert callKwargs["region_name"] == "ru-central1"
+        assert callKwargs["aws_access_key_id"] == "test-key-id"
+        assert callKwargs["aws_secret_access_key"] == "test-key-secret"
+        assert "config" in callKwargs
+    finally:
+        await provider.aclose()
+
+
+async def testPartialConfigBucketWithoutKeysRejected() -> None:
+    """Bucket without both keys raises ValueError (partial config).
+
+    Returns:
+        None
+    """
+    with pytest.raises(ValueError, match="objectStorageKeyId"):
+        _constructProvider(objectStorageBucket="b", objectStorageKeyId=None, objectStorageKeySecret=None)
+
+    with pytest.raises(ValueError, match="objectStorageKeyId"):
+        _constructProvider(objectStorageBucket="b", objectStorageKeyId="k", objectStorageKeySecret=None)
+
+    with pytest.raises(ValueError, match="objectStorageKeySecret"):
+        _constructProvider(objectStorageBucket="b", objectStorageKeyId=None, objectStorageKeySecret="s")
+
+
+async def testPartialConfigKeysWithoutBucketRejected() -> None:
+    """Keys without bucket raises ValueError (partial config).
+
+    Covers both-keys and each single-key alone.
+
+    Returns:
+        None
+    """
+    with pytest.raises(ValueError, match="without objectStorageBucket"):
+        _constructProvider(objectStorageBucket=None, objectStorageKeyId="k", objectStorageKeySecret="s")
+
+    with pytest.raises(ValueError, match="without objectStorageBucket"):
+        _constructProvider(objectStorageBucket=None, objectStorageKeyId="k", objectStorageKeySecret=None)
+
+    with pytest.raises(ValueError, match="without objectStorageBucket"):
+        _constructProvider(objectStorageBucket=None, objectStorageKeyId=None, objectStorageKeySecret="s")
+
+
+async def testEmptyBucketWithKeysRejected() -> None:
+    """objectStorageBucket="" (empty string) + keys raises ValueError.
+
+    An empty bucket is normalized to None, so keys-without-bucket fires. The caller
+    should either provide a real bucket name or omit the keys entirely.
+
+    Returns:
+        None
+    """
+    with pytest.raises(ValueError, match="without objectStorageBucket"):
+        _constructProvider(objectStorageBucket="", objectStorageKeyId="k", objectStorageKeySecret="s")
+
+
+async def testEmptyBucketOnlyTreatedAsUnset() -> None:
+    """objectStorageBucket="" with no keys is treated as unset → inline-only.
+
+    Returns:
+        None
+    """
+    provider = _constructProvider(objectStorageBucket="", objectStorageKeyId=None, objectStorageKeySecret=None)
+    try:
+        assert provider._objectStorage is None
+    finally:
+        await provider.aclose()
+
+
+@pytest.mark.parametrize(
+    "kwargs, match",
+    [
+        (
+            {
+                "objectStorageBucket": "b",
+                "objectStorageKeyId": "${YC_S3_KEY_ID}",
+                "objectStorageKeySecret": "s",
+            },
+            "objectStorageKeyId",
+        ),
+        (
+            {"objectStorageBucket": "${YC_S3_BUCKET}", "objectStorageKeyId": "k", "objectStorageKeySecret": "s"},
+            "objectStorageBucket",
+        ),
+        (
+            {"objectStorageBucket": "b", "objectStorageKeyId": "k", "objectStorageKeySecret": "${YC_S3_SECRET}"},
+            "objectStorageKeySecret",
+        ),
+    ],
+)
+async def testUnresolvedPlaceholderInOsCredsRejected(kwargs: Dict[str, object], match: str) -> None:
+    """Unresolved ${...} placeholders in OS cred params raise ValueError.
+
+    Args:
+        kwargs: The constructor overrides to apply.
+        match: The expected error-message fragment.
+
+    Returns:
+        None
+    """
+    with pytest.raises(ValueError, match=match):
+        _constructProvider(**kwargs)
+
+
+async def testBoto3AbsentWithBucketSetRaisesValueError() -> None:
+    """When _BOTO3_AVAILABLE is False and bucket is set, construction raises ValueError.
+
+    Returns:
+        None
+    """
+    with (
+        patch("lib.stt.providers.yandex_speechkit._BOTO3_AVAILABLE", False),
+        pytest.raises(ValueError, match="boto3 dependency is not installed"),
+    ):
+        _constructProvider(
+            objectStorageBucket="b",
+            objectStorageKeyId="k",
+            objectStorageKeySecret="s",
+        )
+
+
+@pytest.mark.parametrize(
+    "value, match",
+    [
+        (0, "maxInlineBytes must be positive"),
+        (-1, "maxInlineBytes must be positive"),
+        (60_000_001, "maxInlineBytes must be <= 60000000"),
+        (100_000_000, "maxInlineBytes must be <= 60000000"),
+    ],
+)
+def testMaxInlineBytesValidation(value: int, match: str) -> None:
+    """maxInlineBytes <= 0 or > 60_000_000 raises ValueError.
+
+    Args:
+        value: The invalid maxInlineBytes value.
+        match: The expected error-message fragment.
+
+    Returns:
+        None
+    """
+    with pytest.raises(ValueError, match=match):
+        _constructProvider(maxInlineBytes=value)
+
+
+async def testAcloseClosesObjectStorageHelper() -> None:
+    """aclose() awaits _objectStorage.aclose() when the helper is present.
+
+    Returns:
+        None
+    """
+    with patch("lib.stt.providers.yandex_object_storage.boto3") as mockBoto3:
+        mockClient = MagicMock()
+        mockBoto3.client.return_value = mockClient
+        provider = _constructProvider(
+            objectStorageBucket="b",
+            objectStorageKeyId="k",
+            objectStorageKeySecret="s",
+        )
+    try:
+        assert provider._objectStorage is not None
+        mockAclose = AsyncMock()
+        provider._objectStorage.aclose = mockAclose
+        await provider.aclose()
+        mockAclose.assert_awaited_once()
+    finally:
+        pass  # aclose already called above
+
+
+async def testAcloseDoesNotCrashWhenObjectStorageNone() -> None:
+    """aclose() does not crash when _objectStorage is None (inline-only).
+
+    Returns:
+        None
+    """
+    provider = _constructProvider()
+    try:
+        assert provider._objectStorage is None
+        await provider.aclose()  # must not raise
+    finally:
+        pass  # aclose already called above
+
+
+# ============================================================================
+# Phase 3: Object Storage routing lifecycle (design §4.3, §4.4, §4.5)
+# ============================================================================
+
+
+def _largeAudio() -> ExtractedAudio:
+    """Build an ExtractedAudio whose data exceeds the default maxInlineBytes (41943040).
+
+    Returns:
+        ExtractedAudio: A mono 16 kHz clip with data length > maxInlineBytes.
+    """
+    return ExtractedAudio(
+        container=STTAudioContainerType.OGG_OPUS,
+        channels=1,
+        sampleRate=16000,
+        data=b"\x00" * 41943041,
+        durationMs=1000,
+    )
+
+
+def _mockObjectStorage(*, uploadFail: bool = False, deleteFail: bool = False) -> AsyncMock:
+    """Build a mock YandexObjectStorage with controllable upload/delete behaviour.
+
+    Args:
+        uploadFail: When True, ``upload`` raises RuntimeError.
+        deleteFail: When True, ``delete`` raises RuntimeError.
+
+    Returns:
+        AsyncMock: A mock with ``upload``, ``delete``, and ``aclose`` methods.
+    """
+    mockOs: AsyncMock = AsyncMock()
+    mockOs.aclose = AsyncMock()
+    if uploadFail:
+        mockOs.upload.side_effect = RuntimeError("upload failed")
+    else:
+        mockOs.upload.return_value = "https://storage.yandexcloud.net/test-bucket/stt/fake-uuid"
+    if deleteFail:
+        mockOs.delete.side_effect = RuntimeError("delete failed")
+    return mockOs
+
+
+async def _providerWithOs(
+    handler: Callable[[httpx.Request], httpx.Response],
+    *,
+    maxInlineBytes: int = 41943040,
+    mockOs: Optional[AsyncMock] = None,
+) -> YandexSpeechKitProvider:
+    """Construct a provider with Object Storage mock and MockTransport.
+
+    Args:
+        handler: A callable ``(httpx.Request) -> httpx.Response`` for MockTransport.
+        maxInlineBytes: The inline threshold.
+        mockOs: A mock Object Storage; if None, a default (non-failing) mock is used.
+
+    Returns:
+        YandexSpeechKitProvider: A provider ready for ``transcribe``.
+    """
+    kwargs: Dict[str, object] = {
+        "apiKey": "test-key",
+        "folderId": "test-folder",
+        **_FAST_TIMINGS,
+        "maxInlineBytes": maxInlineBytes,
+        "objectStorageBucket": "test-bucket",
+        "objectStorageKeyId": "k",
+        "objectStorageKeySecret": "s",
+    }
+    with patch("lib.stt.providers.yandex_object_storage.boto3") as mockBoto3:
+        mockBoto3.client.return_value = MagicMock()
+        provider = YandexSpeechKitProvider(**kwargs)  # type: ignore[arg-type]
+    await provider.aclose()
+    if mockOs is not None:
+        provider._objectStorage = mockOs
+    provider._httpClient = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return provider
+
+
+# --- Test 1: Inline path unchanged ---
+
+
+async def testInlinePathUsesContentAndDoesNotCallUpload() -> None:
+    """Small audio (below maxInlineBytes) uses inline content, never calls upload.
+
+    The submit body has ``content`` (base64), NO ``uri``; the helper's upload
+    is NOT called; object delete is NOT called.  Byte-for-byte v1 behaviour.
+
+    Returns:
+        None
+    """
+    mockOs = _mockObjectStorage()
+    capturedBody: Dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal capturedBody
+        if request.method == "POST" and request.url.path == _SUBMIT_PATH:
+            capturedBody = json.loads(request.content.decode("utf-8"))
+            return httpx.Response(200, json={"id": "op-1", "done": False})
+        if request.method == "GET" and request.url.path.startswith("/operations/"):
+            return httpx.Response(200, json={"id": "op-1", "done": True})
+        if request.method == "GET" and request.url.path == _GET_RECOGNITION_PATH:
+            return httpx.Response(200, content=_finalEventBytes("inline", 0, 500))
+        if request.method == "DELETE" and request.url.path == _DELETE_RECOGNITION_PATH:
+            return httpx.Response(204)
+        return httpx.Response(404)
+
+    provider = await _providerWithOs(handler, mockOs=mockOs)
+    try:
+        result = await provider.transcribe(_audio())
+    finally:
+        await provider.aclose()
+
+    assert result.status is STTResultStatus.FINAL
+    assert "content" in capturedBody
+    assert "uri" not in capturedBody
+    assert base64.b64decode(str(capturedBody["content"])) == b"fake-audio-bytes"
+    mockOs.upload.assert_not_called()
+    mockOs.delete.assert_not_called()
+
+
+# --- Test 2: OS path submit body ---
+
+
+async def testOsPathUsesUriAndCallsUpload() -> None:
+    """Large audio (>= maxInlineBytes) with OS present uses uri, calls upload.
+
+    The submit body has ``uri`` (the upload return value), NO ``content``.
+    ``recognition_model`` block is identical to the inline path.  Upload is
+    called once, delete is called once in finally.
+
+    Returns:
+        None
+    """
+    mockOs = _mockObjectStorage()
+    capturedBody: Dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal capturedBody
+        if request.method == "POST" and request.url.path == _SUBMIT_PATH:
+            capturedBody = json.loads(request.content.decode("utf-8"))
+            return httpx.Response(200, json={"id": "op-1", "done": False})
+        if request.method == "GET" and request.url.path.startswith("/operations/"):
+            return httpx.Response(200, json={"id": "op-1", "done": True})
+        if request.method == "GET" and request.url.path == _GET_RECOGNITION_PATH:
+            return httpx.Response(200, content=_finalEventBytes("os path", 0, 500))
+        if request.method == "DELETE" and request.url.path == _DELETE_RECOGNITION_PATH:
+            return httpx.Response(204)
+        return httpx.Response(404)
+
+    provider = await _providerWithOs(handler, mockOs=mockOs)
+    try:
+        result = await provider.transcribe(_largeAudio())
+    finally:
+        await provider.aclose()
+
+    assert result.status is STTResultStatus.FINAL
+    assert "uri" in capturedBody
+    assert "content" not in capturedBody
+    assert capturedBody["uri"] == "https://storage.yandexcloud.net/test-bucket/stt/fake-uuid"
+    # recognition_model block is present and structurally identical.
+    recognitionModel: Dict[str, object] = capturedBody["recognition_model"]  # type: ignore[assignment]
+    assert recognitionModel["model"] == "general"
+    audioFormat: Dict[str, object] = recognitionModel["audio_format"]  # type: ignore[assignment]
+    containerAudio: Dict[str, object] = audioFormat["container_audio"]  # type: ignore[assignment]
+    assert containerAudio["container_audio_type"] == "OGG_OPUS"
+    mockOs.upload.assert_awaited_once_with(_largeAudio().data)
+    mockOs.delete.assert_awaited_once()
+
+
+# --- Test 3: OS disabled + over-threshold → SOURCE_TOO_LARGE ---
+
+
+async def testOsDisabledOverThresholdReturnsSourceTooLarge() -> None:
+    """OS disabled (None) + over-threshold → ERROR(SOURCE_TOO_LARGE).
+
+    Submit is NOT called; helper is NOT called (it is None).
+
+    Returns:
+        None
+    """
+    postCount = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal postCount
+        if request.method == "POST":
+            postCount += 1
+        return httpx.Response(404)
+
+    # Provider with OS disabled (no object storage params).
+    provider = await _provider(handler, maxInlineBytes=41943040)
+    try:
+        result = await provider.transcribe(_largeAudio())
+    finally:
+        await provider.aclose()
+
+    assert result.status is STTResultStatus.ERROR
+    assert result.errorCode is STTErrorCode.SOURCE_TOO_LARGE
+    assert postCount == 0
+
+
+# --- Test 4: Upload failure → OBJECT_STORAGE_ERROR ---
+
+
+async def testUploadFailureReturnsObjectStorageError() -> None:
+    """Upload raises → ERROR(OBJECT_STORAGE_ERROR).  Submit NOT called.
+
+    Returns:
+        None
+    """
+    mockOs = _mockObjectStorage(uploadFail=True)
+    postCount = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal postCount
+        if request.method == "POST":
+            postCount += 1
+        return httpx.Response(404)
+
+    provider = await _providerWithOs(handler, mockOs=mockOs)
+    try:
+        result = await provider.transcribe(_largeAudio())
+    finally:
+        await provider.aclose()
+
+    assert result.status is STTResultStatus.ERROR
+    assert result.errorCode is STTErrorCode.OBJECT_STORAGE_ERROR
+    assert postCount == 0
+    mockOs.delete.assert_not_called()  # upload failed → no objectUri → no delete
+
+
+# --- Test 5: Object delete is best-effort / never raises ---
+
+
+async def testObjectDeleteFailureDoesNotInvalidateSuccess() -> None:
+    """Object delete raises → transcript still returned successfully.
+
+    The exception is swallowed + logged; the operation delete still runs.
+
+    Returns:
+        None
+    """
+    mockOs = _mockObjectStorage(deleteFail=True)
+    deleteOperationCount = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal deleteOperationCount
+        if request.method == "POST" and request.url.path == _SUBMIT_PATH:
+            return httpx.Response(200, json={"id": "op-1", "done": False})
+        if request.method == "GET" and request.url.path.startswith("/operations/"):
+            return httpx.Response(200, json={"id": "op-1", "done": True})
+        if request.method == "GET" and request.url.path == _GET_RECOGNITION_PATH:
+            return httpx.Response(200, content=_finalEventBytes("survives", 0, 500))
+        if request.method == "DELETE" and request.url.path == _DELETE_RECOGNITION_PATH:
+            deleteOperationCount += 1
+            return httpx.Response(204)
+        return httpx.Response(404)
+
+    provider = await _providerWithOs(handler, mockOs=mockOs)
+    try:
+        result = await provider.transcribe(_largeAudio())
+    finally:
+        await provider.aclose()
+
+    assert result.status is STTResultStatus.FINAL
+    assert result.segments[0].text == "survives"
+    mockOs.upload.assert_awaited_once()
+    mockOs.delete.assert_awaited_once()
+    # The operation delete still ran.
+    assert deleteOperationCount == 1
+
+
+# --- Test 6: Object delete runs after operation failure ---
+
+
+async def testObjectDeletedInFinallyAfterOperationFailure() -> None:
+    """Upload succeeds, then the operation fails → object IS deleted in finally.
+
+    No leak: the staged object must be cleaned up even when recognition fails.
+
+    Returns:
+        None
+    """
+    mockOs = _mockObjectStorage()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == _SUBMIT_PATH:
+            return httpx.Response(200, json={"id": "op-1", "done": False})
+        if request.method == "GET" and request.url.path.startswith("/operations/"):
+            return httpx.Response(200, json={"id": "op-1", "done": True, "error": {"code": 3}})
+        if request.method == "DELETE" and request.url.path == _DELETE_RECOGNITION_PATH:
+            return httpx.Response(204)
+        return httpx.Response(404)
+
+    provider = await _providerWithOs(handler, mockOs=mockOs)
+    try:
+        result = await provider.transcribe(_largeAudio())
+    finally:
+        await provider.aclose()
+
+    assert result.status is STTResultStatus.ERROR
+    assert result.errorCode is STTErrorCode.PROVIDER_ERROR
+    mockOs.upload.assert_awaited_once()
+    mockOs.delete.assert_awaited_once()
+
+
+# --- Test 7: Upload outside the budget ---
+
+
+async def testUploadOutsideBudgetNotBoundedByOperationTimeout() -> None:
+    """Upload happens BEFORE the asyncio.timeout context (outside the budget).
+
+    A slow upload (with a sleep) should NOT be interrupted by a tiny
+    operation-budget timeout.  Assert upload is called before submit.
+
+    Returns:
+        None
+    """
+    callOrder: List[str] = []
+
+    async def slowUpload(data: bytes) -> str:
+        """Simulate a slow upload that sleeps briefly.
+
+        Args:
+            data: The audio bytes (ignored).
+
+        Returns:
+            str: A fake URI.
+        """
+        callOrder.append("upload")
+        await asyncio.sleep(0.05)  # 50ms upload — longer than the budget
+        return "https://storage.yandexcloud.net/test-bucket/stt/fake-uuid"
+
+    mockOs = _mockObjectStorage()
+    mockOs.upload.side_effect = slowUpload
+    postCount = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal postCount
+        if request.method == "POST" and request.url.path == _SUBMIT_PATH:
+            postCount += 1
+            callOrder.append("submit")
+            return httpx.Response(200, json={"id": "op-1", "done": False})
+        if request.method == "GET" and request.url.path.startswith("/operations/"):
+            return httpx.Response(200, json={"id": "op-1", "done": True})
+        if request.method == "GET" and request.url.path == _GET_RECOGNITION_PATH:
+            return httpx.Response(200, content=_finalEventBytes("x", 0, 1))
+        if request.method == "DELETE":
+            return httpx.Response(204)
+        return httpx.Response(404)
+
+    # operationBudgetSeconds = 0.01 (10ms) — far shorter than the 50ms upload sleep.
+    provider = await _providerWithOs(handler, mockOs=mockOs)
+    # Override the budget to something tiny.
+    provider._operationBudgetSeconds = 0.01
+    try:
+        result = await provider.transcribe(_largeAudio())
+    finally:
+        await provider.aclose()
+
+    # The upload completed (outside the budget) and the submit was reached.
+    # If the upload were inside the budget, the 10ms timeout would have
+    # interrupted the 50ms upload sleep and we'd get PROVIDER_ERROR.
+    assert result.status is STTResultStatus.FINAL
+    assert callOrder == ["upload", "submit"], f"Expected upload before submit, got {callOrder}"
+    assert postCount == 1
+
+
+# ============================================================================
+# Phase 4: Statistics recording (design §5)
+# ============================================================================
+
+
+class _RecordingStatsStorage(StatsStorage):
+    """In-memory fake StatsStorage that records calls for test assertions.
+
+    Attributes:
+        records: List of dicts with keys ``stats``, ``consumerId``, ``labels``.
+        shouldRaise: When set to an exception, ``record()`` raises it (for
+            best-effort testing).
+    """
+
+    def __init__(self) -> None:
+        """Initialize the recording fake.
+
+        Returns:
+            None
+        """
+        self.records: List[Dict[str, Any]] = []
+        self.shouldRaise: Optional[Exception] = None
+
+    async def record(
+        self,
+        stats: dict[str, float | int],
+        *,
+        consumerId: Optional[str] = None,
+        labels: Optional[dict[str, str]] = None,
+        eventTime: Optional[Any] = None,
+    ) -> None:
+        """Append a record for later assertion.
+
+        Args:
+            stats: The stats dict.
+            consumerId: The consumer ID.
+            labels: The labels dict.
+            eventTime: Ignored.
+
+        Returns:
+            None
+
+        Raises:
+            Exception: When ``shouldRaise`` is set (for best-effort testing).
+        """
+        if self.shouldRaise is not None:
+            raise self.shouldRaise
+        self.records.append(
+            {"stats": dict(stats), "consumerId": consumerId, "labels": dict(labels) if labels else None},
+        )
+
+    async def aggregate(self, *, limit: int = 1000, orphanTimeoutSeconds: int = 3600) -> int:
+        """No-op for this fake.
+
+        Args:
+            limit: Ignored.
+            orphanTimeoutSeconds: Ignored.
+
+        Returns:
+            int: Always 0.
+        """
+        return 0
+
+
+async def _providerWithStats(
+    handler: Callable[[httpx.Request], httpx.Response],
+    *,
+    statsStorage: Optional[_RecordingStatsStorage] = None,
+    **overrides: object,
+) -> YandexSpeechKitProvider:
+    """Construct a provider with a recording StatsStorage and MockTransport.
+
+    When ``statsStorage`` is None, the provider uses its default ``NullStatsStorage``
+    (no stats recorded).
+
+    Args:
+        handler: A callable ``(httpx.Request) -> httpx.Response`` for MockTransport.
+        statsStorage: A recording fake; if None, no stats are captured.
+        **overrides: Extra constructor kwargs merged over the fast timings.
+
+    Returns:
+        YandexSpeechKitProvider: A provider ready for ``transcribe``.
+    """
+    kwargs: Dict[str, object] = {"apiKey": "test-key", "folderId": "test-folder", **_FAST_TIMINGS, **overrides}
+    if statsStorage is not None:
+        kwargs["statsStorage"] = statsStorage
+    provider = YandexSpeechKitProvider(**kwargs)  # type: ignore[arg-type]
+    await provider.aclose()
+    provider._httpClient = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return provider
+
+
+def _happyHandler() -> Callable[[httpx.Request], httpx.Response]:
+    """Build a handler for the full happy path (submit→poll→fetch→delete).
+
+    Returns:
+        Callable: A MockTransport handler.
+    """
+    pollCount = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal pollCount
+        if request.method == "POST" and request.url.path == _SUBMIT_PATH:
+            return httpx.Response(200, json={"id": "op-1", "done": False})
+        if request.method == "GET" and request.url.path.startswith("/operations/"):
+            pollCount += 1
+            return httpx.Response(200, json={"id": "op-1", "done": pollCount >= 2})
+        if request.method == "GET" and request.url.path == _GET_RECOGNITION_PATH:
+            return httpx.Response(200, content=_finalEventBytes("hello world", 0, 2000))
+        if request.method == "DELETE" and request.url.path == _DELETE_RECOGNITION_PATH:
+            return httpx.Response(204)
+        return httpx.Response(404)
+
+    return handler
+
+
+# --- Test 1: Success records stats ---
+
+
+async def testStatsRecordedOnSuccess() -> None:
+    """A FINAL result triggers exactly one stats record with correct fields.
+
+    Returns:
+        None
+    """
+    stats = _RecordingStatsStorage()
+    provider = await _providerWithStats(_happyHandler(), statsStorage=stats)
+    try:
+        result = await provider.transcribe(_audio())
+    finally:
+        await provider.aclose()
+
+    assert result.status is STTResultStatus.FINAL
+    assert len(stats.records) == 1
+
+    record = stats.records[0]
+    assert record["stats"]["generation_stt"] == 1
+    assert record["stats"]["request_count"] == 1
+    assert record["stats"]["audio_duration_ms"] == 1000  # _audio().durationMs
+    assert record["stats"]["elapsed_time"] >= 0
+    assert record["stats"]["is_error"] == 0
+    assert record["stats"]["status_FINAL"] == 1
+    assert record["labels"]["provider"] == "yandex-speechkit"
+    assert record["labels"]["generationType"] == "stt"
+    assert record["labels"]["status"] == "FINAL"
+    assert record["labels"]["model"] == "general"
+
+
+# --- Test 2: ERROR records stats ---
+
+
+async def testStatsRecordedOnError() -> None:
+    """An ERROR result (SOURCE_TOO_LARGE) triggers stats with is_error=1.
+
+    Returns:
+        None
+    """
+    stats = _RecordingStatsStorage()
+    postCount = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal postCount
+        if request.method == "POST":
+            postCount += 1
+        return httpx.Response(404)
+
+    # Provider with OS disabled (inline-only) and a large audio → SOURCE_TOO_LARGE.
+    provider = await _providerWithStats(handler, statsStorage=stats, maxInlineBytes=41943040)
+    try:
+        result = await provider.transcribe(_largeAudio())
+    finally:
+        await provider.aclose()
+
+    assert result.status is STTResultStatus.ERROR
+    assert result.errorCode is STTErrorCode.SOURCE_TOO_LARGE
+    assert postCount == 0
+
+    assert len(stats.records) == 1
+    record = stats.records[0]
+    assert record["stats"]["is_error"] == 1
+    assert record["stats"]["status_ERROR"] == 1
+    assert record["labels"]["status"] == "ERROR"
+
+
+# --- Test 3: NullStatsStorage default is a no-op ---
+
+
+async def testNullStatsStorageDefaultIsNoOp() -> None:
+    """Provider constructed without statsStorage transcribes successfully (no crash).
+
+    Returns:
+        None
+    """
+    provider = await _providerWithStats(_happyHandler())
+    try:
+        result = await provider.transcribe(_audio())
+    finally:
+        await provider.aclose()
+
+    assert result.status is STTResultStatus.FINAL
+
+
+# --- Test 4: Best-effort never raises ---
+
+
+async def testStatsRecordingFailureDoesNotAffectResult() -> None:
+    """When the fake's record() raises, transcription still returns the correct result.
+
+    The exception is swallowed + logged; no exception escapes transcribe.
+
+    Returns:
+        None
+    """
+    stats = _RecordingStatsStorage()
+    stats.shouldRaise = RuntimeError("stats storage down")
+    provider = await _providerWithStats(_happyHandler(), statsStorage=stats)
+    try:
+        result = await provider.transcribe(_audio())
+    finally:
+        await provider.aclose()
+
+    assert result.status is STTResultStatus.FINAL
+    assert result.segments[0].text == "hello world"
+
+
+# --- Test 5: consumerId threading ---
+
+
+async def testConsumerIdForwardedToStatsRecording() -> None:
+    """stt(data, consumerId='chat-123') passes consumerId to stats record().
+
+    Returns:
+        None
+    """
+    stats = _RecordingStatsStorage()
+    provider = await _providerWithStats(_happyHandler(), statsStorage=stats)
+    try:
+        await provider.transcribe(_audio(), consumerId="chat-123")
+    finally:
+        await provider.aclose()
+
+    assert len(stats.records) == 1
+    assert stats.records[0]["consumerId"] == "chat-123"
+
+
+async def testNoConsumerIdDefaultsToNoneInStatsRecording() -> None:
+    """stt(data) without consumerId passes None to stats record().
+
+    Returns:
+        None
+    """
+    stats = _RecordingStatsStorage()
+    provider = await _providerWithStats(_happyHandler(), statsStorage=stats)
+    try:
+        await provider.transcribe(_audio())
+    finally:
+        await provider.aclose()
+
+    assert len(stats.records) == 1
+    assert stats.records[0]["consumerId"] is None
+
+
+# --- Test 6: Stats recording does not interfere with finally cleanup ---
+
+
+async def testStatsRecordedAndObjectDeleteBothRun() -> None:
+    """On the OS path, object delete runs AND stats are recorded — neither blocks the other.
+
+    Returns:
+        None
+    """
+    stats = _RecordingStatsStorage()
+    mockOs = _mockObjectStorage()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == _SUBMIT_PATH:
+            return httpx.Response(200, json={"id": "op-1", "done": False})
+        if request.method == "GET" and request.url.path.startswith("/operations/"):
+            return httpx.Response(200, json={"id": "op-1", "done": True})
+        if request.method == "GET" and request.url.path == _GET_RECOGNITION_PATH:
+            return httpx.Response(200, content=_finalEventBytes("os + stats", 0, 500))
+        if request.method == "DELETE" and request.url.path == _DELETE_RECOGNITION_PATH:
+            return httpx.Response(204)
+        return httpx.Response(404)
+
+    provider = await _providerWithOs(handler, mockOs=mockOs)
+    provider._statsStorage = stats
+    try:
+        result = await provider.transcribe(_largeAudio())
+    finally:
+        await provider.aclose()
+
+    assert result.status is STTResultStatus.FINAL
+    # Object delete ran.
+    mockOs.delete.assert_awaited_once()
+    # Stats were recorded.
+    assert len(stats.records) == 1
+    assert stats.records[0]["labels"]["status"] == "FINAL"
+
+
+# ============================================================================
+# Phase 4 ride-along: boundary test for maxInlineBytes (>= semantics)
+# ============================================================================
+
+
+async def testExactMaxInlineBytesRoutesToObjectStorage() -> None:
+    """len(audio.data) == maxInlineBytes routes to Object Storage (locks >= semantics).
+
+    The existing _largeAudio is maxInlineBytes+1 (above); this tests the exact
+    boundary (==) to lock the >= routing against a future > regression.
+
+    Returns:
+        None
+    """
+    maxInlineBytes = 8
+    mockOs = _mockObjectStorage()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == _SUBMIT_PATH:
+            return httpx.Response(200, json={"id": "op-1", "done": False})
+        if request.method == "GET" and request.url.path.startswith("/operations/"):
+            return httpx.Response(200, json={"id": "op-1", "done": True})
+        if request.method == "GET" and request.url.path == _GET_RECOGNITION_PATH:
+            return httpx.Response(200, content=_finalEventBytes("boundary", 0, 500))
+        if request.method == "DELETE":
+            return httpx.Response(204)
+        return httpx.Response(404)
+
+    # Audio with data exactly == maxInlineBytes.
+    boundaryAudio = ExtractedAudio(
+        container=STTAudioContainerType.OGG_OPUS,
+        channels=1,
+        sampleRate=16000,
+        data=b"\x00" * maxInlineBytes,
+        durationMs=100,
+    )
+
+    provider = await _providerWithOs(handler, maxInlineBytes=maxInlineBytes, mockOs=mockOs)
+    try:
+        result = await provider.transcribe(boundaryAudio)
+    finally:
+        await provider.aclose()
+
+    assert result.status is STTResultStatus.FINAL
+    mockOs.upload.assert_awaited_once()

@@ -24,6 +24,7 @@ from internal.config.manager import ConfigManager
 from internal.services.proxy.service import ProxyService
 from lib.proxy import ProxyConfig
 from lib.rate_limiter.manager import RateLimiterManager
+from lib.stats.stats_storage import StatsStorage
 from lib.stt import (
     AbstractSTTProvider,
     STTErrorCode,
@@ -148,7 +149,7 @@ class STTService:
         self._chatLimiterQueue: Optional[str] = None
         self._globalLimiterQueue: Optional[str] = None
 
-    def initialize(self, configManager: ConfigManager) -> None:
+    def initialize(self, configManager: ConfigManager, *, statsStorage: Optional[StatsStorage] = None) -> None:
         """Initialise the STT service with configuration.
 
         Reads the ``[stt]`` config section.  When ``enabled`` is ``false``
@@ -163,6 +164,10 @@ class STTService:
 
         Args:
             configManager: The application configuration manager.
+            statsStorage: Optional stats storage for per-transcription
+                statistics recording.  When ``None`` (the default), the
+                provider uses ``NullStatsStorage`` (no-op).  Wired from
+                ``main.py`` gated on ``[stt].stats-enabled``.
 
         Raises:
             ValueError: If the provider name is unknown (not in
@@ -200,10 +205,11 @@ class STTService:
         # --- Provider construction ----------------------------------------
         self._provider = STT_PROVIDERS_MAP[provider](
             proxyConfig=proxyConfig,
+            statsStorage=statsStorage,
             **{
                 libUtils.kebabToCamelCase(k): v
                 for k, v in sttConfig.items()
-                if k not in ("enabled", "use-proxy", "proxy-config", "provider")
+                if k not in ("enabled", "use-proxy", "proxy-config", "provider", "stats-enabled")
             },
         )
 
@@ -289,7 +295,10 @@ class STTService:
                 # --------------------------------------------------------------
                 try:
                     assert self._provider is not None, "transcribeMedia: _provider is None"
-                    result: TranscriptionResult = await self._provider.stt(data)
+                    result: TranscriptionResult = await self._provider.stt(
+                        data,
+                        consumerId=str(chatId) if chatId is not None else None,
+                    )
                 except Exception:  # noqa: BLE001 — provider never-raise defense-in-depth
                     logger.exception("transcribeMedia: unexpected provider exception")
                     return STTOutcome(success=False, description=None, errorCode=STTErrorCode.PROVIDER_ERROR)

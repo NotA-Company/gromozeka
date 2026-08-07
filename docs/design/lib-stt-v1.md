@@ -168,12 +168,15 @@ class STTResultStatus(StrEnum):
 class STTErrorCode(StrEnum):
     """Stable, provider-neutral failure categories.
 
-    Eight members, in three ownership groups (matches lib/stt/models.py):
+    Nine members, in three ownership groups (matches lib/stt/models.py):
 
       - Provider (surfaced by lib/stt via stt() and the Yandex provider):
-        NO_AUDIO, PROVIDER_ERROR, PROTOCOL_ERROR.
-      - STTService (the service is stateless — produces only these two):
-        STT_DISABLED, SOURCE_TOO_LARGE.
+        NO_AUDIO, PROVIDER_ERROR, PROTOCOL_ERROR. As of v1.1 also
+        SOURCE_TOO_LARGE (over inline threshold without Object Storage) and
+        OBJECT_STORAGE_ERROR (Object-Storage upload failure before submit).
+      - STTService (the service is stateless — produces only these):
+        STT_DISABLED, SOURCE_TOO_LARGE (source-byte cap; shared with the
+        provider for the over-threshold-without-OS case as of v1.1).
       - Handler round (reserved; the handler owns media download, duration
         bounding, and the DB row lifecycle): SOURCE_SIZE_UNKNOWN,
         DOWNLOAD_ERROR, DURATION_EXCEEDED.
@@ -187,7 +190,10 @@ class STTErrorCode(StrEnum):
     """STTService vocabulary; never produced inside lib/stt."""
 
     SOURCE_TOO_LARGE = "source-too-large"
-    """STTService vocabulary; never produced inside lib/stt."""
+    """STTService vocabulary (source-byte cap); never produced by STTService
+    inside lib/stt. As of v1.1 ALSO surfaced by the Yandex provider when the
+    *extracted* payload is at/above `max-inline-bytes` AND Object Storage is
+    disabled (see [`docs/design/stt-v1.1.md`](./stt-v1.1.md) §4.2/§4.5)."""
 
     SOURCE_SIZE_UNKNOWN = "source-size-unknown"
     """Reserved for the handler round; never produced inside lib/stt."""
@@ -208,12 +214,19 @@ class STTErrorCode(StrEnum):
     PROTOCOL_ERROR = "protocol-error"
     """Returned by the Yandex provider (malformed response, trailing garbage,
     result body over the result-byte cap)."""
+
+    OBJECT_STORAGE_ERROR = "object-storage-error"
+    """Added in v1.1. Surfaced by the Yandex provider when
+    `YandexObjectStorage.upload()` raises before the submit call (Object-
+    Storage staging failure). See [`docs/design/stt-v1.1.md`](./stt-v1.1.md)
+    §4.5."""
 ```
 
 (The member names are the contract. The pre-simplification design had a ninth member,
 `AUDIO_TOO_LARGE`; it is **deleted** — caps moved to the service, so nothing in `lib/stt` raises it
 anymore. The shared-enum vocabulary codes above are retained so the service can surface them on
-`TranscriptionResult(ERROR, ...)` without `lib/stt` ever producing them.)
+`TranscriptionResult(ERROR, ...)`. The v1.1 round added a *new* ninth member, `OBJECT_STORAGE_ERROR`,
+which is provider-surfaced — see §4.5 of [`docs/design/stt-v1.1.md`](./stt-v1.1.md).)
 
 ```python
 class STTAudioContainerType(StrEnum):
@@ -402,13 +415,18 @@ This is the uniform rule for failure handling across `lib/stt`:
   truncated, decoder, muxer, or no-transcode-target failures, and via the unexpected-exception branch).
   See §5.
 - Returned by the Yandex provider as `TranscriptionResult(ERROR, ...)`: `PROVIDER_ERROR` (operation
-  error, exhausted auth/429/5xx/timeout) and `PROTOCOL_ERROR` (malformed JSON, trailing garbage, or
-  streamed result body exceeding the result-byte cap) — see §7, §9.
+  error, exhausted auth/429/5xx/timeout), `PROTOCOL_ERROR` (malformed JSON, trailing garbage, or
+  streamed result body exceeding the result-byte cap) — see §7, §9 — and **as of v1.1** also
+  `SOURCE_TOO_LARGE` (extracted payload ≥ `max-inline-bytes` AND Object Storage disabled) and
+  `OBJECT_STORAGE_ERROR` (Object-Storage upload failure before submit). See
+  [`docs/design/stt-v1.1.md`](./stt-v1.1.md) §4.
 - Produced by the **handler round** (never inside `lib/stt`, never by the stateless `STTService`):
   `SOURCE_SIZE_UNKNOWN`, `DOWNLOAD_ERROR`, `DURATION_EXCEEDED` — the handler owns media download,
-  duration bounding, and the DB row lifecycle. Produced by **STTService** (the only two it emits):
-  `STT_DISABLED`, `SOURCE_TOO_LARGE`. (parent §6.2, §8.2.) These never cross the `lib/stt` boundary;
-  they exist on the shared enum so their owners can surface them.
+  duration bounding, and the DB row lifecycle. Produced by **STTService**:
+  `STT_DISABLED`, `SOURCE_TOO_LARGE` (source-byte cap; *shared* as of v1.1 — the Yandex provider
+  also surfaces `SOURCE_TOO_LARGE` for the over-threshold-without-OS case, above). (parent §6.2,
+  §8.2.) The service-only codes never cross the `lib/stt` boundary; they exist on the shared enum so
+  their owners can surface them.
 
 ## 5. Audio extraction contract
 
@@ -623,16 +641,36 @@ no longer hard-coded to `WAV` and is not read off `ExtractedAudio.container.valu
 the lowercase internal labels, not the wire labels). SpeechKit accepts OGG_OPUS and MP3 "without any
 audio file quality and header restrictions" (verified against the v3 proto's `ContainerAudio.ContainerAudioType`
 enum, which has exactly these three members; there is no AIFF/AC3/FLAC). The async API documents a **60 MB inline
-request** limit, a **1 GB Object-Storage** upload limit (deferred in v1 per D8), a **4-hour** duration
+request** limit, a **1 GB Object-Storage** upload limit, a **4-hour** duration
 ceiling, 500 async submissions/hour, and five operation polls/second. v1 uses the inline path only; the
 conservative service-side caps (§8.1) stay well below the 60 MB boundary. Quality-by-format is UNVERIFIED (see
 §10(b)); the proven win is payload size/traffic (compressed containers are far smaller than WAV).
+
+**Object-Storage `uri` body shape (v1.1, sibling to the inline path above).** As of v1.1 the Yandex
+provider gains a second submit body, used when `len(extractedAudio.data) ≥ [stt].max-inline-bytes`
+(measured on the *extracted* payload inside the provider *after* `extractAudio()`, NOT on the source
+bytes). The body is byte-identical to the inline body above **except** the `content` field is replaced
+by a `uri` field pointing at the staged Object-Storage object, and the `recognition_model` block
+(incl. dynamic `container_audio.container_audio_type`) is unchanged between the two paths:
+
+```json
+{
+  "uri": "https://storage.yandexcloud.net/{bucket}/{prefix}{key}",
+  "recognition_model": { "model": "general", "audio_format": { "container_audio": { "container_audio_type": "OGG_OPUS" } }, "language_restriction": { "restriction_type": "WHITELIST", "language_code": ["ru-RU"] }, "text_normalization": { "literature_text": true } }
+}
+```
+
+Object Storage is implicitly enabled when `object-storage-bucket` is configured together with both
+access keys (there is no `object-storage-enabled` flag). When the threshold is met but Object Storage
+is **not** configured, the provider surfaces `STTErrorCode.SOURCE_TOO_LARGE`; an `YandexObjectStorage.upload()`
+failure surfaces the new `STTErrorCode.OBJECT_STORAGE_ERROR`. See [`docs/design/stt-v1.1.md`](./stt-v1.1.md)
+§4 for the full inline-vs-Object-Storage lifecycle (upload-outside-budget, object-delete-in-`finally`).
 
 ### 7.2 Operation lifecycle
 
 1. Parse the operation ID from submit.
 2. Poll `GET https://operation.api.cloud.yandex.net/operations/{id}` until `done=true` or the
-   180-second operation budget expires.
+   2400-second operation budget expires.
 3. If the operation contains `error`, return `ERROR`; `done=true` does **not** contain the transcript.
 4. Fetch recognition events separately with
    `GET https://stt.api.cloud.yandex.net/stt/v3/getRecognition` and query param `operation_id={id}`.
@@ -706,12 +744,12 @@ documented as currently unused; do not build v1 behavior around it or assert it 
 - **Do not automatically retry submit `POST`.** A timeout can occur after Yandex has accepted a
   billable operation, and retrying without an operation ID can create duplicate cost.
 - Operation-poll and result-fetch **`GET`s are idempotent** and may retry transient transport errors,
-  429, and 5xx responses with bounded backoff inside the same 180-second budget. Do **not** retry
+  429, and 5xx responses with bounded backoff inside the same 2400-second budget. Do **not** retry
   authentication/validation 4xx responses. Deletion is best-effort. Respect `Retry-After` when valid
   and keep aggregate poll frequency below the vendor quota.
 - **Each `getRecognition` attempt is atomic**: buffer and parse it independently, commit no segments
   from a partial/failed stream, and discard that attempt before retrying from the beginning. Otherwise
-  a retried stream can duplicate final events. The 180-second operation budget starts immediately
+  a retried stream can duplicate final events. The 2400-second operation budget starts immediately
   before submit and includes submit, polling, and the successful result fetch; best-effort deletion
   does not invalidate a result when the budget is exhausted.
 
@@ -744,10 +782,19 @@ What the deleted manager used to own moves to the service:
   decoded-buffer cap is intentionally absent (§5 accepted gap). See §8.1.
 
 **`AbstractSTTProvider` surface** (§4, §7): four members — the ordered `supportedInputFormats()`
-**method** (consumed by `audio.py`), the async `transcribe(ExtractedAudio)` entry (never-raise), the
-concrete async `stt(data: bytes)` never-raise entry defined on the base itself (wraps
-`extractAudio` + `transcribe`), and `aclose()`. The integration layer's convenience entry is `stt(data)`
-(it never raises and returns a `TranscriptionResult` for every outcome).
+**method** (consumed by `audio.py`), the async `transcribe(ExtractedAudio, *, consumerId=None)` entry
+(never-raise), the concrete async `stt(data: bytes, *, consumerId=None)` never-raise entry defined on
+the base itself (wraps `extractAudio` + `transcribe` and forwards `consumerId`), and `aclose()`. The
+integration layer's convenience entry is `stt(data)` (it never raises and returns a `TranscriptionResult`
+for every outcome).
+
+**v1.1 `consumerId` keyword-only parameter.** As of v1.1 both `transcribe(self, audio, *,
+consumerId: Optional[str] = None)` and the base `stt(self, data, *, consumerId: Optional[str] = None)`
+accept a keyword-only `consumerId`. `STTService.transcribeMedia` threads `str(chatId)` through (None
+when `chatId` is None); the Yandex provider uses it for per-consumer best-effort stats rollup
+(gate-4, mirroring `lib/ai`'s `_recordAttemptStats`). The parameter is **backward-compatible** —
+default `None` — so existing callers that ignore it keep working. It does NOT participate in routing,
+caps, or the never-raise contract; it is a stats label only.
 
 The concrete `YandexSpeechKitProvider.transcribe()` takes `ExtractedAudio` only — **no** unused
 `audioFormat`, `withTimestamps`, or chat-settings arguments (the container travels inside
@@ -769,8 +816,8 @@ lib/stt test matrix; parent §13.2 summarizes and references it.
 
 **Models and exceptions**
 
-- Enum membership and exact string values for `STTResultStatus`, `STTErrorCode` (the **eight** shared
-  failure-category members — `AUDIO_TOO_LARGE` is gone), and `STTAudioContainerType` (lowercase values).
+- Enum membership and exact string values for `STTResultStatus`, `STTErrorCode` (the **nine** shared
+  failure-category members as of v1.1 — `AUDIO_TOO_LARGE` is gone, `OBJECT_STORAGE_ERROR` was added), and `STTAudioContainerType` (lowercase values).
 - `STTAudioContainerType.toYandexSpeechKit()` wire-label mapping (`wav` → `WAV`, `ogg-opus` →
   `OGG_OPUS`, `mp3` → `MP3`).
 - Frozen/slot record construction and immutability; `TranscriptionResult.errorCode` default.
@@ -920,7 +967,7 @@ reaches `lib/stt`, or reaches it unbounded).
 | Global workers | 2 | **STTService** — semaphore; never reaches `lib/stt`. |
 | Admission wait | 20 seconds | **STTService** — admission; never reaches `lib/stt`. |
 | HTTP request | 30 seconds | **lib/stt (Yandex provider)** — per `httpx` request; value passed in at construction. |
-| SpeechKit operation | 180 seconds | **lib/stt (Yandex provider)** — operation budget across submit/poll/get; value passed in at construction. |
+| SpeechKit operation | 2400 seconds | **lib/stt (Yandex provider)** — operation budget across submit/poll/get; value passed in at construction. This is the full SpeechKit operation budget, not a media-poll budget; the v1 default ships 2400 s (`operation-budget-seconds` in [`configs/00-defaults/stt.toml`](../../configs/00-defaults/stt.toml)), comfortably inside the 4 h vendor duration ceiling. |
 | Poll interval | 2 s initial, 10 s max | **lib/stt (Yandex provider)** — poll loop; value passed in at construction. |
 
 **Vendor ceilings vs. v1 defaults (annotated).** SpeechKit's async ceilings are: **60 MB inline

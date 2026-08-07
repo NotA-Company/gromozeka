@@ -100,7 +100,15 @@ class GromozekBot:
         loop.run_until_complete(self.rateLimiterManager.loadConfig(self.configManager.getRateLimiterConfig()))
 
         # Initialize STT service (default-OFF; constructs/skips the provider)
-        STTService.getInstance().initialize(self.configManager)
+        sttConfig = self.configManager.getSttConfig()
+        sttStatsStorage: Optional[StatsStorage] = None
+        if sttConfig.get("stats-enabled", False):
+            sttStatsStorage = DatabaseStatsStorage(
+                db=self.database,
+                eventType="stt_request",
+                dataSource=statsConfig.get("llm-stats-data-source", self.database.manager.default),
+            )
+        STTService.getInstance().initialize(self.configManager, statsStorage=sttStatsStorage)
 
         # Initialize bot application
         botConfig = self.configManager.getBotConfig()
