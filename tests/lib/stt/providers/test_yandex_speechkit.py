@@ -1678,6 +1678,7 @@ async def testStatsRecordedOnSuccess() -> None:
     assert record["labels"]["provider"] == "YandexSpeechKitProvider"
     assert record["labels"]["generationType"] == "stt"
     assert record["labels"]["status"] == "final"
+    assert record["labels"]["model"] == "general"  # _providerWithStats uses the default model
     # No errorCode label on success — it is only added when result.errorCode is set.
     assert "errorCode" not in record["labels"]
 

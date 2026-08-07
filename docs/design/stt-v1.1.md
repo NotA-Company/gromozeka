@@ -1,18 +1,21 @@
 # Design: STT v1.1 — Object Storage routing (gate-3) + statistics recording (gate-4)
 
-Status: **DESIGN (implementation pending)**  
-Date: 2026-08-04  
+Status: **IMPLEMENTED** (branch `add-audio-transcribation-v2`; 3726 passed / 11 skipped / 0 failed)  
+Date: 2026-08-04 (design) · 2026-08-08 (implementation verified)  
 Owner: TBD  
-Companion docs: [`media-transcription-stt-v1.md`](./media-transcription-stt-v1.md) (parent v1 plan), [`lib-stt-v1.md`](./lib-stt-v1.md) (lib/stt spec), [`stt-next-steps.md`](./stt-next-steps.md) (integration roadmap + release gates), [`architecture.md`](../llm/architecture.md), [`configuration.md`](../llm/configuration.md), [`services.md`](../llm/services.md), [`libraries.md`](../llm/libraries.md)
+Companion docs: [`media-transcription-stt-v1.md`](./media-transcription-stt-v1.md) (parent v1 plan), [`lib-stt-v1.md`](./lib-stt-v1.md) (lib/stt spec), [`stt-next-steps.md`](../archive/design/stt-next-steps.md) (integration roadmap + release gates), [`architecture.md`](../llm/architecture.md), [`configuration.md`](../llm/configuration.md), [`services.md`](../llm/services.md), [`libraries.md`](../llm/libraries.md)
 
-> This is a design document only. It does not modify source code, config, or
-> tests. Implementation is a later round via `software-developer`; the final
-> documentation pass must load the `update-project-docs` skill.
+> v1.1 is **fully implemented** on branch `add-audio-transcribation-v2`. The
+> implementation went through a template-method refactor and four user-confirmed
+> simplifications; this document has been reconciled against the final code state
+> (2026-08-08). §9 (implementation steps) and §10 (documentation impact) are
+> marked DONE where applicable. §12 (rejected alternatives) is an intentional
+> historical record.
 
 ## 1. Context and goal
 
 The v1 STT feature ([`media-transcription-stt-v1.md`](./media-transcription-stt-v1.md),
-[`stt-next-steps.md`](./stt-next-steps.md)) ships default-off, inline-only: every
+[`stt-next-steps.md`](../archive/design/stt-next-steps.md)) ships default-off, inline-only: every
 transcribable clip is base64-encoded into the SpeechKit `content` field and POSTed
 inline. The product caps the inline payload at 40 MiB (`max-inline-bytes`), well
 under SpeechKit's 60 MB inline ceiling. Clips whose extracted form exceeds the inline
@@ -132,8 +135,7 @@ the trade-off analysis.
 
 ### 3.1 The co-located helper — `lib/stt/providers/yandex_object_storage.py`
 
-A new module `lib/stt/providers/yandex_object_storage.py` (referenced as a code
-span, not a link — it does not exist yet; implementation is a later round, §9)
+A new module [`lib/stt/providers/yandex_object_storage.py`](../../lib/stt/providers/yandex_object_storage.py)
 defines a `YandexObjectStorage` class. It is **Yandex-Object-Storage-specific**: the
 endpoint (`https://storage.yandexcloud.net`) and region (`ru-central1`) are Yandex
 constants baked into the helper, not config knobs. There is no provider abstraction
@@ -300,11 +302,12 @@ without OS — is accepted and is the explicit reason v1.1 introduces Object Sto
 
 ### 4.3 Object lifecycle
 
-The provider's `transcribe()` extends the existing lifecycle
-([`yandex_speechkit.py:280-355`](../../lib/stt/providers/yandex_speechkit.py)):
+The provider's `_transcribe()` (the abstract override, called by the base
+`AbstractSTTProvider.transcribe` template method) extends the existing lifecycle
+([`yandex_speechkit.py:368-472`](../../lib/stt/providers/yandex_speechkit.py)):
 
 ```text
-transcribe(audio):
+_transcribe(audio):
     objectUri = None
     # Staging (OUTSIDE the operation budget — upload is prep, not a SpeechKit op step).
     if len(audio.data) >= maxInlineBytes:
@@ -434,8 +437,10 @@ DB-backed `StatsStorage` exists and is wired for `lib/ai`.**
 
 **Implication for STT:** v1.1 reuses the same `DatabaseStatsStorage` class with a
 distinct `eventType="stt_request"` discriminator, so STT events stay separate from
-LLM events in `stat_events` without a new table or migration. STT stats are gated on
-the global `[stats].enabled` flag (via `main.py`), not on an independent
+LLM events in `stat_events` without a new table or migration. STT stats use their
+own `[stats].stt-stats-data-source` config key (default `"default"`, added to
+[`configs/00-defaults/stats.toml`](../../configs/00-defaults/stats.toml)). STT stats
+are gated on the global `[stats].enabled` flag (via `main.py`), not on an independent
 `[stt].stats-enabled` key — one global stats flag simplifies the config surface.
 
 ### 5.2 Injection and recording point
@@ -463,7 +468,8 @@ no longer owns stats timing/recording — it just returns a `TranscriptionResult
 `consumerId` stays on `stt()`/`transcribe()` (for stats), removed from `_transcribe()`.
 
 **Recording scope (deliberate boundary).** Stats are recorded inside
-`YandexSpeechKitProvider.transcribe()` — the SpeechKit interaction (staging upload +
+`AbstractSTTProvider.transcribe()` (the base-class template method wrapping
+`_transcribe()`) — covering the SpeechKit interaction (staging upload +
 submit + poll + fetch + parse), for both success and failure. Extraction failures
 (`NO_AUDIO`, `AudioDecodeError`, `EncoderError`) occur in `stt()` *before*
 `transcribe()` is reached and are therefore **not** recorded as provider stats in
@@ -476,8 +482,9 @@ added later by extending `stt()` if needed.
 **Consumer dimension.** To mirror `lib/ai`'s per-consumer rollup, v1.1 threads an
 optional `consumerId` through the call chain: `AbstractSTTProvider.stt(data, *,
 consumerId=None)` (concrete on the base) forwards to
-`transcribe(audio, *, consumerId=None)` (abstract signature gains the keyword-only
-param; the one concrete impl accepts it). `STTService.transcribeMedia` passes
+`transcribe(audio, *, consumerId=None)` (concrete on the base — the template method;
+the abstract override `_transcribe(audio)` does NOT receive `consumerId`).
+`STTService.transcribeMedia` passes
 `str(chatId) if chatId is not None else None`. Default `None` → global rollup only
 (`GLOBAL_CONSUMER_ID`). This is a minor, backward-compatible contract evolution of
 the `lib/stt` abstract surface; [`lib-stt-v1.md`](./lib-stt-v1.md) §8 ("takes
@@ -502,7 +509,7 @@ async def _recordStats(
             "provider": type(self).__name__,              # e.g. "YandexSpeechKitProvider"
             "generationType": "stt",
             "status": result.status,                       # StrEnum value, e.g. "final"
-            **self._extraLabels,
+            **self._extraLabels,                           # e.g. {"model": "general"}
         }
         if result.errorCode:
             labels["errorCode"] = result.errorCode
@@ -537,8 +544,10 @@ async def _recordStats(
 - `errorCode` is conditionally added to labels (only on ERROR results — when
   `result.errorCode` is truthy). This overrides the earlier design's "errorCode
   intentionally omitted at v1.1" deferral.
-- The `model` label is **dropped** — it added noise without actionable signal for
-  STT (there is one model per provider).
+- The `model` label is present — injected by `YandexSpeechKitProvider.__init__` via
+  `self._extraLabels["model"] = model` (e.g. `"general"`). The base class spreads
+  `**self._extraLabels` into the labels dict, so subclass-specific labels are
+  included automatically.
 - `provider` = `type(self).__name__` (e.g. `"YandexSpeechKitProvider"`), not a
   kebab-case slug.
 
@@ -599,7 +608,7 @@ STT statistics are gated on the **global `[stats].enabled`** flag (via `main.py`
 not on an independent `[stt].stats-enabled` key. Rationale: simplified — one global
 stats flag. When `[stats].enabled` is `true`, `main.py` constructs
 `DatabaseStatsStorage(db, eventType="stt_request",
-dataSource=<from [stats].llm-stats-data-source or default>)` and passes it to
+dataSource=<from [stats].stt-stats-data-source or default>)` and passes it to
 `STTService.initialize`. When `[stats].enabled` is `false`, the provider receives
 `None` → defaults to `NullStatsStorage` (no-op). The `eventType="stt_request"`
 discriminator keeps STT events separate from `llm_request` events without a new
@@ -669,8 +678,8 @@ sequenceDiagram
     Note over P: finally (best-effort, never raises) — runs before return
     P->>Y: DELETE deleteRecognition (existing)
     P->>OS: self._objectStorage.delete(objectUri)  (NEW, best-effort)
-    P->>P: _recordStats(consumerId, audio, result, elapsed)  (best-effort, §5.3)
     P-->>S: TranscriptionResult
+    Note over S: Base AbstractSTTProvider.transcribe records _recordStats(consumerId, audio, result, elapsed) — best-effort, §5.3
 ```
 
 The inline path omits the upload/delete-object steps and is otherwise identical. The
@@ -704,22 +713,22 @@ The other release gates **require no code changes from v1.1** and are not in sco
 | gate-8 (encoders) | Already verified present; PyAV pinning unchanged. |
 | gate-9 (quality) | Operational comparison; recognition path unchanged for inline clips. |
 
-## 9. Implementation plan (high-level — for the future round)
+## 9. Implementation plan (high-level — DONE)
 
-This is a design doc; the steps below sketch the future implementation round for
-`software-developer`. Each step must run `make format lint` and `make test` (load
-the `run-quality-gates` skill); bug fixes must load `write-regression-test`.
+Implementation is complete on branch `add-audio-transcribation-v2` (3726 passed /
+11 skipped / 0 failed, `make format lint` 0/0/0, `make check-docs` 0 broken). The
+steps below record the plan as executed; all are DONE.
 
-| Step | Work | Verification |
-|---:|---|---|
-| 1 | Add `OBJECT_STORAGE_ERROR` to `STTErrorCode` and update its ownership docstring; extend `SOURCE_TOO_LARGE` ownership docstring. | Enum membership tests; ownership-docstring assertions in `tests/lib/stt/test_models.py`. |
-| 2 | Create `lib/stt/providers/yandex_object_storage.py` (new module — the `YandexObjectStorage` helper, §3.1): hard `boto3` import (unconditional top-level, pinned dependency), `botocore.config.Config` with bounded connect/read timeouts + retry cap, `upload(data) -> str` (key `{prefix}{uuid}`, `put_object`, returns the SpeechKit URI), `delete(uri) -> None` (missing object = no-op). Add the corresponding constructor params to `YandexSpeechKitProvider` (`maxInlineBytes`, `objectStorageBucket`, `objectStoragePrefix`, `objectStorageKeyId`, `objectStorageKeySecret`, `statsStorage`); the provider constructs `self._objectStorage` when the bucket is present and validates the params (load-bearing contract #2). | Helper unit tests with mocked boto3 (mirror [`tests/services/storage/test_s3_backend.py`](../../tests/services/storage/test_s3_backend.py)): upload key generation + URI shape; delete missing-object no-op. Provider construction tests: inline-only default (`self._objectStorage is None`); helper constructed when bucket + keys present; partial-config rejected. |
-| 3 | Extend `_buildSubmitBody` to branch `content` vs `uri`; extend `transcribe()` with the §4.3 lifecycle (upload outside budget; object delete in `finally`, via `self._objectStorage`). | Golden-HTTP tests for the `uri` body shape + lifecycle with the helper mocked (no real S3). Assert upload failure → `OBJECT_STORAGE_ERROR`; helper-disabled + over-threshold → `SOURCE_TOO_LARGE`; object delete never raises / never invalidates a success. |
-| 4 | Add `_recordStats` to `AbstractSTTProvider` base class (template-method: concrete `transcribe` wraps abstract `_transcribe` with timing + `_recordStats` best-effort + `except Exception`→`PROVIDER_ERROR` + `CancelledError` propagation); thread `consumerId` through `stt()`/`transcribe()`; inject `statsStorage` (default `NullStatsStorage`) into the base `__init__`. `YandexSpeechKitProvider.transcribe` → `_transcribe` (no longer owns stats timing/recording). | Stats-recording tests with a recording fake `StatsStorage`; assert best-effort (never raises); assert `NullStatsStorage` default is a no-op; assert stats recorded on `_transcribe` raise. |
-| 5 | Extend `STTService.initialize(configManager, statsStorage=...)` (§6.1): validate the flat `[stt]` Object-Storage keys are all-or-nothing (bucket set → both keys required; no `[storage.s3]` fallback) and free of unresolved `${...}`; pass `statsStorage` (§5). `STTService.aclose` is unchanged (§3.1). STT stats are gated on the global `[stats].enabled` (no per-service flag). | Service tests: inline-only when `object-storage-bucket` unset; partial-config → startup `ValueError`; stats-on/stats-off. No boto3 client is constructed when STT or Object Storage is disabled. |
-| 6 | Update [`configs/00-defaults/stt.toml`](../../configs/00-defaults/stt.toml) with the §6.1 flat keys (`max-inline-bytes`; `object-storage-bucket` / `-prefix` / `-key-id` / `-key-secret`); update [`main.py`](../../main.py) to construct `sttStatsStorage` (gated on `[stats].enabled`) and pass it to `STTService.initialize`. | Config print/validate tests; startup-without-credentials tests; disabled-STT starts without S3/PyAV. |
-| 7 | Run the §11 smoke verifications against live SpeechKit + Object Storage. | Record only redacted structural output (URI scheme, container_audio behavior, latency). No secrets/audio/transcripts stored. |
-| 8 | Documentation pass (§10) + `CHANGELOG.md` `Added`/`Changed` entries. | `make check-docs`, `make format lint`, `make test`, `make ci`. |
+| Step | Work | Verification | Status |
+|---:|---|---|---|
+| 1 | Add `OBJECT_STORAGE_ERROR` to `STTErrorCode` and update its ownership docstring; extend `SOURCE_TOO_LARGE` ownership docstring. | Enum membership tests; ownership-docstring assertions in `tests/lib/stt/test_models.py`. | **DONE** |
+| 2 | Create `lib/stt/providers/yandex_object_storage.py` (new module — the `YandexObjectStorage` helper, §3.1): hard `boto3` import (unconditional top-level, pinned dependency), `botocore.config.Config` with bounded connect/read timeouts + retry cap, `upload(data) -> str` (key `{prefix}{uuid}`, `put_object`, returns the SpeechKit URI), `delete(uri) -> None` (missing object = no-op). Add the corresponding constructor params to `YandexSpeechKitProvider` (`maxInlineBytes`, `objectStorageBucket`, `objectStoragePrefix`, `objectStorageKeyId`, `objectStorageKeySecret`, `statsStorage`); the provider constructs `self._objectStorage` when the bucket is present and validates the params (load-bearing contract #2). | Helper unit tests with mocked boto3 (mirror [`tests/services/storage/test_s3_backend.py`](../../tests/services/storage/test_s3_backend.py)): upload key generation + URI shape; delete missing-object no-op. Provider construction tests: inline-only default (`self._objectStorage is None`); helper constructed when bucket + keys present; partial-config rejected. | **DONE** |
+| 3 | Extend `_buildSubmitBody` to branch `content` vs `uri`; extend `_transcribe()` with the §4.3 lifecycle (upload outside budget; object delete in `finally`, via `self._objectStorage`). | Golden-HTTP tests for the `uri` body shape + lifecycle with the helper mocked (no real S3). Assert upload failure → `OBJECT_STORAGE_ERROR`; helper-disabled + over-threshold → `SOURCE_TOO_LARGE`; object delete never raises / never invalidates a success. | **DONE** |
+| 4 | Add `_recordStats` to `AbstractSTTProvider` base class (template-method: concrete `transcribe` wraps abstract `_transcribe` with timing + `_recordStats` best-effort + `except Exception`→`PROVIDER_ERROR` + `CancelledError` propagation); thread `consumerId` through `stt()`/`transcribe()`; inject `statsStorage` (default `NullStatsStorage`) into the base `__init__`. `YandexSpeechKitProvider.transcribe` → `_transcribe` (no longer owns stats timing/recording). | Stats-recording tests with a recording fake `StatsStorage`; assert best-effort (never raises); assert `NullStatsStorage` default is a no-op; assert stats recorded on `_transcribe` raise. | **DONE** |
+| 5 | Extend `STTService.initialize(configManager, statsStorage=...)` (§6.1): validate the flat `[stt]` Object-Storage keys are all-or-nothing (bucket set → both keys required; no `[storage.s3]` fallback) and free of unresolved `${...}`; pass `statsStorage` (§5). `STTService.aclose` is unchanged (§3.1). STT stats are gated on the global `[stats].enabled` (no per-service flag). | Service tests: inline-only when `object-storage-bucket` unset; partial-config → startup `ValueError`; stats-on/stats-off. No boto3 client is constructed when STT or Object Storage is disabled. | **DONE** |
+| 6 | Update [`configs/00-defaults/stt.toml`](../../configs/00-defaults/stt.toml) with the §6.1 flat keys (`max-inline-bytes`; `object-storage-bucket` / `-prefix` / `-key-id` / `-key-secret`); update [`main.py`](../../main.py) to construct `sttStatsStorage` (gated on `[stats].enabled`) and pass it to `STTService.initialize`. `[stats].stt-stats-data-source` added to [`configs/00-defaults/stats.toml`](../../configs/00-defaults/stats.toml). | Config print/validate tests; startup-without-credentials tests; disabled-STT starts without S3/PyAV. | **DONE** |
+| 7 | Run the §11 smoke verifications against live SpeechKit + Object Storage. | Record only redacted structural output (URI scheme, container_audio behavior, latency). No secrets/audio/transcripts stored. | **OPEN** (live smoke) |
+| 8 | Documentation pass (§10) + `CHANGELOG.md` `Added`/`Changed` entries. | `make check-docs`, `make format lint`, `make test`, `make ci`. | **PARTIAL** (CHANGELOG done; design docs reconciled 2026-08-08; `docs/llm/*` reconciled; `lib-stt-v1.md` spec reconciled 2026-08-08) |
 
 Dependency note: v1.1 does **not** depend on the v1 §8.3 `[storage.s3]` timeout
 proposal landing — transport timeouts are intrinsic to the helper (§3.1), and that
@@ -729,38 +738,44 @@ proposal, if it lands, governs only attachment storage.
 
 After implementation, load `update-project-docs` and update:
 
-- [`docs/llm/libraries.md`](../llm/libraries.md): `lib/stt` gains the co-located
+- [x] [`docs/llm/libraries.md`](../llm/libraries.md): `lib/stt` gains the co-located
   `YandexObjectStorage` helper (`lib/stt/providers/yandex_object_storage.py`,
   hard `boto3` import) + Object-Storage routing + stats recording (template-method
   refactor: `_recordStats` + timing in base `AbstractSTTProvider.transcribe`).
-- [`docs/design/lib-stt-v1.md`](./lib-stt-v1.md): §4 (`STTErrorCode` — add
+  **DONE (reconciled).**
+- [x] [`docs/design/lib-stt-v1.md`](./lib-stt-v1.md): §4 (`STTErrorCode` — add
   `OBJECT_STORAGE_ERROR`, extend `SOURCE_TOO_LARGE` ownership), §7.1 (the `uri` body
-  shape), §8 (`transcribe` signature gains keyword-only `consumerId`; "takes
-  ExtractedAudio only" caveat), the §10 inherited-limits table (`max-inline-bytes`
-  now enforced; Object-Storage row); note the new co-located helper and the guarded
-  `boto3` dependency new to `lib/`. **Operation-budget reconciliation DONE:**
-  §7.4 and the §10 inherited-limits table now both ship 2400 s, matching
-  [`configs/00-defaults/stt.toml`](../../configs/00-defaults/stt.toml) (the
-  earlier "still say 180 s" item is obsolete).
-- [`docs/llm/services.md`](../llm/services.md): `STTService.initialize` signature
+  shape), §8 (`transcribe` → `_transcribe`; `stt`/`transcribe` gain keyword-only
+  `consumerId`; "takes ExtractedAudio only" caveat), the §10 inherited-limits table
+  (`max-inline-bytes` now enforced; Object-Storage row); note the new co-located
+  helper and the hard `boto3` dependency new to `lib/`. **Operation-budget
+  reconciliation DONE:** §7.4 and the §10 inherited-limits table now both ship
+  2400 s, matching [`configs/00-defaults/stt.toml`](../../configs/00-defaults/stt.toml)
+  (the earlier "still say 180 s" item is obsolete). **Spec reconciliation DONE
+  (2026-08-08):** `lib-stt-v1.md` §3/§4/§8/§9/§10 updated to reflect the
+  template-method refactor (`transcribe` concrete / `_transcribe` abstract),
+  `_recordStats` location, `consumerId` threading, and v1.1 Object-Storage routing.
+- [x] [`docs/llm/services.md`](../llm/services.md): `STTService.initialize` signature
   change (adds `statsStorage`); the flat `[stt]` Object-Storage keys ride the
   existing `kebabToCamelCase` spread into the provider (no service-layer Object
-  Storage client, no sweep); stats wiring.
-- [`docs/llm/configuration.md`](../llm/configuration.md): `[stt]` new flat keys
+  Storage client, no sweep); stats wiring. **DONE (reconciled).**
+- [x] [`docs/llm/configuration.md`](../llm/configuration.md): `[stt]` new flat keys
   (`max-inline-bytes`, `object-storage-bucket`, `object-storage-prefix`,
   `object-storage-key-id`, `object-storage-key-secret`); no
   Object-Storage subsection (flat `[stt]` keys only); STT stats gated on the
-  global `[stats].enabled` (no `stats-enabled` key); the Yandex Object Storage
-  bucket lifecycle TTL (86400 s) as a deployment recommendation.
-- [`docs/design/stt-next-steps.md`](./stt-next-steps.md): mark gate-3/gate-4 code as
-  delivered (manual confirmation parts remain).
-- [`docs/llm/architecture.md`](../llm/architecture.md): note the co-located
+  global `[stats].enabled` (no `stats-enabled` key); `[stats].stt-stats-data-source`
+  key added to `stats.toml`; the Yandex Object Storage bucket lifecycle TTL (86400 s)
+  as a deployment recommendation. **DONE (reconciled).**
+- [x] [`docs/archive/design/stt-next-steps.md`](../archive/design/stt-next-steps.md): mark gate-3/gate-4 code as
+  delivered (manual confirmation parts remain). **DONE (2026-08-08).**
+- [x] [`docs/llm/architecture.md`](../llm/architecture.md): note the co-located
   `YandexObjectStorage` helper in `lib/stt/providers/` (`boto3` is a hard external
   import; the `lib/stt` firewall — zero `internal.*` imports — is intact, so
   this is **not** a new dependency-firewall seam). STT has no Object Storage client
-  at the service layer and no sweep task.
-- `CHANGELOG.md`: one `Added` entry (Object-Storage routing) and one `Changed` entry
+  at the service layer and no sweep task. **DONE (reconciled via ADR-020 update).**
+- [x] `CHANGELOG.md`: one `Added` entry (Object-Storage routing) and one `Changed` entry
   (STT stats recording gated on `[stats].enabled`), under `## [Unreleased]`.
+  **DONE.**
 
 ## 11. Open questions / verification items (deferred to the SpeechKit smoke)
 

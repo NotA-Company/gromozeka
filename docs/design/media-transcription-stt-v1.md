@@ -174,15 +174,15 @@ internal/services/stt/STTService (singleton)
   - rate/admission/concurrency controls
   - invokes loader, extraction, provider, formatter
                  |
-                 +--------------------------+
-                 v                          v
-lib/stt/audio.py                    lib/stt/STTManager
-  - PyAV decode and limits            - selected provider lifecycle
-                                             |
-                                             v
-                                  YandexSpeechKitProvider
-                                  - persistent httpx client
-                                  - submit / poll / get / delete
+                 v
+lib/stt/audio.py
+  - PyAV decode and limits
+                 |
+                 v
+      YandexSpeechKitProvider
+      - persistent httpx client
+      - submit / poll / get / delete
+      - co-located YandexObjectStorage helper (v1.1)
 ```
 
 Proposed files:
@@ -193,15 +193,17 @@ lib/stt/
   abstract.py
   audio.py
   exceptions.py
-  manager.py
   models.py
   providers/
     __init__.py
     yandex_speechkit.py
+    yandex_object_storage.py     # v1.1: co-located Yandex Object Storage helper (boto3 hard import)
+    yandex_events.py             # getRecognition streaming-JSON event parser
 
 internal/services/stt/
   __init__.py
   service.py
+  formatter.py                   # thin formatter (moved from lib/stt/formatter.py, 2026-08-02)
 ```
 
 `lib/stt/` must not import `internal.bot`, `internal.database`, or singleton
@@ -495,8 +497,8 @@ decoding is not stoppable by coroutine cancellation, so source/sample/output and
 concurrency caps are the real resource controls, and v1 drains STT workers
 gracefully without an in-process hard shutdown deadline (a native hang can delay
 shutdown indefinitely; deployment supervision may impose an external hard-kill).
-The PyAV import uses the project-approved module-level guarded import so a
-disabled STT installation can start without PyAV.
+The PyAV import is unconditional (no guarded import — simplification trade-off); any
+`import lib.stt.*` hard-requires PyAV at import time.
 
 > **Authoritative contract:** [`lib-stt-v1.md` §5](./lib-stt-v1.md) — make changes there, not here. This section summarizes it only.
 

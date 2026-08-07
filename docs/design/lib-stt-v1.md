@@ -3,14 +3,14 @@
 Status: **IMPLEMENTED (simplified shape) — lib/stt built; integration pending**  
 Date: 2026-08-01  
 Owner: TBD  
-Companion docs: [`media-transcription-stt-v1.md`](./media-transcription-stt-v1.md) (parent), [`stt-next-steps.md`](./stt-next-steps.md) (integration roadmap + accepted gaps), [`architecture.md`](../llm/architecture.md), [`libraries.md`](../llm/libraries.md), [`configuration.md`](../llm/configuration.md), [`services.md`](../llm/services.md)
+Companion docs: [`media-transcription-stt-v1.md`](./media-transcription-stt-v1.md) (parent), [`stt-next-steps.md`](../archive/design/stt-next-steps.md) (integration roadmap + accepted gaps), [`architecture.md`](../llm/architecture.md), [`libraries.md`](../llm/libraries.md), [`configuration.md`](../llm/configuration.md), [`services.md`](../llm/services.md)
 
 > Companion to and extracted from [`docs/design/media-transcription-stt-v1.md`](./media-transcription-stt-v1.md);
 > ratifies its D1–D8. The `lib/stt` library described here is **implemented** (and has since been
 > **simplified**: no `STTManager`, no caps inside `extractAudio`, a never-raise `stt(data)` entry). This
 > document is the single source of truth for `lib/stt` internals; where it previously described the
 > pre-simplification design it now matches the code. Integration status + open gaps live in
-> [`stt-next-steps.md`](./stt-next-steps.md).
+> [`stt-next-steps.md`](../archive/design/stt-next-steps.md).
 
 This document reorganizes the `lib/stt/`-relevant content of the reviewed parent plan into a
 self-contained specification for the **first implementation step** (parent §13.1 steps 2 and 3).
@@ -41,7 +41,7 @@ no caps, and no config reading.
   bounded platform media download (parent §8.3), attachment storage, config parsing, all caps
   (source-byte / duration / inline-payload), and `STTMediaRequest` (parent §7 — service-side, carries
   media/chat IDs, optional platform `declaredSize`). These are referenced here only as "consumed by
-  STTService per parent §X"; integration status lives in [`stt-next-steps.md`](./stt-next-steps.md).
+  STTService per parent §X"; integration status lives in [`stt-next-steps.md`](../archive/design/stt-next-steps.md).
 
 **Dependency firewall — two seams (load-bearing contract #1).**
 
@@ -96,7 +96,7 @@ design used a module-level guarded `try/except ImportError` with a private `_PYA
 simplification removed it: [`lib/stt/audio.py`](../../lib/stt/audio.py) does `import av` unconditionally,
 and [`lib/stt/abstract.py`](../../lib/stt/abstract.py) does `from . import audio`, so **any** `import
 lib.stt.*` now hard-requires PyAV at import time. This is an accepted trade-off for simplicity
-(documented in [`stt-next-steps.md`](./stt-next-steps.md) §5 "open design notes"): PyAV (`av==18.0.0`)
+(documented in [`stt-next-steps.md`](../archive/design/stt-next-steps.md) §5 "open design notes"): PyAV (`av==18.0.0`)
 is always present in the frozen environment, so the breakage is latent — but the old "lib/stt imports
 cleanly without PyAV" claim no longer holds. If a future module wants `lib/stt` types without PyAV,
 restore the `_PYAV_AVAILABLE` guard pattern (AGENTS.md "Hard rules" specifies the exact
@@ -117,7 +117,7 @@ readiness correction #2, **minus the deleted `manager.py` and the deleted `forma
 ```text
 lib/stt/
   __init__.py                      # public re-exports (models, abstract, exceptions, extractAudio, YandexSpeechKitProvider) — NO manager, NO formatter
-  abstract.py                      # AbstractSTTProvider: supportedInputFormats() METHOD, async transcribe(), async stt(data) never-raise entry, async aclose()
+  abstract.py                      # AbstractSTTProvider: concrete async stt(data) + async transcribe() (template-method: timing + _recordStats + never-raise), abstract _transcribe() + supportedInputFormats() + aclose()
   audio.py                         # extractAudio(data, supportedInputFormats) — PyAV probe + container-only format negotiation (pass-through/transcode); channel-preserving; unconditional `import av`; NO caps
   exceptions.py                    # typed extraction exceptions (3 subclasses), each mapping 1:1 to an STTErrorCode
   models.py                        # provider-neutral models, enums (incl. STTAudioContainerType + toYandexSpeechKit()), format descriptors (AudioFormatSpec)
@@ -381,7 +381,7 @@ bytes (§1 seam #2). There is no `STTLoaderResult` and no `STTMediaLoader` type 
 
 The service-owned **immutable row-seed fields** (`fileId`, media type, metadata/prompt) that readiness
 correction #1 calls out are `STTService`-side, **not** `lib/stt` — they are handled in the integration
-doc ([`stt-next-steps.md`](./stt-next-steps.md) §3), not here. Correction #3 (TEXT media rendering must
+doc ([`stt-next-steps.md`](../archive/design/stt-next-steps.md) §3), not here. Correction #3 (TEXT media rendering must
 reuse the already-computed multi-attachment content so Max per-item descriptions are not lost) is
 handler/rendering-side and likewise out of scope here.
 
@@ -394,7 +394,9 @@ This is the uniform rule for failure handling across `lib/stt`:
    `extractAudio` + `transcribe`: it catches any `STTExtractionError` from extraction and maps it to
    `TranscriptionResult(status=ERROR, errorCode=exc.errorCode)`, catches any **other** exception and
    maps it to `TranscriptionResult(status=ERROR, errorCode=PROVIDER_ERROR)` (logged), and otherwise
-   delegates to `transcribe()` — which is itself never-raise. So **calling `stt(data)` can never raise
+   delegates to `transcribe()` — which is itself never-raise (the template-method wraps the abstract
+   `_transcribe` with timing, best-effort `_recordStats`, and an `except Exception`→`PROVIDER_ERROR`
+   boundary; `CancelledError` propagates). So **calling `stt(data)` can never raise
    for any expected or unexpected failure** (extraction or transcription). This is the integration
    layer's convenience entry point. `STTService` (downstream) is the final never-raise boundary and
    maps an ERROR result to a terminal `FAILED` row (parent §6.2).
@@ -514,7 +516,7 @@ probing/measurement/transcoding (e.g. ~100+ MB for long stereo audio). This is a
 for simplicity**: the service bounds source bytes AND duration BEFORE calling `extractAudio`, which in
 practice bounds the decoded-memory spike; `lib/stt` does not double-check those bounds and applies no
 decoded-buffer cap. If parent §13.3 gate-5 (peak RSS) fails at integration, revisit — i.e. restore a
-decoded-buffer cap inside `extractAudio` (see [`stt-next-steps.md`](./stt-next-steps.md) §5). This is
+decoded-buffer cap inside `extractAudio` (see [`stt-next-steps.md`](../archive/design/stt-next-steps.md) §5). This is
 documented in the `extractAudio` docstring and the module docstring of [`audio.py`](../../lib/stt/audio.py).
 
 **Cancellation & resource notes (part of the §5 contract; parent §8.4 summarizes it).** `asyncio.to_thread()`
@@ -568,7 +570,7 @@ accepted trade-off of the simplification — prompt-injection mitigation (the
 untrusted-data label, XML escaping, never-system-role injection) becomes the
 **handler / prompt-construction layer's responsibility** when the handler round
 ships. See ADR-020 decision 7 in [`docs/llm/architecture.md`](../llm/architecture.md)
-and [`docs/design/stt-next-steps.md`](stt-next-steps.md) §3.3. This is a tracked
+and [`docs/archive/design/stt-next-steps.md`](../archive/design/stt-next-steps.md) §3.3. This is a tracked
 handler-round TODO, not an accident.
 
 ## 7. Yandex SpeechKit v3 provider
@@ -769,7 +771,7 @@ retry, and cleanup control. Do **not** add the older `yandex-cloud-ml-sdk` packa
 
 The post-simplification shape dropped the `STTManager` indirection entirely. There is no
 `lib/stt/manager.py`, and no manager selects the configured provider. The integration layer (the
-future `STTService`, per [`stt-next-steps.md`](./stt-next-steps.md) §3.1) **holds the single configured
+future `STTService`, per [`stt-next-steps.md`](../archive/design/stt-next-steps.md) §3.1) **holds the single configured
 provider directly** — today that is `YandexSpeechKitProvider`, constructed once at startup with its
 already-resolved `ProxyConfig` (§1 seam #1) and held as a singleton attribute on the service.
 
@@ -781,12 +783,13 @@ What the deleted manager used to own moves to the service:
 - **Cap ownership** — the service owns all caps (source bytes, duration, inline payload); the
   decoded-buffer cap is intentionally absent (§5 accepted gap). See §8.1.
 
-**`AbstractSTTProvider` surface** (§4, §7): four members — the ordered `supportedInputFormats()`
-**method** (consumed by `audio.py`), the async `transcribe(ExtractedAudio, *, consumerId=None)` entry
-(never-raise), the concrete async `stt(data: bytes, *, consumerId=None)` never-raise entry defined on
-the base itself (wraps `extractAudio` + `transcribe` and forwards `consumerId`), and `aclose()`. The
-integration layer's convenience entry is `stt(data)` (it never raises and returns a `TranscriptionResult`
-for every outcome).
+**`AbstractSTTProvider` surface** (§4, §7): five members — three **abstract** (`_transcribe(audio)`,
+`supportedInputFormats()`, `aclose()`) and two **concrete on the base** (`stt(data, *, consumerId=None)`,
+`transcribe(audio, *, consumerId=None)`). Post-refactor (template-method), `transcribe` is concrete: it
+wraps the abstract `_transcribe` with `time.monotonic()` timing, best-effort `_recordStats`, and an
+`except Exception`→`PROVIDER_ERROR` boundary (mirrors `lib/ai/abstract.py`). Providers override
+`_transcribe` (not `transcribe`). The integration layer's convenience entry is `stt(data)` (it never raises
+and returns a `TranscriptionResult` for every outcome).
 
 **v1.1 `consumerId` keyword-only parameter.** As of v1.1 both `transcribe(self, audio, *,
 consumerId: Optional[str] = None)` and the base `stt(self, data, *, consumerId: Optional[str] = None)`
@@ -796,13 +799,16 @@ when `chatId` is None); the Yandex provider uses it for per-consumer best-effort
 default `None` — so existing callers that ignore it keep working. It does NOT participate in routing,
 caps, or the never-raise contract; it is a stats label only.
 
-The concrete `YandexSpeechKitProvider.transcribe()` takes `ExtractedAudio` only — **no** unused
+The concrete `YandexSpeechKitProvider._transcribe()` (the abstract override called by the base
+`transcribe` template-method) takes `ExtractedAudio` only — **no** unused
 `audioFormat`, `withTimestamps`, or chat-settings arguments (the container travels inside
 `ExtractedAudio.container`, not as a separate argument). Caps (operation/request timeouts, poll delays,
 result-byte cap, retry budget) and config (credentials, model, language, proxy) are supplied at
-construction, not on `transcribe`. Expected provider/transport/protocol failures return
+construction, not on `_transcribe`. Expected provider/transport/protocol failures return
 `TranscriptionResult(status=ERROR, errorCode=...)`; the constructor may raise `ValueError` on startup
-configuration validation when STT is enabled (the only permitted raise site).
+configuration validation when STT is enabled (the only permitted raise site). The base `transcribe`
+records timing and stats via `_recordStats` (best-effort, never raises); `_transcribe` does NOT record
+stats itself.
 
 ## 9. Test matrix slice (lib/stt only)
 
@@ -849,15 +855,16 @@ lib/stt test matrix; parent §13.2 summarizes and references it.
 **Abstract provider (`stt()` never-raise surface — load-bearing)**
 
 - `AbstractSTTProvider` cannot be instantiated directly (abstract members present).
-- A concrete stub implementing all three abstract members (`supportedInputFormats`, `transcribe`,
-  `aclose`) constructs and its surface behaves per the contract; `transcribe` / `aclose` are
+- A concrete stub implementing all three abstract members (`supportedInputFormats`, `_transcribe`,
+  `aclose`) constructs and its surface behaves per the contract; `_transcribe` / `aclose` are
   coroutines.
 - **`stt()` never raises:** a typed extraction failure (`NoAudioTrackError`) → ERROR with its
   `errorCode`; an unexpected extraction exception → ERROR PROVIDER_ERROR; a successful extraction
   delegates to `transcribe` and returns its result.
-- **Regression: `stt()` covers the `transcribe` call too** — a provider whose `transcribe` raises an
-  unexpected exception is caught by the defense-in-depth branch (logged + PROVIDER_ERROR) rather than
-  escaping. (Pre-fix, `transcribe` sat after the try/except and a raise escaped `stt`.)
+- **Regression: `stt()` covers the `transcribe` call too** — a provider whose `_transcribe` raises an
+  unexpected exception is caught by the base `transcribe`'s defense-in-depth branch (logged +
+  PROVIDER_ERROR) rather than escaping. (Pre-refactor, `transcribe` sat after the try/except and a
+  raise escaped `stt`.)
 
 **PyAV extraction**
 
@@ -924,7 +931,7 @@ static review (full detail in parent §13.3):
    on deployment-equivalent hardware, including enabled attachment storage. ⚠️ Decoded memory is now
    **unbounded in `lib/stt`** (§5 accepted gap) — the service's source (`max-source-bytes`, currently 1 GiB)
    + duration caps bound it indirectly; measure the real spike and reduce source/duration/concurrency defaults if the deployment
-   memory budget cannot absorb it (see [`stt-next-steps.md`](./stt-next-steps.md) §5).
+   memory budget cannot absorb it (see [`stt-next-steps.md`](../archive/design/stt-next-steps.md) §5).
 6. **Graceful shutdown** — exercise graceful shutdown during a maximum-size decode and verify the
    deployment supervisor's external hard-kill grace policy for a simulated native hang.
 7. **`make ci` Alpine-wheel proof** — run [`make ci`](../../AGENTS.md) to prove the pinned PyAV wheel
@@ -960,7 +967,7 @@ reaches `lib/stt`, or reaches it unbounded).
 |---|---:|---|
 | Source container | 1,073,741,824 bytes (1 GiB; `max-source-bytes`) | **STTService** — bounds the platform media download before `extractAudio` is called; the bytes that reach `lib/stt` are already bounded. (The §5 decoded-memory gap means a 1 GiB compressed source can still decode to multiple GB — `lib/stt` does not re-check.) User-configurable; currently defaults to 1 GiB per the accepted residual Max-unbounded-download risk (user decision 2026-08-03; Telegram is platform-capped ~20 MB by the bot API). |
 | Decoded buffer | (removed) | **gone** — `lib/stt` does not bound decoded PCM (§5 accepted gap). The service's source + duration caps bound it indirectly. If parent §13.3 gate-5 fails, restore a decoded-buffer cap inside `extractAudio`. |
-| Inline payload | 41,943,040 bytes (40 MiB; `maxInlineBytes`) | **STTService** — bounds the *source* before it reaches `lib/stt`; `lib/stt` no longer routes pass-through vs. transcode on payload size (container-only routing, §5). A large supported container is now sent inline. The service keeps the conservative 40 MiB default so base64-expanded requests stay under the 60 MB vendor limit. |
+| Inline payload | 41,943,040 bytes (40 MiB; `maxInlineBytes`) | **STTService** (source-byte cap) + **lib/stt (Yandex provider, v1.1)** (routing threshold on extracted payload). The service bounds the *source* before it reaches `lib/stt`; as of v1.1 the provider also checks `len(audio.data) >= maxInlineBytes` after extraction to decide inline vs Object-Storage routing (§7.1). The service keeps the conservative 40 MiB default so base64-expanded requests stay under the 60 MB vendor limit. |
 | Decoded duration | 600 seconds | **STTService** — bounds admission before `extractAudio` is called; `lib/stt` no longer rejects or stop-at-caps on duration. Bounded upstream by the 300 s media-poll (parent §13.3 gate-4); do not relax toward the 4 h vendor ceiling. |
 | Result body | 5,242,880 bytes (5 MiB) | **lib/stt (`yandex_events.py`)** — streaming byte cap before parse (constructor-supplied `maxResultBytes`). |
 | Persisted transcript | (removed) | **gone** — the 2026-08-02 simplification deleted `lib/stt/formatter.py` and its `maxTranscriptChars` parameter. The thin formatter now lives at [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py) and does not truncate; there is no persisted-transcript cap. |
@@ -971,17 +978,18 @@ reaches `lib/stt`, or reaches it unbounded).
 | Poll interval | 2 s initial, 10 s max | **lib/stt (Yandex provider)** — poll loop; value passed in at construction. |
 
 **Vendor ceilings vs. v1 defaults (annotated).** SpeechKit's async ceilings are: **60 MB inline
-request** (used by v1), **1 GB Object-Storage upload** (deferred in v1 per D8), and a **4-hour
-duration** ceiling. v1 defaults stay conservative on all three: the service's inline-payload cap
-(40 MiB) keeps base64-expanded requests well under 60 MB; Object-Storage is not used; the duration
-default (600 s) stays far below 4 h and is additionally bounded by the 300 s media-poll. The vendor
-ceiling is not a safe application default. (The pre-simplification design listed `lib/stt`-enforced
+request** (used by v1), **1 GB Object-Storage upload** (available as of v1.1 for clips whose extracted
+payload exceeds `maxInlineBytes`), and a **4-hour duration** ceiling. v1 defaults stay conservative on
+all three: the service's inline-payload cap (40 MiB) keeps base64-expanded requests well under 60 MB;
+as of v1.1, over-threshold clips route to Object Storage when configured (§7.1); the duration default
+(600 s) stays far below 4 h and is additionally bounded by the 300 s media-poll. The vendor ceiling is
+not a safe application default. (The pre-simplification design listed `lib/stt`-enforced
 source/decoded/inline/duration rows; those are all **STTService-owned** now per §5.)
 
 All values are validated as positive and operator-configurable (parent §8.1, §11.2). Release testing
 must measure peak RSS with two maximum-size workers (parent §13.3 gate-5); because decoded memory is
 now unbounded in `lib/stt` (§5), reduce source/duration/concurrency defaults if the deployment memory
-budget cannot absorb the decoded-memory spike (see [`stt-next-steps.md`](./stt-next-steps.md) §5).
+budget cannot absorb the decoded-memory spike (see [`stt-next-steps.md`](../archive/design/stt-next-steps.md) §5).
 
 ### Alternatives relevant to lib/stt (parent §15, carried over as-is)
 
@@ -989,4 +997,4 @@ budget cannot absorb the decoded-memory spike (see [`stt-next-steps.md`](./stt-n
 |---|---|
 | Use the existing Yandex AI Studio SDK | Credible fallback, but D6 keeps raw `httpx` for exact streaming, caps, retry, proxy, and delete control. |
 | Shell out to `ffmpeg` | Rejected by D3. Pinned PyAV gives an in-process API and supported binary wheels, with source-build caveats. |
-| Use the full 60 MB inline / 1 GB Object-Storage / 4-hour vendor limits | Rejected as unsafe defaults — source, decoded audio, base64, JSON, and provider results create multiple memory copies and long user-path latency. (Object-Storage is also deferred in v1 per D8.) |
+| Use the full 60 MB inline / 1 GB Object-Storage / 4-hour vendor limits | Rejected as unsafe defaults — source, decoded audio, base64, JSON, and provider results create multiple memory copies and long user-path latency. (Object-Storage routing is available as of v1.1 for over-threshold clips; v1 defaults remain conservative.) |
