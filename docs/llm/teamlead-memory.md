@@ -22,7 +22,7 @@ How to use this file:
 
 ## Task-Specific Memory Files
 
-Full index and one-line descriptions live in [`memories/index.md`](memories/index.md) — read the relevant file before working on a subsystem. Topics covered: proxy config & lifecycle, Max Messenger API migration & webhooks, chat history & vector search, bot handlers (delete-from-user, resender, bot-answer-probability), LLM tooling & internals (use-tools filtering, tool-call healing, maxRounds limit, user-message format, messages-handler structure, shutdown state dump, empty TRUNCATED_FINAL bug), **user memories (+ v2 pre-merge review, refinement, context dedup, compaction)**, **condensed-context retrieval**, **chat-users cache**, **DB cache cleanup & cron**, **DB maintenance scripts**, **dependency-usage regression tests**, **doc-link checking + docs reorg/archive/audit**, **test-suite speedup**, **review-campaign lessons**, **skills & agents landscape audit**, codebase cleanup (Any types, dedoodization), testing & sandbox.
+Full index and one-line descriptions live in [`memories/index.md`](memories/index.md) — read the relevant file before working on a subsystem. Topics covered: proxy config & lifecycle, Max Messenger API migration & webhooks, chat history & vector search, bot handlers (delete-from-user, resender, bot-answer-probability), LLM tooling & internals (use-tools filtering, tool-call healing, maxRounds limit, user-message format, messages-handler structure, shutdown state dump, empty TRUNCATED_FINAL bug, customParams refactor, embedding model-lookup refactor), **user memories (+ v2 pre-merge review, refinement, context dedup, compaction)**, **condensed-context retrieval**, **chat-users cache**, **DB cache cleanup & cron**, **DB maintenance scripts**, **dependency-usage regression tests**, **doc-link checking + docs reorg/archive/audit (incl. full /docs audit)**, **test-suite speedup**, **review-campaign lessons**, **skills & agents landscape audit**, codebase cleanup (Any types, dedoodization), testing & sandbox.
 
 ## DB Cache Cleanup (verified 2026-07-15)
 
@@ -120,72 +120,7 @@ See [`memories/db-cache-cleanup.md`](memories/db-cache-cleanup.md) — durable n
 
 ## Embedding Model-Lookup Refactor (COMPLETE 2026-07-21)
 
-Plan: [`docs/plans/embedding-model-lookup-refactor-v1.md`](../plans/embedding-model-lookup-refactor-v1.md) — APPROVED + architect-self-reviewed, 1893 lines. Decisions D1–D10 ratified. **All phases complete + repo renamed + dataSource plumbing added.** `make test` = 3468 passed / 11 skipped (pre-existing); `make format lint` = 0/0/0; `make check-docs` = 0 broken.
-
-**User-driven simplification pass (2026-07-21):** the user simplified the refactor substantially beyond the original plan, and the teamlead dispatched doc-sync to match:
-- **Migration Step 2 (`_backfillModels`) DELETED entirely** — `models` table now created EMPTY; allocation is lazy via `getOrCreateModelId` on first embed. R6 invariant (probe-then-insert idempotency for migration-time backfill) is GONE — the runtime `getOrCreateModelId` still uses probe-then-insert against UNIQUE constraint, but the migration-side R6 section is stale.
-- **Migration Step 3 (`user_memories` swap) no longer backfills `model_id`** — sets NULL constant. Same data-correctness pattern as `chat_messages`: prevents the latent bug where rows are marked "embedded" while vec0 is dropped.
-- **Migration `down()` Step 3** now uses NULL constants instead of LEFT JOIN to `models` (logically equivalent since `up()` doesn't populate `model_id`).
-- **Production code simplified to single-branch predicate** — `deleteObsoleteModelEmbeddings`, `getMessagesWithoutEmbeddings`, `deleteObsoleteMemoryEmbeddings`, `getMemoriesWithoutEmbeddings` all use ONE branch (resolve `model_id` from `(currentModel, currentDimensions)`; predicate is `model_id != currentModelId`). The 3-branch resolution (with dimensions-unknown pre-resolve-list fallback) was REMOVED.
-- **`currentDimensions` reverted to `int`** (was widened to `Optional[int]` during recovery). Keyword-only `*` marker also removed on `deleteObsoleteModelEmbeddings`. Dead `keepIds` variable removed. Dead `if currentDimensions is not None:` guard removed from `user_memories.py:~1608`.
-- **8 tests removed** (5 migration backfill tests + 3 repo regression tests including `test_deleteObsoleteMemoryEmbeddings_regression_currentDimensionsNonePreResolvesKeepIds`). Test count: 3460 passed / 11 skipped.
-- **Known unguarded edge case (user's conscious decision):** production callers at `chat_search.py:476` and `user_memories.py:874` pass `currentDimensions=currentDims` where `currentDims = await model.getDimensions()` (annotated `-> int` but theoretically can yield None for OpenAI-style models with no `embedding_dimensions` config + failed probe). Pre-existing risk; the deleted regression test guarded it. If `currentDims=None` ever occurs at runtime, the single-branch code will crash.
-
-**Migration simplification (2026-07-21, prior):** `migration_025` Step 4 (chat_messages) was reduced from 4-statement temp-table swap to a single `ALTER TABLE chat_messages ADD COLUMN model_id INTEGER`. **Side-effect correctness fix:** the old temp-table backfill set `model_id` from `message_embeddings` provenance, but Step 5 drops message_embeddings and Step 6 drops vec0 — so a backfilled `model_id` would mark rows as "embedded" while every actual vector is gone, causing `getMessagesWithoutEmbeddings` to never re-surface them → silent search data loss. Plain `ADD COLUMN` leaves `model_id` NULL, which is correct (forces re-embed via cron).
-
-**LESSON LEARNED — git stash disaster (2026-07-21):** An implementer ran `git stash` (without `-u`) on a tree with extensive uncommitted refactor work, then `git stash drop`'d after a conflicted pop. Recovery was possible because the dangling commit was preserved (`git fsck --lost-found` found it); `git stash apply <dangling-hash>` restored everything. **Going forward: never `git stash` on trees with substantial uncommitted work — `git commit -m WIP` is always safer. Add `-u` if you must stash. Never `git stash drop` after a conflicted pop — `git stash apply` first, then drop explicitly after verifying recovery.** Even after successful recovery, subsequent commits may not contain all the recovered work — verify `git diff HEAD --stat` shows expected files before declaring recovery complete.
-
-**Repository renamed (2026-07-21):** `ModelsRepository` → `EmbeddingModelsRepository`; file `models.py` → `embedding_models.py`; test file `test_models.py` → `test_embedding_models.py`; Database accessor `self.models` → `self.embeddingModels`; `db.models` → `db.embeddingModels` in docs; `testDatabase.models` → `testDatabase.embeddingModels` in tests. **DB table `models` STAYS** (would require another migration; user explicitly scoped rename to repository only). Note: `from ..models import ModelDict` import inside `embedding_models.py` is the disambiguation goal — refers to the TypedDicts module at `internal/database/models.py`, NOT the repo file.
-
-**dataSource plumbing added (2026-07-21):** All 3 `EmbeddingModelsRepository` methods now take `*, dataSource: Optional[str] = None` keyword-only, threaded into `getProvider(dataSource=dataSource, ...)`. The `_resolveModelId` helpers in the 3 consuming repos (`chat_embeddings.py`, `chat_search.py`, `user_memories.py`) accept + forward `dataSource`. The 4 enclosing-method call sites that already had `dataSource` forward it through. The `modelIdResolver` type widened from `Callable[[str, int], Awaitable[int]]` → `Callable[..., Awaitable[int]]`. The other 4 call sites (no `dataSource` in enclosing method) leave it as None. Documentation: `docs/llm/database.md` §3 + §6 tightened to MUST/SHOULD/MAY rule; `BaseRepository` class docstring has a one-liner pointer.
-
-**Bug fixes found via the recovery investigation (2026-07-21):** 2 pre-existing bugs in `user_memories.py` that prior Gate 1 reviews missed:
-1. `deleteObsoleteMemoryEmbeddings` signature was `currentDimensions: int` but its production caller at `internal/bot/common/handlers/user_memories.py:874` passes `currentDims` which is `Optional[int]`. Fixed to `currentDimensions: Optional[int] = None`.
-2. Both `getMemoriesWithoutEmbeddings` and `deleteObsoleteMemoryEmbeddings` were missing the "dimensions unknown" pre-resolve-list branch (their docstrings described it, sibling `chat_embeddings.py` implemented it, but these methods didn't). Restructured into 3 branches matching sibling pattern.
-Regression test added: `test_deleteObsoleteMemoryEmbeddings_regression_currentDimensionsNonePreResolvesKeepIds` (TDD-verified).
-
-**What landed:**
-- NEW `models(model_id INTEGER PK NOT NULL, model TEXT, dimensions INTEGER, created_at TIMESTAMP, UNIQUE(model, dimensions))` table via `migration_025_embedding_model_lookup`.
-- `chat_messages` += `model_id INTEGER NULL`; `user_memories` swapped `embedding_model`/`embedding_dimensions` → `model_id INTEGER NULL` (both via temp-table swap pattern from `migration_013`).
-- DROPPED `message_embeddings` table + `idx_message_embeddings_chat_model` + both vec0 families (lazily recreated with `model_id INTEGER PARTITION KEY` DDL).
-- NEW `EmbeddingModelsRepository` (`internal/database/repositories/embedding_models.py`): `getOrCreateModelId/getModelById/listModels`; process-local `{(model,dims):id}` cache; uses `provider.upsert(..., conflictColumns=["model","dimensions"], updateExpressions={})` for portable INSERT-OR-IGNORE.
-- NEW `ModelDict` TypedDict; `ChatMessageDict` += `model_id`; `UserMemoryDict` swapped columns; DELETED `MessageEmbeddingDict`.
-- 3 consuming repos (`ChatEmbeddingsRepository`, `ChatSearchRepository`, `UserMemoriesRepository`) refactored with D10 constructor-injected `modelIdResolver: Callable[..., Awaitable[int]]`; `__slots__ = ("_modelIdResolver",)`; identical `_resolveModelId` thin-wrapper (now accepts dataSource kwarg).
-- ALL handler-facing repo signatures UNCHANGED (D6 extended) — resolution to `model_id` is internal.
-- 4 drift-detection methods use three-branch predicate: both-known → resolved-id inequality; model-only → pre-resolved Python list with concrete `NOT IN (:id1, ...)` placeholders (vec0 portability); model-None → `IS NULL` / clear-all.
-- `_loadEmbeddingsFromDb` DELETED; `_semanticSearch` collapsed from 3-rung ladder to vec0-or-`[]` (3 explicit conditions return `[]`: vec0 unsupported / raises / returns empty).
-- DROPPED `getMessageEmbedding` + `deleteChatEmbeddings` (no production callers).
-- numpy fully removed from `chat_search.py` + `user_memories.py`. `numpy==2.5.1` removed from `requirements.direct.txt` (still transitive via fastembed). User also manually edited `lib/ai/providers/fastembed_provider.py` to drop its runtime `import numpy as np` (TYPE_CHECKING-only annotation import now).
-- DELETED `tests/dependencies/test_numpy.py` (21 tests removed).
-- `scripts/clear_memory_embeddings.py` updated to `UPDATE user_memories SET model_id = NULL`.
-
-**D7 INTEGER PK deviation from AGENTS.md preference #3 (TEXT UUID) is user-ratified** for compactness as vec0 partition key + O(1) cached allocation.
-
-**Gate 1 + Gate 2 reviews:** Phase 1 Gate 1 clean (1 Important + 5 minor all fixed); Phase 2+3 Gate 1 clean (0 Critical/0 Important + 5 cleanups all fixed); Gate 2 clean (0 Critical/2 Important both fixed); rename Gate 1 clean (0 Critical + 1 Recommend + 1 Nit applied). dataSource Gate 1: initial review was empty; fallback review found Critical (lint) + Important (Any) + Recommend (tests) — all fixed during recovery. **No fresh Gate 1 review since the recovery applied 2 production bug fixes + 1 regression test.** That's an open follow-up if the user wants it.
-
-**R6 load-bearing invariant:** migration framework does NOT wrap `up()` in a transaction (`manager.py:285-300`); backfill uses probe-then-insert (`SELECT … WHERE model AND dimensions` → skip if present, else `COALESCE(MAX(model_id),0)+1` + plain INSERT), NOT plain INSERT against UNIQUE constraint.
-
-**Migration precedent (the ONLY temp-table swap in the repo before this work):** `migration_013_remove_timestamp_defaults.py` — `<name>_new → INSERT...SELECT → DROP → RENAME` in a single `sqlProvider.batchExecute([ParametrizedQuery(...)])` call. Migration template: `async def up(self, sqlProvider: BaseSQLProvider)` / `async def down(...)`, `def getMigration() -> Type[BaseMigration]`.
-
-**`make freeze-requirements` is a NAIVE uncurated `pip freeze > requirements.txt`** (`Makefile:46-48`) — no clean-venv step, no exclude list, no pip-compile, no `--require-hashes` (requirements.txt uses bare `==` pins throughout, no hashing; `make install` = plain `pip install -r`). The dev venv is MULTI-SOURCE: `lib/ext_modules/grabliarium/requirements.direct.txt` (lxml/weasyprint, gitignored) + Alpine-system `onnxruntime` (`apk add py3-onnxruntime` + `--system-site-packages`) — so freezing a dirty venv CONTAMINATES requirements.txt with ~12 unrelated packages (the embedding-refactor freeze hit exactly this). **Correct workflow: clean the venv first (or `pip uninstall` the leaked pkgs: lxml weasyprint pydyf tinycss2 cssselect2 pyphen tinyhtml5 fonttools brotli zopfli webencodings onnxruntime), add the new dep, THEN freeze.** Hand-editing requirements.txt is acceptable ONLY for zero-dep packages (like `av==18.0.0` — delta provably +1 line); for any dep with transitive requirements, clean-venv-freeze is mandatory. **Pre-existing bug: `sqlite-vec==0.1.9` is declared in `requirements.direct.txt` # Runtime but MISSING from requirements.txt** — degrades vector search silently on non-Alpine fresh installs (invisible on Alpine: no musl wheel, uses `vectorExtensionPath` fallback). Worth a standalone fix.
-
-**Follow-up TODOs (non-blocking):**
-- A commit `8acd881` (message: `"1"`) appeared during recovery session — not created by the implementer; contains the 50+ files of refactor work. User should review + amend the message before pushing. The recovery's regression test + production bug fixes are NOT in that commit (they remain unstaged in the working tree).
-- Gate 1 review on the recovery's production bug fixes (the 3-branch restructure + signature widening in `user_memories.py`) has not been run.
-- `internal/database/repositories/__init__.py` module docstring "Key Components" list still omits `EmbeddingModelsRepository` (rename Gate 1 observation).
-- Migration `_backfillModels` uses `assert idRow is not None` while runtime `EmbeddingModelsRepository.getOrCreateModelId` uses `raise RuntimeError(...)` for the same contract — stylistic inconsistency.
-- `scripts/clear_memory_embeddings.py:179` has a dead `assert extension is not None` after a None-guard return.
-
-**Architect self-review (2026-07-20) catches to remember:**
-- Migration framework does NOT wrap `up()` in a transaction (`manager.py:285-300` sets version only after `up()` returns) — backfill must use probe-then-insert (`SELECT … WHERE model AND dimensions` → skip if present) NOT plain INSERT against UNIQUE constraint. Risk R6.
-- `provider.upsert(table, values, conflictColumns, updateExpressions={})` is the portable INSERT-OR-IGNORE (`sqlite3.py:426-439` — `ON CONFLICT … DO NOTHING` shape). Use it instead of dialect-specific `INSERT OR IGNORE`. Risk R5 closed.
-- `chat_search.py:793` has a SECOND numpy use (`np.linalg.norm(np.asarray(...))`) inside `_nativeVectorSearch` — easy to miss when removing the cosine block at lines 410-480 + the `user_memories.py:872` use.
-- `ChatEmbeddingsRepository` (`chat_embeddings.py:59`), `UserMemoriesRepository`, AND `ChatSearchRepository` all need `__slots__` extended with `_modelIdResolver` per D10 — concrete edit, not deferral.
-- Handler callers DO pass `embeddingModel=` to `addMemory` (e.g. `user_memories.py:533-545`) — `addMemory` signature kept stable per extended D6.
-- `_loadEmbeddingsFromDb` is patched in `tests/database/repositories/test_chat_search_native.py:65,93` — will `AttributeError` once the method is deleted; rewrite those patches.
-- `models` table DDL: `model_id INTEGER PRIMARY KEY NOT NULL, model TEXT NOT NULL, dimensions INTEGER NOT NULL, created_at TIMESTAMP NOT NULL, UNIQUE(model, dimensions)`.
-
-**Verification (when implementation lands):** test-rollback step counts bump (any test rolling back N migrations must bump `steps=` to N+1 for migration_025); `expectedTables`/`requiredTables` hardcoded lists in schema-creation tests need `models` added and `message_embeddings` removed; `test_numpy.py` deleted; `rg "import numpy" internal/ lib/` returns 0 matches.
+See [`memories/embedding-model-lookup-refactor.md`](memories/embedding-model-lookup-refactor.md) — durable notes for the embedding model-lookup refactor: migration_025, `EmbeddingModelsRepository`, vec0 partition key, D7 INTEGER PK, Gate 1+2 reviews, git-stash disaster recovery lesson, dataSource plumbing, 2 pre-existing bugs found and fixed, numpy removal, user-driven simplifications (backfill deletion, single-branch predicates, 8 tests removed), follow-up TODOs.
 
 
 ## Opencode Slash-Command Mechanism
@@ -251,10 +186,6 @@ Source: `internal/bot/models/chat_settings.py` (`ChatSettingsPage` IntEnum, `get
 ## Reviewing Large Changes
 
 See [`docs/llm/reviewing-large-changes.md`](reviewing-large-changes.md) -- methodology for reviewing changes exceeding the single-pass budget of the `code-reviewer` agent (>24 files). Covers pre-review characterization, batching by feature domain, per-batch review with parallel execution, integration pass, and remediation workflow. Created 2026-06-28.
-
-## User Memory V2 Pre-Merge Review (2026-07-14, in progress)
-
-See [`memories/user-memory-v2-review.md`](memories/user-memory-v2-review.md) — full pre-merge review campaign for the 140-file `user_data`→`user_memories` feature branch: pre-review state/batching plan + post-review durable contracts/invariants established.
 
 ## Large Review Campaign Lessons (2026-06-28)
 
@@ -324,25 +255,7 @@ See [`memories/llm-max-rounds.md`](memories/llm-max-rounds.md) — durable notes
 
 ## LLM customParams Refactor (lib/ai, 2026-07-20)
 
-`AbstractModel` (and every concrete model/provider) takes `customParams: Optional[Dict[str, Any]] = None` instead of the old explicit `temperature: float` ctor arg. Stored as `self._customParams: Dict[str, Any]` (defensive copy). `DEFAULT_TEMPERATURE = 0.5` module constant in `lib/ai/abstract.py` is the fallback when the dict doesn't carry `temperature`.
-
-**Architecture (LOCKED):**
-- **5 concrete model classes** inherit from `AbstractModel`: `BasicOpenAIModel` (with `YcOpenaiModel`, `OpenrouterModel` subclasses), `YcAIModel` (direct), `FastembedModel` (direct).
-- **5 concrete provider classes** inherit from `AbstractLLMProvider`: `BasicOpenAIProvider` (abstract base; `YcOpenaiProvider`, `OpenrouterProvider`, `CustomOpenAIProvider` subclasses), `YcAIProvider` (direct), `FastembedProvider` (direct).
-- Per-request param flow: `_getExtraParams()` base returns `dict(self._customParams)` — this is THE seam for inference params. Three text-generation sites in `basic_openai_provider.py` build `params = {...}` then `params.update(self._getExtraParams())` (last-wins).
-- Subclass `_getExtraParams()` overrides MERGE: shape is `{**providerDefaults, **super()._getExtraParams()}` so user `customParams` wins. Example: `OpenrouterModel` returns `{"extra_headers": {...}, **super()._getExtraParams()}`.
-- `_getImageRequestOptions()` returns `dict(self._customParams)` — NO whitelist (whitelist removed 2026-07-20). All `customParams` keys are sent to the OpenAI Images API; caller's responsibility to use keys valid for the transport.
-- `YcAIModel._getModel(**configOverrides)` text path: `kwargs = dict(self._customParams); kwargs.update(configOverrides)`. Image path: same seed, then YC-specific `mime_type`/`width_ratio`/`height_ratio`/`seed` from `self._config` override customParams, then `configOverrides` win. Structured-output override at `yc_sdk_provider.py` uses `min(self._customParams.get("temperature", DEFAULT_TEMPERATURE), 0.3)`.
-- `FastembedModel` passes `**self._customParams` directly to `TextEmbedding(...)` — `_CONSUMED_EXTRA_KEYS` filter is GONE. Fastembed library kwargs (cache_dir, threads, max_length, etc.) now live under `customParams.*` in TOML.
-- `LLMManager._initModels` reads `customParams=modelConfig.get("customParams", {})` from per-model TOML. Still also passes the whole `modelConfig` as `extraConfig` (capability flags + provider wiring).
-- `getInfo()` returns `"customParams": dict(self._customParams)` (defensive copy on read too). The `temperature` key is GONE.
-- `dev_commands.py` `/models` command: i18n label `"customParams": "Кастомные параметры"`; display loop renders the dict via `utils.jsonDumps(v, indent=2)` (same treatment as the `"extra"` key).
-
-**TOML shape (under `configs/00-defaults/*-models.toml`):** dotted-key form `customParams.temperature = 0.3`, NOT nested table headers. Image-API keys (`size`, `quality`, `n`, `output_format`, `moderation`) flatten into `customParams.*` (the old `[models.models.X.image_options]` sub-table is gone). Fastembed TOML has no `customParams` block at all if there are no library kwargs.
-
-**Test patterns:** ctor `Model(..., customParams={"temperature": X})` (not `temperature=X`); attribute read/write via `model._customParams["temperature"]`; on `Mock(spec=AbstractModel)`, use `model._customParams = {"temperature": X}` (the `temperature` attribute is rejected by spec-restriction). Import `DEFAULT_TEMPERATURE` from `lib.ai.abstract` for fallback reads.
-
-**Gitignored overlay configs to migrate manually (NOT in `configs/00-defaults/`):** `configs/common/01-opencode-go.toml` (8 entries), `configs/common/00-config.toml` (1 entry), `configs/prod/01-ollama.toml` (2 commented). User handles these per-deployment.
+See [`memories/llm-customparams-refactor.md`](memories/llm-customparams-refactor.md) — durable notes for the customParams refactor: architecture (5 provider + 5 model classes), per-request param flow through `_getExtraParams()`, `_getImageRequestOptions()` no-whitelist, TOML dotted-key shape, test patterns.
 
 ## LLM User-Message Format (verified 2026-07-11)
 
@@ -378,68 +291,8 @@ See [`memories/dependency-usage-tests.md`](memories/dependency-usage-tests.md) �
 
 ## user-memory-v2 Pre-Merge Review (2026-07-14)
 
-See [`memories/user-memory-v2-review.md`](memories/user-memory-v2-review.md) — post-review half of the merged campaign narrative: 2 Critical + ~15 Important + ~25 Recommend + ~15 Nit found (all fixed); durable contracts (`CondensingDict.messageCount` counts ALL processed positions, per-message memory injection, `getThreadByMessageForLLM` dedup accumulator invariant, `condenseContext.batchLength` floor at 1, `MAX_SQL_VARIABLES=900`, `_normalizeTags` strips `"`/`\`); user-preference + process-lessons reinforcement.
+See [`memories/user-memory-v2-review.md`](memories/user-memory-v2-review.md) — full pre-merge review campaign for the 140-file `user_data`→`user_memories` feature branch: pre-review state & batching plan, post-review durable contracts/invariants, 2 Critical + ~15 Important + ~25 Recommend + ~15 Nit findings (all fixed).
 
 ## Full /docs Audit (2026-07-18, COMPLETED)
 
-End-to-end audit of all 85 files under `/docs/` (excluding `docs/archive/`): 36 memories + 12 `docs/llm/` non-memory + 8 `docs/` root + 29 plans/designs/examples/templates/other. Outcomes: ~78 FIX, ~6 KEEP, 13 ARCHIVE moves (12 in Phase 2 + 1 in Phase 3d Wave 9 `condensing-prompt-tool-param.md` + 1 in Phase 3d Wave 11 `max-bot-client-generation-brief.md`). Gate 2 review closed cleanly. `make check-docs` green (106 files / 1615 links / 0 broken). Process: 1 inventory agent → 1 bulk-archive agent → 5 waves of 8 memory audits (Phase 3a) → 2 waves of 6 `docs/llm/` non-memory (Phase 3b) → 1 wave of 8 `docs/` root (Phase 3c) → 2 waves of 11+18 plans/examples/templates/other (Phase 3d) → 3 parallel reconciliation agents (Phase 4) → 1 whole-work review + 1 fix dispatch + 1 re-review (Phase 5). 8 files/wave was the right batch size; 2 of 6 high-drift `docs/llm/` files needed re-dispatch (libraries.md, configuration.md — step limit). Per-file agents were strict one-file-only; cross-file consistency was the explicit Phase 4+5 gap to close.
-
-### Recurring drift patterns (for future audits — apply repo-wide grep verification)
-
-1. **`_persistMemoryEntry` → `_runSingleRefinement` inlined cursor-persist** — method removed (inlined into `_runSingleRefinement` at `user_memories.py:1356-1374` under `cache.chatUserMetadataLock()`); class `UserDataHandler` → `UserMemoriesHandler`; file `user_data.py` deleted (now `user_memories.py`). Historical-pointer convention: *"`_runSingleRefinement`'s inlined cursor-persist (formerly `_persistMemoryEntry`)"*.
-2. **`chatMessages.searchChatMessages` → `chatSearch.searchChatMessages`** — repository split; `chat_search.py` is a separate repo, accessed as `db.chatSearch`. Test: `grep -rn 'chatMessages.searchChatMessages' docs/` (outside `docs/archive/`) must return 0.
-3. **`excludeMemoryIds` is OPTIONAL, not REQUIRED** — only `cache` is required keyword-only; `excludeMemoryIds: Optional[Set[str]] = None` at `ensured_message.py:1073, 1203, 1275` (3 sites). The "pyright enforces both" claim is false — pyright does NOT enforce optional-with-default.
-4. **`handleRandomAnswer` → `handleRandomMessage`** — method at `llm_messages.py:790`.
-5. **Repository class merges**: `DivinationLayoutsRepository` → `DivinationsRepository` (layout CRUD was merged in; `db.divinations` accessor); `CommonRepository` → `CommonFunctionsRepository`. Test: `grep -rn -E '(CommonRepository|DivinationRepository|DivinationLayoutsRepository)\b' docs/` (outside `docs/archive/` + clarifying-mention narrative) must return ~0.
-6. **`[database.sources.*]` → `[database.providers.*]`** — config schema rename; `DatabaseManagerConfig.providers` is the live shape (`configs/00-defaults/00-config.toml`).
-7. **SQLink is a REMOTE-DB HTTP client, NOT SQLite with async** — required kwargs are `url`/`user`/`password`/`database`. The `dbPath` kwarg belongs to `SQLite3Provider` only. Don't conflate them in multi-source examples. SQLink's `readOnly` is server-controlled (`db.access == "ro"`), not a client-side flag.
-8. **Handler chain ordering** — full list (verified `manager.py:478-612`): 9 always-on + 3 Telegram-only (`DeleteFromUserMessageHandler` at position 10, `ReactOnUserMessageHandler`, `TopicManagerHandler`) + 6 config-gated (`MessagePreprocessorHandler`, `SpamHandler`, `ChatSearchHandler`, `ResenderHandler`, `SandboxHandler`, `DivinationHandler`) + custom-loader + `LLMMessageHandler` (MUST BE LAST — appended after conditional/custom handlers). Don't forget `DeleteFromUserMessageHandler` (registered before `ReactOnUserMessageHandler`).
-9. **Method renames** — `saveChatUser`→`updateChatUser`, `saveChatInfo`→`updateChatInfo`, `saveChatTopic`→`updateChatTopicInfo`, `getMessages`→`getChatMessagesSince`, `addMessage`→`saveChatMessage`, `saveMediaAttachment`→`addMediaAttachment`, `saveSpamMessage`→`addSpamMessage`, `saveHamMessage`→`addHamMessage`, `saveDelayedTask`→`addDelayedTask`, `getCache`/`setCache`→`getCacheEntry`/`setCacheEntry`, `getChatSummarizationCache`/`setChatSummarizationCache`→`getChatSummarization`/`addChatSummarization`, `markDelayedTaskDone(taskId)`→`updateDelayedTask(id, isDone)`. Pattern: `save*`/`get*` (legacy) → `update*`/`add*`/descriptive (current). Always grep current code before trusting doc method names.
-10. **`HandlersManager.injectBot` was renamed to `initialize`** — `BaseBotHandler.injectBot` (`base.py:178`) is now the narrower method that just sets `self._bot`. Don't conflate them in refactor proposals.
-11. **`_sendLLMChatMessage` returns `LLMReplyOutcome` StrEnum** (3 members: SENT/ERROR/SKIPPED_BY_MODEL), not `bool`. Span `llm_messages.py:221-443`. `SKIPPED_BY_MODEL` returned by handler-level empty-guard at L394 (Option B handler-half of `llm-empty-truncated-final` fix).
-12. **`ModelResultStatus` has 8 values**: UNSPECIFIED, PARTIAL, TRUNCATED_FINAL, FINAL, CONTENT_FILTER, TOOL_CALLS, UNKNOWN, ERROR (`lib/ai/models.py:923-950`). `ERROR_STATUSES = {UNSPECIFIED, CONTENT_FILTER, UNKNOWN, ERROR}` (excludes TRUNCATED_FINAL, PARTIAL, FINAL, TOOL_CALLS). Older docs fabricated `TIMEOUT`/`EMPTY` — they don't exist.
-13. **`RANDOM_ANSWER_PROMPT` wiring** — `ChatSettingsKey` at `chat_settings.py:334`; entry at `:701-707` (page `BOT_OWNER_SYSTEM`); TOML default at `bot-defaults.toml:227-237`; used in `handleRandomMessage` at `llm_messages.py:865-874` (thread path, slice-rebuild) and `:878-887` (non-thread path).
-14. **`HandlersManager` line refs drifted massively (~200+ lines)** since early 2026: class 177→382, `__init__` 185→416, `self.handlers` list 249→478, `awaitStepDone` 110→236, `messageProcessed` 149→330, `injectBot`/`initialize` 389→703, `shutdown` 430→738. **Always re-locate by symbol before trusting line numbers.**
-15. **`lib/ext_modules/grabliarium/tests/` is sanctioned-collocated** — vendored subpackage with its own `pyproject.toml`/tests. **AGENTS.md L127 carve-out added 2026-07-18** (Phase 10 follow-up); `docs/llm/testing.md` also documents it.
-16. **Counts as of 2026-07-18**: 36 memories + `memories/index.md` = 37; ADR count = 19 (ADR-001..019); `ToolName` StrEnum = 22 members; `registerTool` call sites = 22; migrations = 24 (`migration_001..024`); `Database` repos = 15; tests ≈ 3392 collected. These drift monotonically — re-verify before relying on absolute counts.
-17. **YC SDK docs fully re-captured against pinned v0.22.0** (2026-07-18, Phase 12 wave of 7 parallel agents + Gate 2 fix dispatch + serial verification): all 7 files in `docs/other/yc-ai-sdk/` now have H1 stamp `(verified against pinned v0.22.0, 2026-07-18)` and a banner stating verification scope. ~30 newly-discovered drifts fixed across the bundle (most critical: `embeddings-and-other.md` had 13 — nonexistent `as_batch()`/`query()` methods, invalid `"BM25"`/`"TextGeneration"` enums, etc.; `chat-openai-compat.md` had wrong `ChatModelResult` dataclass fields; `speech.md`/`completions.md`/`chat-openai-compat.md` had `await run_stream()` bugs that would raise `TypeError` — async generator, not coroutine). `⚠` convention: server-side facts only (model catalogues, context sizes, required scopes). `make check-docs` green.
-18. **Max Messenger host lineage**: `botapi.max.ru` (legacy, retired 2026-07-19) → `platform-api.max.ru` (deprecated, also retired 2026-07-19) → `platform-api2.max.ru` (current production host, `lib/max_bot/constants.py:18`). Migration COMPLETE per `memories/max-api-migration.md`. Schema snapshots in `docs/other/Max-Messenger/` carry deprecation banners.
-19. **Dependency pins (verified 2026-07-18)**: `aiodocker==0.27.0` (was 0.26.0); `sqlite-vec==0.1.9` (was 0.1.10a4); `httpx-socks[asyncio]==0.11.0` (was `>=0.10.0`); `numpy==2.5.1` (was 2.4.6); `pillow==12.3.0` (new direct dep at `lib/ai/models.py:48`, **zero dep-usage coverage — candidate for future round**); `aiohttp==3.14.1`.
-
-### Cross-cutting code-side follow-ups (ALL RESOLVED 2026-07-18 in Phase 8-9 follow-up pass)
-
-All items below were flagged as out-of-`/docs`-scope during the initial audit; the user requested them resolved. Status: every item landed, `make format lint` clean, `make test` green (3389 passed).
-
-- ✅ **`internal/database/database.py`** class docstring (removed `divinationLayouts`; added `userMemories`/`chatEmbeddings`/`chatSearch`) + module/class example `getMessages`→`getChatMessagesSince` (×2).
-- ✅ **`internal/services/cache/service.py:1137`** + **`internal/bot/common/handlers/base.py:1174`** docstrings → `_runSingleRefinement`'s inlined cursor-persist (with "formerly `_persistMemoryEntry`" historical pointer).
-- ✅ **`internal/services/llm/service.py:78-80`** `generateCondensingDict` docstring → `messageCount += 1` is unconditional; only metadata extraction skipped in None branch.
-- ✅ **`internal/bot/models/message_metadata.py:289`** `mergeCondensingDicts` docstring → "set-unique (unsorted)" for participants; "plain extend (NO de-dup)" for messageIds.
-- ✅ **`internal/bot/common/handlers/chat_search.py:974-978`** comment → `extra=` is commented out; runtime `str(mid).strip()` + `MessageId(midStr)` coercion is the actual safety net.
-- ✅ **`internal/bot/common/handlers/dev_commands.py:842`** docstring → `reconstructMessages` replaced with `ModelMessage.fromDictList` (the actual consumer at `lib/ai/models.py:676`).
-- ✅ **`internal/bot/max/application.py:127`** `unregister-webhook` code default `True` → `False` (RUNTIME change; aligns with config default `false`; doc-sync rippled to 4 docs).
-- ✅ **`internal/bot/common/handlers/manager.py:491-492`** comment → corrected handler-ordering misattribution.
-- ✅ **`internal/bot/constants.py:65,168`** stale paths → `docs/archive/plans/...`.
-- ✅ **`lib/markdown/__init__.py:17`** docstring → camelCase `markdownToMarkdownV2` (was snake_case).
-- ✅ **`lib/geocode_maps/client.py:14`** docstring → "TypedDict models" (was "Pydantic models"; file path was `client.py` not `__init__.py` as initially flagged).
-- ✅ **Test-side stale comments**: `test_user_memories.py:819,855,28,1214,1729`; `test_user_memories_memory_regen.py:4`; `test_yandex_search.py:4`; `test_user_info.py:449` — all updated.
-- ✅ **`.agents/skills/add-llm-tool/SKILL.md:353`** stale `~line 1306` ref → symbol-only reference.
-- ✅ **17 stale `docs/plans/` paths in code/tests** all → `docs/archive/plans/...` (8 in `user_memories.py`, 2 in `constants.py`, 1 each in `migration_020/021`, `llm/models.py`, 5 across 4 test files).
-- ✅ **Regression tests for `llm_messages.py:394` empty-guard** — `TestLLMEmptyResponseGuard` class (5 tests) added to `tests/bot/common/handlers/test_llm_messages.py`; `testPostStopUnregisterWebhookKeyAbsentDefaultsToFalse` added to `tests/bot/max/test_webhook_mode.py`. Test count: 3381 → 3389.
-
-### Open documentation decisions (status as of 2026-07-18 end-of-day)
-
-- ✅ **`docs/database-README.md`**: FREEZE-and-link framing removed (Phase 11); file is now a normal maintained overview with positive "Canonical sources" navigation pointer. All 27 Phase 3c drift fixes intact.
-- ✅ **`docs/plans/llm-empty-truncated-final-handling-v1.md`**: Test Plan implemented (Phase 9, 5 tests); status remains `PARTIALLY IMPLEMENTED` (Option A provider downgrade + `bot.py` empty-string guard still pending — those are product decisions, not doc drift).
-- ✅ **AGENTS.md L124-127**: `lib/ext_modules/*/tests/` sanctioned-exception carve-out added (Phase 10).
-- ✅ **YC SDK version drift** (`docs/other/yc-ai-sdk/`): **FULLY RE-CAPTURED 2026-07-18 (Phase 12)**. All 7 files re-verified against installed v0.22.0 SDK source. ~30 newly-discovered drifts fixed. H1 + banners consistent across the bundle. `⚠` markers discipline: server-side facts only. See "Recurring drift patterns" item 17 above.
-- ⚠ **`docs/archive/design/` count** = 23 archived + 1 README = 24 total (decremented from 24+1=25 after `custom-modules-design.md` was restored to `docs/design/` in Phase 7).
-- ℹ **Per-section archive READMEs** enumerate files without explicit count statements; parent `docs/archive/README.md` carries the canonical counts. Intentional — enumeration suffices.
-
-### Process lessons reinforced
-
-- **Per-file agents need explicit cross-file-flag instructions.** When a drift is found, the agent should be told which sibling files might carry the same drift and instructed to flag (not fix — that would violate one-file-only scope) for Phase 4 reconciliation. This worked well; only 4 of ~85 files had residual cross-file drift after Phase 3.
-- **Gate 2 (whole-work review) is non-optional for multi-file audits.** Caught 3 HIGH-severity cross-file inconsistencies (Pattern-1 incomplete in `user-memory-refinement.md`; Pattern-5 missed in `architecture.md` + `database-schema.md`) that per-file agents couldn't see.
-- **Re-dispatch is normal for high-drift files.** 2 of 6 `docs/llm/` non-memory files hit the ~60 step budget on first pass; the brief was tightened and re-dispatched successfully. Don't fight it — just re-dispatch with the remaining scope made explicit.
-- **Count methodology in archive indexes**: "content-only + `+ 1 README` suffix" is now the convention. `docs/archive/plans/` = 66 archived + 1 README = 67 total; `docs/archive/design/` = 23 archived + 1 README = 24 total (was 24+1=25 before `custom-modules-design.md` was restored to `docs/design/` in Phase 7).
-- **Strict one-subagent-per-file + Phase 4 reconciliation**: worked well at 85 files; the alternative (parallel multi-file agents) would have caused more merge conflicts and harder review.
-- **Archive-vs-live decision principle (learned from user feedback 2026-07-18)**: a doc referenced as **current operational guidance** by a live skill/code-path is NOT a historical-only candidate, regardless of its "Status: Implemented" header. Phase 2 incorrectly archived `custom-modules-design.md` because it looked like a "shipped-feature design doc"; the user pointed out that `.agents/skills/add-handler/SKILL.md` references it as routing/decision guidance under "When NOT to use" — so it's a living reference. Restoration to `docs/design/` (not original `docs/` root — that would re-create clutter) + revert of inbound links to current-guidance framing was the correct fix. Apply this principle to future archive decisions: grep for **operational** references (skills, "see this for how to X"), not just historical-plan-of-record references.
+See [`memories/full-docs-audit.md`](memories/full-docs-audit.md) — durable notes from the 85-file audit campaign: ~78 fixes, 13 archives, 5-phase process, ~30 YC SDK drifts, 19 recurring drift patterns, 12 code-side follow-ups all resolved, archive-vs-live decision principle.
