@@ -118,7 +118,10 @@ permission:
     "sed -n *": allow
     "make lint": allow
     "make test": allow
-    "make check-docs*": allow
+    "make check-docs": allow
+    "make lint 2>&1": allow
+    "make test 2>&1": allow
+    "make check-docs 2>&1": allow
     "./venv/bin/pytest *": allow
   edit: deny
   write: deny

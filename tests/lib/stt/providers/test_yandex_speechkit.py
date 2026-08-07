@@ -1082,11 +1082,7 @@ async def testEmptyBucketOnlyTreatedAsUnset() -> None:
     "kwargs, match",
     [
         (
-            {
-                "objectStorageBucket": "b",
-                "objectStorageKeyId": "${YC_S3_KEY_ID}",
-                "objectStorageKeySecret": "s",
-            },
+            {"objectStorageBucket": "b", "objectStorageKeyId": "${YC_S3_KEY_ID}", "objectStorageKeySecret": "s"},
             "objectStorageKeyId",
         ),
         (
@@ -1113,34 +1109,15 @@ async def testUnresolvedPlaceholderInOsCredsRejected(kwargs: Dict[str, object], 
         _constructProvider(**kwargs)
 
 
-async def testBoto3AbsentWithBucketSetRaisesValueError() -> None:
-    """When _BOTO3_AVAILABLE is False and bucket is set, construction raises ValueError.
-
-    Returns:
-        None
-    """
-    with (
-        patch("lib.stt.providers.yandex_speechkit._BOTO3_AVAILABLE", False),
-        pytest.raises(ValueError, match="boto3 dependency is not installed"),
-    ):
-        _constructProvider(
-            objectStorageBucket="b",
-            objectStorageKeyId="k",
-            objectStorageKeySecret="s",
-        )
-
-
 @pytest.mark.parametrize(
     "value, match",
     [
         (0, "maxInlineBytes must be positive"),
         (-1, "maxInlineBytes must be positive"),
-        (60_000_001, "maxInlineBytes must be <= 60000000"),
-        (100_000_000, "maxInlineBytes must be <= 60000000"),
     ],
 )
 def testMaxInlineBytesValidation(value: int, match: str) -> None:
-    """maxInlineBytes <= 0 or > 60_000_000 raises ValueError.
+    """A non-positive maxInlineBytes raises ValueError (must be positive).
 
     Args:
         value: The invalid maxInlineBytes value.
@@ -1697,11 +1674,12 @@ async def testStatsRecordedOnSuccess() -> None:
     assert record["stats"]["audio_duration_ms"] == 1000  # _audio().durationMs
     assert record["stats"]["elapsed_time"] >= 0
     assert record["stats"]["is_error"] == 0
-    assert record["stats"]["status_FINAL"] == 1
-    assert record["labels"]["provider"] == "yandex-speechkit"
+    assert record["stats"]["status_final"] == 1
+    assert record["labels"]["provider"] == "YandexSpeechKitProvider"
     assert record["labels"]["generationType"] == "stt"
-    assert record["labels"]["status"] == "FINAL"
-    assert record["labels"]["model"] == "general"
+    assert record["labels"]["status"] == "final"
+    # No errorCode label on success — it is only added when result.errorCode is set.
+    assert "errorCode" not in record["labels"]
 
 
 # --- Test 2: ERROR records stats ---
@@ -1736,8 +1714,9 @@ async def testStatsRecordedOnError() -> None:
     assert len(stats.records) == 1
     record = stats.records[0]
     assert record["stats"]["is_error"] == 1
-    assert record["stats"]["status_ERROR"] == 1
-    assert record["labels"]["status"] == "ERROR"
+    assert record["stats"]["status_error"] == 1
+    assert record["labels"]["status"] == "error"
+    assert record["labels"]["errorCode"] == result.errorCode
 
 
 # --- Test 3: NullStatsStorage default is a no-op ---
@@ -1842,7 +1821,7 @@ async def testStatsRecordedAndObjectDeleteBothRun() -> None:
         return httpx.Response(404)
 
     provider = await _providerWithOs(handler, mockOs=mockOs)
-    provider._statsStorage = stats
+    provider.statsStorage = stats
     try:
         result = await provider.transcribe(_largeAudio())
     finally:
@@ -1853,7 +1832,7 @@ async def testStatsRecordedAndObjectDeleteBothRun() -> None:
     mockOs.delete.assert_awaited_once()
     # Stats were recorded.
     assert len(stats.records) == 1
-    assert stats.records[0]["labels"]["status"] == "FINAL"
+    assert stats.records[0]["labels"]["status"] == "final"
 
 
 # ============================================================================

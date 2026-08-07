@@ -58,6 +58,7 @@ class FakeProvider(AbstractSTTProvider):
                 Ignored when shouldRaise is set.
             shouldRaise: Exception to raise from stt().
         """
+        super().__init__()
         self._result = result or TranscriptionResult(status=STTResultStatus.ERROR, segments=())
         self._shouldRaise = shouldRaise
         self.sttCallCount: int = 0
@@ -79,12 +80,11 @@ class FakeProvider(AbstractSTTProvider):
             )
         ]
 
-    async def transcribe(self, audio: ExtractedAudio, *, consumerId: Optional[str] = None) -> TranscriptionResult:
+    async def _transcribe(self, audio: ExtractedAudio) -> TranscriptionResult:
         """Return the configured result or raise.
 
         Args:
             audio: The extracted audio data (unused by fake).
-            consumerId: Optional consumer identifier (unused by fake).
 
         Returns:
             The configured TranscriptionResult.

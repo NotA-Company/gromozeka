@@ -167,7 +167,7 @@ class STTService:
             statsStorage: Optional stats storage for per-transcription
                 statistics recording.  When ``None`` (the default), the
                 provider uses ``NullStatsStorage`` (no-op).  Wired from
-                ``main.py`` gated on ``[stt].stats-enabled``.
+                ``main.py`` gated on ``[stats].enabled``.
 
         Raises:
             ValueError: If the provider name is unknown (not in
@@ -209,7 +209,7 @@ class STTService:
             **{
                 libUtils.kebabToCamelCase(k): v
                 for k, v in sttConfig.items()
-                if k not in ("enabled", "use-proxy", "proxy-config", "provider", "stats-enabled")
+                if k not in ("enabled", "use-proxy", "proxy-config", "provider")
             },
         )
 

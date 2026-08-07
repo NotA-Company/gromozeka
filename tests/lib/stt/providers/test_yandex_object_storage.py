@@ -5,49 +5,16 @@ Covers:
   shape, returned URI contains bucket + key.
 - ``delete``: key recovery from URI, ``delete_object`` call, no-op on
   missing object (``NoSuchKey`` / 404).
-- Guarded import: module imports cleanly when boto3 is unavailable and
-  ``_BOTO3_AVAILABLE`` flag is set to ``False``.
 """
 
-import importlib
-import sys
 import threading
 import uuid
-from types import ModuleType
-from typing import Dict
 from unittest.mock import MagicMock, patch
 
 import pytest
 from botocore.exceptions import ClientError
 
 from lib.stt.providers.yandex_object_storage import YandexObjectStorage
-
-
-class _ImportErrorStub:
-    """Module stub that raises ImportError on any attribute access.
-
-    Used to simulate an absent package in ``sys.modules`` for guarded-import
-    tests.  Only ``__getattr__`` is defined; ``__name__`` is set so the stub
-    looks like a module to the import system.
-    """
-
-    def __init__(self, name: str) -> None:
-        """Args:
-        name: The module name this stub impersonates.
-        """
-        self.__name__ = name
-
-    def __getattr__(self, item: str) -> object:
-        """Raise ImportError for any attribute access.
-
-        Args:
-            item: The attribute name being accessed.
-
-        Raises:
-            ImportError: Always.
-        """
-        raise ImportError(f"simulated absent module: {self.__name__}.{item}")
-
 
 # ============================================================================
 # Fixtures
@@ -332,65 +299,3 @@ class TestOffload:
         await storage.delete("https://storage.yandexcloud.net/test-bucket/stt/some-key")
         assert capturedThreads, "delete_object was never called"
         assert capturedThreads[0] is not mainThread, "delete_object ran on the event-loop thread (not offloaded)"
-
-
-# ============================================================================
-# Guarded import test
-# ============================================================================
-
-
-class TestGuardedImport:
-    """Tests for the _BOTO3_AVAILABLE guarded import flag."""
-
-    def testModuleImportsCleanlyWhenBoto3Unavailable(self) -> None:
-        """The module imports without error even when boto3 is absent.
-
-        We simulate an absent boto3 by temporarily injecting a module stub
-        into ``sys.modules`` that raises ``ImportError`` on attribute access,
-        then reloading the module.  After the test the original module state
-        is restored.
-
-        Args:
-            None.
-        """
-        # Save original state.
-        savedModules: Dict[str, ModuleType | None] = {}
-        boto3Related = [k for k in sys.modules if k.startswith("boto3") or k.startswith("botocore")]
-        for mod in boto3Related:
-            savedModules[mod] = sys.modules.pop(mod, None)
-
-        # Also remove our module so it gets re-imported.
-        ourMod = "lib.stt.providers.yandex_object_storage"
-        savedOurMod: ModuleType | None = sys.modules.pop(ourMod, None)
-
-        # Remove parent package modules so the re-import doesn't short-circuit.
-        parentMods = ["lib.stt.providers", "lib.stt", "lib"]
-        savedParentMods: Dict[str, ModuleType] = {}
-        for mod in parentMods:
-            if mod in sys.modules:
-                savedParentMods[mod] = sys.modules.pop(mod)  # type: ignore[assignment]
-
-        try:
-            # Inject stubs that raise ImportError so the guarded import
-            # takes the except branch.
-            for pkg in ("boto3", "botocore", "botocore.config", "botocore.exceptions"):
-                sys.modules[pkg] = _ImportErrorStub(pkg)  # type: ignore[assignment]
-
-            # Restore parent packages so importlib can traverse them.
-            for mod, obj in savedParentMods.items():
-                sys.modules[mod] = obj
-
-            # Re-import the module.
-            imported = importlib.import_module(ourMod)
-            assert hasattr(imported, "_BOTO3_AVAILABLE")
-            assert imported._BOTO3_AVAILABLE is False
-        finally:
-            # Remove the stubs.
-            for pkg in ("boto3", "botocore", "botocore.config", "botocore.exceptions"):
-                sys.modules.pop(pkg, None)
-            # Restore original state.
-            for mod, obj in savedModules.items():
-                if obj is not None:
-                    sys.modules[mod] = obj
-            if savedOurMod is not None:
-                sys.modules[ourMod] = savedOurMod

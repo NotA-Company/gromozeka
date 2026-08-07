@@ -35,14 +35,12 @@ Authoritative references:
 import asyncio
 import base64
 import logging
-import time
 from collections.abc import Sequence
 from typing import Dict, Optional, Tuple
 
 import httpx
 
-from lib.proxy import ProxyConfig, ProxyKwargs
-from lib.stats.stats_storage import NullStatsStorage, StatsStorage
+from lib.proxy import ProxyKwargs
 
 from ..abstract import AbstractSTTProvider
 from ..models import (
@@ -54,7 +52,7 @@ from ..models import (
     TranscriptionResult,
 )
 from .yandex_events import DEFAULT_MAX_RESULT_BYTES, parseRecognitionEvents
-from .yandex_object_storage import _BOTO3_AVAILABLE, YandexObjectStorage
+from .yandex_object_storage import YandexObjectStorage
 
 logger = logging.getLogger(__name__)
 """Module logger (mirrors :mod:`lib.yandex_search.client` — no logger injection)."""
@@ -137,7 +135,7 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
 
     Attributes:
         _httpClient: The persistent httpx client (proxy-configured at construction).
-        _proxyConfig: The injected, already-resolved ProxyConfig (or None).
+        proxyConfig: The injected, already-resolved ProxyConfig (or None).
     """
 
     # --- Wire endpoints (§7.1 / §7.2) ---------------------------------------
@@ -146,10 +144,30 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
     _GET_RECOGNITION_URL: str = "https://stt.api.cloud.yandex.net/stt/v3/getRecognition"
     _DELETE_RECOGNITION_URL: str = "https://stt.api.cloud.yandex.net/stt/v3/deleteRecognition"
 
+    # Slots for every instance attribute set in __init__ (below); the base-class
+    # slots already cover proxyConfig/statsStorage/_extraLabels, so a __dict__ is
+    # never created for provider instances.
+    __slots__ = (
+        "_maxInlineBytes",
+        "_objectStorage",
+        "_apiKey",
+        "_folderId",
+        "_model",
+        "_language",
+        "_operationBudgetSeconds",
+        "_pollIntervalSeconds",
+        "_maxPollIntervalSeconds",
+        "_maxPolls",
+        "_maxRetries",
+        "_retryBackoffSeconds",
+        "_maxResultBytes",
+        "_authHeaders",
+        "_httpClient",
+    )
+
     def __init__(
         self,
         *,
-        proxyConfig: Optional[ProxyConfig] = None,
         apiKey: str,
         folderId: str,
         model: str = "general",
@@ -167,7 +185,6 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
         objectStoragePrefix: str = "stt/",
         objectStorageKeyId: Optional[str] = None,
         objectStorageKeySecret: Optional[str] = None,
-        statsStorage: Optional[StatsStorage] = None,
         **extraKwargs,
     ) -> None:
         """Initialize the provider, validating startup config and building the client.
@@ -206,8 +223,7 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
                 5 MiB default).
             maxInlineBytes: Routing threshold in bytes measured on ``len(audio.data)``.
                 Clips below this go inline; at/above this route to Object Storage (when
-                configured). Default 40 MiB (41943040), safely under the 60 MB vendor
-                inline ceiling after base64 expansion. Must be positive and ``<= 60_000_000``.
+                configured). Default 40 MiB (41943040). Must be positive.
             objectStorageBucket: Yandex Object Storage bucket name for large-clip routing.
                 When set (non-empty), Object Storage is enabled and both
                 ``objectStorageKeyId`` and ``objectStorageKeySecret`` are required. When
@@ -227,14 +243,21 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
                 parameter contains an unresolved ``${…}`` placeholder (indicating a
                 missing environment variable), any numeric limit is non-positive,
                 ``maxPollIntervalSeconds < pollIntervalSeconds``, ``maxInlineBytes`` is
-                not positive or exceeds 60 MB, Object Storage params are partially
-                configured (bucket without both keys, or keys without bucket), or
-                Object Storage is requested but the ``boto3`` dependency is absent
-                (startup validation, load-bearing contract #2).
+                not positive, or Object Storage params are partially configured (bucket
+                without both keys, or keys without bucket). Startup validation,
+                load-bearing contract #2.
 
         Returns:
             None
         """
+
+        # To not enumerate all kwargs, copy them from locals() and ther extend with extraKwargs
+        kwargs = locals().copy()
+        kwargs.pop("self", None)
+        kwargs.pop("extraKwargs", None)
+        kwargs.update(extraKwargs)
+        super().__init__(**kwargs)
+
         if not apiKey or not isinstance(apiKey, str):
             raise ValueError("apiKey must be a non-empty string")
         if not folderId or not isinstance(folderId, str):
@@ -268,8 +291,6 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
         # --- Phase 2: Object Storage validation (design §6.3) ---
         if maxInlineBytes <= 0:
             raise ValueError("maxInlineBytes must be positive")
-        if maxInlineBytes > 60_000_000:
-            raise ValueError("maxInlineBytes must be <= 60000000 (vendor inline ceiling)")
 
         osBucket: Optional[str] = objectStorageBucket if objectStorageBucket else None
         osKeyId: Optional[str] = objectStorageKeyId if objectStorageKeyId else None
@@ -289,9 +310,6 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
         ):
             if value and value.startswith("${") and value.endswith("}"):
                 raise ValueError(f"{name} contains an unresolved placeholder: {value!r}")
-        # boto3 presence: Object Storage explicitly requested but dependency absent.
-        if osBucket is not None and not _BOTO3_AVAILABLE:
-            raise ValueError("objectStorageBucket is set but the boto3 dependency is not installed")
 
         # Store maxInlineBytes and construct the Object Storage helper when configured.
         self._maxInlineBytes: int = maxInlineBytes
@@ -305,13 +323,10 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
         else:
             self._objectStorage = None
 
-        self._statsStorage: StatsStorage = statsStorage if statsStorage is not None else NullStatsStorage()
-
         self._apiKey: str = apiKey
         self._folderId: str = folderId
         self._model: str = model
         self._language: Sequence[str] = [language] if isinstance(language, str) else list(language)
-        self._proxyConfig: Optional[ProxyConfig] = proxyConfig
         self._operationBudgetSeconds: float = operationBudgetSeconds
         self._pollIntervalSeconds: float = pollIntervalSeconds
         self._maxPollIntervalSeconds: float = maxPollIntervalSeconds
@@ -325,12 +340,14 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
             "x-folder-id": folderId,
         }
 
+        self._extraLabels["model"] = model
+
         # Dependency-firewall seam #1 (§1/§7.2): spread the already-resolved proxy
         # config into the persistent client exactly like lib.yandex_search.client and
         # lib.openweathermap.client. When proxyConfig is None, no proxy kwargs spread.
         # Typed as ProxyKwargs (a total=False TypedDict) so spreading into the httpx
         # client is type-checked the same way lib.yandex_search.client does it.
-        proxyKwargs: ProxyKwargs = proxyConfig.toKwargs() if proxyConfig is not None else ProxyKwargs()
+        proxyKwargs: ProxyKwargs = self.proxyConfig.toKwargs() if self.proxyConfig is not None else ProxyKwargs()
         self._httpClient: httpx.AsyncClient = httpx.AsyncClient(
             **proxyKwargs,
             timeout=httpx.Timeout(requestTimeoutSeconds),
@@ -348,7 +365,7 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
         """
         return _SUPPORTED_INPUT_FORMATS
 
-    async def transcribe(self, audio: ExtractedAudio, *, consumerId: Optional[str] = None) -> TranscriptionResult:
+    async def _transcribe(self, audio: ExtractedAudio) -> TranscriptionResult:
         """Transcribe format-aware ExtractedAudio through the full Yandex v3 lifecycle.
 
         For clips below ``maxInlineBytes`` the lifecycle is byte-for-byte identical
@@ -369,15 +386,13 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
         exception is also caught and mapped to PROVIDER_ERROR.  ``asyncio.CancelledError``
         propagates (``except Exception`` does not catch ``BaseException``).
 
-        Stats are recorded for **every** outcome (FINAL, NO_SPEECH, and all ERROR
-        variants) via ``_recordStats`` — best-effort, never raises (design §5.3).
+        This method does **not** record statistics itself — the base ``transcribe``
+        records stats for every outcome (FINAL, NO_SPEECH, and all ERROR variants)
+        via ``_recordStats``, best-effort and never raising (design §5.3).
 
         Args:
             audio: The format-aware audio after negotiation. ``audio.container`` drives
                 the ``container_audio.container_audio_type`` field dynamically.
-            consumerId: Optional consumer identifier for per-consumer statistics
-                rollup (design §5.2). When ``None``, stats aggregate to the global
-                rollup only.
 
         Returns:
             TranscriptionResult: FINAL/NO_SPEECH from the parsed recognition result, or
@@ -386,7 +401,6 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
             the extracted payload exceeds the inline threshold and Object Storage is
             disabled; OBJECT_STORAGE_ERROR when the Object Storage upload fails).
         """
-        startTime = time.monotonic()
         objectUri: Optional[str] = None
 
         # --- Staging: OUTSIDE the operation budget (design §4.3) ---
@@ -395,26 +409,12 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
         if len(audio.data) >= self._maxInlineBytes:
             if self._objectStorage is None:
                 # §4.2: over-threshold + OS disabled → SOURCE_TOO_LARGE.
-                result = self._errorResult(STTErrorCode.SOURCE_TOO_LARGE)
-                await self._recordStats(
-                    consumerId=consumerId,
-                    audio=audio,
-                    result=result,
-                    elapsedSeconds=time.monotonic() - startTime,
-                )
-                return result
+                return self._errorResult(STTErrorCode.SOURCE_TOO_LARGE)
             try:
                 objectUri = await self._objectStorage.upload(audio.data)
             except Exception:  # noqa: BLE001 — upload failure → OBJECT_STORAGE_ERROR
                 logger.exception("Yandex STT Object Storage upload failed")
-                result = self._errorResult(STTErrorCode.OBJECT_STORAGE_ERROR)
-                await self._recordStats(
-                    consumerId=consumerId,
-                    audio=audio,
-                    result=result,
-                    elapsedSeconds=time.monotonic() - startTime,
-                )
-                return result
+                return self._errorResult(STTErrorCode.OBJECT_STORAGE_ERROR)
 
         # --- SpeechKit operation: INSIDE the operation budget ---
         operationId: Optional[str] = None
@@ -469,12 +469,6 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
         if not operationFailed and result.status is STTResultStatus.ERROR:
             logger.warning("Yandex STT recognition parse failed: %s", result.errorCode)
 
-        await self._recordStats(
-            consumerId=consumerId,
-            audio=audio,
-            result=result,
-            elapsedSeconds=time.monotonic() - startTime,
-        )
         return result
 
     async def aclose(self) -> None:
@@ -848,51 +842,3 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
             TranscriptionResult: ``status=ERROR``, no segments, the given errorCode.
         """
         return TranscriptionResult(status=STTResultStatus.ERROR, segments=(), errorCode=errorCode)
-
-    async def _recordStats(
-        self,
-        *,
-        consumerId: Optional[str],
-        audio: ExtractedAudio,
-        result: TranscriptionResult,
-        elapsedSeconds: float,
-    ) -> None:
-        """Record one STT attempt. Best-effort — never raises (mirrors lib/ai).
-
-        Records per-transcription statistics for every outcome (FINAL, NO_SPEECH,
-        and all ERROR variants). The ``except Exception`` (not ``BaseException``)
-        ensures ``asyncio.CancelledError`` propagates unchanged.
-
-        Args:
-            consumerId: Consumer identifier (e.g. ``str(chatId)``). ``None``
-                → global rollup only.
-            audio: The extracted audio that was transcribed (used for
-                ``durationMs``).
-            result: The transcription outcome to record.
-            elapsedSeconds: Wall-clock seconds from ``transcribe`` entry to
-                result (includes upload on the Object-Storage path).
-
-        Returns:
-            None
-        """
-        try:
-            await self._statsStorage.record(
-                stats={
-                    "generation_stt": 1,
-                    "request_count": 1,
-                    "audio_duration_ms": audio.durationMs,
-                    "elapsed_time": elapsedSeconds,
-                    "is_error": 1 if result.status is STTResultStatus.ERROR else 0,
-                    f"status_{result.status.name}": 1,
-                },
-                consumerId=consumerId,
-                labels={
-                    "provider": "yandex-speechkit",
-                    "generationType": "stt",
-                    "status": result.status.name,
-                    "model": self._model,
-                },
-            )
-        except Exception:
-            logger.error("Failed to record STT stats")
-            logger.exception("STT stats recording failure")

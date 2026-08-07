@@ -5,13 +5,11 @@ a URI that SpeechKit can consume via the ``uri`` submit-body field.  The
 helper is **Yandex-specific**: the endpoint and region are constants baked
 into the module, not config knobs.  Only ``YandexSpeechKitProvider`` uses it.
 
-**Guarded ``boto3`` import.** ``boto3`` is an external dependency (already
-pinned in ``requirements.direct.txt``) but new to ``lib/``'s import graph.
-The module-level ``try/except ImportError`` sets ``_BOTO3_AVAILABLE``; when
-``False`` the module imports cleanly but construction of
-``YandexObjectStorage`` will fail at the boto3 usage site.  The provider
-(Phase 2) checks ``_BOTO3_AVAILABLE`` before constructing the helper and
-raises ``ValueError`` when Object Storage is configured but boto3 is absent.
+**Hard ``boto3`` import.** ``boto3`` is an external dependency (pinned in
+``requirements.direct.txt``) and is imported unconditionally at module
+top-level — an absent boto3 fails at import time, so importing this module
+(and the provider that imports it) requires boto3 installed even when Object
+Storage is not configured.
 
 **URI scheme — smoke pending.** The exact URI scheme SpeechKit consumes
 (``s3://bucket/key`` vs HTTPS) is a smoke-test verification item
@@ -27,23 +25,15 @@ import asyncio
 import logging
 import uuid
 
-try:
-    import boto3
-    from botocore.config import Config as BotocoreConfig
-    from botocore.exceptions import ClientError
+import boto3
+from botocore.config import Config as BotocoreConfig
+from botocore.exceptions import ClientError
 
-    _BOTO3_AVAILABLE = True
-
-    # Bounded botocore config: finite connect/read timeouts and a capped retry
-    # count so a wedged Object Storage endpoint cannot hold an STT semaphore slot
-    # indefinitely (design §3.1).
-    _STT_S3_CONFIG = BotocoreConfig(
-        connect_timeout=5,
-        read_timeout=30,
-        retries={"max_attempts": 3, "mode": "standard"},
-    )
-except ImportError:
-    _BOTO3_AVAILABLE = False
+_STT_S3_CONFIG = BotocoreConfig(
+    connect_timeout=5,
+    read_timeout=30,
+    retries={"max_attempts": 3, "mode": "standard"},
+)
 
 logger = logging.getLogger(__name__)
 

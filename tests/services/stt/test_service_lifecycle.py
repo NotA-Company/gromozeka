@@ -3,9 +3,9 @@
 Covers: singleton identity, disabled no-op, enabled provider construction
 with proxy resolution, idempotent initialization, isEnabled after failed
 init, full provider kwarg forwarding, aclose behaviour, unknown-provider
-validation, provider ValueError propagation, stats-enabled filtering,
-statsStorage forwarding, partial Object-Storage config rejection, and
-default-off invariant (v1.1 Phase 5).
+validation, provider ValueError propagation, statsStorage forwarding,
+partial Object-Storage config rejection, and default-off invariant
+(v1.1 Phase 5).
 """
 
 from __future__ import annotations
@@ -384,52 +384,7 @@ class TestInitializeIsIdempotent:
 
 
 # -----------------------------------------------------------------------
-# 11. v1.1 Phase 5 — stats-enabled is NOT forwarded to the provider
-# -----------------------------------------------------------------------
-
-
-class TestStatsEnabledNotForwardedToProvider:
-    """[stt].stats-enabled must be filtered out and not reach the provider."""
-
-    @patch("internal.services.stt.service.ProxyService")
-    def test_statsEnabledNotInProviderKwargs(self, mockProxyServiceCls: Mock) -> None:
-        """Provider constructor receives no statsEnabled kwarg when stats-enabled=true."""
-        mockProxyService = MagicMock()
-        mockProxyService.resolveProxy = Mock(return_value=MagicMock())
-        mockProxyServiceCls.getInstance = Mock(return_value=mockProxyService)
-
-        config = _validSttConfig()
-        config["stats-enabled"] = True
-
-        mockProviderCls = MagicMock()
-        with patch.dict(STT_PROVIDERS_MAP, {"yandex-speechkit": mockProviderCls}):
-            svc = STTService.getInstance()
-            svc.initialize(_makeConfigManager(config))
-
-        callKwargs = mockProviderCls.call_args[1]
-        assert "statsEnabled" not in callKwargs
-
-    @patch("internal.services.stt.service.ProxyService")
-    def test_statsEnabledNotInProviderKwargsWhenFalse(self, mockProxyServiceCls: Mock) -> None:
-        """Provider constructor receives no statsEnabled kwarg when stats-enabled=false."""
-        mockProxyService = MagicMock()
-        mockProxyService.resolveProxy = Mock(return_value=MagicMock())
-        mockProxyServiceCls.getInstance = Mock(return_value=mockProxyService)
-
-        config = _validSttConfig()
-        config["stats-enabled"] = False
-
-        mockProviderCls = MagicMock()
-        with patch.dict(STT_PROVIDERS_MAP, {"yandex-speechkit": mockProviderCls}):
-            svc = STTService.getInstance()
-            svc.initialize(_makeConfigManager(config))
-
-        callKwargs = mockProviderCls.call_args[1]
-        assert "statsEnabled" not in callKwargs
-
-
-# -----------------------------------------------------------------------
-# 12. v1.1 Phase 5 — statsStorage is forwarded to the provider
+# 11. v1.1 Phase 5 — statsStorage is forwarded to the provider
 # -----------------------------------------------------------------------
 
 
@@ -469,7 +424,7 @@ class TestStatsStorageForwardedToProvider:
 
 
 # -----------------------------------------------------------------------
-# 13. v1.1 Phase 5 — partial Object-Storage config → ValueError
+# 12. v1.1 Phase 5 — partial Object-Storage config → ValueError
 # -----------------------------------------------------------------------
 
 
@@ -512,7 +467,7 @@ class TestPartialObjectStorageConfigRaisesValueError:
 
 
 # -----------------------------------------------------------------------
-# 14. v1.1 Phase 5 — inline-only when no OS config (provider._objectStorage is None)
+# 13. v1.1 Phase 5 — inline-only when no OS config (provider._objectStorage is None)
 # -----------------------------------------------------------------------
 
 
@@ -539,41 +494,21 @@ class TestInlineOnlyDefaultNoObjectStorage:
 
 
 # -----------------------------------------------------------------------
-# 15. v1.1 Phase 5 — stats-enabled true/false does not affect OS/inline
+# 14. v1.1 Phase 5 — full OS config initializes without ValueError
 # -----------------------------------------------------------------------
 
 
-class TestStatsEnabledIndependentOfObjectStorage:
-    """stats-enabled flag is independent of Object-Storage configuration."""
+class TestFullOsConfigInitializes:
+    """Full Object-Storage config initializes without ValueError; statsStorage=None."""
 
     @patch("internal.services.stt.service.ProxyService")
-    def test_statsEnabledTrueWithNoOs(self, mockProxyServiceCls: Mock) -> None:
-        """stats-enabled=true with no OS config → no ValueError, provider has no OS kwargs."""
+    def test_fullOsConfigWithStatsStorageNone(self, mockProxyServiceCls: Mock) -> None:
+        """Full OS config → no ValueError, provider receives statsStorage=None."""
         mockProxyService = MagicMock()
         mockProxyService.resolveProxy = Mock(return_value=MagicMock())
         mockProxyServiceCls.getInstance = Mock(return_value=mockProxyService)
 
         config = _validSttConfig()
-        config["stats-enabled"] = True
-
-        mockProviderCls = MagicMock()
-        with patch.dict(STT_PROVIDERS_MAP, {"yandex-speechkit": mockProviderCls}):
-            svc = STTService.getInstance()
-            svc.initialize(_makeConfigManager(config))
-
-        assert svc.isEnabled() is True
-        callKwargs = mockProviderCls.call_args[1]
-        assert "objectStorageBucket" not in callKwargs
-
-    @patch("internal.services.stt.service.ProxyService")
-    def test_statsEnabledFalseWithOs(self, mockProxyServiceCls: Mock) -> None:
-        """stats-enabled=false with full OS config → no ValueError, statsStorage=None."""
-        mockProxyService = MagicMock()
-        mockProxyService.resolveProxy = Mock(return_value=MagicMock())
-        mockProxyServiceCls.getInstance = Mock(return_value=mockProxyService)
-
-        config = _validSttConfig()
-        config["stats-enabled"] = False
         config["object-storage-bucket"] = "test-bucket"
         config["object-storage-prefix"] = "stt/"
         config["object-storage-key-id"] = "test-key-id"
@@ -590,12 +525,12 @@ class TestStatsEnabledIndependentOfObjectStorage:
 
 
 # -----------------------------------------------------------------------
-# 16. v1.1 Phase 5 — default-off invariant (00-defaults config)
+# 15. v1.1 Phase 5 — default-off invariant (00-defaults config)
 # -----------------------------------------------------------------------
 
 
 class TestDefaultOffInvariant:
-    """With shipped 00-defaults config (no OS keys, stats-enabled=false),
+    """With shipped 00-defaults config (no OS keys),
     initialize succeeds, provider is inline-only, statsStorage is None."""
 
     @patch("internal.services.stt.service.ProxyService")
@@ -605,7 +540,7 @@ class TestDefaultOffInvariant:
         mockProxyService.resolveProxy = Mock(return_value=MagicMock())
         mockProxyServiceCls.getInstance = Mock(return_value=mockProxyService)
 
-        # Mirrors the 00-defaults/stt.toml keys (no OS keys, no stats-enabled)
+        # Mirrors the 00-defaults/stt.toml keys (no OS keys)
         config = _validSttConfig()
 
         mockProviderCls = MagicMock()
@@ -619,12 +554,10 @@ class TestDefaultOffInvariant:
         assert "objectStorageBucket" not in callKwargs
         # statsStorage is None (not passed → defaults to None)
         assert callKwargs["statsStorage"] is None
-        # stats-enabled not forwarded
-        assert "statsEnabled" not in callKwargs
 
 
 # -----------------------------------------------------------------------
-# 17. v1.1 Phase 5 — max-inline-bytes forwarded to provider
+# 16. v1.1 Phase 5 — max-inline-bytes forwarded to provider
 # -----------------------------------------------------------------------
 
 

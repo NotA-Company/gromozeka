@@ -11,7 +11,7 @@ Covers (per ``docs/design/lib-stt-v1.md`` §8):
 
 import inspect
 from collections.abc import Sequence
-from typing import Optional, Tuple
+from typing import Tuple
 
 import pytest
 
@@ -65,6 +65,7 @@ class _StubProvider(AbstractSTTProvider):
         Args:
             formats: The ordered accepted input formats to expose.
         """
+        super().__init__()
         self._formats = formats
         self.closed = False
 
@@ -76,12 +77,11 @@ class _StubProvider(AbstractSTTProvider):
         """
         return self._formats
 
-    async def transcribe(self, audio: ExtractedAudio, *, consumerId: Optional[str] = None) -> TranscriptionResult:
+    async def _transcribe(self, audio: ExtractedAudio) -> TranscriptionResult:
         """Return a NO_SPEECH result for any input (stub never errors).
 
         Args:
             audio: The extracted audio to transcribe (ignored by the stub).
-            consumerId: Ignored by the stub.
 
         Returns:
             TranscriptionResult: A NO_SPEECH result with no segments.
@@ -113,13 +113,13 @@ def testAbstractProviderCannotBeInstantiated() -> None:
 
 
 def testAbstractMembersAreAbstract() -> None:
-    """supportedInputFormats, transcribe, and aclose are all abstract.
+    """supportedInputFormats, _transcribe, and aclose are all abstract.
 
     Returns:
         None
     """
     abstractNames = AbstractSTTProvider.__abstractmethods__
-    assert {"supportedInputFormats", "transcribe", "aclose"} <= abstractNames
+    assert {"supportedInputFormats", "_transcribe", "aclose"} <= abstractNames
 
 
 # ============================================================================
@@ -251,12 +251,11 @@ class _RaisingTranscribeProvider(_StubProvider):
     ``supportedInputFormats`` / ``aclose`` from :class:`_StubProvider`.
     """
 
-    async def transcribe(self, audio: ExtractedAudio, *, consumerId: Optional[str] = None) -> TranscriptionResult:
+    async def _transcribe(self, audio: ExtractedAudio) -> TranscriptionResult:
         """Raise an unexpected RuntimeError instead of returning a result.
 
         Args:
             audio: The extracted audio (ignored).
-            consumerId: Ignored.
 
         Returns:
             TranscriptionResult: Never returns; always raises RuntimeError.

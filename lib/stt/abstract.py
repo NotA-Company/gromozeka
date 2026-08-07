@@ -7,16 +7,23 @@ provider and its lifecycle) and consumed by ``audio.py`` (which reads
 :attr:`AbstractSTTProvider.supportedInputFormats` to negotiate pass-through vs.
 transcode).
 
-This module imports only the standard library (``abc``, ``logging``,
-``collections.abc``) and :mod:`lib.stt.models` / :mod:`lib.stt.exceptions` — no
-``internal.*`` or singleton-service imports (the ``lib/stt`` dependency firewall,
-``docs/design/lib-stt-v1.md`` §1).
+This module imports the standard library (``abc``, ``logging``,
+``collections.abc``, ``time``, ``typing``), :mod:`lib.proxy` (for the
+injected, already-resolved :class:`~lib.proxy.ProxyConfig`), :mod:`lib.stats`
+(for :class:`~lib.stats.stats_storage.StatsStorage` /
+:class:`~lib.stats.stats_storage.NullStatsStorage`), and :mod:`lib.stt.models`
+/ :mod:`lib.stt.exceptions` — no ``internal.*`` or singleton-service imports
+(the ``lib/stt`` dependency firewall, ``docs/design/lib-stt-v1.md`` §1).
 """
 
 import logging
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import Optional
+from typing import Dict, Optional
+
+from lib.proxy import ProxyConfig
+from lib.stats import NullStatsStorage, StatsStorage
 
 from . import audio
 from .exceptions import STTExtractionError
@@ -48,6 +55,23 @@ class AbstractSTTProvider(ABC):
     ``transcribe``.
     """
 
+    __slots__ = ("proxyConfig", "statsStorage", "_extraLabels")
+
+    def __init__(
+        self,
+        *,
+        proxyConfig: Optional[ProxyConfig] = None,
+        statsStorage: Optional[StatsStorage] = None,
+        **extraKwargs,
+    ) -> None:
+
+        self.proxyConfig: Optional[ProxyConfig] = proxyConfig
+        """The injected, already-resolved proxy config, or ``None`` for no proxy."""
+        self.statsStorage: StatsStorage = statsStorage if statsStorage is not None else NullStatsStorage()
+        """The stats storage used by :meth:`_recordStats`; ``NullStatsStorage`` (no-op) by default."""
+        self._extraLabels: Dict[str, str] = {}
+        """Extra labels for lib/stats logging purposes"""
+
     @abstractmethod
     def supportedInputFormats(self) -> Sequence[AudioFormatSpec]:
         """Ordered container formats this provider accepts inline.
@@ -62,7 +86,6 @@ class AbstractSTTProvider(ABC):
             container formats.
         """
 
-    @abstractmethod
     async def transcribe(self, audio: ExtractedAudio, *, consumerId: Optional[str] = None) -> TranscriptionResult:
         """Transcribe format-aware ExtractedAudio.
 
@@ -71,8 +94,15 @@ class AbstractSTTProvider(ABC):
         container travels inside ``ExtractedAudio.container``, not as a separate
         argument). Returns a :class:`~lib.stt.models.TranscriptionResult` for
         every expected outcome, including failures
-        (``TranscriptionResult(status=ERROR, errorCode=...)``); **never raises**
-        for expected provider/transport/protocol failures.
+        (``TranscriptionResult(status=ERROR, errorCode=...)``); **never raises**.
+
+        Wraps the abstract :meth:`_transcribe` with the never-raise +
+        statistics boundary: the call is timed, any unexpected ``Exception`` is
+        caught and mapped to ``TranscriptionResult(status=ERROR,
+        errorCode=PROVIDER_ERROR)`` (``asyncio.CancelledError``, a
+        ``BaseException``, propagates unchanged), and the outcome — FINAL,
+        NO_SPEECH, or ERROR — is recorded best-effort via :meth:`_recordStats`
+        (never raises).
 
         Args:
             audio: The format-aware audio handed to the provider after
@@ -83,6 +113,46 @@ class AbstractSTTProvider(ABC):
                 rollup (e.g. ``str(chatId)``). When ``None``, stats aggregate to
                 the global rollup only. Keyword-only, backward-compatible default
                 (design §5.2).
+
+        Returns:
+            TranscriptionResult: The provider-neutral outcome. FINAL with the
+            recognized segments, NO_SPEECH when recognition produced no
+            non-empty final segment, or ERROR with an
+            :class:`~lib.stt.models.STTErrorCode` for an expected failure.
+        """
+        startTime = time.monotonic()
+        try:
+            ret = await self._transcribe(audio=audio)
+        except Exception:
+            logger.exception("STT transcribe failed with unexpected exception")
+            ret = TranscriptionResult(status=STTResultStatus.ERROR, segments=(), errorCode=STTErrorCode.PROVIDER_ERROR)
+        await self._recordStats(
+            consumerId=consumerId,
+            audio=audio,
+            result=ret,
+            elapsedSeconds=time.monotonic() - startTime,
+        )
+        return ret
+
+    @abstractmethod
+    async def _transcribe(self, audio: ExtractedAudio) -> TranscriptionResult:
+        """Transcribe format-aware ExtractedAudio.
+
+        Accepts :class:`~lib.stt.models.ExtractedAudio` ONLY — no separate
+        ``audioFormat`` / ``withTimestamps`` / chat-settings arguments (the
+        container travels inside ``ExtractedAudio.container``, not as a separate
+        argument). Returns a :class:`~lib.stt.models.TranscriptionResult` for
+        every expected outcome, including failures
+        (``TranscriptionResult(status=ERROR, errorCode=...)``); ``_transcribe``
+        should return ``ERROR`` results for expected
+        provider/transport/protocol failures. Unexpected exceptions are caught
+        by the base :meth:`transcribe` and mapped to ``PROVIDER_ERROR``.
+
+        Args:
+            audio: The format-aware audio handed to the provider after
+                negotiation (the source container on a pass-through path, or the
+                transcode target — e.g. ``OGG_OPUS`` — on a transcode path).
+                ``channels`` is always the source channel count (no downmix).
 
         Returns:
             TranscriptionResult: The provider-neutral outcome. FINAL with the
@@ -136,3 +206,55 @@ class AbstractSTTProvider(ABC):
         Returns:
             None
         """
+
+    async def _recordStats(
+        self,
+        *,
+        consumerId: Optional[str],
+        audio: ExtractedAudio,
+        result: TranscriptionResult,
+        elapsedSeconds: float,
+    ) -> None:
+        """Record one STT attempt. Best-effort — never raises (mirrors lib/ai).
+
+        Records per-transcription statistics for every outcome (FINAL, NO_SPEECH,
+        and all ERROR variants). The ``except Exception`` (not ``BaseException``)
+        ensures ``asyncio.CancelledError`` propagates unchanged.
+
+        Args:
+            consumerId: Consumer identifier (e.g. ``str(chatId)``). ``None``
+                → global rollup only.
+            audio: The extracted audio that was transcribed (used for
+                ``durationMs``).
+            result: The transcription outcome to record.
+            elapsedSeconds: Wall-clock seconds from ``transcribe`` entry to
+                result (includes upload on the Object-Storage path).
+
+        Returns:
+            None
+        """
+        try:
+            labels = {
+                "provider": type(self).__name__,
+                "generationType": "stt",
+                "status": result.status,
+                **self._extraLabels,
+            }
+            if result.errorCode:
+                labels["errorCode"] = result.errorCode
+
+            await self.statsStorage.record(
+                stats={
+                    "generation_stt": 1,
+                    "request_count": 1,
+                    "audio_duration_ms": audio.durationMs,
+                    "elapsed_time": elapsedSeconds,
+                    "is_error": 1 if result.status is STTResultStatus.ERROR else 0,
+                    f"status_{result.status}": 1,
+                },
+                consumerId=consumerId,
+                labels=labels,
+            )
+        except Exception:
+            logger.error("Failed to record STT stats")
+            logger.exception("STT stats recording failure")

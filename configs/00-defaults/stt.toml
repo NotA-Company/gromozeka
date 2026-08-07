@@ -24,10 +24,6 @@ max-result-bytes = 5242880
 # keeps base64-expanded requests under the 60 MB vendor inline ceiling.
 max-inline-bytes = 41943040
 
-# v1.1 — gate-4 statistics enable flag. Independent of [stats].enabled.
-# When true, per-transcription stats are recorded (eventType="stt_request").
-stats-enabled = false
-
 # v1.1 — gate-3 Object Storage (Yandex Object Storage, S3-compatible).
 # Implicitly enabled when object-storage-bucket is set together with both keys;
 # when the bucket is unset, STT is inline-only and clips whose extracted form
