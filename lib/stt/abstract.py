@@ -208,6 +208,7 @@ class AbstractSTTProvider(ABC):
             )
             return await self.transcribe(audioData, consumerId=consumerId)
         except STTExtractionError as exc:
+            logger.exception("STT extraction failure")
             return TranscriptionResult(status=STTResultStatus.ERROR, segments=(), errorCode=exc.errorCode)
         except Exception:  # noqa: BLE001 — never-raise boundary (defense-in-depth)
             logger.exception("Unexpected STT failure")
