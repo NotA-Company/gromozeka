@@ -1854,12 +1854,18 @@ class BaseBotHandler(CommandHandlerMixin):
                         logger.error(f"{ret.type}#{ret.id} Error during checking age:")
                         logger.exception(e)
 
+                case MediaStatus.FAILED:
+                    logger.debug(
+                        f"{ret.type}#{ret.id} already in database but in status "
+                        f"{mediaAttachment['status']} and is in error, reprocessing it"
+                    )
+
                 case _:
                     mimeType = str(mediaAttachment["mime_type"])
-                    # NOTE: Currently we can process only images
-                    if mimeType.lower().startswith("image/"):
+                    mimeTypeStart = mimeType.lower().split("/",1)[0]                    
+                    if mimeTypeStart  in ["image", "video", "audio"]:
                         logger.debug(
-                            f"{ret.type}#{ret.id} in wrong status: {mediaAttachment['status']}. Reprocessing it"
+                            f"{ret.type}#{ret.id} ({mimeType}) in wrong status: {mediaAttachment['status']}. Reprocessing it"
                         )
                     else:
                         logger.debug(f"{ret.type}#{ret.id} is {mimeType}, skipping it")
