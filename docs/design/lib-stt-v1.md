@@ -25,7 +25,7 @@ parent (`consumed by STTService / handlers per parent §X`).
 
 `lib/stt/` is the provider-neutral Speech-to-Text library: provider-neutral data models, a typed
 exception taxonomy, PyAV-based audio extraction with **container-driven format negotiation** (probe →
-pass-through / transcode; pass-through preserves source channels, transcode converts out-of-spec channels/rates via AudioResampler), transcript formatting, an abstract provider exposing a
+pass-through / transcode; pass-through preserves source channels, transcode converts out-of-spec channels/rates via AudioResampler), an abstract provider exposing a
 never-raise `stt(data)` entry, and a single concrete provider (Yandex SpeechKit v3) which the
 integration layer holds directly. It owns no DB rows, no bot state, no admission/concurrency policy,
 no caps, and no config reading.
@@ -33,7 +33,7 @@ no caps, and no config reading.
 **In / out boundary.**
 
 - **In scope for `lib/stt`:** models (incl. format descriptors), exceptions, audio extraction with
-  format negotiation, transcript formatting, the Yandex wire protocol, event parsing, and the abstract
+  format negotiation, the Yandex wire protocol, event parsing, and the abstract
   + concrete provider surface. Caps (source bytes, duration, inline payload) are **out of scope** — see
   §5 ("accepted decoded-memory gap") and §8.1.
 - **Out of scope (owned by `STTService` / handlers, per parent §5.1, §6, §8.2, §8.3, §11, §12):** the
@@ -287,12 +287,16 @@ class TranscriptionSegment:
         endMs: Segment end time in milliseconds.
         words: Sequence of TranscriptionWord, preserved in memory for
             future use even though only formatted text is persisted.
+        channelTag: Optional response-only provider channel identifier for this
+            segment; None when the provider supplied no usable tag. It is audio
+            channel metadata, not speaker diarization.
     """
 
     text: str
     startMs: int
     endMs: int
     words: Sequence[TranscriptionWord]
+    channelTag: Optional[str] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -303,6 +307,9 @@ class TranscriptionResult:
         status: The outcome category.
         segments: Sequence of TranscriptionSegment; empty unless FINAL.
         errorCode: Present iff status == ERROR; identifies the failure category.
+
+    There is deliberately no result-level channelTag: finals can belong to
+    different audio channels.
     """
 
     status: STTResultStatus
@@ -556,38 +563,24 @@ intentionally absent (see "Accepted decoded-memory gap" above). The one thing `a
 is the pass-through-vs-transcode choice, and that decision is **container/range-only** — there is no
 cap-driven routing. See §8.1 for the full cap-ownership table.
 
-## 6. Transcript formatter — MOVED OUT of `lib/stt`
+## 6. Transcript formatting — service-owned
 
-> **2026-08-02 simplification:** `lib/stt/formatter.py` was **DELETED**. The
-> formatter now lives at [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py)
-> and is **thin**. The `lib/stt` formatter contracts documented in earlier
-> revisions of this section (the `UNTRUSTED_TRANSCRIPT_HEADER` constant, XML
-> escaping of `&`/`<`/`>`, deterministic head/tail truncation to `maxTranscriptChars`
-> around a single marker, and the `[No speech detected]` sentinel) are
-> **obsolete** — they were intentionally shed. Load-bearing contract #5 about
-> the header/truncation is **no longer a `lib/stt` contract**.
+`lib/stt` returns structured `TranscriptionResult` records and does not format
+transcript text. The pure, service-owned
+[`formatTranscript(result)`](../../internal/services/stt/formatter.py) consumes
+segments in their supplied order, ignores result status/error code, strips and
+skips empty text, and returns `""` if no non-empty segment remains. It emits:
 
-**New (thin) formatter shape** — see [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py):
+- `[Ch#<tag>] [HH:MM:SS.mmm..HH:MM:SS.mmm] text` when a segment has a non-empty
+  `channelTag`;
+- `[HH:MM:SS.mmm..HH:MM:SS.mmm] text` when it does not; and
+- a single timestamp instead of a range when `startMs == endMs`.
 
-- Pure function `formatTranscript(result: TranscriptionResult) -> str`. Consumes
-  only `result.segments`; ignores `result.status`/`errorCode`.
-- One line per non-empty segment: `[HH:MM:SS.mmm] text` with millisecond precision
-  (the `.mmm` suffix is omitted when `milliseconds == 0`, yielding `[HH:MM:SS]`).
-  Hours are zero-padded to a minimum width of 2.
-- Empty segments (after stripping) are skipped; a result with all empty segments
-  yields `""` (the `[No speech detected]` sentinel is gone).
-- No untrusted-data header, no XML escaping, no truncation, no `maxTranscriptChars`
-  parameter.
-- The service maps `NO_SPEECH` → `DONE` with `description=""` (empty string).
-
-**Accepted trade-off (prompt-injection mitigation deferred):** the old
-`UNTRUSTED_TRANSCRIPT_HEADER` was a prompt-injection defense. Shedding it is an
-accepted trade-off of the simplification — prompt-injection mitigation (the
-untrusted-data label, XML escaping, never-system-role injection) becomes the
-**handler / prompt-construction layer's responsibility** when the handler round
-ships. See ADR-020 decision 7 in [`docs/llm/architecture.md`](../llm/architecture.md)
-and [`docs/archive/design/stt-next-steps.md`](../archive/design/stt-next-steps.md) §3.3. This is a tracked
-handler-round TODO, not an accident.
+The `.mmm` suffix is omitted for whole-second timestamps and hours have a
+minimum width of two digits. `channelTag` is audio-channel metadata, not a
+speaker label. The service maps both `FINAL` and `NO_SPEECH` to success; the
+latter has `description=""`. Transcript delivery is structured through the
+existing `mediaDescription` path; see the parent plan §12.5.
 
 ## 7. Yandex SpeechKit v3 provider
 
@@ -723,24 +716,19 @@ lifecycle registration (parent §9).
 
 ### 7.3 Event parsing — `lib/stt/providers/yandex_events.py` (correction #2)
 
-> **Live-wire known-unknown (load-bearing contract #4 — read before implementing or testing).**
-> Per the live-wire known-unknown (§10(a)) and parent §13.3 gate-1, the `getRecognition` transport framing/content-type is
-> **PROVISIONAL**. `yandex_events.py` is implemented per the provisional streaming-JSON spec below and
-> **must be verified/adjusted by the parent §13.3 gate-1 smoke test before release.** Do **not**
-> over-commit the parser shape in golden tests before that gate runs — golden fixtures should assert
-> the parsing *logic* (event semantics) while treating framing as provisional until gate-1 captures the
-> real wire shape.
+> **Verified recorded framing (load-bearing contract #4).** Gate-1 **PASS** is established by the
+> committed aurumentation fixtures, which record live SpeechKit `getRecognition` responses as
+> consecutive streaming JSON objects with a top-level `result` wrapper. Golden replay asserts that
+> recorded framing and the known-speech final/tag contract. `_resolveEnvelope` also accepts a bare
+> envelope only as defensive compatibility for variant or future input; it is not a release blocker.
 
-`getRecognition` is server-streaming. Official REST examples show consecutive JSON event objects, not
-one JSON document, but do not specify a stable wire framing/content-type contract. The provisional
-parser reads streaming bytes up to `max-result-bytes`, decodes UTF-8 strictly, and parses consecutive
+`getRecognition` is server-streaming. The parser reads streaming bytes up to `max-result-bytes`,
+decodes UTF-8 strictly, and parses consecutive
 objects with `JSONDecoder.raw_decode`, skipping only whitespace between objects and rejecting other
 garbage. Enforcing `max-result-bytes` here is the one surviving module-level cap inside `lib/stt`
 (the result-body cap, enforced at module level by `yandex_events.py`); exceeding it yields
-`PROTOCOL_ERROR`. (This is all that remains of the old "caps enforced at module level" contract #3 —
-every `extractAudio` cap moved to `STTService` per §5/§8.1, and the transcript-char formatter cap was
-deleted with `lib/stt/formatter.py` in the 2026-08-02 simplification; only the result-body cap
-remains.)
+`PROTOCOL_ERROR`. Source, decoded-audio, and transcript-length caps are not
+`lib/stt` parser concerns; only the result-body cap remains here.
 
 Relevant events are under `result.final` and `result.finalRefinement.normalizedText`. For each final
 event:
@@ -750,7 +738,11 @@ event:
   `int64` as strings;
 - preserve word text and millisecond ranges in memory (the `TranscriptionWord` tuple);
 - use a matching `finalRefinement.finalIndex` to **replace** the raw final text with normalized text
-  rather than emitting both;
+  rather than emitting both, while retaining the final's selected `channelTag`;
+- read the canonical envelope-level non-empty string `channelTag` into that segment.
+  Deprecated `final.channelTag` is a fallback only when the canonical value is absent,
+  null, or empty. Missing/null/empty values become `None`; any non-string wire value
+  makes the whole result `PROTOCOL_ERROR` rather than becoming visible transcript text;
 - ignore non-final update events for persistence;
 - **sort final segments by start time** before formatting.
 
@@ -847,31 +839,18 @@ lib/stt test matrix; parent §13.2 summarizes and references it.
   failure-category members as of v1.1 — `AUDIO_TOO_LARGE` is gone, `OBJECT_STORAGE_ERROR` was added), and `STTAudioContainerType` (lowercase values).
 - `STTAudioContainerType.toYandexSpeechKit()` wire-label mapping (`wav` → `WAV`, `ogg-opus` →
   `OGG_OPUS`, `mp3` → `MP3`).
-- Frozen/slot record construction and immutability; `TranscriptionResult.errorCode` default.
+- Frozen/slot record construction and immutability; `TranscriptionSegment.channelTag`
+  default is `None`, and `TranscriptionResult.errorCode` default. There is no
+  result-level channel tag because a result may contain finals from multiple channels.
 - The typed extraction-exception taxonomy (3 subclasses): the 1:1 (and shared) exception →
   `STTErrorCode` mapping and the `isinstance` relationship to `STTExtractionError`.
 
-**Transcript formatter — MOVED OUT (see §6)**
+**Service formatter coverage (outside `tests/lib/stt/`; see §6)**
 
-> The bullets below described the **deleted** `lib/stt/formatter.py` (header +
-> `[HH:MM:SS]` lines, XML escaping, `[No speech detected]` sentinel, deterministic
-> `maxTranscriptChars` truncation). The 2026-08-02 simplification deleted that
-> module: the formatter moved to
-> [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py)
-> and is now **thin** — no header, no XML escaping, no truncation, no
-> `max-transcript-chars` parameter, no sentinel (`NO_SPEECH` → `""`). Those
-> bullets are retained as the historical record of what `lib/stt` used to test;
-> there are **no** formatter tests under `tests/lib/stt/` anymore (the
-> `test_formatter.py` referenced in §9 was deleted with the module).
-
-- Basic one/multi-segment formatting (header + `[HH:MM:SS] text` lines); timestamp zero-padding and
-  hours ≥ 2 digits.
-- Ordering: the formatter does NOT re-sort (segments emitted in given order).
-- XML escaping with the `&`-first ordering; skipping whitespace-only segments.
-- The `[No speech detected]` sentinel (no header prepended); under-cap results returned unchanged.
-- Deterministic head/tail truncation to an EXACT character boundary, including the marker digit-width
-  fixed-point (crossing powers of 10); the header is counted inside the cap (output never exceeds it).
-- Int and decimal-string timestamp inputs; malformed-timestamp rejection (event-parsing side, §7.3).
+- `tests/services/stt/test_formatter.py` asserts exact tagged and untagged range
+  output and the equal-timestamp single-time form.
+- `tests/services/stt/test_transcribe.py` verifies that tagged output propagates
+  through `STTService` and that `NO_SPEECH` produces an empty description.
 
 **Abstract provider (`stt()` never-raise surface — load-bearing)**
 
@@ -916,7 +895,12 @@ lib/stt test matrix; parent §13.2 summarizes and references it.
   `audio.container.toYandexSpeechKit()`); operation polling; separate result fetch; best-effort delete.
 - Concatenated/whitespace-delimited result events and split HTTP chunks.
 - Multiple finals, top-alternative selection, out-of-order finals, `finalRefinement` replacement by
-  `finalIndex`, and no duplicate text.
+  `finalIndex`, no duplicate text, and selected tag retention through refinement.
+- Canonical envelope-level `channelTag` precedence, deprecated final-level fallback,
+  missing/null/empty normalization to `None`, malformed non-string tags returning
+  `PROTOCOL_ERROR`, and multi-channel chronological ordering.
+- Golden replay of known-speech recordings requires `FINAL`, non-empty segments, and
+  the stable per-segment tag `"0"`, so a dropped final cannot hide behind `NO_SPEECH`.
 - `int64` times as strings and integers; no speech.
 - Operation error, authentication error, 429/5xx, timeout, malformed JSON, trailing garbage,
   result-body cap, and cleanup failure.
@@ -924,23 +908,20 @@ lib/stt test matrix; parent §13.2 summarizes and references it.
 - **Assert the `finally`-based delete ordering** (§7.2): the DELETE runs after fetch succeeded but
   before parse, and also when submit/poll raised, without invalidating a successful transcript.
 
-> Per load-bearing contract #4, golden HTTP tests assert the parsing/wire **logic**; the `getRecognition`
-> framing/content-type assertions stay provisional until parent §13.3 gate-1 captures the real shape.
+> Per load-bearing contract #4, golden HTTP tests replay and assert the **verified recorded**
+> `getRecognition` framing/content semantics. Bare-envelope parsing remains defensive compatibility.
 
 ## 10. Inherited release gates & open questions
 
-**(a) Live-wire known-unknown (load-bearing contract #4).** The `getRecognition` transport
-framing/content-type is **PROVISIONAL** (§7.3; parent §13.3 gate-1). `yandex_events.py` is implemented
-per the provisional streaming-JSON spec and **must be verified/adjusted by the gate-1 smoke test
-before release.** Do not treat the parser shape as fixed until that gate runs.
+**(a) Live-wire framing — VERIFIED/PASS.** The committed aurumentation fixtures are recorded live
+Yandex SpeechKit `getRecognition` responses. They verify the wrapped streaming-JSON framing and the
+known-speech final/tag contract. `_resolveEnvelope` retains bare-envelope support solely as defensive
+compatibility; the parser remains isolated so a future provider wire change has one focused update point.
 
 **(b) Manual gates from parent §13.3 that block *enabling*/releasing STT but NOT lib/stt
 code-completion.** These require credentials or platform/runtime behavior and cannot be proven by
 static review (full detail in parent §13.3):
 
-1. **Real recognition capture** — run one short real recognition and capture only redacted structural
-   output to confirm submit, operation, event framing, refinement ordering, and delete. (This **is**
-   the live-wire gate referenced in (a).)
 2. **Model confirmation** — confirm whether `general` or `deferred-general` is the appropriate
    production model; retain the configured model either way.
 3. **Inline-limit semantics** — confirm the provider's inline-limit semantics (60 MB inline vs. base64
@@ -992,7 +973,7 @@ reaches `lib/stt`, or reaches it unbounded).
 | Inline payload | 41,943,040 bytes (40 MiB; `maxInlineBytes`) | **STTService** (source-byte cap) + **lib/stt (Yandex provider, v1.1)** (routing threshold on extracted payload). The service bounds the *source* before it reaches `lib/stt`; as of v1.1 the provider also checks `len(audio.data) >= maxInlineBytes` after extraction to decide inline vs Object-Storage routing (§7.1). The service keeps the conservative 40 MiB default so base64-expanded requests stay under the 60 MB vendor limit. |
 | Decoded duration | 600 seconds | **STTService** — bounds admission before `extractAudio` is called; `lib/stt` no longer rejects or stop-at-caps on duration. Bounded upstream by the 300 s media-poll (parent §13.3 gate-4); do not relax toward the 4 h vendor ceiling. |
 | Result body | 5,242,880 bytes (5 MiB) | **lib/stt (`yandex_events.py`)** — streaming byte cap before parse (constructor-supplied `maxResultBytes`). |
-| Persisted transcript | (removed) | **gone** — the 2026-08-02 simplification deleted `lib/stt/formatter.py` and its `maxTranscriptChars` parameter. The thin formatter now lives at [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py) and does not truncate; there is no persisted-transcript cap. |
+| Persisted transcript | (removed) | **gone** — the service formatter at [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py) does not truncate; there is no persisted-transcript cap. |
 | Global workers | 2 | **STTService** — semaphore; never reaches `lib/stt`. |
 | Admission wait | 20 seconds | **STTService** — admission; never reaches `lib/stt`. |
 | HTTP request | 30 seconds | **lib/stt (Yandex provider)** — per `httpx` request; value passed in at construction. |

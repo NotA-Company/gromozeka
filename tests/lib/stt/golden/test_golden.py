@@ -29,14 +29,13 @@ cannot contain the literal API-key substring). :func:`_recoverAudioBytesFromFixt
 ``base64.b64decode``\\ s that field and hands the bytes to
 :meth:`~tests.lib.stt.golden.scenario_runner.YandexSTTScenarioRunner.runBytes`.
 
-The replayer assertion is deliberately **"parses without ERROR"**: the
-:class:`~lib.stt.models.TranscriptionResult` status must be FINAL or NO_SPEECH,
-never ERROR. An ERROR means the parser failed on real response bytes — which
-indicates either a gate-1 framing mismatch (the provisional ``getRecognition``
-wire format differs from what the parser assumes) or a parser bug. This is
-exactly what these tests must catch. Specific segment counts / text assertions
-are tightened by the human AFTER recording + inspection (the collector discards
-the return value, so expected content is re-derived at replay time).
+The replayer assertions require FINAL status and stable response-only segment
+metadata: both committed fixtures are known speech recordings whose final
+envelopes contain ``channelTag: "0"``, so every replay must produce at least one
+segment and preserve that exact tag. This makes a parser regression that drops
+the final envelopes fail rather than silently passing as NO_SPEECH. Specific
+transcript-text assertions remain out of scope because the collector discards
+the return value.
 """
 
 from __future__ import annotations
@@ -75,6 +74,11 @@ REQUIRED_SCENARIO_KEYS: Tuple[str, ...] = (
 )
 
 REQUIRED_KWARGS_KEYS: Tuple[str, ...] = ("audioPath",)
+
+# Both committed SpeechKit recordings contain one final envelope with this
+# response-only per-segment metadata. Keep the assertion narrowly scoped to the
+# stable tag rather than transcript text or unrelated response details.
+EXPECTED_CHANNEL_TAG: str = "0"
 
 
 def _loadScenarios() -> List[Dict[str, Any]]:
@@ -280,7 +284,7 @@ def testGoldenFixturesAreRecorded() -> None:
 
 @pytest.mark.parametrize("fixturePath", _discoverFixtures())
 async def testReplayTranscription(fixturePath: str) -> None:
-    """Replay a recorded Yandex STT lifecycle and assert the result is not ERROR.
+    """Replay a known-speech Yandex STT lifecycle and require final tagged segments.
 
     For each recorded fixture this test:
 
@@ -300,10 +304,10 @@ async def testReplayTranscription(fixturePath: str) -> None:
        submitted), :func:`extractAudio` re-probes them as a supported container
        and passes them through verbatim, so the re-submitted body is
        byte-identical to the recording (format-agnostic replay).
-    6. Asserts the :class:`TranscriptionResult` status is FINAL or NO_SPEECH —
-       **never ERROR**. An ERROR means the parser failed on real response bytes
-       (a gate-1 framing mismatch or a parser bug). If FINAL, segments must be
-       non-empty.
+    6. Requires the :class:`TranscriptionResult` status to be FINAL. Both
+        committed fixtures are known speech recordings, so NO_SPEECH would mean
+        a parser regression dropped their final envelopes. Requires at least one
+        segment and the stable ``"0"`` channel tag on every segment.
 
     Args:
         fixturePath: Absolute path to a fixture JSON file in ``data/``.
@@ -341,26 +345,21 @@ async def testReplayTranscription(fixturePath: str) -> None:
         runner: YandexSTTScenarioRunner = YandexSTTScenarioRunner(**replayInitKwargs)
         result = await runner.runBytes(data=audioBytes)
 
-    # Core assertion: the real Yandex response must parse without ERROR.
-    # An ERROR here is the gate-1 signal — the parser choked on real bytes.
-    assert result.status is not STTResultStatus.ERROR, (
-        f"Replay produced ERROR ({result.errorCode}) for scenario '{scenarioName}'. "
-        "This indicates either:\n"
-        "  (a) a gate-1 framing mismatch — the real getRecognition wire format "
-        "differs from what _resolveEnvelope in lib/stt/providers/yandex_events.py "
-        "assumes; inspect the recorded response body in the fixture; or\n"
-        "  (b) a parser bug in parseRecognitionEvents.\n"
+    # Both committed fixtures are known speech recordings. FINAL plus non-empty
+    # tagged segments proves the parser retained their committed final envelopes.
+    assert result.status is STTResultStatus.FINAL, (
+        f"Replay produced {result.status!r} ({result.errorCode}) for known-speech scenario '{scenarioName}'. "
+        "This indicates the parser failed to retain the committed final envelope. "
         f"Fixture: {fixturePath}"
     )
-    assert result.status in (
-        STTResultStatus.FINAL,
-        STTResultStatus.NO_SPEECH,
-    ), f"Unexpected status {result.status!r} for scenario '{scenarioName}'."
-
-    if result.status is STTResultStatus.FINAL:
-        assert len(result.segments) > 0, (
-            f"FINAL status for scenario '{scenarioName}' but segments is empty — " "unexpected for a real speech clip."
-        )
+    assert len(result.segments) > 0, (
+        f"FINAL status for scenario '{scenarioName}' but segments is empty — "
+        "unexpected for a known speech recording."
+    )
+    assert all(segment.channelTag == EXPECTED_CHANNEL_TAG for segment in result.segments), (
+        f"Unexpected per-segment channel tags for scenario '{scenarioName}'. "
+        "The committed recognition response uses the stable channelTag '0'."
+    )
 
     # Always-on cheap check: at least one HTTP recording was captured.
     assert isinstance(fixture["recordings"], list)

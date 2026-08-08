@@ -432,8 +432,8 @@ outcome: STTOutcome = await STTService.getInstance().transcribeMedia(
 )
 # outcome.success is True when a transcript was produced.
 # outcome.description: the formatted transcript when success is True ("" when
-#   NO_SPEECH — the thin formatter emits [HH:MM:SS.mmm] text lines, no
-#   header/sentinel); None when success is False.
+#   NO_SPEECH — the thin formatter emits [Ch#<tag>] [start..end] text for tagged
+#   segments and [start..end] text otherwise); None when success is False.
 # outcome.errorCode: an STTErrorCode when success is False; None otherwise.
 
 # Shutdown (main.py Step 2.5, best-effort try/except, after LLM close,
@@ -456,7 +456,7 @@ This is a **thin, stateless** entry (ADR-020 decision 1). It performs no DB I/O.
 3. **Rate limiters** — per-chat (`chat-ratelimiter-queue`, keyed by `str(chatId)`) then global (`global-ratelimiter-queue`), applied when configured and `chatId is not None`. (Duration bounding is the handler's job — see ADR-020 decision 3.)
 4. **`async with self._semaphore`** — concurrency limiter (`max-concurrency` size). **No `asyncio.timeout`** (admission is unbounded; the handler bounds the turn).
 5. **`await self._provider.stt(data)`** — the `lib/stt` provider's extract + transcribe never-raise entry (ADR-020 decision 2). An unexpected raise is caught defense-in-depth → `FAILED` + `PROVIDER_ERROR`.
-6. **`_mapOutcome`** — `FINAL`/`NO_SPEECH` → `success=True` + `formatTranscript(result)` (the thin formatter at [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py) — `[HH:MM:SS.mmm] text` lines, no header/escape/truncate/sentinel; `NO_SPEECH` yields `success=True` with `description=""`); `ERROR` → `success=False` + the provider's `errorCode`.
+6. **`_mapOutcome`** — `FINAL`/`NO_SPEECH` → `success=True` + `formatTranscript(result)` (the thin formatter at [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py) emits `[Ch#<tag>] [start..end] text` for a non-empty per-segment audio-channel tag and `[start..end] text` otherwise; equal timestamps render once; `NO_SPEECH` yields `success=True` with `description=""`); `ERROR` → `success=False` + the provider's `errorCode`.
 7. Return the `STTOutcome`.
 
 A broad outer `except Exception` (never-raise boundary) catches anything else → `FAILED` + `PROVIDER_ERROR` (the service's catch-all fallback; structured logs distinguish service-caught vs provider-returned `PROVIDER_ERROR`).

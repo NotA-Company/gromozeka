@@ -4,8 +4,10 @@ Covers (per ``docs/design/lib-stt-v1.md`` §7.1/§7.2/§7.4 and the §9 test mat
 provider's full submit→poll→getRecognition→delete lifecycle using ``httpx.MockTransport``
 ONLY — no real network (§9). The fixtures assert the parsing/wire LOGIC (event
 semantics, dynamic ``container_audio_type``, never-retry submit, idempotent-GET retry,
-best-effort delete), not any provisional ``getRecognition`` framing (load-bearing
-contract #4).
+best-effort delete). This mock suite is non-authoritative for live ``getRecognition``
+framing: committed aurumentation recordings are the authoritative live data and verify
+the wrapped ``{"result": ...}`` shape; bare-envelope parsing remains defensive
+compatibility.
 
 Test cases:
 - Happy path: submit 200 → poll done:false then done:true → getRecognition finals →
@@ -93,26 +95,29 @@ def _finalEventBytes(
     text: str = "hello world",
     startMs: int = 0,
     endMs: int = 1500,
+    channelTag: Optional[str] = None,
 ) -> bytes:
-    """Build a single-final recognition body (the provisional streaming-JSON shape).
+    """Build a single-final recognition body in the verified wrapped event shape.
 
     Args:
         text: The final segment text.
         startMs: The segment start time in milliseconds.
         endMs: The segment end time in milliseconds.
+        channelTag: Optional response-only channel metadata for the final envelope.
 
     Returns:
         bytes: A UTF-8 event stream with one wrapped final event.
     """
-    event = {
-        "result": {
-            "final": {
-                "alternatives": [
-                    {"text": text, "startTimeMs": startMs, "endTimeMs": endMs},
-                ]
-            }
+    result: dict[str, object] = {
+        "final": {
+            "alternatives": [
+                {"text": text, "startTimeMs": startMs, "endTimeMs": endMs},
+            ]
         }
     }
+    event: dict[str, object] = {"result": result}
+    if channelTag is not None:
+        result["channelTag"] = channelTag
     return (json.dumps(event) + "\n").encode("utf-8")
 
 
@@ -182,10 +187,44 @@ async def testHappyPathYieldsFinalResult() -> None:
     assert result.segments[0].text == "recognized text"
     assert result.segments[0].startMs == 0
     assert result.segments[0].endMs == 2000
+    assert result.segments[0].channelTag is None
     # Submit happened once, delete happened once with the operation_id query param.
     assert len(submitRequests) == 1
     assert len(deleteRequests) == 1
     assert deleteRequests[0].url.params.get("operation_id") == "op-123"
+
+
+async def testRecognitionChannelTagIsPreservedOnSegment() -> None:
+    """A channel-tagged recognition response exposes metadata on its segment only.
+
+    This exercises the provider's public ``transcribe`` path through its real
+    ``_transcribe`` implementation and ``parseRecognitionEvents`` integration,
+    rather than testing the parser in isolation.
+
+    Returns:
+        None
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == _SUBMIT_PATH:
+            return httpx.Response(200, json={"id": "op-123", "done": False})
+        if request.method == "GET" and request.url.path.startswith("/operations/"):
+            return httpx.Response(200, json={"id": "op-123", "done": True})
+        if request.method == "GET" and request.url.path == _GET_RECOGNITION_PATH:
+            return httpx.Response(200, content=_finalEventBytes("tagged segment", 0, 2000, "channel-0"))
+        if request.method == "DELETE" and request.url.path == _DELETE_RECOGNITION_PATH:
+            return httpx.Response(204)
+        return httpx.Response(404)
+
+    provider = await _provider(handler)
+    try:
+        result = await provider.transcribe(_audio())
+    finally:
+        await provider.aclose()
+
+    assert result.status is STTResultStatus.FINAL
+    assert tuple(segment.channelTag for segment in result.segments) == ("channel-0",)
+    assert not hasattr(result, "channelTag")
 
 
 # ============================================================================

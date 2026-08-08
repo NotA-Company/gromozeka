@@ -13,12 +13,12 @@ Covers (per ``docs/design/lib-stt-v1.md`` §7.3 / §9):
 - Result-body cap (§8.1): over-cap → ERROR/PROTOCOL_ERROR; at-cap → parses.
 - Malformed input never raises: invalid UTF-8, broken JSON, trailing garbage, a
   non-numeric timestamp, a wrong-typed field all → ERROR/PROTOCOL_ERROR.
-- Provisional-framing robustness: events without the ``result`` wrapper still parse.
+- Defensive compatibility: events without the ``result`` wrapper still parse.
 
-Per load-bearing contract #4 (§7.3 / §10(a)), the golden fixtures assert the
-parsing LOGIC (event semantics) against the DOCUMENTED provisional streaming-JSON
-shape; the ``getRecognition`` transport framing/content-type stays provisional
-until the parent §13.3 gate-1 smoke test captures the real wire shape.
+Per load-bearing contract #4 (§7.3 / §10(a)), committed aurumentation golden
+fixtures record live SpeechKit responses and verify the ``getRecognition``
+streaming-JSON framing, including its ``result`` wrapper. Bare-envelope parsing
+is retained only as defensive compatibility for variant or future input.
 """
 
 import json
@@ -38,25 +38,25 @@ _ROOMY_CAP: int = 10 * 1024 * 1024
 
 
 # ============================================================================
-# Fixture builders — construct the DOCUMENTED provisional streaming-JSON shape.
+# Fixture builders — construct the verified streaming-JSON shape.
 #
 # Each *_event() helper returns the StreamingResponse EVENT PAYLOAD (the inner
 # object holding the oneof Event). _wire() wraps each payload in {"result": ...}
-# (the §7.3 "result.final" documented shape), JSON-encodes them, and joins with
-# newlines into the provisional event stream. Pass wrapped=False for the bare
-# framing-robustness cases.
+# (the recorded §7.3 ``result.final`` shape), JSON-encodes them, and joins with
+# newlines into the event stream. Pass wrapped=False for defensive-compatibility
+# cases.
 # ============================================================================
 
 
 def _wire(eventPayloads: List[Dict[str, object]], *, wrapped: bool = True) -> bytes:
-    """Serialize event payloads into the provisional streaming-JSON byte stream.
+    """Serialize event payloads into the verified streaming-JSON byte stream.
 
     Args:
         eventPayloads: The inner StreamingResponse event objects (each carrying
             one oneof Event such as ``final`` / ``finalRefinement`` / ``partial``).
         wrapped: When True (default), wrap each payload in ``{"result": ...}`` per
-            the §7.3 documented shape. When False, emit payloads bare (used by the
-            framing-robustness test).
+            the recorded §7.3 shape. When False, emit payloads bare for the
+            defensive-compatibility test.
 
     Returns:
         bytes: The newline-joined, UTF-8 encoded event stream.
@@ -74,6 +74,8 @@ def _finalEvent(
     endMs: object,
     words: Optional[List[Dict[str, object]]] = None,
     extraAlternatives: Optional[List[Dict[str, object]]] = None,
+    channelTag: Optional[object] = None,
+    includeChannelTag: bool = False,
 ) -> Dict[str, object]:
     """Build a ``final`` StreamingResponse event payload.
 
@@ -84,6 +86,10 @@ def _finalEvent(
         words: Optional words list for the first alternative.
         extraAlternatives: Additional (lower-ranked) alternatives to assert that
             only the first is consumed.
+        channelTag: Deprecated final-level channel tag used only as a fallback
+            when the canonical envelope-level value is absent.
+        includeChannelTag: Whether to emit the deprecated field even when its
+            value is null.
 
     Returns:
         Dict[str, object]: The ``{"final": {"alternatives": [...]}}`` payload.
@@ -94,7 +100,10 @@ def _finalEvent(
     alternatives: List[Dict[str, object]] = [firstAlternative]
     if extraAlternatives is not None:
         alternatives.extend(extraAlternatives)
-    return {"final": {"alternatives": alternatives}}
+    final: Dict[str, object] = {"alternatives": alternatives}
+    if channelTag is not None or includeChannelTag:
+        final["channelTag"] = channelTag
+    return {"final": final}
 
 
 def _word(text: str, startMs: object, endMs: object) -> Dict[str, object]:
@@ -228,6 +237,105 @@ def testTopAlternativeSelectionIgnoresLowerRanked() -> None:
     assert len(result.segments) == 1
     assert result.segments[0].text == "primary hypothesis"
     assert result.segments[0].startMs == 100
+
+
+# ============================================================================
+# channelTag — canonical envelope metadata with deprecated final-level fallback
+# ============================================================================
+
+
+def testCanonicalChannelTagPropagatesToSegment() -> None:
+    """A canonical envelope channelTag is preserved on its final segment.
+
+    Returns:
+        None
+    """
+    final = _finalEvent("left channel", startMs=0, endMs=1000)
+    final["channelTag"] = "left"
+
+    result = parseRecognitionEvents(_wire([final]), maxResultBytes=_ROOMY_CAP)
+
+    assert result.status is STTResultStatus.FINAL
+    assert result.segments[0].channelTag == "left"
+
+
+def testCanonicalChannelTagWinsOverDeprecatedFinalTag() -> None:
+    """A non-empty canonical channelTag takes precedence over the deprecated tag.
+
+    Regression: the final-level value previously overwrote the canonical envelope
+    value even when both were valid non-empty strings.
+
+    Returns:
+        None
+    """
+    final = _finalEvent("canonical wins", startMs=0, endMs=1000, channelTag="deprecated")
+    final["channelTag"] = "canonical"
+
+    result = parseRecognitionEvents(_wire([final]), maxResultBytes=_ROOMY_CAP)
+
+    assert result.status is STTResultStatus.FINAL
+    assert result.segments[0].channelTag == "canonical"
+
+
+@pytest.mark.parametrize("channelTag, includeChannelTag", [(None, True), ("", False)])
+def testNullOrEmptyDeprecatedFinalChannelTagBecomesNone(channelTag: Optional[str], includeChannelTag: bool) -> None:
+    """Null and empty deprecated channel tags produce an untagged segment.
+
+    Args:
+        channelTag: The null or empty deprecated channel tag value.
+        includeChannelTag: Whether to emit an explicit null deprecated field.
+
+    Returns:
+        None
+    """
+    final = _finalEvent(
+        "untagged legacy fallback",
+        startMs=0,
+        endMs=1000,
+        channelTag=channelTag,
+        includeChannelTag=includeChannelTag,
+    )
+
+    result = parseRecognitionEvents(_wire([final]), maxResultBytes=_ROOMY_CAP)
+
+    assert result.status is STTResultStatus.FINAL
+    assert result.segments[0].channelTag is None
+
+
+def testRefinementPreservesChannelTag() -> None:
+    """A finalRefinement keeps the selected channelTag while replacing text.
+
+    Returns:
+        None
+    """
+    final = _finalEvent("raw", startMs=0, endMs=1000)
+    final["channelTag"] = "right"
+
+    result = parseRecognitionEvents(
+        _wire([final, _refinementEvent(finalIndex=0, text="normalized")]), maxResultBytes=_ROOMY_CAP
+    )
+
+    assert result.segments[0].text == "normalized"
+    assert result.segments[0].channelTag == "right"
+
+
+def testTaggedSegmentsSortByStartTime() -> None:
+    """Segments retain their tags after sorting into chronological order.
+
+    Returns:
+        None
+    """
+    late = _finalEvent("right later", startMs=2000, endMs=3000)
+    late["channelTag"] = "right"
+    early = _finalEvent("left earlier", startMs=0, endMs=1000)
+    early["channelTag"] = "left"
+
+    result = parseRecognitionEvents(_wire([late, early]), maxResultBytes=_ROOMY_CAP)
+
+    assert [(segment.text, segment.channelTag) for segment in result.segments] == [
+        ("left earlier", "left"),
+        ("right later", "right"),
+    ]
 
 
 # ============================================================================
@@ -670,15 +778,16 @@ def testSingleMalformedEventPoisonsWholeStream() -> None:
 
 
 # ============================================================================
-# Provisional-framing robustness (load-bearing contract #4)
+# Bare-envelope defensive compatibility (load-bearing contract #4)
 # ============================================================================
 
 
 def testBareEnvelopeWithoutResultWrapperStillParses() -> None:
-    """Events without the top-level ``result`` wrapper still parse (provisional).
+    """Events without the top-level ``result`` wrapper still parse defensively.
 
-    §7.3 documents events under ``result.final``; until parent §13.3 gate-1 pins
-    the framing, the parser tolerates the bare StreamingResponse form too.
+    Recorded live SpeechKit golden data verifies the ``result.final`` framing.
+    The parser nevertheless tolerates a bare StreamingResponse envelope as
+    defensive compatibility for variant or future input.
 
     Returns:
         None

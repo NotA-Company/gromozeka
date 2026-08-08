@@ -2,22 +2,21 @@
 
 This module is the isolated live-wire parser (readiness correction #2,
 ``docs/design/lib-stt-v1.md`` §3/§7.3): a PURE, sync function that takes the raw
-``getRecognition`` response body (the provisional streaming-JSON event stream the
+``getRecognition`` response body (the verified streaming-JSON event stream the
 provider fetches) and turns it into a provider-neutral
 :class:`~lib.stt.models.TranscriptionResult`. It performs no HTTP, no async I/O,
 and no PyAV — it receives ``bytes`` and returns a ``TranscriptionResult``. Keeping
-the provisional live-wire parsing factored out here lets the stable provider class
+the live-wire parsing factored out here lets the stable provider class
 (``yandex_speechkit.py``) stay focused on the wire lifecycle, and lets the parser
 be unit-tested in isolation with golden fixtures (§9).
 
-PROVISIONAL wire format (load-bearing contract #4, §7.3 / §10(a)): the exact
-``getRecognition`` transport framing/content-type is **not yet verified** and
-**must be confirmed/adjusted by the parent §13.3 gate-1 smoke test before
-release.** The parser is implemented per the provisional streaming-JSON spec in
-§7.3 and intentionally centralises the framing detail (the optional top-level
-``result`` wrapper) in :func:`_resolveEnvelope` so it is a one-line change once
-gate-1 captures the real shape. Golden tests assert the parsing *logic* (event
-semantics) and treat the wrapper as provisional.
+VERIFIED wire format (load-bearing contract #4, §7.3 / §10(a)): recorded live
+SpeechKit responses in the committed aurumentation golden data verify the
+``getRecognition`` streaming-JSON framing and its top-level ``result`` wrapper.
+The parser centralises that wrapper in :func:`_resolveEnvelope`; accepting a bare
+``StreamingResponse`` envelope remains defensive compatibility for variant or
+future input, not a release gate. Golden tests assert the recorded framing and
+event semantics.
 
 Authoritative references:
 - §7.3 (event parsing) and §8.1 (result-body cap = 5 MiB, owned here) of
@@ -67,7 +66,7 @@ _WHITESPACE: FrozenSet[str] = frozenset(" \t\n\r")
 def parseRecognitionEvents(responseBytes: bytes, maxResultBytes: int) -> TranscriptionResult:
     """Parse a Yandex v3 ``getRecognition`` event stream into a TranscriptionResult.
 
-    Reads the provisional streaming-JSON event body, enforces the result-body cap,
+    Reads the verified streaming-JSON event body, enforces the result-body cap,
     decodes UTF-8 strictly, parses consecutive top-level JSON event objects
     (allowing only whitespace between them and rejecting any other garbage), and
     folds the ``final`` + ``finalRefinement`` events into a provider-neutral
@@ -80,6 +79,9 @@ def parseRecognitionEvents(responseBytes: bytes, maxResultBytes: int) -> Transcr
     - a matching ``finalRefinement.finalIndex`` **replaces** the raw final text
       with the normalized text (and normalized words when the refinement carries
       them), rather than emitting both — so no duplicate text is produced;
+    - each final's canonical envelope-level ``channelTag`` is preserved on its
+      segment; the deprecated ``final.channelTag`` is used only when the
+      canonical field is absent, null, or empty;
     - non-final events (``partial``, ``status_code``, ``eou_update``, …) are
       ignored;
     - final segments are **sorted by start time** before being returned;
@@ -93,7 +95,7 @@ def parseRecognitionEvents(responseBytes: bytes, maxResultBytes: int) -> Transcr
     the whole result rather than committing partial segments.
 
     Args:
-        responseBytes: The raw ``getRecognition`` response body (the provisional
+        responseBytes: The raw ``getRecognition`` response body (the verified
             streaming-JSON event stream). Treated as opaque bytes; the cap is
             checked on the byte length BEFORE any decoding/parsing.
         maxResultBytes: The inclusive result-body byte cap (§8.1). A validated
@@ -115,6 +117,7 @@ def parseRecognitionEvents(responseBytes: bytes, maxResultBytes: int) -> Transcr
 
     try:
         text = responseBytes.decode("utf-8")  # strict UTF-8
+        # print(text)
         events = _iterJsonObjects(text)
         return _buildResult(events)
     except (UnicodeDecodeError, ValueError, TypeError, KeyError, IndexError, ArithmeticError):
@@ -131,7 +134,7 @@ def parseRecognitionEvents(responseBytes: bytes, maxResultBytes: int) -> Transcr
 def _iterJsonObjects(text: str) -> List[object]:
     """Parse consecutive top-level JSON event objects from a stream string.
 
-    Implements the §7.3 provisional framing parser: walks ``text``, skipping only
+    Implements the §7.3 streaming-JSON framing parser: walks ``text``, skipping only
     JSON whitespace between objects, and parses each object with
     :meth:`json.JSONDecoder.raw_decode`. Only objects (``{...}``) are accepted at
     the top level — a bare array, atom, or any other character between/after
@@ -174,9 +177,9 @@ def _buildResult(events: List[object]) -> TranscriptionResult:
     Collects ``final`` events in stream order (their position IS their
     ``finalIndex``) and ``finalRefinement`` events keyed by ``finalIndex``,
     applies each refinement to its matching final (replacing the raw text — and
-    the words when the refinement carries them), drops empty-text segments, and
-    sorts the survivors by start time. Returns ``NO_SPEECH`` when nothing
-    non-empty remains.
+    the words when the refinement carries them), preserves each selected
+    ``channelTag``, drops empty-text segments, and sorts the survivors by start
+    time. Returns ``NO_SPEECH`` when nothing non-empty remains.
 
     Args:
         events: The parsed top-level event objects (from :func:`_iterJsonObjects`).
@@ -195,9 +198,10 @@ def _buildResult(events: List[object]) -> TranscriptionResult:
 
     for event in events:
         envelope = _resolveEnvelope(event)
+        channelTag = str(envelope.get("channelTag")) if "channelTag" in envelope else None
         if "final" in envelope:
             alternative = _firstAlternative(envelope["final"])
-            rawFinals.append(_extractFinal(alternative))
+            rawFinals.append(_extractFinal(alternative, channelTag))
         if "finalRefinement" in envelope:
             refinement = envelope["finalRefinement"]
             if isinstance(refinement, dict):
@@ -215,9 +219,11 @@ def _buildResult(events: List[object]) -> TranscriptionResult:
     segments: List[TranscriptionSegment] = []
     for index, raw in enumerate(rawFinals):
         normalizedAlt = refinements.get(index)
-        text, startMs, endMs, words = _applyRefinement(raw, normalizedAlt)
+        text, startMs, endMs, words, channelTag = _applyRefinement(raw, normalizedAlt)
         if text.strip():
-            segments.append(TranscriptionSegment(text=text, startMs=startMs, endMs=endMs, words=words))
+            segments.append(
+                TranscriptionSegment(text=text, startMs=startMs, endMs=endMs, words=words, channelTag=channelTag)
+            )
 
     if not segments:
         return _noSpeech()
@@ -229,22 +235,21 @@ def _buildResult(events: List[object]) -> TranscriptionResult:
 def _resolveEnvelope(event: object) -> Dict[str, object]:
     """Resolve a parsed event object to its StreamingResponse envelope.
 
-    PROVISIONAL framing (load-bearing contract #4, §7.3): §7.3 documents the
-    relevant events under ``result.final`` / ``result.finalRefinement``,
-    suggesting the gateway wraps each ``StreamingResponse`` in a top-level
-    ``result`` key. The raw proto has no such field, so a ``result`` key can only
-    be this wrapper. To stay robust against the unconfirmed wire shape (verified
-    at parent §13.3 gate-1), this helper accepts BOTH the wrapped form
-    (``{"result": {...}}``) and the bare form (``{...}``); the choice is isolated
-    here so gate-1 can pin one shape with a one-line edit.
+    Verified framing (load-bearing contract #4, §7.3): committed aurumentation
+    golden data records live SpeechKit responses with each ``StreamingResponse``
+    wrapped in a top-level ``result`` key (``result.final`` /
+    ``result.finalRefinement``). The raw proto has no such field, so the wrapper
+    is gateway framing. This helper also accepts the bare form (``{...}``) as
+    defensive compatibility for variant or future input; it is not a release
+    blocker. The framing choice remains isolated here for maintainability.
 
     Args:
         event: One parsed top-level object from :func:`_iterJsonObjects`.
 
     Returns:
-        Dict[str, object]: The envelope to read ``final`` / ``finalRefinement``
-        from (the wrapped value when a ``result`` key holding a dict is present,
-        otherwise ``event`` itself).
+        Dict[str, object]: The envelope to read ``final``, ``finalRefinement``,
+        and canonical ``channelTag`` from (the wrapped value when a ``result``
+        key holding a dict is present, otherwise ``event`` itself).
 
     Raises:
         ValueError: If ``event`` is not a JSON object.
@@ -295,7 +300,7 @@ def _firstAlternative(update: object) -> Dict[str, object]:
     return cast(Dict[str, object], first)
 
 
-def _extractFinal(alternative: Dict[str, object]) -> "_RawFinal":
+def _extractFinal(alternative: Dict[str, object], channelTag: Optional[str] = None) -> "_RawFinal":
     """Extract a raw final (text + ms range + words) from one Alternative.
 
     Timestamps are coerced via :func:`_coerceInt` (integers or decimal strings);
@@ -304,9 +309,11 @@ def _extractFinal(alternative: Dict[str, object]) -> "_RawFinal":
 
     Args:
         alternative: The chosen first ``Alternative`` of a ``final`` event.
+        channelTag: Validated canonical channel tag, or the deprecated
+            final-level fallback when the canonical value is absent.
 
     Returns:
-        _RawFinal: The extracted raw final record.
+        _RawFinal: The extracted raw final record, including ``channelTag``.
 
     Raises:
         ValueError: If ``text`` is present but not a string, or a timestamp/word
@@ -318,7 +325,7 @@ def _extractFinal(alternative: Dict[str, object]) -> "_RawFinal":
     startMs = _coerceInt(alternative.get("startTimeMs", 0))
     endMs = _coerceInt(alternative.get("endTimeMs", 0))
     words = _extractWords(alternative.get("words"))
-    return _RawFinal(text=text, startMs=startMs, endMs=endMs, words=tuple(words))
+    return _RawFinal(text=text, startMs=startMs, endMs=endMs, words=tuple(words), channelTag=channelTag)
 
 
 def _extractWords(wordsValue: object) -> List[TranscriptionWord]:
@@ -357,7 +364,7 @@ def _extractWords(wordsValue: object) -> List[TranscriptionWord]:
 
 def _applyRefinement(
     raw: "_RawFinal", normalizedAlt: Optional[Dict[str, object]]
-) -> Tuple[str, int, int, Tuple[TranscriptionWord, ...]]:
+) -> Tuple[str, int, int, Tuple[TranscriptionWord, ...], Optional[str]]:
     """Apply a finalRefinement to a raw final, per §7.3.
 
     §7.3 says to "replace the raw final text with normalized text rather than
@@ -375,16 +382,17 @@ def _applyRefinement(
     degrades to keeping the raw words when the refinement carries none.
 
     Args:
-        raw: The raw final record (text + ms range + words).
+        raw: The raw final record (text + ms range + words + channel tag).
         normalizedAlt: The refinement's first normalized Alternative, or None
             when no refinement matched this final.
 
     Returns:
-        Tuple[str, int, int, Tuple[TranscriptionWord, ...]]: The
-        ``(text, startMs, endMs, words)`` to build the segment from.
+        Tuple[str, int, int, Tuple[TranscriptionWord, ...], Optional[str]]:
+        The ``(text, startMs, endMs, words, channelTag)`` to build the segment
+        from. The selected channel tag is preserved through refinement.
     """
     if normalizedAlt is None:
-        return raw.text, raw.startMs, raw.endMs, raw.words
+        return raw.text, raw.startMs, raw.endMs, raw.words, raw.channelTag
     normalizedText = normalizedAlt.get("text", "")
     if not isinstance(normalizedText, str):
         # A refinement present but with a non-string text is malformed for our
@@ -397,7 +405,7 @@ def _applyRefinement(
         normalizedText = raw.text
     normalizedWords = _extractWords(normalizedAlt.get("words"))
     words: Tuple[TranscriptionWord, ...] = tuple(normalizedWords) if normalizedWords else raw.words
-    return normalizedText, raw.startMs, raw.endMs, words
+    return normalizedText, raw.startMs, raw.endMs, words, raw.channelTag
 
 
 def _coerceInt(value: object) -> int:
@@ -491,11 +499,19 @@ class _RawFinal:
         startMs: The final start time in milliseconds.
         endMs: The final end time in milliseconds.
         words: The raw final words (pre-refinement).
+        channelTag: The validated channel tag selected for this final.
     """
 
-    __slots__ = ("text", "startMs", "endMs", "words")
+    __slots__ = ("text", "startMs", "endMs", "words", "channelTag")
 
-    def __init__(self, text: str, startMs: int, endMs: int, words: Tuple[TranscriptionWord, ...]) -> None:
+    def __init__(
+        self,
+        text: str,
+        startMs: int,
+        endMs: int,
+        words: Tuple[TranscriptionWord, ...],
+        channelTag: Optional[str] = None,
+    ) -> None:
         """Initialize the raw final scratch record.
 
         Args:
@@ -503,6 +519,7 @@ class _RawFinal:
             startMs: The final start time in milliseconds.
             endMs: The final end time in milliseconds.
             words: The raw final words (pre-refinement).
+            channelTag: The validated channel tag selected for this final.
 
         Returns:
             None
@@ -511,3 +528,4 @@ class _RawFinal:
         self.startMs = startMs
         self.endMs = endMs
         self.words = words
+        self.channelTag = channelTag

@@ -44,21 +44,20 @@ changes from v1.1**. They are operational/confirmation gates (see §8).
 
 The following are facts verified against source, not assumptions:
 
-- The Yandex provider builds the inline body in
+- The Yandex provider builds the submit body in
   [`lib/stt/providers/yandex_speechkit.py`](../../lib/stt/providers/yandex_speechkit.py)
-  `_buildSubmitBody` (lines 415-442): it base64-encodes `audio.data` into the
-  `"content"` field and sets `container_audio.container_audio_type` from
-  `audio.container.toYandexSpeechKit()`. **No `"uri"` field exists today.**
+  `_buildSubmitBody`: it base64-encodes `audio.data` into `"content"` for the
+  inline path, or sends the staged object `"uri"` for the Object Storage path;
+  both set `container_audio.container_audio_type` from
+  `audio.container.toYandexSpeechKit()`.
 - The bytes that become the API payload are `audio.data` — the **extracted** audio
   produced by [`lib/stt/audio.py`](../../lib/stt/audio.py) `extractAudio()`
   (post pass-through/transcode), NOT the raw source bytes. The inline-vs-Object-Storage
   threshold therefore applies to `len(audio.data)`.
-- Caps live in `STTService` (service layer), not in `lib/stt`
-  ([`internal/services/stt/service.py`](../../internal/services/stt/service.py)).
-  `SOURCE_TOO_LARGE` is produced at `service.py:272-273` when
-  `len(data) > self._maxSourceBytes`. The current `[stt]` config has **no
-  `max-inline-bytes` key** (it was shed when caps moved out of `lib/stt` and v1
-  relied on the 60 MB vendor ceiling + the source-byte cap).
+- `STTService` enforces the source-byte cap before calling the provider;
+  `max-inline-bytes` is a provider-owned positive routing threshold on
+  `len(audio.data)`. It is configured in `[stt]` and routes at/above-threshold
+  extracted audio through Object Storage when configured.
 - `lib/stt` has a hard dependency firewall: zero `internal.*` imports, no singleton
   access. The proxy is injected as an already-resolved `ProxyConfig`
   ([`yandex_speechkit.py:146-266`](../../lib/stt/providers/yandex_speechkit.py));
@@ -76,9 +75,15 @@ The following are facts verified against source, not assumptions:
 - **A concrete `StatsStorage` exists and is wired** for `lib/ai`
   ([`internal/database/stats_storage.py`](../../internal/database/stats_storage.py)
   `DatabaseStatsStorage`, constructed in [`main.py`](../../main.py):82-94; `lib/ai`
-  records via `_recordAttemptStats`,
-  [`lib/ai/abstract.py:850-887`](../../lib/ai/abstract.py)). See §5.1 for the full
-  finding and the implication for STT.
+   records via `_recordAttemptStats`,
+   [`lib/ai/abstract.py:850-887`](../../lib/ai/abstract.py)). See §5.1 for the full
+   finding and the implication for STT.
+
+**`channelTag` compatibility.** The response-only per-segment `channelTag`
+contract is owned by [`lib-stt-v1.md` §4/§6/§7.3](./lib-stt-v1.md). It is parsed
+from recognition events and affects only `TranscriptionSegment` metadata and
+service transcript rendering. It does not affect v1.1 submission-body selection,
+Object Storage routing, configuration, or statistics.
 
 ## 2. Scope
 
@@ -282,9 +287,8 @@ enabled). The vendor ceilings: 60 MB inline (base64-expanded), 1 GB Object-Stora
 
 The default `max-inline-bytes = 40 MiB` matches the v1 product cap
 ([`media-transcription-stt-v1.md`](./media-transcription-stt-v1.md) §8.1). v1.1
-makes it **explicit and enforced** (it is currently documented but absent from
-[`configs/00-defaults/stt.toml`](../../configs/00-defaults/stt.toml) because
-inline-only v1 never needed to act on it).
+makes it explicit and enforces it from
+[`configs/00-defaults/stt.toml`](../../configs/00-defaults/stt.toml).
 
 ### 4.2 Object Storage disabled + over-threshold clip
 

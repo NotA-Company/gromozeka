@@ -191,12 +191,15 @@ class TranscriptionSegment:
         endMs: Segment end time in milliseconds.
         words: Immutable tuple of TranscriptionWord, preserved in memory for
             future use even though only formatted text is persisted.
+        channelTag: Optional provider channel identifier for this segment. None
+            when the provider did not supply a tag.
     """
 
     text: str
     startMs: int
     endMs: int
     words: Sequence[TranscriptionWord]
+    channelTag: Optional[str] = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -145,6 +145,19 @@ def testTranscriptionResultErrorCodeDefaultsToNone() -> None:
     assert result.errorCode is None
 
 
+def testChannelTagIsOptionalSegmentMetadataOnly() -> None:
+    """TranscriptionSegment defaults channelTag to None; TranscriptionResult has no such field.
+
+    Returns:
+        None
+    """
+    segment = TranscriptionSegment(text="left", startMs=0, endMs=1, words=())
+    result = TranscriptionResult(status=STTResultStatus.FINAL, segments=(segment,))
+
+    assert segment.channelTag is None
+    assert "channelTag" not in {field.name for field in dataclasses.fields(result)}
+
+
 def testAudioFormatSpecAndExtractedAudioConstruct() -> None:
     """AudioFormatSpec and ExtractedAudio construct with their declared fields.
 

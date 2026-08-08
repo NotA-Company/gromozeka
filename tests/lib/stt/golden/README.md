@@ -7,9 +7,10 @@ It records real Yandex SpeechKit v3 responses once (manually, with credentials)
 and replays them through the real provider + parser in CI (offline,
 deterministic) on every `make test`.
 
-This resolves the STT feature's **release gate-1**: capture the real
-`getRecognition` wire framing — the highest-risk PROVISIONAL known-unknown
-(see `docs/design/lib-stt-v1.md` §7.3 / §13.3).
+This resolves the STT feature's **release gate-1**: the committed recordings
+verify the live `getRecognition` streaming-JSON framing with its top-level
+`result` wrapper (see `docs/design/lib-stt-v1.md` §7.3 / §13.3). Bare-envelope
+parsing remains defensive compatibility, not a release blocker.
 
 ## How it works
 
@@ -118,17 +119,18 @@ headers/bodies, but **always double-check** before committing.
 ./venv/bin/pytest tests/lib/stt/golden/test_golden.py -v
 ```
 
-All replayer tests should pass (status FINAL or NO_SPEECH, never ERROR).
+All replayer tests should pass with `FINAL`, at least one segment, and the stable
+response-only `channelTag` value `"0"` on every segment. The committed fixtures
+are known-speech recordings, so `NO_SPEECH` would indicate that a final was lost.
 
 ## Gate-1 resolution
 
-After recording, **inspect the `getRecognition` response body** in each
-`data/*.json` fixture and compare its framing to `_resolveEnvelope` in
+The committed fixtures record the verified wrapped `getRecognition` form
+(`{"result": {...}}`). `_resolveEnvelope` also accepts a bare form (`{...}`) as
+defensive compatibility for variant or future input. When recording a future
+fixture, inspect its response body and compare its framing to
 [`lib/stt/providers/yandex_events.py`](../../../../lib/stt/providers/yandex_events.py).
-
-The parser currently accepts **both** the wrapped form (`{"result": {...}}`)
-and the bare form (`{...}`) — the choice is isolated in `_resolveEnvelope` so
-gate-1 can pin one shape with a one-line edit. If the real framing differs:
+If the live framing changes:
 
 1. Adjust `_resolveEnvelope` (or the event-field readers) to match the real shape.
 2. Update the unit-test fixtures in
@@ -186,10 +188,8 @@ recording list, so there is no cross-scenario collision.
 
 ## Assertion philosophy
 
-The replayer test asserts **"parses without ERROR"** — the status must be
-FINAL or NO_SPEECH, never ERROR. An ERROR means the parser failed on real
-response bytes, which is exactly what gate-1 is designed to catch. Specific
-segment counts and text content are intentionally not asserted here — the
-collector discards the return value, so expected content is re-derived at
-replay time. Tighter assertions on specific transcript text can be added by the
-human after recording + inspecting the fixtures.
+The replayer requires `FINAL`, non-empty segments, and the fixtures' stable
+per-segment `channelTag` value `"0"`. This catches malformed parsing and a
+dropped-final regression that could otherwise appear as `NO_SPEECH`. Specific
+transcript text remains intentionally unasserted because the collector discards
+the return value; it must be re-derived after recording and inspection.

@@ -292,9 +292,9 @@ class TestFinalTranscriptionProducesDone:
         # Special chars are NOT escaped in the thin formatter.
         assert "<world>" in outcome.description
         assert "&" in outcome.description
-        # Timestamp prefix is present (1000ms = [00:00:01]).
-        assert "[00:00:00]" in outcome.description
-        assert "[00:00:01]" in outcome.description
+        # Timestamp ranges are present (0ms..1000ms and 1000ms..2000ms).
+        assert "[00:00:00..00:00:01]" in outcome.description
+        assert "[00:00:01..00:00:02]" in outcome.description
         # Output is NOT truncated (well over 200 chars).
         assert len(outcome.description) > 200
 
@@ -340,10 +340,27 @@ class TestFinalUnderCapYieldsDone:
 
         assert outcome.success is True
         assert outcome.description is not None
-        assert "[00:00:00]" in outcome.description
+        assert "[00:00:00..00:00:01]" in outcome.description
         assert "short text" in outcome.description
         # The untrusted header was dropped in the thin formatter.
         assert "[Untrusted media transcript" not in outcome.description
+
+    async def test_taggedSegmentPreservesChannelTag(self) -> None:
+        """FINAL with a channel tag propagates its exact formatted line.
+
+        Returns:
+            None: The assertion verifies service-level formatter propagation.
+        """
+        segments = (TranscriptionSegment(text="speaker", startMs=125, endMs=1500, words=(), channelTag="left"),)
+        provider = FakeProvider(
+            result=TranscriptionResult(status=STTResultStatus.FINAL, segments=segments),
+        )
+        svc = _buildService(provider=provider)
+
+        outcome: STTOutcome = await svc.transcribeMedia(b"\x00" * 64, chatId=100)
+
+        assert outcome.success is True
+        assert outcome.description == "[00:00:00.125..00:00:01.500] speaker"
 
 
 # ---------------------------------------------------------------------------
