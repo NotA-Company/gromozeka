@@ -38,13 +38,13 @@ This resolves the STT feature's **release gate-1**: capture the real
 ```
 
 **Key design point: replay is self-contained.** The audio clips under `input/`
-are `.gitignore`'d (they may contain personal voice data), but the `data/*.json`
-fixtures are committed. To avoid breaking CI on a checkout that has fixtures but
-no clip, replay RECOVERS the submitted audio bytes from the committed fixture
-itself: the recorded `recognizeFileAsync` POST body carries `content` =
-`base64(audio.data)`, which is NOT secret-masked (base64 cannot contain the
-literal API-key substring). The replay test `base64.b64decode`s that field and
-feeds the bytes to `runBytes()` — it never touches `input/*.ogg`.
+are committed TTS-generated synthetic samples, and so are the `data/*.json`
+fixtures. Replay never reads the clip on disk: it RECOVERS the submitted audio
+bytes from the committed fixture itself — the recorded `recognizeFileAsync`
+POST body carries `content` = `base64(audio.data)`, which is NOT secret-masked
+(base64 cannot contain the literal API-key substring). The replay test
+`base64.b64decode`s that field and feeds the bytes to `runBytes()` — it never
+touches `input/*.ogg`.
 
 The [`YandexSTTScenarioRunner`](scenario_runner.py) is the **impedance adapter**:
 aurumentation's `collectGoldenData` can only pass JSON-serialisable kwargs
@@ -62,7 +62,7 @@ directly. This mirrors
 | `scenario_runner.py` | Impedance adapter: builds the provider; `run()` reads audio bytes from disk (record), `runBytes()` takes bytes directly (replay). |
 | `collect.py` | Manual recording driver. Run with credentials to produce `data/*.json`. Emits a loud privacy warning (audio is embedded in fixtures). |
 | `input/scenarios.json` | Scenario definitions (credentials as `${VAR}` placeholders, audio paths). |
-| `input/*.ogg` | Audio clips — **supplied manually, never committed** (`.gitignore`'d). Only needed for RECORDING; replay recovers bytes from the fixture. |
+| `input/*.ogg` | Audio clips — committed TTS-generated synthetic samples for self-contained CI replay. Only needed for RECORDING; replay recovers bytes from the fixture. |
 | `data/*.json` | Recorded fixtures (masked HTTP traffic + metadata + embedded audio as base64). The ONLY thing CI needs. |
 | `test_golden.py` | Replay tests: sanity checks + parametrised replayer over `data/`. Recovers audio bytes from the fixture (never reads `input/*.ogg`). |
 
@@ -81,14 +81,14 @@ export YANDEX_FOLDER_ID=<your folder ID>
 Drop **short** (< 30 s) voice clips into `input/`:
 
 ```
-input/sample.ogg      # Russian speech (scenario: yandex_basic_transcription_ru)
+input/sample_ru.ogg   # Russian speech (scenario: yandex_basic_transcription_ru)
 input/sample_en.ogg   # English speech (scenario: yandex_english_transcription_en)
 ```
 
 Any supported container is fine (OGG_OPUS, MP3, WAV, or even a transcode-
 triggering one like M4A — the fixture captures the post-extraction bytes either
-way; replay is format-agnostic). These are `.gitignore`'d — they will never be
-committed. **Use throwaway/synthetic clips only**: the audio content is embedded
+way; replay is format-agnostic). The clips are committed TTS-generated synthetic
+samples. **Use throwaway/synthetic clips only**: the audio content is embedded
 (base64) in the committed fixtures, so whatever voice data you record lives in
 the repo. The collector prints a loud privacy warning after recording to remind
 you of this.

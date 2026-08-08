@@ -1826,6 +1826,9 @@ class BaseBotHandler(CommandHandlerMixin):
             # Only skip processing if Media in DB is in right status
             match MediaStatus(mediaAttachment["status"]):
                 case MediaStatus.DONE:
+                    # DONE rows always return early — retroactive STT transcription of
+                    # previously-processed media is intentionally out of scope (the
+                    # stateless simplification removed the DONE-reprocess branch).
                     ret.task = makeEmptyAsyncTask()
                     return ret
 
@@ -1848,7 +1851,7 @@ class BaseBotHandler(CommandHandlerMixin):
                             ret.task = makeEmptyAsyncTask()
                             return ret
                     except Exception as e:
-                        logger.error("{ret.type}#{ret.id} Error during checking age:")
+                        logger.error(f"{ret.type}#{ret.id} Error during checking age:")
                         logger.exception(e)
 
                 case _:

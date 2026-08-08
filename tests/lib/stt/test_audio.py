@@ -645,6 +645,7 @@ async def testContainersClosedOnSuccessPassthrough(monkeypatch: pytest.MonkeyPat
     data = _makeOggOpus(channels=1)  # build fixture before the spy patches av.open
     opened = _installCloseSpy(monkeypatch)
     await _extract(data)
+    # This count is implementation-specific — if probe/transcode refactored, update expected count.
     assert len(opened) == 2  # probe + pass-through duration measurement
     _assertAllClosed(opened)
 
@@ -661,6 +662,7 @@ async def testContainersClosedOnSuccessTranscode(monkeypatch: pytest.MonkeyPatch
     data = _makeWav(channels=2)  # stereo WAV -> transcode; build before the spy
     opened = _installCloseSpy(monkeypatch)
     await _extract(data)
+    # This count is implementation-specific — if probe/transcode refactored, update expected count.
     assert len(opened) == 3  # probe + transcode input + transcode output
     _assertAllClosed(opened)
 
@@ -757,5 +759,6 @@ async def testMultiChannelSourceRaisesEncoderErrorAndClosesContainers(
         await _extract(data)
     assert excInfo.value.errorCode.value == "provider-error"
     # probe (1) + transcode input (1) + transcode output (1); all closed, none leaked.
+    # This count is implementation-specific — if probe/transcode refactored, update expected count.
     assert len(opened) == 3
     _assertAllClosed(opened)

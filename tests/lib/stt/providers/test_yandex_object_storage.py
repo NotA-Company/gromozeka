@@ -25,9 +25,6 @@ from lib.stt.providers.yandex_object_storage import YandexObjectStorage
 def mockS3Client() -> MagicMock:
     """Create a mock boto3 S3 client with put_object / delete_object.
 
-    Args:
-        None.
-
     Returns:
         A MagicMock mimicking a boto3 S3 client.
     """
@@ -52,7 +49,7 @@ def storage(mockS3Client: MagicMock) -> YandexObjectStorage:
         "lib.stt.providers.yandex_object_storage.boto3.client",
         return_value=mockS3Client,
     ):
-        os = YandexObjectStorage(
+        obj = YandexObjectStorage(
             bucket="test-bucket",
             prefix="stt/",
             keyId="test-key-id",
@@ -60,8 +57,8 @@ def storage(mockS3Client: MagicMock) -> YandexObjectStorage:
         )
         # Ensure the mock is used (boto3.client was patched at import time,
         # but the constructor re-assigns self._client from the patched call).
-        os._client = mockS3Client
-        return os
+        obj._client = mockS3Client
+        return obj
 
 
 # ============================================================================
@@ -72,9 +69,7 @@ def storage(mockS3Client: MagicMock) -> YandexObjectStorage:
 class TestUpload:
     """Tests for YandexObjectStorage.upload."""
 
-    async def testUploadGeneratesPrefixedUuidKey(
-        self, storage: "YandexObjectStorage", mockS3Client: MagicMock
-    ) -> None:  # noqa: F821
+    async def testUploadGeneratesPrefixedUuidKey(self, storage: YandexObjectStorage, mockS3Client: MagicMock) -> None:
         """upload generates a key of the shape ``{prefix}{uuid4}``.
 
         Args:
@@ -89,11 +84,11 @@ class TestUpload:
         assert key.startswith("stt/")
         # After prefix, the remainder should be a valid UUID4 string.
         uuidPart = key[len("stt/") :]
-        # uuid.UUID will raise ValueError if not a valid UUID.
-        uuid.UUID(uuidPart)
+        # uuid.UUID raises ValueError if not a valid UUID; version 4 pins uuid4.
+        assert uuid.UUID(uuidPart).version == 4
 
     async def testUploadCallsPutObjectWithCorrectArgs(
-        self, storage: "YandexObjectStorage", mockS3Client: MagicMock  # noqa: F821
+        self, storage: YandexObjectStorage, mockS3Client: MagicMock
     ) -> None:
         """upload calls put_object with the expected Bucket, Key, and Body.
 
@@ -104,14 +99,14 @@ class TestUpload:
         data = b"\x00\x01\x02"
         await storage.upload(data)
 
-        mockS3Client.put_object.assert_called_once_with(
-            Bucket="test-bucket",
-            Key=mockS3Client.put_object.call_args.kwargs["Key"],
-            Body=data,
-        )
+        mockS3Client.put_object.assert_called_once()
+        callKwargs = mockS3Client.put_object.call_args.kwargs
+        assert callKwargs["Bucket"] == "test-bucket"
+        assert callKwargs["Key"].startswith("stt/")
+        assert callKwargs["Body"] == data
 
     async def testUploadReturnsUriContainingBucketAndKey(
-        self, storage: "YandexObjectStorage", mockS3Client: MagicMock  # noqa: F821
+        self, storage: YandexObjectStorage, mockS3Client: MagicMock
     ) -> None:
         """upload returns an HTTPS URI containing the bucket and the generated key.
 
@@ -135,7 +130,7 @@ class TestDelete:
     """Tests for YandexObjectStorage.delete."""
 
     async def testDeleteRecoversKeyAndCallsDeleteObject(
-        self, storage: "YandexObjectStorage", mockS3Client: MagicMock  # noqa: F821
+        self, storage: YandexObjectStorage, mockS3Client: MagicMock
     ) -> None:
         """delete recovers the key from the URI and calls delete_object.
 
@@ -151,9 +146,7 @@ class TestDelete:
             Key="stt/some-uuid",
         )
 
-    async def testDeleteIsNoOpOnMissingObject(
-        self, storage: "YandexObjectStorage", mockS3Client: MagicMock
-    ) -> None:  # noqa: F821
+    async def testDeleteIsNoOpOnMissingObject(self, storage: YandexObjectStorage, mockS3Client: MagicMock) -> None:
         """delete returns without raising when the object does not exist.
 
         Mocks delete_object to raise a ClientError with NoSuchKey code.
@@ -173,9 +166,7 @@ class TestDelete:
 
         mockS3Client.delete_object.assert_called_once()
 
-    async def testDeleteIsNoOpOn404(
-        self, storage: "YandexObjectStorage", mockS3Client: MagicMock
-    ) -> None:  # noqa: F821
+    async def testDeleteIsNoOpOn404(self, storage: YandexObjectStorage, mockS3Client: MagicMock) -> None:
         """delete returns without raising when delete_object returns a 404 code.
 
         Args:
@@ -191,9 +182,7 @@ class TestDelete:
         await storage.delete("https://storage.yandexcloud.net/test-bucket/stt/gone")
         mockS3Client.delete_object.assert_called_once()
 
-    async def testDeleteRaisesOnNonMissingError(
-        self, storage: "YandexObjectStorage", mockS3Client: MagicMock
-    ) -> None:  # noqa: F821
+    async def testDeleteRaisesOnNonMissingError(self, storage: YandexObjectStorage, mockS3Client: MagicMock) -> None:
         """delete re-raises ClientError codes that are not NoSuchKey/404.
 
         Args:
@@ -210,8 +199,8 @@ class TestDelete:
             await storage.delete("https://storage.yandexcloud.net/test-bucket/stt/forbidden")
 
     async def testDeleteRaisesValueErrorOnMalformedUri(
-        self, storage: "YandexObjectStorage", mockS3Client: MagicMock
-    ) -> None:  # noqa: F821
+        self, storage: YandexObjectStorage, mockS3Client: MagicMock
+    ) -> None:
         """delete raises ValueError when the URI lacks the expected bucket segment.
 
         Args:
@@ -233,9 +222,7 @@ class TestDelete:
 class TestAclose:
     """Tests for YandexObjectStorage.aclose."""
 
-    async def testAcloseClosesBoto3Client(
-        self, storage: "YandexObjectStorage", mockS3Client: MagicMock
-    ) -> None:  # noqa: F821
+    async def testAcloseClosesBoto3Client(self, storage: YandexObjectStorage, mockS3Client: MagicMock) -> None:
         """aclose delegates to the underlying boto3 client close.
 
         Args:
@@ -259,8 +246,8 @@ class TestOffload:
     """
 
     async def testUploadOffloadsBoto3ToWorkerThread(
-        self, storage: "YandexObjectStorage", mockS3Client: MagicMock
-    ) -> None:  # noqa: F821
+        self, storage: YandexObjectStorage, mockS3Client: MagicMock
+    ) -> None:
         """upload runs put_object on a worker thread, not the event-loop thread.
 
         Args:
@@ -280,8 +267,8 @@ class TestOffload:
         assert capturedThreads[0] is not mainThread, "put_object ran on the event-loop thread (not offloaded)"
 
     async def testDeleteOffloadsBoto3ToWorkerThread(
-        self, storage: "YandexObjectStorage", mockS3Client: MagicMock
-    ) -> None:  # noqa: F821
+        self, storage: YandexObjectStorage, mockS3Client: MagicMock
+    ) -> None:
         """delete runs delete_object on a worker thread, not the event-loop thread.
 
         Args:

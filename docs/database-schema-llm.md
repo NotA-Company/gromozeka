@@ -190,7 +190,7 @@ CREATE TABLE media_attachments (
 
 **TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:255)
 
-**STT (media-transcription) semantics:** the existing `media_attachments` table is reused — **no migration**. The `status` column carries the transcription lifecycle (`NEW → PENDING → DONE|FAILED`) and the transcript is persisted in `description`. `STTService` is **stateless** and does NOT perform DB I/O — the **handler round** owns the row lifecycle (read / cache-hit / claim to `PENDING` / persist / terminalize). All transitions go through `MediaAttachmentsRepository.updateMediaAttachment(mediaId, *, status, description=None, ...)` — plain last-write semantics (single attachments have no concurrent writes, so there is no CAS; the former `setStatusVerified` helper has been removed). The feature is **wired but default-off** — the row lifecycle is owned by the `BaseBotHandler._processMediaV2` STT branch + its `_transcribeMedia` background task ([`internal/bot/common/handlers/base.py`](../internal/bot/common/handlers/base.py)), gated by `[stt].enabled` config + an eligible media type + the per-chat `PARSE_ATTACHMENTS` and `TRANSCRIBE_MEDIA` settings (all default `false`). See [ADR-020](llm/architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall).
+**STT (media-transcription) semantics:** For STT semantics (lifecycle, gating, CAS-removal), see [ADR-020](llm/architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall).
 
 **Note on `metadata`:** `migration_013` declares `metadata TEXT NOT NULL` (no `DEFAULT ''`) for cross-RDBMS portability — application code always supplies the value.
 

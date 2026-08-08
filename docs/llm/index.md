@@ -36,7 +36,7 @@
 | Type | Multi-platform AI bot (Telegram + Max Messenger) |
 | Python | 3.12+ |
 | Architecture | Modular, async, singleton services |
-| Test count | ~3661 (as of 2026-08-02; verify with `./venv/bin/pytest --collect-only -q`) |
+| Test count | ~3737 (as of 2026-08-08; verify with `./venv/bin/pytest --collect-only -q`) |
 | Status | Production-ready, active development |
 
 ### Key Features

@@ -40,7 +40,8 @@ no caps, and no config reading.
   keyed in-flight task registry, DB status transitions, admission/rate-limit/semaphore policy, the
   bounded platform media download (parent §8.3), attachment storage, config parsing, all caps
   (source-byte / duration / inline-payload), and `STTMediaRequest` (parent §7 — service-side, carries
-  media/chat IDs, optional platform `declaredSize`). These are referenced here only as "consumed by
+  media/chat IDs, optional platform `declaredSize`; **removed in the 2026-08-02 simplification**).
+  These are referenced here only as "consumed by
   STTService per parent §X"; integration status lives in [`stt-next-steps.md`](../archive/design/stt-next-steps.md).
 
 **Dependency firewall — two seams (load-bearing contract #1).**
@@ -259,7 +260,7 @@ class STTAudioContainerType(StrEnum):
 
 ```python
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional, Sequence
 
 @dataclass(frozen=True, slots=True)
 class TranscriptionWord:
@@ -284,14 +285,14 @@ class TranscriptionSegment:
         text: The (normalized) segment text.
         startMs: Segment start time in milliseconds.
         endMs: Segment end time in milliseconds.
-        words: Immutable tuple of TranscriptionWord, preserved in memory for
+        words: Sequence of TranscriptionWord, preserved in memory for
             future use even though only formatted text is persisted.
     """
 
     text: str
     startMs: int
     endMs: int
-    words: Tuple[TranscriptionWord, ...]
+    words: Sequence[TranscriptionWord]
 
 
 @dataclass(frozen=True, slots=True)
@@ -300,12 +301,12 @@ class TranscriptionResult:
 
     Attributes:
         status: The outcome category.
-        segments: Immutable tuple of TranscriptionSegment; empty unless FINAL.
+        segments: Sequence of TranscriptionSegment; empty unless FINAL.
         errorCode: Present iff status == ERROR; identifies the failure category.
     """
 
     status: STTResultStatus
-    segments: Tuple[TranscriptionSegment, ...]
+    segments: Sequence[TranscriptionSegment]
     errorCode: Optional[STTErrorCode] = None
 
 
@@ -813,9 +814,14 @@ stats itself.
 ## 9. Test matrix slice (lib/stt only)
 
 All tests live under `tests/lib/stt/` mirroring source paths
-(`tests/lib/stt/test_abstract.py`, `tests/lib/stt/test_audio.py`, `tests/lib/stt/test_formatter.py`,
+(`tests/lib/stt/test_abstract.py`, `tests/lib/stt/test_audio.py`,
 `tests/lib/stt/test_models.py`, `tests/lib/stt/providers/test_yandex_speechkit.py`,
-`tests/lib/stt/providers/test_yandex_events.py`). `async def test_...` with **no** decorator
+`tests/lib/stt/providers/test_yandex_events.py`,
+`tests/lib/stt/providers/test_yandex_object_storage.py`), plus the
+aurumentation-powered `tests/lib/stt/golden/` suite (`test_golden.py`,
+`collect.py`, `scenario_runner.py`; see
+[`docs/llm/aurumentation.md` §6.2](../llm/aurumentation.md)).
+`async def test_...` with **no** decorator
 (`asyncio_mode = "auto"`). **Mock transport only — no real network** in automated tests. (`lib/stt`
 itself has no singletons, so no singleton-reset fixtures are needed.) This section is the authoritative
 lib/stt test matrix; parent §13.2 summarizes and references it.

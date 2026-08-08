@@ -1,10 +1,11 @@
 """Tests for STTService.transcribeMedia pipeline.
 
 Covers the failure-half and success-half of the stateless transcription
-pipeline: provider ERROR mapping (PROVIDER_ERROR, PROTOCOL_ERROR, NO_AUDIO),
-never-raise boundary (provider raises, service exception), FINAL/NO_SPEECH
-happy paths with formatTranscript verification, formatTranscript-bug
-never-raise safety net, and rate-limiter application.
+pipeline: admission early returns (STT_DISABLED, SOURCE_TOO_LARGE), provider
+ERROR mapping (PROVIDER_ERROR, PROTOCOL_ERROR, NO_AUDIO), never-raise
+boundary (provider raises, service exception), FINAL/NO_SPEECH happy paths
+with formatTranscript verification, formatTranscript-bug never-raise safety
+net, and rate-limiter application.
 
 Uses a FakeProvider (implements AbstractSTTProvider) for white-box unit testing.
 The service is stateless — no DB, no cache, no gate, no admission timeout.
@@ -373,6 +374,38 @@ class TestFormatTranscriptBugNeverRaises:
 
         assert outcome.success is False
         assert outcome.errorCode == STTErrorCode.PROVIDER_ERROR
+
+
+# ---------------------------------------------------------------------------
+# Test: Admission early returns (STT_DISABLED / SOURCE_TOO_LARGE)
+# ---------------------------------------------------------------------------
+
+
+class TestAdmissionEarlyReturns:
+    """Admission gates in transcribeMedia return FAILED without calling the provider."""
+
+    async def test_sourceTooLargeReturnsEarly(self) -> None:
+        """``len(data) > maxSourceBytes`` → FAILED+SOURCE_TOO_LARGE, provider not called."""
+        provider = FakeProvider()
+        svc = _buildService(provider=provider, maxSourceBytes=1024)
+
+        outcome: STTOutcome = await svc.transcribeMedia(b"\x00" * 2048, chatId=100)
+
+        assert outcome.success is False
+        assert outcome.errorCode == STTErrorCode.SOURCE_TOO_LARGE
+        assert provider.sttCallCount == 0
+
+    async def test_disabledReturnsEarly(self) -> None:
+        """``_enabled=False`` → FAILED+STT_DISABLED, provider not called."""
+        provider = FakeProvider()
+        svc = _buildService(provider=provider)
+        svc._enabled = False
+
+        outcome: STTOutcome = await svc.transcribeMedia(b"\x00" * 64, chatId=100)
+
+        assert outcome.success is False
+        assert outcome.errorCode == STTErrorCode.STT_DISABLED
+        assert provider.sttCallCount == 0
 
 
 # ---------------------------------------------------------------------------

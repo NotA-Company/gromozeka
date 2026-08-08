@@ -34,8 +34,6 @@ def _validSttConfig() -> dict:
         "model": "general",
         "language": "ru-RU",
         "max-source-bytes": 67108864,
-        "max-duration-seconds": 600,
-        "max-transcript-chars": 48000,
         "max-concurrency": 2,
         "request-timeout-seconds": 30.0,
         "operation-budget-seconds": 2400.0,

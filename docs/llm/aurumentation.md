@@ -311,7 +311,7 @@ The six existing suites:
 ### 6.2 Three `collect.py` styles
 
 There has been drift in how the per-service `collect.py` drives recording. The
-accurate breakdown across the five suites:
+accurate breakdown across the six suites:
 
 - **Inline "copy-paste the loop" style** (openweathermap, yandex_search): the
   script **re-implements** the record loop inline, importing `sanitizeFilename`,
@@ -320,11 +320,13 @@ accurate breakdown across the five suites:
   [`tests/lib/yandex_search/golden/collect.py`](../../tests/lib/yandex_search/golden/collect.py):29-97.
   These do **not** pass `aenterCallback`/`aexitCallback`, so they cannot patch
   anything beyond raw `httpx`.
-- **Delegating WITHOUT callbacks** (geocode_maps): the script imports
+- **Delegating WITHOUT callbacks** (geocode_maps, stt): the script imports
   `lib.aurumentation.collector as aurumentationCollector` and delegates to the
   real `aurumentationCollector.collectGoldenData(...)`, but passes **no**
-  callbacks (its only local logic is rate-limiter setup). See
-  [`tests/lib/geocode_maps/golden/collect.py`](../../tests/lib/geocode_maps/golden/collect.py):45-49.
+  callbacks (its only local logic is setup around the delegate call — e.g.
+  geocode_maps' rate-limiter setup or stt's env-var/secret handling). See
+  [`tests/lib/geocode_maps/golden/collect.py`](../../tests/lib/geocode_maps/golden/collect.py):45-49
+  and [`tests/lib/stt/golden/collect.py`](../../tests/lib/stt/golden/collect.py):159-163.
 - **Delegating WITH callbacks** (ai, divination): the script calls the real
   `lib.aurumentation.collector.collectGoldenData` **and** passes its SDK patcher
   as `aenterCallback`/`aexitCallback`. See

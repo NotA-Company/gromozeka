@@ -19,11 +19,11 @@ The tests fall into three groups:
    returns an empty list and pytest emits zero parametrised cases — so the
    suite stays green even before any fixture has been recorded.
 
-**Self-contained replay (CI never needs the gitignored audio clip).** The audio
-clips under ``input/`` are gitignored, but the ``data/*.json`` fixtures are
-committed. To avoid breaking replay on a fresh checkout that has fixtures but no
-clip, the replayer test RECOVERS the submitted audio bytes from the committed
-fixture itself: the recorded ``recognizeFileAsync`` POST body carries
+**Self-contained replay (never touches the clip on disk).** The audio clips
+under ``input/`` are committed TTS-generated synthetic samples, and the
+``data/*.json`` fixtures are committed too. To keep replay self-contained and
+format-agnostic, the replayer test RECOVERS the submitted audio bytes from the
+committed fixture itself: the recorded ``recognizeFileAsync`` POST body carries
 ``content`` = ``base64(ExtractedAudio.data)``, which is NOT secret-masked (base64
 cannot contain the literal API-key substring). :func:`_recoverAudioBytesFromFixture`
 ``base64.b64decode``\\ s that field and hands the bytes to
@@ -162,8 +162,9 @@ def _recoverAudioBytesFromFixture(fixture: GoldenDataScenarioDict) -> bytes:
     cannot contain the literal API-key substring. So the field survives intact
     in the committed fixture, and ``base64.b64decode`` recovers the bytes.
 
-    This is what makes replay self-contained: CI never needs the gitignored
-    ``input/*.ogg`` clip, because the bytes are embedded in the fixture.
+    This is what makes replay self-contained: replay never reads the
+    ``input/*.ogg`` clip from disk, because the exact submitted bytes are
+    embedded in the fixture.
 
     Args:
         fixture: A loaded golden-data fixture (the return of
@@ -265,7 +266,7 @@ def testGoldenFixturesAreRecorded() -> None:
         pytest.skip(
             "No golden STT fixtures found in data/. To record:\n"
             "  1. Set YANDEX_API_KEY and YANDEX_FOLDER_ID env vars (or .env file).\n"
-            "  2. Provide short voice clips at input/sample.ogg and input/sample_en.ogg\n"
+            "  2. Provide short voice clips at input/sample_ru.ogg and input/sample_en.ogg\n"
             "     (any supported container — OGG_OPUS/MP3/WAV; replay is format-agnostic).\n"
             "  3. Run: ./venv/bin/python3 tests/lib/stt/golden/collect.py\n"
             "See tests/lib/stt/golden/README.md for the full workflow."
@@ -289,7 +290,7 @@ async def testReplayTranscription(fixturePath: str) -> None:
        placeholders, not resolved keys).
     3. RECOVERS the audio bytes from the committed fixture itself (the recorded
        ``recognizeFileAsync`` POST body's ``content`` field, base64-decoded) —
-       NOT from the gitignored ``input/*.ogg`` clip, which is absent in CI.
+       NOT from the ``input/*.ogg`` clip on disk.
     4. Builds a :class:`YandexSTTScenarioRunner` with dummy credentials INSIDE
        the :class:`GoldenDataReplayer` context (so the provider's
        ``httpx.AsyncClient`` is auto-intercepted by the replay transport).
@@ -328,9 +329,10 @@ async def testReplayTranscription(fixturePath: str) -> None:
     replayInitKwargs: Dict[str, Any] = _resolveReplayInitKwargs(scenario["init_kwargs"])
 
     # Recover the audio bytes from the committed fixture itself (NOT from the
-    # gitignored input/*.ogg clip, which is absent on a fresh CI checkout). The
-    # recorded recognizeFileAsync POST body carries content=base64(audio.data),
-    # which is not secret-masked — see _recoverAudioBytesFromFixture.
+    # input/*.ogg clip on disk — keeps replay self-contained and
+    # format-agnostic). The recorded recognizeFileAsync POST body carries
+    # content=base64(audio.data), which is not secret-masked — see
+    # _recoverAudioBytesFromFixture.
     audioBytes: bytes = _recoverAudioBytesFromFixture(fixture)
 
     # Construct the runner INSIDE the replayer context so the provider's
@@ -361,7 +363,7 @@ async def testReplayTranscription(fixturePath: str) -> None:
         )
 
     # Always-on cheap check: at least one HTTP recording was captured.
-    assert isinstance(fixture.get("recordings", []), list)
+    assert isinstance(fixture["recordings"], list)
     assert len(fixture["recordings"]) > 0, (
         f"Fixture '{Path(fixturePath).name}' contains zero HTTP recordings — "
         "the collector did not capture any traffic."

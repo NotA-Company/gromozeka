@@ -26,13 +26,15 @@ Prerequisites::
        (or put them in a ``.env`` file at the repo root.)
 
     2. Provide short voice clips:
-         input/sample.ogg      (Russian speech — scenario 1)
+         input/sample_ru.ogg   (Russian speech — scenario 1)
          input/sample_en.ogg   (English speech — scenario 2)
        Any supported container is fine (OGG_OPUS, MP3, WAV, or even a
        transcode-triggering one like M4A — the fixture captures the
        post-extraction bytes either way; replay is format-agnostic). Keep them
        short (< 30 s): the audio content is embedded (base64) in the committed
-       fixtures, so the recording clip's voice data lives in the repo.
+       fixtures. The clips are committed TTS-generated synthetic samples
+       (self-contained CI replay), so use synthetic/throwaway audio only — never
+       personal or identifiable voice: whatever you record ends up in the repo.
 
     3. Run:
          ./venv/bin/python3 tests/lib/stt/golden/collect.py

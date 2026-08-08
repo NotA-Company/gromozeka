@@ -21,8 +21,8 @@ handles only strings/dicts/lists — it cannot materialise a binary audio payloa
 - **Replay entry** (:meth:`runBytes`): receives the audio ``data`` directly as
   ``bytes``. The replay test (:mod:`tests.lib.stt.golden.test_golden.py`)
   recovers those bytes from the committed fixture itself (see *Self-contained
-  replay* below) and calls this — it NEVER touches the gitignored ``input/*.ogg``
-  clip.
+  replay* below) and calls this — it NEVER touches the ``input/*.ogg`` clip on
+  disk.
 
 Because the provider builds its ``httpx.AsyncClient`` in ``__init__``,
 aurumentation's class-level patch (active inside the
@@ -30,13 +30,12 @@ aurumentation's class-level patch (active inside the
 auto-intercepts it — no custom transport patcher is needed (unlike the AI suite,
 which needs an OpenAI patcher).
 
-**Self-contained replay (no gitignored file needed in CI).** The audio clips
-under ``input/`` are gitignored (they may contain personal voice data), while
-the ``data/*.json`` fixtures ARE committed. To avoid a ``FileNotFoundError`` on
-a fresh checkout that has fixtures but no clip, replay RECOVERS the submitted
-audio bytes from the committed fixture: the recorded ``recognizeFileAsync`` POST
-body carries ``content`` = ``base64(ExtractedAudio.data)`` (the audio bytes are
-NOT secret-masked — they are base64, which cannot contain the literal API-key
+**Self-contained replay (never touches the clip on disk).** The audio clips
+under ``input/`` are committed TTS-generated synthetic samples, and the
+``data/*.json`` fixtures are committed too. Replay RECOVERS the submitted audio
+bytes from the committed fixture: the recorded ``recognizeFileAsync`` POST body
+carries ``content`` = ``base64(ExtractedAudio.data)`` (the audio bytes are NOT
+secret-masked — they are base64, which cannot contain the literal API-key
 substring; see :class:`lib.aurumentation.masker.SecretMasker`). The replay test
 ``base64.b64decode``\\ s that field to obtain the exact bytes that were
 submitted, then feeds them to :meth:`runBytes`.

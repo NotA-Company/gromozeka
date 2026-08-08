@@ -389,6 +389,11 @@ def _applyRefinement(
     if not isinstance(normalizedText, str):
         # A refinement present but with a non-string text is malformed for our
         # purposes; fall back to the raw text rather than poisoning the stream.
+        # Deliberate asymmetry with _extractWords (which REJECTS a non-list
+        # words): a raw final is load-bearing, so a malformed field there fails
+        # the stream, whereas a refinement is an enhancement on top of an
+        # already-valid final, so a malformed refinement degrades to the raw
+        # final instead.
         normalizedText = raw.text
     normalizedWords = _extractWords(normalizedAlt.get("words"))
     words: Tuple[TranscriptionWord, ...] = tuple(normalizedWords) if normalizedWords else raw.words
@@ -417,6 +422,12 @@ def _coerceInt(value: object) -> int:
     ``int(float)`` semantics rather than rounding; protobuf int64 ms values
     should never legitimately be fractional, so the truncation is a defined
     fallback, not silent data loss.
+
+    Underscore note: because parsing goes through CPython's ``int()``, an
+    underscored numeric string such as ``"1_000"`` is accepted as ``1000``
+    (Python digit-separator syntax). Protobuf-JSON int64 strings never contain
+    underscores, so this is a documented passthrough of ``int()`` semantics
+    rather than a wire feature.
 
     Args:
         value: The raw timestamp value from a parsed event.

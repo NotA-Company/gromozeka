@@ -130,7 +130,9 @@ async def extractAudio(
 
     Raises:
         NoAudioTrackError: The source has no decodable audio stream.
-        AudioDecodeError: The source is corrupt/truncated or PyAV is unavailable.
+        AudioDecodeError: The source is corrupt/truncated or PyAV is unavailable,
+            or an unexpected non-typed exception from PyAV (caught by the caller's
+            defense-in-depth).
         EncoderError: No compressed transcode target is available, or the
             encoder/muxer failed.
     """
@@ -167,10 +169,10 @@ def _extractBlocking(
 
     # Transcode path: source container unsupported, or supported but channels/rate
     # out of range.
-    target = _chooseTranscodeTarget(supportedInputFormats)
-    if target is None:
+    targetSpec = _chooseTranscodeTarget(supportedInputFormats)
+    if targetSpec is None:
         raise EncoderError("no compressed transcode target available in supportedInputFormats")
-    return _transcode(sourceBytes, probe, target)
+    return _transcode(sourceBytes, probe, targetSpec)
 
 
 def _probe(sourceBytes: bytes) -> _ProbeInfo:
@@ -256,19 +258,21 @@ def _passthrough(
 def _transcode(
     sourceBytes: bytes,
     probe: _ProbeInfo,
-    target: STTAudioContainerType,
+    target: AudioFormatSpec,
 ) -> ExtractedAudio:
     """Transcode path: decode the source and re-encode to a compressed container.
 
-    Encodes to ``target`` (the provider's first supported compressed format —
-    OGG_OPUS for Yandex), **channel-preserving** (no downmix). Decoded-memory
-    bounding is intentionally not enforced here (see the module note on the
-    accepted decoded-memory gap).
+    Encodes to ``target.container`` (the provider's first supported compressed
+    format — OGG_OPUS for Yandex), **channel-preserving** (no downmix).
+    Decoded-memory bounding is intentionally not enforced here (see the module
+    note on the accepted decoded-memory gap).
 
     Args:
         sourceBytes: The source container bytes.
         probe: The header probe result (container, channels, sample rate).
-        target: The transcode target container (OGG_OPUS or MP3).
+        target: The transcode target spec (the provider's first supported
+            compressed format — OGG_OPUS or MP3), whose channel/sample-rate
+            limits are enforced before encoding.
 
     Returns:
         ExtractedAudio: The re-encoded bytes with the target container, preserved
@@ -276,11 +280,12 @@ def _transcode(
 
     Raises:
         AudioDecodeError: The source is corrupt/truncated mid-decode.
-        EncoderError: The encoder/muxer failed.
+        EncoderError: The source channels or the output sample rate fall outside
+            the target spec's limits, or the encoder/muxer failed.
     """
-    outCodec = _CODEC_FOR_CONTAINER[target]
-    outFormat = _FORMAT_FOR_CONTAINER[target]
-    outRate = _OPUS_NATIVE_RATE if target is STTAudioContainerType.OGG_OPUS else probe.sampleRate
+    outCodec = _CODEC_FOR_CONTAINER[target.container]
+    outFormat = _FORMAT_FOR_CONTAINER[target.container]
+    outRate = _OPUS_NATIVE_RATE if target.container == STTAudioContainerType.OGG_OPUS else probe.sampleRate
 
     inContainer = None
     outContainer = None
@@ -293,6 +298,27 @@ def _transcode(
         outBuffer = BytesIO()
         try:
             outContainer = av.open(outBuffer, mode="w", format=outFormat)
+            # Validate the source channels and the output sample rate against the
+            # target spec here (after both containers are open) so an out-of-spec
+            # source raises EncoderError and the outer ``finally`` still closes
+            # both containers — no leak on mid-configuration rejection (§5). The
+            # never-downmix hard rule makes out-of-range channels unrecoverable,
+            # and an out-of-spec output rate would hand the provider
+            # non-compliant audio. Harmless for the current Yandex provider
+            # (generous specs); closes the enforcement gap for future providers
+            # with restrictive limits. The physical opus/mp3 <=2-channel ceiling
+            # is enforced separately by ``_layoutForChannels`` below.
+            if not target.minChannels <= probe.channels <= target.maxChannels:
+                raise EncoderError(
+                    f"cannot transcode a {probe.channels}-channel source: target spec {target.container}"
+                    f" accepts {target.minChannels}-{target.maxChannels} channels and conversion"
+                    " is forbidden by the never-downmix hard rule (§5)"
+                )
+            if not target.minSampleRate <= outRate <= target.maxSampleRate:
+                raise EncoderError(
+                    f"cannot transcode {probe.sampleRate} Hz source to {outRate} Hz output: target spec"
+                    f" {target.container} accepts {target.minSampleRate}-{target.maxSampleRate} Hz"
+                )
             outStream = cast(AudioStream, outContainer.add_stream(outCodec, rate=outRate))
             # Validate the layout here (after both containers are open) so a
             # >2-channel source raises EncoderError and the outer ``finally``
@@ -300,7 +326,7 @@ def _transcode(
             # source mid-configuration (§5; opus/mp3 support <= 2 channels and
             # the never-downmix hard rule makes >2-channel unrecoverable).
             outStream.layout = _layoutForChannels(probe.channels)
-            if target is STTAudioContainerType.OGG_OPUS:
+            if target.container == STTAudioContainerType.OGG_OPUS:
                 # 'voip' is the appropriate application for speech recognition.
                 # Gated on the enum (the authoritative signal), not the codec name.
                 outStream.options = {"application": "voip"}
@@ -335,7 +361,11 @@ def _transcode(
             outContainer.close()
         except av.error.FFmpegError as exc:
             muxerFinalizeError = exc
-        outContainer = None
+        finally:
+            # Clear the reference unconditionally (success, FFmpegError, or any
+            # unexpected exception from close()) so the outer ``finally`` never
+            # double-closes a half-finalized container.
+            outContainer = None
         if muxerFinalizeError is not None:
             raise EncoderError(f"{outCodec} muxer finalize failed: {muxerFinalizeError}") from muxerFinalizeError
         outBytes = outBuffer.getvalue()
@@ -350,7 +380,7 @@ def _transcode(
     durationMs = int(round(encodedSamples * 1000 / probe.sampleRate))
 
     return ExtractedAudio(
-        container=target,
+        container=target.container,
         channels=probe.channels,
         sampleRate=outRate,
         data=outBytes,
@@ -388,7 +418,7 @@ def _measureDuration(
 
         sampleCount = 0
         try:
-            sampleCount = sum([frame.samples for frame in container.decode(audio=0)])
+            sampleCount = sum(frame.samples for frame in container.decode(audio=0))
         except av.error.FFmpegError as exc:
             raise AudioDecodeError(f"source decode failed: {exc}") from exc
 
@@ -478,23 +508,26 @@ def _matchFormatSpec(
     return None
 
 
-def _chooseTranscodeTarget(formats: Sequence[AudioFormatSpec]) -> Optional[STTAudioContainerType]:
-    """Pick the transcode target: the provider's first supported compressed format.
+def _chooseTranscodeTarget(formats: Sequence[AudioFormatSpec]) -> Optional[AudioFormatSpec]:
+    """Pick the transcode target spec: the provider's first supported compressed format.
 
     The provider's preferred transcode target is the first ``supportedInputFormats``
     entry whose container is compressed (OGG_OPUS/MP3) — OGG_OPUS first for Yandex.
+    The FULL spec (including its channel/sample-rate limits) is returned, not just
+    the container, so the transcode path can validate the source against the
+    provider's declared limits before encoding (§5).
 
     Args:
         formats: The provider's ordered accepted input formats.
 
     Returns:
-        The first compressed container in ``formats``, or ``None`` when the
-        provider accepts no compressed container (in which case transcode is
-        impossible and the caller raises :class:`EncoderError`).
+        The first compressed :class:`AudioFormatSpec` in ``formats``, or ``None``
+        when the provider accepts no compressed container (in which case transcode
+        is impossible and the caller raises :class:`EncoderError`).
     """
     for spec in formats:
         if spec.container in _COMPRESSED_TARGETS:
-            return spec.container
+            return spec
     return None
 
 

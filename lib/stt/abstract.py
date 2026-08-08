@@ -20,7 +20,7 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from lib.proxy import ProxyConfig
 from lib.stats import NullStatsStorage, StatsStorage
@@ -62,15 +62,32 @@ class AbstractSTTProvider(ABC):
         *,
         proxyConfig: Optional[ProxyConfig] = None,
         statsStorage: Optional[StatsStorage] = None,
-        **extraKwargs,
+        **extraKwargs: Dict[str, Any],
     ) -> None:
+        """Initialize the shared provider state.
+
+        Accepts and ignores ``extraKwargs`` so subclasses can share one
+        ``__init__`` call-chain (cooperative multiple inheritance) without the
+        base class needing to know their constructor arguments.
+
+        Args:
+            proxyConfig: The injected, already-resolved proxy config, or ``None``
+                for no proxy.
+            statsStorage: The stats storage used by :meth:`_recordStats`;
+                ``None`` selects the no-op :class:`NullStatsStorage`.
+            extraKwargs: Unused keyword arguments accepted for cooperative
+                multiple-inheritance compatibility; ignored by the base class.
+
+        Returns:
+            None
+        """
 
         self.proxyConfig: Optional[ProxyConfig] = proxyConfig
         """The injected, already-resolved proxy config, or ``None`` for no proxy."""
         self.statsStorage: StatsStorage = statsStorage if statsStorage is not None else NullStatsStorage()
         """The stats storage used by :meth:`_recordStats`; ``NullStatsStorage`` (no-op) by default."""
         self._extraLabels: Dict[str, str] = {}
-        """Extra labels for lib/stats logging purposes"""
+        """Extra labels for lib/stats logging purposes."""
 
     @abstractmethod
     def supportedInputFormats(self) -> Sequence[AudioFormatSpec]:
@@ -249,7 +266,7 @@ class AbstractSTTProvider(ABC):
                     "request_count": 1,
                     "audio_duration_ms": audio.durationMs,
                     "elapsed_time": elapsedSeconds,
-                    "is_error": 1 if result.status is STTResultStatus.ERROR else 0,
+                    "is_error": 1 if result.status == STTResultStatus.ERROR else 0,
                     f"status_{result.status}": 1,
                 },
                 consumerId=consumerId,

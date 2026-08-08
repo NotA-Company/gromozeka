@@ -40,7 +40,8 @@ from typing import Dict, Optional, Tuple
 
 import httpx
 
-from lib.proxy import ProxyKwargs
+from lib.proxy import ProxyConfig, ProxyKwargs
+from lib.stats import StatsStorage
 
 from ..abstract import AbstractSTTProvider
 from ..models import (
@@ -171,7 +172,7 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
         apiKey: str,
         folderId: str,
         model: str = "general",
-        language: str | Sequence[str] = "ru-RU",
+        language: str = "ru-RU",
         requestTimeoutSeconds: float = 30.0,
         operationBudgetSeconds: float = 180.0,
         pollIntervalSeconds: float = 2.0,
@@ -185,6 +186,8 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
         objectStoragePrefix: str = "stt/",
         objectStorageKeyId: Optional[str] = None,
         objectStorageKeySecret: Optional[str] = None,
+        proxyConfig: Optional[ProxyConfig] = None,
+        statsStorage: Optional[StatsStorage] = None,
         **extraKwargs,
     ) -> None:
         """Initialize the provider, validating startup config and building the client.
@@ -198,16 +201,17 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
             folderId: Yandex Cloud folder ID (``x-folder-id`` header). Required.
             model: Recognition model name (``recognition_model.model``). Defaults to
                 ``"general"``.
-            language: BCP-47 language code for the WHITELIST restriction. Defaults to
-                ``"ru-RU"``.
+            language: Single BCP-47 language code for the WHITELIST restriction.
+                Defaults to ``"ru-RU"``.
             proxyConfig: Already-resolved :class:`~lib.proxy.ProxyConfig` (the
                 dependency-firewall seam — resolved in the service layer via
                 ``ProxyService.resolveProxy``), or ``None`` for no proxy. Spread into
                 the ``httpx.AsyncClient`` via ``toKwargs()``.
             requestTimeoutSeconds: Per-httpx-request timeout in seconds (§8.1: 30 s).
             operationBudgetSeconds: Wall-clock operation budget in seconds across
-                submit + poll + fetch (§7.2/§7.4: 180 s). Best-effort deletion runs
-                outside this budget.
+                submit + poll + fetch (§7.2/§7.4: 180 s — constructor default; the
+                shipped ``stt.toml`` config overrides to 2400). Best-effort deletion
+                runs outside this budget.
             pollIntervalSeconds: Initial poll interval in seconds (§8.1: 2 s).
             maxPollIntervalSeconds: Ceiling for the exponential poll backoff in seconds
                 (§8.1: 10 s).
@@ -251,12 +255,7 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
             None
         """
 
-        # To not enumerate all kwargs, copy them from locals() and ther extend with extraKwargs
-        kwargs = locals().copy()
-        kwargs.pop("self", None)
-        kwargs.pop("extraKwargs", None)
-        kwargs.update(extraKwargs)
-        super().__init__(**kwargs)
+        super().__init__(proxyConfig=proxyConfig, statsStorage=statsStorage)
 
         if not apiKey or not isinstance(apiKey, str):
             raise ValueError("apiKey must be a non-empty string")
@@ -308,7 +307,7 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
             ("objectStorageKeyId", objectStorageKeyId),
             ("objectStorageKeySecret", objectStorageKeySecret),
         ):
-            if value and value.startswith("${") and value.endswith("}"):
+            if value and isinstance(value, str) and value.startswith("${") and value.endswith("}"):
                 raise ValueError(f"{name} contains an unresolved placeholder: {value!r}")
 
         # Store maxInlineBytes and construct the Object Storage helper when configured.
@@ -326,7 +325,7 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
         self._apiKey: str = apiKey
         self._folderId: str = folderId
         self._model: str = model
-        self._language: Sequence[str] = [language] if isinstance(language, str) else list(language)
+        self._language: Sequence[str] = [language]
         self._operationBudgetSeconds: float = operationBudgetSeconds
         self._pollIntervalSeconds: float = pollIntervalSeconds
         self._maxPollIntervalSeconds: float = maxPollIntervalSeconds
@@ -749,13 +748,16 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
     def _pollDelay(self, attempt: int) -> float:
         """Exponential poll backoff, capped at ``maxPollIntervalSeconds`` (§8.1).
 
+        The exponent is capped at 100 so ``2 ** attempt`` stays within ``float``
+        range even for a pathological attempt index (``2 ** 1024`` overflows).
+
         Args:
             attempt: The zero-based poll attempt index.
 
         Returns:
             float: The delay in seconds before the next poll.
         """
-        return min(self._pollIntervalSeconds * (2**attempt), self._maxPollIntervalSeconds)
+        return min(self._pollIntervalSeconds * (2 ** min(attempt, 100)), self._maxPollIntervalSeconds)
 
     def _retryDelay(self, attempt: int, *, response: Optional[httpx.Response]) -> float:
         """GET-retry delay honouring ``Retry-After`` when present (§7.4).
@@ -775,7 +777,7 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
         retryAfter = self._retryAfterSeconds(response)
         if retryAfter is not None:
             return retryAfter
-        return min(self._retryBackoffSeconds * (2**attempt), self._maxPollIntervalSeconds)
+        return min(self._retryBackoffSeconds * (2 ** min(attempt, 100)), self._maxPollIntervalSeconds)
 
     @staticmethod
     def _retryAfterSeconds(response: Optional[httpx.Response]) -> Optional[float]:

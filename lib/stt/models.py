@@ -138,6 +138,23 @@ class STTAudioContainerType(StrEnum):
     """MPEG-1/2 Audio Layer III container (common AUDIO shape)."""
 
     def toYandexSpeechKit(self) -> str:
+        """Return the Yandex SpeechKit v3 proto wire label for this container.
+
+        Maps the lowercase enum value to the Yandex proto enum wire label
+        (``"WAV"`` / ``"OGG_OPUS"`` / ``"MP3"``) used when submitting the audio
+        to the Yandex SpeechKit v3 recognition API.
+
+        Args:
+            self: The container enum member being converted.
+
+        Returns:
+            str: The Yandex proto wire label — ``"WAV"``, ``"OGG_OPUS"``, or
+            ``"MP3"``.
+
+        Raises:
+            ValueError: An unknown enum value was encountered (defensive — the
+                StrEnum members are closed, so this is unreachable in practice).
+        """
         match self:
             case STTAudioContainerType.WAV:
                 return "WAV"

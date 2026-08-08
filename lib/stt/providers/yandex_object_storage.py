@@ -56,6 +56,8 @@ class YandexObjectStorage:
         _client: The boto3 S3 client (built once with bounded config).
     """
 
+    __slots__ = ("_client", "_bucket", "_prefix", "_endpointUrl", "_regionName")
+
     def __init__(
         self,
         *,
@@ -72,6 +74,9 @@ class YandexObjectStorage:
                 A trailing ``/`` is conventional but not enforced.
             keyId: Yandex static access-key ID (SigV4 credential).
             keySecret: Yandex static access-key secret (SigV4 credential).
+
+        Returns:
+            None
         """
         self._bucket = bucket
         self._prefix = prefix
@@ -101,8 +106,7 @@ class YandexObjectStorage:
 
         Raises:
             ClientError: On infrastructure failure (auth, network, 5xx).
-                The provider wraps this in a best-effort try/except
-                (Phase 3).
+                The provider wraps this in a best-effort try/except.
         """
         key = f"{self._prefix}{uuid.uuid4()}"
         await asyncio.to_thread(

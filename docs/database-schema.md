@@ -534,7 +534,7 @@ Stores information about media attachments (images, documents, etc.).
 | `mime_type` | TEXT | Yes | NULL | MIME type of the file |
 | `local_url` | TEXT | Yes | NULL | Local file path if downloaded |
 | `prompt` | TEXT | Yes | NULL | Prompt used for image generation |
-| `description` | TEXT | Yes | NULL | AI-generated description of media. Also carries the Speech-to-Text transcript for transcribed media. `STTService` is stateless and does NOT persist — the **handler round** (`_transcribeMedia`) owns the row lifecycle and writes the transcript via plain `updateMediaAttachment` (single attachments have no concurrent writes; there is no CAS — see [`docs/llm/architecture.md`](llm/architecture.md) ADR-020 and [`docs/llm/services.md`](llm/services.md) §7). Reuses the existing column; **no migration** was added for STT. |
+| `description` | TEXT | Yes | NULL | AI-generated description of media; also carries the STT transcript — see STT semantics below. |
 | `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
@@ -543,7 +543,7 @@ Stores information about media attachments (images, documents, etc.).
 
 **TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:255)
 
-**STT (media-transcription) semantics:** the existing `media_attachments` table is reused — **no migration**. The `status` column carries the transcription lifecycle (`NEW → PENDING → DONE|FAILED`) and the transcript is persisted in `description`. `STTService` is **stateless** and does NOT perform DB I/O — the **handler round** owns the row lifecycle (read / cache-hit / claim to `PENDING` / persist / terminalize). All transitions go through `MediaAttachmentsRepository.updateMediaAttachment(mediaId, *, status, description=None, ...)` — plain last-write semantics (single attachments have no concurrent writes, so there is no CAS; the former `setStatusVerified` helper has been removed). The feature is **wired but default-off** — the row lifecycle is owned by the `BaseBotHandler._processMediaV2` STT branch + its `_transcribeMedia` background task ([`internal/bot/common/handlers/base.py`](../internal/bot/common/handlers/base.py)), gated by `[stt].enabled` config + an eligible media type + the per-chat `PARSE_ATTACHMENTS` and `TRANSCRIBE_MEDIA` settings (all default `false`). See [ADR-020](llm/architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall).
+**STT (media-transcription) semantics:** For STT semantics (lifecycle, gating, CAS-removal), see [ADR-020](llm/architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall).
 
 ---
 

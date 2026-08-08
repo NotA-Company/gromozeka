@@ -4,6 +4,7 @@ This module implements custom httpx transports that can intercept HTTP
 requests for recording or replay previously recorded requests.
 """
 
+import logging
 import re
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
@@ -11,6 +12,8 @@ from typing import Dict, List, Optional, Tuple
 import httpx
 
 from .types import HttpCallDict, HttpRequestDict, HttpResponseDict
+
+logger = logging.getLogger(__name__)
 
 
 class RecordingTransport(httpx.AsyncHTTPTransport):
@@ -46,8 +49,8 @@ class RecordingTransport(httpx.AsyncHTTPTransport):
         Returns:
             The httpx Response from the real transport.
         """
-        # Print debug info
-        print(f"Recording HTTP call: {request.method} {request.url}")
+        # Debug logging of the outgoing call
+        logger.debug("Recording HTTP call: %s %s", request.method, request.url)
 
         # Capture request details
         request_data: HttpRequestDict = {
@@ -79,7 +82,11 @@ class RecordingTransport(httpx.AsyncHTTPTransport):
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         self.recordings.append(call)
-        print(f"RecordingTransport: Recorded call to {request.url}, now have {len(self.recordings)} recordings")
+        logger.debug(
+            "RecordingTransport: Recorded call to %s, now have %d recordings",
+            request.url,
+            len(self.recordings),
+        )
 
         return response
 
@@ -94,6 +101,11 @@ class ReplayTransport(httpx.AsyncHTTPTransport):
     Attributes:
         recordings: List of recorded HttpCallDict objects to replay.
         _matchCursors: Per-request-signature advancing cursor (see handle_async_request).
+
+    Note:
+        The transport assumes sequential request issuance per signature; the
+        read-increment-write on ``_matchCursors`` is not concurrency-safe. For
+        concurrent consumers, use an ``asyncio.Lock`` per matchKey.
     """
 
     def __init__(self, recordings: List[HttpCallDict], *args, **kwargs) -> None:
@@ -131,11 +143,10 @@ class ReplayTransport(httpx.AsyncHTTPTransport):
             return recorded_url == request_url
 
         # If the recorded URL has a masked API key, do pattern matching
-        # Replace the masked API key with a regex pattern
+        # Replace the masked API key with a regex pattern. The first replace
+        # consumes every "***MASKED***" occurrence (re.escape makes the literal
+        # "\*\*\*MASKED\*\*\*"), so there is nothing left for a second pass.
         pattern = re.escape(recorded_url).replace(r"\*\*\*MASKED\*\*\*", r"[^&]*")
-
-        # Also handle URL-encoded masked key
-        pattern = pattern.replace(r"\*\*\*MASKED\*\*\*", r"[^&]*")
 
         # Match the pattern against the request URL
         return bool(re.match(pattern, request_url))
@@ -169,6 +180,10 @@ class ReplayTransport(httpx.AsyncHTTPTransport):
 
     def _bodyMatch(self, recorded_body: Optional[str], request_body: Optional[str]) -> bool:
         """Check if two request bodies match, handling masked values.
+
+        Note:
+            Body comparison is byte-exact — if httpx's JSON serialization
+            changes, regenerate fixtures.
 
         Args:
             recorded_body: Body from the recorded data (may have masked values).
@@ -214,6 +229,13 @@ class ReplayTransport(httpx.AsyncHTTPTransport):
         to exhaust the sequence is an over-polling regression, which a shared
         regression-catching library must surface loudly (verifyAllCallsUsed is
         a stub, so this raise is the over-polling signal).
+
+        Note:
+            Matching is a linear scan over ALL recordings on every request —
+            O(n) in the fixture count, plus a tuple allocation for the match
+            key. This is acceptable for current fixture sizes; if fixture
+            counts grow large, precompute a ``Dict[signature, Tuple[int, ...]]``
+            in ``__init__`` to cache per-signature match indices.
 
         Args:
             request: The httpx Request to match.

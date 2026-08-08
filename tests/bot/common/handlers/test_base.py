@@ -624,12 +624,13 @@ class TestProcessMediaV2STT:
 
     Validates the four integration points of the STT pipeline:
 
-    1. **DONE cache-hit gate**: DONE + description (or STT gate off) → early
-       return; DONE + no description + gate on → reprocess.
+    1. **DONE cache-hit gate**: DONE → always early return (unconditional;
+       retroactive STT transcription of previously-processed media is
+       intentionally out of scope).
     2. **Status decision**: STT-eligible + gate on → ``MediaStatus.PENDING``.
     3. **STT scheduling**: background ``_transcribeMedia`` task via
-       ``queueService``, ``ret.task`` is an empty placeholder (not the STT
-       task).
+       ``queueService``, ``ret.task`` is the STT task (mirrors the
+       image-parsing path).
     4. **``_transcribeMedia`` terminalization**: download success/failure,
        STT success/failure, exception handling — row never left PENDING.
 
@@ -1149,11 +1150,11 @@ class TestProcessMediaV2STT:
         assert row["description"] is None
 
     # ------------------------------------------------------------------
-    # Scenario 9: ret.task is empty placeholder, NOT the STT task
+    # Scenario 9: ret.task is the STT task (mirrors the image-parsing path)
     # ------------------------------------------------------------------
 
-    async def test_sttRetTaskIsEmptyNotTheSttTask(self, testDatabase: Database) -> None:
-        """``ret.task`` is an immediately-complete placeholder, not the STT task.
+    async def test_sttRetTaskIsTheSttTask(self, testDatabase: Database) -> None:
+        """``ret.task`` is the STT task (mirrors the image-parsing path).
 
         The LLM polls the DB (via ``_awaitMedia``, 300 s cap) instead of
         awaiting the transcription task directly.

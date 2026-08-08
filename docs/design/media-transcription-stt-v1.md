@@ -160,6 +160,10 @@ do not copy it into new documentation.
 
 ### 5.1 Components
 
+> **Superseded (2026-08-02 simplification):** The STTService is now stateless —
+> no in-flight registry, no DB interaction. The handler owns the row lifecycle.
+> See [`services.md`](../llm/services.md) and ADR-020.
+
 ```text
 internal/bot/common/handlers/base.py
   - evaluates type and the chat gate
@@ -323,9 +327,9 @@ Every exit after the provider call must be caught and persisted:
 
 | Outcome | Status | Description |
 |---|---|---|
-| One or more non-empty final segments | `DONE` | Formatted, escaped, bounded transcript |
-| Valid recognition with no speech | `DONE` | `[No speech detected]` |
-| Source too large, no audio track, corrupt media, duration/output cap, admission timeout, download error, provider/operation/protocol error | `FAILED` | Remains null |
+| One or more non-empty final segments | `DONE` | Formatted with `[HH:MM:SS.mmm]` prefix. No bounding. See [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py). |
+| Valid recognition with no speech | `DONE` | `NO_SPEECH` returns `""` (no sentinel). See [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py). |
+| Source too large, no audio track, corrupt media, download error, provider/operation/protocol error | `FAILED` | Remains null |
 
 `FAILED` is retryable when a later message has the effective gate enabled.
 v1 is user-silent: failures are operator-visible through bounded structured
@@ -344,6 +348,12 @@ Update `EnsuredMessage._awaitMedia()` to treat expected `NEW` and `FAILED`
 terminal rows explicitly rather than logging them as an invalid enum status.
 
 ### 6.3 In-process deduplication
+
+> **Superseded (2026-08-02 simplification):** `dispatchTranscription()` and the
+> `dict[str, STTInFlight]` in-flight registry are **removed**. `STTService` is
+> stateless — deduplication is by the per-`file_unique_id` DB row (one row, one
+> background task at a time). The handler owns the row lifecycle; see
+> [`services.md`](../llm/services.md) and ADR-020.
 
 `STTService` owns `dict[str, STTInFlight]`, keyed by media ID. Each internal
 entry contains `task: asyncio.Task[None]` and a shared
@@ -386,11 +396,12 @@ startup config validation.
 
 > **Authoritative contract:** [`lib-stt-v1.md` §4](./lib-stt-v1.md) — make changes there, not here. This section summarizes it only.
 
-**`STTMediaRequest` (service-side integration boundary).** The internal
-`STTMediaRequest` carries media/chat IDs, optional platform `declaredSize`, and
-a loader. The loader result contains source `data`, actual `fileSize`, and
-optional detected `mimeType`; the loader is an async typed callable that closes
-over platform identifiers and the current `SAVE_ATTACHMENTS` behavior.
+**`STTMediaRequest` (service-side integration boundary — **removed in the
+2026-08-02 simplification**).** The internal `STTMediaRequest` carried
+media/chat IDs, optional platform `declaredSize`, and a loader. The loader
+result contained source `data`, actual `fileSize`, and optional detected
+`mimeType`; the loader was an async typed callable that closed over platform
+identifiers and the current `SAVE_ATTACHMENTS` behavior.
 Download is performed by the existing unbounded `TheBot.downloadAttachment` (see
 §12.4); size enforcement is post-download inside `STTService`.
 `STTService` remains the final never-raise boundary for background work and maps
@@ -405,13 +416,13 @@ Defaults deliberately stay below SpeechKit's vendor maximum:
 | Guard | Default | Purpose |
 |---|---:|---|
 | Source container | 1,073,741,824 bytes (1 GiB; `max-source-bytes`) | Bound platform download and source buffer. User-configurable; currently defaults to 1 GiB per the accepted residual Max-unbounded-download risk (user decision 2026-08-03 — a large Max attachment fully materializes before `STTService` rejects it; Telegram is platform-capped ~20 MB by the bot API `getFile` limit). |
-| Decoded buffer | `duration × channels × sampleRate × 2` bytes; bounded by `max-audio-bytes` (20 MiB default) | Bound in-memory decoded PCM during PyAV processing. Channel-aware; replaces the old mono "20 MiB WAV" output bound. |
+| Decoded buffer (`max-audio-bytes`) | (removed) | **Removed.** See [`lib-stt-v1.md` §5/§8.1](./lib-stt-v1.md). |
 | Inline payload | 41,943,040 bytes (40 MiB; `max-inline-bytes`) | Bound `ExtractedAudio.data` (pass-through source or transcode output); base64-expanded must stay below the 60 MB vendor **inline** limit with headroom. |
-| Decoded duration | 600 seconds | Bound CPU and billed duration. Stop-at-cap on the transcode path; reject on the pass-through path. Bounded upstream by the 300 s media-poll; far below the 4 h vendor ceiling. |
+| Decoded duration | (removed) | **Removed.** See [`lib-stt-v1.md` §5/§8.1](./lib-stt-v1.md). |
 | Result body | 5,242,880 bytes (5 MiB) | Bound server-streamed event collection. |
-| Persisted transcript | 48,000 characters | Bound LLM-context expansion. |
+| Persisted transcript | (removed) | **Removed.** See [`lib-stt-v1.md` §5/§8.1](./lib-stt-v1.md). |
 | Global workers | 2 | Bound simultaneous download/decode/request memory. |
-| Admission wait | 20 seconds | Convert prolonged throttling/contention into terminal `FAILED`. |
+| Admission wait | (removed) | **Removed.** See [`lib-stt-v1.md` §5/§8.1](./lib-stt-v1.md). |
 | HTTP request | 30 seconds | Bound each network request. |
 | SpeechKit operation | 2400 seconds | Cap submit/poll/get for the SpeechKit operation itself. This is the full SpeechKit operation budget (`operation-budget-seconds`), not a media-poll budget; it sits well inside the 4 h vendor duration ceiling. |
 | Poll interval | 2 seconds initially, 10 seconds maximum | Stay below operation polling quota. |
@@ -428,10 +439,19 @@ source/duration/concurrency defaults if the deployment memory budget cannot abso
 
 ### 8.2 Admission order
 
+> **Superseded (2026-08-02 simplification):** The admitted-loader pipeline is
+> **removed** — no `STTMediaRequest.declaredSize`, no 20-second admission
+> budget, no service-side `PENDING` write. The handler writes `PENDING`,
+> downloads synchronously, and passes bytes to the stateless
+> `STTService.transcribeMedia(data, chatId=...)`; the service applies rate
+> limits and the semaphore, and the handler persists the terminal row. See
+> [`lib-stt-v1.md` §1](./lib-stt-v1.md) and ADR-020.
+
 For a newly created worker:
 
 1. Write `PENDING`.
-2. Reject a known `STTMediaRequest.declaredSize` over the cap.
+2. Reject a known `STTMediaRequest.declaredSize` over the cap (**removed in the
+   2026-08-02 simplification**).
 3. Within the 20-second admission budget, apply the per-chat limiter, apply the
    global vendor limiter, and acquire the global semaphore.
 4. Under the semaphore, perform the unbounded platform download via the
@@ -476,6 +496,12 @@ the storage helper returns, so source-memory and concurrency bounds still hold,
 and §8.4's shutdown limitation applies.
 
 ### 8.4 PyAV contract
+
+> **Superseded (2026-08-02 simplification):** `extractAudio()` no longer enforces
+> caps — `DurationExceededError` and the stop-at-cap / reject-on-pass-through
+> duration logic are **removed**. Negotiation is container-only; the handler /
+> service bound source bytes and duration before calling `extractAudio`. See
+> [`lib-stt-v1.md` §5](./lib-stt-v1.md).
 
 Pin `av==18.0.0` (supported wheels bundle FFmpeg libraries on published macOS /
 manylinux / musllinux artifacts; source builds still require FFmpeg development
@@ -537,7 +563,13 @@ all-empty result becomes exactly the `[No speech detected]` sentinel (header not
 prepended), and `max-transcript-chars` is enforced after escaping with
 deterministic head/tail truncation around a single
 `[... transcript truncated; N characters omitted ...]` marker (header and marker
-counted inside the cap). Transcript text is **never** placed in a system-role
+counted inside the cap). **Deleted keys (2026-08-02 simplification):**
+`max-transcript-chars` (with `max-duration-seconds`, `admission-timeout`) is
+removed from `[stt]` config — the thin formatter at
+[`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py)
+no longer truncates and there is no sentinel. See
+[`lib-stt-v1.md` §6](./lib-stt-v1.md) and `configs/00-defaults/stt.toml` for
+the current keys. Transcript text is **never** placed in a system-role
 message; the default-off friend gate, untrusted label, and escaping are the v1
 prompt-injection controls.
 
@@ -569,28 +601,36 @@ Add `configs/00-defaults/stt.toml`:
 enabled = false
 provider = "yandex-speechkit"
 use-proxy = false
-
-max-source-bytes = 1073741824  # 1 GiB (user decision 2026-08-03; see §8.1)
-max-audio-bytes = 20971520
-max-inline-bytes = 41943040
-max-duration-seconds = 600
-max-result-bytes = 5242880
-max-transcript-chars = 48000
 max-concurrency = 2
-admission-timeout = 20
-request-timeout = 30
-operation-timeout = 2400
-poll-initial-delay = 2
-poll-max-delay = 10
 chat-ratelimiter-queue = "stt-chat"
 global-ratelimiter-queue = "stt-global"
 
-[stt.providers.yandex-speechkit]
-type = "yandex-speechkit"
+max-source-bytes = 1073741824  # 1 GiB (user decision 2026-08-03; see §8.1)
+
 api-key = "${YC_API_KEY}"
 folder-id = "${YC_FOLDER_ID}"
-language-code = "ru-RU"
 model = "general"
+language = "ru-RU"
+request-timeout-seconds = 30
+operation-budget-seconds = 2400
+poll-interval-seconds = 2
+max-poll-interval-seconds = 10
+max-result-bytes = 5242880
+
+# v1.1 — gate-3 routing threshold: clips whose extracted form (len(audio.data))
+# is at/above this route to Object Storage (when configured); else inline.
+max-inline-bytes = 41943040
+
+# v1.1 — gate-3 Object Storage (Yandex Object Storage, S3-compatible).
+# Implicitly enabled when object-storage-bucket is set together with both keys.
+#object-storage-bucket = "stt-clips"
+#object-storage-prefix = "stt/"
+#object-storage-key-id = "${YC_STT_S3_KEY_ID}"
+#object-storage-key-secret = "${YC_STT_S3_SECRET_KEY}"
+
+# **Deleted keys (2026-08-02 simplification):** `max-audio-bytes`,
+# `max-duration-seconds`, `max-transcript-chars`, `admission-timeout` — see
+# `configs/00-defaults/stt.toml` for the current keys.
 ```
 
 Extend the existing `[storage.s3]` table in

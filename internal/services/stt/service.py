@@ -181,6 +181,9 @@ class STTService:
             logger.debug("STTService already initialized; skipping.")
             return
 
+        # ``Dict[str, Any]`` is inherited from ``ConfigManager.getSttConfig()``; it is
+        # acceptable as a generic container for TOML-sourced config and is not
+        # converted to a TypedDict here.
         sttConfig: Dict[str, Any] = configManager.getSttConfig()
         enabled: bool = bool(sttConfig.get("enabled", False))
 
@@ -209,7 +212,17 @@ class STTService:
             **{
                 libUtils.kebabToCamelCase(k): v
                 for k, v in sttConfig.items()
-                if k not in ("enabled", "use-proxy", "proxy-config", "provider")
+                if k
+                not in (
+                    "enabled",
+                    "use-proxy",
+                    "proxy-config",
+                    "provider",
+                    "max-source-bytes",
+                    "chat-ratelimiter-queue",
+                    "global-ratelimiter-queue",
+                    "max-concurrency",
+                )
             },
         )
 
@@ -227,7 +240,7 @@ class STTService:
         # Provider successfully constructed — mark enabled and initialized.
         self._enabled = True
         self._initialized = True
-        logger.info("STT service initialized (provider=yandex-speechkit).")
+        logger.info(f"STT service initialized (provider={provider}).")
 
     def isEnabled(self) -> bool:
         """Whether the STT service is enabled.
@@ -330,6 +343,10 @@ class STTService:
             with the provider's error code.
         """
         if result.status == STTResultStatus.ERROR:
-            return STTOutcome(success=False, description=None, errorCode=result.errorCode)
+            return STTOutcome(
+                success=False,
+                description=None,
+                errorCode=result.errorCode or STTErrorCode.PROVIDER_ERROR,
+            )
         description = formatTranscript(result)
         return STTOutcome(success=True, description=description)

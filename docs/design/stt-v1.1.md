@@ -264,7 +264,7 @@ every other TTL in the repo (`CACHE_CLEANUP_DEFAULT_TTL_SECS`,
 keeps the documented figure consistent with the repo's other TTLs even though the
 bot no longer enforces it.
 
-## 4. Enhancement 1 — gate-3: inline vs Object Storage routing
+## 4. Enhancement 1 — gate-3 (parent §13.3 gate-3): inline vs Object Storage routing
 
 ### 4.1 Threshold semantics
 
@@ -417,7 +417,7 @@ Two error-code changes accompany Object-Storage routing:
 
    A minimal alternative (reuse `PROVIDER_ERROR`) is rejected — see §12.
 
-## 5. Enhancement 2 — gate-4: statistics recording in lib/stt
+## 5. Enhancement 2 — gate-4 (parent §13.3 gate-4): statistics recording in lib/stt
 
 ### 5.1 Concrete StatsStorage finding (resolved)
 

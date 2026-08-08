@@ -32,7 +32,8 @@ following §4 over the looser wording in the phase task's test-matrix bullet.
 import asyncio
 import base64
 import json
-from typing import Any, Callable, Dict, List, Optional
+from datetime import datetime
+from typing import Callable, Optional, TypedDict
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -51,7 +52,7 @@ from lib.stt.providers.yandex_speechkit import YandexSpeechKitProvider
 
 # Fast lifecycle timings so no test waits on real wall-clock backoff. The operation
 # budget is generous enough that only maxPolls / explicit status codes drive outcomes.
-_FAST_TIMINGS: Dict[str, object] = {
+_FAST_TIMINGS: dict[str, object] = {
     "requestTimeoutSeconds": 5.0,
     "operationBudgetSeconds": 10.0,
     "pollIntervalSeconds": 0.0,
@@ -132,7 +133,7 @@ async def _provider(
     Returns:
         YandexSpeechKitProvider: A provider ready for ``transcribe``.
     """
-    kwargs: Dict[str, object] = {"apiKey": "test-key", "folderId": "test-folder", **_FAST_TIMINGS, **overrides}
+    kwargs: dict[str, object] = {"apiKey": "test-key", "folderId": "test-folder", **_FAST_TIMINGS, **overrides}
     provider = YandexSpeechKitProvider(**kwargs)  # type: ignore[arg-type]
     await provider.aclose()
     provider._httpClient = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -151,8 +152,8 @@ async def testHappyPathYieldsFinalResult() -> None:
         None
     """
     pollCount = 0
-    submitRequests: List[httpx.Request] = []
-    deleteRequests: List[httpx.Request] = []
+    submitRequests: list[httpx.Request] = []
+    deleteRequests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal pollCount
@@ -307,10 +308,10 @@ async def testOperationBudgetTimeoutYieldsProviderError() -> None:
     """The wall-clock ``asyncio.timeout`` budget path yields ERROR/PROVIDER_ERROR.
 
     Complements ``testMaxPollsExhaustedYieldsProviderError`` (the count-exhaustion
-    branch): here a tiny ``operationBudgetSeconds`` plus a poll interval that exceeds
-    it forces the ``except TimeoutError`` branch (~line 303) to fire during the
-    inter-poll sleep. No real multi-second wait — the 0.05 s budget interrupts the
-    0.5 s sleep almost immediately.
+    branch): here a small ``operationBudgetSeconds`` plus a poll interval that exceeds
+    it forces the ``except TimeoutError`` branch to fire during the inter-poll sleep.
+    The margins are deliberately wide (0.5 s budget vs 1.0 s poll sleep) so CI
+    scheduling jitter cannot mask or fake the timeout.
 
     Returns:
         None
@@ -326,13 +327,13 @@ async def testOperationBudgetTimeoutYieldsProviderError() -> None:
             return httpx.Response(200, json={"id": "op-1", "done": False})
         return httpx.Response(404)
 
-    # pollIntervalSeconds (0.5) exceeds the operation budget (0.05): the first
-    # non-done poll schedules a 0.5 s sleep during which the budget fires.
+    # pollIntervalSeconds (1.0) exceeds the operation budget (0.5): the first
+    # non-done poll schedules a 1.0 s sleep during which the budget fires.
     provider = await _provider(
         handler,
-        operationBudgetSeconds=0.05,
-        pollIntervalSeconds=0.5,
-        maxPollIntervalSeconds=0.5,
+        operationBudgetSeconds=0.5,
+        pollIntervalSeconds=1.0,
+        maxPollIntervalSeconds=1.0,
     )
     try:
         result = await provider.transcribe(_audio())
@@ -453,7 +454,7 @@ async def testSubmitContainerAudioTypeTracksExtractedAudio(container: STTAudioCo
     Returns:
         None
     """
-    capturedBody: Dict[str, object] = {}
+    capturedBody: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST" and request.url.path == _SUBMIT_PATH:
@@ -845,7 +846,7 @@ def testConstructorRejectsMissingFolderId() -> None:
         ({"retryBackoffSeconds": -1}, "retryBackoffSeconds"),
     ],
 )
-def testConstructorRejectsNonPositiveOrContradictoryLimits(kwargs: Dict[str, object], match: str) -> None:
+def testConstructorRejectsNonPositiveOrContradictoryLimits(kwargs: dict[str, object], match: str) -> None:
     """Non-positive / contradictory numeric limits raise ValueError.
 
     Args:
@@ -855,7 +856,7 @@ def testConstructorRejectsNonPositiveOrContradictoryLimits(kwargs: Dict[str, obj
     Returns:
         None
     """
-    base: Dict[str, object] = {"apiKey": "k", "folderId": "f", **_FAST_TIMINGS}
+    base: dict[str, object] = {"apiKey": "k", "folderId": "f", **_FAST_TIMINGS}
     base.update(kwargs)
     with pytest.raises(ValueError, match=match):
         with patch("lib.stt.providers.yandex_speechkit.httpx.AsyncClient"):
@@ -871,7 +872,7 @@ def testConstructorRejectsNonPositiveOrContradictoryLimits(kwargs: Dict[str, obj
         ({"language": "${STT_LANGUAGE}"}, "language"),
     ],
 )
-def testConstructorRejectsUnresolvedPlaceholders(kwargs: Dict[str, object], match: str) -> None:
+def testConstructorRejectsUnresolvedPlaceholders(kwargs: dict[str, object], match: str) -> None:
     """Unresolved ${...} placeholders in string params raise ValueError.
 
     Args:
@@ -881,7 +882,7 @@ def testConstructorRejectsUnresolvedPlaceholders(kwargs: Dict[str, object], matc
     Returns:
         None
     """
-    base: Dict[str, object] = {"apiKey": "k", "folderId": "f", "model": "general", "language": "ru-RU", **_FAST_TIMINGS}
+    base: dict[str, object] = {"apiKey": "k", "folderId": "f", "model": "general", "language": "ru-RU", **_FAST_TIMINGS}
     base.update(kwargs)
     with pytest.raises(ValueError, match=match):
         with patch("lib.stt.providers.yandex_speechkit.httpx.AsyncClient"):
@@ -921,7 +922,7 @@ async def testSubmitUsesCorrectUrlAndHeaders() -> None:
     Returns:
         None
     """
-    capturedRequest: List[httpx.Request] = []
+    capturedRequest: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST" and request.url.path == _SUBMIT_PATH:
@@ -963,7 +964,7 @@ def _constructProvider(**overrides: object) -> YandexSpeechKitProvider:
     Returns:
         YandexSpeechKitProvider: A constructed provider (httpx client is a mock).
     """
-    base: Dict[str, object] = {"apiKey": "test-key", "folderId": "test-folder", **_FAST_TIMINGS}
+    base: dict[str, object] = {"apiKey": "test-key", "folderId": "test-folder", **_FAST_TIMINGS}
     base.update(overrides)
     with patch("lib.stt.providers.yandex_speechkit.httpx.AsyncClient") as mockCtor:
         mockCtor.return_value = AsyncMock()
@@ -1095,7 +1096,7 @@ async def testEmptyBucketOnlyTreatedAsUnset() -> None:
         ),
     ],
 )
-async def testUnresolvedPlaceholderInOsCredsRejected(kwargs: Dict[str, object], match: str) -> None:
+async def testUnresolvedPlaceholderInOsCredsRejected(kwargs: dict[str, object], match: str) -> None:
     """Unresolved ${...} placeholders in OS cred params raise ValueError.
 
     Args:
@@ -1147,9 +1148,11 @@ async def testAcloseClosesObjectStorageHelper() -> None:
     try:
         assert provider._objectStorage is not None
         mockAclose = AsyncMock()
-        provider._objectStorage.aclose = mockAclose
-        await provider.aclose()
-        mockAclose.assert_awaited_once()
+        # YandexObjectStorage.__slots__ forbids shadowing ``aclose`` as an instance
+        # attribute; patch the class method instead (same effect, slots-safe).
+        with patch.object(YandexObjectStorage, "aclose", mockAclose):
+            await provider.aclose()
+            mockAclose.assert_awaited_once()
     finally:
         pass  # aclose already called above
 
@@ -1225,7 +1228,7 @@ async def _providerWithOs(
     Returns:
         YandexSpeechKitProvider: A provider ready for ``transcribe``.
     """
-    kwargs: Dict[str, object] = {
+    kwargs: dict[str, object] = {
         "apiKey": "test-key",
         "folderId": "test-folder",
         **_FAST_TIMINGS,
@@ -1257,7 +1260,7 @@ async def testInlinePathUsesContentAndDoesNotCallUpload() -> None:
         None
     """
     mockOs = _mockObjectStorage()
-    capturedBody: Dict[str, object] = {}
+    capturedBody: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal capturedBody
@@ -1300,7 +1303,7 @@ async def testOsPathUsesUriAndCallsUpload() -> None:
         None
     """
     mockOs = _mockObjectStorage()
-    capturedBody: Dict[str, object] = {}
+    capturedBody: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal capturedBody
@@ -1315,9 +1318,10 @@ async def testOsPathUsesUriAndCallsUpload() -> None:
             return httpx.Response(204)
         return httpx.Response(404)
 
+    audio = _largeAudio()
     provider = await _providerWithOs(handler, mockOs=mockOs)
     try:
-        result = await provider.transcribe(_largeAudio())
+        result = await provider.transcribe(audio)
     finally:
         await provider.aclose()
 
@@ -1326,12 +1330,12 @@ async def testOsPathUsesUriAndCallsUpload() -> None:
     assert "content" not in capturedBody
     assert capturedBody["uri"] == "https://storage.yandexcloud.net/test-bucket/stt/fake-uuid"
     # recognition_model block is present and structurally identical.
-    recognitionModel: Dict[str, object] = capturedBody["recognition_model"]  # type: ignore[assignment]
+    recognitionModel: dict[str, object] = capturedBody["recognition_model"]  # type: ignore[assignment]
     assert recognitionModel["model"] == "general"
-    audioFormat: Dict[str, object] = recognitionModel["audio_format"]  # type: ignore[assignment]
-    containerAudio: Dict[str, object] = audioFormat["container_audio"]  # type: ignore[assignment]
+    audioFormat: dict[str, object] = recognitionModel["audio_format"]  # type: ignore[assignment]
+    containerAudio: dict[str, object] = audioFormat["container_audio"]  # type: ignore[assignment]
     assert containerAudio["container_audio_type"] == "OGG_OPUS"
-    mockOs.upload.assert_awaited_once_with(_largeAudio().data)
+    mockOs.upload.assert_awaited_once_with(audio.data)
     mockOs.delete.assert_awaited_once()
 
 
@@ -1477,16 +1481,16 @@ async def testObjectDeletedInFinallyAfterOperationFailure() -> None:
 async def testUploadOutsideBudgetNotBoundedByOperationTimeout() -> None:
     """Upload happens BEFORE the asyncio.timeout context (outside the budget).
 
-    A slow upload (with a sleep) should NOT be interrupted by a tiny
+    A slow upload (with a sleep) should NOT be interrupted by the
     operation-budget timeout.  Assert upload is called before submit.
 
     Returns:
         None
     """
-    callOrder: List[str] = []
+    callOrder: list[str] = []
 
     async def slowUpload(data: bytes) -> str:
-        """Simulate a slow upload that sleeps briefly.
+        """Simulate a slow upload that sleeps longer than the operation budget.
 
         Args:
             data: The audio bytes (ignored).
@@ -1495,7 +1499,7 @@ async def testUploadOutsideBudgetNotBoundedByOperationTimeout() -> None:
             str: A fake URI.
         """
         callOrder.append("upload")
-        await asyncio.sleep(0.05)  # 50ms upload — longer than the budget
+        await asyncio.sleep(1.0)  # 1s upload — longer than the budget
         return "https://storage.yandexcloud.net/test-bucket/stt/fake-uuid"
 
     mockOs = _mockObjectStorage()
@@ -1516,18 +1520,18 @@ async def testUploadOutsideBudgetNotBoundedByOperationTimeout() -> None:
             return httpx.Response(204)
         return httpx.Response(404)
 
-    # operationBudgetSeconds = 0.01 (10ms) — far shorter than the 50ms upload sleep.
+    # operationBudgetSeconds = 0.5 (500ms) — far shorter than the 1s upload sleep.
     provider = await _providerWithOs(handler, mockOs=mockOs)
-    # Override the budget to something tiny.
-    provider._operationBudgetSeconds = 0.01
+    # Override the budget to something smaller than the upload sleep.
+    provider._operationBudgetSeconds = 0.5
     try:
         result = await provider.transcribe(_largeAudio())
     finally:
         await provider.aclose()
 
     # The upload completed (outside the budget) and the submit was reached.
-    # If the upload were inside the budget, the 10ms timeout would have
-    # interrupted the 50ms upload sleep and we'd get PROVIDER_ERROR.
+    # If the upload were inside the budget, the 0.5s timeout would have
+    # interrupted the 1s upload sleep and we'd get PROVIDER_ERROR.
     assert result.status is STTResultStatus.FINAL
     assert callOrder == ["upload", "submit"], f"Expected upload before submit, got {callOrder}"
     assert postCount == 1
@@ -1536,6 +1540,20 @@ async def testUploadOutsideBudgetNotBoundedByOperationTimeout() -> None:
 # ============================================================================
 # Phase 4: Statistics recording (design §5)
 # ============================================================================
+
+
+class _StatsRecord(TypedDict):
+    """One recorded stats event as captured by ``_RecordingStatsStorage``.
+
+    Attributes:
+        stats: The numeric stats dict.
+        consumerId: The consumer ID (None when not provided).
+        labels: The dimension labels (empty when not provided).
+    """
+
+    stats: dict[str, float | int]
+    consumerId: Optional[str]
+    labels: dict[str, str]
 
 
 class _RecordingStatsStorage(StatsStorage):
@@ -1553,7 +1571,7 @@ class _RecordingStatsStorage(StatsStorage):
         Returns:
             None
         """
-        self.records: List[Dict[str, Any]] = []
+        self.records: list[_StatsRecord] = []
         self.shouldRaise: Optional[Exception] = None
 
     async def record(
@@ -1562,7 +1580,7 @@ class _RecordingStatsStorage(StatsStorage):
         *,
         consumerId: Optional[str] = None,
         labels: Optional[dict[str, str]] = None,
-        eventTime: Optional[Any] = None,
+        eventTime: Optional[datetime] = None,
     ) -> None:
         """Append a record for later assertion.
 
@@ -1580,9 +1598,12 @@ class _RecordingStatsStorage(StatsStorage):
         """
         if self.shouldRaise is not None:
             raise self.shouldRaise
-        self.records.append(
-            {"stats": dict(stats), "consumerId": consumerId, "labels": dict(labels) if labels else None},
-        )
+        record: _StatsRecord = {
+            "stats": dict(stats),
+            "consumerId": consumerId,
+            "labels": dict(labels) if labels else {},
+        }
+        self.records.append(record)
 
     async def aggregate(self, *, limit: int = 1000, orphanTimeoutSeconds: int = 3600) -> int:
         """No-op for this fake.
@@ -1616,7 +1637,7 @@ async def _providerWithStats(
     Returns:
         YandexSpeechKitProvider: A provider ready for ``transcribe``.
     """
-    kwargs: Dict[str, object] = {"apiKey": "test-key", "folderId": "test-folder", **_FAST_TIMINGS, **overrides}
+    kwargs: dict[str, object] = {"apiKey": "test-key", "folderId": "test-folder", **_FAST_TIMINGS, **overrides}
     if statsStorage is not None:
         kwargs["statsStorage"] = statsStorage
     provider = YandexSpeechKitProvider(**kwargs)  # type: ignore[arg-type]
