@@ -7,8 +7,12 @@ paths (pass-through / transcode / reject) against the provider's
 ``supportedInputFormats``, and returns an :class:`~lib.stt.models.ExtractedAudio`.
 
 Key invariants:
-- **Always preserve source channels; never downmix** (hard rule). Both the
-  pass-through and transcode paths carry the source channel count unchanged.
+- **Pass-through preserves source channels; transcode converts out-of-spec
+  channels/rates.** The pass-through path carries the source channel count and
+  sample rate unchanged. The transcode path clamps channels to the target
+  spec's ``[minChannels, maxChannels]`` (downmix when too many, upmix when too
+  few) and the output rate to ``[minSampleRate, maxSampleRate]`` (nearest
+  bound), both via an :class:`~av.audio.resampler.AudioResampler`.
 - **Duration is measured from the actual sample count**, not container metadata
   alone, on every path.
 - **All blocking PyAV work runs in** :func:`asyncio.to_thread`, and a ``finally``
@@ -36,6 +40,7 @@ from typing import Dict, Optional, cast
 
 import av
 import av.error
+from av.audio.resampler import AudioResampler
 from av.audio.stream import AudioStream
 from av.container import InputContainer
 
@@ -260,32 +265,65 @@ def _transcode(
     probe: _ProbeInfo,
     target: AudioFormatSpec,
 ) -> ExtractedAudio:
-    """Transcode path: decode the source and re-encode to a compressed container.
+    """Transcode path: decode the source, convert channels/sample rate, and re-encode.
 
     Encodes to ``target.container`` (the provider's first supported compressed
-    format — OGG_OPUS for Yandex), **channel-preserving** (no downmix).
-    Decoded-memory bounding is intentionally not enforced here (see the module
-    note on the accepted decoded-memory gap).
+    format — OGG_OPUS for Yandex). Source channels and sample rate are clamped
+    to the target spec's ``[minChannels, maxChannels]`` and
+    ``[minSampleRate, maxSampleRate]`` ranges via an
+    :class:`~av.audio.resampler.AudioResampler` (downmix/upmix to the nearest
+    in-range channel count, resample to the nearest in-range rate). A source
+    already inside the spec is carried through the resampler unchanged (it is a
+    passthrough for those dimensions). Decoded-memory bounding is intentionally
+    not enforced here (see the module note on the accepted decoded-memory gap).
 
     Args:
         sourceBytes: The source container bytes.
         probe: The header probe result (container, channels, sample rate).
         target: The transcode target spec (the provider's first supported
             compressed format — OGG_OPUS or MP3), whose channel/sample-rate
-            limits are enforced before encoding.
+            limits define the clamping bounds.
 
     Returns:
-        ExtractedAudio: The re-encoded bytes with the target container, preserved
-        source channel count, the target sample rate, and the measured duration.
+        ExtractedAudio: The re-encoded bytes with the target container, the
+        clamped channel count, the clamped output sample rate, and the measured
+        duration.
 
     Raises:
         AudioDecodeError: The source is corrupt/truncated mid-decode.
-        EncoderError: The source channels or the output sample rate fall outside
-            the target spec's limits, or the encoder/muxer failed.
+        EncoderError: The encoder/muxer failed, or the target spec declares a
+            channel range the codec physically cannot encode (e.g. opus/mp3
+            support at most 2 channels — a spec with ``maxChannels > 2`` is
+            rejected up front rather than handed to the encoder).
     """
     outCodec = _CODEC_FOR_CONTAINER[target.container]
     outFormat = _FORMAT_FOR_CONTAINER[target.container]
-    outRate = _OPUS_NATIVE_RATE if target.container == STTAudioContainerType.OGG_OPUS else probe.sampleRate
+    # The codec ceiling (opus/mp3 <= 2 channels) is enforced against the spec's
+    # maxChannels up front: a spec promising >2 channels cannot be honoured by
+    # either encoder, so it is a configuration error, not a per-source reject.
+    if target.maxChannels > 2:
+        raise EncoderError(
+            f"target spec {target.container} declares maxChannels={target.maxChannels}"
+            f" but {outCodec} supports at most 2 channels"
+        )
+    # Clamp the source channels to the spec's [min, max] range (downmix when
+    # too many, upmix when too few). minChannels is clamped to >= 1 so a
+    # misconfigured spec (minChannels=0) cannot produce a zero-channel output.
+    outChannels = (
+        max(target.minChannels, 1) if probe.channels < target.minChannels else min(probe.channels, target.maxChannels)
+    )
+    # Opus always produces a 48 kHz stream regardless of the input rate (the
+    # libopus encoder resamples internally); for OGG_OPUS we use that native
+    # rate directly. For MP3 we clamp the source rate to the spec's range.
+    if target.container == STTAudioContainerType.OGG_OPUS:
+        outRate = _OPUS_NATIVE_RATE
+    else:
+        outRate = (
+            target.minSampleRate
+            if probe.sampleRate < target.minSampleRate
+            else min(probe.sampleRate, target.maxSampleRate)
+        )
+    outLayout = _layoutForChannels(outChannels)
 
     inContainer = None
     outContainer = None
@@ -298,34 +336,8 @@ def _transcode(
         outBuffer = BytesIO()
         try:
             outContainer = av.open(outBuffer, mode="w", format=outFormat)
-            # Validate the source channels and the output sample rate against the
-            # target spec here (after both containers are open) so an out-of-spec
-            # source raises EncoderError and the outer ``finally`` still closes
-            # both containers — no leak on mid-configuration rejection (§5). The
-            # never-downmix hard rule makes out-of-range channels unrecoverable,
-            # and an out-of-spec output rate would hand the provider
-            # non-compliant audio. Harmless for the current Yandex provider
-            # (generous specs); closes the enforcement gap for future providers
-            # with restrictive limits. The physical opus/mp3 <=2-channel ceiling
-            # is enforced separately by ``_layoutForChannels`` below.
-            if not target.minChannels <= probe.channels <= target.maxChannels:
-                raise EncoderError(
-                    f"cannot transcode a {probe.channels}-channel source: target spec {target.container}"
-                    f" accepts {target.minChannels}-{target.maxChannels} channels and conversion"
-                    " is forbidden by the never-downmix hard rule (§5)"
-                )
-            if not target.minSampleRate <= outRate <= target.maxSampleRate:
-                raise EncoderError(
-                    f"cannot transcode {probe.sampleRate} Hz source to {outRate} Hz output: target spec"
-                    f" {target.container} accepts {target.minSampleRate}-{target.maxSampleRate} Hz"
-                )
             outStream = cast(AudioStream, outContainer.add_stream(outCodec, rate=outRate))
-            # Validate the layout here (after both containers are open) so a
-            # >2-channel source raises EncoderError and the outer ``finally``
-            # still closes both containers — no leak when the encoder rejects the
-            # source mid-configuration (§5; opus/mp3 support <= 2 channels and
-            # the never-downmix hard rule makes >2-channel unrecoverable).
-            outStream.layout = _layoutForChannels(probe.channels)
+            outStream.layout = outLayout
             if target.container == STTAudioContainerType.OGG_OPUS:
                 # 'voip' is the appropriate application for speech recognition.
                 # Gated on the enum (the authoritative signal), not the codec name.
@@ -333,17 +345,38 @@ def _transcode(
         except av.error.FFmpegError as exc:
             raise EncoderError(f"failed to configure {outCodec} encoder: {exc}") from exc
 
+        # The resampler converts decoded frames to the target layout + rate
+        # before encoding. ``format=None`` lets swresample pick a format the
+        # encoder accepts (libopus/libmp3lame both take ``s16``). Only
+        # instantiated when a conversion is actually needed — a source already
+        # at the target channels+rate is encoded directly (zero-overhead path).
+        needsResample = probe.channels != outChannels or probe.sampleRate != outRate
+        resampler: Optional[AudioResampler] = AudioResampler(layout=outLayout, rate=outRate) if needsResample else None
+
         encodedSamples = 0
         try:
             for frame in inContainer.decode(audio=0):
-                # Encode every decoded frame (channel-preserving).
-                try:
-                    for packet in outStream.encode(frame):
-                        outContainer.mux(packet)
-                except av.error.FFmpegError as exc:
-                    raise EncoderError(f"{outCodec} encode failed: {exc}") from exc
-                encodedSamples += frame.samples
-            # Flush the encoder (emits delayed packets; preserves tail samples).
+                # Resample each decoded frame to the target channels+rate, then
+                # encode every output frame. The resampler may emit 0 or N
+                # frames per input (swresample buffers internally).
+                outFrames = [frame] if resampler is None else resampler.resample(frame)
+                for outFrame in outFrames:
+                    try:
+                        for packet in outStream.encode(outFrame):
+                            outContainer.mux(packet)
+                    except av.error.FFmpegError as exc:
+                        raise EncoderError(f"{outCodec} encode failed: {exc}") from exc
+                    encodedSamples += outFrame.samples
+            # Flush the resampler (emits buffered tail frames), then flush the
+            # encoder (emits delayed packets; preserves tail samples).
+            if resampler is not None:
+                for outFrame in resampler.resample(None):
+                    try:
+                        for packet in outStream.encode(outFrame):
+                            outContainer.mux(packet)
+                    except av.error.FFmpegError as exc:
+                        raise EncoderError(f"{outCodec} encode failed: {exc}") from exc
+                    encodedSamples += outFrame.samples
             try:
                 for packet in outStream.encode(None):
                     outContainer.mux(packet)
@@ -375,13 +408,13 @@ def _transcode(
         if inContainer is not None:
             inContainer.close()
 
-    # durationMs from the actual encoded sample count (the source-rate samples we
-    # fed to the encoder).
-    durationMs = int(round(encodedSamples * 1000 / probe.sampleRate))
+    # durationMs from the actual encoded sample count at the OUTPUT rate (the
+    # resampled frames fed to the encoder carry outRate samples each).
+    durationMs = int(round(encodedSamples * 1000 / outRate))
 
     return ExtractedAudio(
         container=target.container,
-        channels=probe.channels,
+        channels=outChannels,
         sampleRate=outRate,
         data=outBytes,
         durationMs=durationMs,
@@ -514,8 +547,8 @@ def _chooseTranscodeTarget(formats: Sequence[AudioFormatSpec]) -> Optional[Audio
     The provider's preferred transcode target is the first ``supportedInputFormats``
     entry whose container is compressed (OGG_OPUS/MP3) — OGG_OPUS first for Yandex.
     The FULL spec (including its channel/sample-rate limits) is returned, not just
-    the container, so the transcode path can validate the source against the
-    provider's declared limits before encoding (§5).
+    the container, so the transcode path can clamp the source channels/sample rate
+    to the provider's declared limits before encoding (§5).
 
     Args:
         formats: The provider's ordered accepted input formats.
@@ -532,31 +565,32 @@ def _chooseTranscodeTarget(formats: Sequence[AudioFormatSpec]) -> Optional[Audio
 
 
 def _layoutForChannels(channels: int) -> str:
-    """Return the PyAV channel layout name for a channel count.
+    """Return the PyAV channel layout name for a clamped channel count.
 
-    Both transcode targets (libopus / libmp3lame) support at most 2 channels, and
-    the never-downmix hard rule (§5) makes a >2-channel source unrecoverable — it
-    would fail at the encoder anyway, so it is rejected up front as a clean typed
-    :class:`EncoderError` rather than emitting an invalid ``"Nc"`` layout string
-    (FFmpeg does not recognise positional names like ``"3c"``).
+    The caller (:func:`_transcode`) clamps the source channels to the target
+    spec's ``[minChannels, maxChannels]`` range BEFORE calling this, so
+    ``channels`` is normally 1 or 2. Both transcode targets (libopus /
+    libmp3lame) support at most 2 channels; a spec with ``maxChannels > 2`` is
+    rejected up front in :func:`_transcode` (the codec cannot honour it), so
+    this guard is a defense-in-depth backstop against a future caller that
+    bypasses the clamp — it rejects an invalid count as a clean typed
+    :class:`EncoderError` rather than emitting a positional ``"Nc"`` layout
+    string FFmpeg does not recognise.
 
     Args:
-        channels: Source channel count (preserved through negotiation).
+        channels: Clamped output channel count (1 or 2 in normal operation).
 
     Returns:
         The PyAV layout name: ``"mono"`` for 1 channel or ``"stereo"`` for 2.
 
     Raises:
         EncoderError: ``channels`` is not positive or exceeds 2 (opus/mp3 cannot
-            encode it and the source is never downmixed).
+            encode it; the spec ceiling is enforced in :func:`_transcode`).
     """
     if channels <= 0:
         raise EncoderError(f"cannot transcode a source with {channels} channels")
     if channels > 2:
-        raise EncoderError(
-            f"cannot transcode a {channels}-channel source: opus/mp3 support at most 2 channels "
-            "and the never-downmix hard rule (§5) makes >2-channel unrecoverable"
-        )
+        raise EncoderError(f"cannot transcode to {channels} channels: opus/mp3 support at most 2 channels")
     if channels == 1:
         return "mono"
     return "stereo"

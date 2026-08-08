@@ -25,7 +25,7 @@ parent (`consumed by STTService / handlers per parent §X`).
 
 `lib/stt/` is the provider-neutral Speech-to-Text library: provider-neutral data models, a typed
 exception taxonomy, PyAV-based audio extraction with **container-driven format negotiation** (probe →
-pass-through / transcode, channel-preserving), transcript formatting, an abstract provider exposing a
+pass-through / transcode; pass-through preserves source channels, transcode converts out-of-spec channels/rates via AudioResampler), transcript formatting, an abstract provider exposing a
 never-raise `stt(data)` entry, and a single concrete provider (Yandex SpeechKit v3) which the
 integration layer holds directly. It owns no DB rows, no bot state, no admission/concurrency policy,
 no caps, and no config reading.
@@ -119,7 +119,7 @@ readiness correction #2, **minus the deleted `manager.py` and the deleted `forma
 lib/stt/
   __init__.py                      # public re-exports (models, abstract, exceptions, extractAudio, YandexSpeechKitProvider) — NO manager, NO formatter
   abstract.py                      # AbstractSTTProvider: concrete async stt(data) + async transcribe() (template-method: timing + _recordStats + never-raise), abstract _transcribe() + supportedInputFormats() + aclose()
-  audio.py                         # extractAudio(data, supportedInputFormats) — PyAV probe + container-only format negotiation (pass-through/transcode); channel-preserving; unconditional `import av`; NO caps
+  audio.py                         # extractAudio(data, supportedInputFormats) — PyAV probe + container-only format negotiation (pass-through/transcode); pass-through preserves source channels, transcode clamps channels+rate to the target spec's [min,max] bounds via AudioResampler; unconditional `import av`; NO caps
   exceptions.py                    # typed extraction exceptions (3 subclasses), each mapping 1:1 to an STTErrorCode
   models.py                        # provider-neutral models, enums (incl. STTAudioContainerType + toYandexSpeechKit()), format descriptors (AudioFormatSpec)
   providers/
@@ -325,9 +325,11 @@ class AudioFormatSpec:
             accepts multi-channel async audio, but the exact ceiling is
             unpublished; set a generous value here. Note: a `>2`-channel source
             routes to transcode only if unsupported, where the transcode path
-            rejects it (`EncoderError` — opus/mp3 support at most 2 channels and
-            the never-downmix hard rule makes >2-channel unrecoverable, §5); a
-            >2-channel source in a supported container passes through unchanged.
+            clamps it to `[minChannels, maxChannels]` via `AudioResampler`
+            (downmix to the nearest in-range count); a >2-channel source in a
+            supported container passes through unchanged. The opus/mp3 codec
+            ceiling of 2 channels is enforced against `maxChannels` up front — a
+            spec declaring `maxChannels > 2` raises `EncoderError` (§5).
         minSampleRate: Minimum accepted sample rate in Hz (inclusive).
         maxSampleRate: Maximum accepted sample rate in Hz (inclusive).
     """
@@ -345,12 +347,16 @@ class ExtractedAudio:
 
     The container is whatever the negotiation decided — the source container on
     a pass-through path, or the transcode target (OGG_OPUS for Yandex) on a
-    transcode path. `channels` is ALWAYS the source channel count; it is never
-    downmixed (hard rule, §5).
+    transcode path. On the pass-through path `channels` is the source channel
+    count (preserved); on the transcode path it is the source channel count
+    clamped to the target spec's `[minChannels, maxChannels]` range (downmix
+    when too many, upmix when too few) via `AudioResampler` (§5).
 
     Attributes:
         container: The container of `data` (WAV / OGG_OPUS / MP3).
-        channels: Channel count preserved from the source (no downmix).
+        channels: Channel count — preserved from the source on the pass-through
+            path, or clamped to the target spec's `[minChannels, maxChannels]`
+            range on the transcode path (downmix/upmix).
         sampleRate: Sample rate of `data` in Hz.
         data: The audio bytes the provider receives (source bytes on
             pass-through, PyAV-re-encoded bytes on transcode). Base64 encoding
@@ -367,12 +373,14 @@ class ExtractedAudio:
     durationMs: int
 ```
 
-**Channel preservation (hard rule, user decision).** `ExtractedAudio.channels` always equals the
-source channel count. The negotiation never downmixes — not on the pass-through path, not on the
-transcode path. The multi-channel cost is no longer bounded inside `lib/stt` (caps moved out — §5);
-the service's source+duration caps bound it indirectly. The transcode path rejects a `>2`-channel
-source with `EncoderError` (opus/mp3 ceiling + never-downmix), but that is a codec-capability reject,
-not a cap reject. See §5 for the decision flow.
+**Channel policy.** On the pass-through path `ExtractedAudio.channels` equals the source channel
+count (preserved). On the transcode path it is clamped to the target spec's `[minChannels,
+maxChannels]` range via `AudioResampler` (downmix when too many, upmix when too few), and the output
+sample rate is clamped to `[minSampleRate, maxSampleRate]` (nearest bound; OGG_OPUS always uses the
+48 kHz Opus-native rate). The opus/mp3 codec ceiling of 2 channels is enforced against the spec's
+`maxChannels` up front — a spec declaring `maxChannels > 2` raises `EncoderError` (a configuration
+error, not a per-source reject). The multi-channel cost is no longer bounded inside `lib/stt` (caps
+moved out — §5); the service's source+duration caps bound it indirectly. See §5 for the decision flow.
 
 **Loader boundary (gone — simplified to a `bytes` argument).** The pre-simplification design passed a
 typed async loader callable into `lib/stt` (an `STTMediaLoader` returning an `STTLoaderResult` with
@@ -464,8 +472,12 @@ source byte length, decoded PCM memory, duration, or inline payload size. The ca
 the prior "always normalize to mono s16/16 kHz WAV" contract with container-driven format negotiation;
 it is a refinement within D3 (PyAV) and D8 (inline only), not a contradiction of either.
 
-**Hard rule — always preserve source channels; never downmix (user decision).** Both the pass-through
-and transcode paths carry the source channel count unchanged. The negotiation never downmixes.
+**Channel + rate policy — pass-through preserves, transcode converts (user decision, revised 2026-08-08).**
+The pass-through path preserves the source channel count and sample rate unchanged. The transcode
+path clamps channels to the target spec's `[minChannels, maxChannels]` range (downmix when too many,
+upmix when too few) and the output sample rate to `[minSampleRate, maxSampleRate]` (nearest bound;
+OGG_OPUS always uses the 48 kHz Opus-native rate), both via an `AudioResampler`. A source already
+inside the spec is carried through the resampler unchanged.
 
 **Decision flow.** `audio.py` receives the provider's ordered `supportedInputFormats` and produces an
 `ExtractedAudio` via exactly one of two paths:
@@ -484,18 +496,20 @@ and transcode paths carry the source channel count unchanged. The negotiation ne
    - **Transcode** when the source container is **not** in `supportedInputFormats`, **or** is supported
      but its channels/sample rate fall outside the matched `AudioFormatSpec`'s ranges. Encode to the
      provider's first supported compressed format (OGG_OPUS for Yandex — the first `supportedInputFormats`
-     entry whose container is compressed). Preserve source channels (no downmix). If no compressed
-     transcode target is available, raise `EncoderError`.
-3. **Measure duration from the actual sample count**, not container metadata alone, on every path. The
+     entry whose container is compressed). Clamp channels to the target spec's `[minChannels,
+     maxChannels]` range (downmix/upmix via `AudioResampler`) and the output rate to
+     `[minSampleRate, maxSampleRate]` (nearest bound; OGG_OPUS uses the 48 kHz Opus-native rate). If no
+     compressed transcode target is available, raise `EncoderError`.
+ 3. **Measure duration from the actual sample count**, not container metadata alone, on every path. The
    pass-through path decodes-and-discards frames purely to count samples (`_measureDuration`, no large
-   PCM buffer accumulates); the transcode path counts the source-rate samples it feeds to the encoder.
-4. **Finalize/close** the output container before reading bytes, and close both input and output PyAV
+   PCM buffer accumulates); the transcode path counts the output-rate samples it feeds to the encoder.
+ 4. **Finalize/close** the output container before reading bytes, and close both input and output PyAV
    containers in `finally` on **every** path (pass-through probe/measure and transcode encode alike) —
    success, exception, and cancellation.
-5. **Return** `ExtractedAudio(container, channels, sampleRate, data, durationMs)` where `container` is
+ 5. **Return** `ExtractedAudio(container, channels, sampleRate, data, durationMs)` where `container` is
    the negotiated container (the source container on pass-through, the transcode target otherwise),
-   `channels` is ALWAYS the source channel count, and `sampleRate` is the source rate on pass-through
-   (or the Opus-native 48 kHz for an OGG_OPUS transcode target — Opus always produces a 48 kHz stream).
+   `channels` is the source channel count on pass-through (or the clamped count on transcode), and
+   `sampleRate` is the source rate on pass-through (or the clamped/Opus-native 48 kHz rate on transcode).
 
 **Container mapping detail (`_mapContainerType`).** Maps the PyAV demuxer name + codec to one of the
 three inline containers. The OGG mapping additionally requires `codecName == "opus"`: a Vorbis-in-OGG
@@ -505,11 +519,12 @@ alone. Comma-separated demuxer aliases (e.g. the `mov,mp4,m4a,3gp,3g2,mj2` list 
 never alias one of the three inline containers and route to the transcode path.
 
 **Channel ceiling on the transcode path.** Both transcode targets (libopus / libmp3lame) support at
-most 2 channels, and the never-downmix hard rule makes a >2-channel source unrecoverable. A >2-channel
-source routed to transcode is rejected up front with a clean `EncoderError` (in `_layoutForChannels`)
-rather than emitting an invalid positional layout string (FFmpeg does not recognise names like `"3c"`).
-The pass-through path carries the source channel count unchanged regardless — a multi-channel source in
-a supported container (e.g. up to OGG_OPUS's 8-channel spec) passes through.
+most 2 channels. The codec ceiling is enforced against the spec's `maxChannels` up front — a spec
+declaring `maxChannels > 2` raises `EncoderError` (a configuration error: the codec cannot honour it).
+A source whose channel count exceeds the spec's `maxChannels` is downmixed to `maxChannels` via
+`AudioResampler` (e.g. a 5.1 source against a 1-2 spec downmixes to stereo). The pass-through path
+carries the source channel count unchanged regardless — a multi-channel source in a supported container
+(e.g. up to OGG_OPUS's 8-channel spec) passes through.
 
 **Accepted decoded-memory gap (load-bearing contract #3, modified — user decision).** `extractAudio`
 does **NOT** bound decoded PCM memory. A large/long source can decode to hundreds of MB of PCM during
@@ -886,9 +901,10 @@ lib/stt test matrix; parent §13.2 summarizes and references it.
     not be mislabelled OGG_OPUS) → OGG_OPUS (the provider's first supported compressed format).
   - Out-of-spec supported container (channel/rate outside the matched `AudioFormatSpec`) routes to
     transcode rather than pass-through.
-  - Channel preservation: a stereo source stays stereo through **both** the pass-through and transcode
-    paths (no downmix).
-  - `>2`-channel source on the transcode path → `EncoderError` (opus/mp3 ceiling + never-downmix).
+  - Channel policy: a stereo source stays stereo through both paths when inside the spec; a >2-channel
+    source on the transcode path downmixes to `maxChannels` (e.g. 5.1 → stereo).
+  - `>2`-channel spec ceiling → `EncoderError` (opus/mp3 cannot encode >2 channels; a spec declaring
+    `maxChannels > 2` is a configuration error).
   - No compressed transcode target available → `EncoderError`.
 - (There are **no** source-byte / decoded-buffer / duration / inline-payload cap tests in `lib/stt` —
   those caps moved to `STTService` and are exercised in the integration test suite, not here. See §8.1.

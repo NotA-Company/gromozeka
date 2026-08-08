@@ -3,7 +3,8 @@
 Covers:
 - Probe success across voice and audio containers and mono/stereo sources.
 - No-audio-track and corrupt-source failure modes.
-- Channel preservation through BOTH the pass-through and transcode paths.
+- Channel preservation through the pass-through path, and channel conversion
+  (downmix/upmix to spec bounds) through the transcode path.
 - Path selection: supported-container pass-through vs. unsupported-container
   transcode (and out-of-spec channel/rate routing to transcode).
 - PyAV container close on every path (success, each exception type, and
@@ -170,7 +171,7 @@ def _makeMp3(channels: int = 1, seconds: float = 0.5) -> bytes:
     return _encode("mp3", "libmp3lame", channels, seconds=seconds)
 
 
-def _makeM4a(channels: int = 1, seconds: float = 0.5) -> bytes:
+def _makeM4a(channels: int = 1, seconds: float = 0.5, sampleRate: int = _TONE_RATE) -> bytes:
     """Encode a mono/stereo AAC-in-MP4 source (an unsupported container).
 
     MP4's PyAV ``format.name`` is ``"mov,mp4,m4a,3gp,3g2,mj2"`` which does not map
@@ -179,11 +180,12 @@ def _makeM4a(channels: int = 1, seconds: float = 0.5) -> bytes:
     Args:
         channels: 1 or 2.
         seconds: Tone duration in seconds.
+        sampleRate: Synthesis sample rate in Hz.
 
     Returns:
         bytes: The MP4/AAC container bytes.
     """
-    return _encode("mp4", "aac", channels, seconds=seconds)
+    return _encode("mp4", "aac", channels, seconds=seconds, sampleRate=sampleRate)
 
 
 def _makeVideoOnly() -> bytes:
@@ -592,12 +594,15 @@ async def testUnderCapTranscodeDurationApproximatesSource() -> None:
 
 
 # ============================================================================
-# Channel preservation (hard rule — never downmix)
+# Channel conversion through the transcode path (downmix/upmix to spec bounds)
 # ============================================================================
 
 
 async def testStereoSourceStaysStereoThroughTranscode() -> None:
-    """A stereo source stays stereo (channels == 2) after transcode — no downmix.
+    """A stereo source within the target spec stays stereo after transcode.
+
+    The target OGG_OPUS spec accepts 1-2 channels, so a 2-channel source is
+    already inside the range and is carried through the resampler unchanged.
 
     Returns:
         None
@@ -616,6 +621,134 @@ async def testMonoSourceStaysMonoThroughTranscode() -> None:
     data = _makeM4a(channels=1)
     result = await _extract(data)
     assert result.channels == 1
+
+
+async def testMultiChannelSourceDownmixesToMaxChannelsThroughTranscode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A >2-channel source downmixes to the spec's maxChannels (stereo), no raise.
+
+    The target OGG_OPUS spec accepts 1-2 channels; a 3-channel source exceeds
+    maxChannels=2 and is downmixed to stereo via the AudioResampler (was: raised
+    EncoderError under the never-downmix hard rule). The result carries
+    channels == 2 and a duration within ~50ms of the source. Containers opened
+    along the path are all closed (no leak).
+
+    Args:
+        monkeypatch: The pytest monkeypatch fixture.
+
+    Returns:
+        None
+    """
+    data = _makeMultiChannelWav(channels=3)  # build fixture before the spy
+    opened = _installCloseSpy(monkeypatch)
+    result = await _extract(data)
+    assert result.container is STTAudioContainerType.OGG_OPUS
+    assert result.channels == 2  # downmixed from 3 to the spec's maxChannels
+    assert result.sampleRate == 48000  # opus-native rate
+    assert result.data != data  # re-encoded, not pass-through
+    assert abs(result.durationMs - 500) <= 50
+    # probe + transcode input + transcode output; all closed, none leaked.
+    assert len(opened) == 3
+    _assertAllClosed(opened)
+
+
+async def testUpmixesWhenSourceBelowMinChannelsThroughTranscode() -> None:
+    """A mono source against a stereo-only spec upmixes to minChannels (2).
+
+    A spec declaring minChannels=2/maxChannels=2 forces a mono source to be
+    upmixed to stereo. The result carries channels == 2.
+
+    Returns:
+        None
+    """
+    stereoOnlyFormats: Tuple[AudioFormatSpec, ...] = (
+        AudioFormatSpec(
+            container=STTAudioContainerType.OGG_OPUS,
+            minChannels=2,
+            maxChannels=2,
+            minSampleRate=8000,
+            maxSampleRate=48000,
+        ),
+    )
+    data = _makeM4a(channels=1)  # mono source, unsupported container -> transcode
+    result = await _extract(data, formats=stereoOnlyFormats)
+    assert result.container is STTAudioContainerType.OGG_OPUS
+    assert result.channels == 2  # upmixed from 1 to the spec's minChannels
+
+
+async def testRateClampsHighToMaxSampleRateThroughTranscode() -> None:
+    """A source rate above the target spec's maxSampleRate clamps down (MP3 path).
+
+    An MP3 target (no OGG_OPUS in the surface) preserves the source rate but
+    clamps it to [minSampleRate, maxSampleRate]. A 48 kHz source against a
+    8-16 kHz spec clamps to 16 kHz (the nearest upper bound). Duration tracks
+    the source within ~50ms.
+
+    Returns:
+        None
+    """
+    narrowRateMp3: Tuple[AudioFormatSpec, ...] = (
+        AudioFormatSpec(
+            container=STTAudioContainerType.MP3,
+            minChannels=1,
+            maxChannels=2,
+            minSampleRate=8000,
+            maxSampleRate=16000,
+        ),
+    )
+    data = _makeM4a(channels=1, sampleRate=48000)  # 48 kHz source
+    result = await _extract(data, formats=narrowRateMp3)
+    assert result.container is STTAudioContainerType.MP3
+    assert result.sampleRate == 16000  # clamped from 48000 to maxSampleRate
+    assert result.durationMs > 0
+
+
+async def testRateClampsLowToMinSampleRateThroughTranscode() -> None:
+    """A source rate below the target spec's minSampleRate clamps up (MP3 path).
+
+    An 8 kHz source against a 16-48 kHz MP3 spec clamps to 16 kHz (the nearest
+    lower bound). AAC accepts 8 kHz, so the m4a fixture builds cleanly.
+
+    Returns:
+        None
+    """
+    narrowRateMp3: Tuple[AudioFormatSpec, ...] = (
+        AudioFormatSpec(
+            container=STTAudioContainerType.MP3,
+            minChannels=1,
+            maxChannels=2,
+            minSampleRate=16000,
+            maxSampleRate=48000,
+        ),
+    )
+    data = _makeM4a(channels=1, sampleRate=8000)  # 8 kHz source, AAC accepts it
+    result = await _extract(data, formats=narrowRateMp3)
+    assert result.container is STTAudioContainerType.MP3
+    assert result.sampleRate == 16000  # clamped from 8000 to minSampleRate
+
+
+async def testSpecExceedingCodecChannelCeilingRaisesEncoderError() -> None:
+    """A spec declaring maxChannels > 2 raises EncoderError (opus/mp3 cap at 2).
+
+    The codec ceiling (opus/mp3 <= 2 channels) is enforced against the spec's
+    maxChannels up front — a spec promising >2 channels cannot be honoured by
+    either encoder and is a configuration error, not a per-source reject.
+
+    Returns:
+        None
+    """
+    overspecFormats: Tuple[AudioFormatSpec, ...] = (
+        AudioFormatSpec(
+            container=STTAudioContainerType.OGG_OPUS,
+            minChannels=1,
+            maxChannels=6,  # opus cannot encode >2 channels
+            minSampleRate=8000,
+            maxSampleRate=48000,
+        ),
+    )
+    with pytest.raises(EncoderError):
+        await _extract(_makeM4a(channels=1), formats=overspecFormats)
 
 
 async def testStereoSourceStaysStereoThroughPassthrough() -> None:
@@ -734,31 +867,3 @@ async def testNoCompressedTranscodeTargetRaisesEncoderError() -> None:
     )
     with pytest.raises(EncoderError):
         await _extract(_makeM4a(channels=1), formats=wavOnlyFormats)
-
-
-async def testMultiChannelSourceRaisesEncoderErrorAndClosesContainers(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A >2-channel source raises EncoderError and leaks no container.
-
-    Opus and mp3 support at most 2 channels; the never-downmix hard rule (§5)
-    makes a >2-channel source unrecoverable, so ``_layoutForChannels`` raises a
-    clean :class:`EncoderError` after both the input and output containers are
-    opened — and the ``finally`` closes both (no leak when the encoder rejects
-    the source mid-configuration, the EncoderError-mid-encode gap).
-
-    Args:
-        monkeypatch: The pytest monkeypatch fixture.
-
-    Returns:
-        None
-    """
-    data = _makeMultiChannelWav(channels=3)  # build fixture before the spy
-    opened = _installCloseSpy(monkeypatch)
-    with pytest.raises(EncoderError) as excInfo:
-        await _extract(data)
-    assert excInfo.value.errorCode.value == "provider-error"
-    # probe (1) + transcode input (1) + transcode output (1); all closed, none leaked.
-    # This count is implementation-specific — if probe/transcode refactored, update expected count.
-    assert len(opened) == 3
-    _assertAllClosed(opened)

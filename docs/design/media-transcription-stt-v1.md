@@ -234,7 +234,7 @@ sequenceDiagram
     S->>S: bounded rate/admission + semaphore
     S->>B: downloadAttachment(mediaId, fileId)
     B-->>S: source bytes (or None → DOWNLOAD_ERROR)
-    S->>A: negotiate format + extract (pass-through/transcode, channel-preserving)
+    S->>A: negotiate format + extract (pass-through/transcode; pass-through preserves channels, transcode converts)
     A-->>S: ExtractedAudio(data, durationMs)
     S->>Y: transcribe(format-aware ExtractedAudio)
     Y-->>S: FINAL / NO_SPEECH / ERROR
@@ -510,9 +510,11 @@ libraries — do not claim system FFmpeg is never needed on unsupported platform
 negotiated path — **pass-through** (source container already in the provider's
 `supportedInputFormats`, payload within the inline-payload cap), **transcode**
 (unsupported container, or supported-but-over-cap, encoded to the provider's
-first compressed format), or **reject**. The hard rule is **channel-preserving**:
-source channels are never downmixed on either path; caps bound the multi-channel
-cost, they do not reduce it. Duration is measured from the actual sample count; a
+first compressed format), or **reject**. The channel policy is: pass-through
+preserves source channels; transcode clamps channels to the target spec's
+`[minChannels, maxChannels]` range (downmix/upmix via `AudioResampler`) and the
+output rate to `[minSampleRate, maxSampleRate]` (nearest bound). Duration is
+measured from the actual sample count; a
 pass-through source over the duration cap is rejected with
 `DurationExceededError` (compressed audio cannot be truncated without a re-encode),
 while the transcode path stops at the cap. The old single "20 MiB WAV" bound
@@ -873,8 +875,9 @@ vendored-package tests. Async tests need no explicit asyncio decorator.
 The provider-neutral model/formatter tests, the PyAV extraction and
 multi-format-negotiation tests, and the Yandex golden-HTTP suite (mock transport
 only, no real network) are specified in full in the lib/stt test matrix. That
-covers timestamp/XML-escape/truncation/no-speech cases, channel-preserving
-pass-through vs. transcode vs. reject negotiation, decoded-buffer and
+covers timestamp/XML-escape/truncation/no-speech cases, pass-through channel
+preservation vs. transcode channel/rate conversion, pass-through vs. transcode vs.
+reject negotiation, decoded-buffer and
 inline-payload cap enforcement, and the submit-never-retried /
 idempotent-GET-retry wire assertions. Per the §9 live-wire known-unknown, golden
 HTTP tests assert the parsing/wire **logic** while the `getRecognition` framing

@@ -248,12 +248,16 @@ class ExtractedAudio:
 
     The container is whatever the negotiation decided — the source container on
     a pass-through path, or the transcode target (OGG_OPUS for Yandex) on a
-    transcode path. ``channels`` is ALWAYS the source channel count; it is never
-    downmixed (hard rule, ``docs/design/lib-stt-v1.md`` §5).
+    transcode path. On the pass-through path ``channels`` is the source channel
+    count (preserved); on the transcode path it is the source channel count
+    clamped to the target spec's ``[minChannels, maxChannels]`` range (downmix
+    when too many, upmix when too few), see ``docs/design/lib-stt-v1.md`` §5.
 
     Attributes:
         container: The container of ``data`` (WAV / OGG_OPUS / MP3).
-        channels: Channel count preserved from the source (no downmix).
+        channels: Channel count — preserved from the source on the pass-through
+            path, or clamped to the target spec's ``[minChannels, maxChannels]``
+            range on the transcode path (downmix/upmix).
         sampleRate: Sample rate of ``data`` in Hz.
         data: The audio bytes the provider receives (source bytes on
             pass-through, PyAV-re-encoded bytes on transcode). Base64 encoding

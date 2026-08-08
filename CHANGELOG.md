@@ -13,6 +13,7 @@ process governing this file, see [docs/llm/changelog.md](docs/llm/changelog.md).
 
 ### Changed
 - `[stt]` config gained `max-inline-bytes` (default `41943040` / 40 MiB, active; no upper bound enforced — only `> 0`) and the optional/commented `object-storage-bucket` / `object-storage-prefix` (default `stt/`) / `object-storage-key-id` / `object-storage-key-secret` keys (all commented out — Object Storage disabled by default). STT statistics are gated on the global `[stats].enabled` flag (no STT-specific flag). Validation: bucket set ⇒ both keys required + no unresolved `${...}`; no `[storage.s3]` fallback; Object Storage is implicitly enabled when the bucket is configured (no `object-storage-enabled` flag).
+- STT transcode path: source channels/sample rates that fall outside the target format spec's `[min, max]` ranges are now converted via `AudioResampler` (downmix/upmix to the nearest in-range channel count, resample to the nearest in-range rate) instead of being rejected with `EncoderError`. Pass-through still preserves source channels/rate. The opus/mp3 codec ceiling of 2 channels is now enforced against the spec's `maxChannels` up front (a spec declaring `maxChannels > 2` raises `EncoderError` as a configuration error).
 
 ### Fixed
 - Markdown-formatted inline tool names followed by JSON arguments now execute as tool calls instead of being sent as plain text.
