@@ -534,7 +534,7 @@ Stores information about media attachments (images, documents, etc.).
 | `mime_type` | TEXT | Yes | NULL | MIME type of the file |
 | `local_url` | TEXT | Yes | NULL | Local file path if downloaded |
 | `prompt` | TEXT | Yes | NULL | Prompt used for image generation |
-| `description` | TEXT | Yes | NULL | AI-generated description of media |
+| `description` | TEXT | Yes | NULL | AI-generated description of media; also carries the STT transcript — see STT semantics below. |
 | `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
@@ -542,6 +542,8 @@ Stores information about media attachments (images, documents, etc.).
 - Referenced by [`chat_messages`](#chat_messages) via `media_id`
 
 **TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:255)
+
+**STT (media-transcription) semantics:** For STT semantics (lifecycle, gating, CAS-removal), see [ADR-020](llm/architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall).
 
 ---
 

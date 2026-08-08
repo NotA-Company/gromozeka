@@ -1,7 +1,7 @@
 # Gromozeka — Service Integration Patterns
 
 > **Audience:** LLM agents  
-> **Purpose:** Complete reference for using CacheService, QueueService, LLMService, StorageService, RateLimiterManager, and ProxyService  
+> **Purpose:** Complete reference for using CacheService, QueueService, LLMService, StorageService, RateLimiterManager, ProxyService, and STTService  
 > **Self-contained:** Everything needed for service integration is here
 
 ---
@@ -14,7 +14,8 @@
 4. [StorageService](#4-storageservice)
 5. [RateLimiterManager](#5-ratelimitermanager)
 6. [ProxyService](#6-proxyservice)
-7. [Service Singleton Pattern](#7-service-singleton-pattern)
+7. [STTService](#7-sttservice)
+8. [Service Singleton Pattern](#8-service-singleton-pattern)
 
 ---
 
@@ -402,7 +403,99 @@ def resetProxyServiceSingleton():
 
 ---
 
-## 7. Service Singleton Pattern
+## 7. STTService
+
+**File:** [`internal/services/stt/service.py`](../../internal/services/stt/service.py)  
+**Import:** `from internal.services.stt import STTService, STTOutcome`
+
+`STTService` is a **stateless** singleton that owns the STT provider lifecycle (construction, proxy resolution, `aclose()`) and the never-raise transcription entry. It mirrors `ProxyService` exactly: class-level `_instance` / `_lock`, `getInstance()`, `hasattr(self, 'initialized')` guard, separate `initialize(...)`. **It does NOT touch the database** — no row read, insert, cache, claim, persist, or reclaim. The full `media_attachments` row lifecycle (read / cache-hit short-circuit / claim / persist the outcome via plain `updateMediaAttachment` / terminalize) is owned by the **`BaseBotHandler._processMediaV2` STT branch + its `_transcribeMedia` background task** in [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) (see [`docs/archive/design/stt-next-steps.md`](../archive/design/stt-next-steps.md) §2). Single attachments have no concurrent writes, so last-write semantics via `updateMediaAttachment` are sufficient — there is no CAS.
+
+**Status (2026-08-03):** implemented, tested, and **wired into `BaseBotHandler._processMediaV2`** — the `_transcribeMedia` background task consumes `STTService.getInstance().transcribeMedia(data, chatId=...)` (the bytes are downloaded synchronously inside `_processMediaV2` and passed in as `data`) and terminalizes the row via `updateMediaAttachment`. The feature remains **DEFAULT-OFF** — all four gates (`[stt] enabled = false` config default + eligible media type + the per-chat `PARSE_ATTACHMENTS` and `TRANSCRIBE_MEDIA` settings, both default `false`) must be satisfied before any media is transcribed.
+
+> **v1.1 (gate-3 Object-Storage routing + gate-4 statistics) — implemented.** See [`docs/design/stt-v1.1.md`](../design/stt-v1.1.md) for the authoritative design. gate-3: the Yandex provider now routes clips whose extracted payload ≥ `[stt].max-inline-bytes` through a co-located `lib/stt/providers/yandex_object_storage.py` helper (boto3, hard import) and submits via the `uri` field; over-threshold + Object-Storage-disabled → `SOURCE_TOO_LARGE`, upload failure → the new `OBJECT_STORAGE_ERROR`. gate-4: per-transcription stats are recorded best-effort in the base `AbstractSTTProvider._recordStats` (template-method refactor — timing + recording in the base `transcribe`, hoisted from the Yandex provider; mirrors `lib/ai`'s `_recordAttemptStats`; reuses `DatabaseStatsStorage` with `eventType="stt_request"`, no new table/migration), gated by the global `[stats].enabled` flag. STT stats use a separate `[stats].stt-stats-data-source` config key (independent from `llm-stats-data-source`). The `lib/stt` dependency firewall (zero `internal.*` imports) is intact — boto3 is an external dependency. No service-layer Object-Storage client and no sweep task; leaked-object reclamation is delegated to a Yandex bucket lifecycle rule.
+
+```python
+from internal.services.stt import STTService, STTOutcome
+
+# Initialize (called once from main.py AFTER proxy + rate-limiter init,
+# BEFORE the bot application). NO database argument:
+STTService.getInstance().initialize(configManager)
+
+# Cheap gate check before any per-message work (handlers call this):
+if not STTService.getInstance().isEnabled():
+    return HandlerResultStatus.NEXT
+
+# Stateless transcription entry (NEVER raises except asyncio.CancelledError).
+# The handler supplies the already-downloaded raw bytes:
+outcome: STTOutcome = await STTService.getInstance().transcribeMedia(
+    audioBytes, chatId=chatId
+)
+# outcome.success is True when a transcript was produced.
+# outcome.description: the formatted transcript when success is True ("" when
+#   NO_SPEECH — the thin formatter emits [HH:MM:SS.mmm] text lines, no
+#   header/sentinel); None when success is False.
+# outcome.errorCode: an STTErrorCode when success is False; None otherwise.
+
+# Shutdown (main.py Step 2.5, best-effort try/except, after LLM close,
+# before DB close):
+await STTService.getInstance().aclose()
+```
+
+### `transcribeMedia` — the stateless pipeline
+
+**Signature:** `async def transcribeMedia(self, data: bytes, *, chatId: Optional[int]) -> STTOutcome`.
+
+This is a **thin, stateless** entry (ADR-020 decision 1). It performs no DB I/O. Admission is **unbounded** — there is no `asyncio.timeout` around the semaphore; the **handler bounds the originating turn** (via its pipeline timeout).
+
+**Never-raise boundary:** `transcribeMedia` is the FINAL never-raise boundary for the STT feature. Every failure path returns an `STTOutcome(FAILED, …)` + a structured log; only `asyncio.CancelledError` propagates. `provider.stt(data)` (the `lib/stt` never-raise entry) never raises either, so `STTService` is the layer that converts every outcome into a typed `STTOutcome` for the handler to persist.
+
+**Pipeline:**
+
+1. **`STT_DISABLED`** — early return when `not self._enabled` (i.e. `[stt] enabled = false`).
+2. **`SOURCE_TOO_LARGE`** — early return when `len(data) > self._maxSourceBytes` (source bytes are caller-supplied — bounding is post-download; `max-source-bytes` default is 1 GiB).
+3. **Rate limiters** — per-chat (`chat-ratelimiter-queue`, keyed by `str(chatId)`) then global (`global-ratelimiter-queue`), applied when configured and `chatId is not None`. (Duration bounding is the handler's job — see ADR-020 decision 3.)
+4. **`async with self._semaphore`** — concurrency limiter (`max-concurrency` size). **No `asyncio.timeout`** (admission is unbounded; the handler bounds the turn).
+5. **`await self._provider.stt(data)`** — the `lib/stt` provider's extract + transcribe never-raise entry (ADR-020 decision 2). An unexpected raise is caught defense-in-depth → `FAILED` + `PROVIDER_ERROR`.
+6. **`_mapOutcome`** — `FINAL`/`NO_SPEECH` → `success=True` + `formatTranscript(result)` (the thin formatter at [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py) — `[HH:MM:SS.mmm] text` lines, no header/escape/truncate/sentinel; `NO_SPEECH` yields `success=True` with `description=""`); `ERROR` → `success=False` + the provider's `errorCode`.
+7. Return the `STTOutcome`.
+
+A broad outer `except Exception` (never-raise boundary) catches anything else → `FAILED` + `PROVIDER_ERROR` (the service's catch-all fallback; structured logs distinguish service-caught vs provider-returned `PROVIDER_ERROR`).
+
+### `STTErrorCode` ownership
+
+The shared [`STTErrorCode`](../../lib/stt/models.py) enum (9 members as of v1.1 — `OBJECT_STORAGE_ERROR` was added) is the stable failure vocabulary, but its members are produced at different layers:
+
+- **Service-produced** (produced ONLY by `STTService`): `STT_DISABLED`. `SOURCE_TOO_LARGE` is produced by the service (source-byte cap, `len(data) > maxSourceBytes`) **and** as of v1.1 also surfaced by the Yandex provider when the *extracted* payload ≥ `max-inline-bytes` and Object Storage is disabled (see [`docs/design/stt-v1.1.md`](../design/stt-v1.1.md) §4.2/§4.5). (`PROVIDER_ERROR` is also produced by the service as the catch-all fallback for unexpected exceptions — structured logs distinguish a service-caught fallback from a provider-returned `PROVIDER_ERROR`.)
+- **Provider-produced** (returned inside a `TranscriptionResult(ERROR, …)` from `provider.stt()`): `NO_AUDIO`, `PROVIDER_ERROR`, `PROTOCOL_ERROR`, and as of v1.1 `SOURCE_TOO_LARGE` (over inline threshold without Object Storage) + `OBJECT_STORAGE_ERROR` (Object-Storage upload failure before submit).
+- **Reserved / partially-produced at the handler layer** (not produced by the service or provider): `SOURCE_SIZE_UNKNOWN`, `DOWNLOAD_ERROR`, `DURATION_EXCEEDED`. The bounded-download platform extension that would have produced `SOURCE_SIZE_UNKNOWN` was **dropped** (user decision 2026-08-03 — the wired `_transcribeMedia` task uses the existing unbounded `downloadAttachment`); `DOWNLOAD_ERROR` is emitted only as a structured log label by `_transcribeMedia` when `downloadAttachment` returns `None` (it is not persisted — there is no `errorCode` column); `DURATION_EXCEEDED` remains vocabulary-only (no duration gating in v1). These codes stay reserved on the enum as the stable failure vocabulary.
+
+See [ADR-020](architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall) and [`docs/design/lib-stt-v1.md`](../design/lib-stt-v1.md) §4 for the full raise/return contract.
+
+### Lifecycle & proxy injection
+
+- **`initialize(configManager, statsStorage=None)`** (NO `database` arg) — reads `[stt]`; when `enabled = false` (the default) the provider stays `None` and the service is a no-op. When `enabled = true`, the service validates ONLY the provider name via `STT_PROVIDERS_MAP`; the chosen provider's constructor (e.g. `YandexSpeechKitProvider.__init__`) owns cred / unresolved `${...}`-placeholder / cap-positivity / cross-field (`maxPollIntervalSeconds ≥ pollIntervalSeconds`) validation and may raise `ValueError` (propagated). `ProxyService.resolveProxy(sttConfig, "stt")` `ValueError`s are also propagated. Idempotent. The optional `statsStorage` (v1.1 gate-4) is forwarded to the provider constructor; `main.py` constructs a `DatabaseStatsStorage(eventType="stt_request", dataSource=<from [stats].stt-stats-data-source>)` when `[stats].enabled = true` (the global stats flag) and passes `None` otherwise → provider defaults to `NullStatsStorage` (no-op). STT stats use their own `[stats].stt-stats-data-source` config key (independent from `llm-stats-data-source`); the enabled gate is the global `[stats].enabled` flag (no STT-specific flag).
+- **Proxy firewall (ADR-020 decision 4):** `STTService` resolves the proxy and **injects** it into the provider; it never resolves a proxy itself inside `lib/stt`, and `lib/stt` never imports `internal.*`.
+- **Construction order in `main.py`:** `STTService.getInstance().initialize(configManager)` runs AFTER proxy + rate-limiter init, BEFORE the bot application.
+- **`aclose()`** — best-effort close of the provider's persistent HTTP client. Called from `main.py` shutdown Step 2.5 (after LLM close, before DB close), wrapped in `try/except`. Never raises.
+- **`isEnabled()`** — cheap gate; returns `_enabled`. Handlers should call this before doing any per-message STT work.
+
+### Integration-boundary dataclass
+
+`STTOutcome` is a frozen, slot dataclass re-exported from [`internal.services.stt`](../../internal/services/stt/__init__.py). (`STTMediaRequest` was REMOVED in the 2026-08-02 simplification — `transcribeMedia` now takes raw `bytes` + a `chatId` keyword.)
+
+| Dataclass | Field | Type | Notes |
+|---|---|---|---|
+| `STTOutcome` | `success` | `bool` | `True` when a transcript was produced |
+| | `description` | `Optional[str]` | Formatted transcript when `success is True` (`""` for `NO_SPEECH`); `None` when `success is False` |
+| | `errorCode` | `Optional[STTErrorCode]` | Present iff `success is False` |
+
+**Database:** NO migration, and the service itself does NO DB I/O. The `BaseBotHandler._processMediaV2` STT branch + its `_transcribeMedia` background task own the `media_attachments` row lifecycle (download synchronously inside `_processMediaV2`, then read/cache/claim/persist/terminalize via plain `updateMediaAttachment` — single attachments have no concurrent writes, so last-write semantics suffice; there is no CAS); the service just returns an `STTOutcome`. See [`database.md`](database.md) (media attachments) and [ADR-020](architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall).
+
+**See also:** [`docs/design/media-transcription-stt-v1.md`](../design/media-transcription-stt-v1.md) (parent product decisions D1–D8), [`docs/archive/design/stt-next-steps.md`](../archive/design/stt-next-steps.md) (integration roadmap), [`docs/design/lib-stt-v1.md`](../design/lib-stt-v1.md) (`lib/stt` library spec).
+
+---
+
+## 8. Service Singleton Pattern
 
 All services use this pattern. When MODIFYING a service, preserve the singleton structure
 
@@ -456,7 +549,7 @@ class MyService:
 ## See Also
 
 - [`index.md`](index.md) — Project overview, singleton services quick reference
-- [`architecture.md`](architecture.md) — ADR-001 (singleton services), service initialization order
+- [`architecture.md`](architecture.md) — ADR-001 (singleton services), ADR-020 (stateless STTService boundary), service initialization order
 - [`handlers.md`](handlers.md) — Using services from handler methods
 - [`database.md`](database.md) — CacheService for DB hot-path access
 - [`libraries.md`](libraries.md) — Low-level lib/ai, lib/cache, lib/rate_limiter APIs
@@ -466,4 +559,4 @@ class MyService:
 ---
 
 *This guide is auto-maintained and should be updated whenever service integration patterns change*  
-*Last updated: 2026-07-18*
+*Last updated: 2026-08-02*

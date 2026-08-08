@@ -1,0 +1,31 @@
+[
+  {
+    "name": "yandex_basic_transcription_ru",
+    "description": "Yandex SpeechKit basic transcription of a short Russian OGG_OPUS voice clip.",
+    "module": "tests.lib.stt.golden.scenario_runner",
+    "class": "YandexSTTScenarioRunner",
+    "method": "run",
+    "init_kwargs": {
+      "apiKey": "${YANDEX_API_KEY}",
+      "folderId": "${YANDEX_FOLDER_ID}"
+    },
+    "kwargs": {
+      "audioPath": "input/sample_ru.ogg"
+    }
+  },
+  {
+    "name": "yandex_english_transcription_en",
+    "description": "Yandex SpeechKit transcription of a short English OGG_OPUS voice clip (en-US language restriction).",
+    "module": "tests.lib.stt.golden.scenario_runner",
+    "class": "YandexSTTScenarioRunner",
+    "method": "run",
+    "init_kwargs": {
+      "apiKey": "${YANDEX_API_KEY}",
+      "folderId": "${YANDEX_FOLDER_ID}",
+      "language": "en-US"
+    },
+    "kwargs": {
+      "audioPath": "input/sample_en.ogg"
+    }
+  }
+]

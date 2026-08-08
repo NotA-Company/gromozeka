@@ -88,6 +88,8 @@ save-prefix = "media-"
 allow-tools-commands = true
 # Enable sandbox code execution for this chat
 allow-sandbox = false
+# Enable speech-to-text transcription for voice/audio/video messages
+transcribe-media = false
 # Delete message with commands, which deniend in chat (for flood protection purposes)
 delete-denied-commands = false
 

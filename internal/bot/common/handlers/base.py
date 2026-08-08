@@ -70,6 +70,7 @@ from internal.services.cache import CacheService
 from internal.services.llm import LLMService
 from internal.services.queue_service import QueueService, makeEmptyAsyncTask
 from internal.services.storage import StorageService
+from internal.services.stt import STTService
 from lib.ai import (
     ModelImageMessage,
     ModelMessage,
@@ -160,6 +161,10 @@ class BaseBotHandler(CommandHandlerMixin):
         self.queueService = QueueService.getInstance()
         self.storage = StorageService.getInstance()
         self.llmService = LLMService.getInstance()
+
+        # Cached config flags — read once at init, require restart to take effect.
+        # Mirrors the _searchEnabled pattern in MessagePreprocessorHandler.
+        self._sttEnabled: bool = bool(self.configManager.getSttConfig().get("enabled", False))
 
         # self._tgBot: Optional[telegramExt.ExtBot] = None
         # self._maxBot: Optional[libMax.MaxBotClient] = None
@@ -1368,6 +1373,45 @@ class BaseBotHandler(CommandHandlerMixin):
 
         # ret['content'] = llmRet.resultText
 
+    async def _transcribeMedia(self, mediaId: str, chatId: int, data: bytes) -> None:
+        """Transcribe a media attachment in a background task.
+
+        The caller (``_processMediaV2``) has already downloaded the media and
+        passes the raw bytes as *data*.  This method calls
+        :meth:`STTService.transcribeMedia` and terminalizes the media-attachment
+        row: PENDING → DONE with the transcript on success, or PENDING → FAILED
+        on error or exception.
+
+        ``asyncio.CancelledError`` is a ``BaseException`` and is **not** caught
+        by the ``except Exception`` — it propagates, which may leave the row
+        PENDING.  The orphan-reclaim logic in ``_processMediaV2`` (rows PENDING
+        longer than ``PROCESSING_TIMEOUT``) is the safety net for those cases.
+
+        Never raises (fire-and-forget).
+
+        Args:
+            mediaId: The media attachment unique id (file_unique_id).
+            chatId: Chat id for per-chat STT rate limiting.
+            data: Downloaded media bytes, provided by the caller.
+        """
+        try:
+            outcome = await STTService.getInstance().transcribeMedia(data, chatId=chatId)
+            if outcome.success:
+                await self.db.mediaAttachments.updateMediaAttachment(
+                    mediaId=mediaId, status=MediaStatus.DONE, description=outcome.description
+                )
+                return
+
+            logger.warning("STT failed for media %s: errorCode=%s", mediaId, outcome.errorCode)
+            await self.db.mediaAttachments.updateMediaAttachment(
+                mediaId=mediaId,
+                status=MediaStatus.FAILED,
+            )
+
+        except Exception:
+            logger.exception("STT background task error for media %s", mediaId)
+            await self.db.mediaAttachments.updateMediaAttachment(mediaId=mediaId, status=MediaStatus.FAILED)
+
     async def processTelegramSticker(
         self, ensuredMessage: EnsuredMessage, prompt: Optional[str] = None
     ) -> MediaProcessingInfo:
@@ -1770,6 +1814,7 @@ class BaseBotHandler(CommandHandlerMixin):
         # First check if we have the photo in the database already
         mediaAttachment = await self.db.mediaAttachments.getMediaAttachment(ret.id)
         hasMediaAttachment = mediaAttachment is not None
+
         if mediaAttachment is not None:
             logger.debug(f"Media#{ret.id} already in database")
             if mediaAttachment["media_type"] != mediaType:
@@ -1781,6 +1826,9 @@ class BaseBotHandler(CommandHandlerMixin):
             # Only skip processing if Media in DB is in right status
             match MediaStatus(mediaAttachment["status"]):
                 case MediaStatus.DONE:
+                    # DONE rows always return early — retroactive STT transcription of
+                    # previously-processed media is intentionally out of scope (the
+                    # stateless simplification removed the DONE-reprocess branch).
                     ret.task = makeEmptyAsyncTask()
                     return ret
 
@@ -1803,7 +1851,7 @@ class BaseBotHandler(CommandHandlerMixin):
                             ret.task = makeEmptyAsyncTask()
                             return ret
                     except Exception as e:
-                        logger.error("{ret.type}#{ret.id} Error during checking age:")
+                        logger.error(f"{ret.type}#{ret.id} Error during checking age:")
                         logger.exception(e)
 
                 case _:
@@ -1831,11 +1879,26 @@ class BaseBotHandler(CommandHandlerMixin):
                     mediaType=mediaType,
                 )
 
-        if chatSettings[ChatSettingsKey.PARSE_ATTACHMENTS].toBool() and mediaType in [
+        needParseImage = chatSettings[ChatSettingsKey.PARSE_ATTACHMENTS].toBool() and mediaType in (
             MessageType.IMAGE,
             MessageType.STICKER,
-        ]:
-            # Currently we can process only images
+        )
+        needProcessSTT = (
+            self._sttEnabled
+            and mediaType
+            in (
+                MessageType.VIDEO,
+                MessageType.VIDEO_NOTE,
+                MessageType.VOICE,
+                MessageType.AUDIO,
+            )
+            and chatSettings[ChatSettingsKey.PARSE_ATTACHMENTS].toBool()
+            and chatSettings[ChatSettingsKey.TRANSCRIBE_MEDIA].toBool()
+        )
+
+        if needParseImage:
+            mediaStatus = MediaStatus.PENDING
+        elif needProcessSTT:
             mediaStatus = MediaStatus.PENDING
         else:
             mediaStatus = MediaStatus.DONE
@@ -1863,8 +1926,8 @@ class BaseBotHandler(CommandHandlerMixin):
                 description=None,
             )
 
-        # Need to parse image content with LLM
-        if chatSettings[ChatSettingsKey.PARSE_ATTACHMENTS].toBool():
+        # Need to process Attachment somehow
+        if needParseImage or needProcessSTT:
             # Do not redownload file if it was downloaded already
             if mediaData is None:
                 if self._bot is None:
@@ -1889,40 +1952,48 @@ class BaseBotHandler(CommandHandlerMixin):
                 fileSize=len(mediaData),
             )
 
-            if mimeType.lower().startswith("image/"):
-                logger.debug(f"{ret.type}#{ret.id} is an image")
-            else:
-                logger.warning(f"{ret.type}#{ret.id} is not an image, skipping parsing")
-                ret.task = makeEmptyAsyncTask()
-                await self.db.mediaAttachments.updateMediaAttachment(
-                    mediaId=ret.id,
-                    status=MediaStatus.NEW,
-                )
-                return ret
+            if needParseImage:
+                # Need to parse image content with LLM
+                if mimeType.lower().startswith("image/"):
+                    logger.debug(f"{ret.type}#{ret.id} is an image")
+                else:
+                    logger.warning(f"{ret.type}#{ret.id} is not an image, but {mimeType}, skipping parsing")
+                    ret.task = makeEmptyAsyncTask()
+                    await self.db.mediaAttachments.updateMediaAttachment(
+                        mediaId=ret.id,
+                        status=MediaStatus.NEW,
+                    )
+                    return ret
 
-            imagePrompt = chatSettings[ChatSettingsKey.PARSE_IMAGE_PROMPT].toStr()
-            messages = [
-                ModelMessage(
-                    role="system",
-                    content=imagePrompt,
-                ),
-                ModelImageMessage(
-                    role="user",
-                    # content=ensuredMessage.messageText,
-                    # Openrouer LLMs does not support adding text to message with image.
-                    # In the same time looks like YC OpenAI LLMs doesn't care about this message at all
-                    # So let's delete it
-                    content="",
-                    image=bytearray(mediaData),
-                ),
-            ]
+                imagePrompt = chatSettings[ChatSettingsKey.PARSE_IMAGE_PROMPT].toStr()
+                messages = [
+                    ModelMessage(
+                        role="system",
+                        content=imagePrompt,
+                    ),
+                    ModelImageMessage(
+                        role="user",
+                        # content=ensuredMessage.messageText,
+                        # Openrouer LLMs does not support adding text to message with image.
+                        # In the same time looks like YC OpenAI LLMs doesn't care about this message at all
+                        # So let's delete it
+                        content="",
+                        image=bytearray(mediaData),
+                    ),
+                ]
 
-            logger.debug(f"{mediaType}#{ret.id}: Asynchronously parsing image")
-            parseTask = asyncio.create_task(self._parseImage(ensuredMessage, ret.id, messages))
-            # logger.debug(f"{mediaType}#{ret.id} After Start")
-            ret.task = parseTask
-            await self.queueService.addBackgroundTask(parseTask)
-            # logger.debug(f"{mediaType}#{ret.id} After Queued")
+                logger.debug(f"{mediaType}#{ret.id}: Asynchronously parsing image")
+                parseTask = asyncio.create_task(self._parseImage(ensuredMessage, ret.id, messages))
+                # logger.debug(f"{mediaType}#{ret.id} After Start")
+                ret.task = parseTask
+                await self.queueService.addBackgroundTask(parseTask)
+                # logger.debug(f"{mediaType}#{ret.id} After Queued")
+
+            if needProcessSTT:
+                chatId = ensuredMessage.recipient.id
+                sttTask = asyncio.create_task(self._transcribeMedia(ret.id, chatId, data=mediaData))
+                await self.queueService.addBackgroundTask(sttTask)
+                ret.task = sttTask
 
         if ret.task is None:
             ret.task = makeEmptyAsyncTask()

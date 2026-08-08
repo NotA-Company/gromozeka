@@ -464,8 +464,9 @@ Parse-structure-template placeholders: `{systemId}`, `{layoutName}`, `{descripti
 |---|---|---|---|
 | `enabled` | bool | `false` | Master switch for statistics collection |
 | `llm-stats-data-source` | str | `"default"` | Database data source for LLM stats storage |
+| `stt-stats-data-source` | str | `"default"` | Database data source for STT stats storage (`eventType="stt_request"`); independent from `llm-stats-data-source` |
 
-**Note:** Disabled by default until aggregation trigger and query API are implemented. When enabled, `DatabaseStatsStorage` is initialized in `main.py` and passed to `LLMManager` for recording LLM usage metrics. Statistics are stored in the data source specified by `llm-stats-data-source` (default: "default") with `stat_events` (append-only log) and `stat_aggregates` (period buckets) tables created by `migration_016`.
+**Note:** Disabled by default until aggregation trigger and query API are implemented. When enabled, `DatabaseStatsStorage` is initialized in `main.py` — one instance for LLM (passed to `LLMManager`) and one for STT (passed to `STTService`), each reading its own data source key (`llm-stats-data-source` and `stt-stats-data-source` respectively; both default `"default"`). Statistics are stored in `stat_events` (append-only log) and `stat_aggregates` (period buckets) tables created by `migration_016`.
 
 ---
 
@@ -841,6 +842,86 @@ One `ChatSettingsKey` default under `[bot.defaults]`, `page = FRIEND`, wired via
 
 ---
 
+### `[stt]`
+
+Speech-to-Text (media transcription) configuration. Defaults live in [`configs/00-defaults/stt.toml`](../../configs/00-defaults/stt.toml). The section is flat (no sub-tables beyond the optional `[stt.proxy]` override). The service is **shipped default-off** (`enabled = false`); when disabled, no provider is constructed, PyAV is not loaded for STT, and no credentials are validated. The service is owned by the stateless `STTService` (see [`services.md`](services.md) §7 and [ADR-020](architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall)).
+
+> **Status (2026-08-03):** the service is implemented + tested and **wired into `BaseBotHandler._processMediaV2`**, but remains **DEFAULT-OFF** — transcription requires `[stt].enabled = true` **and** an eligible media type (`VIDEO`/`VIDEO_NOTE`/`VOICE`/`AUDIO`) **and** the per-chat `PARSE_ATTACHMENTS` setting **and** the per-chat `TRANSCRIBE_MEDIA` setting (all default `false`). `PARSE_ATTACHMENTS` is the general attachment-processing gate (it gates any attachment processing, not just images); `TRANSCRIBE_MEDIA` is the additional opt-in for the expensive STT sub-feature, so transcription requires *both*. See [`docs/archive/design/stt-next-steps.md`](../archive/design/stt-next-steps.md) for the integration roadmap and manual release gates.
+
+> **Validation lives in the provider constructor, not the service.** `STTService.initialize(configManager)` (no `database` arg) validates ONLY the provider name via `STT_PROVIDERS_MAP`. Each provider validates its own parameters (different providers have different params): `YandexSpeechKitProvider.__init__` owns cred / unresolved `${...}`-placeholder / cap-positivity / cross-field (`maxPollIntervalSeconds ≥ pollIntervalSeconds`) validation and raises `ValueError` on failure; `ProxyService.resolveProxy` `ValueError`s are also propagated.
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `enabled` | bool | `false` | Master switch. When `false`, `STTService.initialize()` leaves the provider `None` and `isEnabled()` returns `False`. When `true`, the provider is constructed (which validates its own params — see the note above). |
+| `provider` | str | `"yandex-speechkit"` | Provider name. Only `"yandex-speechkit"` is supported (NOTE: no hyphen between "speech" and "kit"). |
+| `use-proxy` | bool | `false` | Route STT HTTP traffic through the global proxy (requires `[proxy].enabled = true`). Proxy is resolved by `ProxyService.resolveProxy(sttConfig, "stt")` and **injected** into the provider; `lib/stt` never resolves a proxy itself (ADR-020 decision 4). |
+| `api-key` | str | `"${YC_API_KEY}"` | Yandex Cloud API key. Uses `${YC_API_KEY}` env-var substitution. Required when `enabled = true`; an unresolved `${...}` placeholder fails startup (validated by the provider constructor). Document the env-var name only — never paste the secret. |
+| `folder-id` | str | `"${YC_FOLDER_ID}"` | Yandex Cloud folder ID. Uses `${YC_FOLDER_ID}` env-var substitution. Same validation rules as `api-key`. |
+| `model` | str | `"general"` | Yandex recognition model (passed to the provider constructor). |
+| `language` | str | `"ru-RU"` | BCP-47 language code for recognition. |
+| `max-source-bytes` | int | `1073741824` (1 GiB) | Max caller-supplied source size in bytes. `transcribeMedia` rejects `len(data) > maxSourceBytes` with `STTErrorCode.SOURCE_TOO_LARGE` (post-download bounding — the caller supplies the bytes; the download itself is the handler's responsibility). Default raised to 1 GiB in the 2026-08-02 simplification. |
+| `max-concurrency` | int | `2` | Max in-flight transcriptions (the `asyncio.Semaphore` size). Admission is **unbounded** — there is no admission timeout (the handler bounds the turn). |
+| `request-timeout-seconds` | int | `30` | Per-HTTP-request timeout (seconds) inside the Yandex provider. |
+| `operation-budget-seconds` | int | `2400` | Wall-clock budget (seconds) for the whole submit + poll + result-fetch operation inside the provider. |
+| `poll-interval-seconds` | int | `2` | Initial operation-poll delay (seconds). |
+| `max-poll-interval-seconds` | int | `10` | Max operation-poll delay (seconds). Must be ≥ `poll-interval-seconds` (cross-field validation owned by the provider constructor). |
+| `max-result-bytes` | int | `5242880` (5 MiB) | Cap on the `getRecognition` streamed result body enforced inside `yandex_events.py` (the one surviving module-level cap inside `lib/stt`). Exceeding → `PROTOCOL_ERROR`. |
+| `max-inline-bytes` | int | `41943040` (40 MiB) | **v1.1 gate-3** routing threshold. Measured on the *extracted* payload (`len(audio.data)`) inside the provider *after* extraction. Below → inline base64 `content` (v1 path, unchanged); at/above → Object Storage `uri` (when Object Storage is configured) or `STTErrorCode.SOURCE_TOO_LARGE` (when not). The 40 MiB default keeps base64-expanded requests under the 60 MB vendor inline ceiling. **No upper bound is enforced at startup** (only `> 0`) — an operator can set it higher, but values ≥ 60 MB risk opaque runtime SpeechKit rejection after base64 expansion. See [`docs/design/stt-v1.1.md`](../design/stt-v1.1.md) §4.1, §6.3. |
+| `object-storage-bucket` | str | *(unset; key commented out)* | **v1.1 gate-3** — Yandex Object Storage bucket name. Object Storage is **implicitly enabled when this key is set together with both access keys** (there is no `object-storage-enabled` flag); when unset, STT is inline-only and over-threshold clips fail with `SOURCE_TOO_LARGE`. Uses `${...}` env-var substitution. See validation rules below + [`docs/design/stt-v1.1.md`](../design/stt-v1.1.md) §3, §6.1, §6.3. |
+| `object-storage-prefix` | str | `"stt/"` | **v1.1 gate-3** — key prefix for staged objects under `object-storage-bucket`. Defaults to `"stt/"` when the bucket is configured and the key is unset. |
+| `object-storage-key-id` | str | *(unset; key commented out)* | **v1.1 gate-3** — Yandex static-access-key ID (SigV4) for the *same* Yandex service account used for SpeechKit. **Cannot reuse `[stt].api-key`** (that is an IAM API key; Object Storage authenticates with a static access-key pair). Uses `${...}` env-var substitution. |
+| `object-storage-key-secret` | str | *(unset; key commented out)* | **v1.1 gate-3** — Yandex static-access-key secret matching `object-storage-key-id`. Uses `${...}` env-var substitution. |
+| `chat-ratelimiter-queue` | str | `"stt-chat"` | Per-chat rate-limiter queue name. The named queue must be registered under `[ratelimiter.queues]` (see below). |
+| `global-ratelimiter-queue` | str | `"stt-global"` | Global rate-limiter queue name. Must also be registered under `[ratelimiter.queues]`. |
+
+> **STT statistics** are gated on the global `[stats].enabled` flag (via `main.py`), not on an STT-specific flag. When `[stats].enabled = true`, a `DatabaseStatsStorage(eventType="stt_request", dataSource=<from [stats].stt-stats-data-source>)` is constructed and passed to the provider; when `false`, the provider receives `None` → `NullStatsStorage` no-op. STT stats use their own `[stats].stt-stats-data-source` config key (independent from `llm-stats-data-source`). See [`docs/design/stt-v1.1.md`](../design/stt-v1.1.md) §5, §6.2.
+
+> **Deleted keys (2026-08-02 simplification):** `max-duration-seconds`, `max-transcript-chars`, `admission-timeout`, and the old non-`-seconds` spellings (`request-timeout`, `operation-timeout`, `poll-initial-delay`, `poll-max-delay`) were removed. The transcript formatter is now thin (no `max-transcript-chars` truncation); duration bounding is the handler's job; admission is unbounded.
+
+> **Deleted key (simplification):** `stats-enabled` was removed from `[stt]` — STT statistics are now gated on the global `[stats].enabled` flag (one global stats flag, not an independent STT-specific flag).
+
+**Optional `[stt.proxy]` sub-table:** a per-service proxy override (same `type`/`address`/`user`/`password` keys as `[proxy]`). Follows the standard [`ProxyConfig.fromServiceConfig`](libraries.md#13-libproxy--proxy-resolution) semantics — include `enabled = true` inside the sub-table for the override to take effect; otherwise it inherits the global `[proxy]`.
+
+**Rate-limiter queues (registered in [`configs/00-defaults/00-config.toml`](../../configs/00-defaults/00-config.toml)):** the `stt-chat` and `stt-global` queues map to `SlidingWindow` limiters under `[ratelimiter.ratelimiters]`. When `chat-ratelimiter-queue` / `global-ratelimiter-queue` are set, `transcribeMedia` applies both (per-chat keyed by `str(chatId)`, global unkeyed) before acquiring the concurrency semaphore. There is no admission timeout wrapping this (admission is unbounded).
+
+```toml
+[stt]
+enabled = false                      # shipped default-off
+provider = "yandex-speechkit"
+api-key = "${YC_API_KEY}"            # env-var substitution
+folder-id = "${YC_FOLDER_ID}"
+max-source-bytes = 1073741824        # 1 GiB; post-download bound
+max-concurrency = 2
+request-timeout-seconds = 30
+operation-budget-seconds = 2400
+poll-interval-seconds = 2
+max-poll-interval-seconds = 10
+max-result-bytes = 5242880
+chat-ratelimiter-queue = "stt-chat"
+global-ratelimiter-queue = "stt-global"
+```
+
+**Secrets discipline:** `api-key` and `folder-id` use `${...}` env-var substitution. Document the env-var names (`YC_API_KEY`, `YC_FOLDER_ID`) only — never paste the values, never commit `.env*`. An unresolved `${...}` placeholder fails startup when `enabled = true` (the provider constructor rejects it; it would otherwise be sent verbatim as a credential). The `object-storage-key-id` / `object-storage-key-secret` keys use the same `${...}` substitution convention (recommended env-var names: `YC_STT_S3_KEY_ID`, `YC_STT_S3_SECRET_KEY`).
+
+**v1.1 Object-Storage validation** (gate-3; enforced by the provider constructor when `object-storage-bucket` is set — see [`docs/design/stt-v1.1.md`](../design/stt-v1.1.md) §6.3 for the full rules):
+
+- **All-or-nothing.** `object-storage-bucket` set ⇒ `object-storage-key-id` **and** `object-storage-key-secret` are both required (and vice versa — keys present without a bucket are rejected as partial config). All three must be non-empty and free of unresolved `${...}` placeholders (same rule as `api-key` / `folder-id`).
+- **boto3 is a hard import** — boto3 is a pinned dependency and is always present (unconditional top-level `import boto3` in `lib/stt/providers/yandex_object_storage.py`). There is no guarded import and no construction-time `ValueError` for absent boto3.
+- **No `[storage.s3]` fallback.** STT does **not** reuse the attachment-storage S3 backend (`[storage.s3]` may point at a different provider/bucket/credentials, and the SpeechKit service account must be able to read the bucket). The flat `[stt]` `object-storage-*` keys are the only Object-Storage source for STT.
+- **Implicit enable.** Object Storage is **implicitly enabled when `object-storage-bucket` is configured** (with both keys). There is no `object-storage-enabled` flag. When the bucket is unset, STT is inline-only and clips whose extracted payload ≥ `max-inline-bytes` fail with `SOURCE_TOO_LARGE` (see [`docs/design/stt-v1.1.md`](../design/stt-v1.1.md) §4.2).
+- **Endpoint/region are helper constants** (`https://storage.yandexcloud.net`, `ru-central1`), not config knobs.
+
+**Deployment recommendation (operator-side, not a `[stt]` key):** leaked objects (e.g. a bot crash between upload and the best-effort per-request delete) are reclaimed by a **Yandex Object Storage bucket lifecycle rule** expiring objects under `prefix` after a TTL of **86400 s (24 h)**. The bot runs **no sweep**; without this rule, leaked objects accumulate. See [`docs/design/stt-v1.1.md`](../design/stt-v1.1.md) §3.3, §6.3.
+
+**Chat settings keys** (defined in [`internal/bot/models/chat_settings.py`](../../internal/bot/models/chat_settings.py); defaults under `[bot.defaults]` in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml)) — the per-chat gates that, together with `[stt].enabled` and an eligible media type, control whether `_processMediaV2` transcribes an attachment:
+
+| `ChatSettingsKey` enum | Setting key | Page | Type | Default | Purpose |
+|---|---|---|---|---|---|
+| `PARSE_ATTACHMENTS` | `parse-attachments` | `PAID` | `BOOL` | `false` | General attachment-processing gate — gates any attachment processing in `_processMediaV2` (image parsing **and** STT), not just images. STT requires this **plus** `TRANSCRIBE_MEDIA`. |
+| `TRANSCRIBE_MEDIA` | `transcribe-media` | `FRIEND` | `BOOL` | `false` | Additional per-chat opt-in for the expensive STT sub-feature (`VIDEO`/`VIDEO_NOTE`/`VOICE`/`AUDIO`). Read by `_processMediaV2` as `chatSettings[ChatSettingsKey.TRANSCRIBE_MEDIA].toBool()` AND-gated with `[stt].enabled`, `PARSE_ATTACHMENTS`, and an eligible media type. Friend-tier only — non-friend chats cannot enable transcription. Default off; all four gates must be satisfied for transcription to fire. |
+
+---
+
 ## 3. ConfigManager Methods
 
 **File:** [`internal/config/manager.py`](../../internal/config/manager.py) — class `ConfigManager` (singleton instantiated from `main.py`). The module-level `substituteEnvVars(value: T) -> T` helper performs the recursive `${VAR}` substitution and is called once from `ConfigManager.__init__`; `__init__` also calls `os.chdir(rootDir)` when `application.root-dir` is set.
@@ -861,6 +942,7 @@ One `ChatSettingsKey` default under `[bot.defaults]`, `page = FRIEND`, wired via
 | `getStatsConfig()` | `Dict[str, Any]` | `[stats]` section |
 | `getProxyConfig()` | `ProxyConfigDict` | `[proxy]` section (typed `TypedDict` from [`lib/proxy`](../../lib/proxy/__init__.py)) |
 | `getSearchHistoryConfig()` | `Dict[str, Any]` | `[search-history]` section (returns `{}` when missing) |
+| `getSttConfig()` | `Dict[str, Any]` | `[stt]` section (returns `{}` when missing); consumed by `STTService.initialize()` |
 
 ---
 
@@ -921,4 +1003,4 @@ apiKey: str = myConfig.get("api-key", "")
 ---
 
 *This guide is auto-maintained and should be updated whenever configuration sections change*
-*Last updated: 2026-07-18*
+*Last updated: 2026-08-02*

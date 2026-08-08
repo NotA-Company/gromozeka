@@ -339,6 +339,26 @@ def checkIfProperCommandName(command: str) -> bool:
     return re.match(r"^[a-z][a-z_0-9]*$", command) is not None
 
 
+def kebabToCamelCase(value: str) -> str:
+    """
+    Convert a kebab-case string into camelCase.
+
+    Handles single and consecutive hyphens; non-alphanumeric separators other
+    than `-` are left untouched. An empty string returns an empty string, and a
+    string with no hyphens is returned unchanged.
+
+    Args:
+        value: Kebab-case string (e.g. `"foo-bar-baz"`, `"foo--bar"`).
+
+    Returns:
+        camelCase version of `value` (e.g. `"fooBarBaz"`, `"fooBar"`).
+    """
+    parts = [p for p in value.split("-") if p]
+    if not parts:
+        return ""
+    return parts[0] + "".join(word[:1].upper() + word[1:] for word in parts[1:])
+
+
 def now() -> datetime.datetime:
     """Get current date and time in UTC"""
     return datetime.datetime.now(datetime.timezone.utc)

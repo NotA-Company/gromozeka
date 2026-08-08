@@ -177,7 +177,7 @@ CREATE TABLE media_attachments (
     file_id TEXT,
     file_size INTEGER,
     media_type TEXT NOT NULL,
-    metadata TEXT NOT NULL DEFAULT '',
+    metadata TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     mime_type TEXT,
     local_url TEXT,
@@ -189,6 +189,10 @@ CREATE TABLE media_attachments (
 ```
 
 **TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:255)
+
+**STT (media-transcription) semantics:** For STT semantics (lifecycle, gating, CAS-removal), see [ADR-020](llm/architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall).
+
+**Note on `metadata`:** `migration_013` declares `metadata TEXT NOT NULL` (no `DEFAULT ''`) for cross-RDBMS portability — application code always supplies the value.
 
 ---
 

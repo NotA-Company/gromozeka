@@ -22,6 +22,7 @@ from internal.database.stats_storage import DatabaseStatsStorage
 from internal.services.llm import LLMService
 from internal.services.proxy import ProxyService
 from internal.services.queue_service import QueueService
+from internal.services.stt import STTService
 from lib.ai.manager import LLMManager
 from lib.logging_utils import initLogging
 from lib.rate_limiter import RateLimiterManager
@@ -80,7 +81,8 @@ class GromozekBot:
         # Initialize stats storage for LLM usage tracking
         llmStatsStorage: Optional[StatsStorage] = None
         statsConfig = self.configManager.getStatsConfig()
-        if statsConfig.get("enabled", False):
+        statsEnabled = statsConfig.get("enabled", False)
+        if statsEnabled:
             llmStatsStorage = DatabaseStatsStorage(
                 db=self.database,
                 eventType="llm_request",
@@ -97,6 +99,16 @@ class GromozekBot:
         # Initialize rate limiter manager
         self.rateLimiterManager = RateLimiterManager.getInstance()
         loop.run_until_complete(self.rateLimiterManager.loadConfig(self.configManager.getRateLimiterConfig()))
+
+        # Initialize STT service (default-OFF; constructs/skips the provider)
+        sttStatsStorage: Optional[StatsStorage] = None
+        if statsEnabled:
+            sttStatsStorage = DatabaseStatsStorage(
+                db=self.database,
+                eventType="stt_request",
+                dataSource=statsConfig.get("stt-stats-data-source", self.database.manager.default),
+            )
+        STTService.getInstance().initialize(self.configManager, statsStorage=sttStatsStorage)
 
         # Initialize bot application
         botConfig = self.configManager.getBotConfig()
@@ -148,7 +160,14 @@ class GromozekBot:
             logger.exception("Error closing LLM manager during shutdown")
 
         try:
-            logger.info("Step 2.5: Closing database...")
+            logger.info("Step 2.5: Closing STT provider...")
+            await STTService.getInstance().aclose()
+            logger.info("STT provider closed...")
+        except Exception:
+            logger.exception("Error closing STT provider during shutdown")
+
+        try:
+            logger.info("Step 2.6: Closing database...")
             await self.database.manager.closeAll()
             logger.info("Database closed...")
         except Exception:

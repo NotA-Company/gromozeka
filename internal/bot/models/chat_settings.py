@@ -390,6 +390,8 @@ class ChatSettingsKey(StrEnum):
     """Whether tool commands (/draw, /analyze, etc.) are allowed."""
     ALLOW_SANDBOX = "allow-sandbox"
     """Whether sandbox code execution is enabled for this chat."""
+    TRANSCRIBE_MEDIA = "transcribe-media"
+    """Whether to transcribe voice/audio/video media messages to text (STT)."""
     DELETE_DENIED_COMMANDS = "delete-denied-commands"
     """Whether to delete messages with denied commands."""
     # Allowing different reactions in chat (to mention/reply/random)
@@ -917,6 +919,12 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
             "в изолированной среде (sandbox) в этом чате. \n"
             "Команды /run и /sandbox станут доступны."
         ),
+        "page": ChatSettingsPage.FRIEND,
+    },
+    ChatSettingsKey.TRANSCRIBE_MEDIA: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Расшифровка медиа в текст",
+        "long": "Разрешить расшифровку голосовых сообщений, аудио и видео в текст с помощью Speech-to-Text.",
         "page": ChatSettingsPage.FRIEND,
     },
     ChatSettingsKey.MEMORY_REFINEMENT_ENABLED: {

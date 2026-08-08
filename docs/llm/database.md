@@ -47,7 +47,7 @@
 | `chatUsers` | `getUserChats(userId)` | `List[ChatInfoDict]` | Get all chats for user |
 | `mediaAttachments` | `addMediaAttachment(...)` | `None` | Add media attachment record |
 | `mediaAttachments` | `getMediaAttachment(mediaId)` | `Optional[MediaAttachmentDict]` | Get media by unique ID |
-| `mediaAttachments` | `updateMediaAttachment(mediaId, ...)` | `None` | Update media record |
+| `mediaAttachments` | `updateMediaAttachment(mediaId, ...)` | `bool` | Update media record fields (only non-`None` kwargs are written; `updated_at` is refreshed). Used by `_transcribeMedia` to terminalize STT rows (`PENDING`→`DONE`+`description` on success | `PENDING`→`FAILED` on failure/exception). Single attachments have no concurrent writes, so plain last-write semantics suffice — there is no CAS (the former `setStatusVerified` CAS helper was removed when the design was simplified). |
 | `mediaAttachments` | `ensureMediaInGroup(mediaId, mediaGroupId)` | `None` | Ensure media in group |
 | `mediaAttachments` | `getMediaGroupLastUpdatedAt(mediaGroupId)` | `Optional[datetime]` | Get MAX(created_at) from media_groups |
 | `chatSettings` | `setChatSetting(chatId, key, value, *, updatedBy)` | `None` | Set a chat setting with audit trail |
@@ -372,6 +372,8 @@ All defined in `internal/database/models.py`. Dict keys are snake_case to mirror
 | `PENDING` | Processing |
 | `DONE` | Successfully processed |
 | `FAILED` | Processing failed |
+
+**STT (media-transcription) semantics:** the existing `media_attachments` table is reused — **no migration**. The `status` column carries the transcription lifecycle (`NEW → PENDING → DONE|FAILED`) and the transcript text is persisted in the existing `description` column. `STTService` is **stateless** — it performs no DB I/O; the **handler round** owns the row lifecycle (read / cache-hit short-circuit / claim to `PENDING` / persist / terminalize via plain `updateMediaAttachment`). Single attachments have no concurrent writes, so last-write semantics suffice — there is no CAS, and the former `setStatusVerified` helper has been removed. A `DONE` row always early-returns (it is no longer re-transcribed if the gate later flips off→on). See [`database-schema.md`](../database-schema.md) `media_attachments`, [`services.md`](services.md) §7, and ADR-020.
 
 #### `SpamReason`
 
@@ -850,4 +852,4 @@ success, value = sqlToCustomType("123", Union[int, str])
 ---
 
 *This guide is auto-maintained and should be updated whenever significant database changes are made*
-*Last updated: 2026-07-18*
+*Last updated: 2026-08-02*
