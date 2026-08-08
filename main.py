@@ -144,6 +144,7 @@ class GromozekBot:
             await queueService.beginShutdown()
             logger.info("Step 2.2: Waiting for delayed scheduler task...")
             if self._schedulerTask is not None:
+                QueueService.getInstance().setVerboseLogging(True)
                 await self._schedulerTask
         except Exception:
             logger.exception("Error during scheduler shutdown")

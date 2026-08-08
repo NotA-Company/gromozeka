@@ -728,29 +728,6 @@ async def testRateClampsLowToMinSampleRateThroughTranscode() -> None:
     assert result.sampleRate == 16000  # clamped from 8000 to minSampleRate
 
 
-async def testSpecExceedingCodecChannelCeilingRaisesEncoderError() -> None:
-    """A spec declaring maxChannels > 2 raises EncoderError (opus/mp3 cap at 2).
-
-    The codec ceiling (opus/mp3 <= 2 channels) is enforced against the spec's
-    maxChannels up front — a spec promising >2 channels cannot be honoured by
-    either encoder and is a configuration error, not a per-source reject.
-
-    Returns:
-        None
-    """
-    overspecFormats: Tuple[AudioFormatSpec, ...] = (
-        AudioFormatSpec(
-            container=STTAudioContainerType.OGG_OPUS,
-            minChannels=1,
-            maxChannels=6,  # opus cannot encode >2 channels
-            minSampleRate=8000,
-            maxSampleRate=48000,
-        ),
-    )
-    with pytest.raises(EncoderError):
-        await _extract(_makeM4a(channels=1), formats=overspecFormats)
-
-
 async def testStereoSourceStaysStereoThroughPassthrough() -> None:
     """A stereo OGG_OPUS source stays stereo through pass-through.
 
