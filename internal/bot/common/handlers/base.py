@@ -1862,10 +1862,11 @@ class BaseBotHandler(CommandHandlerMixin):
 
                 case _:
                     mimeType = str(mediaAttachment["mime_type"])
-                    mimeTypeStart = mimeType.lower().split("/",1)[0]                    
-                    if mimeTypeStart  in ["image", "video", "audio"]:
+                    mimeTypeStart = mimeType.lower().split("/", 1)[0]
+                    if mimeTypeStart in ["image", "video", "audio"]:
                         logger.debug(
-                            f"{ret.type}#{ret.id} ({mimeType}) in wrong status: {mediaAttachment['status']}. Reprocessing it"
+                            f"{ret.type}#{ret.id} ({mimeType}) in wrong status: {mediaAttachment['status']}. "
+                            "Reprocessing it"
                         )
                     else:
                         logger.debug(f"{ret.type}#{ret.id} is {mimeType}, skipping it")

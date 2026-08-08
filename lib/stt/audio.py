@@ -298,14 +298,7 @@ def _transcode(
     """
     outCodec = _CODEC_FOR_CONTAINER[target.container]
     outFormat = _FORMAT_FOR_CONTAINER[target.container]
-    # The codec ceiling (opus/mp3 <= 2 channels) is enforced against the spec's
-    # maxChannels up front: a spec promising >2 channels cannot be honoured by
-    # either encoder, so it is a configuration error, not a per-source reject.
-    if target.maxChannels > 2:
-        raise EncoderError(
-            f"target spec {target.container} declares maxChannels={target.maxChannels}"
-            f" but {outCodec} supports at most 2 channels"
-        )
+
     # Clamp the source channels to the spec's [min, max] range (downmix when
     # too many, upmix when too few). minChannels is clamped to >= 1 so a
     # misconfigured spec (minChannels=0) cannot produce a zero-channel output.
