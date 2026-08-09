@@ -855,6 +855,7 @@ Speech-to-Text (media transcription) configuration. Defaults live in [`configs/0
 | `enabled` | bool | `false` | Master switch. When `false`, `STTService.initialize()` leaves the provider `None` and `isEnabled()` returns `False`. When `true`, the provider is constructed (which validates its own params — see the note above). |
 | `provider` | str | `"yandex-speechkit"` | Provider name. Only `"yandex-speechkit"` is supported (NOTE: no hyphen between "speech" and "kit"). |
 | `use-proxy` | bool | `false` | Route STT HTTP traffic through the global proxy (requires `[proxy].enabled = true`). Proxy is resolved by `ProxyService.resolveProxy(sttConfig, "stt")` and **injected** into the provider; `lib/stt` never resolves a proxy itself (ADR-020 decision 4). |
+| `force-mono` | bool | `false` | Provider-owned option generically forwarded as `forceMono`. For Yandex, `true` constrains every supported format to one channel: compatible multi-channel OGG_OPUS/MP3/WAV is downmixed and re-encoded, while compatible mono input remains pass-through. This is opt-in and lossy, adds CPU work, and can change inline-versus-Object-Storage routing. |
 | `api-key` | str | `"${YC_API_KEY}"` | Yandex Cloud API key. Uses `${YC_API_KEY}` env-var substitution. Required when `enabled = true`; an unresolved `${...}` placeholder fails startup (validated by the provider constructor). Document the env-var name only — never paste the secret. |
 | `folder-id` | str | `"${YC_FOLDER_ID}"` | Yandex Cloud folder ID. Uses `${YC_FOLDER_ID}` env-var substitution. Same validation rules as `api-key`. |
 | `model` | str | `"general"` | Yandex recognition model (passed to the provider constructor). |
@@ -897,6 +898,7 @@ operation-budget-seconds = 2400
 poll-interval-seconds = 2
 max-poll-interval-seconds = 10
 max-result-bytes = 5242880
+force-mono = false                   # opt-in lossy downmix for Yandex multi-channel input
 chat-ratelimiter-queue = "stt-chat"
 global-ratelimiter-queue = "stt-global"
 ```

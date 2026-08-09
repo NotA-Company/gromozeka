@@ -37,7 +37,7 @@ processing behavior.
 | D4 | Persist formatted text in `media_attachments.description`; do not add a migration or transcript table in v1. |
 | D5 | Introduce a provider-neutral `lib/stt/` abstraction and an internal singleton `STTService`. |
 | D6 | Implement the Yandex wire protocol with raw `httpx`, not through an SDK wrapper. |
-| D7 | Deliver timestamped transcript segments; the implemented service formatter uses `[Ch#<tag>] [start..end] text` when response-only audio-channel metadata exists, otherwise `[start..end] text` (equal timestamps use one time). |
+| D7 | Deliver timestamped transcript segments; the formatter uses the result-level attribution role: `[Speaker#<tag>] [start..end] text` for `SPEAKER`, `[Ch#<tag>]` only for multiple tags on `CHANNEL`, or an untagged timestamped line. Speaker labels are opaque and recording-local. |
 | D8 | v1 started with inline SpeechKit input; v1.1 adds Yandex Object Storage routing for extracted clips at/above `max-inline-bytes` when configured. |
 
 Review-derived constraints in this plan refine those decisions; they do not
@@ -63,8 +63,9 @@ change them.
 ### 3.2 Non-goals
 
 - Object Storage input for files up to 1 GB / 4 hours.
-- Speaker labeling. SpeechKit support is constrained to v3 `FULL_DATA`, mono,
-  at most two speakers, and compatible models; v1 remains a single stream.
+- Stable speaker identity, cross-recording diarization, or support claims beyond
+  the Yandex mono speaker-label response contract. Labels are opaque,
+  recording-local, and Yandex documents at most two; they are not user identities.
 - Automatic language detection; v1 uses a configured BCP-47 language.
 - Multiple audio-track selection or mixing.
 - Streaming/partial transcript delivery.
@@ -265,10 +266,12 @@ messages; the worker must not be cancelled merely because that turn timed out.
 
 ### 6.1 Effective gate
 
-New billable work requires both:
+New billable work requires all three activation gates:
 
 ```text
-[stt].enabled AND chatSettings[TRANSCRIBE_MEDIA].toBool()
+[stt].enabled
+AND chatSettings[PARSE_ATTACHMENTS].toBool()
+AND chatSettings[TRANSCRIBE_MEDIA].toBool()
 ```
 
 The setting gates new work, not cache reads. A transcript already cached by
@@ -327,7 +330,7 @@ Every exit after the provider call must be caught and persisted:
 
 | Outcome | Status | Description |
 |---|---|---|
-| One or more non-empty final segments | `DONE` | Formatted as `[Ch#<tag>] [start..end] text` when the segment has a tag, otherwise `[start..end] text`; equal timestamps render once. Tags are audio-channel metadata, not speaker labels. See [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py). |
+| One or more non-empty final segments | `DONE` | Formatted from generic `attributionTag` plus the result role: `[Speaker#<tag>] [start..end] text` for `SPEAKER`, `[Ch#<tag>]` only for multiple tags on `CHANNEL`, or untagged. Equal timestamps render once. Speaker labels are opaque and recording-local. See [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py). |
 | Valid recognition with no speech | `DONE` | `NO_SPEECH` returns `""` (no sentinel). See [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py). |
 | Source too large, no audio track, corrupt media, download error, provider/operation/protocol error | `FAILED` | Remains null |
 
@@ -552,6 +555,15 @@ compatibility for variant or future input, not a release blocker. The proxy is
 registration). `yandex-ai-studio-sdk` is a credible fallback, but D6 keeps raw
 `httpx` for explicit wire/streaming/caps/retry/proxy/cleanup control.
 
+`[stt].force-mono` defaults to `false` and is provider-owned. When enabled, Yandex
+advertises mono-only descriptors, which forces otherwise compatible multi-channel
+audio through downmix/re-encode while retaining supported mono pass-through. The
+option is lossy and can change routing based on the extracted payload. Regardless
+of this option, a final mono `ExtractedAudio` causes both inline and Object Storage
+submissions to request Yandex speaker labeling. The parser stores a canonical envelope
+tag as generic `attributionTag` and marks the result role as `SPEAKER` for that request;
+deprecated final-level tags are ignored. See the authoritative [`lib-stt-v1.md` §4/§7](./lib-stt-v1.md).
+
 > **Authoritative contract:** [`lib-stt-v1.md` §7](./lib-stt-v1.md) — make changes there, not here. This section summarizes it only.
 
 ## 10. Transcript formatting and trust boundary
@@ -559,9 +571,10 @@ registration). `yandex-ai-studio-sdk` is a credible fallback, but D6 keeps raw
 The pure service formatter,
 [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py),
 turns non-empty segments into one plain-text line each, retaining their supplied
-order. Its exact output is `[Ch#<tag>] [start..end] text` for a non-empty
-per-segment `channelTag` and `[start..end] text` without one; equal start/end
-uses one timestamp. `channelTag` identifies an audio channel, not a speaker.
+order. Its exact output is `[Speaker#<tag>] [start..end] text` for a non-empty
+generic `attributionTag` on a `SPEAKER` result; `[Ch#<tag>]` appears only for a
+`CHANNEL` result with multiple distinct non-empty tags, or the line is untagged.
+Equal start/end uses one timestamp. Speaker labels are opaque and recording-local.
 The formatter strips/skips empty text, returns `""` when no segment remains, and
 does not alter text or impose a transcript-length cap.
 
@@ -583,6 +596,9 @@ Add `configs/00-defaults/stt.toml`:
 enabled = false
 provider = "yandex-speechkit"
 use-proxy = false
+# Opt-in: constrain Yandex input descriptors to mono; multi-channel compatible
+# input is downmixed/re-encoded, while compatible mono input stays pass-through.
+force-mono = false
 max-concurrency = 2
 chat-ratelimiter-queue = "stt-chat"
 global-ratelimiter-queue = "stt-global"
@@ -854,12 +870,16 @@ vendored-package tests. Async tests need no explicit asyncio decorator.
 **lib/stt slice (models, PyAV extraction, Yandex golden HTTP).** The model,
 extraction/multi-format negotiation, parser, provider, and golden-replay suites
 are specified in full in the library test matrix. They cover canonical
-envelope-level `channelTag` precedence, deprecated final-level fallback,
-malformed-tag `PROTOCOL_ERROR`, refinement retention, and multi-channel segments;
-the golden recordings require `FINAL`, non-empty segments, and tag `"0"` so a
-dropped final cannot pass as `NO_SPEECH`. Service tests assert exact tagged,
-untagged, and equal-timestamp formatted output plus structured description
-delivery. See [`lib-stt-v1.md` §9](./lib-stt-v1.md).
+envelope-level attribution coercion, ignored deprecated-final tags, refinement
+retention, and `PROTOCOL_ERROR` for malformed cursor/index or other protocol
+structures; detailed parser rules remain authoritative in
+[`lib-stt-v1.md` §7](./lib-stt-v1.md). They also cover forced-mono
+downmix/pass-through and speaker-label request/parse semantics. Two sanitized
+live golden recordings require `FINAL`, non-empty segments, generic
+attribution-tag set `{"0", "1"}`, and result role `SPEAKER` so a dropped final or
+attribution regression cannot pass as `NO_SPEECH`. Service tests assert exact
+role-sensitive speaker/channel/untagged and equal-timestamp formatted output
+plus structured description delivery. See [`lib-stt-v1.md` §9](./lib-stt-v1.md).
 
 > **Authoritative contract:** [`lib-stt-v1.md` §9](./lib-stt-v1.md) — make changes there, not here. This section summarizes it only.
 
@@ -1002,7 +1022,7 @@ This plan-only rewrite does not itself require a changelog entry.
 
 Implementation is complete only when:
 
-1. All four media types transcribe through one bounded pipeline when both gates
+1. All four media types transcribe through one bounded pipeline when all three activation gates
    are on, and cached descriptions reuse without new cost.
 2. State transitions match §6 under disabled gates, duplicates, orphaned
    pending rows, no speech, and every failure stage.
@@ -1012,9 +1032,11 @@ Implementation is complete only when:
    all configured byte/duration/concurrency caps are enforced.
 5. Yandex requests and event parsing match §9, submit is not blindly retried,
    and successful results are deleted best-effort.
-6. Persisted transcripts retain timestamp ranges and optional per-segment audio
-   channel tags, and are injected through the structured `mediaDescription`
-   path for single and multi-media messages.
+6. Persisted transcripts retain timestamp ranges and optional generic
+   attribution tags, with role-sensitive speaker/channel/untagged formatting,
+   and are injected through the structured `mediaDescription` path for single
+   and multi-media messages. Parser internals remain authoritative in
+   [`lib-stt-v1.md` §7](./lib-stt-v1.md).
 7. Disabled STT starts without credential/provider validation; enabled invalid
    config fails fast; shutdown drains workers and closes clients in order.
 8. Existing image and unsupported-media behavior has regression coverage and

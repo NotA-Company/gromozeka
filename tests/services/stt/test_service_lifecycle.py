@@ -29,6 +29,7 @@ def _validSttConfig() -> dict:
         "enabled": True,
         "provider": "yandex-speechkit",
         "use-proxy": False,
+        "force-mono": False,
         "api-key": "test-api-key",
         "folder-id": "test-folder-id",
         "model": "general",
@@ -579,3 +580,60 @@ class TestMaxInlineBytesForwarded:
 
         callKwargs = mockProviderCls.call_args[1]
         assert callKwargs["maxInlineBytes"] == 41943040
+
+
+# -----------------------------------------------------------------------
+# 17. force-mono config forwarding
+# -----------------------------------------------------------------------
+
+
+class TestForceMonoForwarded:
+    """force-mono is generically forwarded to the Yandex provider as forceMono."""
+
+    @patch("internal.services.stt.service.ProxyService")
+    def test_defaultForceMonoForwardedAsBoolean(self, mockProxyServiceCls: Mock) -> None:
+        """The shipped false default reaches the provider as boolean forceMono=False.
+
+        Args:
+            mockProxyServiceCls: Patched ProxyService class.
+
+        Returns:
+            None
+        """
+        mockProxyService = MagicMock()
+        mockProxyService.resolveProxy = Mock(return_value=MagicMock())
+        mockProxyServiceCls.getInstance = Mock(return_value=mockProxyService)
+
+        mockProviderCls = MagicMock()
+        with patch.dict(STT_PROVIDERS_MAP, {"yandex-speechkit": mockProviderCls}):
+            svc = STTService.getInstance()
+            svc.initialize(_makeConfigManager(_validSttConfig()))
+
+        callKwargs = mockProviderCls.call_args[1]
+        assert callKwargs["forceMono"] is False
+        assert isinstance(callKwargs["forceMono"], bool)
+
+    @patch("internal.services.stt.service.ProxyService")
+    def test_forceMonoOverrideForwardedAsBoolean(self, mockProxyServiceCls: Mock) -> None:
+        """A true force-mono override reaches the provider as boolean forceMono=True.
+
+        Args:
+            mockProxyServiceCls: Patched ProxyService class.
+
+        Returns:
+            None
+        """
+        mockProxyService = MagicMock()
+        mockProxyService.resolveProxy = Mock(return_value=MagicMock())
+        mockProxyServiceCls.getInstance = Mock(return_value=mockProxyService)
+
+        config = _validSttConfig()
+        config["force-mono"] = True
+        mockProviderCls = MagicMock()
+        with patch.dict(STT_PROVIDERS_MAP, {"yandex-speechkit": mockProviderCls}):
+            svc = STTService.getInstance()
+            svc.initialize(_makeConfigManager(config))
+
+        callKwargs = mockProviderCls.call_args[1]
+        assert callKwargs["forceMono"] is True
+        assert isinstance(callKwargs["forceMono"], bool)

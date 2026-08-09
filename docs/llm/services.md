@@ -414,6 +414,8 @@ def resetProxyServiceSingleton():
 
 > **v1.1 (gate-3 Object-Storage routing + gate-4 statistics) — implemented.** See [`docs/design/stt-v1.1.md`](../design/stt-v1.1.md) for the authoritative design. gate-3: the Yandex provider now routes clips whose extracted payload ≥ `[stt].max-inline-bytes` through a co-located `lib/stt/providers/yandex_object_storage.py` helper (boto3, hard import) and submits via the `uri` field; over-threshold + Object-Storage-disabled → `SOURCE_TOO_LARGE`, upload failure → the new `OBJECT_STORAGE_ERROR`. gate-4: per-transcription stats are recorded best-effort in the base `AbstractSTTProvider._recordStats` (template-method refactor — timing + recording in the base `transcribe`, hoisted from the Yandex provider; mirrors `lib/ai`'s `_recordAttemptStats`; reuses `DatabaseStatsStorage` with `eventType="stt_request"`, no new table/migration), gated by the global `[stats].enabled` flag. STT stats use a separate `[stats].stt-stats-data-source` config key (independent from `llm-stats-data-source`). The `lib/stt` dependency firewall (zero `internal.*` imports) is intact — boto3 is an external dependency. No service-layer Object-Storage client and no sweep task; leaked-object reclamation is delegated to a Yandex bucket lifecycle rule.
 
+> **Yandex mono speaker attribution — implemented.** `[stt].force-mono = false` is provider-owned and forwarded generically as `forceMono`. Enabling it makes Yandex advertise mono-only input formats, so compatible multi-channel input is downmixed/re-encoded; compatible mono input still passes through. Regardless of that option, final mono `ExtractedAudio` causes both inline and Object-Storage submissions to request speaker labeling. The service preserves the provider result: generic opaque, recording-local `attributionTag` values render as `[Speaker#<tag>]` for `SPEAKER` results, while `CHANNEL` results render `[Ch#<tag>]` only for multiple tags. See the authoritative [`lib-stt-v1.md`](../design/lib-stt-v1.md).
+
 ```python
 from internal.services.stt import STTService, STTOutcome
 
@@ -432,8 +434,8 @@ outcome: STTOutcome = await STTService.getInstance().transcribeMedia(
 )
 # outcome.success is True when a transcript was produced.
 # outcome.description: the formatted transcript when success is True ("" when
-#   NO_SPEECH — the thin formatter emits [Ch#<tag>] [start..end] text for tagged
-#   segments and [start..end] text otherwise); None when success is False.
+#   NO_SPEECH — the thin formatter uses the result attribution role: [Speaker#<tag>]
+#   for SPEAKER, [Ch#<tag>] only for multi-tag CHANNEL); None on failure.
 # outcome.errorCode: an STTErrorCode when success is False; None otherwise.
 
 # Shutdown (main.py Step 2.5, best-effort try/except, after LLM close,
@@ -455,8 +457,8 @@ This is a **thin, stateless** entry (ADR-020 decision 1). It performs no DB I/O.
 2. **`SOURCE_TOO_LARGE`** — early return when `len(data) > self._maxSourceBytes` (source bytes are caller-supplied — bounding is post-download; `max-source-bytes` default is 1 GiB).
 3. **Rate limiters** — per-chat (`chat-ratelimiter-queue`, keyed by `str(chatId)`) then global (`global-ratelimiter-queue`), applied when configured and `chatId is not None`. (Duration bounding is the handler's job — see ADR-020 decision 3.)
 4. **`async with self._semaphore`** — concurrency limiter (`max-concurrency` size). **No `asyncio.timeout`** (admission is unbounded; the handler bounds the turn).
-5. **`await self._provider.stt(data)`** — the `lib/stt` provider's extract + transcribe never-raise entry (ADR-020 decision 2). An unexpected raise is caught defense-in-depth → `FAILED` + `PROVIDER_ERROR`.
-6. **`_mapOutcome`** — `FINAL`/`NO_SPEECH` → `success=True` + `formatTranscript(result)` (the thin formatter at [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py) emits `[Ch#<tag>] [start..end] text` for a non-empty per-segment audio-channel tag and `[start..end] text` otherwise; equal timestamps render once; `NO_SPEECH` yields `success=True` with `description=""`); `ERROR` → `success=False` + the provider's `errorCode`.
+5. **`await self._provider.stt(data)`** — the `lib/stt` provider's extract + transcribe never-raise entry (ADR-020 decision 2). Yandex requests speaker labeling for final mono extracted audio; an unexpected raise is caught defense-in-depth → `FAILED` + `PROVIDER_ERROR`.
+6. **`_mapOutcome`** — `FINAL`/`NO_SPEECH` → `success=True` + `formatTranscript(result)` (the thin formatter uses generic tags plus the result role: `[Speaker#<tag>]` for `SPEAKER`, `[Ch#<tag>]` only for multi-tag `CHANNEL`; equal timestamps render once; `NO_SPEECH` yields `success=True` with `description=""`); `ERROR` → `success=False` + the provider's `errorCode`.
 7. Return the `STTOutcome`.
 
 A broad outer `except Exception` (never-raise boundary) catches anything else → `FAILED` + `PROVIDER_ERROR` (the service's catch-all fallback; structured logs distinguish service-caught vs provider-returned `PROVIDER_ERROR`).

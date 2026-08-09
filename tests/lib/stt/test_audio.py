@@ -31,6 +31,7 @@ from lib.stt.models import (
     ExtractedAudio,
     STTAudioContainerType,
 )
+from lib.stt.providers.yandex_speechkit import YandexSpeechKitProvider
 
 # ============================================================================
 # Constants — a Yandex-like provider format surface
@@ -295,6 +296,23 @@ async def _extract(
         data,
         formats,
     )
+
+
+def _assertEncodedAudioIsMono(data: bytes) -> None:
+    """Assert PyAV decodes the encoded payload as a single-channel audio stream.
+
+    Args:
+        data: Encoded audio container bytes to inspect.
+
+    Returns:
+        None
+    """
+    container = av.open(io.BytesIO(data))
+    try:
+        assert len(container.streams.audio) == 1
+        assert len(container.streams.audio[0].layout.channels) == 1
+    finally:
+        container.close()
 
 
 # ============================================================================
@@ -736,6 +754,71 @@ async def testStereoSourceStaysStereoThroughPassthrough() -> None:
     """
     result = await _extract(_makeOggOpus(channels=2))
     assert result.channels == 2
+
+
+# ============================================================================
+# Yandex force-mono integration — actual provider descriptors + audio fixtures
+# ============================================================================
+
+
+@pytest.mark.parametrize("maker", [_makeOggOpus, _makeMp3, _makeWav])
+async def testYandexForceMonoDownmixesSupportedStereoSources(maker: Callable[..., bytes]) -> None:
+    """Mono-only Yandex descriptors transcode supported stereo sources to mono.
+
+    Args:
+        maker: Builder for a supported stereo OGG_OPUS, MP3, or WAV fixture.
+
+    Returns:
+        None
+    """
+    provider = YandexSpeechKitProvider(apiKey="test-api-key", folderId="test-folder-id", forceMono=True)
+    data = maker(channels=2)
+    try:
+        result = await extractAudio(data, provider.supportedInputFormats())
+    finally:
+        await provider.aclose()
+
+    assert result.channels == 1
+    assert result.data != data
+    _assertEncodedAudioIsMono(result.data)
+
+
+async def testYandexForceMonoPreservesSupportedMonoPassthrough() -> None:
+    """Mono-only Yandex descriptors pass supported mono input through unchanged.
+
+    Returns:
+        None
+    """
+    provider = YandexSpeechKitProvider(apiKey="test-api-key", folderId="test-folder-id", forceMono=True)
+    data = _makeOggOpus(channels=1)
+    try:
+        result = await extractAudio(data, provider.supportedInputFormats())
+    finally:
+        await provider.aclose()
+
+    assert result.channels == 1
+    assert result.data == data
+
+
+@pytest.mark.parametrize("maker", [_makeOggOpus, _makeMp3, _makeWav])
+async def testYandexDefaultDescriptorsPreserveSupportedStereoPassthrough(maker: Callable[..., bytes]) -> None:
+    """Default Yandex descriptors leave supported stereo inputs unchanged.
+
+    Args:
+        maker: Builder for a supported stereo OGG_OPUS, MP3, or WAV fixture.
+
+    Returns:
+        None
+    """
+    provider = YandexSpeechKitProvider(apiKey="test-api-key", folderId="test-folder-id")
+    data = maker(channels=2)
+    try:
+        result = await extractAudio(data, provider.supportedInputFormats())
+    finally:
+        await provider.aclose()
+
+    assert result.channels == 2
+    assert result.data == data
 
 
 # ============================================================================

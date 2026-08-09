@@ -43,12 +43,15 @@ import pytest
 
 from lib.proxy import ProxyConfig, ProxyHelper, ProxyType
 from lib.stats.stats_storage import StatsStorage
+from lib.stt import STTAttributionType
 from lib.stt.models import (
+    AudioFormatSpec,
     ExtractedAudio,
     STTAudioContainerType,
     STTErrorCode,
     STTResultStatus,
 )
+from lib.stt.providers.yandex_events import parseRecognitionEvents
 from lib.stt.providers.yandex_object_storage import YandexObjectStorage
 from lib.stt.providers.yandex_speechkit import YandexSpeechKitProvider
 
@@ -73,18 +76,24 @@ _DELETE_RECOGNITION_PATH: str = "/stt/v3/deleteRecognition"
 # ============================================================================
 
 
-def _audio(container: STTAudioContainerType = STTAudioContainerType.OGG_OPUS) -> ExtractedAudio:
+def _audio(
+    container: STTAudioContainerType = STTAudioContainerType.OGG_OPUS,
+    *,
+    channels: int = 1,
+) -> ExtractedAudio:
     """Build a minimal ExtractedAudio for the given container.
 
     Args:
         container: The container type to set on the audio.
+        channels: The final negotiated channel count to set on the audio.
 
     Returns:
-        ExtractedAudio: A mono 16 kHz clip with placeholder bytes.
+        ExtractedAudio: A 16 kHz clip with the requested channel count and
+        placeholder bytes.
     """
     return ExtractedAudio(
         container=container,
-        channels=1,
+        channels=channels,
         sampleRate=16000,
         data=b"fake-audio-bytes",
         durationMs=1000,
@@ -96,6 +105,7 @@ def _finalEventBytes(
     startMs: int = 0,
     endMs: int = 1500,
     channelTag: Optional[str] = None,
+    finalIndex: Optional[int] = None,
 ) -> bytes:
     """Build a single-final recognition body in the verified wrapped event shape.
 
@@ -104,6 +114,7 @@ def _finalEventBytes(
         startMs: The segment start time in milliseconds.
         endMs: The segment end time in milliseconds.
         channelTag: Optional response-only channel metadata for the final envelope.
+        finalIndex: Optional final cursor for speaker-attribution correlation.
 
     Returns:
         bytes: A UTF-8 event stream with one wrapped final event.
@@ -118,6 +129,8 @@ def _finalEventBytes(
     event: dict[str, object] = {"result": result}
     if channelTag is not None:
         result["channelTag"] = channelTag
+    if finalIndex is not None:
+        result["audioCursors"] = {"finalIndex": finalIndex}
     return (json.dumps(event) + "\n").encode("utf-8")
 
 
@@ -187,15 +200,61 @@ async def testHappyPathYieldsFinalResult() -> None:
     assert result.segments[0].text == "recognized text"
     assert result.segments[0].startMs == 0
     assert result.segments[0].endMs == 2000
-    assert result.segments[0].channelTag is None
+    assert result.segments[0].attributionTag is None
     # Submit happened once, delete happened once with the operation_id query param.
     assert len(submitRequests) == 1
     assert len(deleteRequests) == 1
     assert deleteRequests[0].url.params.get("operation_id") == "op-123"
 
 
-async def testRecognitionChannelTagIsPreservedOnSegment() -> None:
-    """A channel-tagged recognition response exposes metadata on its segment only.
+async def testMonoInlineSubmitUsesExactSpeakerLabelingRequestAndParserMode() -> None:
+    """Final mono inline audio sends the exact request field and enables parser mode.
+
+    Returns:
+        None
+    """
+    capturedBody: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == _SUBMIT_PATH:
+            capturedBody.update(json.loads(request.content.decode("utf-8")))
+            return httpx.Response(200, json={"id": "op-1", "done": False})
+        if request.method == "GET" and request.url.path.startswith("/operations/"):
+            return httpx.Response(200, json={"id": "op-1", "done": True})
+        if request.method == "GET" and request.url.path == _GET_RECOGNITION_PATH:
+            return httpx.Response(200, content=_finalEventBytes("mono speaker", 0, 1000, "speaker-1", finalIndex=0))
+        if request.method == "DELETE" and request.url.path == _DELETE_RECOGNITION_PATH:
+            return httpx.Response(204)
+        return httpx.Response(404)
+
+    provider = await _provider(handler)
+    try:
+        with patch(
+            "lib.stt.providers.yandex_speechkit.parseRecognitionEvents",
+            wraps=parseRecognitionEvents,
+        ) as mockParser:
+            result = await provider.transcribe(_audio())
+    finally:
+        await provider.aclose()
+
+    assert capturedBody == {
+        "recognition_model": {
+            "model": "general",
+            "audio_format": {"container_audio": {"container_audio_type": "OGG_OPUS"}},
+            "language_restriction": {"restriction_type": "WHITELIST", "language_code": ["ru-RU"]},
+            "text_normalization": {"literature_text": True},
+        },
+        "content": base64.b64encode(b"fake-audio-bytes").decode("ascii"),
+        "speakerLabeling": {"speakerLabeling": "SPEAKER_LABELING_ENABLED"},
+    }
+    assert mockParser.call_args is not None
+    assert mockParser.call_args.kwargs == {"speakerLabelingRequested": True}
+    assert result.segments[0].attributionTag == "speaker-1"
+    assert result.attributionType is STTAttributionType.SPEAKER
+
+
+async def testStereoSubmitOmitsSpeakerLabelingAndPreservesChannelTag() -> None:
+    """Final stereo audio omits speaker labeling and invokes ordinary parser mode.
 
     This exercises the provider's public ``transcribe`` path through its real
     ``_transcribe`` implementation and ``parseRecognitionEvents`` integration,
@@ -204,9 +263,11 @@ async def testRecognitionChannelTagIsPreservedOnSegment() -> None:
     Returns:
         None
     """
+    capturedBody: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST" and request.url.path == _SUBMIT_PATH:
+            capturedBody.update(json.loads(request.content.decode("utf-8")))
             return httpx.Response(200, json={"id": "op-123", "done": False})
         if request.method == "GET" and request.url.path.startswith("/operations/"):
             return httpx.Response(200, json={"id": "op-123", "done": True})
@@ -218,13 +279,20 @@ async def testRecognitionChannelTagIsPreservedOnSegment() -> None:
 
     provider = await _provider(handler)
     try:
-        result = await provider.transcribe(_audio())
+        with patch(
+            "lib.stt.providers.yandex_speechkit.parseRecognitionEvents",
+            wraps=parseRecognitionEvents,
+        ) as mockParser:
+            result = await provider.transcribe(_audio(channels=2))
     finally:
         await provider.aclose()
 
     assert result.status is STTResultStatus.FINAL
-    assert tuple(segment.channelTag for segment in result.segments) == ("channel-0",)
-    assert not hasattr(result, "channelTag")
+    assert "speakerLabeling" not in capturedBody
+    assert mockParser.call_args is not None
+    assert mockParser.call_args.kwargs == {"speakerLabelingRequested": False}
+    assert tuple(segment.attributionTag for segment in result.segments) == ("channel-0",)
+    assert result.attributionType is STTAttributionType.CHANNEL
 
 
 # ============================================================================
@@ -587,12 +655,12 @@ async def testNoProxyByDefaultSpreadsEmptyKwargs() -> None:
 
 
 # ============================================================================
-# supportedInputFormats — OGG_OPUS first
+# supportedInputFormats — default preservation and optional mono constraint
 # ============================================================================
 
 
-def testSupportedInputFormatsOggOpusFirst() -> None:
-    """supportedInputFormats is (OGG_OPUS, MP3, WAV) — OGG_OPUS first.
+def testSupportedInputFormatsDefaultPreservesCurrentSpecs() -> None:
+    """Default negotiation returns the existing multi-channel descriptors unchanged.
 
     Returns:
         None
@@ -601,11 +669,54 @@ def testSupportedInputFormatsOggOpusFirst() -> None:
         mockCtor.return_value = AsyncMock()
         provider = YandexSpeechKitProvider(apiKey="k", folderId="f")
     formats = provider.supportedInputFormats()
-    assert [f.container for f in formats] == [
-        STTAudioContainerType.OGG_OPUS,
-        STTAudioContainerType.MP3,
-        STTAudioContainerType.WAV,
+    assert formats == (
+        AudioFormatSpec(STTAudioContainerType.OGG_OPUS, 1, 8, 8000, 48000),
+        AudioFormatSpec(STTAudioContainerType.MP3, 1, 2, 8000, 48000),
+        AudioFormatSpec(STTAudioContainerType.WAV, 1, 2, 8000, 48000),
+    )
+
+
+def testSupportedInputFormatsForceMonoConstrainsChannelsWithoutChangingFormatDetails() -> None:
+    """forceMono returns mono-only copies without changing order, containers, or rates.
+
+    Returns:
+        None
+    """
+    with patch("lib.stt.providers.yandex_speechkit.httpx.AsyncClient") as mockCtor:
+        mockCtor.return_value = AsyncMock()
+        defaultProvider = YandexSpeechKitProvider(apiKey="k", folderId="f")
+        forcedProvider = YandexSpeechKitProvider(apiKey="k", folderId="f", forceMono=True)
+
+    defaultFormats = defaultProvider.supportedInputFormats()
+    forcedFormats = forcedProvider.supportedInputFormats()
+
+    assert [formatSpec.container for formatSpec in forcedFormats] == [
+        formatSpec.container for formatSpec in defaultFormats
     ]
+    assert [(formatSpec.minChannels, formatSpec.maxChannels) for formatSpec in forcedFormats] == [(1, 1)] * 3
+    assert [(formatSpec.minSampleRate, formatSpec.maxSampleRate) for formatSpec in forcedFormats] == [
+        (formatSpec.minSampleRate, formatSpec.maxSampleRate) for formatSpec in defaultFormats
+    ]
+    assert all(forcedSpec is not defaultSpec for forcedSpec, defaultSpec in zip(forcedFormats, defaultFormats))
+
+
+def testSupportedInputFormatsForceMonoHasNoCrossInstanceAliasing() -> None:
+    """forceMono returns fresh descriptors so one provider cannot share another's specs.
+
+    Returns:
+        None
+    """
+    with patch("lib.stt.providers.yandex_speechkit.httpx.AsyncClient") as mockCtor:
+        mockCtor.return_value = AsyncMock()
+        firstProvider = YandexSpeechKitProvider(apiKey="k", folderId="f", forceMono=True)
+        secondProvider = YandexSpeechKitProvider(apiKey="k", folderId="f", forceMono=True)
+
+    firstFormats = firstProvider.supportedInputFormats()
+    secondFormats = secondProvider.supportedInputFormats()
+
+    assert firstFormats == secondFormats
+    assert firstFormats is not secondFormats
+    assert all(firstSpec is not secondSpec for firstSpec, secondSpec in zip(firstFormats, secondFormats))
 
 
 # ============================================================================
@@ -870,6 +981,21 @@ def testConstructorRejectsMissingFolderId() -> None:
     with pytest.raises(ValueError, match="folderId"):
         with patch("lib.stt.providers.yandex_speechkit.httpx.AsyncClient"):
             YandexSpeechKitProvider(apiKey="k", folderId="")
+
+
+@pytest.mark.parametrize("forceMono", [0, 1, "true", None])
+def testConstructorRejectsNonBooleanForceMono(forceMono: object) -> None:
+    """A non-boolean forceMono value raises ValueError during startup validation.
+
+    Args:
+        forceMono: The invalid value to pass as the forceMono constructor argument.
+
+    Returns:
+        None
+    """
+    with pytest.raises(ValueError, match="forceMono"):
+        with patch("lib.stt.providers.yandex_speechkit.httpx.AsyncClient"):
+            YandexSpeechKitProvider(apiKey="k", folderId="f", forceMono=forceMono)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -1331,12 +1457,12 @@ async def testInlinePathUsesContentAndDoesNotCallUpload() -> None:
 # --- Test 2: OS path submit body ---
 
 
-async def testOsPathUsesUriAndCallsUpload() -> None:
-    """Large audio (>= maxInlineBytes) with OS present uses uri, calls upload.
+async def testMonoOsPathUsesExactUriSpeakerLabelingRequestAndCallsUpload() -> None:
+    """Large final mono audio submits an exact URI speaker-labeling request.
 
-    The submit body has ``uri`` (the upload return value), NO ``content``.
-    ``recognition_model`` block is identical to the inline path.  Upload is
-    called once, delete is called once in finally.
+    The submit body has ``uri`` (the upload return value), NO ``content``, and
+    the exact top-level ``speakerLabeling`` object. Upload is called once and
+    delete is called once in finally.
 
     Returns:
         None
@@ -1365,15 +1491,16 @@ async def testOsPathUsesUriAndCallsUpload() -> None:
         await provider.aclose()
 
     assert result.status is STTResultStatus.FINAL
-    assert "uri" in capturedBody
-    assert "content" not in capturedBody
-    assert capturedBody["uri"] == "https://storage.yandexcloud.net/test-bucket/stt/fake-uuid"
-    # recognition_model block is present and structurally identical.
-    recognitionModel: dict[str, object] = capturedBody["recognition_model"]  # type: ignore[assignment]
-    assert recognitionModel["model"] == "general"
-    audioFormat: dict[str, object] = recognitionModel["audio_format"]  # type: ignore[assignment]
-    containerAudio: dict[str, object] = audioFormat["container_audio"]  # type: ignore[assignment]
-    assert containerAudio["container_audio_type"] == "OGG_OPUS"
+    assert capturedBody == {
+        "recognition_model": {
+            "model": "general",
+            "audio_format": {"container_audio": {"container_audio_type": "OGG_OPUS"}},
+            "language_restriction": {"restriction_type": "WHITELIST", "language_code": ["ru-RU"]},
+            "text_normalization": {"literature_text": True},
+        },
+        "uri": "https://storage.yandexcloud.net/test-bucket/stt/fake-uuid",
+        "speakerLabeling": {"speakerLabeling": "SPEAKER_LABELING_ENABLED"},
+    }
     mockOs.upload.assert_awaited_once_with(audio.data)
     mockOs.delete.assert_awaited_once()
 

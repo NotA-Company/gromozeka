@@ -25,6 +25,7 @@ from lib.stt.exceptions import (
 from lib.stt.models import (
     AudioFormatSpec,
     ExtractedAudio,
+    STTAttributionType,
     STTAudioContainerType,
     STTErrorCode,
     STTResultStatus,
@@ -50,6 +51,16 @@ def testSTTResultStatusMembershipAndValues() -> None:
         "NO_SPEECH": "no-speech",
         "ERROR": "error",
     }
+
+
+def testSTTAttributionTypeMembershipAndValues() -> None:
+    """STTAttributionType exposes the unified channel and speaker roles.
+
+    Returns:
+        None
+    """
+    members = {member.name: member.value for member in STTAttributionType}
+    assert members == {"CHANNEL": "channel", "SPEAKER": "speaker"}
 
 
 def testSTTErrorCodeMembershipAndValues() -> None:
@@ -143,10 +154,11 @@ def testTranscriptionResultErrorCodeDefaultsToNone() -> None:
     """
     result = TranscriptionResult(status=STTResultStatus.ERROR, segments=())
     assert result.errorCode is None
+    assert result.attributionType is STTAttributionType.CHANNEL
 
 
-def testChannelTagIsOptionalSegmentMetadataOnly() -> None:
-    """TranscriptionSegment defaults channelTag to None; TranscriptionResult has no such field.
+def testTranscriptionSegmentExposesOnlyUnifiedAttributionField() -> None:
+    """TranscriptionSegment exposes only the unified optional attribution field.
 
     Returns:
         None
@@ -154,8 +166,28 @@ def testChannelTagIsOptionalSegmentMetadataOnly() -> None:
     segment = TranscriptionSegment(text="left", startMs=0, endMs=1, words=())
     result = TranscriptionResult(status=STTResultStatus.FINAL, segments=(segment,))
 
-    assert segment.channelTag is None
-    assert "channelTag" not in {field.name for field in dataclasses.fields(result)}
+    assert segment.attributionTag is None
+    assert tuple(field.name for field in dataclasses.fields(segment)) == (
+        "text",
+        "startMs",
+        "endMs",
+        "words",
+        "attributionTag",
+    )
+    assert not hasattr(segment, "channelTag")
+    assert not hasattr(segment, "speakerTag")
+    assert result.attributionType is STTAttributionType.CHANNEL
+
+
+def testTranscriptionSegmentAcceptsUnifiedAttributionPositionally() -> None:
+    """The fifth positional field is the unified attribution tag.
+
+    Returns:
+        None
+    """
+    segment = TranscriptionSegment("left", 0, 1, (), "attribution-left")
+
+    assert segment.attributionTag == "attribution-left"
 
 
 def testAudioFormatSpecAndExtractedAudioConstruct() -> None:

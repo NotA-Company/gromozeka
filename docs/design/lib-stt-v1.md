@@ -287,16 +287,16 @@ class TranscriptionSegment:
         endMs: Segment end time in milliseconds.
         words: Sequence of TranscriptionWord, preserved in memory for
             future use even though only formatted text is persisted.
-        channelTag: Optional response-only provider channel identifier for this
-            segment; None when the provider supplied no usable tag. It is audio
-            channel metadata, not speaker diarization.
+        attributionTag: Optional canonical opaque attribution identifier for this
+            segment; None when the provider supplied no usable tag. Its role is
+            declared once by TranscriptionResult.attributionType.
     """
 
     text: str
     startMs: int
     endMs: int
     words: Sequence[TranscriptionWord]
-    channelTag: Optional[str] = None
+    attributionTag: Optional[str] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,14 +307,14 @@ class TranscriptionResult:
         status: The outcome category.
         segments: Sequence of TranscriptionSegment; empty unless FINAL.
         errorCode: Present iff status == ERROR; identifies the failure category.
-
-    There is deliberately no result-level channelTag: finals can belong to
-    different audio channels.
+        attributionType: Role (CHANNEL or SPEAKER) of every segment's generic
+            attributionTag. Defaults to CHANNEL.
     """
 
     status: STTResultStatus
     segments: Sequence[TranscriptionSegment]
     errorCode: Optional[STTErrorCode] = None
+    attributionType: STTAttributionType = STTAttributionType.CHANNEL
 
 
 @dataclass(frozen=True, slots=True)
@@ -388,6 +388,14 @@ sample rate is clamped to `[minSampleRate, maxSampleRate]` (nearest bound; OGG_O
 `maxChannels` up front — a spec declaring `maxChannels > 2` raises `EncoderError` (a configuration
 error, not a per-source reject). The multi-channel cost is no longer bounded inside `lib/stt` (caps
 moved out — §5); the service's source+duration caps bound it indirectly. See §5 for the decision flow.
+
+**Yandex `forceMono` option.** The generic `[stt].force-mono = false` default is forwarded to the
+provider as `forceMono`. When false, Yandex advertises its normal channel ranges. When true,
+`YandexSpeechKitProvider.supportedInputFormats()` returns fresh descriptors with `minChannels =
+maxChannels = 1` for every supported container. Thus supported mono OGG_OPUS/MP3/WAV remains
+pass-through, while otherwise pass-through multi-channel inputs negotiate the existing transcode and
+downmix path. This opt-in is lossy, adds decode/re-encode work, and can change the extracted payload
+enough to affect inline-versus-Object-Storage routing; it is not a recognition-quality guarantee.
 
 **Loader boundary (gone — simplified to a `bytes` argument).** The pre-simplification design passed a
 typed async loader callable into `lib/stt` (an `STTMediaLoader` returning an `STTLoaderResult` with
@@ -571,14 +579,17 @@ transcript text. The pure, service-owned
 segments in their supplied order, ignores result status/error code, strips and
 skips empty text, and returns `""` if no non-empty segment remains. It emits:
 
-- `[Ch#<tag>] [HH:MM:SS.mmm..HH:MM:SS.mmm] text` when a segment has a non-empty
-  `channelTag`;
+- `[Speaker#<tag>] [HH:MM:SS.mmm..HH:MM:SS.mmm] text` when the result role is
+  `SPEAKER` and a segment has a non-empty `attributionTag`;
+- otherwise `[Ch#<tag>] [HH:MM:SS.mmm..HH:MM:SS.mmm] text` only when the role is
+  `CHANNEL` and more than one distinct non-empty `attributionTag` exists;
 - `[HH:MM:SS.mmm..HH:MM:SS.mmm] text` when it does not; and
 - a single timestamp instead of a range when `startMs == endMs`.
 
 The `.mmm` suffix is omitted for whole-second timestamps and hours have a
-minimum width of two digits. `channelTag` is audio-channel metadata, not a
-speaker label. The service maps both `FINAL` and `NO_SPEECH` to success; the
+minimum width of two digits. `attributionType`, not the generic tag value, determines the prefix.
+Speaker labels are opaque,
+recording-local values (Yandex documents at most two); they are not stable identities. The service maps both `FINAL` and `NO_SPEECH` to success; the
 latter has `description=""`. Transcript delivery is structured through the
 existing `mediaDescription` path; see the parent plan §12.5.
 
@@ -601,6 +612,13 @@ ranges gate pass-through; OGG_OPUS and MP3 are documented as restriction-free, W
 conservatively (the exact multi-channel ceiling is unpublished — it is no longer indirectly bounded
 by a decoded-buffer cap, which moved out of `lib/stt` per the §5 accepted gap; a >2-channel source
 that routes to transcode is rejected by `EncoderError`).
+
+`forceMono` defaults to `false`. When enabled it constrains all advertised Yandex input-format
+descriptors to mono (§4), so compatible multi-channel inputs downmix/re-encode while compatible mono
+inputs still pass through. Separately and regardless of this option, the provider requests speaker
+labeling exactly when final `ExtractedAudio.channels == 1`, adding the top-level protobuf-JSON field
+`"speakerLabeling": {"speakerLabeling": "SPEAKER_LABELING_ENABLED"}` on both inline `content` and
+Object-Storage `uri` submissions. Stereo submissions omit that field.
 
 ### 7.1 Authentication and request
 
@@ -626,6 +644,7 @@ Protobuf-JSON body:
 ```json
 {
   "content": "<base64 audio bytes (WAV / OGG_OPUS / MP3)>",
+  "speakerLabeling": {"speakerLabeling": "SPEAKER_LABELING_ENABLED"},
   "recognition_model": {
     "model": "general",
     "audio_format": {
@@ -667,6 +686,7 @@ by a `uri` field pointing at the staged Object-Storage object, and the `recognit
 ```json
 {
   "uri": "https://storage.yandexcloud.net/{bucket}/{prefix}{key}",
+  "speakerLabeling": {"speakerLabeling": "SPEAKER_LABELING_ENABLED"},
   "recognition_model": { "model": "general", "audio_format": { "container_audio": { "container_audio_type": "OGG_OPUS" } }, "language_restriction": { "restriction_type": "WHITELIST", "language_code": ["ru-RU"] }, "text_normalization": { "literature_text": true } }
 }
 ```
@@ -738,11 +758,23 @@ event:
   `int64` as strings;
 - preserve word text and millisecond ranges in memory (the `TranscriptionWord` tuple);
 - use a matching `finalRefinement.finalIndex` to **replace** the raw final text with normalized text
-  rather than emitting both, while retaining the final's selected `channelTag`;
-- read the canonical envelope-level non-empty string `channelTag` into that segment.
-  Deprecated `final.channelTag` is a fallback only when the canonical value is absent,
-  null, or empty. Missing/null/empty values become `None`; any non-string wire value
-  makes the whole result `PROTOCOL_ERROR` rather than becoming visible transcript text;
+  rather than emitting both, while retaining the final's selected attribution;
+- map indices (`audioCursors.finalIndex` and `finalRefinement.finalIndex`) accept only a non-negative
+  JSON integer or a canonical decimal string (`"0"` or a non-zero digit followed by digits). Thus zero is
+  valid, but fractions, negatives, booleans, whitespace-padded/prefixed/zero-padded strings, and other
+  types are malformed. A non-null `audioCursors` value must be an object. Any such malformed supplied
+  cursor or final/refinement index atomically returns `ERROR` / `PROTOCOL_ERROR` without entering either
+  refinement map or replacing a valid index-zero final. An absent or null `audioCursors`/`finalIndex` on
+  a final remains the unattributed legacy bare-index fallback; a refinement carrying `normalizedText`
+  still requires a non-null `finalIndex`;
+- read only the canonical envelope-level `channelTag`: missing, null, and empty values become `None`;
+  every other JSON value becomes `str(value)`. Deprecated `final.channelTag` is ignored entirely,
+  including malformed values;
+- store that value as `segment.attributionTag`; set result `attributionType` to `CHANNEL` normally or
+  `SPEAKER` when speaker labeling was requested. In speaker-labeling mode, correlate refinements by the
+  complete `(canonicalTag, audioCursors.finalIndex)` key so interleaved speakers that reuse an index
+  cannot overwrite one another. Missing/null cursor metadata retains the bare-index refinement fallback
+  while preserving any canonical attribution; null is never interpreted as index `0`;
 - ignore non-final update events for persistence;
 - **sort final segments by start time** before formatting.
 
@@ -839,9 +871,10 @@ lib/stt test matrix; parent §13.2 summarizes and references it.
   failure-category members as of v1.1 — `AUDIO_TOO_LARGE` is gone, `OBJECT_STORAGE_ERROR` was added), and `STTAudioContainerType` (lowercase values).
 - `STTAudioContainerType.toYandexSpeechKit()` wire-label mapping (`wav` → `WAV`, `ogg-opus` →
   `OGG_OPUS`, `mp3` → `MP3`).
-- Frozen/slot record construction and immutability; `TranscriptionSegment.channelTag`
-  default is `None`, and `TranscriptionResult.errorCode` default. There is no
-  result-level channel tag because a result may contain finals from multiple channels.
+- Frozen/slot record construction and immutability; `TranscriptionSegment.attributionTag` defaults to
+  `None`, while `TranscriptionResult.errorCode` and `attributionType=CHANNEL` default. The
+  `STTAttributionType` enum exposes exactly `CHANNEL` and `SPEAKER` and is publicly re-exported by
+  `lib.stt`.
 - The typed extraction-exception taxonomy (3 subclasses): the 1:1 (and shared) exception →
   `STTErrorCode` mapping and the `isinstance` relationship to `STTExtractionError`.
 
@@ -880,8 +913,10 @@ lib/stt test matrix; parent §13.2 summarizes and references it.
     not be mislabelled OGG_OPUS) → OGG_OPUS (the provider's first supported compressed format).
   - Out-of-spec supported container (channel/rate outside the matched `AudioFormatSpec`) routes to
     transcode rather than pass-through.
-  - Channel policy: a stereo source stays stereo through both paths when inside the spec; a >2-channel
-    source on the transcode path downmixes to `maxChannels` (e.g. 5.1 → stereo).
+   - Channel policy: a stereo source stays stereo through both paths when inside the default spec; with
+     `forceMono`, every multi-channel source routes to transcode/downmix while supported mono source
+     remains pass-through. A >2-channel source on the normal transcode path downmixes to `maxChannels`
+     (e.g. 5.1 → stereo).
   - `>2`-channel spec ceiling → `EncoderError` (opus/mp3 cannot encode >2 channels; a spec declaring
     `maxChannels > 2` is a configuration error).
   - No compressed transcode target available → `EncoderError`.
@@ -895,12 +930,15 @@ lib/stt test matrix; parent §13.2 summarizes and references it.
   `audio.container.toYandexSpeechKit()`); operation polling; separate result fetch; best-effort delete.
 - Concatenated/whitespace-delimited result events and split HTTP chunks.
 - Multiple finals, top-alternative selection, out-of-order finals, `finalRefinement` replacement by
-  `finalIndex`, no duplicate text, and selected tag retention through refinement.
-- Canonical envelope-level `channelTag` precedence, deprecated final-level fallback,
-  missing/null/empty normalization to `None`, malformed non-string tags returning
-  `PROTOCOL_ERROR`, and multi-channel chronological ordering.
-- Golden replay of known-speech recordings requires `FINAL`, non-empty segments, and
-  the stable per-segment tag `"0"`, so a dropped final cannot hide behind `NO_SPEECH`.
+  `finalIndex`, no duplicate text, selected-tag retention through refinement, and atomic
+  `PROTOCOL_ERROR` rejection of a null refinement index without sacrificing valid index zero.
+- Canonical envelope-level tag normalization (missing/null/empty → `None`; every other JSON value →
+  `str(value)`), deprecated `final.channelTag` ignored, and attribution preserved through refinement.
+  Speaker requests use the result-level `SPEAKER` role; ordinary requests use `CHANNEL`.
+- Mono submit bodies request the exact top-level `speakerLabeling` object for both inline and URI paths;
+  stereo bodies omit it. Golden replay of the two sanitized live recordings requires `FINAL`, non-empty
+  segments, generic attribution-tag set `{"0", "1"}`, and result role `SPEAKER`, so attribution
+  regressions cannot hide behind `NO_SPEECH`.
 - `int64` times as strings and integers; no speech.
 - Operation error, authentication error, 429/5xx, timeout, malformed JSON, trailing garbage,
   result-body cap, and cleanup failure.
@@ -953,9 +991,9 @@ artifacts.
 
 **(c) Code-complete vs. release.** These gates are documented in the parent. Per parent §16/§13.3,
 **automated `lib/stt` code can be complete and default-off while these gates remain open**: STT ships
-behind `[stt].enabled = false` and the per-chat `TRANSCRIBE_MEDIA` setting (both default off), so a
-green lib/stt implementation does not enable any billable behavior until an operator turns it on after
-the gates pass.
+behind `[stt].enabled = false` and the per-chat `PARSE_ATTACHMENTS` and `TRANSCRIBE_MEDIA` settings
+(all default off), so a green lib/stt implementation does not enable any billable behavior until an
+operator enables all three activation gates after the gates pass.
 
 ---
 

@@ -1,6 +1,6 @@
 # Design: STT v1.1 — Object Storage routing (gate-3) + statistics recording (gate-4)
 
-Status: **IMPLEMENTED** (branch `add-audio-transcribation-v2`; 3726 passed / 11 skipped / 0 failed)  
+Status: **IMPLEMENTED** (branch `add-audio-transcribation-v2`; 3873 passed / 11 skipped / 0 failed)
 Date: 2026-08-04 (design) · 2026-08-08 (implementation verified)  
 Owner: TBD  
 Companion docs: [`media-transcription-stt-v1.md`](./media-transcription-stt-v1.md) (parent v1 plan), [`lib-stt-v1.md`](./lib-stt-v1.md) (lib/stt spec), [`stt-next-steps.md`](../archive/design/stt-next-steps.md) (integration roadmap + release gates), [`architecture.md`](../llm/architecture.md), [`configuration.md`](../llm/configuration.md), [`services.md`](../llm/services.md), [`libraries.md`](../llm/libraries.md)
@@ -79,11 +79,11 @@ The following are facts verified against source, not assumptions:
    [`lib/ai/abstract.py:850-887`](../../lib/ai/abstract.py)). See §5.1 for the full
    finding and the implication for STT.
 
-**`channelTag` compatibility.** The response-only per-segment `channelTag`
-contract is owned by [`lib-stt-v1.md` §4/§6/§7.3](./lib-stt-v1.md). It is parsed
-from recognition events and affects only `TranscriptionSegment` metadata and
-service transcript rendering. It does not affect v1.1 submission-body selection,
-Object Storage routing, configuration, or statistics.
+**Attribution compatibility.** The generic per-segment `attributionTag` plus
+result-level `STTAttributionType` contract is owned by
+[`lib-stt-v1.md` §4/§6/§7.3](./lib-stt-v1.md). Explicitly requested Yandex speaker
+labeling sets the result role to `SPEAKER`; ordinary results use `CHANNEL`. This does
+not change v1.1 Object-Storage routing or statistics.
 
 ## 2. Scope
 
@@ -109,9 +109,9 @@ Object Storage routing, configuration, or statistics.
 
 ### 2.2 Non-goals
 
-- Speaker labeling, language auto-detection, streaming transcripts, a `/transcribe`
-  command, or any structured transcript persistence (all inherited from v1
-  non-goals).
+- Language auto-detection, streaming transcripts, a `/transcribe` command, or
+  structured transcript persistence. Speaker labeling is no longer a non-goal;
+  its focused contract is owned by [`lib-stt-v1.md`](./lib-stt-v1.md).
 - Decoded-PCM memory bounding inside `lib/stt` (the accepted decoded-memory gap,
   [`lib-stt-v1.md`](./lib-stt-v1.md) §5; revisit only if gate-5 fails).
 - Per-chat STT statistics dashboards or retention policy (v1.1 records raw events
@@ -719,7 +719,7 @@ The other release gates **require no code changes from v1.1** and are not in sco
 
 ## 9. Implementation plan (high-level — DONE)
 
-Implementation is complete on branch `add-audio-transcribation-v2` (3726 passed /
+Implementation is complete on branch `add-audio-transcribation-v2` (3873 passed /
 11 skipped / 0 failed, `make format lint` 0/0/0, `make check-docs` 0 broken). The
 steps below record the plan as executed; all are DONE.
 

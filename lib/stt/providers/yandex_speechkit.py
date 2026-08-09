@@ -151,6 +151,7 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
     __slots__ = (
         "_maxInlineBytes",
         "_objectStorage",
+        "_forceMono",
         "_apiKey",
         "_folderId",
         "_model",
@@ -186,6 +187,7 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
         objectStoragePrefix: str = "stt/",
         objectStorageKeyId: Optional[str] = None,
         objectStorageKeySecret: Optional[str] = None,
+        forceMono: bool = False,
         proxyConfig: Optional[ProxyConfig] = None,
         statsStorage: Optional[StatsStorage] = None,
         **extraKwargs,
@@ -237,6 +239,10 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
                 Required when ``objectStorageBucket`` is set.
             objectStorageKeySecret: Yandex static access-key secret for Object Storage
                 (SigV4). Required when ``objectStorageBucket`` is set.
+            forceMono: Whether to constrain every advertised input format to one channel.
+                When true, multi-channel inputs take the existing audio
+                negotiation transcode/downmix path while supported mono inputs stay
+                pass-through. Defaults to false.
             statsStorage: Optional :class:`~lib.stats.stats_storage.StatsStorage` for
                 recording per-transcription statistics. When ``None`` (default), a
                 :class:`~lib.stats.stats_storage.NullStatsStorage` no-op is used.
@@ -248,8 +254,8 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
                 missing environment variable), any numeric limit is non-positive,
                 ``maxPollIntervalSeconds < pollIntervalSeconds``, ``maxInlineBytes`` is
                 not positive, or Object Storage params are partially configured (bucket
-                without both keys, or keys without bucket). Startup validation,
-                load-bearing contract #2.
+                without both keys, or keys without bucket), or ``forceMono`` is not a
+                boolean. Startup validation, load-bearing contract #2.
 
         Returns:
             None
@@ -265,6 +271,8 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
             raise ValueError("model must be a non-empty string")
         if not language or not isinstance(language, str):
             raise ValueError("language must be a non-empty string")
+        if not isinstance(forceMono, bool):
+            raise ValueError("forceMono must be a boolean")
 
         for name, value in (("apiKey", apiKey), ("folderId", folderId), ("model", model), ("language", language)):
             if value.startswith("${") and value.endswith("}"):
@@ -312,6 +320,7 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
 
         # Store maxInlineBytes and construct the Object Storage helper when configured.
         self._maxInlineBytes: int = maxInlineBytes
+        self._forceMono: bool = forceMono
         if osBucket is not None:
             self._objectStorage: Optional[YandexObjectStorage] = YandexObjectStorage(
                 bucket=osBucket,
@@ -353,15 +362,30 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
         )
 
     def supportedInputFormats(self) -> Sequence[AudioFormatSpec]:
-        """Ordered accepted input containers, OGG_OPUS first (preferred transcode target).
+        """Return ordered accepted input formats, optionally constrained to mono.
 
         Consumed by ``audio.py`` for pass-through/transcode negotiation. The FIRST entry
         is the preferred transcode target (OGG_OPUS for speech efficiency). Does NOT
-        describe recognition quality (quality-by-format is UNVERIFIED, §10(b)).
+        describe recognition quality (quality-by-format is UNVERIFIED, §10(b)). When
+        ``forceMono`` is enabled, every returned descriptor accepts only one channel;
+        container order and sample-rate bounds remain unchanged.
 
         Returns:
-            Sequence[AudioFormatSpec]: ``(OGG_OPUS, MP3, WAV)``.
+            Sequence[AudioFormatSpec]: ``(OGG_OPUS, MP3, WAV)`` in the default mode,
+            or fresh mono-only descriptors in the same order when ``forceMono`` is
+            enabled.
         """
+        if self._forceMono:
+            return tuple(
+                AudioFormatSpec(
+                    container=formatSpec.container,
+                    minChannels=1,
+                    maxChannels=1,
+                    minSampleRate=formatSpec.minSampleRate,
+                    maxSampleRate=formatSpec.maxSampleRate,
+                )
+                for formatSpec in _SUPPORTED_INPUT_FORMATS
+            )
         return _SUPPORTED_INPUT_FORMATS
 
     async def _transcribe(self, audio: ExtractedAudio) -> TranscriptionResult:
@@ -400,6 +424,7 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
             the extracted payload exceeds the inline threshold and Object Storage is
             disabled; OBJECT_STORAGE_ERROR when the Object Storage upload fails).
         """
+        speakerLabelingRequested: bool = audio.channels == 1
         objectUri: Optional[str] = None
 
         # --- Staging: OUTSIDE the operation budget (design §4.3) ---
@@ -424,7 +449,11 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
             # §7.4: the operation budget "starts immediately before submit
             # and includes submit, polling, and the successful result fetch".
             async with asyncio.timeout(self._operationBudgetSeconds):
-                operationId = await self._submit(audio, objectUri=objectUri)
+                operationId = await self._submit(
+                    audio,
+                    objectUri=objectUri,
+                    speakerLabelingRequested=speakerLabelingRequested,
+                )
                 recognitionBytes = await self._pollAndFetch(operationId)
         except _ProviderFailure as failure:
             logger.warning("Yandex STT transcribe failed (%s): %s", failure.errorCode, failure)
@@ -461,7 +490,11 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
         # If the operation already failed, skip parsing.
         if not operationFailed:
             try:
-                result = parseRecognitionEvents(recognitionBytes, self._maxResultBytes)
+                result = parseRecognitionEvents(
+                    recognitionBytes,
+                    self._maxResultBytes,
+                    speakerLabelingRequested=speakerLabelingRequested,
+                )
             except Exception:  # noqa: BLE001 — defense-in-depth for the parse path too
                 logger.exception("Yandex STT unexpected parse failure; operationId=%s", operationId)
                 result = self._errorResult(STTErrorCode.PROTOCOL_ERROR)
@@ -491,7 +524,13 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
     # Private lifecycle helpers
     # ------------------------------------------------------------------ #
 
-    async def _submit(self, audio: ExtractedAudio, *, objectUri: Optional[str] = None) -> str:
+    async def _submit(
+        self,
+        audio: ExtractedAudio,
+        *,
+        objectUri: Optional[str] = None,
+        speakerLabelingRequested: bool,
+    ) -> str:
         """Submit the audio for deferred recognition (§7.1). NEVER retried (§7.4).
 
         Builds the protobuf-JSON body with ``container_audio.container_audio_type`` set
@@ -504,6 +543,8 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
             audio: The format-aware audio after negotiation.
             objectUri: When not None, submit via the ``uri`` field instead of
                 inline ``content`` (design §4.4).
+            speakerLabelingRequested: Whether the final submitted audio is mono and
+                must request Yandex speaker labeling.
 
         Returns:
             str: The Yandex operation ID parsed from the submit response.
@@ -512,7 +553,11 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
             _ProviderFailure: PROVIDER_ERROR on a non-2xx response, transport error,
                 unparseable JSON, or a response missing the operation ID.
         """
-        body: Dict[str, object] = self._buildSubmitBody(audio, objectUri=objectUri)
+        body: Dict[str, object] = self._buildSubmitBody(
+            audio,
+            objectUri=objectUri,
+            speakerLabelingRequested=speakerLabelingRequested,
+        )
         headers: Dict[str, str] = {**self._authHeaders, "Content-Type": "application/json"}
         try:
             response = await self._httpClient.post(self._SUBMIT_URL, headers=headers, json=body)
@@ -534,7 +579,13 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
             raise _ProviderFailure(STTErrorCode.PROVIDER_ERROR, "submit response missing operation id")
         return operationId
 
-    def _buildSubmitBody(self, audio: ExtractedAudio, *, objectUri: Optional[str] = None) -> Dict[str, object]:
+    def _buildSubmitBody(
+        self,
+        audio: ExtractedAudio,
+        *,
+        objectUri: Optional[str] = None,
+        speakerLabelingRequested: bool,
+    ) -> Dict[str, object]:
         """Build the protobuf-JSON recognizeFileAsync body (§7.1 / design §4.4).
 
         The ``recognition_model`` block (model, ``container_audio``, language
@@ -548,6 +599,8 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
             audio: The format-aware audio after negotiation.
             objectUri: When not None, use the Object Storage ``uri`` field
                 instead of the inline ``content`` field (design §4.4).
+            speakerLabelingRequested: Whether to include the exact Yandex
+                speaker-labeling request field for final mono audio.
 
         Returns:
             Dict[str, object]: The protobuf-JSON submit body.
@@ -563,10 +616,14 @@ class YandexSpeechKitProvider(AbstractSTTProvider):
             },
             "text_normalization": {"literature_text": True},
         }
+        body: Dict[str, object] = {"recognition_model": recognitionModel}
         if objectUri is not None:
-            return {"uri": objectUri, "recognition_model": recognitionModel}
-        encodedContent: str = base64.b64encode(audio.data).decode("ascii")
-        return {"content": encodedContent, "recognition_model": recognitionModel}
+            body["uri"] = objectUri
+        else:
+            body["content"] = base64.b64encode(audio.data).decode("ascii")
+        if speakerLabelingRequested:
+            body["speakerLabeling"] = {"speakerLabeling": "SPEAKER_LABELING_ENABLED"}
+        return body
 
     async def _pollAndFetch(self, operationId: str) -> bytes:
         """Poll the operation until done, then fetch the recognition bytes (§7.2).

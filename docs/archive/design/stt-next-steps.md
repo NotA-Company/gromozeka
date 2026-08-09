@@ -17,13 +17,13 @@
 > `tests/bot/common/handlers/test_base.py::TestProcessMediaV2STT`. All §2
 > checklist items are checked off below. §3 (manual release gates) is unchanged
 > — most gates remain pending (only gate-1 is PASS); STT stays default-off
-> until an operator turns both gates on.
+> until an operator enables all three activation gates.
 >
 > **UPDATE (2026-08-08): v1.1 (gate-3 + gate-4) is IMPLEMENTED.** Object-Storage
 > routing (`lib/stt/providers/yandex_object_storage.py`, `_transcribe` lifecycle,
 > `max-inline-bytes` config) and per-transcription statistics recording
 > (template-method refactor: `_recordStats` + timing in base
-> `AbstractSTTProvider.transcribe`) are fully implemented and green (3726 passed /
+> `AbstractSTTProvider.transcribe`) are fully implemented and green (3873 passed /
 > 11 skipped / 0 failed). Gate-3 and gate-4 code is DONE; their smoke-test parts
 > remain open. See [`stt-v1.1.md`](../design/stt-v1.1.md).
 
@@ -46,7 +46,7 @@
 > the `LLMMessageHandler`-stays-last invariant is no longer a concern.
 >
 > **Key files to load first:**
-> - [`internal/bot/common/handlers/base.py`](../../../internal/bot/common/handlers/base.py) — `_processMediaV2` is the method to extend; the STT branch lives here (gated on TRANSCRIBE_MEDIA + `[stt].enabled`, filtered to VIDEO/VIDEO_NOTE/VOICE/AUDIO, background-task timing like image parsing).
+> - [`internal/bot/common/handlers/base.py`](../../../internal/bot/common/handlers/base.py) — `_processMediaV2` is the method to extend; the STT branch lives here (gated on `[stt].enabled` plus `PARSE_ATTACHMENTS` and `TRANSCRIBE_MEDIA`, filtered to VIDEO/VIDEO_NOTE/VOICE/AUDIO, background-task timing like image parsing).
 > - [`internal/services/stt/service.py`](../../../internal/services/stt/service.py) — the stateless `STTService.transcribeMedia(data: bytes, *, chatId: Optional[int]) -> STTOutcome` entry the background task will call.
 > - [`internal/bot/models/chat_settings.py`](../../../internal/bot/models/chat_settings.py) — `ChatSettingsKey.TRANSCRIBE_MEDIA` (line 393) + `_chatSettingsInfo` entry (line 924, BOOL / `ChatSettingsPage.FRIEND`). Already defined — the `_processMediaV2` STT branch only READS it.
 > - [`lib/stt/`](../../../lib/stt/) — provider-neutral library; see [`docs/design/lib-stt-v1.md`](../design/lib-stt-v1.md) for contracts.
@@ -114,7 +114,7 @@ preprocessor delegates to. No new handler registration; the
 
 ## 3. Manual release gates (block ENABLING, not code completion)
 
-These are manual/operational gates that must pass before STT is **enabled in production**. Per [parent §13.3](../design/media-transcription-stt-v1.md) + [lib/stt spec §10(b)](../design/lib-stt-v1.md), automated `lib/stt` + integration can be code-complete **and default-off** while these remain open — STT ships behind `[stt].enabled = false` + per-chat `TRANSCRIBE_MEDIA` (both off by default), so green code does not enable any billable behavior until an operator turns it on.
+These are manual/operational gates that must pass before STT is **enabled in production**. Per [parent §13.3](../design/media-transcription-stt-v1.md) + [lib/stt spec §10(b)](../design/lib-stt-v1.md), automated `lib/stt` + integration can be code-complete **and default-off** while these remain open — STT requires all three activation gates: `[stt].enabled = true` plus the per-chat `PARSE_ATTACHMENTS` and `TRANSCRIBE_MEDIA` settings (all default `false`), so green code does not enable any billable behavior until an operator enables them.
 
 Carried forward (the two most actionable called out, then the rest):
 

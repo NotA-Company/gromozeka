@@ -27,6 +27,7 @@ from .exceptions import (
 from .models import (
     AudioFormatSpec,
     ExtractedAudio,
+    STTAttributionType,
     STTAudioContainerType,
     STTErrorCode,
     STTResultStatus,
@@ -52,6 +53,7 @@ __all__ = [
     "STTResultStatus",
     "STTErrorCode",
     "STTAudioContainerType",
+    "STTAttributionType",
     # Records
     "TranscriptionWord",
     "TranscriptionSegment",

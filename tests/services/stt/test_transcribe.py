@@ -25,6 +25,7 @@ from lib.stt.abstract import AbstractSTTProvider
 from lib.stt.models import (
     AudioFormatSpec,
     ExtractedAudio,
+    STTAttributionType,
     STTAudioContainerType,
     STTErrorCode,
     STTResultStatus,
@@ -345,15 +346,36 @@ class TestFinalUnderCapYieldsDone:
         # The untrusted header was dropped in the thin formatter.
         assert "[Untrusted media transcript" not in outcome.description
 
-    async def test_taggedSegmentPreservesChannelTag(self) -> None:
-        """FINAL with a channel tag propagates its exact formatted line.
+    async def testSingleChannelAttributionRendersWithoutPrefix(self) -> None:
+        """FINAL with one channel attribution propagates its range-only line.
 
         Returns:
             None: The assertion verifies service-level formatter propagation.
         """
-        segments = (TranscriptionSegment(text="speaker", startMs=125, endMs=1500, words=(), channelTag="left"),)
+        segments = (TranscriptionSegment(text="speaker", startMs=125, endMs=1500, words=(), attributionTag="left"),)
         provider = FakeProvider(
             result=TranscriptionResult(status=STTResultStatus.FINAL, segments=segments),
+        )
+        svc = _buildService(provider=provider)
+
+        outcome: STTOutcome = await svc.transcribeMedia(b"\x00" * 64, chatId=100)
+
+        assert outcome.success is True
+        assert outcome.description == "[00:00:00.125..00:00:01.500] speaker"
+
+    async def testSpeakerTaggedSegmentPropagatesFormattedDescription(self) -> None:
+        """FINAL speaker attribution propagates into STTOutcome.description.
+
+        Returns:
+            None: The assertion verifies service-level speaker formatting.
+        """
+        segments = (TranscriptionSegment(text="speaker", startMs=125, endMs=1500, words=(), attributionTag="1"),)
+        provider = FakeProvider(
+            result=TranscriptionResult(
+                status=STTResultStatus.FINAL,
+                segments=segments,
+                attributionType=STTAttributionType.SPEAKER,
+            ),
         )
         svc = _buildService(provider=provider)
 

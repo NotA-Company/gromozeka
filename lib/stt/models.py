@@ -42,6 +42,16 @@ class STTResultStatus(StrEnum):
     """An expected failure occurred; see the accompanying STTErrorCode."""
 
 
+class STTAttributionType(StrEnum):
+    """Role of the unified attribution tag carried by a transcription result."""
+
+    CHANNEL = "channel"
+    """Tags identify ordinary audio channels."""
+
+    SPEAKER = "speaker"
+    """Tags identify opaque, recording-local speakers."""
+
+
 class STTErrorCode(StrEnum):
     """Stable, provider-neutral failure categories.
 
@@ -191,15 +201,15 @@ class TranscriptionSegment:
         endMs: Segment end time in milliseconds.
         words: Immutable tuple of TranscriptionWord, preserved in memory for
             future use even though only formatted text is persisted.
-        channelTag: Optional provider channel identifier for this segment. None
-            when the provider did not supply a tag.
+        attributionTag: Canonical opaque attribution identifier for this
+            segment. Its role is declared once by ``TranscriptionResult``.
     """
 
     text: str
     startMs: int
     endMs: int
     words: Sequence[TranscriptionWord]
-    channelTag: Optional[str] = None
+    attributionTag: Optional[str] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,11 +220,14 @@ class TranscriptionResult:
         status: The outcome category.
         segments: Immutable tuple of TranscriptionSegment; empty unless FINAL.
         errorCode: Present iff status == ERROR; identifies the failure category.
+        attributionType: Role of every segment's canonical ``attributionTag``.
+            Defaults to CHANNEL for backwards-compatible ordinary results.
     """
 
     status: STTResultStatus
     segments: Sequence[TranscriptionSegment]
     errorCode: Optional[STTErrorCode] = None
+    attributionType: STTAttributionType = STTAttributionType.CHANNEL
 
 
 @dataclass(frozen=True, slots=True)

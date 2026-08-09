@@ -6,19 +6,20 @@ string.  The formatter is deliberately pure: it imports only the standard
 library and :mod:`lib.stt.models`, holds no state, and must not raise for
 any ``TranscriptionResult``.
 
-Format: one line per non-empty segment. A segment renders as
-``[Ch#<tag>] [start..end] text`` when the result spans MORE than one distinct
-channel and that segment has a non-empty ``channelTag``; when the result has
-only a single distinct channel (or the segment's tag is missing/None/empty) it
-renders as ``[start..end] text``. When start and end are equal, the current
-formatter renders the single-timestamp form ``[start] text`` instead.
+Format: one line per non-empty segment. A segment with a non-empty
+``attributionTag`` renders as ``[Speaker#<tag>] [start..end] text`` when the
+result-level ``attributionType`` is SPEAKER. In CHANNEL mode, it renders as
+``[Ch#<tag>] [start..end] text`` only when the result spans MORE than one
+distinct non-empty tag; otherwise it renders as ``[start..end] text``. When
+start and end are equal, the current formatter renders the single-timestamp
+form ``[start] text`` instead.
 Timestamps use millisecond precision when the sub-second component is non-zero.
 Empty segments are skipped; a result with all empty segments yields ``""``. No
 untrusted header, no XML escaping, no truncation, no ``[No speech detected]``
 sentinel.
 """
 
-from lib.stt.models import TranscriptionResult
+from lib.stt.models import STTAttributionType, TranscriptionResult
 
 
 def formatTranscript(result: TranscriptionResult) -> str:
@@ -26,31 +27,35 @@ def formatTranscript(result: TranscriptionResult) -> str:
 
     Builds one line per non-empty segment in the order given (the formatter
     does NOT re-sort; ordering is the caller's responsibility).  Each line
-    is ``[Ch#<tag>] [start..end] text`` when the result spans MORE than one
-    distinct channel and ``segment.channelTag`` is non-empty, otherwise
-    ``[start..end] text``. A single-channel result never renders channel tags,
-    even if individual segments carry one. When ``startMs == endMs``, the
-    range is rendered as one timestamp instead. Timestamps use millisecond
-    precision when the sub-second component is non-zero. Empty segments
-    (after stripping) are skipped.
+    is ``[Speaker#<tag>] [start..end] text`` when the result-level
+    ``attributionType`` is SPEAKER and ``segment.attributionTag`` is non-empty.
+    In CHANNEL mode, it is ``[Ch#<tag>] [start..end] text`` only when the result
+    has MORE than one distinct non-empty attribution tag; otherwise it is
+    ``[start..end] text``. When ``startMs == endMs``, the range is rendered as
+    one timestamp instead. Timestamps use millisecond precision when the
+    sub-second component is non-zero. Empty segments (after stripping) are
+    skipped.
 
     The function is pure and must not raise for any ``TranscriptionResult``;
     it is segment-driven and ignores ``result.status``.
 
     Args:
         result: The provider-neutral transcription result. Each segment's
-            ``text``, ``startMs``, ``endMs``, and ``channelTag`` are consumed;
-            ``status``/``errorCode`` are ignored by this function.
+            ``text``, ``startMs``, ``endMs``, and ``attributionTag`` plus the
+            result-level ``attributionType`` are consumed; ``status`` and
+            ``errorCode`` are ignored by this function.
 
     Returns:
         str: The formatted transcript. Empty string when all segments are
-        empty; otherwise newline-joined lines — ``[Ch#<tag>] [start..end] text``
-        for multi-channel results with a per-segment tag, ``[start..end] text``
-        otherwise (or their single-timestamp forms when the segment start and
-        end are equal).
+            empty; otherwise newline-joined lines — ``[Speaker#<tag>]
+            [start..end] text`` for speaker-attributed segments, ``[Ch#<tag>]
+            [start..end] text`` for multi-channel results with a per-segment
+            attribution tag, ``[start..end] text`` otherwise (or their
+            single-timestamp forms when the segment start and end are equal).
     """
     lines: list[str] = []
-    channelSet = set([segment.channelTag for segment in result.segments if segment.channelTag])
+    attributionsCount = len(set([segment.attributionTag for segment in result.segments if segment.attributionTag]))
+    attributionPrefix = "Speaker" if result.attributionType == STTAttributionType.SPEAKER else "Ch"
     for segment in result.segments:
         normalizedText = segment.text.strip()
         if not normalizedText:
@@ -61,13 +66,13 @@ def formatTranscript(result: TranscriptionResult) -> str:
             endTS = _formatTimestamp(segment.endMs)
             timestamp = beginTS + ".." + endTS
 
-        channelTag = segment.channelTag
-        channelStr = ""
-        if channelTag and len(channelSet) > 1:
-            # If there are only one channel, then don't include the channel tag
-            channelStr = f"[Ch#{channelTag}] "
+        attributionTag = segment.attributionTag
+        attributionStr = ""
+        if attributionTag and attributionsCount > 1:
+            # If there is only one channel\speaker, then don't include the channel tag.
+            attributionStr = f"[{attributionPrefix}#{attributionTag}] "
 
-        lines.append(f"{channelStr}[{timestamp}] {normalizedText}")
+        lines.append(f"{attributionStr}[{timestamp}] {normalizedText}")
     return "\n".join(lines)
 
 

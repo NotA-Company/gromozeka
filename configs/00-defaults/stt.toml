@@ -2,6 +2,8 @@
 enabled = false
 provider = "yandex-speechkit"
 use-proxy = false
+# Constrain provider input descriptors to mono; supported stereo input is downmixed.
+force-mono = false
 max-concurrency = 2
 chat-ratelimiter-queue = "stt-chat"
 global-ratelimiter-queue = "stt-global"

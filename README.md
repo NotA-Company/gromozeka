@@ -17,7 +17,7 @@ See [CHANGELOG.md](CHANGELOG.md) for notable changes.
 - **Provider fallback**: Automatic failover between AI providers
 - **AI tool calling**: Function calling support for extended capabilities
 - **Image generation and analysis**: Text-to-image and image/sticker understanding
-- **Media transcription (speech-to-text)**: Voice/video/video-note/audio transcripts delivered to the LLM as a structured `mediaDescription` field; default-off, friend-gated (`TRANSCRIBE_MEDIA` chat setting + `[stt].enabled` config)
+- **Media transcription (speech-to-text)**: Voice/video/video-note/audio transcripts delivered to the LLM as a structured `mediaDescription` field; default-off. Transcription requires all three activation gates: global `[stt].enabled = true` plus the per-chat `PARSE_ATTACHMENTS` and friend-gated `TRANSCRIBE_MEDIA` settings. Final Yandex mono submissions automatically request opaque, recording-local speaker labels; opt-in `[stt].force-mono` downmixes compatible multi-channel audio.
 - **ML-powered spam detection**: Naive Bayes classifier with learning (`/spam`, `/learn_spam`, `/learn_ham`)
 - **Divination**: Tarot and runes readings with LLM-based layout discovery
 - **Weather**: Real-time weather via OpenWeatherMap with geocoding

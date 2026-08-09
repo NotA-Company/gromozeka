@@ -119,9 +119,10 @@ headers/bodies, but **always double-check** before committing.
 ./venv/bin/pytest tests/lib/stt/golden/test_golden.py -v
 ```
 
-All replayer tests should pass with `FINAL`, at least one segment, and the stable
-response-only `channelTag` value `"0"` on every segment. The committed fixtures
-are known-speech recordings, so `NO_SPEECH` would indicate that a final was lost.
+All replayer tests should pass with `FINAL`, at least one segment, generic attribution-tag set
+`{0, 1}`, and result role `SPEAKER`. The committed fixtures are known-speech mono
+recordings submitted with speaker labeling enabled, so `NO_SPEECH` would indicate
+that a final was lost.
 
 ## Gate-1 resolution
 
@@ -188,8 +189,7 @@ recording list, so there is no cross-scenario collision.
 
 ## Assertion philosophy
 
-The replayer requires `FINAL`, non-empty segments, and the fixtures' stable
-per-segment `channelTag` value `"0"`. This catches malformed parsing and a
-dropped-final regression that could otherwise appear as `NO_SPEECH`. Specific
-transcript text remains intentionally unasserted because the collector discards
-the return value; it must be re-derived after recording and inspection.
+The replayer requires `FINAL`, non-empty segments, the fixtures' generic attribution-tag
+set `{"0", "1"}`, and result role `SPEAKER`. This catches malformed parsing, a dropped final,
+or role/attribution conflation that could otherwise appear as
+`NO_SPEECH`. Specific transcript text remains intentionally unasserted.

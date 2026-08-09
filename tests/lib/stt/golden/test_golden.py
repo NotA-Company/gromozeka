@@ -30,10 +30,12 @@ cannot contain the literal API-key substring). :func:`_recoverAudioBytesFromFixt
 :meth:`~tests.lib.stt.golden.scenario_runner.YandexSTTScenarioRunner.runBytes`.
 
 The replayer assertions require FINAL status and stable response-only segment
-metadata: both committed fixtures are known speech recordings whose final
-envelopes contain ``channelTag: "0"``, so every replay must produce at least one
-segment and preserve that exact tag. This makes a parser regression that drops
-the final envelopes fail rather than silently passing as NO_SPEECH. Specific
+metadata: both committed fixtures are known mono speech recordings submitted
+with speaker labeling enabled. Their final canonical envelope attribution tags
+map to the generic ``attributionTag`` under the SPEAKER result role, so every
+replay must produce at least one segment and preserve the recorded tag set.
+This makes a parser regression that drops final envelopes or loses speaker
+attribution fail rather than silently passing as NO_SPEECH. Specific
 transcript-text assertions remain out of scope because the collector discards
 the return value.
 """
@@ -44,6 +46,7 @@ import base64
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -55,6 +58,7 @@ from lib.aurumentation import (
     loadGoldenData,
 )
 from lib.aurumentation.replayer import GoldenDataReplayer
+from lib.stt import STTAttributionType
 from lib.stt.models import STTResultStatus
 from tests.lib.stt.golden import GOLDEN_DATA_PATH
 from tests.lib.stt.golden.scenario_runner import YandexSTTScenarioRunner
@@ -75,10 +79,67 @@ REQUIRED_SCENARIO_KEYS: Tuple[str, ...] = (
 
 REQUIRED_KWARGS_KEYS: Tuple[str, ...] = ("audioPath",)
 
-# Both committed SpeechKit recordings contain one final envelope with this
-# response-only per-segment metadata. Keep the assertion narrowly scoped to the
-# stable tag rather than transcript text or unrelated response details.
-EXPECTED_CHANNEL_TAG: str = "0"
+# The committed mono SpeechKit recordings use these stable canonical envelope
+# attribution tags. Keep assertions narrowly scoped to this response metadata,
+# rather than transcript text or unrelated response details.
+EXPECTED_ATTRIBUTION_TAGS: set[str] = {"0", "1"}
+
+# The recorder's established placeholder. These assertions deliberately check
+# fixture structure rather than individual captured values.
+MASKED_VALUE: str = "***MASKED***"
+CREDENTIAL_HEADER_NAMES: frozenset[str] = frozenset({"authorization", "x-folder-id"})
+IDENTIFIER_HEADER_NAMES: frozenset[str] = frozenset({"x-client-request-id", "x-request-id", "x-server-trace-id"})
+IDENTIFIER_FIELD_NAMES: frozenset[str] = frozenset({"id", "createdBy", "uuid", "userRequestId"})
+CREDENTIAL_METADATA_FIELD_NAMES: frozenset[str] = frozenset({"apiKey", "folderId"})
+STT_API_HOST: str = "stt.api.cloud.yandex.net"
+OPERATION_API_HOST: str = "operation.api.cloud.yandex.net"
+SUBMIT_PATH: str = "/stt/v3/recognizeFileAsync"
+GET_RECOGNITION_PATH: str = "/stt/v3/getRecognition"
+DELETE_RECOGNITION_PATH: str = "/stt/v3/deleteRecognition"
+OPERATIONS_PATH_PREFIX: str = "/operations/"
+
+
+def _getSpeechKitUrlPrivacyFailureCategory(url: str) -> Optional[str]:
+    """Return a safe failure category when a URL is outside the recorded API surface.
+
+    Args:
+        url: Request URL from a golden fixture or a safe synthetic test value.
+
+    Returns:
+        ``None`` for an expected HTTPS SpeechKit lifecycle URL, otherwise a
+        value-free structural failure category.
+    """
+    if any(character.isspace() or not character.isprintable() for character in url) or "#" in url:
+        return "request URL structure"
+    try:
+        parsedUrl = urlsplit(url)
+    except ValueError:
+        return "request URL structure"
+
+    if parsedUrl.scheme != "https" or not parsedUrl.netloc or parsedUrl.fragment:
+        return "request URL structure"
+    if parsedUrl.netloc == STT_API_HOST:
+        if parsedUrl.path == SUBMIT_PATH:
+            if "?" in url:
+                return "submit URL structure"
+            return None
+        if parsedUrl.path not in {GET_RECOGNITION_PATH, DELETE_RECOGNITION_PATH}:
+            return "STT endpoint structure"
+        if not parsedUrl.query or any(not queryField for queryField in parsedUrl.query.split("&")):
+            return "operation query structure"
+        try:
+            queryParameters: Dict[str, List[str]] = parse_qs(parsedUrl.query, keep_blank_values=True)
+        except ValueError:
+            return "request URL structure"
+        if set(queryParameters) != {"operation_id"} or len(queryParameters["operation_id"]) != 1:
+            return "operation query structure"
+        return None
+    if parsedUrl.netloc != OPERATION_API_HOST:
+        return "request URL host"
+    operationId: str = parsedUrl.path.removeprefix(OPERATIONS_PATH_PREFIX)
+    if not parsedUrl.path.startswith(OPERATIONS_PATH_PREFIX) or not operationId or "/" in operationId or "?" in url:
+        return "operation URL structure"
+    return None
 
 
 def _loadScenarios() -> List[Dict[str, Any]]:
@@ -120,6 +181,165 @@ def _discoverFixtures() -> List[str]:
     """
     paths: List[str] = findGoldenDataFiles(GOLDEN_DATA_PATH)
     return sorted(paths)
+
+
+def _loadResponseContentObjects(content: str, *, fixtureName: str) -> List[object]:
+    """Parse a JSON response body that may use newline-delimited JSON frames.
+
+    Args:
+        content: Serialized response body from a golden fixture.
+        fixtureName: Filename used only to identify a malformed fixture.
+
+    Returns:
+        Parsed JSON object or objects represented by the response body.
+    """
+    try:
+        return [json.loads(content)]
+    except json.JSONDecodeError:
+        try:
+            return [json.loads(line) for line in content.splitlines() if line]
+        except json.JSONDecodeError:
+            pytest.fail(f"{fixtureName}: privacy validation failed for response content structure", pytrace=False)
+    return []
+
+
+def _assertMaskedResponseIdentifiers(value: object, *, fixtureName: str) -> None:
+    """Assert that identifier-bearing fields in a parsed response use the mask.
+
+    Args:
+        value: Parsed JSON value from a response body.
+        fixtureName: Filename used only to identify a malformed fixture.
+
+    Returns:
+        None.
+    """
+    if isinstance(value, dict):
+        for key, nestedValue in value.items():
+            if not isinstance(key, str):
+                pytest.fail(f"{fixtureName}: privacy validation failed for response structure", pytrace=False)
+            if key in IDENTIFIER_FIELD_NAMES:
+                if nestedValue != MASKED_VALUE:
+                    pytest.fail(f"{fixtureName}: privacy validation failed for response identifiers", pytrace=False)
+            _assertMaskedResponseIdentifiers(nestedValue, fixtureName=fixtureName)
+    elif isinstance(value, list):
+        for nestedValue in value:
+            _assertMaskedResponseIdentifiers(nestedValue, fixtureName=fixtureName)
+
+
+def _isMaskedOrPlaceholder(value: object) -> bool:
+    """Return whether a metadata credential uses an approved non-secret form.
+
+    Args:
+        value: Metadata credential value to inspect.
+
+    Returns:
+        True when the value is the masking token or an environment placeholder.
+    """
+    return value == MASKED_VALUE or (isinstance(value, str) and value.startswith("${") and value.endswith("}"))
+
+
+def _assertFixturePrivacy(fixturePath: str) -> None:
+    """Assert structural privacy invariants for one committed STT fixture.
+
+    Args:
+        fixturePath: Absolute path to a committed fixture JSON file.
+
+    Returns:
+        None.
+    """
+    fixtureName: str = Path(fixturePath).name
+    try:
+        fixtureContent: object = json.loads(Path(fixturePath).read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        pytest.fail(f"{fixtureName}: privacy validation failed for fixture structure", pytrace=False)
+        return
+    if not isinstance(fixtureContent, dict):
+        pytest.fail(f"{fixtureName}: privacy validation failed for fixture structure", pytrace=False)
+    metadata: object = fixtureContent.get("metadata")
+    if not isinstance(metadata, dict):
+        pytest.fail(f"{fixtureName}: privacy validation failed for metadata structure", pytrace=False)
+    initKwargs: object = metadata.get("init_kwargs")
+    if not isinstance(initKwargs, dict):
+        pytest.fail(f"{fixtureName}: privacy validation failed for credential metadata structure", pytrace=False)
+    for fieldName in CREDENTIAL_METADATA_FIELD_NAMES:
+        if not _isMaskedOrPlaceholder(initKwargs.get(fieldName)):
+            pytest.fail(f"{fixtureName}: privacy validation failed for credential metadata", pytrace=False)
+
+    recordings: object = fixtureContent.get("recordings")
+    if not isinstance(recordings, list):
+        pytest.fail(f"{fixtureName}: privacy validation failed for recordings structure", pytrace=False)
+
+    for recording in recordings:
+        if not isinstance(recording, dict):
+            pytest.fail(f"{fixtureName}: privacy validation failed for recording structure", pytrace=False)
+        request: object = recording.get("request")
+        response: object = recording.get("response")
+        if not isinstance(request, dict):
+            pytest.fail(f"{fixtureName}: privacy validation failed for request structure", pytrace=False)
+        if not isinstance(response, dict):
+            pytest.fail(f"{fixtureName}: privacy validation failed for response structure", pytrace=False)
+
+        requestHeaders: object = request.get("headers")
+        if not isinstance(requestHeaders, dict):
+            pytest.fail(f"{fixtureName}: privacy validation failed for request header structure", pytrace=False)
+        credentialHeaderNamesSeen: set[str] = set()
+        for headerName, headerValue in requestHeaders.items():
+            if not isinstance(headerName, str):
+                pytest.fail(f"{fixtureName}: privacy validation failed for request header structure", pytrace=False)
+            normalizedHeaderName: str = headerName.lower()
+            if normalizedHeaderName in CREDENTIAL_HEADER_NAMES:
+                if normalizedHeaderName in credentialHeaderNamesSeen or headerValue != MASKED_VALUE:
+                    pytest.fail(
+                        f"{fixtureName}: privacy validation failed for credential request headers", pytrace=False
+                    )
+                credentialHeaderNamesSeen.add(normalizedHeaderName)
+            if normalizedHeaderName in IDENTIFIER_HEADER_NAMES:
+                if not isinstance(headerValue, str) or headerValue not in {"", MASKED_VALUE}:
+                    pytest.fail(f"{fixtureName}: privacy validation failed for request identifiers", pytrace=False)
+        if credentialHeaderNamesSeen != CREDENTIAL_HEADER_NAMES:
+            pytest.fail(f"{fixtureName}: privacy validation failed for credential request headers", pytrace=False)
+
+        requestUrl: object = request.get("url")
+        if not isinstance(requestUrl, str):
+            pytest.fail(f"{fixtureName}: privacy validation failed for request URL structure", pytrace=False)
+        urlFailureCategory: Optional[str] = _getSpeechKitUrlPrivacyFailureCategory(requestUrl)
+        if urlFailureCategory is not None:
+            pytest.fail(f"{fixtureName}: privacy validation failed for {urlFailureCategory}", pytrace=False)
+        try:
+            parsedUrl = urlsplit(requestUrl)
+            queryParameters: Dict[str, List[str]] = parse_qs(parsedUrl.query, keep_blank_values=True)
+        except ValueError:
+            pytest.fail(f"{fixtureName}: privacy validation failed for request URL structure", pytrace=False)
+            return
+        if parsedUrl.netloc == OPERATION_API_HOST:
+            if parsedUrl.path.removeprefix(OPERATIONS_PATH_PREFIX) != MASKED_VALUE:
+                pytest.fail(f"{fixtureName}: privacy validation failed for operation URL", pytrace=False)
+        if "operation_id" in queryParameters:
+            if queryParameters["operation_id"] != [MASKED_VALUE]:
+                pytest.fail(f"{fixtureName}: privacy validation failed for operation query", pytrace=False)
+
+        requestParameters: object = request.get("params")
+        if not isinstance(requestParameters, dict):
+            pytest.fail(f"{fixtureName}: privacy validation failed for request parameter structure", pytrace=False)
+        if "operation_id" in requestParameters:
+            if requestParameters["operation_id"] != MASKED_VALUE:
+                pytest.fail(f"{fixtureName}: privacy validation failed for operation parameters", pytrace=False)
+
+        responseHeaders: object = response.get("headers")
+        if not isinstance(responseHeaders, dict):
+            pytest.fail(f"{fixtureName}: privacy validation failed for response header structure", pytrace=False)
+        for headerName, headerValue in responseHeaders.items():
+            if not isinstance(headerName, str):
+                pytest.fail(f"{fixtureName}: privacy validation failed for response header structure", pytrace=False)
+            if headerName.lower() in IDENTIFIER_HEADER_NAMES:
+                if not isinstance(headerValue, str) or headerValue not in {"", MASKED_VALUE}:
+                    pytest.fail(f"{fixtureName}: privacy validation failed for response identifiers", pytrace=False)
+
+        responseContent: object = response.get("content")
+        if not isinstance(responseContent, str):
+            pytest.fail(f"{fixtureName}: privacy validation failed for response content structure", pytrace=False)
+        for responseObject in _loadResponseContentObjects(responseContent, fixtureName=fixtureName):
+            _assertMaskedResponseIdentifiers(responseObject, fixtureName=fixtureName)
 
 
 def _resolveReplayInitKwargs(initKwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -277,9 +497,64 @@ def testGoldenFixturesAreRecorded() -> None:
         )
 
 
+def testSpeechKitUrlValidationRejectsUnexpectedShapes() -> None:
+    """Require the privacy URL validator to accept only known SpeechKit routes.
+
+    The strings here are synthetic structural examples. They deliberately do not
+    originate from, or contain values from, a committed golden fixture.
+
+    Returns:
+        None.
+    """
+    validUrls: Tuple[str, ...] = (
+        "https://stt.api.cloud.yandex.net/stt/v3/recognizeFileAsync",
+        "https://operation.api.cloud.yandex.net/operations/***MASKED***",
+        "https://stt.api.cloud.yandex.net/stt/v3/getRecognition?operation_id=***MASKED***",
+        "https://stt.api.cloud.yandex.net/stt/v3/deleteRecognition?operation_id=***MASKED***",
+    )
+    invalidUrls: Tuple[str, ...] = (
+        "stt.api.cloud.yandex.net/stt/v3/recognizeFileAsync",
+        "http://stt.api.cloud.yandex.net/stt/v3/recognizeFileAsync",
+        "https://unexpected.example/stt/v3/recognizeFileAsync",
+        "https:///stt/v3/recognizeFileAsync",
+        "https://stt.api.cloud.yandex.net/stt/v3/unexpected",
+        "https://operation.api.cloud.yandex.net/operations/",
+        "https://operation.api.cloud.yandex.net/unexpected/***MASKED***",
+        " https://stt.api.cloud.yandex.net/stt/v3/recognizeFileAsync",
+        "https://stt.api.cloud.yandex.net/stt/v3/recognizeFileAsync?",
+        "https://stt.api.cloud.yandex.net/stt/v3/recognizeFileAsync#",
+        "https://stt.api.cloud.yandex.net/stt/v3/getRecognition?&operation_id=***MASKED***",
+        "https://stt.api.cloud.yandex.net/stt/v3/getRecognition?operation_id=***MASKED***&",
+        "https://stt.api.cloud.yandex.net/stt/v3/getRecognition?operation_id=***MASKED***&&operation_id=***MASKED***",
+        "https://stt.api.cloud.yandex.net/stt/v3/getRecognition?operation_id=***MASKED***\x7f",
+        "https://stt.api.cloud.yandex.net/stt/v3/getRecognition?operation_id=***MASKED***\x80",
+        "https://stt.api.cloud.yandex.net/stt/v3/getRecognition?operation_id=***MASKED***\u200b",
+    )
+
+    for url in validUrls:
+        if _getSpeechKitUrlPrivacyFailureCategory(url) is not None:
+            pytest.fail("safe synthetic URL was rejected", pytrace=False)
+    for url in invalidUrls:
+        if _getSpeechKitUrlPrivacyFailureCategory(url) is None:
+            pytest.fail("unsafe synthetic URL was accepted", pytrace=False)
+
+
 # ---------------------------------------------------------------------------
 # Replayer tests — parametrised over recorded fixtures (may be empty).
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("fixturePath", _discoverFixtures())
+def testGoldenFixturePrivacy(fixturePath: str) -> None:
+    """Require every committed STT fixture to use structural privacy masks.
+
+    Args:
+        fixturePath: Absolute path to a fixture JSON file in ``data/``.
+
+    Returns:
+        None.
+    """
+    _assertFixturePrivacy(fixturePath)
 
 
 @pytest.mark.parametrize("fixturePath", _discoverFixtures())
@@ -307,7 +582,7 @@ async def testReplayTranscription(fixturePath: str) -> None:
     6. Requires the :class:`TranscriptionResult` status to be FINAL. Both
         committed fixtures are known speech recordings, so NO_SPEECH would mean
         a parser regression dropped their final envelopes. Requires at least one
-        segment and the stable ``"0"`` channel tag on every segment.
+         segment, the recorded generic attribution tags, and a SPEAKER role.
 
     Args:
         fixturePath: Absolute path to a fixture JSON file in ``data/``.
@@ -356,10 +631,11 @@ async def testReplayTranscription(fixturePath: str) -> None:
         f"FINAL status for scenario '{scenarioName}' but segments is empty — "
         "unexpected for a known speech recording."
     )
-    assert all(segment.channelTag == EXPECTED_CHANNEL_TAG for segment in result.segments), (
-        f"Unexpected per-segment channel tags for scenario '{scenarioName}'. "
-        "The committed recognition response uses the stable channelTag '0'."
+    assert {segment.attributionTag for segment in result.segments} == EXPECTED_ATTRIBUTION_TAGS, (
+        f"Unexpected per-segment attribution tags for scenario '{scenarioName}'. "
+        f"The committed recognition response uses the stable attribution tags {EXPECTED_ATTRIBUTION_TAGS}."
     )
+    assert result.attributionType is STTAttributionType.SPEAKER
 
     # Always-on cheap check: at least one HTTP recording was captured.
     assert isinstance(fixture["recordings"], list)

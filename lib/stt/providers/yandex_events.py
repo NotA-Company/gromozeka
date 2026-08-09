@@ -41,9 +41,11 @@ general §4 contract.
 
 import json
 import math
+import re
 from typing import Dict, FrozenSet, List, Optional, Tuple, cast
 
 from ..models import (
+    STTAttributionType,
     STTErrorCode,
     STTResultStatus,
     TranscriptionResult,
@@ -62,8 +64,18 @@ DEFAULT_MAX_RESULT_BYTES: int = 5_242_880
 #: objects (per §7.3: "skipping only whitespace between objects").
 _WHITESPACE: FrozenSet[str] = frozenset(" \t\n\r")
 
+#: Canonical non-negative protobuf-JSON integer spelling accepted for cursor
+#: identities. Unlike timestamps, identity keys must never be truncated or
+#: normalized from alternative spellings.
+_PROTOBUF_NON_NEGATIVE_INTEGER: re.Pattern[str] = re.compile(r"0|[1-9][0-9]*")
 
-def parseRecognitionEvents(responseBytes: bytes, maxResultBytes: int) -> TranscriptionResult:
+
+def parseRecognitionEvents(
+    responseBytes: bytes,
+    maxResultBytes: int,
+    *,
+    speakerLabelingRequested: bool = False,
+) -> TranscriptionResult:
     """Parse a Yandex v3 ``getRecognition`` event stream into a TranscriptionResult.
 
     Reads the verified streaming-JSON event body, enforces the result-body cap,
@@ -79,9 +91,11 @@ def parseRecognitionEvents(responseBytes: bytes, maxResultBytes: int) -> Transcr
     - a matching ``finalRefinement.finalIndex`` **replaces** the raw final text
       with the normalized text (and normalized words when the refinement carries
       them), rather than emitting both — so no duplicate text is produced;
-    - each final's canonical envelope-level ``channelTag`` is preserved on its
-      segment; the deprecated ``final.channelTag`` is used only when the
-      canonical field is absent, null, or empty;
+    - every canonical envelope-level ``channelTag`` becomes a stringified
+      ``attributionTag`` (or None for missing, null, or empty); deprecated
+      ``final.channelTag`` is never read;
+    - the result-level ``attributionType`` is CHANNEL by default and SPEAKER
+      when ``speakerLabelingRequested`` is true;
     - non-final events (``partial``, ``status_code``, ``eou_update``, …) are
       ignored;
     - final segments are **sorted by start time** before being returned;
@@ -101,6 +115,9 @@ def parseRecognitionEvents(responseBytes: bytes, maxResultBytes: int) -> Transcr
         maxResultBytes: The inclusive result-body byte cap (§8.1). A validated
             positive config value received as a parameter (the dependency
             firewall — this module never reads ``[stt]`` config).
+        speakerLabelingRequested: Whether the caller explicitly requested
+            Yandex speaker labeling for this recognition. Only this flag, not
+            audio channel count or tag content, changes tag semantics.
 
     Returns:
         TranscriptionResult: ``FINAL`` with the recognised segments (sorted by
@@ -113,13 +130,13 @@ def parseRecognitionEvents(responseBytes: bytes, maxResultBytes: int) -> Transcr
     # any decoding or parsing, per §7.3 ("reads streaming bytes up to
     # max-result-bytes") and §8.1 (this module owns the result-byte cap).
     if len(responseBytes) > maxResultBytes:
-        return _protocolError()
+        return _protocolError(speakerLabelingRequested=speakerLabelingRequested)
 
     try:
         text = responseBytes.decode("utf-8")  # strict UTF-8
         # print(text)
         events = _iterJsonObjects(text)
-        return _buildResult(events)
+        return _buildResult(events, speakerLabelingRequested=speakerLabelingRequested)
     except (UnicodeDecodeError, ValueError, TypeError, KeyError, IndexError, ArithmeticError):
         # Malformed input of any kind (invalid UTF-8, broken JSON, trailing
         # garbage, a bad timestamp value, a wrong-typed field, or a numeric
@@ -128,7 +145,7 @@ def parseRecognitionEvents(responseBytes: bytes, maxResultBytes: int) -> Transcr
         # is belt-and-braces: ``_coerceInt`` now converts non-finite values to
         # ``ValueError`` up front, but any other numeric-coercion ``ArithmeticError``
         # (e.g. ``OverflowError``) is caught here too rather than escaping.
-        return _protocolError()
+        return _protocolError(speakerLabelingRequested=speakerLabelingRequested)
 
 
 def _iterJsonObjects(text: str) -> List[object]:
@@ -171,18 +188,25 @@ def _iterJsonObjects(text: str) -> List[object]:
     return objects
 
 
-def _buildResult(events: List[object]) -> TranscriptionResult:
+def _buildResult(events: List[object], *, speakerLabelingRequested: bool) -> TranscriptionResult:
     """Fold parsed event objects into a TranscriptionResult per §7.3 semantics.
 
-    Collects ``final`` events in stream order (their position IS their
-    ``finalIndex``) and ``finalRefinement`` events keyed by ``finalIndex``,
-    applies each refinement to its matching final (replacing the raw text — and
-    the words when the refinement carries them), preserves each selected
-    ``channelTag``, drops empty-text segments, and sorts the survivors by start
-    time. Returns ``NO_SPEECH`` when nothing non-empty remains.
+    In ordinary mode, collects ``final`` events in stream order (their position
+    IS their ``finalIndex``) and ``finalRefinement`` events keyed by bare
+    ``finalIndex``. In speaker mode, a final and refinement that both carry a
+    canonical envelope tag are instead correlated by ``(canonicalTag,
+    finalIndex)``. This prevents independently numbered speaker streams from
+    overwriting each other's refinements. Missing cursor metadata falls back to
+    the existing bare-index association while retaining canonical wire
+    attribution. The matched refinement replaces raw text — and words when it
+    carries them — while selected attribution survives unchanged. Empty-text
+    segments are dropped and survivors are sorted by start time. Returns
+    ``NO_SPEECH`` when nothing non-empty remains.
 
     Args:
         events: The parsed top-level event objects (from :func:`_iterJsonObjects`).
+        speakerLabelingRequested: Whether canonical envelope tags represent
+            speaker labels rather than ordinary audio-channel metadata.
 
     Returns:
         TranscriptionResult: The folded, sorted result. ``NO_SPEECH`` when no
@@ -193,43 +217,142 @@ def _buildResult(events: List[object]) -> TranscriptionResult:
             (non-object event, wrong-typed field, uncoercible timestamp); caught
             by :func:`parseRecognitionEvents` and turned into ``PROTOCOL_ERROR``.
     """
-    rawFinals: List[_RawFinal] = []
+    rawFinals: List[Tuple[_RawFinal, Optional[Tuple[str, int]]]] = []
     refinements: Dict[int, Dict[str, object]] = {}
+    speakerRefinements: Dict[Tuple[str, int], Dict[str, object]] = {}
 
     for event in events:
         envelope = _resolveEnvelope(event)
-        channelTag = str(envelope.get("channelTag")) if "channelTag" in envelope else None
+        canonicalTag = _normalizeTag(envelope.get("channelTag")) if "channelTag" in envelope else None
         if "final" in envelope:
-            alternative = _firstAlternative(envelope["final"])
-            rawFinals.append(_extractFinal(alternative, channelTag))
+            finalUpdate = envelope["final"]
+            finalIndex = _getEnvelopeFinalIndex(envelope)
+            alternative = _firstAlternative(finalUpdate)
+            speakerRefinementKey: Optional[Tuple[str, int]] = None
+            if speakerLabelingRequested:
+                if canonicalTag is not None and finalIndex is not None:
+                    speakerRefinementKey = (canonicalTag, finalIndex)
+            rawFinals.append(
+                (
+                    _extractFinal(
+                        alternative,
+                        attributionTag=canonicalTag,
+                    ),
+                    speakerRefinementKey,
+                )
+            )
         if "finalRefinement" in envelope:
             refinement = envelope["finalRefinement"]
             if isinstance(refinement, dict):
+                finalIndex: Optional[int] = None
+                if "finalIndex" in refinement:
+                    if refinement["finalIndex"] is None:
+                        raise ValueError("finalRefinement finalIndex cannot be null")
+                    finalIndex = _coerceFinalIndex(refinement["finalIndex"])
                 normalizedUpdate = refinement.get("normalizedText")
                 # A refinement without normalizedText (e.g. an unknown future
                 # refinement type) carries no text replacement → ignore it and
                 # keep the raw final text. When normalizedText IS present the
-                # finalIndex is required.
+                # finalIndex is required; unlike an absent proto3 timestamp, a
+                # null refinement index is malformed and must never coerce to 0.
                 if isinstance(normalizedUpdate, dict):
-                    finalIndex = _coerceInt(refinement["finalIndex"])
+                    if finalIndex is None:
+                        raise ValueError("finalRefinement finalIndex is required")
                     normalizedAlt = _firstAlternative(normalizedUpdate)
                     if normalizedAlt:
-                        refinements[finalIndex] = normalizedAlt
+                        if speakerLabelingRequested and canonicalTag is not None:
+                            speakerRefinements[(canonicalTag, finalIndex)] = normalizedAlt
+                        else:
+                            # Preserve the legacy bare-index fallback only for
+                            # untagged refinements. Tagged speaker refinements
+                            # must not cross-apply to untagged/cursorless finals
+                            # sharing their provider-local index.
+                            refinements[finalIndex] = normalizedAlt
 
     segments: List[TranscriptionSegment] = []
-    for index, raw in enumerate(rawFinals):
-        normalizedAlt = refinements.get(index)
-        text, startMs, endMs, words, channelTag = _applyRefinement(raw, normalizedAlt)
+    for index, (raw, speakerRefinementKey) in enumerate(rawFinals):
+        normalizedAlt = (
+            speakerRefinements.get(speakerRefinementKey) if speakerRefinementKey is not None else refinements.get(index)
+        )
+        text, startMs, endMs, words, attributionTag = _applyRefinement(raw, normalizedAlt)
         if text.strip():
             segments.append(
-                TranscriptionSegment(text=text, startMs=startMs, endMs=endMs, words=words, channelTag=channelTag)
+                TranscriptionSegment(
+                    text=text,
+                    startMs=startMs,
+                    endMs=endMs,
+                    words=words,
+                    attributionTag=attributionTag,
+                )
             )
 
     if not segments:
-        return _noSpeech()
+        return _noSpeech(speakerLabelingRequested=speakerLabelingRequested)
 
     segments.sort(key=lambda segment: segment.startMs)
-    return TranscriptionResult(status=STTResultStatus.FINAL, segments=tuple(segments))
+    attributionType = STTAttributionType.SPEAKER if speakerLabelingRequested else STTAttributionType.CHANNEL
+    return TranscriptionResult(status=STTResultStatus.FINAL, segments=tuple(segments), attributionType=attributionType)
+
+
+def _getEnvelopeFinalIndex(envelope: Dict[str, object]) -> Optional[int]:
+    """Get an envelope finalIndex when the event supplies a usable cursor.
+
+    Speaker-mode correlation is only more precise than the legacy bare stream
+    position when the canonical speaker tag and this cursor are both present.
+    Missing or null cursor metadata therefore returns None so callers can
+    preserve the old bare-index fallback.
+
+    Args:
+        envelope: The resolved StreamingResponse envelope for a final event.
+
+    Returns:
+        Optional[int]: The cursor final index, or None when audioCursors or its
+        finalIndex field is absent or null.
+
+    Raises:
+        ValueError: If an explicitly supplied finalIndex cannot be coerced to an
+            integer; the parser boundary turns this into PROTOCOL_ERROR.
+    """
+    if "audioCursors" not in envelope or envelope["audioCursors"] is None:
+        return None
+    audioCursors = envelope["audioCursors"]
+    if not isinstance(audioCursors, dict):
+        raise ValueError(f"audioCursors is not a JSON object: {type(audioCursors).__name__}")
+    if "finalIndex" not in audioCursors:
+        return None
+    if audioCursors["finalIndex"] is None:
+        return None
+    return _coerceFinalIndex(audioCursors["finalIndex"])
+
+
+def _coerceFinalIndex(value: object) -> int:
+    """Validate a final/refinement map key as a protobuf-JSON non-negative integer.
+
+    Cursor identities are stricter than timestamps: only JSON integer values and
+    canonical decimal protobuf-JSON integer strings are accepted. This prevents
+    fractional, negative, boolean, whitespace-padded, and otherwise normalized
+    representations from aliasing another final's map key.
+
+    Args:
+        value: A non-null ``audioCursors.finalIndex`` or
+            ``finalRefinement.finalIndex`` value.
+
+    Returns:
+        int: The exact non-negative final index.
+
+    Raises:
+        ValueError: If ``value`` is not an exact non-negative protobuf-JSON
+            integer representation.
+    """
+    if isinstance(value, bool):
+        raise ValueError("finalIndex must not be bool")
+    if isinstance(value, int):
+        if value < 0:
+            raise ValueError("finalIndex must be non-negative")
+        return value
+    if isinstance(value, str) and _PROTOBUF_NON_NEGATIVE_INTEGER.fullmatch(value):
+        return int(value)
+    raise ValueError(f"finalIndex is not a canonical non-negative integer: {value!r}")
 
 
 def _resolveEnvelope(event: object) -> Dict[str, object]:
@@ -300,7 +423,11 @@ def _firstAlternative(update: object) -> Dict[str, object]:
     return cast(Dict[str, object], first)
 
 
-def _extractFinal(alternative: Dict[str, object], channelTag: Optional[str] = None) -> "_RawFinal":
+def _extractFinal(
+    alternative: Dict[str, object],
+    *,
+    attributionTag: Optional[str] = None,
+) -> "_RawFinal":
     """Extract a raw final (text + ms range + words) from one Alternative.
 
     Timestamps are coerced via :func:`_coerceInt` (integers or decimal strings);
@@ -309,11 +436,10 @@ def _extractFinal(alternative: Dict[str, object], channelTag: Optional[str] = No
 
     Args:
         alternative: The chosen first ``Alternative`` of a ``final`` event.
-        channelTag: Validated canonical channel tag, or the deprecated
-            final-level fallback when the canonical value is absent.
+        attributionTag: Canonical unified attribution tag.
 
     Returns:
-        _RawFinal: The extracted raw final record, including ``channelTag``.
+        _RawFinal: The extracted raw final record, including its attribution.
 
     Raises:
         ValueError: If ``text`` is present but not a string, or a timestamp/word
@@ -325,7 +451,13 @@ def _extractFinal(alternative: Dict[str, object], channelTag: Optional[str] = No
     startMs = _coerceInt(alternative.get("startTimeMs", 0))
     endMs = _coerceInt(alternative.get("endTimeMs", 0))
     words = _extractWords(alternative.get("words"))
-    return _RawFinal(text=text, startMs=startMs, endMs=endMs, words=tuple(words), channelTag=channelTag)
+    return _RawFinal(
+        text=text,
+        startMs=startMs,
+        endMs=endMs,
+        words=tuple(words),
+        attributionTag=attributionTag,
+    )
 
 
 def _extractWords(wordsValue: object) -> List[TranscriptionWord]:
@@ -382,17 +514,17 @@ def _applyRefinement(
     degrades to keeping the raw words when the refinement carries none.
 
     Args:
-        raw: The raw final record (text + ms range + words + channel tag).
+        raw: The raw final record (text + ms range + words + attribution).
         normalizedAlt: The refinement's first normalized Alternative, or None
             when no refinement matched this final.
 
     Returns:
         Tuple[str, int, int, Tuple[TranscriptionWord, ...], Optional[str]]:
-        The ``(text, startMs, endMs, words, channelTag)`` to build the segment
-        from. The selected channel tag is preserved through refinement.
+        The ``(text, startMs, endMs, words, attributionTag)`` to build the
+        segment from. Attribution is preserved through refinement.
     """
     if normalizedAlt is None:
-        return raw.text, raw.startMs, raw.endMs, raw.words, raw.channelTag
+        return raw.text, raw.startMs, raw.endMs, raw.words, raw.attributionTag
     normalizedText = normalizedAlt.get("text", "")
     if not isinstance(normalizedText, str):
         # A refinement present but with a non-string text is malformed for our
@@ -405,7 +537,22 @@ def _applyRefinement(
         normalizedText = raw.text
     normalizedWords = _extractWords(normalizedAlt.get("words"))
     words: Tuple[TranscriptionWord, ...] = tuple(normalizedWords) if normalizedWords else raw.words
-    return normalizedText, raw.startMs, raw.endMs, words, raw.channelTag
+    return normalizedText, raw.startMs, raw.endMs, words, raw.attributionTag
+
+
+def _normalizeTag(value: object) -> Optional[str]:
+    """Normalize an optional canonical Yandex envelope tag.
+
+    Args:
+        value: The raw JSON field value from the canonical envelope location.
+
+    Returns:
+        Optional[str]: None for a missing, null, or empty tag; otherwise the
+        string form of the JSON value.
+    """
+    if value is None or value == "":
+        return None
+    return str(value)
 
 
 def _coerceInt(value: object) -> int:
@@ -469,23 +616,30 @@ def _coerceInt(value: object) -> int:
     raise ValueError(f"expected int or decimal string, got {type(value).__name__}")
 
 
-def _protocolError() -> TranscriptionResult:
+def _protocolError(*, speakerLabelingRequested: bool = False) -> TranscriptionResult:
     """Build the PROTOCOL_ERROR result for an over-cap or unparseable response.
 
     Returns:
         TranscriptionResult: ``status=ERROR`` with
         ``errorCode=STTErrorCode.PROTOCOL_ERROR`` and no segments.
     """
-    return TranscriptionResult(status=STTResultStatus.ERROR, segments=(), errorCode=STTErrorCode.PROTOCOL_ERROR)
+    attributionType = STTAttributionType.SPEAKER if speakerLabelingRequested else STTAttributionType.CHANNEL
+    return TranscriptionResult(
+        status=STTResultStatus.ERROR,
+        segments=(),
+        errorCode=STTErrorCode.PROTOCOL_ERROR,
+        attributionType=attributionType,
+    )
 
 
-def _noSpeech() -> TranscriptionResult:
+def _noSpeech(*, speakerLabelingRequested: bool) -> TranscriptionResult:
     """Build the NO_SPEECH result for a completed recognition with no final text.
 
     Returns:
         TranscriptionResult: ``status=NO_SPEECH`` with no segments.
     """
-    return TranscriptionResult(status=STTResultStatus.NO_SPEECH, segments=())
+    attributionType = STTAttributionType.SPEAKER if speakerLabelingRequested else STTAttributionType.CHANNEL
+    return TranscriptionResult(status=STTResultStatus.NO_SPEECH, segments=(), attributionType=attributionType)
 
 
 class _RawFinal:
@@ -499,10 +653,10 @@ class _RawFinal:
         startMs: The final start time in milliseconds.
         endMs: The final end time in milliseconds.
         words: The raw final words (pre-refinement).
-        channelTag: The validated channel tag selected for this final.
+        attributionTag: Canonical unified attribution tag.
     """
 
-    __slots__ = ("text", "startMs", "endMs", "words", "channelTag")
+    __slots__ = ("text", "startMs", "endMs", "words", "attributionTag")
 
     def __init__(
         self,
@@ -510,7 +664,7 @@ class _RawFinal:
         startMs: int,
         endMs: int,
         words: Tuple[TranscriptionWord, ...],
-        channelTag: Optional[str] = None,
+        attributionTag: Optional[str] = None,
     ) -> None:
         """Initialize the raw final scratch record.
 
@@ -519,7 +673,7 @@ class _RawFinal:
             startMs: The final start time in milliseconds.
             endMs: The final end time in milliseconds.
             words: The raw final words (pre-refinement).
-            channelTag: The validated channel tag selected for this final.
+            attributionTag: Canonical unified attribution tag.
 
         Returns:
             None
@@ -528,4 +682,4 @@ class _RawFinal:
         self.startMs = startMs
         self.endMs = endMs
         self.words = words
-        self.channelTag = channelTag
+        self.attributionTag = attributionTag
