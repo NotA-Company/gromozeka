@@ -17,6 +17,7 @@ import telegram
 import telegram.ext
 
 import lib.max_bot as libMax
+import lib.max_bot.exceptions as maxExceptions
 import lib.max_bot.models as maxModels
 from internal.bot.common.models import CallbackButton, TypingAction
 from internal.bot.common.typing_manager import TypingManager
@@ -168,11 +169,17 @@ class TheBot:
         Checks the cache first; fetches from the appropriate platform API if not cached,
         then stores the result in cache before returning.
 
+        When the bot is no longer in the chat or has no access (e.g., kicked/blocked on
+        Telegram or NotFoundError on Max), logs a warning and returns an empty dict
+        without caching the failure. This allows the caller (e.g., isAdmin) to treat
+        the result as "no admins in this chat" and gracefully exclude it from lists.
+
         Args:
             chat: The target chat to fetch administrators for.
 
         Returns:
             Dict mapping admin user IDs (int) to their username + display names (Tuple[str, str]).
+            Returns an empty dict if the bot has no access to the chat.
 
         Raises:
             RuntimeError: If the configured bot provider is neither Telegram nor Max.
@@ -184,23 +191,42 @@ class TheBot:
 
         chatAdmins = {}  # userID -> username
         if self.botProvider == BotProvider.TELEGRAM and self.tgBot is not None:
-            for admin in await self.tgBot.get_chat_administrators(chat_id=chat.id):
-                adminUsername = admin.user.username or ""
-                if adminUsername:
-                    adminUsername = "@" + adminUsername
-                chatAdmins[admin.user.id] = (adminUsername, admin.user.full_name)
+            try:
+                for admin in await self.tgBot.get_chat_administrators(chat_id=chat.id):
+                    adminUsername = admin.user.username or ""
+                    if adminUsername:
+                        adminUsername = "@" + adminUsername
+                    chatAdmins[admin.user.id] = (adminUsername, admin.user.full_name)
+            except telegram.error.Forbidden as exc:
+                # Bot was kicked/blocked or has no access to the chat
+                logger.warning(f"getChatAdmins: cannot fetch admins for chat {chat.id} (Telegram): {exc}")
+                return {}
+            except telegram.error.BadRequest as exc:
+                # Conservative: only treat as inaccessible if clearly about access.
+                # A miss safely re-raises - if Telegram's wording changes, we want real errors surfaced.
+                excMsg = str(exc)
+                if "chat not found" in excMsg.lower():
+                    logger.warning(f"getChatAdmins: cannot fetch admins for chat {chat.id} (Telegram): {exc}")
+                    return {}
+                # Re-raise other BadRequest errors - they're likely real API usage errors
+                raise
 
         elif self.botProvider == BotProvider.MAX and self.maxBot is not None:
-            maxChatAdmins = (await self.maxBot.getAdmins(chatId=chat.id)).members
-            for admin in maxChatAdmins:
-                adminFullName = admin.first_name
-                if admin.last_name:
-                    adminFullName += " " + admin.last_name
-                adminUsername = admin.username or ""
-                if adminUsername:
-                    adminUsername = "@" + adminUsername
+            try:
+                maxChatAdmins = (await self.maxBot.getAdmins(chatId=chat.id)).members
+                for admin in maxChatAdmins:
+                    adminFullName = admin.first_name
+                    if admin.last_name:
+                        adminFullName += " " + admin.last_name
+                    adminUsername = admin.username or ""
+                    if adminUsername:
+                        adminUsername = "@" + adminUsername
 
-                chatAdmins[admin.user_id] = (adminUsername, adminFullName)
+                    chatAdmins[admin.user_id] = (adminUsername, adminFullName)
+            except maxExceptions.NotFoundError as exc:
+                # Bot not in chat or chat not found
+                logger.warning(f"getChatAdmins: cannot fetch admins for chat {chat.id} (Max): {exc}")
+                return {}
 
         else:
             raise RuntimeError(f"Unexpected platform: {self.botProvider}")

@@ -20,6 +20,7 @@ process governing this file, see [docs/llm/changelog.md](docs/llm/changelog.md).
 
 ### Fixed
 - Markdown-formatted inline tool names followed by JSON arguments now execute as tool calls instead of being sent as plain text.
+- `/configure` and other admin-checking flows no longer crash when the bot has been kicked from a chat; `TheBot.getChatAdmins` now catches Telegram `Forbidden` and Max `NotFoundError`, logs a warning, and returns an empty admin set so the inaccessible chat is silently skipped.
 
 ## [1.0.0] - 2026-07-21
 
