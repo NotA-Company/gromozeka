@@ -98,6 +98,21 @@ exemption + cache gate. Final: **3087 tests green**, lint clean. NOTE: the
 dedup contract is now "each memory once at latest occurrence in the
 non-condensed path; condensed-replay root is exempt."
 
+### Follow-up: per-ID relevance scores on the compact form
+
+A later change extended the compact per-message form to OPTIONALLY carry
+per-ID semantic-relevance scores. `CompactMemoryIdsDict` gained a
+`NotRequired` `shortTermScores: dict[str, float]` (mapping `memory_id ->
+score`); `MessagePreprocessorHandler.injectMemories` populates it in
+semantic-search mode only, and `EnsuredMessage.formatForLLM` merges the
+score into each resolved short-term entry at render time (via a shallow
+copy so the shared by-id cache is NOT mutated). Permanent entries and
+latest-mode (`getLatestMemories`) ephemeral entries never carry a score.
+No new resolution or dedup logic was needed — the score rides the same
+compact-metadata → `formatForLLM` path this change established. See
+[`user-memories.md`](user-memories.md) §"Semantic-relevance score for
+short-term memories" for the canonical contract.
+
 ## Historical plan (v1)
 
 Plan to eliminate per-message duplication of user-memories JSON in LLM context

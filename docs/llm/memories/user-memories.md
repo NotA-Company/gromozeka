@@ -423,7 +423,11 @@ memory renders once — see "Render-time resolution (lazy + dedup)".
 
 > **TypedDict note:** the compact ID shape is typed as
 > `CompactMemoryIdsDict` (`internal/bot/models/message_metadata.py`) —
-> `{permanentIds: list[str], shortTermIds: list[str]}`.
+> `{permanentIds: list[str], shortTermIds: list[str], shortTermScores?:
+> dict[str, float]}`. The optional `shortTermScores` (mapping `memory_id ->
+> score`) is populated ONLY in semantic-search mode and ONLY for the
+> short-term cohort — see "Semantic-relevance score for short-term memories"
+> below.
 > `MetadataDict.memories` is typed as `CompactMemoryIdsDict` (the legacy
 > `UserMemoriesDict` content-shape union member was removed once every live
 > write path had migrated to compact IDs), so `sqlToCustomType` no longer
@@ -515,6 +519,48 @@ The memories seen by the model are therefore the snapshot known at the time
 the message arrived — every message in a thread carries its own context, and
 resolution happens lazily at render time (just a cache lookup of the persisted
 IDs), deduplicated so each memory renders once per context.
+
+### Semantic-relevance score for short-term memories
+
+Each short-term memory retrieved via **semantic search** carries its
+relevance score end-to-end into the rendered `userMemories` JSON block the
+LLM sees. The score originates in `UserMemoriesRepository.searchMemories`
+as `score = 1.0 - cosine_distance` (vec0 cosine metric) and is plumbed
+injection → metadata → render without any extra DB/vector calls at render
+time:
+
+- **Injection** — `MessagePreprocessorHandler.injectMemories`, in the
+  semantic branch (`queryEmbedding` is a vector), captures
+  `{memory_id -> score}` from the `searchMemories` result and writes it
+  into `ensuredMessage.metadata["memories"]["shortTermScores"]`. The key
+  is OMITTED in latest-mode (`getLatestMemories`) fallback and never
+  populated for permanent memories (permanent entries do not flow through
+  `searchMemories` on the injection path).
+- **Render** — `EnsuredMessage.formatForLLM` reads `shortTermScores` from
+  `rawMemories` and, for each resolved short-term entry whose `memory_id`
+  is in the map, merges `"score": <float>` into the entry via a shallow
+  copy (`{**entry, "score": shortTermScores[mid]}`). The shallow copy is
+  load-bearing: entries returned by `cache.getMemoriesByIds` are direct
+  references into the LRU cache, so mutating one in place would leak the
+  `score` into subsequent renders of other messages (the
+  `test_cacheMutation_bug_shortTermScoresLeakBetweenCalls` regression
+  locks this in). Permanent entries are NEVER scored (the loop only walks
+  `shortTermIds`).
+
+**Scoping rule (locked):** the score appears ONLY for
+semantically-searched ephemeral memories. Permanent memories and
+latest-mode (`getLatestMemories`) ephemeral memories OMIT the `score`
+field entirely. The score is model-visible (lands in the `userMemories`
+JSON block). Backward compatible: old persisted messages simply lack
+`shortTermScores` → render omits `score` on those entries. No DB
+migration was needed — the score is transient per-message metadata
+carried in the existing JSON `metadata` column, not a stored column.
+
+The `CompactMemoryIdsDict.shortTermScores: NotRequired[dict[str, float]]`
+field in `internal/bot/models/message_metadata.py` is the typed surface
+of this contract; the score is also a `NotRequired[float]` on
+`SingleMemoryDict` (`"score"`) so it survives the round trip through the
+by-id cache shape.
 
 ### Permanent-memories cache
 

@@ -220,6 +220,48 @@ class TestFormatForLLMMemoryResolution:
         assert "permanent" not in parsed["userMemories"]
         assert parsed["userMemories"]["shortTerm"][0]["content"] == "just woke up"
 
+    async def test_excludeMemoryIds_dropsScoredShortTermEntryAndKeepsUnscored(self, testDatabase: Database) -> None:
+        """``excludeMemoryIds`` filters BEFORE score merge — excluded short-term ID's score never leaks.
+
+        Regression guard: if the filtering order were reversed (merge scores, then filter),
+        an excluded short-term ID's score could leak onto another entry. This test verifies
+        the correct order: IDs are filtered first, scores are merged only for survivors.
+
+        Args:
+            testDatabase: Real in-memory database; never read (no media).
+        """
+        msg = _makeEnsuredMessage()
+        msg.metadata["memories"] = {  # type: ignore[assignment]
+            "permanentIds": [],
+            "shortTermIds": ["m1", "m2"],
+            "shortTermScores": {"m1": 0.9, "m2": 0.5},
+        }
+
+        cache = Mock()
+        cache.getMemoriesByIds = AsyncMock(
+            return_value={
+                "m1": {"type": MemoryType.EVENT, "content": "just woke up", "tags": []},
+                "m2": {"type": MemoryType.PREFERENCE, "content": "likes coffee", "tags": []},
+            }
+        )
+
+        output = await msg.formatForLLM(
+            testDatabase, format=LLMMessageFormat.JSON, cache=cache, excludeMemoryIds={"m1"}  # type: ignore[arg-type]
+        )
+
+        parsed = json.loads(output)
+        assert "userMemories" in parsed
+        shortTerm = parsed["userMemories"]["shortTerm"]
+
+        # Only m2 should be present (m1 was excluded).
+        assert len(shortTerm) == 1
+        assert shortTerm[0]["content"] == "likes coffee"
+        assert shortTerm[0]["score"] == 0.5
+
+        # Critical: no entry should have score 0.9 (m1's score must not leak).
+        for entry in shortTerm:
+            assert entry.get("score") != 0.9
+
     async def test_allStaleIds_omitsUserMemoriesKey(self, testDatabase: Database) -> None:
         """When all referenced memory IDs resolve to ``None``, ``userMemories`` is omitted.
 
@@ -257,6 +299,186 @@ class TestFormatForLLMMemoryResolution:
         parsed = json.loads(output)
         assert "userMemories" not in parsed
         assert "userMemories" not in output
+
+    async def test_shortTermScores_mergedIntoEntries(self, testDatabase: Database) -> None:
+        """When ``shortTermScores`` is present, each matching short-term entry gets its score.
+
+        The scores map stored in ``metadata["memories"]["shortTermScores"]`` is merged into
+        the resolved short-term memory entries by memory ID.
+
+        Args:
+            testDatabase: Real in-memory database; never read (no media).
+        """
+        msg = _makeEnsuredMessage()
+        msg.metadata["memories"] = {  # type: ignore[assignment]
+            "permanentIds": [],
+            "shortTermIds": ["s1", "s2"],
+            "shortTermScores": {"s1": 0.95, "s2": 0.87},
+        }
+
+        cache = Mock()
+        cache.getMemoriesByIds = AsyncMock(
+            return_value={
+                "s1": {"type": MemoryType.EVENT, "content": "just woke up", "tags": []},
+                "s2": {"type": MemoryType.PREFERENCE, "content": "likes coffee", "tags": []},
+            }
+        )
+
+        output = await msg.formatForLLM(
+            testDatabase, format=LLMMessageFormat.JSON, cache=cache, excludeMemoryIds=set()  # type: ignore[arg-type]
+        )
+
+        parsed = json.loads(output)
+        assert "userMemories" in parsed
+        shortTerm = parsed["userMemories"]["shortTerm"]
+        # Scores are merged into each entry by memory_id.
+        assert shortTerm[0]["score"] == 0.95
+        assert shortTerm[1]["score"] == 0.87
+
+    async def test_shortTermScoresAbsent_noScoreKey(self, testDatabase: Database) -> None:
+        """When ``shortTermScores`` is absent, short-term entries have NO ``score`` key.
+
+        The key is NOT added when the map is missing (e.g., latest-mode retrieval).
+
+        Args:
+            testDatabase: Real in-memory database; never read (no media).
+        """
+        msg = _makeEnsuredMessage()
+        msg.metadata["memories"] = {"permanentIds": [], "shortTermIds": ["s1"]}  # type: ignore[assignment]
+
+        cache = Mock()
+        cache.getMemoriesByIds = AsyncMock(
+            return_value={"s1": {"type": MemoryType.EVENT, "content": "just woke up", "tags": []}}
+        )
+
+        output = await msg.formatForLLM(
+            testDatabase, format=LLMMessageFormat.JSON, cache=cache, excludeMemoryIds=set()  # type: ignore[arg-type]
+        )
+
+        parsed = json.loads(output)
+        assert "userMemories" in parsed
+        shortTerm = parsed["userMemories"]["shortTerm"][0]
+        assert "score" not in shortTerm
+
+    async def test_permanentEntriesNeverHaveScore(self, testDatabase: Database) -> None:
+        """Permanent entries NEVER get a ``score`` key, even when ``shortTermScores`` exists.
+
+        The score-merge path only touches short-term entries.
+
+        Args:
+            testDatabase: Real in-memory database; never read (no media).
+        """
+        msg = _makeEnsuredMessage()
+        msg.metadata["memories"] = {  # type: ignore[assignment]
+            "permanentIds": ["p1"],
+            "shortTermIds": ["s1"],
+            "shortTermScores": {"s1": 0.95, "p1": 0.99},
+        }
+
+        cache = Mock()
+        cache.getMemoriesByIds = AsyncMock(
+            return_value={
+                "p1": {"type": MemoryType.FACT, "content": "vegan", "tags": ["diet"]},
+                "s1": {"type": MemoryType.EVENT, "content": "just woke up", "tags": []},
+            }
+        )
+
+        output = await msg.formatForLLM(
+            testDatabase, format=LLMMessageFormat.JSON, cache=cache, excludeMemoryIds=set()  # type: ignore[arg-type]
+        )
+
+        parsed = json.loads(output)
+        assert "userMemories" in parsed
+        permanent = parsed["userMemories"]["permanent"][0]
+        shortTerm = parsed["userMemories"]["shortTerm"][0]
+        assert "score" not in permanent
+        assert shortTerm["score"] == 0.95
+
+    async def test_shortTermEntryNotInScores_staysScoreless(self, testDatabase: Database) -> None:
+        """A short-term entry whose ID is NOT in ``shortTermScores`` gets NO ``score`` key.
+
+        Partial map: only IDs present in the scores map get the key.
+
+        Args:
+            testDatabase: Real in-memory database; never read (no media).
+        """
+        msg = _makeEnsuredMessage()
+        msg.metadata["memories"] = {  # type: ignore[assignment]
+            "permanentIds": [],
+            "shortTermIds": ["s1", "s2"],
+            "shortTermScores": {"s1": 0.95},
+        }
+
+        cache = Mock()
+        cache.getMemoriesByIds = AsyncMock(
+            return_value={
+                "s1": {"type": MemoryType.EVENT, "content": "just woke up", "tags": []},
+                "s2": {"type": MemoryType.PREFERENCE, "content": "likes coffee", "tags": []},
+            }
+        )
+
+        output = await msg.formatForLLM(
+            testDatabase, format=LLMMessageFormat.JSON, cache=cache, excludeMemoryIds=set()  # type: ignore[arg-type]
+        )
+
+        parsed = json.loads(output)
+        assert "userMemories" in parsed
+        shortTerm = parsed["userMemories"]["shortTerm"]
+        # s1 is in the scores map, so it gets a score.
+        assert shortTerm[0]["score"] == 0.95
+        # s2 is NOT in the scores map, so it stays scoreless.
+        assert "score" not in shortTerm[1]
+
+    async def test_cacheMutation_bug_shortTermScoresLeakBetweenCalls(self, testDatabase: Database) -> None:
+        """CRITICAL: First call with score must NOT pollute the cache entry for a second call without score.
+
+        Regression test for the cache-mutation bug: ``resolved.get(mid)`` returns a DIRECT reference
+        into the shared LRU cache (CacheService.getMemoriesByIds returns ``self.memories.get(...)`` raw).
+        If we mutate that dict by doing ``entry["score"] = ...``, the score becomes permanently stored
+        in the cache and leaks into subsequent renders even when they have no ``shortTermScores``.
+
+        This test would FAIL with the buggy code (the second call would see ``score == 0.92`` because the
+        first call mutated the cached entry). After the fix, it PASSES (scores are shallow-copied, cache
+        is not mutated).
+
+        Args:
+            testDatabase: Real in-memory database; never read (no media).
+        """
+        # Shared cache instance carrying one short-term memory entry.
+        cache = Mock()
+        cache.getMemoriesByIds = AsyncMock(
+            return_value={"m1": {"type": MemoryType.EVENT, "content": "just woke up", "tags": []}}
+        )
+
+        # First message: HAS shortTermScores.
+        msg1 = _makeEnsuredMessage()
+        msg1.metadata["memories"] = {  # type: ignore[assignment]
+            "permanentIds": [],
+            "shortTermIds": ["m1"],
+            "shortTermScores": {"m1": 0.92},
+        }
+
+        output1 = await msg1.formatForLLM(
+            testDatabase, format=LLMMessageFormat.JSON, cache=cache, excludeMemoryIds=set()  # type: ignore[arg-type]
+        )
+
+        parsed1 = json.loads(output1)
+        assert "userMemories" in parsed1
+        assert parsed1["userMemories"]["shortTerm"][0]["score"] == 0.92
+
+        # Second message: NO shortTermScores (simulating latest-mode / scoreless render).
+        # The SAME cache instance is used — the cached entry must NOT have been mutated.
+        msg2 = _makeEnsuredMessage()
+        msg2.metadata["memories"] = {"permanentIds": [], "shortTermIds": ["m1"]}  # type: ignore[assignment]
+
+        output2 = await msg2.formatForLLM(
+            testDatabase, format=LLMMessageFormat.JSON, cache=cache, excludeMemoryIds=set()  # type: ignore[arg-type]
+        )
+
+        parsed2 = json.loads(output2)
+        assert "userMemories" in parsed2
+        # CRITICAL: The score key must NOT be present — it was never added this time.
+        assert "score" not in parsed2["userMemories"]["shortTerm"][0]
 
 
 # ---------------------------------------------------------------------------

@@ -877,7 +877,8 @@ class EnsuredMessage:
         """Return the set of all memory IDs referenced in this message's compact memory metadata.
 
         Reads ``self.metadata["memories"]`` in the canonical compact ID form
-        (:class:`CompactMemoryIdsDict` = ``{"permanentIds": [...], "shortTermIds": [...]}``)
+        (:class:`CompactMemoryIdsDict` =
+        ``{"permanentIds": [...], "shortTermIds": [...], shortTermScores?: dict[str, float]}``)
         and returns the union of both ID lists. Defensive against legacy/None
         shapes: returns an empty set when ``memories`` is ``None``, missing, or
         any shape that does not carry BOTH ``"permanentIds"`` and
@@ -1147,9 +1148,23 @@ class EnsuredMessage:
                             permanentEntries: List[SingleMemoryDict] = [
                                 entry for mid in permanentIds if (entry := resolved.get(mid)) is not None
                             ]
-                            shortTermEntries: List[SingleMemoryDict] = [
-                                entry for mid in shortTermIds if (entry := resolved.get(mid)) is not None
-                            ]
+                            # Extract and merge semantic-relevance scores from the compact
+                            # storage form (if present) into short-term entries. The ``mid``
+                            # loop variable matches the key used in ``resolved``, so we
+                            # can directly look up the score in ``shortTermScores``.
+                            # CRITICAL: Build a shallow copy for scored entries to avoid
+                            # mutating the shared cache (entries from ``resolved`` are direct
+                            # references into the LRU cache).
+                            shortTermScores = rawMemories.get("shortTermScores") or {}
+                            shortTermEntries: List[SingleMemoryDict] = []
+                            for mid in shortTermIds:
+                                entry = resolved.get(mid)
+                                if entry is None:
+                                    continue
+                                entry = entry.copy()
+                                if mid in shortTermScores:
+                                    entry["score"] = shortTermScores[mid]
+                                shortTermEntries.append(entry)
                             if permanentEntries:
                                 resolvedMemories["permanent"] = permanentEntries
                             if shortTermEntries:

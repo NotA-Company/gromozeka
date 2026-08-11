@@ -971,3 +971,81 @@ class TestInjectMemoriesCompactFormat:
         stored = msg.metadata.get("memories")
         assert stored is not None
         assert stored["shortTermIds"] == ["short-1"]  # type: ignore[index]
+
+    async def test_injectMemories_semanticMode_writesScores(self, handler: MessagePreprocessorHandler) -> None:
+        """Semantic mode writes ``shortTermScores`` mapping memory IDs to search scores.
+
+        When ``queryEmbedding`` is non-None (semantic mode), ``injectMemories`` extracts
+        the ``score`` field from each short-term memory returned by ``searchMemories``
+        and writes a ``shortTermScores`` map keyed by ``memory_id`` into
+        ``metadata["memories"]``. The scores are preserved as floats.
+
+        Args:
+            handler: Preprocessor fixture.
+        """
+        # Wire the semantic search path instead of latest retrieval.
+        handler.getChatSettings = AsyncMock(  # type: ignore[method-assign]
+            return_value=_chatSettingsWithMemoryInjection()
+        )
+        cache = cast(Any, handler.cache)
+        cache.getChatUserPermanentMemories = AsyncMock(return_value=[])
+        # Semantic search returns UserMemoryDict entries with ``score`` keys.
+        semanticResults = [
+            cast(
+                UserMemoryDict,
+                {
+                    "memory_id": "short-1",
+                    "type": MemoryType.PREFERENCE,
+                    "content": "likes coffee",
+                    "tags": ["recent"],
+                    "score": 0.95,
+                },
+            ),
+            cast(
+                UserMemoryDict,
+                {
+                    "memory_id": "short-2",
+                    "type": MemoryType.EVENT,
+                    "content": "just woke up",
+                    "tags": [],
+                    "score": 0.87,
+                },
+            ),
+        ]
+        handler.db.userMemories.searchMemories = AsyncMock(return_value=semanticResults)  # type: ignore[attr-defined]
+
+        msg = _realEnsuredMessage()
+
+        # Call injectMemories with a non-None queryEmbedding to trigger semantic mode.
+        await handler.injectMemories(msg, "test-model", queryEmbedding=[0.1, 0.2])
+
+        stored = msg.metadata.get("memories")
+        assert stored is not None
+        assert "shortTermScores" in stored  # type: ignore[operator]
+        assert stored["shortTermScores"] == {  # type: ignore[index]
+            "short-1": 0.95,
+            "short-2": 0.87,
+        }
+
+    async def test_injectMemories_latestMode_noScores(self, handler: MessagePreprocessorHandler) -> None:
+        """Latest mode (fallback path) omits ``shortTermScores`` from metadata.
+
+        When ``queryEmbedding`` is ``None`` (latest-retrieval fallback), short-term
+        memories are fetched via ``getLatestMemories`` which does not provide scores.
+        The ``shortTermScores`` key must NOT appear in ``metadata["memories"]``.
+
+        Args:
+            handler: Preprocessor fixture.
+        """
+        msg = self._wireForInjection(
+            handler,
+            permanentMemories=[],
+            dbMemories=[_dbUserMemory("short-1", "real")],
+        )
+
+        # Call injectMemories with queryEmbedding=None to trigger latest mode.
+        await handler.injectMemories(msg, None, None)
+
+        stored = msg.metadata.get("memories")
+        assert stored is not None
+        assert "shortTermScores" not in stored  # type: ignore[operator]
