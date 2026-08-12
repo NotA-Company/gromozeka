@@ -1,6 +1,6 @@
 # Our TODO list
 - [x] short-term memories - add score
-- [ ] retry to send message on `telegram.error.TimedOut: Timed out`
+- [x] retry to send message on `telegram.error.TimedOut: Timed out`
 - [ ] On llm-tool-call-fix save wrong + fixed call to file
 - [ ] per-chat settings - how often to do memory-refinement
 - [ ] script for moving chat to separate db

@@ -108,6 +108,24 @@ After this timeout, the processing will be cancelled to prevent
 resource exhaustion. Default is 30 minutes (1800 seconds).
 """
 
+TELEGRAM_SEND_MAX_ATTEMPTS: int = 3
+"""Total number of attempts (initial + retries) for transient Telegram send errors."""
+
+TELEGRAM_SEND_RETRY_DELAY_BASE: float = 0.5
+"""Base delay in seconds for exponential backoff between Telegram send retries.
+
+Actual delay is ``TELEGRAM_SEND_RETRY_DELAY_BASE * (2 ** attempt)`` plus jitter.
+"""
+
+TELEGRAM_SEND_RETRY_JITTER: float = 0.5
+"""Maximum jitter in seconds added to each Telegram send retry delay."""
+
+TELEGRAM_RETRY_AFTER_CAP_SECONDS: float = 60.0
+"""Upper bound (seconds) on the sleep used to honor Telegram ``RetryAfter``.
+
+Protects against absurdly large ``retry_after`` values stalling a handler.
+"""
+
 RANDOM_ANSWER_CONTEXT_LENGTH: int = 64
 """Maximum number of messages to include in the context for random answer generation.
 

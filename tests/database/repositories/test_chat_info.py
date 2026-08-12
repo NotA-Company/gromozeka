@@ -12,29 +12,34 @@ from internal.database import Database
 from internal.database.models import ChatBotStatus
 
 
-class TestUpdateChatInfoNonClobber:
-    """Regression test for updateChatInfo bot_status preservation.
+class TestUpdateChatInfoBotStatusDefault:
+    """Regression tests for updateChatInfo default bot_status behavior.
 
-    The non-clobber invariant is critical: updateChatInfo's upsert must NOT
-    reset bot_status to 'active' when updating title/username. The upsert
-    excludes bot_status from both values and updateExpressions, so an
-    existing INACCESSIBLE chat stays INACCESSIBLE after metadata updates.
-    This behavior is load-bearing — it prevents reactivating dead chats when
-    their metadata is refreshed.
+    The default bot_status contract: updateChatInfo's upsert writes bot_status
+    (default ACTIVE) on BOTH insert and update. This is load-bearing for the
+    message-refresh self-heal path — TheBot.getChatInfo always returns
+    bot_status=ACTIVE, so the periodic refresh in BaseBotHandler.updateChatInfo
+    reactivates a chat the moment the bot successfully receives a message from
+    it, clearing any transient INACCESSIBLE left by a prior getChatAdmins probe
+    failure.
     """
 
-    async def test_updateChatInfo_nonClobberPreservesBotStatus(self, testDatabase: Database) -> None:
-        """updateChatInfo does not clobber bot_status on existing rows.
+    async def test_updateChatInfo_defaultOverwritesExistingBotStatus(self, testDatabase: Database) -> None:
+        """updateChatInfo default (no botStatus) resets an existing row to ACTIVE.
 
-        When a chat with bot_status='inaccessible' is updated via
-        updateChatInfo (which only passes type/title/username/is_forum),
-        the bot_status field must remain 'inaccessible'. The upsert excludes
-        bot_status from both the INSERT and UPDATE clauses.
+        This is the self-heal path: when a chat was previously marked
+        INACCESSIBLE (e.g. via a getChatAdmins probe failure) and the refresh
+        path later calls updateChatInfo without an explicit botStatus, the
+        upsert writes the default ACTIVE. Combined with TheBot.getChatInfo
+        (which always returns bot_status=ACTIVE), this reactivates a chat once
+        the bot can receive messages from it again — so bot_status is a
+        transient "probe failed" signal, not a permanent flag.
 
         Args:
             testDatabase: Fresh in-memory Database fixture.
         """
-        # Arrange: Insert a chat with INACCESSIBLE bot_status
+        # Arrange: Insert a chat, then mark it INACCESSIBLE via raw SQL
+        # (simulating a probe failure; independent of the code under test)
         await testDatabase.chatInfo.updateChatInfo(
             chatId=123,
             type="group",
@@ -42,8 +47,6 @@ class TestUpdateChatInfoNonClobber:
             username=None,
             isForum=False,
         )
-
-        # Manually set bot_status to INACCESSIBLE (simulating a probe failure)
         provider = await testDatabase.manager.getProvider(readonly=False)
         await provider.execute(
             """
@@ -54,7 +57,7 @@ class TestUpdateChatInfoNonClobber:
             {"botStatus": ChatBotStatus.INACCESSIBLE, "chatId": 123},
         )
 
-        # Act: Update the chat info via updateChatInfo (does NOT pass bot_status)
+        # Act: Refresh via updateChatInfo WITHOUT botStatus (default ACTIVE applies)
         await testDatabase.chatInfo.updateChatInfo(
             chatId=123,
             type="group",
@@ -63,10 +66,10 @@ class TestUpdateChatInfoNonClobber:
             isForum=True,
         )
 
-        # Assert: bot_status is still INACCESSIBLE (not reset to ACTIVE)
+        # Assert: bot_status was reset to ACTIVE (self-heal), NOT preserved as INACCESSIBLE
         chatInfo = await testDatabase.chatInfo.getChatInfo(123)
         assert chatInfo is not None
-        assert chatInfo.get("bot_status") == ChatBotStatus.INACCESSIBLE
+        assert chatInfo.get("bot_status") == ChatBotStatus.ACTIVE
 
         # Assert: Other fields were updated
         assert chatInfo["title"] == "New Title"

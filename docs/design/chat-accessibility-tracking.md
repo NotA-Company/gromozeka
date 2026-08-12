@@ -36,17 +36,27 @@ the body below in these ways:
   repository method.
 - **`ChatInfoRepository.setChatBotStatus` and `ChatInfoRepository.getInactiveChatIds`
   were REMOVED.** Persistence of `bot_status` goes through the existing
-  `updateChatInfo`, which gained an optional keyword-only argument
-  `botStatus: Optional[ChatBotStatus] = None`:
-  - `None` (the default) → `bot_status` is omitted from the upsert's `values` *and* its
-    `CONFLICT`-UPDATE expressions. The routine every-message refresh callers pass
-    nothing, so a refresh can never clobber an `INACCESSIBLE` row back to `ACTIVE`
-    (the non-clobber invariant from §3 of the body still holds, now implemented by
-    argument omission rather than by a hardcoded column skip).
-  - provided → `bot_status` is written into both the INSERT `values` and the
-    CONFLICT-UPDATE expressions. `CacheService.setChatInfo` forwards
-    `info.get("bot_status")`, so `markChatInaccessible` / `markChatActive` reach the
-    column via the same upsert path as every other `chat_info` write.
+  `updateChatInfo`, which gained a keyword-only argument
+  `botStatus: Optional[ChatBotStatus] = ChatBotStatus.ACTIVE` (default `ACTIVE`,
+  NOT `None`). `bot_status` is unconditionally included in BOTH the INSERT `values`
+  and the `CONFLICT`-UPDATE expressions of the provider upsert (via `ExcludedValue`);
+  `CacheService.setChatInfo` forwards `info["bot_status"]` (direct subscript, NOT
+  `.get(...)`), so `markChatInaccessible` / `markChatActive` reach the column via the
+  same upsert path as every other `chat_info` write.
+- **SUPERSEDED (2026-08-12): the non-clobber rule from §3.4 of the body.** The shipped
+  implementation does NOT preserve an existing `bot_status` value across a routine
+  refresh — it self-heals instead. `TheBot.getChatInfo` hardcodes
+  `"bot_status": ChatBotStatus.ACTIVE` in both platform return dicts, and
+  `updateChatInfo`'s default is `ACTIVE`, so the every-message refresh path
+  (`BaseBotHandler.updateChatInfo` → `TheBot.getChatInfo` → `CacheService.setChatInfo`
+  → repo `updateChatInfo`) ALWAYS writes `ACTIVE` to the DB. A transient
+  `INACCESSIBLE` set by `markChatInaccessible` (when a `getChatAdmins` probe fails)
+  therefore self-heals to `ACTIVE` the next time the bot receives a message from that
+  chat — which is correct, because successfully receiving a message proves the chat is
+  accessible. `bot_status` is a short-lived "getChatAdmins probe failed" flag, not a
+  permanent state. For the current behaviour, see
+  [`docs/llm/database.md`](../llm/database.md) and
+  [`docs/database-schema.md`](../database-schema.md).
 - **The `idx_chat_info_bot_status` index was REMOVED from migration 026.** Migration 026
   now adds ONLY the `bot_status TEXT NOT NULL DEFAULT 'active'` column (no supporting
   index). `down()` drops the column (SQLite ≥3.35); there is no index to drop.
@@ -58,15 +68,14 @@ the body below in these ways:
   cache miss, so the first post-restart probe of a known-dead chat hits the DB once
   and is then cached — there is no separate warm-up pass.
 
-**Behavioral nuance (self-healing).** The every-message refresh writes a
-`bot_status`-less `ChatInfoDict` into the `CacheService` cache. Until the next
-`getChatAdmins` failure re-marks the chat `INACCESSIBLE`, `isChatInaccessible` returns
-`False` for a chat that is `INACCESSIBLE` in the DB. The DB column and the
-`getUserChats` / `getAllGroupChats` `botStatus` filter remain authoritative throughout
-— only the in-process cache-aside short-circuit is briefly lenient — and the next
-failure probe restores the cache. This is the trade-off for dropping the in-memory
-mirror: no startup-seed, no eviction bookkeeping, at the cost of a transient
-cache/DB divergence on the read-short-circuit path.
+**Behavioral nuance (self-heal on refresh).** The every-message refresh writes
+`bot_status = ACTIVE` to BOTH the in-process `CacheService` cache AND the DB (see the
+SUPERSEDED bullet above). A transient `INACCESSIBLE` therefore self-heals the moment
+the bot receives its next message from the chat; the only window in which
+`isChatInaccessible` can return `True` for a now-reachable chat is between the failed
+`getChatAdmins` probe and the next inbound message. Chat-list queries
+(`getUserChats` / `getAllGroupChats`) read the DB column, so they reflect whatever the
+most recent refresh wrote.
 
 For everything else — binding decisions (no `bot_left_at`, no event wiring, no
 Phase 3), the `ChatBotStatus` enum values, the lazy mark-on-failure / activity-based
@@ -293,6 +302,13 @@ DB rows always carry the column, platform-sourced write dicts omit it, and the u
 imported in that module.
 
 ### 3.4 `updateChatInfo` non-clobber rule (CRITICAL)
+
+> **SUPERSEDED (2026-08-12):** the non-clobber rule described in this section was
+> ABANDONED in the shipped implementation in favour of the self-heal-on-refresh
+> behaviour (the every-message refresh always writes `ACTIVE`). See the
+> "Implementation Divergence (2026-08-12)" note near the top of this document, and
+> [`docs/llm/database.md`](../llm/database.md) / [`docs/database-schema.md`](../database-schema.md)
+> for the current behaviour. The text below is preserved as historical rationale.
 
 The accessibility subsystem **owns** the `bot_status` column. The routine chat-info
 refresh path must not touch it.

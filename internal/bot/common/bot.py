@@ -7,13 +7,17 @@ The main class, TheBot, abstracts platform-specific differences and provides a c
 API for bot operations across different messaging platforms.
 """
 
+import asyncio
 import hashlib
 import logging
-from collections.abc import MutableSet, Sequence
-from typing import Any, Dict, List, Optional, Tuple, Union
+import random
+from collections.abc import Awaitable, Callable, MutableSet, Sequence
+from datetime import timedelta
+from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
 
 import magic
 import telegram
+import telegram.error
 import telegram.ext
 
 import lib.max_bot as libMax
@@ -21,6 +25,12 @@ import lib.max_bot.exceptions as maxExceptions
 import lib.max_bot.models as maxModels
 from internal.bot.common.models import CallbackButton, TypingAction
 from internal.bot.common.typing_manager import TypingManager
+from internal.bot.constants import (
+    TELEGRAM_RETRY_AFTER_CAP_SECONDS,
+    TELEGRAM_SEND_MAX_ATTEMPTS,
+    TELEGRAM_SEND_RETRY_DELAY_BASE,
+    TELEGRAM_SEND_RETRY_JITTER,
+)
 from internal.bot.models import BotProvider, ChatType, EnsuredMessage, MessageRecipient, MessageSender
 from internal.database.models import ChatBotStatus, ChatInfoDict
 from internal.models import MessageId, MessageType
@@ -29,6 +39,10 @@ from lib import utils
 from lib.markdown.parser import markdownToMarkdownV2
 
 logger = logging.getLogger(__name__)
+
+
+_TelegramSendReturnT = TypeVar("_TelegramSendReturnT")
+"""TypeVar for the return type of :meth:`TheBot._retryTelegramSend`."""
 
 
 class TheBot:
@@ -336,7 +350,8 @@ class TheBot:
         if self.botProvider == BotProvider.TELEGRAM and self.tgBot is not None:
             ret = None
             if text is None:
-                ret = await self.tgBot.edit_message_reply_markup(
+                ret = await self._retryTelegramSend(
+                    self.tgBot.edit_message_reply_markup,
                     chat_id=chatId,
                     message_id=messageId.asInt(),
                     reply_markup=self._keyboardToTelegram(inlineKeyboard) if inlineKeyboard is not None else None,
@@ -346,7 +361,8 @@ class TheBot:
                 if useMarkdown:
                     kwargs["parse_mode"] = telegram.constants.ParseMode.MARKDOWN_V2
                     text = markdownToMarkdownV2(text)
-                ret = await self.tgBot.edit_message_text(
+                ret = await self._retryTelegramSend(
+                    self.tgBot.edit_message_text,
                     text=text,
                     chat_id=chatId,
                     message_id=messageId.asInt(),
@@ -660,6 +676,70 @@ class TheBot:
 
         return ensuredReplyList
 
+    async def _retryTelegramSend(
+        self,
+        sendCallable: Callable[..., Awaitable[_TelegramSendReturnT]],
+        **kwargs: Any,
+    ) -> _TelegramSendReturnT:
+        """Retry a Telegram Bot API send/edit call on transient errors.
+
+        Retries on ``telegram.error.TimedOut``, other ``telegram.error.NetworkError``
+        (excluding ``BadRequest``), and ``telegram.error.RetryAfter``. Non-retryable
+        exceptions (``BadRequest``, ``Forbidden``, ``Conflict``, ``ChatMigrated``,
+        etc.) propagate immediately on the first attempt.
+
+        ``BadRequest`` subclasses ``NetworkError`` but is semantically a 400
+        (client error), so it is excluded from retry and re-raised.
+
+        Args:
+            sendCallable: The bound ``self.tgBot.send_*`` / ``edit_message_*``
+                coroutine factory. Called as ``await sendCallable(**kwargs)``.
+            **kwargs: Keyword arguments forwarded verbatim to ``sendCallable``.
+
+        Returns:
+            Whatever ``sendCallable`` returns on a successful attempt
+            (typically ``telegram.Message`` or ``Sequence[telegram.Message]``).
+
+        Raises:
+            The last transient exception if all attempts are exhausted; the
+            original non-retryable exception immediately if one is raised.
+        """
+        for attempt in range(TELEGRAM_SEND_MAX_ATTEMPTS):
+            try:
+                return await sendCallable(**kwargs)
+            except telegram.error.BadRequest:
+                # BadRequest is a client error (400), never retry
+                raise
+            except telegram.error.RetryAfter as e:
+                if attempt == TELEGRAM_SEND_MAX_ATTEMPTS - 1:
+                    # Last attempt exhausted, re-raise
+                    raise
+                # Honor retry_after, capped to prevent absurdly long sleeps
+                if isinstance(e.retry_after, timedelta):
+                    delaySeconds = e.retry_after.total_seconds()
+                else:
+                    delaySeconds = float(e.retry_after)
+                delaySeconds = min(delaySeconds, TELEGRAM_RETRY_AFTER_CAP_SECONDS)
+                logger.warning(
+                    f"Telegram send (attempt {attempt + 1}/{TELEGRAM_SEND_MAX_ATTEMPTS}), "
+                    f"honoring retry_after={e.retry_after}, sleeping {delaySeconds:.1f}s: "
+                    f"{type(e).__name__}#{e}"
+                )
+                await asyncio.sleep(delaySeconds)
+            except telegram.error.NetworkError as e:
+                if attempt == TELEGRAM_SEND_MAX_ATTEMPTS - 1:
+                    # Last attempt exhausted, re-raise
+                    raise
+                # Exponential backoff with jitter
+                delay = TELEGRAM_SEND_RETRY_DELAY_BASE * (2**attempt) + random.uniform(0, TELEGRAM_SEND_RETRY_JITTER)
+                logger.warning(
+                    f"Telegram send (attempt {attempt + 1}/{TELEGRAM_SEND_MAX_ATTEMPTS}), "
+                    f"retrying in {delay:.2f}s: {type(e).__name__}#{e}"
+                )
+                await asyncio.sleep(delay)
+        # This line is unreachable — the loop always returns or raises on the last iteration
+        raise RuntimeError("_retryTelegramSend: exhausted retry loop without return")  # pragma: no cover
+
     async def _sendTelegramMessage(
         self,
         replyToMessage: Optional[EnsuredMessage],
@@ -767,20 +847,33 @@ class TheBot:
                 if tryMarkdownV2 and messageText is not None:
                     try:
                         messageTextParsed = markdownToMarkdownV2(addMessagePrefix + messageText)
-                        # logger.debug(f"Sending MarkdownV2: {replyText}")
-                        # TODO: One day start using self.tgBot
-                        replyMessage = await self.tgBot.send_photo(
-                            caption=messageTextParsed,
-                            parse_mode=telegram.constants.ParseMode.MARKDOWN_V2,
-                            **replyKwargs,
-                        )
                     except Exception as e:
-                        logger.error(f"Error while sending MarkdownV2 reply to message: {type(e).__name__}#{e}")
-                        # Probably error in markdown formatting, fallback to raw text
+                        # Markdown conversion failed (formatter bug, bad input, etc.) —
+                        # broad catch is intentional: the markdown pipeline is best-effort
+                        # and must never prevent sending the message at all.
+                        logger.error(f"Error formatting markdown: {type(e).__name__}#{e}")
+                        messageTextParsed = None
+                    else:
+                        try:
+                            # logger.debug(f"Sending MarkdownV2: {replyText}")
+                            # TODO: One day start using self.tgBot
+                            replyMessage = await self._retryTelegramSend(
+                                self.tgBot.send_photo,
+                                caption=messageTextParsed,
+                                parse_mode=telegram.constants.ParseMode.MARKDOWN_V2,
+                                **replyKwargs,
+                            )
+                        except telegram.error.BadRequest as e:
+                            # Telegram rejected the markdown — fallback to raw text.
+                            # Transient errors (TimedOut/NetworkError/RetryAfter) have
+                            # already been retried inside _retryTelegramSend and bubble
+                            # past this except to the outer handler.
+                            logger.error(f"Error while sending MarkdownV2 reply to message: {type(e).__name__}#{e}")
 
                 if replyMessage is None:
                     _messageText = messageText if messageText is not None else ""
-                    replyMessage = await self.tgBot.send_photo(
+                    replyMessage = await self._retryTelegramSend(
+                        self.tgBot.send_photo,
                         caption=addMessagePrefix + _messageText,
                         **replyKwargs,
                     )
@@ -857,19 +950,33 @@ class TheBot:
                     if tryMarkdownV2:
                         try:
                             messageTextParsed = markdownToMarkdownV2(addMessagePrefix + _messageText)
-                            # logger.debug(f"Sending MarkdownV2: {replyText}")
-                            replyMessage = await self.tgBot.send_message(
-                                text=messageTextParsed,
-                                parse_mode=telegram.constants.ParseMode.MARKDOWN_V2,
-                                **replyKwargs,
-                            )
                         except Exception as e:
-                            logger.error(f"Error while sending MarkdownV2 reply to message: {type(e).__name__}#{e}")
-                            # Probably error in markdown formatting, fallback to raw text
+                            # Markdown conversion failed (formatter bug, bad input, etc.) —
+                            # broad catch is intentional: the markdown pipeline is best-effort
+                            # and must never prevent sending the message at all.
+                            logger.error(f"Error formatting markdown: {type(e).__name__}#{e}")
+                            messageTextParsed = None
+                        else:
+                            try:
+                                # logger.debug(f"Sending MarkdownV2: {replyText}")
+                                replyMessage = await self._retryTelegramSend(
+                                    self.tgBot.send_message,
+                                    text=messageTextParsed,
+                                    parse_mode=telegram.constants.ParseMode.MARKDOWN_V2,
+                                    **replyKwargs,
+                                )
+                            except telegram.error.BadRequest as e:
+                                # Telegram rejected the markdown — fallback to raw text.
+                                # Transient errors (TimedOut/NetworkError/RetryAfter) have
+                                # already been retried inside _retryTelegramSend and bubble
+                                # past this except to the outer handler.
+                                logger.error(f"Error while sending MarkdownV2 reply to message: {type(e).__name__}#{e}")
 
                     if replyMessage is None:
-                        replyMessage = await self.tgBot.send_message(
-                            text=addMessagePrefix + _messageText, **replyKwargs
+                        replyMessage = await self._retryTelegramSend(
+                            self.tgBot.send_message,
+                            text=addMessagePrefix + _messageText,
+                            **replyKwargs,
                         )
 
                     if replyMessage is not None:

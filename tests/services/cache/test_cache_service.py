@@ -29,6 +29,7 @@ Example:
         ./venv/bin/pytest tests/services/cache/test_cache_service.py
 """
 
+import datetime
 import gc
 import json
 import unittest
@@ -41,7 +42,7 @@ import pytest
 
 from internal.bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
 from internal.database import Database
-from internal.database.models import ChatBotStatus, MemoryType, UserMemorySource
+from internal.database.models import ChatBotStatus, ChatInfoDict, MemoryType, UserMemorySource
 from internal.database.repositories.user_memories import UserMemoriesRepository
 
 # Import directly to avoid circular dependencies
@@ -387,16 +388,22 @@ class TestChatInfo(unittest.IsolatedAsyncioTestCase):
     async def testSetChatInfo(self) -> None:
         """Test setting chat info.
 
-        Verifies that chat information can be set and retrieved correctly.
-        Note: setChatInfo writes directly to DB, so no dirty tracking needed.
+        Verifies that a complete ChatInfoDict (including the required bot_status
+        key) can be set and retrieved unchanged. Note: setChatInfo writes
+        directly to DB, so no dirty tracking needed.
         """
-        testInfo = {
+        now = datetime.datetime.now()
+        testInfo: ChatInfoDict = {
+            "chat_id": 123,
             "title": "Test Chat",
             "type": "group",
             "username": None,
             "is_forum": False,
-        }  # type: ignore[typeddict-item]
-        await self.cache.setChatInfo(123, testInfo)  # type: ignore[arg-type]
+            "bot_status": ChatBotStatus.ACTIVE,
+            "created_at": now,
+            "updated_at": now,
+        }
+        await self.cache.setChatInfo(123, testInfo)
 
         info = await self.cache.getChatInfo(123)
         self.assertEqual(info, testInfo)
@@ -1060,7 +1067,7 @@ class TestChatAccessibilityTracking(unittest.IsolatedAsyncioTestCase):
     (returns True for unknown/INACCESSIBLE chats, False for ACTIVE),
     markChatInaccessible/markChatActive (set bot_status via setChatInfo,
     return False if chat not found), and the service→repo boundary
-    (setChatInfo passes botStatus=info.get("bot_status")).
+    (setChatInfo passes botStatus=info["bot_status"]).
     """
 
     async def asyncSetUp(self) -> None:
@@ -1277,54 +1284,46 @@ class TestChatAccessibilityTracking(unittest.IsolatedAsyncioTestCase):
         # Assert: Method returns False (no DB to fetch from)
         assert result is False
 
-    async def test_setChatInfo_withNoBotStatus_passesNoneToUpdateChatInfo(self) -> None:
-        """setChatInfo with no bot_status key passes botStatus=None to updateChatInfo.
+    async def test_setChatInfo_passesBotStatusThroughToUpdateChatInfo(self) -> None:
+        """setChatInfo forwards info['bot_status'] to updateChatInfo as botStatus.
 
-        Verifies the service→repo boundary contract: when setChatInfo is called
-        with a platform-derived ChatInfoDict that omits bot_status (as TheBot.getChatInfo
-        does), the repository's updateChatInfo receives botStatus=None, which signals
-        the repo to omit bot_status from the upsert (non-clobber behavior).
+        Verifies the service→repo boundary contract: setChatInfo reads
+        info["bot_status"] and passes it through as the botStatus kwarg to
+        ChatInfoRepository.updateChatInfo. This is the load-bearing path that
+        markChatInaccessible/markChatActive rely on — they mutate
+        chatInfo["bot_status"] and call setChatInfo, so the new status must
+        reach the repository to be persisted.
 
-        This test asserts the boundary signal (botStatus=None). The DB persistence
-        invariant (existing bot_status is preserved when botStatus=None) is covered by
-        the repo-layer real-DB test:
-        tests/database/repositories/test_chat_info.py::test_updateChatInfo_nonClobberPreservesBotStatus.
+        ChatInfoDict requires the bot_status key (it is never omitted), and
+        botStatus=None is not a valid repo input — the active default is used
+        instead.
         """
-        # Arrange: Chat is INACCESSIBLE in DB (simulate prior markChatInaccessible)
-        chatInfoInDb = {
+        # Arrange: a complete ChatInfoDict with bot_status=INACCESSIBLE,
+        # mirroring what markChatInaccessible produces before calling setChatInfo
+        now = datetime.datetime.now()
+        chatInfo: ChatInfoDict = {
             "chat_id": 123,
-            "title": "Old Title",
+            "title": "Test Chat",
             "type": "group",
             "username": None,
             "is_forum": False,
             "bot_status": ChatBotStatus.INACCESSIBLE,
-            "created_at": "2024-01-01T00:00:00",
-            "updated_at": "2024-01-01T00:00:00",
-        }  # type: ignore[typeddict-item]
-        self.mockDb.chatInfo.getChatInfo = createAsyncMock(returnValue=chatInfoInDb)
+            "created_at": now,
+            "updated_at": now,
+        }
 
-        # Act: setChatInfo is called with a platform-derived dict (NO bot_status key)
-        # This mirrors the shape returned by TheBot.getChatInfo after the fix
-        platformDerivedInfo = {
-            "chat_id": 123,
-            "title": "New Title",
-            "type": "group",
-            "username": "newusername",
-            "is_forum": True,
-            "created_at": "2024-01-02T00:00:00",
-            "updated_at": "2024-01-02T00:00:00",
-        }  # type: ignore[typeddict-item]
-        await self.cache.setChatInfo(123, platformDerivedInfo)  # type: ignore[arg-type]
+        # Act
+        await self.cache.setChatInfo(123, chatInfo)
 
-        # Assert: updateChatInfo was called with botStatus=None (key missing → .get() returns None)
+        # Assert: updateChatInfo received botStatus=INACCESSIBLE (round-tripped, not None)
         self.mockDb.chatInfo.updateChatInfo.assert_called_once()
         args = self.mockDb.chatInfo.updateChatInfo.call_args
         assert args.kwargs.get("chatId") == 123
         assert args.kwargs.get("type") == "group"
-        assert args.kwargs.get("title") == "New Title"
-        assert args.kwargs.get("username") == "newusername"
-        assert args.kwargs.get("isForum") is True
-        assert args.kwargs.get("botStatus") is None  # Critical: None means non-clobber
+        assert args.kwargs.get("title") == "Test Chat"
+        assert args.kwargs.get("username") is None
+        assert args.kwargs.get("isForum") is False
+        assert args.kwargs.get("botStatus") == ChatBotStatus.INACCESSIBLE
 
 
 if __name__ == "__main__":
