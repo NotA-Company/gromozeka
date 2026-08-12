@@ -24,7 +24,7 @@ See [CHANGELOG.md](CHANGELOG.md) for notable changes.
 - **Web search**: Yandex Search integration with caching and rate limiting
 - **Chat summarization**: Summarize conversations and topics
 - **Hierarchical TOML config**: Layered `--config-dir` overrides with `${VAR}` substitution
-- **SQLite with provider abstraction**: PostgreSQL and MySQL providers exist; 19 versioned migrations
+- **SQLite with provider abstraction**: PostgreSQL and MySQL providers exist; 26 versioned migrations
 - **Rate limiting**: Sliding window algorithm with multiple queues
 - **File storage**: Local filesystem or S3-compatible via `StorageService`
 - **Custom handler loading**: Dynamic handler loading via TOML config

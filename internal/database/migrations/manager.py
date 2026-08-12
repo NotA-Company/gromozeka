@@ -309,30 +309,68 @@ class MigrationManager:
         version is updated after each successful rollback. If a rollback fails,
         the process stops and raises an exception.
 
+        The number of steps is resolved against the current version, so this is
+        equivalent to ``rollbackTo(currentVersion - steps)``. Prefer
+        :meth:`rollbackTo` in callers (especially tests) that need a stable
+        target version independent of how many migrations exist above it.
+
         Args:
-            steps: Number of migrations to rollback. Defaults to 1.
+            steps: Number of migrations to rollback. Must be >= 0. Defaults to 1.
             sqlProvider: SQL provider instance for database operations.
 
         Raises:
-            MigrationError: If rollback fails.
+            MigrationError: If ``steps`` is negative or a rollback fails.
             Exception: If database operations fail during rollback execution.
         """
+        if steps < 0:
+            raise MigrationError(f"Cannot roll back a negative number of steps: {steps}")
+
+        currentVersion: int = await self.getCurrentVersion(sqlProvider=sqlProvider)
+        targetVersion: int = max(0, currentVersion - steps)
+        await self.rollbackTo(targetVersion, sqlProvider=sqlProvider)
+
+    async def rollbackTo(self, targetVersion: int, *, sqlProvider: BaseSQLProvider) -> None:
+        """Rollback migrations down to a specific target version.
+
+        Rolls back every registered migration whose version is greater than
+        ``targetVersion`` (and at most the current version), in reverse order.
+        After this returns the database is at ``targetVersion``. If the current
+        version is already at or below ``targetVersion`` this is a no-op.
+
+        Unlike :meth:`rollback` (which counts steps from the current version
+        and therefore drifts whenever a new migration is added on top), this
+        method targets a fixed version number, so callers that need a stable
+        pre-N baseline are insulated from unrelated migrations being added
+        above ``N``.
+
+        Args:
+            targetVersion: Version to roll back to. Must be >= 0.
+            sqlProvider: SQL provider instance for database operations.
+
+        Raises:
+            MigrationError: If ``targetVersion`` is negative or a rollback fails.
+            Exception: If database operations fail during rollback execution.
+        """
+        if targetVersion < 0:
+            raise MigrationError(f"Target version {targetVersion} is negative")
+
         currentVersion: int = await self.getCurrentVersion(sqlProvider=sqlProvider)
 
-        if currentVersion == 0:
-            logger.info("No migrations to rollback")
+        if targetVersion >= currentVersion:
+            logger.info(f"Already at or below target version {targetVersion}; nothing to roll back")
             return
 
-        # Get migrations to rollback
+        # Get migrations to rollback: those strictly above the target and at or
+        # below the current version, in reverse (descending) order.
         migrationsToRollback: List[Type[BaseMigration]] = [
-            m for m in reversed(self.migrations) if m.version <= currentVersion
-        ][:steps]
+            m for m in reversed(self.migrations) if targetVersion < m.version <= currentVersion
+        ]
 
         if not migrationsToRollback:
             logger.info("No migrations to rollback")
             return
 
-        logger.info(f"Rolling back {len(migrationsToRollback)} migrations")
+        logger.info(f"Rolling back {len(migrationsToRollback)} migrations to reach version {targetVersion}")
 
         # Rollback each migration
         for migrationClass in migrationsToRollback:

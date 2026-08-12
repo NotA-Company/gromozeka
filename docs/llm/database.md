@@ -44,7 +44,7 @@
 | `chatUsers` | `updateChatUser(chatId, userId, username, fullName)` | `None` | Upsert user in chat |
 | `chatUsers` | `updateUserMetadata(chatId, userId, metadata)` | `None` | Update user metadata (JSON string). The `metadata` column carries an optional `memoryRefinement` sub-dict — write nested sub-dicts via read-modify-write through this method directly, NOT `setUserMetadata(isUpdate=True)` (see [`tasks.md`](tasks.md) §3 shallow-merge gotcha) |
 | `chatUsers` | `getChatUsers(chatId, limit?, minMessages?, lastActiveDays?, seenSince?, dataSource?)` | `List[ChatUserDict]` | List users in a chat. Default mode: order by `updated_at DESC` (most recently active first) with optional `seenSince` filter. Activity-filtered mode (any of `minMessages` / `lastActiveDays` set): order by `messages_count DESC` with both filters applied |
-| `chatUsers` | `getUserChats(userId)` | `List[ChatInfoDict]` | Get all chats for user |
+| `chatUsers` | `getUserChats(userId, *, botStatus=ChatBotStatus.ACTIVE, dataSource?)` | `List[ChatInfoDict]` | Get all chats for user. `botStatus` filter (added by `migration_026`): default `ChatBotStatus.ACTIVE` excludes inaccessible chats; `None` returns all. Applied as `(:botStatus IS NULL OR ci.bot_status = :botStatus)` against the `chat_info` JOIN. `getAllGroupChats(...)` shares the same `botStatus` parameter and predicate |
 | `mediaAttachments` | `addMediaAttachment(...)` | `None` | Add media attachment record |
 | `mediaAttachments` | `getMediaAttachment(mediaId)` | `Optional[MediaAttachmentDict]` | Get media by unique ID |
 | `mediaAttachments` | `updateMediaAttachment(mediaId, ...)` | `bool` | Update media record fields (only non-`None` kwargs are written; `updated_at` is refreshed). Used by `_transcribeMedia` to terminalize STT rows (`PENDING`→`DONE`+`description` on success | `PENDING`→`FAILED` on failure/exception). Single attachments have no concurrent writes, so plain last-write semantics suffice — there is no CAS (the former `setStatusVerified` CAS helper was removed when the design was simplified). |
@@ -220,7 +220,7 @@ db.chatMessages.saveChatMessage(..., dataSource="readonly")  # ERROR!
    ```bash
    ls -1 internal/database/migrations/versions/ | grep migration_ | sort -V | tail -1
    ```
-   If the last is `migration_024_*.py`, the next is `025`. Never reuse a version number — `migration_016` is already taken by `migration_016_add_stat_tables.py`, so the example below uses `025`.
+   If the last is `migration_025_*.py`, the next is `026`. Never reuse a version number — `migration_016` is already taken by `migration_016_add_stat_tables.py`, so the example below uses `025`.
 
 2. **Create the migration file** with the pattern `migration_{version:03d}_{description}.py`
 
@@ -325,7 +325,7 @@ All defined in `internal/database/models.py`. Dict keys are snake_case to mirror
 | TypedDict | Purpose |
 |---|---|
 | `ChatMessageDict` | Stored message (with optional `score: NotRequired[float]` populated by `chatSearch.searchChatMessages`) |
-| `ChatInfoDict` | Chat metadata |
+| `ChatInfoDict` | Chat metadata (`bot_status: NotRequired[ChatBotStatus]` — DB-row-backed reads include it; platform-sourced write dicts from `TheBot.getChatInfo` omit it because the accessibility subsystem owns the column; added by `migration_026`) |
 | `ChatTopicInfoDict` | Chat topic / forum thread metadata |
 | `ChatUserDict` | User in chat |
 | `MediaAttachmentDict` | Media file record |
@@ -466,9 +466,9 @@ This keeps handler-facing signatures stable (Decision D6 — `embeddingModel: st
 | `chatMessages` | `ChatMessagesRepository` | `chat_messages.py` |
 | `chatEmbeddings` | `ChatEmbeddingsRepository` | `chat_embeddings.py` |
 | `chatSearch` | `ChatSearchRepository` | `chat_search.py` (owns `searchChatMessages`) |
-| `chatUsers` | `ChatUsersRepository` | `chat_users.py` |
+| `chatUsers` | `ChatUsersRepository` | `chat_users.py` (`getUserChats` / `getAllGroupChats` accept `botStatus: Optional[ChatBotStatus] = ChatBotStatus.ACTIVE` — default excludes inaccessible chats; `None` returns all. Applied as the predicate `(:botStatus IS NULL OR ci.bot_status = :botStatus)` against the `chat_info` JOIN, backed by `idx_chat_info_bot_status` added in `migration_026`) |
 | `chatSettings` | `ChatSettingsRepository` | `chat_settings.py` |
-| `chatInfo` | `ChatInfoRepository` | `chat_info.py` |
+| `chatInfo` | `ChatInfoRepository` | `chat_info.py` (chat metadata; owns the `bot_status` accessibility column added by `migration_026`). New methods: `setChatBotStatus(chatId, status: ChatBotStatus) -> bool` (conditional `UPDATE chat_info SET bot_status = :status WHERE chat_id = :chatId`; returns `True` if the chat exists AND is now at the target status — a no-op row at the same status returns `True`, a missing chat returns `False`) and `getInactiveChatIds() -> List[Dict[str, int]]` (`SELECT chat_id FROM chat_info WHERE bot_status = 'inaccessible'`; backs `CacheService`'s startup seed of the in-memory known-inaccessible set). The routine `updateChatInfo` upsert **intentionally omits** `bot_status` from both `values` and `updateExpressions` so a refresh can never clobber an `INACCESSIBLE` row back to `ACTIVE` — `INSERT` takes `DEFAULT 'active'`, `CONFLICT` preserves the existing value. |
 | `chatSummarization` | `ChatSummarizationRepository` | `chat_summarization.py` |
 | `userMemories` | `UserMemoriesRepository` | `user_memories.py` |
 | `mediaAttachments` | `MediaAttachmentsRepository` | `media_attachments.py` |
@@ -820,7 +820,7 @@ success, value = sqlToCustomType("123", Union[int, str])
    - Validate that all historical migrations are accounted for
 
 **Known implemented migrations:**
-- `migration_001` to `migration_025` — Baseline migrations through latest schema updates
+- `migration_001` to `migration_026` — Baseline migrations through latest schema updates
 - `migration_010`: Adds `updated_by INTEGER NOT NULL` to `chat_settings` table (audit trail)
 - `migration_011` and `migration_012`: Additional schema improvements
 - `migration_013`: Removes `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns (explicit timestamp handling)
@@ -836,6 +836,7 @@ success, value = sqlToCustomType("123", Union[int, str])
 - `migration_023`: Idempotent data migration renaming the `chat_settings` key `memory-injection-enabled` → `memory-enabled` via `UPDATE chat_settings SET key='memory-enabled' WHERE key='memory-injection-enabled'`. Companion to the in-code `MEMORY_INJECTION_ENABLED` → `MEMORY_ENABLED` `ChatSettingsKey` enum rename.
 - `migration_024`: Adds `idx_bayes_tokens_updated_at` index on `bayes_tokens (updated_at)` — optimizes the age-based `DatabaseBayesStorage.cleanupOldTokens` DELETE (`WHERE updated_at < :cutoffTime AND total_count <= :maxCount`), which runs across ALL chats from `HandlersManager._cleanupOldData()` on a weekly cron and at shutdown. The existing `bayes_tokens_total_idx(total_count)` and `bayes_tokens_chat_idx(chat_id)` do not help that DELETE (no chat_id filter; `updated_at` is the selective range predicate).
 - `migration_025`: Normalises embedding provenance into a new [`models`](#55-models-lookup-table-embedding-provenance) lookup table (`model_id` integer PK with `UNIQUE(model, dimensions)`); swaps `chat_messages` and `user_memories` to carry `model_id` instead of the legacy `(model, dimensions)` / `(embedding_model, embedding_dimensions)` pairs. **DROPS the `message_embeddings` BLOB side table** (created by `migration_017`) and its `idx_message_embeddings_chat_model` index (`migration_018`). **DROPS both vec0 virtual-table families** (`vec_message_embeddings_{N}`, `vec_user_memories_{N}`) — they are lazily recreated at runtime with `model_id INTEGER PARTITION KEY` (was `model TEXT`). Temp-table swap pattern from `migration_013`. `down()` is schema-correct but data-lossy for vectors (the dropped BLOBs cannot be regenerated from `model_id` alone; vec0 tables are not re-created by `down()` — they re-populate via the normal backfill cron). DB backup strongly recommended before running the migration. See [`docs/plans/embedding-model-lookup-refactor-v1.md`](../plans/embedding-model-lookup-refactor-v1.md).
+- `migration_026`: Adds `bot_status TEXT NOT NULL DEFAULT 'active'` to [`chat_info`](../../docs/database-schema-llm.md#chat_info) + the `idx_chat_info_bot_status` index. Backs the chat-accessibility-tracking subsystem (lazy mark-on-failure at `TheBot.getChatAdmins` catch sites, activity-based recovery in `MessagePreprocessorHandler`, an in-memory known-inaccessible set in `CacheService`, and an optional `botStatus` filter on every chat-listing repository method). Portable DDL: string-literal `DEFAULT 'active'` backfills every existing row to `ACTIVE` as part of the `ALTER TABLE` (no separate backfill; no `AUTOINCREMENT`/`SERIAL`/`DEFAULT CURRENT_TIMESTAMP`). `down()` drops the index then `DROP COLUMN bot_status` (SQLite ≥3.35). See [`docs/design/chat-accessibility-tracking.md`](../design/chat-accessibility-tracking.md).
 
 ---
 

@@ -16,10 +16,12 @@ into one-concern-per-test functions following the pattern in
 Every assertion from the monolith is preserved across the split.
 
 Approach: the shared ``testDatabase`` fixture auto-migrates to the latest
-version (so ``user_memories`` exists, empty).  Each test rolls back
-migration 020 (six steps -- 025, 024, 023, 022, 021, 020 -- because
-021/022/023/024/025 sit above 020), seeds the legacy stores, then exercises
-``up()`` / ``down()`` directly.
+version (so ``user_memories`` exists, empty).  Each test rolls back to the
+pre-020 state (version 19) via ``rollbackTo(targetVersion=19)`` -- this
+runs ``down()`` for every migration above 020 (020 included), seeds the
+legacy stores, then exercises ``up()`` / ``down()`` directly. Targeting a
+fixed version (rather than ``rollback(steps=N)``) keeps the baseline
+stable when new migrations are added above 020.
 
 Idempotency note: migration 020's backfill helpers use a COUNT+diff guard
 (not a pure sentinel probe) so a crash mid-backfill resumes the remaining
@@ -53,21 +55,21 @@ async def _tableNames(provider: BaseSQLProvider) -> set[str]:
 
 
 async def _rollbackToPre020(provider: BaseSQLProvider) -> None:
-    """Roll back migrations 025..020 to reach the pre-020 state (version 19).
+    """Roll back to version 19 to reach the pre-020 state.
 
-    Six steps are rolled back because migrations 025 (embedding-model
-    lookup refactor), 024 (bayes_tokens index), 023 (chat_settings key
-    rename), 022 (drop ``user_data``), and 021 (``user_memories.deleted_at``)
-    sit above 020:
+    ``rollbackTo(targetVersion=19)`` runs ``down()`` for every migration at
+    or below the current version with version > 19 -- i.e. 020 and
+    everything above it (currently 021/022/023/024/025, plus any later
+    migrations). The per-migration effects are:
 
-    - Step 1: 025's ``down()`` (restores the pre-refactor embedding
-      schema -- ``message_embeddings`` re-created empty, ``user_memories``
-      / ``chat_messages`` swapped back, ``models`` dropped).
-    - Step 2: 024's ``down()`` (drops the bayes_tokens index -- no-op on data).
-    - Step 3: 023's ``down()`` (reverse key rename -- no-op on an empty DB).
-    - Step 4: 022's ``down()`` (re-creates an **empty** ``user_data`` table).
-    - Step 5: 021's ``down()`` (no-op -- nullable additive column left in place).
-    - Step 6: 020's ``down()`` (drops ``user_memories``).
+    - 025's ``down()``: restores the pre-refactor embedding schema
+      (``message_embeddings`` re-created empty, ``user_memories`` /
+      ``chat_messages`` swapped back, ``models`` dropped).
+    - 024's ``down()``: drops the bayes_tokens index (no-op on data).
+    - 023's ``down()``: reverse key rename (no-op on an empty DB).
+    - 022's ``down()``: re-creates an **empty** ``user_data`` table.
+    - 021's ``down()``: no-op (nullable additive column left in place).
+    - 020's ``down()``: drops ``user_memories``.
 
     After this, ``user_memories`` does not exist, ``user_data`` exists
     (empty), and ``chat_users`` is untouched.
@@ -80,7 +82,7 @@ async def _rollbackToPre020(provider: BaseSQLProvider) -> None:
     """
     rollbackManager = MigrationManager()
     rollbackManager.loadMigrationsFromVersions()
-    await rollbackManager.rollback(steps=6, sqlProvider=provider)
+    await rollbackManager.rollbackTo(targetVersion=19, sqlProvider=provider)
 
 
 async def _seedLegacyStores(provider: BaseSQLProvider) -> None:

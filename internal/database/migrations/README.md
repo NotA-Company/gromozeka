@@ -46,8 +46,11 @@ internal/database/migrations/
     ├── migration_010_add_updated_by_to_chat_settings.py
     ├── migration_011_add_confidence_to_spam_messages.py
     ├── migration_012_unify_cache_tables.py
-    └── migration_013_remove_timestamp_defaults.py
+    ├── migration_013_remove_timestamp_defaults.py
+    └── migration_026_chat_accessibility_bot_status.py
 ```
+
+> **Note (pre-existing drift):** migrations 014–025 are not listed in the file tree or the Migration History table below — they were never backfilled into this README. The authoritative, complete migration list lives in [`docs/database-schema.md`](../../../docs/database-schema.md) §"Migration Files" and [`docs/database-schema-llm.md`](../../../docs/database-schema-llm.md). Adding `migration_026` here for the chat-accessibility feature; backfilling 014–025 is out of scope for this change.
 
 ### Key Components
 
@@ -77,7 +80,8 @@ Manages migration execution, version tracking, and rollbacks, dood!
 - [`loadMigrationsFromVersions()`](manager.py:68) - Auto-discover migrations from versions directory
 - [`getCurrentVersion()`](manager.py:136) - Get current migration version
 - [`migrate(targetVersion=None)`](manager.py:187) - Run pending migrations
-- [`rollback(steps=1)`](manager.py:247) - Rollback N migrations
+- [`rollback(steps=1)`](manager.py:247) - Rollback N migrations (resolves against the current version; delegates to `rollbackTo`)
+- [`rollbackTo(targetVersion=...)`](manager.py:332) - Rollback to a fixed version (stable across new migrations added on top; preferred in tests/helpers that need a pre-N baseline)
 - [`getStatus()`](manager.py:294) - Get migration status information
 
 #### Auto-Discovery System
@@ -121,8 +125,9 @@ This section documents all migrations in the system, dood!
 | 011 | [`migration_011_add_confidence_to_spam_messages.py`](versions/migration_011_add_confidence_to_spam_messages.py:1) | Add confidence column to spam/ham messages | spam_messages, ham_messages |
 | 012 | [`migration_012_unify_cache_tables.py`](versions/migration_012_unify_cache_tables.py:1) | Unify cache tables structure | cache, cache_storage |
 | 013 | [`migration_013_remove_timestamp_defaults.py`](versions/migration_013_remove_timestamp_defaults.py:1) | Remove DEFAULT CURRENT_TIMESTAMP from timestamp columns | 19 tables (settings, chat_messages, chat_settings, chat_users, chat_info, chat_stats, chat_user_stats, media_attachments, delayed_tasks, user_data, spam_messages, ham_messages, chat_topics, chat_summarization_cache, bayes_tokens, bayes_classes, cache_storage, cache, media_groups) |
+| 026 | [`migration_026_chat_accessibility_bot_status.py`](versions/migration_026_chat_accessibility_bot_status.py:1) | Add `bot_status` column and `idx_chat_info_bot_status` index to `chat_info` for chat-accessibility tracking | chat_info |
 
-**Total Migrations:** 13
+**Total Migrations:** 26
 
 **Important Notes:**
 - Migration 013 is critical for SQL portability - it recreates 19 tables to remove `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns

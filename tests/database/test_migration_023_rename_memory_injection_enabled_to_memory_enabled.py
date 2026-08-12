@@ -6,11 +6,11 @@ module hold the exact before/after strings), accompanying the ``MEMORY_ENABLED``
 enum rename.
 
 Approach: the shared ``testDatabase`` fixture auto-migrates to the latest
-version (so ``chat_settings`` exists, empty). The test rolls back the three
-newest migrations (025, 024 and 023) to reach the pre-rename state, seeds
-a row with the old key plus a couple of sibling rows with unrelated keys,
-then exercises
-``up()`` / ``down()`` directly and asserts:
+version (so ``chat_settings`` exists, empty). The test rolls back to the
+pre-rename state (version 22) via ``rollbackTo(targetVersion=22)`` (which
+runs ``down()`` for 023 and every migration above it), seeds a row with
+the old key plus a couple of sibling rows with unrelated keys, then
+exercises ``up()`` / ``down()`` directly and asserts:
 
 - The old-key row's ``key`` is renamed; its ``value`` is preserved verbatim.
 - Sibling rows for other keys are untouched.
@@ -82,14 +82,14 @@ async def test_migration_023_renamesKeyPreservingValue(testDatabase: Database) -
     """
     provider = await testDatabase.manager.getProvider(chatId=CHAT_ID, readonly=False)
 
-    # --- Roll back the three newest migrations (025, 024, 023) to reach
-    # the pre-rename state. Three steps: 025's down() (restores the
-    # pre-refactor embedding schema), 024's down() drops the bayes_tokens
-    # index (no-op on data) and 023's down() is the reverse rename (a
+    # --- Roll back to the pre-rename state (version 22): runs ``down()``
+    # for 023 and every migration above it. 025's down() restores the
+    # pre-refactor embedding schema, 024's down() drops the bayes_tokens
+    # index (no-op on data), and 023's down() is the reverse rename (a
     # no-op on an empty DB).
     rollbackManager = MigrationManager()
     rollbackManager.loadMigrationsFromVersions()
-    await rollbackManager.rollback(steps=3, sqlProvider=provider)
+    await rollbackManager.rollbackTo(targetVersion=22, sqlProvider=provider)
 
     # --- Seed: the target row under the OLD key, plus two sibling rows for
     # unrelated keys that must be left exactly as they were.
@@ -136,7 +136,7 @@ async def test_migration_023_downRevertsRename(testDatabase: Database) -> None:
 
     rollbackManager = MigrationManager()
     rollbackManager.loadMigrationsFromVersions()
-    await rollbackManager.rollback(steps=3, sqlProvider=provider)
+    await rollbackManager.rollbackTo(targetVersion=22, sqlProvider=provider)
 
     targetValue = "0"
     await _insertChatSetting(provider, CHAT_ID, OLD_KEY, targetValue)
@@ -171,7 +171,7 @@ async def test_migration_023_upIsIdempotent(testDatabase: Database) -> None:
 
     rollbackManager = MigrationManager()
     rollbackManager.loadMigrationsFromVersions()
-    await rollbackManager.rollback(steps=3, sqlProvider=provider)
+    await rollbackManager.rollbackTo(targetVersion=22, sqlProvider=provider)
 
     targetValue = "1"
     await _insertChatSetting(provider, CHAT_ID, OLD_KEY, targetValue)

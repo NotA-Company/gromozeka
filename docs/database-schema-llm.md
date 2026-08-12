@@ -6,7 +6,7 @@
 **Database Class**: [`Database`](../internal/database/database.py:1)
 **Models**: [`internal/database/models.py`](../internal/database/models.py:1)
 **Repositories**: [`internal/database/repositories/`](../internal/database/repositories/)
-**Migrations**: 25 (up to `migration_025`)
+**Migrations**: 26 (up to `migration_026`)
 
 ---
 
@@ -95,12 +95,17 @@ CREATE TABLE chat_info (
     username TEXT,
     type TEXT NOT NULL,
     is_forum BOOLEAN NOT NULL DEFAULT FALSE,
+    bot_status TEXT NOT NULL DEFAULT 'active',   -- migration_026; accessibility state (ChatBotStatus)
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL
 )
 ```
 
-**TypedDict**: [`ChatInfoDict`](../internal/database/models.py:215)
+Schema above is the post-`migration_026` shape. The `bot_status` column (added by `migration_026`) backs the chat-accessibility-tracking subsystem — values of the [`ChatBotStatus`](#chatbotstatus) StrEnum (`'active'` / `'inaccessible'`). The string-literal `DEFAULT 'active'` is portable across SQLite/PostgreSQL/MySQL and backfills every existing row to `'active'` as part of the `ALTER TABLE` (no separate backfill; satisfies the optimistic-default binding decision). The routine `ChatInfoRepository.updateChatInfo` upsert **intentionally omits** `bot_status` from both `values` and `updateExpressions`: on `INSERT` the column takes the `DEFAULT 'active'` (a freshly-seen chat is assumed accessible), and on `CONFLICT` the existing value is preserved — so a routine refresh can never clobber an `INACCESSIBLE` row back to `ACTIVE`.
+
+**Indexes**: `idx_chat_info_bot_status` on `(bot_status)` — added by `migration_026`; backs the chat-list filter predicate `(:botStatus IS NULL OR ci.bot_status = :botStatus)` used by `ChatUsersRepository.getUserChats` / `getAllGroupChats`.
+
+**TypedDict**: [`ChatInfoDict`](../internal/database/models.py:215) — `bot_status` is `NotRequired[ChatBotStatus]` (DB-row-backed reads include it via `SELECT ci.*`; platform-sourced write dicts from `TheBot.getChatInfo` omit it because the accessibility subsystem owns the column).
 
 ---
 
@@ -719,6 +724,18 @@ GM_LOOKUP = "geocode_maps_lookup"
 URL_CONTENT = "url_content"
 URL_CONTENT_CONDENSED = "url_content_condensed"
 ```
+
+---
+
+### ChatBotStatus
+**Location**: [`internal/database/models.py:108`](../internal/database/models.py:108) (StrEnum; lives in the database layer so `internal.database` initialises without importing `internal.bot`)
+
+```python
+ACTIVE = "active"              # Bot is present / assumed present (optimistic default; set by DEFAULT 'active' on INSERT)
+INACCESSIBLE = "inaccessible"  # Bot was kicked / restricted / lost admin rights (lazy mark-on-failure at getChatAdmins catch sites)
+```
+
+Backs the `chat_info.bot_status` column (added by `migration_026`). Owned by the chat-accessibility-tracking subsystem — written only via `ChatInfoRepository.setChatBotStatus`. See [`docs/design/chat-accessibility-tracking.md`](design/chat-accessibility-tracking.md).
 
 ---
 

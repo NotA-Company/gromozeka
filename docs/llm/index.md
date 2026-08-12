@@ -49,6 +49,7 @@
 - Golden data testing framework for reliable API testing
 - Service layer with cache and queue services
 - Multi-source database routing with SQLite
+- Chat accessibility tracking: the bot records per-chat presence in `chat_info.bot_status`, excludes kicked/inaccessible chats from chat lists by default (so `/configure` and similar no longer crash on them), surfaces them to the owner via `/list_chats all`, and auto-recovers on the next inbound message. Design: [`docs/design/chat-accessibility-tracking.md`](../design/chat-accessibility-tracking.md).
 
 ---
 

@@ -17,12 +17,12 @@ single ``models`` lookup table:
 - Step 5 — both vec0 families enumerated via ``listTables`` and dropped.
 
 Approach: the shared ``testDatabase`` fixture auto-migrates to the latest
-version (so the post-025 schema is in place, empty). Each test rolls
-back one step (``migration_025.down()``) to reach the pre-025 state
-(version 24 — ``message_embeddings`` re-created empty, ``user_memories``
-in its ``embedding_model`` / ``embedding_dimensions`` shape, ``models``
-gone), seeds the legacy stores, then exercises ``up()`` / ``down()``
-directly.
+version (so the post-025 schema is in place, empty). Each test rolls back
+to the pre-025 state (version 24) via ``rollbackTo(targetVersion=24)``
+(runs 025's ``down()``: ``message_embeddings`` re-created empty,
+``user_memories`` in its ``embedding_model`` / ``embedding_dimensions``
+shape, ``models`` gone), seeds the legacy stores, then exercises ``up()``
+/ ``down()`` directly.
 """
 
 import uuid
@@ -95,12 +95,13 @@ async def _columnNames(provider: BaseSQLProvider, tableName: str) -> set[str]:
 
 
 async def _rollbackToPre025(provider: BaseSQLProvider) -> None:
-    """Roll back migration 025 to reach the pre-025 state (version 24).
+    """Roll back to version 24 to reach the pre-025 state.
 
-    One step: 025's ``down()`` — re-creates ``message_embeddings`` empty,
-    swaps ``chat_messages`` and ``user_memories`` back to their pre-
-    ``model_id`` shapes, and drops ``models``. After this, the schema is
-    in the pre-refactor shape and legacy stores can be seeded.
+    ``rollbackTo(targetVersion=24)`` runs ``down()`` for 025 and every
+    migration above it: 025's ``down()`` re-creates ``message_embeddings``
+    empty, swaps ``chat_messages`` and ``user_memories`` back to their
+    pre-``model_id`` shapes, and drops ``models``. After this, the schema
+    is in the pre-refactor shape and legacy stores can be seeded.
 
     Args:
         provider: Writable SQL provider for the default data source.
@@ -110,7 +111,7 @@ async def _rollbackToPre025(provider: BaseSQLProvider) -> None:
     """
     rollbackManager = MigrationManager()
     rollbackManager.loadMigrationsFromVersions()
-    await rollbackManager.rollback(steps=1, sqlProvider=provider)
+    await rollbackManager.rollbackTo(targetVersion=24, sqlProvider=provider)
 
 
 async def _seedChatMessage(provider: BaseSQLProvider, chatId: int, messageId: str) -> None:

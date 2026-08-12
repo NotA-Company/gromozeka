@@ -170,9 +170,10 @@ class TheBot:
         then stores the result in cache before returning.
 
         When the bot is no longer in the chat or has no access (e.g., kicked/blocked on
-        Telegram or NotFoundError on Max), logs a warning and returns an empty dict
-        without caching the failure. This allows the caller (e.g., isAdmin) to treat
-        the result as "no admins in this chat" and gracefully exclude it from lists.
+        Telegram or NotFoundError on Max), logs a warning, marks the chat as inaccessible,
+        and returns an empty dict without caching the failure. This allows the caller
+        (e.g., isAdmin) to treat the result as "no admins in this chat" and gracefully
+        exclude it from lists.
 
         Args:
             chat: The target chat to fetch administrators for.
@@ -184,6 +185,12 @@ class TheBot:
         Raises:
             RuntimeError: If the configured bot provider is neither Telegram nor Max.
         """
+        # Short-circuit: if this process already knows the bot is inaccessible here, do not
+        # hit the DB or the platform API. Returns the same {} the failure path would, so
+        # callers (isAdmin, chat-list builders) degrade identically. Recovery evicts.
+        if self.cache.isChatInaccessible(chat.id):
+            return {}
+
         # If chat is passed, check if user is admin of given chat
         chatAdmins: Optional[Dict[int, Tuple[str, str]]] = self.cache.getChatAdmins(chat.id)
         if chatAdmins is not None:
@@ -200,6 +207,7 @@ class TheBot:
             except telegram.error.Forbidden as exc:
                 # Bot was kicked/blocked or has no access to the chat
                 logger.warning(f"getChatAdmins: cannot fetch admins for chat {chat.id} (Telegram): {exc}")
+                await self.cache.markChatInaccessible(chat.id)
                 return {}
             except telegram.error.BadRequest as exc:
                 # Conservative: only treat as inaccessible if clearly about access.
@@ -207,6 +215,7 @@ class TheBot:
                 excMsg = str(exc)
                 if "chat not found" in excMsg.lower():
                     logger.warning(f"getChatAdmins: cannot fetch admins for chat {chat.id} (Telegram): {exc}")
+                    await self.cache.markChatInaccessible(chat.id)
                     return {}
                 # Re-raise other BadRequest errors - they're likely real API usage errors
                 raise
@@ -226,6 +235,7 @@ class TheBot:
             except maxExceptions.NotFoundError as exc:
                 # Bot not in chat or chat not found
                 logger.warning(f"getChatAdmins: cannot fetch admins for chat {chat.id} (Max): {exc}")
+                await self.cache.markChatInaccessible(chat.id)
                 return {}
 
         else:

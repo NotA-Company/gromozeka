@@ -15,6 +15,7 @@
 5. [Registering Handlers in HandlersManager](#5-registering-handlers-in-handlersmanager)
 6. [Handler Chain Order](#6-handler-chain-order)
 7. [HandlerResultStatus Reference](#7-handlerresultstatus-reference)
+8. [Chat Accessibility Tracking](#8-chat-accessibility-tracking)
 
 ---
 
@@ -483,6 +484,36 @@ Full chain:
 - Return `FATAL` only for critical unrecoverable errors
 
 ---
+
+## 8. Chat Accessibility Tracking
+
+The bot records per-chat presence in `chat_info.bot_status` (`ChatBotStatus.ACTIVE` / `ChatBotStatus.INACCESSIBLE`) so it can stop iterating chats it has been kicked from. Three handler-layer touch points implement it; the authoritative design (binding decisions, recovery semantics, restart edge cases) lives in [`docs/design/chat-accessibility-tracking.md`](../design/chat-accessibility-tracking.md).
+
+### 8.1 `MessagePreprocessorHandler` — recovery hook
+
+[`MessagePreprocessorHandler.newMessageHandler`](../../internal/bot/common/handlers/message_preprocessor.py) is the **sole** recovery hook. Near the top of every inbound message it runs:
+
+```python
+if self.cache.isChatInaccessible(chatId):
+    await self.cache.markChatActive(chatId)
+```
+
+An `INACCESSIBLE` chat recovers to `ACTIVE` within **one** inbound message. The check is gated on the in-memory `_inaccessibleChats` set, so an active chat pays only the cheap sync O(1) set lookup — no DB write on the steady-state hot path. `markChatActive` runs a conditional `UPDATE … WHERE bot_status != 'active'`, so even when recovery does fire, it writes only on a real `INACCESSIBLE → ACTIVE` transition.
+
+### 8.2 `TheBot.getChatAdmins` — mark-on-failure + in-memory short-circuit
+
+[`TheBot.getChatAdmins`](../../internal/bot/common/bot.py) is the **primary detection hook**. It layers accessibility writes on top of its existing graceful-degradation `{}` return:
+
+- **In-memory short-circuit (top of method):** `if self.cache.isChatInaccessible(chat.id): return {}`. A chat already known-dead this process provokes **zero** API calls and **zero** DB hits — `isAdmin` therefore returns `False` and chat-list callers silently skip the chat. Recovery (§8.1) evicts from the set, so the short-circuit is self-healing.
+- **Mark-on-failure (the existing three catch arms):** Telegram `telegram.error.Forbidden`, Telegram `telegram.error.BadRequest` **only** when the message contains `"chat not found"` (other `BadRequest`s re-raise — real API-usage errors still surface), and Max `lib.max_bot.exceptions.NotFoundError` → `await self.cache.markChatInaccessible(chat.id)` (adds to the set + conditional `UPDATE` to `INACCESSIBLE`), log a warning, and `return {}` **without poisoning the admin cache** (the existing no-cache-on-failure behaviour is preserved). `isAdmin` returning `False` for the chat is identical to the prior graceful-degradation shape, so existing callers degrade unchanged.
+
+There is intentionally **no mark-on-success hook** — see design doc §5.3 for why it was considered and rejected (the startup seed + preprocessor recovery cover the post-restart window without one).
+
+### 8.3 `/list_chats` — the `botStatus=None` owner escape hatch
+
+Every chat-listing consumer excludes inaccessible chats by default: the handler wrapper `BaseBotHandler.getUserChats` and the repository methods `ChatInfoRepository.getUserChats` / `getAllGroupChats` all default to `botStatus=ChatBotStatus.ACTIVE`. So `/configure`, the topic-manager / summarization / user-memories chat pickers, the non-owner `/list_chats` branch, and the spam-stats scan all silently hide chats the bot was kicked from — this is what stops `/configure` from iterating (and crashing on) dead chats.
+
+The **one** exception is the bot-owner `/list_chats all` branch in [`CommonHandler`](../../internal/bot/common/handlers/common.py), which passes `botStatus=None` (no SQL predicate) so the owner sees inaccessible chats for diagnostics. That branch is already gated `isBotOwner(...)`, so it is the single user-facing signal that means "show me everything, including chats I was kicked from". See design doc §7.4 (owner-visibility note) for the rationale.
 
 ## See Also
 

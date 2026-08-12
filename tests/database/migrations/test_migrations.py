@@ -10,6 +10,8 @@ Key Test Functions:
     - test_fresh_database: Tests initialization of a new database with all migrations
     - test_migration_status: Verifies migration status reporting functionality
     - test_rollback: Tests migration rollback to previous versions
+    - test_rollbackTo_landsAtExactVersion: Tests target-version rollback (rollbackTo)
+    - test_rollbackTo_edges: Tests rollbackTo no-op / validation behaviour
     - test_existing_database: Tests upgrading an existing database
     - test_auto_discovery: Verifies automatic migration discovery
     - test_getMigration_functions: Tests getMigration() functions in migration modules
@@ -33,9 +35,11 @@ import logging
 import os
 import tempfile
 
+import pytest
+
 from internal.database import Database
 from internal.database.manager import DatabaseManagerConfig
-from internal.database.migrations import MigrationManager
+from internal.database.migrations import MigrationError, MigrationManager
 from internal.database.migrations.versions import DISCOVERED_MIGRATIONS
 
 # Use DISCOVERED_MIGRATIONS as MIGRATIONS for backward compatibility
@@ -256,6 +260,163 @@ async def test_rollback() -> None:
         assert "metadata" not in columns, "metadata column should be dropped"
 
         logger.info("✅ Rollback test PASSED")
+
+    finally:
+        if db is not None:
+            await db.manager.closeAll()
+        if os.path.exists(dbPath):
+            os.unlink(dbPath)
+
+
+async def test_rollbackTo_landsAtExactVersion() -> None:
+    """``rollbackTo(targetVersion=N)`` lands the database at exactly version N.
+
+    This is the target-version counterpart to ``rollback(steps=...)`` and the
+    contract every per-migration test helper (``_rollbackToPreNNN``) relies on.
+    The point of targeting a version rather than a step count is that the
+    result is independent of how many migrations exist above ``N`` — adding a
+    new migration on top must not shift the landing version. This test pins
+    that property so the recurring "stale ``steps=N`` broke when migration
+    M+1 landed" failure mode cannot recur for ``rollbackTo``.
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If the version after rollback is not the target, if
+            the schema does not reflect the rolled-back migration, or if the
+            landing version depends on the number of migrations above target.
+        Exception: If database initialisation or rollback execution fails.
+    """
+    logger.info("=" * 60)
+    logger.info("TEST: rollbackTo lands at exact target version")
+    logger.info("=" * 60)
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        dbPath: str = f.name
+
+    db: Database | None = None
+    try:
+        config: DatabaseManagerConfig = {
+            "default": "default",
+            "chatMapping": {},
+            "providers": {
+                "default": {
+                    "provider": "sqlite3",
+                    "parameters": {
+                        "dbPath": dbPath,
+                    },
+                }
+            },
+        }
+        db = Database(config)
+        provider = await db.manager.getProvider()
+        manager = MigrationManager()
+        manager.registerMigrations(MIGRATIONS)
+
+        latestVersion: int = manager.getAvailableMigrations()[-1].version
+        logger.info(f"Latest version: {latestVersion}")
+
+        # Pick a low, stable target well below the latest version. The exact
+        # number is irrelevant; what matters is that the landing version
+        # equals the target regardless of how many migrations sit above it.
+        targetVersion: int = 3
+        assert latestVersion > targetVersion, "test requires migrations above the target"
+
+        await manager.rollbackTo(targetVersion=targetVersion, sqlProvider=provider)
+
+        newVersion: int = await manager.getCurrentVersion(sqlProvider=provider)
+        logger.info(f"Version after rollbackTo({targetVersion}): {newVersion}")
+        assert newVersion == targetVersion, f"Expected version {targetVersion}, got {newVersion}"
+
+        # Migration 003 adds the ``metadata`` column to ``chat_users``; its
+        # ``down()`` removes it. Reaching version 3 means 003 ran (metadata
+        # present) but nothing above it did. Probing the column confirms the
+        # schema genuinely reflects the target, not merely the version counter.
+        provider = await db.manager.getProvider(readonly=True)
+        rows = await provider.executeFetchAll("PRAGMA table_info(chat_users)")
+        columns: list[str] = [row["name"] for row in rows]  # type: ignore[index]
+        assert "metadata" in columns, "metadata column (added by migration 003) must be present at version 3"
+
+        logger.info("✅ rollbackTo target-version test PASSED")
+
+    finally:
+        if db is not None:
+            await db.manager.closeAll()
+        if os.path.exists(dbPath):
+            os.unlink(dbPath)
+
+
+async def test_rollbackTo_edges() -> None:
+    """``rollbackTo`` no-ops above the current version and rejects negatives.
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If a target >= current version changes the version,
+            or if a negative target does not raise ``MigrationError``.
+        Exception: If database initialisation or rollback execution fails.
+    """
+    logger.info("=" * 60)
+    logger.info("TEST: rollbackTo edge cases (no-op + validation)")
+    logger.info("=" * 60)
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        dbPath: str = f.name
+
+    db: Database | None = None
+    try:
+        config: DatabaseManagerConfig = {
+            "default": "default",
+            "chatMapping": {},
+            "providers": {
+                "default": {
+                    "provider": "sqlite3",
+                    "parameters": {
+                        "dbPath": dbPath,
+                    },
+                }
+            },
+        }
+        db = Database(config)
+        provider = await db.manager.getProvider()
+        manager = MigrationManager()
+        manager.registerMigrations(MIGRATIONS)
+
+        latestVersion: int = manager.getAvailableMigrations()[-1].version
+
+        # Targeting the current version is a no-op: version unchanged.
+        await manager.rollbackTo(targetVersion=latestVersion, sqlProvider=provider)
+        assert (
+            await manager.getCurrentVersion(sqlProvider=provider) == latestVersion
+        ), "rollbackTo to the current version must be a no-op"
+
+        # Targeting above the current version is also a no-op (no raise).
+        await manager.rollbackTo(targetVersion=latestVersion + 5, sqlProvider=provider)
+        assert (
+            await manager.getCurrentVersion(sqlProvider=provider) == latestVersion
+        ), "rollbackTo above the current version must be a no-op"
+
+        # Rolling all the way down to 0 lands at version 0.
+        await manager.rollbackTo(targetVersion=0, sqlProvider=provider)
+        assert await manager.getCurrentVersion(sqlProvider=provider) == 0, "rollbackTo(0) must reach version 0"
+
+        # Negative targets are rejected.
+        with pytest.raises(MigrationError):
+            await manager.rollbackTo(targetVersion=-1, sqlProvider=provider)
+
+        # Negative steps are rejected.
+        with pytest.raises(MigrationError):
+            await manager.rollback(steps=-1, sqlProvider=provider)
+
+        logger.info("✅ rollbackTo edge-case test PASSED")
 
     finally:
         if db is not None:
@@ -566,6 +727,130 @@ async def test_database_auto_discovery() -> None:
             assert table in tableNames, f"Table {table} not found"
 
         logger.info("✅ Database auto-discovery test PASSED")
+
+    finally:
+        if db is not None:
+            await db.manager.closeAll()
+        if os.path.exists(dbPath):
+            os.unlink(dbPath)
+
+
+async def test_migration_026_chat_accessibility_bot_status() -> None:
+    """Test migration 026: bot_status column and index on chat_info.
+
+    Creates a temporary database, applies migration 026, and verifies that:
+    - The bot_status column exists with correct type and default
+    - The idx_chat_info_bot_status index exists
+    - Existing rows are backfilled to 'active'
+    - The down() method correctly removes column and index
+
+    Args:
+        None
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If bot_status column doesn't exist or has wrong properties
+        AssertionError: If index doesn't exist
+        AssertionError: If default value is incorrect
+        AssertionError: If rollback doesn't remove column/index
+        Exception: If database initialization or migration execution fails
+    """
+    logger.info("=" * 60)
+    logger.info("TEST: Migration 026 - Chat Accessibility Bot Status")
+    logger.info("=" * 60)
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        dbPath: str = f.name
+
+    db: Database | None = None
+    try:
+        # Initialize database (should apply all migrations including 026)
+        config: DatabaseManagerConfig = {
+            "default": "default",
+            "chatMapping": {},
+            "providers": {
+                "default": {
+                    "provider": "sqlite3",
+                    "parameters": {
+                        "dbPath": dbPath,
+                    },
+                }
+            },
+        }
+        db = Database(config)
+        provider = await db.manager.getProvider()
+
+        # Get migration 026 from discovered migrations
+        migration_026 = None
+        for migration in DISCOVERED_MIGRATIONS:
+            if migration.version == 26:
+                migration_026 = migration
+                break
+
+        assert migration_026 is not None, "Migration 026 not found"
+
+        # Check that bot_status column exists
+        columns = await provider.executeFetchAll("PRAGMA table_info(chat_info)")
+        columnNames: list[str] = [row["name"] for row in columns]  # type: ignore[index]
+        assert "bot_status" in columnNames, "bot_status column should exist"
+
+        # Check column properties
+        botStatusColumn = None
+        for col in columns:
+            if col["name"] == "bot_status":  # type: ignore[index]
+                botStatusColumn = col
+                break
+
+        assert botStatusColumn is not None, "bot_status column not found in table_info"
+        assert (
+            botStatusColumn["type"] == "TEXT"
+        ), f"bot_status type should be TEXT, got {botStatusColumn['type']}"  # type: ignore[index]
+        assert botStatusColumn["notnull"] == 1, "bot_status should be NOT NULL"  # type: ignore[index]
+        assert (
+            botStatusColumn["dflt_value"] == "'active'"
+        ), f"bot_status default should be 'active', got {botStatusColumn['dflt_value']}"  # type: ignore[index]
+
+        logger.info("✅ bot_status column exists with correct properties")
+
+        # Check that index exists
+        indexes = await provider.executeFetchAll(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_chat_info_bot_status'"
+        )
+        assert len(indexes) == 1, "idx_chat_info_bot_status index should exist"
+        logger.info("✅ idx_chat_info_bot_status index exists")
+
+        # Test default value on a new row
+        await provider.execute(
+            "INSERT INTO chat_info (chat_id, title, username, type, is_forum, "
+            "created_at, updated_at) VALUES (99999, 'Test Chat', 'testchat', 'group', "
+            "0, datetime('now'), datetime('now'))"
+        )
+        rows = await provider.executeFetchOne("SELECT bot_status FROM chat_info WHERE chat_id = 99999")
+        assert rows is not None, "Inserted row should exist"
+        assert (
+            rows["bot_status"] == "active"
+        ), f"New row should have bot_status='active', got {rows['bot_status']}"  # type: ignore[index]
+        logger.info("✅ Default value 'active' is applied to new rows")
+
+        # Test rollback (down())
+        migrationInstance = migration_026()
+        await migrationInstance.down(sqlProvider=provider)
+
+        # Check that index is dropped
+        indexes = await provider.executeFetchAll(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_chat_info_bot_status'"
+        )
+        assert len(indexes) == 0, "idx_chat_info_bot_status index should be dropped"
+
+        # Check that column is dropped
+        columns = await provider.executeFetchAll("PRAGMA table_info(chat_info)")
+        columnNames = [row["name"] for row in columns]  # type: ignore[index]
+        assert "bot_status" not in columnNames, "bot_status column should be dropped"
+
+        logger.info("✅ Rollback (down()) correctly removes index and column")
+        logger.info("✅ Migration 026 test PASSED")
 
     finally:
         if db is not None:

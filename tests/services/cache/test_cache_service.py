@@ -41,7 +41,7 @@ import pytest
 
 from internal.bot.models.chat_settings import ChatSettingsKey, ChatSettingsValue
 from internal.database import Database
-from internal.database.models import MemoryType, UserMemorySource
+from internal.database.models import ChatBotStatus, MemoryType, UserMemorySource
 from internal.database.repositories.user_memories import UserMemoriesRepository
 
 # Import directly to avoid circular dependencies
@@ -220,6 +220,7 @@ class TestCacheServiceBasics(unittest.IsolatedAsyncioTestCase):
         self.mockDb = Mock()
         # Configure mock BEFORE injection to avoid connection issues
         self.mockDb.cache.getCacheStorage = createAsyncMock(returnValue=[])
+        self.mockDb.chatInfo.getInactiveChatIds = createAsyncMock(returnValue=[])
         await self.cache.injectDatabase(self.mockDb)
 
     async def asyncTearDown(self) -> None:
@@ -278,6 +279,7 @@ class TestChatSettings(unittest.IsolatedAsyncioTestCase):
         self.mockDb.chatSettings.setChatSetting = createAsyncMock(returnValue=True)
         self.mockDb.chatInfo.getChatInfo = createAsyncMock(returnValue=None)
         self.mockDb.chatInfo.setChatInfo = createAsyncMock(returnValue=True)
+        self.mockDb.chatInfo.getInactiveChatIds = createAsyncMock(returnValue=[])
         await self.cache.injectDatabase(self.mockDb)
 
     async def asyncTearDown(self) -> None:
@@ -357,6 +359,7 @@ class TestChatInfo(unittest.IsolatedAsyncioTestCase):
         self.mockDb.chatInfo.setChatInfo = createAsyncMock(returnValue=True)
         self.mockDb.chatInfo.addChatInfo = createAsyncMock(returnValue=True)
         self.mockDb.chatInfo.updateChatInfo = createAsyncMock(returnValue=True)
+        self.mockDb.chatInfo.getInactiveChatIds = createAsyncMock(returnValue=[])
         await self.cache.injectDatabase(self.mockDb)
 
     async def asyncTearDown(self) -> None:
@@ -424,6 +427,7 @@ class TestUserState(unittest.IsolatedAsyncioTestCase):
         self.cache = CacheService.getInstance()
         self.mockDb = Mock()
         self.mockDb.cache.getCacheStorage = createAsyncMock(returnValue=[])
+        self.mockDb.chatInfo.getInactiveChatIds = createAsyncMock(returnValue=[])
         await self.cache.injectDatabase(self.mockDb)
 
     async def asyncTearDown(self) -> None:
@@ -463,6 +467,7 @@ class TestNamespaceOperations(unittest.IsolatedAsyncioTestCase):
         self.cache = CacheService.getInstance()
         self.mockDb = Mock()
         self.mockDb.cache.getCacheStorage = createAsyncMock(returnValue=[])
+        self.mockDb.chatInfo.getInactiveChatIds = createAsyncMock(returnValue=[])
         await self.cache.injectDatabase(self.mockDb)
 
     async def asyncTearDown(self) -> None:
@@ -512,6 +517,7 @@ class TestPersistence(unittest.IsolatedAsyncioTestCase):
         self.mockDb.cache.getCacheStorage = createAsyncMock(returnValue=[])
         self.mockDb.cache.setCacheStorage = createAsyncMock(returnValue=True)
         self.mockDb.cache.unsetCacheStorage = createAsyncMock(returnValue=True)
+        self.mockDb.chatInfo.getInactiveChatIds = createAsyncMock(returnValue=[])
         await self.cache.injectDatabase(self.mockDb)
 
     async def asyncTearDown(self) -> None:
@@ -746,6 +752,7 @@ class TestEdgeCases(unittest.IsolatedAsyncioTestCase):
         self.cache = CacheService.getInstance()
         self.mockDb = Mock()
         self.mockDb.cache.getCacheStorage = createAsyncMock(returnValue=[])
+        self.mockDb.chatInfo.getInactiveChatIds = createAsyncMock(returnValue=[])
         await self.cache.injectDatabase(self.mockDb)
 
     async def asyncTearDown(self) -> None:
@@ -1056,6 +1063,177 @@ class TestMemoriesByIdCache:
         callArgs = spy.call_args
         assert callArgs.kwargs.get("chatId") == 42
         assert callArgs.kwargs.get("dataSource") == "custom-src"
+
+
+class TestChatAccessibilityTracking(unittest.IsolatedAsyncioTestCase):
+    """Test suite for chat accessibility tracking methods.
+
+    Tests the in-memory inaccessible chat set and the methods that manage it:
+    isChatInaccessible, markChatInaccessible, markChatActive, and the startup
+    seed in injectDatabase.
+    """
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures before each async test method.
+
+        Creates a new CacheService instance with a mocked database for testing.
+        """
+        CacheService._instance = None
+        self.cache = CacheService.getInstance()
+        self.mockDb = Mock()
+        self.mockDb.cache.getCacheStorage = createAsyncMock(returnValue=[])
+        self.mockDb.chatInfo.getInactiveChatIds = createAsyncMock(returnValue=[])
+        self.mockDb.chatInfo.setChatBotStatus = createAsyncMock(returnValue=True)
+        await self.cache.injectDatabase(self.mockDb)
+
+    async def asyncTearDown(self) -> None:
+        """Clean up after each async test method.
+
+        Resets the singleton instance and cleans up mock objects.
+        """
+        if hasattr(self, "mockDb"):
+            self.mockDb.reset_mock()
+            del self.mockDb
+        CacheService._instance = None
+        gc.collect()
+
+    def test_isChatInaccessible_returnsFalseForNewChat(self) -> None:
+        """isChatInaccessible returns False for a chat not in the set.
+
+        Verifies that a new chat (not marked inaccessible) returns False.
+        """
+        assert self.cache.isChatInaccessible(123) is False
+        assert self.cache.isChatInaccessible(456) is False
+
+    async def test_markChatInaccessible_addsToSetAndPersists(self) -> None:
+        """markChatInaccessible adds chat to in-memory set and persists to DB.
+
+        Verifies that calling markChatInaccessible adds the chat ID to the
+        in-memory set and calls the repository to update the DB.
+        """
+        # Act: Mark chat as inaccessible
+        await self.cache.markChatInaccessible(123)
+
+        # Assert: Chat is in the set
+        assert self.cache.isChatInaccessible(123) is True
+        assert self.cache.isChatInaccessible(456) is False
+
+        # Assert: DB write was called with correct parameters
+        self.mockDb.chatInfo.setChatBotStatus.assert_called_once_with(123, ChatBotStatus.INACCESSIBLE)
+
+    async def test_markChatActive_discardsFromSetAndPersists(self) -> None:
+        """markChatActive discards chat from in-memory set and persists to DB.
+
+        Verifies that calling markChatActive removes the chat ID from the
+        in-memory set and calls the repository to update the DB.
+        """
+        # Arrange: Mark chat as inaccessible first
+        await self.cache.markChatInaccessible(123)
+        assert self.cache.isChatInaccessible(123) is True
+
+        # Reset mock to track the next call
+        self.mockDb.chatInfo.setChatBotStatus.reset_mock()
+
+        # Act: Mark chat as active
+        await self.cache.markChatActive(123)
+
+        # Assert: Chat is removed from the set
+        assert self.cache.isChatInaccessible(123) is False
+
+        # Assert: DB write was called with correct parameters
+        self.mockDb.chatInfo.setChatBotStatus.assert_called_once_with(123, ChatBotStatus.ACTIVE)
+
+    async def test_markChatActive_idempotentOnMissingKey(self) -> None:
+        """markChatActive is idempotent - calling on missing key is safe.
+
+        Verifies that calling markChatActive on a chat not in the set does
+        not raise an exception (uses discard, not remove).
+        """
+        # Arrange: Chat is not in the inaccessible set
+        assert self.cache.isChatInaccessible(999) is False
+
+        # Act: Mark non-inaccessible chat as active (should not raise)
+        await self.cache.markChatActive(999)
+
+        # Assert: Still not in the set, DB call still made (conditional UPDATE is a no-op)
+        assert self.cache.isChatInaccessible(999) is False
+        self.mockDb.chatInfo.setChatBotStatus.assert_called_once_with(999, ChatBotStatus.ACTIVE)
+
+    async def test_injectDatabase_seedsInaccessibleChatsFromDb(self) -> None:
+        """injectDatabase seeds the in-memory set from DB getInactiveChatIds.
+
+        Verifies that when injectDatabase is called, it queries the DB for
+        inactive chat IDs and populates the in-memory set.
+        """
+        # Arrange: DB returns some inaccessible chats
+        inactiveChats = [
+            {"chat_id": 100},
+            {"chat_id": 200},
+            {"chat_id": 300},
+        ]
+        self.mockDb.chatInfo.getInactiveChatIds = createAsyncMock(returnValue=inactiveChats)
+
+        # Act: Reset and inject database (simulating fresh startup)
+        CacheService._instance = None
+        cache = CacheService.getInstance()
+        await cache.injectDatabase(self.mockDb)
+
+        # Assert: All inactive chats are in the in-memory set
+        assert cache.isChatInaccessible(100) is True
+        assert cache.isChatInaccessible(200) is True
+        assert cache.isChatInaccessible(300) is True
+        assert cache.isChatInaccessible(999) is False
+
+        # Assert: getInactiveChatIds was called
+        self.mockDb.chatInfo.getInactiveChatIds.assert_called_once()
+
+    async def test_injectDatabase_emptyDbLeavesSetEmpty(self) -> None:
+        """injectDatabase with empty DB leaves the in-memory set empty.
+
+        Verifies that when the DB has no inactive chats, the set remains empty.
+        """
+        # Arrange: DB returns no inaccessible chats
+        self.mockDb.chatInfo.getInactiveChatIds = createAsyncMock(returnValue=[])
+
+        # Act: Reset and inject database
+        CacheService._instance = None
+        cache = CacheService.getInstance()
+        await cache.injectDatabase(self.mockDb)
+
+        # Assert: Set is empty
+        assert cache.isChatInaccessible(100) is False
+        assert cache.isChatInaccessible(200) is False
+
+    async def test_markChatInaccessible_withoutDatabaseDoesNotCrash(self) -> None:
+        """markChatInaccessible works without database (in-memory only).
+
+        Verifies that when no database is wired, markChatInaccessible still
+        updates the in-memory set and does not crash.
+        """
+        # Arrange: Remove database
+        self.cache.database = None
+
+        # Act: Mark chat as inaccessible (should not crash)
+        await self.cache.markChatInaccessible(123)
+
+        # Assert: Chat is in the set
+        assert self.cache.isChatInaccessible(123) is True
+
+    async def test_markChatActive_withoutDatabaseDoesNotCrash(self) -> None:
+        """markChatActive works without database (in-memory only).
+
+        Verifies that when no database is wired, markChatActive still
+        updates the in-memory set and does not crash.
+        """
+        # Arrange: Mark chat as inaccessible first, then remove database
+        await self.cache.markChatInaccessible(123)
+        self.cache.database = None
+
+        # Act: Mark chat as active (should not crash)
+        await self.cache.markChatActive(123)
+
+        # Assert: Chat is removed from the set
+        assert self.cache.isChatInaccessible(123) is False
 
 
 if __name__ == "__main__":

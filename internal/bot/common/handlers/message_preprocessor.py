@@ -160,6 +160,14 @@ class MessagePreprocessorHandler(BaseBotHandler):
         Raises:
             Exception: If media processing or database operations fail.
         """
+        chatId = ensuredMessage.recipient.id
+
+        # Recovery: if a chat marked INACCESSIBLE receives an inbound message,
+        # the bot is back. Gate on the in-memory set to avoid DB writes for active chats.
+        if self.cache.isChatInaccessible(chatId):
+            await self.cache.markChatActive(chatId)
+            logger.info(f"Chat {chatId} recovered to ACTIVE by inbound activity")
+
         messageCategory: MessageCategory = MessageCategory.USER
         # Telegram has different messages for each media\document
         # While Each Max Message can contain multiple attachments of different types

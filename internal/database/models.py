@@ -105,6 +105,27 @@ class SpamReason(StrEnum):
     """User was unbanned."""
 
 
+class ChatBotStatus(StrEnum):
+    """Durable accessibility state of the bot for a chat (``chat_info.bot_status``).
+
+    Members:
+        ACTIVE: The bot is (or is assumed to be) present in the chat. This is the
+            optimistic default for every row — newly inserted chats and all pre-existing
+            rows backfilled by migration 026 start here. Recovery (inbound activity in
+            the preprocessor) flips ``INACCESSIBLE`` back to ``ACTIVE``.
+        INACCESSIBLE: A platform API call failed because the bot is no longer in the
+            chat / was blocked (Telegram ``Forbidden`` / ``BadRequest("chat not found")``
+            / Max ``NotFoundError``). Set lazily at the ``getChatAdmins`` catch sites.
+            Chat-listing consumers exclude these chats by default.
+    """
+
+    ACTIVE = "active"
+    """Bot is present or assumed present (optimistic default)."""
+
+    INACCESSIBLE = "inaccessible"
+    """Bot was kicked/blocked/removed; last ``getChatAdmins`` probe failed."""
+
+
 class ChatMessageDict(TypedDict):
     """Dictionary representing a chat message with user information.
 
@@ -202,6 +223,13 @@ class ChatInfoDict(TypedDict):
     """Chat type."""
     is_forum: bool
     """Whether chat is a forum."""
+    bot_status: NotRequired[ChatBotStatus]
+    """Accessibility state of the bot for this chat. Populated on DB-row-backed reads
+    (``SELECT *``/``SELECT ci.*`` include the column). Absent on platform-sourced write
+    dicts produced by :meth:`TheBot.getChatInfo`, because the accessibility subsystem
+    owns this column and the ``updateChatInfo`` upsert omits it. The
+    authoritative value is the DB column; consumers that need it read it via the
+    chat-list SQL filter or the dedicated status methods, not from a cached dict."""
     created_at: datetime.datetime
     """Record creation timestamp."""
     updated_at: datetime.datetime

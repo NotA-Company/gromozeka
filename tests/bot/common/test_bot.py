@@ -21,6 +21,7 @@ import lib.max_bot.exceptions as maxExceptions
 from internal.bot.common.bot import TheBot
 from internal.bot.models import BotProvider, ChatType, MessageRecipient
 from internal.services.cache import CacheService
+from tests.utils import createAsyncMock
 
 
 class TestGetChatAdminsRegression:
@@ -45,11 +46,13 @@ class TestGetChatAdminsRegression:
         """Create a mock CacheService.
 
         Returns:
-            Mock: Mocked CacheService with getChatAdmins/setChatAdmins.
+            Mock: Mocked CacheService with getChatAdmins/setChatAdmins and new accessibility methods.
         """
         cache = Mock(spec=CacheService)
         cache.getChatAdmins = Mock(return_value=None)
         cache.setChatAdmins = Mock()
+        cache.isChatInaccessible = Mock(return_value=False)
+        cache.markChatInaccessible = createAsyncMock()
         return cache
 
     @pytest.fixture
@@ -289,3 +292,127 @@ class TestGetChatAdminsRegression:
         mockCacheService.getChatAdmins.assert_called_once_with(groupChat.id)
         mockCacheService.setChatAdmins.assert_not_called()
         telegramBot.tgBot.get_chat_administrators.assert_not_called()  # type: ignore[union-attr]
+
+    async def test_getChatAdmins_shortCircuitWhenInaccessible(
+        self, telegramBot: TheBot, groupChat: MessageRecipient, mockCacheService: Mock
+    ) -> None:
+        """Short-circuit to {} for known-inaccessible chats (zero API/DB cost).
+
+        Args:
+            telegramBot: The TheBot instance with Telegram provider.
+            groupChat: Test group chat.
+            mockCacheService: Mock cache service for verification.
+        """
+        # Arrange: Cache reports chat as inaccessible
+        mockCacheService.isChatInaccessible.return_value = True
+
+        # Act: Call getChatAdmins
+        result = await telegramBot.getChatAdmins(groupChat)
+
+        # Assert: Returns empty dict, no API call, no cache read/write
+        assert result == {}
+        mockCacheService.isChatInaccessible.assert_called_once_with(groupChat.id)
+        mockCacheService.getChatAdmins.assert_not_called()
+        mockCacheService.setChatAdmins.assert_not_called()
+        telegramBot.tgBot.get_chat_administrators.assert_not_called()  # type: ignore[union-attr]
+
+    async def test_getChatAdmins_telegramForbidden_marksInaccessible(
+        self, telegramBot: TheBot, groupChat: MessageRecipient, mockCacheService: Mock
+    ) -> None:
+        """Telegram Forbidden marks chat inaccessible (memory + DB) and returns {}.
+
+        Args:
+            telegramBot: The TheBot instance with Telegram provider.
+            groupChat: Test group chat.
+            mockCacheService: Mock cache service for verification.
+        """
+        # Arrange: Telegram API raises Forbidden when bot is kicked
+        telegramBot.tgBot.get_chat_administrators.side_effect = (  # type: ignore[union-attr]
+            telegram.error.Forbidden("Forbidden: bot was kicked from the supergroup chat")
+        )
+
+        # Act: Call getChatAdmins - should NOT raise
+        result = await telegramBot.getChatAdmins(groupChat)
+
+        # Assert: Returns empty dict, marks inaccessible, cache NOT populated
+        assert result == {}
+        mockCacheService.getChatAdmins.assert_called_once_with(groupChat.id)
+        mockCacheService.markChatInaccessible.assert_awaited_once_with(groupChat.id)
+        mockCacheService.setChatAdmins.assert_not_called()
+
+    async def test_getChatAdmins_telegramBadRequestChatNotFound_marksInaccessible(
+        self, telegramBot: TheBot, groupChat: MessageRecipient, mockCacheService: Mock
+    ) -> None:
+        """Telegram BadRequest "chat not found" marks chat inaccessible and returns {}.
+
+        Args:
+            telegramBot: The TheBot instance with Telegram provider.
+            groupChat: Test group chat.
+            mockCacheService: Mock cache service for verification.
+        """
+        # Arrange: Telegram API raises BadRequest for inaccessible chat
+        telegramBot.tgBot.get_chat_administrators.side_effect = (  # type: ignore[union-attr]
+            telegram.error.BadRequest("Bad Request: chat not found")
+        )
+
+        # Act: Call getChatAdmins - should NOT raise
+        result = await telegramBot.getChatAdmins(groupChat)
+
+        # Assert: Returns empty dict, marks inaccessible, cache NOT populated
+        assert result == {}
+        mockCacheService.getChatAdmins.assert_called_once_with(groupChat.id)
+        mockCacheService.markChatInaccessible.assert_awaited_once_with(groupChat.id)
+        mockCacheService.setChatAdmins.assert_not_called()
+
+    async def test_getChatAdmins_maxNotFound_marksInaccessible(
+        self, maxBot: TheBot, groupChat: MessageRecipient, mockCacheService: Mock
+    ) -> None:
+        """Max NotFoundError marks chat inaccessible (memory + DB) and returns {}.
+
+        Args:
+            maxBot: The TheBot instance with Max provider.
+            groupChat: Test group chat.
+            mockCacheService: Mock cache service for verification.
+        """
+        # Arrange: Max API raises NotFoundError when bot not in chat
+        maxBot.maxBot.getAdmins.side_effect = (  # type: ignore[union-attr]
+            maxExceptions.NotFoundError("Resource not found.")
+        )
+
+        # Act: Call getChatAdmins - should NOT raise
+        result = await maxBot.getChatAdmins(groupChat)
+
+        # Assert: Returns empty dict, marks inaccessible, cache NOT populated
+        assert result == {}
+        mockCacheService.getChatAdmins.assert_called_once_with(groupChat.id)
+        mockCacheService.markChatInaccessible.assert_awaited_once_with(groupChat.id)
+        mockCacheService.setChatAdmins.assert_not_called()
+
+    async def test_getChatAdmins_telegramSuccess_stillCachesAndDoesNotMarkInaccessible(
+        self, telegramBot: TheBot, groupChat: MessageRecipient, mockCacheService: Mock
+    ) -> None:
+        """Successful fetch still caches admins and does NOT mark inaccessible.
+
+        Args:
+            telegramBot: The TheBot instance with Telegram provider.
+            groupChat: Test group chat.
+            mockCacheService: Mock cache service for verification.
+        """
+        # Arrange: Telegram API returns admins
+        admin1 = Mock()
+        admin1.user.id = 123
+        admin1.user.username = "admin1"
+        admin1.user.full_name = "Admin One"
+
+        telegramBot.tgBot.get_chat_administrators.side_effect = [[admin1]]  # type: ignore[union-attr]
+
+        # Act: Call getChatAdmins
+        result = await telegramBot.getChatAdmins(groupChat)
+
+        # Assert: Returns admins dict, cache populated, NOT marked inaccessible
+        assert result == {
+            123: ("@admin1", "Admin One"),
+        }
+        mockCacheService.getChatAdmins.assert_called_once_with(groupChat.id)
+        mockCacheService.setChatAdmins.assert_called_once_with(groupChat.id, result)
+        mockCacheService.markChatInaccessible.assert_not_called()

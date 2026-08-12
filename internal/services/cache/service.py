@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Tupl
 import internal.database.utils as dbUtils
 from internal.bot.models.message_metadata import SingleMemoryDict, convertDBMemoryToSingleMemoryDict
 from internal.bot.models.user_metadata import UserMetadataDict
-from internal.database.models import ChatInfoDict, ChatTopicInfoDict, ChatUserDict
+from internal.database.models import ChatBotStatus, ChatInfoDict, ChatTopicInfoDict, ChatUserDict
 from internal.models import MessageId
 from internal.services.queue_service.service import QueueService
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
@@ -258,6 +258,13 @@ class CacheService:
             self.maxCacheSize = 1000  # Per namespace
             """Maximum number of entries per namespace before eviction occurs."""
 
+            # In-memory mirror of {chat_id : bot_status == INACCESSIBLE}. Pure optimization — the
+            # DB column is the source of truth. Seeded from the DB at startup (injectDatabase)
+            # and thereafter kept in sync: added by getChatAdmins failures, discarded by the
+            # preprocessor recovery. Used to short-circuit getChatAdmins/isAdmin for chats
+            # already known dead this process, avoiding repeated redundant API+DB work.
+            self._inaccessibleChats: set[int] = set()
+
             # Initialize namespaces with LRU caches
             self._caches: Dict[
                 CacheNamespace,
@@ -387,12 +394,70 @@ class CacheService:
         """
         return self._caches[CacheNamespace.MEMORIES]  # pyright: ignore[reportReturnType]
 
+    def isChatInaccessible(self, chatId: int) -> bool:
+        """Check if a chat is known to be inaccessible (in-memory lookup).
+
+        Performs an O(1) check against the in-memory known-inaccessible set.
+        This is a hot-path optimization used by getChatAdmins to short-circuit
+        API and DB work for chats already marked as dead.
+
+        Args:
+            chatId: The chat identifier to check
+
+        Returns:
+            True if the chat is in the in-memory inaccessible set, False otherwise
+        """
+        return chatId in self._inaccessibleChats
+
+    async def markChatInaccessible(self, chatId: int) -> None:
+        """Record that the bot is inaccessible in ``chatId`` (memory + DB).
+
+        Idempotent. Adds ``chatId`` to the in-memory known-inaccessible set and flips
+        ``chat_info.bot_status`` to ``INACCESSIBLE`` via a conditional UPDATE (no-op if
+        already inaccessible). Called from ``TheBot.getChatAdmins`` failure catch sites.
+
+        Args:
+            chatId: The chat identifier to mark as inaccessible
+
+        Returns:
+            None
+        """
+        self._inaccessibleChats.add(chatId)
+        if self.database is not None:
+            await self.database.chatInfo.setChatBotStatus(chatId, ChatBotStatus.INACCESSIBLE)
+
+    async def markChatActive(self, chatId: int) -> bool:
+        """Recover ``chatId`` to ACTIVE: evict from the in-memory set + conditional UPDATE.
+
+        Idempotent and write-light: the DB UPDATE is conditional on the current value being
+        ``inaccessible``, so calling this on an already-active chat is a no-op write. The
+        in-memory eviction is unconditional (cheap, and correct either way).
+
+        Args:
+            chatId: The chat identifier to mark as active
+
+        Returns:
+            True if the chat exists in the database and is now ACTIVE, False otherwise.
+            This is the result of ``setChatBotStatus`` — True means the chat row exists
+            and the status was set or already ACTIVE, NOT necessarily that this caller
+            flipped it. When no database is attached, always returns False. Callers
+            must treat this signal as best-effort and keep operability logic idempotent.
+            See ``setChatBotStatus`` contract for details.
+        """
+        self._inaccessibleChats.discard(chatId)
+        if self.database is not None:
+            return await self.database.chatInfo.setChatBotStatus(chatId, ChatBotStatus.ACTIVE)
+        return False
+
     async def injectDatabase(self, database: "Database") -> None:
         """Inject database wrapper for persistence.
 
         Sets the database wrapper for persistence operations and loads any
         previously persisted cache data from the database. This should be
-        called once during application initialization.
+        called once during application initialization. Also seeds the
+        in-memory inaccessible chat set from the database by calling
+        ``database.chatInfo.getInactiveChatIds()`` — tests injecting a Mock()
+        DB must stub this method or the ``await`` will raise.
 
         Args:
             database: The database wrapper instance for persistence operations
@@ -400,6 +465,10 @@ class CacheService:
         self.database = database
         # Load persisted data on injection
         await self.loadFromDatabase()
+        # Seed the in-memory inaccessible chat set from the DB
+        if self.database is not None:
+            rows = await self.database.chatInfo.getInactiveChatIds()
+            self._inaccessibleChats.update(int(r["chat_id"]) for r in rows)
         logger.info("Database injected into CacheService")
 
     async def _doExitHandler(self, task: DelayedTask) -> None:

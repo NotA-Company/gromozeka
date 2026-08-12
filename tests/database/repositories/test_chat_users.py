@@ -13,7 +13,10 @@ applied — no mocks.
 
 import datetime
 
+from telegram import Chat
+
 from internal.database import Database
+from internal.database.models import ChatBotStatus
 
 
 class TestGetChatUsersDefaultMode:
@@ -253,3 +256,159 @@ class TestDictKeysIterationSafety:
             assert isinstance(chats, list)
         finally:
             cleanup()
+
+
+class TestChatBotStatusFilter:
+    """Test botStatus filter on getUserChats and getAllGroupChats.
+
+    The filter defaults to ACTIVE (excluding INACCESSIBLE chats) and
+    can be set to None to return all chats or to INACCESSIBLE to return
+    only those.
+    """
+
+    async def test_getUserChats_botStatusActiveExcludesInaccessible(self, testDatabase: Database) -> None:
+        """getUserChats with default botStatus=ACTIVE excludes INACCESSIBLE chats."""
+        # Create two chats and add user 100 to both
+        provider = await testDatabase.manager.getProvider(readonly=False)
+        await provider.execute(
+            """INSERT INTO chat_info (chat_id, username, type, created_at, updated_at)
+               VALUES (:chatId, :username, 'private', :now, :now)""",
+            {"chatId": 20001, "username": "chat1", "now": "2026-01-01T00:00:00"},
+        )
+        await provider.execute(
+            """INSERT INTO chat_info (chat_id, username, type, created_at, updated_at)
+               VALUES (:chatId, :username, 'private', :now, :now)""",
+            {"chatId": 20002, "username": "chat2", "now": "2026-01-01T00:00:00"},
+        )
+
+        await testDatabase.chatUsers.updateChatUser(chatId=20001, userId=100, username="user100", fullName="User 100")
+        await testDatabase.chatUsers.updateChatUser(chatId=20002, userId=100, username="user100", fullName="User 100")
+
+        # Mark chat 20002 as INACCESSIBLE
+        await testDatabase.chatInfo.setChatBotStatus(20002, ChatBotStatus.INACCESSIBLE)
+
+        # Default (botStatus=ACTIVE) should return only chat 20001
+        chats = await testDatabase.chatUsers.getUserChats(userId=100)
+        chatIds = [c["chat_id"] for c in chats]
+        assert chatIds == [20001], "Default ACTIVE filter should exclude INACCESSIBLE chat"
+
+    async def test_getUserChats_botStatusNoneReturnsAll(self, testDatabase: Database) -> None:
+        """getUserChats with botStatus=None returns all chats regardless of status."""
+        # Create two chats and add user 100 to both
+        provider = await testDatabase.manager.getProvider(readonly=False)
+        await provider.execute(
+            """INSERT INTO chat_info (chat_id, username, type, created_at, updated_at)
+               VALUES (:chatId, :username, 'private', :now, :now)""",
+            {"chatId": 20003, "username": "chat3", "now": "2026-01-01T00:00:00"},
+        )
+        await provider.execute(
+            """INSERT INTO chat_info (chat_id, username, type, created_at, updated_at)
+               VALUES (:chatId, :username, 'private', :now, :now)""",
+            {"chatId": 20004, "username": "chat4", "now": "2026-01-01T00:00:00"},
+        )
+
+        await testDatabase.chatUsers.updateChatUser(chatId=20003, userId=100, username="user100", fullName="User 100")
+        await testDatabase.chatUsers.updateChatUser(chatId=20004, userId=100, username="user100", fullName="User 100")
+
+        # Mark chat 20004 as INACCESSIBLE
+        await testDatabase.chatInfo.setChatBotStatus(20004, ChatBotStatus.INACCESSIBLE)
+
+        # botStatus=None should return both chats
+        chats = await testDatabase.chatUsers.getUserChats(userId=100, botStatus=None)
+        chatIds = sorted(c["chat_id"] for c in chats)
+        assert chatIds == [20003, 20004], "botStatus=None should return all chats"
+
+    async def test_getUserChats_botStatusInaccessibleReturnsOnlyInaccessible(self, testDatabase: Database) -> None:
+        """getUserChats with botStatus=INACCESSIBLE returns only inaccessible chats."""
+        # Create two chats and add user 100 to both
+        provider = await testDatabase.manager.getProvider(readonly=False)
+        await provider.execute(
+            """INSERT INTO chat_info (chat_id, username, type, created_at, updated_at)
+               VALUES (:chatId, :username, 'private', :now, :now)""",
+            {"chatId": 20005, "username": "chat5", "now": "2026-01-01T00:00:00"},
+        )
+        await provider.execute(
+            """INSERT INTO chat_info (chat_id, username, type, created_at, updated_at)
+               VALUES (:chatId, :username, 'private', :now, :now)""",
+            {"chatId": 20006, "username": "chat6", "now": "2026-01-01T00:00:00"},
+        )
+
+        await testDatabase.chatUsers.updateChatUser(chatId=20005, userId=100, username="user100", fullName="User 100")
+        await testDatabase.chatUsers.updateChatUser(chatId=20006, userId=100, username="user100", fullName="User 100")
+
+        # Mark chat 20006 as INACCESSIBLE
+        await testDatabase.chatInfo.setChatBotStatus(20006, ChatBotStatus.INACCESSIBLE)
+
+        # botStatus=INACCESSIBLE should return only chat 20006
+        chats = await testDatabase.chatUsers.getUserChats(userId=100, botStatus=ChatBotStatus.INACCESSIBLE)
+        chatIds = [c["chat_id"] for c in chats]
+        assert chatIds == [20006], "botStatus=INACCESSIBLE should return only inaccessible chats"
+
+    async def test_getAllGroupChats_botStatusActiveExcludesInaccessible(self, testDatabase: Database) -> None:
+        """getAllGroupChats with default botStatus=ACTIVE excludes INACCESSIBLE chats."""
+        # Create two group chats
+        provider = await testDatabase.manager.getProvider(readonly=False)
+        await provider.execute(
+            """INSERT INTO chat_info (chat_id, username, type, created_at, updated_at)
+               VALUES (:chatId, :username, :type, :now, :now)""",
+            {"chatId": 20007, "username": "group1", "type": Chat.GROUP, "now": "2026-01-01T00:00:00"},
+        )
+        await provider.execute(
+            """INSERT INTO chat_info (chat_id, username, type, created_at, updated_at)
+               VALUES (:chatId, :username, :type, :now, :now)""",
+            {"chatId": 20008, "username": "group2", "type": Chat.GROUP, "now": "2026-01-01T00:00:00"},
+        )
+
+        # Mark chat 20008 as INACCESSIBLE
+        await testDatabase.chatInfo.setChatBotStatus(20008, ChatBotStatus.INACCESSIBLE)
+
+        # Default (botStatus=ACTIVE) should return only chat 20007
+        chats = await testDatabase.chatUsers.getAllGroupChats()
+        chatIds = [c["chat_id"] for c in chats]
+        assert chatIds == [20007], "Default ACTIVE filter should exclude INACCESSIBLE group"
+
+    async def test_getAllGroupChats_botStatusNoneReturnsAll(self, testDatabase: Database) -> None:
+        """getAllGroupChats with botStatus=None returns all group chats regardless of status."""
+        # Create two group chats
+        provider = await testDatabase.manager.getProvider(readonly=False)
+        await provider.execute(
+            """INSERT INTO chat_info (chat_id, username, type, created_at, updated_at)
+               VALUES (:chatId, :username, :type, :now, :now)""",
+            {"chatId": 20009, "username": "group3", "type": Chat.GROUP, "now": "2026-01-01T00:00:00"},
+        )
+        await provider.execute(
+            """INSERT INTO chat_info (chat_id, username, type, created_at, updated_at)
+               VALUES (:chatId, :username, :type, :now, :now)""",
+            {"chatId": 20010, "username": "group4", "type": Chat.GROUP, "now": "2026-01-01T00:00:00"},
+        )
+
+        # Mark chat 20010 as INACCESSIBLE
+        await testDatabase.chatInfo.setChatBotStatus(20010, ChatBotStatus.INACCESSIBLE)
+
+        # botStatus=None should return both group chats
+        chats = await testDatabase.chatUsers.getAllGroupChats(botStatus=None)
+        chatIds = sorted(c["chat_id"] for c in chats)
+        assert chatIds == [20009, 20010], "botStatus=None should return all group chats"
+
+    async def test_getAllGroupChats_botStatusInaccessibleReturnsOnlyInaccessible(self, testDatabase: Database) -> None:
+        """getAllGroupChats with botStatus=INACCESSIBLE returns only inaccessible groups."""
+        # Create two group chats
+        provider = await testDatabase.manager.getProvider(readonly=False)
+        await provider.execute(
+            """INSERT INTO chat_info (chat_id, username, type, created_at, updated_at)
+               VALUES (:chatId, :username, :type, :now, :now)""",
+            {"chatId": 20011, "username": "group5", "type": Chat.GROUP, "now": "2026-01-01T00:00:00"},
+        )
+        await provider.execute(
+            """INSERT INTO chat_info (chat_id, username, type, created_at, updated_at)
+               VALUES (:chatId, :username, :type, :now, :now)""",
+            {"chatId": 20012, "username": "group6", "type": Chat.GROUP, "now": "2026-01-01T00:00:00"},
+        )
+
+        # Mark chat 20012 as INACCESSIBLE
+        await testDatabase.chatInfo.setChatBotStatus(20012, ChatBotStatus.INACCESSIBLE)
+
+        # botStatus=INACCESSIBLE should return only chat 20012
+        chats = await testDatabase.chatUsers.getAllGroupChats(botStatus=ChatBotStatus.INACCESSIBLE)
+        chatIds = [c["chat_id"] for c in chats]
+        assert chatIds == [20012], "botStatus=INACCESSIBLE should return only inaccessible group chats"

@@ -17,7 +17,7 @@ import lib.utils as libUtils
 
 from .. import utils as dbUtils
 from ..manager import DatabaseManager
-from ..models import ChatInfoDict, ChatUserDict
+from ..models import ChatBotStatus, ChatInfoDict, ChatUserDict
 from ..providers.base import ExcludedValue
 from .base import BaseRepository
 
@@ -268,7 +268,13 @@ class ChatUsersRepository(BaseRepository):
             logger.error(f"Failed to get users for chat {chatId}: {e}")
             return []
 
-    async def getUserChats(self, userId: int, *, dataSource: Optional[str] = None) -> List[ChatInfoDict]:
+    async def getUserChats(
+        self,
+        userId: int,
+        *,
+        dataSource: Optional[str] = None,
+        botStatus: Optional[ChatBotStatus] = ChatBotStatus.ACTIVE,
+    ) -> List[ChatInfoDict]:
         """
         Get chats user was seen in.
 
@@ -276,6 +282,9 @@ class ChatUsersRepository(BaseRepository):
             userId: User identifier
             dataSource: Optional data source name. If None in multi-source mode,
                        aggregates from all sources and deduplicates by (userId, chatId).
+            botStatus: Optional filter for bot accessibility status. Defaults to
+                       ``ChatBotStatus.ACTIVE`` to exclude inaccessible chats. Pass
+                       ``None`` to return all chats regardless of status.
 
         Returns:
             List of ChatInfoDict
@@ -297,9 +306,11 @@ class ChatUsersRepository(BaseRepository):
                     JOIN chat_users cu ON cu.chat_id = ci.chat_id
                     WHERE
                         user_id = :userId
+                        AND (:botStatus IS NULL OR ci.bot_status = :botStatus)
                 """,
                     {
                         "userId": userId,
+                        "botStatus": botStatus.value if botStatus else None,
                     },
                 )
                 for row in rows:
@@ -315,13 +326,18 @@ class ChatUsersRepository(BaseRepository):
         logger.debug(f"Aggregated {len(allResults)} unique chats for user {userId}")
         return allResults
 
-    async def getAllGroupChats(self, *, dataSource: Optional[str] = None) -> List[ChatInfoDict]:
+    async def getAllGroupChats(
+        self, *, dataSource: Optional[str] = None, botStatus: Optional[ChatBotStatus] = ChatBotStatus.ACTIVE
+    ) -> List[ChatInfoDict]:
         """
         Get all group chats.
 
         Args:
             dataSource: Optional data source name. If None in multi-source mode,
                        aggregates from all sources and deduplicates by chatId.
+            botStatus: Optional filter for bot accessibility status. Defaults to
+                       ``ChatBotStatus.ACTIVE`` to exclude inaccessible chats. Pass
+                       ``None`` to return all chats regardless of status.
 
         Returns:
             List of ChatInfoDict
@@ -340,10 +356,12 @@ class ChatUsersRepository(BaseRepository):
                     SELECT ci.* FROM chat_info ci
                     WHERE
                         type in (:groupChat, :supergroupChat)
+                        AND (:botStatus IS NULL OR ci.bot_status = :botStatus)
                 """,
                     {
                         "groupChat": Chat.GROUP,
                         "supergroupChat": Chat.SUPERGROUP,
+                        "botStatus": botStatus.value if botStatus else None,
                     },
                 )
                 for row in rows:

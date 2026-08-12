@@ -64,7 +64,7 @@ from internal.bot.models import (
 )
 from internal.config.manager import ConfigManager
 from internal.database import Database
-from internal.database.models import ChatInfoDict, ChatUserDict, MediaStatus, MessageCategory
+from internal.database.models import ChatBotStatus, ChatInfoDict, ChatUserDict, MediaStatus, MessageCategory
 from internal.models import MessageId
 from internal.services.cache import CacheService
 from internal.services.llm import LLMService
@@ -1287,7 +1287,12 @@ class BaseBotHandler(CommandHandlerMixin):
                 chatTitle = f"#{chatInfo['chat_id']} {chatTitle}"
         return chatTitle
 
-    async def getUserChats(self, userId: int) -> List[ChatInfoDict]:
+    async def getUserChats(
+        self,
+        userId: int,
+        *,
+        botStatus: Optional[ChatBotStatus] = ChatBotStatus.ACTIVE,
+    ) -> List[ChatInfoDict]:
         """
         Get all chats for a given user, excluding chats they have left
 
@@ -1296,11 +1301,14 @@ class BaseBotHandler(CommandHandlerMixin):
 
         Args:
             userId: Telegram user ID
+            botStatus: Optional filter for bot accessibility status. Defaults to
+                       ``ChatBotStatus.ACTIVE`` to exclude inaccessible chats. Pass
+                       ``None`` to return all chats regardless of status.
 
         Returns:
             List of ChatInfoDict objects representing chats the user is in
         """
-        userChats = await self.db.chatUsers.getUserChats(userId)
+        userChats = await self.db.chatUsers.getUserChats(userId, botStatus=botStatus)
         ret: List[ChatInfoDict] = []
         for chatInfo in userChats:
             userInfo: Optional[ChatUserDict] = await self.cache.getChatUser(chatId=chatInfo["chat_id"], userId=userId)
