@@ -487,31 +487,31 @@ Full chain:
 
 ## 8. Chat Accessibility Tracking
 
-The bot records per-chat presence in `chat_info.bot_status` (`ChatBotStatus.ACTIVE` / `ChatBotStatus.INACCESSIBLE`) so it can stop iterating chats it has been kicked from. Three handler-layer touch points implement it; the authoritative design (binding decisions, recovery semantics, restart edge cases) lives in [`docs/design/chat-accessibility-tracking.md`](../design/chat-accessibility-tracking.md).
+The bot records per-chat presence in `chat_info.bot_status` (`ChatBotStatus.ACTIVE` / `ChatBotStatus.INACCESSIBLE`) so it can stop iterating chats it has been kicked from. Three handler-layer touch points implement it; the authoritative design (binding decisions, recovery semantics, restart edge cases) lives in [`docs/design/chat-accessibility-tracking.md`](../design/chat-accessibility-tracking.md#implementation-divergence-2026-08-12).
 
 ### 8.1 `MessagePreprocessorHandler` — recovery hook
 
 [`MessagePreprocessorHandler.newMessageHandler`](../../internal/bot/common/handlers/message_preprocessor.py) is the **sole** recovery hook. Near the top of every inbound message it runs:
 
 ```python
-if self.cache.isChatInaccessible(chatId):
+if await self.cache.isChatInaccessible(chatId):
     await self.cache.markChatActive(chatId)
 ```
 
-An `INACCESSIBLE` chat recovers to `ACTIVE` within **one** inbound message. The check is gated on the in-memory `_inaccessibleChats` set, so an active chat pays only the cheap sync O(1) set lookup — no DB write on the steady-state hot path. `markChatActive` runs a conditional `UPDATE … WHERE bot_status != 'active'`, so even when recovery does fire, it writes only on a real `INACCESSIBLE → ACTIVE` transition.
+An `INACCESSIBLE` chat recovers to `ACTIVE` within **one** inbound message. `isChatInaccessible` is an **async** cache-aside lookup (in-memory chat-info cache first, DB on miss), so an active chat that is already cached pays only the cheap cached `getChatInfo` read — no platform API call and, on the steady-state hot path, no DB write. `markChatActive` writes only when the chat was actually `INACCESSIBLE` (it routes through `getChatInfo` → `setChatInfo` → `updateChatInfo(botStatus=...)`).
 
-### 8.2 `TheBot.getChatAdmins` — mark-on-failure + in-memory short-circuit
+### 8.2 `TheBot.getChatAdmins` — async short-circuit + mark-on-failure
 
 [`TheBot.getChatAdmins`](../../internal/bot/common/bot.py) is the **primary detection hook**. It layers accessibility writes on top of its existing graceful-degradation `{}` return:
 
-- **In-memory short-circuit (top of method):** `if self.cache.isChatInaccessible(chat.id): return {}`. A chat already known-dead this process provokes **zero** API calls and **zero** DB hits — `isAdmin` therefore returns `False` and chat-list callers silently skip the chat. Recovery (§8.1) evicts from the set, so the short-circuit is self-healing.
-- **Mark-on-failure (the existing three catch arms):** Telegram `telegram.error.Forbidden`, Telegram `telegram.error.BadRequest` **only** when the message contains `"chat not found"` (other `BadRequest`s re-raise — real API-usage errors still surface), and Max `lib.max_bot.exceptions.NotFoundError` → `await self.cache.markChatInaccessible(chat.id)` (adds to the set + conditional `UPDATE` to `INACCESSIBLE`), log a warning, and `return {}` **without poisoning the admin cache** (the existing no-cache-on-failure behaviour is preserved). `isAdmin` returning `False` for the chat is identical to the prior graceful-degradation shape, so existing callers degrade unchanged.
+- **Async short-circuit (top of method):** `if await self.cache.isChatInaccessible(chat.id): return {}`. The check is cache-aside — cheap (a cached `getChatInfo` hit) when the chat is already in the in-memory chat-info cache, with a DB read only on a miss. A chat already marked dead this process therefore provokes **zero** platform API calls — `isAdmin` returns `False` and chat-list callers silently skip the chat. Recovery (§8.1) flips the cached `bot_status` back to `ACTIVE`, so the short-circuit is self-healing.
+- **Mark-on-failure (the existing three catch arms):** Telegram `telegram.error.Forbidden`, Telegram `telegram.error.BadRequest` **only** when the message contains `"chat not found"` (other `BadRequest`s re-raise — real API-usage errors still surface), and Max `lib.max_bot.exceptions.NotFoundError` → `await self.cache.markChatInaccessible(chat.id)` (reads `getChatInfo`, sets `bot_status = INACCESSIBLE`, persists via `setChatInfo`), log a warning, and `return {}` **without poisoning the admin cache** (the existing no-cache-on-failure behaviour is preserved). `isAdmin` returning `False` for the chat is identical to the prior graceful-degradation shape, so existing callers degrade unchanged.
 
-There is intentionally **no mark-on-success hook** — see design doc §5.3 for why it was considered and rejected (the startup seed + preprocessor recovery cover the post-restart window without one).
+There is intentionally **no mark-on-success hook** and **no** in-memory `_inaccessibleChats` set — see the design doc divergence section linked above for why the dedicated set was dropped in favour of the cache-aside `getChatInfo` path. One consequence worth noting: after the periodic (~12 h) chat-info cache refresh, a cache entry may briefly lack a `bot_status` field, so `isChatInaccessible` can return `False` for a chat that is actually `INACCESSIBLE` until the next `getChatAdmins` call re-marks it. This is self-healing — the DB value stays correct and chat-list queries filter on the DB column, so the only effect is a single redundant `getChatAdmins` probe.
 
 ### 8.3 `/list_chats` — the `botStatus=None` owner escape hatch
 
-Every chat-listing consumer excludes inaccessible chats by default: the handler wrapper `BaseBotHandler.getUserChats` and the repository methods `ChatInfoRepository.getUserChats` / `getAllGroupChats` all default to `botStatus=ChatBotStatus.ACTIVE`. So `/configure`, the topic-manager / summarization / user-memories chat pickers, the non-owner `/list_chats` branch, and the spam-stats scan all silently hide chats the bot was kicked from — this is what stops `/configure` from iterating (and crashing on) dead chats.
+Every chat-listing consumer excludes inaccessible chats by default: the repository methods `ChatUsersRepository.getUserChats` / `getAllGroupChats` default to `botStatus=ChatBotStatus.ACTIVE`. So `/configure`, the topic-manager / summarization / user-memories chat pickers, the non-owner `/list_chats` branch, and the spam-stats scan all silently hide chats the bot was kicked from — this is what stops `/configure` from iterating (and crashing on) dead chats. (Consumers call the repository directly; the old `BaseBotHandler.getUserChats` wrapper was removed when the accessibility feature was simplified.)
 
 The **one** exception is the bot-owner `/list_chats all` branch in [`CommonHandler`](../../internal/bot/common/handlers/common.py), which passes `botStatus=None` (no SQL predicate) so the owner sees inaccessible chats for diagnostics. That branch is already gated `isBotOwner(...)`, so it is the single user-facing signal that means "show me everything, including chats I was kicked from". See design doc §7.4 (owner-visibility note) for the rationale.
 

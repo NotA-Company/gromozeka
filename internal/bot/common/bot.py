@@ -22,7 +22,7 @@ import lib.max_bot.models as maxModels
 from internal.bot.common.models import CallbackButton, TypingAction
 from internal.bot.common.typing_manager import TypingManager
 from internal.bot.models import BotProvider, ChatType, EnsuredMessage, MessageRecipient, MessageSender
-from internal.database.models import ChatInfoDict
+from internal.database.models import ChatBotStatus, ChatInfoDict
 from internal.models import MessageId, MessageType
 from internal.services.cache import CacheService
 from lib import utils
@@ -185,10 +185,11 @@ class TheBot:
         Raises:
             RuntimeError: If the configured bot provider is neither Telegram nor Max.
         """
-        # Short-circuit: if this process already knows the bot is inaccessible here, do not
-        # hit the DB or the platform API. Returns the same {} the failure path would, so
-        # callers (isAdmin, chat-list builders) degrade identically. Recovery evicts.
-        if self.cache.isChatInaccessible(chat.id):
+        # Short-circuit: if the chat is marked INACCESSIBLE, skip the platform API call.
+        # isChatInaccessible is cache-aside (cheap on a cache hit, may read DB on miss).
+        # Returns the same {} the failure path would, so callers degrade identically.
+        # Recovery flips the status back to ACTIVE.
+        if await self.cache.isChatInaccessible(chat.id):
             return {}
 
         # If chat is passed, check if user is admin of given chat
@@ -1164,6 +1165,7 @@ class TheBot:
                 "type": message.recipient.chatType,
                 "created_at": now,
                 "updated_at": now,
+                "bot_status": ChatBotStatus.ACTIVE,
             }
 
         elif self.botProvider == BotProvider.MAX and self.maxBot is not None:
@@ -1185,6 +1187,7 @@ class TheBot:
                 "type": message.recipient.chatType,
                 "created_at": now,
                 "updated_at": now,
+                "bot_status": ChatBotStatus.ACTIVE,
             }
 
         else:

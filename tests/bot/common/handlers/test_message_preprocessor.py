@@ -138,7 +138,7 @@ def handler(
     # isChatInaccessible defaults to False (no recovery branch entry in most tests).
     # markChatActive is async and must be awaitable.
     mockCache = Mock(spec=CacheService)
-    mockCache.isChatInaccessible = Mock(return_value=False)  # Not async
+    mockCache.isChatInaccessible = AsyncMock(return_value=False)  # Async
     mockCache.markChatActive = AsyncMock(return_value=True)  # Async
 
     with (
@@ -636,7 +636,7 @@ class TestSearchEnabledCaching:
             patch.object(StorageService, "getInstance", return_value=Mock()),
         ):
             mockCache = Mock(spec=CacheService)
-            mockCache.isChatInaccessible = Mock(return_value=False)
+            mockCache.isChatInaccessible = AsyncMock(return_value=False)
             mockCache.markChatActive = AsyncMock(return_value=True)
             with patch.object(CacheService, "getInstance", return_value=mockCache):
                 h = MessagePreprocessorHandler(  # type: ignore[call-arg]
@@ -1073,8 +1073,8 @@ class TestChatAccessibilityRecovery:
 
     P4 added a recovery hook (~lines 163-169) that fires when an inbound message
     arrives for a chat marked INACCESSIBLE: the chat is recovered to ACTIVE by
-    calling ``cache.markChatActive(chatId)``. The gate checks the in-memory
-    ``isChatInaccessible`` set to avoid DB writes for active chats — only
+    calling ``cache.markChatActive(chatId)``. The gate checks the cache-aside
+    ``isChatInaccessible`` check to avoid DB writes for active chats — only
     inaccessible chats incur the DB write.
 
     These tests prove the recovery logic fires correctly, idempotently, and
@@ -1097,7 +1097,7 @@ class TestChatAccessibilityRecovery:
         cache = cast(Any, handler.cache)
 
         # Mark the chat as inaccessible so the recovery branch is entered.
-        cache.isChatInaccessible = Mock(return_value=True)
+        cache.isChatInaccessible = AsyncMock(return_value=True)
 
         ensured = _makeEnsuredMessage(chatId=chatId, messageText="hello")
         result = await handler.newMessageHandler(ensured, updateObj=Mock())
@@ -1110,8 +1110,8 @@ class TestChatAccessibilityRecovery:
 
         Configures the cache mock so ``isChatInaccessible(chatId)`` returns ``False``,
         drives ``newMessageHandler``, and asserts ``markChatActive`` was NOT called.
-        This proves active chats incur zero DB overhead — only the cheap sync
-        ``isChatInaccessible`` set check runs.
+        This proves active chats incur zero DB overhead — only the cheap cache-aside
+        ``isChatInaccessible`` check runs.
 
         Args:
             handler: Preprocessor fixture.
@@ -1120,7 +1120,7 @@ class TestChatAccessibilityRecovery:
         cache = cast(Any, handler.cache)
 
         # Default fixture already sets isChatInaccessible to False, but be explicit.
-        cache.isChatInaccessible = Mock(return_value=False)
+        cache.isChatInaccessible = AsyncMock(return_value=False)
 
         ensured = _makeEnsuredMessage(chatId=chatId, messageText="hello")
         result = await handler.newMessageHandler(ensured, updateObj=Mock())
@@ -1146,7 +1146,7 @@ class TestChatAccessibilityRecovery:
 
         # First call returns True (chat is inaccessible), second returns False
         # (chat was marked active, so it's no longer in the set).
-        cache.isChatInaccessible = Mock(side_effect=[True, False])
+        cache.isChatInaccessible = AsyncMock(side_effect=[True, False])
 
         ensured = _makeEnsuredMessage(chatId=chatId, messageText="message 1")
         result1 = await handler.newMessageHandler(ensured, updateObj=Mock())

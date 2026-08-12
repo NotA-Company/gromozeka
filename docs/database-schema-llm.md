@@ -101,9 +101,7 @@ CREATE TABLE chat_info (
 )
 ```
 
-Schema above is the post-`migration_026` shape. The `bot_status` column (added by `migration_026`) backs the chat-accessibility-tracking subsystem — values of the [`ChatBotStatus`](#chatbotstatus) StrEnum (`'active'` / `'inaccessible'`). The string-literal `DEFAULT 'active'` is portable across SQLite/PostgreSQL/MySQL and backfills every existing row to `'active'` as part of the `ALTER TABLE` (no separate backfill; satisfies the optimistic-default binding decision). The routine `ChatInfoRepository.updateChatInfo` upsert **intentionally omits** `bot_status` from both `values` and `updateExpressions`: on `INSERT` the column takes the `DEFAULT 'active'` (a freshly-seen chat is assumed accessible), and on `CONFLICT` the existing value is preserved — so a routine refresh can never clobber an `INACCESSIBLE` row back to `ACTIVE`.
-
-**Indexes**: `idx_chat_info_bot_status` on `(bot_status)` — added by `migration_026`; backs the chat-list filter predicate `(:botStatus IS NULL OR ci.bot_status = :botStatus)` used by `ChatUsersRepository.getUserChats` / `getAllGroupChats`.
+Schema above is the post-`migration_026` shape. The `bot_status` column (added by `migration_026`; column only — no supporting index) backs the chat-accessibility-tracking subsystem — values of the [`ChatBotStatus`](#chatbotstatus) StrEnum (`'active'` / `'inaccessible'`). The string-literal `DEFAULT 'active'` is portable across SQLite/PostgreSQL/MySQL and backfills every existing row to `'active'` as part of the `ALTER TABLE` (no separate backfill; satisfies the optimistic-default binding decision). **Non-clobber rule:** `ChatInfoRepository.updateChatInfo` takes an optional keyword-only `botStatus: Optional[ChatBotStatus] = None`. When `None` (the default — used by the routine every-message refresh), `bot_status` is omitted from both `values` and `updateExpressions` of the upsert: on `INSERT` the column takes `DEFAULT 'active'` (a freshly-seen chat is assumed accessible), and on `CONFLICT` the existing value is preserved — so a routine refresh can never clobber an `INACCESSIBLE` row back to `ACTIVE`. When `botStatus` is provided, the column is written into both the INSERT `values` and the `CONFLICT`-UPDATE expressions; `CacheService.setChatInfo` forwards `info.get("bot_status")` so `markChatInaccessible` / `markChatActive` reach the column via the same upsert path.
 
 **TypedDict**: [`ChatInfoDict`](../internal/database/models.py:215) — `bot_status` is `NotRequired[ChatBotStatus]` (DB-row-backed reads include it via `SELECT ci.*`; platform-sourced write dicts from `TheBot.getChatInfo` omit it because the accessibility subsystem owns the column).
 
@@ -735,7 +733,7 @@ ACTIVE = "active"              # Bot is present / assumed present (optimistic de
 INACCESSIBLE = "inaccessible"  # Bot was kicked / restricted / lost admin rights (lazy mark-on-failure at getChatAdmins catch sites)
 ```
 
-Backs the `chat_info.bot_status` column (added by `migration_026`). Owned by the chat-accessibility-tracking subsystem — written only via `ChatInfoRepository.setChatBotStatus`. See [`docs/design/chat-accessibility-tracking.md`](design/chat-accessibility-tracking.md).
+Backs the `chat_info.bot_status` column (added by `migration_026`; column only — no supporting index). Owned by the accessibility subsystem — written through `ChatInfoRepository.updateChatInfo(..., botStatus=...)` (via `CacheService.setChatInfo`, which forwards `info.get("bot_status")`); read with the optional `botStatus` filter on `ChatUsersRepository.getUserChats` / `getAllGroupChats`. See [`docs/design/chat-accessibility-tracking.md`](design/chat-accessibility-tracking.md) (and its "Implementation Divergence (2026-08-12)" section for the shipped design).
 
 ---
 

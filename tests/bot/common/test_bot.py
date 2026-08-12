@@ -21,7 +21,6 @@ import lib.max_bot.exceptions as maxExceptions
 from internal.bot.common.bot import TheBot
 from internal.bot.models import BotProvider, ChatType, MessageRecipient
 from internal.services.cache import CacheService
-from tests.utils import createAsyncMock
 
 
 class TestGetChatAdminsRegression:
@@ -51,8 +50,8 @@ class TestGetChatAdminsRegression:
         cache = Mock(spec=CacheService)
         cache.getChatAdmins = Mock(return_value=None)
         cache.setChatAdmins = Mock()
-        cache.isChatInaccessible = Mock(return_value=False)
-        cache.markChatInaccessible = createAsyncMock()
+        cache.isChatInaccessible = AsyncMock(return_value=False)
+        cache.markChatInaccessible = AsyncMock()
         return cache
 
     @pytest.fixture
@@ -311,7 +310,7 @@ class TestGetChatAdminsRegression:
 
         # Assert: Returns empty dict, no API call, no cache read/write
         assert result == {}
-        mockCacheService.isChatInaccessible.assert_called_once_with(groupChat.id)
+        mockCacheService.isChatInaccessible.assert_awaited_once_with(groupChat.id)
         mockCacheService.getChatAdmins.assert_not_called()
         mockCacheService.setChatAdmins.assert_not_called()
         telegramBot.tgBot.get_chat_administrators.assert_not_called()  # type: ignore[union-attr]

@@ -736,13 +736,14 @@ async def test_database_auto_discovery() -> None:
 
 
 async def test_migration_026_chat_accessibility_bot_status() -> None:
-    """Test migration 026: bot_status column and index on chat_info.
+    """Test migration 026: bot_status column on chat_info (no index).
 
     Creates a temporary database, applies migration 026, and verifies that:
     - The bot_status column exists with correct type and default
-    - The idx_chat_info_bot_status index exists
     - Existing rows are backfilled to 'active'
-    - The down() method correctly removes column and index
+    - The down() method correctly removes column
+
+    Note: Migration 026 was simplified to only add the column without an index.
 
     Args:
         None
@@ -752,9 +753,8 @@ async def test_migration_026_chat_accessibility_bot_status() -> None:
 
     Raises:
         AssertionError: If bot_status column doesn't exist or has wrong properties
-        AssertionError: If index doesn't exist
         AssertionError: If default value is incorrect
-        AssertionError: If rollback doesn't remove column/index
+        AssertionError: If rollback doesn't remove column
         Exception: If database initialization or migration execution fails
     """
     logger.info("=" * 60)
@@ -814,13 +814,6 @@ async def test_migration_026_chat_accessibility_bot_status() -> None:
 
         logger.info("✅ bot_status column exists with correct properties")
 
-        # Check that index exists
-        indexes = await provider.executeFetchAll(
-            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_chat_info_bot_status'"
-        )
-        assert len(indexes) == 1, "idx_chat_info_bot_status index should exist"
-        logger.info("✅ idx_chat_info_bot_status index exists")
-
         # Test default value on a new row
         await provider.execute(
             "INSERT INTO chat_info (chat_id, title, username, type, is_forum, "
@@ -838,18 +831,12 @@ async def test_migration_026_chat_accessibility_bot_status() -> None:
         migrationInstance = migration_026()
         await migrationInstance.down(sqlProvider=provider)
 
-        # Check that index is dropped
-        indexes = await provider.executeFetchAll(
-            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_chat_info_bot_status'"
-        )
-        assert len(indexes) == 0, "idx_chat_info_bot_status index should be dropped"
-
         # Check that column is dropped
         columns = await provider.executeFetchAll("PRAGMA table_info(chat_info)")
         columnNames = [row["name"] for row in columns]  # type: ignore[index]
         assert "bot_status" not in columnNames, "bot_status column should be dropped"
 
-        logger.info("✅ Rollback (down()) correctly removes index and column")
+        logger.info("✅ Rollback (down()) correctly removes column")
         logger.info("✅ Migration 026 test PASSED")
 
     finally:

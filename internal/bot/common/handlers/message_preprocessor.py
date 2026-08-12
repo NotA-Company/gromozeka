@@ -163,8 +163,10 @@ class MessagePreprocessorHandler(BaseBotHandler):
         chatId = ensuredMessage.recipient.id
 
         # Recovery: if a chat marked INACCESSIBLE receives an inbound message,
-        # the bot is back. Gate on the in-memory set to avoid DB writes for active chats.
-        if self.cache.isChatInaccessible(chatId):
+        # the bot is back. Gate on isChatInaccessible (cache-aside) so active chats
+        # skip the markActive write; an INACCESSIBLE chat receiving a message
+        # recovers to ACTIVE.
+        if await self.cache.isChatInaccessible(chatId):
             await self.cache.markChatActive(chatId)
             logger.info(f"Chat {chatId} recovered to ACTIVE by inbound activity")
 

@@ -67,10 +67,10 @@ metadata: UserMetadataDict = await cache.getUserMetadata(chatId=chatId, userId=u
 await cache.updateUserMetadata(chatId=chatId, userId=userId, metadata=metadata)  # full-dict replace, NO merge
 cache.invalidateChatUser(chatId=chatId, userId=userId)  # sync; pops userInfo only, preserves permanentMemories
 
-# Chat accessibility (bot_status mirror; see "Chat accessibility tracking" below)
-if cache.isChatInaccessible(chatId):
-    await cache.markChatActive(chatId)        # async, conditional DB write
-await cache.markChatInaccessible(otherChatId) # async, memory + conditional DB write
+# Chat accessibility (cache-aside via getChatInfo; see "Chat accessibility tracking" below)
+if await cache.isChatInaccessible(chatId):           # async, cache-aside (cheap on a hit)
+    await cache.markChatActive(chatId)               # async; reads getChatInfo, writes via setChatInfo
+await cache.markChatInaccessible(otherChatId)        # async; reads getChatInfo, writes via setChatInfo
 
 # Default chat settings are handled by config/database, not CacheService
 # Use config files in configs/ for defaults, or set per-chat via setChatSetting()
@@ -85,17 +85,19 @@ await cache.markChatInaccessible(otherChatId) # async, memory + conditional DB w
 - `HCChatUserCacheDict` — per-user-in-chat cache
 - `UserDataType` / `UserDataValueType` — user data structures
 
-### Chat accessibility tracking (`_inaccessibleChats`)
+### Chat accessibility tracking (cache-aside via `getChatInfo`)
 
-CacheService holds an in-memory mirror of the `chat_info.bot_status` column: a `set[int]` of chat ids known to be `ChatBotStatus.INACCESSIBLE` in the current process. The DB column is the source of truth; the set is a hot-path optimisation only. It is populated at startup by `injectDatabase` and thereafter kept in sync by exactly two in-process events: a `getChatAdmins` failure adds a chat (and writes `INACCESSIBLE`); the preprocessor recovery discards a chat (and writes `ACTIVE`). Full design (binding decisions, recovery semantics, restart edge cases): [`docs/design/chat-accessibility-tracking.md`](../design/chat-accessibility-tracking.md).
+CacheService exposes three async accessors that read/write the `chat_info.bot_status` column. There is **no** dedicated in-memory set and **no** dedicated repository method for accessibility any more — `bot_status` is read through the normal `getChatInfo` cache-aside path (in-memory `self.chats` cache first, DB on miss) and persisted through `setChatInfo`, which routes to `ChatInfoRepository.updateChatInfo(botStatus=...)`. The DB column remains the source of truth; the in-memory chat-info cache is the hot-path optimisation. Full design (binding decisions, recovery semantics, restart edge cases) and the divergence note for this cache-aside shape live in [`docs/design/chat-accessibility-tracking.md`](../design/chat-accessibility-tracking.md#implementation-divergence-2026-08-12).
 
 | Member | Kind | Purpose |
 |---|---|---|
-| `_inaccessibleChats: set[int]` | instance field | In-memory known-inaccessible chat set. Bounded by the (small) number of genuinely-dead chats; seeded once, kept in sync by the two paths below. |
-| `isChatInaccessible(chatId: int) -> bool` | sync | O(1) hot-path short-circuit. No DB I/O, no API call. Called at the top of `TheBot.getChatAdmins` so a known-dead chat provokes zero probes within the process until it recovers. |
-| `async markChatInaccessible(chatId: int) -> None` | async | Record that the bot is inaccessible in `chatId` (memory + DB). Idempotent: adds `chatId` to the set and runs a conditional `UPDATE … WHERE bot_status != 'inaccessible'` via `ChatInfoRepository.setChatBotStatus`, so the steady-state cost of repeated failure probes is a no-op write. Called from the `getChatAdmins` failure catch sites. |
-| `async markChatActive(chatId: int) -> bool` | async | Recover `chatId` to `ACTIVE`: evict from the set unconditionally + conditional DB `UPDATE` (no-op write when already active). The return value is `setChatBotStatus`'s — `True` if the chat row exists and is now `ACTIVE` (set OR already was), `False` otherwise; treat it as a best-effort signal, never a flipped-by-this-caller guarantee. |
-| `injectDatabase(database)` side effect | async | Seeds `_inaccessibleChats` from `ChatInfoRepository.getInactiveChatIds()` after `loadFromDatabase()`, so the `isChatInaccessible` short-circuit and the preprocessor recovery hook are correct from the first post-restart message (no "first redundant probe" tax). Read-only warm-up — it does not change any `bot_status` value. |
+| `async isChatInaccessible(chatId: int) -> bool` | async | Cache-aside check via `getChatInfo`. Returns `True` if the chat is unknown to the bot (fail-closed — treats a missing row as inaccessible) or its `bot_status == ChatBotStatus.INACCESSIBLE`; `False` otherwise. A cache hit is cheap (no DB I/O, no API call); a miss reads the DB through the normal `getChatInfo` path. Awaited at the top of `TheBot.getChatAdmins` to short-circuit the platform API call, and in the preprocessor recovery hook. |
+| `async markChatInaccessible(chatId: int) -> bool` | async | Record that the bot is inaccessible in `chatId`. Reads `getChatInfo`; if the chat is not found, logs an error and returns `False`. Otherwise sets `bot_status = ChatBotStatus.INACCESSIBLE` and persists via `setChatInfo` (updates the in-memory cache + writes the DB through `updateChatInfo(botStatus=...)`). Called from the `getChatAdmins` failure catch sites. |
+| `async markChatActive(chatId: int) -> bool` | async | Recover `chatId` to `ACTIVE`. Reads `getChatInfo`; if the chat is not found, logs an error and returns `False`. Otherwise sets `bot_status = ChatBotStatus.ACTIVE` and persists via `setChatInfo` (in-memory cache + DB). The return value is a best-effort signal; callers keep recovery logic idempotent. |
+
+**No startup seeding hook.** Because accessibility is looked up cache-aside through the same `getChatInfo` path the rest of the chat cache uses, there is no separate `injectDatabase` warm-up step and no `getInactiveChatIds()`/`setChatBotStatus()` repository method — those were removed when the in-memory `_inaccessibleChats` set was dropped. The first `isChatInaccessible(chatId)` for a chat that is not yet in the in-memory cache simply falls through to a DB read, same as any other `getChatInfo` miss.
+
+**Post-refresh nuance:** after the periodic (~12 h) chat-info cache refresh, a cache entry may briefly lack a `bot_status` field, in which case `isChatInaccessible` returns `False` for a chat that is actually `INACCESSIBLE` until the next `getChatAdmins` call re-marks it. This is self-healing — the DB value stays correct and chat-list queries filter on the DB column, so the only effect is a single redundant `getChatAdmins` probe. See the design doc divergence section linked above.
 
 **IMPORTANT:** `CacheService.injectDatabase(db)` MUST be called before any cache operations. This is done automatically by `HandlersManager`, so only call it manually in tests
 

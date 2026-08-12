@@ -7,6 +7,74 @@
 
 ---
 
+## Implementation Divergence (2026-08-12)
+
+> **The body below is the original design rationale and is preserved as historical.**
+> The shipped implementation simplifies this design in roughly fifty places. For the
+> CURRENT behavior, read [`docs/llm/services.md`](../llm/services.md) (CacheService
+> accessibility surface), [`docs/llm/handlers.md`](../llm/handlers.md) (mark-on-failure
+> and recovery hooks), and [`docs/llm/database.md`](../llm/database.md) (repository
+> surface) — not the sections under this heading.
+
+The implementation consolidated accessibility state into the existing
+`chat_info.bot_status` column, accessed through the existing
+`CacheService.getChatInfo` / `setChatInfo` cache-aside path. There is no longer a
+separate in-memory mirror of the column. Concretely, the shipped code diverges from
+the body below in these ways:
+
+- **No `_inaccessibleChats` in-memory set.** `CacheService` does not hold a per-process
+  mirror of `bot_status`. The accessibility surface is read-through `getChatInfo`
+  (in-memory cache first, DB on miss).
+- **`CacheService.isChatInaccessible(chatId) -> bool` is `async`** and is a cache-aside
+  lookup: it returns `True` if the chat is unknown to `getChatInfo` (fail-closed) or if
+  `bot_status == ChatBotStatus.INACCESSIBLE`, otherwise `False`. It is no longer a
+  synchronous O(1) set-membership check.
+- **`CacheService.markChatInaccessible(chatId) -> bool` and `markChatActive(chatId) -> bool`
+  are `async`** and route through `getChatInfo` (read) and `setChatInfo` (write) — they
+  set `bot_status` in the `ChatInfoDict` and persist cache + DB via `setChatInfo`. Both
+  return `False` if the chat is not found; they do not call a dedicated status-mutation
+  repository method.
+- **`ChatInfoRepository.setChatBotStatus` and `ChatInfoRepository.getInactiveChatIds`
+  were REMOVED.** Persistence of `bot_status` goes through the existing
+  `updateChatInfo`, which gained an optional keyword-only argument
+  `botStatus: Optional[ChatBotStatus] = None`:
+  - `None` (the default) → `bot_status` is omitted from the upsert's `values` *and* its
+    `CONFLICT`-UPDATE expressions. The routine every-message refresh callers pass
+    nothing, so a refresh can never clobber an `INACCESSIBLE` row back to `ACTIVE`
+    (the non-clobber invariant from §3 of the body still holds, now implemented by
+    argument omission rather than by a hardcoded column skip).
+  - provided → `bot_status` is written into both the INSERT `values` and the
+    CONFLICT-UPDATE expressions. `CacheService.setChatInfo` forwards
+    `info.get("bot_status")`, so `markChatInaccessible` / `markChatActive` reach the
+    column via the same upsert path as every other `chat_info` write.
+- **The `idx_chat_info_bot_status` index was REMOVED from migration 026.** Migration 026
+  now adds ONLY the `bot_status TEXT NOT NULL DEFAULT 'active'` column (no supporting
+  index). `down()` drops the column (SQLite ≥3.35); there is no index to drop.
+- **The `BaseBotHandler.getUserChats` wrapper was REMOVED.** Consumers call
+  `self.db.chatUsers.getUserChats(...)` (and `getAllGroupChats(...)`) directly and
+  inherit the `botStatus=ChatBotStatus.ACTIVE` default.
+- **The `CacheService.injectDatabase` startup-seed of the in-memory set was REMOVED.**
+  It is no longer needed: `isChatInaccessible` is cache-aside and reads the DB on a
+  cache miss, so the first post-restart probe of a known-dead chat hits the DB once
+  and is then cached — there is no separate warm-up pass.
+
+**Behavioral nuance (self-healing).** The every-message refresh writes a
+`bot_status`-less `ChatInfoDict` into the `CacheService` cache. Until the next
+`getChatAdmins` failure re-marks the chat `INACCESSIBLE`, `isChatInaccessible` returns
+`False` for a chat that is `INACCESSIBLE` in the DB. The DB column and the
+`getUserChats` / `getAllGroupChats` `botStatus` filter remain authoritative throughout
+— only the in-process cache-aside short-circuit is briefly lenient — and the next
+failure probe restores the cache. This is the trade-off for dropping the in-memory
+mirror: no startup-seed, no eviction bookkeeping, at the cost of a transient
+cache/DB divergence on the read-short-circuit path.
+
+For everything else — binding decisions (no `bot_left_at`, no event wiring, no
+Phase 3), the `ChatBotStatus` enum values, the lazy mark-on-failure / activity-based
+recovery shape, the `botStatus` filter parameter on the chat-list queries, the DM
+dormancy rationale — the body below remains accurate.
+
+---
+
 ## 1. Overview / Goal
 
 Today the bot has no durable record of whether it is still present in a given chat. When

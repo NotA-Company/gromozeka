@@ -6,7 +6,7 @@ as managing forum topic information.
 """
 
 import logging
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from .. import utils as dbUtils
 from ..manager import DatabaseManager
@@ -46,6 +46,8 @@ class ChatInfoRepository(BaseRepository):
         title: Optional[str] = None,
         username: Optional[str] = None,
         isForum: Optional[bool] = False,
+        *,
+        botStatus: Optional[ChatBotStatus] = ChatBotStatus.ACTIVE,
     ) -> bool:
         """Add or update chat information in the database.
 
@@ -55,6 +57,7 @@ class ChatInfoRepository(BaseRepository):
             title: Optional chat title
             username: Optional chat username
             isForum: Whether the chat is a forum (default: False)
+            botStatus: bot accessibility status.
 
         Returns:
             bool: True if successful, False otherwise
@@ -78,6 +81,7 @@ class ChatInfoRepository(BaseRepository):
                     "is_forum": isForum,
                     "created_at": currentTimestamp,
                     "updated_at": currentTimestamp,
+                    "bot_status": botStatus,
                 },
                 conflictColumns=["chat_id"],
                 updateExpressions={
@@ -86,6 +90,7 @@ class ChatInfoRepository(BaseRepository):
                     "username": ExcludedValue(),
                     "is_forum": ExcludedValue(),
                     "updated_at": ExcludedValue(),
+                    "bot_status": ExcludedValue(),
                 },
             )
             return True
@@ -203,85 +208,3 @@ class ChatInfoRepository(BaseRepository):
         except Exception as e:
             logger.error(f"Failed to get chat topics: {e}")
             return []
-
-    async def setChatBotStatus(self, chatId: int, status: ChatBotStatus) -> bool:
-        """Conditionally set ``chat_info.bot_status`` for ``chatId``.
-
-        Uses a conditional UPDATE (``WHERE bot_status != :status``) so the common case of
-        setting the current value is a no-op write and the method is safe to call on every
-        probe. Routed by ``chatId``. Cannot write to readonly sources.
-
-        Args:
-            chatId: Chat identifier.
-            status: Target :class:`ChatBotStatus`.
-
-        Returns:
-            True if the chat exists and now has the target status, False if the chat
-            does not exist. Under concurrent writes, multiple callers may both return
-            True even if only one actually changed the value — the DB converges to the
-            last writer. Callers must not gate critical logic on "this caller specifically
-            changed it."
-        """
-        sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
-        # Conditional UPDATE: only write when status differs (idempotent, race-convergent)
-        await sqlProvider.execute(
-            """
-            UPDATE chat_info
-            SET bot_status = :status
-            WHERE chat_id = :chatId AND bot_status != :status
-            """,
-            {
-                "chatId": chatId,
-                "status": status.value,
-            },
-        )
-        # Recover the signal: check the resulting state
-        row = await sqlProvider.executeFetchOne(
-            """
-            SELECT bot_status FROM chat_info WHERE chat_id = :chatId
-            """,
-            {"chatId": chatId},
-        )
-        # row is None → chat doesn't exist; else True if now at target (always true after
-        # successful UPDATE + conditional, or was already target)
-        return row is not None
-
-    async def getInactiveChatIds(self) -> List[Dict[str, int]]:
-        """Return ``[{chat_id: int}, ...]`` for every chat currently ``INACCESSIBLE``.
-
-        Used by ``CacheService.injectDatabase`` to seed the in-memory known-inaccessible
-        set at startup so the preprocessor recovery hook (§5.1) works immediately after a
-        restart. Read-only; aggregates across sources like the other chat-listing reads.
-
-        Returns:
-            List of dicts with ``chat_id`` keys for every chat with ``bot_status =
-            ChatBotStatus.INACCESSIBLE``. Aggregates from all sources in multi-source mode.
-        """
-        allResults: List[Dict[str, int]] = []
-        seen: set[int] = set()  # Deduplicate by chatId
-
-        sourcesList = list(self.manager._providers.keys())
-
-        for sourceName in sourcesList:
-            try:
-                sqlProvider = await self.manager.getProvider(dataSource=sourceName, readonly=True)
-                rows = await sqlProvider.executeFetchAll(
-                    """
-                    SELECT chat_id FROM chat_info
-                    WHERE bot_status = :inaccessibleStatus
-                    """,
-                    {
-                        "inaccessibleStatus": ChatBotStatus.INACCESSIBLE.value,
-                    },
-                )
-                for row in rows:
-                    chatId = int(row["chat_id"])
-                    if chatId not in seen:
-                        seen.add(chatId)
-                        allResults.append({"chat_id": chatId})
-            except Exception as e:
-                logger.warning(f"Failed to get inactive chat IDs from source '{sourceName}': {e}")
-                continue
-
-        logger.debug(f"Found {len(allResults)} inactive chats across all sources")
-        return allResults

@@ -310,7 +310,7 @@ class ChatUsersRepository(BaseRepository):
                 """,
                     {
                         "userId": userId,
-                        "botStatus": botStatus.value if botStatus else None,
+                        "botStatus": botStatus,
                     },
                 )
                 for row in rows:

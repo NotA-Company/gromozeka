@@ -223,13 +223,8 @@ class ChatInfoDict(TypedDict):
     """Chat type."""
     is_forum: bool
     """Whether chat is a forum."""
-    bot_status: NotRequired[ChatBotStatus]
-    """Accessibility state of the bot for this chat. Populated on DB-row-backed reads
-    (``SELECT *``/``SELECT ci.*`` include the column). Absent on platform-sourced write
-    dicts produced by :meth:`TheBot.getChatInfo`, because the accessibility subsystem
-    owns this column and the ``updateChatInfo`` upsert omits it. The
-    authoritative value is the DB column; consumers that need it read it via the
-    chat-list SQL filter or the dedicated status methods, not from a cached dict."""
+    bot_status: ChatBotStatus
+    """Accessibility state of the bot for this chat."""
     created_at: datetime.datetime
     """Record creation timestamp."""
     updated_at: datetime.datetime
