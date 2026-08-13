@@ -34,7 +34,7 @@ h11==0.16.0
 h2==4.4.1
 hf-xet==1.6.0
 hpack==4.2.0
-html-to-markdown==3.8.3
+html-to-markdown==3.10.6
 httpcore==1.0.9
 httpcore2==2.10.0
 httpx2==2.10.0

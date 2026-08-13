@@ -45,7 +45,7 @@ import pytest
 #: Pinned ``html-to-markdown`` distribution version these assertions were
 #: observed against. A bump that changes conversion output must be re-verified
 #: against every pin in this file before shipping.
-PINNED_VERSION: str = "3.8.3"
+PINNED_VERSION: str = "3.10.6"
 
 # The EXACT ConversionOptions production (the ``_llmToolGetUrlContent`` block in yandex_search.py) uses.
 # Constructed once and shared; treated as immutable in spirit.

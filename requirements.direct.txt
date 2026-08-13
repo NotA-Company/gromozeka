@@ -5,7 +5,7 @@ aiosqlite==0.22.1
 av==18.1.0
 boto3==1.43.70
 fastembed==0.8.0
-html-to-markdown==3.8.3
+html-to-markdown==3.10.6
 httpx2[http2,socks]==2.10.0
 openai==3.0.0
 packaging==26.3
