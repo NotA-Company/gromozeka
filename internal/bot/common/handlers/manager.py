@@ -65,6 +65,7 @@ from internal.services.queue_service import DelayedTask, DelayedTaskFunction, Qu
 from internal.services.storage import StorageService
 from lib import utils
 from lib.rate_limiter.manager import RateLimiterManager
+from lib.stats import NullStatsStorage, StatsStorage
 
 from .base import BaseBotHandler, HandlerResultStatus
 from .chat_search import ChatSearchHandler
@@ -413,7 +414,14 @@ class HandlersManager(CommandHandlerGetterInterface):
         _shutdownEvent: Event set when the manager is shutting down
     """
 
-    def __init__(self, *, configManager: ConfigManager, database: Database, botProvider: BotProvider) -> None:
+    def __init__(
+        self,
+        *,
+        configManager: ConfigManager,
+        database: Database,
+        botProvider: BotProvider,
+        messageStatsStorage: Optional[StatsStorage] = None,
+    ) -> None:
         """Initialize the handlers manager with required services.
 
         Initializes all core services, sets up default chat settings, configures
@@ -424,11 +432,13 @@ class HandlersManager(CommandHandlerGetterInterface):
             configManager: Configuration manager instance
             database: Database wrapper for data persistence
             botProvider: Bot provider type (TELEGRAM or MAX)
+            messageStatsStorage: Stats storage for message_received events
         """
         self.configManager = configManager
         self.db = database
         self.botProvider: BotProvider = botProvider
         self.handlerTimeout = 60 * 30
+        self.messageStatsStorage: StatsStorage = messageStatsStorage or NullStatsStorage()
 
         # Map of command name -> CommandHandlerInfo
         self._commands: Dict[str, CommandHandlerInfoV2] = {}
@@ -621,6 +631,10 @@ class HandlersManager(CommandHandlerGetterInterface):
         self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.CRON_JOB, self._dtCronJob)
         self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, self._dtOnExit)
         self._shutdownEvent = asyncio.Event()
+
+        # Post-construction injection: set messageStatsStorage on all handlers
+        for handler, _ in self.handlers:
+            handler.messageStatsStorage = self.messageStatsStorage
 
     async def _dtOnExit(self, task: DelayedTask) -> None:
         """Handle application exit by delegating cleanup to _cleanupOldData().

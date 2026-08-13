@@ -118,6 +118,15 @@ class GromozekBot:
             )
         STTService.getInstance().initialize(self.configManager, statsStorage=sttStatsStorage)
 
+        # Initialize message stats storage
+        messageStatsStorage: Optional[StatsStorage] = None
+        if statsEnabled:
+            messageStatsStorage = DatabaseStatsStorage(
+                db=self.database,
+                eventType="message_received",
+                dataSource=statsConfig.get("message-stats-data-source", self.database.manager.default),
+            )
+
         # Initialize bot application
         botConfig = self.configManager.getBotConfig()
         self.botMode = BotProvider(botConfig.get("mode", BotProvider.TELEGRAM))
@@ -128,12 +137,14 @@ class GromozekBot:
                     configManager=self.configManager,
                     botToken=self.configManager.getBotToken(),
                     database=self.database,
+                    messageStatsStorage=messageStatsStorage,
                 )
             case BotProvider.MAX:
                 self.botApp = MaxBotApplication(
                     configManager=self.configManager,
                     botToken=self.configManager.getBotToken(),
                     database=self.database,
+                    messageStatsStorage=messageStatsStorage,
                 )
             case _:
                 raise ValueError(f"Unknown bot mode: {self.botMode}")

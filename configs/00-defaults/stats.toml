@@ -3,3 +3,4 @@ enabled = false
 
 llm-stats-data-source = "default"
 stt-stats-data-source = "default"
+message-stats-data-source = "default"

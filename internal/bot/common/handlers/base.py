@@ -76,6 +76,7 @@ from lib.ai import (
     ModelMessage,
     ModelResultStatus,
 )
+from lib.stats import NullStatsStorage, StatsStorage
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +162,9 @@ class BaseBotHandler(CommandHandlerMixin):
         self.queueService = QueueService.getInstance()
         self.storage = StorageService.getInstance()
         self.llmService = LLMService.getInstance()
+
+        # Stats storage for message_received events (default: no-op)
+        self.messageStatsStorage: StatsStorage = NullStatsStorage()
 
         # Cached config flags — read once at init, require restart to take effect.
         # Mirrors the _searchEnabled pattern in MessagePreprocessorHandler.
@@ -1134,6 +1138,18 @@ class BaseBotHandler(CommandHandlerMixin):
             markup=FormatEntity.toDictList(message.formatEntities),
             metadata=message.metadata,
             mediaGroupId=message.mediaGroupId,
+        )
+
+        # Record message_received stats event (best-effort, never raises)
+        # Media-only messages have text_length=0 — this is intentional per D3
+        await self.messageStatsStorage.record(
+            stats={"message_count": 1, "text_length": len(message.messageText) if message.messageText else 0},
+            consumerId=str(chat.id),
+            labels={
+                "user_id": str(sender.id),
+                "chat_type": chat.chatType.value,
+                "has_media": "1" if message.messageType != MessageType.TEXT else "0",
+            },
         )
 
         return True

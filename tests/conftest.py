@@ -87,12 +87,6 @@ def mockDatabaseWrapper():
 
     mock = Mock(spec=Database)
 
-    # Configure common return values
-    mock.getChatSettings.return_value = {}
-    mock.getUserData.return_value = {}
-    mock.getChatMessages.return_value = []
-    mock.getDelayedTasks.return_value = []
-
     # Configure async methods
     mock.saveChatMessage = AsyncMock(return_value=None)
     mock.updateChatUser = AsyncMock(return_value=None)
@@ -286,8 +280,7 @@ def mockConfigManager():
         "token": "test_token",
         "owners": [123456],
     }
-    mock.getProviderConfig.return_value = {}
-    mock.getModelConfig.return_value = {}
+    mock.getModelsConfig.return_value = {}
 
     return mock
 
