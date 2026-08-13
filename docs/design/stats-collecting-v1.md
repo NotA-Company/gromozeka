@@ -1,7 +1,7 @@
 # Design: Statistics collection v1 — messages, tool calls, commands
 
 **Date**: 2026-08-14
-**Status**: **PROPOSED** (design only; no code landed).
+**Status**: **Phase 1 implemented** (commits `46cac39f` + `f885702b` — `message_received` events + migration 027 back-fill/drop, gated on `[stats] enabled`). Phase 2 (`llm_tool_call`) and Phase 3 (`command`) remain proposed/pending. The body below is the original design rationale and is preserved as-is.
 **Owner**: TBD
 **Branch**: `lib-stat-improvement`
 **Scope**: Extend Gromozeka's `lib/stats` event pipeline to three new bot-level event

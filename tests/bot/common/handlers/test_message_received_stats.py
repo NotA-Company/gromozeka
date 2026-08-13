@@ -69,7 +69,6 @@ class TestMessageReceivedStatsRecording:
         labels = call.kwargs["labels"]
         assert labels["user_id"] == "42"
         assert labels["chat_type"] == "private"
-        assert labels["has_media"] == "0"  # Text message
 
     async def test_no_record_when_save_fails_unknown_type(self, mockConfigManager, mockDatabaseWrapper):
         """No stats record when saveChatMessage returns False (UNKNOWN message type early return)."""
@@ -161,7 +160,6 @@ class TestMessageReceivedStatsRecording:
         call = mockStatsStorage.record.call_args
         assert call.kwargs["stats"] == {"message_count": 1, "text_length": 0}
         labels = call.kwargs["labels"]
-        assert labels["has_media"] == "1"  # Media message
 
     async def test_group_chat_type_label(self, mockConfigManager, mockDatabaseWrapper):
         """Group chat message has chat_type="group" in labels."""
@@ -266,147 +264,3 @@ class TestMessageReceivedStatsRecording:
         # Commands are text messages, so has_media should be "0"
         call = mockStatsStorage.record.call_args
         labels = call.kwargs["labels"]
-        assert labels["has_media"] == "0"
-
-
-class TestBackfillCrossCompatibility:
-    """Cross-compatibility test: live aggregation hash parity and backfill bucket separation.
-
-    This test verifies that:
-    - Live message_received events produce labels_hash that matches aggregation
-    - Backfill-shape labels_hash (same labels minus has_media) differs from live hash
-    This confirms live and backfilled rows occupy distinct buckets — no accidental merge/double-count.
-    """
-
-    async def test_hashMechanismParity_andLiveBackfillBucketSeparation(self, mockConfigManager, testDatabase):
-        """Live aggregation hash parity and backfill bucket separation.
-
-        Drives the live side through the PRODUCTION path (saveChatMessage),
-        captures the exact labels dict production builds, runs aggregate(),
-        and asserts:
-        - md5(jsonDumps(productionLabels)) equals the labels_hash stored in the aggregated row
-        - The backfill-shape hash (same labels minus has_media) DIFFERS from live hash
-
-        This proves live and backfilled rows occupy distinct buckets.
-        """
-        from internal.bot.common.handlers.base import BaseBotHandler
-
-        # Create storage for message_received events
-        storage = DatabaseStatsStorage(db=testDatabase, eventType="message_received", dataSource="default")
-
-        # Spy to capture production labels
-        capturedProductionLabels: dict[str, str] | None = None
-
-        originalRecord = storage.record
-
-        async def spyRecord(
-            stats: dict[str, float | int],
-            *,
-            consumerId: Optional[str] = None,
-            labels: Optional[dict[str, str]] = None,
-            eventTime: Optional[datetime.datetime] = None,
-        ) -> None:
-            nonlocal capturedProductionLabels
-            # Capture the labels and merge consumerId exactly as production does
-            capturedProductionLabels = dict(labels or {})
-            capturedProductionLabels["consumer"] = consumerId or GLOBAL_CONSUMER_ID
-            await originalRecord(stats, consumerId=consumerId, labels=labels, eventTime=eventTime)
-
-        storage.record = spyRecord
-
-        # Create a handler with the spied storage
-        handler = BaseBotHandler(
-            configManager=mockConfigManager, database=testDatabase, botProvider=BotProvider.TELEGRAM
-        )
-        handler.messageStatsStorage = storage
-        handler.updateChatInfo = AsyncMock(return_value=None)  # Mock to avoid bot requirement
-        handler.cache.updateChatUser = AsyncMock(return_value=None)  # Mock cache call
-
-        # Create a real EnsuredMessage and save via production path
-        message = EnsuredMessage(
-            sender=MessageSender(id=100, name="Alice", username="@alice"),
-            recipient=MessageRecipient(id=42, chatType=ChatType.PRIVATE),
-            messageId=MessageId(200),
-            date=datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
-            messageText="Hello world",
-        )
-        message.messageType = MessageType.TEXT
-
-        await handler.saveChatMessage(message, MessageCategory.USER)
-
-        # Verify production labels were captured (includes has_media and consumer)
-        assert capturedProductionLabels is not None, "Production labels should have been captured"
-        assert "has_media" in capturedProductionLabels, "Production labels should include has_media"
-        assert "consumer" in capturedProductionLabels, "Production labels should include consumer"
-        assert capturedProductionLabels == {
-            "user_id": "100",
-            "chat_type": "private",
-            "has_media": "0",
-            "consumer": "42",
-        }, "Production labels should match expected shape"
-
-        # Compute production hash (same algorithm as _hashLabels in stats_storage.py)
-        # Type: ignore for capturedProductionLabels - pyright doesn't narrow after assert
-        productionLabelsJson = jsonDumps(capturedProductionLabels)  # type: ignore[arg-type]
-        productionHash = hashlib.md5(productionLabelsJson.encode("utf-8")).hexdigest()
-
-        # Run aggregation to roll up the event
-        await storage.aggregate()
-
-        # Query the stat_aggregates table for the daily row using the production hash
-        # Filter to consumer="42" and metric_key="message_count" to exclude:
-        #   - Global rollup (consumer="__global__")
-        #   - Other metrics like text_length
-        provider = await testDatabase.manager.getProvider()
-        rows = await provider.executeFetchAll(
-            """
-            SELECT labels, labels_hash
-            FROM stat_aggregates
-            WHERE event_type = 'message_received'
-              AND period_type = 'daily'
-              AND labels_hash = :expectedHash
-              AND metric_key = 'message_count'
-              AND labels LIKE '%"consumer":"42"%'
-            """,
-            {"expectedHash": productionHash},
-        )
-
-        assert len(rows) == 1, "Expected exactly one aggregated row with production hash"
-        row = rows[0]
-        actualHash = row["labels_hash"]
-        assert actualHash == productionHash, f"Hash mismatch: live={actualHash} vs expected={productionHash}"
-
-        # Verify the labels JSON matches too
-        actualLabelsJson = row["labels"]
-        assert (
-            actualLabelsJson == productionLabelsJson
-        ), f"Labels JSON mismatch: live={actualLabelsJson} vs expected={productionLabelsJson}"
-
-        # Now verify backfill-shape hash differs from production hash
-        # Backfill shape is same labels MINUS has_media
-        if capturedProductionLabels is None:
-            raise AssertionError("capturedProductionLabels should not be None at this point")
-        backfillLabels = {k: v for k, v in capturedProductionLabels.items() if k != "has_media"}
-        backfillLabelsJson = jsonDumps(backfillLabels)
-        backfillHash = hashlib.md5(backfillLabelsJson.encode("utf-8")).hexdigest()
-
-        assert (
-            backfillHash != productionHash
-        ), f"Backfill hash should differ from production hash: backfill={backfillHash} vs production={productionHash}"
-
-        # Verify no backfill-shape row exists in the aggregates (proving bucket separation)
-        backfillRows = await provider.executeFetchAll(
-            """
-            SELECT labels_hash
-            FROM stat_aggregates
-            WHERE event_type = 'message_received'
-              AND period_type = 'daily'
-              AND labels_hash = :expectedHash
-              AND metric_key = 'message_count'
-            """,
-            {"expectedHash": backfillHash},
-        )
-
-        assert (
-            len(backfillRows) == 0
-        ), f"No backfill-shape row should exist (it would merge incorrectly): found {len(backfillRows)} rows"

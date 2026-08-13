@@ -1148,7 +1148,7 @@ class BaseBotHandler(CommandHandlerMixin):
             labels={
                 "user_id": str(sender.id),
                 "chat_type": chat.chatType.value,
-                "has_media": "1" if message.messageType != MessageType.TEXT else "0",
+                "message_type": message.messageType,
             },
         )
 

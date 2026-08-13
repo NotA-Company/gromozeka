@@ -746,7 +746,7 @@ See: [Best Practices](database-schema.md#best-practices)
 - **Cache Tables**: 3 explicit (`chat_summarization_cache`, `cache_storage`, `cache`) plus dynamic per-`CacheType` tables
 - **Spam Detection Tables**: 4 (`spam_messages`, `ham_messages`, `bayes_tokens`, `bayes_classes`)
 - **Statistics Tables**: 2 (`stat_events`, `stat_aggregates`) — legacy `chat_stats` and `chat_user_stats` dropped in migration_027
-- **Current Migration Version**: 25
+- **Current Migration Version**: 27
 - **Total Repositories**: 16 specialised repositories on the `Database` class
 
 ## 🤝 Contributing

@@ -601,6 +601,7 @@ await storage.record(
 - `LLMManager` receives `statsStorage` in constructor and propagates to all `AbstractModel` instances
 - `AbstractModel` records generation stats (tokens, errors, status) via `_recordAttemptStats()`
 - `LLMService` passes `consumerId=str(chatId)` to LLM generation methods
+- `message_received` events — `BaseBotHandler.saveChatMessage` records `message_count`/`text_length` with `user_id`/`chat_type`/`has_media` labels per inbound message (stats `{message_count: 1, text_length: len(text)}`); `main.py` builds the `messageStatsStorage` (gated on `[stats].enabled`) and threads it through both bot applications into `HandlersManager`, which injects it post-construction onto every handler. Default is `NullStatsStorage` so stats-off needs no `None` checks.
 
 **Best-effort design:** `record()` implementations must never raise — log and return silently on error.
 

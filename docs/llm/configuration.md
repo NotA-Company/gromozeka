@@ -465,8 +465,9 @@ Parse-structure-template placeholders: `{systemId}`, `{layoutName}`, `{descripti
 | `enabled` | bool | `false` | Master switch for statistics collection |
 | `llm-stats-data-source` | str | `"default"` | Database data source for LLM stats storage |
 | `stt-stats-data-source` | str | `"default"` | Database data source for STT stats storage (`eventType="stt_request"`); independent from `llm-stats-data-source` |
+| `message-stats-data-source` | str | `"default"` | Database data source for message stats storage (`eventType="message_received"`, recorded in `BaseBotHandler.saveChatMessage`); independent from the LLM/STT keys |
 
-**Note:** Disabled by default until aggregation trigger and query API are implemented. When enabled, `DatabaseStatsStorage` is initialized in `main.py` — one instance for LLM (passed to `LLMManager`) and one for STT (passed to `STTService`), each reading its own data source key (`llm-stats-data-source` and `stt-stats-data-source` respectively; both default `"default"`). Statistics are stored in `stat_events` (append-only log) and `stat_aggregates` (period buckets) tables created by `migration_016`.
+**Note:** Disabled by default until aggregation trigger and query API are implemented. When enabled, `DatabaseStatsStorage` is initialized in `main.py` — one instance per event type: LLM (passed to `LLMManager`, key `llm-stats-data-source`), STT (passed to `STTService`, key `stt-stats-data-source`), and `message_received` (threaded through both bot applications into `HandlersManager`, which injects it onto every `BaseBotHandler`; key `message-stats-data-source`). Each reads its own data source key (all default `"default"`). Statistics are stored in `stat_events` (append-only log) and `stat_aggregates` (period buckets) tables created by `migration_016`.
 
 ---
 
