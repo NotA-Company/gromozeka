@@ -8,19 +8,10 @@ This module lives in ``lib/`` and has **no** imports from ``internal/``.
 """
 
 import logging
-import ssl
 from enum import StrEnum
 from threading import Lock
 from typing import Any, Dict, Optional, TypedDict, cast
 from urllib.parse import quote, urlparse, urlunparse
-
-try:
-    from httpx_socks import AsyncProxyTransport
-
-    _HTTPX_SOCKS_AVAILABLE = True
-except ImportError:
-    _HTTPX_SOCKS_AVAILABLE = False
-
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +24,7 @@ class ProxyType(StrEnum):
     HTTP = "http"
     """HTTP/HTTPS proxy."""
     SOCKS5 = "socks5"
-    """SOCKS5 proxy (requires httpx-socks[asyncio] package)."""
+    """SOCKS5 proxy (requires httpx2[socks] package, native proxy="socks5://...")."""
 
 
 class HealthCheckType(StrEnum):
@@ -103,19 +94,17 @@ class ProxyConfigDict(TypedDict, total=False):
 
 
 class ProxyKwargs(TypedDict, total=False):
-    """Keyword arguments for httpx.AsyncClient proxy configuration.
+    """Keyword arguments for httpx2.AsyncClient proxy configuration.
 
-    Contains either a ``proxy`` URL string (HTTP proxies) or a ``transport``
-    instance (SOCKS5 proxies). When empty (no proxy configured), spreading
-    ``**kwargs`` into ``httpx.AsyncClient()`` is a safe no-op.
+    Contains a ``proxy`` URL string (for both HTTP and SOCKS5 proxies). When
+    empty (no proxy configured), spreading ``**kwargs`` into
+    ``httpx2.AsyncClient()`` is a safe no-op.
     """
 
     proxy: str
-    """HTTP proxy URL string (e.g. ``\"http://user:pass@host:8080\"``).
-    Passed directly to httpx.AsyncClient(proxy=...)."""
-    transport: "AsyncProxyTransport"
-    """SOCKS5 transport instance from httpx_socks.AsyncProxyTransport.
-    Passed to httpx.AsyncClient(transport=...)."""
+    """Proxy URL string (e.g. ``\"http://user:pass@host:8080\"`` or
+    ``\"socks5://user:pass@host:1080\"``). Passed directly to
+    httpx2.AsyncClient(proxy=...)."""
 
 
 def _kebabToCamelCase(key: str) -> str:
@@ -430,34 +419,25 @@ class ProxyConfig:
             password=(config.password or "") if not maskPassword else "REDACTED",
         )
 
-    def toKwargs(self, *, verify: Optional[ssl.SSLContext] = None) -> ProxyKwargs:
-        """Convert this proxy config to httpx-compatible keyword arguments.
+    def toKwargs(self) -> ProxyKwargs:
+        """Convert this proxy config to httpx2-compatible keyword arguments.
 
-        For SOCKS5 proxies the SSL context is threaded directly into the
-        transport via ``AsyncProxyTransport.from_url(url, verify=verify)``.
-        For HTTP proxies it is returned as ``ProxyKwargs(proxy=...)`` only —
-        the caller is responsible for applying ``verify=`` at the
-        ``httpx.AsyncClient`` level.
+        For both HTTP and SOCKS5 proxies, returns ``ProxyKwargs(proxy=...)``.
+        The caller is responsible for applying ``verify=`` at the
+        ``httpx2.AsyncClient`` level uniformly.
 
         See also :meth:`MaxBotClient._getHttpClient` in
         ``lib/max_bot/client.py``, which applies ``verify=`` at the client
-        level for HTTP proxies — the two must agree on how SSL context
-        reaches the transport.
-
-        Args:
-            verify: Optional SSL context for custom CA trust (e.g. Минцифры CA
-                certs). When provided and the proxy type is SOCKS5, passed to
-                ``AsyncProxyTransport.from_url(url, verify=verify)``. Ignored
-                for HTTP proxies. Defaults to None (system CAs).
+        level.
 
         Returns:
-            A ProxyKwargs TypedDict with either ``proxy`` key (HTTP) or
-            ``transport`` key (SOCKS5). Returns an empty dict when proxy
-            type is NONE (spreading into httpx.AsyncClient is a no-op).
+            A ProxyKwargs TypedDict with a ``proxy`` key for HTTP or SOCKS5.
+            Returns an empty dict when proxy type is NONE (spreading into
+            httpx2.AsyncClient is a no-op).
 
         Raises:
-            ImportError: If proxy type is SOCKS5 and the httpx-socks package
-                is not installed.
+            ValueError: If proxy type is HTTP or SOCKS5 but the address is
+                missing or invalid.
         """
         config = self.getCombined()
 
@@ -470,18 +450,8 @@ class ProxyConfig:
             password=config.password or "",
         )
 
-        if config.type == ProxyType.HTTP:
+        if config.type in [ProxyType.HTTP, ProxyType.SOCKS5]:
             return ProxyKwargs(proxy=proxyUrl)
-
-        if config.type == ProxyType.SOCKS5:
-            if not _HTTPX_SOCKS_AVAILABLE:
-                raise ImportError(
-                    "SOCKS5 proxy requires httpx-socks[asyncio] package. "
-                    "Install with: pip install httpx-socks[asyncio]"
-                )
-            if verify is not None:
-                return ProxyKwargs(transport=AsyncProxyTransport.from_url(proxyUrl, verify=verify))
-            return ProxyKwargs(transport=AsyncProxyTransport.from_url(proxyUrl))
 
         raise ValueError(f"Unsupported proxy type: {config.type!r}. Must be 'none', 'http' or 'socks5'.")
 

@@ -216,14 +216,12 @@ async def testNoSslContextWhenCaBundlePathOmitted() -> None:
         assert "verify" not in callKwargs
 
 
-async def testSocks5TransportGetsSslContext() -> None:
-    """Verify sslContext is threaded into the SOCKS5 transport, not verify=.
+async def testSocks5ReturnsProxyUrlWithSslContextOnClient() -> None:
+    """Verify SOCKS5 proxy passes plain URL via proxy= and sslContext via verify=.
 
-    Regression for the bug where httpx silently drops the top-level ``verify=``
-    argument when a custom ``transport`` is supplied. For SOCKS5 proxies the
-    SSL context must be passed to ``AsyncProxyTransport.from_url`` (via
-    ``ProxyConfig.toKwargs(verify=...)``) so the Минцифры CA certs are actually
-    trusted end-to-end.
+    After the D2 migration (httpx2 native proxy support), both HTTP and SOCKS5
+    use the same shape: {'proxy': 'url'}. The SSL context is applied uniformly
+    at the httpx.AsyncClient level (verify=) rather than threaded into a transport.
 
     Args:
         None
@@ -242,17 +240,7 @@ async def testSocks5TransportGetsSslContext() -> None:
     ctx = client._sslContext
     assert ctx is not None
 
-    capturedTransports: list[Any] = []
-
-    class _FakeTransport:
-        """Stub replacing httpx_socks.AsyncProxyTransport for capture."""
-
-        @classmethod
-        def from_url(cls, url: str, **kwargs: Any) -> "_FakeTransport":
-            capturedTransports.append(kwargs)
-            return cls()
-
-    with patch("lib.proxy.AsyncProxyTransport", _FakeTransport), patch("httpx.AsyncClient") as mockAsyncClient:
+    with patch("httpx.AsyncClient") as mockAsyncClient:
         mockClient: Any = MagicMock()
         mockClient.is_closed = False
         mockClient.headers = {}
@@ -260,22 +248,19 @@ async def testSocks5TransportGetsSslContext() -> None:
         client._getHttpClient()
 
     callKwargs = mockAsyncClient.call_args.kwargs
-    # The SSL context must NOT live on the client-level verify= (it would be
-    # ignored by httpx in the presence of a custom transport).
-    assert "transport" in callKwargs
-    assert "verify" not in callKwargs
-    # The transport itself must have been built with verify=ctx.
-    assert len(capturedTransports) == 1
-    transportKwargs = capturedTransports[0]
-    assert transportKwargs.get("verify") is ctx
+    # No transport key - D2 replaced it with native proxy support
+    assert "transport" not in callKwargs
+    # Proxy URL is passed at the client level
+    assert callKwargs.get("proxy") == "socks5://user:pass@proxy.example.invalid:1080"
+    # SSL context is applied at the client level (uniformly, same as HTTP)
+    assert callKwargs.get("verify") is ctx
 
 
-async def testSocks5TransportWithoutSslContextUnchanged() -> None:
-    """Verify SOCKS5 path is untouched when caBundlePath is None.
+async def testSocks5ReturnsProxyUrlWithoutSslContextOnClient() -> None:
+    """Verify SOCKS5 proxy passes plain URL via proxy= with no verify= when caBundlePath is None.
 
-    When no custom CA context is supplied the existing behaviour (transport
-    built by ``ProxyConfig.toKwargs()`` with system-default TLS) must be
-    preserved — a single transport build, no verify= on the client.
+    When no custom CA context is supplied the existing behaviour (proxy URL
+    at client level, system-default TLS) must be preserved.
 
     Args:
         None
@@ -290,15 +275,7 @@ async def testSocks5TransportWithoutSslContextUnchanged() -> None:
     )
     client = MaxBotClient("test-token-for-testing", proxyConfig=proxyConfig, caBundlePath=None)
 
-    capturedTransports: list[Any] = []
-
-    class _FakeTransport:
-        @classmethod
-        def from_url(cls, url: str, **kwargs: Any) -> "_FakeTransport":
-            capturedTransports.append(kwargs)
-            return cls()
-
-    with patch("lib.proxy.AsyncProxyTransport", _FakeTransport), patch("httpx.AsyncClient") as mockAsyncClient:
+    with patch("httpx.AsyncClient") as mockAsyncClient:
         mockClient: Any = MagicMock()
         mockClient.is_closed = False
         mockClient.headers = {}
@@ -306,12 +283,12 @@ async def testSocks5TransportWithoutSslContextUnchanged() -> None:
         client._getHttpClient()
 
     callKwargs = mockAsyncClient.call_args.kwargs
-    # toKwargs() builds the transport exactly once; no recreation.
-    assert len(capturedTransports) == 1
-    assert "transport" in callKwargs
+    # No transport key - D2 replaced it with native proxy support
+    assert "transport" not in callKwargs
+    # Proxy URL is passed at the client level
+    assert callKwargs.get("proxy") == "socks5://proxy.example.invalid:1080"
+    # No verify= when caBundlePath is None (defer to httpx defaults)
     assert "verify" not in callKwargs
-    # No verify threaded into the transport either.
-    assert "verify" not in capturedTransports[0]
 
 
 async def testHttpProxyKeepsVerifyOnClient() -> None:

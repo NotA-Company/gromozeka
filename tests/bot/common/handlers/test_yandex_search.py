@@ -29,8 +29,8 @@ instance level.
 """
 
 import datetime
-from typing import Any, Dict, List, Tuple, cast
-from unittest.mock import AsyncMock, Mock
+from typing import Any, Dict, List, Optional, Tuple, cast
+from unittest.mock import AsyncMock, Mock, patch
 
 from internal.bot.common.handlers.yandex_search import YandexSearchHandler
 from internal.bot.models import (
@@ -45,6 +45,7 @@ from internal.bot.models import (
 )
 from lib.ai import ModelMessage, ModelResultStatus, ModelRunResult
 from lib.cache import JsonKeyGenerator
+from lib.proxy import ProxyHelper, ProxyType
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -67,15 +68,19 @@ DEFAULT_DOC_PROMPT = "DEFAULT DOC PROMPT"
 # ---------------------------------------------------------------------------
 
 
-def _makeConfigManager() -> Mock:
+def _makeConfigManager(proxyConfig: Optional[Dict[str, Any]] = None) -> Mock:
     """Build a ``ConfigManager`` stub satisfying ``YandexSearchHandler.__init__``.
 
     ``BaseBotHandler.__init__`` reads ``getBotConfig()``; the
     ``YandexSearchHandler.__init__`` raises ``RuntimeError`` unless
     ``getYandexSearchConfig()["enabled"]`` is truthy and supplies the
     ``api-key`` / ``folder-id`` the ``YandexSearchClient`` constructor
-    consumes. No ``proxy`` / ``use-proxy`` keys are present so the
+    consumes. No ``proxy`` / ``use-proxy`` keys are present by default so the
     (reset) ``ProxyService`` resolves a type-NONE config without I/O.
+
+    Args:
+        proxyConfig: Optional proxy configuration dict. If provided, includes
+            ``use-proxy`` and ``proxy`` sections in the yandex-search config.
 
     Returns:
         ``Mock`` exposing ``getBotConfig()`` and ``getYandexSearchConfig()``
@@ -83,14 +88,19 @@ def _makeConfigManager() -> Mock:
     """
     cm = Mock()
     cm.getBotConfig = Mock(return_value={"token": "test", "owners": []})
-    cm.getYandexSearchConfig = Mock(
-        return_value={
-            "enabled": True,
-            "api-key": "test-api-key",
-            "folder-id": "test-folder-id",
-            "defaults": {},
-        }
-    )
+
+    ysConfig = {
+        "enabled": True,
+        "api-key": "test-api-key",
+        "folder-id": "test-folder-id",
+        "defaults": {},
+    }
+
+    if proxyConfig:
+        ysConfig["use-proxy"] = True
+        ysConfig["proxy"] = proxyConfig
+
+    cm.getYandexSearchConfig = Mock(return_value=ysConfig)
     return cm
 
 
@@ -614,3 +624,139 @@ class TestWebSearchForwarding:
         getUrl.assert_awaited_once()
         assert getUrl.call_args.kwargs["condensing_prompt"] is None
         assert getUrl.call_args.kwargs["max_size"] == DEFAULT_MAX_SIZE
+
+
+class TestHttp2DisabledForSocks5:
+    """Regression test for D3: HTTP/2 must be disabled when proxy type is SOCKS5.
+
+    Before the D3 fix, the heuristic ``useHttp2 = "transport" not in proxyKwargs``
+    detected SOCKS indirectly via the transport object. After D2 removed the
+    transport key, that check would always return True — silently re-enabling
+    HTTP/2 over SOCKS (the historically-flaky combo).
+
+    This test locks in the corrected behavior: HTTP/2 is disabled explicitly
+    when the resolved proxy type is SOCKS5, and enabled for HTTP and NONE types.
+    """
+
+    async def test_http2_disabled_when_proxy_type_is_socks5(self) -> None:
+        """When proxy type is SOCKS5, http2 parameter passed to AsyncClient must be False.
+
+        This regression test ensures the D3 fix (keying off proxyType) is in place.
+        Without D3, the old ``"transport" not in proxyKwargs`` heuristic would
+        always return True after D2 removed the transport key, incorrectly
+        enabling HTTP/2 over SOCKS5.
+
+        Args:
+            None
+        """
+        # Set SOCKS5 proxy BEFORE creating handler so handler.__init__ picks it up
+        ProxyHelper.getInstance().setGlobalProxyConfig(
+            {"enabled": True, "type": ProxyType.SOCKS5, "address": "socks5://proxy:1080"}
+        )
+
+        # Configure handler - will pick up SOCKS5 config from yandex-search proxy section
+        handler = YandexSearchHandler(
+            configManager=_makeConfigManager(proxyConfig={"type": ProxyType.SOCKS5, "address": "socks5://proxy:1080"}),
+            database=_makeDatabase(),
+            botProvider=BotProvider.TELEGRAM,
+        )
+
+        # Mock httpx.AsyncClient to capture the http2 parameter
+        clientMock = AsyncMock()
+        clientMock.__aenter__ = AsyncMock(return_value=clientMock)
+        clientMock.__aexit__ = AsyncMock(return_value=None)
+        clientMock.get = AsyncMock(
+            return_value=Mock(
+                status_code=200,
+                headers={"content-type": "text/html"},
+                content=b"<html>test</html>",
+            )
+        )
+
+        with patch("httpx2.AsyncClient", return_value=clientMock) as mockClient:
+            try:
+                await handler._downloadUrl("http://example.com")
+            except Exception:
+                pass  # We only care about the AsyncClient call
+
+            # Assert AsyncClient was called with http2=False
+            mockClient.assert_called_once()
+            assert mockClient.call_args.kwargs["http2"] is False, "HTTP/2 must be disabled when proxy type is SOCKS5"
+
+    async def test_http2_enabled_when_proxy_type_is_http(self) -> None:
+        """When proxy type is HTTP, http2 parameter passed to AsyncClient must be True.
+
+        Args:
+            None
+        """
+        # Set HTTP proxy BEFORE creating handler
+        ProxyHelper.getInstance().setGlobalProxyConfig(
+            {"enabled": True, "type": ProxyType.HTTP, "address": "http://proxy:8080"}
+        )
+
+        # Configure handler - will pick up HTTP config from yandex-search proxy section
+        handler = YandexSearchHandler(
+            configManager=_makeConfigManager(proxyConfig={"type": ProxyType.HTTP, "address": "http://proxy:8080"}),
+            database=_makeDatabase(),
+            botProvider=BotProvider.TELEGRAM,
+        )
+
+        # Mock httpx.AsyncClient to capture the http2 parameter
+        clientMock = AsyncMock()
+        clientMock.__aenter__ = AsyncMock(return_value=clientMock)
+        clientMock.__aexit__ = AsyncMock(return_value=None)
+        clientMock.get = AsyncMock(
+            return_value=Mock(
+                status_code=200,
+                headers={"content-type": "text/html"},
+                content=b"<html>test</html>",
+            )
+        )
+
+        with patch("httpx2.AsyncClient", return_value=clientMock) as mockClient:
+            try:
+                await handler._downloadUrl("http://example.com")
+            except Exception:
+                pass  # We only care about the AsyncClient call
+
+            # Assert AsyncClient was called with http2=True
+            mockClient.assert_called_once()
+            assert mockClient.call_args.kwargs["http2"] is True, "HTTP/2 must be enabled when proxy type is HTTP"
+
+    async def test_http2_enabled_when_proxy_type_is_none(self) -> None:
+        """When proxy type is NONE, http2 parameter passed to AsyncClient must be True.
+
+        Args:
+            None
+        """
+        # Set NONE proxy BEFORE creating handler
+        ProxyHelper.getInstance().setGlobalProxyConfig({"enabled": True, "type": ProxyType.NONE, "address": ""})
+
+        # Configure handler with no proxy (NONE)
+        handler = YandexSearchHandler(
+            configManager=_makeConfigManager(),
+            database=_makeDatabase(),
+            botProvider=BotProvider.TELEGRAM,
+        )
+
+        # Mock httpx.AsyncClient to capture the http2 parameter
+        clientMock = AsyncMock()
+        clientMock.__aenter__ = AsyncMock(return_value=clientMock)
+        clientMock.__aexit__ = AsyncMock(return_value=None)
+        clientMock.get = AsyncMock(
+            return_value=Mock(
+                status_code=200,
+                headers={"content-type": "text/html"},
+                content=b"<html>test</html>",
+            )
+        )
+
+        with patch("httpx2.AsyncClient", return_value=clientMock) as mockClient:
+            try:
+                await handler._downloadUrl("http://example.com")
+            except Exception:
+                pass  # We only care about the AsyncClient call
+
+            # Assert AsyncClient was called with http2=True
+            mockClient.assert_called_once()
+            assert mockClient.call_args.kwargs["http2"] is True, "HTTP/2 must be enabled when proxy type is NONE"

@@ -15,7 +15,7 @@ from collections.abc import Awaitable
 from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 from urllib.parse import urljoin
 
-import httpx
+import httpx2 as httpx
 
 from lib import utils
 from lib.max_bot.models import AttachmentRequest, Button, Keyboard
@@ -145,9 +145,10 @@ class MaxBotClient:
             timeout: Request timeout in seconds (default: 30)
             maxRetries: Maximum number of retry attempts (default: 5)
             retryBackoffFactor: Backoff factor for retry delays (default: 1.0)
-            proxyConfig: Optional keyword arguments to spread into httpx.AsyncClient
-                for proxy support (e.g. {"proxy": "http://proxy:8080"} or
-                {"transport": AsyncProxyTransport(...)}). Defaults to None (no proxy).
+            proxyConfig: Optional ProxyConfig object for proxy support. The client calls
+                proxyConfig.toKwargs() internally to produce the dict spread into
+                httpx2.AsyncClient (e.g. {"proxy": "http://proxy:8080"} or
+                {"proxy": "socks5://proxy:1080"}). Defaults to None (no proxy).
             caBundlePath: Path to a directory containing additional CA certificate
                 PEM files (e.g. Минцифры CA certs for platform-api2.max.ru).
                 Passed to ``buildMaxSslContext()``. When None or empty string,
@@ -223,20 +224,17 @@ class MaxBotClient:
         httpClient = self._httpClient
 
         if getNew or httpClient is None or httpClient.is_closed:
-            proxyKwargs = self._proxyConfig.toKwargs(verify=self._sslContext)
+            proxyKwargs = self._proxyConfig.toKwargs()
             clientKwargs: Dict[str, Any] = {
                 **proxyKwargs,
                 "base_url": self.baseUrl,
                 "timeout": httpx.Timeout(self.timeout),
                 "headers": {"User-Agent": f"Gromozeka/{VERSION}"},
             }
-            # Only thread verify= onto the client when no custom transport is
-            # present. For SOCKS5 proxies toKwargs() bakes the SSL context into
-            # the transport via AsyncProxyTransport.from_url(verify=...), and
-            # httpx silently ignores a top-level verify= when transport= is set.
+            # Apply SSL context uniformly for both HTTP and SOCKS5 proxies.
             # When no custom CA context is configured, defer to httpx defaults
             # (do not pass verify=None, which would DISABLE verification).
-            if "transport" not in proxyKwargs and self._sslContext is not None:
+            if self._sslContext is not None:
                 clientKwargs["verify"] = self._sslContext
 
             httpClient = httpx.AsyncClient(**clientKwargs)

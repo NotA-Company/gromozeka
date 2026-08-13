@@ -24,7 +24,7 @@ import logging
 from typing import Any, Dict, List, Optional, Sequence
 
 import html_to_markdown
-import httpx
+import httpx2 as httpx
 
 import lib.utils as utils
 import lib.yandex_search as ys
@@ -56,6 +56,7 @@ from lib.ai import (
 )
 from lib.ai.models import ModelMessage, ModelResultStatus
 from lib.cache import JsonKeyGenerator, JsonValueConverter, StringKeyGenerator, StringValueConverter
+from lib.proxy import ProxyType
 from lib.yandex_search import SearchRequestKeyGenerator, YandexSearchClient
 
 from .base import BaseBotHandler
@@ -562,11 +563,12 @@ class YandexSearchHandler(BaseBotHandler):
             user agent header to avoid blocking.
         """
         try:
-            # SOCKS5 transport does not support HTTP/2; disable it when proxy is SOCKS5
+            # SOCKS5 proxy does not support HTTP/2; disable it when proxy type is SOCKS5
             proxyKwargs = self._proxyConfig.toKwargs()
-            useHttp2 = "transport" not in proxyKwargs
+            resolvedType = self._proxyConfig.getCombined().type
+            useHttp2 = resolvedType != ProxyType.SOCKS5
             if not useHttp2:
-                logger.warning("HTTP/2 disabled for web-fetch: SOCKS5 transport does not support HTTP/2")
+                logger.warning("HTTP/2 disabled for web-fetch: SOCKS5 proxy does not support HTTP/2")
 
             async with httpx.AsyncClient(
                 **proxyKwargs,

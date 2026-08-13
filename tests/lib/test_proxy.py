@@ -1,6 +1,5 @@
 """Unit tests for lib/proxy/__init__.py — proxy configuration using class-based API."""
 
-import unittest.mock
 from typing import Generator
 
 import pytest
@@ -477,10 +476,11 @@ class TestProxyConfigToKwargs:
         result = config.toKwargs()
         assert result == {"proxy": "http://p:80"}
 
-    async def test_socks5Proxy_returnsTransportKwarg(self, resetProxyHelper: ProxyHelper) -> None:
-        """SOCKS5 proxy type returns a dict with 'transport' key.
+    def test_socks5Proxy_returnsProxyKwarg(self, resetProxyHelper: ProxyHelper) -> None:
+        """SOCKS5 proxy type returns a dict with 'proxy' key (native httpx2 proxy).
 
-        Requires httpx_socks to be importable; otherwise the test is skipped.
+        After the httpx2 migration (native ``proxy=`` support), both HTTP and SOCKS5
+        return the same shape: {'proxy': 'url'}. This test verifies the new shape.
 
         Args:
             resetProxyHelper: Fixture setting up ProxyHelper singleton.
@@ -488,32 +488,12 @@ class TestProxyConfigToKwargs:
         Returns:
             None
         """
-        try:
-            from httpx_socks import AsyncProxyTransport  # pyright: ignore[reportMissingImports]
-        except ImportError:
-            pytest.skip("httpx_socks not installed")
-
         resetProxyHelper.setGlobalProxyConfig({"enabled": True, "type": ProxyType.NONE, "address": ""})
         config = ProxyConfig(ProxyType.SOCKS5, "socks5://p:1080")
         result = config.toKwargs()
-        assert "transport" in result
-        transport = result["transport"]
-        assert isinstance(transport, AsyncProxyTransport)
-
-    async def test_socks5MissingHttpxSocks_raisesImportError(self, resetProxyHelper: ProxyHelper) -> None:
-        """When httpx_socks is not importable and type is SOCKS5, raise ImportError.
-
-        Args:
-            resetProxyHelper: Fixture setting up ProxyHelper singleton.
-
-        Returns:
-            None
-        """
-        resetProxyHelper.setGlobalProxyConfig({"enabled": True, "type": ProxyType.NONE, "address": ""})
-        config = ProxyConfig(ProxyType.SOCKS5, "socks5://p:1080")
-        with unittest.mock.patch("lib.proxy._HTTPX_SOCKS_AVAILABLE", False):
-            with pytest.raises(ImportError, match="httpx-socks"):
-                config.toKwargs()
+        assert result == {"proxy": "socks5://p:1080"}
+        assert "transport" not in result
+        assert "verify" not in result
 
 
 class TestProxyHelper:
