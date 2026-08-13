@@ -23,8 +23,16 @@ at ``internal/services/proxy/service.py:103``. Scripts do not need the full
 registration), so they call the lower-level helper directly.
 """
 
-from internal.config.manager import ConfigManager
-from lib.proxy import ProxyHelper
+import httpx2
+
+# Process-wide: make `import httpx` resolve to `httpx2` so the `openai` SDK's
+# internal httpx.AsyncClient becomes an httpx2.AsyncClient (the SDK cannot be edited).
+# MUST run before any import that transitively pulls httpx (e.g., importing LLM providers).
+# See docs/design/httpx2-migration-v1.md §6.
+httpx2.alias_httpx()
+
+from internal.config.manager import ConfigManager  # noqa: E402
+from lib.proxy import ProxyHelper  # noqa: E402
 
 
 def bootstrapProxy(configManager: ConfigManager) -> None:

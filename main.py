@@ -13,25 +13,33 @@ import os
 import sys
 from typing import Optional
 
-from internal.bot.max.application import MaxBotApplication
-from internal.bot.models.enums import BotProvider
-from internal.bot.telegram.application import TelegramBotApplication
-from internal.config.manager import ConfigManager
-from internal.database import Database
-from internal.database.stats_storage import DatabaseStatsStorage
-from internal.services.llm import LLMService
-from internal.services.proxy import ProxyService
-from internal.services.queue_service import QueueService
-from internal.services.stt import STTService
-from lib.ai.manager import LLMManager
-from lib.logging_utils import initLogging
-from lib.rate_limiter import RateLimiterManager
-from lib.stats import StatsStorage
+import httpx2
+
+# Process-wide: make `import httpx` resolve to `httpx2` so python-telegram-bot's
+# internal httpx.AsyncClient becomes an httpx2.AsyncClient (PTB cannot be edited).
+# MUST run before any import that transitively pulls httpx (e.g. the Max/Telegram
+# application imports below). See docs/design/httpx2-migration-v1.md §6.
+httpx2.alias_httpx()
+
+from internal.bot.max.application import MaxBotApplication  # noqa: E402
+from internal.bot.models.enums import BotProvider  # noqa: E402
+from internal.bot.telegram.application import TelegramBotApplication  # noqa: E402
+from internal.config.manager import ConfigManager  # noqa: E402
+from internal.database import Database  # noqa: E402
+from internal.database.stats_storage import DatabaseStatsStorage  # noqa: E402
+from internal.services.llm import LLMService  # noqa: E402
+from internal.services.proxy import ProxyService  # noqa: E402
+from internal.services.queue_service import QueueService  # noqa: E402
+from internal.services.stt import STTService  # noqa: E402
+from lib.ai.manager import LLMManager  # noqa: E402
+from lib.logging_utils import initLogging  # noqa: E402
+from lib.rate_limiter import RateLimiterManager  # noqa: E402
+from lib.stats import StatsStorage  # noqa: E402
 
 # Configure basic logging first
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
-# set higher logging level for httpx to avoid all GET and POST requests being logged
-logging.getLogger("httpx").setLevel(logging.WARNING)
+# set higher logging level for httpx2 to avoid all GET and POST requests being logged
+logging.getLogger("httpx2").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
