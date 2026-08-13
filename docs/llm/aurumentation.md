@@ -23,6 +23,15 @@ construction, real header signing, real response parsing); only the network
 hop is swapped for a recorded cassette. This is stricter than hand-fabricated
 mocks, which can drift silently from what the client actually sends.
 
+> **httpx2 alias note:** the repo runs on `httpx2` (Pydantic-org fork of
+> `httpx 0.28.1`, API-identical), aliased as `httpx` process-wide via
+> `httpx2.alias_httpx()` at the top of `main.py` and `tests/conftest.py`
+> (see [`architecture.md`](architecture.md) ADR-021). Every `httpx.AsyncClient` /
+> `httpx.AsyncHTTPTransport` reference below is literally what the source reads,
+> and at runtime those are `httpx2.AsyncClient` / `httpx2.AsyncHTTPTransport`.
+> The record/replay patching mechanism is unaffected by the alias — it patches
+> the module-global `httpx.AsyncClient`, which the alias points at `httpx2`'s.
+
 **Name vs. capability.** The package directory is `lib/aurumentation`; the
 capability it provides is universally called **"golden data"** in the docs and
 in fixture/test layout (`golden/` directories, `GOLDEN_DATA_PATH`, the

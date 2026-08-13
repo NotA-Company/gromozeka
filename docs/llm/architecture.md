@@ -786,6 +786,34 @@ The originals are **always retained** in `chat_messages` (condensing adds summar
 
 ---
 
+### ADR-021: HTTP layer migrated to `httpx2` (PTB via `alias_httpx()`)
+
+**Decision:** Gromozeka's HTTP client layer runs on **`httpx2`** (Pydantic-org fork of `httpx 0.28.1`, API-identical) instead of `httpx`. `requirements.direct.txt` carries a single direct dependency — `httpx2[http2,socks]==2.10.0` — and the previous `httpx[http2]==0.28.1` + `httpx-socks[asyncio]==0.11.0` direct pins were removed. The frozen `requirements.txt` **genuinely lost only `httpx-socks` / `python-socks`** and gained `httpx2` / `httpcore2` / `socksio` / `truststore`. **`httpx` and `httpcore` REMAIN pinned in `requirements.txt`** as shadowed transitive dependencies of `python-telegram-bot` and `openai` — they are still installed in the venv, but at runtime `import httpx` resolves to `httpx2` process-wide via the `alias_httpx()` startup hook below, so the real `httpx`/`httpcore` packages never execute. (Any doc claiming "httpx was removed from the dependency tree" is wrong; httpx2 is what actually runs.)
+
+**Why:** upstream `encode/httpx` is on a ~20-month stable-release gap with a stalled 1.0 effort; `httpx2` ships monthly under the Pydantic organization with OIDC Trusted Publishing + Sigstore attestations and is gaining ecosystem momentum (Starlette, MCP Python SDK). httpx2 is the same code as httpx 0.28.1, so this is opportunistic maintenance/security-velocity modernization, not a rescue or a performance play. Full comparison, supply-chain assessment, and verdict live in [`docs/design/httpx2-migration-research.md`](../design/httpx2-migration-research.md); the D1–D7 design decisions and phased plan live in [`docs/design/httpx2-migration-v1.md`](../design/httpx2-migration-v1.md).
+
+**Owned code (`import httpx2 as httpx`):** all Gromozeka-owned modules that previously did `import httpx` now do `import httpx2 as httpx` (13 production + 6 test files). The `httpx.` references (`httpx.AsyncClient`, `httpx.Timeout`, `httpx.HTTPError`, `httpx.MockTransport`, `httpx.AsyncHTTPTransport`, etc.) are unchanged — the alias preserves them literally. Naming the alias `httpx` keeps the diff minimal and reviewable (decision D5 in the design doc).
+
+**PTB strategy b2 — `alias_httpx()` startup hook (load-bearing):** `python-telegram-bot` 22.8 owns its own `httpx` clients and constructs `httpx.AsyncClient` internally from `HTTPXRequest(httpx_kwargs=...)`; its source cannot be edited. To get PTB onto httpx2 without forking it, [`main.py`](../../main.py) calls `httpx2.alias_httpx()` at the very top — **before** any import that transitively pulls httpx (the first such import is `from internal.bot.telegram.application import TelegramBotApplication`, which pulls PTB). After the call, `import httpx` resolves to `httpx2` process-wide, so PTB's internal `httpx.AsyncClient` becomes an `httpx2.AsyncClient` and the object boundary disappears. The same alias call is mirrored at the top of [`tests/conftest.py`](../../tests/conftest.py) so tests see the same process-wide resolution. This is the single most order-sensitive line in the migration; moving it below any httpx-transitive import silently reverts PTB to the real (transitively-installed, still-pinned) `httpx 0.28.1` instead of `httpx2`.
+
+**Proxy layer simplification (decision D2):** [`lib/proxy/__init__.py`](../../lib/proxy/__init__.py) dropped `httpx-socks` entirely. SOCKS5 now uses httpx2's native `proxy="socks5://..."` support (the `httpx2[socks]` extra pulls `socksio`). The `_HTTPX_SOCKS_AVAILABLE` flag and the `AsyncProxyTransport` conditional import are gone. `ProxyKwargs` collapsed to a single-key `{proxy: str}` used for **both** HTTP and SOCKS5; `toKwargs()` takes no `verify` argument (the caller applies `verify=<sslContext>` at the `httpx2.AsyncClient` level uniformly). The two `"transport" not in proxyKwargs` special-cases (`lib/max_bot/client.py` `_getHttpClient` and `internal/bot/common/handlers/yandex_search.py` `_downloadUrl`) are gone — there is never a `transport` key.
+
+**HTTP/2-over-SOCKS guard (decision D3):** the web-fetch handler's old heuristic (`useHttp2 = "transport" not in proxyKwargs`) detected SOCKS *indirectly* via the transport object; after D2 it would always return `True` and silently re-enable the historically-flaky HTTP/2-over-SOCKS combination. The new rule keys off the resolved proxy type directly: `useHttp2 = self._proxyConfig.getCombined().type != ProxyType.SOCKS5`.
+
+**Logging:** the `httpx` / `httpcore` logger silencers in [`main.py`](../../main.py) and [`lib/logging_utils.py`](../../lib/logging_utils.py) were replaced by `httpx2` / `httpcore2` silencers.
+
+**SSL note (truststore):** httpx2 (since 2.3.0) resolves SSL through `truststore` (OS trust store) instead of bundling `certifi` certs. Custom CA bundles (e.g. the Минцифры root CA for the Max platform-api2 endpoint) still thread through via the explicit `verify=<ssl.SSLContext>` built by `lib/max_bot/utils.buildMaxSslContext()`.
+
+**Status — code complete, manual smokes pending:** all code phases landed; `make test` 3942 passed / 11 skipped / 0 failed; `make lint` 0 pyright errors. The three operator-only manual verification gates from design doc §8 — the Минцифры-SSL-through-SOCKS smoke (verify the custom `sslContext` reaches target TLS through `proxy="socks5://..."`), the HTTP/2-over-SOCKS probe (does httpcore2 now support it?), and the live Telegram getMe/sendMessage round-trip through PTB over the aliased httpx2 — remain **PENDING**. The migration is not yet operationally validated end-to-end against the real Telegram/Max/Минцифры endpoints.
+
+**References:**
+
+- [`docs/design/httpx2-migration-research.md`](../design/httpx2-migration-research.md) — research, comparison, supply-chain assessment, verdict (marked ADOPTED).
+- [`docs/design/httpx2-migration-v1.md`](../design/httpx2-migration-v1.md) — design doc + D1–D7 decisions + phased plan (marked IMPLEMENTED; manual gates pending).
+- [`libraries.md`](libraries.md) §5 / §7 / §8 / §13 — the migrated client libraries and the simplified `lib/proxy` layer.
+
+---
+
 ## 2. Dependency Map
 
 ### 2.1 Component Dependency Graph

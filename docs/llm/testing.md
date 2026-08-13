@@ -285,6 +285,8 @@ class TestMyDbOperation:
 
 Golden data tests use the lib/aurumentation framework with transport-level httpx patching. This system captures actual HTTP traffic and replays it during tests without making real API calls.
 
+> **httpx2 alias note:** the repo runs on `httpx2` (aliased as `httpx` process-wide via `httpx2.alias_httpx()` at the top of `tests/conftest.py` and `main.py` — see [`architecture.md`](architecture.md) ADR-021). References below to "patches httpx" / `httpx.AsyncClient` are literally what the source reads; at runtime those are `httpx2` symbols, and the patching mechanism is unaffected by the alias. See [`aurumentation.md`](aurumentation.md) for the full internals.
+
 ### Golden Data Locations
 
 Per-service golden data directories (all under `tests/lib/`):

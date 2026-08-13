@@ -193,10 +193,10 @@ For **optional dependencies** that may not be installed, use a module-level
 .. code-block:: python
 
    try:
-       from httpx_socks import AsyncProxyTransport
-       _HTTPX_SOCKS_AVAILABLE = True
+       import sqlite_vec
+       _SQLITE_VEC_AVAILABLE = True
    except ImportError:
-       _HTTPX_SOCKS_AVAILABLE = False
+       _SQLITE_VEC_AVAILABLE = False
 
 The ``_AVAILABLE`` flag is checked at usage sites rather than relying on a
 runtime ``ImportError`` during execution. Inline imports are **only** acceptable

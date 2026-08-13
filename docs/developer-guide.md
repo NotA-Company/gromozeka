@@ -1849,7 +1849,7 @@ import logging
 from typing import Optional
 
 # 3. THIRDPARTY imports
-import httpx
+import httpx2 as httpx
 import telegram
 
 # 4. FIRSTPARTY imports (internal/, lib/)
@@ -1932,16 +1932,16 @@ This is already the project-wide convention (e.g. ``ChatSettingsKey``,
 **Import Placement**
 
 All imports belong at the top of the file. For optional dependencies that
-may not be installed (e.g. ``httpx-socks``), use a module-level
+may not be installed (e.g. ``sqlite-vec``), use a module-level
 ``try/except ImportError`` block:
 
 .. code-block:: python
 
    try:
-       from httpx_socks import AsyncProxyTransport
-       _HTTPX_SOCKS_AVAILABLE = True
+       import sqlite_vec
+       _SQLITE_VEC_AVAILABLE = True
    except ImportError:
-       _HTTPX_SOCKS_AVAILABLE = False
+       _SQLITE_VEC_AVAILABLE = False
 
 Never place ``import`` or ``from ... import`` inside a method or function
 body unless a cyclic dependency makes it genuinely unavoidable.
@@ -2242,7 +2242,7 @@ password = ""
 
 ### SOCKS5 Setup
 
-For SOCKS5 proxies, set `type = "socks5"` and install the `httpx-socks` package (included in `requirements.txt`):
+For SOCKS5 proxies, set `type = "socks5"`. SOCKS5 support is built into `httpx2[socks]` (the `socksio` extra, already in `requirements.direct.txt` via `httpx2[http2,socks]==2.10.0`) — no separate package is needed:
 
 ```toml
 [proxy]
@@ -2372,7 +2372,7 @@ lib/
 import logging
 from typing import Optional
 
-import httpx
+import httpx2 as httpx
 
 from lib.cache import CacheInterface, NullCache
 from lib.rate_limiter import RateLimiterManager

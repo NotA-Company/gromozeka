@@ -296,7 +296,7 @@ There is no `TIMEOUT` and no `EMPTY` status. Callers wanting "did we get usable 
 
 **IMPORTANT:** `LLMService` has an `initialized` guard (singleton init runs once). Never check `initialized` directly in new code
 
-**Proxy config flow:** Proxy configuration flows from `ConfigManager.getProxyConfig()` → `ProxyHelper.getInstance().setGlobalProxyConfig()` in `main.py`. Services create `ProxyConfig` via `ProxyConfig.fromServiceConfig()` with their service-level config, then call `ProxyConfig.getCombined()` to merge with the global config, and `ProxyConfig.toKwargs()` to get `httpx.AsyncClient` kwargs. `LLMManager` stores a `proxyConfig` attribute. `BasicOpenAIProvider._initClient()` creates a custom `httpx.AsyncClient` for the OpenAI SDK. Image download and OpenRouter `listRemoteModels()` also resolve proxy.
+**Proxy config flow:** Proxy configuration flows from `ConfigManager.getProxyConfig()` → `ProxyHelper.getInstance().setGlobalProxyConfig()` in `main.py`. Services create `ProxyConfig` via `ProxyConfig.fromServiceConfig()` with their service-level config, then call `ProxyConfig.getCombined()` to merge with the global config, and `ProxyConfig.toKwargs()` to get `httpx2.AsyncClient` kwargs (httpx2 is aliased as `httpx` process-wide via `httpx2.alias_httpx()` — see [`architecture.md`](architecture.md) ADR-021; source reads `httpx.AsyncClient`). `LLMManager` stores a `proxyConfig` attribute. `BasicOpenAIProvider._initClient()` creates a custom `httpx2.AsyncClient` for the OpenAI SDK. Image download and OpenRouter `listRemoteModels()` also resolve proxy.
 
 ### Message reconstruction: `ModelMessage.fromDictList`
 

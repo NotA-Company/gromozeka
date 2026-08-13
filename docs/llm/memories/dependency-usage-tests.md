@@ -6,7 +6,7 @@ Task: add tests that lock in our *usage* of third-party libs so a dep-version bu
 
 **Direct-dep classification (27 in `requirements.direct.txt` as of 2026-07-21; `numpy` was removed as a direct dep after the embedding-model-lookup refactor — was 28 at 2026-07-18, was 27 at extraction before `pillow` was added):**
 - **PURE (6):** `python-dateutil` 2.9.0.post0, `html-to-markdown` 3.8.3, `packaging` 26.2, `python-magic` 0.4.27, `tomli` 2.4.1, `pillow` 12.3.0 (added post-hoc; `from PIL import Image` in `lib/ai/models.py:48`; no dep-usage test yet — candidate for a future round).
-- **EXTERNAL (7, out of scope this round):** `openai`, `yandex-ai-studio-sdk`, `fastembed`, `aiodocker`, `boto3`, `httpx-socks`, `sqlink`.
+- **EXTERNAL (7, out of scope this round):** `openai`, `yandex-ai-studio-sdk`, `fastembed`, `aiodocker`, `boto3`, `httpx-socks`, `sqlink`. *(Note: `httpx-socks` has since been REMOVED from the repo entirely during the 2026-08-13 httpx→httpx2 migration — see `architecture.md` ADR-021; httpx2's native `proxy="socks5://..."` replaced it.)*
 - **MIXED (5):** `aiosqlite`, `aiohttp`, `httpx`, `python-telegram-bot`, **`sqlite-vec` 0.1.9** (testable in-process — INCLUDED this round).
 - **DEV (9):** black/isort/flake8/flake8-pyproject/pyright + pytest/pytest-asyncio/pytest-cov stack + `PyYAML` (debug scripts only).
 

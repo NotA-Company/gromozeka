@@ -2,6 +2,15 @@
 
 **Date**: 2026-08-13 (sources verified this date)
 **Status**: Research complete. Verdict below. No code changed.
+**Outcome**: **ADOPTED.** The verdict ("worth migrating incrementally") was
+accepted and the migration **landed** — see the companion design doc
+[`httpx2-migration-v1.md`](./httpx2-migration-v1.md) (now marked IMPLEMENTED).
+`httpx[http2]==0.28.1` + `httpx-socks[asyncio]==0.11.0` were removed;
+`httpx2[http2,socks]==2.10.0` is the sole HTTP library. PTB strategy **b2**
+(`httpx2.alias_httpx()` at the top of `main.py`) was chosen. `make test` 3942
+passed / 11 skipped / 0 failed; `make lint` 0 pyright errors. Manual operator
+smokes (Минцифры-SSL-through-SOCKS, HTTP/2-over-SOCKS probe, live Telegram
+round-trip) remain pending — see design doc §8.
 **Companion doc**: [`httpx2-migration-v1.md`](./httpx2-migration-v1.md) — design + phased implementation plan
 **Scope**: Evaluate whether Gromozeka should migrate its HTTP layer from `httpx` to `httpx2`, and on what timeline.
 

@@ -1,7 +1,20 @@
 # Design: httpx → httpx2 migration (v1)
 
 **Date**: 2026-08-13
-**Status**: PROPOSED (unimplemented). Optional, opportunistic modernization.
+**Status**: **IMPLEMENTED** (all phases landed). `make test` 3942 passed / 11
+skipped / 0 failed; `make lint` 0 pyright errors. The user chose PTB strategy
+**b2** — `httpx2.alias_httpx()` runs at the very top of `main.py` (and
+`tests/conftest.py`), before any import that transitively pulls httpx (e.g.
+python-telegram-bot), so `import httpx` resolves to `httpx2` process-wide and
+PTB runs on httpx2. `httpx[http2]==0.28.1` and `httpx-socks[asyncio]==0.11.0`
+were removed from `requirements.direct.txt`; `httpx2[http2,socks]==2.10.0` is
+the sole HTTP library. All Gromozeka-owned modules use `import httpx2 as httpx`
+(13 production + 6 test files); `httpx.` references are unchanged via the alias.
+**Operator-only manual verification gates (§8) remain PENDING** — the Минцифры
+SSL-through-SOCKS smoke, the HTTP/2-over-SOCKS probe, and the live Telegram
+getMe/sendMessage round-trip are still required before the migration is
+considered operationally validated. The code is complete; it has not yet been
+live-validated end-to-end against the real Telegram/Max/Минцифры endpoints.
 **Owner**: TBD
 **Companion doc**: [`httpx2-migration-research.md`](./httpx2-migration-research.md) — research, comparison, and verdict (read first for the *why*).
 **Scope**: Migrate Gromozeka's HTTP layer from `httpx` to `httpx2` incrementally, preserving all current behavior. No full library swap.
@@ -9,9 +22,9 @@
 > This is a **behavior-preserving** migration. httpx2 is a fork of httpx `0.28.1`
 > with an identical public API surface (see research doc §4); the existing test
 > suite is the primary safety net. Every phase is independently revertible via
-> git. Nothing here is shipped yet — this document describes the intended end
-> state. Code snippets are illustrative of the intended change and follow the
-> repo's camelCase convention; they are not committed source.
+> git. The phased plan in §7 is preserved below as the authoritative record of
+> the D1–D7 decisions and the order in which they were executed; code snippets
+> are illustrative and follow the repo's camelCase convention.
 
 ---
 

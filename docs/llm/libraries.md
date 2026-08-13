@@ -345,7 +345,7 @@ The vector is a plain `list[float]` — same shape every embedding backend in th
 
 **Default model:** `local/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (384-dim, ~0.22 GB, ~50 languages, 512 token context) is the per-chat default for the `EMBEDDING_MODEL` chat setting via `embedding-model = "local/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"` under `[bot.defaults]` in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml). Both this model and the larger alternative `local/jinaai/jina-embeddings-v3` (1024-dim, ~2.24 GB, ~100 languages, 1024 token context) are registered in [`configs/00-defaults/fastembed-models.toml`](../../configs/00-defaults/fastembed-models.toml). The model resolution chain in `ChatSearchHandler._dtCronJob` (backfill) and the `MessagePreprocessorHandler` embedding dispatch is single-tier: the per-chat `EMBEDDING_MODEL` setting provides the value, and an empty / unresolvable model is a silent no-op for that chat on that tick. The server-wide `[search-history.embeddings].model` and `[search-history.embeddings].on-save` config keys were removed — the per-chat default already provides the model name, and the on-save dispatch is now unconditional whenever `[search-history].enabled` and `EMBEDDINGS_ENABLED` are both on. See [`configuration.md`](configuration.md) for the full `[search-history]` reference.
 
-**Proxy support:** `LLMManager.__init__()` itself does not take a proxy argument — proxy is resolved per-provider from each provider's own service config. `BasicOpenAIProvider._initClient()` calls `ProxyConfig.fromServiceConfig(self.config)` then `ProxyConfig.toKwargs()` to construct a custom `httpx.AsyncClient` for the OpenAI SDK (stored on `self._proxyHttpClient`). Image download (`BasicOpenAIModel._generateImageViaImagesApi`) and OpenRouter `listRemoteModels()` likewise call `ProxyConfig.fromServiceConfig(self.config).toKwargs()` to wire the proxy into their ad-hoc HTTP clients.
+**Proxy support:** `LLMManager.__init__()` itself does not take a proxy argument — proxy is resolved per-provider from each provider's own service config. `BasicOpenAIProvider._initClient()` calls `ProxyConfig.fromServiceConfig(self.config)` then `ProxyConfig.toKwargs()` to construct a custom `httpx2.AsyncClient` for the OpenAI SDK (stored on `self._proxyHttpClient`) — httpx2 is aliased as `httpx` process-wide via `httpx2.alias_httpx()`, so source reads `httpx.AsyncClient` (see [`architecture.md`](architecture.md) ADR-021). Image download (`BasicOpenAIModel._generateImageViaImagesApi`) and OpenRouter `listRemoteModels()` likewise call `ProxyConfig.fromServiceConfig(self.config).toKwargs()` to wire the proxy into their ad-hoc HTTP clients.
 
 ---
 
@@ -444,7 +444,7 @@ from lib.max_bot import MaxBotClient, MAX_MESSAGE_LENGTH
 
 **API endpoint:** [`API_BASE_URL`](../../lib/max_bot/constants.py) = `https://platform-api2.max.ru` (Max API v2; migrated from the deprecated `platform-api.max.ru` and legacy `botapi.max.ru`, both kept as comments only). Deadline: 2026-07-19.
 
-**TLS / Минцифры CA certs:** the v2 endpoint is signed by the Russian Ministry of Digital Development (Минцифры) root CA, which is not in the system bundle. `libMax.utils.buildMaxSslContext(caBundlePath)` loads the additional PEM files from the `[bot].max-ca-bundle` directory into an `ssl.SSLContext`. The path resolves relative to the current working directory at call time (same convention as every other project path); the default value is `"../certs/max"`, which — because `application.root-dir` is `"storage"` — resolves to `<repo-root>/certs/max/`. The `caBundlePath` is passed to `MaxBotClient(caBundlePath=...)`, which builds the SSL context internally via `buildMaxSslContext()` and forwards it to `httpx.AsyncClient(verify=...)` in `_getHttpClient`. When the key is empty/unset, httpx falls back to its default CA bundle. SOCKS5 proxy caveat: httpx ignores the top-level `verify=` when a custom `transport=` is supplied, so the SSL context is threaded into the transport via `ProxyConfig.toKwargs(verify=self._sslContext)` (which calls `AsyncProxyTransport.from_url(url, verify=sslContext)` for SOCKS5); the `"transport" not in proxyKwargs` guard then skips the redundant client-level `verify=` (see [`MaxBotClient._getHttpClient`](../../lib/max_bot/client.py)).
+**TLS / Минцифры CA certs:** the v2 endpoint is signed by the Russian Ministry of Digital Development (Минцифры) root CA, which is not in the system bundle. `libMax.utils.buildMaxSslContext(caBundlePath)` loads the additional PEM files from the `[bot].max-ca-bundle` directory into an `ssl.SSLContext`. The path resolves relative to the current working directory at call time (same convention as every other project path); the default value is `"../certs/max"`, which — because `application.root-dir` is `"storage"` — resolves to `<repo-root>/certs/max/`. The `caBundlePath` is passed to `MaxBotClient(caBundlePath=...)`, which builds the SSL context internally via `buildMaxSslContext()` and forwards it to `httpx2.AsyncClient(verify=...)` in `_getHttpClient` (httpx2 is aliased as `httpx` process-wide — see [`architecture.md`](architecture.md) ADR-021). When the key is empty/unset, httpx2 falls back to its default trust resolution (httpx2 ≥ 2.3 uses `truststore` / the OS trust store rather than bundled `certifi` certs). SOCKS5 proxies are handled by httpx2's native `proxy="socks5://..."` support; the SSL context is applied uniformly at the client level via `verify=self._sslContext` (see [`MaxBotClient._getHttpClient`](../../lib/max_bot/client.py)).
 
 **Key constants:**
 - `MAX_MESSAGE_LENGTH` — max message length for Max platform
@@ -462,11 +462,11 @@ from lib.max_bot import MaxBotClient, MAX_MESSAGE_LENGTH
 **IMPORTANT gotcha — Max platform sticker stubs:**
 Animated stickers have stub URLs, not real images. Always check `url.startswith(...)` before processing
 
-**Proxy support:** `MaxBotClient.__init__()` accepts an optional `proxyKwargs` keyword argument (dict to spread into `httpx.AsyncClient`). When proxy is enabled for the bot, `MaxBotApplication._runPolling()` creates a `ProxyConfig` via `ProxyConfig.fromServiceConfig()` and passes the resulting kwargs from `ProxyConfig.toKwargs()`.
+**Proxy support:** `MaxBotClient.__init__()` accepts an optional `proxyKwargs` keyword argument (dict to spread into `httpx2.AsyncClient` — httpx2 is aliased as `httpx` process-wide via `httpx2.alias_httpx()`, see [`architecture.md`](architecture.md) ADR-021). When proxy is enabled for the bot, `MaxBotApplication._runPolling()` creates a `ProxyConfig` via `ProxyConfig.fromServiceConfig()` and passes the resulting kwargs from `ProxyConfig.toKwargs()` — a single-key `{proxy: str}` (the proxy URL, `http://...` or `socks5://...`) for both HTTP and SOCKS5.
 
-**SSL support:** `MaxBotClient.__init__()` also accepts an optional `caBundlePath: Optional[str]` keyword argument. When provided, the client builds an `ssl.SSLContext` internally via `buildMaxSslContext(caBundlePath)` and forwards it to `httpx.AsyncClient(verify=...)`. For SOCKS5 proxies the context is threaded into the transport via `ProxyConfig.toKwargs(verify=self._sslContext)` (so `AsyncProxyTransport.from_url(url, verify=sslContext)` is used); the client-level `verify=` is then skipped via the `"transport" not in proxyKwargs` guard. The `caBundlePath` value comes from the `max-ca-bundle` config key — see TLS note above. When `buildMaxSslContext()` cannot load a cert (typically the GOST certs on a non-GOST OpenSSL build) it is skipped with a warning; if any are skipped a summary warning is logged (`Loaded N CA cert(s) but M were skipped ... TLS to platform-api2.max.ru may fail if the chain requires them`) so operators can tell a skipped-cert failure from a missing-bundle failure.
+**SSL support:** `MaxBotClient.__init__()` also accepts an optional `caBundlePath: Optional[str]` keyword argument. When provided, the client builds an `ssl.SSLContext` internally via `buildMaxSslContext(caBundlePath)` and forwards it to `httpx2.AsyncClient(verify=...)` in `_getHttpClient`. The `verify=<sslContext>` is applied uniformly at the client level for **both** HTTP and SOCKS5 proxies — httpx2's native `proxy="socks5://..."` support (no separate `transport=`) accepts a top-level `verify=`, so the old SOCKS5 special-case (`AsyncProxyTransport.from_url(url, verify=sslContext)` + the `"transport" not in proxyKwargs` guard) is gone. The `caBundlePath` value comes from the `max-ca-bundle` config key — see TLS note above. When `buildMaxSslContext()` cannot load a cert (typically the GOST certs on a non-GOST OpenSSL build) it is skipped with a warning; if any are skipped a summary warning is logged (`Loaded N CA cert(s) but M were skipped ... TLS to platform-api2.max.ru may fail if the chain requires them`) so operators can tell a skipped-cert failure from a missing-bundle failure.
 
-**Webhook-mode polling:** when `basePollingUrl` is set (Max webhook receiver mode — see [`architecture.md`](architecture.md) ADR-013), `getUpdates()` does not hit `platform-api2.max.ru`; instead it routes through `_makeLocalRequest()` to the receiver's `GET /updates`. Three consequences of that routing: (1) the `lastEventId` marker is widened to `Optional[Union[int, str]]` — the real API uses an int marker, but the local receiver returns a compound string marker `"{received_at}|{rowId}"` that the bot echoes back on its next poll (and returns `null` in immediate/at-most-once mode); (2) a dedicated, reusable `httpx.AsyncClient` (`_localHttpClient`, created lazily on first poll and closed in `aclose()`) handles the local polls so connection pooling is reused across the polling loop, bypassing the main client's base URL / proxy / TLS settings; (3) a non-JSON 200 body from the receiver (e.g. a crash mid-response) is caught and re-raised as `NetworkError` rather than letting `json.JSONDecodeError` escape the polling loop.
+**Webhook-mode polling:** when `basePollingUrl` is set (Max webhook receiver mode — see [`architecture.md`](architecture.md) ADR-013), `getUpdates()` does not hit `platform-api2.max.ru`; instead it routes through `_makeLocalRequest()` to the receiver's `GET /updates`. Three consequences of that routing: (1) the `lastEventId` marker is widened to `Optional[Union[int, str]]` — the real API uses an int marker, but the local receiver returns a compound string marker `"{received_at}|{rowId}"` that the bot echoes back on its next poll (and returns `null` in immediate/at-most-once mode); (2) a dedicated, reusable `httpx2.AsyncClient` (`_localHttpClient`, created lazily on first poll and closed in `aclose()`; httpx2 is aliased as `httpx` — see [`architecture.md`](architecture.md) ADR-021) handles the local polls so connection pooling is reused across the polling loop, bypassing the main client's base URL / proxy / TLS settings; (3) a non-JSON 200 body from the receiver (e.g. a crash mid-response) is caught and re-raised as `NetworkError` rather than letting `json.JSONDecodeError` escape the polling loop.
 
 **Chat discovery:** the client intentionally exposes no `getChats()` wrapper. The Max server's `GET /chats` endpoint is deprecated on `platform-api2.max.ru`, so chat discovery is subscription-based only (see `ENDPOINT_SUBSCRIPTIONS = "/subscriptions"` in [`constants.py`](../../lib/max_bot/constants.py) and the bot's subscription handlers).
 
@@ -520,7 +520,7 @@ weather = await client.getWeatherByCity(city="Moscow")           # convenience: 
 
 **Tests:** Uses golden data framework in `tests/lib/openweathermap/test_weather_client.py`
 
-**Proxy support:** `OpenWeatherMapClient.__init__()` accepts an optional `proxyConfig: Optional[ProxyConfig]` keyword argument (a `ProxyConfig` instance, NOT a kwargs dict). `WeatherHandler` resolves it via `ProxyService.getInstance().resolveProxy(openWeatherMapConfig, "openweathermap")` (which internally calls `ProxyConfig.fromServiceConfig()` and registers any per-service lifecycle) and passes the resulting `ProxyConfig` directly to the client constructor.
+**Proxy support:** `OpenWeatherMapClient.__init__()` accepts an optional `proxyConfig: Optional[ProxyConfig]` keyword argument (a `ProxyConfig` instance, NOT a kwargs dict). `WeatherHandler` resolves it via `ProxyService.getInstance().resolveProxy(openWeatherMapConfig, "openweathermap")` (which internally calls `ProxyConfig.fromServiceConfig()` and registers any per-service lifecycle) and passes the resulting `ProxyConfig` directly to the client constructor. The client runs on httpx2 (aliased as `httpx` process-wide — see [`architecture.md`](architecture.md) ADR-021).
 
 ---
 
@@ -543,7 +543,7 @@ places   = await client.lookup(["R2623018", "N107775"])      # OSM lookup by ID 
 
 **Config:** Configured via `[geocode-maps]` TOML section, accessed via `configManager.getGeocodeMapsConfig()`
 
-**Proxy support:** `GeocodeMapsClient.__init__()` accepts an optional `proxyConfig: Optional[ProxyConfig]` keyword argument (a `ProxyConfig` instance, NOT a kwargs dict). `WeatherHandler` resolves it via `ProxyService.getInstance().resolveProxy(geocodeMapsConfig, "geocode-maps")` (which internally calls `ProxyConfig.fromServiceConfig()` and registers any per-service lifecycle) and passes the resulting `ProxyConfig` directly to the client constructor. The client internally calls `proxyConfig.toKwargs()` once per request when constructing each `httpx.AsyncClient`.
+**Proxy support:** `GeocodeMapsClient.__init__()` accepts an optional `proxyConfig: Optional[ProxyConfig]` keyword argument (a `ProxyConfig` instance, NOT a kwargs dict). `WeatherHandler` resolves it via `ProxyService.getInstance().resolveProxy(geocodeMapsConfig, "geocode-maps")` (which internally calls `ProxyConfig.fromServiceConfig()` and registers any per-service lifecycle) and passes the resulting `ProxyConfig` directly to the client constructor. The client internally calls `proxyConfig.toKwargs()` once per request when constructing each `httpx2.AsyncClient` (httpx2 is aliased as `httpx` process-wide — see [`architecture.md`](architecture.md) ADR-021).
 
 ---
 
@@ -746,6 +746,14 @@ d.gc(force=True)          # Remove expired entries
 
 Class-based proxy resolution package. Lives in `lib/` with no imports from `internal/`.
 
+> **httpx2 (aliased as `httpx`) note:** the package produces plain kwargs dicts
+> consumed by `httpx2.AsyncClient` (the runtime alias of `httpx.AsyncClient` —
+> see [`architecture.md`](architecture.md) ADR-021). It does **not** import
+> `httpx`/`httpx2` itself and has no dependency on `httpx-socks` — SOCKS5 is
+> handled by httpx2's native `proxy="socks5://..."` support (the `httpx2[socks]`
+> extra pulls `socksio`). `ProxyKwargs` is a single-key `{proxy: str}` for both
+> HTTP and SOCKS5; there is no `transport` key and no `verify` argument.
+
 **Import:**
 ```python
 from lib.proxy import ProxyConfig, ProxyHelper, ProxyType, ProxyKwargs
@@ -757,14 +765,14 @@ from lib.proxy import ProxyConfig, ProxyHelper, ProxyType, ProxyKwargs
 |---|---|
 | `ProxyType` | `StrEnum("http", "socks5", "none")` — supported proxy protocol types |
 | `HealthCheckType` | `StrEnum("none", "url", "command")` — health check mechanism for proxy lifecycle |
-| `ProxyKwargs(TypedDict)` | Keyword arguments for `httpx.AsyncClient` — either `proxy: str` or `transport: AsyncProxyTransport` |
+| `ProxyKwargs(TypedDict)` | Keyword arguments for `httpx2.AsyncClient` — a single `proxy: str` key (the proxy URL, `http://...` or `socks5://...`). Both HTTP and SOCKS5 produce the same shape; the caller applies `verify=<ssl.SSLContext>` at the client level. |
 | `ProxyLifecycleConfigDict(TypedDict)` | Optional lifecycle configuration with 7 fields: `startCommand`, `stopCommand`, `restartCommand`, `healthCheckType`, `healthCheckUrl`, `healthCheckCommand`, `healthCheckInterval` |
 
 **Classes:**
 
 | Class | Purpose |
 |---|---|
-| `ProxyConfig` | Immutable proxy configuration (`__slots__`). Created via `fromServiceConfig()` or `fromDict()`. Methods: `getCombined()` (merge with global), `getProxyURL(maskPassword=False)` (build URL), `toKwargs()` (httpx kwargs). Has optional `lifecycle` field of type `ProxyLifecycleConfigDict`. |
+| `ProxyConfig` | Immutable proxy configuration (`__slots__`). Created via `fromServiceConfig()` or `fromDict()`. Methods: `getCombined()` (merge with global), `getProxyURL(maskPassword=False)` (build URL), `toKwargs()` (httpx2 kwargs — a single-key `{proxy: str}` for both HTTP and SOCKS5; no `transport` key, no `verify` argument). Has optional `lifecycle` field of type `ProxyLifecycleConfigDict`. |
 | `ProxyHelper` | Singleton storing the global proxy config. `setGlobalProxyConfig()` called once from `main.py`; `getGlobalProxyConfig()` used internally by `ProxyConfig.getCombined()`. |
 
 **Helper functions:**
@@ -783,7 +791,7 @@ proxyUrl = proxyConfig.getProxyURL(maskPassword=True)
 if proxyUrl:
     logger.info(f"Proxy enabled: {proxyUrl}")
 
-# Then in HTTP calls:
+# Then in HTTP calls (httpx2 is aliased as httpx process-wide — see ADR-021):
 async with httpx.AsyncClient(**proxyKwargs, timeout=30) as client:
     ...
 ```
@@ -830,7 +838,7 @@ Provider-neutral Speech-to-Text library: PyAV-based audio extraction with contai
 
 **Authoritative spec:** [`docs/design/lib-stt-v1.md`](../design/lib-stt-v1.md) — this section is a quick-reference; the design doc is the single source of truth for `lib/stt` internals (contracts, module layout, test matrix). **Integration status** (now wired via the stateless `STTService`) lives in [`docs/archive/design/stt-next-steps.md`](../archive/design/stt-next-steps.md) and [`services.md`](services.md) §7.
 
-**Dependency firewall (load-bearing):** `lib/stt` is bot-free — it must never import `internal.bot`, `internal.database`, or any singleton service. The proxy is **injected** into the provider constructor (never resolved inside `lib/stt`); the audio bytes are a plain `bytes` argument to `extractAudio` / `stt` (never a bot download callable). Sits alongside other bot-free libraries (`lib/ai/`, `lib/yandex_search/`, `lib/openweathermap/`).
+**Dependency firewall (load-bearing):** `lib/stt` is bot-free — it must never import `internal.bot`, `internal.database`, or any singleton service. The proxy is **injected** into the provider constructor (never resolved inside `lib/stt`); the audio bytes are a plain `bytes` argument to `extractAudio` / `stt` (never a bot download callable). The Yandex SpeechKit HTTP client runs on httpx2 (aliased as `httpx` process-wide — see [`architecture.md`](architecture.md) ADR-021). Sits alongside other bot-free libraries (`lib/ai/`, `lib/yandex_search/`, `lib/openweathermap/`).
 
 **Key modules:**
 

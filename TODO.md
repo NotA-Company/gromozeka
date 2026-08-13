@@ -7,7 +7,7 @@
 - [ ] refactor models
 - [ ] more statistics thing (more sources, consolidation, export + cleanup of old statistics)
 - [ ] slash-commands for getting description, prompt
-- [ ] migrate to httpx2
+- [x] migrate to httpx2
 
 - [ ] Subagent with conversation history
 - [ ] Topic-level configs
