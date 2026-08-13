@@ -126,8 +126,9 @@ This section documents all migrations in the system, dood!
 | 012 | [`migration_012_unify_cache_tables.py`](versions/migration_012_unify_cache_tables.py:1) | Unify cache tables structure | cache, cache_storage |
 | 013 | [`migration_013_remove_timestamp_defaults.py`](versions/migration_013_remove_timestamp_defaults.py:1) | Remove DEFAULT CURRENT_TIMESTAMP from timestamp columns | 19 tables (settings, chat_messages, chat_settings, chat_users, chat_info, chat_stats, chat_user_stats, media_attachments, delayed_tasks, user_data, spam_messages, ham_messages, chat_topics, chat_summarization_cache, bayes_tokens, bayes_classes, cache_storage, cache, media_groups) |
 | 026 | [`migration_026_chat_accessibility_bot_status.py`](versions/migration_026_chat_accessibility_bot_status.py:1) | Add `bot_status` column to `chat_info` for chat-accessibility tracking | chat_info |
+| 027 | [`migration_027_drop_chat_stats_backfill_aggregates.py`](versions/migration_027_drop_chat_stats_backfill_aggregates.py:1) | Backfill chat_user_stats into stat_aggregates and drop legacy tables | chat_stats, chat_user_stats, stat_aggregates |
 
-**Total Migrations:** 26
+**Total Migrations:** 27
 
 **Important Notes:**
 - Migration 013 is critical for SQL portability - it recreates 19 tables to remove `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns

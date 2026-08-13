@@ -820,7 +820,7 @@ success, value = sqlToCustomType("123", Union[int, str])
    - Validate that all historical migrations are accounted for
 
 **Known implemented migrations:**
-- `migration_001` to `migration_026` — Baseline migrations through latest schema updates
+- `migration_001` to `migration_027` — Baseline migrations through latest schema updates
 - `migration_010`: Adds `updated_by INTEGER NOT NULL` to `chat_settings` table (audit trail)
 - `migration_011` and `migration_012`: Additional schema improvements
 - `migration_013`: Removes `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns (explicit timestamp handling)

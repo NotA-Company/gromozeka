@@ -15,8 +15,6 @@ This document provides comprehensive documentation for the Gromozeka bot's datab
   - [chat_topics](#chat_topics)
   - [chat_settings](#chat_settings)
 - [Statistics Tables](#statistics-tables)
-  - [chat_stats](#chat_stats)
-  - [chat_user_stats](#chat_user_stats)
 - [Media Tables](#media-tables)
   - [media_attachments](#media_attachments)
 - [Spam Detection Tables](#spam-detection-tables)
@@ -457,43 +455,6 @@ Pre-computed period buckets for aggregated statistics metrics. Produced by aggre
 - `generationType` — Type of generation ('text', 'structured', 'image')
 
 **Note:** Created by `migration_016`. Part of the v3 statistics library (`lib/stats/`). Automatically updated when `DatabaseStatsStorage.aggregate()` is called. See [`internal/database/stats_storage.py`](../internal/database/stats_storage.py) for implementation details.
-
----
-
-### chat_stats
-
-Aggregated daily statistics per chat.
-
-**Primary Key**: `(chat_id, date)`
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `chat_id` | INTEGER | No | - | Telegram chat identifier |
-| `date` | TIMESTAMP | No | - | Date (time set to 00:00:00) |
-| `messages_count` | INTEGER | No | 0 | Total messages sent on this date |
-| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
-| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
-
-**Note**: Automatically updated when messages are saved via repository methods.
-
----
-
-### chat_user_stats
-
-Aggregated daily statistics per user per chat.
-
-**Primary Key**: `(chat_id, user_id, date)`
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `chat_id` | INTEGER | No | - | Telegram chat identifier |
-| `user_id` | INTEGER | No | - | Telegram user identifier |
-| `date` | TIMESTAMP | No | - | Date (time set to 00:00:00) |
-| `messages_count` | INTEGER | No | 0 | Messages sent by user on this date |
-| `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
-| `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
-
-**Note**: Automatically updated when messages are saved via repository methods.
 
 ---
 

@@ -6,7 +6,7 @@
 **Database Class**: [`Database`](../internal/database/database.py:1)
 **Models**: [`internal/database/models.py`](../internal/database/models.py:1)
 **Repositories**: [`internal/database/repositories/`](../internal/database/repositories/)
-**Migrations**: 26 (up to `migration_026`)
+**Migrations**: 27 (up to `migration_027`)
 
 ---
 
@@ -287,41 +287,6 @@ CREATE TABLE bayes_classes (
 ```
 
 **Indexes**: `bayes_classes_chat_idx`
-
----
-
-### chat_stats
-**Purpose**: Daily chat statistics
-**Primary Key**: `(chat_id, date)`
-
-```sql
-CREATE TABLE chat_stats (
-    chat_id INTEGER NOT NULL,
-    date TIMESTAMP NOT NULL,
-    messages_count INTEGER NOT NULL DEFAULT 0,
-    created_at TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP NOT NULL,
-    PRIMARY KEY (chat_id, date)
-)
-```
-
----
-
-### chat_user_stats
-**Purpose**: Daily per-user chat statistics
-**Primary Key**: `(chat_id, user_id, date)`
-
-```sql
-CREATE TABLE chat_user_stats (
-    chat_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
-    date TIMESTAMP NOT NULL,
-    messages_count INTEGER NOT NULL DEFAULT 0,
-    created_at TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP NOT NULL,
-    PRIMARY KEY (chat_id, user_id, date)
-)
-```
 
 ---
 
@@ -1542,4 +1507,3 @@ chat_messages (1) ──< (N) chat_messages (self-reference via reply_id, root_m
 7. **JSON fields** (metadata, markup) are stored as TEXT strings
 8. **Read-only sources** reject write operations with ValueError
 9. **Thread-safe** - uses thread-local connections per source
-10. **Auto-updates** - `chat_stats` and `chat_user_stats` updated automatically on message save
