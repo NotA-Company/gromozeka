@@ -314,6 +314,10 @@ guard can be removed in a one-line change keyed on the same `proxyType` check.
 **Open question (§9):** whether HTTP/2-over-SOCKS now works in httpcore2. If a
 smoke test shows it does, the guard can be dropped; until then, keep it.
 
+**(2026-08-13 update):** HTTP/2-over-SOCKS works (negotiated via TLS ALPN above the
+tunnel; httpcore2 native SOCKS path supports it). The guard was dropped; see ADR-021.
+The restriction was an httpx-socks-era artifact, not a protocol limitation.
+
 ### D4 — PTB strategy: b1 recommended, b2 alternative — DECIDE IN PHASE 2
 
 This is the one decision explicitly left open. Two viable strategies for the
@@ -648,8 +652,11 @@ HTTP library.
 
 1. **PTB: b1 vs b2 (D4).** Explicitly left to the user. Recommended default is b1
    (lowest risk); b2 is a time-boxed spike. This is the Phase 2 decision point.
-2. **HTTP/2-over-SOCKS in httpcore2.** Does it now work? If yes, D3's guard can be
-   dropped. Resolve via the §8 probe during Phase 1.
+2. ~~**HTTP/2-over-SOCKS in httpcore2.** Does it now work? If yes, D3's guard can be
+   dropped. Resolve via the §8 probe during Phase 1.~~ **RESOLVED (2026-08-13):**
+   HTTP/2 works over SOCKS5 (negotiated via TLS ALPN above the tunnel; httpcore2
+   native SOCKS path supports it). The restriction was an httpx-socks-era artifact,
+   not a protocol limitation. Guard dropped; see ADR-021 D3 follow-up.
 3. **PTB-local SOCKS under b1.** Once `toKwargs()` no longer emits a transport,
    the Telegram wiring must either build its own `httpx-socks` transport locally
    or switch PTB to `httpx[socks]` native `proxy=`. Resolve during the Phase 2 b1

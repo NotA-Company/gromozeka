@@ -56,7 +56,6 @@ from lib.ai import (
 )
 from lib.ai.models import ModelMessage, ModelResultStatus
 from lib.cache import JsonKeyGenerator, JsonValueConverter, StringKeyGenerator, StringValueConverter
-from lib.proxy import ProxyType
 from lib.yandex_search import SearchRequestKeyGenerator, YandexSearchClient
 
 from .base import BaseBotHandler
@@ -558,21 +557,17 @@ class YandexSearchHandler(BaseBotHandler):
                 - 'error' (str): Error message if download failed
 
         Note:
-            Uses HTTP/2 (unless SOCKS5 proxy is active, which requires HTTP/1.1)
-            with a 60-second timeout, follows up to 5 redirects, and sets a
-            user agent header to avoid blocking.
+            HTTP/2 is negotiated via TLS ALPN above the SOCKS5 tunnel; httpcore2
+            supports it natively — the old httpx-socks-era disable was removed.
+            Uses HTTP/2 with a 60-second timeout, follows up to 5 redirects,
+            and sets a user agent header to avoid blocking.
         """
         try:
-            # SOCKS5 proxy does not support HTTP/2; disable it when proxy type is SOCKS5
             proxyKwargs = self._proxyConfig.toKwargs()
-            resolvedType = self._proxyConfig.getCombined().type
-            useHttp2 = resolvedType != ProxyType.SOCKS5
-            if not useHttp2:
-                logger.warning("HTTP/2 disabled for web-fetch: SOCKS5 proxy does not support HTTP/2")
 
             async with httpx.AsyncClient(
                 **proxyKwargs,
-                http2=useHttp2,
+                http2=True,
                 timeout=httpx.Timeout(60),  # Set Timeout to 1 minute for everything
                 follow_redirects=True,
                 max_redirects=5,

@@ -8,9 +8,10 @@ accepted and the migration **landed** — see the companion design doc
 `httpx[http2]==0.28.1` + `httpx-socks[asyncio]==0.11.0` were removed;
 `httpx2[http2,socks]==2.10.0` is the sole HTTP library. PTB strategy **b2**
 (`httpx2.alias_httpx()` at the top of `main.py`) was chosen. `make test` 3942
-passed / 11 skipped / 0 failed; `make lint` 0 pyright errors. Manual operator
-smokes (Минцифры-SSL-through-SOCKS, HTTP/2-over-SOCKS probe, live Telegram
-round-trip) remain pending — see design doc §8.
+passed / 11 skipped / 0 failed; `make lint` 0 pyright errors. The HTTP/2-over-SOCKS
+probe was resolved (closed-by-analysis on 2026-08-13 — HTTP/2 works over SOCKS5).
+Remaining operator smokes (Минцифры-SSL-through-SOCKS, live Telegram round-trip)
+remain pending — see design doc §8.
 **Companion doc**: [`httpx2-migration-v1.md`](./httpx2-migration-v1.md) — design + phased implementation plan
 **Scope**: Evaluate whether Gromozeka should migrate its HTTP layer from `httpx` to `httpx2`, and on what timeline.
 
@@ -175,9 +176,9 @@ dependency tree until convergence.
   `httpx2.Client` (the object-boundary problem). Known issue
   `romis2012/httpx-socks#2` ("HTTP/2 not working" with
   `AsyncProxyTransport.from_url` + `http2=True`) confirms `httpx-socks`'
-  `from_url()` accepts `http2=True` but HTTP/2-over-SOCKS has historically been
-  flaky (matches Gromozeka's own gotcha that forces `http2=False` when SOCKS is
-  active — see §8). `httpcore2` actively maintains the SOCKS+SSL path (changelog:
+   `from_url()` accepts `http2=True` but HTTP/2-over-SOCKS had an httpx-socks
+   config/propagation bug (matches Gromozeka's own gotcha that forces `http2=False` when SOCKS is
+   active — see §8). `httpcore2` actively maintains the SOCKS+SSL path (changelog:
   *"Fix trace extension when used with socks proxy (#849/#880)"*, *"Fix SSL
   context for connections using the 'wss' scheme (#869)"* in the 1.0.x line).
 
@@ -303,7 +304,7 @@ From a thorough explore pass.
   # internal/bot/common/handlers/yandex_search.py:567
   ```
 
-  (SOCKS transport incompatible with HTTP/2.)
+   (SOCKS transport incompatible with HTTP/2 — refuted post-migration; see the outcome note above and ADR-021.)
 - **Coupling rating: MEDIUM-HIGH — but** it is coupling to httpx internals that
   are API-identical in httpx2 (it is a fork from 0.28.1). The custom transport
   subclasses, the exception hierarchy, the SSL threading, and `MockTransport` all

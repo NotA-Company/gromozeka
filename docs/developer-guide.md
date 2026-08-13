@@ -2253,7 +2253,7 @@ user = "${PROXY_USER}"
 password = "${PROXY_PASSWORD}"
 ```
 
-**Limitation:** SOCKS5 proxy is incompatible with HTTP/2. When a SOCKS5 proxy is active, the Yandex Search web-fetch client (`_downloadUrl()`) automatically disables HTTP/2.
+HTTP/2 works over SOCKS5 proxies (HTTP/2 is negotiated via TLS ALPN entirely above the SOCKS5 tunnel; httpcore2 supports it natively). The Yandex Search web-fetch client (`_downloadUrl()`) always enables HTTP/2, and ALPN degrades gracefully to HTTP/1.1 if the target server lacks h2 support.
 
 ### How Resolution Works
 

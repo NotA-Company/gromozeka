@@ -626,25 +626,27 @@ class TestWebSearchForwarding:
         assert getUrl.call_args.kwargs["max_size"] == DEFAULT_MAX_SIZE
 
 
-class TestHttp2DisabledForSocks5:
-    """Regression test for D3: HTTP/2 must be disabled when proxy type is SOCKS5.
+class TestHttp2EnabledForAllProxyTypes:
+    """Regression test for HTTP/2 being enabled for ALL proxy types.
 
-    Before the D3 fix, the heuristic ``useHttp2 = "transport" not in proxyKwargs``
-    detected SOCKS indirectly via the transport object. After D2 removed the
-    transport key, that check would always return True — silently re-enabling
-    HTTP/2 over SOCKS (the historically-flaky combo).
+    HTTP/2 is negotiated via TLS ALPN entirely above the SOCKS5 tunnel — there
+    is NO protocol incompatibility. httpcore2's native SOCKS path supports HTTP/2
+    by construction, and ALPN degrades gracefully to HTTP/1.1 if the target
+    server lacks h2 support. The old restriction (disabling HTTP/2 for SOCKS5)
+    was an artifact of the retired third-party `httpx-socks` transport, which
+    did not propagate client-level `http2=True` into a user-supplied transport.
 
-    This test locks in the corrected behavior: HTTP/2 is disabled explicitly
-    when the resolved proxy type is SOCKS5, and enabled for HTTP and NONE types.
+    This test locks in the corrected behavior: HTTP/2 is enabled for ALL proxy
+    types (SOCKS5, HTTP, NONE).
     """
 
-    async def test_http2_disabled_when_proxy_type_is_socks5(self) -> None:
-        """When proxy type is SOCKS5, http2 parameter passed to AsyncClient must be False.
+    async def test_http2_enabled_when_proxy_type_is_socks5(self) -> None:
+        """When proxy type is SOCKS5, http2 parameter passed to AsyncClient must be True.
 
-        This regression test ensures the D3 fix (keying off proxyType) is in place.
-        Without D3, the old ``"transport" not in proxyKwargs`` heuristic would
-        always return True after D2 removed the transport key, incorrectly
-        enabling HTTP/2 over SOCKS5.
+        HTTP/2 is negotiated via TLS ALPN above the SOCKS5 tunnel; httpcore2
+        supports it natively. The old httpx-socks-era restriction was removed
+        after source+web research established h2-over-SOCKS was never a protocol
+        limitation.
 
         Args:
             None
@@ -679,9 +681,9 @@ class TestHttp2DisabledForSocks5:
             except Exception:
                 pass  # We only care about the AsyncClient call
 
-            # Assert AsyncClient was called with http2=False
+            # Assert AsyncClient was called with http2=True
             mockClient.assert_called_once()
-            assert mockClient.call_args.kwargs["http2"] is False, "HTTP/2 must be disabled when proxy type is SOCKS5"
+            assert mockClient.call_args.kwargs["http2"] is True, "HTTP/2 must be enabled when proxy type is SOCKS5"
 
     async def test_http2_enabled_when_proxy_type_is_http(self) -> None:
         """When proxy type is HTTP, http2 parameter passed to AsyncClient must be True.
