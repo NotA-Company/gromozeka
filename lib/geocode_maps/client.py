@@ -40,7 +40,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional, cast
 
-import httpx
+import httpx2 as httpx
 
 from lib.cache import CacheInterface, NullCache
 from lib.proxy import ProxyConfig, ProxyType

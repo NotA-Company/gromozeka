@@ -22,7 +22,7 @@ from io import BytesIO
 from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
-import httpx
+import httpx2 as httpx
 import openai
 import pytest
 from openai import AsyncOpenAI

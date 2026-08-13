@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Awaitable, Dict, List, Optional, TypeAlias
 
-import httpx
+import httpx2 as httpx
 
 from .masker import SecretMasker
 from .transports import RecordingTransport

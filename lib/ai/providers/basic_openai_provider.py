@@ -26,7 +26,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-import httpx
+import httpx2 as httpx
 import openai
 from openai.types import ImagesResponse
 from openai.types.chat.chat_completion import ChatCompletion

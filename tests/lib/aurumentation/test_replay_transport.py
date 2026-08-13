@@ -19,7 +19,7 @@ These tests exercise the transport directly via ``httpx.AsyncClient(transport=..
 
 from typing import List, Optional
 
-import httpx
+import httpx2 as httpx
 import pytest
 
 from lib.aurumentation.transports import ReplayTransport

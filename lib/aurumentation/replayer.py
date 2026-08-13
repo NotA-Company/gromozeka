@@ -8,7 +8,7 @@ import inspect
 from collections.abc import Callable
 from typing import Awaitable, List, Optional, TypeAlias
 
-import httpx
+import httpx2 as httpx
 
 from .transports import ReplayTransport
 from .types import GoldenDataScenarioDict

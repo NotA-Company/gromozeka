@@ -47,7 +47,7 @@ OpenRouter-specific features:
 import logging
 from typing import Any, Dict, Optional
 
-import httpx
+import httpx2 as httpx
 from openai import AsyncOpenAI
 
 from lib.proxy import ProxyConfig

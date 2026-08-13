@@ -38,7 +38,7 @@ import logging
 from collections.abc import Sequence
 from typing import Dict, Optional, Tuple
 
-import httpx
+import httpx2 as httpx
 
 from lib.proxy import ProxyConfig, ProxyKwargs
 from lib.stats import StatsStorage

@@ -9,7 +9,7 @@ import re
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
-import httpx
+import httpx2 as httpx
 
 from .types import HttpCallDict, HttpRequestDict, HttpResponseDict
 

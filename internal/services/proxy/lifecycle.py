@@ -12,7 +12,7 @@ import asyncio
 import logging
 from typing import Optional
 
-import httpx
+import httpx2 as httpx
 
 from lib.proxy import HealthCheckType, ProxyConfig, ProxyLifecycleConfigDict
 

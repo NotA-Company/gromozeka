@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
-import httpx
+import httpx2 as httpx
 
 from .replayer import GoldenDataReplayer
 from .types import GoldenDataFormat, GoldenDataScenarioDict, HttpCallDict
