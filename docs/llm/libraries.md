@@ -603,6 +603,7 @@ await storage.record(
 - `LLMService` passes `consumerId=str(chatId)` to LLM generation methods
 - `message_received` events — `BaseBotHandler.saveChatMessage` records `message_count`/`text_length` with `user_id`/`chat_type`/`message_type` labels per inbound message (stats `{message_count: 1, text_length: len(text)}`); `main.py` builds the `messageStatsStorage` (gated on `[stats].enabled`) and threads it through both bot applications into `HandlersManager`, which injects it post-construction onto every handler. Default is `NullStatsStorage` so stats-off needs no `None` checks.
 - `llm_tool_call` events — `LLMService.injectStatsStorage` receives a `DatabaseStatsStorage` built in `main.py` (key `[stats].tool-stats-data-source`); every tool dispatch in the `generateTextViaLLM` loop records `tool_call_count`/`elapsed_time`/`is_error` with `user_id`/`toolName` labels. Tools that raise propagate unrecorded (never-raise contract makes that a bug, not a stats gap).
+- `command` events — `HandlersManager.handleCommand` records `command_count`/`is_error` with `user_id`/`commandName` (lowercased) labels for every **executed** command (denials/unrecognized commands are not recorded); `consumerId` is the chat ID. `main.py` builds the storage (key `[stats].command-stats-data-source`, gated on `[stats].enabled`) and threads it through both bot applications into `HandlersManager`.
 
 **Best-effort design:** `record()` implementations must never raise — log and return silently on error.
 

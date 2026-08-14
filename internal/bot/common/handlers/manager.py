@@ -1048,18 +1048,18 @@ class HandlersManager(CommandHandlerGetterInterface):
         except Exception as e:
             logger.error(f"Error while handling command {command}: {e}")
             logger.exception(e)
+            # Record failed command execution before sending error reply
+            await self.commandStatsStorage.record(
+                stats={"command_count": 1, "is_error": 1},
+                consumerId=str(ensuredMessage.recipient.id),
+                labels={"user_id": str(ensuredMessage.sender.id), "commandName": commandLower},
+            )
             if handlerInfo.replyErrorOnException:
                 await handlerObj.sendMessage(
                     ensuredMessage,
                     messageText=f"Error while handling command:\n```\n{e}\n```",
                     messageCategory=MessageCategory.BOT_ERROR,
                 )
-            # Record failed command execution
-            await self.commandStatsStorage.record(
-                stats={"command_count": 1, "is_error": 1},
-                consumerId=str(ensuredMessage.recipient.id),
-                labels={"user_id": str(ensuredMessage.sender.id), "commandName": commandLower},
-            )
             return False
 
     async def handleNewMessage(self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType) -> None:

@@ -1,7 +1,10 @@
 # Design: Statistics collection v1 — messages, tool calls, commands
 
 **Date**: 2026-08-14
-**Status**: **Phase 3 implemented** (working tree — `command` events via `HandlersManager.handleCommand`, gated on `[stats] enabled`). Phase 2 implemented (commit `ed378378` — `llm_tool_call` events via `LLMService.injectStatsStorage`, gated on `[stats] enabled`). Phase 1 implemented (commits `46cac39f` + `f885702b` — `message_received` events + migration 027 back-fill/drop, gated on `[stats] enabled`). The body below is the original design rationale and is preserved as-is.
+**Status**: **IMPLEMENTED — all phases landed.** Phase 3 implemented (commit `92040759` — `command` events via `HandlersManager.handleCommand`, gated on `[stats] enabled`). Phase 2 implemented (commit `ed378378` + fix `0fea86b6` — `llm_tool_call` events via `LLMService.injectStatsStorage`, gated on `[stats] enabled`). Phase 1 implemented (commits `46cac39f` + `f885702b` — `message_received` events + migration 027 back-fill/drop, gated on `[stats] enabled`). Remaining deferred items (next design): aggregation trigger, retention, query API, display. The body below is the original design rationale and is preserved as-is.
+
+**Caveats (post-implementation):** (a) a handler timed out by the manager's `wait_for` records no `command` event (CancelledError bypasses the except; accepted best-effort undercount); (b) denied/not-found commands record no events of any kind (saveChatMessage is post-gate) — command-origin message_received ⊇ command, minus denials; (c) label naming is mixed camelCase/snake_case across events (pre-existing; harmonizing would split labels_hash buckets — do not change).
+
 **Owner**: TBD
 **Branch**: `lib-stat-improvement`
 **Scope**: Extend Gromozeka's `lib/stats` event pipeline to three new bot-level event

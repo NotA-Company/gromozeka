@@ -339,3 +339,71 @@ class TestCommandStatsRecording:
             consumerId="100",
             labels={"user_id": "999", "commandName": "test"},
         )
+
+    async def testMixedCaseCommandRecordsLowercase(self, mockHandlerManager: HandlersManager) -> None:
+        """Mixed-case command input records the lowercase commandName label.
+
+        D5 amendment: command variants like /Help and /help share one bucket via
+        lowercased normalization.
+
+        Args:
+            mockHandlerManager: Minimal HandlersManager fixture.
+        """
+        mockStatsStorage = AsyncMock(spec=StatsStorage)
+        mockHandlerManager.commandStatsStorage = mockStatsStorage
+
+        ensuredMessage = _makeEnsuredMessage(userId=7, chatId=100)
+        ensuredMessage.messageText = "/TeSt"  # Mixed case
+
+        result = await mockHandlerManager.handleCommand(ensuredMessage, AsyncMock())
+
+        assert result is True
+        mockStatsStorage.record.assert_awaited_once_with(
+            stats={"command_count": 1, "is_error": 0},
+            consumerId="100",
+            labels={"user_id": "7", "commandName": "test"},  # Lowercased
+        )
+
+    async def testExceptionPathRecordSurvivesRaisingErrorReply(self, mockHandlerManager: HandlersManager) -> None:
+        """Exception path record survives even when error reply send raises.
+
+        After the exception-path reordering (record before reply), the stats
+        record is guaranteed to happen even if sendMessage raises.
+
+        Args:
+            mockHandlerManager: Minimal HandlersManager fixture.
+        """
+        # Replace the handler method with one that raises
+        handler = mockHandlerManager.handlers[0][0]  # (handler, parallelism)
+
+        async def raisingCommand(
+            self, ensuredMessage: EnsuredMessage, command: str, args: str, updateObj, typingManager
+        ) -> None:
+            raise RuntimeError("handler error")
+
+        handler.testCommand = raisingCommand  # type: ignore[attr-defined]
+        mockHandlerManager._commands["test"].boundHandler = raisingCommand.__get__(  # type: ignore[attr-defined]
+            handler, type(handler)
+        )
+
+        # Mock sendMessage to raise when called
+        handler.sendMessage = AsyncMock(side_effect=RuntimeError("send failed"))
+
+        mockStatsStorage = AsyncMock(spec=StatsStorage)
+        mockHandlerManager.commandStatsStorage = mockStatsStorage
+
+        ensuredMessage = _makeEnsuredMessage(userId=7, chatId=100)
+        ensuredMessage.messageText = "/test"
+
+        # handleCommand raises when sendMessage raises
+        with pytest.raises(RuntimeError, match="send failed"):
+            await mockHandlerManager.handleCommand(ensuredMessage, AsyncMock())
+
+        # Record must have been awaited despite sendMessage raising
+        mockStatsStorage.record.assert_awaited_once_with(
+            stats={"command_count": 1, "is_error": 1},
+            consumerId="100",
+            labels={"user_id": "7", "commandName": "test"},
+        )
+        # Verify sendMessage was attempted (and raised, causing handleCommand to raise)
+        handler.sendMessage.assert_awaited_once()
