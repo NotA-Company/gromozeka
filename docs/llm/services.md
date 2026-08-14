@@ -187,6 +187,10 @@ llmService.registerTool(
     ],
     handler=mySearchHandler,  # async def mySearchHandler(param1, ...) -> dict
 )
+
+# Inject stats storage for tool call statistics (optional, gated by [stats] enabled)
+from lib.stats.stats_storage import StatsStorage, NullStatsStorage
+llmService.injectStatsStorage(toolStatsStorage)  # or None for NullStatsStorage default
 ```
 
 **Rule:** Always use a `ToolName` member (from `internal.bot.constants`) for the `name=` argument. See the [add-handler skill](../../.agents/skills/add-handler/SKILL.md) Step 5 for the full registration workflow.
@@ -228,6 +232,8 @@ useTools={TOOLS_DEFAULT_DICT_KEY: True, ToolName.SANDBOX_SEND_FILE: False}
 ```
 
 Resolution happens in the private `_resolveTools(useTools)` method, which returns the filtered `List[LLMToolFunction]` sent to the model. The execution guard also uses this filtered set: if the LLM requests a dict-disabled tool, the loop returns an error listing only the **actually available** tool names (not the full registry), so the model is not tempted to retry a disabled tool.
+
+**Tool call statistics:** When `injectStatsStorage` is called with a `StatsStorage` instance (constructed in `main.py` gated by `[stats] enabled`), each tool dispatch in the `generateTextViaLLM` loop records an `llm_tool_call` event with stats `tool_call_count=1`, `elapsed_time` (seconds, float), and `is_error` (0/1). Labels are `user_id` (from `extraData["ensuredMessage"].sender.id`) and `toolName`. The `consumerId` is the chat ID from `ensuredMessage.recipient.id`. Recording is skipped when `ensuredMessage` is absent. Tools that raise exceptions propagate unrecorded (per the never-raise contract).
 
 **`maxRounds` — tool-calling round budget** (`Optional[int]`, default `DEFAULT_MAX_ROUNDS` = 32, defined in [`internal/services/llm/constants.py`](../../internal/services/llm/constants.py) and re-exported from [`internal.services.llm`](../../internal/services/llm/__init__.py)): bounds the number of rounds the model may call tools before the budget is considered exhausted. Must be a non-negative integer or `None` (negative raises `ValueError`). Once `roundN >= maxRounds`: tool schemas are dropped (`tools=[]`), the `filteredToolNames` execution allowlist is cleared (so even healed tool calls cannot execute), tool-call healing is disabled, a steering directive is folded into the leading system message (or a `user` message when none exists), and the loop is hard-bounded to a single additional round — terminating regardless of the model's response. On any post-budget termination `ModelRunResult.roundLimitHit` is set to `True` and a service-level `logger.warning` fires, so callers can detect that the result may be incomplete. A fallback answer is synthesized **only** when the model returned no usable text and the status is `FINAL` or a post-budget `TOOL_CALLS` (a glitching model that ignored the empty `tools=[]`); genuine error statuses (`ERROR` / `CONTENT_FILTER` / `UNKNOWN`) propagate with their original status and empty text so callers can detect the failure. Pass `maxRounds=None` to disable the limit (unlimited rounds, legacy behavior); `maxRounds=0` drops tools on the very first call.
 

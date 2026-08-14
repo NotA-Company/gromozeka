@@ -8,6 +8,7 @@ The service supports fallback models and provides a unified interface for LLM op
 import json
 import logging
 import re
+import time
 import uuid
 from collections.abc import Awaitable, Callable, MutableSequence, MutableSet, Sequence
 from threading import RLock
@@ -31,6 +32,7 @@ from lib.ai.models import (
     ModelStructuredResult,
 )
 from lib.rate_limiter.manager import RateLimiterManager
+from lib.stats.stats_storage import NullStatsStorage, StatsStorage
 
 from .constants import DEFAULT_MAX_ROUNDS, TOOLS_DEFAULT_DICT_KEY
 from .models import ExtraDataDict
@@ -191,6 +193,7 @@ class LLMService:
             self.toolsHandlers: Dict[str, LLMToolFunction] = {}
             self.rateLimiterManager = RateLimiterManager()
             self.llmManager: Optional[LLMManager] = None
+            self.toolStatsStorage: StatsStorage = NullStatsStorage()
 
             self.initialized = True
             logger.info("LLMService initialized")
@@ -214,6 +217,17 @@ class LLMService:
             None
         """
         self.llmManager = llmManager
+
+    def injectStatsStorage(self, statsStorage: Optional[StatsStorage]) -> None:
+        """Inject a StatsStorage instance for tool call statistics.
+
+        Args:
+            statsStorage: The StatsStorage instance to inject, or None to use NullStatsStorage
+
+        Returns:
+            None
+        """
+        self.toolStatsStorage = statsStorage or NullStatsStorage()
 
     def registerTool(
         self, name: str, description: str, parameters: Sequence[LLMFunctionParameter], handler: LLMToolHandler
@@ -972,13 +986,16 @@ class LLMService:
 
                 for toolCall in ret.toolCalls:
                     toolRet: Union[str, Dict[str, Any]] = ""
+                    elapsed: float = 0.0
                     if toolCall.errorMessage is not None:
                         # Synthesised from a broken-but-recognised tool call
                         # (_matchTextForBrokenKnownToolCall): do NOT execute the
                         # handler; tell the model to retry with a proper tool call.
                         toolRet = {"done": False, "error": toolCall.errorMessage}
                     elif toolCall.name in filteredToolNames:
+                        t0 = time.monotonic()
                         toolRet = await self.toolsHandlers[toolCall.name].call(extraData, **toolCall.parameters)
+                        elapsed = time.monotonic() - t0
                     else:
                         # If wrong tool called, return error about it.
                         # Report only the actually-available (filtered) names so the LLM
@@ -988,6 +1005,18 @@ class LLMService:
                             "error": f"Tool {toolCall.name} not available, available tools are "
                             + str(sorted(filteredToolNames)),
                         }
+
+                    # Record tool call statistics
+                    ensuredMessage = extraData.get("ensuredMessage")
+                    if ensuredMessage is not None:
+                        userId = str(ensuredMessage.sender.id)
+                        statsChatId = str(ensuredMessage.recipient.id)
+                        isError = isinstance(toolRet, dict) and ("error" in toolRet or "errorMessage" in toolRet)
+                        await self.toolStatsStorage.record(
+                            stats={"tool_call_count": 1, "elapsed_time": elapsed, "is_error": 1 if isError else 0},
+                            consumerId=statsChatId,
+                            labels={"user_id": userId, "toolName": toolCall.name},
+                        )
 
                     # Content of ModelMessage should be string, so if tool result is not string,
                     # convert it to string via utils.jsonDumps()

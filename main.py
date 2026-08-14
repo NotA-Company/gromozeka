@@ -104,6 +104,16 @@ class GromozekBot:
         )
         LLMService.getInstance().injectLLMManager(self.llmManager)
 
+        # Initialize tool stats storage
+        toolStatsStorage: Optional[StatsStorage] = None
+        if statsEnabled:
+            toolStatsStorage = DatabaseStatsStorage(
+                db=self.database,
+                eventType="llm_tool_call",
+                dataSource=statsConfig.get("tool-stats-data-source", self.database.manager.default),
+            )
+        LLMService.getInstance().injectStatsStorage(toolStatsStorage)
+
         # Initialize rate limiter manager
         self.rateLimiterManager = RateLimiterManager.getInstance()
         loop.run_until_complete(self.rateLimiterManager.loadConfig(self.configManager.getRateLimiterConfig()))

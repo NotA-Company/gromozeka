@@ -1,7 +1,7 @@
 # Design: Statistics collection v1 — messages, tool calls, commands
 
 **Date**: 2026-08-14
-**Status**: **Phase 1 implemented** (commits `46cac39f` + `f885702b` — `message_received` events + migration 027 back-fill/drop, gated on `[stats] enabled`). Phase 2 (`llm_tool_call`) and Phase 3 (`command`) remain proposed/pending. The body below is the original design rationale and is preserved as-is.
+**Status**: **Phase 2 implemented** (working tree). Phase 1 implemented (commits `46cac39f` + `f885702b` — `message_received` events + migration 027 back-fill/drop, gated on `[stats] enabled`). Phase 3 (`command`) remains proposed/pending. The body below is the original design rationale and is preserved as-is.
 **Owner**: TBD
 **Branch**: `lib-stat-improvement`
 **Scope**: Extend Gromozeka's `lib/stats` event pipeline to three new bot-level event
@@ -284,27 +284,22 @@ parameter of the enclosing `LLMService` method.
 | `eventType` | `"message_received"` |
 | `consumerId` | `str(message.recipient.id)` |
 | stats | `message_count: 1` (int); `text_length: len(messageText or "")` (int) |
-| labels | `user_id = str(message.sender.id)`; `chat_type = message.recipient.chatType.value` (`"private"` \| `"group"`); `has_media = "1" if message.messageType != MessageType.TEXT else "0"` |
+| labels | `user_id = str(message.sender.id)`; `chat_type = message.recipient.chatType.value` (`"private"` \| `"group"`); `message_type = message.messageType.value` (raw `MessageType` StrEnum, e.g. `"text"`, `"image"`, `"video"`) |
 
-No `platform` label. The platform is unique per database (one bot process = one
-platform), so it is a constant for every row in the store; carrying it as a label would
-needlessly multiply label cardinality. Applied consistently to all three events.
+*Amended by user after Phase 1: message_type (raw enum) replaces has_media.* No `platform` label. The platform is unique per database (one bot process = one platform), so it is a constant for every row in the store; carrying it as a label would needlessly multiply label cardinality. Applied consistently to all three events.
 
-`has_media` is defined as *not a plain text message* (`messageType != TEXT`). Note the
-`MessageType.UNKNOWN` early-return in the wrapper
-([base.py:1098-1100](../../internal/bot/common/handlers/base.py)) means unknown-type
-messages are never saved and therefore never recorded — desirable.
+`message_type` is the raw `MessageType` enum value (e.g. `"text"`, `"image"`, `"video"`, `"audio"`, `"document"`, `"sticker"`). Note the `MessageType.UNKNOWN` early-return in the wrapper ([base.py:1098-1100](../../internal/bot/common/handlers/base.py)) means unknown-type messages are never saved and therefore never recorded — desirable.
 
 ### D4 — `llm_tool_call` event shape, error rule, and exception handling
 
 | Field | Value |
 |---|---|
 | `eventType` | `"llm_tool_call"` |
-| `consumerId` | `str(chatId)` (enclosing method parameter) |
+| `consumerId` | `str(ensuredMessage.recipient.id)` (chat from ensuredMessage, NOT the method's `chatId` parameter) |
 | stats | `tool_call_count: 1` (int); `elapsed_time: <seconds>` (float); `is_error: 0 \| 1` (int) |
-| labels | `user_id = str(extraData["ensuredMessage"].sender.id)` (fallback `"unknown"` when `ensuredMessage` absent); `toolName = toolCall.name` |
+| labels | `user_id = str(extraData["ensuredMessage"].sender.id)`; `toolName = toolCall.name` |
 
-No `platform` label (same rationale as D3).
+No `platform` label (same rationale as D3). Recording is skipped when `ensuredMessage` is absent (no "unknown" fallback). The attribute name on `LLMService` is `toolStatsStorage`.
 
 **Error-detection rule (exact):** after the dispatch produces `toolRet`,
 
