@@ -8,8 +8,8 @@ as ``message_received`` events, then drops both legacy tables (``chat_stats`` an
 The back-fill writes pre-aggregated rows directly to ``stat_aggregates`` for
 three periods (daily, monthly, total) with two label-sets per period (per-consumer
 and ``__global__`` rollup). No ``hourly`` rows are written because the source
-granularity is per-day. No ``has_media`` label is included because it is unknown
-historically (live-aggregated rows always carry ``has_media`` and will land in
+granularity is per-day. No ``message_type`` label is included because it is unknown
+historically (live-aggregated rows always carry ``message_type`` and will land in
 different label-hash buckets).
 
 The back-fill uses the same canonicalization (``lib.utils.jsonDumps``) and hashing

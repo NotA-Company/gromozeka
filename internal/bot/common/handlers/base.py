@@ -1141,16 +1141,25 @@ class BaseBotHandler(CommandHandlerMixin):
         )
 
         # Record message_received stats event (best-effort, never raises)
-        # Media-only messages have text_length=0 — this is intentional per D3
-        await self.messageStatsStorage.record(
-            stats={"message_count": 1, "text_length": len(message.messageText) if message.messageText else 0},
-            consumerId=str(chat.id),
-            labels={
-                "user_id": str(sender.id),
-                "chat_type": chat.chatType.value,
-                "message_type": message.messageType,
-            },
-        )
+        # Only inbound messages (user-authored) are counted — outgoing bot replies
+        # (incl. split parts / streaming intermediates) are not counted to avoid ~2x inflation
+        if messageCategory in (
+            MessageCategory.USER,
+            MessageCategory.USER_COMMAND,
+            MessageCategory.USER_SPAM,
+            MessageCategory.USER_CONFIG_ANSWER,
+            MessageCategory.CHANNEL,
+        ):
+            # Media-only messages have text_length=0 — this is intentional per D3
+            await self.messageStatsStorage.record(
+                stats={"message_count": 1, "text_length": len(message.messageText) if message.messageText else 0},
+                consumerId=str(chat.id),
+                labels={
+                    "user_id": str(sender.id),
+                    "chat_type": chat.chatType.value,
+                    "message_type": message.messageType,
+                },
+            )
 
         return True
 

@@ -319,3 +319,340 @@ class TestMessageReceivedStatsRecording:
 
         # Since message_type is always present in live labels and never in backfill labels,
         # their label-sets (and thus hashes) will always differ → no accidental merge/double-count.
+
+    # Regression tests for Gate-2 BLOCKER: message_received should count INBOUND messages only
+    # Outbound bot replies (each splitIfTooLong part, each streaming intermediate) must NOT be counted
+
+    async def test_outbound_bot_category_does_not_record_stats(self, mockConfigManager, mockDatabaseWrapper):
+        """MessageCategory.BOT (bot-authored) does NOT record message_received stats."""
+        from internal.bot.common.handlers.base import BaseBotHandler
+
+        mockStatsStorage = AsyncMock(spec=StatsStorage)
+
+        message = EnsuredMessage(
+            sender=MessageSender(id=999, name="Bot", username="@bot"),  # Bot's user_id
+            recipient=MessageRecipient(id=100, chatType=ChatType.PRIVATE),
+            messageId=MessageId(200),
+            date=datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            messageText="Bot reply",
+        )
+        message.messageType = MessageType.TEXT
+
+        handler = BaseBotHandler(
+            configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+        )
+        handler.messageStatsStorage = mockStatsStorage
+        handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
+        handler.updateChatInfo = AsyncMock(return_value=None)
+        handler.cache.updateChatUser = AsyncMock(return_value=None)
+
+        # Act
+        result = await handler.saveChatMessage(message, MessageCategory.BOT)
+
+        # Assert - SHOULD FAIL before fix, PASS after fix
+        assert result is True
+        assert mockStatsStorage.record.call_count == 0, "BOT messages should NOT record message_received stats"
+
+    async def test_outbound_bot_command_reply_does_not_record_stats(self, mockConfigManager, mockDatabaseWrapper):
+        """MessageCategory.BOT_COMMAND_REPLY does NOT record message_received stats."""
+        from internal.bot.common.handlers.base import BaseBotHandler
+
+        mockStatsStorage = AsyncMock(spec=StatsStorage)
+
+        message = EnsuredMessage(
+            sender=MessageSender(id=999, name="Bot", username="@bot"),
+            recipient=MessageRecipient(id=100, chatType=ChatType.PRIVATE),
+            messageId=MessageId(200),
+            date=datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            messageText="Command response",
+        )
+        message.messageType = MessageType.TEXT
+
+        handler = BaseBotHandler(
+            configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+        )
+        handler.messageStatsStorage = mockStatsStorage
+        handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
+        handler.updateChatInfo = AsyncMock(return_value=None)
+        handler.cache.updateChatUser = AsyncMock(return_value=None)
+
+        # Act
+        result = await handler.saveChatMessage(message, MessageCategory.BOT_COMMAND_REPLY)
+
+        # Assert - SHOULD FAIL before fix, PASS after fix
+        assert result is True
+        assert mockStatsStorage.record.call_count == 0, "BOT_COMMAND_REPLY should NOT record message_received stats"
+
+    async def test_outbound_bot_error_does_not_record_stats(self, mockConfigManager, mockDatabaseWrapper):
+        """MessageCategory.BOT_ERROR does NOT record message_received stats."""
+        from internal.bot.common.handlers.base import BaseBotHandler
+
+        mockStatsStorage = AsyncMock(spec=StatsStorage)
+
+        message = EnsuredMessage(
+            sender=MessageSender(id=999, name="Bot", username="@bot"),
+            recipient=MessageRecipient(id=100, chatType=ChatType.PRIVATE),
+            messageId=MessageId(200),
+            date=datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            messageText="Error occurred",
+        )
+        message.messageType = MessageType.TEXT
+
+        handler = BaseBotHandler(
+            configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+        )
+        handler.messageStatsStorage = mockStatsStorage
+        handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
+        handler.updateChatInfo = AsyncMock(return_value=None)
+        handler.cache.updateChatUser = AsyncMock(return_value=None)
+
+        # Act
+        result = await handler.saveChatMessage(message, MessageCategory.BOT_ERROR)
+
+        # Assert - SHOULD FAIL before fix, PASS after fix
+        assert result is True
+        assert mockStatsStorage.record.call_count == 0, "BOT_ERROR should NOT record message_received stats"
+
+    async def test_outbound_bot_summary_does_not_record_stats(self, mockConfigManager, mockDatabaseWrapper):
+        """MessageCategory.BOT_SUMMARY does NOT record message_received stats."""
+        from internal.bot.common.handlers.base import BaseBotHandler
+
+        mockStatsStorage = AsyncMock(spec=StatsStorage)
+
+        message = EnsuredMessage(
+            sender=MessageSender(id=999, name="Bot", username="@bot"),
+            recipient=MessageRecipient(id=100, chatType=ChatType.PRIVATE),
+            messageId=MessageId(200),
+            date=datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            messageText="Summary",
+        )
+        message.messageType = MessageType.TEXT
+
+        handler = BaseBotHandler(
+            configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+        )
+        handler.messageStatsStorage = mockStatsStorage
+        handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
+        handler.updateChatInfo = AsyncMock(return_value=None)
+        handler.cache.updateChatUser = AsyncMock(return_value=None)
+
+        # Act
+        result = await handler.saveChatMessage(message, MessageCategory.BOT_SUMMARY)
+
+        # Assert - SHOULD FAIL before fix, PASS after fix
+        assert result is True
+        assert mockStatsStorage.record.call_count == 0, "BOT_SUMMARY should NOT record message_received stats"
+
+    async def test_outbound_bot_resended_does_not_record_stats(self, mockConfigManager, mockDatabaseWrapper):
+        """MessageCategory.BOT_RESENDED does NOT record message_received stats."""
+        from internal.bot.common.handlers.base import BaseBotHandler
+
+        mockStatsStorage = AsyncMock(spec=StatsStorage)
+
+        message = EnsuredMessage(
+            sender=MessageSender(id=999, name="Bot", username="@bot"),
+            recipient=MessageRecipient(id=100, chatType=ChatType.PRIVATE),
+            messageId=MessageId(200),
+            date=datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            messageText="Resended message",
+        )
+        message.messageType = MessageType.TEXT
+
+        handler = BaseBotHandler(
+            configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+        )
+        handler.messageStatsStorage = mockStatsStorage
+        handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
+        handler.updateChatInfo = AsyncMock(return_value=None)
+        handler.cache.updateChatUser = AsyncMock(return_value=None)
+
+        # Act
+        result = await handler.saveChatMessage(message, MessageCategory.BOT_RESENDED)
+
+        # Assert - SHOULD FAIL before fix, PASS after fix
+        assert result is True
+        assert mockStatsStorage.record.call_count == 0, "BOT_RESENDED should NOT record message_received stats"
+
+    async def test_outbound_bot_spam_notification_does_not_record_stats(self, mockConfigManager, mockDatabaseWrapper):
+        """MessageCategory.BOT_SPAM_NOTIFICATION does NOT record message_received stats."""
+        from internal.bot.common.handlers.base import BaseBotHandler
+
+        mockStatsStorage = AsyncMock(spec=StatsStorage)
+
+        message = EnsuredMessage(
+            sender=MessageSender(id=999, name="Bot", username="@bot"),
+            recipient=MessageRecipient(id=100, chatType=ChatType.PRIVATE),
+            messageId=MessageId(200),
+            date=datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            messageText="Spam notification",
+        )
+        message.messageType = MessageType.TEXT
+
+        handler = BaseBotHandler(
+            configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+        )
+        handler.messageStatsStorage = mockStatsStorage
+        handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
+        handler.updateChatInfo = AsyncMock(return_value=None)
+        handler.cache.updateChatUser = AsyncMock(return_value=None)
+
+        # Act
+        result = await handler.saveChatMessage(message, MessageCategory.BOT_SPAM_NOTIFICATION)
+
+        # Assert - SHOULD FAIL before fix, PASS after fix
+        assert result is True
+        assert mockStatsStorage.record.call_count == 0, "BOT_SPAM_NOTIFICATION should NOT record message_received stats"
+
+    # Verify inbound categories still record stats (existing behavior)
+
+    async def test_inbound_user_records_stats(self, mockConfigManager, mockDatabaseWrapper):
+        """MessageCategory.USER (inbound) records message_received stats."""
+        from internal.bot.common.handlers.base import BaseBotHandler
+
+        mockStatsStorage = AsyncMock(spec=StatsStorage)
+
+        message = EnsuredMessage(
+            sender=MessageSender(id=42, name="Alice", username="@alice"),
+            recipient=MessageRecipient(id=100, chatType=ChatType.PRIVATE),
+            messageId=MessageId(200),
+            date=datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            messageText="User message",
+        )
+        message.messageType = MessageType.TEXT
+
+        handler = BaseBotHandler(
+            configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+        )
+        handler.messageStatsStorage = mockStatsStorage
+        handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
+        handler.updateChatInfo = AsyncMock(return_value=None)
+        handler.cache.updateChatUser = AsyncMock(return_value=None)
+
+        # Act
+        result = await handler.saveChatMessage(message, MessageCategory.USER)
+
+        # Assert - should PASS both before and after fix
+        assert result is True
+        assert mockStatsStorage.record.call_count == 1, "USER messages SHOULD record message_received stats"
+
+    async def test_inbound_user_command_records_stats(self, mockConfigManager, mockDatabaseWrapper):
+        """MessageCategory.USER_COMMAND (inbound) records message_received stats."""
+        from internal.bot.common.handlers.base import BaseBotHandler
+
+        mockStatsStorage = AsyncMock(spec=StatsStorage)
+
+        message = EnsuredMessage(
+            sender=MessageSender(id=42, name="Alice", username="@alice"),
+            recipient=MessageRecipient(id=100, chatType=ChatType.PRIVATE),
+            messageId=MessageId(200),
+            date=datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            messageText="/help",
+        )
+        message.messageType = MessageType.TEXT
+
+        handler = BaseBotHandler(
+            configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+        )
+        handler.messageStatsStorage = mockStatsStorage
+        handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
+        handler.updateChatInfo = AsyncMock(return_value=None)
+        handler.cache.updateChatUser = AsyncMock(return_value=None)
+
+        # Act
+        result = await handler.saveChatMessage(message, MessageCategory.USER_COMMAND)
+
+        # Assert - should PASS both before and after fix
+        assert result is True
+        assert mockStatsStorage.record.call_count == 1, "USER_COMMAND messages SHOULD record message_received stats"
+
+    async def test_inbound_user_spam_records_stats(self, mockConfigManager, mockDatabaseWrapper):
+        """MessageCategory.USER_SPAM (inbound) records message_received stats."""
+        from internal.bot.common.handlers.base import BaseBotHandler
+
+        mockStatsStorage = AsyncMock(spec=StatsStorage)
+
+        message = EnsuredMessage(
+            sender=MessageSender(id=42, name="Alice", username="@alice"),
+            recipient=MessageRecipient(id=100, chatType=ChatType.PRIVATE),
+            messageId=MessageId(200),
+            date=datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            messageText="Spam message",
+        )
+        message.messageType = MessageType.TEXT
+
+        handler = BaseBotHandler(
+            configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+        )
+        handler.messageStatsStorage = mockStatsStorage
+        handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
+        handler.updateChatInfo = AsyncMock(return_value=None)
+        handler.cache.updateChatUser = AsyncMock(return_value=None)
+
+        # Act
+        result = await handler.saveChatMessage(message, MessageCategory.USER_SPAM)
+
+        # Assert - should PASS both before and after fix
+        assert result is True
+        assert mockStatsStorage.record.call_count == 1, "USER_SPAM messages SHOULD record message_received stats"
+
+    async def test_inbound_user_config_answer_records_stats(self, mockConfigManager, mockDatabaseWrapper):
+        """MessageCategory.USER_CONFIG_ANSWER (inbound) records message_received stats."""
+        from internal.bot.common.handlers.base import BaseBotHandler
+
+        mockStatsStorage = AsyncMock(spec=StatsStorage)
+
+        message = EnsuredMessage(
+            sender=MessageSender(id=42, name="Alice", username="@alice"),
+            recipient=MessageRecipient(id=100, chatType=ChatType.PRIVATE),
+            messageId=MessageId(200),
+            date=datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            messageText="Yes",
+        )
+        message.messageType = MessageType.TEXT
+
+        handler = BaseBotHandler(
+            configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+        )
+        handler.messageStatsStorage = mockStatsStorage
+        handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
+        handler.updateChatInfo = AsyncMock(return_value=None)
+        handler.cache.updateChatUser = AsyncMock(return_value=None)
+
+        # Act
+        result = await handler.saveChatMessage(message, MessageCategory.USER_CONFIG_ANSWER)
+
+        # Assert - should PASS both before and after fix
+        assert result is True
+        assert (
+            mockStatsStorage.record.call_count == 1
+        ), "USER_CONFIG_ANSWER messages SHOULD record message_received stats"
+
+    async def test_inbound_channel_records_stats(self, mockConfigManager, mockDatabaseWrapper):
+        """MessageCategory.CHANNEL (inbound) records message_received stats."""
+        from internal.bot.common.handlers.base import BaseBotHandler
+
+        mockStatsStorage = AsyncMock(spec=StatsStorage)
+
+        message = EnsuredMessage(
+            sender=MessageSender(id=42, name="Alice", username="@alice"),
+            recipient=MessageRecipient(id=100, chatType=ChatType.CHANNEL),
+            messageId=MessageId(200),
+            date=datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            messageText="Channel message",
+        )
+        message.messageType = MessageType.TEXT
+
+        handler = BaseBotHandler(
+            configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+        )
+        handler.messageStatsStorage = mockStatsStorage
+        handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
+        handler.updateChatInfo = AsyncMock(return_value=None)
+        handler.cache.updateChatUser = AsyncMock(return_value=None)
+
+        # Act
+        result = await handler.saveChatMessage(message, MessageCategory.CHANNEL)
+
+        # Assert - should PASS both before and after fix
+        assert result is True
+        assert mockStatsStorage.record.call_count == 1, "CHANNEL messages SHOULD record message_received stats"
