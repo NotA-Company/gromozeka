@@ -1,7 +1,7 @@
 # Design: Statistics collection v1 — messages, tool calls, commands
 
 **Date**: 2026-08-14
-**Status**: **Phase 2 implemented** (commit `ed378378` — `llm_tool_call` events via `LLMService.injectStatsStorage`, gated on `[stats] enabled`). Phase 1 implemented (commits `46cac39f` + `f885702b` — `message_received` events + migration 027 back-fill/drop, gated on `[stats] enabled`). Phase 3 (`command`) remains proposed/pending. The body below is the original design rationale and is preserved as-is.
+**Status**: **Phase 3 implemented** (working tree — `command` events via `HandlersManager.handleCommand`, gated on `[stats] enabled`). Phase 2 implemented (commit `ed378378` — `llm_tool_call` events via `LLMService.injectStatsStorage`, gated on `[stats] enabled`). Phase 1 implemented (commits `46cac39f` + `f885702b` — `message_received` events + migration 027 back-fill/drop, gated on `[stats] enabled`). The body below is the original design rationale and is preserved as-is.
 **Owner**: TBD
 **Branch**: `lib-stat-improvement`
 **Scope**: Extend Gromozeka's `lib/stats` event pipeline to three new bot-level event
@@ -338,7 +338,7 @@ documented trade-off — see §9.
 | `eventType` | `"command"` |
 | `consumerId` | `str(ensuredMessage.recipient.id)` |
 | stats | `command_count: 1` (int); `is_error: 0 \| 1` (int) |
-| labels | `user_id = str(ensuredMessage.sender.id)`; `commandName = command` (the parsed name, [manager.py:927](../../internal/bot/common/handlers/manager.py)) |
+| labels | `user_id = str(ensuredMessage.sender.id)`; `commandName = commandLower` (the lowercased parsed name, matches handler lookup; case variants like `/Help` and `/help` share one bucket. Amended 2026-08-14: normalized to lowercased to match handler lookup semantics.) |
 
 No `platform` label.
 

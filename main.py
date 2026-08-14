@@ -137,6 +137,15 @@ class GromozekBot:
                 dataSource=statsConfig.get("message-stats-data-source", self.database.manager.default),
             )
 
+        # Initialize command stats storage
+        commandStatsStorage: Optional[StatsStorage] = None
+        if statsEnabled:
+            commandStatsStorage = DatabaseStatsStorage(
+                db=self.database,
+                eventType="command",
+                dataSource=statsConfig.get("command-stats-data-source", self.database.manager.default),
+            )
+
         # Initialize bot application
         botConfig = self.configManager.getBotConfig()
         self.botMode = BotProvider(botConfig.get("mode", BotProvider.TELEGRAM))
@@ -148,6 +157,7 @@ class GromozekBot:
                     botToken=self.configManager.getBotToken(),
                     database=self.database,
                     messageStatsStorage=messageStatsStorage,
+                    commandStatsStorage=commandStatsStorage,
                 )
             case BotProvider.MAX:
                 self.botApp = MaxBotApplication(
@@ -155,6 +165,7 @@ class GromozekBot:
                     botToken=self.configManager.getBotToken(),
                     database=self.database,
                     messageStatsStorage=messageStatsStorage,
+                    commandStatsStorage=commandStatsStorage,
                 )
             case _:
                 raise ValueError(f"Unknown bot mode: {self.botMode}")

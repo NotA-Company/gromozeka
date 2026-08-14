@@ -397,6 +397,15 @@ async def myCommandMethod(
 
 **File:** [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) — `HandlersManager.__init__` builds the `self.handlers: List[HandlerTuple] = [...]` literal (the `LLMMessageHandler` tuple is appended **after** any conditional/custom handlers to preserve the must-stay-last invariant).
 
+The `HandlersManager` constructor accepts:
+- `configManager` — `ConfigManager` instance
+- `database` — `Database` instance
+- `botProvider` — `BotProvider` enum (Telegram or Max)
+- `messageStatsStorage` — Optional `StatsStorage` instance for `message_received` events (default `NullStatsStorage`)
+- `commandStatsStorage` — Optional `StatsStorage` instance for `command` events (default `NullStatsStorage`)
+
+**Command statistics:** When `commandStatsStorage` is provided (not `NullStatsStorage`), `handleCommand()` records a `command` event for every executed command with `command_count=1`, `is_error=0` on success or `is_error=1` on exception. Labels are `user_id` and `commandName` (lowercased, matching handler lookup — `/Help` and `/help` share one bucket). The `consumerId` is the chat ID. Commands denied by permission or category gates (early returns) are **not** recorded. Recording is gated on `[stats] enabled` (default `false`).
+
 ```python
 # At top of file, add import:
 from .my_handler import MyNewHandler

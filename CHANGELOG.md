@@ -17,6 +17,7 @@ process governing this file, see [docs/llm/changelog.md](docs/llm/changelog.md).
 - Telegram text/photo sends and `editMessage` now retry transient network errors (`TimedOut`/`NetworkError`) and `RetryAfter` up to 3 attempts with capped exponential backoff; markdown→plaintext fallback now triggers only on formatting errors.
 - `message_received` stats events recorded via lib/stats (gated by `[stats] enabled`).
 - `llm_tool_call` stats events recorded via lib/stats (gated by `[stats] enabled`).
+- `command` stats events recorded via lib/stats (gated by `[stats] enabled`).
 
 ### Changed
 - Dropped legacy daily message-counter tables (`chat_stats` and `chat_user_stats`) and back-filled all historical data into `stat_aggregates` as pre-aggregated `message_received` events (migration 027). The back-fill preserves per-day message counts with daily/monthly/total periods and both per-consumer and `__global__` label-sets; historical rows lack the `message_type` label (unknown at recording time) and therefore land in different `labels_hash` buckets than live-aggregated rows.

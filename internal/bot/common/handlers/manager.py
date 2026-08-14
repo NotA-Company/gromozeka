@@ -421,6 +421,7 @@ class HandlersManager(CommandHandlerGetterInterface):
         database: Database,
         botProvider: BotProvider,
         messageStatsStorage: Optional[StatsStorage] = None,
+        commandStatsStorage: Optional[StatsStorage] = None,
     ) -> None:
         """Initialize the handlers manager with required services.
 
@@ -433,12 +434,14 @@ class HandlersManager(CommandHandlerGetterInterface):
             database: Database wrapper for data persistence
             botProvider: Bot provider type (TELEGRAM or MAX)
             messageStatsStorage: Stats storage for message_received events
+            commandStatsStorage: Stats storage for command events
         """
         self.configManager = configManager
         self.db = database
         self.botProvider: BotProvider = botProvider
         self.handlerTimeout = 60 * 30
         self.messageStatsStorage: StatsStorage = messageStatsStorage or NullStatsStorage()
+        self.commandStatsStorage: StatsStorage = commandStatsStorage or NullStatsStorage()
 
         # Map of command name -> CommandHandlerInfo
         self._commands: Dict[str, CommandHandlerInfoV2] = {}
@@ -1035,6 +1038,12 @@ class HandlersManager(CommandHandlerGetterInterface):
             else:
                 await handlerInfo.boundHandler(ensuredMessage, command, args, updateObj, None)
 
+            # Record successful command execution
+            await self.commandStatsStorage.record(
+                stats={"command_count": 1, "is_error": 0},
+                consumerId=str(ensuredMessage.recipient.id),
+                labels={"user_id": str(ensuredMessage.sender.id), "commandName": commandLower},
+            )
             return True
         except Exception as e:
             logger.error(f"Error while handling command {command}: {e}")
@@ -1045,6 +1054,12 @@ class HandlersManager(CommandHandlerGetterInterface):
                     messageText=f"Error while handling command:\n```\n{e}\n```",
                     messageCategory=MessageCategory.BOT_ERROR,
                 )
+            # Record failed command execution
+            await self.commandStatsStorage.record(
+                stats={"command_count": 1, "is_error": 1},
+                consumerId=str(ensuredMessage.recipient.id),
+                labels={"user_id": str(ensuredMessage.sender.id), "commandName": commandLower},
+            )
             return False
 
     async def handleNewMessage(self, ensuredMessage: EnsuredMessage, updateObj: UpdateObjectType) -> None:

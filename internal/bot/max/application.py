@@ -56,6 +56,7 @@ class MaxBotApplication:
         botToken: str,
         database: Database,
         messageStatsStorage: Optional[StatsStorage] = None,
+        commandStatsStorage: Optional[StatsStorage] = None,
     ):
         """Initialize Max bot application with token, database, and LLM model.
 
@@ -64,6 +65,7 @@ class MaxBotApplication:
             botToken: Max bot token for authentication with Max Messenger API
             database: Database object for data persistence and state management
             messageStatsStorage: Stats storage for message_received events
+            commandStatsStorage: Stats storage for command events
         """
         self.configManager = configManager
         self.botToken = botToken
@@ -74,6 +76,7 @@ class MaxBotApplication:
             database=database,
             botProvider=BotProvider.MAX,
             messageStatsStorage=messageStatsStorage,
+            commandStatsStorage=commandStatsStorage,
         )
         self.queueService = QueueService.getInstance()
         self.maxBot: Optional[libMax.MaxBotClient] = None

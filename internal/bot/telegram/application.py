@@ -72,6 +72,7 @@ class TelegramBotApplication:
         botToken: str,
         database: Database,
         messageStatsStorage: Optional[StatsStorage] = None,
+        commandStatsStorage: Optional[StatsStorage] = None,
     ):
         """Initialize Telegram bot application.
 
@@ -80,6 +81,7 @@ class TelegramBotApplication:
             botToken: Telegram bot token for authentication
             database: Database object for data persistence
             messageStatsStorage: Stats storage for message_received events
+            commandStatsStorage: Stats storage for command events
         """
         self.configManager = configManager
         self.botToken = botToken
@@ -90,6 +92,7 @@ class TelegramBotApplication:
             database=database,
             botProvider=BotProvider.TELEGRAM,
             messageStatsStorage=messageStatsStorage,
+            commandStatsStorage=commandStatsStorage,
         )
         self.queueService = QueueService.getInstance()
 
