@@ -1,7 +1,7 @@
 # Design: Statistics collection v1 — messages, tool calls, commands
 
 **Date**: 2026-08-14
-**Status**: **Phase 2 implemented** (working tree). Phase 1 implemented (commits `46cac39f` + `f885702b` — `message_received` events + migration 027 back-fill/drop, gated on `[stats] enabled`). Phase 3 (`command`) remains proposed/pending. The body below is the original design rationale and is preserved as-is.
+**Status**: **Phase 2 implemented** (commit `ed378378` — `llm_tool_call` events via `LLMService.injectStatsStorage`, gated on `[stats] enabled`). Phase 1 implemented (commits `46cac39f` + `f885702b` — `message_received` events + migration 027 back-fill/drop, gated on `[stats] enabled`). Phase 3 (`command`) remains proposed/pending. The body below is the original design rationale and is preserved as-is.
 **Owner**: TBD
 **Branch**: `lib-stat-improvement`
 **Scope**: Extend Gromozeka's `lib/stats` event pipeline to three new bot-level event
@@ -51,7 +51,7 @@ reviewable commit. STT needs no work — it is already wired.
 
 - **G1** — Record a `message_received` event exactly once per inbound message
   (commands and regular messages alike), with `message_count`, `text_length`, and
-  `user_id` / `chat_type` / `has_media` labels.
+  `user_id` / `chat_type` / `message_type` labels.
 - **G2** — Record an `llm_tool_call` event for every tool dispatch through the single
   centralized site in `LLMService`, with `tool_call_count`, `elapsed_time`, `is_error`,
   and `user_id` / `toolName` labels.
@@ -398,13 +398,13 @@ Migrate **all** `chat_user_stats` history into `stat_aggregates` as
   - `chat_type` derived from `chat_id` sign (`> 0` → `"private"`, else `"group"`) — the
     repo-wide convention; matches `ChatType.PRIVATE.value`/`GROUP.value`
     ([ensured_message.py:69-70](../../internal/bot/models/ensured_message.py)).
-- **Label-set difference (documented):** back-filled rows have **no `has_media`** label
-  (unknown historically). Live `message_received` rows always carry `has_media`
+- **Label-set difference (documented):** back-filled rows have **no `message_type`** label
+  (unknown historically). Live `message_received` rows always carry `message_type`
   ([D3](#d3--message_received-event-shape)). They therefore land in **different**
   `labels_hash` buckets and never accidentally merge — which is correct (you cannot
-  aggregate "media unknown" with "media = 0/1"). A consequence: `total`/daily totals for
-  `message_count` are split across `has_media` variants for live data and a single
-  no-`has_media` bucket for historical data; cross-bucket totals need a post-query SUM
+  aggregate "type unknown" with concrete `MessageType` values). A consequence: `total`/daily totals for
+  `message_count` are split across `message_type` variants for live data and a single
+  no-`message_type` bucket for historical data; cross-bucket totals need a post-query SUM
   (see §11).
 - **Canonicalization (load-bearing):** the labels JSON **must** be produced with
   `lib.utils.jsonDumps(labelsDict)` (same call the aggregator makes at
@@ -799,9 +799,9 @@ default, and the existing test suite plus the migration test are the safety net.
 | Risk | Likelihood | Impact | Mitigation | Rollback |
 |---|---|---|---|---|
 | **Hot-path cost of `await record()` INSERT** — `message_received` fires on every inbound message, adding an awaited `stat_events` INSERT to the message-save path | Med | Med | Consistent with the `lib/ai` precedent (every LLM call already awaits `record()`); `record()` is best-effort and the INSERT is a single row; if it proves hot, a future async fire-and-forget queue is an option (out of scope here, NG1) | Set `[stats] enabled = false` |
-| **Back-fill partial failure** — crash between back-fill and DROP leaves `chat_user_stats` intact but `stat_aggregates` already populated; a re-run would double-count | Low | High | Migration is one-shot (standard for this codebase); document the window; operator can `DELETE FROM stat_aggregates WHERE event_type='message_received' AND labels NOT LIKE '%has_media%'` to undo a partial back-fill before re-running | Manual cleanup per above, then re-run |
+| **Back-fill partial failure** — crash between back-fill and DROP leaves `chat_user_stats` intact but `stat_aggregates` already populated; a re-run would double-count | Low | High | Migration is one-shot (standard for this codebase); document the window; operator can `DELETE FROM stat_aggregates WHERE event_type='message_received' AND labels NOT LIKE '%message_type%'` to undo a partial back-fill before re-running | Manual cleanup per above, then re-run |
 | **`labels_hash` mismatch** — back-fill produces a different canonical JSON than the aggregator, splitting buckets | Low | Med | Reuse `lib.utils.jsonDumps` + `_hashLabels` verbatim ([D7](#d7--back-fill-semantics)); migration test asserts a back-filled row and a live-aggregated row for the same labels share a `labels_hash` | Revert migration; regenerate after fixing canonicalization |
-| **Label cardinality** — `user_id` is a high-cardinality label; `stat_aggregates` grows with distinct (consumer, user_id, chat_type, …) combos | Med | Low | SUM-only aggregation keeps row count = distinct combos × periods; `has_media` adds only 2×. Monitor row count; a future retention/cleanup pass is NG2 | n/a |
+| **Label cardinality** — `user_id` is a high-cardinality label; `stat_aggregates` grows with distinct (consumer, user_id, chat_type, …) combos | Med | Low | SUM-only aggregation keeps row count = distinct combos × periods; `message_type` multiplies by the bounded `MessageType` enum cardinality. Monitor row count; a future retention/cleanup pass is NG2 | n/a |
 | **Non-atomic aggregation** (claim → upsert → mark) — a crash mid-`aggregate()` can double-count or leave orphans | Low | Med | Already accepted in the v3 design (`TODO` at [stats_storage.py:232](../../internal/database/stats_storage.py)); orphan reclaim is built into the claim step. Not introduced by this design | n/a (pre-existing) |
 | **Multi data-source mismatch** — if an operator sets `message-stats-data-source` to a non-`default` source, the migration (which runs where `chat_user_stats` lives) writes `stat_aggregates` to a different source than live events | Low | Med | Default config puts everything in `"default"` (no mismatch). Document that non-default stats data sources require `stat_aggregates` to exist there (already a precondition for `llm_request`/`stt_request` to work) | Keep `*-stats-data-source = "default"` |
 | **Tool-exception blind spot** (D4) — a raising tool is not recorded | Low | Low | Never-raise contract makes this a bug, not a stats gap; catching would change behavior | n/a |
@@ -845,7 +845,7 @@ while leaving the migration in place is safe (no recording happens).
 - **True cross-user global totals.** The current `__global__` rollup replaces only
   `consumer` and keeps `user_id`, so it is a per-user-across-chats rollup, not a
   grand total. Cross-user totals today require a post-query SUM across `user_id`
-  buckets (and across `has_media` buckets for the live/historical split, [D7](#d7--back-fill-semantics)).
+  buckets (and across `message_type` buckets for the live/historical split, [D7](#d7--back-fill-semantics)).
   A future stripped-labels rollup pass (drop `user_id` too) would give true globals.
 
 ---

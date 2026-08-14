@@ -140,6 +140,7 @@ emptyTask: asyncio.Task = makeEmptyAsyncTask()
 
 **File:** [`internal/services/llm/service.py:144`](../../internal/services/llm/service.py:144)  
 **Import:** `from internal.services.llm import LLMService`
+**Optional import:** `from lib.stats.stats_storage import StatsStorage, NullStatsStorage` (for tool call statistics, gated by `[stats]` enabled)
 
 ```python
 llmService = LLMService.getInstance()
@@ -189,7 +190,6 @@ llmService.registerTool(
 )
 
 # Inject stats storage for tool call statistics (optional, gated by [stats] enabled)
-from lib.stats.stats_storage import StatsStorage, NullStatsStorage
 llmService.injectStatsStorage(toolStatsStorage)  # or None for NullStatsStorage default
 ```
 
