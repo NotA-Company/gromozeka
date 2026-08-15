@@ -1,4 +1,6 @@
 ---
+name: docs-writer
+model: standard
 description: >-
   Documentation-synchronization specialist for the Gromozeka project. Use this
   agent for routine, mechanical documentation maintenance AFTER code has
@@ -72,9 +74,6 @@ description: >-
 
   </example>
 mode: all
-model: standard
-reasoningEffort: low
-temperature: 0.1
 steps: 40
 color: "#BF5AF2"
 permission:

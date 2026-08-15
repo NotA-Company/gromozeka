@@ -1,4 +1,6 @@
 ---
+name: code-reviewer
+model: code-reviewer
 description: >-
   Use this agent when the user has just written, modified, or completed a
   logical chunk of code and wants expert review for quality, correctness,
@@ -75,9 +77,6 @@ description: >-
 
   </example>
 mode: all
-model: code-reviewer
-reasoningEffort: high
-temperature: 0.1
 steps: 60
 color: "#34C759"
 permission:

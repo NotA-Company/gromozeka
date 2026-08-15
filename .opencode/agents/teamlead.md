@@ -1,4 +1,6 @@
 ---
+name: teamlead
+model: orchestrator
 description: >-
   Pure delegator and coordinator for complex, multi-faceted tasks. The teamlead
   does NOT perform substantive work themselves — they decompose the request,
@@ -72,8 +74,6 @@ description: >-
 
   </example>
 mode: all
-model: orchestrator
-reasoningEffort: high
 color: "#87CEEB"
 permission:
   bash: deny

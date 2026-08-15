@@ -1,4 +1,6 @@
 ---
+name: architect
+model: architector
 description: >-
   Use this agent when you need to analyze, document, or evolve the architecture
   of a software project. This includes understanding existing codebases, mapping
@@ -69,8 +71,6 @@ description: >-
 
   </example>
 mode: all
-model: architector
-reasoningEffort: high
 steps: 80
 color: "#FFD700"
 permission:

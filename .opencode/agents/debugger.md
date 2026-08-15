@@ -1,4 +1,6 @@
 ---
+name: debugger
+model: debugger
 description: >-
   Use this agent for root-cause investigation of runtime failures: flaky or
   failing tests, async/concurrency bugs, memory leaks, deadlocks, unexplained
@@ -78,9 +80,6 @@ description: >-
 
   </example>
 mode: all
-model: debugger
-reasoningEffort: high
-temperature: 0.1
 color: "#FF9500"
 permission:
   bash: allow
