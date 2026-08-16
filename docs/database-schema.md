@@ -407,7 +407,7 @@ Append-only event log for raw statistics events. Used by the statistics collecti
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
 | `event_id` | TEXT | No | - | App-generated UUID primary key |
-| `event_type` | TEXT | No | - | Type of statistics event (e.g., 'llm_request', 'message_received') |
+| `event_type` | TEXT | No | - | Type of statistics event (e.g., 'llm_request', 'message') |
 | `event_time` | TIMESTAMP | No | - | Timestamp when the event occurred |
 | `data` | TEXT | No | - | JSON-encoded event payload (metric key -> value) |
 | `labels` | TEXT | No | - | JSON-encoded dimension key-value pairs (e.g., consumer, model, provider) |
