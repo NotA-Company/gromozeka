@@ -141,12 +141,16 @@ class TheBot:
     ###
 
     async def getBotId(self) -> int:
-        """Get bot's unique identifier.
+        """Get bot's unique ID.
 
-        The bot identity is cached after the first successful platform API call and
-        reused for subsequent calls within ``BOT_ID_CACHE_TTL_SECONDS`` (1 hour).
-        This bounds staleness in case of a platform glitch that changes the bot ID.
-        Failed resolution is never cached — the next call retries the platform API.
+        The bot ID is cached for BOT_ID_CACHE_TTL_SECONDS (3600 seconds) to avoid
+        repeated platform API calls. After the TTL expires, the ID is re-resolved
+        from the platform, enabling recovery from temporary glitches (e.g., bot
+        re-creation on the platform).
+
+        For Max, the refresh bypasses the client-level cache (getMyInfo with
+        useCache=False), so TheBot's TTL is the only caching layer; one uncached
+        request per TTL window.
 
         Returns:
             Bot's unique ID from the active platform
@@ -163,7 +167,7 @@ class TheBot:
         if self.tgBot:
             botId = self.tgBot.id
         elif self.maxBot:
-            botId = (await self.maxBot.getMyInfo()).user_id
+            botId = (await self.maxBot.getMyInfo(useCache=False)).user_id
         else:
             raise RuntimeError("No Active bot found")
 

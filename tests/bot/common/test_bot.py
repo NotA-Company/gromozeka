@@ -935,7 +935,7 @@ class TestGetBotIdMemoization:
 
         First call invokes getMyInfo() and caches the result with a timestamp.
         After advancing time.monotonic() past the TTL window, a subsequent call
-        re-invokes getMyInfo() and updates the cached value.
+        re-invokes getMyInfo() with useCache=False and updates the cached value.
 
         Args:
             maxBotWithMemoization: The TheBot instance with Max provider.
@@ -954,10 +954,11 @@ class TestGetBotIdMemoization:
             mock_monotonic.return_value = 0.0
             result1 = await bot.getBotId()
 
-        # Assert: Returns correct bot ID, getMyInfo called once
+        # Assert: Returns correct bot ID, getMyInfo called once with useCache=False
         assert result1 == expectedBotId1
         assert bot.maxBot.getMyInfo.call_count == 1  # type: ignore[union-attr]
         assert bot._botIdCachedAt == 0.0  # Was set to our mocked value
+        bot.maxBot.getMyInfo.assert_called_once_with(useCache=False)  # type: ignore[union-attr]
 
         # Update the mock to return a different bot ID on second resolution
         newUserInfo = Mock()
@@ -973,9 +974,12 @@ class TestGetBotIdMemoization:
             # Act: Second call after TTL expired should re-resolve
             result2 = await bot.getBotId()
 
-            # Assert: Returns new bot ID, getMyInfo called twice
+            # Assert: Returns new bot ID, getMyInfo called twice, both with useCache=False
             assert result2 == 111222333
             assert bot.maxBot.getMyInfo.call_count == 2  # type: ignore[union-attr]
+            # Verify both calls had useCache=False
+            for call in bot.maxBot.getMyInfo.call_args_list:  # type: ignore[union-attr]
+                assert call.kwargs == {"useCache": False}
 
     async def test_getBotId_max_cacheWithinTtlNoReResolve(self, maxBotWithMemoization: TheBot) -> None:
         """getBotId() does not re-resolve when called within TTL window.

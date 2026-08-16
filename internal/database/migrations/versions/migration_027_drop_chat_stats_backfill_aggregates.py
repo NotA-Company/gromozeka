@@ -52,9 +52,9 @@ class Migration027DropChatStatsBackfillAggregates(BaseMigration):
 
     The back-fill reads individual message rows from ``chat_messages``, groups
     them by ``(chatId, userId, datePart, messageCategory, messageType)``, and
-    aggregates ``message_count`` and ``text_length``. It produces six rows per
-    unique bucket (three periods × two label-sets), with SUM accumulation on
-    upsert so multiple messages contributing to the same bucket aggregate correctly.
+    aggregates ``message_count`` and ``text_length``. It produces 12 rows per
+    unique bucket (three periods × two label-sets × two metrics), using
+    Python-side pre-aggregation and a replace-style upsert (idempotent re-runs).
 
     **Exclusions:** Rows with NULL, ``DELETED``, or ``UNSPECIFIED``
     ``message_category`` are skipped (matches live recording semantics).
@@ -101,9 +101,10 @@ class Migration027DropChatStatsBackfillAggregates(BaseMigration):
         2. **Drop:** Remove both legacy tables (``chat_stats`` and
             ``chat_user_stats``) using portable ``DROP TABLE IF EXISTS``.
 
-        **Bounded memory:** Messages are fetched chat-by-chat (``SELECT DISTINCT
+        **Memory usage:** Messages are fetched chat-by-chat (``SELECT DISTINCT
         chat_id`` first, then rows per chat) to avoid loading the entire
-        ``chat_messages`` table into memory.
+        ``chat_messages`` table into memory at once. The aggregates dict grows
+        with unique buckets (acceptable).
 
         **Date handling:** Date-part truncation is done in Python (``rowDate.date()``)
         for portability across SQLite/PostgreSQL/MySQL — no SQL date functions are used.
