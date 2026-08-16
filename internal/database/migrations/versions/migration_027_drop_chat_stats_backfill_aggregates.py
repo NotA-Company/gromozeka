@@ -2,7 +2,7 @@
 
 This migration (version 27) preserves historical message counts by migrating all
 data from the legacy ``chat_user_stats`` table into the ``stat_aggregates`` table
-as ``message_received`` events, then drops both legacy tables (``chat_stats`` and
+as ``message`` events, then drops both legacy tables (``chat_stats`` and
 ``chat_user_stats``) that have been write-only since migration_001.
 
 The back-fill writes pre-aggregated rows directly to ``stat_aggregates`` for
@@ -15,6 +15,10 @@ different label-hash buckets).
 The back-fill uses the same canonicalization (``lib.utils.jsonDumps``) and hashing
 (``_hashLabels`` from ``internal.database.stats_storage``) as the live aggregator,
 ensuring identical hashes for identical label sets.
+
+**Historical data note:** Legacy counters included bot-authored messages (unconditional
+increments), and message direction (sent/received) is derivable at query time via
+``user_id`` comparison with the bot's ID.
 
 The ``down()`` migration recreates both legacy tables empty — the original data
 is not restorable (destroyed by the DROP in ``up()``).
@@ -36,13 +40,17 @@ class Migration027DropChatStatsBackfillAggregates(BaseMigration):
 
     This migration preserves historical message counts by migrating all data from
     the legacy ``chat_user_stats`` table into the ``stat_aggregates`` table as
-    ``message_received`` events, then drops both legacy daily-counter tables
+    ``message`` events, then drops both legacy daily-counter tables
     (``chat_stats`` and ``chat_user_stats``).
 
     The back-fill produces six rows per source row (three periods × two label-sets),
     with SUM accumulation on upsert so multiple source rows contributing to the
     same period/label-set bucket aggregate correctly (notably the ``__global__``
     rollup, which sums across chats per ``(user_id, chat_type)``).
+
+    **Historical data note:** Legacy counters included bot-authored messages (unconditional
+    increments), and message direction (sent/received) is derivable at query time via
+    ``user_id`` comparison with the bot's ID.
 
     Attributes:
         version: Migration version number (27).
@@ -132,7 +140,7 @@ class Migration027DropChatStatsBackfillAggregates(BaseMigration):
                     await sqlProvider.upsert(
                         table="stat_aggregates",
                         values={
-                            "event_type": "message_received",
+                            "event_type": "message",
                             "period_start": periodStart,
                             "period_type": periodType,
                             "labels_hash": labelsHash,

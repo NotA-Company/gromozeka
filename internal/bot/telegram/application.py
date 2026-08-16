@@ -80,7 +80,7 @@ class TelegramBotApplication:
             configManager: Configuration manager instance
             botToken: Telegram bot token for authentication
             database: Database object for data persistence
-            messageStatsStorage: Stats storage for message_received events
+            messageStatsStorage: Stats storage for message events
             commandStatsStorage: Stats storage for command events
         """
         self.configManager = configManager

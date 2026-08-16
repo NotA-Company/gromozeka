@@ -133,7 +133,7 @@ class GromozekBot:
         if statsEnabled:
             messageStatsStorage = DatabaseStatsStorage(
                 db=self.database,
-                eventType="message_received",
+                eventType="message",
                 dataSource=statsConfig.get("message-stats-data-source", self.database.manager.default),
             )
 

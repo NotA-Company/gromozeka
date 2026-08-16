@@ -64,7 +64,7 @@ class MaxBotApplication:
             configManager: Configuration manager instance for accessing bot settings
             botToken: Max bot token for authentication with Max Messenger API
             database: Database object for data persistence and state management
-            messageStatsStorage: Stats storage for message_received events
+            messageStatsStorage: Stats storage for message events
             commandStatsStorage: Stats storage for command events
         """
         self.configManager = configManager

@@ -855,3 +855,128 @@ class TestTelegramSendRetry:
         assert mockSleep.call_count == 1
         assert len(result) == 1
         assert result[0].messageId.asInt() == successMessage.message_id
+
+
+class TestGetBotIdMemoization:
+    """Tests for TheBot.getBotId() memoization to avoid repeated platform API calls."""
+
+    @pytest.fixture
+    def maxBotWithMemoization(self, mockCacheService: Mock, _resetSingletons: None) -> TheBot:
+        """Build a Max TheBot instance with mocked deps for memoization testing.
+
+        Args:
+            mockCacheService: Mock cache service.
+            _resetSingletons: Fixture to reset CacheService singleton (requested explicitly by bot fixtures).
+
+        Returns:
+            A configured TheBot with Max provider.
+        """
+        # Mock the MaxBotClient with getMyInfo that tracks call count
+        maxBotClient = AsyncMock(spec=libMax.MaxBotClient)
+
+        # Create mock user info
+        userInfo = Mock()
+        userInfo.user_id = 999888777
+        userInfo.username = "memo_test_bot"
+
+        maxBotClient.getMyInfo.return_value = userInfo
+
+        # Config dict with bot_owners (what TheBot expects)
+        config = {"bot_owners": [123456]}
+
+        # Create TheBot with Max provider
+        bot = TheBot(
+            botProvider=BotProvider.MAX,
+            config=config,
+            maxBot=maxBotClient,
+        )
+
+        # Inject the mock cache (replacing the singleton)
+        bot.cache = mockCacheService
+
+        return bot
+
+    async def test_getBotId_max_resolvesOnceThenReturnsCached(self, maxBotWithMemoization: TheBot) -> None:
+        """getBotId() resolves from API on first call, then returns cached value.
+
+        First call invokes getMyInfo() and caches the result. Subsequent calls
+        return the cached value without re-invoking getMyInfo().
+
+        Args:
+            maxBotWithMemoization: The TheBot instance with Max provider.
+        """
+        # Arrange
+        bot = maxBotWithMemoization
+        expectedBotId = 999888777
+
+        # Act: First call should invoke getMyInfo()
+        result1 = await bot.getBotId()
+
+        # Assert: Returns correct bot ID, getMyInfo called once
+        assert result1 == expectedBotId
+        assert bot.maxBot.getMyInfo.call_count == 1  # type: ignore[union-attr]
+
+        # Act: Second call should return cached value
+        result2 = await bot.getBotId()
+
+        # Assert: Returns same bot ID, getMyInfo still called once (not called again)
+        assert result2 == expectedBotId
+        assert bot.maxBot.getMyInfo.call_count == 1  # type: ignore[union-attr]
+
+        # Act: Third call (extra verification)
+        result3 = await bot.getBotId()
+
+        # Assert: Returns same bot ID, getMyInfo still called once
+        assert result3 == expectedBotId
+        assert bot.maxBot.getMyInfo.call_count == 1  # type: ignore[union-attr]
+
+    async def test_getBotId_telegram_returnsCachedWithoutRepeatedAccess(self, telegramBot: TheBot) -> None:
+        """getBotId() on Telegram returns cached value; tgBot.id accessed once.
+
+        For Telegram, the bot ID comes from tgBot.id which is a property, so
+        we verify the method is memoized correctly.
+
+        Args:
+            telegramBot: The TheBot instance with Telegram provider.
+        """
+        # Arrange
+        expectedBotId = 123456789
+
+        # Act: First call
+        result1 = await telegramBot.getBotId()
+
+        # Assert: Returns correct bot ID
+        assert result1 == expectedBotId
+
+        # Act: Second call should return cached value
+        result2 = await telegramBot.getBotId()
+
+        # Assert: Returns same bot ID (cached)
+        assert result2 == expectedBotId
+        # For Telegram, we just verify the values are identical
+        assert result1 == result2
+
+    async def test_getBotId_max_cachePersistsAcrossMultipleCalls(self, maxBotWithMemoization: TheBot) -> None:
+        """getBotId() cache persists across many calls without re-resolving.
+
+        This stress test verifies that no matter how many times we call getBotId(),
+        getMyInfo() is only ever called once.
+
+        Args:
+            maxBotWithMemoization: The TheBot instance with Max provider.
+        """
+        # Arrange
+        bot = maxBotWithMemoization
+        expectedBotId = 999888777
+
+        # Act: Call getBotId() 10 times
+        results = []
+        for _ in range(10):
+            result = await bot.getBotId()
+            results.append(result)
+
+        # Assert: All results are identical
+        assert all(result == expectedBotId for result in results)
+
+        # Assert: getMyInfo() was called exactly once
+        assert bot.maxBot.getMyInfo.call_count == 1  # type: ignore[union-attr]

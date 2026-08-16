@@ -433,7 +433,7 @@ class HandlersManager(CommandHandlerGetterInterface):
             configManager: Configuration manager instance
             database: Database wrapper for data persistence
             botProvider: Bot provider type (TELEGRAM or MAX)
-            messageStatsStorage: Stats storage for message_received events
+            messageStatsStorage: Stats storage for message events
             commandStatsStorage: Stats storage for command events
         """
         self.configManager = configManager

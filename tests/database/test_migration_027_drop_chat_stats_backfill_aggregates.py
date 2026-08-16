@@ -2,7 +2,7 @@
 
 This migration performs two steps:
 1. Back-fill all historical chat_user_stats data into stat_aggregates as
-   message_received events (daily, monthly, total periods; per-consumer
+   message events (daily, monthly, total periods; per-consumer
    and __global__ label-sets).
 2. Drop both legacy write-only tables: chat_stats and chat_user_stats.
 
@@ -161,11 +161,9 @@ async def test_up_backfillsAndDropsLegacyTables(testDatabase: Database) -> None:
     assert await _tableExists(provider, "chat_stats"), "precondition: chat_stats exists"
     assert await _tableExists(provider, "chat_user_stats"), "precondition: chat_user_stats exists"
     aggCount = await provider.executeFetchOne(
-        "SELECT COUNT(*) AS cnt FROM stat_aggregates WHERE event_type = 'message_received'"
+        "SELECT COUNT(*) AS cnt FROM stat_aggregates WHERE event_type = 'message'"
     )
-    assert (
-        aggCount is not None and int(aggCount["cnt"]) == 0
-    ), "precondition: stat_aggregates empty for message_received"
+    assert aggCount is not None and int(aggCount["cnt"]) == 0, "precondition: stat_aggregates empty for message"
 
     # Seed diverse test data:
     # - Private chat (CHAT_PRIVATE_1) with multiple dates in same month (Jan 15, Jan 20)
@@ -191,7 +189,7 @@ async def test_up_backfillsAndDropsLegacyTables(testDatabase: Database) -> None:
     rows = await provider.executeFetchAll("""
         SELECT event_type, period_type, period_start, labels_hash, labels, metric_key, metric_value
         FROM stat_aggregates
-        WHERE event_type = 'message_received'
+        WHERE event_type = 'message'
         ORDER BY labels_hash, period_type
         """)
     assert (
@@ -208,7 +206,7 @@ async def test_up_backfillsAndDropsLegacyTables(testDatabase: Database) -> None:
         labelsHash = _hashLabels(labelsJson)
         expectedRows.append(
             {
-                "event_type": "message_received",
+                "event_type": "message",
                 "period_type": periodType,
                 "period_start": periodStart,
                 "labels_hash": labelsHash,
@@ -406,7 +404,7 @@ async def test_up_idempotentWhenLegacyTablesGone(testDatabase: Database) -> None
     assert not await _tableExists(provider, "chat_stats")
     assert not await _tableExists(provider, "chat_user_stats")
     aggCount = await provider.executeFetchOne(
-        "SELECT COUNT(*) AS cnt FROM stat_aggregates WHERE event_type = 'message_received'"
+        "SELECT COUNT(*) AS cnt FROM stat_aggregates WHERE event_type = 'message'"
     )
     # Should still be 6 rows from the first run (1 source row × 3 periods × 2 label-sets)
     assert aggCount is not None and int(aggCount["cnt"]) == 6

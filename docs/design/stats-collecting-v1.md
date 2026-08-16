@@ -1,7 +1,7 @@
 # Design: Statistics collection v1 — messages, tool calls, commands
 
 **Date**: 2026-08-14
-**Status**: **IMPLEMENTED — all phases landed.** Phase 3 implemented (commit `92040759` — `command` events via `HandlersManager.handleCommand`, gated on `[stats] enabled`). Phase 2 implemented (commit `ed378378` + fix `0fea86b6` — `llm_tool_call` events via `LLMService.injectStatsStorage`, gated on `[stats] enabled`). Phase 1 implemented (commits `46cac39f` + `f885702b` — `message_received` events + migration 027 back-fill/drop, gated on `[stats] enabled`). Remaining deferred items (next design): aggregation trigger, retention, query API, display. The body below is the original design rationale and is preserved as-is.
+**Status**: **IMPLEMENTED — all phases landed.** Phase 4 implemented (Phase-4b on `lib-stat-improvement` branch — both-direction message events, direction via sender identity, `sent`/`message_category` labels). Phase 3 implemented (commit `92040759` — `command` events via `HandlersManager.handleCommand`, gated on `[stats] enabled`). Phase 2 implemented (commit `ed378378` + fix `0fea86b6` — `llm_tool_call` events via `LLMService.injectStatsStorage`, gated on `[stats] enabled`). Phase 1 implemented (commits `46cac39f` + `f885702b` — `message` events + migration 027 back-fill/drop, gated on `[stats] enabled`). Remaining deferred items (next design): aggregation trigger, retention, query API, display. The body below is the original design rationale and is preserved as-is.
 
 **Caveats (post-implementation):** (a) a handler timed out by the manager's `wait_for` records no `command` event (CancelledError bypasses the except; accepted best-effort undercount); (b) denied/not-found commands record no events of any kind (saveChatMessage is post-gate) — command-origin message_received ⊇ command, minus denials; (c) label naming is mixed camelCase/snake_case across events (pre-existing; harmonizing would split labels_hash buckets — do not change).
 
@@ -280,18 +280,26 @@ Every event uses the chat id as the consumer. This matches the existing
 commands the chat id is `message.recipient.id`; for tool calls it is the `chatId`
 parameter of the enclosing `LLMService` method.
 
-### D3 — `message_received` event shape
+### D3 — `message` event shape
 
 | Field | Value |
 |---|---|
-| `eventType` | `"message_received"` |
+| `eventType` | `"message"` |
 | `consumerId` | `str(message.recipient.id)` |
 | stats | `message_count: 1` (int); `text_length: len(messageText or "")` (int) |
-| labels | `user_id = str(message.sender.id)`; `chat_type = message.recipient.chatType.value` (`"private"` \| `"group"`); `message_type = message.messageType.value` (raw `MessageType` StrEnum, e.g. `"text"`, `"image"`, `"video"`) |
+| labels | `user_id = str(message.sender.id)`; `chat_type = message.recipient.chatType.value` (`"private"` \| `"group"`); `message_type = message.messageType.value` (raw `MessageType` StrEnum, e.g. `"text"`, `"image"`, `"video"`); `message_category = messageCategory` (raw `MessageCategory` StrEnum); `sent = "True"` if `sender.id == botId`, `"False"` otherwise |
 
-*Amended by user after Phase 1: message_type (raw enum) replaces has_media.* No `platform` label. The platform is unique per database (one bot process = one platform), so it is a constant for every row in the store; carrying it as a label would needlessly multiply label cardinality. Applied consistently to all three events.
+*Amended by user after Phase 1: message_type (raw enum) replaces has_media.* *Amended after Phase 4 (2026-08-16): eventType renamed to `message`; both directions recorded; direction determined by `sender.id == await self.getBotId()` (not by messageCategory); added `message_category` and `sent` labels; excluded only DELETED/UNSPECIFIED categories; split parts counted as raw saves.* No `platform` label. The platform is unique per database (one bot process = one platform), so it is a constant for every row in the store; carrying it as a label would needlessly multiply label cardinality. Applied consistently to all three events.
 
 `message_type` is the raw `MessageType` enum value (e.g. `"text"`, `"image"`, `"video"`, `"audio"`, `"document"`, `"sticker"`). Note the `MessageType.UNKNOWN` early-return in the wrapper ([base.py:1098-1100](../../internal/bot/common/handlers/base.py)) means unknown-type messages are never saved and therefore never recorded — desirable.
+
+**Direction rule:** `sent = "True"` when the sender is the bot (`sender.id == await self.getBotId()`), `sent = "False"` otherwise. Direction is determined by sender identity, NOT by messageCategory. This enables counting both inbound user messages and outbound bot messages (including split parts and streaming intermediates), preserving raw-save semantics.
+
+**Exclusions:** Only `MessageCategory.DELETED` and `MessageCategory.UNSPECIFIED` are excluded (rewrites/defaults, not fresh messages). All other categories (USER, USER_COMMAND, USER_SPAM, USER_CONFIG_ANSWER, CHANNEL, BOT, BOT_COMMAND_REPLY, BOT_ERROR, BOT_SUMMARY, BOT_RESENDED, BOT_SPAM_NOTIFICATION) are recorded.
+
+**Best-effort guard:** `getBotId()` is called once per `saveChatMessage` invocation, wrapped in a `try/except` that logs debug-level errors and skips recording when `botId is None`. This ensures stats recording never breaks message saving (getBotId can raise RuntimeError or hit the Max API on first call).
+
+**Backfill compatibility:** Historical rows from migration 027 lack the `message_category` and `sent` labels (direction is derivable at query time via `user_id` — if `user_id` matches the bot id, `sent="True"`). Live rows always carry these labels, so backfill and live land in different `labels_hash` buckets.
 
 ### D4 — `llm_tool_call` event shape, error rule, and exception handling
 

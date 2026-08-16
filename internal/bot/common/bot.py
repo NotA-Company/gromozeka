@@ -129,6 +129,9 @@ class TheBot:
         logger.debug(f"Bot Owners: byId: {self.botOwnersId}, byUsername: {self.botOwnersUsername}")
         self.cache = CacheService.getInstance()
 
+        # Cache for bot identity (stable for process lifetime)
+        self._botId: Optional[int] = None
+
         ###
 
     # Different helpers
@@ -137,16 +140,25 @@ class TheBot:
     async def getBotId(self) -> int:
         """Get bot's unique identifier.
 
+        The bot identity is stable for the process lifetime, so the result is
+        cached after the first call to avoid repeated platform API calls.
+
         Returns:
             Bot's unique ID from the active platform
 
         Raises:
             RuntimeError: If no active bot client is configured
         """
+        if self._botId is not None:
+            return self._botId
+
         if self.tgBot:
-            return self.tgBot.id
+            self._botId = self.tgBot.id
+            return self._botId
         elif self.maxBot:
-            return (await self.maxBot.getMyInfo()).user_id
+            botId = (await self.maxBot.getMyInfo()).user_id
+            self._botId = botId
+            return botId
 
         raise RuntimeError("No Active bot found")
 
