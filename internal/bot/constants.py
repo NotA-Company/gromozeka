@@ -126,6 +126,16 @@ TELEGRAM_RETRY_AFTER_CAP_SECONDS: float = 60.0
 Protects against absurdly large ``retry_after`` values stalling a handler.
 """
 
+BOT_ID_CACHE_TTL_SECONDS: float = 3600.0
+"""Time-to-live in seconds for the cached bot ID.
+
+The bot ID is cached after the first successful platform API call and reused
+for subsequent calls within this window (1 hour by default). This bounds
+staleness in case of a platform glitch that changes the bot identity.
+
+Failed resolution is never cached — the next call retries the platform API.
+"""
+
 RANDOM_ANSWER_CONTEXT_LENGTH: int = 64
 """Maximum number of messages to include in the context for random answer generation.
 

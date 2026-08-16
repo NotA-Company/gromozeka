@@ -1145,27 +1145,28 @@ class BaseBotHandler(CommandHandlerMixin):
         # Split parts each count as raw saves. Exclude only DELETED/UNSPECIFIED (rewrites/defaults).
         if messageCategory not in (MessageCategory.DELETED, MessageCategory.UNSPECIFIED):
             # Resolve bot id ONCE per call, guarded — getBotId can raise RuntimeError / hit Max API on first call.
-            # Best-effort stats must never break message saving; skip recording when botId is None.
+            # Best-effort stats must never break message saving.
+            # Unknown bot identity counts as non-bot (belt-and-suspenders; rare: TTL expiry plus transient API failure).
             try:
                 botId = await self.getBotId()
             except Exception as e:
                 logger.debug(f"Failed to get bot id for stats recording: {e}")
                 botId = None
 
-            if botId is not None:
-                # Direction: sent=True if sender is the bot, sent=False if sender is a user.
-                sent = sender.id == botId
-                await self.messageStatsStorage.record(
-                    stats={"message_count": 1, "text_length": len(message.messageText) if message.messageText else 0},
-                    consumerId=str(chat.id),
-                    labels={
-                        "user_id": str(sender.id),
-                        "chat_type": chat.chatType.value,
-                        "message_type": message.messageType,
-                        "message_category": messageCategory,
-                        "sent": str(sent),
-                    },
-                )
+            # Direction: sent=True if sender is the bot, sent=False if sender is a user.
+            # When botId is None, sent=False (treat as non-bot).
+            sent = botId is not None and sender.id == botId
+            await self.messageStatsStorage.record(
+                stats={"message_count": 1, "text_length": len(message.messageText) if message.messageText else 0},
+                consumerId=str(chat.id),
+                labels={
+                    "user_id": str(sender.id),
+                    "chat_type": chat.chatType.value,
+                    "message_type": message.messageType,
+                    "message_category": messageCategory,
+                    "sent": str(sent),
+                },
+            )
 
         return True
 

@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import logging
 import random
+import time
 from collections.abc import Awaitable, Callable, MutableSet, Sequence
 from datetime import timedelta
 from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union
@@ -26,6 +27,7 @@ import lib.max_bot.models as maxModels
 from internal.bot.common.models import CallbackButton, TypingAction
 from internal.bot.common.typing_manager import TypingManager
 from internal.bot.constants import (
+    BOT_ID_CACHE_TTL_SECONDS,
     TELEGRAM_RETRY_AFTER_CAP_SECONDS,
     TELEGRAM_SEND_MAX_ATTEMPTS,
     TELEGRAM_SEND_RETRY_DELAY_BASE,
@@ -129,8 +131,9 @@ class TheBot:
         logger.debug(f"Bot Owners: byId: {self.botOwnersId}, byUsername: {self.botOwnersUsername}")
         self.cache = CacheService.getInstance()
 
-        # Cache for bot identity (stable for process lifetime)
+        # Cache for bot identity (stable for process lifetime, with TTL)
         self._botId: Optional[int] = None
+        self._botIdCachedAt: float = 0.0
 
         ###
 
@@ -140,27 +143,34 @@ class TheBot:
     async def getBotId(self) -> int:
         """Get bot's unique identifier.
 
-        The bot identity is stable for the process lifetime, so the result is
-        cached after the first call to avoid repeated platform API calls.
+        The bot identity is cached after the first successful platform API call and
+        reused for subsequent calls within ``BOT_ID_CACHE_TTL_SECONDS`` (1 hour).
+        This bounds staleness in case of a platform glitch that changes the bot ID.
+        Failed resolution is never cached — the next call retries the platform API.
 
         Returns:
             Bot's unique ID from the active platform
 
         Raises:
-            RuntimeError: If no active bot client is configured
+            RuntimeError: If no active bot client; otherwise the platform client's exception.
         """
-        if self._botId is not None:
+        # Return cached value if it exists and hasn't expired
+        if self._botId is not None and (time.monotonic() - self._botIdCachedAt) < BOT_ID_CACHE_TTL_SECONDS:
             return self._botId
 
+        # Resolve from platform API
+        botId: Optional[int] = None
         if self.tgBot:
-            self._botId = self.tgBot.id
-            return self._botId
+            botId = self.tgBot.id
         elif self.maxBot:
             botId = (await self.maxBot.getMyInfo()).user_id
-            self._botId = botId
-            return botId
+        else:
+            raise RuntimeError("No Active bot found")
 
-        raise RuntimeError("No Active bot found")
+        # Cache only on successful resolution (raise propagates first, preserving retry behavior)
+        self._botId = botId
+        self._botIdCachedAt = time.monotonic()
+        return botId
 
     async def getBotUserName(self) -> Optional[str]:
         """Get bot's username.

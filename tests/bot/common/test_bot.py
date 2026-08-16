@@ -900,7 +900,7 @@ class TestGetBotIdMemoization:
         """getBotId() resolves from API on first call, then returns cached value.
 
         First call invokes getMyInfo() and caches the result. Subsequent calls
-        return the cached value without re-invoking getMyInfo().
+        within the TTL window return the cached value without re-invoking getMyInfo().
 
         Args:
             maxBotWithMemoization: The TheBot instance with Max provider.
@@ -929,6 +929,93 @@ class TestGetBotIdMemoization:
         # Assert: Returns same bot ID, getMyInfo still called once
         assert result3 == expectedBotId
         assert bot.maxBot.getMyInfo.call_count == 1  # type: ignore[union-attr]
+
+    async def test_getBotId_max_cacheExpiredReResolves(self, maxBotWithMemoization: TheBot) -> None:
+        """getBotId() re-resolves from API after TTL expires.
+
+        First call invokes getMyInfo() and caches the result with a timestamp.
+        After advancing time.monotonic() past the TTL window, a subsequent call
+        re-invokes getMyInfo() and updates the cached value.
+
+        Args:
+            maxBotWithMemoization: The TheBot instance with Max provider.
+        """
+        # Arrange
+        bot = maxBotWithMemoization
+        expectedBotId1 = 999888777
+
+        # First, reset the cached values to ensure we control the initial state
+        bot._botId = None
+        bot._botIdCachedAt = 0.0
+
+        # Act: First call should invoke getMyInfo() and cache the timestamp
+        with patch("internal.bot.common.bot.time.monotonic") as mock_monotonic:
+            # First call sets _botIdCachedAt to 0.0
+            mock_monotonic.return_value = 0.0
+            result1 = await bot.getBotId()
+
+        # Assert: Returns correct bot ID, getMyInfo called once
+        assert result1 == expectedBotId1
+        assert bot.maxBot.getMyInfo.call_count == 1  # type: ignore[union-attr]
+        assert bot._botIdCachedAt == 0.0  # Was set to our mocked value
+
+        # Update the mock to return a different bot ID on second resolution
+        newUserInfo = Mock()
+        newUserInfo.user_id = 111222333
+        newUserInfo.username = "memo_test_bot_updated"
+        bot.maxBot.getMyInfo.return_value = newUserInfo  # type: ignore[union-attr]
+
+        # Act: Advance time past TTL (3600 seconds) by patching the module's reference
+        with patch("internal.bot.common.bot.time.monotonic") as mock_monotonic:
+            # Return a time > TTL (3600) to force re-resolution
+            mock_monotonic.return_value = 7200.0
+
+            # Act: Second call after TTL expired should re-resolve
+            result2 = await bot.getBotId()
+
+            # Assert: Returns new bot ID, getMyInfo called twice
+            assert result2 == 111222333
+            assert bot.maxBot.getMyInfo.call_count == 2  # type: ignore[union-attr]
+
+    async def test_getBotId_max_cacheWithinTtlNoReResolve(self, maxBotWithMemoization: TheBot) -> None:
+        """getBotId() does not re-resolve when called within TTL window.
+
+        Verifies that time.monotonic() is used correctly and the cached value is
+        returned as long as the time since caching is less than BOT_ID_CACHE_TTL_SECONDS.
+
+        Args:
+            maxBotWithMemoization: The TheBot instance with Max provider.
+        """
+        # Arrange
+        bot = maxBotWithMemoization
+        expectedBotId = 999888777
+
+        # Reset the cached values to ensure we control the initial state
+        bot._botId = None
+        bot._botIdCachedAt = 0.0
+
+        # Act: First call should invoke getMyInfo() and cache the timestamp
+        with patch("internal.bot.common.bot.time.monotonic") as mock_monotonic:
+            # First call sets _botIdCachedAt to 0.0
+            mock_monotonic.return_value = 0.0
+            result1 = await bot.getBotId()
+
+        # Assert: Returns correct bot ID, getMyInfo called once
+        assert result1 == expectedBotId
+        assert bot.maxBot.getMyInfo.call_count == 1  # type: ignore[union-attr]
+        assert bot._botIdCachedAt == 0.0  # Was set to our mocked value
+
+        # Act: Advance time within TTL (less than 3600 seconds)
+        with patch("internal.bot.common.bot.time.monotonic") as mock_monotonic:
+            # Return a time < TTL (3600) to ensure cache is still valid
+            mock_monotonic.return_value = 3000.0
+
+            # Act: Second call should return cached value
+            result2 = await bot.getBotId()
+
+            # Assert: Returns same bot ID, getMyInfo still called once (not called again)
+            assert result2 == expectedBotId
+            assert bot.maxBot.getMyInfo.call_count == 1  # type: ignore[union-attr]
 
     async def test_getBotId_telegram_returnsCachedWithoutRepeatedAccess(self, telegramBot: TheBot) -> None:
         """getBotId() on Telegram returns cached value; tgBot.id accessed once.
@@ -959,8 +1046,8 @@ class TestGetBotIdMemoization:
     async def test_getBotId_max_cachePersistsAcrossMultipleCalls(self, maxBotWithMemoization: TheBot) -> None:
         """getBotId() cache persists across many calls without re-resolving.
 
-        This stress test verifies that no matter how many times we call getBotId(),
-        getMyInfo() is only ever called once.
+        This stress test verifies that no matter how many times we call getBotId()
+        within the TTL window, getMyInfo() is only ever called once.
 
         Args:
             maxBotWithMemoization: The TheBot instance with Max provider.

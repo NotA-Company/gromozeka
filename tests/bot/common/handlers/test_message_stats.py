@@ -524,11 +524,15 @@ class TestMessageStatsRecording:
         labels = mockStatsStorage.record.call_args.kwargs["labels"]
         assert labels["sent"] == "True", "USER-category from bot should have sent=True"
 
-    async def test_getbotid_raises_no_record_no_crash(self, mockConfigManager, mockDatabaseWrapper):
-        """When getBotId raises, no stats are recorded and message save still succeeds (best-effort)."""
+    async def test_getbotid_raises_records_as_not_sent(self, mockConfigManager, mockDatabaseWrapper):
+        """When getBotId raises, stats are recorded with sent=False and message save still succeeds.
+
+        Unknown bot identity counts as non-bot (belt-and-suspenders; shouldn't happen).
+        """
         from internal.bot.common.handlers.base import BaseBotHandler
 
         mockStatsStorage = AsyncMock(spec=StatsStorage)
+        mockStatsStorage.record = AsyncMock(return_value=None)
 
         message = EnsuredMessage(
             sender=MessageSender(id=42, name="Alice", username="@alice"),
@@ -554,7 +558,12 @@ class TestMessageStatsRecording:
 
         # Assert
         assert result is True, "Message save should succeed even if getBotId fails"
-        assert mockStatsStorage.record.call_count == 0, "No stats record when getBotId fails"
+        assert mockStatsStorage.record.call_count == 1, "Stats should be recorded even when getBotId fails"
+        # Verify the record call had sent="False"
+        call_args = mockStatsStorage.record.call_args
+        assert call_args is not None, "record() should have been called"
+        labels = call_args.kwargs.get("labels") or call_args[1].get("labels")
+        assert labels["sent"] == "False", "sent should be False when getBotId fails"
 
     async def test_null_stats_storage_path_no_explosions(self, mockConfigManager, mockDatabaseWrapper):
         """Default NullStatsStorage path: save works, nothing explodes (stats disabled = zero behavior change)."""
@@ -730,11 +739,15 @@ class TestMessageStatsRecording:
         assert call.kwargs["labels"]["message_type"] == MessageType.TEXT
 
     async def test_live_and_backfill_label_buckets_differ(self, mockConfigManager, mockDatabaseWrapper):
-        """Live labels include message_category and sent; backfill labels never do → different labels_hash buckets.
+        """Live labels include sent; backfill labels never do → different labels_hash buckets.
 
-        Verifies bucket separation: live recording emits labels with message_category+sent,
-        while backfill rows (migration 027) never have these labels. Their labels_hash
+        Verifies bucket separation: live recording emits labels with sent,
+        while backfill rows (migration 027) never have this label. Their labels_hash
         values therefore differ, and no backfill-shape row exists among live aggregates.
+
+        Both live and backfill now include message_category and message_type labels
+        (changed in migration 027 rework to source from chat_messages instead of
+        chat_user_stats), but only live adds the sent label.
         """
         from internal.bot.common.handlers.base import BaseBotHandler
 
@@ -767,26 +780,28 @@ class TestMessageStatsRecording:
         assert mockStatsStorage.record.call_count == 1
         call = mockStatsStorage.record.call_args
 
-        # Verify live labels include message_category and sent
+        # Verify live labels include message_category, message_type, and sent
         liveLabels = call.kwargs["labels"]
         assert "message_category" in liveLabels
+        assert "message_type" in liveLabels
         assert "sent" in liveLabels
         assert liveLabels["message_category"] == MessageCategory.USER
+        assert liveLabels["message_type"] == MessageType.TEXT
         assert liveLabels["sent"] == "False"
 
         # Compute live labels hash
         liveLabelsJson = jsonDumps(liveLabels)
         liveLabelsHash = hashlib.md5(liveLabelsJson.encode("utf-8")).hexdigest()
 
-        # Backfill-shape labels are the same but WITHOUT message_category and sent
-        backfillLabels = {k: v for k, v in liveLabels.items() if k not in ("message_category", "sent")}
+        # Backfill-shape labels are the same but WITHOUT sent (message_category and message_type are now included)
+        backfillLabels = {k: v for k, v in liveLabels.items() if k != "sent"}
         backfillLabelsJson = jsonDumps(backfillLabels)
         backfillLabelsHash = hashlib.md5(backfillLabelsJson.encode("utf-8")).hexdigest()
 
         # Assert hashes differ
         assert backfillLabelsHash != liveLabelsHash, "Backfill and live labels_hash must differ"
 
-        # Since message_category and sent are always present in live labels and never in backfill labels,
+        # Since sent is always present in live labels and never in backfill labels,
         # their label-sets (and thus hashes) will always differ → no accidental merge/double-count.
 
     async def test_no_record_when_save_fails_unknown_type(self, mockConfigManager, mockDatabaseWrapper):

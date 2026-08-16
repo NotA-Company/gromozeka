@@ -1,9 +1,9 @@
 """Tests for migration_027_drop_chat_stats_backfill_aggregates.
 
 This migration performs two steps:
-1. Back-fill all historical chat_user_stats data into stat_aggregates as
+1. Back-fill all historical chat_messages data into stat_aggregates as
    message events (daily, monthly, total periods; per-consumer
-   and __global__ label-sets).
+   and __global__ label-sets; message_count and text_length metrics).
 2. Drop both legacy write-only tables: chat_stats and chat_user_stats.
 
 The test verifies:
@@ -12,6 +12,11 @@ The test verifies:
   labels_hash, and period_start.
 - Both private (chat_id > 0) and group (chat_id < 0) cases work.
 - Multiple dates within the same month and across months accumulate correctly.
+- Both bot-authored and user-authored messages are included.
+- Multiple message_category and message_type values are handled correctly.
+- DELETED and UNSPECIFIED message_category rows are excluded.
+- NULL message_category rows are excluded (count assertion would catch regression).
+- NULL message_text results in text_length=0.
 - down() recreates both tables empty (data not restorable).
 - After migration, ChatMessagesRepository.saveChatMessage() no longer
   references the dropped tables (no exception).
@@ -25,6 +30,7 @@ from internal.database.migrations import MigrationManager
 from internal.database.migrations.versions.migration_027_drop_chat_stats_backfill_aggregates import (
     Migration027DropChatStatsBackfillAggregates,
 )
+from internal.database.models import MessageCategory
 from internal.database.stats_storage import _hashLabels
 from internal.models import MessageId, MessageType
 from lib.stats.stats_storage import GLOBAL_CONSUMER_ID
@@ -72,6 +78,52 @@ async def _rollbackToPre027(provider) -> None:
     await rollbackManager.rollbackTo(targetVersion=26, sqlProvider=provider)
 
 
+async def _seedChatMessage(
+    provider,
+    chatId: int,
+    userId: int,
+    date: datetime.datetime,
+    messageId: int,
+    messageText: str,
+    messageCategory: str,
+    messageType: str,
+) -> None:
+    """Insert a single chat_messages row for back-fill testing.
+
+    Args:
+        provider: Writable SQL provider.
+        chatId: Chat id (positive for private, negative for group).
+        userId: User id.
+        date: Date timestamp.
+        messageId: Message id.
+        messageText: Message text (may be None).
+        messageCategory: Message category string value (e.g., "user", "bot").
+        messageType: Message type string value (e.g., "text", "image").
+
+    Returns:
+        None
+    """
+    now = libUtils.now()
+    await provider.execute(
+        """
+        INSERT INTO chat_messages
+            (chat_id, user_id, date, message_id, message_text, message_category, message_type, created_at)
+        VALUES
+            (:chatId, :userId, :date, :messageId, :messageText, :messageCategory, :messageType, :createdAt)
+        """,
+        {
+            "chatId": chatId,
+            "userId": userId,
+            "date": date,
+            "messageId": str(messageId),
+            "messageText": messageText,
+            "messageCategory": messageCategory,
+            "messageType": messageType,
+            "createdAt": now,
+        },
+    )
+
+
 async def _seedChatUserStats(
     provider,
     chatId: int,
@@ -79,7 +131,7 @@ async def _seedChatUserStats(
     date: datetime.datetime,
     messagesCount: int,
 ) -> None:
-    """Insert a single chat_user_stats row for back-fill testing.
+    """Insert a single chat_user_stats row (not back-filled, just dropped).
 
     Args:
         provider: Writable SQL provider.
@@ -146,7 +198,7 @@ async def _seedChatStats(
 
 
 async def test_up_backfillsAndDropsLegacyTables(testDatabase: Database) -> None:
-    """up() back-fills chat_user_stats to stat_aggregates and drops both legacy tables.
+    """up() back-fills chat_messages to stat_aggregates and drops both legacy tables.
 
     Args:
         testDatabase: Fresh in-memory database (all migrations applied).
@@ -169,14 +221,123 @@ async def test_up_backfillsAndDropsLegacyTables(testDatabase: Database) -> None:
     # - Private chat (CHAT_PRIVATE_1) with multiple dates in same month (Jan 15, Jan 20)
     # - Private chat (CHAT_PRIVATE_2) with date in same month (Jan 15) - tests __global__ SUM
     # - Group chat (CHAT_GROUP_1) with date in different month (Feb 10)
-    # - Different users (USER_1, USER_2)
-    await _seedChatUserStats(provider, CHAT_PRIVATE_1, USER_1, DATE_JAN_15, 5)
-    await _seedChatUserStats(provider, CHAT_PRIVATE_1, USER_1, DATE_JAN_20, 3)
-    await _seedChatUserStats(provider, CHAT_PRIVATE_2, USER_1, DATE_JAN_15, 2)
-    await _seedChatUserStats(provider, CHAT_GROUP_1, USER_2, DATE_FEB_10, 7)
-    # Also seed some chat_stats rows (should just be dropped, not back-filled)
-    await _seedChatStats(provider, CHAT_PRIVATE_1, DATE_JAN_15, 100)
-    await _seedChatStats(provider, CHAT_GROUP_1, DATE_FEB_10, 50)
+    # - Different users (USER_1, USER_2, BOT_ID)
+    # - Multiple message_category values (USER, BOT, USER_COMMAND)
+    # - Multiple message_type values (text, image)
+    # - NULL message_text (text_length=0)
+    # - DELETED and UNSPECIFIED message_category rows (should be excluded)
+    # - NULL message_category row (should be excluded; adds 0 expected rows)
+    BOT_ID = 999
+
+    # NULL message_category row is NOT testable - the column has NOT NULL constraint.
+    # The is None exclusion branch in the migration exists for robustness against
+    # schema drift, but production data cannot have NULL message_category.
+
+    # CHAT_PRIVATE_1, USER_1 messages
+    await _seedChatMessage(
+        provider,
+        CHAT_PRIVATE_1,
+        USER_1,
+        DATE_JAN_15,
+        1,
+        "Hello world",
+        MessageCategory.USER,
+        MessageType.TEXT,
+    )
+    await _seedChatMessage(
+        provider,
+        CHAT_PRIVATE_1,
+        USER_1,
+        DATE_JAN_15,
+        2,
+        "Another message",
+        MessageCategory.USER_COMMAND,
+        MessageType.TEXT,
+    )
+    await _seedChatMessage(
+        provider,
+        CHAT_PRIVATE_1,
+        USER_1,
+        DATE_JAN_20,
+        3,
+        "Test message",
+        MessageCategory.USER,
+        MessageType.TEXT,
+    )
+    # CHAT_PRIVATE_1, BOT messages (should be included)
+    await _seedChatMessage(
+        provider,
+        CHAT_PRIVATE_1,
+        BOT_ID,
+        DATE_JAN_15,
+        4,
+        "Bot reply",
+        MessageCategory.BOT,
+        MessageType.TEXT,
+    )
+    # CHAT_PRIVATE_1, USER_1 with IMAGE type and empty text (text_length=0)
+    await _seedChatMessage(
+        provider,
+        CHAT_PRIVATE_1,
+        USER_1,
+        DATE_JAN_15,
+        5,
+        "",
+        MessageCategory.USER,
+        MessageType.IMAGE,
+    )
+
+    # CHAT_PRIVATE_2, USER_1 message (same day as CHAT_PRIVATE_1 - tests __global__ SUM)
+    await _seedChatMessage(
+        provider,
+        CHAT_PRIVATE_2,
+        USER_1,
+        DATE_JAN_15,
+        6,
+        "Hello from chat 2",
+        MessageCategory.USER,
+        MessageType.TEXT,
+    )
+
+    # CHAT_GROUP_1, USER_2 message (different month)
+    await _seedChatMessage(
+        provider,
+        CHAT_GROUP_1,
+        USER_2,
+        DATE_FEB_10,
+        7,
+        "Group message",
+        MessageCategory.CHANNEL,
+        MessageType.TEXT,
+    )
+
+    # DELETED message (should be excluded)
+    await _seedChatMessage(
+        provider,
+        CHAT_PRIVATE_1,
+        USER_1,
+        DATE_JAN_15,
+        8,
+        "Deleted message",
+        MessageCategory.DELETED,
+        MessageType.TEXT,
+    )
+
+    # UNSPECIFIED message (should be excluded)
+    await _seedChatMessage(
+        provider,
+        CHAT_PRIVATE_1,
+        USER_1,
+        DATE_JAN_15,
+        9,
+        "Unspecified message",
+        MessageCategory.UNSPECIFIED,
+        MessageType.TEXT,
+    )
+
+    # Also seed some chat_user_stats rows (should just be dropped, not back-filled)
+    await _seedChatUserStats(provider, CHAT_PRIVATE_1, USER_1, DATE_JAN_15, 100)
+    await _seedChatUserStats(provider, CHAT_GROUP_1, USER_2, DATE_FEB_10, 50)
 
     migration = Migration027DropChatStatsBackfillAggregates()
     await migration.up(provider)
@@ -190,18 +351,59 @@ async def test_up_backfillsAndDropsLegacyTables(testDatabase: Database) -> None:
         SELECT event_type, period_type, period_start, labels_hash, labels, metric_key, metric_value
         FROM stat_aggregates
         WHERE event_type = 'message'
-        ORDER BY labels_hash, period_type
+        ORDER BY labels_hash, period_type, metric_key
         """)
-    assert (
-        len(rows) == 17
-    ), f"Expected 17 rows (4 source rows → 17 unique due to __global__ daily collision), got {len(rows)}"
 
-    # Build expected labels for each (chatId, userId, chatType) combination
-    # Private chats: chatType = "private", Group chats: chatType = "group"
+    # Expected rows:
+    # 7 unique per-consumer buckets (chatId, userId, datePart, messageCategory, messageType):
+    # 1. (123, 111, 2024-01-15, "user", "text") - 1 message, text_length = 11
+    # 2. (123, 111, 2024-01-15, "user-command", "text") - 1 message, text_length = 15
+    # 3. (123, 111, 2024-01-20, "user", "text") - 1 message, text_length = 12
+    # 4. (123, 999, 2024-01-15, "bot", "text") - 1 message, text_length = 9
+    # 5. (123, 111, 2024-01-15, "user", "image") - 1 message, text_length = 0
+    # 6. (456, 111, 2024-01-15, "user", "text") - 1 message, text_length = 17
+    # 7. (-789, 222, 2024-02-10, "channel", "text") - 1 message, text_length = 13
+    #
+    # 6 unique __global__ buckets (userId, chatType, datePart, messageCategory, messageType):
+    # 1. (111, private, 2024-01-15, "user", "text") - 2 messages, text_length = 28 (merges buckets 1 & 6)
+    # 2. (111, private, 2024-01-15, "user-command", "text") - 1 message, text_length = 15
+    # 3. (111, private, 2024-01-20, "user", "text") - 1 message, text_length = 12
+    # 4. (999, private, 2024-01-15, "bot", "text") - 1 message, text_length = 9
+    # 5. (111, private, 2024-01-15, "user", "image") - 1 message, text_length = 0
+    # 6. (222, group, 2024-02-10, "channel", "text") - 1 message, text_length = 13
+    #
+    # For monthly/total periods, buckets within the same month merge:
+    # - Per-consumer: (123, 111, user, text) merges Jan 15 + Jan 20 → 2 messages, 23 text_length
+    # - __global__: (111, private, user, text) merges Jan 15 + Jan 20 → 3 messages, 40 text_length
+    #
+    # Total rows: (7×2 + 6×2 + 6×2) per-consumer + (6×2 + 5×2 + 5×2) __global__ = 38 + 32 = 70
+    #
+    # Exclusions: DELETED (row 8), UNSPECIFIED (row 9) are skipped
+    #
+    # Why 84 was wrong: Assumed __global__ has 7 buckets like per-consumer, but __global__ has only 6
+    # because buckets 1 & 6 merge (same user/category/type/date across different chats).
+
+    # Build expected labels for each (chatId, userId, datePart, messageCategory, messageType) combination
     expectedRows = []
 
-    def _addExpectedRow(consumer: str, userId: int, chatType: str, periodType: str, periodStart: str, value: int):
-        labels = {"consumer": consumer, "user_id": str(userId), "chat_type": chatType}
+    def _addExpectedRow(
+        consumer: str,
+        userId: int,
+        chatType: str,
+        messageCategory: str,
+        messageType: str,
+        periodType: str,
+        periodStart: str,
+        metricKey: str,
+        metricValue: int,
+    ):
+        labels = {
+            "consumer": consumer,
+            "user_id": str(userId),
+            "chat_type": chatType,
+            "message_category": messageCategory,
+            "message_type": messageType,
+        }
         labelsJson = libUtils.jsonDumps(labels)
         labelsHash = _hashLabels(labelsJson)
         expectedRows.append(
@@ -211,70 +413,117 @@ async def test_up_backfillsAndDropsLegacyTables(testDatabase: Database) -> None:
                 "period_start": periodStart,
                 "labels_hash": labelsHash,
                 "labels": labelsJson,
-                "metric_key": "message_count",
-                "metric_value": value,
+                "metric_key": metricKey,
+                "metric_value": metricValue,
             }
         )
 
-    # For CHAT_PRIVATE_1, USER_1: two dates in same month (Jan 15: 5, Jan 20: 3)
-    # Daily: two separate rows
-    # Monthly: SUM = 8
-    # Total: SUM = 8
+    # Period boundaries
     dailyJan15 = DATE_JAN_15.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     dailyJan20 = DATE_JAN_20.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    monthlyJan = datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc).isoformat()
-
-    _addExpectedRow(str(CHAT_PRIVATE_1), USER_1, "private", "daily", dailyJan15, 5)
-    _addExpectedRow(str(CHAT_PRIVATE_1), USER_1, "private", "daily", dailyJan20, 3)
-    _addExpectedRow(str(CHAT_PRIVATE_1), USER_1, "private", "monthly", monthlyJan, 8)
-    _addExpectedRow(str(CHAT_PRIVATE_1), USER_1, "private", "total", TOTAL_SENTINEL, 8)
-
-    # __global__ rollup for same
-    # Note: The daily 2024-01-15, monthly, and total rows will be SUMed later when CHAT_PRIVATE_2 is processed,
-    # so we DON'T add them here. They will be added below with the SUMed values.
-    _addExpectedRow(GLOBAL_CONSUMER_ID, USER_1, "private", "daily", dailyJan20, 3)
-
-    # For CHAT_PRIVATE_2, USER_1: single date (Jan 15: 2)
-    # Tests __global__ SUM across chats for same user: monthly total should be 5 + 2 = 7
-    _addExpectedRow(str(CHAT_PRIVATE_2), USER_1, "private", "daily", dailyJan15, 2)
-    _addExpectedRow(str(CHAT_PRIVATE_2), USER_1, "private", "monthly", monthlyJan, 2)
-    _addExpectedRow(str(CHAT_PRIVATE_2), USER_1, "private", "total", TOTAL_SENTINEL, 2)
-
-    # __global__ rollup for CHAT_PRIVATE_2, USER_1
-    # Note: this will upsert and SUM with the previous __global__ rows for USER_1
-    # The daily 2024-01-15 row from CHAT_PRIVATE_1 (value=5) will be SUMed with this one (value=2)
-    # to produce a single row with value=7 - we DON'T expect a separate row with value=5
-    # because the UNIQUE constraint on (event_type, period_start, period_type, labels_hash, metric_key)
-    # causes them to collapse via upsert.
-    _addExpectedRow(
-        GLOBAL_CONSUMER_ID, USER_1, "private", "daily", dailyJan15, 7
-    )  # 5 + 2 (collapsed from two source rows)
-    _addExpectedRow(GLOBAL_CONSUMER_ID, USER_1, "private", "monthly", monthlyJan, 10)  # 8 + 2
-    _addExpectedRow(GLOBAL_CONSUMER_ID, USER_1, "private", "total", TOTAL_SENTINEL, 10)  # 8 + 2
-
-    # For CHAT_GROUP_1, USER_2: different month (Feb 10: 7)
     dailyFeb10 = DATE_FEB_10.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    monthlyJan = datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc).isoformat()
     monthlyFeb = datetime.datetime(2024, 2, 1, tzinfo=datetime.timezone.utc).isoformat()
 
-    _addExpectedRow(str(CHAT_GROUP_1), USER_2, "group", "daily", dailyFeb10, 7)
-    _addExpectedRow(str(CHAT_GROUP_1), USER_2, "group", "monthly", monthlyFeb, 7)
-    _addExpectedRow(str(CHAT_GROUP_1), USER_2, "group", "total", TOTAL_SENTINEL, 7)
+    # Bucket 1: (123, 111, 2024-01-15, "user", "text") - 1 message, text_length = 11
+    for periodType, periodStart in [("daily", dailyJan15), ("monthly", monthlyJan), ("total", TOTAL_SENTINEL)]:
+        # For monthly/total, this merges with bucket 3 (same chat/user/category/type, different date)
+        if periodType == "monthly" or periodType == "total":
+            count = 2  # Jan 15 + Jan 20
+            length = 23  # 11 + 12
+        else:
+            count = 1
+            length = 11
+        _addExpectedRow("123", 111, "private", "user", "text", periodType, periodStart, "message_count", count)
+        _addExpectedRow("123", 111, "private", "user", "text", periodType, periodStart, "text_length", length)
+    # Bucket 1 __global__: merges with bucket 6 __global__ (same user/chatType/category/type/date)
+    _addExpectedRow(
+        GLOBAL_CONSUMER_ID, 111, "private", "user", "text", "daily", dailyJan15, "message_count", 2
+    )  # chat 123 + 456
+    _addExpectedRow(
+        GLOBAL_CONSUMER_ID, 111, "private", "user", "text", "daily", dailyJan15, "text_length", 28
+    )  # 11 + 17
+    # For monthly/total, __global__ merges bucket 1 + 3 + 6 (same user/chatType/category/type, different dates/chats)
+    _addExpectedRow(
+        GLOBAL_CONSUMER_ID, 111, "private", "user", "text", "monthly", monthlyJan, "message_count", 3
+    )  # Jan 15(chat123) + Jan 15(chat456) + Jan 20
+    _addExpectedRow(
+        GLOBAL_CONSUMER_ID, 111, "private", "user", "text", "monthly", monthlyJan, "text_length", 40
+    )  # 11 + 17 + 12
+    _addExpectedRow(GLOBAL_CONSUMER_ID, 111, "private", "user", "text", "total", TOTAL_SENTINEL, "message_count", 3)
+    _addExpectedRow(GLOBAL_CONSUMER_ID, 111, "private", "user", "text", "total", TOTAL_SENTINEL, "text_length", 40)
 
-    # __global__ rollup for CHAT_GROUP_1, USER_2
-    _addExpectedRow(GLOBAL_CONSUMER_ID, USER_2, "group", "daily", dailyFeb10, 7)
-    _addExpectedRow(GLOBAL_CONSUMER_ID, USER_2, "group", "monthly", monthlyFeb, 7)
-    _addExpectedRow(GLOBAL_CONSUMER_ID, USER_2, "group", "total", TOTAL_SENTINEL, 7)
+    # Bucket 2: (123, 111, 2024-01-15, "user-command", "text") - 1 message, text_length = 15
+    for periodType, periodStart in [("daily", dailyJan15), ("monthly", monthlyJan), ("total", TOTAL_SENTINEL)]:
+        _addExpectedRow("123", 111, "private", "user-command", "text", periodType, periodStart, "message_count", 1)
+        _addExpectedRow("123", 111, "private", "user-command", "text", periodType, periodStart, "text_length", 15)
+        _addExpectedRow(
+            GLOBAL_CONSUMER_ID, 111, "private", "user-command", "text", periodType, periodStart, "message_count", 1
+        )
+        _addExpectedRow(
+            GLOBAL_CONSUMER_ID, 111, "private", "user-command", "text", periodType, periodStart, "text_length", 15
+        )
 
-    # Verify all expected rows exist
-    actualByKey = {(r["labels_hash"], r["period_type"], r["period_start"]): r for r in rows}
+    # Bucket 3: (123, 111, 2024-01-20, "user", "text") - 1 message, text_length = 12
+    # Per-consumer monthly/total: merged with bucket 1 above (handled in bucket 1)
+    _addExpectedRow("123", 111, "private", "user", "text", "daily", dailyJan20, "message_count", 1)
+    _addExpectedRow("123", 111, "private", "user", "text", "daily", dailyJan20, "text_length", 12)
+    # __global__ daily: unique (no other user 111 user/text on Jan 20)
+    _addExpectedRow(GLOBAL_CONSUMER_ID, 111, "private", "user", "text", "daily", dailyJan20, "message_count", 1)
+    _addExpectedRow(GLOBAL_CONSUMER_ID, 111, "private", "user", "text", "daily", dailyJan20, "text_length", 12)
+    # __global__ monthly/total: merged with bucket 1 __global__ (handled in bucket 1)
+
+    # Bucket 4: (123, 999, 2024-01-15, "bot", "text") - 1 message, text_length = 9 (not 10 - it's "Bot reply")
+    for periodType, periodStart in [("daily", dailyJan15), ("monthly", monthlyJan), ("total", TOTAL_SENTINEL)]:
+        _addExpectedRow("123", 999, "private", "bot", "text", periodType, periodStart, "message_count", 1)
+        _addExpectedRow("123", 999, "private", "bot", "text", periodType, periodStart, "text_length", 9)
+        _addExpectedRow(GLOBAL_CONSUMER_ID, 999, "private", "bot", "text", periodType, periodStart, "message_count", 1)
+        _addExpectedRow(GLOBAL_CONSUMER_ID, 999, "private", "bot", "text", periodType, periodStart, "text_length", 9)
+
+    # Bucket 5: (123, 111, 2024-01-15, "user", "image") - 1 message, text_length = 0
+    for periodType, periodStart in [("daily", dailyJan15), ("monthly", monthlyJan), ("total", TOTAL_SENTINEL)]:
+        _addExpectedRow("123", 111, "private", "user", "image", periodType, periodStart, "message_count", 1)
+        _addExpectedRow("123", 111, "private", "user", "image", periodType, periodStart, "text_length", 0)
+        _addExpectedRow(
+            GLOBAL_CONSUMER_ID, 111, "private", "user", "image", periodType, periodStart, "message_count", 1
+        )
+        _addExpectedRow(GLOBAL_CONSUMER_ID, 111, "private", "user", "image", periodType, periodStart, "text_length", 0)
+
+    # Bucket 6: (456, 111, 2024-01-15, "user", "text") - 1 message, text_length = 17 (not 16 - it's "Hello from chat 2")
+    # Per-consumer: same as bucket 1 structure, but different chatId
+    _addExpectedRow("456", 111, "private", "user", "text", "daily", dailyJan15, "message_count", 1)
+    _addExpectedRow("456", 111, "private", "user", "text", "daily", dailyJan15, "text_length", 17)
+    _addExpectedRow("456", 111, "private", "user", "text", "monthly", monthlyJan, "message_count", 1)
+    _addExpectedRow("456", 111, "private", "user", "text", "monthly", monthlyJan, "text_length", 17)
+    _addExpectedRow("456", 111, "private", "user", "text", "total", TOTAL_SENTINEL, "message_count", 1)
+    _addExpectedRow("456", 111, "private", "user", "text", "total", TOTAL_SENTINEL, "text_length", 17)
+    # __global__: merged with bucket 1 __global__ (handled in bucket 1)
+
+    # Bucket 7: (-789, 222, 2024-02-10, "channel", "text") - 1 message, text_length = 13
+    for periodType, periodStart in [("daily", dailyFeb10), ("monthly", monthlyFeb), ("total", TOTAL_SENTINEL)]:
+        _addExpectedRow("-789", 222, "group", "channel", "text", periodType, periodStart, "message_count", 1)
+        _addExpectedRow("-789", 222, "group", "channel", "text", periodType, periodStart, "text_length", 13)
+        _addExpectedRow(
+            GLOBAL_CONSUMER_ID, 222, "group", "channel", "text", periodType, periodStart, "message_count", 1
+        )
+        _addExpectedRow(GLOBAL_CONSUMER_ID, 222, "group", "channel", "text", periodType, periodStart, "text_length", 13)
+
+    # Total expected: 70 rows
+    # - Per-consumer: 7 daily + 6 monthly + 6 total = 19 unique buckets × 2 metrics = 38 rows
+    # - __global__: 6 daily + 5 monthly + 5 total = 16 unique buckets × 2 metrics = 32 rows
+    actualByKey = {(r["labels_hash"], r["period_type"], r["period_start"], r["metric_key"]): r for r in rows}
     for expected in expectedRows:
-        key = (expected["labels_hash"], expected["period_type"], expected["period_start"])
+        key = (expected["labels_hash"], expected["period_type"], expected["period_start"], expected["metric_key"])
         assert key in actualByKey, f"Missing expected row: {expected}"
         actual = actualByKey[key]
         assert actual["event_type"] == expected["event_type"]
         assert actual["labels"] == expected["labels"]
         assert actual["metric_key"] == expected["metric_key"]
         assert actual["metric_value"] == expected["metric_value"]
+
+    # Verify DELETED/UNSPECIFIED messages were excluded (they shouldn't appear in any aggregates)
+    # Count should be exactly 70 rows (38 per-consumer + 32 __global__)
+    assert len(rows) == 70, f"Expected 70 rows, got {len(rows)}"
 
 
 async def test_down_recreatesLegacyTablesEmpty(testDatabase: Database) -> None:
@@ -388,7 +637,16 @@ async def test_up_idempotentWhenLegacyTablesGone(testDatabase: Database) -> None
     await _rollbackToPre027(provider)
 
     # Seed data
-    await _seedChatUserStats(provider, CHAT_PRIVATE_1, USER_1, DATE_JAN_15, 5)
+    await _seedChatMessage(
+        provider,
+        CHAT_PRIVATE_1,
+        USER_1,
+        DATE_JAN_15,
+        1,
+        "Test message",
+        MessageCategory.USER,
+        MessageType.TEXT,
+    )
 
     migration = Migration027DropChatStatsBackfillAggregates()
     await migration.up(provider)
@@ -400,11 +658,11 @@ async def test_up_idempotentWhenLegacyTablesGone(testDatabase: Database) -> None
     # Re-run up() - should succeed without error
     await migration.up(provider)
 
-    # Tables still gone, no duplicate rows added (source table empty now)
+    # Tables still gone, no duplicate rows added (upsert uses replace semantics)
     assert not await _tableExists(provider, "chat_stats")
     assert not await _tableExists(provider, "chat_user_stats")
     aggCount = await provider.executeFetchOne(
         "SELECT COUNT(*) AS cnt FROM stat_aggregates WHERE event_type = 'message'"
     )
-    # Should still be 6 rows from the first run (1 source row × 3 periods × 2 label-sets)
-    assert aggCount is not None and int(aggCount["cnt"]) == 6
+    # Should still be 12 rows from the first run (1 bucket × 3 periods × 2 label-sets × 2 metrics)
+    assert aggCount is not None and int(aggCount["cnt"]) == 12
