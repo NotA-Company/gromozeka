@@ -166,6 +166,7 @@ Migrations are located in [`internal/database/migrations/versions/`](../internal
 | 24 | [`migration_024_add_bayes_tokens_updated_at_index.py`](../internal/database/migrations/versions/migration_024_add_bayes_tokens_updated_at_index.py:1) | Adds secondary index on `bayes_tokens` (`updated_at`) to optimize the age-based `cleanupOldTokens` DELETE |
 | 25 | [`migration_025_embedding_model_lookup.py`](../internal/database/migrations/versions/migration_025_embedding_model_lookup.py:1) | Normalises embedding provenance into a new [`models`](#models) lookup table (`model_id` integer PK, `UNIQUE(model, dimensions)`); swaps `chat_messages` and `user_memories` to carry `model_id` instead of the legacy `(model, dimensions)` / `(embedding_model, embedding_dimensions)` pairs; DROPS the [`message_embeddings`](#message_embeddings-dropped) BLOB side table + `idx_message_embeddings_chat_model` index; DROPS both vec0 virtual-table families (`vec_message_embeddings_{N}`, `vec_user_memories_{N}`) — they are lazily recreated at runtime with `model_id INTEGER PARTITION KEY`. `down()` is schema-correct but data-lossy for vectors (the dropped BLOBs cannot be regenerated from `model_id`; vec0 tables are not re-created by `down()` — they re-populate via the normal backfill cron). |
 | 26 | [`migration_026_chat_accessibility_bot_status.py`](../internal/database/migrations/versions/migration_026_chat_accessibility_bot_status.py:1) | Adds `bot_status TEXT NOT NULL DEFAULT 'active'` to [`chat_info`](#chat_info) (column only — no supporting index). Backs the chat-accessibility-tracking subsystem (lazy mark-on-failure at `TheBot.getChatAdmins` catch sites, activity-based recovery in `MessagePreprocessorHandler`, and an optional `botStatus` filter on every chat-listing repository method). Portable DDL: string-literal `DEFAULT 'active'` backfills every existing row to `ACTIVE` as part of the `ALTER TABLE` (no separate backfill; no `AUTOINCREMENT`/`SERIAL`/`DEFAULT CURRENT_TIMESTAMP`). `down()` runs `DROP COLUMN bot_status` (SQLite ≥3.35). See [`docs/design/chat-accessibility-tracking.md`](design/chat-accessibility-tracking.md). |
+| 27 | [`migration_027_drop_chat_stats_backfill_aggregates.py`](../internal/database/migrations/versions/migration_027_drop_chat_stats_backfill_aggregates.py:1) | Backfill chat_messages history into stat_aggregates (real categories/types, text_length) and drop chat_stats/chat_user_stats; tables: chat_stats, chat_user_stats, stat_aggregates |
 
 ### Creating New Migrations
 
@@ -434,7 +435,7 @@ Pre-computed period buckets for aggregated statistics metrics. Produced by aggre
 |--------|------|----------|---------|-------------|
 | `event_type` | TEXT | No | - | Type of statistics event |
 | `period_start` | TEXT | No | - | Start of the aggregation period (ISO-8601 formatted string) |
-| `period_type` | TEXT | No | - | Period length ('hour', 'day', 'month', 'total') |
+| `period_type` | TEXT | No | - | Period length ('hourly', 'daily', 'monthly', 'total') |
 | `labels_hash` | TEXT | No | - | MD5 hex digest from labels |
 | `labels` | TEXT | No | - | JSON-encoded dimension key-value pairs |
 | `metric_key` | TEXT | No | - | Name of the metric (e.g., 'request_count', 'input_tokens') |
@@ -442,9 +443,9 @@ Pre-computed period buckets for aggregated statistics metrics. Produced by aggre
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp |
 
 **Period types:**
-- `hour` — Hourly aggregation (period_start rounded to hour)
-- `day` — Daily aggregation (period_start rounded to day)
-- `month` — Monthly aggregation (period_start rounded to month)
+- `hourly` — Hourly aggregation (period_start rounded to hour)
+- `daily` — Daily aggregation (period_start rounded to day)
+- `monthly` — Monthly aggregation (period_start rounded to month)
 - `total` — All-time aggregation (period_start = epoch)
 
 **Labels include:**

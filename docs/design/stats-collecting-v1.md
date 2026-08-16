@@ -1,7 +1,7 @@
 # Design: Statistics collection v1 — messages, tool calls, commands
 
 **Date**: 2026-08-14
-**Status**: **IMPLEMENTED — all phases landed.** Phase 4 implemented (commit `b61c67aa` — both-direction `message` events, direction via sender identity, `sent`/`message_category` labels). Phase 3 implemented (commit `92040759` — `command` events via `HandlersManager.handleCommand`, gated on `[stats] enabled`). Phase 2 implemented (commit `ed378378` + fix `0fea86b6` — `llm_tool_call` events via `LLMService.injectStatsStorage`, gated on `[stats] enabled`). Phase 1 implemented (commits `46cac39f` + `f885702b` — `message` events + migration 027 back-fill/drop, gated on `[stats] enabled`). Remaining deferred items (next design): aggregation trigger, retention, query API, display. The body below is the original design rationale and is preserved as-is.
+**Status**: **IMPLEMENTED — all phases landed.** Phase 4 implemented (commit `b61c67aa` — both-direction `message` events, direction via sender identity, `sent`/`message_category` labels; fix-set `fcdf5663` — `getBotId()` 1 h TTL cache, stats recorded with `sent="False"` when the bot id is unresolvable, back-fill recomputed from `chat_messages`). Phase 3 implemented (commit `92040759` — `command` events via `HandlersManager.handleCommand`, gated on `[stats] enabled`). Phase 2 implemented (commit `ed378378` + fix `0fea86b6` — `llm_tool_call` events via `LLMService.injectStatsStorage`, gated on `[stats] enabled`). Phase 1 implemented (commits `46cac39f` + `f885702b` — `message` events + migration 027 back-fill/drop, gated on `[stats] enabled`). Remaining deferred items (next design): aggregation trigger, retention, query API, display. The body below is the original design rationale and is preserved as-is.
 
 **Caveats (post-implementation):** (a) a handler timed out by the manager's `wait_for` records no `command` event (CancelledError bypasses the except; accepted best-effort undercount); (b) denied/not-found commands record no events of any kind (saveChatMessage is post-gate) — command-origin message ⊇ command, minus denials; (c) label naming is mixed camelCase/snake_case across events (pre-existing; harmonizing would split labels_hash buckets — do not change).
 
@@ -291,15 +291,17 @@ parameter of the enclosing `LLMService` method.
 
 *Amended by user after Phase 1: message_type (raw enum) replaces has_media.* *Amended after Phase 4 (2026-08-16): eventType renamed to `message`; both directions recorded; direction determined by `sender.id == await self.getBotId()` (not by messageCategory); added `message_category` and `sent` labels; excluded only DELETED/UNSPECIFIED categories; split parts counted as raw saves.* No `platform` label. The platform is unique per database (one bot process = one platform), so it is a constant for every row in the store; carrying it as a label would needlessly multiply label cardinality. Applied consistently to all three events.
 
+*Amended 2026-08-16 (fix-set `fcdf5663`): the migration-027 back-fill is recomputed from `chat_messages` instead of `chat_user_stats` — backfilled rows carry real `message_category`/`message_type` labels and `text_length` sums, apply the same exclusions as live recording (NULL/DELETED/UNSPECIFIED), and are grouped by date part with Python-side pre-aggregation. The only remaining label-set difference vs live rows is the absent `sent` label (direction stays derivable at query time via `user_id`); this supersedes the back-fill semantics in [D7](#d7--back-fill-semantics)/§5 below. Additionally, `TheBot.getBotId()` results are cached with a 1 h TTL (`BOT_ID_CACHE_TTL_SECONDS`; failures are never cached — the next call retries the platform API), and when the bot id cannot be resolved the event is recorded with `sent = "False"` instead of skipping (supersedes the best-effort-guard paragraph below).*
+
 `message_type` is the raw `MessageType` enum value (e.g. `"text"`, `"image"`, `"video"`, `"audio"`, `"document"`, `"sticker"`). Note the `MessageType.UNKNOWN` early-return in the wrapper ([base.py:1098-1100](../../internal/bot/common/handlers/base.py)) means unknown-type messages are never saved and therefore never recorded — desirable.
 
 **Direction rule:** `sent = "True"` when the sender is the bot (`sender.id == await self.getBotId()`), `sent = "False"` otherwise. Direction is determined by sender identity, NOT by messageCategory. This enables counting both inbound user messages and outbound bot messages (including split parts and streaming intermediates), preserving raw-save semantics.
 
 **Exclusions:** Only `MessageCategory.DELETED` and `MessageCategory.UNSPECIFIED` are excluded (rewrites/defaults, not fresh messages). All other categories (USER, USER_COMMAND, USER_SPAM, USER_CONFIG_ANSWER, CHANNEL, BOT, BOT_COMMAND_REPLY, BOT_ERROR, BOT_SUMMARY, BOT_RESENDED, BOT_SPAM_NOTIFICATION) are recorded.
 
-**Best-effort guard:** `getBotId()` is called once per `saveChatMessage` invocation, wrapped in a `try/except` that logs debug-level errors and skips recording when `botId is None`. This ensures stats recording never breaks message saving (getBotId can raise RuntimeError or hit the Max API on first call).
+**Best-effort guard:** `getBotId()` is called once per `saveChatMessage` invocation, wrapped in a `try/except` that logs debug-level errors; when `botId is None` recording proceeds with `sent = "False"` (unknown identity counts as non-bot — rare: TTL expiry plus a transient API failure). This ensures stats recording never breaks message saving (getBotId can raise RuntimeError or hit the Max API; its result is cached for 1 h via `BOT_ID_CACHE_TTL_SECONDS` and failures are never cached, so the next call retries).
 
-**Backfill compatibility:** Historical rows from migration 027 lack the `message_category` and `sent` labels (direction is derivable at query time via `user_id` — if `user_id` matches the bot id, `sent="True"`). Live rows always carry these labels, so backfill and live land in different `labels_hash` buckets.
+**Backfill compatibility:** Historical rows from migration 027 are recomputed from `chat_messages` and carry real `message_category` and `message_type` labels (plus `text_length` sums and the same DELETED/UNSPECIFIED/NULL exclusions as live); they lack only the `sent` label (direction is derivable at query time via `user_id` — if `user_id` matches the bot id, `sent="True"`). Live rows always carry `sent`, so backfill and live land in different `labels_hash` buckets.
 
 ### D4 — `llm_tool_call` event shape, error rule, and exception handling
 
@@ -390,6 +392,8 @@ skill: `version: int = 27`, `async up/down(self, sqlProvider: BaseSQLProvider)`,
 
 ### D7 — Back-fill semantics
 
+*Amended 2026-08-16 (fix-set `fcdf5663`): superseded — the shipped back-fill reads `chat_messages` (not `chat_user_stats`), emits real `message_category`/`message_type` labels and `text_length` sums with live-matching exclusions (NULL/DELETED/UNSPECIFIED), groups by Python-computed date parts, and pre-aggregates in Python with replace-style upserts (idempotent re-runs); backfilled rows carry every live label except `sent`. See the amendment note under [D3](#d3--message-event-shape).*
+
 Migrate **all** `chat_user_stats` history into `stat_aggregates` as
 `message_received` / `message_count`, in the **same migration**, **unconditionally**
 (independent of `[stats] enabled` — this is data preservation, not a feature).
@@ -411,7 +415,7 @@ Migrate **all** `chat_user_stats` history into `stat_aggregates` as
     ([ensured_message.py:69-70](../../internal/bot/models/ensured_message.py)).
 - **Label-set difference (documented):** back-filled rows have **no `message_type`** label
   (unknown historically). Live `message_received` rows always carry `message_type`
-  ([D3](#d3--message_received-event-shape)). They therefore land in **different**
+  ([D3](#d3--message-event-shape)). They therefore land in **different**
   `labels_hash` buckets and never accidentally merge — which is correct (you cannot
   aggregate "type unknown" with concrete `MessageType` values). A consequence: `total`/daily totals for
   `message_count` are split across `message_type` variants for live data and a single
@@ -515,7 +519,7 @@ main.py  ──messageStatsStorage──▶  TelegramBotApplication / MaxBotAppl
   `self.messageStatsStorage: StatsStorage = NullStatsStorage()`.
 - `BaseBotHandler.saveChatMessage` ([base.py:1080](../../internal/bot/common/handlers/base.py)):
   after the successful `self.db.chatMessages.saveChatMessage(...)` await
-  ([base.py:1121-1137](../../internal/bot/common/handlers/base.py)), record per [D3](#d3--message_received-event-shape).
+  ([base.py:1121-1137](../../internal/bot/common/handlers/base.py)), record per [D3](#d3--message-event-shape).
   `record()` is best-effort/never-raises, so it cannot affect the save outcome.
 
 #### D10.2 `llm_tool_call` chain
@@ -703,7 +707,7 @@ must land before Phase 1 is considered done.
 - `internal/bot/common/handlers/manager.py` — `HandlersManager.__init__` accepts
   `messageStatsStorage`; sets it on handlers after `self.handlers` is built.
 - `internal/bot/common/handlers/base.py` — `BaseBotHandler.__init__` default
-  `NullStatsStorage`; `saveChatMessage` records per [D3](#d3--message_received-event-shape).
+  `NullStatsStorage`; `saveChatMessage` records per [D3](#d3--message-event-shape).
 - `lib/stats/__init__.py` (only if `NullStatsStorage` is not already re-exported for
   handler-layer import — verify during implementation).
 
@@ -810,7 +814,7 @@ default, and the existing test suite plus the migration test are the safety net.
 | Risk | Likelihood | Impact | Mitigation | Rollback |
 |---|---|---|---|---|
 | **Hot-path cost of `await record()` INSERT** — `message_received` fires on every inbound message, adding an awaited `stat_events` INSERT to the message-save path | Med | Med | Consistent with the `lib/ai` precedent (every LLM call already awaits `record()`); `record()` is best-effort and the INSERT is a single row; if it proves hot, a future async fire-and-forget queue is an option (out of scope here, NG1) | Set `[stats] enabled = false` |
-| **Back-fill partial failure** — crash between back-fill and DROP leaves `chat_user_stats` intact but `stat_aggregates` already populated; a re-run would double-count | Low | High | Migration is one-shot (standard for this codebase); document the window; operator can `DELETE FROM stat_aggregates WHERE event_type='message' AND labels NOT LIKE '%message_type%'` to undo a partial back-fill before re-running | Manual cleanup per above, then re-run |
+| **Back-fill partial failure** — crash between back-fill and DROP leaves the `chat_messages` source intact but `stat_aggregates` already populated; a re-run is idempotent (*Amended 2026-08-16, fix-set `fcdf5663`*: source is now `chat_messages`; Python pre-aggregation + replace-style upsert recomputes each bucket instead of incrementing) | Low | High | Migration is one-shot (standard for this codebase); document the window; operator can `DELETE FROM stat_aggregates WHERE event_type='message' AND labels NOT LIKE '%"sent"%'` to undo a partial back-fill before re-running — the absent `sent` label identifies backfilled rows, which now carry `message_type` (*Amended 2026-08-16*) | Manual cleanup per above, then re-run |
 | **`labels_hash` mismatch** — back-fill produces a different canonical JSON than the aggregator, splitting buckets | Low | Med | Reuse `lib.utils.jsonDumps` + `_hashLabels` verbatim ([D7](#d7--back-fill-semantics)); migration test asserts a back-filled row and a live-aggregated row for the same labels share a `labels_hash` | Revert migration; regenerate after fixing canonicalization |
 | **Label cardinality** — `user_id` is a high-cardinality label; `stat_aggregates` grows with distinct (consumer, user_id, chat_type, …) combos | Med | Low | SUM-only aggregation keeps row count = distinct combos × periods; `message_type` multiplies by the bounded `MessageType` enum cardinality. Monitor row count; a future retention/cleanup pass is NG2 | n/a |
 | **Non-atomic aggregation** (claim → upsert → mark) — a crash mid-`aggregate()` can double-count or leave orphans | Low | Med | Already accepted in the v3 design (`TODO` at [stats_storage.py:232](../../internal/database/stats_storage.py)); orphan reclaim is built into the claim step. Not introduced by this design | n/a (pre-existing) |
@@ -856,7 +860,7 @@ while leaving the migration in place is safe (no recording happens).
 - **True cross-user global totals.** The current `__global__` rollup replaces only
   `consumer` and keeps `user_id`, so it is a per-user-across-chats rollup, not a
   grand total. Cross-user totals today require a post-query SUM across `user_id`
-  buckets (and across `message_type` buckets for the live/historical split, [D7](#d7--back-fill-semantics)).
+  buckets (and across `sent`-presence buckets for the live/historical split — backfilled rows carry `message_type` but not `sent`, [D7](#d7--back-fill-semantics)).
   A future stripped-labels rollup pass (drop `user_id` too) would give true globals.
 
 ---

@@ -499,7 +499,7 @@ CREATE TABLE stat_aggregates (
 
 **Repository**: `DatabaseStatsStorage.aggregate()` in `internal/database/stats_storage.py`
 
-**Period types**: `hour`, `day`, `month`, `total`
+**Period types**: `hourly`, `daily`, `monthly`, `total`
 
 **Labels**: consumer, modelName, modelId, provider, generationType (for LLM events)
 
