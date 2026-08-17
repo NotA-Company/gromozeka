@@ -583,22 +583,24 @@ class MyService:
 
 **Status (2026-08-17):** implemented, tested, and **wired into `main.py`** — `StatsAggregationService.getInstance().initialize(configManager, database)` is called once (synchronous) before the first storage factory call. The factory `createStatsStorage(eventType, dataSource)` reads `[stats] enabled` itself: disabled returns an **unregistered** `NullStatsStorage` (registry stays empty, handler no-ops every tick); enabled constructs `DatabaseStatsStorage` and registers it in the registry keyed by eventType.
 
+**Initialization:** Reads and parses `[stats]` configuration once at startup, caching the values. Raises `ValueError` on malformed configuration values (startup fails loudly — user decision). The service is not marked as initialized until config parse succeeds, and the handler is not registered until then — a failed initialize leaves the service retryable (config fixed → initialize again succeeds). Configuration changes after initialization have no effect (config frozen at init).
+
 **Per-cycle behavior (runs on CRON_JOB tick, gated by elapsed time):**
 1. **Gate check:** if registry is empty → immediate return (stats disabled). If `time.time() - _lastRunTime < intervalSeconds` → return (interval not elapsed).
-2. **Guard config parse:** read `[stats]` config fresh, parse interval/retention (clamp interval to minimum 60). On parse failure (e.g. `"1h"`), log error, advance gate, return — next interval skips too.
-3. For each storage in `_statsStorages.values()` (insertion order: llm_request, llm_tool_call, stt_request, message, command):
-   - **Drain loop:** call `aggregate()` repeatedly until it returns 0 **or** a safety cap of `MAX_AGGREGATION_ROUNDS = 10` is hit (bounds a cycle at 10,000 events per storage).
-   - **Retention purge:** if `events-retention-days > 0`, call `purgeProcessed(retentionDays=N)` — deletes rows with `processed = 1 AND created_at < truncateToDay(now - N days)`. The cutoff is day-truncated: events are deleted only once they are beyond N **whole** days (UTC midnight comparison).
+2. For each storage in `_statsStorages.items()` (insertion order: llm_request, llm_tool_call, stt_request, message, command):
+   - **Drain loop:** call `aggregate(limit=self._batchLimit)` repeatedly until it returns 0 **or** a safety cap of `MAX_AGGREGATION_ROUNDS = 10` is hit (bounds a cycle at `MAX_AGGREGATION_ROUNDS × batch-limit` events per storage).
+   - **Retention purge:** if `self._retentionDays > 0`, call `purgeProcessed(retentionDays=N)` — deletes rows with `processed = 1 AND created_at < truncateToDay(now - N days)`. The cutoff is day-truncated: events are deleted only once they are beyond N **whole** days (UTC midnight comparison).
    - Per-storage try/except isolation — one storage's failure never blocks others.
-4. One INFO summary line: per-storage processed/purged counts + errors.
-5. Set `_lastRunTime = cycleStart` (gate advanced to cycle-start timestamp).
+3. One INFO summary line: per-storage processed/purged counts + errors (using registry keys as labels).
+4. Set `_lastRunTime = cycleStart` (gate advanced to cycle-start timestamp).
 
 **First tick after startup is an immediate catch-up run** (`_lastRunTime = 0.0` → the gate always passes).
 
 **Configuration:**
 - `[stats] enabled` (default `false`): master switch; when false, the factory returns unregistered `NullStatsStorage` and the registry stays empty — zero per-tick cost.
-- `[stats] aggregation-interval-seconds` (default `3600`): cycle cadence in seconds; clamped to minimum 60 (the tick granularity).
-- `[stats] events-retention-days` (default `30`): retention window; `0` = keep forever.
+- `[stats] aggregation-interval-seconds` (default `3600`): cycle cadence in seconds; clamped to minimum 60 (the tick granularity). Cached at initialization; malformed values raise ValueError.
+- `[stats] aggregation-batch-limit` (default `1000`): number of events to process per `aggregate()` call in the drain loop; clamped to minimum 1. Bounds a cycle at `MAX_AGGREGATION_ROUNDS × batch-limit` events per storage. Cached at initialization; malformed values raise ValueError.
+- `[stats] events-retention-days` (default `30`): retention window; `0` = keep forever. Cached at initialization; malformed values raise ValueError.
 
 ```python
 from internal.services.stats import StatsAggregationService
@@ -634,7 +636,7 @@ commandStatsStorage = StatsAggregationService.getInstance().createStatsStorage(
 - **Enabled config**: `createStatsStorage` constructs `DatabaseStatsStorage`, registers it in `_statsStorages[eventType]`, and returns it. Duplicate eventType calls overwrite last-wins.
 - **DataSource resolution**: `dataSource=None` uses the database manager's default datasource; main.py passes `statsConfig.get("<key>-stats-data-source")` (which is `None` when the key is absent).
 
-**Failure isolation:** Per-storage try/except means one broken datasource or missing table never prevents the other storages from being processed. Errors are logged at exception level with storage context, and the summary line names failing storages.
+**Failure isolation:** Per-storage try/except means one broken datasource or missing table never prevents the other storages from being processed. Errors are logged at exception level with storage context, and the summary line names failing storages (using registry keys as labels).
 
 **Stats-off silence:** When `[stats] enabled = false`, the factory hands out unregistered `NullStatsStorage`s, the registry stays empty, and the registered handler returns after one truthiness check per tick — equivalent to the old nothing-seeded state, with zero per-tick cost.
 

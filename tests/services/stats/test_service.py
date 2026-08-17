@@ -18,9 +18,12 @@ Test Coverage:
     - Per-storage isolation (one storage failing doesn't block others)
     - Retention purge gating (events-retention-days = 0 skips purge)
     - Retention purge deletes only processed+old rows (through per-storage datasource)
-    - Malformed config: non-numeric interval skips work, advances gate, logs error, next interval skips too
-    - Duplicate-run impossibility: two consecutive calls within interval → work runs once
-    - Summary logging with per-storage processed/purged/errors (regression: failed storages appear)
+    - Fail-loudly contract: malformed config at initialize raises ValueError, service stays uninitialized
+    - Retryability: initialize again with fixed config succeeds after initial failure
+    - Config-frozen contract: config changes after initialize do not affect handler behavior
+    - Clamp tests at init: interval floor 60, batch-limit floor 1, retentionDays floor 0
+    - Batch limit: drain calls aggregate(limit=<batchLimit>)
+    - Summary logging with per-storage processed/purged/errors using registry keys as labels (regression)
 
 Example:
     Run tests from project root:
@@ -76,6 +79,7 @@ def mockConfigManager():
         "enabled": True,
         "aggregation-interval-seconds": 3600,
         "events-retention-days": 30,
+        "aggregation-batch-limit": 1000,
     }
     return mock
 
@@ -95,7 +99,6 @@ def mockStorage():
     storage = AsyncMock(spec=StatsStorage)
     storage.aggregate.return_value = 0
     storage.purgeProcessed.return_value = 0
-    storage.eventType = "test_event"
     return storage
 
 
@@ -137,7 +140,9 @@ class TestStatsAggregationServiceSingleton:
         assert statsAggregationService._database is None
         assert statsAggregationService._statsStorages == {}
         assert statsAggregationService._lastRunTime == 0.0
-        assert statsAggregationService._intervalSeconds == 3600
+        assert statsAggregationService._intervalSeconds == 3600  # Default from __init__
+        assert statsAggregationService._retentionDays == 30  # Default from __init__
+        assert statsAggregationService._batchLimit == 1000  # Default from __init__
         assert statsAggregationService._initialized is False
 
     def testMultipleInitializationCalls(self, statsAggregationService, mockConfigManager, mockDatabase):
@@ -154,6 +159,323 @@ class TestStatsAggregationServiceSingleton:
 
         assert statsAggregationService._configManager is firstConfigManager
         assert statsAggregationService._database is firstDatabase
+
+
+class TestConfigFrozenContract:
+    """Test that config is frozen at initialize (changes after init have no effect)."""
+
+    async def testConfigChangesAfterInitializeHaveNoEffect(
+        self, statsAggregationService, mockConfigManager, mockDatabase, mockStorage, sampleDelayedTask
+    ):
+        """Test that changing config mock after initialize does not affect handler behavior."""
+        # Initialize with config interval=60s for fast testing
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 60,  # Short interval for testing
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 500,  # Custom batch limit
+        }
+
+        statsAggregationService.initialize(mockConfigManager, mockDatabase)
+        statsAggregationService._statsStorages["test_event"] = mockStorage
+
+        # Verify getStatsConfig was called once at initialize
+        assert mockConfigManager.getStatsConfig.call_count == 1
+
+        # Store call count before running handler
+        initialCallCount = mockConfigManager.getStatsConfig.call_count
+
+        # Set _lastRunTime to now (within interval)
+        statsAggregationService._lastRunTime = time.time()
+
+        # Run handler within interval (should no-op)
+        await statsAggregationService._dtCronJob(sampleDelayedTask)
+
+        # Verify getStatsConfig NOT called again (no per-cycle re-read)
+        assert mockConfigManager.getStatsConfig.call_count == initialCallCount
+        assert mockStorage.aggregate.call_count == 0
+
+        # Advance _lastRunTime past interval
+        statsAggregationService._lastRunTime = time.time() - 61
+
+        # CHANGE the config mock (simulating config change after startup)
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 9999,  # Different interval
+            "events-retention-days": 999,  # Different retention
+            "aggregation-batch-limit": 9999,  # Different batch limit
+        }
+
+        # Run handler again (interval elapsed)
+        await statsAggregationService._dtCronJob(sampleDelayedTask)
+
+        # Verify getStatsConfig NOT called again (config frozen at init)
+        assert mockConfigManager.getStatsConfig.call_count == initialCallCount
+
+        # Verify aggregate was called with INIT-TIME batch limit (500), not the new 9999
+        assert mockStorage.aggregate.call_count >= 1
+        # Check that aggregate was called with the init-time batch limit
+        for call in mockStorage.aggregate.call_args_list:
+            assert call.kwargs.get("limit") == 500, "Should use init-time batch limit, not post-init config"
+
+        # Verify _intervalSeconds was NOT changed (still 60 from init)
+        assert statsAggregationService._intervalSeconds == 60
+
+    async def testConfigChangesAfterInitializeDoNotAffectRetention(
+        self, statsAggregationService, mockConfigManager, mockDatabase, mockStorage, sampleDelayedTask
+    ):
+        """Test that changing retention config after initialize does not affect handler behavior."""
+        # Initialize with retentionDays=0 (no purge)
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 60,
+            "events-retention-days": 0,  # No purge
+            "aggregation-batch-limit": 1000,
+        }
+
+        statsAggregationService.initialize(mockConfigManager, mockDatabase)
+        statsAggregationService._statsStorages["test_event"] = mockStorage
+
+        # CHANGE the config mock to retentionDays=30
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 60,
+            "events-retention-days": 30,  # Should purge now
+            "aggregation-batch-limit": 1000,
+        }
+
+        # Run handler (interval elapsed)
+        statsAggregationService._lastRunTime = time.time() - 61
+        await statsAggregationService._dtCronJob(sampleDelayedTask)
+
+        # Verify purgeProcessed was NOT called (retentionDays=0 from init)
+        assert mockStorage.purgeProcessed.call_count == 0
+
+        # Verify _retentionDays was NOT changed (still 0 from init)
+        assert statsAggregationService._retentionDays == 0
+
+
+class TestInitializationValidation:
+    """Test initialization validation (fail-loudly contract, clamp, retryability)."""
+
+    def testMalformedIntervalRaisesValueError(
+        self, statsAggregationService, mockConfigManager, mockDatabase, queueService
+    ):
+        """Test that malformed interval raises ValueError, service stays uninitialized."""
+        # Config with non-numeric interval (malformed TOML)
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": "1h",  # Non-numeric!
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
+        }
+
+        # Initialize should raise ValueError
+        with pytest.raises(ValueError) as exc_info:
+            statsAggregationService.initialize(mockConfigManager, mockDatabase)
+
+        # Verify error message mentions the malformed key
+        msg = str(exc_info.value)
+        assert "Malformed [stats] configuration" in msg
+        assert "aggregation-interval-seconds" in msg
+        # Discriminate: this error is about interval, NOT retention or batch-limit
+        assert "events-retention-days" not in msg
+        assert "aggregation-batch-limit" not in msg
+
+        # Verify service stays uninitialized
+        assert statsAggregationService._initialized is False
+        assert statsAggregationService._intervalSeconds == 3600  # Default unchanged
+        assert statsAggregationService._retentionDays == 30  # Default unchanged
+        assert statsAggregationService._batchLimit == 1000  # Default unchanged
+
+        # Verify handler NOT registered on QueueService
+        assert DelayedTaskFunction.CRON_JOB not in queueService.tasksHandlers
+
+    def testMalformedRetentionRaisesValueError(
+        self, statsAggregationService, mockConfigManager, mockDatabase, queueService
+    ):
+        """Test that malformed retention raises ValueError, service stays uninitialized."""
+        # Config with non-numeric retention (malformed TOML)
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 3600,
+            "events-retention-days": "30d",  # Non-numeric!
+            "aggregation-batch-limit": 1000,
+        }
+
+        # Initialize should raise ValueError
+        with pytest.raises(ValueError) as exc_info:
+            statsAggregationService.initialize(mockConfigManager, mockDatabase)
+
+        # Verify error message mentions the malformed key
+        msg = str(exc_info.value)
+        assert "Malformed [stats] configuration" in msg
+        assert "events-retention-days" in msg
+        # Discriminate: this error is about retention, NOT interval or batch-limit
+        assert "aggregation-interval-seconds" not in msg
+        assert "aggregation-batch-limit" not in msg
+
+        # Verify service stays uninitialized
+        assert statsAggregationService._initialized is False
+
+    def testMalformedBatchLimitRaisesValueError(
+        self, statsAggregationService, mockConfigManager, mockDatabase, queueService
+    ):
+        """Test that malformed batch limit raises ValueError, service stays uninitialized."""
+        # Config with non-numeric batch limit (malformed TOML)
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 3600,
+            "events-retention-days": 30,
+            "aggregation-batch-limit": "1000x",  # Malformed string!
+        }
+
+        # Initialize should raise ValueError
+        with pytest.raises(ValueError) as exc_info:
+            statsAggregationService.initialize(mockConfigManager, mockDatabase)
+
+        # Verify error message mentions the malformed key
+        msg = str(exc_info.value)
+        assert "Malformed [stats] configuration" in msg
+        assert "aggregation-batch-limit" in msg
+        # Discriminate: this error is about batch-limit, NOT interval or retention
+        assert "aggregation-interval-seconds" not in msg
+        assert "events-retention-days" not in msg
+
+        # Verify service stays uninitialized
+        assert statsAggregationService._initialized is False
+
+    def testRetryabilityAfterConfigFix(self, statsAggregationService, mockConfigManager, mockDatabase, queueService):
+        """Test that initialize again with fixed config succeeds after initial failure."""
+        # First attempt: malformed config → fails
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": "1h",  # Non-numeric!
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
+        }
+
+        with pytest.raises(ValueError):
+            statsAggregationService.initialize(mockConfigManager, mockDatabase)
+
+        # Verify service is still uninitialized
+        assert statsAggregationService._initialized is False
+
+        # FIX the config (now valid)
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 3600,  # Now valid!
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
+        }
+
+        # Second attempt: should succeed
+        statsAggregationService.initialize(mockConfigManager, mockDatabase)
+
+        # Verify service is now initialized
+        assert statsAggregationService._initialized is True
+        assert statsAggregationService._intervalSeconds == 3600
+
+        # Verify handler is registered on QueueService
+        assert DelayedTaskFunction.CRON_JOB in queueService.tasksHandlers
+        assert len(queueService.tasksHandlers[DelayedTaskFunction.CRON_JOB]) == 1
+
+    def testFailedInitializeReturnsNullStatsStorageAndEmptyRegistry(
+        self, statsAggregationService, mockConfigManager, mockDatabase, queueService
+    ):
+        """Test that failed initialize returns NullStatsStorage and keeps registry empty."""
+        # Config with malformed interval (malformed TOML)
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": "1h",  # Non-numeric!
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
+        }
+
+        # Initialize should raise ValueError
+        with pytest.raises(ValueError) as exc_info:
+            statsAggregationService.initialize(mockConfigManager, mockDatabase)
+
+        # Verify error message mentions the malformed key
+        assert "Malformed [stats] configuration" in str(exc_info.value)
+        assert "aggregation-interval-seconds" in str(exc_info.value)
+
+        # Verify service stays uninitialized
+        assert statsAggregationService._initialized is False
+
+        # Verify handler NOT registered on QueueService
+        assert DelayedTaskFunction.CRON_JOB not in queueService.tasksHandlers
+
+        # Verify createStatsStorage returns NullStatsStorage when not initialized
+        storage = statsAggregationService.createStatsStorage("message")
+        assert isinstance(storage, NullStatsStorage)
+
+        # Verify registry stays empty
+        assert statsAggregationService._statsStorages == {}
+
+    def testIntervalClampFloor(self, statsAggregationService, mockConfigManager, mockDatabase):
+        """Test that interval config value 30 is clamped to floor of 60."""
+        # Config with interval below floor
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 30,  # Below 60-second floor
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
+        }
+
+        # Initialize
+        statsAggregationService.initialize(mockConfigManager, mockDatabase)
+
+        # Verify interval was clamped to 60
+        assert statsAggregationService._intervalSeconds == 60
+
+    def testIntervalClampFloorString(self, statsAggregationService, mockConfigManager, mockDatabase):
+        """Test that interval config value "30" (string) is clamped to floor of 60."""
+        # Config with interval as string
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": "30",  # String, but parsable
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
+        }
+
+        # Initialize
+        statsAggregationService.initialize(mockConfigManager, mockDatabase)
+
+        # Verify interval was parsed and clamped to 60
+        assert statsAggregationService._intervalSeconds == 60
+
+    def testBatchLimitClampFloor(self, statsAggregationService, mockConfigManager, mockDatabase):
+        """Test that batch limit config value 0 is clamped to floor of 1."""
+        # Config with batch limit at floor
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 3600,
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 0,  # At floor
+        }
+
+        # Initialize
+        statsAggregationService.initialize(mockConfigManager, mockDatabase)
+
+        # Verify batch limit was clamped to 1
+        assert statsAggregationService._batchLimit == 1
+
+    def testRetentionDaysClampFloor(self, statsAggregationService, mockConfigManager, mockDatabase):
+        """Test that retentionDays config value -5 is clamped to floor of 0."""
+        # Config with negative retention
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 3600,
+            "events-retention-days": -5,  # Negative (keep forever)
+            "aggregation-batch-limit": 1000,
+        }
+
+        # Initialize
+        statsAggregationService.initialize(mockConfigManager, mockDatabase)
+
+        # Verify retentionDays was clamped to 0
+        assert statsAggregationService._retentionDays == 0
 
 
 # ============================================================================
@@ -284,15 +606,21 @@ class TestEmptyRegistry:
     """Test empty registry behavior."""
 
     async def testEmptyRegistryNoOp(self, statsAggregationService, mockConfigManager, mockDatabase, sampleDelayedTask):
-        """Test that empty registry results in immediate return, no config read, no work."""
-        # Initialize without any storages
+        """Test that empty registry results in immediate return, no work."""
+        # Initialize without any storages (config read once at initialize)
         statsAggregationService.initialize(mockConfigManager, mockDatabase)
+
+        # Verify getStatsConfig was called once at initialize (new behavior)
+        assert mockConfigManager.getStatsConfig.call_count == 1
+
+        # Store call count before running handler
+        initialCallCount = mockConfigManager.getStatsConfig.call_count
 
         # Run the handler (empty registry)
         await statsAggregationService._dtCronJob(sampleDelayedTask)
 
-        # Verify getStatsConfig was NOT called (no config read for empty registry)
-        assert mockConfigManager.getStatsConfig.call_count == 0
+        # Verify getStatsConfig was NOT called again (no per-cycle re-read)
+        assert mockConfigManager.getStatsConfig.call_count == initialCallCount
 
 
 # ============================================================================
@@ -310,6 +638,7 @@ class TestFactory:
             "enabled": False,
             "aggregation-interval-seconds": 3600,
             "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
         }
 
         statsAggregationService.initialize(mockConfigManager, mockDatabase)
@@ -330,6 +659,7 @@ class TestFactory:
             "enabled": True,
             "aggregation-interval-seconds": 3600,
             "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
         }
 
         statsAggregationService.initialize(mockConfigManager, mockDatabase)
@@ -351,6 +681,7 @@ class TestFactory:
             "enabled": True,
             "aggregation-interval-seconds": 3600,
             "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
         }
 
         statsAggregationService.initialize(mockConfigManager, mockDatabase)
@@ -375,13 +706,20 @@ class TestFactory:
 
 
 class TestDrainLoop:
-    """Test drain loop behavior (stops at 0, caps at MAX_AGGREGATION_ROUNDS)."""
+    """Test drain loop behavior (stops at 0, caps at MAX_AGGREGATION_ROUNDS, batch limit)."""
 
     async def testDrainStopsAtZero(
         self, statsAggregationService, mockConfigManager, mockDatabase, mockStorage, sampleDelayedTask
     ):
         """Test that drain loop stops when aggregate() returns 0."""
         # Initialize and register a storage
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 60,
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
+        }
+
         statsAggregationService.initialize(mockConfigManager, mockDatabase)
         statsAggregationService._statsStorages["test_event"] = mockStorage
 
@@ -399,6 +737,13 @@ class TestDrainLoop:
     ):
         """Test that drain loop caps at MAX_AGGREGATION_ROUNDS."""
         # Initialize and register a storage
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 60,
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
+        }
+
         statsAggregationService.initialize(mockConfigManager, mockDatabase)
         statsAggregationService._statsStorages["test_event"] = mockStorage
 
@@ -410,6 +755,31 @@ class TestDrainLoop:
 
         # Verify aggregate was called exactly MAX_AGGREGATION_ROUNDS times
         assert mockStorage.aggregate.call_count == MAX_AGGREGATION_ROUNDS
+
+    async def testDrainPassesBatchLimitToAggregate(
+        self, statsAggregationService, mockConfigManager, mockDatabase, mockStorage, sampleDelayedTask
+    ):
+        """Test that drain loop passes the configured batch limit to aggregate()."""
+        # Initialize with custom batch limit
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 60,
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 500,  # Custom batch limit
+        }
+
+        statsAggregationService.initialize(mockConfigManager, mockDatabase)
+        statsAggregationService._statsStorages["test_event"] = mockStorage
+
+        # Setup: aggregate returns 0 after one call
+        mockStorage.aggregate.return_value = 0
+
+        # Run the handler
+        await statsAggregationService._dtCronJob(sampleDelayedTask)
+
+        # Verify aggregate was called with the custom batch limit
+        assert mockStorage.aggregate.call_count == 1
+        mockStorage.aggregate.assert_called_once_with(limit=500)
 
 
 # ============================================================================
@@ -426,12 +796,10 @@ class TestPerStorageIsolation:
         """Test that one storage raising exception doesn't prevent others from being processed."""
         # Setup: storage1 raises, storage2 succeeds
         storage1 = AsyncMock(spec=StatsStorage)
-        storage1.eventType = "message"
         storage1.aggregate.side_effect = RuntimeError("Storage 1 failed")
         storage1.purgeProcessed.return_value = 0
 
         storage2 = AsyncMock(spec=StatsStorage)
-        storage2.eventType = "command"
         storage2.aggregate.side_effect = [500, 0]  # First call 500, second 0 (drain stops)
         storage2.purgeProcessed.return_value = 100
 
@@ -466,6 +834,13 @@ class TestRetention:
     ):
         """Test that purgeProcessed is called after aggregate completes."""
         # Initialize and register a storage
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 60,
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
+        }
+
         statsAggregationService.initialize(mockConfigManager, mockDatabase)
         statsAggregationService._statsStorages["test_event"] = mockStorage
 
@@ -490,8 +865,9 @@ class TestRetention:
         # Setup config with retention-days = 0
         mockConfigManager.getStatsConfig.return_value = {
             "enabled": True,
-            "aggregation-interval-seconds": 3600,
+            "aggregation-interval-seconds": 60,
             "events-retention-days": 0,
+            "aggregation-batch-limit": 1000,
         }
 
         # Initialize and register a storage
@@ -507,115 +883,6 @@ class TestRetention:
         # Verify aggregate was called but purge was NOT
         assert mockStorage.aggregate.call_count >= 1
         assert mockStorage.purgeProcessed.call_count == 0
-
-
-# ============================================================================
-# Malformed Config Tests
-# ============================================================================
-
-
-class TestMalformedConfig:
-    """Test malformed config handling."""
-
-    async def testMalformedIntervalSkipsWorkAndAdvancesGate(
-        self,
-        statsAggregationService,
-        mockConfigManager,
-        mockDatabase,
-        mockStorage,
-        sampleDelayedTask,
-        caplog,
-    ):
-        """Test that non-numeric interval skips work, advances gate, logs error."""
-        # Initialize and register a storage
-        statsAggregationService.initialize(mockConfigManager, mockDatabase)
-        statsAggregationService._statsStorages["test_event"] = mockStorage
-
-        # Setup config with non-numeric interval (malformed TOML)
-        mockConfigManager.getStatsConfig.return_value = {
-            "enabled": True,
-            "aggregation-interval-seconds": "1h",  # Non-numeric!
-            "events-retention-days": 30,
-        }
-
-        mockStorage.aggregate.return_value = 100
-        mockStorage.purgeProcessed.return_value = 10
-
-        # Run the handler with caplog to capture error logs
-        with caplog.at_level(logging.ERROR):
-            await statsAggregationService._dtCronJob(sampleDelayedTask)
-
-        # Verify aggregate was NOT called (work skipped)
-        assert mockStorage.aggregate.call_count == 0
-        # Verify purge was NOT called (work skipped)
-        assert mockStorage.purgeProcessed.call_count == 0
-
-        # Verify gate was advanced (so error logs once per interval, not per tick)
-        assert statsAggregationService._lastRunTime > 0.0
-
-        # Verify an error was logged about malformed config
-        errorMessages = [r.message for r in caplog.records if r.levelname == "ERROR"]
-        assert any("malformed [stats] config" in msg for msg in errorMessages)
-
-        # Run again immediately (gate already advanced) → should still skip
-        caplog.clear()
-        with caplog.at_level(logging.ERROR):
-            await statsAggregationService._dtCronJob(sampleDelayedTask)
-
-        # Verify aggregate still NOT called (interval gate blocks)
-        assert mockStorage.aggregate.call_count == 0
-
-    async def testMalformedConfigRecoveryAfterFix(
-        self,
-        statsAggregationService,
-        mockConfigManager,
-        mockDatabase,
-        mockStorage,
-        sampleDelayedTask,
-    ):
-        """Test that work resumes after fixing malformed config and interval elapses."""
-        # Initialize and register a storage
-        statsAggregationService.initialize(mockConfigManager, mockDatabase)
-        statsAggregationService._statsStorages["test_event"] = mockStorage
-
-        # Setup config with non-numeric interval (malformed)
-        mockConfigManager.getStatsConfig.return_value = {
-            "enabled": True,
-            "aggregation-interval-seconds": "1h",  # Non-numeric!
-            "events-retention-days": 30,
-        }
-
-        # Run the handler (should skip work and advance gate)
-        await statsAggregationService._dtCronJob(sampleDelayedTask)
-
-        # Verify work was skipped
-        assert mockStorage.aggregate.call_count == 0
-        assert mockStorage.purgeProcessed.call_count == 0
-
-        # Gate should be advanced
-        assert statsAggregationService._lastRunTime > 0.0
-
-        # FIX the config (now valid)
-        mockConfigManager.getStatsConfig.return_value = {
-            "enabled": True,
-            "aggregation-interval-seconds": 3600,  # Now valid!
-            "events-retention-days": 30,
-        }
-
-        # Set _lastRunTime far enough back that interval has elapsed
-        statsAggregationService._lastRunTime = time.time() - 3601
-
-        # Mock aggregate/purge to verify they were called
-        mockStorage.aggregate.return_value = 100
-        mockStorage.purgeProcessed.return_value = 10
-
-        # Run the handler again (should work with corrected config)
-        await statsAggregationService._dtCronJob(sampleDelayedTask)
-
-        # Verify aggregate WAS called (work resumed)
-        assert mockStorage.aggregate.call_count >= 1
-        # Verify purge was called
-        assert mockStorage.purgeProcessed.call_count == 1
 
 
 # ============================================================================
@@ -635,24 +902,29 @@ class TestRegression:
         so storages that raised during aggregate() never appeared in the
         summary (other storages were invisible).
 
-        This test verifies that two storages with DISTINCT labels both appear:
+        This test verifies that two storages with DISTINCT registry keys both appear:
         - storage1 (message) raises during aggregate
         - storage2 (command) succeeds
-        The summary line must contain BOTH labels, error marker for storage1,
+        The summary line must contain BOTH registry keys (labels), error marker for storage1,
         and aggregated count for storage2.
         """
         # Setup: storage1 raises, storage2 succeeds
         storage1 = AsyncMock(spec=StatsStorage)
-        storage1.eventType = "message"
         storage1.aggregate.side_effect = RuntimeError("Storage 1 failed during drain")
         storage1.purgeProcessed.return_value = 0
 
         storage2 = AsyncMock(spec=StatsStorage)
-        storage2.eventType = "command"
         storage2.aggregate.side_effect = [1000, 0]  # Drain stops after 1000
         storage2.purgeProcessed.return_value = 50
 
         # Initialize and register both storages
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 60,
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
+        }
+
         statsAggregationService.initialize(mockConfigManager, mockDatabase)
         statsAggregationService._statsStorages["message"] = storage1
         statsAggregationService._statsStorages["command"] = storage2
@@ -667,7 +939,7 @@ class TestRegression:
 
         summary = summaryLines[0]
 
-        # Verify BOTH storage labels appear in the summary
+        # Verify BOTH storage labels (registry keys) appear in the summary
         assert "message:" in summary, "Summary must include storage1 (message) label"
         assert "command:" in summary, "Summary must include storage2 (command) label"
 
@@ -690,6 +962,7 @@ class TestRegression:
             "enabled": True,
             "aggregation-interval-seconds": 3600,
             "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
         }
 
         # Set a custom default datasource
@@ -703,34 +976,3 @@ class TestRegression:
         # Verify it's a DatabaseStatsStorage with the default datasource
         assert storage.__class__.__name__ == "DatabaseStatsStorage"
         assert storage.dataSource == "custom_datasource"
-
-    async def testIntervalClampFloor(
-        self, statsAggregationService, mockConfigManager, mockDatabase, mockStorage, sampleDelayedTask
-    ):
-        """Test that interval config value 30 is clamped to floor of 60."""
-        # Config with interval below floor
-        mockConfigManager.getStatsConfig.return_value = {
-            "enabled": True,
-            "aggregation-interval-seconds": 30,  # Below 60-second floor
-            "events-retention-days": 30,
-        }
-
-        # Initialize and register a storage
-        statsAggregationService.initialize(mockConfigManager, mockDatabase)
-        statsAggregationService._statsStorages["test_event"] = mockStorage
-
-        # Set _lastRunTime to 0 (first run, gate always passes)
-        statsAggregationService._lastRunTime = 0.0
-
-        # Run the handler (gate passes, config is parsed, interval clamped to 60)
-        await statsAggregationService._dtCronJob(sampleDelayedTask)
-
-        # Verify _intervalSeconds was clamped to 60
-        assert statsAggregationService._intervalSeconds == 60
-
-        # Set _lastRunTime to 61 seconds ago (more than clamped interval of 60)
-        statsAggregationService._lastRunTime = time.time() - 61
-
-        # Run again (should work now)
-        await statsAggregationService._dtCronJob(sampleDelayedTask)
-        assert mockStorage.aggregate.call_count >= 1

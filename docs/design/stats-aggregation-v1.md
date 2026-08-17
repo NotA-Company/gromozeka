@@ -833,6 +833,68 @@ migration 027 (import shared helpers), and new migration 028 (retention index).
 
 ---
 
+## Amendments (2026-08-17, user-ratified)
+
+Three user-ratified design changes supersede parts of the original Phase-2 decisions;
+the affected D-decisions are reworked in place and marked *(amended)*. Phase 1 is
+untouched except the purge-cutoff sentence (A2). All mechanics cited below were
+verified against source on 2026-08-17.
+
+- **A1 — Trigger: ride the shared CRON_JOB tick, no dedicated task.** The
+  `DelayedTaskFunction.STATS_AGGREGATION` self-rescheduling task (old D1/D6/D10) is
+  dropped entirely — no new enum member, no seeding. `StatsAggregationService`
+  registers `registerDelayedTaskHandler(DelayedTaskFunction.CRON_JOB,
+  self._dtCronJob)` in `initialize`, and the handler gates on elapsed time
+  in-memory (`self._lastRunTime: float = 0.0`; per tick: skip if
+  `time.time() - _lastRunTime < intervalSeconds`). CRON_JOB is a shared 60-second
+  tick owned by QueueService (`_cronJobHandler` reschedules `time.time() + 60`,
+  service.py:190-201, seeded at service.py:302-307); handler lists are append-based
+  (service.py:233-266) and three consumers already coexist on it. First tick after
+  startup is an immediate catch-up (`_lastRunTime = 0.0`) — the ratified "first run
+  is catch-up" property without seeding. The old reschedule-first machinery and its
+  chain-death risk are obsolete: the tick survives handler exceptions structurally
+  (per-handler try/except, service.py:390-399).
+- **A2 — Purge cutoff day-truncation.**
+  `cutoff = truncateToDay(getCurrentTimestamp() - timedelta(days=retentionDays))` —
+  the UTC midnight of N days ago, reusing the Phase-1 shared helper
+  (stats_storage.py:313-327). An event is deleted only once it is beyond N **whole**
+  days; hours/minutes/seconds of age within the boundary day do not count. The
+  strict-`<` boundary is now midnight: a row created during the boundary day
+  survives.
+- **A3 — Storage factory + registry.**
+  `StatsAggregationService.createStatsStorage(eventType: str, dataSource: str | None
+  = None) -> StatsStorage` is the single construction seam: it reads `[stats]
+  enabled` itself — disabled returns an **unregistered** `NullStatsStorage`; enabled
+  constructs `DatabaseStatsStorage` (today's type; the seam exists for future
+  non-DB backends) and registers it in `self._statsStorages: Dict[str,
+  StatsStorage]` keyed by eventType, returning it. main.py's five per-event
+  constructions become five `createStatsStorage(...)` calls at the same sites; the
+  returned storages flow to the existing consumers exactly as today. The static
+  storages list and the `initialize(statsStorages=…)` parameter disappear.
+  Cyclic-import safety: `internal/services/stats` importing
+  `internal/database/stats_storage` is fine (main.py already imports both; services
+  import `internal.database` elsewhere, e.g. queue_service/service.py:36).
+- **A4 — Config cached at initialize, fail-loudly on malformed (2026-08-17).**
+  `StatsAggregationService.initialize(configManager, database)` now reads `[stats]`
+  configuration once at startup, parsing and caching all values
+  (`self._statsConfig`, `self._intervalSeconds`, `self._retentionDays`,
+  `self._batchLimit`). Config parsing MUST happen BEFORE setting
+  `self._initialized = True` and BEFORE registering the CRON_JOB handler — a failed
+  initialize leaves the service retryable (config fixed → initialize again succeeds).
+  On malformed values (TypeError/ValueError from `int()` parse), `initialize` RAISES
+  `ValueError` with a clear error message naming the offending key (chained `from e`);
+  startup fails loudly, forcing the user to fix the config. This replaces the
+  per-cycle guarded-parse block in `_dtCronJob` — there is no per-cycle config read
+  anymore; the handler uses the cached values directly. Summary logging uses
+  registry keys as labels (`eventType` keys from `_statsStorages.items()`), removing
+  the double derivation and `storageLabels` precompute dict.
+  New config key `aggregation-batch-limit` (default 1000, clamp >= 1) bounds the drain
+  batch size; the drain loop passes `limit=self._batchLimit` to `aggregate()`, and
+  `MAX_AGGREGATION_ROUNDS` bounds a cycle at `MAX_AGGREGATION_ROUNDS × batch-limit`
+  events per storage.
+
+---
+
 ## 5. Configuration changes
 
 [`configs/00-defaults/stats.toml`](../../configs/00-defaults/stats.toml) (diff):
@@ -846,18 +908,22 @@ migration 027 (import shared helpers), and new migration 028 (retention index).
  message-stats-data-source = "default"
  tool-stats-data-source = "default"
  command-stats-data-source = "default"
-+aggregation-interval-seconds = 3600   # D1 (amended): min elapsed between cycles;
-+                                     # 60 s tick granularity; first tick after
-+                                     # startup is catch-up
-+events-retention-days = 30            # D3 (amended): whole-day retention (A2);
-+                                     # 0 = keep forever
+ +aggregation-interval-seconds = 3600   # D1 (amended): min elapsed between cycles;
+ +                                     # 60 s tick granularity; first tick after
+ +                                     # startup is catch-up; cached at init (A4)
+ +aggregation-batch-limit = 1000       # A4: bounds drain batch size; clamp >= 1;
+ +                                     # bounds cycle at MAX_AGGREGATION_ROUNDS × limit
+ +events-retention-days = 30            # D3 (amended): whole-day retention (A2);
+ +                                     # 0 = keep forever; cached at init (A4)
 ```
 
 No new enable flag — the **factory reads `[stats] enabled` itself** (D5/A3), so the
 gating lives in the construction seam instead of main.py. `ConfigManager.getStatsConfig()`
 already returns the merged `[stats]` dict — no reader changes beyond `.get(...)` with
-the defaults above. Both keys are already present in the working tree (Phase 2's
-first cut landed them); the rework leaves them unchanged.
+the defaults above. All three keys are already present in the working tree (Phase 2's
+first cut landed them); the rework leaves them unchanged. **A4 adds `aggregation-batch-limit`**
+and changes the semantics: config is read once at `initialize` (not per-cycle), malformed
+values raise `ValueError`, and the handler uses cached values (no guarded parse).
 
 ---
 

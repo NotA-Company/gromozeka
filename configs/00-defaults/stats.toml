@@ -8,4 +8,5 @@ tool-stats-data-source = "default"
 command-stats-data-source = "default"
 
 aggregation-interval-seconds = 3600
+aggregation-batch-limit = 1000
 events-retention-days = 30

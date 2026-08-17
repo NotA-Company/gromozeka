@@ -11,7 +11,7 @@ Usage::
 
     # Construct storages (factory reads [stats] enabled itself):
     llmStorage = StatsAggregationService.getInstance().createStatsStorage(
-        "llm_request", statsConfig.get("llm-stats-data-source")
+        "llm_request", dataSource="default"
     )
 """
 
@@ -31,9 +31,30 @@ from lib.stats import NullStatsStorage, StatsStorage
 logger = logging.getLogger(__name__)
 
 # Maximum number of aggregate() calls per storage per cycle.
-# Bounds a cycle at 10,000 events per storage (default limit=1000) to prevent
-# a runaway backlog from monopolizing the delayed queue.
+# Bounds a cycle at MAX_AGGREGATION_ROUNDS × batch-limit events per storage
+# to prevent a runaway backlog from monopolizing the delayed queue.
 MAX_AGGREGATION_ROUNDS = 10
+
+
+def _parseIntKey(statsConfig: Dict[str, Any], key: str, default: int) -> int:
+    """Parse an integer configuration key with a specific error message.
+
+    Args:
+        statsConfig: The configuration dictionary to read from.
+        key: The configuration key to parse.
+        default: The default value if the key is not present.
+
+    Returns:
+        The parsed integer value.
+
+    Raises:
+        ValueError: If the value is not a valid integer, with a message naming the key.
+    """
+    rawValue = statsConfig.get(key, default)
+    try:
+        return int(rawValue)
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"Malformed [stats] configuration: {key}={rawValue!r} is not a valid integer") from e
 
 
 class StatsAggregationService:
@@ -58,14 +79,17 @@ class StatsAggregationService:
         StatsAggregationService.getInstance().initialize(configManager, database)
 
         # Construct storages (factory reads [stats] enabled itself):
-        llmStorage = service.createStatsStorage("llm_request", dataSource="default")
+        llmStorage = StatsAggregationService.getInstance().createStatsStorage("llm_request", dataSource="default")
 
     Attributes:
         _configManager: The application configuration manager.
         _database: The database instance for storage construction.
+        _statsConfig: Cached raw stats configuration dict from ConfigManager.
         _statsStorages: Registry of event type -> StatsStorage.
         _lastRunTime: Timestamp of the last cycle start (0.0 = never run).
-        _intervalSeconds: Last-known-good interval from config (default 3600).
+        _intervalSeconds: Configured interval in seconds, clamped >= 60, cached at init.
+        _retentionDays: Configured retention in days, clamped >= 0 (0 = keep forever), cached at init.
+        _batchLimit: Configured aggregation batch limit, clamped >= 1, cached at init.
         _initialized: Whether :meth:`initialize` has completed successfully.
     """
 
@@ -107,9 +131,12 @@ class StatsAggregationService:
         self.initialized = True
         self._configManager: Optional[ConfigManager] = None
         self._database: Optional[Database] = None
+        self._statsConfig: Dict[str, Any] = {}
         self._statsStorages: Dict[str, StatsStorage] = {}
         self._lastRunTime: float = 0.0
-        self._intervalSeconds: int = 3600  # Last-known-good interval, default 1h
+        self._intervalSeconds: int = 3600  # Default interval (1h), cached at init
+        self._retentionDays: int = 30  # Default retention (30 days), cached at init
+        self._batchLimit: int = 1000  # Default batch limit, cached at init
         self._initialized: bool = False
 
     def initialize(self, configManager: ConfigManager, database: Database) -> None:
@@ -118,34 +145,67 @@ class StatsAggregationService:
         Registers the CRON_JOB delayed task handler with QueueService.
         Synchronous — registration is a dict append, nothing to await.
 
+        Reads and parses ``[stats]`` configuration once, caching the values.
+        Raises ValueError on malformed configuration values (startup fails loudly).
+
         Idempotent — subsequent calls after the first successful
         initialisation are silently skipped.
 
         Args:
             configManager: The application configuration manager.
             database: The database instance for storage construction.
+
+        Raises:
+            ValueError: If any config value is malformed (non-numeric where int required).
         """
         if self._initialized:
             logger.debug("StatsAggregationService already initialized; skipping.")
             return
 
+        # Parse and cache configuration ONCE at initialization (fail loudly on malformed values)
+        # Parse everything into LOCALS first — nothing commits until all parses succeed
+        try:
+            statsConfig: Dict[str, Any] = configManager.getStatsConfig()
+
+            # Parse interval with clamp: minimum 60 seconds (tick granularity)
+            parsedIntervalSeconds = _parseIntKey(statsConfig, "aggregation-interval-seconds", 3600)
+            intervalSeconds = max(60, parsedIntervalSeconds)
+
+            # Parse retention with clamp: minimum 0 (0 = keep forever)
+            parsedRetentionDays = _parseIntKey(statsConfig, "events-retention-days", 30)
+            retentionDays = max(0, parsedRetentionDays)
+
+            # Parse batch limit with clamp: minimum 1
+            parsedBatchLimit = _parseIntKey(statsConfig, "aggregation-batch-limit", 1000)
+            batchLimit = max(1, parsedBatchLimit)
+
+        except ValueError:
+            # Let the per-key error propagate (already names the offending key)
+            raise
+
+        # CRITICAL ordering: set initialized flag AFTER config parse succeeds
+        # and BEFORE registering the handler. A failed initialize must leave
+        # the service retryable (config fixed → initialize again succeeds).
         self._configManager = configManager
         self._database = database
-
-        # Set initialized flag (idempotent guard)
+        self._statsConfig = statsConfig
+        self._intervalSeconds = intervalSeconds
+        self._retentionDays = retentionDays
+        self._batchLimit = batchLimit
         self._initialized = True
 
         # Register the CRON_JOB handler (shared 60-second tick)
         QueueService.getInstance().registerDelayedTaskHandler(DelayedTaskFunction.CRON_JOB, self._dtCronJob)
 
         logger.info(
-            "StatsAggregationService initialized; aggregation cycle will run on CRON_JOB tick gated by elapsed time."
+            "StatsAggregationService initialized; aggregation cycle will run on CRON_JOB tick gated by elapsed time. "
+            f"interval={self._intervalSeconds}s, retention={self._retentionDays} days, batch-limit={self._batchLimit}"
         )
 
     def createStatsStorage(self, eventType: str, dataSource: Optional[str] = None) -> StatsStorage:
         """Create and register a stats storage for the given event type.
 
-        Reads ``[stats] enabled`` from config — if disabled, returns an
+        Reads ``[stats] enabled`` from the cached config — if disabled, returns an
         **unregistered** ``NullStatsStorage`` (the registry stays empty).
         If enabled, constructs ``DatabaseStatsStorage`` and registers it
         in the registry keyed by ``eventType``.
@@ -156,17 +216,17 @@ class StatsAggregationService:
                 uses the database manager's default datasource.
 
         Returns:
-            ``NullStatsStorage`` if stats disabled (unregistered),
+            ``NullStatsStorage`` if stats disabled or uninitialized (unregistered),
             otherwise a registered ``DatabaseStatsStorage`` instance.
         """
-        if self._configManager is None:
-            logger.warning("ConfigManager not initialized; returning NullStatsStorage")
+        if not self._initialized or self._configManager is None:
+            logger.warning(
+                "StatsAggregationService not initialized or ConfigManager not set; returning NullStatsStorage"
+            )
             return NullStatsStorage()
 
-        statsConfig: Dict[str, Any] = self._configManager.getStatsConfig()
-        enabled = statsConfig.get("enabled", False)
-
-        if not enabled:
+        # Use cached config (read once at initialize)
+        if not self._statsConfig.get("enabled", False):
             # Disabled — return unregistered NullStatsStorage
             return NullStatsStorage()
 
@@ -191,13 +251,12 @@ class StatsAggregationService:
 
         Per cycle (only if registry non-empty):
         1. Gate on elapsed time: ``time.time() - _lastRunTime < intervalSeconds`` → return.
-        2. Guard config parse with try/except: on failure, advance gate and return.
-        3. For each storage in ``_statsStorages.values()`` (sequential order):
-           a. Drain loop: call ``aggregate()`` repeatedly until 0 or MAX_AGGREGATION_ROUNDS.
-           b. Retention purge: if ``events-retention-days > 0``, call ``purgeProcessed``.
-           Per-storage try/except isolation — one storage's failure never blocks others.
-        4. One INFO summary line: per-storage processed/purged counts + errors.
-        5. Set ``_lastRunTime`` to cycle-start timestamp.
+        2. For each storage in ``_statsStorages.items()`` (sequential order, using eventType key as label):
+            a. Drain loop: call ``aggregate(limit=self._batchLimit)`` repeatedly until 0 or MAX_AGGREGATION_ROUNDS.
+            b. Retention purge: if ``retentionDays > 0``, call ``purgeProcessed``.
+            Per-storage try/except isolation — one storage's failure never blocks others.
+        3. One INFO summary line: per-storage processed/purged counts + errors.
+        4. Set ``_lastRunTime`` to cycle-start timestamp.
 
         Args:
             task: The delayed task triggering this handler (kwargs are empty).
@@ -213,67 +272,44 @@ class StatsAggregationService:
         if cycleStart - self._lastRunTime < self._intervalSeconds:
             return
 
-        # Guard config parse with fallback to last-known-good interval
-        # On failure: skip work but advance gate so error logs once per interval, not per tick
-        try:
-            if self._configManager is None:
-                raise ValueError("_configManager is not initialized")
-            statsConfig: Dict[str, Any] = self._configManager.getStatsConfig()
-            intervalSeconds = max(60, int(statsConfig.get("aggregation-interval-seconds", 3600)))
-            retentionDays = int(statsConfig.get("events-retention-days", 30))
-
-            # Store last-known-good interval (applies to subsequent gates — a just-changed interval takes effect on the next tick)  # noqa: E501
-            self._intervalSeconds = intervalSeconds
-        except (TypeError, ValueError):
-            logger.exception("stats aggregation: malformed [stats] config; skipping cycle")
-            self._lastRunTime = cycleStart  # Advance gate so error logs once per interval
-            return
-
         perStorageProcessed: Dict[str, int] = {}
         perStoragePurged: Dict[str, int] = {}
         perStorageErrors: Dict[str, str] = {}
 
-        # Pre-compute storage labels (avoid duplication in two loops)
-        storageLabels: Dict[StatsStorage, str] = {}
-        for storage in self._statsStorages.values():
-            storageLabels[storage] = getattr(storage, "eventType", None) or type(storage).__name__
-
-        for storage in self._statsStorages.values():
-            storageLabel = storageLabels[storage]
-
+        # Iterate over registry items: eventType keys ARE the labels (unique by dict construction)
+        for eventType, storage in self._statsStorages.items():
             try:
                 # Drain loop: repeated aggregate() until 0 or MAX_AGGREGATION_ROUNDS
                 processedTotal = 0
                 for _ in range(MAX_AGGREGATION_ROUNDS):
-                    processed = await storage.aggregate()
+                    processed = await storage.aggregate(limit=self._batchLimit)
                     processedTotal += processed
                     if processed == 0:
                         break
 
-                perStorageProcessed[storageLabel] = processedTotal
+                perStorageProcessed[eventType] = processedTotal
 
                 # Retention purge: delete processed events older than retention window
                 purged = 0
-                if retentionDays > 0:
-                    purged = await storage.purgeProcessed(retentionDays=retentionDays)
+                if self._retentionDays > 0:
+                    purged = await storage.purgeProcessed(retentionDays=self._retentionDays)
 
-                perStoragePurged[storageLabel] = purged
+                perStoragePurged[eventType] = purged
 
             except Exception as e:
-                logger.exception(f"Stats aggregation failed for storage {storageLabel}")
-                perStorageErrors[storageLabel] = str(e)
+                logger.exception(f"Stats aggregation failed for storage {eventType}")
+                perStorageErrors[eventType] = str(e)
 
         # INFO summary line: per-storage processed/purged/errors
         summaryParts = []
-        for storage in self._statsStorages.values():
-            storageLabel = storageLabels[storage]
-            parts = [f"{storageLabel}:"]
-            if storageLabel in perStorageProcessed:
-                parts.append(f"aggregated={perStorageProcessed[storageLabel]}")
-            if storageLabel in perStoragePurged:
-                parts.append(f"purged={perStoragePurged[storageLabel]}")
-            if storageLabel in perStorageErrors:
-                parts.append(f"error={perStorageErrors[storageLabel][:50]}")
+        for eventType in self._statsStorages.keys():
+            parts = [f"{eventType}:"]
+            if eventType in perStorageProcessed:
+                parts.append(f"aggregated={perStorageProcessed[eventType]}")
+            if eventType in perStoragePurged:
+                parts.append(f"purged={perStoragePurged[eventType]}")
+            if eventType in perStorageErrors:
+                parts.append(f"error={perStorageErrors[eventType][:50]}")
             summaryParts.append(" ".join(parts))
 
         summary = " | ".join(summaryParts) if summaryParts else "No storages processed"
