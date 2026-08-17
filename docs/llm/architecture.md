@@ -418,8 +418,9 @@ await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
 6. **Claim-aggregate-commit:** `aggregate()` claims unprocessed events, computes sums, upserts to `stat_aggregates`, marks events processed
 
 **Configuration:**
-- `[stats] enabled = false` (default) — disabled until aggregation trigger and query API are implemented
-- When enabled: `DatabaseStatsStorage` created in `main.py`, passed to `LLMManager`, propagated to all models
+- `[stats] enabled = false` (default) — when enabled, `StatsAggregationService.getInstance().initialize(configManager, database)` is called (synchronous) and the factory `createStatsStorage(eventType, dataSource)` constructs and registers five storages (LLM, tool, STT, message, command). The factory reads `[stats] enabled` itself; when disabled, it returns unregistered `NullStatsStorage` and the registry stays empty.
+- `aggregation-interval-seconds` (default `3600`) — periodic aggregation cycle cadence in seconds (minimum 60, gated on shared CRON_JOB tick)
+- `events-retention-days` (default `30`) — retention window for processed `stat_events` rows (day-truncated UTC midnight cutoff); `0` = keep forever
 
 **Stats recorded for LLM events:**
 - `generation_text`, `generation_structured`, `generation_image` — 0/1 flags per generation type

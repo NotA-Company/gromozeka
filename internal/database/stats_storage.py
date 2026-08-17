@@ -273,6 +273,10 @@ class DatabaseStatsStorage(BaseStatsStorage):
         this storage's own data source. ``retentionDays <= 0`` is a no-op.
         Errors propagate to the caller (matching ``aggregate()``'s contract).
 
+        The cutoff is day-truncated: events are deleted only once they are
+        beyond N **whole** days. The cutoff is UTC midnight of ``now - N days``,
+        so events created during the boundary day survive (strict ``<`` comparison).
+
         Args:
             retentionDays: Minimum age in days for a processed row to be deleted.
 
@@ -282,7 +286,8 @@ class DatabaseStatsStorage(BaseStatsStorage):
         if retentionDays <= 0:
             return 0
 
-        cutoff = dbUtils.getCurrentTimestamp() - datetime.timedelta(days=retentionDays)
+        # A2: day-truncated cutoff — UTC midnight of N days ago
+        cutoff = truncateToDay(dbUtils.getCurrentTimestamp() - datetime.timedelta(days=retentionDays))
         sqlProvider = await self.db.manager.getProvider(dataSource=self.dataSource, readonly=False)
 
         # Count first — execute with NO_FETCH returns None, no portable rowcount

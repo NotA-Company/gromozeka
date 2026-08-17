@@ -26,15 +26,14 @@ from internal.bot.models.enums import BotProvider  # noqa: E402
 from internal.bot.telegram.application import TelegramBotApplication  # noqa: E402
 from internal.config.manager import ConfigManager  # noqa: E402
 from internal.database import Database  # noqa: E402
-from internal.database.stats_storage import DatabaseStatsStorage  # noqa: E402
 from internal.services.llm import LLMService  # noqa: E402
 from internal.services.proxy import ProxyService  # noqa: E402
 from internal.services.queue_service import QueueService  # noqa: E402
+from internal.services.stats import StatsAggregationService  # noqa: E402
 from internal.services.stt import STTService  # noqa: E402
 from lib.ai.manager import LLMManager  # noqa: E402
 from lib.logging_utils import initLogging  # noqa: E402
 from lib.rate_limiter import RateLimiterManager  # noqa: E402
-from lib.stats import StatsStorage  # noqa: E402
 
 # Configure basic logging first
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -86,16 +85,17 @@ class GromozekBot:
         # In the same time it MUST be initialized BEFORE LLMManager as it uses proxy.
         ProxyService.getInstance().initialize(self.configManager.getProxyConfig(), loop=loop)
 
-        # Initialize stats storage for LLM usage tracking
-        llmStatsStorage: Optional[StatsStorage] = None
+        # Initialize stats aggregation service (sync — registers CRON_JOB handler)
+        # Factory reads [stats] enabled itself, so call before any createStatsStorage
+        StatsAggregationService.getInstance().initialize(self.configManager, self.database)
+
+        # Get stats config for data source resolution (factory handles enabled gate)
         statsConfig = self.configManager.getStatsConfig()
-        statsEnabled = statsConfig.get("enabled", False)
-        if statsEnabled:
-            llmStatsStorage = DatabaseStatsStorage(
-                db=self.database,
-                eventType="llm_request",
-                dataSource=statsConfig.get("llm-stats-data-source", self.database.manager.default),
-            )
+
+        # Initialize stats storage for LLM usage tracking
+        llmStatsStorage = StatsAggregationService.getInstance().createStatsStorage(
+            "llm_request", statsConfig.get("llm-stats-data-source", self.database.manager.default)
+        )
 
         # Initialize LLM Manager
         self.llmManager = LLMManager(
@@ -105,13 +105,9 @@ class GromozekBot:
         LLMService.getInstance().injectLLMManager(self.llmManager)
 
         # Initialize tool stats storage
-        toolStatsStorage: Optional[StatsStorage] = None
-        if statsEnabled:
-            toolStatsStorage = DatabaseStatsStorage(
-                db=self.database,
-                eventType="llm_tool_call",
-                dataSource=statsConfig.get("tool-stats-data-source", self.database.manager.default),
-            )
+        toolStatsStorage = StatsAggregationService.getInstance().createStatsStorage(
+            "llm_tool_call", statsConfig.get("tool-stats-data-source", self.database.manager.default)
+        )
         LLMService.getInstance().injectStatsStorage(toolStatsStorage)
 
         # Initialize rate limiter manager
@@ -119,32 +115,20 @@ class GromozekBot:
         loop.run_until_complete(self.rateLimiterManager.loadConfig(self.configManager.getRateLimiterConfig()))
 
         # Initialize STT service (default-OFF; constructs/skips the provider)
-        sttStatsStorage: Optional[StatsStorage] = None
-        if statsEnabled:
-            sttStatsStorage = DatabaseStatsStorage(
-                db=self.database,
-                eventType="stt_request",
-                dataSource=statsConfig.get("stt-stats-data-source", self.database.manager.default),
-            )
+        sttStatsStorage = StatsAggregationService.getInstance().createStatsStorage(
+            "stt_request", statsConfig.get("stt-stats-data-source", self.database.manager.default)
+        )
         STTService.getInstance().initialize(self.configManager, statsStorage=sttStatsStorage)
 
         # Initialize message stats storage
-        messageStatsStorage: Optional[StatsStorage] = None
-        if statsEnabled:
-            messageStatsStorage = DatabaseStatsStorage(
-                db=self.database,
-                eventType="message",
-                dataSource=statsConfig.get("message-stats-data-source", self.database.manager.default),
-            )
+        messageStatsStorage = StatsAggregationService.getInstance().createStatsStorage(
+            "message", statsConfig.get("message-stats-data-source", self.database.manager.default)
+        )
 
         # Initialize command stats storage
-        commandStatsStorage: Optional[StatsStorage] = None
-        if statsEnabled:
-            commandStatsStorage = DatabaseStatsStorage(
-                db=self.database,
-                eventType="command",
-                dataSource=statsConfig.get("command-stats-data-source", self.database.manager.default),
-            )
+        commandStatsStorage = StatsAggregationService.getInstance().createStatsStorage(
+            "command", statsConfig.get("command-stats-data-source", self.database.manager.default)
+        )
 
         # Initialize bot application
         botConfig = self.configManager.getBotConfig()

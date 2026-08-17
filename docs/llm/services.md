@@ -16,6 +16,7 @@
 6. [ProxyService](#6-proxyservice)
 7. [STTService](#7-sttservice)
 8. [Service Singleton Pattern](#8-service-singleton-pattern)
+9. [StatsAggregationService](#9-statsaggregationservice)
 
 ---
 
@@ -570,6 +571,72 @@ class MyService:
 - Thread safety via `RLock`
 - `hasattr(self, "initialized")` guard prevents double-init
 - In tests, reset with `MyService._instance = None` (use autouse fixture)
+
+---
+
+## 9. StatsAggregationService
+
+**File:** [`internal/services/stats/service.py`](../../internal/services/stats/service.py)  
+**Import:** `from internal.services.stats import StatsAggregationService`
+
+`StatsAggregationService` is a **singleton coordinator** for periodic stats aggregation and event retention. It owns the storage factory + registry — the single construction seam for stats storages — and registers a handler on the shared CRON_JOB 60-second tick, gated in-memory by a configurable interval. Mirrors `STTService` exactly: class-level `_instance` / `_lock`, `getInstance()`, `hasattr(self, 'initialized')` guard, separate `initialize(...)`.
+
+**Status (2026-08-17):** implemented, tested, and **wired into `main.py`** — `StatsAggregationService.getInstance().initialize(configManager, database)` is called once (synchronous) before the first storage factory call. The factory `createStatsStorage(eventType, dataSource)` reads `[stats] enabled` itself: disabled returns an **unregistered** `NullStatsStorage` (registry stays empty, handler no-ops every tick); enabled constructs `DatabaseStatsStorage` and registers it in the registry keyed by eventType.
+
+**Per-cycle behavior (runs on CRON_JOB tick, gated by elapsed time):**
+1. **Gate check:** if registry is empty → immediate return (stats disabled). If `time.time() - _lastRunTime < intervalSeconds` → return (interval not elapsed).
+2. **Guard config parse:** read `[stats]` config fresh, parse interval/retention (clamp interval to minimum 60). On parse failure (e.g. `"1h"`), log error, advance gate, return — next interval skips too.
+3. For each storage in `_statsStorages.values()` (insertion order: llm_request, llm_tool_call, stt_request, message, command):
+   - **Drain loop:** call `aggregate()` repeatedly until it returns 0 **or** a safety cap of `MAX_AGGREGATION_ROUNDS = 10` is hit (bounds a cycle at 10,000 events per storage).
+   - **Retention purge:** if `events-retention-days > 0`, call `purgeProcessed(retentionDays=N)` — deletes rows with `processed = 1 AND created_at < truncateToDay(now - N days)`. The cutoff is day-truncated: events are deleted only once they are beyond N **whole** days (UTC midnight comparison).
+   - Per-storage try/except isolation — one storage's failure never blocks others.
+4. One INFO summary line: per-storage processed/purged counts + errors.
+5. Set `_lastRunTime = cycleStart` (gate advanced to cycle-start timestamp).
+
+**First tick after startup is an immediate catch-up run** (`_lastRunTime = 0.0` → the gate always passes).
+
+**Configuration:**
+- `[stats] enabled` (default `false`): master switch; when false, the factory returns unregistered `NullStatsStorage` and the registry stays empty — zero per-tick cost.
+- `[stats] aggregation-interval-seconds` (default `3600`): cycle cadence in seconds; clamped to minimum 60 (the tick granularity).
+- `[stats] events-retention-days` (default `30`): retention window; `0` = keep forever.
+
+```python
+from internal.services.stats import StatsAggregationService
+
+# Initialize (called once from main.py, synchronous, before first factory call):
+StatsAggregationService.getInstance().initialize(configManager, database)
+
+# Get stats config for data source resolution:
+statsConfig = configManager.getStatsConfig()
+
+# Construct storages via factory (reads [stats] enabled itself):
+llmStatsStorage = StatsAggregationService.getInstance().createStatsStorage(
+    "llm_request", statsConfig.get("llm-stats-data-source", database.manager.default)
+)
+toolStatsStorage = StatsAggregationService.getInstance().createStatsStorage(
+    "llm_tool_call", statsConfig.get("tool-stats-data-source", database.manager.default)
+)
+sttStatsStorage = StatsAggregationService.getInstance().createStatsStorage(
+    "stt_request", statsConfig.get("stt-stats-data-source", database.manager.default)
+)
+messageStatsStorage = StatsAggregationService.getInstance().createStatsStorage(
+    "message", statsConfig.get("message-stats-data-source", database.manager.default)
+)
+commandStatsStorage = StatsAggregationService.getInstance().createStatsStorage(
+    "command", statsConfig.get("command-stats-data-source", database.manager.default)
+)
+
+# Storages flow to consumers exactly as today (LLMService, STTService, bot applications).
+```
+
+**Factory semantics:**
+- **Disabled config** (`[stats] enabled = false`): `createStatsStorage` returns `NullStatsStorage()` and does NOT register it in the registry. The registry stays empty, so the handler returns after one truthiness check per tick — zero per-tick cost.
+- **Enabled config**: `createStatsStorage` constructs `DatabaseStatsStorage`, registers it in `_statsStorages[eventType]`, and returns it. Duplicate eventType calls overwrite last-wins.
+- **DataSource resolution**: `dataSource=None` uses the database manager's default datasource; main.py passes `statsConfig.get("<key>-stats-data-source")` (which is `None` when the key is absent).
+
+**Failure isolation:** Per-storage try/except means one broken datasource or missing table never prevents the other storages from being processed. Errors are logged at exception level with storage context, and the summary line names failing storages.
+
+**Stats-off silence:** When `[stats] enabled = false`, the factory hands out unregistered `NullStatsStorage`s, the registry stays empty, and the registered handler returns after one truthiness check per tick — equivalent to the old nothing-seeded state, with zero per-tick cost.
 
 ---
 

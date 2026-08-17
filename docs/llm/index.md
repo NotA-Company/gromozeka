@@ -244,6 +244,7 @@ vanishingly rare in the Gromozeka codebase.
 | [`STTService`](../../internal/services/stt/service.py) | `from internal.services.stt import STTService` | `STTService.getInstance()` (default-off; see ADR-020) |
 | [`SandboxManager`](../../lib/sandbox/manager.py) | `from lib.sandbox import SandboxManager` | `SandboxManager.getInstance()` |
 | [`ProxyHelper`](../../lib/proxy/__init__.py) | `from lib.proxy import ProxyHelper` | `ProxyHelper.getInstance()` |
+| [`StatsAggregationService`](../../internal/services/stats/service.py) | `from internal.services.stats import StatsAggregationService` | `StatsAggregationService.getInstance()` |
 
 ### 4.4 Critical File Paths
 
@@ -255,10 +256,11 @@ vanishingly rare in the Gromozeka codebase.
 | [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) | `HandlersManager` – handler chain |
 | [`internal/database/database.py`](../../internal/database/database.py) | `Database` – all DB operations with repository pattern |
 | [`internal/config/manager.py`](../../internal/config/manager.py) | `ConfigManager` – TOML loading |
-| [`internal/services/cache/service.py`](../../internal/services/cache/service.py) | `CacheService` singleton |
+ | [`internal/services/cache/service.py`](../../internal/services/cache/service.py) | `CacheService` singleton |
 | [`internal/services/llm/service.py`](../../internal/services/llm/service.py) | `LLMService` singleton |
 | [`internal/services/queue_service/service.py`](../../internal/services/queue_service/service.py) | `QueueService` singleton |
 | [`internal/services/storage/service.py`](../../internal/services/storage/service.py) | `StorageService` singleton |
+| [`internal/services/stats/service.py`](../../internal/services/stats/service.py) | `StatsAggregationService` singleton |
 | [`lib/ai/abstract.py`](../../lib/ai/abstract.py) | `AbstractModel`, `AbstractLLMProvider` |
 | [`lib/ai/manager.py`](../../lib/ai/manager.py) | `LLMManager` – provider + model registry |
 

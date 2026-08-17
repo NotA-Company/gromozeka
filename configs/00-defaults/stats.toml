@@ -6,3 +6,6 @@ stt-stats-data-source = "default"
 message-stats-data-source = "default"
 tool-stats-data-source = "default"
 command-stats-data-source = "default"
+
+aggregation-interval-seconds = 3600
+events-retention-days = 30

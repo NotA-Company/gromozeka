@@ -553,30 +553,39 @@ async def testPurgeRetentionNegativeIsNoOp(statsStorage: DatabaseStatsStorage) -
 
 
 async def testPurgeBoundaryExactCutoffSurvives(statsStorage: DatabaseStatsStorage) -> None:
-    """Verify row exactly at cutoff survives (comparison is <, not <=).
+    """Verify row created during the boundary day survives (day-truncated cutoff).
 
     Uses a frozen clock to guarantee deterministic timing:
     - Monkeypatch internal.database.utils.getCurrentTimestamp to return fixedNow
-    - Insert a row exactly at cutoff = fixedNow - 30 days (should SURVIVE)
-    - Insert a row 1 microsecond older than cutoff (should be DELETED)
-    - Assert strict < behavior: exact-cutoff row survives, older row deleted
+    - Cutoff is UTC midnight of (fixedNow - 30 days) = boundaryDayMidnight
+    - Row at midnight EXACTLY → survives (strict < comparison)
+    - Row at 23:59:59 on the boundary day → survives (created during the boundary day)
+    - Row 1 microsecond before midnight → DELETED (created on previous day)
+
+    Day-truncated semantics: events are deleted only once they are beyond N
+    **whole** days. A row created during the boundary day (any time-of-day)
+    survives; only rows from whole days before the boundary are deleted.
 
     Returns:
         None
     """
-    # Fixed UTC timestamp for the test
+    # Fixed UTC timestamp for the test: 2024-06-15 12:00:00 UTC
     fixedNow = datetime.datetime(2024, 6, 15, 12, 0, 0, tzinfo=datetime.UTC)
 
-    # The exact cutoff time (30 days before fixedNow)
-    exactCutoff = fixedNow - datetime.timedelta(days=30)
+    # The boundary day is 30 days ago: 2024-05-16
+    # Cutoff is UTC midnight of the boundary day: 2024-05-16 00:00:00 UTC
+    boundaryDayMidnight = datetime.datetime(2024, 5, 16, 0, 0, 0, tzinfo=datetime.UTC)
 
-    # One microsecond older than cutoff (should be deleted)
-    oneMicrosecondOlder = exactCutoff - datetime.timedelta(microseconds=1)
+    # One microsecond before midnight (on previous day, 2024-05-15 23:59:59.999999) → DELETED
+    oneMicrosecondBeforeMidnight = boundaryDayMidnight - datetime.timedelta(microseconds=1)
+
+    # At 23:00:00 on the boundary day (2024-05-16 23:00:00) → SURVIVES
+    lateInBoundaryDay = boundaryDayMidnight + datetime.timedelta(hours=23)
 
     with patch.object(dbUtils, "getCurrentTimestamp", return_value=fixedNow):
         provider = await statsStorage.db.manager.getProvider(dataSource=statsStorage.dataSource, readonly=False)
 
-        # Insert row exactly at cutoff (should SURVIVE)
+        # Insert row exactly at midnight (should SURVIVE - strict <)
         await provider.execute(
             """INSERT INTO stat_events
                (event_id, event_type, event_time, data, labels,
@@ -585,16 +594,16 @@ async def testPurgeBoundaryExactCutoffSurvives(statsStorage: DatabaseStatsStorag
                (:eventId1, :eventType, :eventTime, :data, :labels,
                 1, NULL, NULL, :createdAt)""",
             {
-                "eventId1": "exact-cutoff-1",
+                "eventId1": "exact-midnight",
                 "eventType": "llm_request",
-                "eventTime": exactCutoff,
+                "eventTime": boundaryDayMidnight,
                 "data": '{"tokens": 100}',
                 "labels": '{"consumer":"test"}',
-                "createdAt": exactCutoff,
+                "createdAt": boundaryDayMidnight,
             },
         )
 
-        # Insert row 1 microsecond older (should be DELETED)
+        # Insert row 1 microsecond before midnight (should be DELETED)
         await provider.execute(
             """INSERT INTO stat_events
                (event_id, event_type, event_time, data, labels,
@@ -603,25 +612,43 @@ async def testPurgeBoundaryExactCutoffSurvives(statsStorage: DatabaseStatsStorag
                (:eventId2, :eventType, :eventTime, :data, :labels,
                 1, NULL, NULL, :createdAt)""",
             {
-                "eventId2": "older-than-cutoff-1",
+                "eventId2": "one-us-before-midnight",
                 "eventType": "llm_request",
-                "eventTime": oneMicrosecondOlder,
+                "eventTime": oneMicrosecondBeforeMidnight,
                 "data": '{"tokens": 200}',
                 "labels": '{"consumer":"test"}',
-                "createdAt": oneMicrosecondOlder,
+                "createdAt": oneMicrosecondBeforeMidnight,
             },
         )
 
-        # Purge with 30-day retention (cutoff is fixedNow - 30 days = exactCutoff)
+        # Insert row at 23:00 on boundary day (should SURVIVE)
+        await provider.execute(
+            """INSERT INTO stat_events
+               (event_id, event_type, event_time, data, labels,
+                processed, processed_id, claimed_at, created_at)
+               VALUES
+               (:eventId3, :eventType, :eventTime, :data, :labels,
+                1, NULL, NULL, :createdAt)""",
+            {
+                "eventId3": "late-in-boundary-day",
+                "eventType": "llm_request",
+                "eventTime": lateInBoundaryDay,
+                "data": '{"tokens": 300}',
+                "labels": '{"consumer":"test"}',
+                "createdAt": lateInBoundaryDay,
+            },
+        )
+
+        # Purge with 30-day retention (cutoff is boundaryDayMidnight)
         # The predicate is created_at < cutoff
         deleted = await statsStorage.purgeProcessed(retentionDays=30)
 
-        # Should delete exactly 1 (the one that's 1 microsecond older than cutoff)
+        # Should delete exactly 1 (the one that's 1 microsecond before midnight)
         assert deleted == 1
 
-        # Verify exact-cutoff-1 still exists
+        # Verify exact-midnight and late-in-boundary-day still exist
         remainingRows = await provider.executeFetchAll(
             """SELECT event_id FROM stat_events""",
         )
         remainingIds = {r["event_id"] for r in remainingRows}
-        assert remainingIds == {"exact-cutoff-1"}
+        assert remainingIds == {"exact-midnight", "late-in-boundary-day"}
