@@ -876,8 +876,8 @@ verified against source on 2026-08-17.
   import `internal.database` elsewhere, e.g. queue_service/service.py:36).
 - **A4 — Config cached at initialize, fail-loudly on malformed (2026-08-17).**
   `StatsAggregationService.initialize(configManager, database)` now reads `[stats]`
-  configuration once at startup, parsing and caching all values
-  (`self._statsConfig`, `self._intervalSeconds`, `self._retentionDays`,
+  configuration once at startup, parsing and caching all values as typed scalars
+  (`self._statsEnabled`, `self._intervalSeconds`, `self._retentionDays`,
   `self._batchLimit`). Config parsing MUST happen BEFORE setting
   `self._initialized = True` and BEFORE registering the CRON_JOB handler — a failed
   initialize leaves the service retryable (config fixed → initialize again succeeds).

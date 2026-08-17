@@ -84,7 +84,7 @@ class StatsAggregationService:
     Attributes:
         _configManager: The application configuration manager.
         _database: The database instance for storage construction.
-        _statsConfig: Cached raw stats configuration dict from ConfigManager.
+        _statsEnabled: Cached enabled flag (parsed once at initialize).
         _statsStorages: Registry of event type -> StatsStorage.
         _lastRunTime: Timestamp of the last cycle start (0.0 = never run).
         _intervalSeconds: Configured interval in seconds, clamped >= 60, cached at init.
@@ -131,7 +131,7 @@ class StatsAggregationService:
         self.initialized = True
         self._configManager: Optional[ConfigManager] = None
         self._database: Optional[Database] = None
-        self._statsConfig: Dict[str, Any] = {}
+        self._statsEnabled: bool = False
         self._statsStorages: Dict[str, StatsStorage] = {}
         self._lastRunTime: float = 0.0
         self._intervalSeconds: int = 3600  # Default interval (1h), cached at init
@@ -163,35 +163,33 @@ class StatsAggregationService:
             return
 
         # Parse and cache configuration ONCE at initialization (fail loudly on malformed values)
-        # Parse everything into LOCALS first — nothing commits until all parses succeed
-        try:
-            statsConfig: Dict[str, Any] = configManager.getStatsConfig()
+        # Parse into locals first, commit atomically to keep service retryable on failure
+        statsConfig: Dict[str, Any] = configManager.getStatsConfig()
 
-            # Parse interval with clamp: minimum 60 seconds (tick granularity)
-            parsedIntervalSeconds = _parseIntKey(statsConfig, "aggregation-interval-seconds", 3600)
-            intervalSeconds = max(60, parsedIntervalSeconds)
+        # Parse interval with clamp: minimum 60 seconds (tick granularity)
+        parsedIntervalSeconds = _parseIntKey(statsConfig, "aggregation-interval-seconds", 3600)
+        intervalSeconds = max(60, parsedIntervalSeconds)
 
-            # Parse retention with clamp: minimum 0 (0 = keep forever)
-            parsedRetentionDays = _parseIntKey(statsConfig, "events-retention-days", 30)
-            retentionDays = max(0, parsedRetentionDays)
+        # Parse retention with clamp: minimum 0 (0 = keep forever)
+        parsedRetentionDays = _parseIntKey(statsConfig, "events-retention-days", 30)
+        retentionDays = max(0, parsedRetentionDays)
 
-            # Parse batch limit with clamp: minimum 1
-            parsedBatchLimit = _parseIntKey(statsConfig, "aggregation-batch-limit", 1000)
-            batchLimit = max(1, parsedBatchLimit)
+        # Parse batch limit with clamp: minimum 1
+        parsedBatchLimit = _parseIntKey(statsConfig, "aggregation-batch-limit", 1000)
+        batchLimit = max(1, parsedBatchLimit)
 
-        except ValueError:
-            # Let the per-key error propagate (already names the offending key)
-            raise
+        # Parse enabled flag
+        statsEnabled: bool = statsConfig.get("enabled", False)
 
         # CRITICAL ordering: set initialized flag AFTER config parse succeeds
         # and BEFORE registering the handler. A failed initialize must leave
         # the service retryable (config fixed → initialize again succeeds).
         self._configManager = configManager
         self._database = database
-        self._statsConfig = statsConfig
         self._intervalSeconds = intervalSeconds
         self._retentionDays = retentionDays
         self._batchLimit = batchLimit
+        self._statsEnabled = statsEnabled
         self._initialized = True
 
         # Register the CRON_JOB handler (shared 60-second tick)
@@ -199,14 +197,15 @@ class StatsAggregationService:
 
         logger.info(
             "StatsAggregationService initialized; aggregation cycle will run on CRON_JOB tick gated by elapsed time. "
-            f"interval={self._intervalSeconds}s, retention={self._retentionDays} days, batch-limit={self._batchLimit}"
+            f"enabled={self._statsEnabled}, interval={self._intervalSeconds}s, "
+            f"retention={self._retentionDays} days, batch-limit={self._batchLimit}"
         )
 
     def createStatsStorage(self, eventType: str, dataSource: Optional[str] = None) -> StatsStorage:
         """Create and register a stats storage for the given event type.
 
-        Reads ``[stats] enabled`` from the cached config — if disabled, returns an
-        **unregistered** ``NullStatsStorage`` (the registry stays empty).
+        Reads the cached ``enabled`` value (parsed once at initialize) — if disabled,
+        returns an **unregistered** ``NullStatsStorage`` (the registry stays empty).
         If enabled, constructs ``DatabaseStatsStorage`` and registers it
         in the registry keyed by ``eventType``.
 
@@ -225,8 +224,8 @@ class StatsAggregationService:
             )
             return NullStatsStorage()
 
-        # Use cached config (read once at initialize)
-        if not self._statsConfig.get("enabled", False):
+        # Use cached enabled flag (read once at initialize)
+        if not self._statsEnabled:
             # Disabled — return unregistered NullStatsStorage
             return NullStatsStorage()
 
