@@ -132,6 +132,7 @@ class DatabaseStatsStorage(BaseStatsStorage):
         **v3 flow — claim-first, reclaim-in-place, global rollup, total period:**
 
             1. UPDATE claim: claims up to ``limit`` rows with ``processed = 0``
+               whose ``event_type`` matches this storage's ``eventType`` AND
                whose ``processed_id IS NULL`` (never claimed) OR whose
                ``claimed_at`` is older than the orphan timeout (stale claim
                from a crashed previous run). Uses ``applyPagination()`` for
@@ -145,6 +146,10 @@ class DatabaseStatsStorage(BaseStatsStorage):
 
         No separate orphan-reclaim pass — stale rows are reclaimed as part
         of the claim UPDATE itself.
+
+        The claim predicate is scoped to this storage's ``eventType`` to
+        ensure isolation when multiple storages share one ``stat_events``
+        table (e.g., 'llm_request', 'command', 'message' event types).
 
         Args:
             limit: Maximum number of unprocessed events to claim.
@@ -173,6 +178,7 @@ class DatabaseStatsStorage(BaseStatsStorage):
         innerSelect = sqlProvider.applyPagination(
             """SELECT event_id FROM stat_events
                WHERE processed = 0
+                 AND event_type = :eventType
                  AND (processed_id IS NULL OR claimed_at < :orphanTimeout)
                ORDER BY event_time""",
             limit=limit,
@@ -187,6 +193,7 @@ class DatabaseStatsStorage(BaseStatsStorage):
                 "batchId": batchId,
                 "now": now,
                 "orphanTimeout": orphanTimeout,
+                "eventType": self.eventType,
             },
         )
 
@@ -276,6 +283,11 @@ class DatabaseStatsStorage(BaseStatsStorage):
         The cutoff is day-truncated: events are deleted only once they are
         beyond N **whole** days. The cutoff is UTC midnight of ``now - N days``,
         so events created during the boundary day survive (strict ``<`` comparison).
+
+        The purge predicate is deliberately type-agnostic (no ``event_type`` filter)
+        because the first purge pass cleans all processed rows regardless of type.
+        When multiple storages share one ``stat_events`` table, this ensures
+        retention is applied uniformly across all event types.
 
         Args:
             retentionDays: Minimum age in days for a processed row to be deleted.

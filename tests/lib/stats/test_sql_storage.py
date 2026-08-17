@@ -652,3 +652,179 @@ async def testPurgeBoundaryExactCutoffSurvives(statsStorage: DatabaseStatsStorag
         )
         remainingIds = {r["event_id"] for r in remainingRows}
         assert remainingIds == {"exact-midnight", "late-in-boundary-day"}
+
+
+# ----------------------------------------------------------------------
+# Regression test for Gate-2 critical defect: multi-eventType isolation
+# ----------------------------------------------------------------------
+
+
+async def testMultiEventTypeIsolation(statsStorage: DatabaseStatsStorage) -> None:
+    """Verify aggregate() claims only events of its own eventType.
+
+    Regression test for Gate-2 critical defect: when multiple storages
+    share one stat_events table, each aggregate() call must claim and
+    process ONLY events matching its own eventType. Without this filter,
+    the first storage to drain claims ALL unprocessed rows of ALL types
+    and corrupts the stat_aggregates PK dimension (event_type becomes
+    the first storage's type for all rows).
+
+    Seed:
+    - Two storages sharing one database: commandStorage (eventType="command")
+      and messageStorage (eventType="message")
+    - 3 command events (count metric)
+    - 3 message events (tokens metric)
+
+    Test sequence:
+    1. commandStorage.aggregate() should process ONLY command events (return 3)
+    2. stat_aggregates rows should have event_type='command' with count=3
+    3. messageStorage.aggregate() should process ONLY message events (return 3)
+    4. stat_aggregates rows should have event_type='message' with tokens=3
+
+    The bug manifests as:
+    - commandStorage.aggregate() returns 6 (claims both command AND message events)
+    - stat_aggregates has event_type='command' rows containing both count and tokens
+    - messageStorage.aggregate() returns 0 (nothing left to claim)
+
+    Returns:
+        None
+    """
+    from internal.database import Database
+    from internal.database.manager import DatabaseManagerConfig
+    from internal.database.migrations.versions.migration_016_add_stat_tables import (
+        getMigration,
+    )
+
+    # Create a shared in-memory database
+    config: DatabaseManagerConfig = {
+        "default": "default",
+        "chatMapping": {},
+        "providers": {
+            "default": {
+                "provider": "sqlite3",
+                "parameters": {
+                    "dbPath": ":memory:",
+                },
+            }
+        },
+    }
+    sharedDb = Database(config)
+
+    try:
+        # Apply migration 016
+        provider = await sharedDb.manager.getProvider(dataSource="default", readonly=False)
+        migration = getMigration()()
+        await migration.up(provider)
+
+        # Create two storages with different eventTypes, same data source
+        commandStorage = DatabaseStatsStorage(
+            db=sharedDb,
+            eventType="command",
+            dataSource="default",
+        )
+        messageStorage = DatabaseStatsStorage(
+            db=sharedDb,
+            eventType="message",
+            dataSource="default",
+        )
+
+        # Record 3 command events
+        for i in range(3):
+            await commandStorage.record(
+                {"count": 1},
+                consumerId=f"chat_{i}",
+                labels={"cmd": f"/test{i}"},
+            )
+
+        # Record 3 message events
+        for i in range(3):
+            await messageStorage.record(
+                {"tokens": 100},
+                consumerId=f"chat_{i}",
+                labels={"model": "gpt-4"},
+            )
+
+        # Verify 6 unprocessed events exist in stat_events
+        allEvents = await provider.executeFetchAll(
+            """SELECT event_type, COUNT(*) AS cnt FROM stat_events
+               WHERE processed = 0
+               GROUP BY event_type""",
+        )
+        eventTypeCounts = {r["event_type"]: r["cnt"] for r in allEvents}
+        assert eventTypeCounts.get("command") == 3
+        assert eventTypeCounts.get("message") == 3
+
+        # --- BUG REPRODUCTION: commandStorage.aggregate() claims ALL events ---
+        processedByCommand = await commandStorage.aggregate()
+
+        # BUG: Without the fix, processedByCommand == 6 (claims both types)
+        # FIX: With the fix, processedByCommand == 3 (claims only command events)
+        assert processedByCommand == 3, f"Expected 3, got {processedByCommand} - bug reproduced!"
+
+        # Verify aggregates have ONLY event_type='command' with count metric
+        commandAggregates = await provider.executeFetchAll(
+            """SELECT event_type, metric_key, metric_value, labels
+               FROM stat_aggregates
+               WHERE event_type = 'command' AND period_type = 'total' AND metric_key = 'count'
+               ORDER BY labels""",
+        )
+        # 3 per-consumer (chat_0, chat_1, chat_2) + 3 global rollups (one per event)
+        assert len(commandAggregates) == 6
+        # All rows should have event_type='command' and metric_key='count'
+        for row in commandAggregates:
+            assert row["event_type"] == "command"
+            assert row["metric_key"] == "count"
+        # Sum all count values
+        totalCount = sum(row["metric_value"] for row in commandAggregates)
+        # 3 per-consumer (count=1 each) + 3 global rollups (count=1 each) = 6.0
+        assert totalCount == 6.0
+
+        # Verify NO message-type aggregates exist yet
+        messageAggregates = await provider.executeFetchAll(
+            """SELECT COUNT(*) AS cnt FROM stat_aggregates
+               WHERE event_type = 'message'""",
+        )
+        assert messageAggregates[0]["cnt"] == 0
+
+        # Verify remaining unprocessed events are ONLY message type
+        remainingEvents = await provider.executeFetchAll(
+            """SELECT event_type, COUNT(*) AS cnt FROM stat_events
+               WHERE processed = 0
+               GROUP BY event_type""",
+        )
+        remainingCounts = {r["event_type"]: r["cnt"] for r in remainingEvents}
+        assert remainingCounts.get("command") is None
+        assert remainingCounts.get("message") == 3
+
+        # --- messageStorage.aggregate() should process remaining message events ---
+        processedByMessage = await messageStorage.aggregate()
+
+        # Should process exactly 3 message events
+        assert processedByMessage == 3
+
+        # Verify aggregates now have event_type='message' with tokens metric
+        messageAggregates = await provider.executeFetchAll(
+            """SELECT event_type, metric_key, metric_value, labels
+               FROM stat_aggregates
+               WHERE event_type = 'message' AND period_type = 'total' AND metric_key = 'tokens'
+               ORDER BY labels""",
+        )
+        # 3 per-consumer (chat_0, chat_1, chat_2) + 1 global rollup (all same model label)
+        assert len(messageAggregates) == 4
+        # All rows should have event_type='message' and metric_key='tokens'
+        for row in messageAggregates:
+            assert row["event_type"] == "message"
+            assert row["metric_key"] == "tokens"
+        # Sum all tokens values
+        totalTokens = sum(row["metric_value"] for row in messageAggregates)
+        # 3 per-consumer (tokens=100 each) + 1 global rollup (tokens=300) = 600.0
+        assert totalTokens == 600.0
+
+        # Verify no unprocessed events remain
+        allProcessed = await provider.executeFetchAll(
+            """SELECT COUNT(*) AS cnt FROM stat_events WHERE processed = 0""",
+        )
+        assert allProcessed[0]["cnt"] == 0
+
+    finally:
+        await sharedDb.manager.closeAll()

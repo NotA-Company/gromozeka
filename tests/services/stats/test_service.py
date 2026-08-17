@@ -682,3 +682,55 @@ class TestRegression:
 
         # Verify storage2 shows purged count
         assert "purged=50" in summary, "Summary must include purged count for storage2"
+
+    def testFactoryDataSourceNoneResolvesToDefault(self, statsAggregationService, mockConfigManager, mockDatabase):
+        """Test that dataSource=None resolves to database's manager.default."""
+        # Config with enabled = True
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 3600,
+            "events-retention-days": 30,
+        }
+
+        # Set a custom default datasource
+        mockDatabase.manager.default = "custom_datasource"
+
+        statsAggregationService.initialize(mockConfigManager, mockDatabase)
+
+        # Create storage without dataSource parameter (None)
+        storage = statsAggregationService.createStatsStorage("llm_request")
+
+        # Verify it's a DatabaseStatsStorage with the default datasource
+        assert storage.__class__.__name__ == "DatabaseStatsStorage"
+        assert storage.dataSource == "custom_datasource"
+
+    async def testIntervalClampFloor(
+        self, statsAggregationService, mockConfigManager, mockDatabase, mockStorage, sampleDelayedTask
+    ):
+        """Test that interval config value 30 is clamped to floor of 60."""
+        # Config with interval below floor
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 30,  # Below 60-second floor
+            "events-retention-days": 30,
+        }
+
+        # Initialize and register a storage
+        statsAggregationService.initialize(mockConfigManager, mockDatabase)
+        statsAggregationService._statsStorages["test_event"] = mockStorage
+
+        # Set _lastRunTime to 0 (first run, gate always passes)
+        statsAggregationService._lastRunTime = 0.0
+
+        # Run the handler (gate passes, config is parsed, interval clamped to 60)
+        await statsAggregationService._dtCronJob(sampleDelayedTask)
+
+        # Verify _intervalSeconds was clamped to 60
+        assert statsAggregationService._intervalSeconds == 60
+
+        # Set _lastRunTime to 61 seconds ago (more than clamped interval of 60)
+        statsAggregationService._lastRunTime = time.time() - 61
+
+        # Run again (should work now)
+        await statsAggregationService._dtCronJob(sampleDelayedTask)
+        assert mockStorage.aggregate.call_count >= 1

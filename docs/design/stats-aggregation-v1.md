@@ -1,7 +1,7 @@
 # Design: Statistics aggregation v1 — periodic trigger and retention
 
 **Date**: 2026-08-17
-**Status**: Phase 1 implemented (working tree, commit: `3c3c156a`); Phase 2 implemented (working tree)
+**Status**: Phase 1 implemented (working tree, commit: `3c3c156a`); Phase 2 implemented (commit: `549d0a81` + follow-up fix)
 **Owner**: TBD
 **Branch**: `lib-stat-improvement`
 
@@ -145,11 +145,13 @@ Facts verified against source on 2026-08-17.
   `aggregate(*, limit=1000, orphanTimeoutSeconds=3600) -> int` (lines 55-78 — returns
   events processed; claim-based). `NullStatsStorage` no-ops both (lines 81-118).
 - `DatabaseStatsStorage.aggregate()`
-  ([`internal/database/stats_storage.py`](../../internal/database/stats_storage.py):129-267):
-  1. **Claim** (lines 163-191): single `UPDATE` setting `processed_id = batchId,
-     claimed_at = now` on up to `limit` rows with `processed = 0 AND (processed_id IS
-     NULL OR claimed_at < :orphanTimeout)`, via `provider.applyPagination()` for
-     portable LIMIT, double-nested for MySQL ERROR 1093.
+   ([`internal/database/stats_storage.py`](../../internal/database/stats_storage.py):129-267):
+   1. **Claim** (lines 163-191): single `UPDATE` setting `processed_id = batchId,
+      claimed_at = now` on up to `limit` rows with `processed = 0 AND
+      event_type = :eventType AND (processed_id IS NULL OR claimed_at < :orphanTimeout)`,
+      via `provider.applyPagination()` for portable LIMIT, double-nested for
+      MySQL ERROR 1093. The `event_type` predicate ensures per-type isolation
+      when multiple storages share one table (Gate-2 fix, 2026-08-17).
   2. **Fetch** claimed rows by `processed_id = batchId` (lines 193-199); returns 0 if
      none.
   3. **Python pre-aggregation** keyed `(labelsJson, periodType, periodStart,

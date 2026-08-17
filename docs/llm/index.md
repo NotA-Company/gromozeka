@@ -256,7 +256,7 @@ vanishingly rare in the Gromozeka codebase.
 | [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) | `HandlersManager` – handler chain |
 | [`internal/database/database.py`](../../internal/database/database.py) | `Database` – all DB operations with repository pattern |
 | [`internal/config/manager.py`](../../internal/config/manager.py) | `ConfigManager` – TOML loading |
- | [`internal/services/cache/service.py`](../../internal/services/cache/service.py) | `CacheService` singleton |
+| [`internal/services/cache/service.py`](../../internal/services/cache/service.py) | `CacheService` singleton |
 | [`internal/services/llm/service.py`](../../internal/services/llm/service.py) | `LLMService` singleton |
 | [`internal/services/queue_service/service.py`](../../internal/services/queue_service/service.py) | `QueueService` singleton |
 | [`internal/services/storage/service.py`](../../internal/services/storage/service.py) | `StorageService` singleton |

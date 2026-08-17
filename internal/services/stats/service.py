@@ -139,7 +139,7 @@ class StatsAggregationService:
         QueueService.getInstance().registerDelayedTaskHandler(DelayedTaskFunction.CRON_JOB, self._dtCronJob)
 
         logger.info(
-            "StatsAggregationService initialized; aggregation cycle will run " "on CRON_JOB tick gated by elapsed time."
+            "StatsAggregationService initialized; aggregation cycle will run on CRON_JOB tick gated by elapsed time."
         )
 
     def createStatsStorage(self, eventType: str, dataSource: Optional[str] = None) -> StatsStorage:
@@ -222,7 +222,7 @@ class StatsAggregationService:
             intervalSeconds = max(60, int(statsConfig.get("aggregation-interval-seconds", 3600)))
             retentionDays = int(statsConfig.get("events-retention-days", 30))
 
-            # Store last-known-good interval
+            # Store last-known-good interval (applies to subsequent gates — a just-changed interval takes effect on the next tick)  # noqa: E501
             self._intervalSeconds = intervalSeconds
         except (TypeError, ValueError):
             logger.exception("stats aggregation: malformed [stats] config; skipping cycle")
@@ -233,9 +233,13 @@ class StatsAggregationService:
         perStoragePurged: Dict[str, int] = {}
         perStorageErrors: Dict[str, str] = {}
 
+        # Pre-compute storage labels (avoid duplication in two loops)
+        storageLabels: Dict[StatsStorage, str] = {}
         for storage in self._statsStorages.values():
-            # Get storage identifier for logging (eventType is the best we have)
-            storageLabel = getattr(storage, "eventType", None) or type(storage).__name__
+            storageLabels[storage] = getattr(storage, "eventType", None) or type(storage).__name__
+
+        for storage in self._statsStorages.values():
+            storageLabel = storageLabels[storage]
 
             try:
                 # Drain loop: repeated aggregate() until 0 or MAX_AGGREGATION_ROUNDS
@@ -262,7 +266,7 @@ class StatsAggregationService:
         # INFO summary line: per-storage processed/purged/errors
         summaryParts = []
         for storage in self._statsStorages.values():
-            storageLabel = getattr(storage, "eventType", None) or type(storage).__name__
+            storageLabel = storageLabels[storage]
             parts = [f"{storageLabel}:"]
             if storageLabel in perStorageProcessed:
                 parts.append(f"aggregated={perStorageProcessed[storageLabel]}")
