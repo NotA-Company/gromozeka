@@ -1,6 +1,9 @@
 # Our TODO list
 - [x] short-term memories - add score
 - [x] retry to send message on `telegram.error.TimedOut: Timed out`
+- [ ] add ability to add bot-memory. think how to inject it
+- [ ] move Max Webhook reciver to lib
+- [ ] move database providers to lib
 - [ ] On llm-tool-call-fix save wrong + fixed call to file
 - [ ] per-chat settings - how often to do memory-refinement
 - [ ] script for moving chat to separate db
