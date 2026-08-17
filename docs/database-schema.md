@@ -167,6 +167,7 @@ Migrations are located in [`internal/database/migrations/versions/`](../internal
 | 25 | [`migration_025_embedding_model_lookup.py`](../internal/database/migrations/versions/migration_025_embedding_model_lookup.py:1) | Normalises embedding provenance into a new [`models`](#models) lookup table (`model_id` integer PK, `UNIQUE(model, dimensions)`); swaps `chat_messages` and `user_memories` to carry `model_id` instead of the legacy `(model, dimensions)` / `(embedding_model, embedding_dimensions)` pairs; DROPS the [`message_embeddings`](#message_embeddings-dropped) BLOB side table + `idx_message_embeddings_chat_model` index; DROPS both vec0 virtual-table families (`vec_message_embeddings_{N}`, `vec_user_memories_{N}`) — they are lazily recreated at runtime with `model_id INTEGER PARTITION KEY`. `down()` is schema-correct but data-lossy for vectors (the dropped BLOBs cannot be regenerated from `model_id`; vec0 tables are not re-created by `down()` — they re-populate via the normal backfill cron). |
 | 26 | [`migration_026_chat_accessibility_bot_status.py`](../internal/database/migrations/versions/migration_026_chat_accessibility_bot_status.py:1) | Adds `bot_status TEXT NOT NULL DEFAULT 'active'` to [`chat_info`](#chat_info) (column only — no supporting index). Backs the chat-accessibility-tracking subsystem (lazy mark-on-failure at `TheBot.getChatAdmins` catch sites, activity-based recovery in `MessagePreprocessorHandler`, and an optional `botStatus` filter on every chat-listing repository method). Portable DDL: string-literal `DEFAULT 'active'` backfills every existing row to `ACTIVE` as part of the `ALTER TABLE` (no separate backfill; no `AUTOINCREMENT`/`SERIAL`/`DEFAULT CURRENT_TIMESTAMP`). `down()` runs `DROP COLUMN bot_status` (SQLite ≥3.35). See [`docs/design/chat-accessibility-tracking.md`](design/chat-accessibility-tracking.md). |
 | 27 | [`migration_027_drop_chat_stats_backfill_aggregates.py`](../internal/database/migrations/versions/migration_027_drop_chat_stats_backfill_aggregates.py:1) | Backfill chat_messages history into stat_aggregates (real categories/types, text_length) and drop chat_stats/chat_user_stats; tables: chat_stats, chat_user_stats, stat_aggregates |
+| 28 | [`migration_028_add_stat_events_retention_index.py`](../internal/database/migrations/versions/migration_028_add_stat_events_retention_index.py:1) | Add retention index on stat_events (processed, created_at) to support efficient deletion of processed events older than the retention window |
 
 ### Creating New Migrations
 
@@ -420,8 +421,9 @@ Append-only event log for raw statistics events. Used by the statistics collecti
 **Indexes:**
 - `idx_stat_events_unprocessed` on `(processed, processed_id, claimed_at)` — for fast lookup of unprocessed/orphaned events
 - `idx_stat_events_lookup` on `(event_type, event_time)` — for event lookup by type and time
+- `idx_stat_events_retention` on `(processed, created_at)` — for efficient deletion of processed events older than the retention window
 
-**Note:** Created by `migration_016`. Part of the v3 statistics library (`lib/stats/`). See [`internal/database/stats_storage.py`](../internal/database/stats_storage.py) for `DatabaseStatsStorage` implementation.
+**Note:** Created by `migration_016` (tables + unprocessed/lookup indexes) + `migration_028` (retention index). Part of the v3 statistics library (`lib/stats/`). See [`internal/database/stats_storage.py`](../internal/database/stats_storage.py) for `DatabaseStatsStorage` implementation.
 
 ---
 

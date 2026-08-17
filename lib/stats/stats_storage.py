@@ -77,6 +77,24 @@ class StatsStorage(ABC):
         """
         ...
 
+    @abstractmethod
+    async def purgeProcessed(self, *, retentionDays: int) -> int:
+        """Delete processed stat events older than the retention window.
+
+        Deletes rows with ``processed = 1 AND created_at < now - retentionDays``
+        through this storage's own data source. ``retentionDays <= 0`` is a no-op
+        (keep forever). Errors propagate to the caller (matching ``aggregate()``'s
+        contract — isolation is the coordinator's job); ``record()`` remains the
+        only never-raise method.
+
+        Args:
+            retentionDays: Minimum age in days for a processed row to be deleted.
+
+        Returns:
+            Number of rows deleted (0 if nothing was eligible or retention is off).
+        """
+        ...
+
 
 class NullStatsStorage(StatsStorage):
     """No-op storage — discards all events, ``aggregate()`` is a no-op.
@@ -111,6 +129,17 @@ class NullStatsStorage(StatsStorage):
         Args:
             limit: Ignored.
             orphanTimeoutSeconds: Ignored.
+
+        Returns:
+            0
+        """
+        return 0
+
+    async def purgeProcessed(self, *, retentionDays: int) -> int:
+        """No-op — returns 0.
+
+        Args:
+            retentionDays: Ignored.
 
         Returns:
             0

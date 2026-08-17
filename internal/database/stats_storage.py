@@ -266,10 +266,82 @@ class DatabaseStatsStorage(BaseStatsStorage):
 
         return nClaimed
 
+    async def purgeProcessed(self, *, retentionDays: int) -> int:
+        """Delete processed stat events older than the retention window.
+
+        Deletes rows with ``processed = 1 AND created_at < cutoff`` through
+        this storage's own data source. ``retentionDays <= 0`` is a no-op.
+        Errors propagate to the caller (matching ``aggregate()``'s contract).
+
+        Args:
+            retentionDays: Minimum age in days for a processed row to be deleted.
+
+        Returns:
+            Number of rows deleted (0 if nothing was eligible or retention is off).
+        """
+        if retentionDays <= 0:
+            return 0
+
+        cutoff = dbUtils.getCurrentTimestamp() - datetime.timedelta(days=retentionDays)
+        sqlProvider = await self.db.manager.getProvider(dataSource=self.dataSource, readonly=False)
+
+        # Count first — execute with NO_FETCH returns None, no portable rowcount
+        countRow = await sqlProvider.executeFetchOne(
+            """SELECT COUNT(*) AS cnt FROM stat_events
+               WHERE processed = 1 AND created_at < :cutoff""",
+            {"cutoff": cutoff},
+        )
+
+        if countRow is None or countRow["cnt"] == 0:
+            return 0
+
+        # Delete the rows
+        await sqlProvider.execute(
+            """DELETE FROM stat_events
+               WHERE processed = 1 AND created_at < :cutoff""",
+            {"cutoff": cutoff},
+        )
+
+        return int(countRow["cnt"])
+
 
 # ------------------------------------------------------------------
 # Internal helpers
 # ------------------------------------------------------------------
+
+
+def truncateToDay(eventTime: datetime.datetime) -> str:
+    """Truncate a datetime to the start of its day and return ISO-8601 string.
+
+    Performs plain `.replace()` truncation to midnight; does NOT handle
+    naive datetime normalization — callers must pass aware-UTC datetimes.
+
+    Args:
+        eventTime: The event timestamp (must be UTC, aware).
+
+    Returns:
+        ISO-8601 UTC string for the daily period start (hour, minute, second,
+        microsecond all zero).
+    """
+    truncated = eventTime.replace(hour=0, minute=0, second=0, microsecond=0)
+    return truncated.isoformat()
+
+
+def truncateToMonth(eventTime: datetime.datetime) -> str:
+    """Truncate a datetime to the start of its month and return ISO-8601 string.
+
+    Performs plain `.replace()` truncation to first of month; does NOT handle
+    naive datetime normalization — callers must pass aware-UTC datetimes.
+
+    Args:
+        eventTime: The event timestamp (must be UTC, aware).
+
+    Returns:
+        ISO-8601 UTC string for the monthly period start (day=1, hour,
+        minute, second, microsecond all zero).
+    """
+    truncated = eventTime.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return truncated.isoformat()
 
 
 def _hashLabels(labelsJson: str) -> str:
@@ -302,14 +374,14 @@ def _computePeriods(eventTime: datetime.datetime) -> dict[str, str]:
     Returns:
         dict mapping periodType to truncated ISO 8601 string.
     """
-    hourly = eventTime.replace(minute=0, second=0, microsecond=0)
-    daily = hourly.replace(hour=0)
-    monthly = daily.replace(day=1)
-    total = datetime.datetime(1970, 1, 1, tzinfo=datetime.UTC)
+    hourly = eventTime.replace(minute=0, second=0, microsecond=0).isoformat()
+    daily = truncateToDay(eventTime)
+    monthly = truncateToMonth(eventTime)
+    total = datetime.datetime(1970, 1, 1, tzinfo=datetime.UTC).isoformat()
 
     return {
-        "hourly": hourly.isoformat(),
-        "daily": daily.isoformat(),
-        "monthly": monthly.isoformat(),
-        "total": total.isoformat(),
+        "hourly": hourly,
+        "daily": daily,
+        "monthly": monthly,
+        "total": total,
     }

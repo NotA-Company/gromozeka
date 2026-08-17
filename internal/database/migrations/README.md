@@ -47,7 +47,9 @@ internal/database/migrations/
     ├── migration_011_add_confidence_to_spam_messages.py
     ├── migration_012_unify_cache_tables.py
     ├── migration_013_remove_timestamp_defaults.py
-    └── migration_026_chat_accessibility_bot_status.py
+    ├── migration_026_chat_accessibility_bot_status.py
+    ├── migration_027_drop_chat_stats_backfill_aggregates.py
+    └── migration_028_add_stat_events_retention_index.py
 ```
 
 > **Note (pre-existing drift):** migrations 014–025 are not listed in the file tree or the Migration History table below — they were never backfilled into this README. The authoritative, complete migration list lives in [`docs/database-schema.md`](../../../docs/database-schema.md) §"Migration Files" and [`docs/database-schema-llm.md`](../../../docs/database-schema-llm.md). Adding `migration_026` here for the chat-accessibility feature; backfilling 014–025 is out of scope for this change.
@@ -127,8 +129,9 @@ This section documents all migrations in the system, dood!
 | 013 | [`migration_013_remove_timestamp_defaults.py`](versions/migration_013_remove_timestamp_defaults.py:1) | Remove DEFAULT CURRENT_TIMESTAMP from timestamp columns | 19 tables (settings, chat_messages, chat_settings, chat_users, chat_info, chat_stats, chat_user_stats, media_attachments, delayed_tasks, user_data, spam_messages, ham_messages, chat_topics, chat_summarization_cache, bayes_tokens, bayes_classes, cache_storage, cache, media_groups) |
 | 026 | [`migration_026_chat_accessibility_bot_status.py`](versions/migration_026_chat_accessibility_bot_status.py:1) | Add `bot_status` column to `chat_info` for chat-accessibility tracking | chat_info |
 | 027 | [`migration_027_drop_chat_stats_backfill_aggregates.py`](versions/migration_027_drop_chat_stats_backfill_aggregates.py:1) | Backfill chat_messages history into stat_aggregates (real categories/types, text_length) and drop legacy tables | chat_stats, chat_user_stats, stat_aggregates |
+| 028 | [`migration_028_add_stat_events_retention_index.py`](versions/migration_028_add_stat_events_retention_index.py:1) | Add retention index on stat_events (processed, created_at) | stat_events |
 
-**Total Migrations:** 27
+**Total Migrations:** 28
 
 **Important Notes:**
 - Migration 013 is critical for SQL portability - it recreates 19 tables to remove `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns

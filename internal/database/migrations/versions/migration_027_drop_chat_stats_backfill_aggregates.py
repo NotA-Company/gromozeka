@@ -37,7 +37,7 @@ from lib.stats.stats_storage import GLOBAL_CONSUMER_ID
 
 from ...models import MessageCategory
 from ...providers import BaseSQLProvider, ExcludedValue, ParametrizedQuery
-from ...stats_storage import _hashLabels
+from ...stats_storage import _hashLabels, truncateToDay, truncateToMonth
 from ...utils import getCurrentTimestamp
 from ..base import BaseMigration
 
@@ -176,10 +176,10 @@ class Migration027DropChatStatsBackfillAggregates(BaseMigration):
                     textLength = len(messageText or "")
 
                     # Compute period starts for daily/monthly/total
-                    # Reconstruct datetime from datePart for truncation
+                    # Reconstruct datetime from datePart for truncation (UTC aware)
                     dateMidnight = datetime.datetime.combine(datePart, datetime.time.min, tzinfo=datetime.timezone.utc)
-                    dailyStart = _dayISO(dateMidnight)
-                    monthlyStart = _monthISO(dateMidnight)
+                    dailyStart = truncateToDay(dateMidnight)
+                    monthlyStart = truncateToMonth(dateMidnight)
 
                     periods = [
                         ("daily", dailyStart),
@@ -313,54 +313,3 @@ def getMigration() -> type[BaseMigration]:
         type[BaseMigration]: The migration class for this module.
     """
     return Migration027DropChatStatsBackfillAggregates
-
-
-# ------------------------------------------------------------------
-# Internal helpers (mirroring stats_storage.py for hash compatibility)
-# ------------------------------------------------------------------
-
-
-def _dayISO(dateVal: datetime.datetime) -> str:
-    """Convert a date timestamp to ISO-8601 daily period start.
-
-    Mirrors the daily truncation from ``_computePeriods`` in stats_storage.py:
-    truncates to midnight and returns ISO-8601 string.
-
-    Args:
-        dateVal: Date timestamp (may carry time-of-day; truncated here).
-
-    Returns:
-        ISO-8601 UTC string for the daily period start.
-    """
-    # Ensure we have UTC timezone
-    if dateVal.tzinfo is None:
-        dateVal = dateVal.replace(tzinfo=datetime.timezone.utc)
-    else:
-        dateVal = dateVal.astimezone(datetime.timezone.utc)
-
-    # Truncate to midnight (may carry time-of-day from source)
-    truncated = dateVal.replace(hour=0, minute=0, second=0, microsecond=0)
-    return truncated.isoformat()
-
-
-def _monthISO(dateVal: datetime.datetime) -> str:
-    """Convert a date timestamp to ISO-8601 monthly period start.
-
-    Mirrors the monthly truncation from ``_computePeriods`` in stats_storage.py:
-    truncates to first of month and returns ISO-8601 string.
-
-    Args:
-        dateVal: Date timestamp (may carry time-of-day; truncated here).
-
-    Returns:
-        ISO-8601 UTC string for the monthly period start.
-    """
-    # Ensure we have UTC timezone
-    if dateVal.tzinfo is None:
-        dateVal = dateVal.replace(tzinfo=datetime.timezone.utc)
-    else:
-        dateVal = dateVal.astimezone(datetime.timezone.utc)
-
-    # Truncate to first of month
-    truncated = dateVal.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    return truncated.isoformat()

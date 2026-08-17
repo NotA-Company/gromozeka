@@ -47,3 +47,25 @@ async def testNullAggregateWithLimit() -> None:
     storage = NullStatsStorage()
     result = await storage.aggregate(limit=500)
     assert result == 0
+
+
+async def testNullPurgeProcessedReturnsZero() -> None:
+    """Verify purgeProcessed() returns 0 for NullStatsStorage.
+
+    Returns:
+        None
+    """
+    storage = NullStatsStorage()
+    result = await storage.purgeProcessed(retentionDays=30)
+    assert result == 0
+
+
+async def testNullPurgeProcessedWithZeroRetention() -> None:
+    """Verify purgeProcessed() with 0 retention returns 0.
+
+    Returns:
+        None
+    """
+    storage = NullStatsStorage()
+    result = await storage.purgeProcessed(retentionDays=0)
+    assert result == 0

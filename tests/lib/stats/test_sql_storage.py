@@ -3,7 +3,9 @@
 import datetime
 import uuid
 from typing import Any
+from unittest.mock import patch
 
+from internal.database import utils as dbUtils
 from internal.database.stats_storage import DatabaseStatsStorage
 from lib.stats.stats_storage import GLOBAL_CONSUMER_ID
 
@@ -335,3 +337,291 @@ async def testRecordHandlesDataError(statsStorage: DatabaseStatsStorage) -> None
 
     # If we reach here without exception, the test passes
     assert True
+
+
+# ----------------------------------------------------------------------
+# Purge tests
+# ----------------------------------------------------------------------
+
+
+async def testPurgeDeletesOnlyProcessedOldEvents(statsStorage: DatabaseStatsStorage) -> None:
+    """Verify purge deletes only processed+old events.
+
+    Seed:
+    - Old processed (created 40 days ago) → should be deleted
+    - Fresh processed (created now) → should survive
+    - Old unprocessed (created 40 days ago) → should survive
+
+    Returns:
+        None
+    """
+    now = datetime.datetime.now(datetime.UTC)
+    oldTimestamp = now - datetime.timedelta(days=40)
+
+    provider = await statsStorage.db.manager.getProvider(dataSource=statsStorage.dataSource, readonly=False)
+
+    # Insert old processed event
+    await provider.execute(
+        """INSERT INTO stat_events
+           (event_id, event_type, event_time, data, labels,
+            processed, processed_id, claimed_at, created_at)
+           VALUES
+           (:eventId1, :eventType, :eventTime, :data, :labels,
+            1, NULL, NULL, :createdAt)""",
+        {
+            "eventId1": "old-processed-1",
+            "eventType": "llm_request",
+            "eventTime": oldTimestamp,
+            "data": '{"tokens": 100}',
+            "labels": '{"consumer":"test"}',
+            "createdAt": oldTimestamp,
+        },
+    )
+
+    # Insert fresh processed event
+    await provider.execute(
+        """INSERT INTO stat_events
+           (event_id, event_type, event_time, data, labels,
+            processed, processed_id, claimed_at, created_at)
+           VALUES
+           (:eventId2, :eventType, :eventTime, :data, :labels,
+            1, NULL, NULL, :createdAt)""",
+        {
+            "eventId2": "fresh-processed-1",
+            "eventType": "llm_request",
+            "eventTime": now,
+            "data": '{"tokens": 200}',
+            "labels": '{"consumer":"test"}',
+            "createdAt": now,
+        },
+    )
+
+    # Insert old unprocessed event
+    await provider.execute(
+        """INSERT INTO stat_events
+           (event_id, event_type, event_time, data, labels,
+            processed, processed_id, claimed_at, created_at)
+           VALUES
+           (:eventId3, :eventType, :eventTime, :data, :labels,
+            0, NULL, NULL, :createdAt)""",
+        {
+            "eventId3": "old-unprocessed-1",
+            "eventType": "llm_request",
+            "eventTime": oldTimestamp,
+            "data": '{"tokens": 300}',
+            "labels": '{"consumer":"test"}',
+            "createdAt": oldTimestamp,
+        },
+    )
+
+    # Purge with 30-day retention
+    deleted = await statsStorage.purgeProcessed(retentionDays=30)
+
+    # Should delete exactly 1 row (old processed)
+    assert deleted == 1
+
+    # Verify only old-processed-1 is gone
+    remainingRows = await provider.executeFetchAll(
+        """SELECT event_id FROM stat_events""",
+    )
+    remainingIds = {r["event_id"] for r in remainingRows}
+    assert remainingIds == {"fresh-processed-1", "old-unprocessed-1"}
+
+
+async def testPurgeReturnsCorrectCount(statsStorage: DatabaseStatsStorage) -> None:
+    """Verify purge returns the correct count of deleted rows.
+
+    Returns:
+        None
+    """
+    now = datetime.datetime.now(datetime.UTC)
+    oldTimestamp = now - datetime.timedelta(days=40)
+
+    provider = await statsStorage.db.manager.getProvider(dataSource=statsStorage.dataSource, readonly=False)
+
+    # Insert 5 old processed events
+    for i in range(5):
+        await provider.execute(
+            """INSERT INTO stat_events
+               (event_id, event_type, event_time, data, labels,
+                processed, processed_id, claimed_at, created_at)
+               VALUES
+               (:eventId, :eventType, :eventTime, :data, :labels,
+                1, NULL, NULL, :createdAt)""",
+            {
+                "eventId": f"old-processed-{i}",
+                "eventType": "llm_request",
+                "eventTime": oldTimestamp,
+                "data": '{"tokens": 100}',
+                "labels": '{"consumer":"test"}',
+                "createdAt": oldTimestamp,
+            },
+        )
+
+    # Purge with 30-day retention
+    deleted = await statsStorage.purgeProcessed(retentionDays=30)
+
+    assert deleted == 5
+
+    # Verify all are gone
+    remainingRows = await provider.executeFetchAll(
+        """SELECT COUNT(*) AS cnt FROM stat_events""",
+    )
+    assert remainingRows[0]["cnt"] == 0
+
+
+async def testPurgeRetentionZeroIsNoOp(statsStorage: DatabaseStatsStorage) -> None:
+    """Verify retentionDays=0 is a no-op (returns 0, deletes nothing).
+
+    Returns:
+        None
+    """
+    now = datetime.datetime.now(datetime.UTC)
+    oldTimestamp = now - datetime.timedelta(days=40)
+
+    provider = await statsStorage.db.manager.getProvider(dataSource=statsStorage.dataSource, readonly=False)
+
+    # Insert old processed event
+    await provider.execute(
+        """INSERT INTO stat_events
+           (event_id, event_type, event_time, data, labels,
+            processed, processed_id, claimed_at, created_at)
+           VALUES
+           (:eventId, :eventType, :eventTime, :data, :labels,
+            1, NULL, NULL, :createdAt)""",
+        {
+            "eventId": "old-processed-1",
+            "eventType": "llm_request",
+            "eventTime": oldTimestamp,
+            "data": '{"tokens": 100}',
+            "labels": '{"consumer":"test"}',
+            "createdAt": oldTimestamp,
+        },
+    )
+
+    # Purge with 0-day retention (should be no-op)
+    deleted = await statsStorage.purgeProcessed(retentionDays=0)
+
+    assert deleted == 0
+
+    # Verify row still exists
+    remainingRows = await provider.executeFetchAll(
+        """SELECT COUNT(*) AS cnt FROM stat_events""",
+    )
+    assert remainingRows[0]["cnt"] == 1
+
+
+async def testPurgeRetentionNegativeIsNoOp(statsStorage: DatabaseStatsStorage) -> None:
+    """Verify negative retentionDays is a no-op (returns 0, deletes nothing).
+
+    Returns:
+        None
+    """
+    now = datetime.datetime.now(datetime.UTC)
+    oldTimestamp = now - datetime.timedelta(days=40)
+
+    provider = await statsStorage.db.manager.getProvider(dataSource=statsStorage.dataSource, readonly=False)
+
+    # Insert old processed event
+    await provider.execute(
+        """INSERT INTO stat_events
+           (event_id, event_type, event_time, data, labels,
+            processed, processed_id, claimed_at, created_at)
+           VALUES
+           (:eventId, :eventType, :eventTime, :data, :labels,
+            1, NULL, NULL, :createdAt)""",
+        {
+            "eventId": "old-processed-1",
+            "eventType": "llm_request",
+            "eventTime": oldTimestamp,
+            "data": '{"tokens": 100}',
+            "labels": '{"consumer":"test"}',
+            "createdAt": oldTimestamp,
+        },
+    )
+
+    # Purge with negative retention (should be no-op)
+    deleted = await statsStorage.purgeProcessed(retentionDays=-5)
+
+    assert deleted == 0
+
+    # Verify row still exists
+    remainingRows = await provider.executeFetchAll(
+        """SELECT COUNT(*) AS cnt FROM stat_events""",
+    )
+    assert remainingRows[0]["cnt"] == 1
+
+
+async def testPurgeBoundaryExactCutoffSurvives(statsStorage: DatabaseStatsStorage) -> None:
+    """Verify row exactly at cutoff survives (comparison is <, not <=).
+
+    Uses a frozen clock to guarantee deterministic timing:
+    - Monkeypatch internal.database.utils.getCurrentTimestamp to return fixedNow
+    - Insert a row exactly at cutoff = fixedNow - 30 days (should SURVIVE)
+    - Insert a row 1 microsecond older than cutoff (should be DELETED)
+    - Assert strict < behavior: exact-cutoff row survives, older row deleted
+
+    Returns:
+        None
+    """
+    # Fixed UTC timestamp for the test
+    fixedNow = datetime.datetime(2024, 6, 15, 12, 0, 0, tzinfo=datetime.UTC)
+
+    # The exact cutoff time (30 days before fixedNow)
+    exactCutoff = fixedNow - datetime.timedelta(days=30)
+
+    # One microsecond older than cutoff (should be deleted)
+    oneMicrosecondOlder = exactCutoff - datetime.timedelta(microseconds=1)
+
+    with patch.object(dbUtils, "getCurrentTimestamp", return_value=fixedNow):
+        provider = await statsStorage.db.manager.getProvider(dataSource=statsStorage.dataSource, readonly=False)
+
+        # Insert row exactly at cutoff (should SURVIVE)
+        await provider.execute(
+            """INSERT INTO stat_events
+               (event_id, event_type, event_time, data, labels,
+                processed, processed_id, claimed_at, created_at)
+               VALUES
+               (:eventId1, :eventType, :eventTime, :data, :labels,
+                1, NULL, NULL, :createdAt)""",
+            {
+                "eventId1": "exact-cutoff-1",
+                "eventType": "llm_request",
+                "eventTime": exactCutoff,
+                "data": '{"tokens": 100}',
+                "labels": '{"consumer":"test"}',
+                "createdAt": exactCutoff,
+            },
+        )
+
+        # Insert row 1 microsecond older (should be DELETED)
+        await provider.execute(
+            """INSERT INTO stat_events
+               (event_id, event_type, event_time, data, labels,
+                processed, processed_id, claimed_at, created_at)
+               VALUES
+               (:eventId2, :eventType, :eventTime, :data, :labels,
+                1, NULL, NULL, :createdAt)""",
+            {
+                "eventId2": "older-than-cutoff-1",
+                "eventType": "llm_request",
+                "eventTime": oneMicrosecondOlder,
+                "data": '{"tokens": 200}',
+                "labels": '{"consumer":"test"}',
+                "createdAt": oneMicrosecondOlder,
+            },
+        )
+
+        # Purge with 30-day retention (cutoff is fixedNow - 30 days = exactCutoff)
+        # The predicate is created_at < cutoff
+        deleted = await statsStorage.purgeProcessed(retentionDays=30)
+
+        # Should delete exactly 1 (the one that's 1 microsecond older than cutoff)
+        assert deleted == 1
+
+        # Verify exact-cutoff-1 still exists
+        remainingRows = await provider.executeFetchAll(
+            """SELECT event_id FROM stat_events""",
+        )
+        remainingIds = {r["event_id"] for r in remainingRows}
+        assert remainingIds == {"exact-cutoff-1"}

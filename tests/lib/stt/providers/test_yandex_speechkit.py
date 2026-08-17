@@ -1783,6 +1783,17 @@ class _RecordingStatsStorage(StatsStorage):
         """
         return 0
 
+    async def purgeProcessed(self, *, retentionDays: int) -> int:
+        """No-op for this fake.
+
+        Args:
+            retentionDays: Ignored.
+
+        Returns:
+            int: Always 0.
+        """
+        return 0
+
 
 async def _providerWithStats(
     handler: Callable[[httpx.Request], httpx.Response],
