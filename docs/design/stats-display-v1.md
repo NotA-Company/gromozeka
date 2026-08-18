@@ -1,11 +1,11 @@
 # Design: Statistics display v1 — `/stats` command and optional web pages
 
 **Date**: 2026-08-18
-**Status**: **Amended 2026-08-18 (user round 3)** (PROPOSED content as amended)
+**Status**: **Amended 2026-08-18 (user round 3 + U11 same-day)** (PROPOSED content as amended)
 **Owner**: TBD
 **Branch**: `lib-stat-improvement`
 
-## Amendments (2026-08-18, user round 3 — user-ratified)
+## Amendments (2026-08-18, user round 3 — user-ratified; U11 later the same day)
 
 Ten user-ratified amendments (U1-U10) supersede parts of the original
 decisions; the affected D-decisions are reworked in place and marked
@@ -16,6 +16,12 @@ composition, failure-mode table shape (D15), UTC labeling, username join,
 three-bucket `sent` rendering, and Phase 1 — stands unchanged. New grounding
 for this round lives in §2.5 (addendum), §2.6 (addendum), and §2.12-§2.13;
 all file:line claims there were verified against source on 2026-08-18.
+
+A later same-day user decision adds **U11** (below): the page-registry
+mechanism of U9 is superseded — NO page tracking at all. D14 is rewritten
+again in place, D10's validation home moves to `StatsHandler` construction,
+§2.13's seeding analysis is mooted, and §4-§11 are updated accordingly.
+U9's ratified text below stays as history.
 
 - **U1 — Default outputs** (supersedes the D6 multi-section digest default and
   part of D3): GROUP chat → MESSAGE STATS ONLY for that chat (other sections
@@ -67,13 +73,44 @@ all file:line claims there were verified against source on 2026-08-18.
 - **U10 — Housekeeping**: §4 wiring, §5 config, §6 phases, §7 gates, §8
   risks, §9 open questions, §10 documentation impact, and §11 references
   updated; D-numbers unchanged (D14 rewritten in place; D16 added).
+- **U11 — No page tracking: one persisted one-shot deletion task per page**
+  (2026-08-18, later than U9-U10; supersedes U9's *mechanism* — U9's
+  ratified text above stays as history): NO page registry at all — no
+  `stats_pages` table, no migration 029, no `StatsPagesRepository` /
+  `getExpiredPages`, no periodic self-rescheduling cleanup task, no
+  first-CRON-tick seeding, and no `[stats-pages]` handling in
+  `StatsAggregationService` (the A4-style `[stats-pages]` caching there is
+  gone; D10 validation moves to `StatsHandler` construction). New mechanism:
+  after SUCCESSFUL page generation (CLI returned `{"id","url"}`),
+  `StatsHandler` schedules ONE DB-persisted delayed task —
+  `addDelayedTask(delayedUntil = now + ttl-hours × 3600, function =
+  DelayedTaskFunction.STATS_PAGES_CLEANUP, kwargs = {"pageId": <id>,
+  "command": <the delete-command template with {page_id} ALREADY
+  substituted>}, skipDB=False)` — survives restarts; kwargs are
+  self-contained (config frozen at load — no ConfigManager reload, NG6). The
+  `STATS_PAGES_CLEANUP` enum name is retained; semantics: one-shot per-page
+  deletion, NOT periodic cleanup. Handler owner = `StatsHandler`:
+  `registerDelayedTaskHandler(DelayedTaskFunction.STATS_PAGES_CLEANUP, …)`
+  in its `__init__` (the handler exists exactly when `[stats] enabled`,
+  since construction is gated; `[stats-pages]` requires `[stats]` —
+  dependency unchanged; NO seeding needed, the seed race is moot). A
+  pending deletion task while stats is disabled hits the queue-service
+  no-handler re-delay path (task waits until re-enabled) — accepted,
+  documented (R10). Handler behavior: run the resolved argv via
+  `asyncio.create_subprocess_exec` (same conventions as generation: ~30 s
+  timeout, DEVNULL/PIPE per `docs/llm/tasks.md:489`); CLI output
+  `{"deleted": 0}` tolerated; failure → WARNING log and the task completes
+  (SINGLE attempt, no retry loop — an orphaned page file is the accepted
+  bounded risk, R13). `ttl-hours` semantics: per-page deletion task delay
+  (was "page-registry cutoff").
 
 **Scope**: The read/display tier over `stat_aggregates`: a `query()` read API on the
 `lib/stats` `StatsStorage` ABC, ONE user-facing `/stats` bot command with a
 `/stats_web` alias (single-section default reply, scope-derived visibility,
 `--section`/`--user` drill-downs), and an optional config-gated web-page
 generation tier (payload → local CLI subprocess → self-contained static HTML,
-TTL-cleaned via a DB-persisted delayed task over a page registry).
+TTL-cleaned via ONE DB-persisted one-shot delayed deletion task per page —
+no page tracking, U11).
 This closes the last deferred item of
 [stats-collecting-v1](./stats-collecting-v1.md) NG3 / [stats-aggregation-v1](./stats-aggregation-v1.md) NG2.
 
@@ -105,8 +142,8 @@ grammar, scope-derived access, bounded single-section default reply, drill-downs
 registered only when `[stats] enabled`; (3) an optional `--web` flag (equivalent to
 the `/stats_web` alias) that renders the same query results into a self-contained
 static HTML page via a configurable local CLI subprocess, rate-limited per chat and
-cleaned up by TTL through a persisted delayed task and a page registry. The
-in-chat output must never depend on tier 3 working.
+cleaned up by TTL through one persisted one-shot delayed deletion task per page
+(no page tracking, U11). The in-chat output must never depend on tier 3 working.
 
 ### 1.1 Goals
 
@@ -131,18 +168,19 @@ in-chat output must never depend on tier 3 working.
   `/stats_web` alias) generates a self-contained HTML page (UUID filename,
   inline CSS, no external resources, zero new runtime dependencies) via a
   configurable CLI subprocess (stdin JSON in, stdout JSON `{"id", "url"}` out),
-  rate-limited per chat, TTL-cleaned via a persisted delayed task, best-effort
-  — failure never degrades the in-chat reply.
+  rate-limited per chat, TTL-cleaned via one persisted one-shot delayed
+  deletion task per page (U11), best-effort — failure never degrades the
+  in-chat reply.
 - **G6** — All displayed periods are labeled UTC.
 
 ### 1.2 Non-goals
 
-- **NG1** — *(superseded 2026-08-18, U9/U1)* Originally "no new tables, no
-  migration, no schema change". The read API over `stat_events`/
-  `stat_aggregates` remains migration-free, but the amended design ADDS the
-  `stats_pages` page-registry table (migration 029, D14) and extends
-  `ChatInfoDict` with the user's `messages_count` (existing column, no DDL,
-  §2.5 addendum).
+- **NG1** — No new tables, no migration, no schema change *(restored
+  2026-08-18, U11 — the U9-era page-registry table was removed before any
+  implementation)*. The read API over `stat_events`/`stat_aggregates` is
+  migration-free, and U11's per-page deletion tasks need no tracking table;
+  the only data-model change is the additive `ChatInfoDict` extension with
+  the user's `messages_count` (existing column, no DDL, §2.5 addendum).
 - **NG2** — No `stat_aggregates` retention/cardinality management
   (carried over from stats-aggregation-v1 §9 Q2; see R1).
 - **NG3** — No per-user attribution for `llm_request` events (they carry no
@@ -536,6 +574,17 @@ patch `…asyncio.create_subprocess_exec`
 
 ### 2.13 Delayed tasks — persisted lifecycle (grounding for the cleanup task, U9)
 
+> **Superseded by U11 (2026-08-18):** the live design no longer uses a
+> periodic self-rescheduling STATS_PAGES_CLEANUP task, so this section's
+> seeding analysis (the idempotent-seed consequence, the first-CRON-tick
+> placement rule, and the duplicate-chain crash window — risks R15/R16,
+> removed from §8) is MOOT — no seeded task exists. The body below stands
+> as the verified historical record. The live mechanism (ONE one-shot
+> per-page task scheduled on generation, D14) still relies on the per-task
+> facts here: DB persistence + restart restoration (:309-318), mark-done
+> after handlers run (:401-402), and the no-handler re-delay path
+> (:385-388).
+
 - `DelayedTaskFunction` StrEnum today: `SEND_MESSAGE`, `DELETE_MESSAGE`,
   `CRON_JOB`, `DO_EXIT` — no stats member
   ([types.py:9-19](../../internal/services/queue_service/types.py));
@@ -594,9 +643,11 @@ patch `…asyncio.create_subprocess_exec`
 
 All of D1-D15 encode the user-ratified direction (2026-08-18); sub-choices the
 ratified text left open are resolved against the evidence in §2 and marked
-**flagged** with rationale. The **2026-08-18 amendments** (user round 3, U1-U10,
-above) rework D1/D2/D3/D6/D7/D10/D11/D12/D14 in place, adjust D15's table, and
-add D16; amended decisions are marked *(amended 2026-08-18)*.
+**flagged** with rationale. The **2026-08-18 amendments** (user round 3,
+U1-U10, plus the later same-day U11, above) rework D1/D2/D3/D6/D7/D10/D11/
+D12/D14 in place, adjust D15's table, and add D16; U11 rewrites D14's
+mechanism again (one-shot per-page deletion, no registry) and moves D10's
+validation home. Amended decisions are marked *(amended 2026-08-18)*.
 
 ### D1 — ONE `/stats` command (+ `/stats_web` alias), DEFAULT permission, gated registration *(amended 2026-08-18: U2/U4)*
 
@@ -920,30 +971,37 @@ Both the reply header ("7d (UTC)") and the page meta label all periods as UTC.
 No local-time conversion is offered in v1 (the `chat_users.timezone` column exists
 but per-user rendering timezone is out of scope).
 
-### D10 — Web tier config-gated: `[stats-pages]`, default off *(amended 2026-08-18: U7 — two command templates, no output-dir)*
+### D10 — Web tier config-gated: `[stats-pages]`, default off *(amended 2026-08-18: U7 — two command templates, no output-dir; U11 — validation moved to StatsHandler construction)*
 
 New config section (§5 for the diff). When `enabled = false` (default) or the
 section is absent: `--web`/`/stats_web` produces an informative reply ("web
 pages disabled — ask the operator to configure `[stats-pages]`") and the
 in-chat output is unaffected — exactly the WeatherHandler-gating philosophy
 applied to a sub-feature. Keys: `enabled`, `base-url` (composed into the
-reply link), `ttl-hours` (page-registry cutoff, unit-explicit, default 24),
+reply link), `ttl-hours` (per-page deletion task delay *(superseded
+2026-08-18, U11 — was "page-registry cutoff")*, unit-explicit, default 24),
 `generate-command` and `delete-command` (template lists, D12),
 `ratelimiter-queue` (default `"stats-pages"`).
 
 - **`output-dir` is REMOVED** (U7): the CLI owns all storage decisions — the
   bot neither knows nor cares where pages are stored, or whether they are
-  files at all. TTL is likewise the BOT's decision over the page registry
-  (`ttl-hours`), not a CLI argument.
+  files at all. TTL is likewise the BOT's decision — the per-page deletion
+  task's delay (`ttl-hours`, U11) — not a CLI argument.
 - Accessed via a typed accessor `ConfigManager.getStatsPagesConfig()`
   mirroring `getStatsConfig()` (§2.7 dominant pattern); the handler only
-  reads cached scalars (NG6). Validation lives at exactly ONE site:
-  `StatsAggregationService.initialize` (A4-style — the `[stats-pages]` values
-  join the existing atomic parse-locals-then-commit block,
-  [service.py:142-202](../../internal/services/stats/service.py)). Accepted
-  consequence (fail-loud by design): malformed `[stats-pages]` values crash
-  startup even when `[stats] enabled = false` — `initialize` is unconditional
-  ([main.py:90](../../main.py)).
+  reads cached scalars (NG6). Validation lives at exactly ONE site
+  *(moved 2026-08-18, U11 — previously
+  `StatsAggregationService.initialize`, A4-style)*: **`StatsHandler`
+  construction**. When `[stats-pages] enabled = true` → validate that
+  `generate-command` and `delete-command` are non-empty `list[str]` entries
+  and `ttl-hours` is a positive int; fail loud (construction raises → bot
+  startup fails — operator error, consistent with the repo's fail-loud
+  philosophy and the gated-handler `__init__` self-check precedent, §2.6).
+  When `enabled = false` (default) → NO validation; `--web`/`/stats_web`
+  returns the disabled reply. (This replaces the old "validate even when
+  stats off" stance, whose rationale — the unconditional service
+  `initialize` — is gone since the service no longer touches
+  `[stats-pages]` at all.)
 
 ### D11 — CLI contract: stdin JSON in, self-contained HTML out, JSON stdout *(user-ratified; amended 2026-08-18: U7/U8 — placement and storage ownership)*
 
@@ -990,7 +1048,7 @@ surfaces as the D15 failure note, logged):
 | `generate-command` | `{user_id}` | The calling user's id |
 | | `{chat_id}` | **The chat the command was issued in** — in private scope with a chatId positional this is the TARGET chat id (its stats are what the page shows) *(amendment: follows U1 targeting)* |
 | | `{platform}` | `"max"` \| `"telegram"` — `self.botProvider.value` (§2.6) |
-| `delete-command` | `{page_id}` | The page id returned by `generate` (the registry key) |
+| `delete-command` | `{page_id}` | The page id returned by `generate` (the per-page deletion task's key, U11) |
 
 - **`{platform}` on `delete-command`: decided NO** — deletion needs only the
   id; keeping the placeholder set minimal documents that the delete contract
@@ -998,7 +1056,8 @@ surfaces as the D15 failure note, logged):
 - **`{mode}`, `{output_dir}`, `{ttl_hours}` placeholders are REMOVED
   entirely** (U7; every prior mention purged from this doc): there is no mode
   switch (two commands instead), the CLI owns storage location, and TTL is
-  the bot's registry decision (`ttl-hours` key, D14) — never a CLI argument.
+  the bot's per-page deletion-task delay (`ttl-hours` key, D14/U11) — never
+  a CLI argument.
 - Default values (both point at the built-in generator, U8):
 
   ```toml
@@ -1013,10 +1072,10 @@ surfaces as the D15 failure note, logged):
 
 - `generate` prints `{"id": "<uuid>", "url": "<uuid>.html"}` (D11);
   `delete` prints `{"deleted": 0|1}` (0 = no such page — still a success
-  exit so the registry row can be dropped, D14). The page id is DATA, not
+  exit so the deletion task completes, D14). The page id is DATA, not
   configuration — it appears only as the `{page_id}` placeholder the bot
-  substitutes from the registry row; no trailing-positional convention
-  anymore.
+  substitutes into the scheduled deletion task's argv; no
+  trailing-positional convention anymore.
 - The built-in CLI's own storage flags/defaults are its internal affair
   (D11); external tools honor the same stdin/stdout JSON contracts.
 
@@ -1048,101 +1107,86 @@ surfaces as the D15 failure note, logged):
   concurrent `--web` calls — benign (R11). Suggested defaults: **3 pages per chat per
   hour** (`windowSeconds = 3600`, `maxRequests = 3`).
 
-### D14 — TTL cleanup via a DB-persisted self-rescheduling delayed task + page registry *(rewritten 2026-08-18: U9 — replaces the cron-rider cleanup decision)*
+### D14 — TTL cleanup: ONE persisted one-shot delayed deletion task per page, no page tracking *(rewritten 2026-08-18: U9, then U11 — supersedes the U9 registry mechanism)*
 
-- **New enum member**: `DelayedTaskFunction.STATS_PAGES_CLEANUP =
-  "statsPagesCleanup"` ([types.py](../../internal/services/queue_service/types.py),
-  §2.13). The task is **DB-PERSISTED** (`skipDB=False`) and self-reschedules —
-  it survives bot restarts naturally (restored by `startDelayedScheduler`,
-  service.py:309-318). This is the user's rationale for the whole mechanism,
-  and the contrast with the CRON_JOB tick it was previously riding (that tick
-  is `skipDB=True` in-memory only, service.py:190-201 — the SHAPE is copied,
-  the persistence is new).
-- **Handler registration**: `StatsAggregationService.initialize` registers
+> **Superseded by U11 (2026-08-18).** The prior U9-era body of this decision
+> — the `stats_pages` page-registry DDL (migration 029), the
+> `StatsPagesRepository` (`addPage` / `getExpiredPages(cutoff, limit)` /
+> `deletePage`), the bounded batch (≤10) with `ORDER BY created_at ASC`,
+> retry-forever semantics for failing deletes, the hourly self-rescheduling
+> handler chain registered by `StatsAggregationService`, and the idempotent
+> first-CRON-tick seed with its placement rules — is **removed from the live
+> spec**; see U9's ratified bullet and §2.13 for the historical record. The
+> user decided (2026-08-18): no page tracking at all.
+
+- **Enum member — name retained, semantics changed**:
+  `DelayedTaskFunction.STATS_PAGES_CLEANUP = "statsPagesCleanup"`
+  ([types.py](../../internal/services/queue_service/types.py), §2.13) — now
+  a **one-shot per-page deletion**, NOT a periodic cleanup.
+- **Scheduling — on generation, exactly one task per page**: after a
+  SUCCESSFUL generation (the CLI returned `{"id","url"}`, D11) and the reply
+  link is composed, `StatsHandler` schedules the deletion immediately:
+
+  ```python
+  await QueueService.getInstance().addDelayedTask(
+      delayedUntil=time.time() + self._pagesTtlHours * 3600,   # ttl-hours × 3600
+      function=DelayedTaskFunction.STATS_PAGES_CLEANUP,
+      kwargs={
+          "pageId": pageId,
+          # delete-command template with {page_id} substituted NOW:
+          "command": [part.format_map({"page_id": pageId}) for part in self._pagesDeleteCommand],
+      },
+      skipDB=False,   # DB-backed → survives restarts (§2.13 restoration :309-318)
+  )
+  ```
+
+  DB-persisted (`skipDB=False`) → restored by `startDelayedScheduler`
+  across restarts (service.py:309-318, §2.13). The kwargs are
+  **self-contained**: the delete argv is resolved at scheduling time from
+  the config cached at handler construction — config frozen at load, no
+  ConfigManager reload at fire time (NG6). Auto `taskId` (each task fires
+  exactly once; the repo's no-upsert INSERT quirk, §2.13, is irrelevant
+  here).
+- **Handler ownership = StatsHandler**: `__init__` calls
   `QueueService.getInstance().registerDelayedTaskHandler(
-  DelayedTaskFunction.STATS_PAGES_CLEANUP, self._dtStatsPagesCleanup)` — the
-  nine-class `__init__`-time precedent (aggregation-v1 §2.3). Handler shape:
+  DelayedTaskFunction.STATS_PAGES_CLEANUP, self._dtStatsPagesCleanup)`
+  ([service.py:233-266](../../internal/services/queue_service/service.py)).
+  Construction is gated on `[stats] enabled` (D1), so the handler exists
+  exactly when the command does — and `[stats-pages]` requires `[stats]`
+  (dependency unchanged, D10). **NO seeding**: there is no periodic task to
+  seed; the U9-era first-CRON-tick seed and its placement rules are moot
+  (§2.13 supersession note).
+- **No-handler consequence (accepted, documented — R10)**: a pending
+  deletion task that fires while stats is disabled (handler not
+  constructed) hits the queue-service no-handler re-delay path — re-delayed
+  +60 s with an error log (service.py:385-388, §2.13) — the task simply
+  waits until stats is re-enabled and the handler registers again.
+- **Handler behavior — SINGLE attempt, no retry**:
 
   ```python
   async def _dtStatsPagesCleanup(self, task: DelayedTask) -> None:
+      pageId = task.kwargs.get("pageId")
       try:
-          if self._pagesEnabled:                       # cached [stats-pages] enabled
-              await self._cleanupExpiredStatsPages()   # bounded batch (below)
+          # run task.kwargs["command"] (the RESOLVED argv) via
+          # asyncio.create_subprocess_exec / the shared launcher — same
+          # conventions as generation (D11): ~30 s wait_for + kill-on-timeout,
+          # DEVNULL/PIPE per docs/llm/tasks.md:489; stdout {"deleted": 0}
+          # tolerated (page already gone — nothing to do).
+          ...
       except Exception:
-          logger.exception("stats-pages TTL cleanup failed")
-      finally:
-          await QueueService.getInstance().addDelayedTask(     # PERSISTED reschedule
-              time.time() + self._pagesCleanupIntervalSeconds,   # 3600 (hourly = TTL granularity)
-              DelayedTaskFunction.STATS_PAGES_CLEANUP, kwargs={}, skipDB=False,
-          )
+          logger.warning("stats-pages deletion failed for page %s", pageId)
+      # either way the task COMPLETES (the loop marks the row done,
+      # service.py:401-402) — no retry loop, no reschedule; an orphaned
+      # page file is the accepted bounded risk (R13).
   ```
 
-  Always reschedules (in `finally`) — the pending row ticks at ~zero cost when
-  `[stats-pages]` is later disabled (config is cached at init, NG6; the
-  work-gate no-ops), and resumes if re-enabled. Auto `taskId` per re-add —
-  a FIXED id is unusable: the repo INSERT is not an upsert and completed rows
-  are never overwritten (§2.13).
-- **Idempotent seeding, only when `[stats-pages] enabled`**: seeded from the
-  FIRST CRON tick (`self._pagesCleanupSeeded` in-memory flag), by checking
-  `db.delayedTasks.getPendingDelayedTasks()` (filter in Python for
-  `function == "statsPagesCleanup"` — no by-function repo query exists, §2.13)
-  and calling `addDelayedTask(..., skipDB=False)` only when none is pending.
-  **Placement pinned against the current `_dtCronJob`**
-  ([service.py:248-272](../../internal/services/stats/service.py)): the seed
-  check runs AFTER the `if not self._statsStorages: return` early return
-  (:263-265) and BEFORE the interval gate (:270-272) — i.e. on the first tick
-  past the registry check regardless of elapsed interval, so first seeding is
-  never delayed by `aggregation-interval-seconds`. **Dependency (explicit)**:
-  with `[stats] enabled = false` the storage registry is empty and the rider
-  returns BEFORE the seed — `[stats-pages]` therefore requires `[stats]`
-  enabled; pages-only mode (stats off + pages on) never seeds. First-CRON-tick
-  seeding is race-free: the tick fires strictly AFTER
-  `startDelayedScheduler` finished restoring pending rows (§2.13) — seeding
-  from `GromozekBot.__init__` could race the restoration read and permanently
-  duplicate the task.
-- **Page registry (REQUIRED CONSEQUENCE — teamlead judgment call, flagged for
-  the reviewer)**: since delete is by `{page_id}` and the bot no longer knows
-  output paths (U7), the bot must REMEMBER generated pages. New table
-  (migration **029** — `028` is the highest today, verified):
-
-  ```sql
-  CREATE TABLE IF NOT EXISTS stats_pages (
-      page_id    TEXT PRIMARY KEY NOT NULL,   -- the CLI-returned uuid — app-known, no AUTOINCREMENT
-      url        TEXT NOT NULL,               -- the relative url (uuid.html)
-      chat_id    INTEGER NOT NULL,
-      user_id    INTEGER NOT NULL,
-      created_at TIMESTAMP NOT NULL           -- app-set (no DEFAULT CURRENT_TIMESTAMP, migration-013 rule)
-  );
-  CREATE INDEX IF NOT EXISTS idx_stats_pages_created_at ON stats_pages (created_at);
-  ```
-
-  Rules per the
-  [`add-database-migration`](../../.agents/skills/add-database-migration/SKILL.md)
-  skill: portable types only, no AUTOINCREMENT, no DEFAULT CURRENT_TIMESTAMP,
-  app-set timestamps, `:named` params; single-natural-key PK (`page_id`); the
-  created_at index follows the `idx_cache_updated_at` "for TTL cleanup"
-  precedent (migration_012:78). Accessed via a new `StatsPagesRepository`
-  (`internal/database/repositories/stats_pages.py`): `addPage`,
-  `getExpiredPages(cutoff, limit)` (bounded via `applyPagination`,
-  `ORDER BY created_at ASC` — oldest first; permanently-failing deletes are
-  therefore retried each cycle — bounded, accepted), `deletePage(pageId)`.
-  Rows are inserted by the handler on SUCCESSFUL generation only (D15).
-- **Cleanup body**: `cutoff = now - ttlHours`; select expired registry rows
-  (bounded batch per run — default 10; worst-case handler duration is
-  batch × per-page timeout = 10 × 30 s ≈ 5 min, vs ≈ 25 min at a batch of 50
-  — the single-threaded delayed-task queue stalls behind the handler, so the
-  smaller default keeps other delayed tasks waiting minutes, not tens of
-  minutes); for each, invoke the shared launcher
-  with `delete-command` substitutions `{"page_id": row.page_id}`; on exit 0
-  (including `{"deleted": 0}` — page already gone) delete the registry row.
-  **Failure isolation per page**: each page's delete is wrapped; a failing
-  page is logged at WARNING and retried next run (its row stays). Handler
-  exceptions are additionally isolated by the QueueService invocation loop
-  (service.py:390-399, §2.13).
-- Registry-orphan pages (delete-command fails persistently) are **accepted**:
-  the page just outlives its TTL (R13); the registry row keeps flagging it
-  for retry, and an operator can always invoke `delete-command` manually with
-  the page_id (or clean storage their way — the bot doesn't know it, U7).
+- **No page registry**: the bot does NOT remember generated pages (U11) —
+  no table, no migration, no repository (NG1's migration-free stance
+  restored). Consequence: a failed deletion is NOT retried — the page id
+  exists only in the WARNING log and the original reply link; an operator
+  can invoke `delete-command` manually with that page_id (the bot knows
+  nothing else about storage, U7). This is the accepted trade for the
+  removed tracking machinery.
 - A user-facing delete/list UI remains NG5/O1.
 
 ### D15 — Failure modes: in-chat reply always wins *(user-ratified; table rows adjusted 2026-08-18: U7/U9)*
@@ -1156,7 +1200,7 @@ The `--web` tier is best-effort and **must never raise out of the command handle
 | rate limit exceeded | informative reply (with retry hint), no CLI |
 | nonzero exit / unparseable stdout / timeout (30 s, kill) | in-chat reply delivered + one-line "page generation failed" note |
 | unknown template placeholder (`KeyError`) / missing `generate-command` or `delete-command` | same as above (config error, logged at WARNING with the key) |
-| registry INSERT fails after a successful generation | in-chat reply + link still delivered; page becomes UNTRACKED (orphan — outlives TTL, manual delete possible); WARNING log (R13) |
+| deletion-task scheduling fails after a successful generation | in-chat reply + link still delivered; page becomes UNTRACKED (orphan — outlives TTL, manual delete possible); WARNING log (R13) |
 | any unexpected exception in the tier | same as above |
 
 Query-layer errors (D4 raise-on-error) are caught one level up: the handler
@@ -1228,6 +1272,8 @@ User: /stats [help|chatId] [--period=…] [--section=…] [--user=<id>] [--web] 
          │
          ▼
 StatsHandler.statsCommand                    internal/bot/common/handlers/stats.py [NEW]
+  ├─ __init__: [stats-pages] validation when enabled (D10/U11) + register
+  │     STATS_PAGES_CLEANUP handler (D14/U11) — exists exactly when [stats] enabled
   ├─ ALLOW_SHOW_STATS gate (D16): group/channel only; off → informative reply, STOP
   ├─ parse args (D2, argparse-style — NEW pattern; usage reply on any bad input)
   ├─ chat type: ensuredMessage.recipient.chatType (D3/§2.6 — never chatId sign)
@@ -1250,20 +1296,21 @@ StatsHandler.statsCommand                    internal/bot/common/handlers/stats.
         │   payload = view-model JSON on stdin
         │   ◀ stdout {"id": "<uuid>", "url": "<uuid>.html"}
         ├─ reply: base-url + "/" + url          (failures → D15 table)
-        └─ on success: INSERT stats_pages(page_id, url, chat_id, user_id, now)   [D14 registry]
+        └─ on success: ONE delayed task (D14/U11) —
+              addDelayedTask(now + ttl-hours×3600, STATS_PAGES_CLEANUP,
+                kwargs={"pageId": id, "command": delete-command argv
+                        with {page_id} substituted}, skipDB=False)
 
 QueueService delayed scheduler                                    [service.py:268-320]
   ├─ CRON_JOB tick (existing, skipDB=True) → StatsAggregationService._dtCronJob
-  │     └─ [NEW first-tick step] if [stats-pages] enabled and not yet seeded:
-  │           getPendingDelayedTasks() has no STATS_PAGES_CLEANUP row?
-  │           → addDelayedTask(STATS_PAGES_CLEANUP, skipDB=False)   [D14 idempotent seed]
-  └─ STATS_PAGES_CLEANUP task [NEW, DB-PERSISTED, restored on restart :309-318]
-        → StatsAggregationService._dtStatsPagesCleanup(task)
-              ├─ not enabled → no-op
-              ├─ select expired stats_pages rows (cutoff = now - ttl-hours, batch ≤ 10)
-              ├─ per page: launcher(delete-command, {page_id}) → on success DELETE row
-              │   (per-page try/except — failed rows retry next run)
-              └─ finally: addDelayedTask(+3600 s, STATS_PAGES_CLEANUP, skipDB=False)  [persisted chain]
+  │     (UNCHANGED by U11 — no seed step; the service never touches [stats-pages])
+  └─ STATS_PAGES_CLEANUP task [one-shot PER PAGE, DB-PERSISTED, restored on restart :309-318]
+        → StatsHandler._dtStatsPagesCleanup(task)   [registered in handler __init__, D14/U11]
+              ├─ run task.kwargs["command"] (resolved argv) via the launcher /
+              │   asyncio.create_subprocess_exec (~30 s timeout, kill; {"deleted": 0} tolerated)
+              └─ failure → WARNING log (page id); task completes — SINGLE attempt,
+                  no retry, no reschedule (orphaned page = accepted bounded risk, R13);
+                  no handler registered (stats disabled) → +60 s re-delay, task waits (R10)
 
 lib/stats/stats_pages/ [NEW package, ./venv/bin/python3 -m lib.stats.stats_pages]
   ├─ __main__.py   argparse: generate | delete <page_id> (no cleanup verb — TTL is the bot's job)
@@ -1272,8 +1319,9 @@ lib/stats/stats_pages/ [NEW package, ./venv/bin/python3 -m lib.stats.stats_pages
 ```
 
 Read path over `stat_aggregates` (provider, `readonly=True`) is unchanged;
-`stat_events` untouched. Schema delta: ONE new table (`stats_pages`,
-migration 029) + the `ChatInfoDict.messages_count` field (existing column).
+`stat_events` untouched. Schema delta: NONE (U11 removed the page registry —
+no migration, no new table); the only data-model change is the additive
+`ChatInfoDict.messages_count` field (existing column, no DDL).
 
 ---
 
@@ -1286,7 +1334,7 @@ default-off so merged behavior is unchanged):
 [stats-pages]
 enabled = false
 # base-url = "https://example.com/stats"    # REQUIRED when enabled; composed into the reply link
-ttl-hours = 24                              # page-registry cutoff (D14) — the BOT's TTL decision
+ttl-hours = 24                              # per-page deletion task delay (D14/U11) — the BOT's TTL decision
 ratelimiter-queue = "stats-pages"
 generate-command = [                        # D12; defaults point at the built-in generator (U8)
     "./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate",
@@ -1340,9 +1388,10 @@ table — **unchanged by this amendment round**):
 
 `[stats]` itself is unchanged. Reader: new typed accessor
 `ConfigManager.getStatsPagesConfig()` (D10). Validation errors (missing
-`base-url`, missing `generate-command`/`delete-command` when enabled,
-malformed ttl) fail loudly at the single validation site —
-`StatsAggregationService.initialize` (D10, A4 precedent).
+`base-url`, empty `generate-command`/`delete-command` when enabled,
+non-positive-int `ttl-hours`) fail loudly at the single validation site —
+`StatsHandler` construction (D10/U11; construction raises → bot startup
+fails). No validation when `enabled = false` (default).
 
 ---
 
@@ -1478,33 +1527,23 @@ period/section/user/chat drill-downs, scope-derived visibility) gated on
 
 **Gate 2:** `make format lint`; `make test`; `make check-docs`.
 
-### Phase 3a — Web tier: CLI generator + config + page-registry migration *(amended 2026-08-18: U7/U8/U9)*
+### Phase 3a — Web tier: CLI generator + config *(amended 2026-08-18: U7/U8/U9/U11 — U11 removed the migration + repository deliverables)*
 
-Sized ~35 steps: new lib package (3 files), migration 029 + repository, 2
-config files, 1 edited internal file, tests. (The 3a/3b split is
-**unconditional** — combined the two sub-phases span 15+ files, so each
-carries its own budget and the ~60-step-per-invocation ceiling holds by
-construction.) **Split contingency (pre-declared):** if 3a itself overflows,
-split **3a-split** — migration 029 + repository + their tests vs generator
-package + config + their tests.
+Sized ~25 steps: new lib package (3 files), 2 config files, 1 edited
+internal file, tests. (The 3a/3b split is **unconditional** — combined the
+two sub-phases span 10+ files, so each carries its own budget and the
+~60-step-per-invocation ceiling holds by construction. The pre-declared
+3a-split contingency — migration + repository vs generator — is gone with
+the U11 removals; there is no migration-vs-generator split left.)
 
 **Files:**
 
 - `lib/stats/stats_pages/__init__.py`, `__main__.py`, `generator.py` —
   **new** (D11/D12, U8): argparse verbs `generate` / `delete <page_id>`
-  (no cleanup verb — TTL is the bot's registry decision); self-contained
-  HTML renderer (inline CSS, `html.escape` everything, UTC footer with meta
-  incl. user/chat/platform ids); storage location is the CLI's own internal
-  default/flag (no bot-config coupling).
-- `internal/database/migrations/versions/migration_029_add_stats_pages_registry.py`
-  — **new** (D14): `stats_pages` table + `idx_stats_pages_created_at`;
-  `version: int = 29` (028 is the highest today — verified); follow the
-  [`add-database-migration`](../../.agents/skills/add-database-migration/SKILL.md)
-  skill.
-- `internal/database/repositories/stats_pages.py` + a `StatsPageDict` row
-  TypedDict in [`internal/database/models.py`](../../internal/database/models.py)
-  — **new** (D14): `addPage`, `getExpiredPages(cutoff, limit)`,
-  `deletePage(pageId)`; wire into `Database` repos.
+  (no cleanup verb — TTL is the bot's per-page deletion task, U11);
+  self-contained HTML renderer (inline CSS, `html.escape` everything, UTC
+  footer with meta incl. user/chat/platform ids); storage location is the
+  CLI's own internal default/flag (no bot-config coupling).
 - [`configs/00-defaults/stats-pages.toml`](../../configs/00-defaults) — **new**
   (§5); [`configs/00-defaults/00-config.toml`](../../configs/00-defaults/00-config.toml) —
   limiter + queue binding (§5).
@@ -1521,19 +1560,9 @@ package + config + their tests.
   `__main__` functions directly): generate writes file + stdout JSON; delete
   removes by id and prints `{"deleted": 0|1}` (0 for unknown id, exit 0);
   nonzero exit on bad stdin JSON.
-- `tests/database/test_migration_029_add_stats_pages_registry.py` — table +
-  index exist after `up()`, gone after `down()`, idempotent re-run (migration
-  test pattern).
-- `tests/database/repositories/test_stats_pages.py` — add / getExpired
-  (cutoff boundary, limit respected) / delete round-trip on the `testDatabase`
-  fixture.
 
 **Docs:** [`docs/llm/configuration.md`](../llm/configuration.md)
 (`[stats-pages]` table + ratelimiter additions),
-[`docs/database-schema.md`](../database-schema.md) **and**
-[`docs/database-schema-llm.md`](../database-schema-llm.md) (`stats_pages`
-table — dual sync), [`docs/llm/database.md`](../llm/database.md) (migration
-029 in the version list + repository),
 [`docs/llm/libraries.md`](../llm/libraries.md) (`lib/stats/stats_pages/`),
 [`docs/llm/index.md`](../llm/index.md) (lib map entry).
 **CHANGELOG:** none yet — fold into the Phase 3b entry (single user-visible
@@ -1541,10 +1570,10 @@ feature).
 
 **Gate 3a:** `make format lint`; `make test`; `make check-docs`.
 
-### Phase 3b — Web tier: bot integration — invocation, rate limit, registry, cleanup task, failure modes *(amended 2026-08-18: U9)*
+### Phase 3b — Web tier: bot integration — invocation, rate limit, per-page deletion task, failure modes *(amended 2026-08-18: U9/U11 — U11 replaced the registry + periodic cleanup with the one-shot per-page task)*
 
-Sized ~35 steps: 1 new lib file, 3 edited files (handler, queue types, stats
-service), tests.
+Sized ~30 steps: 1 new lib file, 2 edited files (handler, queue types),
+tests.
 
 **Files:**
 
@@ -1553,17 +1582,16 @@ service), tests.
   parse + `{"id","url"}` / `{"deleted",…}` validation) — pure, config-free
   (callers pass the template + substitutions).
 - `internal/bot/common/handlers/stats.py` —
-  the `--web`/`/stats_web` tier: config gate, rate-limit pre-check + apply
-  (D13), payload build (view-model JSON), launcher call with
-  `generate-command` substitutions (`{platform}` = `self.botProvider.value`),
-  link composition (`base-url + "/" + url`), registry INSERT on success
-  (D14), D15 failure table.
+  the `--web`/`/stats_web` tier: config gate + `[stats-pages]` validation at
+  construction (D10/U11), rate-limit pre-check + apply (D13), payload build
+  (view-model JSON), launcher call with `generate-command` substitutions
+  (`{platform}` = `self.botProvider.value`), link composition (`base-url +
+  "/" + url`), and on success ONE persisted deletion task with the RESOLVED
+  delete argv in kwargs (D14/U11); `registerDelayedTaskHandler(
+  STATS_PAGES_CLEANUP, self._dtStatsPagesCleanup)` + `_dtStatsPagesCleanup`
+  in the same handler; D15 failure table.
 - [`internal/services/queue_service/types.py`](../../internal/services/queue_service/types.py) —
   `STATS_PAGES_CLEANUP = "statsPagesCleanup"` enum member.
-- [`internal/services/stats/service.py`](../../internal/services/stats/service.py) —
-  parse/cache `[stats-pages]` at `initialize` (A4 pattern); register the
-  `STATS_PAGES_CLEANUP` handler; first-CRON-tick idempotent seed;
-  `_dtStatsPagesCleanup` + `_cleanupExpiredStatsPages` (D14).
 
 **Tests:**
 
@@ -1573,34 +1601,34 @@ service), tests.
   pattern): timeout kill; nonzero exit; unparseable stdout; happy path returns
   `{"id","url"}`.
 - `tests/bot/common/handlers/test_stats.py` — extend: disabled
-  `[stats-pages]` → informative reply, no subprocess; rate-limit refusal (mock
+  `[stats-pages]` → informative reply, no subprocess; malformed
+  `[stats-pages]` with `enabled = true` (empty command template, bad
+  `ttl-hours`) → handler construction raises; rate-limit refusal (mock
   `getStats` full window) → reply, no subprocess; success → link composed +
-  registry row inserted; registry-insert failure → link still delivered
-  (D15 row); failure modes per D15 (in-chat reply still sent); `/stats_web`
-  alias shares the rate limit.
-- `tests/services/stats/test_service.py` — cleanup task matrix (D14/§2.13):
-  handler registered on the new function; seed is idempotent (existing
-  pending `STATS_PAGES_CLEANUP` row → no second `addDelayedTask`) and skipped
-  when disabled; task **persists** (`skipDB=False` asserted) and
-  self-reschedules in `finally` even when the body raises; expired rows →
-  `delete-command` invoked per page (bounded batch); per-page failure
-  isolation (failing page's row survives, others deleted);
-  `{"deleted": 0}` still removes the row; config-off body no-op.
-- `tests/database/repositories/test_stats_pages.py` — expired-selection
-  integration with the cleanup cutoff if not already covered in 3a.
+  ONE deletion task scheduled with the RESOLVED delete argv in kwargs
+  (`skipDB=False` asserted); deletion-task scheduling failure → link still
+  delivered (D15 row); failure modes per D15 (in-chat reply still sent);
+  `/stats_web` alias shares the rate limit.
+- `tests/bot/common/handlers/test_stats.py` — deletion-task handler matrix
+  (D14/§2.13): handler registered in `__init__`; runs `task.kwargs["command"]`
+  through the launcher; `{"deleted": 0}` tolerated; failure → WARNING + task
+  completes (no second `addDelayedTask`, no retry); task is persisted
+  (`skipDB=False`) and restored across restarts.
 
-**Docs:** [`docs/llm/services.md`](../llm/services.md) (cleanup task + seed),
-[`docs/llm/architecture.md`](../llm/architecture.md) (display tier paragraph),
-this design doc's status line when it lands.
+**Docs:** [`docs/llm/handlers.md`](../llm/handlers.md) (web tier +
+per-page deletion task in `StatsHandler`),
+[`docs/llm/architecture.md`](../llm/architecture.md) (display tier
+paragraph), this design doc's status line when it lands.
 **CHANGELOG:** `Added` — optional `--web`/`/stats_web` web-page generation
 with `[stats-pages]` config (two command templates), per-chat rate limit,
-TTL cleanup via a persisted delayed task + page registry.
+per-page TTL deletion via a persisted one-shot delayed task.
 
 **Gate 3b:** `make format lint`; `make test`; `make check-docs`; manual smoke
 (local, operator-optional): enable `[stats]` + `[stats-pages]`, `/stats
 --period=7d --web`, open the generated HTML offline (no network) and verify
-the link resolves; advance/forge a registry row past TTL and watch the
-cleanup run invoke `delete-command`.
+the link resolves; forge the scheduled deletion task's `delayedUntil` into
+the past (or temporarily lower `ttl-hours`) and watch the task invoke
+`delete-command` once.
 
 ---
 
@@ -1623,8 +1651,7 @@ cleanup run invoke `delete-command`.
 | CLI contract | generate/delete + stdout JSON + failure exits | Phase 3 |
 | Subprocess safety | timeout-kill, nonzero-exit, unparseable-stdout tests | Phase 3 |
 | Rate limit | refusal path never invokes the CLI | Phase 3 |
-| Cleanup task *(amended 2026-08-18)* | self-reschedule is PERSISTED (`skipDB=False`) and survives the body raising; seed idempotent (existing pending row → no second); skipped when disabled; per-page failure isolation | Phase 3 |
-| Page registry *(added 2026-08-18)* | row inserted on successful generation; expired rows removed only after `delete-command` exit 0 (incl. `{"deleted": 0}`) | Phase 3 |
+| Deletion task *(amended 2026-08-18, U11)* | ONE task scheduled on generation with the RESOLVED delete argv in kwargs (`skipDB=False`); single attempt — failure → WARNING, no retry; `{"deleted": 0}` tolerated | Phase 3 |
 | Offline page | generated HTML contains no external resource references | Phase 3 |
 
 No live/operator smoke gate is mandatory beyond the optional Phase 3 local smoke
@@ -1641,36 +1668,36 @@ No live/operator smoke gate is mandatory beyond the optional Phase 3 local smoke
 | R3 | **Per-chat LLM undercount** (§2.3 exceptions: embeddings, background calls, condensing land in `__global__`) | Certain (today) | Low | Documented in `help`/reply honesty ("LLM counts cover interactive generation"); fix path is a small follow-up (O2), not a display-layer concern | n/a |
 | R4 | **Backfill/live label split** — direction breakdown misread as undercount | Low | Low | Three-bucket rendering (users/bot/history) per §2.4/D6 | n/a |
 | R5 | **Reply too long → mechanical split breaks MarkdownV2** | Low | Low | Bounded reply (< 3500 chars, Gate); top-3 lists; drill-downs bounded to top-10; chat list truncation with "and K more" | Shorten reply |
-| R6 | **Disk exhaustion via page generation** | Med | Med | Per-chat rate limit (3/h default) + UUID names (no overwrite) + TTL cleanup via the persisted task over the page registry (D14) | Disable `[stats-pages]`; run `delete-command` manually per page_id |
+| R6 | **Disk exhaustion via page generation** | Med | Med | Per-chat rate limit (3/h default) + UUID names (no overwrite) + per-page TTL deletion via persisted one-shot tasks (D14/U11) | Disable `[stats-pages]`; run `delete-command` manually per page_id |
 | R7 | **CLI hangs / misbehaves** | Low | Med | 30 s `wait_for` + kill (§2.9 conventions); JSON-validated stdout; D15 failure table; external commands are operator-supplied (WARNING not ERROR, proxy precedent) | `--web` off / fix the command templates |
-| R8 | **Command-template misconfiguration** *(reworked 2026-08-18 — no more output-dir)*: missing/malformed `generate-command`/`delete-command`, wrong bin path | Med | Low | Startup validation when enabled (fail loudly, A4 pattern); strict `format_map` → KeyError → D15 note + WARNING log naming the key | Fix the templates |
+| R8 | **Command-template misconfiguration** *(reworked 2026-08-18 — no more output-dir)*: missing/malformed `generate-command`/`delete-command`, wrong bin path | Med | Low | Construction-time validation when enabled (fail loudly — `StatsHandler.__init__`, D10/U11); strict `format_map` → KeyError → D15 note + WARNING log naming the key | Fix the templates |
 | R9 | **Unguessable-URL-only "auth"** — link sharing exposes scope aggregates | — (ratified) | Low | Ratified for non-sensitive aggregates (NG4); UUIDv4 hex; TTL; scope already bounds what is visible | Lower ttl-hours |
-| R10 | **Stale pages after stats/pages disabled** — the persisted task survives and no-ops on the config check; already-generated pages + registry rows remain | Low | Low | Documented (D14); pages eventually outlive TTL harmlessly; operator can invoke `delete-command` per registry page_id or clean storage their own way (the bot doesn't know it, U7); re-enabling + restart resumes cleanup | Manual cleanup; drop registry rows |
+| R10 | **Pending deletion task while stats disabled** — handler not constructed → the task hits the no-handler re-delay path (+60 s, error log, §2.13) and waits; pages generated before disabling outlive their TTL until re-enable | Low | Low | Accepted & documented (D14/U11): the waiting task costs ~nothing and fires once stats is re-enabled and the handler registers again; meanwhile the operator can invoke `delete-command` manually per page_id (from the reply link / logs) | Re-enable stats, or delete pages manually |
 | R11 | **Check-then-apply rate-limit race** over-admits a few concurrent `--web` | Low | Low | Single event loop bounds interleaving; consequence ≤ a few extra files per window (D13) | n/a |
 | R12 | **Template placeholder drift** (unknown placeholder in a custom template) | Med | Low | Strict `format_map` → KeyError → D15 note + WARNING log naming the command | Fix the templates |
-| R13 | **Registry-orphan pages** — delete-command fails persistently for a page (external tool broken/removed) | Low | Low | Per-page failure isolation; the registry row keeps flagging it for retry; **accepted** (U9): the page just outlives TTL — no data risk, only storage | Fix or remove the external tool; manual delete |
+| R13 | **Orphaned page on failed deletion** — the one-shot task's delete-command call fails (external tool broken/removed); SINGLE attempt, no retry | Low | Low | WARNING log naming the page id; **accepted** (U11): the page just outlives TTL — no data risk, only storage | Fix or remove the external tool; manual delete |
 | R14 | **`request_count` counts attempts, not logical requests** (fallback loop, §2.2) | — (documented) | Low | Rendered as "requests (attempts)" in help/footnote; not fixable display-side | n/a |
-| R15 | **Self-reschedule crash window duplicates the cleanup task** — crash between a handler's persisted re-add and the old row's mark-done leaves two pending rows → two live instances | Low | Low | Cleanup is idempotent (delete by page_id; `{"deleted": 0}` tolerated); each duplicate fires and re-adds exactly one row, so the duplicate chain persists at N indefinitely — benign, bounded (§2.13 analysis) | n/a (benign) |
-| R16 | **Seed-vs-restore race** — seeding from `GromozekBot.__init__` could double-add a pending row | — (designed out) | Low | Seed runs on the FIRST CRON tick, strictly after `startDelayedScheduler` restored pending rows (D14/§2.13) | n/a |
 
 **Rollback principle:** the whole display tier is gated on `[stats] enabled`
 (the command, the chat-setting gate and page generation disappear with one
-flag; the read API is inert code when nothing calls it; the persisted cleanup
-task no-ops on its config check). Each phase is independently revertible via
-git; migration 029's `down()` drops only the `stats_pages` table (no other
-data touched); the `ChatInfoDict.messages_count` extension is additive and
-inert if unused.
+flag; the read API is inert code when nothing calls it; pending per-page
+deletion tasks either fire once through the registered handler or wait on
+the no-handler re-delay path until stats is re-enabled). Each phase is
+independently revertible via git; there is NO migration to roll back (U11
+removed the page registry before implementation); the
+`ChatInfoDict.messages_count` extension is additive and inert if unused.
 
 ---
 
 ## 9. Open questions
 
-1. **O1 — Bot-side delete/list UI for pages** (NG5, reworded 2026-08-18): the
-   CLI `delete` verb exists and is wired to the TTL cleanup task (D12/D14).
-   If page litter becomes a user complaint, a follow-up can add e.g.
-   `/stats --pages` (list recent registry rows for this chat) + a delete
-   verb. Verification plan: none needed now — the registry table IS the
-   future UI's data source, so no contract change is anticipated.
+1. **O1 — Bot-side delete/list UI for pages** (NG5, reworded 2026-08-18):
+   the CLI `delete` verb exists and the bot schedules one deletion task per
+   generated page (D12/D14/U11). If page litter becomes a user complaint, a
+   follow-up can add a user-facing delete verb — noting that the bot now
+   deliberately keeps NO page list (U11), so such a UI implies re-introducing
+   lightweight tracking; page ids live only in reply links and WARNING logs.
+   Verification plan: none needed now.
 2. **O2 — Per-user `llm_request` attribution** (R3): thread `consumerId`
    through `LLMService.generateEmbedding` ([service.py:1499](../../internal/services/llm/service.py))
    and the condensing call (:1239), and optionally real chat ids into the two
@@ -1696,12 +1723,13 @@ skill and update:
   `StatsAggregateDict` (lib/stats/types.py), `StatsAnalyzer`, and the
   `lib/stats/stats_pages/` package (generator + launcher, module-invocable).
 - [`docs/llm/services.md`](../llm/services.md) — `StatsAggregationService`:
-  `getQueryStorage` accessor (Phase 1) and the STATS_PAGES_CLEANUP persisted
-  task + idempotent seed (Phase 3).
+  `getQueryStorage` accessor (Phase 1); the service no longer touches
+  `[stats-pages]` in any way (U11).
 - [`docs/llm/handlers.md`](../llm/handlers.md) — `StatsHandler` (`stats.py`):
   command grammar (argparse-style), `/stats_web` alias, scoping via
   `recipient.chatType`, conditional registration on `[stats] enabled`, the
-  `ALLOW_SHOW_STATS` gate.
+  `ALLOW_SHOW_STATS` gate, the `--web` tier + per-page STATS_PAGES_CLEANUP
+  deletion task (Phase 3, U11).
 - [`docs/llm/configuration.md`](../llm/configuration.md) — `[stats-pages]`
   table (`generate-command`/`delete-command` templates and their placeholder
   sets; NO output-dir); `[ratelimiter]` additions; the `allow-show-stats`
@@ -1715,17 +1743,9 @@ skill and update:
   a new category (it does not — routine BOOL flag).
 - [`docs/llm/architecture.md`](../llm/architecture.md) — stats pipeline section:
   add the read/display tier (query API → /stats → optional page generation →
-  persisted TTL cleanup).
+  per-page one-shot TTL deletion task, U11).
 - [`docs/llm/index.md`](../llm/index.md) — §4 map: `lib/stats/stats_pages/`
   in the lib tree; handler-list entry for `/stats`(+`/stats_web`).
-- **Migration 029 schema sync (U9, per the
-  [`add-database-migration`](../../.agents/skills/add-database-migration/SKILL.md)
-  skill)**:
-  [`docs/database-schema.md`](../database-schema.md) **and**
-  [`docs/database-schema-llm.md`](../database-schema-llm.md) gain the
-  `stats_pages` table (both in sync, dual-schema rule);
-  [`docs/llm/database.md`](../llm/database.md) gains migration 029 in the
-  version list and the `StatsPagesRepository`.
 - `CHANGELOG.md` — Phase 2 and Phase 3 `Added` entries per
   [`docs/llm/changelog.md`](../llm/changelog.md) rules (this amended PROPOSED
   doc itself gets no entry — doc-only).
@@ -1782,6 +1802,8 @@ skill and update:
 - SQL portability: [`docs/sql-portability-guide.md`](../sql-portability-guide.md).
 - Skills: [`add-handler`](../../.agents/skills/add-handler/SKILL.md),
   [`add-chat-setting`](../../.agents/skills/add-chat-setting/SKILL.md),
-  [`add-database-migration`](../../.agents/skills/add-database-migration/SKILL.md),
   [`run-quality-gates`](../../.agents/skills/run-quality-gates/SKILL.md),
   [`update-project-docs`](../../.agents/skills/update-project-docs/SKILL.md).
+  *(The `add-database-migration` skill reference was pruned 2026-08-18, U11 —
+  the design has no migration anymore; all registry-era citations above are
+  historical.)*
