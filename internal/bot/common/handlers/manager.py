@@ -82,6 +82,7 @@ from .react_on_user import ReactOnUserMessageHandler
 from .resender import ResenderHandler
 from .sandbox import SandboxHandler
 from .spam import SpamHandler
+from .stats import StatsHandler
 from .summarization import SummarizationHandler
 from .topic_manager import TopicManagerHandler
 from .user_memories import UserMemoriesHandler
@@ -604,6 +605,15 @@ class HandlersManager(CommandHandlerGetterInterface):
             self.handlers.append(
                 (
                     ChatSearchHandler(configManager=configManager, database=database, botProvider=botProvider),
+                    HandlerParallelism.PARALLEL,
+                )
+            )
+
+        # Stats handler — /stats and /stats_web commands
+        if configManager.getStatsConfig().get("enabled", False):
+            self.handlers.append(
+                (
+                    StatsHandler(configManager=configManager, database=database, botProvider=botProvider),
                     HandlerParallelism.PARALLEL,
                 )
             )

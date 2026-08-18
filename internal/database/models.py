@@ -229,6 +229,13 @@ class ChatInfoDict(TypedDict):
     """Record creation timestamp."""
     updated_at: datetime.datetime
     """Record last update timestamp."""
+    messages_count: NotRequired[int]
+    """User's message count in this chat (operational counter).
+
+    Note: This field is only populated when querying via getUserChats
+    (which JOINs with the chat_users table). Direct queries to the
+    chat_info table (e.g., getChatInfo) will not include this field.
+    """
 
 
 class ChatTopicInfoDict(TypedDict):

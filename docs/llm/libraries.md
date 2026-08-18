@@ -565,6 +565,7 @@ from lib.stats import StatsStorage, NullStatsStorage, GLOBAL_CONSUMER_ID
 |---|---|---|
 | [`StatsStorage`](../../lib/stats/stats_storage.py:11) | `lib/stats/stats_storage.py` | ABC for statistics storage backends |
 | [`NullStatsStorage`](../../lib/stats/stats_storage.py:81) | `lib/stats/stats_storage.py` | No-op implementation (discards all events) |
+| [`StatsAnalyzer`](../../lib/stats/analysis.py) | `lib/stats/analysis.py` | Read-side filtering/grouping/aggregation over `query()` rows (pure Python) |
 
 **Interface methods on `StatsStorage`:**
 ```python
@@ -603,6 +604,11 @@ await statsStorage.query(
 - `aggregate()`: Claim up to `limit` unprocessed (or orphaned) events, aggregate into hourly/daily/monthly/total buckets, upsert into the aggregation table, and mark events as processed. Returns the number of events processed (0 if nothing to do).
 - `purgeProcessed()`: Delete processed stat events older than the retention window (``processed = 1 AND created_at < cutoff`` through this storage's own data source). ``retentionDays <= 0`` is a no-op (returns 0, deletes nothing). Errors propagate to the caller (matching ``aggregate()``'s contract). Used by `StatsAggregationService` per storage after each aggregation cycle to clean up old processed events. `NullStatsStorage` returns 0.
 - `query()`: Read aggregated rows filtered by `eventType` (required), `periodType` (optional: `'hourly'`, `'daily'`, `'monthly'`, or `'total'`), and optional inclusive bounds `periodStartFrom` / `periodStartTo` (ISO-8601 UTC strings). Returns rows with labels parsed from JSON as `StatsAggregateDict` (fields: `periodStart`, `periodType`, `labels`, `metricKey`, `metricValue`). Applies `limit` via provider's `applyPagination()`. Raises on database/provider errors. `NullStatsStorage` returns `[]`.
+
+**Analysis (read-side)** — [`lib/stats/analysis.py`](../../lib/stats/analysis.py), re-exported from the package root; pure-Python post-processing over `query()` rows (no SQL label filtering), used by `StatsHandler`:
+- `StatsAnalyzer(rows)` — immutable analyzer over `list[StatsAggregateDict]`; filter methods return new instances: `filterByLabelIn(key, values)` / `filterByLabel(key, value)` (callers filter the `consumer` label to concrete chat IDs, which naturally excludes `__global__` rows), plus `sumMetric(metricKey)`, `groupSum(groupLabel, metricKey)`, `topN(groupLabel, metricKey, n)`, and `average(valueKey, countKey)` (weighted average Σvalue / Σcount — never an average of averages).
+- `mapPeriodArgToPeriodType(periodArg)` — maps `/stats` period args to query granularity (constants in `PeriodArg` / `PeriodType`): `1d` → `hourly`, `7d`/`30d` → `daily`, `all` → `total`; `ValueError` otherwise.
+- `computePeriodRange(periodArg)` — returns `(periodStartFrom, periodStartTo)` ISO-8601 UTC bounds (`(None, None)` for `all`); the start is truncated to the period boundary so the partial current day is included (7d → 8 daily buckets, 30d → 31).
 
 **Usage example:**
 ```python

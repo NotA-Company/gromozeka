@@ -474,6 +474,12 @@ Parse-structure-template placeholders: `{systemId}`, `{layoutName}`, `{descripti
 
 **Note:** Disabled by default. When enabled, `DatabaseStatsStorage` is initialized in `main.py` — one instance per event type: LLM (passed to `LLMManager`, key `llm-stats-data-source`), STT (passed to `STTService`, key `stt-stats-data-source`), `message` (both directions; threaded through both bot applications into `HandlersManager`, which injects it onto every `BaseBotHandler`; key `message-stats-data-source`), `llm_tool_call` (passed to `LLMService` via `injectStatsStorage`; key `tool-stats-data-source`), and `command` (threaded through both bot applications into `HandlersManager`; key `command-stats-data-source`). Each reads its own data source key (all default `"default"`). The `StatsAggregationService` (periodic aggregation + retention) reads `[stats]` configuration once at startup; malformed values cause initialization to fail loudly (startup aborts). The service drains all five storages into `stat_aggregates` at `aggregation-interval-seconds` cadence and purges processed events older than `events-retention-days`. Statistics are stored in `stat_events` (append-only log) and `stat_aggregates` (period buckets) tables created by `migration_016`.
 
+**Chat settings keys** (defined in [`internal/bot/models/chat_settings.py`](../../internal/bot/models/chat_settings.py); defaults under `[bot.defaults]` in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml)):
+
+| `ChatSettingsKey` enum | Setting key | Page | Type | Default | Purpose |
+|---|---|---|---|---|---|
+| `ALLOW_SHOW_STATS` | `allow-show-stats` | `STANDARD` | `BOOL` | `true` | Moderation control for the `/stats` (`/stats_web`) command, group/channel chats only: when an admin disables it, `StatsHandler` sends an informative reply and runs zero stats queries. Not consulted in private chats. The `StatsHandler` itself is registered only when `[stats].enabled = true` — the setting has no effect while stats are disabled. See [`handlers.md`](handlers.md) `StatsHandler`. |
+
 ---
 
 ### `[search-history]`

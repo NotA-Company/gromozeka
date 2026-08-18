@@ -16,7 +16,18 @@ consumer, model, provider, generation type, and any future dimensions.
         ... )
 """
 
+from .analysis import PeriodArg, PeriodType, StatsAnalyzer, computePeriodRange, mapPeriodArgToPeriodType
 from .stats_storage import GLOBAL_CONSUMER_ID, NullStatsStorage, StatsStorage
 from .types import StatsAggregateDict
 
-__all__ = ["GLOBAL_CONSUMER_ID", "NullStatsStorage", "StatsStorage", "StatsAggregateDict"]
+__all__ = [
+    "GLOBAL_CONSUMER_ID",
+    "NullStatsStorage",
+    "StatsStorage",
+    "StatsAggregateDict",
+    "PeriodArg",
+    "PeriodType",
+    "StatsAnalyzer",
+    "computePeriodRange",
+    "mapPeriodArgToPeriodType",
+]

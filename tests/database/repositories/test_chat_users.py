@@ -399,3 +399,59 @@ class TestChatUsersBotStatusFiltering:
 
         # Should return empty list
         assert chats == []
+
+    async def test_getUserChats_returnsMessagesCount(self, testDatabase) -> None:
+        """getUserChats returns messages_count field for each chat.
+
+        Tests the U1 addendum: getUserChats should return the user's message
+        count per chat via the chat_users table.
+
+        Args:
+            testDatabase: Database fixture with initialized tables.
+        """
+        # Create chat_info entries
+        provider = await testDatabase.manager.getProvider(readonly=False)
+        await provider.execute(
+            "INSERT INTO chat_info "
+            "(chat_id, title, username, type, is_forum, bot_status, created_at, updated_at) "
+            "VALUES "
+            "(100, 'Chat 1', 'chat1', 'group', 0, 'active', "
+            "datetime('now'), datetime('now'))"
+        )
+        provider = await testDatabase.manager.getProvider(readonly=False)
+        await provider.execute(
+            "INSERT INTO chat_info "
+            "(chat_id, title, username, type, is_forum, bot_status, created_at, updated_at) "
+            "VALUES "
+            "(200, 'Chat 2', 'chat2', 'group', 0, 'active', "
+            "datetime('now'), datetime('now'))"
+        )
+
+        # Create chat_users entries with different messages_count values
+        provider = await testDatabase.manager.getProvider(readonly=False)
+        await provider.execute(
+            "INSERT INTO chat_users "
+            "(chat_id, user_id, username, full_name, messages_count, created_at, updated_at) "
+            "VALUES "
+            "(100, 100, 'user100', 'User 100', 42, datetime('now'), datetime('now'))"
+        )
+        provider = await testDatabase.manager.getProvider(readonly=False)
+        await provider.execute(
+            "INSERT INTO chat_users "
+            "(chat_id, user_id, username, full_name, messages_count, created_at, updated_at) "
+            "VALUES "
+            "(200, 100, 'user100', 'User 100', 17, datetime('now'), datetime('now'))"
+        )
+
+        # Call getUserChats
+        chats = await testDatabase.chatUsers.getUserChats(userId=100)
+
+        # Should return both chats with messages_count populated
+        assert len(chats) == 2
+
+        # Verify messages_count field is present and correct
+        chatById = {chat["chat_id"]: chat for chat in chats}
+        assert "messages_count" in chatById[100]
+        assert chatById[100]["messages_count"] == 42
+        assert "messages_count" in chatById[200]
+        assert chatById[200]["messages_count"] == 17
