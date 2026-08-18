@@ -45,6 +45,136 @@ class StatsPayload(TypedDict):
     chatList: NotRequired[list[dict[str, Any]]]
 
 
+class MessagesSectionData(TypedDict):
+    """Structured data for the messages section.
+
+    Attributes:
+        totalMessages: Total message count.
+        totalLength: Total character count across all messages.
+        userMessages: Count of messages sent by users.
+        botMessages: Count of messages sent by the bot.
+        historyMessages: Count of messages from before stats was enabled.
+        avgLength: Average message length in characters.
+        topUsers: Top 3 users by message count as [userId, count] pairs.
+        topTypes: Top 3 message types by count as [type, count] pairs.
+        possiblyIncomplete: Whether the query hit the 10k row limit.
+    """
+
+    totalMessages: int
+    totalLength: int
+    userMessages: int
+    botMessages: int
+    historyMessages: int
+    avgLength: float
+    topUsers: list[list[int | str]]
+    topTypes: list[list[str | int]]
+    possiblyIncomplete: NotRequired[bool]
+
+
+class CommandsSectionData(TypedDict):
+    """Structured data for the commands section.
+
+    Attributes:
+        totalCommands: Total command count.
+        errorCommands: Count of commands that errored.
+        totalElapsed: Total elapsed time in seconds.
+        avgElapsed: Average elapsed time in seconds.
+        topCommands: Top 3 commands by count as [commandName, count] pairs.
+        possiblyIncomplete: Whether the query hit the 10k row limit.
+    """
+
+    totalCommands: int
+    errorCommands: int
+    totalElapsed: float
+    avgElapsed: float
+    topCommands: list[list[str | int]]
+    possiblyIncomplete: NotRequired[bool]
+
+
+class ToolsSectionData(TypedDict):
+    """Structured data for the tools section.
+
+    Attributes:
+        totalCalls: Total tool call count.
+        errorCalls: Count of tool calls that errored.
+        totalElapsed: Total elapsed time in seconds.
+        avgElapsed: Average elapsed time in seconds.
+        topTools: Top 3 tools by count as [toolName, count] pairs.
+        possiblyIncomplete: Whether the query hit the 10k row limit.
+    """
+
+    totalCalls: int
+    errorCalls: int
+    totalElapsed: float
+    avgElapsed: float
+    topTools: list[list[str | int]]
+    possiblyIncomplete: NotRequired[bool]
+
+
+class SttSectionData(TypedDict):
+    """Structured data for the STT (speech-to-text) subsection.
+
+    Attributes:
+        totalRequests: Total STT request count.
+        errorRequests: Count of STT requests that errored.
+        totalAudioDuration: Total audio duration in seconds.
+        totalElapsed: Total elapsed time in seconds.
+        avgElapsed: Average elapsed time in seconds.
+        topProviders: Top 3 providers by count as [provider, count] pairs.
+    """
+
+    totalRequests: int
+    errorRequests: int
+    totalAudioDuration: float
+    totalElapsed: float
+    avgElapsed: float
+    topProviders: list[list[str | int]]
+
+
+class LlmSectionData(TypedDict):
+    """Structured data for the LLM section (including STT subsection).
+
+    Attributes:
+        totalRequests: Total LLM request count.
+        errorRequests: Count of LLM requests that errored.
+        inputTokens: Total input tokens.
+        outputTokens: Total output tokens.
+        totalTokens: Total tokens (input + output).
+        totalElapsed: Total elapsed time in seconds.
+        avgElapsed: Average elapsed time in seconds.
+        topModels: Top 3 models by count as [modelName, count] pairs.
+        topProviders: Top 3 providers by count as [provider, count] pairs.
+        stt: STT subsection data (speech-to-text stats).
+        possiblyIncomplete: Whether the query hit the 10k row limit.
+    """
+
+    totalRequests: int
+    errorRequests: int
+    inputTokens: int
+    outputTokens: int
+    totalTokens: int
+    totalElapsed: float
+    avgElapsed: float
+    topModels: list[list[str | int]]
+    topProviders: list[list[str | int]]
+    stt: NotRequired[SttSectionData]
+    possiblyIncomplete: NotRequired[bool]
+
+
+class ChatListEntry(TypedDict):
+    """Entry in the user's chat list (private scope).
+
+    Attributes:
+        chatId: Chat ID.
+        title: Chat title or name.
+        messagesCount: The user's message count in this chat.
+    """
+
+    chatId: int
+    title: str
+    messagesCount: int
+
+
 class StatsPageGenerator:
     """Generates self-contained HTML statistics pages.
 
@@ -322,12 +452,18 @@ class StatsPageGenerator:
         avgLength = sectionData.get("avgLength", 0.0)
         topUsers = sectionData.get("topUsers", [])
         topTypes = sectionData.get("topTypes", [])
+        possiblyIncomplete = sectionData.get("possiblyIncomplete", False)
 
         topUsersHtml = self._renderTopList("Top Users by Messages", topUsers)
         topTypesHtml = self._renderTopList("Top Message Types", topTypes)
 
+        honestyLine = ""
+        if possiblyIncomplete:
+            honestyLine = '<p class="neutral">⚠ Результаты могут быть неполными (достигнут лимит запроса)</p>\n'
+
         return f"""        <div class="section">
             <h2>💬 Messages</h2>
+            {honestyLine}
             <table>
                 <tr>
                     <th>Metric</th>
@@ -375,11 +511,17 @@ class StatsPageGenerator:
         totalCommands = sectionData.get("totalCommands", 0)
         errorCommands = sectionData.get("errorCommands", 0)
         topCommands = sectionData.get("topCommands", [])
+        possiblyIncomplete = sectionData.get("possiblyIncomplete", False)
 
         topCommandsHtml = self._renderTopList("Top Commands", topCommands)
 
+        honestyLine = ""
+        if possiblyIncomplete:
+            honestyLine = '<p class="neutral">⚠ Результаты могут быть неполными (достигнут лимит запроса)</p>\n'
+
         return f"""        <div class="section">
             <h2>🔧 Commands</h2>
+            {honestyLine}
             <table>
                 <tr>
                     <th>Metric</th>
@@ -416,11 +558,17 @@ class StatsPageGenerator:
         totalElapsed = sectionData.get("totalElapsed", 0.0)
         avgElapsed = sectionData.get("avgElapsed", 0.0)
         topTools = sectionData.get("topTools", [])
+        possiblyIncomplete = sectionData.get("possiblyIncomplete", False)
 
         topToolsHtml = self._renderTopList("Top Tools", topTools)
 
+        honestyLine = ""
+        if possiblyIncomplete:
+            honestyLine = '<p class="neutral">⚠ Результаты могут быть неполными (достигнут лимит запроса)</p>\n'
+
         return f"""        <div class="section">
             <h2>🛠️ Tools</h2>
+            {honestyLine}
             <table>
                 <tr>
                     <th>Metric</th>
@@ -469,6 +617,7 @@ class StatsPageGenerator:
         avgElapsed = sectionData.get("avgElapsed", 0.0)
         topModels = sectionData.get("topModels", [])
         topProviders = sectionData.get("topProviders", [])
+        possiblyIncomplete = sectionData.get("possiblyIncomplete", False)
 
         # STT subsection (folded into LLM per D6)
         sttHtml = ""
@@ -508,8 +657,13 @@ class StatsPageGenerator:
         topModelsHtml = self._renderTopList("Top Models", topModels)
         topProvidersHtml = self._renderTopList("Top Providers", topProviders)
 
+        honestyLine = ""
+        if possiblyIncomplete:
+            honestyLine = '<p class="neutral">⚠ Результаты могут быть неполными (достигнут лимит запроса)</p>\n'
+
         return f"""        <div class="section">
             <h2>🧠 LLM</h2>
+            {honestyLine}
             <p class="neutral">
                 Note: LLM counts cover interactive generation only (embeddings
                 and background requests excluded).

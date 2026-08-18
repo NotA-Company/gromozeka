@@ -104,6 +104,8 @@ U9's ratified text below stays as history.
   bounded risk, R13). `ttl-hours` semantics: per-page deletion task delay
   (was "page-registry cutoff").
 
+ - **Deviation 2026-08-18 (Gate-1 Round B P3b) — D11's "grouping logic exists exactly once" not fully achieved**: The reply-text renderers and the payload builders remain two pipelines (unification deferred — follow-up candidate). Mitigations shipped: chatList condition aligned (private ∧ no user filter), possiblyIncomplete propagated into payload sections (FIX 5), averages now correct (FIX 1), subprocess mechanics extracted to `lib/stats/stats_pages/launcher.py` (satisfying the "exactly once" principle at the subprocess level).
+
 **Scope**: The read/display tier over `stat_aggregates`: a `query()` read API on the
 `lib/stats` `StatsStorage` ABC, ONE user-facing `/stats` bot command with a
 `/stats_web` alias (single-section default reply, scope-derived visibility,

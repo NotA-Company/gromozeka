@@ -905,9 +905,10 @@ Self-contained HTML page generator for statistics display. Used by `StatsHandler
 
 | Path | Purpose |
 |---|---|
-| [`lib/stats/stats_pages/__init__.py`](../../lib/stats/stats_pages/__init__.py) | Package exports (`StatsPageGenerator`, `StatsPayload`) |
+| [`lib/stats/stats_pages/__init__.py`](../../lib/stats/stats_pages/__init__.py) | Package exports (`StatsPageGenerator`, `StatsPayload`, the section TypedDicts, `StatsCliError`/`StatsCliErrorReason`, `runCliCommand`) |
 | [`lib/stats/stats_pages/__main__.py`](../../lib/stats/stats_pages/__main__.py) | Main entry point for module invocation |
-| [`lib/stats/stats_pages/generator.py`](../../lib/stats/stats_pages/generator.py) | Core generator class (`StatsPageGenerator`) + CLI handlers |
+| [`lib/stats/stats_pages/generator.py`](../../lib/stats/stats_pages/generator.py) | Core generator class (`StatsPageGenerator`), section TypedDicts, CLI handlers |
+| [`lib/stats/stats_pages/launcher.py`](../../lib/stats/stats_pages/launcher.py) | Shared subprocess helper used by BOTH generation and deletion: `runCliCommand(argv, *, stdinPayload=None, timeoutSeconds=30.0) -> (returncode, stdout, stderr)` (async; kill-on-timeout; stdout/stderr decoded with `errors="replace"`) and `StatsCliError` with `StatsCliErrorReason.TIMEOUT`/`SPAWN`. Mirrors the subprocess conventions of `internal/services/proxy/lifecycle.py`. |
 
 **CLI contract:**
 
@@ -930,11 +931,13 @@ class StatsPayload(TypedDict):
     chatList: NotRequired[list[dict[str, Any]]]       # User's chat list (private scope)
 ```
 
-**Sections** (optional, all nested under `sections` dict):
-- `messages` — `totalMessages`, `totalLength`, `userMessages`, `botMessages`, `historyMessages`, `avgLength`, `topUsers` (list of `(name, count)`), `topTypes` (list of `(type, count)`)
-- `commands` — `totalCommands`, `errorCommands`, `topCommands` (list of `(name, count)`)
-- `tools` — `totalCalls`, `errorCalls`, `totalElapsed`, `avgElapsed`, `topTools` (list of `(name, count)`)
-- `llm` — `totalRequests`, `errorRequests`, `inputTokens`, `outputTokens`, `totalTokens`, `totalElapsed`, `avgElapsed`, `topModels` (list of `(name, count)`), `topProviders` (list of `(name, count)`), `stt` (sub-table with STT stats: `totalRequests`, `errorRequests`, `totalAudioDuration`)
+**Sections** (optional, all nested under `sections` dict; each shape is a TypedDict exported from the package — `MessagesSectionData`, `CommandsSectionData`, `ToolsSectionData`, `LlmSectionData` with nested `SttSectionData`):
+- `messages` — `totalMessages`, `totalLength`, `userMessages`, `botMessages`, `historyMessages`, `avgLength`, `topUsers` (list of `(userId, count)` pairs), `topTypes` (list of `(type, count)` pairs), `possiblyIncomplete`
+- `commands` — `totalCommands`, `errorCommands`, `totalElapsed`, `avgElapsed`, `topCommands` (list of `(name, count)` pairs), `possiblyIncomplete`
+- `tools` — `totalCalls`, `errorCalls`, `totalElapsed`, `avgElapsed`, `topTools` (list of `(name, count)` pairs), `possiblyIncomplete`
+- `llm` — `totalRequests`, `errorRequests`, `inputTokens`, `outputTokens`, `totalTokens`, `totalElapsed`, `avgElapsed`, `topModels` (list of `(name, count)` pairs), `topProviders` (list of `(name, count)` pairs), `stt` (nested `SttSectionData`: `totalRequests`, `errorRequests`, `totalAudioDuration` (seconds), `totalElapsed`, `avgElapsed`, `topProviders`), `possiblyIncomplete`
+
+`possiblyIncomplete` (on every section) is the D5 honesty flag set by `StatsHandler` when the underlying query hit its 10k-row limit; the generator renders it as a "results may be incomplete" line at the top of the affected section. `ChatListEntry` (`chatId`, `title`, `messagesCount`) is the TypedDict for `chatList` rows.
 
 **HTML rendering:**
 - Self-contained: inline `<style>` block only, no `<link rel="stylesheet">`, no `<script src`, no CDN references.
@@ -945,14 +948,15 @@ class StatsPayload(TypedDict):
 - Responsive design: max-width 900px container, clean table layout, hover effects.
 
 **Integration with bot:**
-- Not imported by `internal/` — pure lib package.
-- Invoked via `asyncio.create_subprocess_exec` (per ProxyLifecycle precedent) with stdin payload JSON and 30-second timeout (bot-side invocation lands in Phase 3b).
+- Not imported as a handler dependency for state — pure lib package; `StatsHandler` imports only the TypedDicts and the launcher.
+- Generation and deletion both go through `launcher.runCliCommand` (one subprocess helper, per D11 "exactly once" at the subprocess level): stdin payload JSON, 30-second timeout, kill-on-timeout, `StatsCliError` on TIMEOUT/SPAWN.
 - The bot composes the full URL: `base-url + "/" + <url>` from the stdout JSON.
-- Deletion is bot-managed via one-shot per-page `DelayedTaskFunction.STATS_PAGES_CLEANUP` tasks — the CLI itself only provides the `delete` verb (bot-side deletion wiring lands in Phase 3b).
+- Deletion is bot-managed via one-shot per-page `DelayedTaskFunction.STATS_PAGES_CLEANUP` tasks (scheduled after each successful generation; delay = `ttl-hours × 3600`; single attempt, no reschedule) — the CLI itself only provides the `delete` verb.
 
 **Tests:**
-- `tests/lib/stats/test_stats_pages_generator.py` — in-process generator tests (HTML structure, escaping, sections, file I/O).
+- `tests/lib/stats/test_stats_pages_generator.py` — in-process generator tests (HTML structure, escaping, sections, file I/O, possiblyIncomplete honesty-line rendering).
 - `tests/lib/stats/test_stats_pages_cli.py` — subprocess CLI contract tests (stdin/stdout JSON, exit codes, help).
+- `tests/lib/stats/test_stats_pages_launcher.py` — `runCliCommand` tests (success capture, stdin delivery, timeout kill, spawn failure → `StatsCliError`).
 
 ---
 

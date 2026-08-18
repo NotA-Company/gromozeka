@@ -131,9 +131,11 @@ emptyTask: asyncio.Task = makeEmptyAsyncTask()
 ```
 
 **`DelayedTaskFunction` enum** (from `internal/services/queue_service/types.py`):
+- `SEND_MESSAGE` — scheduled message sending
+- `DELETE_MESSAGE` — scheduled message deletion
 - `CRON_JOB` — periodic cron tasks
 - `DO_EXIT` — cleanup on exit
-- `SEND_MESSAGE` — scheduled message sending
+- `STATS_PAGES_CLEANUP` — one-shot per-page deletion of a generated stats page: `StatsHandler` registers the handler (and schedules one such task per successful page generation) when `[stats-pages] enabled = true`; `kwargs` carry `pageId` + the resolved delete argv; single attempt, no reschedule. A pending task with no registered handler (stats disabled) hits the queue's no-handler path and is re-delayed 60 s until the handler exists again.
 
 ---
 

@@ -11,9 +11,28 @@ Entry points:
 Used by StatsHandler via subprocess invocation; zero new runtime dependencies.
 """
 
-from .generator import StatsPageGenerator, StatsPayload
+from .generator import (
+    ChatListEntry,
+    CommandsSectionData,
+    LlmSectionData,
+    MessagesSectionData,
+    StatsPageGenerator,
+    StatsPayload,
+    SttSectionData,
+    ToolsSectionData,
+)
+from .launcher import StatsCliError, StatsCliErrorReason, runCliCommand
 
 __all__ = [
     "StatsPageGenerator",
     "StatsPayload",
+    "MessagesSectionData",
+    "CommandsSectionData",
+    "ToolsSectionData",
+    "LlmSectionData",
+    "SttSectionData",
+    "ChatListEntry",
+    "StatsCliError",
+    "StatsCliErrorReason",
+    "runCliCommand",
 ]

@@ -608,3 +608,125 @@ class TestReadPayload:
                 readPayload()
         finally:
             sys.stdin = originalStdin
+
+    def test_rendering_possiblyIncomplete_flag(self, tmp_path) -> None:
+        """Test that possiblyIncomplete flag renders honesty line in sections."""
+        generator = StatsPageGenerator(outputDir=tmp_path)
+
+        payload: StatsPayload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "sections": {
+                "messages": {
+                    "totalMessages": 100,
+                    "totalLength": 5000,
+                    "userMessages": 80,
+                    "botMessages": 20,
+                    "historyMessages": 0,
+                    "avgLength": 50.0,
+                    "topUsers": [],
+                    "topTypes": [],
+                    "possiblyIncomplete": True,  # Flag set to True
+                },
+                "commands": {
+                    "totalCommands": 50,
+                    "errorCommands": 5,
+                    "topCommands": [],
+                    "possiblyIncomplete": False,  # Flag set to False
+                },
+                "tools": {
+                    "totalCalls": 30,
+                    "errorCalls": 2,
+                    "totalElapsed": 15.5,
+                    "avgElapsed": 0.517,
+                    "topTools": [],
+                    "possiblyIncomplete": True,  # Flag set to True
+                },
+                "llm": {
+                    "totalRequests": 20,
+                    "errorRequests": 1,
+                    "inputTokens": 10000,
+                    "outputTokens": 5000,
+                    "totalTokens": 15000,
+                    "totalElapsed": 10.0,
+                    "avgElapsed": 0.5,
+                    "topModels": [],
+                    "topProviders": [],
+                    "possiblyIncomplete": False,  # Flag set to False
+                },
+            },
+        }
+
+        pageId, url = generator.generate(payload)
+        htmlContent = (tmp_path / url).read_text()
+
+        # Check that honesty line appears in sections with flag=True
+        assert "⚠ Результаты могут быть неполными (достигнут лимит запроса)" in htmlContent
+
+        # Check that messages section (flag=True) has honesty line
+        assert "💬 Messages" in htmlContent
+        messagesSectionStart = htmlContent.find("💬 Messages")
+        messagesSectionEnd = htmlContent.find("🔧 Commands", messagesSectionStart)
+        messagesHtml = htmlContent[messagesSectionStart:messagesSectionEnd]
+        assert "⚠ Результаты могут быть неполными (достигнут лимит запроса)" in messagesHtml
+
+        # Check that commands section (flag=False) does NOT have honesty line
+        assert "🔧 Commands" in htmlContent
+        commandsSectionStart = htmlContent.find("🔧 Commands")
+        commandsSectionEnd = htmlContent.find("🛠️ Tools", commandsSectionStart)
+        commandsHtml = htmlContent[commandsSectionStart:commandsSectionEnd]
+        assert "⚠ Результаты могут быть неполными (достигнут лимит запроса)" not in commandsHtml
+
+        # Check that tools section (flag=True) has honesty line
+        assert "🛠️ Tools" in htmlContent
+        toolsSectionStart = htmlContent.find("🛠️ Tools")
+        toolsSectionEnd = htmlContent.find("🧠 LLM", toolsSectionStart)
+        toolsHtml = htmlContent[toolsSectionStart:toolsSectionEnd]
+        assert "⚠ Результаты могут быть неполными (достигнут лимит запроса)" in toolsHtml
+
+        # Check that LLM section (flag=False) does NOT have honesty line
+        assert "🧠 LLM" in htmlContent
+        llmSectionStart = htmlContent.find("🧠 LLM")
+        llmHtml = htmlContent[llmSectionStart:]
+        assert "⚠ Результаты могут быть неполными (достигнут лимит запроса)" not in llmHtml
+
+        # Test with all flags=False - no honesty lines should appear
+        payload2: StatsPayload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat 2",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "sections": {
+                "messages": {
+                    "totalMessages": 100,
+                    "totalLength": 5000,
+                    "userMessages": 80,
+                    "botMessages": 20,
+                    "historyMessages": 0,
+                    "avgLength": 50.0,
+                    "topUsers": [],
+                    "topTypes": [],
+                    "possiblyIncomplete": False,
+                },
+                "commands": {
+                    "totalCommands": 50,
+                    "errorCommands": 5,
+                    "topCommands": [],
+                    "possiblyIncomplete": False,
+                },
+            },
+        }
+
+        pageId2, url2 = generator.generate(payload2)
+        htmlContent2 = (tmp_path / url2).read_text()
+
+        # No honesty lines should appear
+        assert "⚠ Результаты могут быть неполными (достигнут лимит запроса)" not in htmlContent2
