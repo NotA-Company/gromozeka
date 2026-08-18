@@ -505,6 +505,22 @@ class ConfigManager:
         """
         return self.get("stats", {})
 
+    def getStatsPagesConfig(self) -> Dict[str, Any]:
+        """Get stats-pages-specific configuration.
+
+        Returns:
+            A dictionary containing stats-pages configuration settings including
+            enabled flag, base-url, ttl-hours, and command templates.
+            Returns an empty dict if not configured.
+
+        Example:
+            >>> config_manager = ConfigManager()
+            >>> stats_pages_config = config_manager.getStatsPagesConfig()
+            >>> print(stats_pages_config.get("enabled"))
+            False
+        """
+        return self.get("stats-pages", {})
+
     def getProxyConfig(self) -> ProxyConfigDict:
         """Get global proxy configuration.
 

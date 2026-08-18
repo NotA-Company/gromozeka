@@ -875,6 +875,44 @@ ttl = 3600
         weatherConfig = manager.getOpenWeatherMapConfig()
         assert weatherConfig == {}
 
+    def testGetStatsPagesConfig(self, tempDir: Path) -> None:
+        """Test getting stats-pages configuration.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+        """
+        config = """
+[bot]
+token = "test_token"
+
+[stats-pages]
+enabled = true
+base-url = "https://example.com/stats"
+ttl-hours = 24
+ratelimiter-queue = "stats-pages"
+"""
+        configPath = createConfigFile(tempDir, "config.toml", config)
+        manager = ConfigManager(str(configPath))
+
+        statsPagesConfig = manager.getStatsPagesConfig()
+
+        assert "enabled" in statsPagesConfig
+        assert statsPagesConfig["enabled"] is True
+        assert statsPagesConfig["base-url"] == "https://example.com/stats"
+
+    def testGetStatsPagesConfigEmpty(self, tempDir: Path, sampleConfigToml: str) -> None:
+        """Test getting stats-pages config when not present.
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+            sampleConfigToml: Sample TOML configuration fixture.
+        """
+        configPath = createConfigFile(tempDir, "config.toml", sampleConfigToml)
+        manager = ConfigManager(str(configPath))
+
+        statsPagesConfig = manager.getStatsPagesConfig()
+        assert statsPagesConfig == {}
+
 
 # ============================================================================
 # Error Handling Tests

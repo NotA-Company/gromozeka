@@ -482,6 +482,50 @@ Parse-structure-template placeholders: `{systemId}`, `{layoutName}`, `{descripti
 
 ---
 
+### `[stats-pages]`
+
+Optional web-page generation tier for `/stats --web` (or the `/stats_web` alias). Defaults live in [`configs/00-defaults/stats-pages.toml`](../../configs/00-defaults/stats-pages.toml). The feature is tier-default-off — `[stats-pages]` can be missing entirely, and `--web`/`/stats_web` will respond with an informative "disabled" message. When `enabled = true`, the bot will invoke the configured `generate-command` as a subprocess (stdin JSON payload, stdout `{"id","url"}` JSON), compose `base-url + "/" + url` as the reply link, and schedule one persisted one-shot delayed deletion task per page (delay = `ttl-hours × 3600`) (bot-side invocation and deletion wiring land in Phase 3b). The deletion task will run the `delete-command` with `{page_id}` substituted; the bot stores no page registry.
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
+| `enabled` | bool | `false` | Master switch — operator must flip to enable `--web`/`/stats_web` page generation |
+| `base-url` | str | (required when enabled) | Base URL for page links — the bot composes `base-url + "/" + <uuid>.html` for the reply (the CLI returns only the relative `<uuid>.html` filename, so `base-url` lives in bot config, not the CLI template). Validated at `StatsHandler` construction (must be present and non-empty) when enabled. |
+| `ttl-hours` | int | `24` | Per-page deletion task delay in hours — after a successful generation, `StatsHandler` will schedule ONE DB-persisted `DelayedTaskFunction.STATS_PAGES_CLEANUP` task with `delayedUntil = now + ttl-hours × 3600` (bot-side deletion wiring lands in Phase 3b). The task will run the delete-command and complete (single attempt, no retry; orphaned pages on failure are an accepted bounded risk). Validated at `StatsHandler` construction (must be positive int) when enabled. |
+| `ratelimiter-queue` | str | `"stats-pages"` | Rate limiter queue name for per-chat limits — bound to a named limiter under `[ratelimiter.ratelimiters.stats-pages]` (default: 3 pages per chat per hour). Pre-check will refuse without invoking the CLI when the window is full (bot-side rate-limit pre-check lands in Phase 3b). |
+| `generate-command` | list[str] | (see below) | CLI invocation template for page generation — passed to `asyncio.create_subprocess_exec` with stdin JSON payload. Substitutions: `{user_id}` (calling user id), `{chat_id}` (target chat id — the chat the command was issued in, or the positional chatId in private scope), `{platform}` (`"telegram"` or `"max"` from `self.botProvider.value`). Default points at the built-in generator: `["./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate", "--user-id={user_id}", "--chat-id={chat_id}", "--platform={platform}"]`. |
+| `delete-command` | list[str] | (see below) | CLI invocation template for page deletion — to be used by the one-shot per-page deletion task (bot-side deletion wiring lands in Phase 3b). Substitutions: `{page_id}` (the UUID page id returned by generate). Default: `["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}"]`. |
+
+**Validation rules** (applied at `StatsHandler` construction when `enabled = true`):
+- `base-url` must be present and non-empty — startup fails loudly (`RuntimeError`) on missing or empty values.
+- `generate-command` and `delete-command` must be non-empty `list[str]` entries — startup fails loudly (`RuntimeError`) on empty lists.
+- `ttl-hours` must be a positive int — startup fails loudly on non-positive values.
+- When `enabled = false` (default), NO validation occurs — the handler skips all web-tier work and replies with a disabled message.
+
+**Rate limiter binding** (must be present in `[ratelimiter]` when `enabled = true`; validation does NOT check this — it's an operator error surfaced at runtime):
+```toml
+[ratelimiter.ratelimiters.stats-pages]
+type = "SlidingWindow"
+
+[ratelimiter.ratelimiters.stats-pages.config]
+windowSeconds = 3600  # 1 hour
+maxRequests = 3       # 3 pages per chat per hour
+
+[ratelimiter.queues]
+stats-pages = "stats-pages"
+```
+
+**Built-in generator** (`lib/stats/stats_pages/`):
+- Module-invocable: `./venv/bin/python3 -m lib.stats.stats_pages generate` reads JSON payload from stdin, writes a self-contained static HTML page (UUID filename, inline CSS, no external resources, zero new dependencies), prints `{"id": "<uuid>", "url": "<uuid>.html"}` to stdout. The `delete` verb removes a page by `{page_id}` and prints `{"deleted": 0|1}` (0 = no such page — still a success exit).
+- Storage location is the CLI's internal affair (its own `--output-dir` flag, default `.`) — the bot never knows where pages are stored, only the `id` for deletion.
+
+**Failure modes** (best-effort tier — in-chat reply always wins):
+- Invalid JSON on stdin / nonzero CLI exit / timeout (30 s) / unparseable stdout → in-chat reply delivered + one-line "page generation failed" note.
+- Unknown template placeholder (`KeyError`) → logged at WARNING with the key, same failure-mode.
+- Deletion-task scheduling failure → link still delivered, page becomes UNTRACKED (orphan — outlives TTL, manual delete possible); WARNING log.
+- Any unexpected exception → WARNING log, in-chat reply still sent.
+
+---
+
 ### `[search-history]`
 
 Chat-history semantic search configuration. Defaults live in [`configs/00-defaults/search-history.toml`](../../configs/00-defaults/search-history.toml). The `ChatSearchHandler` is registered conditionally on `enabled = true`; the per-chat `EMBEDDINGS_ENABLED` setting must also be on for messages in a given chat to be embedded and searched.

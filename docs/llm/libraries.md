@@ -20,6 +20,11 @@
 10. [lib/divination — Tarot & Runes Logic](#10-libdivination--tarot--runes-logic)
 11. [lib/sandbox — Sandboxed Code Execution](#11-libsandbox--sandboxed-code-execution)
 12. [lib/utils — Utilities & TTLDict](#12-libutils--utilities--ttldict)
+13. [lib/proxy — Proxy Resolution](#13-libproxy--proxy-resolution)
+14. [sqlite-vec — Native Vector Search Extension](#14-sqlite-vec--native-vector-search-extension)
+15. [aiohttp — HTTP Server for the Webhook Receiver](#15-aiohttp--http-server-for-the-webhook-receiver)
+16. [lib/stt — Provider-neutral Speech-to-Text](#16-libstt--provider-neutral-speech-to-text)
+17. [lib/stats/stats_pages/ — Statistics Page Generator](#17-libstatsstats_pages--statistics-page-generator)
 
 ---
 
@@ -889,6 +894,65 @@ Provider-neutral Speech-to-Text library: PyAV-based audio extraction with contai
 **PyAV prerequisite:** pins `av==18.0.0` (parent §8.4). The `import av` is now **unconditional** — the pre-simplification `_PYAV_AVAILABLE` guarded-import pattern is gone, so any `import lib.stt.*` hard-requires PyAV at import time (latent breakage only, since `av` is always in the frozen env).
 
 **Tests:** `tests/lib/stt/` mirrors source paths, with service formatter coverage in `tests/services/stt/test_formatter.py` and `tests/services/stt/test_transcribe.py`, plus a golden-data suite under `tests/lib/stt/golden/`. Two sanitized live SpeechKit replays require `FINAL`, non-empty segments, generic attribution-tag set `{"0", "1"}`, and role `SPEAKER`; no transcript text is asserted. `async def test_...` needs no decorator (`asyncio_mode = "auto"`).
+
+---
+
+## 17. `lib/stats/stats_pages/` — Statistics Page Generator
+
+Self-contained HTML page generator for statistics display. Used by `StatsHandler` via subprocess invocation for the `--web` tier. Module-invocable: `./venv/bin/python3 -m lib.stats.stats_pages`. Zero new runtime dependencies (stdlib `argparse`/`html`/`json`/`uuid`/`pathlib` only).
+
+**Layout:**
+
+| Path | Purpose |
+|---|---|
+| [`lib/stats/stats_pages/__init__.py`](../../lib/stats/stats_pages/__init__.py) | Package exports (`StatsPageGenerator`, `StatsPayload`) |
+| [`lib/stats/stats_pages/__main__.py`](../../lib/stats/stats_pages/__main__.py) | Main entry point for module invocation |
+| [`lib/stats/stats_pages/generator.py`](../../lib/stats/stats_pages/generator.py) | Core generator class (`StatsPageGenerator`) + CLI handlers |
+
+**CLI contract:**
+
+- `generate` — reads JSON payload from stdin (see `StatsPayload` TypedDict), writes a self-contained static HTML page (UUID filename, inline CSS, no external resources, no JS), prints `{"id": "<uuid>", "url": "<uuid>.html"}` to stdout. Accepts `--output-dir` flag (default `.`). The `--user-id`/`--chat-id`/`--platform` flags exist for metadata but are ignored — the CLI uses only the stdin payload.
+- `delete PAGE_ID` — removes a page by UUID filename stem, prints `{"deleted": 0\|1}` to stdout (0 = no such page, still a success exit). Accepts `--output-dir` flag.
+- Exit codes: 0 for success, nonzero for any failure (with a human-readable stderr line).
+- Failure modes: invalid JSON on stdin → nonzero exit + error message; missing required fields in payload → nonzero exit + error message; file write errors → nonzero exit + error message.
+
+**StatsPayload TypedDict** (required fields: `userId`, `chatId`, `chatTitle`, `chatType`, `platform`, `period`, `generatedAt`):
+```python
+class StatsPayload(TypedDict):
+    userId: str                    # User ID who requested the page
+    chatId: str                    # Chat ID the page is for
+    chatTitle: str                 # Chat title or name
+    chatType: str                  # "private", "group", or "channel"
+    platform: str                 # "telegram" or "max"
+    period: str                   # "1d", "7d", "30d", or "all"
+    generatedAt: str              # ISO-8601 UTC timestamp
+    sections: NotRequired[dict[str, dict[str, Any]]]  # Statistics sections
+    chatList: NotRequired[list[dict[str, Any]]]       # User's chat list (private scope)
+```
+
+**Sections** (optional, all nested under `sections` dict):
+- `messages` — `totalMessages`, `totalLength`, `userMessages`, `botMessages`, `historyMessages`, `avgLength`, `topUsers` (list of `(name, count)`), `topTypes` (list of `(type, count)`)
+- `commands` — `totalCommands`, `errorCommands`, `topCommands` (list of `(name, count)`)
+- `tools` — `totalCalls`, `errorCalls`, `totalElapsed`, `avgElapsed`, `topTools` (list of `(name, count)`)
+- `llm` — `totalRequests`, `errorRequests`, `inputTokens`, `outputTokens`, `totalTokens`, `totalElapsed`, `avgElapsed`, `topModels` (list of `(name, count)`), `topProviders` (list of `(name, count)`), `stt` (sub-table with STT stats: `totalRequests`, `errorRequests`, `totalAudioDuration`)
+
+**HTML rendering:**
+- Self-contained: inline `<style>` block only, no `<link rel="stylesheet">`, no `<script src`, no CDN references.
+- Escapes all text content via `html.escape()`.
+- UTC timestamps labeled explicitly.
+- Large numbers formatted with commas (e.g., `15,000`).
+- Emojis used as section headers: 💬 Messages, 🔧 Commands, 🛠️ Tools, 🧠 LLM, 📋 Your Chats, 🎤 Speech-to-Text.
+- Responsive design: max-width 900px container, clean table layout, hover effects.
+
+**Integration with bot:**
+- Not imported by `internal/` — pure lib package.
+- Invoked via `asyncio.create_subprocess_exec` (per ProxyLifecycle precedent) with stdin payload JSON and 30-second timeout (bot-side invocation lands in Phase 3b).
+- The bot composes the full URL: `base-url + "/" + <url>` from the stdout JSON.
+- Deletion is bot-managed via one-shot per-page `DelayedTaskFunction.STATS_PAGES_CLEANUP` tasks — the CLI itself only provides the `delete` verb (bot-side deletion wiring lands in Phase 3b).
+
+**Tests:**
+- `tests/lib/stats/test_stats_pages_generator.py` — in-process generator tests (HTML structure, escaping, sections, file I/O).
+- `tests/lib/stats/test_stats_pages_cli.py` — subprocess CLI contract tests (stdin/stdout JSON, exit codes, help).
 
 ---
 
