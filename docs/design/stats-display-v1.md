@@ -105,7 +105,88 @@ U9's ratified text below stays as history.
   bounded risk, R13). `ttl-hours` semantics: per-page deletion task delay
   (was "page-registry cutoff").
 
- - **Deviation 2026-08-18 (Gate-1 Round B P3b) — D11's "grouping logic exists exactly once" not fully achieved**: The reply-text renderers and the payload builders remain two pipelines (unification deferred — follow-up candidate). Mitigations shipped: chatList condition aligned (private ∧ no user filter), possiblyIncomplete propagated into payload sections (FIX 5), averages now correct (FIX 1), subprocess mechanics extracted to `lib/stats/stats_pages/launcher.py` (satisfying the "exactly once" principle at the subprocess level).
+ - **Deviation 2026-08-18 (Gate-1 Round B P3b) — D11's "grouping logic exists exactly once" not fully achieved**: The reply-text renderers and the payload builders remain two pipelines (unification deferred — follow-up candidate). Mitigations shipped: chatList condition aligned (private ∧ no user filter), possiblyIncomplete propagated into payload sections (FIX 5), averages now correct (FIX 1), subprocess mechanics extracted to `lib/stats/stats_pages/launcher.py` (satisfying the "exactly once" principle at the subprocess level). *(Superseded 2026-08-19 by U12-9 below — the page payload is now raw rows, mooting the two-pipeline concern.)*
+
+- **U12 — /stats command + web-tier revision** (2026-08-19, user round 4 —
+  later than U11 and the P3b deviation note above; supersedes the listed
+  parts of D2/D6/D7/D10/D11/D12/D13/D16 and §5, and the deviation note's
+  grouping rationale — superseded text below stays as history; this block
+  carries the authority). Ten sub-decisions, all user-ratified 2026-08-19
+  (three via the question tool — noted inline):
+
+  1. **Period grammar (amends D2):** `--period=<N><suffix>` or `all`.
+     Suffixes: `h` = hours (1..24, periodType hourly), `d` = days
+     (1..31, daily), `m` = months (N ≥ 1, monthly — CALENDAR months,
+     user-ratified), `all` (total, no range). Range computation: `h` →
+     from = now−Nh truncated to the hour; `d` → from = now−Nd truncated to
+     the day (N+1 buckets incl. the partial current day); `m` → from =
+     first day of the month N calendar months back; `all` → no bounds. The
+     old fixed args (1d/7d/30d) are subsumed by `Nd`; default stays `7d`;
+     out-of-range N or bad suffix → usage error (D2's one rule).
+  2. **`--section=all` (amends D2/D6):** renders all four sections. The
+     sectionsToRender exclusion logic (positional chatId → all sections;
+     `--user` → llm excluded) is REMOVED — the positional chatId only
+     selects the target chat; `--user` only filters (llm renders with its
+     existing chat-level annotation).
+  3. **`--user` accepts `@username` (amends D2/D7):** `<id>` or
+     `@username`, case-insensitive, resolved within the TARGET chat via
+     `ChatUsersRepository.getChatUserByUsername` (chat_users.py:170-200 —
+     existing case-insensitive LOWER comparison, LIMIT 1; target-chat scope
+     user-ratified). Leading `@` stripped; not found → usage error.
+  4. **Config merge (amends D10/§5):** the `[stats-pages]` section and the
+     `configs/00-defaults/stats-pages.toml` file are DELETED; all keys move
+     under `[stats.pages]` in `configs/00-defaults/stats.toml`.
+     `getStatsPagesConfig()` reads `self.get("stats.pages", {})`
+     (dotted-path get confirmed at manager.py:278-293). The `base-url` key
+     is REMOVED entirely (see 5).
+  5. **CLI contract (amends D11/D12):** generate stdout JSON =
+     `{"pageId", "url"}` (key `id` renamed `pageId`). `url` is FULL and
+     used VERBATIM by the bot (no composition). The CLI accepts an
+     optional `--base-url <url>` argument — operators put it directly in
+     the generate-command template; url = base.rstrip("/")+"/"+filename
+     when given, else the bare filename.
+  6. **Rate limiting (SUPERSEDES D13's pre-check+refuse):** applyLimit-only —
+     `await RateLimiterManager.getInstance().applyLimit(queue, key)` with
+     the issuing-chat key, exactly like the weather/geocode/yandex client
+     precedents (lib/openweathermap/client.py:470 etc.). NO `getStats`
+     pre-check (its return is an untyped dict — assuming fields is wrong,
+     user note), NO refusal reply; exceeded requests sleep until a slot
+     frees. Limiter config (00-config.toml, already present): stats-pages
+     SlidingWindow **windowSeconds 3600→600** (user-ratified shrink; keeps
+     sleeps under the 30-min command timeout), maxRequests 3. NOTE:
+     manager-level applyLimit can raise RuntimeError only when no limiter
+     and no default is configured (manager.py:298-299) — left to the outer
+     D15 wrap.
+  7. **DELETE_DENIED_COMMANDS respected (amends D16):** in statsCommand's
+     ALLOW_SHOW_STATS deny branch — when
+     `chatSettings[ChatSettingsKey.DELETE_DENIED_COMMANDS].toBool()` (key
+     `delete-denied-commands`, default false, bot-defaults.toml:96) →
+     `await self.deleteMessage(ensuredMessage)` wrapped in try/except-log
+     (manager.py:990-1001 shape), NO reply; otherwise the existing
+     informative reply stands.
+  8. **Output cap removed (amends D6):** `_MAX_OUTPUT_LENGTH` deleted. Full
+     output delivered via whole-line chunked `sendMessage` calls
+     (~3000-char chunks, each converted to MarkdownV2 independently —
+     avoids the mechanical-split boundary-corruption hazard; platform
+     splitIfTooLong stays as last resort).
+  9. **Web payload = raw rows (SUPERSEDES the D11 "grouping once" deviation
+     note above):** the bot no longer pre-groups for the page. Payload =
+     meta (userId, chatId, chatTitle, chatType, platform, period arg
+     string, periodType, generatedAt) + `rows: dict[eventType →
+     list[StatsAggregateDict]]` covering the five event types + chatList
+     (private scope, same condition as the reply). Bot applies ONLY scope
+     filters (consumer = target chat, `__global__` excluded) + granularity
+     (periodType) + range + limit=10000. The page renders from rows
+     server-side: per-eventType sections, time-series tables + inline SVG
+     bar charts, NO client-side JS interactivity (user-ratified); label
+     filtering on the page is future work. Honesty line: per-eventType
+     len(rows) == 10000.
+  10. **User edits ratified (2026-08-19):** stats.py
+      `visibility={CommandPermission.PRIVATE}` = HELP-LISTING ONLY
+      (user-confirmed — group execution unchanged); chat-list line format
+      `` #`chatId` title — N `` (backticked id); title fallback chain
+      title→username→""; chat list only when NOT positionalChatIdUsed;
+      chat_users.py `cu.user_id` JOIN-column qualification (bug fix).
 
 **Scope**: The read/display tier over `stat_aggregates`: a `query()` read API on the
 `lib/stats` `StatsStorage` ABC, ONE user-facing `/stats` bot command with a
@@ -1073,7 +1154,9 @@ surfaces as the D15 failure note, logged):
   ]
   ```
 
-- `generate` prints `{"id": "<uuid>", "url": "<uuid>.html"}` (D11);
+- `generate` prints `{"id": "<uuid>", "url": "<uuid>.html"}` (D11) *(revised
+  2026-08-19 by U12-5: `{"pageId": …, "url": …}` with a FULL url — used
+  verbatim by the bot, no composition)*;
   `delete` prints `{"deleted": 0|1}` (0 = no such page — still a success
   exit so the deletion task completes, D14). The page id is DATA, not
   configuration — it appears only as the `{page_id}` placeholder the bot
@@ -1082,7 +1165,7 @@ surfaces as the D15 failure note, logged):
 - The built-in CLI's own storage flags/defaults are its internal affair
   (D11); external tools honor the same stdin/stdout JSON contracts.
 
-### D13 — Rate limiting: per-chat, check-then-apply *(user-ratified purpose; mechanism flagged; unchanged by the 2026-08-18 round)*
+### D13 — Rate limiting: per-chat, check-then-apply *(user-ratified purpose; mechanism flagged; unchanged by the 2026-08-18 round; SUPERSEDED 2026-08-19 by U12-6: applyLimit-only — no pre-check, no refusal reply, windowSeconds 600)*
 
 - Purpose (user's words): "so users can't generate millions of stat files and eat
   all space". Only `--web`/`/stats_web` is limited — never the in-chat reply
@@ -1127,8 +1210,10 @@ surfaces as the D15 failure note, logged):
   ([types.py](../../internal/services/queue_service/types.py), §2.13) — now
   a **one-shot per-page deletion**, NOT a periodic cleanup.
 - **Scheduling — on generation, exactly one task per page**: after a
-  SUCCESSFUL generation (the CLI returned `{"id","url"}`, D11) and the reply
-  link is composed, `StatsHandler` schedules the deletion immediately:
+  SUCCESSFUL generation (the CLI returned `{"pageId","url"}` per the U12-5
+  revised contract — was `{"id","url"}`; url used verbatim, no composition)
+  and the reply link is sent, `StatsHandler` schedules the deletion
+  immediately:
 
   ```python
   await QueueService.getInstance().addDelayedTask(
@@ -1332,25 +1417,34 @@ no migration, no new table); the only data-model change is the additive
 
 ## 5. Configuration changes
 
-New file [`configs/00-defaults/stats-pages.toml`](../../configs/00-defaults) (created;
-default-off so merged behavior is unchanged):
+> **Revised by U12 (2026-08-19):** the `[stats-pages]` section and the
+> standalone `configs/00-defaults/stats-pages.toml` file are DELETED; the
+> keys live under `[stats.pages]` in `stats.toml`, and `base-url` is gone
+> entirely (the CLI's `--base-url` argument replaces it, U12-4/U12-5).
+
+`[stats.pages]` child section appended to
+[`configs/00-defaults/stats.toml`](../../configs/00-defaults/stats.toml)
+(default-off so merged behavior is unchanged; the former standalone
+`stats-pages.toml` is deleted, U12-4):
 
 ```toml
-[stats-pages]
+[stats.pages]
 enabled = false
-# base-url = "https://example.com/stats"    # REQUIRED when enabled; composed into the reply link
 ttl-hours = 24                              # per-page deletion task delay (D14/U11) — the BOT's TTL decision
 ratelimiter-queue = "stats-pages"
 generate-command = [                        # D12; defaults point at the built-in generator (U8)
     "./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate",
     "--user-id={user_id}", "--chat-id={chat_id}", "--platform={platform}",
+    # operators may append "--base-url=https://example.com/stats" (U12-5)
 ]
 delete-command = [
     "./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}",
 ]
 ```
 
-No `output-dir` key exists (U7): the CLI owns all storage decisions.
+No `output-dir` key exists (U7); no `base-url` key exists (U12-5 — the CLI
+owns URL composition via its `--base-url` argument): the CLI owns all storage
+decisions.
 
 Chat-setting default (U6/D16) — diff to
 [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml),
@@ -1364,7 +1458,7 @@ Chat-setting default (U6/D16) — diff to
 
 Diff to [`configs/00-defaults/00-config.toml`](../../configs/00-defaults/00-config.toml)
 (new limiter + queue binding, appended after `stt-global` / into the queues
-table — **unchanged by this amendment round**):
+table — windowSeconds revised 2026-08-19 by U12-6):
 
 ```toml
  [ratelimiter.ratelimiters.stt-global]
@@ -1378,7 +1472,7 @@ table — **unchanged by this amendment round**):
 +type = "SlidingWindow"
 +
 +[ratelimiter.ratelimiters.stats-pages.config]
-+windowSeconds = 3600
++windowSeconds = 600                         # U12-6: shrunk from 3600 — applyLimit sleeps must stay under the 30-min command timeout
 +maxRequests = 3
 +
  [ratelimiter.queues]
@@ -1391,12 +1485,13 @@ table — **unchanged by this amendment round**):
 +stats-pages = "stats-pages"
 ```
 
-`[stats]` itself is unchanged. Reader: new typed accessor
-`ConfigManager.getStatsPagesConfig()` (D10). Validation errors (missing
-`base-url`, empty `generate-command`/`delete-command` when enabled,
-non-positive-int `ttl-hours`) fail loudly at the single validation site —
-`StatsHandler` construction (D10/U11; construction raises → bot startup
-fails). No validation when `enabled = false` (default).
+`[stats]` itself gains only the `[stats.pages]` child section (U12-4); its
+existing keys are unchanged. Reader: typed accessor
+`ConfigManager.getStatsPagesConfig()` reading `self.get("stats.pages", {})`
+(D10/U12-4). Validation errors (empty `generate-command`/`delete-command`
+when enabled, non-positive-int `ttl-hours`) fail loudly at the single
+validation site — `StatsHandler` construction (D10/U11; construction raises →
+bot startup fails). No validation when `enabled = false` (default).
 
 ---
 
@@ -1576,6 +1671,11 @@ feature).
 **Gate 3a:** `make format lint`; `make test`; `make check-docs`.
 
 ### Phase 3b — Web tier: bot integration — invocation, rate limit, per-page deletion task, failure modes *(amended 2026-08-18: U9/U11 — U11 replaced the registry + periodic cleanup with the one-shot per-page task)*
+
+> **Revised by U12 (2026-08-19):** raw-rows payload (U12-9), stdout
+> `{"pageId","url"}` used verbatim (U12-5), applyLimit-only rate limiting
+> (U12-6), config under `[stats.pages]` (U12-4). The body below is the
+> 2026-08-18 (U11) state.
 
 Sized ~30 steps: 1 new lib file, 2 edited files (handler, queue types),
 tests.
