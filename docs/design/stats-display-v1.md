@@ -244,7 +244,8 @@ the fallback loop threads `consumerId` through each model's `generateText`,
   ([abstract.py:557-563, 578-584](../../lib/ai/abstract.py)). Every embedding stat
   row lands under `consumer = "__global__"`.
 - **Exception 2 — background calls pass `chatId = None`**: chat-search indexing
-  ([chat_search.py:532, 554](../../internal/bot/common/handlers/chat_search.py)) and
+  ([chat_search.py:552-556](../../internal/bot/common/handlers/chat_search.py),
+  deliberate per its docstring :532-534) and
   background memory refinement ([user_memories.py:1301](../../internal/bot/common/handlers/user_memories.py),
   synthetic-ensuredMessage refinement uses `chatId=None` for rate limiting). `None` →
   `consumer = "__global__"` ([stats_storage.py:107](../../internal/database/stats_storage.py)).
@@ -499,7 +500,9 @@ patch `…asyncio.create_subprocess_exec`
   any-tier flags.
 - Defaults live under `[bot.defaults]` in
   [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml)
-  (e.g. `allow-sandbox = false`, :90; `allow-tools-commands = false`, :54).
+  (e.g. `allow-sandbox = false`, :90; `allow-tools-commands = true`, :88). The
+  `allow-tools-commands = false` at :54 sits under `[bot.channel-defaults]`
+  (channel-only override), not the operative default.
 - **Who sets them**: `/set`|`/unset`
   ([dev_commands.py:322-327](../../internal/bot/common/handlers/dev_commands.py),
   category `TECHNICAL` → centrally admin-gated per
@@ -640,6 +643,10 @@ async def statsCommand(self, ensuredMessage, command, args, updateObj, typingMan
   same coarse gate `/users` already rides
   ([chat_search.py:1088](../../internal/bot/common/handlers/chat_search.py)).
   The dedicated per-chat opt-out is the new `ALLOW_SHOW_STATS` setting (D16).
+  Effective out-of-the-box visibility: `[bot.defaults]
+  allow-tools-commands = true` (§2.12) makes `/stats` available in groups and
+  private chats, and denied in channels (`[bot.channel-defaults]
+  allow-tools-commands = false`, :54).
 
 **No permission tiers** (user decision, explicitly against an owner-only tier for
 operational detail): modelName, provider, tokens, error rates are visible to
@@ -718,7 +725,9 @@ options (both --opt=value and --opt value accepted):
 - *(Superseded by U1: the old private default — a multi-section digest over
   the UNION of all the user's chats — no longer exists; the union is replaced
   by the chat list plus per-chat targeting. `getUserChats` is still resolved
-  once per private-scope command — one cheap indexed join, §2.5.)*
+  once per private-scope command — the `getUserChats` join plus per-chat
+  cache lookups ([base.py:1343-1354](../../internal/bot/common/handlers/base.py)),
+  bounded by the user's chat count (§2.5).)*
 - `--user=<id>` filters the `user_id` label wherever the event type carries
   it (D7). Authorization for both drills is scope membership, not
   permissions — any user id may be inspected within your scope (same
@@ -927,9 +936,14 @@ reply link), `ttl-hours` (page-registry cutoff, unit-explicit, default 24),
   files at all. TTL is likewise the BOT's decision over the page registry
   (`ttl-hours`), not a CLI argument.
 - Accessed via a typed accessor `ConfigManager.getStatsPagesConfig()`
-  mirroring `getStatsConfig()` (§2.7 dominant pattern), cached once at
-  handler init / service init (NG6). Validation: `enabled = true` requires
-  `base-url` AND both command templates (A4 fail-loud pattern; §5).
+  mirroring `getStatsConfig()` (§2.7 dominant pattern); the handler only
+  reads cached scalars (NG6). Validation lives at exactly ONE site:
+  `StatsAggregationService.initialize` (A4-style — the `[stats-pages]` values
+  join the existing atomic parse-locals-then-commit block,
+  [service.py:142-202](../../internal/services/stats/service.py)). Accepted
+  consequence (fail-loud by design): malformed `[stats-pages]` values crash
+  startup even when `[stats] enabled = false` — `initialize` is unconditional
+  ([main.py:90](../../main.py)).
 
 ### D11 — CLI contract: stdin JSON in, self-contained HTML out, JSON stdout *(user-ratified; amended 2026-08-18: U7/U8 — placement and storage ownership)*
 
@@ -1073,7 +1087,16 @@ surfaces as the D15 failure note, logged):
   `db.delayedTasks.getPendingDelayedTasks()` (filter in Python for
   `function == "statsPagesCleanup"` — no by-function repo query exists, §2.13)
   and calling `addDelayedTask(..., skipDB=False)` only when none is pending.
-  First-CRON-tick seeding is race-free: the tick fires strictly AFTER
+  **Placement pinned against the current `_dtCronJob`**
+  ([service.py:248-272](../../internal/services/stats/service.py)): the seed
+  check runs AFTER the `if not self._statsStorages: return` early return
+  (:263-265) and BEFORE the interval gate (:270-272) — i.e. on the first tick
+  past the registry check regardless of elapsed interval, so first seeding is
+  never delayed by `aggregation-interval-seconds`. **Dependency (explicit)**:
+  with `[stats] enabled = false` the storage registry is empty and the rider
+  returns BEFORE the seed — `[stats-pages]` therefore requires `[stats]`
+  enabled; pages-only mode (stats off + pages on) never seeds. First-CRON-tick
+  seeding is race-free: the tick fires strictly AFTER
   `startDelayedScheduler` finished restoring pending rows (§2.13) — seeding
   from `GromozekBot.__init__` could race the restoration read and permanently
   duplicate the task.
@@ -1099,11 +1122,17 @@ surfaces as the D15 failure note, logged):
   app-set timestamps, `:named` params; single-natural-key PK (`page_id`); the
   created_at index follows the `idx_cache_updated_at` "for TTL cleanup"
   precedent (migration_012:78). Accessed via a new `StatsPagesRepository`
-  (`internal/database/repositories/stats_pages.py`): `addPage`, `getExpiredPages(cutoff,
-  limit)` (bounded via `applyPagination`), `deletePage(pageId)`. Rows are
-  inserted by the handler on SUCCESSFUL generation only (D15).
+  (`internal/database/repositories/stats_pages.py`): `addPage`,
+  `getExpiredPages(cutoff, limit)` (bounded via `applyPagination`,
+  `ORDER BY created_at ASC` — oldest first; permanently-failing deletes are
+  therefore retried each cycle — bounded, accepted), `deletePage(pageId)`.
+  Rows are inserted by the handler on SUCCESSFUL generation only (D15).
 - **Cleanup body**: `cutoff = now - ttlHours`; select expired registry rows
-  (bounded batch per run — e.g. 50); for each, invoke the shared launcher
+  (bounded batch per run — default 10; worst-case handler duration is
+  batch × per-page timeout = 10 × 30 s ≈ 5 min, vs ≈ 25 min at a batch of 50
+  — the single-threaded delayed-task queue stalls behind the handler, so the
+  smaller default keeps other delayed tasks waiting minutes, not tens of
+  minutes); for each, invoke the shared launcher
   with `delete-command` substitutions `{"page_id": row.page_id}`; on exit 0
   (including `{"deleted": 0}` — page already gone) delete the registry row.
   **Failure isolation per page**: each page's delete is wrapped; a failing
@@ -1231,7 +1260,7 @@ QueueService delayed scheduler                                    [service.py:26
   └─ STATS_PAGES_CLEANUP task [NEW, DB-PERSISTED, restored on restart :309-318]
         → StatsAggregationService._dtStatsPagesCleanup(task)
               ├─ not enabled → no-op
-              ├─ select expired stats_pages rows (cutoff = now - ttl-hours, batch ≤ 50)
+              ├─ select expired stats_pages rows (cutoff = now - ttl-hours, batch ≤ 10)
               ├─ per page: launcher(delete-command, {page_id}) → on success DELETE row
               │   (per-page try/except — failed rows retry next run)
               └─ finally: addDelayedTask(+3600 s, STATS_PAGES_CLEANUP, skipDB=False)  [persisted chain]
@@ -1312,7 +1341,8 @@ table — **unchanged by this amendment round**):
 `[stats]` itself is unchanged. Reader: new typed accessor
 `ConfigManager.getStatsPagesConfig()` (D10). Validation errors (missing
 `base-url`, missing `generate-command`/`delete-command` when enabled,
-malformed ttl) fail loudly at startup / handler-init per the A4 precedent.
+malformed ttl) fail loudly at the single validation site —
+`StatsAggregationService.initialize` (D10, A4 precedent).
 
 ---
 
@@ -1368,7 +1398,10 @@ Phase 2 entry if preferred).
 Sized ~60 steps: one new lib file, one new handler file, four edited production
 files (manager, chat_settings ×2 sites, bot-defaults TOML, chat_users repo +
 models), tests. (The four-site and `messages_count` additions are one-line
-sites each — the ceiling holds.)
+sites each — the ceiling holds.) **Split contingency (pre-declared):** if the
+phase overflows the budget, split **P2a** (`lib/stats/analysis.py` + the
+`getUserChats`/`messages_count` extension + their tests) / **P2b** (handler +
+registration + chat-setting + handler tests).
 
 **Files:**
 
@@ -1394,6 +1427,13 @@ sites each — the ceiling holds.)
   + [`internal/database/models.py`](../../internal/database/models.py) — U1
   ground: add `cu.messages_count` to the `getUserChats` SELECT and
   `messages_count: int` to `ChatInfoDict` (§2.5 addendum).
+
+**Interim `--web` behavior (pre-Phase-3):** until Phase 3 lands, `--web` /
+`/stats_web` replies "page generation is disabled" (informative, not an
+error), decided by an ad-hoc `configManager.get("stats-pages", {})` read
+(§2.7 ad-hoc precedent — no `getStatsPagesConfig()` dependency; the accessor
+arrives in Phase 3a), so P2 alias/grammar tests have a defined expectation
+for the web path.
 
 **Tests:**
 
@@ -1444,7 +1484,9 @@ Sized ~35 steps: new lib package (3 files), migration 029 + repository, 2
 config files, 1 edited internal file, tests. (The 3a/3b split is
 **unconditional** — combined the two sub-phases span 15+ files, so each
 carries its own budget and the ~60-step-per-invocation ceiling holds by
-construction.)
+construction.) **Split contingency (pre-declared):** if 3a itself overflows,
+split **3a-split** — migration 029 + repository + their tests vs generator
+package + config + their tests.
 
 **Files:**
 
@@ -1608,7 +1650,7 @@ No live/operator smoke gate is mandatory beyond the optional Phase 3 local smoke
 | R12 | **Template placeholder drift** (unknown placeholder in a custom template) | Med | Low | Strict `format_map` → KeyError → D15 note + WARNING log naming the command | Fix the templates |
 | R13 | **Registry-orphan pages** — delete-command fails persistently for a page (external tool broken/removed) | Low | Low | Per-page failure isolation; the registry row keeps flagging it for retry; **accepted** (U9): the page just outlives TTL — no data risk, only storage | Fix or remove the external tool; manual delete |
 | R14 | **`request_count` counts attempts, not logical requests** (fallback loop, §2.2) | — (documented) | Low | Rendered as "requests (attempts)" in help/footnote; not fixable display-side | n/a |
-| R15 | **Self-reschedule crash window duplicates the cleanup task** — crash between a handler's persisted re-add and the old row's mark-done leaves two pending rows → two live instances | Low | Low | Cleanup is idempotent (delete by page_id; `{"deleted": 0}` tolerated); duplicates converge back as rows clear; §2.13 analysis | n/a (benign) |
+| R15 | **Self-reschedule crash window duplicates the cleanup task** — crash between a handler's persisted re-add and the old row's mark-done leaves two pending rows → two live instances | Low | Low | Cleanup is idempotent (delete by page_id; `{"deleted": 0}` tolerated); each duplicate fires and re-adds exactly one row, so the duplicate chain persists at N indefinitely — benign, bounded (§2.13 analysis) | n/a (benign) |
 | R16 | **Seed-vs-restore race** — seeding from `GromozekBot.__init__` could double-add a pending row | — (designed out) | Low | Seed runs on the FIRST CRON tick, strictly after `startDelayedScheduler` restored pending rows (D14/§2.13) | n/a |
 
 **Rollback principle:** the whole display tier is gated on `[stats] enabled`
