@@ -1,4 +1,6 @@
 # Our TODO list
+- [ ] Work on the stats display v2 design (owner global/per-model/per-chat-per-model) — see docs/design/stats-display-v2-draft.md
+- [ ] Fix consumerId logging gaps in llm_request stats (embeddings/background/condensing) — see docs/design/stats-consumerid-gaps.md
 - [x] short-term memories - add score
 - [x] retry to send message on `telegram.error.TimedOut: Timed out`
 - [ ] add ability to add bot-memory. think how to inject it

@@ -1,14 +1,79 @@
 # Design: Statistics display v1 — `/stats` command and optional web pages
 
 **Date**: 2026-08-18
-**Status**: **PROPOSED**
+**Status**: **Amended 2026-08-18 (user round 3)** (PROPOSED content as amended)
 **Owner**: TBD
 **Branch**: `lib-stat-improvement`
 
+## Amendments (2026-08-18, user round 3 — user-ratified)
+
+Ten user-ratified amendments (U1-U10) supersede parts of the original
+decisions; the affected D-decisions are reworked in place and marked
+*(amended 2026-08-18)*, and one decision is added (D16). Everything this round
+does not touch — the query API (D4/D5), rate-limiting pre-check+refuse (D13),
+stdin-JSON / stdout-`{"id","url"}` CLI contract, relative `url` + `base-url`
+composition, failure-mode table shape (D15), UTC labeling, username join,
+three-bucket `sent` rendering, and Phase 1 — stands unchanged. New grounding
+for this round lives in §2.5 (addendum), §2.6 (addendum), and §2.12-§2.13;
+all file:line claims there were verified against source on 2026-08-18.
+
+- **U1 — Default outputs** (supersedes the D6 multi-section digest default and
+  part of D3): GROUP chat → MESSAGE STATS ONLY for that chat (other sections
+  via `--section=`); PRIVATE chat → message stats for the current private
+  chat + a list of the user's chats (chat id + name + the USER's messages
+  count in each — operational `chat_users` data via `getUserChats`, works
+  even where aggregates are sparse). Positional chatId (private only)
+  selects the target chat; must be a chat the user is a member of; in a
+  group a chatId argument is a usage error.
+- **U2 — Handler naming**: `StatsHandler`, file
+  `internal/bot/common/handlers/stats.py` (NOT `StatsDisplayHandler`) —
+  leaves room for future stat-related actions in the same handler.
+- **U3 — Args grammar** (rewrites D2): argparse-like. Positionals `help` OR
+  chatId (mutually exclusive; chatId private-only); options `--period=`,
+  `--section=`, `--user=<id>`, `--web`. Unknown option / bad value / dangling
+  positional → usage reply. FLAG: a NEW args-pattern for the repo — deliberate
+  divergence from the `/users` token-loop precedent.
+- **U4 — `/stats_web` alias**: an alias running the SAME handler with web
+  generation forced on — the `commands=` tuple mechanism (`/taro`|`/tarot`),
+  not a second handler class.
+- **U5 — Scoping** (amends D3): chat type comes canonically from
+  `ensuredMessage.recipient.chatType` (`ChatType` StrEnum); any chatId-sign
+  (`> 0` → private) parsing is removed from the design's scope logic.
+- **U6 — Chat-settings gate**: new chat setting `ALLOW_SHOW_STATS`
+  (`allow-show-stats`), default ENABLED, following the add-chat-setting
+  four-site pattern; a chat admin can disable stats showing FOR THAT CHAT.
+  Explicitly NOT the LLM tool-gate — a plain chat setting read by the
+  command handler.
+- **U7 — CLI config**: TWO templates — `generate-command` and
+  `delete-command` — instead of one mode-switched `command`. Substitutions:
+  generate `{user_id}`/`{chat_id}`/`{platform}`; delete `{page_id}` only.
+  `{mode}` and `{output_dir}` are REMOVED entirely — the CLI owns all storage
+  decisions; the bot neither knows nor cares where pages are stored, or
+  whether they are files at all.
+- **U8 — Built-in generator location**: `lib/stats/stats_pages/`
+  (module-invocable: `./venv/bin/python3 -m lib.stats.stats_pages`), NOT
+  `internal/stats_pages/`. Default values of both command templates point at
+  it.
+- **U9 — TTL cleanup via a persisted delayed task** (rewrites the cron-rider
+  cleanup decision D14): new `DelayedTaskFunction.STATS_PAGES_CLEANUP`,
+  DB-persisted (skipDB=False) and self-rescheduling — survives bot restarts
+  naturally. REQUIRED CONSEQUENCE (teamlead judgment call, flagged for the
+  reviewer in D14): since delete is by `{page_id}` and the bot no longer
+  knows output paths, the bot must REMEMBER generated pages → small
+  **page-registry table** `stats_pages` (migration 029), inserted on
+  successful generation; the cleanup task selects rows older than TTL and
+  invokes `delete-command` per `page_id` (bounded batch, per-page failure
+  isolation), then removes registry rows.
+- **U10 — Housekeeping**: §4 wiring, §5 config, §6 phases, §7 gates, §8
+  risks, §9 open questions, §10 documentation impact, and §11 references
+  updated; D-numbers unchanged (D14 rewritten in place; D16 added).
+
 **Scope**: The read/display tier over `stat_aggregates`: a `query()` read API on the
-`lib/stats` `StatsStorage` ABC, ONE user-facing `/stats` bot command (brief in-chat
-digest + full drill-downs, scope-derived visibility), and an optional config-gated
-web-page generation tier (payload → local CLI subprocess → self-contained static HTML).
+`lib/stats` `StatsStorage` ABC, ONE user-facing `/stats` bot command with a
+`/stats_web` alias (single-section default reply, scope-derived visibility,
+`--section`/`--user` drill-downs), and an optional config-gated web-page
+generation tier (payload → local CLI subprocess → self-contained static HTML,
+TTL-cleaned via a DB-persisted delayed task over a page registry).
 This closes the last deferred item of
 [stats-collecting-v1](./stats-collecting-v1.md) NG3 / [stats-aggregation-v1](./stats-aggregation-v1.md) NG2.
 
@@ -35,35 +100,49 @@ that is a different, non-historical data source.
 **Goal in one paragraph:** expose the aggregates through three tiers of increasing
 optional cost — (1) a portable `query()` on the existing `StatsStorage` ABC that
 filters on `event_type` + `period_type` + `period_start` range in SQL and leaves all
-label work to Python; (2) ONE `/stats` command (args grammar, scope-derived access,
-bounded digest, full drill-downs) registered only when `[stats] enabled`; (3) an
-optional `-w` flag that renders the same query results into a self-contained static
-HTML page via a configurable local CLI subprocess, rate-limited per chat and cleaned
-up by TTL. The brief in-chat output must never depend on tier 3 working.
+label work to Python; (2) ONE `/stats` command (+`/stats_web` alias; argparse-style
+grammar, scope-derived access, bounded single-section default reply, drill-downs)
+registered only when `[stats] enabled`; (3) an optional `--web` flag (equivalent to
+the `/stats_web` alias) that renders the same query results into a self-contained
+static HTML page via a configurable local CLI subprocess, rate-limited per chat and
+cleaned up by TTL through a persisted delayed task and a page registry. The
+in-chat output must never depend on tier 3 working.
 
 ### 1.1 Goals
 
 - **G1** — Read API: `query()` on the `lib/stats` ABC returning rows with **parsed**
   labels dicts; `NullStatsStorage.query` returns `[]`; portable SQL (no JSON1, no
   dialect functions, `:named` placeholders, provider-routed, `applyPagination`).
-- **G2** — ONE `/stats` command, permission `DEFAULT`, registered only when
-  `[stats] enabled` (WeatherHandler-style conditional registration).
-- **G3** — Scope-derived visibility: group chat → that chat only; private chat → all
-  chats where the issuing user appears (existing `getUserChats`); **no permission
-  tiers** — all operational detail is visible to everyone within their scope.
-- **G4** — Bounded multi-section digest by default (messages / commands / tools /
-  llm+stt) with top-N lists, plus `user <id>` and `chat <id>` full drill-downs, and
+- **G2** — ONE `/stats` command (+ `/stats_web` alias), permission `DEFAULT`,
+  registered only when `[stats] enabled` (WeatherHandler-style conditional
+  registration).
+- **G3** — Scope-derived visibility: group chat → that chat only; private chat →
+  the user's chats via the existing `getUserChats` (default view = current
+  private chat + the chat list; positional chatId targets a member chat);
+  **no permission tiers** — all operational detail is visible to everyone
+  within their scope.
+- **G4** — Default reply *(amended 2026-08-18, U1)*: group → message stats for
+  that chat; private → message stats for the current private chat + a list of
+  the user's chats (id, title, the user's messages count per chat). Other
+  sections via `--section=messages|commands|tools|llm`; user drill-down via
+  `--user=<id>`; chat drill-down via the positional chatId (private only);
   `/stats help`.
-- **G5** — Optional web tier: `-w` generates a self-contained HTML page (UUID
-  filename, inline CSS, no external resources, zero new runtime dependencies) via a
+- **G5** — Optional web tier *(amended 2026-08-18, U3/U4)*: `--web` (or the
+  `/stats_web` alias) generates a self-contained HTML page (UUID filename,
+  inline CSS, no external resources, zero new runtime dependencies) via a
   configurable CLI subprocess (stdin JSON in, stdout JSON `{"id", "url"}` out),
-  rate-limited per chat, TTL-cleaned, best-effort — failure never degrades the brief.
+  rate-limited per chat, TTL-cleaned via a persisted delayed task, best-effort
+  — failure never degrades the in-chat reply.
 - **G6** — All displayed periods are labeled UTC.
 
 ### 1.2 Non-goals
 
-- **NG1** — No new tables, no migration, no schema change. This design is read-only
-  over `stat_events`/`stat_aggregates` (both from migration 016).
+- **NG1** — *(superseded 2026-08-18, U9/U1)* Originally "no new tables, no
+  migration, no schema change". The read API over `stat_events`/
+  `stat_aggregates` remains migration-free, but the amended design ADDS the
+  `stats_pages` page-registry table (migration 029, D14) and extends
+  `ChatInfoDict` with the user's `messages_count` (existing column, no DDL,
+  §2.5 addendum).
 - **NG2** — No `stat_aggregates` retention/cardinality management
   (carried over from stats-aggregation-v1 §9 Q2; see R1).
 - **NG3** — No per-user attribution for `llm_request` events (they carry no
@@ -72,8 +151,10 @@ up by TTL. The brief in-chat output must never depend on tier 3 working.
   stats-collecting-v1 Caveats).
 - **NG4** — No auth on generated pages. Ratified: unguessable UUID URL + TTL is the
   protection (aggregates deemed non-sensitive within scope).
-- **NG5** — No bot-side UI for deleting a page by id in v1 (the CLI delete mode
-  exists and is documented; wiring a command around it is future work, see O1).
+- **NG5** — No bot-side USER-facing UI for deleting a page by id in v1
+  *(amended 2026-08-18)*: the CLI `delete` verb now exists and is wired to the
+  TTL cleanup task (D12/D14); a user-facing delete/list verb remains future
+  work, see O1.
 - **NG6** — No config hot-reload; `[stats-pages]` is read once at startup like the
   rest of the config (aggregation-v1 NG4 precedent).
 - **NG7** — No charts, no JS, no per-page assets. Static HTML with inline CSS only.
@@ -189,7 +270,7 @@ consequences for display:
 
 - **Direction (users vs. bot) breakdowns render only from live rows.** The
   `groupSum("sent", ...)` view naturally produces three buckets — `"True"`, `"False"`,
-  and *absent* (backfill). The digest renders the absent bucket explicitly as
+  and *absent* (backfill). The reply renders the absent bucket explicitly as
   "history (before stats enabled)" so the split never silently undercounts (D6).
 - Totals (`message_count`, `text_length`) remain correct across backfill + live:
   post-query SUM over disjoint label buckets.
@@ -214,6 +295,25 @@ Return type: `List[ChatInfoDict]` (has `chat_id`, `title`, `username`, `type`,
 private scope; do not invent a new query.** (A stale note in teamlead memory saying
 the reverse query "does not exist" predates verification; the repo wins.)
 
+**Addendum (2026-08-18, U1 grounding): the returned shape has id + title but NOT
+the user's messages count.** `ChatUsersRepository.getUserChats` selects `ci.*`
+only — `SELECT ci.* FROM chat_info ci JOIN chat_users cu ON cu.chat_id =
+ci.chat_id WHERE user_id = :userId`
+([chat_users.py:303-315](../../internal/database/repositories/chat_users.py)) —
+so the returned `ChatInfoDict` (`chat_id`/`title`/`username`/`type`/`is_forum`/
+`bot_status`/…, [models.py:213-231](../../internal/database/models.py)) carries
+chat identity but NOT `cu.messages_count`, even though the join already visits
+the row that holds it: `chat_users` is keyed `(chat_id, user_id)` and
+`messages_count` lives there ([chat_users.py:246-253](../../internal/database/repositories/chat_users.py),
+the `getChatUsers` filter). The private-scope chat list needs chat id + name +
+the USER's messages count per chat, so the SMALLEST addition is: add
+`cu.messages_count` to that one SELECT and a `messages_count: int` field to
+`ChatInfoDict` (additive — `dbUtils.sqlToTypedDict` fills matching keys, and
+existing consumers ignore the new field; `/list_chats` output is unaffected).
+Multi-source dedup keeps the first source's count
+([chat_users.py:316-321](../../internal/database/repositories/chat_users.py)) —
+acceptable for an operational counter. **No new query.**
+
 ### 2.6 Registration, permissions, and command machinery (grounding task 4)
 
 - Conditional handler registration mechanism (copy verbatim):
@@ -237,6 +337,39 @@ the reverse query "does not exist" predates verification; the repo wins.)
   `args.split()`, `token.startswith("key=")`, `int()` inside `try/except
   (ValueError, TypeError): pass` (keep default), then clamp
   ([chat_search.py:1112-1134](../../internal/bot/common/handlers/chat_search.py)).
+  This remains the documented precedent FOR THAT STYLE; the amended D2
+  deliberately diverges from it (argparse-style) — see D2's flag.
+- **Canonical chat type (2026-08-18 amendment grounding, U5)**:
+  `ensuredMessage.recipient.chatType` is the canonical chat-type source at
+  command time. `ChatType` is a StrEnum (`PRIVATE`/`GROUP`/`CHANNEL`,
+  [ensured_message.py:57-71](../../internal/bot/models/ensured_message.py))
+  living on `MessageRecipient` ([ensured_message.py:86-97](../../internal/bot/models/ensured_message.py)),
+  populated platform-side by `fromTelegramChat`
+  ([ensured_message.py:108-130](../../internal/bot/models/ensured_message.py))
+  and `fromMaxRecipient` (:132-159). `handleCommand` itself already reads it
+  ([manager.py:966](../../internal/bot/common/handlers/manager.py)) and
+  handlers branch on it (e.g. [base.py:750](../../internal/bot/common/handlers/base.py)).
+  Chat-type checks MUST use this enum, never the `chatId > 0` sign heuristic.
+- **Command aliases and platform (2026-08-18 amendment grounding, U4/U7)**:
+  `@commandHandlerV2(commands=…)` accepts a Sequence of names — ONE
+  registration, N aliases; the established shape is
+  `commands=("taro", "tarot", "таро")`
+  ([divination.py:284-292](../../internal/bot/common/handlers/divination.py);
+  also `("runes", "rune", "руны")` :322-329, `("summary", "topic_summary")`
+  [summarization.py:705](../../internal/bot/common/handlers/summarization.py)).
+  `getCommandHandlersDict` maps every alias (lower-cased) to the SAME handler
+  info ([manager.py:877-880](../../internal/bot/common/handlers/manager.py));
+  the INVOKED command name reaches the handler as its `command` argument
+  ([manager.py:1037-1039](../../internal/bot/common/handlers/manager.py);
+  signature [command_handlers.py:96-98](../../internal/bot/models/command_handlers.py));
+  `/help` renders ONE entry per registration with the aliases pipe-joined —
+  `"|".join(v.commands)` ([help_command.py:212](../../internal/bot/common/handlers/help_command.py)).
+  Platform: every handler is constructed with `botProvider: BotProvider`
+  (`BotProvider.TELEGRAM = "telegram"`, `BotProvider.MAX = "max"`,
+  [enums.py:8-20](../../internal/bot/models/enums.py); ctor
+  [base.py:143-151](../../internal/bot/common/handlers/base.py)) and stores it
+  as `self.botProvider` — `self.botProvider.value` is the `{platform}`
+  substitution value.
 
 ### 2.7 Config access (grounding task 6)
 
@@ -305,7 +438,7 @@ patch `…asyncio.create_subprocess_exec`
    ([bot.py:968](../../internal/bot/common/bot.py), same value as
    `TELEGRAM_MAX_MESSAGE_LENGTH` in
    [internal/bot/constants.py:96](../../internal/bot/constants.py)). A chunk
-   boundary can cut an escaped entity mid-way — **the digest must stay well
+   boundary can cut an escaped entity mid-way — **the in-chat reply must stay well
    under ~3500 chars** so it always renders as one message (D6). (The function
    name `splitIfTooLong` in the task brief is this send-path *parameter*, not a
    standalone helper — verified, no such function exists.)
@@ -347,27 +480,136 @@ patch `…asyncio.create_subprocess_exec`
   are built (:137-153) — by the time handlers are constructed, the registry is
   populated. This ordering makes a lazy `getQueryStorage` accessor safe (D4).
 
+### 2.12 Chat settings (grounding for the command gate, U6)
+
+- `ChatSettingsKey` is a StrEnum whose Python names are UPPER_CASE and whose
+  string values are **kebab-case** matching the TOML key
+  ([chat_settings.py:287](../../internal/bot/models/chat_settings.py)). The
+  `allow-*` family precedents: `ALLOW_TOOLS_COMMANDS = "allow-tools-commands"`
+  (:389), `ALLOW_SANDBOX = "allow-sandbox"` (:391), `ALLOW_MENTION =
+  "allow-mention"` (:398).
+- Metadata lives in `_chatSettingsInfo` — dict literals of `ChatSettingsInfoValue`
+  (`type`/`short`/`long`/`page`, dict declared at
+  [chat_settings.py:628](../../internal/bot/models/chat_settings.py)):
+  `ALLOW_TOOLS_COMMANDS` → BOOL/page `PAID` (:907-912), `ALLOW_SANDBOX` →
+  BOOL/page `FRIEND` (:913-923), `ALLOW_MENTION` → BOOL/page `STANDARD`
+  (:963-968). `ChatSettingsPage` is an IntEnum
+  ([chat_settings.py:160-186](../../internal/bot/models/chat_settings.py));
+  `STANDARD` has minimum tier `FREE` (:227-231) — the page for basic
+  any-tier flags.
+- Defaults live under `[bot.defaults]` in
+  [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml)
+  (e.g. `allow-sandbox = false`, :90; `allow-tools-commands = false`, :54).
+- **Who sets them**: `/set`|`/unset`
+  ([dev_commands.py:322-327](../../internal/bot/common/handlers/dev_commands.py),
+  category `TECHNICAL` → centrally admin-gated per
+  [manager.py:1007-1009](../../internal/bot/common/handlers/manager.py)) and
+  the `/settings` configure wizard
+  ([configure.py](../../internal/bot/common/handlers/configure.py)), with
+  `ADMIN_CAN_CHANGE_SETTINGS` ("Whether chat admins can modify chat settings",
+  [chat_settings.py:368-369](../../internal/bot/models/chat_settings.py))
+  deciding whether chat admins may change settings (enforced at
+  [configure.py:203](../../internal/bot/common/handlers/configure.py) and
+  :832); bot owners bypass.
+- **No GENERIC per-command disable mechanism exists today.** `handleCommand`'s
+  central gates are per-CATEGORY
+  ([manager.py:994-1013](../../internal/bot/common/handlers/manager.py)):
+  `CommandCategory.TOOLS` → `ALLOW_TOOLS_COMMANDS` or bot owner (:1002-1004);
+  `SPAM` → admin or `ALLOW_USER_SPAM_COMMAND` (:1005-1006); `ADMIN` /
+  `SPAM_ADMIN` / `TECHNICAL` → admin; `PRIVATE` → private chats only;
+  `UNSPECIFIED` → **deny by default** (:995-997). Feature toggles are
+  otherwise per-feature keys checked inside the feature's own handler — the
+  precedent is `ALLOW_SANDBOX`, checked at each sandbox command entry
+  ([sandbox.py:285](../../internal/bot/common/handlers/sandbox.py) and five
+  more sites).
+- Handler-layer read shape: `self.getChatSettings(chatId)` returns
+  `ChatSettingsValue` objects — `settings[key].toBool()`; never tuple-index
+  (add-chat-setting skill, Gotcha A). Writing goes through `setChatSetting(...,
+  user=MessageSender)` (keyword-only `user` at the handler layer).
+- The four-site pattern (enum value + `_chatSettingsInfo` entry + TOML default
+  + consumer) is codified in the
+  [`add-chat-setting`](../../.agents/skills/add-chat-setting/SKILL.md) skill
+  (:32-118).
+
+### 2.13 Delayed tasks — persisted lifecycle (grounding for the cleanup task, U9)
+
+- `DelayedTaskFunction` StrEnum today: `SEND_MESSAGE`, `DELETE_MESSAGE`,
+  `CRON_JOB`, `DO_EXIT` — no stats member
+  ([types.py:9-19](../../internal/services/queue_service/types.py));
+  `DelayedTask(taskId, delayedUntil, function, kwargs)` (:22-44);
+  `DelayedTaskHandler = Callable[[DelayedTask], Awaitable[None]]` (:71).
+- `QueueService.addDelayedTask(delayedUntil, function, kwargs, taskId=None,
+  skipDB=False, skipLogs=False)`
+  ([service.py:420-481](../../internal/services/queue_service/service.py)):
+  auto-generated `taskId` when None (:464-465); in-memory priority-queue put
+  (:469); DB persistence ONLY when `skipDB=False` (:470-478; raises when the
+  DB is missing, :471-472).
+- `registerDelayedTaskHandler(function, handler)`
+  ([service.py:233-266](../../internal/services/queue_service/service.py)) —
+  append-based; handlers run sequentially per fired task (:390-399).
+- **The self-reschedule handler SHAPE (the precedent cited by the brief)**:
+  QueueService's own `_cronJobHandler` re-adds CRON_JOB at `time.time() + 60`
+  with `skipDB=True, skipLogs=True`
+  ([service.py:190-201](../../internal/services/queue_service/service.py)) —
+  in-memory only, re-seeded at startup. The stats-pages cleanup task copies
+  this SHAPE but passes `skipDB=False` — PERSISTENCE is the point: the task
+  survives restarts without re-seeding.
+- **Restart restoration**: `startDelayedScheduler` seeds the CRON tick
+  (`skipDB=True`, :302-307), then reads `db.delayedTasks.getPendingDelayedTasks()`
+  and re-adds EVERY pending DB row to the in-memory queue (:309-318, restore
+  passes `skipDB=True`) before starting the processing loop (:320). This is
+  what makes a persisted task restart-surviving — and it means the first CRON
+  tick handler execution happens STRICTLY AFTER restoration (sequential inside
+  `startDelayedScheduler`).
+- After a task's handlers run, the loop marks the row done in the DB:
+  `updateDelayedTask(taskId, True)` (:401-402). Tasks with no registered
+  handler are re-delayed +60 s with an error log (:385-388).
+- Repository ([delayed_tasks.py](../../internal/database/repositories/delayed_tasks.py)):
+  `addDelayedTask` is a **plain INSERT** (:155-176) — a duplicate id raises
+  inside the repo and is swallowed into `return False` (no upsert), so a
+  FIXED taskId re-add is unusable for self-rescheduling (and a completed row
+  is never overwritten); `getPendingDelayedTasks` returns ALL pending rows
+  with **no function filter** (:226-269; `DelayedTaskDict.function` exists —
+  [models.py:291-292](../../internal/database/models.py) — so filter in
+  Python); completed rows are removed only by
+  `cleanupOldCompletedDelayedTasks` (:271-324).
+- **Idempotent-seed consequence**: seed with a FRESH auto `taskId`
+  (`skipDB=False`), guarded by a Python-side check over
+  `getPendingDelayedTasks()` for the new function value. Do NOT seed from
+  `GromozekBot.__init__` — `startDelayedScheduler` runs as a `create_task`
+  ([main.py:75-78](../../main.py)) and a seed racing its restoration read can
+  double-add the same pending row (permanent duplicates via self-reschedule).
+  Seed from the FIRST CRON tick instead (strictly post-restore, §2.13 above).
+  Residual crash window between a handler's persisted re-add and the old
+  row's mark-done can leave two pending rows → two live instances; the
+  cleanup is idempotent (delete by `page_id`), so a duplicate instance is
+  benign (R15).
+
 ---
 
 ## 3. Architecture decisions
 
 All of D1-D15 encode the user-ratified direction (2026-08-18); sub-choices the
 ratified text left open are resolved against the evidence in §2 and marked
-**flagged** with rationale.
+**flagged** with rationale. The **2026-08-18 amendments** (user round 3, U1-U10,
+above) rework D1/D2/D3/D6/D7/D10/D11/D12/D14 in place, adjust D15's table, and
+add D16; amended decisions are marked *(amended 2026-08-18)*.
 
-### D1 — ONE `/stats` command, DEFAULT permission, gated registration *(user-ratified)*
+### D1 — ONE `/stats` command (+ `/stats_web` alias), DEFAULT permission, gated registration *(amended 2026-08-18: U2/U4)*
 
-`StatsDisplayHandler(BaseBotHandler)` in
-`internal/bot/common/handlers/stats_display.py`, registered in `HandlersManager`
-**only when `[stats] enabled`** using the verified conditional-append mechanism
+`StatsHandler(BaseBotHandler)` in
+`internal/bot/common/handlers/stats.py` — **not** `StatsDisplayHandler`
+(U2: leave room for future stat-related actions in the same handler) —
+registered in `HandlersManager` **only when `[stats] enabled`** using the
+verified conditional-append mechanism
 ([manager.py:565-609](../../internal/bot/common/handlers/manager.py) pattern), with
 the `__init__` self-check raising `RuntimeError` when stats are off
 ([weather.py:75-78](../../internal/bot/common/handlers/weather.py) pattern).
 
 ```python
 @commandHandlerV2(
-    commands=("stats",),
-    shortDescription="[period] [section] [user <id>|chat <id>] [-w] - Statistics digest",
+    commands=("stats", "stats_web"),
+    shortDescription="[--period=…] [--section=…] [--user=<id>] [chatId] [--web] - Statistics",
     helpMessage=" … ",                       # usage text, Russian per repo precedent
     visibility={CommandPermission.DEFAULT},
     availableFor={CommandPermission.DEFAULT},
@@ -377,6 +619,28 @@ the `__init__` self-check raising `RuntimeError` when stats are off
 async def statsCommand(self, ensuredMessage, command, args, updateObj, typingManager) -> None:
 ```
 
+- **The alias is the `commands=` tuple, not a second handler** (U4): one
+  registration, two names — the `/taro`|`/tarot` mechanism
+  ([divination.py:284-292](../../internal/bot/common/handlers/divination.py),
+  §2.6). `getCommandHandlersDict` maps both names to this one handler info
+  ([manager.py:877-880](../../internal/bot/common/handlers/manager.py)), and the
+  INVOKED name arrives as the `command` argument
+  ([manager.py:1037-1039](../../internal/bot/common/handlers/manager.py)); the
+  handler sets `web = (command == "stats_web") or parsedWebFlag`.
+  Help-text implication: `/help` shows ONE `/stats|stats_web` entry
+  ([help_command.py:212](../../internal/bot/common/handlers/help_command.py));
+  registration-order implications: none (one registration = one dict entry per
+  alias; the handler list and the LLMMessageHandler-stays-last invariant are
+  untouched). Stats recording notes each alias separately (`commandName`
+  label, [manager.py:1045](../../internal/bot/common/handlers/manager.py)) —
+  fine.
+- **Coarse category gate (documented consequence)**: `category=TOOLS` means
+  `handleCommand` centrally requires `ALLOW_TOOLS_COMMANDS` or bot owner
+  ([manager.py:1002-1004](../../internal/bot/common/handlers/manager.py)) — the
+  same coarse gate `/users` already rides
+  ([chat_search.py:1088](../../internal/bot/common/handlers/chat_search.py)).
+  The dedicated per-chat opt-out is the new `ALLOW_SHOW_STATS` setting (D16).
+
 **No permission tiers** (user decision, explicitly against an owner-only tier for
 operational detail): modelName, provider, tokens, error rates are visible to
 everyone within their scope (D3). Registration block sits beside the sandbox /
@@ -384,46 +648,81 @@ chat-search blocks (before `LLMMessageHandler`'s final append) — the
 stays-last invariant is untouched. The handler is platform-agnostic (common/), so
 it serves both Telegram and Max.
 
-### D2 — Args grammar and period→bucket mapping *(user-ratified shape; grammar formalized)*
+### D2 — Args grammar: argparse-like, and period→bucket mapping *(rewritten 2026-08-18: U3)*
 
 ```
-/stats [period] [section] [drill] [-w] [help]
+/stats [help | chatId] [--period=1d|7d|30d|all] [--section=messages|commands|tools|llm]
+       [--user=<id>] [--web]
 
-period  ∈ {1d, 7d, 30d, all}          default 7d
-section ∈ {messages, commands, tools, llm}   default: all four
-drill   ∈ {user <int id>} | {chat <int id>}
--w      generate the web page too (tier 3)
-help    usage text
+positional (at most one):
+  help    usage text (Russian per repo precedent)
+  chatId  target chat whose stats are shown — PRIVATE scope only;
+          membership-checked (D3); negative numbers are valid
+          (group ids), e.g. /stats -100123 --period=30d
+
+options (both --opt=value and --opt value accepted):
+  --period=…    default 7d
+  --section=…   default messages
+  --user=<id>   user drill-down (replaces the old "user <id>" subcommand form)
+  --web         web-page generation (boolean flag; equivalent to /stats_web)
 ```
 
-- Tokens are order-insensitive; parsing follows the `/users` precedent — a token
-  loop over `args.split()` with `try/except (ValueError, TypeError)` per token and
-  defaults kept on parse failure ([chat_search.py:1112-1134](../../internal/bot/common/handlers/chat_search.py));
-  `user`/`chat` consume the **next** token as the id. Unknown tokens → the reply
-  becomes the usage text (no exception, no partial output); a dangling
-  `user`/`chat` token with no following id falls under that same rule (usage
-  reply).
-- **Period → bucket mapping (validated):** `1d → period_type=hourly` (last 24
-  hourly buckets), `7d`/`30d → daily`, `all → total` (sentinel row, no range).
-  Mechanical note: a 7d daily window spans 8 buckets (7 full days + the partial
-  current day) — bucket-granularity rounding, documented in `help`.
-- `-w` composes with everything: `/stats 30d llm chat -100123 -w`.
+- **⚠ FLAG — this is a NEW args-pattern for the repo, a deliberate
+  divergence** from the `/users` token-loop precedent
+  ([chat_search.py:1112-1134](../../internal/bot/common/handlers/chat_search.py),
+  §2.6). Rationale (user-ratified): an options-based grammar scales to future
+  multi-option commands, which may copy this pattern. Implement with stdlib
+  `argparse` over `args.split()` (no new dependencies) or a hand-rolled loop
+  with identical observable semantics — the contract below is what matters.
+- **Number-vs-option rule** (needed because group chat ids are negative):
+  a token starting with `--` is an option; a token starting with `-` followed
+  by digits is a positional chatId candidate (argparse's negative-number
+  behavior); any other `-x…` token is an unknown option.
+- **Error behavior (one rule for everything)**: unknown option, bad option
+  value, more than one positional, `help` mixed with anything else, or a
+  chatId given in a group/channel context → the reply becomes the usage text
+  (no exception, no partial output). This keeps the original unknown-token
+  rule; the previous grammar's "dangling `user`/`chat` token" concept is
+  **superseded and removed** (options carry their values; a missing value is
+  just a bad invocation).
+- **Period → bucket mapping (unchanged, previously validated):** `1d →
+  period_type=hourly` (last 24 hourly buckets), `7d`/`30d → daily`, `all →
+  total` (sentinel row, no range). Mechanical note: a 7d daily window spans 8
+  buckets (7 full days + the partial current day) — bucket-granularity
+  rounding, documented in `help`.
+- `--web` composes with everything: `/stats --period=30d --section=llm --web`
+  ≡ `/stats_web --period=30d --section=llm`.
 
-### D3 — Scoping: group → this chat; private → all the user's chats *(user-ratified)*
+### D3 — Scoping: chat type from `recipient.chatType`; group → this chat; private → current chat or a member chat *(amended 2026-08-18: U1/U5)*
 
-- **Group chat** (`chatId < 0`, sign convention per AGENTS.md): scope = that chat
-  only. Analysis filter: `labels["consumer"] == str(chatId)` (this also excludes
-  `__global__` rows — §2.1 corollary).
-- **Private chat**: scope = **all chats where the user appears**, resolved with the
-  existing `BaseBotHandler.getUserChats(userId)` ([base.py:1322-1355](../../internal/bot/common/handlers/base.py),
-  the `/list_chats` backend — §2.5). Analysis filter:
-  `labels["consumer"] ∈ {str(c.chat_id) for c in scopeChats}`.
-- **Drill authorization is scope membership, not permissions**: `chat <id>` is
-  honored only if `id` is the current chat (group scope) or a member of the user's
-  scope set (private scope); otherwise the reply says the chat is not in scope.
-  `user <id>` filters the `user_id` label wherever the event type carries it.
-- No caching of the scope resolution beyond the single command invocation (one
-  `getUserChats` call per `/stats` in private — a cheap indexed join, §2.5).
+- **Chat type is determined canonically from
+  `ensuredMessage.recipient.chatType`** (the `ChatType` StrEnum, §2.6) — the
+  same source `handleCommand` itself uses
+  ([manager.py:966](../../internal/bot/common/handlers/manager.py)). The
+  original design's chatId-sign reading ("group chat = `chatId < 0` per the
+  sign convention") is **removed** from this design's scope logic.
+- **Group or channel chat**: scope = that chat only. Analysis filter:
+  `labels["consumer"] == str(chatId)` (this also excludes `__global__` rows —
+  §2.1 corollary). A positional chatId argument is a **usage error** here
+  (D2).
+- **Private chat**: default scope = **the current private chat**. The chat
+  list in the default reply comes from
+  `BaseBotHandler.getUserChats(userId)`
+  ([base.py:1322-1355](../../internal/bot/common/handlers/base.py), the
+  `/list_chats` backend — §2.5 with the messages_count addendum). A
+  positional chatId argument selects the target chat whose stats are shown;
+  **membership = presence in the `getUserChats` result** — anything else gets
+  an informative error ("chat not found among your chats"). The target may be
+  any member chat (group or another private chat); the analysis filter is
+  always `labels["consumer"] == str(targetChatId)`.
+- *(Superseded by U1: the old private default — a multi-section digest over
+  the UNION of all the user's chats — no longer exists; the union is replaced
+  by the chat list plus per-chat targeting. `getUserChats` is still resolved
+  once per private-scope command — one cheap indexed join, §2.5.)*
+- `--user=<id>` filters the `user_id` label wherever the event type carries
+  it (D7). Authorization for both drills is scope membership, not
+  permissions — any user id may be inspected within your scope (same
+  visibility rule as before).
 
 ### D4 — Read API: `query()` on the lib/stats ABC *(user-ratified)*
 
@@ -522,55 +821,76 @@ class StatsAnalyzer:
 - If a query returns exactly `limit` rows, renderers append a
   "⚠ results possibly truncated" line (honesty at the 10 000-row cap).
 
-### D6 — Digest content, section folding, bounded output *(digest shape flagged; stt folding flagged)*
+### D6 — Default outputs and section rendering, bounded output *(amended 2026-08-18: U1 supersedes the multi-section digest default)*
 
-Default no-args reply = multi-section digest (user-ratified) + pointer to
-`/stats help`. Sketch (wording frozen at implementation; user-facing text in
-Russian per repo precedent — `/list_chats`, `/users`):
+Default no-args reply = **message stats only** (group) or **message stats +
+chat list** (private) — NOT a multi-section digest. Sketches (wording frozen
+at implementation; user-facing text in Russian per repo precedent —
+`/list_chats`, `/users`):
 
 ```
-📊 Stats — 7d (UTC) — scope: this chat
+GROUP default (/stats in a group):
+
+📊 Stats — 7d (UTC) — this chat
 Messages: 1234 (users 1000 / bot 234 / history 0)
   Top: Alice 300 · Bob 210 · Carol 95
-Commands: 45 (errors 2) — Top: /stats 12 · /help 8 · /users 5
-Tools: 88 calls (errors 3, avg 1.2s) — Top: search_messages 40 · run_python 20
-LLM: 200 requests (text 150 · structured 40 · image 10)
-  tokens in 1.2M / out 340K · errors 5 · avg 2.1s · top model gpt-4o-mini
-STT: 12 req · 34 min audio
 /stats help — полная справка
 ```
 
-- **`stt` folds into the `llm` section** as its final line (**flagged decision**,
-  brief left it open): both are model-API requests; a separate 5th section adds
-  digest length while `stt_request` is empty in most deployments (STT is
-  default-off, [main.py:117-121](../../main.py)). `llm` drill-down shows STT
-  detail; the web page renders it as its own sub-table. The section keyword stays
-  `llm`.
-- **The `llm` section reflects §2.3**: scoped views count interactive
-  text/structured/image generation (correctly chat-scoped) and STT; embeddings and
-  background requests land in `__global__` and are invisible to scoped queries
-  (R3) — `help` words this as "LLM counts cover interactive generation".
-- **Direction split with the three-bucket honesty rule** (§2.4): users / bot /
-  history-before-stats. This honors the ratified "direction breakdowns render
-  only for live period; totals correct — no UI special-casing": the explicit
-  "history (before stats enabled)" line is an honesty label on otherwise-missing
-  data, not per-view special-case logic.
-- **Bounded: ≤ ~30 lines / ~2 500 chars** so it always fits one message and never
-  hits the mechanical character-split (§2.10). Top lists are top-3 in the digest;
-  drill-downs may use top-10; anything longer belongs on the page (tier 3).
-- Section keyword filters: `/stats 30d commands` renders only that section, full
-  drill-down depth (top-10) still bounded to one message.
+```
+PRIVATE default (/stats in a private chat):
 
-### D7 — Drill-downs `user <id>` and `chat <id>` *(user-ratified: full drill-downs in scope)*
+📊 Stats — 7d (UTC) — this chat
+Messages: 42 (users 42 / bot 0 / history 0)
+Ваши чаты:
+#`-100123` Group A — 300
+#`-100456` Group B — 210
+#`789012` Private With Bob — 42
+/stats help — полная справка
+```
 
-- `user <id>`: per-user breakdown across sections — `message` / `command` /
-  `llm_tool_call` filtered by `user_id == str(id)` within the scope; totals,
-  per-section lines, top message types. **`llm_request` carries no `user_id` label
-  (§2.2) and is therefore excluded from user drill-downs** — documented in `help`
-  ("LLM requests are chat-level, not user-level"). Authorization: none beyond
-  scope (any user id may be inspected within your scope — same visibility rule).
-- `chat <id>`: full per-chat detail for all four sections (scope membership check
-  per D3), including llm top-models/tokens and stt lines.
+- **The chat list is operational `chat_users` data** (`getUserChats` +
+  `messages_count`, §2.5 addendum) — it renders even where aggregates are
+  sparse or empty (pre-enablement chats still list with their live counter).
+  Long lists truncate to top-N by messages count with an "… and K more" line
+  (bounded output, below).
+- **`--section=` renders any single section** (`messages|commands|tools|llm`)
+  at full drill-down depth (top-10) for the current scope/target chat. The
+  section keyword `messages` is the default; the former multi-section digest
+  no longer exists as a reply shape (U1).
+- **`stt` folds into the `llm` section** as its final line (unchanged flagged
+  decision): both are model-API requests; STT is default-off in most
+  deployments ([main.py:117-121](../../main.py)). The `llm` drill-down shows
+  STT detail; the web page renders it as its own sub-table. The section
+  keyword stays `llm`.
+- **The `llm` section reflects §2.3** (unchanged): scoped views count
+  interactive text/structured/image generation (correctly chat-scoped) and
+  STT; embeddings and background requests land in `__global__` and are
+  invisible to scoped queries (R3) — `help` words this as "LLM counts cover
+  interactive generation".
+- **Direction split with the three-bucket honesty rule** (unchanged, §2.4):
+  users / bot / history-before-stats. The explicit "history (before stats
+  enabled)" line is an honesty label on otherwise-missing data, not
+  per-view special-case logic.
+- **Bounded: ≤ ~30 lines / ~2 500 chars** so every reply fits one message and
+  never hits the mechanical character-split (§2.10). Top lists are top-3 in
+  default/section replies; drill-downs may use top-10; anything longer
+  belongs on the page (tier 3).
+
+### D7 — Drill-downs `--user=<id>` and the positional chatId *(amended 2026-08-18: U1/U3; full drill-downs in scope unchanged)*
+
+- `--user=<id>` (replaces the old `user <id>` subcommand form): per-user
+  breakdown across sections — `message` / `command` / `llm_tool_call`
+  filtered by `user_id == str(id)` within the scope; totals, per-section
+  lines, top message types. **`llm_request` carries no `user_id` label
+  (§2.2) and is therefore excluded from user drill-downs** — documented in
+  `help` ("LLM requests are chat-level, not user-level"). Authorization:
+  none beyond scope (any user id may be inspected within your scope — same
+  visibility rule).
+- Positional chatId (private scope only, D3): full per-chat detail for all
+  four sections at drill-down depth, including llm top-models/tokens and stt
+  lines. Membership check per D3; in a group context the chatId positional
+  is a usage error (D2).
 - Username resolution applies to every rendered user id (D8).
 
 ### D8 — Username resolution via `chat_users`, raw-id fallback *(user-ratified)*
@@ -587,90 +907,110 @@ actually render (top-N lists, ≤ ~10 lookups).
 
 ### D9 — UTC everywhere *(user-ratified)*
 
-Both the digest header ("7d (UTC)") and the page meta label all periods as UTC.
+Both the reply header ("7d (UTC)") and the page meta label all periods as UTC.
 No local-time conversion is offered in v1 (the `chat_users.timezone` column exists
 but per-user rendering timezone is out of scope).
 
-### D10 — Web tier config-gated: `[stats-pages]`, default off *(user-ratified)*
+### D10 — Web tier config-gated: `[stats-pages]`, default off *(amended 2026-08-18: U7 — two command templates, no output-dir)*
 
 New config section (§5 for the diff). When `enabled = false` (default) or the
-section is absent: `-w` produces an informative reply ("web pages disabled — ask
-the operator to configure `[stats-pages]`") and the brief output is unaffected —
-exactly the WeatherHandler-gating philosophy applied to a sub-feature. Keys:
-`enabled`, `output-dir` (web-served path the bot can write), `base-url`
-(composed into the reply link), `ttl-hours` (unit-explicit, default 24),
-`command` (template list, D12), `ratelimiter-queue` (default `"stats-pages"`).
-Accessed via a typed accessor `ConfigManager.getStatsPagesConfig()` mirroring
-`getStatsConfig()` (§2.7 dominant pattern), cached once at handler init (NG6).
+section is absent: `--web`/`/stats_web` produces an informative reply ("web
+pages disabled — ask the operator to configure `[stats-pages]`") and the
+in-chat output is unaffected — exactly the WeatherHandler-gating philosophy
+applied to a sub-feature. Keys: `enabled`, `base-url` (composed into the
+reply link), `ttl-hours` (page-registry cutoff, unit-explicit, default 24),
+`generate-command` and `delete-command` (template lists, D12),
+`ratelimiter-queue` (default `"stats-pages"`).
 
-### D11 — CLI contract: stdin JSON in, self-contained HTML out, JSON stdout *(user-ratified; url shape flagged)*
+- **`output-dir` is REMOVED** (U7): the CLI owns all storage decisions — the
+  bot neither knows nor cares where pages are stored, or whether they are
+  files at all. TTL is likewise the BOT's decision over the page registry
+  (`ttl-hours`), not a CLI argument.
+- Accessed via a typed accessor `ConfigManager.getStatsPagesConfig()`
+  mirroring `getStatsConfig()` (§2.7 dominant pattern), cached once at
+  handler init / service init (NG6). Validation: `enabled = true` requires
+  `base-url` AND both command templates (A4 fail-loud pattern; §5).
+
+### D11 — CLI contract: stdin JSON in, self-contained HTML out, JSON stdout *(user-ratified; amended 2026-08-18: U7/U8 — placement and storage ownership)*
 
 - Invocation via `asyncio.create_subprocess_exec` (no shell), payload JSON on
   **stdin** (no temp dump files), following the `_runCommand` conventions
   (§2.9) plus `stdin=PIPE`; `asyncio.wait_for(communicate(input=…), timeout=30)`
   with kill-on-timeout; stderr decoded for the log; WARNING-level failure logs.
-- The CLI writes a **self-contained static HTML page** — UUID filename
-  (`uuid.uuid4().hex + ".html"`), inline CSS, **no CDN/external resources, no JS,
-  zero new runtime dependencies** (stdlib `argparse`/`html`/`json` only) — into
-  `output-dir`.
+- The bot-visible contract is only **stdin view-model JSON → stdout JSON**;
+  where (and whether) the page is stored is the CLI's own business (U7). The
+  **built-in** generator writes a self-contained static HTML page — UUID
+  filename (`uuid.uuid4().hex + ".html"`), inline CSS, **no CDN/external
+  resources, no JS, zero new runtime dependencies** (stdlib
+  `argparse`/`html`/`json` only) — into its own internally-defaulted location
+  (its own flag/env concern, outside bot config).
 - **STDOUT contract: one JSON object `{"id": "<uuid>", "url": "…"}`**
   (user requirement: the id enables deletion; not a bare filename).
-  **Flagged: `url` is relative (the `<uuid>.html` filename) and the bot composes
-  `base-url + "/" + url` for the reply link.** Rationale: the CLI stays a pure
-  local tool with no knowledge of the serving web server; `base-url` is
-  deployment config that would otherwise be duplicated into the CLI (and could
-  drift). An absolute URL would require passing `base-url` into every invocation.
-- In-repo generator placement (**flagged**): `internal/stats_pages/` with a
-  `__main__.py`, mirroring the standalone-module precedent
-  `internal/max_webhook_receiver/` (run as
-  `./venv/bin/python3 -m internal.max_webhook_receiver`, AGENTS.md). Rationale:
-  module-invocable standalone processes live in `internal/`; `lib/` stays
-  import-only primitives. It imports nothing from the bot.
+  **Flagged (unchanged): `url` is relative (the `<uuid>.html` filename) and
+  the bot composes `base-url + "/" + url` for the reply link.** Rationale: the
+  CLI stays a pure local tool with no knowledge of the serving web server;
+  `base-url` is deployment config that would otherwise be duplicated into the
+  CLI (and could drift). An absolute URL would require passing `base-url`
+  into every invocation.
+- In-repo generator placement *(amended 2026-08-18, U8 — user decision)*:
+  **`lib/stats/stats_pages/`** with a `__main__.py`, run as
+  `./venv/bin/python3 -m lib.stats.stats_pages` (the module-invocation
+  precedent is `internal.max_webhook_receiver`, AGENTS.md — the *location*
+  moves to `lib/` so the generator + launcher live beside the stats library,
+  importable and testable like the rest of `lib/stats/`). It imports nothing
+  from the bot.
 - Exit codes: 0 success; nonzero any failure (with a human-readable stderr line).
   Anything non-JSON on stdout = failure (D15).
-- Page content = the same view-model the brief renders (meta + sections with
-  full grouped lists; the digest truncates, the page does not), so grouping logic
-  exists exactly once (bot side, D5).
+- Page content = the same view-model the in-chat reply renders from (meta +
+  sections with full grouped lists; the in-chat reply truncates, the page
+  does not), so grouping logic exists exactly once (bot side, D5).
 
-### D12 — Configurable command template *(user-ratified; placeholder set formalized)*
+### D12 — Configurable command templates: `generate-command` and `delete-command` *(rewritten 2026-08-18: U7 — replaces the mode-switched `command`)*
 
-`command` is a `list[str]` template; substitution is `str.format_map` over the
+Both are `list[str]` templates; substitution is `str.format_map` over the
 defined placeholder set (strict — an unknown placeholder is a config error and
 surfaces as the D15 failure note, logged):
 
-| Placeholder | Meaning |
-|---|---|
-| `{mode}` | `generate` \| `cleanup` \| `delete` — the mode switch |
-| `{user_id}` | The calling user's id (`"0"` in cron-cleanup context) |
-| `{chat_id}` | **The chat the command was issued in** — in private-multi-chat scope this is the private chat id (the scope itself is the user's chat union; there is no single "target" chat) *(user-ratified recommendation)* |
-| `{output_dir}` | `[stats-pages] output-dir` |
-| `{ttl_hours}` | `[stats-pages] ttl-hours` |
+| Template | Placeholders | Meaning |
+|---|---|---|
+| `generate-command` | `{user_id}` | The calling user's id |
+| | `{chat_id}` | **The chat the command was issued in** — in private scope with a chatId positional this is the TARGET chat id (its stats are what the page shows) *(amendment: follows U1 targeting)* |
+| | `{platform}` | `"max"` \| `"telegram"` — `self.botProvider.value` (§2.6) |
+| `delete-command` | `{page_id}` | The page id returned by `generate` (the registry key) |
 
-- Default value:
+- **`{platform}` on `delete-command`: decided NO** — deletion needs only the
+  id; keeping the placeholder set minimal documents that the delete contract
+  is storage-agnostic (U7's "keep minimal" option).
+- **`{mode}`, `{output_dir}`, `{ttl_hours}` placeholders are REMOVED
+  entirely** (U7; every prior mention purged from this doc): there is no mode
+  switch (two commands instead), the CLI owns storage location, and TTL is
+  the bot's registry decision (`ttl-hours` key, D14) — never a CLI argument.
+- Default values (both point at the built-in generator, U8):
 
   ```toml
-  command = [
-      "./venv/bin/python3", "-m", "internal.stats_pages", "{mode}",
-      "--output-dir={output_dir}", "--ttl-hours={ttl_hours}",
-      "--user-id={user_id}", "--chat-id={chat_id}",
+  generate-command = [
+      "./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate",
+      "--user-id={user_id}", "--chat-id={chat_id}", "--platform={platform}",
+  ]
+  delete-command = [
+      "./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}",
   ]
   ```
 
-  (The in-repo CLI records user/chat ids in the page footer meta; external tools
-  may use them for their own accounting. In `cleanup`/`delete` modes they are
-  substituted with the same values and ignored.)
-- **Delete-by-id invocation shape:** the bot (or an operator) appends the page id
-  as one trailing positional argument after substitution —
-  `<command {mode}=delete …> <uuid>` → deletes `<output-dir>/<uuid>.html`,
-  prints `{"deleted": 0|1}`. No template placeholder for the id (it is data, not
-  configuration). Bot-side wiring around delete is NG5/O1.
-- **Cleanup invocation:** `<command {mode}=cleanup …>` deletes `*.html` files
-  older than TTL (mtime) in `output-dir`, prints `{"deleted": N}`.
+- `generate` prints `{"id": "<uuid>", "url": "<uuid>.html"}` (D11);
+  `delete` prints `{"deleted": 0|1}` (0 = no such page — still a success
+  exit so the registry row can be dropped, D14). The page id is DATA, not
+  configuration — it appears only as the `{page_id}` placeholder the bot
+  substitutes from the registry row; no trailing-positional convention
+  anymore.
+- The built-in CLI's own storage flags/defaults are its internal affair
+  (D11); external tools honor the same stdin/stdout JSON contracts.
 
-### D13 — Rate limiting: per-chat, check-then-apply *(user-ratified purpose; mechanism flagged)*
+### D13 — Rate limiting: per-chat, check-then-apply *(user-ratified purpose; mechanism flagged; unchanged by the 2026-08-18 round)*
 
 - Purpose (user's words): "so users can't generate millions of stat files and eat
-  all space". Only `-w` is limited — never the brief.
+  all space". Only `--web`/`/stats_web` is limited — never the in-chat reply
+  (both entry paths share one limit — the alias forces the same flag).
 - Mechanism: the **existing** `RateLimiterManager` with a dedicated queue
   `"stats-pages"` bound to a new named limiter (§5 config diff — the
   `[ratelimiter]` mechanism, §2.8), keyed **per chatId**:
@@ -691,69 +1031,180 @@ surfaces as the D15 failure note, logged):
 
   The pre-check makes the sleep branch unreachable in practice; the residual
   check-then-record race on the shared loop can over-admit by at most a couple of
-  concurrent `-w` calls — benign (R12). Suggested defaults: **3 pages per chat per
+  concurrent `--web` calls — benign (R11). Suggested defaults: **3 pages per chat per
   hour** (`windowSeconds = 3600`, `maxRequests = 3`).
 
-### D14 — TTL cleanup rides the StatsAggregationService cycle; delete-by-id exists *(user-ratified choice; rider pick flagged)*
+### D14 — TTL cleanup via a DB-persisted self-rescheduling delayed task + page registry *(rewritten 2026-08-18: U9 — replaces the cron-rider cleanup decision)*
 
-- Two precedents were on the table (§ refs): the **StatsAggregationService tick**
-  (hourly cycle, [service.py:248-318](../../internal/services/stats/service.py))
-  and the **weekly `_cleanupOldData`** gate
-  ([manager.py:657-679](../../internal/bot/common/handlers/manager.py), the
-  `nowMinutes == 0 and nowHour == 0 and nowWDay == 0` Sunday-midnight pattern).
-  **Flagged pick: the StatsAggregationService cycle.** Rationale: TTL default is
-  24 h — weekly cleanup would retain files up to ~7× TTL; the aggregation cycle is
-  already the stats subsystem's maintenance heartbeat and runs (by default)
-  hourly, i.e. at TTL granularity; and it early-returns cheaply when stats are
-  off, which is exactly when no new pages can be generated anyway (R10 covers the
-  disable-later residue). Cost of the coupling: the cleanup cadence inherits
-  `aggregation-interval-seconds` (an operator setting a 24 h interval gets
-  daily cleanup — still ≤ TTL+1 day, acceptable and documented).
-- Mechanics: `initialize` additionally parses+caches `[stats-pages]`
-  (enabled/outputDir/ttlHours/commandTemplate — A4 fail-loud pattern,
-  `_parseIntKey` for `ttl-hours`); `_dtCronJob` gains a final step (after the
-  per-storage drain/purge, outside the per-storage try/excepts, inside its own):
+- **New enum member**: `DelayedTaskFunction.STATS_PAGES_CLEANUP =
+  "statsPagesCleanup"` ([types.py](../../internal/services/queue_service/types.py),
+  §2.13). The task is **DB-PERSISTED** (`skipDB=False`) and self-reschedules —
+  it survives bot restarts naturally (restored by `startDelayedScheduler`,
+  service.py:309-318). This is the user's rationale for the whole mechanism,
+  and the contrast with the CRON_JOB tick it was previously riding (that tick
+  is `skipDB=True` in-memory only, service.py:190-201 — the SHAPE is copied,
+  the persistence is new).
+- **Handler registration**: `StatsAggregationService.initialize` registers
+  `QueueService.getInstance().registerDelayedTaskHandler(
+  DelayedTaskFunction.STATS_PAGES_CLEANUP, self._dtStatsPagesCleanup)` — the
+  nine-class `__init__`-time precedent (aggregation-v1 §2.3). Handler shape:
 
   ```python
-  if self._pagesEnabled:
+  async def _dtStatsPagesCleanup(self, task: DelayedTask) -> None:
       try:
-          await self._cleanupStatsPages()   # subprocess {mode}=cleanup; WARNING on failure
+          if self._pagesEnabled:                       # cached [stats-pages] enabled
+              await self._cleanupExpiredStatsPages()   # bounded batch (below)
       except Exception:
           logger.exception("stats-pages TTL cleanup failed")
+      finally:
+          await QueueService.getInstance().addDelayedTask(     # PERSISTED reschedule
+              time.time() + self._pagesCleanupIntervalSeconds,   # 3600 (hourly = TTL granularity)
+              DelayedTaskFunction.STATS_PAGES_CLEANUP, kwargs={}, skipDB=False,
+          )
   ```
 
-  The rider invokes the CLI via the same D11 invocation helper (shared with the
-  handler — placed in `internal/stats_pages/launcher.py` so both callers use one
-  code path) with `{user_id}`/`{chat_id}` = `"0"`.
-- `delete <id>` mode is implemented in the CLI (D12) with no bot UI in v1 (O1).
+  Always reschedules (in `finally`) — the pending row ticks at ~zero cost when
+  `[stats-pages]` is later disabled (config is cached at init, NG6; the
+  work-gate no-ops), and resumes if re-enabled. Auto `taskId` per re-add —
+  a FIXED id is unusable: the repo INSERT is not an upsert and completed rows
+  are never overwritten (§2.13).
+- **Idempotent seeding, only when `[stats-pages] enabled`**: seeded from the
+  FIRST CRON tick (`self._pagesCleanupSeeded` in-memory flag), by checking
+  `db.delayedTasks.getPendingDelayedTasks()` (filter in Python for
+  `function == "statsPagesCleanup"` — no by-function repo query exists, §2.13)
+  and calling `addDelayedTask(..., skipDB=False)` only when none is pending.
+  First-CRON-tick seeding is race-free: the tick fires strictly AFTER
+  `startDelayedScheduler` finished restoring pending rows (§2.13) — seeding
+  from `GromozekBot.__init__` could race the restoration read and permanently
+  duplicate the task.
+- **Page registry (REQUIRED CONSEQUENCE — teamlead judgment call, flagged for
+  the reviewer)**: since delete is by `{page_id}` and the bot no longer knows
+  output paths (U7), the bot must REMEMBER generated pages. New table
+  (migration **029** — `028` is the highest today, verified):
 
-### D15 — Failure modes: brief always wins *(user-ratified)*
+  ```sql
+  CREATE TABLE IF NOT EXISTS stats_pages (
+      page_id    TEXT PRIMARY KEY NOT NULL,   -- the CLI-returned uuid — app-known, no AUTOINCREMENT
+      url        TEXT NOT NULL,               -- the relative url (uuid.html)
+      chat_id    INTEGER NOT NULL,
+      user_id    INTEGER NOT NULL,
+      created_at TIMESTAMP NOT NULL           -- app-set (no DEFAULT CURRENT_TIMESTAMP, migration-013 rule)
+  );
+  CREATE INDEX IF NOT EXISTS idx_stats_pages_created_at ON stats_pages (created_at);
+  ```
 
-The `-w` tier is best-effort and **must never raise out of the command handler**
+  Rules per the
+  [`add-database-migration`](../../.agents/skills/add-database-migration/SKILL.md)
+  skill: portable types only, no AUTOINCREMENT, no DEFAULT CURRENT_TIMESTAMP,
+  app-set timestamps, `:named` params; single-natural-key PK (`page_id`); the
+  created_at index follows the `idx_cache_updated_at` "for TTL cleanup"
+  precedent (migration_012:78). Accessed via a new `StatsPagesRepository`
+  (`internal/database/repositories/stats_pages.py`): `addPage`, `getExpiredPages(cutoff,
+  limit)` (bounded via `applyPagination`), `deletePage(pageId)`. Rows are
+  inserted by the handler on SUCCESSFUL generation only (D15).
+- **Cleanup body**: `cutoff = now - ttlHours`; select expired registry rows
+  (bounded batch per run — e.g. 50); for each, invoke the shared launcher
+  with `delete-command` substitutions `{"page_id": row.page_id}`; on exit 0
+  (including `{"deleted": 0}` — page already gone) delete the registry row.
+  **Failure isolation per page**: each page's delete is wrapped; a failing
+  page is logged at WARNING and retried next run (its row stays). Handler
+  exceptions are additionally isolated by the QueueService invocation loop
+  (service.py:390-399, §2.13).
+- Registry-orphan pages (delete-command fails persistently) are **accepted**:
+  the page just outlives its TTL (R13); the registry row keeps flagging it
+  for retry, and an operator can always invoke `delete-command` manually with
+  the page_id (or clean storage their way — the bot doesn't know it, U7).
+- A user-facing delete/list UI remains NG5/O1.
+
+### D15 — Failure modes: in-chat reply always wins *(user-ratified; table rows adjusted 2026-08-18: U7/U9)*
+
+The `--web` tier is best-effort and **must never raise out of the command handler**
 (whole tier wrapped in `try/except Exception` + `logger.exception`):
 
 | Failure | Behavior |
 |---|---|
 | `[stats-pages]` disabled/absent | informative reply, no CLI |
 | rate limit exceeded | informative reply (with retry hint), no CLI |
-| nonzero exit / unparseable stdout / timeout (30 s, kill) | brief delivered + one-line "page generation failed" note |
-| unknown template placeholder (`KeyError`) / missing output-dir | same as above (config error, logged at WARNING with the key) |
+| nonzero exit / unparseable stdout / timeout (30 s, kill) | in-chat reply delivered + one-line "page generation failed" note |
+| unknown template placeholder (`KeyError`) / missing `generate-command` or `delete-command` | same as above (config error, logged at WARNING with the key) |
+| registry INSERT fails after a successful generation | in-chat reply + link still delivered; page becomes UNTRACKED (orphan — outlives TTL, manual delete possible); WARNING log (R13) |
 | any unexpected exception in the tier | same as above |
 
 Query-layer errors (D4 raise-on-error) are caught one level up: the handler
 renders a one-line "stats query failed" reply and returns normally.
+
+### D16 — Chat-settings gate: `ALLOW_SHOW_STATS` *(added 2026-08-18: U6)*
+
+- **Grounding (G1, §2.12): no generic per-command disable mechanism exists** —
+  central gates are per-category, feature toggles are per-feature keys. So
+  the gate is a NEW chat setting following the
+  [`add-chat-setting`](../../.agents/skills/add-chat-setting/SKILL.md)
+  four-site pattern:
+  1. **Enum**: `ALLOW_SHOW_STATS = "allow-show-stats"` in the "Allowing
+     different commands in chat" section of `ChatSettingsKey`
+     ([chat_settings.py:388-396](../../internal/bot/models/chat_settings.py) —
+     beside `ALLOW_TOOLS_COMMANDS`/`ALLOW_SANDBOX`), with a docstring.
+     Naming: the user's spirit, and it matches both conventions — UPPER_CASE
+     Python name ↔ kebab-case value, and the `allow-<thing>` family
+     (`allow-sandbox`, `allow-tools-commands`, `allow-mention`). (A shorter
+     `ALLOW_STATS` was considered and rejected: "show" names the user-visible
+     action the admin is toggling.)
+  2. **`_chatSettingsInfo` entry**: `{"type": ChatSettingsType.BOOL, "short":
+     "Показывать статистику чата", "long": "Разрешить команду /stats
+     (и /stats_web) в этом чате", "page": ChatSettingsPage.STANDARD}` —
+     STANDARD = FREE-tier page, the precedent of the other basic allow-flags
+     (`ALLOW_MENTION`, chat_settings.py:963-968).
+  3. **Default**: `allow-show-stats = true` (default ENABLED — stats show)
+     under `[bot.defaults]` in
+     [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml)
+     (the `allow-sandbox = false` line :90 is the placement precedent).
+  4. **Consumer**: `StatsHandler` — at command entry (both aliases), BEFORE
+     any query or scope work:
+
+      ```python
+      if ensuredMessage.recipient.chatType != ChatType.PRIVATE:   # group/channel only (see below)
+          chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
+          if not chatSettings[ChatSettingsKey.ALLOW_SHOW_STATS].toBool():
+              await self.sendMessage(ensuredMessage, messageText=INFORMATIVE_TEXT, …)
+              return
+      ```
+
+     When disabled: informative reply, **no queries**. Handler-layer read via
+     `.toBool()` (never tuple indexing); writes (if ever) via
+     `setChatSetting(..., user=MessageSender)`.
+- **Scope of the setting**: group and channel chats — the admin's moderation
+  control for THAT chat. **In private chats the setting is NOT consulted**
+  (decided): a private `/stats` is the user inspecting their own operational
+  data, and the private chat's only "admin" is the user themselves — there is
+  no moderation surface. (Judgment call, flagged: the alternative — honoring
+  the user's own private-chat setting — adds a self-negation toggle with no
+  moderation value.)
+- **This is NOT the LLM tool-gate** (the add-llm-tool D3 chat-time gating
+  rule): no `ToolName`, no `useTools` interplay — a plain chat setting read
+  by a command handler, exactly the `ALLOW_SANDBOX` pattern
+  ([sandbox.py:285](../../internal/bot/common/handlers/sandbox.py)).
+- Who can flip it: the existing settings machinery — `/set`/`/unset` (admin)
+  or the `/settings` wizard, subject to `ADMIN_CAN_CHANGE_SETTINGS`
+  (§2.12); bot owners bypass.
+- Stacks with the coarse category gate (D1): `category=TOOLS` still requires
+  `ALLOW_TOOLS_COMMANDS`-or-bot-owner centrally; `ALLOW_SHOW_STATS` is the
+  dedicated fine-grained opt-out on top.
 
 ---
 
 ## 4. Wiring diagram
 
 ```
-User: /stats [period] [section] [drill] [-w]
-        │
-        ▼
-StatsDisplayHandler.statsCommand            internal/bot/common/handlers/stats_display.py [NEW]
-  ├─ parse args (D2, /users token-loop pattern)
-  ├─ resolve scope (D3): group → {chatId}; private → getUserChats(userId)  [base.py:1322]
+User: /stats [help|chatId] [--period=…] [--section=…] [--user=<id>] [--web]   (or /stats_web)
+         │
+         ▼
+StatsHandler.statsCommand                    internal/bot/common/handlers/stats.py [NEW]
+  ├─ ALLOW_SHOW_STATS gate (D16): group/channel only; off → informative reply, STOP
+  ├─ parse args (D2, argparse-style — NEW pattern; usage reply on any bad input)
+  ├─ chat type: ensuredMessage.recipient.chatType (D3/§2.6 — never chatId sign)
+  ├─ resolve scope (D3): group/channel → {chatId}; private → {chatId} default,
+  │     positional chatId → membership check against getUserChats(userId)
+  │     [base.py:1322; + messages_count per §2.5 addendum]
   ├─ for each section eventType in {message, command, llm_tool_call, llm_request, stt_request}:
   │     StatsAggregationService.getInstance().getQueryStorage(eventType)    [service.py, NEW accessor]
   │           └─ _statsStorages registry (populated by main.py:96-131 factory calls)
@@ -761,25 +1212,39 @@ StatsDisplayHandler.statsCommand            internal/bot/common/handlers/stats_d
   │           └─ DatabaseStatsStorage.query → provider.executeFetchAll (SQL: event_type+period only)
   ├─ StatsAnalyzer (lib/stats/analysis.py [NEW]): consumer-scope filter → group/topN/Σ/Σ÷Σ
   ├─ username join via chat_users / cache.getChatUser (D8)
-  ├─ render digest (bounded, MarkdownV2-safe) → sendMessage                     [base.py:568]
-  └─ if -w:  [stats-pages] gate → rate-limit pre-check (D13) → launcher (D11)
-              asyncio.create_subprocess_exec(*templatedArgv, stdin=PIPE)
-              payload = view-model JSON on stdin
-              ◀ stdout {"id": "<uuid>", "url": "<uuid>.html"}
-              reply: base-url + "/" + url          (failures → D15 table)
+  ├─ render reply (D6: group → messages-only; private → messages + chat list; bounded)
+  │     → sendMessage                                              [base.py:568]
+  └─ if --web or /stats_web:  [stats-pages] gate → rate-limit pre-check (D13)
+        → launcher (lib/stats/stats_pages/launcher.py [NEW])
+        │   asyncio.create_subprocess_exec(*format_map(generate-command,
+        │     {user_id}, {chat_id}, {platform}=self.botProvider.value), stdin=PIPE)
+        │   payload = view-model JSON on stdin
+        │   ◀ stdout {"id": "<uuid>", "url": "<uuid>.html"}
+        ├─ reply: base-url + "/" + url          (failures → D15 table)
+        └─ on success: INSERT stats_pages(page_id, url, chat_id, user_id, now)   [D14 registry]
 
-StatsAggregationService._dtCronJob (existing hourly cycle)                       [service.py:248]
-  └─ [NEW last step] if [stats-pages] enabled: _cleanupStatsPages()
-        └─ launcher({mode}=cleanup) → CLI deletes output-dir/*.html older than ttl-hours
+QueueService delayed scheduler                                    [service.py:268-320]
+  ├─ CRON_JOB tick (existing, skipDB=True) → StatsAggregationService._dtCronJob
+  │     └─ [NEW first-tick step] if [stats-pages] enabled and not yet seeded:
+  │           getPendingDelayedTasks() has no STATS_PAGES_CLEANUP row?
+  │           → addDelayedTask(STATS_PAGES_CLEANUP, skipDB=False)   [D14 idempotent seed]
+  └─ STATS_PAGES_CLEANUP task [NEW, DB-PERSISTED, restored on restart :309-318]
+        → StatsAggregationService._dtStatsPagesCleanup(task)
+              ├─ not enabled → no-op
+              ├─ select expired stats_pages rows (cutoff = now - ttl-hours, batch ≤ 50)
+              ├─ per page: launcher(delete-command, {page_id}) → on success DELETE row
+              │   (per-page try/except — failed rows retry next run)
+              └─ finally: addDelayedTask(+3600 s, STATS_PAGES_CLEANUP, skipDB=False)  [persisted chain]
 
-internal/stats_pages/ [NEW standalone module, python3 -m internal.stats_pages]
-  ├─ __main__.py   argparse: generate|cleanup|delete, --output-dir, --ttl-hours, --user-id, --chat-id
+lib/stats/stats_pages/ [NEW package, ./venv/bin/python3 -m lib.stats.stats_pages]
+  ├─ __main__.py   argparse: generate | delete <page_id> (no cleanup verb — TTL is the bot's job)
   ├─ generator.py  stdin JSON view-model → self-contained HTML (uuid4 name, inline CSS)
   └─ launcher.py   the one subprocess invocation helper (timeout 30 s, kill, JSON stdout parse)
 ```
 
-Read path only — `stat_events` is untouched; `stat_aggregates` is read via the
-provider (readonly=True). No migration, no schema change.
+Read path over `stat_aggregates` (provider, `readonly=True`) is unchanged;
+`stat_events` untouched. Schema delta: ONE new table (`stats_pages`,
+migration 029) + the `ChatInfoDict.messages_count` field (existing column).
 
 ---
 
@@ -791,19 +1256,33 @@ default-off so merged behavior is unchanged):
 ```toml
 [stats-pages]
 enabled = false
-# output-dir = "/var/www/gromozeka/stats"   # REQUIRED when enabled; web-served, bot-writable
 # base-url = "https://example.com/stats"    # REQUIRED when enabled; composed into the reply link
-ttl-hours = 24
+ttl-hours = 24                              # page-registry cutoff (D14) — the BOT's TTL decision
 ratelimiter-queue = "stats-pages"
-command = [
-    "./venv/bin/python3", "-m", "internal.stats_pages", "{mode}",
-    "--output-dir={output_dir}", "--ttl-hours={ttl_hours}",
-    "--user-id={user_id}", "--chat-id={chat_id}",
+generate-command = [                        # D12; defaults point at the built-in generator (U8)
+    "./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate",
+    "--user-id={user_id}", "--chat-id={chat_id}", "--platform={platform}",
+]
+delete-command = [
+    "./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}",
 ]
 ```
 
+No `output-dir` key exists (U7): the CLI owns all storage decisions.
+
+Chat-setting default (U6/D16) — diff to
+[`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml),
+`[bot.defaults]` section (kebab-case key matching the enum value):
+
+```toml
+ [bot.defaults]
+ # … existing …
++allow-show-stats = true
+```
+
 Diff to [`configs/00-defaults/00-config.toml`](../../configs/00-defaults/00-config.toml)
-(new limiter + queue binding, appended after `stt-global` / into the queues table):
+(new limiter + queue binding, appended after `stt-global` / into the queues
+table — **unchanged by this amendment round**):
 
 ```toml
  [ratelimiter.ratelimiters.stt-global]
@@ -832,8 +1311,8 @@ Diff to [`configs/00-defaults/00-config.toml`](../../configs/00-defaults/00-conf
 
 `[stats]` itself is unchanged. Reader: new typed accessor
 `ConfigManager.getStatsPagesConfig()` (D10). Validation errors (missing
-output-dir/base-url when enabled, malformed ttl) fail loudly at startup /
-handler-init per the A4 precedent.
+`base-url`, missing `generate-command`/`delete-command` when enabled,
+malformed ttl) fail loudly at startup / handler-init per the A4 precedent.
 
 ---
 
@@ -884,61 +1363,106 @@ Phase 2 entry if preferred).
 
 **Gate 1:** `make format lint`; `make test`; `make check-docs`.
 
-### Phase 2 — `/stats` command: registration, grammar, scoping, digest, drill-downs
+### Phase 2 — `/stats` command: registration, grammar, scoping, defaults, gate, drill-downs *(amended 2026-08-18: U1-U6)*
 
-Sized ~60 steps: one new lib file, one new handler file, two edited files, tests.
+Sized ~60 steps: one new lib file, one new handler file, four edited production
+files (manager, chat_settings ×2 sites, bot-defaults TOML, chat_users repo +
+models), tests. (The four-site and `messages_count` additions are one-line
+sites each — the ceiling holds.)
 
 **Files:**
 
 - `lib/stats/analysis.py` — **new**; `StatsAnalyzer` (D5).
-- `internal/bot/common/handlers/stats_display.py` — **new**;
-  `StatsDisplayHandler` (D1/D2/D3/D6/D7/D8/D9): `@commandHandlerV2` registration,
-  `__init__` stats-enabled self-check, args parser, scope resolution, per-section
-  queries via `getQueryStorage`, view-model builder, digest renderer, drill-down
-  renderers, username join.
+- `internal/bot/common/handlers/stats.py` — **new**; `StatsHandler`
+  (D1/D2/D3/D6/D7/D8/D9/D16): `@commandHandlerV2(commands=("stats",
+  "stats_web"))` registration, `__init__` stats-enabled self-check,
+  argparse-style parser, `ALLOW_SHOW_STATS` gate, chat-type dispatch on
+  `recipient.chatType`, scope resolution, per-section queries via
+  `getQueryStorage`, view-model builder, renderers (group default / private
+  default + chat list / section / drill-downs), username join.
 - [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) —
   conditional registration block beside sandbox/chat-search (D1):
-  `if self.configManager.getStatsConfig().get("enabled", False): self.handlers.append((StatsDisplayHandler(...), HandlerParallelism.PARALLEL))`.
+  `if self.configManager.getStatsConfig().get("enabled", False): self.handlers.append((StatsHandler(...), HandlerParallelism.PARALLEL))`.
 - `internal/bot/common/handlers/__init__.py` — export (follow the WeatherHandler
   export pattern).
+- [`internal/bot/models/chat_settings.py`](../../internal/bot/models/chat_settings.py) —
+  U6 sites 1+2: `ALLOW_SHOW_STATS` enum member + `_chatSettingsInfo` entry
+  (D16).
+- [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml) —
+  U6 site 3: `allow-show-stats = true` under `[bot.defaults]` (D16).
+- [`internal/database/repositories/chat_users.py`](../../internal/database/repositories/chat_users.py)
+  + [`internal/database/models.py`](../../internal/database/models.py) — U1
+  ground: add `cu.messages_count` to the `getUserChats` SELECT and
+  `messages_count: int` to `ChatInfoDict` (§2.5 addendum).
 
 **Tests:**
 
 - `tests/lib/stats/test_analysis.py` — `StatsAnalyzer` matrix: consumer-scope
   filter excludes `__global__`; groupSum ordering; topN; Σvalue/Σcount average
   (incl. 0-count); three-bucket `sent` grouping (True/False/absent).
-- `tests/bot/common/handlers/test_stats_display.py` — real `EnsuredMessage`
+- `tests/bot/common/handlers/test_stats.py` — real `EnsuredMessage`
   construction (conftest pattern); mocked storages returning canned
-  `StatsAggregateDict` rows: digest renders all sections bounded; group vs
-  private scope filter sets (patch `getUserChats`); `chat <id>` authorization
-  (in-scope ok / out-of-scope refused); `user <id>` excludes `llm_request`;
-  period→bucket mapping (1d→hourly, 7d/30d→daily, all→total+no range);
-  unknown token → usage; username fallback to raw id; **stats-off → handler
-  construction raises + manager registers nothing** (registration test at the
-  manager level, mirror the WeatherHandler gating test if one exists).
+  `StatsAggregateDict` rows:
+  - grammar matrix (D2): `--period`/`--section`/`--user`/`--web` in both
+    `--opt=value` and `--opt value` forms; negative chatId positional
+    (`-100123` parsed as positional, not option); unknown option / bad
+    value / second positional / `help`+args → usage; chatId in group →
+    usage;
+  - defaults (D6/U1): group → messages-only reply; private → messages +
+    chat list with `messages_count` (mock `getUserChats`);
+  - scope (D3/U5): chat type taken from `recipient.chatType` (patch nothing —
+    construct recipients of each type); positional chatId membership
+    (in-scope ok / out-of-scope informative error);
+  - `--user=<id>` excludes `llm_request`;
+  - period→bucket mapping (1d→hourly, 7d/30d→daily, all→total+no range);
+  - chat-setting gate (D16): `ALLOW_SHOW_STATS = false` (complete-dict
+    `chatSettings` mock) → informative reply, **no storage queries**;
+    default `true` → normal reply; private chat → gate not consulted;
+  - alias (U4): `/stats_web` ≡ `/stats --web` (same web path, forced);
+  - username fallback to raw id;
+  - **stats-off → handler construction raises + manager registers nothing**
+    (registration test at the manager level, mirror the WeatherHandler
+    gating test if one exists).
+- `tests/database/repositories/test_chat_users.py` (extend) — `getUserChats`
+  returns `messages_count` per chat (seed two chats with different counts).
 - Singleton hygiene: reset `StatsAggregationService._instance` where manipulated.
 
-**Docs:** [`docs/llm/handlers.md`](../llm/handlers.md) (new handler + gating),
+**Docs:** [`docs/llm/handlers.md`](../llm/handlers.md) (new handler + alias +
+gating + `ALLOW_SHOW_STATS`),
 [`docs/llm/libraries.md`](../llm/libraries.md) §9 (`StatsAnalyzer`),
-[`docs/llm/index.md`](../llm/index.md) §4 handler-list entry.
-**CHANGELOG:** `Added` — `/stats` command (period/section/user/chat drill-downs,
-scope-derived visibility) gated on `[stats] enabled`.
+[`docs/llm/configuration.md`](../llm/configuration.md) (chat-setting default
+note), [`docs/llm/index.md`](../llm/index.md) §4 handler-list entry.
+**CHANGELOG:** `Added` — `/stats` (+`/stats_web`) command (argparse-style
+period/section/user/chat drill-downs, scope-derived visibility) gated on
+`[stats] enabled`, with per-chat `allow-show-stats` setting.
 
 **Gate 2:** `make format lint`; `make test`; `make check-docs`.
 
-### Phase 3a — Web tier: CLI generator + config
+### Phase 3a — Web tier: CLI generator + config + page-registry migration *(amended 2026-08-18: U7/U8/U9)*
 
-Sized ~30 steps: new module (3 files), 2 config files, 1 edited internal file,
-tests. (The 3a/3b split is **unconditional** — the combined ~60 steps span 14
-files, so each sub-phase carries its own budget and the ~60-step-per-invocation
-ceiling holds by construction.)
+Sized ~35 steps: new lib package (3 files), migration 029 + repository, 2
+config files, 1 edited internal file, tests. (The 3a/3b split is
+**unconditional** — combined the two sub-phases span 15+ files, so each
+carries its own budget and the ~60-step-per-invocation ceiling holds by
+construction.)
 
 **Files:**
 
-- `internal/stats_pages/__init__.py`, `__main__.py`, `generator.py` — **new**
-  (D11/D12): argparse modes generate/cleanup/delete; self-contained HTML
-  renderer (inline CSS, `html.escape` everything, UTC footer with meta incl.
-  user/chat ids).
+- `lib/stats/stats_pages/__init__.py`, `__main__.py`, `generator.py` —
+  **new** (D11/D12, U8): argparse verbs `generate` / `delete <page_id>`
+  (no cleanup verb — TTL is the bot's registry decision); self-contained
+  HTML renderer (inline CSS, `html.escape` everything, UTC footer with meta
+  incl. user/chat/platform ids); storage location is the CLI's own internal
+  default/flag (no bot-config coupling).
+- `internal/database/migrations/versions/migration_029_add_stats_pages_registry.py`
+  — **new** (D14): `stats_pages` table + `idx_stats_pages_created_at`;
+  `version: int = 29` (028 is the highest today — verified); follow the
+  [`add-database-migration`](../../.agents/skills/add-database-migration/SKILL.md)
+  skill.
+- `internal/database/repositories/stats_pages.py` + a `StatsPageDict` row
+  TypedDict in [`internal/database/models.py`](../../internal/database/models.py)
+  — **new** (D14): `addPage`, `getExpiredPages(cutoff, limit)`,
+  `deletePage(pageId)`; wire into `Database` repos.
 - [`configs/00-defaults/stats-pages.toml`](../../configs/00-defaults) — **new**
   (§5); [`configs/00-defaults/00-config.toml`](../../configs/00-defaults/00-config.toml) —
   limiter + queue binding (§5).
@@ -947,63 +1471,94 @@ ceiling holds by construction.)
 
 **Tests:**
 
-- `tests/stats_pages/test_generator.py` — golden-ish: given a fixed view-model
-  JSON → HTML contains escaped values, no external URLs (`http`/`https` absent
-  outside the footer meta), inline `<style>`, UTC label; uuid filename shape.
-- `tests/stats_pages/test_cli.py` — subprocess-in-process (import `__main__`
-  functions directly): generate writes file + stdout JSON; cleanup deletes by
-  mtime TTL; delete removes by id; nonzero exit on bad stdin JSON / missing
-  output-dir.
+- `tests/lib/stats/test_stats_pages_generator.py` — golden-ish: given a fixed
+  view-model JSON → HTML contains escaped values, no external URLs
+  (`http`/`https` absent outside the footer meta), inline `<style>`, UTC
+  label; uuid filename shape.
+- `tests/lib/stats/test_stats_pages_cli.py` — subprocess-in-process (import
+  `__main__` functions directly): generate writes file + stdout JSON; delete
+  removes by id and prints `{"deleted": 0|1}` (0 for unknown id, exit 0);
+  nonzero exit on bad stdin JSON.
+- `tests/database/test_migration_029_add_stats_pages_registry.py` — table +
+  index exist after `up()`, gone after `down()`, idempotent re-run (migration
+  test pattern).
+- `tests/database/repositories/test_stats_pages.py` — add / getExpired
+  (cutoff boundary, limit respected) / delete round-trip on the `testDatabase`
+  fixture.
 
-**Docs:** [`docs/llm/configuration.md`](../llm/configuration.md) (`[stats-pages]`
-table + ratelimiter additions), [`docs/llm/index.md`](../llm/index.md)
-(`internal/stats_pages/` in the layout map).
+**Docs:** [`docs/llm/configuration.md`](../llm/configuration.md)
+(`[stats-pages]` table + ratelimiter additions),
+[`docs/database-schema.md`](../database-schema.md) **and**
+[`docs/database-schema-llm.md`](../database-schema-llm.md) (`stats_pages`
+table — dual sync), [`docs/llm/database.md`](../llm/database.md) (migration
+029 in the version list + repository),
+[`docs/llm/libraries.md`](../llm/libraries.md) (`lib/stats/stats_pages/`),
+[`docs/llm/index.md`](../llm/index.md) (lib map entry).
 **CHANGELOG:** none yet — fold into the Phase 3b entry (single user-visible
 feature).
 
 **Gate 3a:** `make format lint`; `make test`; `make check-docs`.
 
-### Phase 3b — Web tier: bot integration — subprocess invocation, rate limiter, cleanup, failure modes
+### Phase 3b — Web tier: bot integration — invocation, rate limit, registry, cleanup task, failure modes *(amended 2026-08-18: U9)*
 
-Sized ~30 steps: 1 new module file, 2 edited internal files, tests.
+Sized ~35 steps: 1 new lib file, 3 edited files (handler, queue types, stats
+service), tests.
 
 **Files:**
 
-- `internal/stats_pages/launcher.py` — **new** (D11): launcher helper (exec,
-  stdin payload, `wait_for` 30 s, kill, stdout JSON parse + `{"id","url"}`
-  validation).
-- `internal/bot/common/handlers/stats_display.py` — the `-w` tier: config gate,
-  rate-limit pre-check + apply (D13), payload build (view-model JSON), launcher
-  call, link composition (`base-url + "/" + url`), D15 failure table.
+- `lib/stats/stats_pages/launcher.py` — **new** (D11): the one subprocess
+  invocation helper (exec, stdin payload, `wait_for` 30 s, kill, stdout JSON
+  parse + `{"id","url"}` / `{"deleted",…}` validation) — pure, config-free
+  (callers pass the template + substitutions).
+- `internal/bot/common/handlers/stats.py` —
+  the `--web`/`/stats_web` tier: config gate, rate-limit pre-check + apply
+  (D13), payload build (view-model JSON), launcher call with
+  `generate-command` substitutions (`{platform}` = `self.botProvider.value`),
+  link composition (`base-url + "/" + url`), registry INSERT on success
+  (D14), D15 failure table.
+- [`internal/services/queue_service/types.py`](../../internal/services/queue_service/types.py) —
+  `STATS_PAGES_CLEANUP = "statsPagesCleanup"` enum member.
 - [`internal/services/stats/service.py`](../../internal/services/stats/service.py) —
-  parse/cache `[stats-pages]` at `initialize` (A4 pattern); `_cleanupStatsPages`
-  rider at the end of `_dtCronJob` (D14).
+  parse/cache `[stats-pages]` at `initialize` (A4 pattern); register the
+  `STATS_PAGES_CLEANUP` handler; first-CRON-tick idempotent seed;
+  `_dtStatsPagesCleanup` + `_cleanupExpiredStatsPages` (D14).
 
 **Tests:**
 
-- `tests/stats_pages/test_launcher.py` — patch
-  `internal.stats_pages.launcher.asyncio.create_subprocess_exec`
+- `tests/lib/stats/test_stats_pages_launcher.py` — patch
+  `lib.stats.stats_pages.launcher.asyncio.create_subprocess_exec`
   ([tests/services/proxy/test_lifecycle.py:69](../../tests/services/proxy/test_lifecycle.py)
   pattern): timeout kill; nonzero exit; unparseable stdout; happy path returns
   `{"id","url"}`.
-- `tests/bot/common/handlers/test_stats_display.py` — extend: disabled
+- `tests/bot/common/handlers/test_stats.py` — extend: disabled
   `[stats-pages]` → informative reply, no subprocess; rate-limit refusal (mock
-  `getStats` full window) → reply, no subprocess; success → link composed;
-  failure modes per D15 (brief still sent).
-- `tests/services/stats/test_service.py` — cleanup rider: enabled → launcher
-  called with `{mode}=cleanup` once per cycle; disabled → not called; launcher
-  exception isolated (cycle still advances gate).
+  `getStats` full window) → reply, no subprocess; success → link composed +
+  registry row inserted; registry-insert failure → link still delivered
+  (D15 row); failure modes per D15 (in-chat reply still sent); `/stats_web`
+  alias shares the rate limit.
+- `tests/services/stats/test_service.py` — cleanup task matrix (D14/§2.13):
+  handler registered on the new function; seed is idempotent (existing
+  pending `STATS_PAGES_CLEANUP` row → no second `addDelayedTask`) and skipped
+  when disabled; task **persists** (`skipDB=False` asserted) and
+  self-reschedules in `finally` even when the body raises; expired rows →
+  `delete-command` invoked per page (bounded batch); per-page failure
+  isolation (failing page's row survives, others deleted);
+  `{"deleted": 0}` still removes the row; config-off body no-op.
+- `tests/database/repositories/test_stats_pages.py` — expired-selection
+  integration with the cleanup cutoff if not already covered in 3a.
 
-**Docs:** [`docs/llm/services.md`](../llm/services.md) (cleanup rider),
+**Docs:** [`docs/llm/services.md`](../llm/services.md) (cleanup task + seed),
 [`docs/llm/architecture.md`](../llm/architecture.md) (display tier paragraph),
 this design doc's status line when it lands.
-**CHANGELOG:** `Added` — optional `-w` web-page generation with `[stats-pages]`
-config, per-chat rate limit, TTL cleanup.
+**CHANGELOG:** `Added` — optional `--web`/`/stats_web` web-page generation
+with `[stats-pages]` config (two command templates), per-chat rate limit,
+TTL cleanup via a persisted delayed task + page registry.
 
 **Gate 3b:** `make format lint`; `make test`; `make check-docs`; manual smoke
-(local, operator-optional): enable `[stats]` + `[stats-pages]` with a temp
-output-dir, `/stats 7d -w`, open the generated HTML offline (no network) and
-verify the link resolves.
+(local, operator-optional): enable `[stats]` + `[stats-pages]`, `/stats
+--period=7d --web`, open the generated HTML offline (no network) and verify
+the link resolves; advance/forge a registry row past TTL and watch the
+cleanup run invoke `delete-command`.
 
 ---
 
@@ -1017,13 +1572,17 @@ verify the link resolves.
 | Query portability | `TestQuery` matrix (filters, ISO bounds, sentinel, pagination) | Phase 1 |
 | No-double-count | analysis test asserting `__global__` rows excluded by scope filter | Phase 1/2 |
 | Command gating | stats-off → no registration + `__init__` raises; stats-on → registered, `LLMMessageHandler` still last | Phase 2 |
-| Scope correctness | group/private/chat-drill authorization tests | Phase 2 |
-| Bounded digest | digest-render test asserts length < 3500 chars | Phase 2 |
+| Chat-setting gate *(added 2026-08-18)* | `allow-show-stats = false` → informative reply and ZERO storage queries; private chat ignores the gate | Phase 2 |
+| Alias *(added 2026-08-18)* | `/stats_web` ≡ `/stats --web` — same code path, web forced; one `/help` entry | Phase 2 |
+| Grammar *(amended 2026-08-18)* | argparse matrix: both `--opt=value`/`--opt value`, negative chatId positional, all bad inputs → usage | Phase 2 |
+| Scope correctness | group/private/chat-drill authorization tests (chat type from `recipient.chatType`) | Phase 2 |
+| Bounded reply | default/section render tests assert length < 3500 chars | Phase 2 |
 | Stats-off silence | entire feature (command + pages) inert when `[stats] enabled = false` | every phase |
-| CLI contract | generate/cleanup/delete + stdout JSON + failure exits | Phase 3 |
+| CLI contract | generate/delete + stdout JSON + failure exits | Phase 3 |
 | Subprocess safety | timeout-kill, nonzero-exit, unparseable-stdout tests | Phase 3 |
 | Rate limit | refusal path never invokes the CLI | Phase 3 |
-| Cleanup rider | invoked once per cycle when enabled; isolated on failure | Phase 3 |
+| Cleanup task *(amended 2026-08-18)* | self-reschedule is PERSISTED (`skipDB=False`) and survives the body raising; seed idempotent (existing pending row → no second); skipped when disabled; per-page failure isolation | Phase 3 |
+| Page registry *(added 2026-08-18)* | row inserted on successful generation; expired rows removed only after `delete-command` exit 0 (incl. `{"deleted": 0}`) | Phase 3 |
 | Offline page | generated HTML contains no external resource references | Phase 3 |
 
 No live/operator smoke gate is mandatory beyond the optional Phase 3 local smoke
@@ -1037,35 +1596,41 @@ No live/operator smoke gate is mandatory beyond the optional Phase 3 local smoke
 |---|---|---|---|---|---|
 | R1 | **Query cost / cardinality** — `stat_aggregates` grows with distinct label combos × periods; a scope query scans all label buckets of the window | Med | Med | PK prefix `(event_type, period_start)` serves the SQL predicate; `limit=10000` cap + explicit truncation line (D5); SUM-only buckets stay small vs `stat_events` (aggregation-v1 NG3 analysis); revisit retention per its §9 Q2 | Raise nothing — read-only; lower `limit` |
 | R2 | **Double counting via `__global__` rows** — naively summing a window counts every event twice | Med | High | The D3 consumer-scope filter structurally excludes `__global__`; pinned by an explicit analysis test (Gate: no-double-count) | n/a (test-locked) |
-| R3 | **Per-chat LLM undercount** (§2.3 exceptions: embeddings, background calls, condensing land in `__global__`) | Certain (today) | Low | Documented in `help`/digest honesty ("LLM counts cover interactive generation"); fix path is a small follow-up (O2), not a display-layer concern | n/a |
+| R3 | **Per-chat LLM undercount** (§2.3 exceptions: embeddings, background calls, condensing land in `__global__`) | Certain (today) | Low | Documented in `help`/reply honesty ("LLM counts cover interactive generation"); fix path is a small follow-up (O2), not a display-layer concern | n/a |
 | R4 | **Backfill/live label split** — direction breakdown misread as undercount | Low | Low | Three-bucket rendering (users/bot/history) per §2.4/D6 | n/a |
-| R5 | **Digest too long → mechanical split breaks MarkdownV2** | Low | Low | Bounded digest (< 3500 chars, Gate); top-3 lists; drill-downs bounded to top-10 | Shorten digest |
-| R6 | **Disk exhaustion via page generation** | Med | Med | Per-chat rate limit (3/h default) + UUID names (no overwrite) + TTL cleanup rider + `output-dir` is operator-designated | Disable `[stats-pages]`; `cleanup`/`delete` CLI modes |
-| R7 | **CLI hangs / misbehaves** | Low | Med | 30 s `wait_for` + kill (§2.9 conventions); JSON-validated stdout; D15 failure table; external commands are operator-supplied (WARNING not ERROR, proxy precedent) | `-w` off / fix `command` |
-| R8 | **`output-dir` unwritable or outside web root** | Med | Low | Startup validation when enabled (fail loudly, A4 pattern); runtime failure → D15 note | Fix config |
+| R5 | **Reply too long → mechanical split breaks MarkdownV2** | Low | Low | Bounded reply (< 3500 chars, Gate); top-3 lists; drill-downs bounded to top-10; chat list truncation with "and K more" | Shorten reply |
+| R6 | **Disk exhaustion via page generation** | Med | Med | Per-chat rate limit (3/h default) + UUID names (no overwrite) + TTL cleanup via the persisted task over the page registry (D14) | Disable `[stats-pages]`; run `delete-command` manually per page_id |
+| R7 | **CLI hangs / misbehaves** | Low | Med | 30 s `wait_for` + kill (§2.9 conventions); JSON-validated stdout; D15 failure table; external commands are operator-supplied (WARNING not ERROR, proxy precedent) | `--web` off / fix the command templates |
+| R8 | **Command-template misconfiguration** *(reworked 2026-08-18 — no more output-dir)*: missing/malformed `generate-command`/`delete-command`, wrong bin path | Med | Low | Startup validation when enabled (fail loudly, A4 pattern); strict `format_map` → KeyError → D15 note + WARNING log naming the key | Fix the templates |
 | R9 | **Unguessable-URL-only "auth"** — link sharing exposes scope aggregates | — (ratified) | Low | Ratified for non-sensitive aggregates (NG4); UUIDv4 hex; TTL; scope already bounds what is visible | Lower ttl-hours |
-| R10 | **Stale pages after stats disabled** — cleanup rider early-returns on empty registry | Low | Low | Documented (D14); operator can run `{mode}=cleanup` manually or `rm`; NG5 keeps no bot UI | Manual cleanup |
-| R11 | **Check-then-apply rate-limit race** over-admits a few concurrent `-w` | Low | Low | Single event loop bounds interleaving; consequence ≤ a few extra files per window (D13) | n/a |
-| R12 | **Template misconfiguration** (unknown placeholder, wrong bin path) | Med | Low | Strict `format_map` → KeyError → D15 note + WARNING log naming the command | Fix `command` |
-| R13 | **Cleanup cadence inherits aggregation interval** | Low | Low | Documented (D14); worst case files live TTL + interval | Lower `aggregation-interval-seconds` or run manual cleanup |
+| R10 | **Stale pages after stats/pages disabled** — the persisted task survives and no-ops on the config check; already-generated pages + registry rows remain | Low | Low | Documented (D14); pages eventually outlive TTL harmlessly; operator can invoke `delete-command` per registry page_id or clean storage their own way (the bot doesn't know it, U7); re-enabling + restart resumes cleanup | Manual cleanup; drop registry rows |
+| R11 | **Check-then-apply rate-limit race** over-admits a few concurrent `--web` | Low | Low | Single event loop bounds interleaving; consequence ≤ a few extra files per window (D13) | n/a |
+| R12 | **Template placeholder drift** (unknown placeholder in a custom template) | Med | Low | Strict `format_map` → KeyError → D15 note + WARNING log naming the command | Fix the templates |
+| R13 | **Registry-orphan pages** — delete-command fails persistently for a page (external tool broken/removed) | Low | Low | Per-page failure isolation; the registry row keeps flagging it for retry; **accepted** (U9): the page just outlives TTL — no data risk, only storage | Fix or remove the external tool; manual delete |
 | R14 | **`request_count` counts attempts, not logical requests** (fallback loop, §2.2) | — (documented) | Low | Rendered as "requests (attempts)" in help/footnote; not fixable display-side | n/a |
+| R15 | **Self-reschedule crash window duplicates the cleanup task** — crash between a handler's persisted re-add and the old row's mark-done leaves two pending rows → two live instances | Low | Low | Cleanup is idempotent (delete by page_id; `{"deleted": 0}` tolerated); duplicates converge back as rows clear; §2.13 analysis | n/a (benign) |
+| R16 | **Seed-vs-restore race** — seeding from `GromozekBot.__init__` could double-add a pending row | — (designed out) | Low | Seed runs on the FIRST CRON tick, strictly after `startDelayedScheduler` restored pending rows (D14/§2.13) | n/a |
 
-**Rollback principle:** the whole display tier is gated on `[stats] enabled` (the
-command and page generation disappear with one flag; the read API is inert code
-when nothing calls it). Each phase is independently revertible via git; no
-migration exists to unwind.
+**Rollback principle:** the whole display tier is gated on `[stats] enabled`
+(the command, the chat-setting gate and page generation disappear with one
+flag; the read API is inert code when nothing calls it; the persisted cleanup
+task no-ops on its config check). Each phase is independently revertible via
+git; migration 029's `down()` drops only the `stats_pages` table (no other
+data touched); the `ChatInfoDict.messages_count` extension is additive and
+inert if unused.
 
 ---
 
 ## 9. Open questions
 
-1. **O1 — Bot-side delete-by-id UI** (NG5): v1 ships the CLI `delete <id>` mode only.
+1. **O1 — Bot-side delete/list UI for pages** (NG5, reworded 2026-08-18): the
+   CLI `delete` verb exists and is wired to the TTL cleanup task (D12/D14).
    If page litter becomes a user complaint, a follow-up can add e.g.
-   `/stats pages` (list recent ids for this chat) + a delete verb. Verification
-   plan: none needed now — the invocation contract (D12) is frozen so the future
-   UI needs no CLI change.
-2. **O2 — Per-user `llm_request` attribution** (R3): thread `consumerId` through
-   `LLMService.generateEmbedding` ([service.py:1499](../../internal/services/llm/service.py))
+   `/stats --pages` (list recent registry rows for this chat) + a delete
+   verb. Verification plan: none needed now — the registry table IS the
+   future UI's data source, so no contract change is anticipated.
+2. **O2 — Per-user `llm_request` attribution** (R3): thread `consumerId`
+   through `LLMService.generateEmbedding` ([service.py:1499](../../internal/services/llm/service.py))
    and the condensing call (:1239), and optionally real chat ids into the two
    background callers; separately consider a `user_id` label for interactive
    generation (would change label vocabulary → new buckets only going forward —
@@ -1075,7 +1640,7 @@ migration exists to unwind.
    query API now landing, row counts become observable — revisit after real-world
    cardinality data exists.
 4. **i18n of `/stats` output**: v1 follows repo precedent (Russian replies). If a
-   localization pass ever happens repo-wide, the digest strings ride along; no
+   localization pass ever happens repo-wide, the reply strings ride along; no
    design change.
 
 ---
@@ -1086,24 +1651,45 @@ Load the [`update-project-docs`](../../.agents/skills/update-project-docs/SKILL.
 skill and update:
 
 - [`docs/llm/libraries.md`](../llm/libraries.md) §9 — `StatsStorage.query()`,
-  `StatsAggregateDict` (lib/stats/types.py), `StatsAnalyzer`.
+  `StatsAggregateDict` (lib/stats/types.py), `StatsAnalyzer`, and the
+  `lib/stats/stats_pages/` package (generator + launcher, module-invocable).
 - [`docs/llm/services.md`](../llm/services.md) — `StatsAggregationService`:
-  `getQueryStorage` accessor (Phase 1) and the `[stats-pages]` TTL-cleanup rider
-  (Phase 3).
-- [`docs/llm/handlers.md`](../llm/handlers.md) — `StatsDisplayHandler`: command
-  grammar, scoping, conditional registration on `[stats] enabled`.
-- [`docs/llm/configuration.md`](../llm/configuration.md) — `[stats-pages]` table
-  (keys, defaults, placeholders); `[ratelimiter]` additions; note that `[stats]`
-  is unchanged.
+  `getQueryStorage` accessor (Phase 1) and the STATS_PAGES_CLEANUP persisted
+  task + idempotent seed (Phase 3).
+- [`docs/llm/handlers.md`](../llm/handlers.md) — `StatsHandler` (`stats.py`):
+  command grammar (argparse-style), `/stats_web` alias, scoping via
+  `recipient.chatType`, conditional registration on `[stats] enabled`, the
+  `ALLOW_SHOW_STATS` gate.
+- [`docs/llm/configuration.md`](../llm/configuration.md) — `[stats-pages]`
+  table (`generate-command`/`delete-command` templates and their placeholder
+  sets; NO output-dir); `[ratelimiter]` additions; the `allow-show-stats`
+  chat-setting default in `bot-defaults.toml`; note that `[stats]` is
+  unchanged.
+- **Chat-setting four-site sync (U6, per the
+  [`add-chat-setting`](../../.agents/skills/add-chat-setting/SKILL.md)
+  skill)**: enum + `_chatSettingsInfo` (code) land with Phase 2; verify
+  `/settings` shows the entry with the default populated, and keep
+  `docs/llm/tasks.md` §4.1's example list current if the setting illustrates
+  a new category (it does not — routine BOOL flag).
 - [`docs/llm/architecture.md`](../llm/architecture.md) — stats pipeline section:
-  add the read/display tier (query API → /stats → optional page generation).
-- [`docs/llm/index.md`](../llm/index.md) — §4 map: `internal/stats_pages/`;
-  handler-list entry for `/stats`.
-- [`CHANGELOG.md`](../../CHANGELOG.md) — Phase 2 and Phase 3 `Added` entries per
-  [`docs/llm/changelog.md`](../llm/changelog.md) rules (this PROPOSED doc itself
-  gets no entry — doc-only).
-- **Schema docs unchanged** — no migration, no DDL (state explicitly in the PR
-  description so reviewers don't hunt for one).
+  add the read/display tier (query API → /stats → optional page generation →
+  persisted TTL cleanup).
+- [`docs/llm/index.md`](../llm/index.md) — §4 map: `lib/stats/stats_pages/`
+  in the lib tree; handler-list entry for `/stats`(+`/stats_web`).
+- **Migration 029 schema sync (U9, per the
+  [`add-database-migration`](../../.agents/skills/add-database-migration/SKILL.md)
+  skill)**:
+  [`docs/database-schema.md`](../database-schema.md) **and**
+  [`docs/database-schema-llm.md`](../database-schema-llm.md) gain the
+  `stats_pages` table (both in sync, dual-schema rule);
+  [`docs/llm/database.md`](../llm/database.md) gains migration 029 in the
+  version list and the `StatsPagesRepository`.
+- `CHANGELOG.md` — Phase 2 and Phase 3 `Added` entries per
+  [`docs/llm/changelog.md`](../llm/changelog.md) rules (this amended PROPOSED
+  doc itself gets no entry — doc-only).
+- The `ChatInfoDict.messages_count` extension is a TypedDict change only (no
+  DDL — the column exists); mention it in the Phase 2 PR description so
+  reviewers don't hunt for a migration.
 
 ---
 
@@ -1126,11 +1712,24 @@ skill and update:
   [`lib/stt/abstract.py`](../../lib/stt/abstract.py):228-278.
 - Scoping: [`common.py`](../../internal/bot/common/handlers/common.py):372-427,
   [`base.py`](../../internal/bot/common/handlers/base.py):1322-1355,
-  [`chat_users.py`](../../internal/database/repositories/chat_users.py):271-327.
+  [`chat_users.py`](../../internal/database/repositories/chat_users.py):271-327,
+  [`models.py`](../../internal/database/models.py):213-231 (`ChatInfoDict`).
 - Command machinery: [`command_handlers.py`](../../internal/bot/models/command_handlers.py):27-146,
   args precedent [`chat_search.py`](../../internal/bot/common/handlers/chat_search.py):1074-1141,
   gating [`manager.py`](../../internal/bot/common/handlers/manager.py):565-627 +
   [`weather.py`](../../internal/bot/common/handlers/weather.py):75-78.
+- Alias mechanism (2026-08-18 grounding): [`divination.py`](../../internal/bot/common/handlers/divination.py):284-329,
+  dispatch [`manager.py`](../../internal/bot/common/handlers/manager.py):877-880/1037-1039,
+  help rendering [`help_command.py`](../../internal/bot/common/handlers/help_command.py):212.
+- Chat settings (2026-08-18 grounding): [`chat_settings.py`](../../internal/bot/models/chat_settings.py),
+  consumer precedent [`sandbox.py`](../../internal/bot/common/handlers/sandbox.py):285,
+  wizard enforcement [`configure.py`](../../internal/bot/common/handlers/configure.py):203,
+  defaults [`bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml).
+- Chat type + platform (2026-08-18 grounding): [`ensured_message.py`](../../internal/bot/models/ensured_message.py):57-159,
+  [`enums.py`](../../internal/bot/models/enums.py):8-20.
+- Delayed-task mechanism (2026-08-18 grounding): [`internal/services/queue_service/service.py`](../../internal/services/queue_service/service.py),
+  [`types.py`](../../internal/services/queue_service/types.py),
+  [`internal/database/repositories/delayed_tasks.py`](../../internal/database/repositories/delayed_tasks.py).
 - Rate limiting: [`lib/rate_limiter/manager.py`](../../lib/rate_limiter/manager.py),
   [`lib/rate_limiter/sliding_window.py`](../../lib/rate_limiter/sliding_window.py),
   consumer [`stt/service.py`](../../internal/services/stt/service.py):298-301,
@@ -1140,5 +1739,7 @@ skill and update:
   [`internal/bot/common/bot.py`](../../internal/bot/common/bot.py):654-669/969-978.
 - SQL portability: [`docs/sql-portability-guide.md`](../sql-portability-guide.md).
 - Skills: [`add-handler`](../../.agents/skills/add-handler/SKILL.md),
+  [`add-chat-setting`](../../.agents/skills/add-chat-setting/SKILL.md),
+  [`add-database-migration`](../../.agents/skills/add-database-migration/SKILL.md),
   [`run-quality-gates`](../../.agents/skills/run-quality-gates/SKILL.md),
   [`update-project-docs`](../../.agents/skills/update-project-docs/SKILL.md).
