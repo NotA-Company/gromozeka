@@ -38,6 +38,7 @@ from lib.stats.stats_pages import (
     MessagesSectionData,
     StatsCliError,
     StatsCliErrorReason,
+    StatsPayload,
     SttSectionData,
     ToolsSectionData,
     runCliCommand,
@@ -353,7 +354,7 @@ class StatsHandler(BaseBotHandler):
             except Exception as e:
                 logger.exception(f"Web mode failed for chat {targetChatId}: {e}")
                 # D15: Always send brief + failure note, never let exception escape
-                # Brief was already sent by _handleWebMode, just add failure note
+                # Brief was already sent by _handleWebMode (rate-limit check or _buildStatsReply)
                 await self.sendMessage(
                     ensuredMessage,
                     messageText="⚠ Генерация веб-страницы не удалась.",
@@ -474,7 +475,7 @@ class StatsHandler(BaseBotHandler):
             if positional[0] == "help" and len(options) > 0:
                 raise StatsUsageError("help не может сочетаться с другими аргументами")
             if positional[0] != "help":
-                # Token already validated as int at line 358, so this conversion cannot fail
+                # Token already validated as int at line 464, so this conversion cannot fail
                 chatId = int(positional[0])
             else:
                 chatId = None
@@ -1033,7 +1034,7 @@ class StatsHandler(BaseBotHandler):
         periodStartTo: Optional[str],
         filterUserId: Optional[int],
         positionalChatIdUsed: bool = False,
-    ) -> dict:
+    ) -> StatsPayload:
         """Build the stats payload for web page generation.
 
         Args:
@@ -1119,7 +1120,7 @@ class StatsHandler(BaseBotHandler):
                 pass
 
         # Build payload (FIX 7: use chatType.value instead of ternary)
-        payload = {
+        payload: StatsPayload = {
             "userId": str(userId),
             "chatId": str(targetChatId),
             "chatTitle": chatTitle,
@@ -1127,11 +1128,11 @@ class StatsHandler(BaseBotHandler):
             "platform": self.botProvider.value,
             "period": periodArg,
             "generatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "sections": sectionsData,
+            "sections": sectionsData,  # type: ignore[assignment]  # MessagesSectionData etc. are dict[str, Any]
         }
 
         if chatList:
-            payload["chatList"] = chatList
+            payload["chatList"] = chatList  # type: ignore[assignment]  # ChatListEntry is dict[str, Any]
 
         return payload
 
@@ -1186,8 +1187,8 @@ class StatsHandler(BaseBotHandler):
         historyCount = totalMessageCount - userCount - botCount
 
         # Total length
-        totalLength = analyzerAll.sumMetric("total_length")
-        avgLength = totalLength / max(totalMessageCount, 1)  # FIX 1: divide by totalLength, not totalMessageCount
+        totalLength = analyzerAll.sumMetric("text_length")
+        avgLength = totalLength / max(totalMessageCount, 1)  # Compute average text length per message
 
         # Top users (by message count)
         topUsers = analyzerAll.filterByLabel("sent", "False").topN("user_id", "message_count", 3)
@@ -1252,7 +1253,7 @@ class StatsHandler(BaseBotHandler):
         totalElapsed = analyzer.sumMetric("elapsed_time")
         avgElapsed = (
             totalElapsed / max(totalCommands, 1) if totalCommands > 0 else 0.0
-        )  # FIX 1: divide by totalElapsed, not totalCommands
+        )  # Compute average elapsed time per command
 
         topCommands = analyzer.topN("commandName", "command_count", 3)
 
@@ -1310,7 +1311,7 @@ class StatsHandler(BaseBotHandler):
         totalElapsed = analyzer.sumMetric("elapsed_time")
         avgElapsed = (
             totalElapsed / max(totalCalls, 1) if totalCalls > 0 else 0.0
-        )  # FIX 1: divide by totalCalls, not totalElapsed
+        )  # Compute average elapsed time per tool call
 
         topTools = analyzer.topN("toolName", "tool_call_count", 3)
 
@@ -1365,10 +1366,10 @@ class StatsHandler(BaseBotHandler):
         totalElapsed = analyzer.sumMetric("elapsed_time")
         avgElapsed = (
             totalElapsed / max(totalRequests, 1) if totalRequests > 0 else 0.0
-        )  # FIX 1: divide by totalElapsed, not totalRequests
+        )  # Compute average elapsed time per LLM request
 
         topModels = analyzer.topN("modelName", "request_count", 3)
-        topProviders = analyzer.topN("providerName", "request_count", 3)
+        topProviders = analyzer.topN("provider", "request_count", 3)
 
         # STT stats
         sttStorage = self.statsAggregationService.getQueryStorage("stt_request")
@@ -1385,6 +1386,9 @@ class StatsHandler(BaseBotHandler):
             sttAnalyzer = StatsAnalyzer(sttRows)
             sttAnalyzer = sttAnalyzer.filterByLabelIn("consumer", consumerFilter)
 
+            # D5 honesty line: check if we hit the limit
+            possiblyIncompleteStt = len(sttRows) == 10000
+
             totalSttRequests = sttAnalyzer.sumMetric("request_count")
             errorSttRequests = sttAnalyzer.sumMetric("is_error")
             totalAudioDurationMs = sttAnalyzer.sumMetric("audio_duration_ms")
@@ -1398,8 +1402,9 @@ class StatsHandler(BaseBotHandler):
                 "totalElapsed": float(totalSttElapsedTime),
                 "avgElapsed": float(avgSttTime),
                 "topProviders": [
-                    [provider, int(count)] for provider, count in sttAnalyzer.topN("providerName", "request_count", 3)
+                    [provider, int(count)] for provider, count in sttAnalyzer.topN("provider", "request_count", 3)
                 ],
+                "possiblyIncomplete": possiblyIncompleteStt,
             }
 
         result: LlmSectionData = {
@@ -1454,16 +1459,25 @@ class StatsHandler(BaseBotHandler):
         # D13: Rate limit check FIRST
         # FIX 6: Key limiter on ISSUING chat (ensuredMessage.recipient.id), not target chat
         rateLimiterKey = f"stats-pages-{ensuredMessage.recipient.id}"
+        limiterUnavailable = False
+        maxRequests: int = 3
+        windowSeconds: int = 3600
+        used: int = 0
         try:
             rateStats = RateLimiterManager.getInstance().getStats(self._statsPagesRatelimiterQueue, key=rateLimiterKey)
             used = rateStats["requestsInWindow"]
             maxRequests = rateStats["maxRequests"]
             windowSeconds = rateStats.get("windowSeconds", 3600)  # FIX 6: read window unit from rateStats
+        except RuntimeError:
+            # Limiter unavailable (queue not registered) - build brief and note, then return
+            limiterUnavailable = True
         except ValueError:
             # Never-used key (no requests yet for this chat) - treat as 0 used
             # FIX 6: Simplified - just set used=0, skip the comparison entirely (0 can't exceed positive limit)
             used = 0
             # Need maxRequests for the limit check - get queue level stats
+            # Note: queue-name key is never populated by this handler (applyLimit uses per-chat keys),
+            # so the hardcoded 3/3600 fallback is what first-requests actually compare against
             try:
                 queueStats = RateLimiterManager.getInstance().getStats(self._statsPagesRatelimiterQueue, key=None)
                 maxRequests = queueStats["maxRequests"]
@@ -1473,11 +1487,42 @@ class StatsHandler(BaseBotHandler):
                 maxRequests = 3
                 windowSeconds = 3600
 
+        if limiterUnavailable:
+            # Build brief reply when limiter is unavailable
+            try:
+                messageText = await self._buildStatsReply(
+                    targetChatId=targetChatId,
+                    chatType=chatType,
+                    userId=userId,
+                    section=section,
+                    periodArg=periodArg,
+                    periodType=periodType,
+                    periodStartFrom=periodStartFrom,
+                    periodStartTo=periodStartTo,
+                    filterUserId=filterUserId,
+                    positionalChatIdUsed=positionalChatIdUsed,
+                )
+                await self.sendMessage(
+                    ensuredMessage,
+                    messageText=f"{messageText}\n\n⚠ Лимитер генерации страниц недоступен.",
+                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                    typingManager=typingManager,
+                )
+            except Exception:
+                logger.exception(f"Stats query failed for chat {targetChatId}")
+                await self.sendMessage(
+                    ensuredMessage,
+                    messageText="❌ Ошибка при запросе статистики.",
+                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                    typingManager=typingManager,
+                )
+            return
+
         if used >= maxRequests:
             # Russian pluralization helper
             def formatRussianPlural(n: int, singular: str, paucal: str, plural: str) -> str:
                 """Format number with correct Russian plural form."""
-                if n == 1:
+                if n == 1 or (n % 10 == 1 and n % 100 != 11):
                     return f"{n} {singular}"
                 elif 2 <= n % 10 <= 4 and not (12 <= n % 100 <= 14):
                     return f"{n} {paucal}"
@@ -1531,17 +1576,28 @@ class StatsHandler(BaseBotHandler):
             return
 
         # Build payload for subprocess
-        payload = await self._buildStatsPayload(
-            targetChatId=targetChatId,
-            chatType=chatType,
-            userId=userId,
-            periodArg=periodArg,
-            periodType=periodType,
-            periodStartFrom=periodStartFrom,
-            periodStartTo=periodStartTo,
-            filterUserId=filterUserId,
-            positionalChatIdUsed=positionalChatIdUsed,
-        )
+        try:
+            payload = await self._buildStatsPayload(
+                targetChatId=targetChatId,
+                chatType=chatType,
+                userId=userId,
+                periodArg=periodArg,
+                periodType=periodType,
+                periodStartFrom=periodStartFrom,
+                periodStartTo=periodStartTo,
+                filterUserId=filterUserId,
+                positionalChatIdUsed=positionalChatIdUsed,
+            )
+        except Exception:
+            logger.exception(f"Stats payload build failed for chat {targetChatId}")
+            # Brief was already built and sent above, just add failure note
+            await self.sendMessage(
+                ensuredMessage,
+                messageText=f"{messageText}\n\n⚠ Генерация веб-страницы не удалась.",
+                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                typingManager=typingManager,
+            )
+            return
 
         # Resolve generate-command argv with substitutions
         placeholders = {

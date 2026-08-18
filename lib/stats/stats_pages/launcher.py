@@ -24,7 +24,7 @@ class StatsCliErrorReason(StrEnum):
 class StatsCliError(Exception):
     """Exception raised when stats-pages CLI invocation fails.
 
-    Distinguishes between timeout, kill, and spawn failures so the caller
+    Distinguishes between (TIMEOUT, SPAWN) failures so the caller
     can log appropriately.
 
     Attributes:

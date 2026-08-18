@@ -131,7 +131,7 @@ class TestStatsHandlerPayloadDataRegression:
                             "periodType": "daily",
                             "periodStart": "2023-08-15T00:00:00Z",
                             "labels": {"consumer": "123", "user_id": "456"},
-                            "metricKey": "total_length",
+                            "metricKey": "text_length",
                             "metricValue": 10,
                         },
                         {
@@ -145,7 +145,7 @@ class TestStatsHandlerPayloadDataRegression:
                             "periodType": "daily",
                             "periodStart": "2023-08-15T00:00:00Z",
                             "labels": {"consumer": "123", "user_id": "456"},
-                            "metricKey": "total_length",
+                            "metricKey": "text_length",
                             "metricValue": 20,
                         },
                     ]
@@ -195,28 +195,28 @@ class TestStatsHandlerPayloadDataRegression:
                         {
                             "periodType": "daily",
                             "periodStart": "2023-08-15T00:00:00Z",
-                            "labels": {"consumer": "123", "user_id": "456"},
+                            "labels": {"consumer": "123", "user_id": "456", "provider": "test_provider"},
                             "metricKey": "elapsed_time",
                             "metricValue": 2.0,
                         },
                         {
                             "periodType": "daily",
                             "periodStart": "2023-08-15T00:00:00Z",
-                            "labels": {"consumer": "123", "user_id": "456"},
+                            "labels": {"consumer": "123", "user_id": "456", "provider": "test_provider"},
                             "metricKey": "request_count",
                             "metricValue": 1,
                         },
                         {
                             "periodType": "daily",
                             "periodStart": "2023-08-15T00:00:00Z",
-                            "labels": {"consumer": "123", "user_id": "456"},
+                            "labels": {"consumer": "123", "user_id": "456", "provider": "test_provider"},
                             "metricKey": "elapsed_time",
                             "metricValue": 4.0,
                         },
                         {
                             "periodType": "daily",
                             "periodStart": "2023-08-15T00:00:00Z",
-                            "labels": {"consumer": "123", "user_id": "456"},
+                            "labels": {"consumer": "123", "user_id": "456", "provider": "test_provider"},
                             "metricKey": "request_count",
                             "metricValue": 1,
                         },
@@ -266,6 +266,10 @@ class TestStatsHandlerPayloadDataRegression:
         assert payload["sections"]["llm"]["totalElapsed"] == 6.0
         assert payload["sections"]["llm"]["totalRequests"] == 2
         assert payload["sections"]["llm"]["avgElapsed"] == 3.0
+
+        # C-2: Verify provider label key is used (topProviders should be non-empty)
+        assert "topProviders" in payload["sections"]["llm"]
+        assert len(payload["sections"]["llm"]["topProviders"]) > 0
 
         # FIX 5: Verify honesty flags are propagated
         assert "possiblyIncomplete" in payload["sections"]["messages"]

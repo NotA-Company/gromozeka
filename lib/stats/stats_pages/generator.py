@@ -41,7 +41,7 @@ class StatsPayload(TypedDict):
     platform: str
     period: str
     generatedAt: str
-    sections: NotRequired[dict[str, dict[str, Any]]]
+    sections: dict[str, dict[str, Any]]
     chatList: NotRequired[list[dict[str, Any]]]
 
 
@@ -121,6 +121,7 @@ class SttSectionData(TypedDict):
         totalElapsed: Total elapsed time in seconds.
         avgElapsed: Average elapsed time in seconds.
         topProviders: Top 3 providers by count as [provider, count] pairs.
+        possiblyIncomplete: Whether the query hit the 10k row limit.
     """
 
     totalRequests: int
@@ -129,6 +130,7 @@ class SttSectionData(TypedDict):
     totalElapsed: float
     avgElapsed: float
     topProviders: list[list[str | int]]
+    possiblyIncomplete: NotRequired[bool]
 
 
 class LlmSectionData(TypedDict):
@@ -626,8 +628,15 @@ class StatsPageGenerator:
             sttTotal = sttData.get("totalRequests", 0)
             sttErrors = sttData.get("errorRequests", 0)
             sttAudioDuration = sttData.get("totalAudioDuration", 0.0)
+            sttPossiblyIncomplete = sttData.get("possiblyIncomplete", False)
+
+            sttHonestyLine = ""
+            if sttPossiblyIncomplete:
+                sttHonestyLine = '<p class="neutral">⚠ Результаты могут быть неполными (достигнут лимит запроса)</p>\n'
+
             sttHtml = f"""
             <h3>🎤 Speech-to-Text</h3>
+            {sttHonestyLine}
             <table>
                 <tr>
                     <th>Metric</th>

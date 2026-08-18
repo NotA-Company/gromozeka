@@ -30,6 +30,7 @@ class TestStatsPageGenerator:
             "platform": "telegram",
             "period": "7d",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "sections": {},
         }
 
         pageId, url = generator.generate(payload)
@@ -104,6 +105,7 @@ class TestStatsPageGenerator:
             "platform": "telegram",
             "period": "7d",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "sections": {},
         }
 
         pageId, url = generator.generate(payload)
@@ -255,6 +257,7 @@ class TestStatsPageGenerator:
             "platform": "telegram",
             "period": "7d",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "sections": {},
             "chatList": [
                 {"chatId": -1001234567890, "title": "Group A", "messagesCount": 300},
                 {"chatId": -1009876543210, "title": "Group B", "messagesCount": 210},
@@ -286,6 +289,7 @@ class TestStatsPageGenerator:
             "platform": "telegram",
             "period": "7d",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "sections": {},
         }
 
         pageId, url = generator.generate(payload)
@@ -319,6 +323,7 @@ class TestStatsPageGenerator:
             "platform": "telegram",
             "period": "7d",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "sections": {},
         }
 
         # Generate multiple pages
@@ -346,7 +351,8 @@ class TestStatsPageGenerator:
             "chatType": "group",
             "platform": "telegram",
             "period": "7d",
-            "generatedAt": "2026-08-18T10:30:00+00:00",  # Fixed timestamp
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "sections": {},
         }
 
         # Generate two pages
@@ -432,6 +438,7 @@ class TestStatsPageGenerator:
             "platform": "telegram",
             "period": "7d",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "sections": {},
             "chatList": chatList,
         }
 

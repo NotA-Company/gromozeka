@@ -93,10 +93,11 @@ U9's ratified text below stays as history.
   `registerDelayedTaskHandler(DelayedTaskFunction.STATS_PAGES_CLEANUP, …)`
   in its `__init__` (the handler exists exactly when `[stats] enabled`,
   since construction is gated; `[stats-pages]` requires `[stats]` —
-  dependency unchanged; NO seeding needed, the seed race is moot). A
-  pending deletion task while stats is disabled hits the queue-service
-  no-handler re-delay path (task waits until re-enabled) — accepted,
-  documented (R10). Handler behavior: run the resolved argv via
+  dependency unchanged; NO seeding needed, the seed race is moot).
+  Pending deletion task while stats is disabled hits the queue-service
+  no-handler re-delay path (task re-delays in memory for the process lifetime
+  but the DB row is marked done on first firing — after restart the task is gone;
+  orphaned page file is the accepted R13 outcome) — documented (R10). Handler behavior: run the resolved argv via
   `asyncio.create_subprocess_exec` (same conventions as generation: ~30 s
   timeout, DEVNULL/PIPE per `docs/llm/tasks.md:489`); CLI output
   `{"deleted": 0}` tolerated; failure → WARNING log and the task completes
@@ -1161,8 +1162,10 @@ surfaces as the D15 failure note, logged):
 - **No-handler consequence (accepted, documented — R10)**: a pending
   deletion task that fires while stats is disabled (handler not
   constructed) hits the queue-service no-handler re-delay path — re-delayed
-  +60 s with an error log (service.py:385-388, §2.13) — the task simply
-  waits until stats is re-enabled and the handler registers again.
+  +60 s with an error log (service.py:385-388, §2.13). The task re-delays
+  in memory for the process lifetime but the DB row is marked done on first
+  firing — after restart the task is gone; orphaned page file is the accepted
+  R13 outcome.
 - **Handler behavior — SINGLE attempt, no retry**:
 
   ```python
