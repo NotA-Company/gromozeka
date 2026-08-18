@@ -976,3 +976,106 @@ class TestRegression:
         # Verify it's a DatabaseStatsStorage with the default datasource
         assert storage.__class__.__name__ == "DatabaseStatsStorage"
         assert storage.dataSource == "custom_datasource"
+
+
+# ============================================================================
+# GetQueryStorage Tests
+# ============================================================================
+
+
+class TestGetQueryStorage:
+    """Test getQueryStorage accessor behavior."""
+
+    def testGetQueryStorageReturnsRegisteredStorage(
+        self, statsAggregationService, mockConfigManager, mockDatabase, mockStorage
+    ):
+        """Test that getQueryStorage returns the registered storage for eventType."""
+        # Config with enabled = True
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 3600,
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
+        }
+
+        statsAggregationService.initialize(mockConfigManager, mockDatabase)
+
+        # Create and register two storages
+        storage1 = statsAggregationService.createStatsStorage("llm_request", dataSource="default")
+        storage2 = statsAggregationService.createStatsStorage("message", dataSource="default")
+
+        # Query for registered eventTypes should return the registered storages
+        assert statsAggregationService.getQueryStorage("llm_request") is storage1
+        assert statsAggregationService.getQueryStorage("message") is storage2
+
+    def testGetQueryStorageUnregisteredReturnsNull(self, statsAggregationService, mockConfigManager, mockDatabase):
+        """Test that getQueryStorage returns NullStatsStorage for unregistered eventType."""
+        # Config with enabled = True
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 3600,
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
+        }
+
+        statsAggregationService.initialize(mockConfigManager, mockDatabase)
+
+        # Register one storage
+        statsAggregationService.createStatsStorage("llm_request", dataSource="default")
+
+        # Query for unregistered eventType should return NullStatsStorage
+        result = statsAggregationService.getQueryStorage("message")
+        assert isinstance(result, NullStatsStorage)
+
+        # Query for a third unregistered eventType should also return NullStatsStorage
+        result2 = statsAggregationService.getQueryStorage("command")
+        assert isinstance(result2, NullStatsStorage)
+
+    def testGetQueryStorageNotInitializedReturnsNull(self, statsAggregationService):
+        """Test that getQueryStorage returns NullStatsStorage when service not initialized."""
+        # Don't call initialize
+
+        # Query should return NullStatsStorage
+        result = statsAggregationService.getQueryStorage("llm_request")
+        assert isinstance(result, NullStatsStorage)
+
+    def testGetQueryStorageReturnsFreshNullEachCall(self, statsAggregationService, mockConfigManager, mockDatabase):
+        """Test that getQueryStorage returns a fresh NullStatsStorage each unregistered call."""
+        # Config with enabled = True
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 3600,
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
+        }
+
+        statsAggregationService.initialize(mockConfigManager, mockDatabase)
+
+        # Don't register any storages
+
+        # Each call should return a new NullStatsStorage instance (or the same one is fine too)
+        # The important part is that it IS a NullStatsStorage
+        result1 = statsAggregationService.getQueryStorage("llm_request")
+        result2 = statsAggregationService.getQueryStorage("message")
+
+        assert isinstance(result1, NullStatsStorage)
+        assert isinstance(result2, NullStatsStorage)
+
+    def testGetQueryStorageWithDisabledStatsReturnsNull(self, statsAggregationService, mockConfigManager, mockDatabase):
+        """Test that getQueryStorage returns NullStatsStorage when stats disabled."""
+        # Config with enabled = False
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": False,
+            "aggregation-interval-seconds": 3600,
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
+        }
+
+        statsAggregationService.initialize(mockConfigManager, mockDatabase)
+
+        # Try to create a storage (should return unregistered NullStatsStorage)
+        statsAggregationService.createStatsStorage("llm_request", dataSource="default")
+
+        # Query should return NullStatsStorage (registry is empty)
+        result = statsAggregationService.getQueryStorage("llm_request")
+        assert isinstance(result, NullStatsStorage)

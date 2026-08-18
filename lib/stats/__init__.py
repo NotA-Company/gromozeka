@@ -17,5 +17,6 @@ consumer, model, provider, generation type, and any future dimensions.
 """
 
 from .stats_storage import GLOBAL_CONSUMER_ID, NullStatsStorage, StatsStorage
+from .types import StatsAggregateDict
 
-__all__ = ["GLOBAL_CONSUMER_ID", "NullStatsStorage", "StatsStorage"]
+__all__ = ["GLOBAL_CONSUMER_ID", "NullStatsStorage", "StatsStorage", "StatsAggregateDict"]

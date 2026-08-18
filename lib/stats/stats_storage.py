@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Optional
 
+from .types import StatsAggregateDict
+
 # Sentinel consumer ID for global (all-consumer) aggregation
 GLOBAL_CONSUMER_ID = "__global__"
 
@@ -96,6 +98,43 @@ class StatsStorage(ABC):
         """
         ...
 
+    @abstractmethod
+    async def query(
+        self,
+        *,
+        eventType: str,
+        periodType: Optional[str] = None,
+        periodStartFrom: Optional[str] = None,
+        periodStartTo: Optional[str] = None,
+        limit: int = 10000,
+    ) -> list[StatsAggregateDict]:
+        """Read aggregated rows with parsed labels.
+
+        Queries the ``stat_aggregates`` table for rows matching the given
+        criteria and returns them with labels parsed from JSON into dicts.
+        The ``eventType`` parameter is a query filter (not tied to this
+        storage's per-instance eventType), enabling cross-eventType views.
+
+        Args:
+            eventType: Event type discriminator to filter on (required).
+            periodType: Optional period type filter ('hourly', 'daily',
+                'monthly', or 'total'). None = all period types.
+            periodStartFrom: Optional ISO-8601 UTC timestamp lower bound
+                (inclusive). String comparison works for lexicographic ordering.
+            periodStartTo: Optional ISO-8601 UTC timestamp upper bound
+                (inclusive). String comparison works for lexicographic ordering.
+            limit: Maximum number of rows to return (default 10000).
+
+        Returns:
+            List of StatsAggregateDict objects with parsed labels dicts.
+            Empty list if no rows match.
+
+        Raises:
+            Database or provider errors on failure (raise-on-error contract,
+            matching ``aggregate()`` and ``purgeProcessed()``).
+        """
+        ...
+
 
 class NullStatsStorage(StatsStorage):
     """No-op storage — discards all events, ``aggregate()`` is a no-op.
@@ -146,3 +185,26 @@ class NullStatsStorage(StatsStorage):
             0
         """
         return 0
+
+    async def query(
+        self,
+        *,
+        eventType: str,
+        periodType: Optional[str] = None,
+        periodStartFrom: Optional[str] = None,
+        periodStartTo: Optional[str] = None,
+        limit: int = 10000,
+    ) -> list[StatsAggregateDict]:
+        """No-op — returns empty list.
+
+        Args:
+            eventType: Ignored.
+            periodType: Ignored.
+            periodStartFrom: Ignored.
+            periodStartTo: Ignored.
+            limit: Ignored.
+
+        Returns:
+            Empty list.
+        """
+        return []

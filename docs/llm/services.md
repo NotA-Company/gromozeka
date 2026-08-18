@@ -602,6 +602,8 @@ class MyService:
 - `[stats] aggregation-batch-limit` (default `1000`): number of events to process per `aggregate()` call in the drain loop; clamped to minimum 1. Bounds a cycle at `MAX_AGGREGATION_ROUNDS × batch-limit` events per storage. Cached at initialization; malformed values raise ValueError.
 - `[stats] events-retention-days` (default `30`): retention window; `0` = keep forever. Cached at initialization; malformed values raise ValueError.
 
+**Public read accessor:** `getQueryStorage(eventType: str) -> StatsStorage` — returns the registered storage for that eventType (e.g., `llm_request`, `message`, `command`) or `NullStatsStorage()` if the registry is uninitialized, empty, or the eventType is unregistered. Enables handlers to reach storages for read queries without construction side effects.
+
 ```python
 from internal.services.stats import StatsAggregationService
 
@@ -627,6 +629,10 @@ messageStatsStorage = StatsAggregationService.getInstance().createStatsStorage(
 commandStatsStorage = StatsAggregationService.getInstance().createStatsStorage(
     "command", statsConfig.get("command-stats-data-source", database.manager.default)
 )
+
+# Read accessor for query() calls (returns NullStatsStorage if unregistered):
+storage = StatsAggregationService.getInstance().getQueryStorage("llm_request")
+rows = await storage.query(eventType="llm_request", periodType="daily")
 
 # Storages flow to consumers exactly as today (LLMService, STTService, bot applications).
 ```

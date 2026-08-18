@@ -8,6 +8,7 @@ upsert + mark-processed operations.
 
 import datetime
 import hashlib
+import json
 import logging
 import math
 import uuid
@@ -16,6 +17,7 @@ from typing import Optional, TypedDict
 from lib import utils as libUtils
 from lib.stats.stats_storage import GLOBAL_CONSUMER_ID
 from lib.stats.stats_storage import StatsStorage as BaseStatsStorage
+from lib.stats.types import StatsAggregateDict
 
 from . import utils as dbUtils
 from .database import Database
@@ -320,6 +322,88 @@ class DatabaseStatsStorage(BaseStatsStorage):
         )
 
         return int(countRow["cnt"])
+
+    async def query(
+        self,
+        *,
+        eventType: str,
+        periodType: Optional[str] = None,
+        periodStartFrom: Optional[str] = None,
+        periodStartTo: Optional[str] = None,
+        limit: int = 10000,
+    ) -> list[StatsAggregateDict]:
+        """Read aggregated rows with parsed labels.
+
+        Queries the ``stat_aggregates`` table for rows matching the given
+        criteria and returns them with labels parsed from JSON into dicts.
+        The ``eventType`` parameter is a query filter (not tied to this
+        storage's per-instance eventType), enabling cross-eventType views.
+
+        Args:
+            eventType: Event type discriminator to filter on (required).
+            periodType: Optional period type filter ('hourly', 'daily',
+                'monthly', or 'total'). None = all period types.
+            periodStartFrom: Optional ISO-8601 UTC timestamp lower bound
+                (inclusive). String comparison works for lexicographic ordering.
+            periodStartTo: Optional ISO-8601 UTC timestamp upper bound
+                (inclusive). String comparison works for lexicographic ordering.
+            limit: Maximum number of rows to return (default 10000).
+
+        Returns:
+            List of StatsAggregateDict objects with parsed labels dicts.
+            Empty list if no rows match.
+
+        Raises:
+            Database or provider errors on failure (raise-on-error contract).
+        """
+        sqlProvider = await self.db.manager.getProvider(dataSource=self.dataSource, readonly=True)
+
+        # Build WHERE conditions
+        conditions: list[str] = ["event_type = :eventType"]
+        params: dict[str, str | int] = {"eventType": eventType}
+
+        if periodType is not None:
+            conditions.append("period_type = :periodType")
+            params["periodType"] = periodType
+
+        if periodStartFrom is not None:
+            conditions.append("period_start >= :periodStartFrom")
+            params["periodStartFrom"] = periodStartFrom
+
+        if periodStartTo is not None:
+            conditions.append("period_start <= :periodStartTo")
+            params["periodStartTo"] = periodStartTo
+
+        # Build base query
+        baseQuery = (
+            "SELECT period_start, period_type, labels, metric_key, metric_value "
+            "FROM stat_aggregates "
+            "WHERE " + " AND ".join(conditions) + " ORDER BY period_start, labels_hash, metric_key"
+        )
+
+        # Apply pagination using provider (portable across RDBMS)
+        query = sqlProvider.applyPagination(baseQuery, limit=limit, offset=0)
+
+        # Execute query
+        rows = await sqlProvider.executeFetchAll(query, params)
+
+        # Convert rows to StatsAggregateDict with parsed labels
+        result: list[StatsAggregateDict] = []
+        for row in rows:
+            # Parse labels from JSON
+            labelsDict = json.loads(row["labels"]) if isinstance(row["labels"], str) else row["labels"]
+
+            # Build result dict with camelCase field names
+            aggregateRow: StatsAggregateDict = {
+                "periodStart": row["period_start"],
+                "periodType": row["period_type"],
+                "labels": labelsDict,
+                "metricKey": row["metric_key"],
+                "metricValue": float(row["metric_value"]),
+            }
+            result.append(aggregateRow)
+
+        return result
 
 
 # ------------------------------------------------------------------

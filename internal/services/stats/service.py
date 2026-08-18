@@ -245,6 +245,21 @@ class StatsAggregationService:
         logger.debug(f"Created and registered stats storage for event type '{eventType}'")
         return storage
 
+    def getQueryStorage(self, eventType: str) -> StatsStorage:
+        """Return the registered storage for eventType (NullStatsStorage if none).
+
+        Provides handler-side access to the storage registry for read-only
+        queries. Returns a fresh NullStatsStorage if the service is uninitialized
+        or the eventType is not registered.
+
+        Args:
+            eventType: Event type discriminator (e.g., 'llm_request', 'message').
+
+        Returns:
+            Registered StatsStorage for the event type, or NullStatsStorage if none.
+        """
+        return self._statsStorages.get(eventType, NullStatsStorage())
+
     async def _dtCronJob(self, task: DelayedTask) -> None:
         """Handle a CRON_JOB delayed task (shared 60-second tick).
 

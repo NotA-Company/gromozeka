@@ -5,7 +5,10 @@ import uuid
 from typing import Any
 from unittest.mock import patch
 
+from internal.database import Database
 from internal.database import utils as dbUtils
+from internal.database.manager import DatabaseManagerConfig
+from internal.database.migrations.versions.migration_016_add_stat_tables import getMigration
 from internal.database.stats_storage import DatabaseStatsStorage
 from lib.stats.stats_storage import GLOBAL_CONSUMER_ID
 
@@ -828,3 +831,326 @@ async def testMultiEventTypeIsolation(statsStorage: DatabaseStatsStorage) -> Non
 
     finally:
         await sharedDb.manager.closeAll()
+
+
+# ----------------------------------------------------------------------
+# Query API tests
+# ----------------------------------------------------------------------
+
+
+async def testQueryPeriodTypeFilter(statsStorage: DatabaseStatsStorage) -> None:
+    """Verify query() filters by periodType correctly.
+
+    Seed:
+    - Record one event
+    - Aggregate produces rows for hourly, daily, monthly, total
+    - Query with periodType='daily' should return only daily rows
+
+    Returns:
+        None
+    """
+    await statsStorage.record(
+        {"tokens": 100},
+        consumerId="chat_1",
+        labels={"model": "gpt-4"},
+    )
+    await statsStorage.aggregate()
+
+    # Query only daily periods
+    dailyRows = await statsStorage.query(eventType="llm_request", periodType="daily")
+
+    # All returned rows should be daily
+    assert len(dailyRows) > 0
+    for row in dailyRows:
+        assert row["periodType"] == "daily"
+
+    # Verify no hourly or monthly rows returned
+    periodTypes = {row["periodType"] for row in dailyRows}
+    assert "hourly" not in periodTypes
+    assert "monthly" not in periodTypes
+    assert "total" not in periodTypes
+
+
+async def testQueryPeriodStartRangeFilter(statsStorage: DatabaseStatsStorage) -> None:
+    """Verify query() filters by periodStartFrom and periodStartTo correctly.
+
+    Seed:
+    - Record events at two different times (2024-06-15 and 2024-06-20)
+    - Aggregate both
+    - Query with periodStartFrom and periodStartTo should return rows in range
+
+    Returns:
+        None
+    """
+    eventTime1 = datetime.datetime(2024, 6, 15, 14, 30, 0, tzinfo=datetime.UTC)
+    eventTime2 = datetime.datetime(2024, 6, 20, 10, 15, 0, tzinfo=datetime.UTC)
+
+    await statsStorage.record(
+        {"tokens": 100},
+        consumerId="chat_1",
+        eventTime=eventTime1,
+        labels={"model": "gpt-4"},
+    )
+    await statsStorage.record(
+        {"tokens": 200},
+        consumerId="chat_1",
+        eventTime=eventTime2,
+        labels={"model": "gpt-4"},
+    )
+    await statsStorage.aggregate()
+
+    # Query for daily periods in range [2024-06-15, 2024-06-20]
+    fromBound = "2024-06-15T00:00:00+00:00"
+    toBound = "2024-06-20T00:00:00+00:00"
+
+    rows = await statsStorage.query(
+        eventType="llm_request",
+        periodType="daily",
+        periodStartFrom=fromBound,
+        periodStartTo=toBound,
+    )
+
+    # Seed arithmetic: 2 events → each creates 2 aggregates (per-consumer + global)
+    # → 4 total daily rows at 2024-06-15 and 2024-06-20
+    # Inclusive range [fromBound, toBound] should return all 4 rows
+    assert len(rows) == 4
+
+    # All returned rows should be in the inclusive range
+    for row in rows:
+        assert row["periodStart"] >= fromBound
+        assert row["periodStart"] <= toBound
+
+    # Assert boundary rows are PRESENT (inclusive bounds)
+    assert any(r["periodStart"] == fromBound for r in rows), "fromBound boundary row should be present"
+    assert any(r["periodStart"] == toBound for r in rows), "toBound boundary row should be present"
+
+    # Query for a narrower range should return fewer rows
+    # Narrow range [2024-06-18, 2024-06-20] includes only the 2024-06-20 rows
+    narrowFrom = "2024-06-18T00:00:00+00:00"
+    narrowRows = await statsStorage.query(
+        eventType="llm_request",
+        periodType="daily",
+        periodStartFrom=narrowFrom,
+        periodStartTo=toBound,
+    )
+    # Should have exactly 2 rows (per-consumer + global for 2024-06-20)
+    assert len(narrowRows) == 2
+    assert len(narrowRows) < len(rows)
+
+    # All narrow rows should be >= narrowFrom
+    for row in narrowRows:
+        assert row["periodStart"] >= narrowFrom
+        assert row["periodStart"] <= toBound
+
+    # Narrow range should NOT include the fromBound row (2024-06-15)
+    assert not any(
+        r["periodStart"] == fromBound for r in narrowRows
+    ), "fromBound row should be excluded in narrow query"
+    # But should still include the toBound row (2024-06-20)
+    assert any(r["periodStart"] == toBound for r in narrowRows), "toBound row should still be present in narrow query"
+
+
+async def testQueryLimitViaApplyPagination(statsStorage: DatabaseStatsStorage) -> None:
+    """Verify query() applies limit via provider.applyPagination.
+
+    Seed:
+    - Record multiple events with different labels
+    - Aggregate produces many rows
+    - Query with limit should return at most that many rows
+
+    Returns:
+        None
+    """
+    # Record 10 events with different labels
+    for i in range(10):
+        await statsStorage.record(
+            {"tokens": 100},
+            consumerId=f"chat_{i}",
+            labels={"model": f"model_{i}"},
+        )
+    await statsStorage.aggregate()
+
+    # Query with limit=5
+    rows = await statsStorage.query(eventType="llm_request", limit=5)
+
+    # Should return at most 5 rows
+    assert len(rows) <= 5
+
+    # Query with larger limit
+    allRows = await statsStorage.query(eventType="llm_request", limit=10000)
+
+    # Should return more rows
+    assert len(allRows) > len(rows)
+
+
+async def testQueryLabelsParsedToDicts(statsStorage: DatabaseStatsStorage) -> None:
+    """Verify query() returns labels as parsed dicts, not JSON strings.
+
+    Seed:
+    - Record an event with labels
+    - Aggregate
+    - Query should return rows with labels as dict[str, str]
+
+    Returns:
+        None
+    """
+    await statsStorage.record(
+        {"tokens": 150},
+        consumerId="chat_42",
+        labels={"modelName": "gpt-4o", "provider": "openai", "user_id": "123"},
+    )
+    await statsStorage.aggregate()
+
+    rows = await statsStorage.query(eventType="llm_request")
+
+    assert len(rows) > 0
+
+    # Labels should be dict[str, str], not JSON strings
+    for row in rows:
+        assert isinstance(row["labels"], dict)
+        assert "consumer" in row["labels"]
+        assert isinstance(row["labels"]["consumer"], str)
+
+        # Check for specific labels if present
+        if "modelName" in row["labels"]:
+            assert row["labels"]["modelName"] == "gpt-4o"
+        if "provider" in row["labels"]:
+            assert row["labels"]["provider"] == "openai"
+        if "user_id" in row["labels"]:
+            assert row["labels"]["user_id"] == "123"
+
+
+async def testQueryEmptyTableReturnsEmptyList(statsStorage: DatabaseStatsStorage) -> None:
+    """Verify query() on empty table returns empty list.
+
+    Returns:
+        None
+    """
+    # Don't record any events, just query
+    rows = await statsStorage.query(eventType="llm_request")
+
+    # Should return empty list
+    assert rows == []
+
+
+async def testQueryIsolationFromOtherEventTypes(statsStorage: DatabaseStatsStorage) -> None:
+    """Verify query() is isolated from other eventTypes (same database).
+
+    This is a regression test ensuring that query() only returns rows
+    for the requested eventType, not all eventTypes in the table.
+
+    Returns:
+        None
+    """
+    # Create a shared in-memory database
+    config: DatabaseManagerConfig = {
+        "default": "default",
+        "chatMapping": {},
+        "providers": {
+            "default": {
+                "provider": "sqlite3",
+                "parameters": {
+                    "dbPath": ":memory:",
+                },
+            }
+        },
+    }
+    sharedDb = Database(config)
+
+    try:
+        # Apply migration 016
+        provider = await sharedDb.manager.getProvider(dataSource="default", readonly=False)
+        migration = getMigration()()
+        await migration.up(provider)
+
+        # Create three storages with different eventTypes
+        commandStorage = DatabaseStatsStorage(
+            db=sharedDb,
+            eventType="command",
+            dataSource="default",
+        )
+        messageStorage = DatabaseStatsStorage(
+            db=sharedDb,
+            eventType="message",
+            dataSource="default",
+        )
+        llmStorage = DatabaseStatsStorage(
+            db=sharedDb,
+            eventType="llm_request",
+            dataSource="default",
+        )
+
+        # Record and aggregate for all three eventTypes
+        await commandStorage.record(
+            {"count": 1},
+            consumerId="chat_1",
+            labels={"cmd": "/test"},
+        )
+        await commandStorage.aggregate()
+
+        await messageStorage.record(
+            {"tokens": 100},
+            consumerId="chat_2",
+            labels={"model": "gpt-4"},
+        )
+        await messageStorage.aggregate()
+
+        await llmStorage.record(
+            {"tokens": 50},
+            consumerId="chat_3",
+            labels={"modelName": "gpt-4o"},
+        )
+        await llmStorage.aggregate()
+
+        # Query for command eventType should return ONLY command rows
+        commandRows = await commandStorage.query(eventType="command")
+        for row in commandRows:
+            assert row["metricKey"] == "count"
+
+        # Query for message eventType should return ONLY message rows
+        messageRows = await messageStorage.query(eventType="message")
+        for row in messageRows:
+            assert row["metricKey"] == "tokens"
+
+        # Query for llm_request eventType should return ONLY llm_request rows
+        llmRows = await llmStorage.query(eventType="llm_request")
+        for row in llmRows:
+            assert row["metricKey"] == "tokens"
+
+    finally:
+        await sharedDb.manager.closeAll()
+
+
+async def testQueryTotalSentinelPeriods(statsStorage: DatabaseStatsStorage) -> None:
+    """Verify query() returns total sentinel rows correctly.
+
+    Seed:
+    - Record an event and aggregate it
+    - Query for periodType='total' should return rows with periodStart='1970-01-01T00:00:00+00:00'
+    - Query with periodStartFrom after the sentinel should exclude total rows
+
+    Returns:
+        None
+    """
+    await statsStorage.record(
+        {"tokens": 150},
+        consumerId="chat_42",
+        labels={"modelName": "gpt-4o"},
+    )
+    await statsStorage.aggregate()
+
+    # Query for total periods should return sentinel rows
+    totalRows = await statsStorage.query(eventType="llm_request", periodType="total")
+    assert len(totalRows) > 0
+    for row in totalRows:
+        assert row["periodType"] == "total"
+        assert row["periodStart"] == "1970-01-01T00:00:00+00:00"
+
+    # Query with periodStartFrom after the sentinel should exclude total rows
+    rowsAfterSentinel = await statsStorage.query(
+        eventType="llm_request",
+        periodStartFrom="1970-01-02T00:00:00+00:00",
+    )
+    # Should only return non-total rows (hourly/daily/monthly), not total rows
+    totalRowsAfter = [r for r in rowsAfterSentinel if r["periodType"] == "total"]
+    assert len(totalRowsAfter) == 0

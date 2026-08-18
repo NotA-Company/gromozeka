@@ -43,6 +43,7 @@ import pytest
 
 from lib.proxy import ProxyConfig, ProxyHelper, ProxyType
 from lib.stats.stats_storage import StatsStorage
+from lib.stats.types import StatsAggregateDict
 from lib.stt import STTAttributionType
 from lib.stt.models import (
     AudioFormatSpec,
@@ -1793,6 +1794,29 @@ class _RecordingStatsStorage(StatsStorage):
             int: Always 0.
         """
         return 0
+
+    async def query(
+        self,
+        *,
+        eventType: str,
+        periodType: Optional[str] = None,
+        periodStartFrom: Optional[str] = None,
+        periodStartTo: Optional[str] = None,
+        limit: int = 10000,
+    ) -> list[StatsAggregateDict]:
+        """No-op for this fake.
+
+        Args:
+            eventType: Ignored.
+            periodType: Ignored.
+            periodStartFrom: Ignored.
+            periodStartTo: Ignored.
+            limit: Ignored.
+
+        Returns:
+            Empty list.
+        """
+        return []
 
 
 async def _providerWithStats(

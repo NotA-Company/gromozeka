@@ -586,6 +586,15 @@ await statsStorage.purgeProcessed(
     *,
     retentionDays: int,
 ) -> int
+
+await statsStorage.query(
+    *,
+    eventType: str,
+    periodType: Optional[str] = None,
+    periodStartFrom: Optional[str] = None,
+    periodStartTo: Optional[str] = None,
+    limit: int = 10000,
+) -> list[StatsAggregateDict]
 ```
 
 **Method details:**
@@ -593,6 +602,7 @@ await statsStorage.purgeProcessed(
 - `record()`: Append a raw stat event to the log. Failures are logged but not raised.
 - `aggregate()`: Claim up to `limit` unprocessed (or orphaned) events, aggregate into hourly/daily/monthly/total buckets, upsert into the aggregation table, and mark events as processed. Returns the number of events processed (0 if nothing to do).
 - `purgeProcessed()`: Delete processed stat events older than the retention window (``processed = 1 AND created_at < cutoff`` through this storage's own data source). ``retentionDays <= 0`` is a no-op (returns 0, deletes nothing). Errors propagate to the caller (matching ``aggregate()``'s contract). Used by `StatsAggregationService` per storage after each aggregation cycle to clean up old processed events. `NullStatsStorage` returns 0.
+- `query()`: Read aggregated rows filtered by `eventType` (required), `periodType` (optional: `'hourly'`, `'daily'`, `'monthly'`, or `'total'`), and optional inclusive bounds `periodStartFrom` / `periodStartTo` (ISO-8601 UTC strings). Returns rows with labels parsed from JSON as `StatsAggregateDict` (fields: `periodStart`, `periodType`, `labels`, `metricKey`, `metricValue`). Applies `limit` via provider's `applyPagination()`. Raises on database/provider errors. `NullStatsStorage` returns `[]`.
 
 **Usage example:**
 ```python

@@ -69,3 +69,33 @@ async def testNullPurgeProcessedWithZeroRetention() -> None:
     storage = NullStatsStorage()
     result = await storage.purgeProcessed(retentionDays=0)
     assert result == 0
+
+
+async def testNullQueryReturnsEmptyList() -> None:
+    """Verify query() on NullStatsStorage returns empty list.
+
+    Returns:
+        None
+    """
+    storage = NullStatsStorage()
+    result = await storage.query(eventType="llm_request")
+
+    assert result == []
+
+
+async def testNullQueryWithFiltersReturnsEmptyList() -> None:
+    """Verify query() with all filters on NullStatsStorage returns empty list.
+
+    Returns:
+        None
+    """
+    storage = NullStatsStorage()
+    result = await storage.query(
+        eventType="llm_request",
+        periodType="daily",
+        periodStartFrom="2024-01-01T00:00:00+00:00",
+        periodStartTo="2024-01-31T23:59:59+00:00",
+        limit=100,
+    )
+
+    assert result == []
