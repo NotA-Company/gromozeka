@@ -312,7 +312,7 @@ class ChatUsersRepository(BaseRepository):
                     SELECT ci.*, cu.messages_count FROM chat_info ci
                     JOIN chat_users cu ON cu.chat_id = ci.chat_id
                     WHERE
-                        user_id = :userId
+                        cu.user_id = :userId
                         AND (:botStatus IS NULL OR ci.bot_status = :botStatus)
                 """,
                     {

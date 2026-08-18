@@ -21,29 +21,35 @@ from lib.stats.types import StatsAggregateDict
 class TestPeriodMapping:
     """Tests for period argument to period type mapping."""
 
-    def testMapPeriodArgToPeriodType_oneDayMapsToHourly(self) -> None:
-        """Verify that '1d' maps to 'hourly' period type.
+    def testMapPeriodArgToPeriodType_hourlyMapsToHourly(self) -> None:
+        """Verify that '<N>h' (1-24) maps to 'hourly' period type.
 
         Returns:
             None
         """
-        assert mapPeriodArgToPeriodType(PeriodArg.ONE_DAY) == PeriodType.HOURLY
+        assert mapPeriodArgToPeriodType("1h") == PeriodType.HOURLY
+        assert mapPeriodArgToPeriodType("6h") == PeriodType.HOURLY
+        assert mapPeriodArgToPeriodType("24h") == PeriodType.HOURLY
 
-    def testMapPeriodArgToPeriodType_sevenDaysMapsToDaily(self) -> None:
-        """Verify that '7d' maps to 'daily' period type.
-
-        Returns:
-            None
-        """
-        assert mapPeriodArgToPeriodType(PeriodArg.SEVEN_DAYS) == PeriodType.DAILY
-
-    def testMapPeriodArgToPeriodType_thirtyDaysMapsToDaily(self) -> None:
-        """Verify that '30d' maps to 'daily' period type.
+    def testMapPeriodArgToPeriodType_dailyMapsToDaily(self) -> None:
+        """Verify that '<N>d' (1-31) maps to 'daily' period type.
 
         Returns:
             None
         """
-        assert mapPeriodArgToPeriodType(PeriodArg.THIRTY_DAYS) == PeriodType.DAILY
+        assert mapPeriodArgToPeriodType("1d") == PeriodType.DAILY
+        assert mapPeriodArgToPeriodType("7d") == PeriodType.DAILY
+        assert mapPeriodArgToPeriodType("31d") == PeriodType.DAILY
+
+    def testMapPeriodArgToPeriodType_monthlyMapsToMonthly(self) -> None:
+        """Verify that '<N>m' (N>=1) maps to 'monthly' period type.
+
+        Returns:
+            None
+        """
+        assert mapPeriodArgToPeriodType("1m") == PeriodType.MONTHLY
+        assert mapPeriodArgToPeriodType("12m") == PeriodType.MONTHLY
+        assert mapPeriodArgToPeriodType("24m") == PeriodType.MONTHLY
 
     def testMapPeriodArgToPeriodType_allMapsToTotal(self) -> None:
         """Verify that 'all' maps to 'total' period type.
@@ -59,8 +65,47 @@ class TestPeriodMapping:
         Returns:
             None
         """
+        # Invalid suffix
         try:
-            mapPeriodArgToPeriodType("invalid")
+            mapPeriodArgToPeriodType("7x")
+            assert False, "Expected ValueError for invalid period arg"
+        except ValueError:
+            pass
+
+        # Out of range hours (0h, 25h)
+        try:
+            mapPeriodArgToPeriodType("0h")
+            assert False, "Expected ValueError for invalid period arg"
+        except ValueError:
+            pass
+        try:
+            mapPeriodArgToPeriodType("25h")
+            assert False, "Expected ValueError for invalid period arg"
+        except ValueError:
+            pass
+
+        # Out of range days (0d, 32d)
+        try:
+            mapPeriodArgToPeriodType("0d")
+            assert False, "Expected ValueError for invalid period arg"
+        except ValueError:
+            pass
+        try:
+            mapPeriodArgToPeriodType("32d")
+            assert False, "Expected ValueError for invalid period arg"
+        except ValueError:
+            pass
+
+        # Negative months (0m)
+        try:
+            mapPeriodArgToPeriodType("0m")
+            assert False, "Expected ValueError for invalid period arg"
+        except ValueError:
+            pass
+
+        # Invalid format (no number)
+        try:
+            mapPeriodArgToPeriodType("h")
             assert False, "Expected ValueError for invalid period arg"
         except ValueError:
             pass
@@ -79,11 +124,8 @@ class TestPeriodRangeComputation:
         assert periodStartFrom is None
         assert periodStartTo is None
 
-    def testComputePeriodRange_oneDayReturnsOneDayRange(self) -> None:
-        """Verify that '1d' returns a range with hour-truncated from-bound.
-
-        The new semantics truncate the from-bound to the hour boundary to
-        ensure the boundary bucket is included. The to-bound is now.
+    def testComputePeriodRange_sixHoursReturnsHourlyRange(self) -> None:
+        """Verify that '6h' returns a range with hour-truncated from-bound.
 
         Returns:
             None
@@ -97,25 +139,23 @@ class TestPeriodRangeComputation:
             mockDatetime.timezone = datetime.timezone
             mockDatetime.timedelta = datetime.timedelta
 
-            periodStartFrom, periodStartTo = computePeriodRange(PeriodArg.ONE_DAY)
+            periodStartFrom, periodStartTo = computePeriodRange("6h")
 
         # periodStartTo should be the fixed now
         assert periodStartTo is not None
         actualTo = datetime.datetime.fromisoformat(periodStartTo)
         assert actualTo == fixedNow
 
-        # periodStartFrom should be 1 day ago, truncated to the hour
+        # periodStartFrom should be 6 hours ago, truncated to the hour
         assert periodStartFrom is not None
         actualFrom = datetime.datetime.fromisoformat(periodStartFrom)
-        # (2024-01-02 14:30:45 - 1 day) = 2024-01-01 14:30:45, truncated to hour = 2024-01-01 14:00:00
-        expectedFrom = datetime.datetime(2024, 1, 1, 14, 0, 0, tzinfo=datetime.UTC)
+        # (2024-01-02 14:30:45 - 6 hours) = 2024-01-02 08:30:45, truncated to hour = 2024-01-02 08:00:00
+        expectedFrom = datetime.datetime(2024, 1, 2, 8, 0, 0, tzinfo=datetime.UTC)
         assert actualFrom == expectedFrom
 
     def testComputePeriodRange_sevenDaysReturnsSevenDayRange(self) -> None:
         """Verify that '7d' returns a range with day-truncated from-bound.
 
-        The new semantics truncate the from-bound to the day boundary to
-        ensure the boundary bucket is included. The to-bound is now.
         The range is 7 full days plus the partial current day.
 
         Returns:
@@ -130,7 +170,7 @@ class TestPeriodRangeComputation:
             mockDatetime.timezone = datetime.timezone
             mockDatetime.timedelta = datetime.timedelta
 
-            periodStartFrom, periodStartTo = computePeriodRange(PeriodArg.SEVEN_DAYS)
+            periodStartFrom, periodStartTo = computePeriodRange("7d")
 
         # Verify both bounds are set
         assert periodStartFrom is not None
@@ -154,18 +194,16 @@ class TestPeriodRangeComputation:
         actualRangeSeconds = (actualTo - actualFrom).total_seconds()
         assert actualRangeSeconds == expectedRangeSeconds
 
-    def testComputePeriodRange_thirtyDaysReturnsThirtyDayRange(self) -> None:
-        """Verify that '30d' returns a range with day-truncated from-bound.
+    def testComputePeriodRange_twoMonthsReturnsMonthlyRange(self) -> None:
+        """Verify that '2m' returns a range with month-truncated from-bound.
 
-        The new semantics truncate the from-bound to the day boundary to
-        ensure the boundary bucket is included. The to-bound is now.
-        The range is 30 full days plus the partial current day.
+        This tests the calendar month arithmetic including a year-underflow case.
 
         Returns:
             None
         """
-        # Fixed time for deterministic testing
-        fixedNow = datetime.datetime(2024, 1, 31, 14, 30, 45, 123456, tzinfo=datetime.UTC)
+        # Fixed time for deterministic testing (Jan 15, 2024)
+        fixedNow = datetime.datetime(2024, 1, 15, 14, 30, 45, 123456, tzinfo=datetime.UTC)
 
         with patch("lib.stats.analysis.datetime") as mockDatetime:
             mockDatetime.datetime.now.return_value = fixedNow
@@ -173,7 +211,7 @@ class TestPeriodRangeComputation:
             mockDatetime.timezone = datetime.timezone
             mockDatetime.timedelta = datetime.timedelta
 
-            periodStartFrom, periodStartTo = computePeriodRange(PeriodArg.THIRTY_DAYS)
+            periodStartFrom, periodStartTo = computePeriodRange("2m")
 
         # Verify both bounds are set
         assert periodStartFrom is not None
@@ -185,17 +223,16 @@ class TestPeriodRangeComputation:
         # periodStartTo should be the fixed now
         assert actualTo == fixedNow
 
-        # periodStartFrom should be 30 days ago, truncated to the day
-        # (2024-01-31 14:30:45 - 30 days) = 2024-01-01 14:30:45, truncated to day = 2024-01-01 00:00:00
-        expectedFrom = datetime.datetime(2024, 1, 1, 0, 0, 0, tzinfo=datetime.UTC)
+        # periodStartFrom should be first day of 2 calendar months back
+        # 2024-01 - 2 months = 2023-11-01
+        expectedFrom = datetime.datetime(2023, 11, 1, 0, 0, 0, tzinfo=datetime.UTC)
         assert actualFrom == expectedFrom
 
-        # Range should be 30 days plus the partial current day (14:30:45.123456)
-        # Calculate the partial day: 14h 30m 45.123456s = 52245.123456 seconds
-        partialDaySeconds = (14 * 3600) + (30 * 60) + 45 + 0.123456
-        expectedRangeSeconds = 30 * 24 * 60 * 60 + partialDaySeconds
-        actualRangeSeconds = (actualTo - actualFrom).total_seconds()
-        assert actualRangeSeconds == expectedRangeSeconds
+        # Range should be from 2023-11-01 to 2024-01-15 14:30:45
+        # This spans parts of Nov, Dec, and Jan
+        assert actualFrom.year == 2023
+        assert actualFrom.month == 11
+        assert actualFrom.day == 1
 
     def testComputePeriodRange_invalidRaisesValueError(self) -> None:
         """Verify that an invalid period arg raises ValueError.
@@ -203,8 +240,40 @@ class TestPeriodRangeComputation:
         Returns:
             None
         """
+        # Invalid suffix
         try:
-            computePeriodRange("invalid")
+            computePeriodRange("7x")
+            assert False, "Expected ValueError for invalid period arg"
+        except ValueError:
+            pass
+
+        # Out of range hours (0h, 25h)
+        try:
+            computePeriodRange("0h")
+            assert False, "Expected ValueError for invalid period arg"
+        except ValueError:
+            pass
+        try:
+            computePeriodRange("25h")
+            assert False, "Expected ValueError for invalid period arg"
+        except ValueError:
+            pass
+
+        # Out of range days (0d, 32d)
+        try:
+            computePeriodRange("0d")
+            assert False, "Expected ValueError for invalid period arg"
+        except ValueError:
+            pass
+        try:
+            computePeriodRange("32d")
+            assert False, "Expected ValueError for invalid period arg"
+        except ValueError:
+            pass
+
+        # Negative months (0m)
+        try:
+            computePeriodRange("0m")
             assert False, "Expected ValueError for invalid period arg"
         except ValueError:
             pass

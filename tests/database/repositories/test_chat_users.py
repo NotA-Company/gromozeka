@@ -455,3 +455,60 @@ class TestChatUsersBotStatusFiltering:
         assert chatById[100]["messages_count"] == 42
         assert "messages_count" in chatById[200]
         assert chatById[200]["messages_count"] == 17
+
+    async def test_getUserChats_userIdJoinQualification(self, testDatabase) -> None:
+        """getUserChats properly qualifies user_id in JOIN (I3-7).
+
+        Regression test for cu.user_id JOIN qualification: ensures that when
+        user_id exists in both chat_info and chat_users tables, the JOIN is
+        properly qualified to avoid column ambiguity errors.
+
+        This test seeds data where both tables have a user_id column and
+        verifies getUserChats returns correct rows without crashing.
+
+        Args:
+            testDatabase: Database fixture with initialized tables.
+        """
+        # Create chat_info entries with user_id in both tables
+        provider = await testDatabase.manager.getProvider(readonly=False)
+        await provider.execute(
+            "INSERT INTO chat_info "
+            "(chat_id, title, username, type, is_forum, bot_status, created_at, updated_at) "
+            "VALUES "
+            "(100, 'Chat 1', 'chat1', 'group', 0, 'active', "
+            "datetime('now'), datetime('now'))"
+        )
+        provider = await testDatabase.manager.getProvider(readonly=False)
+        await provider.execute(
+            "INSERT INTO chat_info "
+            "(chat_id, title, username, type, is_forum, bot_status, created_at, updated_at) "
+            "VALUES "
+            "(200, 'Chat 2', 'chat2', 'group', 0, 'active', "
+            "datetime('now'), datetime('now'))"
+        )
+
+        # Create chat_users entries with user_id = 100
+        # This creates the JOIN condition: both tables have user_id references
+        provider = await testDatabase.manager.getProvider(readonly=False)
+        await provider.execute(
+            "INSERT INTO chat_users "
+            "(chat_id, user_id, username, full_name, messages_count, created_at, updated_at) "
+            "VALUES "
+            "(100, 100, 'user100', 'User 100', 42, datetime('now'), datetime('now'))"
+        )
+        provider = await testDatabase.manager.getProvider(readonly=False)
+        await provider.execute(
+            "INSERT INTO chat_users "
+            "(chat_id, user_id, username, full_name, messages_count, created_at, updated_at) "
+            "VALUES "
+            "(200, 100, 'user100', 'User 100', 17, datetime('now'), datetime('now'))"
+        )
+
+        # Call getUserChats - this should NOT crash with "ambiguous column name: user_id"
+        chats = await testDatabase.chatUsers.getUserChats(userId=100)
+
+        # Should return both chats successfully
+        assert len(chats) == 2
+        chatIds = [chat["chat_id"] for chat in chats]
+        assert 100 in chatIds
+        assert 200 in chatIds

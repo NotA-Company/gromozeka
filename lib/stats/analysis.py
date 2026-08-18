@@ -23,9 +23,6 @@ class PeriodType:
 class PeriodArg:
     """Period argument constants for the /stats command."""
 
-    ONE_DAY = "1d"
-    SEVEN_DAYS = "7d"
-    THIRTY_DAYS = "30d"
     ALL = "all"
 
 
@@ -33,23 +30,44 @@ def mapPeriodArgToPeriodType(periodArg: str) -> str:
     """Map a period argument to its corresponding period type.
 
     Args:
-        periodArg: The period argument (1d, 7d, 30d, or all).
+        periodArg: The period argument (<N>h, <N>d, <N>m, or all).
 
     Returns:
-        The corresponding period type (hourly, daily, or total).
+        The corresponding period type (hourly, daily, monthly, or total).
 
     Raises:
-        ValueError: If periodArg is not a valid value.
+        ValueError: If periodArg is not a valid value or out of range.
     """
-    mapping = {
-        PeriodArg.ONE_DAY: PeriodType.HOURLY,
-        PeriodArg.SEVEN_DAYS: PeriodType.DAILY,
-        PeriodArg.THIRTY_DAYS: PeriodType.DAILY,
-        PeriodArg.ALL: PeriodType.TOTAL,
-    }
-    if periodArg not in mapping:
+    if periodArg == PeriodArg.ALL:
+        return PeriodType.TOTAL
+
+    # Parse <N><suffix> format
+    if len(periodArg) < 2:
         raise ValueError(f"Invalid periodArg: {periodArg}")
-    return mapping[periodArg]
+
+    suffix = periodArg[-1]
+    numberPart = periodArg[:-1]
+
+    # Validate that numberPart consists only of ASCII digits (rejects +5d, 1_0h, unicode digits)
+    if not numberPart.isdigit():
+        raise ValueError(f"Invalid periodArg: {periodArg}")
+
+    number = int(numberPart)
+
+    if suffix == "h":
+        if not 1 <= number <= 24:
+            raise ValueError(f"Invalid periodArg: {periodArg} (hours must be 1..24)")
+        return PeriodType.HOURLY
+    elif suffix == "d":
+        if not 1 <= number <= 31:
+            raise ValueError(f"Invalid periodArg: {periodArg} (days must be 1..31)")
+        return PeriodType.DAILY
+    elif suffix == "m":
+        if number < 1:
+            raise ValueError(f"Invalid periodArg: {periodArg} (months must be >= 1)")
+        return PeriodType.MONTHLY
+    else:
+        raise ValueError(f"Invalid periodArg: {periodArg}")
 
 
 def computePeriodRange(
@@ -66,27 +84,61 @@ def computePeriodRange(
     current partial day).
 
     Args:
-        periodArg: The period argument (1d, 7d, 30d, or all).
+        periodArg: The period argument (<N>h, <N>d, <N>m, or all).
 
     Returns:
         A tuple of (periodStartFrom, periodStartTo). Both are ISO-8601 UTC
         strings, or None for the 'all' period.
+
+    Raises:
+        ValueError: If periodArg is invalid or out of range.
     """
     if periodArg == PeriodArg.ALL:
         return None, None
 
     now = datetime.datetime.now(datetime.timezone.utc)
 
-    if periodArg == PeriodArg.ONE_DAY:
-        periodStartFrom = (now - datetime.timedelta(days=1)).replace(minute=0, second=0, microsecond=0).isoformat()
-    elif periodArg == PeriodArg.SEVEN_DAYS:
+    # Parse <N><suffix> format
+    if len(periodArg) < 2:
+        raise ValueError(f"Invalid periodArg: {periodArg}")
+
+    suffix = periodArg[-1]
+    numberPart = periodArg[:-1]
+
+    # Validate that numberPart consists only of ASCII digits (rejects +5d, 1_0h, unicode digits)
+    if not numberPart.isdigit():
+        raise ValueError(f"Invalid periodArg: {periodArg}")
+
+    number = int(numberPart)
+
+    if suffix == "h":
+        # <N>h: from = now - N hours, truncated to the hour
+        if not 1 <= number <= 24:
+            raise ValueError(f"Invalid periodArg: {periodArg} (hours must be 1..24)")
         periodStartFrom = (
-            (now - datetime.timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+            (now - datetime.timedelta(hours=number)).replace(minute=0, second=0, microsecond=0).isoformat()
         )
-    elif periodArg == PeriodArg.THIRTY_DAYS:
+    elif suffix == "d":
+        # <N>d: from = now - N days, truncated to the day
+        if not 1 <= number <= 31:
+            raise ValueError(f"Invalid periodArg: {periodArg} (days must be 1..31)")
         periodStartFrom = (
-            (now - datetime.timedelta(days=30)).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+            (now - datetime.timedelta(days=number)).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
         )
+    elif suffix == "m":
+        # <N>m: from = first day of the month N calendar months back
+        if number < 1:
+            raise ValueError(f"Invalid periodArg: {periodArg} (months must be >= 1)")
+        # Calculate the target month using year*12 + month arithmetic to avoid date clamp issues
+        currentYear = now.year
+        currentMonth = now.month
+        currentMonthNumber = currentYear * 12 + (currentMonth - 1)
+        targetMonthNumber = currentMonthNumber - number
+        targetYear = targetMonthNumber // 12
+        targetMonth = (targetMonthNumber % 12) + 1
+        periodStartFrom = datetime.datetime(
+            targetYear, targetMonth, 1, 0, 0, 0, tzinfo=datetime.timezone.utc
+        ).isoformat()
     else:
         raise ValueError(f"Invalid periodArg: {periodArg}")
 

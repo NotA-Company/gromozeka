@@ -885,9 +885,8 @@ ttl = 3600
 [bot]
 token = "test_token"
 
-[stats-pages]
+[stats.pages]
 enabled = true
-base-url = "https://example.com/stats"
 ttl-hours = 24
 ratelimiter-queue = "stats-pages"
 """
@@ -898,7 +897,7 @@ ratelimiter-queue = "stats-pages"
 
         assert "enabled" in statsPagesConfig
         assert statsPagesConfig["enabled"] is True
-        assert statsPagesConfig["base-url"] == "https://example.com/stats"
+        assert statsPagesConfig["ttl-hours"] == 24
 
     def testGetStatsPagesConfigEmpty(self, tempDir: Path, sampleConfigToml: str) -> None:
         """Test getting stats-pages config when not present.
@@ -912,6 +911,52 @@ ratelimiter-queue = "stats-pages"
 
         statsPagesConfig = manager.getStatsPagesConfig()
         assert statsPagesConfig == {}
+
+    def testGetDotNavigation(self, tempDir: Path) -> None:
+        """Test ConfigManager.get() with dot navigation (I3-6).
+
+        Tests:
+        - Existing nested key returns correct value
+        - Missing intermediate key returns default
+        - Non-dict intermediate key returns default (no crash)
+        - Non-dotted key regression unchanged
+        """
+        config = """
+[bot]
+token = "test_token"
+
+[stats.pages]
+enabled = true
+ttl-hours = 24
+
+[database]
+path = ":memory:"
+
+[models]
+default_model = "gpt-4"
+temperature = 0.7
+"""
+        configPath = createConfigFile(tempDir, "config.toml", config)
+        manager = ConfigManager(str(configPath))
+
+        # Test existing nested key (stats.pages.enabled)
+        assert manager.get("stats.pages.enabled") is True
+        assert manager.get("stats.pages.ttl-hours") == 24
+
+        # Test missing intermediate key returns default
+        assert manager.get("nonexistent.nested.key") is None
+        assert manager.get("nonexistent.nested.key", "default") == "default"
+
+        # Test non-dict intermediate key returns default (no crash)
+        # database.path is a string, not a dict, so database.path.nested should return None
+        assert manager.get("database.path.nested") is None
+        assert manager.get("database.path.nested", "default") == "default"
+
+        # Test non-dotted key regression unchanged
+        assert manager.get("bot") is not None
+        assert manager.get("bot")["token"] == "test_token"
+        assert manager.get("nonexistent") is None
+        assert manager.get("nonexistent", "default") == "default"
 
 
 # ============================================================================

@@ -96,11 +96,11 @@ class TestStatsPagesCli:
         stdoutData = json.loads(result.stdout)
 
         # Check JSON structure
-        assert "id" in stdoutData
+        assert "pageId" in stdoutData
         assert "url" in stdoutData
-        assert len(stdoutData["id"]) == 32  # UUID hex
+        assert len(stdoutData["pageId"]) == 32  # UUID hex
         assert stdoutData["url"].endswith(".html")
-        assert stdoutData["url"].startswith(stdoutData["id"])
+        assert stdoutData["url"].startswith(stdoutData["pageId"])
 
         # Check HTML file was created
         htmlPath = tmp_path / stdoutData["url"]
@@ -310,7 +310,7 @@ class TestStatsPagesCli:
 
         assert generateResult.returncode == 0
         stdoutData = json.loads(generateResult.stdout)
-        pageId = stdoutData["id"]
+        pageId = stdoutData["pageId"]
 
         # Now delete it
         deleteResult = subprocess.run(
@@ -487,7 +487,7 @@ class TestStatsPagesCli:
 
             assert result.returncode == 0
             stdoutData = json.loads(result.stdout)
-            pageIds.append(stdoutData["id"])
+            pageIds.append(stdoutData["pageId"])
 
         # Check all IDs are unique
         assert len(set(pageIds)) == len(pageIds)

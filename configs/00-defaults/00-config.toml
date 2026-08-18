@@ -97,7 +97,7 @@ maxRequests = 10
 type = "SlidingWindow"
 
 [ratelimiter.ratelimiters.stats-pages.config]
-windowSeconds = 3600
+windowSeconds = 600
 maxRequests = 3
 
 [ratelimiter.queues]

@@ -484,7 +484,7 @@ Parse-structure-template placeholders: `{systemId}`, `{layoutName}`, `{descripti
 
 ### `[stats-pages]`
 
-Optional web-page generation tier for `/stats --web` (or the `/stats_web` alias). Defaults live in [`configs/00-defaults/stats-pages.toml`](../../configs/00-defaults/stats-pages.toml). The feature is tier-default-off — `[stats-pages]` can be missing entirely, and `--web`/`/stats_web` will respond with an informative "disabled" message. When `enabled = true`, the bot invokes the configured `generate-command` as a subprocess (stdin JSON payload, stdout `{"id","url"}` JSON), composes `base-url + "/" + url` as the reply link, and schedules one persisted one-shot delayed deletion task per page (delay = `ttl-hours × 3600`). The deletion task runs the `delete-command` with `{page_id}` substituted; the bot stores no page registry.
+Optional web-page generation tier for `/stats --web` (or the `/stats_web` alias). Defaults live in [`[stats.pages]` in `configs/00-defaults/stats.toml`](../../configs/00-defaults/stats.toml). The feature is tier-default-off — `[stats-pages]` can be missing entirely, and `--web`/`/stats_web` will respond with an informative "disabled" message. When `enabled = true`, the bot invokes the configured `generate-command` as a subprocess (stdin JSON payload, stdout `{"id","url"}` JSON), composes `base-url + "/" + url` as the reply link, and schedules one persisted one-shot delayed deletion task per page (delay = `ttl-hours × 3600`). The deletion task runs the `delete-command` with `{page_id}` substituted; the bot stores no page registry.
 
 | Key | Type | Default | Purpose |
 |---|---|---|---|

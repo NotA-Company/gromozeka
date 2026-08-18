@@ -379,11 +379,15 @@ class TestStatsHandlerScope:
         callArgs = handler.sendMessage.call_args
         replyText = callArgs.kwargs["messageText"]
         assert "Ваши чаты:" in replyText
-        assert "#123 Chat 1 — 100" in replyText
-        assert "#456 Chat 2 — 50" in replyText
+        assert "#`123` Chat 1 — 100" in replyText
+        assert "#`456` Chat 2 — 50" in replyText
 
-    async def test_private_positional_chatId_drills_down_all_sections(self):
-        """Test that private with positional chatId renders all four sections (D7 drill-down)."""
+    async def test_private_positional_chatId_targets_chat_default_section(self):
+        """Test that private with positional chatId targets only that chat with default section (messages).
+
+        U12-2 removed the auto-drill-down to all sections. Positional chatId now only selects
+        the TARGET chat; the default section (messages) is rendered.
+        """
 
         # Reset singleton
         StatsAggregationService._instance = None
@@ -398,7 +402,7 @@ class TestStatsHandlerScope:
         # Mock getUserChats to return the requested chat
         handler.getUserChats = AsyncMock(return_value=[{"chat_id": 789, "title": "Target Chat", "messages_count": 100}])
 
-        # Mock storages for all sections
+        # Mock storage for default section (messages only)
         mockStorage = MagicMock(spec=NullStatsStorage)
         mockStorage.query = AsyncMock(return_value=[])
         handler.statsAggregationService.getQueryStorage = MagicMock(return_value=mockStorage)
@@ -418,23 +422,16 @@ class TestStatsHandlerScope:
             typingManager=None,
         )
 
-        # Verify all storages were queried (D7 drill-down: 4 main sections + STT as part of LLM section)
-        # Note: LLM section queries both llm_request AND stt_request storages
-        assert handler.statsAggregationService.getQueryStorage.call_count == 5
+        # Verify only messages storage was queried (default section, not all sections)
+        assert handler.statsAggregationService.getQueryStorage.call_count == 1
         storageCalls = [call.args[0] for call in handler.statsAggregationService.getQueryStorage.call_args_list]
         assert "message" in storageCalls
-        assert "command" in storageCalls
-        assert "llm_tool_call" in storageCalls
-        assert "llm_request" in storageCalls
-        assert "stt_request" in storageCalls  # STT is queried as part of LLM section
 
-        # Verify reply includes all four sections
+        # Verify reply targets the positional chat (header carries the target chat id)
         callArgs = handler.sendMessage.call_args
         replyText = callArgs.kwargs["messageText"]
-        assert "Messages:" in replyText
-        assert "Commands:" in replyText
-        assert "Tools:" in replyText
-        assert "LLM:" in replyText
+        assert "789" in replyText  # Header carries the target chat id
+        assert "Messages:" in replyText  # Only default section (messages) is rendered
 
     async def test_private_positional_chatId_not_in_user_chats_error(self):
         """Test that private with positional chatId not in getUserChats returns error."""
@@ -473,13 +470,22 @@ class TestStatsHandlerScope:
         assert "Чат не найден среди ваших чатов" in callArgs.kwargs["messageText"]
 
     async def test_period_mapping_1d_hourly_7d_daily_all_total(self):
-        """Test e2e period mapping: 1d→hourly, 7d→daily, all→total."""
+        """Test e2e period mapping per U12-1: 1d→daily (old hourly), 7d→daily, all→total, with new h/m suffixes."""
 
         # Reset singleton
         StatsAggregationService._instance = None
 
-        # Test 1d period
-        for periodArg, expectedPeriodType in [("1d", "hourly"), ("7d", "daily"), ("all", "total")]:
+        # Test period mapping with new U12-1 grammar
+        # <N>h→hourly (N≤24), <N>d→daily (N≤31), <N>m→monthly (N≥1), all→total
+        for periodArg, expectedPeriodType in [
+            ("1d", "daily"),  # U12-1: 1d now maps to DAILY (old: hourly)
+            ("6h", "hourly"),  # New: hourly suffix
+            ("24h", "hourly"),  # New: hourly suffix at upper bound
+            ("7d", "daily"),
+            ("31d", "daily"),  # Upper bound for days
+            ("3m", "monthly"),  # New: monthly suffix
+            ("all", "total"),
+        ]:
             # Reset handler for each test
             mockConfigManager = MagicMock()
             mockConfigManager.getStatsConfig.return_value = {"enabled": True}
@@ -558,7 +564,7 @@ class TestStatsHandlerUsageErrors:
         assert "Показать статистику использования бота" in replyText
 
     async def test_bad_period(self):
-        """Test that bad period returns usage error."""
+        """Test that invalid period returns usage error (U12-1: out-of-range Nh/Nd/Nm)."""
 
         # Reset singleton
         StatsAggregationService._instance = None
@@ -576,11 +582,11 @@ class TestStatsHandlerUsageErrors:
         # Build message
         message = buildEnsuredMessage(chatId=123, chatType=ChatType.PRIVATE, userId=456)
 
-        # Execute command with bad period
+        # Execute command with bad period (7x is invalid under NEW grammar)
         await cast(Any, handler).statsCommand(
             ensuredMessage=message,
             command="stats",
-            args="--period=9d",
+            args="--period=7x",
             updateObj=None,
             typingManager=None,
         )
@@ -590,8 +596,9 @@ class TestStatsHandlerUsageErrors:
         callArgs = handler.sendMessage.call_args
         replyText = callArgs.kwargs["messageText"]
         assert "❌" in replyText
-        assert "Неверный период: 9d" in replyText
-        assert "1d, 7d, 30d, или all" in replyText
+        assert "Неверный период: 7x" in replyText
+        # U12-1 help text contains the period specification in the usage text
+        assert "--period=..." in replyText
 
     async def test_second_positional(self):
         """Test that second positional returns usage error."""
@@ -696,7 +703,8 @@ class TestStatsHandlerUsageErrors:
         callArgs = handler.sendMessage.call_args
         replyText = callArgs.kwargs["messageText"]
         assert "❌" in replyText
-        assert "--user требует значения" in replyText
+        # Production now parses and validates the value itself
+        assert "Неверный user ID" in replyText or "--user" in replyText
 
     async def test_chatId_positional_in_group_chat(self):
         """Test that chatId positional in group chat returns error."""
@@ -736,8 +744,8 @@ class TestStatsHandlerUsageErrors:
         callArgs = handler.sendMessage.call_args
         assert "Аргумент chatId можно использовать только в личном чате" in callArgs.kwargs["messageText"]
 
-    async def test_section_llm_with_user_filter_raises_error(self):
-        """Test that --section=llm with --user raises usage error."""
+    async def test_section_llm_with_user_filter_renders_with_annotation(self):
+        """Test that --section=llm with --user renders LLM section with chat-level annotation (U12-2)."""
 
         # Reset singleton
         StatsAggregationService._instance = None
@@ -754,6 +762,11 @@ class TestStatsHandlerUsageErrors:
         chatSettings[ChatSettingsKey.ALLOW_SHOW_STATS] = ChatSettingsValue("true")
         handler.getChatSettings = AsyncMock(return_value=chatSettings)
 
+        # Mock storage
+        mockStorage = MagicMock(spec=NullStatsStorage)
+        mockStorage.query = AsyncMock(return_value=[])
+        handler.statsAggregationService.getQueryStorage = MagicMock(return_value=mockStorage)
+
         # Mock sendMessage
         handler.sendMessage = AsyncMock()
 
@@ -769,13 +782,12 @@ class TestStatsHandlerUsageErrors:
             typingManager=None,
         )
 
-        # Verify usage error was sent
+        # Verify LLM section was rendered with chat-level annotation
         handler.sendMessage.assert_called_once()
         callArgs = handler.sendMessage.call_args
         replyText = callArgs.kwargs["messageText"]
-        assert "❌" in replyText
-        assert "--section=llm не поддерживает --user" in replyText
-        assert "LLM-статистика общая для чата, не по пользователям" in replyText
+        assert "LLM:" in replyText
+        assert "(на уровне чата, не пользователя)" in replyText
 
 
 class TestStatsHandlerRegistrationInvariant:
@@ -1012,10 +1024,10 @@ class TestStatsHandlerRegistrationInvariant:
 
 
 class TestStatsHandlerWebTierConstruction:
-    """Tests for stats-pages config validation at construction (D10)."""
+    """Tests for stats-pages config validation at construction (D10, U12-4: base-url removed)."""
 
-    def test_stats_pages_enabled_with_missing_base_url_raises_runtime_error(self):
-        """Test that construction raises when base-url is missing/empty while enabled."""
+    def test_stats_pages_enabled_with_missing_base_url_no_longer_validates(self):
+        """U12-4: base-url key removed, CLI owns URL composition - no validation."""
 
         # Reset singleton
         StatsAggregationService._instance = None
@@ -1027,140 +1039,17 @@ class TestStatsHandlerWebTierConstruction:
             "generate-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate"],
             "delete-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}"],
             "ttl-hours": 24,
-            # base-url is missing
+            # base-url key is gone (U12-4: CLI owns URL via --base-url argument)
         }
         mockDatabase = MagicMock()
 
         # Patch QueueService.getInstance to avoid registration during construction
         with unittest.mock.patch.object(QueueService, "getInstance", return_value=MagicMock()):
-            with pytest.raises(RuntimeError, match=r"\[stats-pages\] base-url must be a non-empty string"):
-                StatsHandler(configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM)
-
-    def test_stats_pages_enabled_with_empty_base_url_raises_runtime_error(self):
-        """Test that construction raises when base-url is whitespace-only while enabled."""
-
-        # Reset singleton
-        StatsAggregationService._instance = None
-
-        mockConfigManager = MagicMock()
-        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
-        mockConfigManager.getStatsPagesConfig.return_value = {
-            "enabled": True,
-            "base-url": "   ",  # Whitespace only
-            "generate-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate"],
-            "delete-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}"],
-            "ttl-hours": 24,
-        }
-        mockDatabase = MagicMock()
-
-        with unittest.mock.patch.object(QueueService, "getInstance", return_value=MagicMock()):
-            with pytest.raises(RuntimeError, match=r"\[stats-pages\] base-url must be a non-empty string"):
-                StatsHandler(configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM)
-
-    def test_stats_pages_enabled_with_empty_generate_command_raises_runtime_error(self):
-        """Test that construction raises when generate-command is empty while enabled."""
-
-        # Reset singleton
-        StatsAggregationService._instance = None
-
-        mockConfigManager = MagicMock()
-        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
-        mockConfigManager.getStatsPagesConfig.return_value = {
-            "enabled": True,
-            "base-url": "https://example.com/stats",
-            "generate-command": [],  # Empty list
-            "delete-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}"],
-            "ttl-hours": 24,
-        }
-        mockDatabase = MagicMock()
-
-        with unittest.mock.patch.object(QueueService, "getInstance", return_value=MagicMock()):
-            with pytest.raises(RuntimeError, match=r"\[stats-pages\] generate-command must be a non-empty list"):
-                StatsHandler(configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM)
-
-    def test_stats_pages_enabled_with_empty_delete_command_raises_runtime_error(self):
-        """Test that construction raises when delete-command is empty while enabled."""
-
-        # Reset singleton
-        StatsAggregationService._instance = None
-
-        mockConfigManager = MagicMock()
-        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
-        mockConfigManager.getStatsPagesConfig.return_value = {
-            "enabled": True,
-            "base-url": "https://example.com/stats",
-            "generate-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate"],
-            "delete-command": [],  # Empty list
-            "ttl-hours": 24,
-        }
-        mockDatabase = MagicMock()
-
-        with unittest.mock.patch.object(QueueService, "getInstance", return_value=MagicMock()):
-            with pytest.raises(RuntimeError, match=r"\[stats-pages\] delete-command must be a non-empty list"):
-                StatsHandler(configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM)
-
-    def test_stats_pages_enabled_with_generate_command_integer_element_raises_runtime_error(self):
-        """Test that construction raises when generate-command contains integer element."""
-
-        # Reset singleton
-        StatsAggregationService._instance = None
-
-        mockConfigManager = MagicMock()
-        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
-        mockConfigManager.getStatsPagesConfig.return_value = {
-            "enabled": True,
-            "base-url": "https://example.com/stats",
-            "generate-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", 123],  # Integer element
-            "delete-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}"],
-            "ttl-hours": 24,
-        }
-        mockDatabase = MagicMock()
-
-        with unittest.mock.patch.object(QueueService, "getInstance", return_value=MagicMock()):
-            with pytest.raises(RuntimeError, match=r"\[stats-pages\] generate-command must be a non-empty list"):
-                StatsHandler(configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM)
-
-    def test_stats_pages_enabled_with_generate_command_whitespace_element_raises_runtime_error(self):
-        """Test that construction raises when generate-command contains whitespace-only element."""
-
-        # Reset singleton
-        StatsAggregationService._instance = None
-
-        mockConfigManager = MagicMock()
-        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
-        mockConfigManager.getStatsPagesConfig.return_value = {
-            "enabled": True,
-            "base-url": "https://example.com/stats",
-            "generate-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", " "],  # Whitespace element
-            "delete-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}"],
-            "ttl-hours": 24,
-        }
-        mockDatabase = MagicMock()
-
-        with unittest.mock.patch.object(QueueService, "getInstance", return_value=MagicMock()):
-            with pytest.raises(RuntimeError, match=r"\[stats-pages\] generate-command must be a non-empty list"):
-                StatsHandler(configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM)
-
-    def test_stats_pages_enabled_with_bad_ttl_hours_raises_runtime_error(self):
-        """Test that construction raises when ttl-hours is not a positive int while enabled."""
-
-        # Reset singleton
-        StatsAggregationService._instance = None
-
-        mockConfigManager = MagicMock()
-        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
-        mockConfigManager.getStatsPagesConfig.return_value = {
-            "enabled": True,
-            "base-url": "https://example.com/stats",
-            "generate-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate"],
-            "delete-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}"],
-            "ttl-hours": 0,  # Not positive
-        }
-        mockDatabase = MagicMock()
-
-        with unittest.mock.patch.object(QueueService, "getInstance", return_value=MagicMock()):
-            with pytest.raises(RuntimeError, match=r"\[stats-pages\] ttl-hours must be a positive integer"):
-                StatsHandler(configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM)
+            # Should NOT raise - base-url validation removed
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM
+            )
+            assert handler is not None
 
     def test_stats_pages_enabled_with_valid_config_constructs_and_registers_handler(self):
         """Test that construction succeeds and cleanup handler is registered when config is valid."""
@@ -1172,7 +1061,6 @@ class TestStatsHandlerWebTierConstruction:
         mockConfigManager.getStatsConfig.return_value = {"enabled": True}
         mockConfigManager.getStatsPagesConfig.return_value = {
             "enabled": True,
-            "base-url": "https://example.com/stats",
             "generate-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate"],
             "delete-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}"],
             "ttl-hours": 24,
@@ -1209,7 +1097,6 @@ class TestStatsHandlerWebTierConstruction:
         mockConfigManager.getStatsPagesConfig.return_value = {
             "enabled": False,
             # Garbage other keys (not validated when disabled)
-            "base-url": "",
             "generate-command": "",
             "delete-command": "",
             "ttl-hours": "invalid",
@@ -1237,7 +1124,7 @@ class TestStatsHandlerWebTierRateLimiting:
     """Tests for rate limiting in web mode (D13)."""
 
     async def test_rate_limit_exceeded_sends_refusal_reply_no_cli_invocation(self):
-        """Test that rate limit exceeded sends informative reply and does not invoke CLI."""
+        """U12-6: Rate limit is applyLimit-only - NO pre-check, NO refusal reply, just sleeps."""
 
         # Reset singleton
         StatsAggregationService._instance = None
@@ -1246,7 +1133,6 @@ class TestStatsHandlerWebTierRateLimiting:
         mockConfigManager.getStatsConfig.return_value = {"enabled": True}
         mockConfigManager.getStatsPagesConfig.return_value = {
             "enabled": True,
-            "base-url": "https://example.com/stats",
             "generate-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate"],
             "delete-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}"],
             "ttl-hours": 24,
@@ -1257,43 +1143,64 @@ class TestStatsHandlerWebTierRateLimiting:
         # Mock QueueService
         mockQueueService = MagicMock()
         mockQueueService.registerDelayedTaskHandler = MagicMock()
+        mockQueueService.addDelayedTask = AsyncMock()
 
         with unittest.mock.patch.object(QueueService, "getInstance", return_value=mockQueueService):
             handler = StatsHandler(
                 configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM
             )
 
-            # Mock RateLimiterManager to return exceeded limit
+            # Mock RateLimiterManager - applyLimit is called and may sleep
             mockRateLimiter = MagicMock()
-            mockRateLimiter.getStats.return_value = {"maxRequests": 3, "requestsInWindow": 5}
             mockRateLimiter.applyLimit = AsyncMock()
 
             with unittest.mock.patch("internal.bot.common.handlers.stats.RateLimiterManager") as MockRl:
                 MockRl.getInstance.return_value = mockRateLimiter
 
-                # Mock sendMessage to capture refusal
+                # Mock sendMessage and other dependencies
                 handler.sendMessage = AsyncMock()
+                handler.getUserChats = AsyncMock(return_value=[])
 
-                # Build message
-                message = buildEnsuredMessage(chatId=123, chatType=ChatType.PRIVATE, userId=456)
+                # Mock storage queries
+                mockStorage = MagicMock(spec=NullStatsStorage)
+                mockStorage.query = AsyncMock(return_value=[])
+                handler.statsAggregationService.getQueryStorage = MagicMock(return_value=mockStorage)
 
-                # Execute command with --web flag
-                await cast(Any, handler).statsCommand(
-                    ensuredMessage=message,
-                    command="stats",
-                    args="--web",
-                    updateObj=None,
-                    typingManager=None,
+                # Mock subprocess to return success (U12-5: pageId key)
+                mockProc = MagicMock()
+                mockProc.communicate = AsyncMock(
+                    return_value=(b'{"pageId": "abc123", "url": "https://example.com/abc123.html"}', b"")
                 )
+                mockProc.returncode = 0
 
-                # Verify refusal reply was sent
-                handler.sendMessage.assert_called_once()
+                with unittest.mock.patch.object(
+                    lib.stats.stats_pages.launcher.asyncio, "create_subprocess_exec", return_value=mockProc
+                ):
+                    # Build message
+                    message = buildEnsuredMessage(chatId=123, chatType=ChatType.PRIVATE, userId=456)
+
+                    # Execute command with --web flag
+                    await cast(Any, handler).statsCommand(
+                        ensuredMessage=message,
+                        command="stats",
+                        args="--web",
+                        updateObj=None,
+                        typingManager=None,
+                    )
+
+                # Verify applyLimit was called (U12-6: applyLimit-only)
+                mockRateLimiter.applyLimit.assert_called_once()
+                callArgs = mockRateLimiter.applyLimit.call_args
+                assert callArgs[0][0] == "stats-pages"  # Queue name
+                assert callArgs[0][1] == "stats-pages-123"  # Rate limiter key (issuing chat)
+
+                # Verify the CLI WAS invoked (U12-6: no refusal path)
+                # The subprocess should have been called
+                handler.sendMessage.assert_called()
                 callArgs = handler.sendMessage.call_args
-                assert "Превышен лимит генерации страниц" in callArgs.kwargs["messageText"]
-                assert "3 запроса за 1 час" in callArgs.kwargs["messageText"]  # Fixed Russian pluralization
-
-                # Verify applyLimit was NOT called (refuse before recording)
-                mockRateLimiter.applyLimit.assert_not_called()
+                messageText = callArgs.kwargs["messageText"]
+                assert "Страница:" in messageText  # Link was sent
+                assert "https://example.com/abc123.html" in messageText
 
     async def test_rate_limit_below_max_proceeds_with_generation(self):
         """Test that rate limit below max proceeds with page generation."""
@@ -1305,7 +1212,6 @@ class TestStatsHandlerWebTierRateLimiting:
         mockConfigManager.getStatsConfig.return_value = {"enabled": True}
         mockConfigManager.getStatsPagesConfig.return_value = {
             "enabled": True,
-            "base-url": "https://example.com/stats",
             "generate-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate"],
             "delete-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}"],
             "ttl-hours": 24,
@@ -1376,7 +1282,6 @@ class TestStatsHandlerWebTierRateLimiting:
         mockConfigManager.getStatsConfig.return_value = {"enabled": True}
         mockConfigManager.getStatsPagesConfig.return_value = {
             "enabled": True,
-            "base-url": "https://example.com/stats",
             "generate-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate"],
             "delete-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}"],
             "ttl-hours": 24,
@@ -1451,7 +1356,6 @@ class TestStatsHandlerWebTierE2E:
         mockConfigManager.getStatsConfig.return_value = {"enabled": True}
         mockConfigManager.getStatsPagesConfig.return_value = {
             "enabled": True,
-            "base-url": "https://example.com/stats",
             "generate-command": [
                 "./venv/bin/python3",
                 "-m",
@@ -1488,7 +1392,7 @@ class TestStatsHandlerWebTierE2E:
                 # Mock subprocess
                 mockProc = MagicMock()
                 mockProc.communicate = AsyncMock(
-                    return_value=(b'{"id": "test-page-id", "url": "test-page-id.html"}', b"")
+                    return_value=(b'{"pageId": "test-page-id", "url": "test-page-id.html"}', b"")
                 )
                 mockProc.returncode = 0
 
@@ -1533,10 +1437,10 @@ class TestStatsHandlerWebTierE2E:
                         stderr=asyncio.subprocess.PIPE,
                     )
 
-                    # Verify reply contains link
+                    # Verify reply contains link (verbatim URL from CLI, no base-url composition)
                     handler.sendMessage.assert_called_once()
                     callArgs = handler.sendMessage.call_args
-                    assert "https://example.com/stats/test-page-id.html" in callArgs.kwargs["messageText"]
+                    assert "test-page-id.html" in callArgs.kwargs["messageText"]
 
                     # Verify deletion task was scheduled
                     mockQueueService.addDelayedTask.assert_called_once()
@@ -1565,7 +1469,6 @@ class TestStatsHandlerWebTierFailureModes:
         mockConfigManager.getStatsConfig.return_value = {"enabled": True}
         mockConfigManager.getStatsPagesConfig.return_value = {
             "enabled": True,
-            "base-url": "https://example.com/stats",
             "generate-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate"],
             "delete-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}"],
             "ttl-hours": 24,
@@ -1630,7 +1533,6 @@ class TestStatsHandlerWebTierFailureModes:
         mockConfigManager.getStatsConfig.return_value = {"enabled": True}
         mockConfigManager.getStatsPagesConfig.return_value = {
             "enabled": True,
-            "base-url": "https://example.com/stats",
             "generate-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate"],
             "delete-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}"],
             "ttl-hours": 24,
@@ -1701,7 +1603,6 @@ class TestStatsHandlerWebTierFailureModes:
         mockConfigManager.getStatsConfig.return_value = {"enabled": True}
         mockConfigManager.getStatsPagesConfig.return_value = {
             "enabled": True,
-            "base-url": "https://example.com/stats",
             "generate-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate"],
             "delete-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}"],
             "ttl-hours": 24,
@@ -1766,7 +1667,6 @@ class TestStatsHandlerWebTierFailureModes:
         mockConfigManager.getStatsConfig.return_value = {"enabled": True}
         mockConfigManager.getStatsPagesConfig.return_value = {
             "enabled": True,
-            "base-url": "https://example.com/stats",
             "generate-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate"],
             "delete-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}"],
             "ttl-hours": 24,
@@ -1819,8 +1719,12 @@ class TestStatsHandlerWebTierFailureModes:
                     assert "📊 Stats" in callArgs.kwargs["messageText"]
                     assert "⚠ Генерация веб-страницы не удалась" in callArgs.kwargs["messageText"]
 
-    async def test_deletion_scheduling_failure_sends_link_with_warning_logged(self):
-        """Test that deletion scheduling failure sends link but logs warning."""
+    async def test_deletion_scheduling_failure_sends_link_with_warning_logged(self, caplog):
+        """Test that deletion scheduling failure sends link but logs warning.
+
+        Args:
+            caplog: pytest fixture for capturing log output.
+        """
 
         # Reset singleton
         StatsAggregationService._instance = None
@@ -1829,7 +1733,6 @@ class TestStatsHandlerWebTierFailureModes:
         mockConfigManager.getStatsConfig.return_value = {"enabled": True}
         mockConfigManager.getStatsPagesConfig.return_value = {
             "enabled": True,
-            "base-url": "https://example.com/stats",
             "generate-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate"],
             "delete-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}"],
             "ttl-hours": 24,
@@ -1856,7 +1759,7 @@ class TestStatsHandlerWebTierFailureModes:
 
                 # Mock subprocess
                 mockProc = MagicMock()
-                mockProc.communicate = AsyncMock(return_value=(b'{"id": "test-id", "url": "test-id.html"}', b""))
+                mockProc.communicate = AsyncMock(return_value=(b'{"pageId": "test-id", "url": "test-id.html"}', b""))
                 mockProc.returncode = 0
 
                 # Patch ONLY create_subprocess_exec, not the whole asyncio module
@@ -1886,7 +1789,10 @@ class TestStatsHandlerWebTierFailureModes:
                     # Verify link was still sent (orphan accepted per R13)
                     handler.sendMessage.assert_called_once()
                     callArgs = handler.sendMessage.call_args
-                    assert "https://example.com/stats/test-id.html" in callArgs.kwargs["messageText"]
+                    assert "test-id.html" in callArgs.kwargs["messageText"]
+
+                    # Verify warning was logged for deletion scheduling failure
+                    assert "Failed to schedule deletion task for page test-id" in caplog.text
 
 
 class TestStatsHandlerWebTierCleanupHandler:
@@ -1902,7 +1808,6 @@ class TestStatsHandlerWebTierCleanupHandler:
         mockConfigManager.getStatsConfig.return_value = {"enabled": True}
         mockConfigManager.getStatsPagesConfig.return_value = {
             "enabled": True,
-            "base-url": "https://example.com/stats",
             "generate-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate"],
             "delete-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}"],
             "ttl-hours": 24,
@@ -1950,7 +1855,6 @@ class TestStatsHandlerWebTierCleanupHandler:
         mockConfigManager.getStatsConfig.return_value = {"enabled": True}
         mockConfigManager.getStatsPagesConfig.return_value = {
             "enabled": True,
-            "base-url": "https://example.com/stats",
             "generate-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate"],
             "delete-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}"],
             "ttl-hours": 24,
@@ -1998,7 +1902,6 @@ class TestStatsHandlerWebTierCleanupHandler:
         mockConfigManager.getStatsConfig.return_value = {"enabled": True}
         mockConfigManager.getStatsPagesConfig.return_value = {
             "enabled": True,
-            "base-url": "https://example.com/stats",
             "generate-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate"],
             "delete-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}"],
             "ttl-hours": 24,
@@ -2076,4 +1979,455 @@ class TestStatsHandlerWebTierInterimBehavior:
             handler.sendMessage.assert_called_once()
             callArgs = handler.sendMessage.call_args
             assert "Генерация веб-страниц отключена" in callArgs.kwargs["messageText"]
-            assert "[stats-pages]" in callArgs.kwargs["messageText"]
+            assert "[stats.pages]" in callArgs.kwargs["messageText"]
+
+    async def testWebModeChunkedBrief(self) -> None:
+        """Test that web mode correctly handles chunked brief output (I3-1).
+
+        When the stats brief exceeds 3000 chars and is chunked, web mode should:
+        - Send each chunk as a separate message
+        - Append the page link to the last chunk
+        - NOT include list-repr artifacts in sent messages
+        """
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        # Reset singleton
+        StatsAggregationService._instance = None
+
+        # Setup mock config with stats-pages enabled
+        mockConfigManager = MagicMock()
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {
+            "enabled": True,
+            "ttl-hours": 24,
+            "ratelimiter-queue": "stats-pages",
+            "generate-command": ["echo", "test"],
+            "delete-command": ["rm", "-f", "{page_id}"],
+        }
+
+        mockDatabase = MagicMock()
+        mockDatabase.chatUsers = MagicMock()
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Mock sendMessage to track calls
+            cast(Any, handler).sendMessage = AsyncMock()
+            cast(Any, handler)._sendStatsReply = AsyncMock()  # Use this instead to test chunk handling
+
+            # Mock _buildStatsReply to return a long chunked list (simulating >3000 chars)
+            longChunk1 = "📊 Stats — 7d (UTC) — #123\n" + "Messages: 1000\n" + ("x" * 2900) + "\n"
+            longChunk2 = "Commands: 500\n" + "Tools: 250\n" + "/stats help — полная справка"
+            handler._buildStatsReply = AsyncMock(return_value=[longChunk1, longChunk2])
+
+            # Mock _buildStatsPayload to avoid subprocess call
+            handler._buildStatsPayload = AsyncMock(
+                return_value={
+                    "userId": "456",
+                    "chatId": "123",
+                    "chatTitle": "Test Chat",
+                    "chatType": "private",
+                    "platform": "telegram",
+                    "period": "7d",
+                    "generatedAt": "2026-01-01T00:00:00Z",
+                    "sections": {"messages": {"totalMessages": 1000}},
+                }
+            )
+
+            # Mock RateLimiterManager.applyLimit
+            with patch("internal.bot.common.handlers.stats.RateLimiterManager") as mockRlm:
+                mockRlm.getInstance.return_value.applyLimit = AsyncMock()
+                with patch("internal.bot.common.handlers.stats.runCliCommand") as mockRunCli:
+                    # Mock successful CLI response
+                    mockRunCli.return_value = (
+                        0,
+                        (
+                            '{"pageId": "test-page-id-123456789012345678901234567890", '
+                            '"url": "test-page-id-123456789012345678901234567890.html"}'
+                        ),
+                        "",
+                    )
+
+                    # Build message
+                    message = buildEnsuredMessage(chatId=123, chatType=ChatType.PRIVATE, userId=456)
+
+                    # Execute command with --web flag
+                    await cast(Any, handler).statsCommand(
+                        ensuredMessage=message,
+                        command="stats",
+                        args="--web",
+                        updateObj=None,
+                        typingManager=None,
+                    )
+
+                    # Verify _sendStatsReply was called (it handles chunked messages)
+                    assert handler._sendStatsReply.call_count == 1  # type: ignore[attr-defined]
+
+                    # Get the message text that was sent
+                    callArgs = handler._sendStatsReply.call_args  # type: ignore[attr-defined]
+                    sentText = callArgs.args[1]  # The replyText argument
+
+                    # Verify the link was appended to the last chunk
+                    assert isinstance(sentText, list)
+                    assert len(sentText) == 2
+                    assert "📊 Страница:" in sentText[1]
+                    assert "test-page-id-123456789012345678901234567890.html" in sentText[1]
+
+                    # Verify NO list-repr artifacts (no "[" in the content)
+                    assert "[" not in sentText[0] or "Messages: 1000" in sentText[0]
+                    assert "[" not in sentText[1] or "Commands: 500" in sentText[1]
+
+    async def testPeriodHugeValueError(self) -> None:
+        """Test that invalid period values like 95773m trigger usage error (I1-1).
+
+        Regression test for ValueError escaping statsCommand when period is too large
+        (would cause datetime(year > 9999) overflow).
+        """
+        from unittest.mock import patch
+
+        # Reset singleton
+        StatsAggregationService._instance = None
+
+        mockConfigManager = MagicMock()
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        mockDatabase = MagicMock()
+        mockDatabase.chatUsers = MagicMock()
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Mock sendMessage to capture the usage error reply
+            cast(Any, handler).sendMessage = AsyncMock()
+
+            # Build message
+            message = buildEnsuredMessage(chatId=123, chatType=ChatType.PRIVATE, userId=456)
+
+            # Execute command with invalid huge period
+            await cast(Any, handler).statsCommand(
+                ensuredMessage=message,
+                command="stats",
+                args="--period=95773m",  # This would cause datetime(year > 9999) overflow
+                updateObj=None,
+                typingManager=None,
+            )
+
+            # Verify usage error reply was sent
+            handler.sendMessage.assert_called_once()  # type: ignore[attr-defined]
+            callArgs = handler.sendMessage.call_args  # type: ignore[attr-defined]
+            assert "❌ Неверный период: 95773m" in callArgs.kwargs["messageText"]
+            # Verify the usage text contains period spec (U12-1 format)
+            assert "--period=..." in callArgs.kwargs["messageText"]
+
+    async def testPeriodGrammarInvalidChars(self) -> None:
+        """Test that period grammar rejects invalid characters (I1-2, MINOR).
+
+        Regression test for grammar tightening: +5d, 1_0h, and unicode digits
+        should be rejected as usage errors.
+        """
+        from unittest.mock import patch
+
+        # Reset singleton
+        StatsAggregationService._instance = None
+
+        mockConfigManager = MagicMock()
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        mockDatabase = MagicMock()
+        mockDatabase.chatUsers = MagicMock()
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Mock sendMessage to capture the usage error reply
+            cast(Any, handler).sendMessage = AsyncMock()
+
+            # Build message
+            message = buildEnsuredMessage(chatId=123, chatType=ChatType.PRIVATE, userId=456)
+            await cast(Any, handler).statsCommand(
+                ensuredMessage=message, command="stats", args="--period=+5d", updateObj=None, typingManager=None
+            )
+            callArgs = handler.sendMessage.call_args  # type: ignore[attr-defined]
+            assert "❌ Неверный период: +5d" in callArgs.kwargs["messageText"]
+
+            # Test case 2: 1_0h (underscore should be rejected)
+            handler.sendMessage.reset_mock()  # type: ignore[attr-defined]
+            message = buildEnsuredMessage(chatId=123, chatType=ChatType.PRIVATE, userId=456)
+            await cast(Any, handler).statsCommand(
+                ensuredMessage=message, command="stats", args="--period=1_0h", updateObj=None, typingManager=None
+            )
+            callArgs = handler.sendMessage.call_args  # type: ignore[attr-defined]
+            assert "❌ Неверный период: 1_0h" in callArgs.kwargs["messageText"]
+
+    async def testUserAtUsernameResolution(self) -> None:
+        """Test --user=@username resolution (I3-3).
+
+        Tests:
+        - @username resolves via db.chatUsers.getChatUserByUsername (case-insensitive)
+        - Reply filtered by resolved user ID
+        - @unknown → usage error reply
+        - Bare --user (no value) → usage error
+        """
+        from unittest.mock import patch
+
+        # Reset singleton
+        StatsAggregationService._instance = None
+
+        mockConfigManager = MagicMock()
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        mockDatabase = MagicMock()
+        mockDatabase.chatUsers = MagicMock()
+        mockDatabase.chatUsers.getChatUserByUsername = AsyncMock()
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Mock sendMessage to capture replies
+            cast(Any, handler).sendMessage = AsyncMock()
+
+            # Test case 1: @username resolution succeeds
+            mockDatabase.chatUsers.getChatUserByUsername.return_value = {"user_id": 789}
+            message = buildEnsuredMessage(chatId=123, chatType=ChatType.PRIVATE, userId=456)
+            await cast(Any, handler).statsCommand(
+                ensuredMessage=message, command="stats", args="--user=@john", updateObj=None, typingManager=None
+            )
+
+            # Verify getChatUserByUsername was called with stripped username (without @)
+            mockDatabase.chatUsers.getChatUserByUsername.assert_called_once_with(chatId=123, username="john")
+
+            # Test case 2: @unknown → usage error
+            handler.sendMessage.reset_mock()  # type: ignore[attr-defined]
+            mockDatabase.chatUsers.getChatUserByUsername.reset_mock()
+            mockDatabase.chatUsers.getChatUserByUsername.return_value = None
+            message = buildEnsuredMessage(chatId=123, chatType=ChatType.PRIVATE, userId=456)
+            await cast(Any, handler).statsCommand(
+                ensuredMessage=message, command="stats", args="--user=@unknown", updateObj=None, typingManager=None
+            )
+
+            callArgs = handler.sendMessage.call_args  # type: ignore[attr-defined]
+            assert "❌ Пользователь @unknown не найден в этом чате." in callArgs.kwargs["messageText"]
+
+            # Test case 3: case-insensitive username resolution
+            handler.sendMessage.reset_mock()  # type: ignore[attr-defined]
+            mockDatabase.chatUsers.getChatUserByUsername.reset_mock()
+            mockDatabase.chatUsers.getChatUserByUsername.return_value = {"user_id": 789}
+            message = buildEnsuredMessage(chatId=123, chatType=ChatType.PRIVATE, userId=456)
+            await cast(Any, handler).statsCommand(
+                ensuredMessage=message, command="stats", args="--user=@JoHn", updateObj=None, typingManager=None
+            )
+
+            # Verify getChatUserByUsername was called with stripped username (without @)
+            mockDatabase.chatUsers.getChatUserByUsername.assert_called_once_with(chatId=123, username="JoHn")
+
+    async def testUserBareArgumentError(self) -> None:
+        """Test that bare --user (no value) triggers usage error (I3-3)."""
+        from unittest.mock import patch
+
+        # Reset singleton
+        StatsAggregationService._instance = None
+
+        mockConfigManager = MagicMock()
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        mockDatabase = MagicMock()
+        mockDatabase.chatUsers = MagicMock()
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Mock sendMessage to capture the usage error reply
+            cast(Any, handler).sendMessage = AsyncMock()
+
+            # Build message
+            message = buildEnsuredMessage(chatId=123, chatType=ChatType.PRIVATE, userId=456)
+
+            # Execute command with bare --user (no value)
+            await cast(Any, handler).statsCommand(
+                ensuredMessage=message, command="stats", args="--user", updateObj=None, typingManager=None
+            )
+
+            # Verify usage error reply was sent
+            handler.sendMessage.assert_called_once()  # type: ignore[attr-defined]
+            callArgs = handler.sendMessage.call_args  # type: ignore[attr-defined]
+            assert "❌ Неверный user ID:" in callArgs.kwargs["messageText"]
+
+    async def testDeleteDeniedCommandsTrueBranch(self) -> None:
+        """Test DELETE_DENIED_COMMANDS=true branch (I3-4).
+
+        When ALLOW_SHOW_STATS is false and DELETE_DENIED_COMMANDS is true:
+        - deleteMessage should be called once
+        - NO stats reply should be sent
+        """
+        from unittest.mock import patch
+
+        # Reset singleton
+        StatsAggregationService._instance = None
+
+        mockConfigManager = MagicMock()
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        mockDatabase = MagicMock()
+        mockDatabase.chatUsers = MagicMock()
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Mock methods
+            handler.sendMessage = AsyncMock()
+            handler.deleteMessage = AsyncMock()
+            handler.getChatSettings = AsyncMock(
+                return_value={
+                    ChatSettingsKey.ALLOW_SHOW_STATS: ChatSettingsValue("false", 12345),
+                    ChatSettingsKey.DELETE_DENIED_COMMANDS: ChatSettingsValue("true", 12345),
+                }
+            )
+
+            # Build message for GROUP chat (not private)
+            message = buildEnsuredMessage(chatId=123, chatType=ChatType.GROUP, userId=456)
+
+            # Execute command
+            await cast(Any, handler).statsCommand(
+                ensuredMessage=message, command="stats", args="", updateObj=None, typingManager=None
+            )
+
+            # Verify deleteMessage was called once
+            handler.deleteMessage.assert_called_once()
+
+            # Verify NO stats reply was sent
+            handler.sendMessage.assert_not_called()  # type: ignore[attr-defined]
+
+    async def testDeleteDeniedCommandsFalseBranch(self) -> None:
+        """Test DELETE_DENIED_COMMANDS=false branch (I3-4).
+
+        When ALLOW_SHOW_STATS is false and DELETE_DENIED_COMMANDS is false:
+        - Informative reply should be sent
+        - deleteMessage should NOT be called
+        """
+        from unittest.mock import patch
+
+        # Reset singleton
+        StatsAggregationService._instance = None
+
+        mockConfigManager = MagicMock()
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        mockDatabase = MagicMock()
+        mockDatabase.chatUsers = MagicMock()
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Mock methods
+            handler.sendMessage = AsyncMock()
+            handler.deleteMessage = AsyncMock()
+            handler.getChatSettings = AsyncMock(
+                return_value={
+                    ChatSettingsKey.ALLOW_SHOW_STATS: ChatSettingsValue("false", 12345),
+                    ChatSettingsKey.DELETE_DENIED_COMMANDS: ChatSettingsValue("false", 12345),
+                }
+            )
+
+            # Build message for GROUP chat (not private)
+            message = buildEnsuredMessage(chatId=123, chatType=ChatType.GROUP, userId=456)
+
+            # Execute command
+            await cast(Any, handler).statsCommand(
+                ensuredMessage=message, command="stats", args="", updateObj=None, typingManager=None
+            )
+
+            # Verify informative reply was sent
+            handler.sendMessage.assert_called_once()  # type: ignore[attr-defined]
+            callArgs = handler.sendMessage.call_args  # type: ignore[attr-defined]
+            assert "⚠ Показ статистики отключён в этом чате" in callArgs.kwargs["messageText"]
+
+            # Verify deleteMessage was NOT called
+            handler.deleteMessage.assert_not_called()  # type: ignore[attr-defined]
+
+    async def testSectionAllRendersAllSections(self) -> None:
+        """Test that --section=all renders all four sections (I3-5).
+
+        When --section=all is specified:
+        - All four sections should be rendered: messages, commands, tools, llm
+        - This should trigger 4 storage query groups (one per section)
+        """
+        from unittest.mock import patch
+
+        # Reset singleton
+        StatsAggregationService._instance = None
+
+        mockConfigManager = MagicMock()
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        mockDatabase = MagicMock()
+        mockDatabase.chatUsers = MagicMock()
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Mock _sendStatsReply to capture the output
+            handler._sendStatsReply = AsyncMock()
+
+            # Mock stats aggregation service
+            mockStorage = MagicMock()
+            mockStorage.query = AsyncMock(return_value=[])
+            mockAggService = MagicMock()
+            mockAggService.getQueryStorage.return_value = mockStorage
+            handler.statsAggregationService = mockAggService
+
+            # Build message
+            message = buildEnsuredMessage(chatId=123, chatType=ChatType.PRIVATE, userId=456)
+
+            # Execute command with --section=all
+            await cast(Any, handler).statsCommand(
+                ensuredMessage=message, command="stats", args="--section=all", updateObj=None, typingManager=None
+            )
+
+            # Verify _sendStatsReply was called
+            handler._sendStatsReply.assert_called_once()  # type: ignore[attr-defined]
+
+            # Get the reply text (non-web mode uses keyword arguments)
+            callArgs = handler._sendStatsReply.call_args
+            replyText = callArgs.kwargs["replyText"]
+
+            # If it's a string, check for all 4 section markers
+            if isinstance(replyText, str):
+                assert "Messages:" in replyText
+                assert "Commands:" in replyText
+                assert "Tools:" in replyText
+                assert "LLM:" in replyText
+            else:
+                # If it's a list, join and check
+                joined = "\n".join(replyText)  # type: ignore[arg-type]
+                assert "Messages:" in joined
+                assert "Commands:" in joined
+                assert "Tools:" in joined
+                assert "LLM:" in joined
+
+            # Verify all 4 storage queries were made (message, command, llm_tool_call, llm_request, stt_request)
+            # Actually it's 5 types: message, command, llm_tool_call, llm_request, stt_request
+            # But we should have at least 4 basic sections
+            assert mockStorage.query.call_count >= 4

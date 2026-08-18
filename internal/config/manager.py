@@ -290,7 +290,18 @@ class ConfigManager:
             >>> bot_token = config_manager.get("bot.token")
             >>> db_type = config_manager.get("database.type", "sqlite")
         """
-        return self.config.get(key, default)
+        if "." not in key:
+            return self.config.get(key, default)
+
+        # Handle dot notation for nested keys
+        keys = key.split(".")
+        value = self.config
+        for k in keys:
+            if isinstance(value, dict) and k in value:
+                value = value[k]
+            else:
+                return default
+        return value
 
     def getBotConfig(self) -> Dict[str, Any]:
         """Get bot-specific configuration.
@@ -510,7 +521,7 @@ class ConfigManager:
 
         Returns:
             A dictionary containing stats-pages configuration settings including
-            enabled flag, base-url, ttl-hours, and command templates.
+            enabled flag, ttl-hours, ratelimiter-queue, and command templates.
             Returns an empty dict if not configured.
 
         Example:
@@ -519,7 +530,7 @@ class ConfigManager:
             >>> print(stats_pages_config.get("enabled"))
             False
         """
-        return self.get("stats-pages", {})
+        return self.get("stats.pages", {})
 
     def getProxyConfig(self) -> ProxyConfigDict:
         """Get global proxy configuration.

@@ -5,7 +5,7 @@ statistics pages and deleting them. The generator reads a stats view-model
 from stdin and produces a self-contained static HTML page with inline CSS.
 
 Entry points:
-    generate: Read JSON from stdin, write HTML file, print {"id", "url"} to stdout
+    generate: Read JSON from stdin, write HTML file, print {"pageId", "url"} to stdout
     delete: Delete a page by ID, print {"deleted": 0|1} to stdout
 
 Used by StatsHandler via subprocess invocation; zero new runtime dependencies.

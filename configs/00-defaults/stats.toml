@@ -10,3 +10,16 @@ command-stats-data-source = "default"
 aggregation-interval-seconds = 3600
 aggregation-batch-limit = 1000
 events-retention-days = 30
+
+[stats.pages]
+enabled = false
+# The CLI accepts an optional --base-url argument in the generate-command template (W2 adds the arg)
+ttl-hours = 24
+ratelimiter-queue = "stats-pages"
+generate-command = [
+    "./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate",
+    "--user-id={user_id}", "--chat-id={chat_id}", "--platform={platform}",
+]
+delete-command = [
+    "./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}",
+]

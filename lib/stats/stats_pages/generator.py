@@ -905,7 +905,7 @@ def handleGenerate(args: argparse.Namespace) -> int:
         pageId, url = generator.generate(payload)
 
         # Output the result JSON to stdout
-        result = {"id": pageId, "url": url}
+        result = {"pageId": pageId, "url": url}
         print(json.dumps(result))
 
         return 0

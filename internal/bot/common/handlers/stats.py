@@ -30,7 +30,7 @@ from internal.services.queue_service import QueueService
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
 from internal.services.stats import StatsAggregationService
 from lib.rate_limiter import RateLimiterManager
-from lib.stats import PeriodArg, StatsAnalyzer, computePeriodRange, mapPeriodArgToPeriodType
+from lib.stats import StatsAnalyzer, computePeriodRange, mapPeriodArgToPeriodType
 from lib.stats.stats_pages import (
     ChatListEntry,
     CommandsSectionData,
@@ -71,9 +71,9 @@ class ParsedStatsArgs(TypedDict):
     Attributes:
         help: Whether help was requested.
         chatId: Optional chat ID for private scope drill-down.
-        period: Period argument (1d, 7d, 30d, all).
-        section: Section to display (messages, commands, tools, llm).
-        user: Optional user ID filter.
+        period: Period argument (Nh, Nd, Nm, all).
+        section: Section to display (messages, commands, tools, llm, all).
+        user: Optional user ID filter (numeric ID or @username string).
         web: Whether web mode is enabled.
     """
 
@@ -81,7 +81,7 @@ class ParsedStatsArgs(TypedDict):
     chatId: Optional[int]
     period: str
     section: str
-    user: Optional[int]
+    user: Optional[str]
     web: bool
 
 
@@ -96,8 +96,7 @@ class StatsHandler(BaseBotHandler):
         statsAggregationService: Singleton service for accessing stats storage.
     """
 
-    # Maximum output length to avoid message splitting
-    _MAX_OUTPUT_LENGTH = 2500
+    _OUTPUT_CHUNK_LENGTH = 3000
 
     # Help text constants (deduplicated from three copies in the code)
     _USAGE_TEXT = (
@@ -108,9 +107,10 @@ class StatsHandler(BaseBotHandler):
         "  chatId         - ID чата для показа статистики (только в личке)\n"
         "\n"
         "Опции:\n"
-        "  --period=...   - период: 1d, 7d (по умолчанию), 30d, all\n"
-        "  --section=...  - раздел: messages (по умолчанию), commands, tools, llm\n"
-        "  --user=<id>    - показать статистику только для пользователя с ID\n"
+        "  --period=...   - период: Nh (1-24 часов), Nd (1-31 дней), Nm (N>=1 месяцев),\n"
+        "                  all (все время; по умолчанию 7d)\n"
+        "  --section=...  - раздел: messages (по умолчанию), commands, tools, llm, all\n"
+        "  --user=<id>    - показать статистику только для пользователя с ID или @username\n"
         "  --web          - сгенерировать веб-страницу (если включено оператором)\n"
         "\n"
         "Примеры:\n"
@@ -118,6 +118,7 @@ class StatsHandler(BaseBotHandler):
         "  /stats --period=30d       - статистика за 30 дней\n"
         "  /stats --section=llm      - статистика использования LLM\n"
         "  /stats --user=12345       - статистика пользователя\n"
+        "  /stats --user=@john       - статистика пользователя @john\n"
         "  /stats_web                - псевдоним для /stats --web"
     )
 
@@ -127,7 +128,7 @@ class StatsHandler(BaseBotHandler):
         + "\n"
         + "Примечания:\n"
         + "  --section=llm показывает статистику запросов LLM (на уровне чата, не пользователя).\n"
-        + "  Для периодов 7d и 30d включается частичный текущий день (8/31 бакетов)."
+        + "  Для периодов с 'd' суффиксом включается частичный текущий день (N+1 бакетов)."
     )
 
     def __init__(self, *, configManager: ConfigManager, database: Database, botProvider: BotProvider) -> None:
@@ -156,11 +157,6 @@ class StatsHandler(BaseBotHandler):
         self._statsPagesEnabled = statsPagesConfig.get("enabled", False)
 
         if self._statsPagesEnabled:
-            # Validate base-url (kebab-case for TOML, must be non-empty string)
-            baseUrl = statsPagesConfig.get("base-url")
-            if not baseUrl or not isinstance(baseUrl, str) or not baseUrl.strip():
-                raise RuntimeError("[stats-pages] base-url must be a non-empty string when enabled")
-
             # Validate generate-command (must be non-empty list[str] of non-empty strings)
             generateCommand = statsPagesConfig.get("generate-command")
             if (
@@ -170,7 +166,7 @@ class StatsHandler(BaseBotHandler):
                 or not all(isinstance(item, str) and item.strip() for item in generateCommand)
             ):
                 raise RuntimeError(
-                    "[stats-pages] generate-command must be a non-empty list[str] of non-empty strings when enabled"
+                    "[stats.pages] generate-command must be a non-empty list[str] of non-empty strings when enabled"
                 )
 
             # Validate delete-command (must be non-empty list[str] of non-empty strings)
@@ -182,16 +178,15 @@ class StatsHandler(BaseBotHandler):
                 or not all(isinstance(item, str) and item.strip() for item in deleteCommand)
             ):
                 raise RuntimeError(
-                    "[stats-pages] delete-command must be a non-empty list[str] of non-empty strings when enabled"
+                    "[stats.pages] delete-command must be a non-empty list[str] of non-empty strings when enabled"
                 )
 
             # Validate ttl-hours is positive int
             ttlHours = statsPagesConfig.get("ttl-hours", 24)
             if not isinstance(ttlHours, int) or ttlHours <= 0:
-                raise RuntimeError("[stats-pages] ttl-hours must be a positive integer when enabled")
+                raise RuntimeError("[stats.pages] ttl-hours must be a positive integer when enabled")
 
             # Cache validated config values (already lists from above validation)
-            self._statsPagesBaseUrl = baseUrl.strip()
             self._statsPagesTtlHours = ttlHours
             self._statsPagesGenerateCommand = generateCommand
             self._statsPagesDeleteCommand = deleteCommand
@@ -206,7 +201,7 @@ class StatsHandler(BaseBotHandler):
         commands=("stats", "stats_web"),
         shortDescription="[help|chatId] [--period=...] [--section=...] [--user=<id>] [--web] - Statistics",
         helpMessage=_HELP_TEXT,
-        visibility={CommandPermission.DEFAULT},
+        visibility={CommandPermission.PRIVATE},
         availableFor={CommandPermission.DEFAULT},
         helpOrder=CommandHandlerOrder.NORMAL,
         category=CommandCategory.TOOLS,
@@ -232,16 +227,25 @@ class StatsHandler(BaseBotHandler):
         if ensuredMessage.recipient.chatType != ChatType.PRIVATE:
             chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
             if not chatSettings[ChatSettingsKey.ALLOW_SHOW_STATS].toBool():
-                await self.sendMessage(
-                    ensuredMessage,
-                    messageText=(
-                        "⚠ Показ статистики отключён в этом чате. Админ может включить "
-                        "настройку «Показывать статистику чата»."
-                    ),
-                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-                    typingManager=typingManager,
-                )
-                return
+                # Respect DELETE_DENIED_COMMANDS setting
+                if chatSettings[ChatSettingsKey.DELETE_DENIED_COMMANDS].toBool():
+                    try:
+                        await self.deleteMessage(ensuredMessage)
+                    except Exception as e:
+                        logger.error(f"Failed to delete denied stats command: {e}")
+                    return
+                else:
+                    # Informative reply when DELETE_DENIED_COMMANDS is false
+                    await self.sendMessage(
+                        ensuredMessage,
+                        messageText=(
+                            "⚠ Показ статистики отключён в этом чате. Админ может включить "
+                            "настройку «Показывать статистику чата»."
+                        ),
+                        messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                        typingManager=typingManager,
+                    )
+                    return
 
         # Parse arguments using argparse-style grammar
         try:
@@ -249,24 +253,6 @@ class StatsHandler(BaseBotHandler):
         except StatsUsageError as e:
             # Send usage reply with error reason
             usageReply = f"❌ {e.reason}\n\n{self._USAGE_TEXT}"
-            await self.sendMessage(
-                ensuredMessage,
-                messageText=usageReply,
-                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-                typingManager=typingManager,
-            )
-            return
-
-        # Validate that --user is not combined with --section=llm
-        # (LLM statistics are chat-level, not per-user)
-        # This validation must happen BEFORE the try/except around _buildStatsReply
-        # so that StatsUsageError is caught by the usage reply handler above
-        if parsedArgs["section"] == "llm" and parsedArgs["user"] is not None:
-            # Send usage reply directly (avoid raising exception that gets swallowed)
-            usageReply = (
-                "❌ --section=llm не поддерживает --user: LLM-статистика общая для чата, не по пользователям\n\n"
-                + self._USAGE_TEXT
-            )
             await self.sendMessage(
                 ensuredMessage,
                 messageText=usageReply,
@@ -317,10 +303,50 @@ class StatsHandler(BaseBotHandler):
             # Default to current chat
             targetChatId = ensuredMessage.recipient.id
 
-        # Map period arg to period type and compute range
+        # Resolve --user argument (can be numeric ID or @username)
+        # Resolution happens AFTER targetChatId is known
+        filterUserId = None
+        if parsedArgs["user"] is not None:
+            userValue = parsedArgs["user"]
+            if userValue.startswith("@"):
+                # Username resolution - strip leading @
+                username = userValue[1:]
+                chatUser = await self.db.chatUsers.getChatUserByUsername(chatId=targetChatId, username=username)
+                if chatUser is None:
+                    await self.sendMessage(
+                        ensuredMessage,
+                        messageText=f"❌ Пользователь @{username} не найден в этом чате.",
+                        messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                        typingManager=typingManager,
+                    )
+                    return
+                filterUserId = chatUser["user_id"]
+            else:
+                # Numeric ID
+                try:
+                    filterUserId = int(userValue)
+                except (ValueError, TypeError):
+                    await self.sendMessage(
+                        ensuredMessage,
+                        messageText=f"❌ Неверный user ID: {userValue}. Используйте числовой ID или @username.",
+                        messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                        typingManager=typingManager,
+                    )
+                    return
+
+        # Map period arg to period type and compute range (I1: wrap to catch ValueError)
         periodArg = parsedArgs["period"]
-        periodType = mapPeriodArgToPeriodType(periodArg)
-        periodStartFrom, periodStartTo = computePeriodRange(periodArg)
+        try:
+            periodType = mapPeriodArgToPeriodType(periodArg)
+            periodStartFrom, periodStartTo = computePeriodRange(periodArg)
+        except ValueError:
+            await self.sendMessage(
+                ensuredMessage,
+                messageText=f"❌ Неверный период: {periodArg}\n\n{self._USAGE_TEXT}",
+                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                typingManager=typingManager,
+            )
+            return
 
         # Handle web mode (D10/D11/D13/D14/D15)
         if parsedArgs["web"]:
@@ -328,7 +354,7 @@ class StatsHandler(BaseBotHandler):
                 await self.sendMessage(
                     ensuredMessage,
                     messageText=(
-                        "⚠ Генерация веб-страниц отключена. Спросите оператора о настройке " "секции [stats-pages]."
+                        "⚠ Генерация веб-страниц отключена. Спросите оператора о настройке " "секции [stats.pages]."
                     ),
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                     typingManager=typingManager,
@@ -347,7 +373,7 @@ class StatsHandler(BaseBotHandler):
                     periodType=periodType,
                     periodStartFrom=periodStartFrom,
                     periodStartTo=periodStartTo,
-                    filterUserId=parsedArgs["user"],
+                    filterUserId=filterUserId,
                     positionalChatIdUsed=positionalChatIdUsed,
                     typingManager=typingManager,
                 )
@@ -374,8 +400,13 @@ class StatsHandler(BaseBotHandler):
                 periodType=periodType,
                 periodStartFrom=periodStartFrom,
                 periodStartTo=periodStartTo,
-                filterUserId=parsedArgs["user"],
+                filterUserId=filterUserId,
                 positionalChatIdUsed=positionalChatIdUsed,
+            )
+            await self._sendStatsReply(
+                ensuredMessage=ensuredMessage,
+                replyText=messageText,
+                typingManager=typingManager,
             )
         except Exception:
             logger.exception(f"Stats query failed for chat {targetChatId}")
@@ -386,13 +417,6 @@ class StatsHandler(BaseBotHandler):
                 typingManager=typingManager,
             )
             return
-
-        await self.sendMessage(
-            ensuredMessage,
-            messageText=messageText,
-            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-            typingManager=typingManager,
-        )
 
     def _parseStatsArgs(self, args: str, forceWeb: bool = False) -> ParsedStatsArgs:
         """Parse stats command arguments using argparse-like grammar.
@@ -412,7 +436,7 @@ class StatsHandler(BaseBotHandler):
             return {
                 "help": False,
                 "chatId": None,
-                "period": PeriodArg.SEVEN_DAYS,
+                "period": "7d",
                 "section": "messages",
                 "user": None,
                 "web": forceWeb,
@@ -489,34 +513,24 @@ class StatsHandler(BaseBotHandler):
             raise StatsUsageError(f"Неизвестные опции: {', '.join(unknownOptions)}")
 
         # Parse options with defaults and validation
-        period = options.get("period", PeriodArg.SEVEN_DAYS)
-        if period not in (PeriodArg.ONE_DAY, PeriodArg.SEVEN_DAYS, PeriodArg.THIRTY_DAYS, PeriodArg.ALL):
-            raise StatsUsageError(f"Неверный период: {period}. Используйте 1d, 7d, 30d, или all")
+        period: str = options.get("period", "7d")  # type: ignore[assignment]
+        section: str = options.get("section", "messages")  # type: ignore[assignment]
+        if section not in ("messages", "commands", "tools", "llm", "all"):
+            raise StatsUsageError(f"Неизвестный раздел: {section}. Используйте messages, commands, tools, llm, или all")
 
-        section = options.get("section", "messages")
-        if section not in ("messages", "commands", "tools", "llm"):
-            raise StatsUsageError(f"Неизвестный раздел: {section}. Используйте messages, commands, tools, или llm")
+        # User can be numeric ID or @username (stored as string, resolved later)
+        user: Optional[str] = options.get("user")
 
-        user = None
-        if "user" in options:
-            userValue = options["user"]
-            if userValue is None or userValue == "":
-                raise StatsUsageError("--user требует значения, например: --user=12345")
-            try:
-                user = int(userValue) if userValue else None
-            except (ValueError, TypeError):
-                raise StatsUsageError(f"Неверный user ID: {userValue}")
+        web: bool = "web" in options or forceWeb
 
-        web = "web" in options or forceWeb
-
-        return {
-            "help": positional == ["help"],
-            "chatId": chatId,
-            "period": period,
-            "section": section,
-            "user": user,
-            "web": web,
-        }
+        return ParsedStatsArgs(
+            help=positional == ["help"],
+            chatId=chatId,
+            period=period,
+            section=section,
+            user=user,
+            web=web,
+        )
 
     async def _buildStatsReply(
         self,
@@ -530,7 +544,7 @@ class StatsHandler(BaseBotHandler):
         periodStartTo: Optional[str],
         filterUserId: Optional[int],
         positionalChatIdUsed: bool = False,
-    ) -> str:
+    ) -> str | list[str]:
         """Build the stats reply message.
 
         Args:
@@ -543,36 +557,28 @@ class StatsHandler(BaseBotHandler):
             periodStartFrom: ISO-8601 UTC start bound (None for 'all').
             periodStartTo: ISO-8601 UTC end bound (None for 'all').
             filterUserId: Optional user ID filter for drill-down.
-            positionalChatIdUsed: Whether a positional chatId was provided (triggers multi-section).
+            positionalChatIdUsed: Whether a positional chatId was provided (gates chat list).
 
         Returns:
-            Formatted markdown reply string.
+            Formatted markdown reply string (or list of strings for chunked output).
         """
         # Scope: group → this chat only, private → this chat or member chat
         consumerFilter = {str(targetChatId)}
 
-        # D7 drill-down depth: positional chatId → all four sections
+        # D7 drill-down depth: --section=all renders all four sections
         sectionsToRender: list[str]
-        if positionalChatIdUsed:
-            # Positional chatId: render all four sections
+        if section == "all":
+            # --section=all: render all four sections
             sectionsToRender = ["messages", "commands", "tools", "llm"]
-        elif filterUserId is not None:
-            # --user filter: render sections that support user filtering
-            sectionsToRender = ["messages", "commands", "tools"]
         else:
-            # Default: single section
+            # Default: single section (the one specified)
             sectionsToRender = [section]
 
         # Build reply
         lines: list[str] = []
 
         # Header
-        periodLabel = {
-            PeriodArg.ONE_DAY: "1d",
-            PeriodArg.SEVEN_DAYS: "7d",
-            PeriodArg.THIRTY_DAYS: "30d",
-            PeriodArg.ALL: "всё время",
-        }.get(periodArg, periodArg)
+        periodLabel = periodArg if periodArg != "all" else "всё время"
 
         chatIdentifier = f"#{targetChatId}"
         lines.append(f"📊 Stats — {periodLabel} (UTC) — {chatIdentifier}")
@@ -593,7 +599,12 @@ class StatsHandler(BaseBotHandler):
                 lines.append("")  # Blank line between sections
 
         # In private scope, add chat list for default messages section (private ∧ no user filter)
-        if chatType == ChatType.PRIVATE and section == "messages" and filterUserId is None:
+        if (
+            chatType == ChatType.PRIVATE
+            and section == "messages"
+            and filterUserId is None
+            and positionalChatIdUsed is False
+        ):
             lines.append("")
             lines.append("Ваши чаты:")
             userChats = await self.getUserChats(userId)
@@ -601,9 +612,9 @@ class StatsHandler(BaseBotHandler):
             userChats.sort(key=lambda c: c.get("messages_count", 0), reverse=True)
             for chat in userChats[:10]:
                 chatId = chat["chat_id"]
-                title = chat["title"] or f"#{chatId}"
+                title = chat["title"] or chat["username"] or ""
                 msgCount = chat.get("messages_count", 0)
-                lines.append(f"  #{chatId} {title} — {msgCount}")
+                lines.append(f"  #`{chatId}` {title} — {msgCount}")
             if len(userChats) > 10:
                 lines.append(f"  … и ещё {len(userChats) - 10} чатов")
 
@@ -611,24 +622,59 @@ class StatsHandler(BaseBotHandler):
         lines.append("")
         lines.append("/stats help — полная справка")
 
-        # Join and check length
-        replyText = "\n".join(lines)
-        if len(replyText) > self._MAX_OUTPUT_LENGTH:
-            # Truncate to whole lines only
-            truncatedLines = []
-            currentLength = 0
-            for line in lines:
-                lineLength = len(line) + 1  # +1 for newline
-                if currentLength + lineLength <= self._MAX_OUTPUT_LENGTH:
-                    truncatedLines.append(line)
-                    currentLength += lineLength
-                else:
-                    break
-            replyText = "\n".join(truncatedLines)
-            if replyText:
-                replyText += "\n… (вывод ограничен)"
+        # Send output in chunks to avoid hitting message size limits
+        # Accumulate lines and flush when exceeding _OUTPUT_CHUNK_LENGTH
+        chunks: list[str] = []
+        currentChunk: list[str] = []
+        currentLength = 0
 
-        return replyText
+        for line in lines:
+            lineLength = len(line) + 1  # +1 for newline
+            if currentLength + lineLength > self._OUTPUT_CHUNK_LENGTH and currentChunk:
+                # Flush current chunk before adding this line
+                chunks.append("\n".join(currentChunk))
+                currentChunk = [line]
+                currentLength = lineLength
+            else:
+                currentChunk.append(line)
+                currentLength += lineLength
+
+        # Don't forget the last chunk (ensure at least one message is sent)
+        if currentChunk:
+            chunks.append("\n".join(currentChunk))
+
+        return chunks[0] if len(chunks) == 1 else chunks
+
+    async def _sendStatsReply(
+        self,
+        ensuredMessage: EnsuredMessage,
+        replyText: str | list[str],
+        typingManager: Optional[TypingManager],
+    ) -> None:
+        """Send the stats reply, handling chunked output if needed.
+
+        Args:
+            ensuredMessage: The originating user message.
+            replyText: The reply text (string for single message, or list of strings for chunks).
+            typingManager: Optional typing indicator manager.
+        """
+        if isinstance(replyText, str):
+            # Single message (most common case)
+            await self.sendMessage(
+                ensuredMessage,
+                messageText=replyText,
+                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                typingManager=typingManager,
+            )
+        else:
+            # Multiple chunks - send sequentially
+            for i, chunk in enumerate(replyText):
+                await self.sendMessage(
+                    ensuredMessage,
+                    messageText=chunk,
+                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                    typingManager=typingManager,
+                )
 
     async def _buildSectionView(
         self,
@@ -1425,6 +1471,27 @@ class StatsHandler(BaseBotHandler):
 
         return result
 
+    async def _appendWebSuffix(self, messageText: str | list[str], suffix: str) -> str | list[str]:
+        """Append a suffix to messageText, handling both str and list[str] shapes.
+
+        If messageText is a string, appends the suffix with a blank line separator.
+        If messageText is a list of strings, appends the suffix to the last chunk.
+
+        Args:
+            messageText: The message text (string or list of strings).
+            suffix: The suffix to append (e.g., failure note or page link).
+
+        Returns:
+            The message text with suffix appended (str or list[str]).
+        """
+        if isinstance(messageText, str):
+            return f"{messageText}\n\n{suffix}"
+        else:
+            # Append to the last chunk
+            lastChunk = messageText[-1]
+            messageText[-1] = f"{lastChunk}\n\n{suffix}"
+            return messageText
+
     async def _handleWebMode(
         self,
         ensuredMessage: EnsuredMessage,
@@ -1456,104 +1523,18 @@ class StatsHandler(BaseBotHandler):
             positionalChatIdUsed: Whether positional chatId was used.
             typingManager: Optional typing indicator manager.
         """
-        # D13: Rate limit check FIRST
-        # FIX 6: Key limiter on ISSUING chat (ensuredMessage.recipient.id), not target chat
+        # D13: Rate limit check FIRST - U12-6: applyLimit-only
+        # Key limiter on ISSUING chat (ensuredMessage.recipient.id), not target chat
         rateLimiterKey = f"stats-pages-{ensuredMessage.recipient.id}"
-        limiterUnavailable = False
-        maxRequests: int = 3
-        windowSeconds: int = 3600
-        used: int = 0
-        try:
-            rateStats = RateLimiterManager.getInstance().getStats(self._statsPagesRatelimiterQueue, key=rateLimiterKey)
-            used = rateStats["requestsInWindow"]
-            maxRequests = rateStats["maxRequests"]
-            windowSeconds = rateStats.get("windowSeconds", 3600)  # FIX 6: read window unit from rateStats
-        except RuntimeError:
-            # Limiter unavailable (queue not registered) - build brief and note, then return
-            limiterUnavailable = True
-        except ValueError:
-            # Never-used key (no requests yet for this chat) - treat as 0 used
-            # FIX 6: Simplified - just set used=0, skip the comparison entirely (0 can't exceed positive limit)
-            used = 0
-            # Need maxRequests for the limit check - get queue level stats
-            # Note: queue-name key is never populated by this handler (applyLimit uses per-chat keys),
-            # so the hardcoded 3/3600 fallback is what first-requests actually compare against
-            try:
-                queueStats = RateLimiterManager.getInstance().getStats(self._statsPagesRatelimiterQueue, key=None)
-                maxRequests = queueStats["maxRequests"]
-                windowSeconds = queueStats.get("windowSeconds", 3600)  # FIX 6: read window unit from rateStats
-            except (ValueError, KeyError):
-                # Fallback if queue-level stats also fail (shouldn't happen with valid config)
-                maxRequests = 3
-                windowSeconds = 3600
 
-        if limiterUnavailable:
-            # Build brief reply when limiter is unavailable
-            try:
-                messageText = await self._buildStatsReply(
-                    targetChatId=targetChatId,
-                    chatType=chatType,
-                    userId=userId,
-                    section=section,
-                    periodArg=periodArg,
-                    periodType=periodType,
-                    periodStartFrom=periodStartFrom,
-                    periodStartTo=periodStartTo,
-                    filterUserId=filterUserId,
-                    positionalChatIdUsed=positionalChatIdUsed,
-                )
-                await self.sendMessage(
-                    ensuredMessage,
-                    messageText=f"{messageText}\n\n⚠ Лимитер генерации страниц недоступен.",
-                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-                    typingManager=typingManager,
-                )
-            except Exception:
-                logger.exception(f"Stats query failed for chat {targetChatId}")
-                await self.sendMessage(
-                    ensuredMessage,
-                    messageText="❌ Ошибка при запросе статистики.",
-                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-                    typingManager=typingManager,
-                )
-            return
-
-        if used >= maxRequests:
-            # Russian pluralization helper
-            def formatRussianPlural(n: int, singular: str, paucal: str, plural: str) -> str:
-                """Format number with correct Russian plural form."""
-                if n == 1 or (n % 10 == 1 and n % 100 != 11):
-                    return f"{n} {singular}"
-                elif 2 <= n % 10 <= 4 and not (12 <= n % 100 <= 14):
-                    return f"{n} {paucal}"
-                else:
-                    return f"{n} {plural}"
-
-            windowHours = windowSeconds // 3600
-            if windowHours >= 1:
-                windowLabel = formatRussianPlural(windowHours, "час", "часа", "часов")
-            else:
-                windowLabel = formatRussianPlural(windowSeconds, "секунда", "секунды", "секунд")
-
-            requestsLabel = formatRussianPlural(maxRequests, "запрос", "запроса", "запросов")
-
-            await self.sendMessage(
-                ensuredMessage,
-                messageText=(
-                    f"⚠ Превышен лимит генерации страниц (попробуйте позже). "
-                    f"Максимум: {requestsLabel} за {windowLabel}."
-                ),
-                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-                typingManager=typingManager,
-            )
-            return
-
-        # Apply the rate limit (record the attempt)
+        # U12-6: applyLimit-only - NO pre-check, NO refusal reply
+        # Just apply the limit (this may sleep until a slot is available)
+        # No try/except here; outer D15 wrap covers the no-limiter RuntimeError
         await RateLimiterManager.getInstance().applyLimit(self._statsPagesRatelimiterQueue, rateLimiterKey)
 
         # Build the in-chat reply first (D15: reply always wins)
         try:
-            messageText = await self._buildStatsReply(
+            brief = await self._buildStatsReply(
                 targetChatId=targetChatId,
                 chatType=chatType,
                 userId=userId,
@@ -1590,12 +1571,11 @@ class StatsHandler(BaseBotHandler):
             )
         except Exception:
             logger.exception(f"Stats payload build failed for chat {targetChatId}")
-            # Brief was already built and sent above, just add failure note
-            await self.sendMessage(
+            # Brief was already built, send it with failure note
+            await self._sendStatsReply(
                 ensuredMessage,
-                messageText=f"{messageText}\n\n⚠ Генерация веб-страницы не удалась.",
-                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-                typingManager=typingManager,
+                await self._appendWebSuffix(brief, "⚠ Генерация веб-страницы не удалась."),
+                typingManager,
             )
             return
 
@@ -1611,11 +1591,10 @@ class StatsHandler(BaseBotHandler):
         except (KeyError, AttributeError) as e:  # FIX 2: Catch AttributeError for non-str templates
             logger.warning("stats-pages generate-command contains unknown placeholder or non-str template: %s", e)
             # Fall back to in-chat reply with failure note
-            await self.sendMessage(
+            await self._sendStatsReply(
                 ensuredMessage,
-                messageText=f"{messageText}\n\n⚠ Генерация веб-страницы не удалась (ошибка конфигурации).",
-                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-                typingManager=typingManager,
+                await self._appendWebSuffix(brief, "⚠ Генерация веб-страницы не удалась (ошибка конфигурации)."),
+                typingManager,
             )
             return
 
@@ -1630,22 +1609,20 @@ class StatsHandler(BaseBotHandler):
             if e.reason == StatsCliErrorReason.TIMEOUT:
                 logger.warning("stats-pages generate timed out for chat %s", targetChatId)
                 # Fall back to in-chat reply with failure note
-                await self.sendMessage(
+                await self._sendStatsReply(
                     ensuredMessage,
-                    messageText=f"{messageText}\n\n⚠ Генерация веб-страницы не удалась (тайм-аут).",
-                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-                    typingManager=typingManager,
+                    await self._appendWebSuffix(brief, "⚠ Генерация веб-страницы не удалась (тайм-аут)."),
+                    typingManager,
                 )
                 return
             else:
                 # SPAWN or other error
                 logger.warning("stats-pages generate failed for chat %s: %s", targetChatId, e.message)
                 # Fall back to in-chat reply with failure note
-                await self.sendMessage(
+                await self._sendStatsReply(
                     ensuredMessage,
-                    messageText=f"{messageText}\n\n⚠ Генерация веб-страницы не удалась.",
-                    messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-                    typingManager=typingManager,
+                    await self._appendWebSuffix(brief, "⚠ Генерация веб-страницы не удалась."),
+                    typingManager,
                 )
                 return
 
@@ -1657,32 +1634,30 @@ class StatsHandler(BaseBotHandler):
                 stderr,
             )
             # Fall back to in-chat reply with failure note
-            await self.sendMessage(
+            await self._sendStatsReply(
                 ensuredMessage,
-                messageText=f"{messageText}\n\n⚠ Генерация веб-страницы не удалась.",
-                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-                typingManager=typingManager,
+                await self._appendWebSuffix(brief, "⚠ Генерация веб-страницы не удалась."),
+                typingManager,
             )
             return
 
         # Parse stdout JSON
         try:
             result = json.loads(stdout)
-            pageId = result["id"]
+            pageId = result["pageId"]  # U12-5: key renamed from "id" to "pageId"
             url = result["url"]
         except (json.JSONDecodeError, KeyError) as e:
             logger.warning("stats-pages generate returned invalid JSON for chat %s: %s", targetChatId, e)
             # Fall back to in-chat reply with failure note
-            await self.sendMessage(
+            await self._sendStatsReply(
                 ensuredMessage,
-                messageText=f"{messageText}\n\n⚠ Генерация веб-страницы не удалась (неверный ответ).",
-                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-                typingManager=typingManager,
+                await self._appendWebSuffix(brief, "⚠ Генерация веб-страницы не удалась (неверный ответ)."),
+                typingManager,
             )
             return
 
-        # Compose full link
-        fullLink = f"{self._statsPagesBaseUrl.rstrip('/')}/{url}"
+        # Use the URL as-is (CLI returns verbatim URL)
+        fullLink = url
 
         # D14: Schedule deletion task on SUCCESSFUL generation
         try:
@@ -1698,11 +1673,10 @@ class StatsHandler(BaseBotHandler):
             # Accept orphaned page per R13, still deliver the link
 
         # Send reply with link
-        await self.sendMessage(
+        await self._sendStatsReply(
             ensuredMessage,
-            messageText=f"{messageText}\n\n📊 Страница: {fullLink}",
-            messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-            typingManager=typingManager,
+            await self._appendWebSuffix(brief, f"📊 Страница: {fullLink}"),
+            typingManager,
         )
 
     async def _dtStatsPagesCleanup(self, task: DelayedTask) -> None:
