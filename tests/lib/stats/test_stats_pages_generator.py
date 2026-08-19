@@ -121,6 +121,61 @@ class TestStatsPageGenerator:
         assert url == f"{pageId}.html"
         assert "/" not in url
 
+    def test_user_filter_annotation_in_llm_section(self, tmp_path) -> None:
+        """Test that user filter annotation appears in LLM section when userFilterApplied is true."""
+        generator = StatsPageGenerator(outputDir=tmp_path)
+
+        # Create sample LLM rows
+        llmRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"modelName": "gpt-4o"},
+                "metricKey": "request_count",
+                "metricValue": 10.0,
+            },
+        ]
+
+        # Test with userFilterApplied = True
+        payload: StatsPayload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {"llm_request": llmRows},
+            "userFilterApplied": True,
+        }
+
+        pageId, url = generator.generate(payload)
+        htmlContent = (tmp_path / url).read_text()
+
+        # Check that the annotation is present
+        assert "на уровне чата, не пользователя" in htmlContent
+
+        # Test with userFilterApplied = False (or absent)
+        payload2: StatsPayload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {"llm_request": llmRows},
+            "userFilterApplied": False,
+        }
+
+        pageId2, url2 = generator.generate(payload2)
+        htmlContent2 = (tmp_path / url2).read_text()
+
+        # Check that the annotation is NOT present
+        assert "на уровне чата, не пользователя" not in htmlContent2
+
     def test_generate_html_contains_required_sections(self, tmp_path) -> None:
         """Test that generated HTML contains all required meta information."""
         generator = StatsPageGenerator(outputDir=tmp_path)

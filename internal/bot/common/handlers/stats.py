@@ -442,7 +442,7 @@ class StatsHandler(BaseBotHandler):
 
         # Positional arguments (at most one: help OR chatId)
         positional: list[str] = []
-        options: dict[str, Optional[str]] = {}
+        options: dict[str, str] = {}
 
         # Parse tokens
         i = 0
@@ -494,7 +494,7 @@ class StatsHandler(BaseBotHandler):
             if positional[0] == "help" and len(options) > 0:
                 raise StatsUsageError("help не может сочетаться с другими аргументами")
             if positional[0] != "help":
-                # Token already validated as int at line 464, so this conversion cannot fail
+                # Token already validated as int at line ~484, so this conversion cannot fail
                 chatId = int(positional[0])
             else:
                 chatId = None
@@ -508,8 +508,8 @@ class StatsHandler(BaseBotHandler):
             raise StatsUsageError(f"Неизвестные опции: {', '.join(unknownOptions)}")
 
         # Parse options with defaults and validation
-        period: str = options.get("period", "7d")  # type: ignore[assignment]
-        section: str = options.get("section", "messages")  # type: ignore[assignment]
+        period: str = options.get("period", "7d")
+        section: str = options.get("section", "messages")
         if section not in ("messages", "commands", "tools", "llm", "all"):
             raise StatsUsageError(f"Неизвестный раздел: {section}. Используйте messages, commands, tools, llm, или all")
 
@@ -1182,6 +1182,9 @@ class StatsHandler(BaseBotHandler):
 
         if truncatedEventTypes:
             payload["truncatedEventTypes"] = truncatedEventTypes
+
+        if filterUserId is not None:
+            payload["userFilterApplied"] = True
 
         return payload
 

@@ -58,6 +58,7 @@ class StatsPayload(TypedDict):
             Keys: "message", "command", "llm_tool_call", "llm_request", "stt_request".
         chatList: For private chats, list of user's chats with message counts.
         truncatedEventTypes: List of event types that hit the 10000-row limit.
+        userFilterApplied: Whether a user filter (--user) was applied by the requester.
     """
 
     userId: str
@@ -71,6 +72,7 @@ class StatsPayload(TypedDict):
     rows: dict[str, list[StatsAggregateDict]]
     chatList: NotRequired[list[ChatListEntry]]
     truncatedEventTypes: NotRequired[list[str]]
+    userFilterApplied: NotRequired[bool]
 
 
 class StatsPageGenerator:
@@ -362,8 +364,9 @@ class StatsPageGenerator:
         # LLM section (llm_request + stt_request)
         llmRows = rows.get("llm_request", [])
         sttRows = rows.get("stt_request", [])
+        userFilterApplied = payload.get("userFilterApplied", False)
         if llmRows or sttRows:
-            sectionsHtml += self._renderLlmSection(llmRows, sttRows, periodType, truncatedEventTypes)
+            sectionsHtml += self._renderLlmSection(llmRows, sttRows, periodType, truncatedEventTypes, userFilterApplied)
 
         # Chat list for private chats
         chatListHtml = ""
@@ -754,6 +757,7 @@ class StatsPageGenerator:
         sttRows: list[StatsAggregateDict],
         periodType: str,
         truncatedEventTypes: list[str],
+        userFilterApplied: bool = False,
     ) -> str:
         """Render the LLM statistics section from raw rows.
 
@@ -762,6 +766,7 @@ class StatsPageGenerator:
             sttRows: Raw aggregate rows for stt_request events.
             periodType: Period granularity.
             truncatedEventTypes: List of event types that hit the 10000-row limit.
+            userFilterApplied: Whether a user filter was applied (for annotation).
 
         Returns:
             str: HTML for the LLM section.
@@ -798,6 +803,11 @@ class StatsPageGenerator:
         honestyLine = ""
         if self._shouldShowHonestyLine("llm_request", llmRows, truncatedEventTypes):
             honestyLine = '<p class="neutral">⚠ Результаты могут быть неполными (достигнут лимит запроса)</p>\n'
+
+        # User filter annotation (matches reply text pattern)
+        userFilterAnnotation = ""
+        if userFilterApplied:
+            userFilterAnnotation = '<p class="neutral">на уровне чата, не пользователя</p>\n'
 
         # STT subsection
         sttHtml = ""
@@ -849,6 +859,7 @@ class StatsPageGenerator:
                 Note: LLM counts cover interactive generation only (embeddings
                 and background requests excluded).
             </p>
+            {userFilterAnnotation}
             {chartHtml}
             <table>
                 <tr>
@@ -977,7 +988,7 @@ class StatsPageGenerator:
             nameEscaped = html.escape(name)
             rows += f"""                <tr>
                     <td>{nameEscaped}</td>
-                    <td class="metric">{self._formatNumber(value, decimals=2)}</td>
+                    <td class="metric">{self._formatNumber(value, decimals=0)}</td>
                 </tr>
 """
 
@@ -1089,11 +1100,11 @@ def handleDelete(args: argparse.Namespace) -> int:
         return 1
 
 
-def main() -> int:
-    """Main entry point for the stats-pages CLI.
+def buildParser() -> argparse.ArgumentParser:
+    """Build and return the argparse parser for the stats-pages CLI.
 
     Returns:
-        int: Exit code (0 for success, non-zero for failure).
+        argparse.ArgumentParser: Configured parser for stats-pages commands.
     """
     parser = argparse.ArgumentParser(
         description="Generate and delete statistics pages for Gromozeka.",
@@ -1134,6 +1145,16 @@ def main() -> int:
         type=str,
     )
 
+    return parser
+
+
+def main() -> int:
+    """Main entry point for the stats-pages CLI.
+
+    Returns:
+        int: Exit code (0 for success, non-zero for failure).
+    """
+    parser = buildParser()
     args = parser.parse_args()
 
     if args.command == "generate":

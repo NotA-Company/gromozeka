@@ -1434,13 +1434,15 @@ ttl-hours = 24                              # per-page deletion task delay (D14/
 ratelimiter-queue = "stats-pages"
 generate-command = [                        # D12; defaults point at the built-in generator (U8)
     "./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate",
-    "--user-id={user_id}", "--chat-id={chat_id}", "--platform={platform}",
+    # --user-id/--chat-id/--platform flags removed in shipped stats.toml (U12-9: CLI reads from stdin JSON)
     # operators may append "--base-url=https://example.com/stats" (U12-5)
 ]
 delete-command = [
     "./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}",
 ]
 ```
+
+> **NOTE**: The `generate-command` sketch above with `--user-id/--chat-id/--platform` placeholders was superseded by the shipped `configs/00-defaults/stats.toml` (U12-9: CLI reads these values from the stdin JSON payload, not from command-line flags). The historical sketch is retained for design intent; the actual shipped default contains no placeholder substitutions.
 
 No `output-dir` key exists (U7); no `base-url` key exists (U12-5 — the CLI
 owns URL composition via its `--base-url` argument): the CLI owns all storage

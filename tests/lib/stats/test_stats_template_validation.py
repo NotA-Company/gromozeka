@@ -6,8 +6,9 @@ substitution). This is a regression test for the seam bug where the template had
 --user-id/--chat-id/--platform flags that the CLI didn't accept.
 """
 
-import argparse
 from pathlib import Path
+
+import tomli  # tomllib is Python 3.11+, tomli is the backport
 
 # Compute repo root at module top for portability
 # tests/lib/stats/test_stats_template_validation.py → parents[3] = repo root
@@ -32,8 +33,6 @@ class TestStatsTemplateValidation:
         # Read the default stats config
         statsConfigPath = repoRoot / "configs" / "00-defaults" / "stats.toml"
         assert statsConfigPath.exists(), f"Config not found: {statsConfigPath}"
-
-        import tomli  # tomllib is Python 3.11+, tomli is the backport
 
         with statsConfigPath.open("rb") as f:
             config = tomli.load(f)
@@ -66,53 +65,17 @@ class TestStatsTemplateValidation:
             # Find "-m" and skip the module name after it
             if "-m" in resolvedArgv:
                 dashMIndex = resolvedArgv.index("-m")
-                cliArgs = resolvedArgv[dashMIndex + 2:]  # Skip "-m", "lib.stats.stats_pages"
+                cliArgs = resolvedArgv[dashMIndex + 2 :]  # Skip "-m", "lib.stats.stats_pages"
             else:
-                cliArgs = resolvedArgv[pythonIndex + 1:]
+                cliArgs = resolvedArgv[pythonIndex + 1 :]
         except ValueError:
             # Fallback: skip the first 3 elements (python, -m, module)
             cliArgs = resolvedArgv[3:]
 
-        # Now build the same argparse setup as generator.py::main()
-        # and parse the resolved argv
-        parser = argparse.ArgumentParser(
-            description="Generate and delete statistics pages for Gromozeka.",
-            prog="python -m lib.stats.stats_pages",
-        )
+        # Use the real parser from generator.py
+        from lib.stats.stats_pages.generator import buildParser
 
-        subparsers = parser.add_subparsers(dest="command", required=True, help="Command to execute")
-
-        # Generate command (must match generator.py)
-        generateParser = subparsers.add_parser("generate", help="Generate a statistics page from stdin JSON")
-        generateParser.add_argument(
-            "--base-url",
-            dest="baseUrl",
-            help="Base URL for constructing full URLs (e.g., https://example.com/pages)",
-            default=None,
-            type=str,
-        )
-        generateParser.add_argument(
-            "--output-dir",
-            dest="outputDir",
-            help="Output directory for generated HTML files",
-            default=".",
-            type=str,
-        )
-
-        # Delete command
-        deleteParser = subparsers.add_parser("delete", help="Delete a statistics page by ID")
-        deleteParser.add_argument(
-            "pageId",
-            help="Page ID (UUID filename stem)",
-            type=str,
-        )
-        deleteParser.add_argument(
-            "--output-dir",
-            dest="outputDir",
-            help="Directory containing the page files",
-            default=".",
-            type=str,
-        )
+        parser = buildParser()
 
         # Parse the resolved argv
         # If this raises SystemExit, the template has unrecognized arguments
@@ -136,8 +99,6 @@ class TestStatsTemplateValidation:
         # Read the default stats config
         statsConfigPath = repoRoot / "configs" / "00-defaults" / "stats.toml"
         assert statsConfigPath.exists(), f"Config not found: {statsConfigPath}"
-
-        import tomli
 
         with statsConfigPath.open("rb") as f:
             config = tomli.load(f)
@@ -163,27 +124,14 @@ class TestStatsTemplateValidation:
         # Extract only the subcommand and its arguments (skip Python invocation)
         try:
             dashMIndex = resolvedArgv.index("-m")
-            cliArgs = resolvedArgv[dashMIndex + 2:]  # Skip "-m", "lib.stats.stats_pages"
+            cliArgs = resolvedArgv[dashMIndex + 2 :]  # Skip "-m", "lib.stats.stats_pages"
         except ValueError:
             cliArgs = resolvedArgv[3:]  # Fallback: skip first 3 elements
 
-        # Build argparse setup (same as above)
-        parser = argparse.ArgumentParser(
-            description="Generate and delete statistics pages for Gromozeka.",
-            prog="python -m lib.stats.stats_pages",
-        )
+        # Use the real parser from generator.py
+        from lib.stats.stats_pages.generator import buildParser
 
-        subparsers = parser.add_subparsers(dest="command", required=True, help="Command to execute")
-
-        # Generate command
-        generateParser = subparsers.add_parser("generate", help="Generate a statistics page from stdin JSON")
-        generateParser.add_argument("--base-url", dest="baseUrl", default=None, type=str)
-        generateParser.add_argument("--output-dir", dest="outputDir", default=".", type=str)
-
-        # Delete command
-        deleteParser = subparsers.add_parser("delete", help="Delete a statistics page by ID")
-        deleteParser.add_argument("pageId", help="Page ID (UUID filename stem)", type=str)
-        deleteParser.add_argument("--output-dir", dest="outputDir", default=".", type=str)
+        parser = buildParser()
 
         # Parse the resolved argv
         try:
