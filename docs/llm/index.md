@@ -309,7 +309,7 @@ vanishingly rare in the Gromozeka codebase.
 | [`lib/yandex_search/`](../../lib/yandex_search/) | Yandex Search API client |
 | [`lib/geocode_maps/client.py`](../../lib/geocode_maps/client.py) | Geocode Maps API client |
 | [`lib/stats/`](../../lib/stats/) | Statistics collection library (`StatsStorage`, `NullStatsStorage`, `GLOBAL_CONSUMER_ID`; read-side `StatsAnalyzer` + period helpers in `analysis.py`) |
-| [`lib/stats/stats_pages/`](../../lib/stats/stats_pages/) | Module-invocable stats-page HTML generator: STDIN JSON → self-contained HTML file → stdout `{"id","url"}` (subprocess CLI contract), plus `launcher.runCliCommand` — the shared subprocess helper `StatsHandler` uses for both generation and TTL deletion; zero new deps |
+| [`lib/stats/stats_pages/`](../../lib/stats/stats_pages/) | Module-invocable stats-page HTML generator: STDIN JSON → self-contained HTML file → stdout `{"pageId","url"}` (subprocess CLI contract), plus `launcher.runCliCommand` — the shared subprocess helper `StatsHandler` uses for both generation and TTL deletion; zero new deps |
 | [`lib/ext_modules/`](../../lib/ext_modules/) | External custom modules (Grabliarium etc.) |
 | [`lib/divination/`](../../lib/divination/) | Tarot & runes pure-logic library (decks, layouts, drawing); used by `DivinationHandler` |
 | [`lib/sandbox/`](../../lib/sandbox/) | Sandboxed code execution (Docker + Python); `SandboxManager` singleton |

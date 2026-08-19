@@ -905,39 +905,43 @@ Self-contained HTML page generator for statistics display. Used by `StatsHandler
 
 | Path | Purpose |
 |---|---|
-| [`lib/stats/stats_pages/__init__.py`](../../lib/stats/stats_pages/__init__.py) | Package exports (`StatsPageGenerator`, `StatsPayload`, the section TypedDicts, `StatsCliError`/`StatsCliErrorReason`, `runCliCommand`) |
+| [`lib/stats/stats_pages/__init__.py`](../../lib/stats/stats_pages/__init__.py) | Package exports (`StatsPageGenerator`, `StatsPayload`, `ChatListEntry`, `StatsCliError`/`StatsCliErrorReason`, `runCliCommand`) |
 | [`lib/stats/stats_pages/__main__.py`](../../lib/stats/stats_pages/__main__.py) | Main entry point for module invocation |
-| [`lib/stats/stats_pages/generator.py`](../../lib/stats/stats_pages/generator.py) | Core generator class (`StatsPageGenerator`), section TypedDicts, CLI handlers |
+| [`lib/stats/stats_pages/generator.py`](../../lib/stats/stats_pages/generator.py) | Core generator class (`StatsPageGenerator`), `StatsPayload`/`ChatListEntry` TypedDicts, server-side grouping + SVG rendering, CLI handlers |
 | [`lib/stats/stats_pages/launcher.py`](../../lib/stats/stats_pages/launcher.py) | Shared subprocess helper used by BOTH generation and deletion: `runCliCommand(argv, *, stdinPayload=None, timeoutSeconds=30.0) -> (returncode, stdout, stderr)` (async; kill-on-timeout; stdout/stderr decoded with `errors="replace"`) and `StatsCliError` with `StatsCliErrorReason.TIMEOUT`/`SPAWN`. Mirrors the subprocess conventions of `internal/services/proxy/lifecycle.py`. |
 
 **CLI contract:**
 
-- `generate` — reads JSON payload from stdin (see `StatsPayload` TypedDict), writes a self-contained static HTML page (UUID filename, inline CSS, no external resources, no JS), prints `{"id": "<uuid>", "url": "<uuid>.html"}` to stdout. Accepts `--output-dir` flag (default `.`). The `--user-id`/`--chat-id`/`--platform` flags exist for metadata but are ignored — the CLI uses only the stdin payload.
+- `generate` — reads a raw-rows JSON payload from stdin (see `StatsPayload` TypedDict), renders a self-contained static HTML page server-side (UUID filename, inline CSS, inline SVG charts, no external resources, no JS), prints `{"pageId": "<uuid>", "url": ...}` to stdout. Flags: `--base-url` (when given, `url` = `baseUrl.rstrip("/") + "/" + <uuid>.html`; without it, `url` is the bare `<uuid>.html` filename) and `--output-dir` (default `.`).
 - `delete PAGE_ID` — removes a page by UUID filename stem, prints `{"deleted": 0\|1}` to stdout (0 = no such page, still a success exit). Accepts `--output-dir` flag.
 - Exit codes: 0 for success, nonzero for any failure (with a human-readable stderr line).
 - Failure modes: invalid JSON on stdin → nonzero exit + error message; missing required fields in payload → nonzero exit + error message; file write errors → nonzero exit + error message.
 
-**StatsPayload TypedDict** (required fields: `userId`, `chatId`, `chatTitle`, `chatType`, `platform`, `period`, `generatedAt`):
+**StatsPayload TypedDict** (stdin JSON contract — the bot applies ONLY scope/granularity/range filters and the 10000-row limit; ALL grouping, time-series construction, and rendering happens server-side in the generator):
 ```python
 class StatsPayload(TypedDict):
     userId: str                    # User ID who requested the page
     chatId: str                    # Chat ID the page is for
     chatTitle: str                 # Chat title or name
     chatType: str                  # "private", "group", or "channel"
-    platform: str                 # "telegram" or "max"
-    period: str                   # "1d", "7d", "30d", or "all"
-    generatedAt: str              # ISO-8601 UTC timestamp
-    sections: NotRequired[dict[str, dict[str, Any]]]  # Statistics sections
-    chatList: NotRequired[list[dict[str, Any]]]       # User's chat list (private scope)
+    platform: str                  # "telegram" or "max"
+    period: str                    # e.g., "6h", "7d", "2m", "all"
+    periodType: str                # "hourly", "daily", "monthly", or "total"
+    generatedAt: str               # ISO-8601 UTC timestamp
+    rows: dict[str, list[StatsAggregateDict]]
+                                   # raw aggregate rows keyed by eventType:
+                                   # "message", "command", "llm_tool_call",
+                                   # "llm_request", "stt_request"
+    chatList: NotRequired[list[ChatListEntry]]  # user's chats (private scope)
+    truncatedEventTypes: NotRequired[list[str]]  # eventTypes that hit the 10000-row limit
 ```
 
-**Sections** (optional, all nested under `sections` dict; each shape is a TypedDict exported from the package — `MessagesSectionData`, `CommandsSectionData`, `ToolsSectionData`, `LlmSectionData` with nested `SttSectionData`):
-- `messages` — `totalMessages`, `totalLength`, `userMessages`, `botMessages`, `historyMessages`, `avgLength`, `topUsers` (list of `(userId, count)` pairs), `topTypes` (list of `(type, count)` pairs), `possiblyIncomplete`
-- `commands` — `totalCommands`, `errorCommands`, `totalElapsed`, `avgElapsed`, `topCommands` (list of `(name, count)` pairs), `possiblyIncomplete`
-- `tools` — `totalCalls`, `errorCalls`, `totalElapsed`, `avgElapsed`, `topTools` (list of `(name, count)` pairs), `possiblyIncomplete`
-- `llm` — `totalRequests`, `errorRequests`, `inputTokens`, `outputTokens`, `totalTokens`, `totalElapsed`, `avgElapsed`, `topModels` (list of `(name, count)` pairs), `topProviders` (list of `(name, count)` pairs), `stt` (nested `SttSectionData`: `totalRequests`, `errorRequests`, `totalAudioDuration` (seconds), `totalElapsed`, `avgElapsed`, `topProviders`), `possiblyIncomplete`
+`ChatListEntry` (`chatId`, `title`, `messagesCount`) is the TypedDict for `chatList` rows. `rows` values are `StatsAggregateDict` (from [`lib/stats/types.py`](../../lib/stats/types.py)) — already consumer-filtered to the target chat by the bot, and user-filtered for the user-level event types (`message`, `command`, `llm_tool_call`) when a `--user` filter is active.
 
-`possiblyIncomplete` (on every section) is the D5 honesty flag set by `StatsHandler` when the underlying query hit its 10k-row limit; the generator renders it as a "results may be incomplete" line at the top of the affected section. `ChatListEntry` (`chatId`, `title`, `messagesCount`) is the TypedDict for `chatList` rows.
+**Rendering from raw rows** (no per-section view-model TypedDicts — those were deleted in the U12 raw-rows rework; the generator groups rows itself):
+- One section per eventType present in `rows`: messages, commands, tools (`llm_tool_call`), LLM (`llm_request` with an STT subsection for `stt_request`).
+- Each section gets an inline SVG bar chart of the time series built from the rows; `periodType == "total"` produces no time series (single sentinel bucket), so total-granularity pages skip charts. Hourly series are capped at 24 bars with an "… and N more" note.
+- Truncation honesty: a "results may be incomplete" line is rendered for a section when its eventType appears in `truncatedEventTypes` (recorded by the bot BEFORE consumer filtering, when the raw query returned exactly 10000 rows), with a fallback heuristic when the flag is absent.
 
 **HTML rendering:**
 - Self-contained: inline `<style>` block only, no `<link rel="stylesheet">`, no `<script src`, no CDN references.
@@ -948,14 +952,14 @@ class StatsPayload(TypedDict):
 - Responsive design: max-width 900px container, clean table layout, hover effects.
 
 **Integration with bot:**
-- Not imported as a handler dependency for state — pure lib package; `StatsHandler` imports only the TypedDicts and the launcher.
+- Not imported as a handler dependency for state — pure lib package; `StatsHandler` imports only the payload/entry TypedDicts and the launcher.
 - Generation and deletion both go through `launcher.runCliCommand` (one subprocess helper, per D11 "exactly once" at the subprocess level): stdin payload JSON, 30-second timeout, kill-on-timeout, `StatsCliError` on TIMEOUT/SPAWN.
-- The bot composes the full URL: `base-url + "/" + <url>` from the stdout JSON.
+- The bot uses the stdout `url` VERBATIM as the reply link — it never composes URLs itself. Full URLs come from putting `--base-url` in the configured `generate-command` template; without it the CLI returns the bare `<uuid>.html` filename.
 - Deletion is bot-managed via one-shot per-page `DelayedTaskFunction.STATS_PAGES_CLEANUP` tasks (scheduled after each successful generation; delay = `ttl-hours × 3600`; single attempt, no reschedule) — the CLI itself only provides the `delete` verb.
 
 **Tests:**
-- `tests/lib/stats/test_stats_pages_generator.py` — in-process generator tests (HTML structure, escaping, sections, file I/O, possiblyIncomplete honesty-line rendering).
-- `tests/lib/stats/test_stats_pages_cli.py` — subprocess CLI contract tests (stdin/stdout JSON, exit codes, help).
+- `tests/lib/stats/test_stats_pages_generator.py` — in-process generator tests with rows-shaped payloads (UUID filenames, base-URL construction, per-eventType grouping from raw rows, `sent`-direction split, top-users, SVG chart rendering for time series, file I/O, deletion).
+- `tests/lib/stats/test_stats_pages_cli.py` — subprocess CLI contract tests (`{"pageId","url"}` stdout, `--base-url` full-URL and bare-filename variants, missing-field and invalid-JSON nonzero exits, SVG present for time series / absent for `total`, delete verb).
 - `tests/lib/stats/test_stats_pages_launcher.py` — `runCliCommand` tests (success capture, stdin delivery, timeout kill, spawn failure → `StatsCliError`).
 
 ---

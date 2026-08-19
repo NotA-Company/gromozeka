@@ -92,8 +92,9 @@ class MyService:
 16. (if enabled) `DivinationHandler` — PARALLEL — tarot/runes divination
 17. (if enabled) `SandboxHandler` — PARALLEL — sandboxed code execution
 18. (if enabled) `ChatSearchHandler` — PARALLEL — chat search /search command
-19. (custom handlers via `CustomHandlerLoader`) — PARALLEL by default (configurable per-handler)
-20. `LLMMessageHandler` — SEQUENTIAL — **MUST BE LAST**
+19. (if enabled) `StatsHandler` — PARALLEL — usage statistics display (gated by `[stats].enabled`, registered after ChatSearchHandler, before custom handlers; see manager.py:612-619)
+20. (custom handlers via `CustomHandlerLoader`) — PARALLEL by default (configurable per-handler)
+21. `LLMMessageHandler` — SEQUENTIAL — **MUST BE LAST**
 
 **Return values:** Handlers return [`HandlerResultStatus`](../../internal/bot/common/handlers/base.py:81):
 - `FINAL` — stop chain, success

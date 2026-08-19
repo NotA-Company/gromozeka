@@ -18,7 +18,6 @@ ttl-hours = 24
 ratelimiter-queue = "stats-pages"
 generate-command = [
     "./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate",
-    "--user-id={user_id}", "--chat-id={chat_id}", "--platform={platform}",
 ]
 delete-command = [
     "./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}",
