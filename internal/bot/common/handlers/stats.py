@@ -33,16 +33,12 @@ from lib.rate_limiter import RateLimiterManager
 from lib.stats import StatsAnalyzer, computePeriodRange, mapPeriodArgToPeriodType
 from lib.stats.stats_pages import (
     ChatListEntry,
-    CommandsSectionData,
-    LlmSectionData,
-    MessagesSectionData,
     StatsCliError,
     StatsCliErrorReason,
     StatsPayload,
-    SttSectionData,
-    ToolsSectionData,
     runCliCommand,
 )
+from lib.stats.types import StatsAggregateDict
 
 from .base import BaseBotHandler
 
@@ -379,8 +375,7 @@ class StatsHandler(BaseBotHandler):
                 )
             except Exception as e:
                 logger.exception(f"Web mode failed for chat {targetChatId}: {e}")
-                # D15: Always send brief + failure note, never let exception escape
-                # Brief was already sent by _handleWebMode (rate-limit check or _buildStatsReply)
+                # D15: Note sent alone if exception occurred before brief was built (e.g., rate-limit check failed)
                 await self.sendMessage(
                     ensuredMessage,
                     messageText="⚠ Генерация веб-страницы не удалась.",
@@ -1075,6 +1070,7 @@ class StatsHandler(BaseBotHandler):
         chatType: ChatType,
         userId: int,
         periodArg: str,
+        section: str,
         periodType: str,
         periodStartFrom: Optional[str],
         periodStartTo: Optional[str],
@@ -1088,6 +1084,7 @@ class StatsHandler(BaseBotHandler):
             chatType: Type of the target chat.
             userId: Current user ID (for scope checks).
             periodArg: Original period argument string (for header label).
+            section: Section to display (for chat list condition).
             periodType: Period granularity for queries.
             periodStartFrom: ISO-8601 UTC start bound (None for 'all').
             periodStartTo: ISO-8601 UTC end bound (None for 'all').
@@ -1095,48 +1092,50 @@ class StatsHandler(BaseBotHandler):
             positionalChatIdUsed: Whether a positional chatId was provided.
 
         Returns:
-            StatsPayload dict with all required meta fields and sections.
+            StatsPayload dict with all required meta fields and raw rows.
         """
-        # Scope: group → this chat only, private → this chat or member chat
+
+        # Query all five event types
+        eventTypes = ["message", "command", "llm_tool_call", "llm_request", "stt_request"]
+        rows: dict[str, list[StatsAggregateDict]] = {eventType: [] for eventType in eventTypes}
+        truncatedEventTypes: list[str] = []
+
+        # Consumer filter for target chat (excludes __global__ and other chats)
         consumerFilter = {str(targetChatId)}
 
-        # Build sections data for all four sections
-        sectionsData: dict[str, MessagesSectionData | CommandsSectionData | ToolsSectionData | LlmSectionData] = {}
-        sectionsData["messages"] = await self._buildMessagesSectionData(
-            targetChatId=targetChatId,
-            periodType=periodType,
-            periodStartFrom=periodStartFrom,
-            periodStartTo=periodStartTo,
-            consumerFilter=consumerFilter,
-            filterUserId=filterUserId,
-        )
-        sectionsData["commands"] = await self._buildCommandsSectionData(
-            targetChatId=targetChatId,
-            periodType=periodType,
-            periodStartFrom=periodStartFrom,
-            periodStartTo=periodStartTo,
-            consumerFilter=consumerFilter,
-            filterUserId=filterUserId,
-        )
-        sectionsData["tools"] = await self._buildToolsSectionData(
-            targetChatId=targetChatId,
-            periodType=periodType,
-            periodStartFrom=periodStartFrom,
-            periodStartTo=periodStartTo,
-            consumerFilter=consumerFilter,
-            filterUserId=filterUserId,
-        )
-        sectionsData["llm"] = await self._buildLlmSectionData(
-            targetChatId=targetChatId,
-            periodType=periodType,
-            periodStartFrom=periodStartFrom,
-            periodStartTo=periodStartTo,
-            consumerFilter=consumerFilter,
-        )
+        for eventType in eventTypes:
+            storage = self.statsAggregationService.getQueryStorage(eventType)
+            queriedRows = await storage.query(
+                eventType=eventType,
+                periodType=periodType,
+                periodStartFrom=periodStartFrom,
+                periodStartTo=periodStartTo,
+                limit=10000,
+            )
 
-        # Chat list for private scope (match reply path condition)
+            # Track truncation BEFORE filtering (honesty line needs this)
+            if len(queriedRows) == 10000:
+                truncatedEventTypes.append(eventType)
+
+            # Filter by consumer label to exclude __global__ and other chats
+            analyzer = StatsAnalyzer(queriedRows)
+            analyzer = analyzer.filterByLabelIn("consumer", consumerFilter)
+
+            # Apply user filter for user-level event types only
+            if filterUserId is not None and eventType in ("message", "command", "llm_tool_call"):
+                analyzer = analyzer.filterByLabel("user_id", str(filterUserId))
+
+            rows[eventType] = analyzer.rows
+
+        # Chat list for private scope (match reply path condition exactly)
+        # Condition: private ∧ no user filter ∧ no positional chatId ∧ messages section
         chatList: list[ChatListEntry] = []
-        if chatType == ChatType.PRIVATE and filterUserId is None:
+        if (
+            chatType == ChatType.PRIVATE
+            and filterUserId is None
+            and positionalChatIdUsed is False
+            and section == "messages"
+        ):
             userChats = await self.getUserChats(userId)
             # Sort by messages_count descending, top 10
             userChats.sort(key=lambda c: c.get("messages_count", 0), reverse=True)
@@ -1144,7 +1143,7 @@ class StatsHandler(BaseBotHandler):
                 chatList.append(
                     {
                         "chatId": chat["chat_id"],
-                        "title": chat["title"] or f"#{chat['chat_id']}",
+                        "title": chat["title"] or chat["username"] or "",
                         "messagesCount": chat.get("messages_count", 0),
                     }
                 )
@@ -1165,311 +1164,26 @@ class StatsHandler(BaseBotHandler):
             except Exception:
                 pass
 
-        # Build payload (FIX 7: use chatType.value instead of ternary)
+        # Build payload with raw rows
         payload: StatsPayload = {
             "userId": str(userId),
             "chatId": str(targetChatId),
             "chatTitle": chatTitle,
-            "chatType": chatType.value,  # FIX 7: Use StrEnum value ("private"/"group"/"channel")
+            "chatType": chatType.value,
             "platform": self.botProvider.value,
             "period": periodArg,
+            "periodType": periodType,
             "generatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "sections": sectionsData,  # type: ignore[assignment]  # MessagesSectionData etc. are dict[str, Any]
+            "rows": rows,
         }
 
         if chatList:
-            payload["chatList"] = chatList  # type: ignore[assignment]  # ChatListEntry is dict[str, Any]
+            payload["chatList"] = chatList
+
+        if truncatedEventTypes:
+            payload["truncatedEventTypes"] = truncatedEventTypes
 
         return payload
-
-    async def _buildMessagesSectionData(
-        self,
-        targetChatId: int,
-        periodType: str,
-        periodStartFrom: Optional[str],
-        periodStartTo: Optional[str],
-        consumerFilter: set[str],
-        filterUserId: Optional[int],
-    ) -> MessagesSectionData:
-        """Build structured data for the messages section.
-
-        Args:
-            targetChatId: Chat to show stats for.
-            periodType: Period granularity for queries.
-            periodStartFrom: ISO-8601 UTC start bound (None for 'all').
-            periodStartTo: ISO-8601 UTC end bound (None for 'all').
-            consumerFilter: Consumer IDs to filter by.
-            filterUserId: Optional user ID filter for drill-down.
-
-        Returns:
-            Structured messages section data.
-        """
-        storage = self.statsAggregationService.getQueryStorage("message")
-        rows = await storage.query(
-            eventType="message",
-            periodType=periodType,
-            periodStartFrom=periodStartFrom,
-            periodStartTo=periodStartTo,
-            limit=10000,
-        )
-
-        # D5 honesty line: check if we hit the limit (FIX 5: add to payload)
-        possiblyIncomplete = len(rows) == 10000
-
-        analyzer = StatsAnalyzer(rows)
-        analyzer = analyzer.filterByLabelIn("consumer", consumerFilter)
-
-        # Apply user filter if specified
-        if filterUserId is not None:
-            analyzer = analyzer.filterByLabel("user_id", str(filterUserId))
-
-        # Direction breakdown
-        userCount = analyzer.filterByLabel("sent", "False").sumMetric("message_count")
-        botCount = analyzer.filterByLabel("sent", "True").sumMetric("message_count")
-
-        # History count
-        analyzerAll = analyzer
-        totalMessageCount = analyzerAll.sumMetric("message_count")
-        historyCount = totalMessageCount - userCount - botCount
-
-        # Total length
-        totalLength = analyzerAll.sumMetric("text_length")
-        avgLength = totalLength / max(totalMessageCount, 1)  # Compute average text length per message
-
-        # Top users (by message count)
-        topUsers = analyzerAll.filterByLabel("sent", "False").topN("user_id", "message_count", 3)
-
-        # Top message types
-        topTypes = analyzerAll.topN("message_type", "message_count", 3)
-
-        return {
-            "totalMessages": int(totalMessageCount),
-            "totalLength": int(totalLength),
-            "userMessages": int(userCount),
-            "botMessages": int(botCount),
-            "historyMessages": int(historyCount),
-            "avgLength": float(avgLength),
-            "topUsers": [[userIdStr, int(count)] for userIdStr, count in topUsers],
-            "topTypes": [[msgType, int(count)] for msgType, count in topTypes],
-            "possiblyIncomplete": possiblyIncomplete,  # FIX 5: add honesty flag
-        }
-
-    async def _buildCommandsSectionData(
-        self,
-        targetChatId: int,
-        periodType: str,
-        periodStartFrom: Optional[str],
-        periodStartTo: Optional[str],
-        consumerFilter: set[str],
-        filterUserId: Optional[int],
-    ) -> CommandsSectionData:
-        """Build structured data for the commands section.
-
-        Args:
-            targetChatId: Chat to show stats for.
-            periodType: Period granularity for queries.
-            periodStartFrom: ISO-8601 UTC start bound (None for 'all').
-            periodStartTo: ISO-8601 UTC end bound (None for 'all').
-            consumerFilter: Consumer IDs to filter by.
-            filterUserId: Optional user ID filter for drill-down.
-
-        Returns:
-            Structured commands section data.
-        """
-        storage = self.statsAggregationService.getQueryStorage("command")
-        rows = await storage.query(
-            eventType="command",
-            periodType=periodType,
-            periodStartFrom=periodStartFrom,
-            periodStartTo=periodStartTo,
-            limit=10000,
-        )
-
-        # D5 honesty line: check if we hit the limit (FIX 5: add to payload)
-        possiblyIncomplete = len(rows) == 10000
-
-        analyzer = StatsAnalyzer(rows)
-        analyzer = analyzer.filterByLabelIn("consumer", consumerFilter)
-
-        if filterUserId is not None:
-            analyzer = analyzer.filterByLabel("user_id", str(filterUserId))
-
-        totalCommands = analyzer.sumMetric("command_count")
-        errorCommands = analyzer.sumMetric("is_error")
-        totalElapsed = analyzer.sumMetric("elapsed_time")
-        avgElapsed = (
-            totalElapsed / max(totalCommands, 1) if totalCommands > 0 else 0.0
-        )  # Compute average elapsed time per command
-
-        topCommands = analyzer.topN("commandName", "command_count", 3)
-
-        return {
-            "totalCommands": int(totalCommands),
-            "errorCommands": int(errorCommands),
-            "totalElapsed": float(totalElapsed),
-            "avgElapsed": float(avgElapsed),
-            "topCommands": [[cmdName, int(count)] for cmdName, count in topCommands],
-            "possiblyIncomplete": possiblyIncomplete,  # FIX 5: add honesty flag
-        }
-
-    async def _buildToolsSectionData(
-        self,
-        targetChatId: int,
-        periodType: str,
-        periodStartFrom: Optional[str],
-        periodStartTo: Optional[str],
-        consumerFilter: set[str],
-        filterUserId: Optional[int],
-    ) -> ToolsSectionData:
-        """Build structured data for the tools section.
-
-        Args:
-            targetChatId: Chat to show stats for.
-            periodType: Period granularity for queries.
-            periodStartFrom: ISO-8601 UTC start bound (None for 'all').
-            periodStartTo: ISO-8601 UTC end bound (None for 'all').
-            consumerFilter: Consumer IDs to filter by.
-            filterUserId: Optional user ID filter for drill-down.
-
-        Returns:
-            Structured tools section data.
-        """
-        storage = self.statsAggregationService.getQueryStorage("llm_tool_call")
-        rows = await storage.query(
-            eventType="llm_tool_call",
-            periodType=periodType,
-            periodStartFrom=periodStartFrom,
-            periodStartTo=periodStartTo,
-            limit=10000,
-        )
-
-        # D5 honesty line: check if we hit the limit (FIX 5: add to payload)
-        possiblyIncomplete = len(rows) == 10000
-
-        analyzer = StatsAnalyzer(rows)
-        analyzer = analyzer.filterByLabelIn("consumer", consumerFilter)
-
-        if filterUserId is not None:
-            analyzer = analyzer.filterByLabel("user_id", str(filterUserId))
-
-        totalCalls = analyzer.sumMetric("tool_call_count")
-        errorCalls = analyzer.sumMetric("is_error")
-        totalElapsed = analyzer.sumMetric("elapsed_time")
-        avgElapsed = (
-            totalElapsed / max(totalCalls, 1) if totalCalls > 0 else 0.0
-        )  # Compute average elapsed time per tool call
-
-        topTools = analyzer.topN("toolName", "tool_call_count", 3)
-
-        return {
-            "totalCalls": int(totalCalls),
-            "errorCalls": int(errorCalls),
-            "totalElapsed": float(totalElapsed),
-            "avgElapsed": float(avgElapsed),
-            "topTools": [[toolName, int(count)] for toolName, count in topTools],
-            "possiblyIncomplete": possiblyIncomplete,  # FIX 5: add honesty flag
-        }
-
-    async def _buildLlmSectionData(
-        self,
-        targetChatId: int,
-        periodType: str,
-        periodStartFrom: Optional[str],
-        periodStartTo: Optional[str],
-        consumerFilter: set[str],
-    ) -> LlmSectionData:
-        """Build structured data for the LLM section.
-
-        Args:
-            targetChatId: Chat to show stats for.
-            periodType: Period granularity for queries.
-            periodStartFrom: ISO-8601 UTC start bound (None for 'all').
-            periodStartTo: ISO-8601 UTC end bound (None for 'all').
-            consumerFilter: Consumer IDs to filter by.
-
-        Returns:
-            Structured LLM section data.
-        """
-        storage = self.statsAggregationService.getQueryStorage("llm_request")
-        rows = await storage.query(
-            eventType="llm_request",
-            periodType=periodType,
-            periodStartFrom=periodStartFrom,
-            periodStartTo=periodStartTo,
-            limit=10000,
-        )
-
-        # D5 honesty line: check if we hit the limit (FIX 5: add to payload)
-        possiblyIncomplete = len(rows) == 10000
-
-        analyzer = StatsAnalyzer(rows)
-        analyzer = analyzer.filterByLabelIn("consumer", consumerFilter)
-
-        totalRequests = analyzer.sumMetric("request_count")
-        errorRequests = analyzer.sumMetric("is_error")
-        totalInputTokens = analyzer.sumMetric("input_tokens")
-        totalOutputTokens = analyzer.sumMetric("output_tokens")
-        totalElapsed = analyzer.sumMetric("elapsed_time")
-        avgElapsed = (
-            totalElapsed / max(totalRequests, 1) if totalRequests > 0 else 0.0
-        )  # Compute average elapsed time per LLM request
-
-        topModels = analyzer.topN("modelName", "request_count", 3)
-        topProviders = analyzer.topN("provider", "request_count", 3)
-
-        # STT stats
-        sttStorage = self.statsAggregationService.getQueryStorage("stt_request")
-        sttRows = await sttStorage.query(
-            eventType="stt_request",
-            periodType=periodType,
-            periodStartFrom=periodStartFrom,
-            periodStartTo=periodStartTo,
-            limit=10000,
-        )
-
-        sttData: SttSectionData | None = None
-        if sttRows:
-            sttAnalyzer = StatsAnalyzer(sttRows)
-            sttAnalyzer = sttAnalyzer.filterByLabelIn("consumer", consumerFilter)
-
-            # D5 honesty line: check if we hit the limit
-            possiblyIncompleteStt = len(sttRows) == 10000
-
-            totalSttRequests = sttAnalyzer.sumMetric("request_count")
-            errorSttRequests = sttAnalyzer.sumMetric("is_error")
-            totalAudioDurationMs = sttAnalyzer.sumMetric("audio_duration_ms")
-            totalSttElapsedTime = sttAnalyzer.sumMetric("elapsed_time")
-            avgSttTime = totalSttElapsedTime / max(totalSttRequests, 1) if totalSttRequests > 0 else 0.0
-
-            sttData = {
-                "totalRequests": int(totalSttRequests),
-                "errorRequests": int(errorSttRequests),
-                "totalAudioDuration": float(totalAudioDurationMs / 1000.0),
-                "totalElapsed": float(totalSttElapsedTime),
-                "avgElapsed": float(avgSttTime),
-                "topProviders": [
-                    [provider, int(count)] for provider, count in sttAnalyzer.topN("provider", "request_count", 3)
-                ],
-                "possiblyIncomplete": possiblyIncompleteStt,
-            }
-
-        result: LlmSectionData = {
-            "totalRequests": int(totalRequests),
-            "errorRequests": int(errorRequests),
-            "inputTokens": int(totalInputTokens),
-            "outputTokens": int(totalOutputTokens),
-            "totalTokens": int(totalInputTokens + totalOutputTokens),
-            "totalElapsed": float(totalElapsed),
-            "avgElapsed": float(avgElapsed),
-            "topModels": [[model, int(count)] for model, count in topModels],
-            "topProviders": [[provider, int(count)] for provider, count in topProviders],
-            "possiblyIncomplete": possiblyIncomplete,  # FIX 5: add honesty flag
-        }
-
-        if sttData is not None:
-            result["stt"] = sttData
-
-        return result
 
     async def _appendWebSuffix(self, messageText: str | list[str], suffix: str) -> str | list[str]:
         """Append a suffix to messageText, handling both str and list[str] shapes.
@@ -1563,6 +1277,7 @@ class StatsHandler(BaseBotHandler):
                 chatType=chatType,
                 userId=userId,
                 periodArg=periodArg,
+                section=section,
                 periodType=periodType,
                 periodStartFrom=periodStartFrom,
                 periodStartTo=periodStartTo,

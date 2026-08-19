@@ -459,48 +459,36 @@ class TestChatUsersBotStatusFiltering:
     async def test_getUserChats_userIdJoinQualification(self, testDatabase) -> None:
         """getUserChats properly qualifies user_id in JOIN (I3-7).
 
-        Regression test for cu.user_id JOIN qualification: ensures that when
-        user_id exists in both chat_info and chat_users tables, the JOIN is
-        properly qualified to avoid column ambiguity errors.
+        Behavior test for cu.user_id JOIN qualification: ensures that user_id
+        references in the SELECT clause are properly qualified to avoid
+        column ambiguity, since chat_info and chat_users are joined and
+        both reference users but only chat_users has a user_id column.
 
-        This test seeds data where both tables have a user_id column and
-        verifies getUserChats returns correct rows without crashing.
+        This test seeds chat_info and chat_users data, then verifies
+        getUserChats returns correct rows with properly qualified columns.
 
         Args:
             testDatabase: Database fixture with initialized tables.
         """
-        # Create chat_info entries with user_id in both tables
+        # Create chat_info entries (no user_id column in chat_info)
         provider = await testDatabase.manager.getProvider(readonly=False)
         await provider.execute(
             "INSERT INTO chat_info "
-            "(chat_id, title, username, type, is_forum, bot_status, created_at, updated_at) "
+            "(chat_id, title, username, type, is_forum, created_at, updated_at) "
             "VALUES "
-            "(100, 'Chat 1', 'chat1', 'group', 0, 'active', "
-            "datetime('now'), datetime('now'))"
-        )
-        provider = await testDatabase.manager.getProvider(readonly=False)
-        await provider.execute(
-            "INSERT INTO chat_info "
-            "(chat_id, title, username, type, is_forum, bot_status, created_at, updated_at) "
-            "VALUES "
-            "(200, 'Chat 2', 'chat2', 'group', 0, 'active', "
+            "(100, 'Chat 1', 'chat1', 'group', 0, "
+            "datetime('now'), datetime('now')), "
+            "(200, 'Chat 2', 'chat2', 'group', 0, "
             "datetime('now'), datetime('now'))"
         )
 
         # Create chat_users entries with user_id = 100
-        # This creates the JOIN condition: both tables have user_id references
-        provider = await testDatabase.manager.getProvider(readonly=False)
+        # This creates the JOIN condition linking chats to user 100
         await provider.execute(
             "INSERT INTO chat_users "
             "(chat_id, user_id, username, full_name, messages_count, created_at, updated_at) "
             "VALUES "
-            "(100, 100, 'user100', 'User 100', 42, datetime('now'), datetime('now'))"
-        )
-        provider = await testDatabase.manager.getProvider(readonly=False)
-        await provider.execute(
-            "INSERT INTO chat_users "
-            "(chat_id, user_id, username, full_name, messages_count, created_at, updated_at) "
-            "VALUES "
+            "(100, 100, 'user100', 'User 100', 42, datetime('now'), datetime('now')), "
             "(200, 100, 'user100', 'User 100', 17, datetime('now'), datetime('now'))"
         )
 

@@ -1,18 +1,20 @@
 """Tests for the statistics page generator.
 
-Tests the HTML generation, file writing, and payload parsing.
-All tests use tmp_path for temporary output directories.
+Tests the HTML generation from raw aggregate rows, file writing, and
+payload parsing. All tests use tmp_path for temporary output directories.
 """
 
 import io
 import json
+import re
 import sys
 from datetime import datetime, timezone
 
 import pytest
 
-from lib.stats.stats_pages import StatsPageGenerator, StatsPayload
+from lib.stats.stats_pages import ChatListEntry, StatsPageGenerator, StatsPayload
 from lib.stats.stats_pages.generator import readPayload
+from lib.stats.types import StatsAggregateDict
 
 
 class TestStatsPageGenerator:
@@ -29,8 +31,9 @@ class TestStatsPageGenerator:
             "chatType": "group",
             "platform": "telegram",
             "period": "7d",
+            "periodType": "daily",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
-            "sections": {},
+            "rows": {},
         }
 
         pageId, url = generator.generate(payload)
@@ -49,9 +52,110 @@ class TestStatsPageGenerator:
         assert "<!DOCTYPE html>" in htmlContent
         assert "</html>" in htmlContent
 
+    def test_generate_with_base_url_constructs_full_url(self, tmp_path) -> None:
+        """Test that baseUrl parameter constructs full URLs."""
+        generator = StatsPageGenerator(outputDir=tmp_path)
+
+        payload: StatsPayload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {},
+        }
+
+        baseUrl = "https://example.com/pages"
+        pageId, url = generator.generate(payload, baseUrl=baseUrl)
+
+        # Check URL is full URL
+        assert url == f"{baseUrl}/{pageId}.html"
+        assert "https://example.com/pages" in url
+        assert url.endswith(".html")
+
+    def test_generate_with_base_url_trailing_slash(self, tmp_path) -> None:
+        """Test that baseUrl with trailing slash is handled correctly."""
+        generator = StatsPageGenerator(outputDir=tmp_path)
+
+        payload: StatsPayload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {},
+        }
+
+        baseUrl = "https://example.com/pages/"
+        pageId, url = generator.generate(payload, baseUrl=baseUrl)
+
+        # Should not have double slashes
+        assert url == f"https://example.com/pages/{pageId}.html"
+        assert "//pages" not in url  # No double slash before pages
+
+    def test_generate_without_base_url_returns_filename(self, tmp_path) -> None:
+        """Test that without baseUrl, only the filename is returned."""
+        generator = StatsPageGenerator(outputDir=tmp_path)
+
+        payload: StatsPayload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {},
+        }
+
+        pageId, url = generator.generate(payload, baseUrl=None)
+
+        # URL should just be the filename
+        assert url == f"{pageId}.html"
+        assert "/" not in url
+
     def test_generate_html_contains_required_sections(self, tmp_path) -> None:
         """Test that generated HTML contains all required meta information."""
         generator = StatsPageGenerator(outputDir=tmp_path)
+
+        # Create sample message rows
+        messageRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"sent": "True", "user_id": "alice"},
+                "metricKey": "message_count",
+                "metricValue": 30.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"sent": "True", "user_id": "bob"},
+                "metricKey": "message_count",
+                "metricValue": 25.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"sent": "False"},
+                "metricKey": "message_count",
+                "metricValue": 20.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"message_type": "text"},
+                "metricKey": "message_count",
+                "metricValue": 75.0,
+            },
+        ]
 
         payload: StatsPayload = {
             "userId": "user123",
@@ -60,19 +164,9 @@ class TestStatsPageGenerator:
             "chatType": "group",
             "platform": "telegram",
             "period": "30d",
+            "periodType": "daily",
             "generatedAt": "2026-08-18T10:30:00+00:00",
-            "sections": {
-                "messages": {
-                    "totalMessages": 100,
-                    "totalLength": 5000,
-                    "userMessages": 80,
-                    "botMessages": 20,
-                    "historyMessages": 0,
-                    "avgLength": 50.0,
-                    "topUsers": [("Alice", 30), ("Bob", 25), ("Carol", 15)],
-                    "topTypes": [("text", 80), ("image", 20)],
-                },
-            },
+            "rows": {"message": messageRows},
         }
 
         pageId, url = generator.generate(payload)
@@ -84,14 +178,13 @@ class TestStatsPageGenerator:
         assert "user123" in htmlContent
         assert "telegram" in htmlContent
         assert "30d" in htmlContent
+        assert "daily" in htmlContent
         assert "UTC" in htmlContent
         assert "2026-08-18" in htmlContent
 
         # Check messages section
         assert "💬 Messages" in htmlContent
-        assert "100" in htmlContent
-        assert "80" in htmlContent
-        assert "20" in htmlContent
+        assert "75" in htmlContent  # total messages
 
     def test_generate_html_has_inline_css_no_external_resources(self, tmp_path) -> None:
         """Test that generated HTML has inline CSS and no external resources."""
@@ -104,8 +197,9 @@ class TestStatsPageGenerator:
             "chatType": "group",
             "platform": "telegram",
             "period": "7d",
+            "periodType": "daily",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
-            "sections": {},
+            "rows": {},
         }
 
         pageId, url = generator.generate(payload)
@@ -141,19 +235,9 @@ class TestStatsPageGenerator:
             "chatType": "group",
             "platform": "telegram",
             "period": "7d",
+            "periodType": "daily",
             "generatedAt": hostileGeneratedAt,
-            "sections": {
-                "messages": {
-                    "totalMessages": 0,
-                    "totalLength": 0,
-                    "userMessages": 0,
-                    "botMessages": 0,
-                    "historyMessages": 0,
-                    "avgLength": 0.0,
-                    "topUsers": [("User & Bob", 10)],
-                    "topTypes": [],
-                },
-            },
+            "rows": {},
         }
 
         pageId, url = generator.generate(payload)
@@ -176,6 +260,106 @@ class TestStatsPageGenerator:
         """Test generation with all sections present."""
         generator = StatsPageGenerator(outputDir=tmp_path)
 
+        # Create sample rows for each event type
+        messageRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"user_id": "alice"},
+                "metricKey": "message_count",
+                "metricValue": 80.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "text_length",
+                "metricValue": 5000.0,
+            },
+        ]
+
+        commandRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"commandName": "/help"},
+                "metricKey": "command_count",
+                "metricValue": 20.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"commandName": "/stats"},
+                "metricKey": "command_count",
+                "metricValue": 15.0,
+            },
+        ]
+
+        toolRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"toolName": "search"},
+                "metricKey": "tool_call_count",
+                "metricValue": 20.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "elapsed_time",
+                "metricValue": 15.5,
+            },
+        ]
+
+        llmRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"modelName": "gpt-4o"},
+                "metricKey": "request_count",
+                "metricValue": 15.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "input_tokens",
+                "metricValue": 10000.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "output_tokens",
+                "metricValue": 5000.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "elapsed_time",
+                "metricValue": 10.0,
+            },
+        ]
+
+        sttRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "request_count",
+                "metricValue": 5.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "audio_duration_ms",
+                "metricValue": 120000.0,  # 120 seconds
+            },
+        ]
+
         payload: StatsPayload = {
             "userId": "user123",
             "chatId": "chat456",
@@ -183,46 +367,14 @@ class TestStatsPageGenerator:
             "chatType": "group",
             "platform": "telegram",
             "period": "7d",
+            "periodType": "daily",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
-            "sections": {
-                "messages": {
-                    "totalMessages": 100,
-                    "totalLength": 5000,
-                    "userMessages": 80,
-                    "botMessages": 20,
-                    "historyMessages": 0,
-                    "avgLength": 50.0,
-                    "topUsers": [("Alice", 30), ("Bob", 25), ("Carol", 15)],
-                    "topTypes": [("text", 80), ("image", 20)],
-                },
-                "commands": {
-                    "totalCommands": 50,
-                    "errorCommands": 5,
-                    "topCommands": [("/help", 20), ("/stats", 15), ("/users", 10)],
-                },
-                "tools": {
-                    "totalCalls": 30,
-                    "errorCalls": 2,
-                    "totalElapsed": 15.5,
-                    "avgElapsed": 0.517,
-                    "topTools": [("search", 20), ("python", 10)],
-                },
-                "llm": {
-                    "totalRequests": 20,
-                    "errorRequests": 1,
-                    "inputTokens": 10000,
-                    "outputTokens": 5000,
-                    "totalTokens": 15000,
-                    "totalElapsed": 10.0,
-                    "avgElapsed": 0.5,
-                    "topModels": [("gpt-4o", 15), ("claude-3", 5)],
-                    "topProviders": [("openai", 15), ("anthropic", 5)],
-                    "stt": {
-                        "totalRequests": 5,
-                        "errorRequests": 0,
-                        "totalAudioDuration": 120.0,
-                    },
-                },
+            "rows": {
+                "message": messageRows,
+                "command": commandRows,
+                "llm_tool_call": toolRows,
+                "llm_request": llmRows,
+                "stt_request": sttRows,
             },
         }
 
@@ -239,7 +391,6 @@ class TestStatsPageGenerator:
         assert "15,000" in htmlContent  # total tokens (formatted with commas)
         assert "10.00s" in htmlContent  # total time
         assert "gpt-4o" in htmlContent
-        assert "openai" in htmlContent
 
         # Check STT subsection within LLM
         assert "🎤 Speech-to-Text" in htmlContent
@@ -256,8 +407,9 @@ class TestStatsPageGenerator:
             "chatType": "private",
             "platform": "telegram",
             "period": "7d",
+            "periodType": "daily",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
-            "sections": {},
+            "rows": {},
             "chatList": [
                 {"chatId": -1001234567890, "title": "Group A", "messagesCount": 300},
                 {"chatId": -1009876543210, "title": "Group B", "messagesCount": 210},
@@ -288,8 +440,9 @@ class TestStatsPageGenerator:
             "chatType": "group",
             "platform": "telegram",
             "period": "7d",
+            "periodType": "daily",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
-            "sections": {},
+            "rows": {},
         }
 
         pageId, url = generator.generate(payload)
@@ -322,8 +475,9 @@ class TestStatsPageGenerator:
             "chatType": "group",
             "platform": "telegram",
             "period": "7d",
+            "periodType": "daily",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
-            "sections": {},
+            "rows": {},
         }
 
         # Generate multiple pages
@@ -351,8 +505,9 @@ class TestStatsPageGenerator:
             "chatType": "group",
             "platform": "telegram",
             "period": "7d",
+            "periodType": "daily",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
-            "sections": {},
+            "rows": {},
         }
 
         # Generate two pages
@@ -370,8 +525,8 @@ class TestStatsPageGenerator:
         # The content should be identical
         assert htmlContent1 == htmlContent2
 
-    def test_empty_sections_dont_break_generation(self, tmp_path) -> None:
-        """Test that empty sections don't break page generation."""
+    def test_empty_rows_render_empty_sections(self, tmp_path) -> None:
+        """Test that empty rows render sections with zeros."""
         generator = StatsPageGenerator(outputDir=tmp_path)
 
         payload: StatsPayload = {
@@ -381,37 +536,14 @@ class TestStatsPageGenerator:
             "chatType": "group",
             "platform": "telegram",
             "period": "7d",
+            "periodType": "daily",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
-            "sections": {
-                "messages": {
-                    "totalMessages": 0,
-                    "totalLength": 0,
-                    "userMessages": 0,
-                    "botMessages": 0,
-                    "historyMessages": 0,
-                    "avgLength": 0.0,
-                    "topUsers": [],
-                    "topTypes": [],
-                },
-                "commands": {"totalCommands": 0, "errorCommands": 0, "topCommands": []},
-                "tools": {
-                    "totalCalls": 0,
-                    "errorCalls": 0,
-                    "totalElapsed": 0.0,
-                    "avgElapsed": 0.0,
-                    "topTools": [],
-                },
-                "llm": {
-                    "totalRequests": 0,
-                    "errorRequests": 0,
-                    "inputTokens": 0,
-                    "outputTokens": 0,
-                    "totalTokens": 0,
-                    "totalElapsed": 0.0,
-                    "avgElapsed": 0.0,
-                    "topModels": [],
-                    "topProviders": [],
-                },
+            "rows": {
+                "message": [],
+                "command": [],
+                "llm_tool_call": [],
+                "llm_request": [],
+                "stt_request": [],
             },
         }
 
@@ -428,7 +560,9 @@ class TestStatsPageGenerator:
         generator = StatsPageGenerator(outputDir=tmp_path)
 
         # Create a chat list with more than 10 items
-        chatList = [{"chatId": -1000000000000 + i, "title": f"Chat {i}", "messagesCount": i * 10} for i in range(15)]
+        chatList: list[ChatListEntry] = [
+            {"chatId": -1000000000000 + i, "title": f"Chat {i}", "messagesCount": i * 10} for i in range(15)
+        ]
 
         payload: StatsPayload = {
             "userId": "user123",
@@ -437,8 +571,9 @@ class TestStatsPageGenerator:
             "chatType": "private",
             "platform": "telegram",
             "period": "7d",
+            "periodType": "daily",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
-            "sections": {},
+            "rows": {},
             "chatList": chatList,
         }
 
@@ -460,6 +595,23 @@ class TestStatsPageGenerator:
         """Test that large numbers are formatted with commas."""
         generator = StatsPageGenerator(outputDir=tmp_path)
 
+        messageRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "total",
+                "periodStart": "1970-01-01T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "message_count",
+                "metricValue": 1234567.0,
+            },
+            {
+                "periodType": "total",
+                "periodStart": "1970-01-01T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "text_length",
+                "metricValue": 9876543210.0,
+            },
+        ]
+
         payload: StatsPayload = {
             "userId": "user123",
             "chatId": "chat456",
@@ -467,30 +619,9 @@ class TestStatsPageGenerator:
             "chatType": "group",
             "platform": "telegram",
             "period": "7d",
+            "periodType": "total",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
-            "sections": {
-                "messages": {
-                    "totalMessages": 1234567,
-                    "totalLength": 9876543210,
-                    "userMessages": 987654,
-                    "botMessages": 246913,
-                    "historyMessages": 0,
-                    "avgLength": 7998.5,
-                    "topUsers": [],
-                    "topTypes": [],
-                },
-                "llm": {
-                    "totalRequests": 1000000,
-                    "errorRequests": 0,
-                    "inputTokens": 5000000000,
-                    "outputTokens": 2500000000,
-                    "totalTokens": 7500000000,
-                    "totalElapsed": 1000000.0,
-                    "avgElapsed": 1.0,
-                    "topModels": [],
-                    "topProviders": [],
-                },
-            },
+            "rows": {"message": messageRows},
         }
 
         pageId, url = generator.generate(payload)
@@ -499,19 +630,45 @@ class TestStatsPageGenerator:
         # Check that large numbers are formatted with commas
         assert "1,234,567" in htmlContent  # totalMessages
         assert "9,876,543,210" in htmlContent  # totalLength
-        assert "987,654" in htmlContent  # userMessages
-        assert "246,913" in htmlContent  # botMessages
-        assert "5,000,000,000" in htmlContent  # inputTokens
-        assert "2,500,000,000" in htmlContent  # outputTokens
-        assert "7,500,000,000" in htmlContent  # totalTokens
 
-    def test_large_top_lists_render_all_items(self, tmp_path) -> None:
-        """Test that top lists with >5 items render all items (no truncation)."""
+
+class TestGroupingCorrectness:
+    """Test server-side grouping correctness from raw rows."""
+
+    def test_message_section_grouping_by_sent(self, tmp_path) -> None:
+        """Test message section correctly groups by sent label."""
         generator = StatsPageGenerator(outputDir=tmp_path)
 
-        # Create top lists with >5 items
-        topUsers = [(f"User {i}", 100 - i) for i in range(10)]
-        topCommands = [(f"/command{i}", 50 - i) for i in range(7)]
+        messageRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"sent": "False", "user_id": "alice"},
+                "metricKey": "message_count",
+                "metricValue": 30.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"sent": "False", "user_id": "bob"},
+                "metricKey": "message_count",
+                "metricValue": 25.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"sent": "True", "user_id": "bot"},
+                "metricKey": "message_count",
+                "metricValue": 20.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},  # Backfill - no sent label
+                "metricKey": "message_count",
+                "metricValue": 5.0,
+            },
+        ]
 
         payload: StatsPayload = {
             "userId": "user123",
@@ -520,36 +677,573 @@ class TestStatsPageGenerator:
             "chatType": "group",
             "platform": "telegram",
             "period": "7d",
+            "periodType": "daily",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
-            "sections": {
-                "messages": {
-                    "totalMessages": 1000,
-                    "totalLength": 50000,
-                    "userMessages": 800,
-                    "botMessages": 200,
-                    "historyMessages": 0,
-                    "avgLength": 50.0,
-                    "topUsers": topUsers,
-                    "topTypes": [],
-                },
-                "commands": {
-                    "totalCommands": 100,
-                    "errorCommands": 0,
-                    "topCommands": topCommands,
-                },
-            },
+            "rows": {"message": messageRows},
         }
 
         pageId, url = generator.generate(payload)
         htmlContent = (tmp_path / url).read_text()
 
-        # Check ALL top users are present (10 users)
-        for i in range(10):
-            assert f"User {i}" in htmlContent
+        # Total messages: 30 + 25 + 20 + 5 = 80
+        assert re.search(r"Total Messages</td>\s*<td[^>]*>80<", htmlContent)
 
-        # Check ALL commands are present (7 commands)
-        for i in range(7):
-            assert f"/command{i}" in htmlContent
+        # User messages (sent=False): 30 + 25 = 55
+        assert re.search(r"User Messages</td>\s*<td[^>]*>55<", htmlContent)
+
+        # Bot messages (sent=True): 20
+        assert re.search(r"Bot Messages</td>\s*<td[^>]*>20<", htmlContent)
+
+        # History (no sent label): 5
+        assert re.search(r"History \(before stats enabled\)</td>\s*<td[^>]*>5<", htmlContent)
+
+    def test_message_section_average_length_calculation(self, tmp_path) -> None:
+        """Test message section correctly calculates average length."""
+        generator = StatsPageGenerator(outputDir=tmp_path)
+
+        messageRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "message_count",
+                "metricValue": 100.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "text_length",
+                "metricValue": 5000.0,
+            },
+        ]
+
+        payload: StatsPayload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {"message": messageRows},
+        }
+
+        pageId, url = generator.generate(payload)
+        htmlContent = (tmp_path / url).read_text()
+
+        # Average length: 5000 / 100 = 50.0
+        assert "50.00" in htmlContent
+
+    def test_message_section_top_users(self, tmp_path) -> None:
+        """Test message section correctly identifies top users."""
+        generator = StatsPageGenerator(outputDir=tmp_path)
+
+        messageRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"user_id": "alice", "sent": "False"},
+                "metricKey": "message_count",
+                "metricValue": 50.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"user_id": "bob", "sent": "False"},
+                "metricKey": "message_count",
+                "metricValue": 40.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"user_id": "carol", "sent": "False"},
+                "metricKey": "message_count",
+                "metricValue": 30.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"user_id": "bot", "sent": "True"},
+                "metricKey": "message_count",
+                "metricValue": 1000.0,  # Bot with many messages, should be excluded
+            },
+        ]
+
+        payload: StatsPayload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {"message": messageRows},
+        }
+
+        pageId, url = generator.generate(payload)
+        htmlContent = (tmp_path / url).read_text()
+
+        # Check top users table exists
+        assert "Top Users by Messages" in htmlContent
+
+        # Check all users are present
+        assert "alice" in htmlContent
+        assert "bob" in htmlContent
+        assert "carol" in htmlContent
+
+        # Bot has the highest count but must be absent from the Top Users table
+        topUsersMatch = re.search(r"Top Users by Messages.*?</table>", htmlContent, re.DOTALL)
+        assert topUsersMatch is not None
+        assert "<td>bot</td>" not in topUsersMatch.group(0)
+        assert "1,000" not in topUsersMatch.group(0)
+
+    def test_command_section_grouping(self, tmp_path) -> None:
+        """Test command section correctly groups metrics."""
+        generator = StatsPageGenerator(outputDir=tmp_path)
+
+        commandRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"commandName": "/help"},
+                "metricKey": "command_count",
+                "metricValue": 20.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"commandName": "/stats"},
+                "metricKey": "command_count",
+                "metricValue": 15.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"commandName": "/help"},
+                "metricKey": "is_error",
+                "metricValue": 1.0,
+            },
+        ]
+
+        payload: StatsPayload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {"command": commandRows},
+        }
+
+        pageId, url = generator.generate(payload)
+        htmlContent = (tmp_path / url).read_text()
+
+        # Total commands: 20 + 15 = 35
+        assert "35" in htmlContent
+
+        # Errors: 1
+        assert "1" in htmlContent
+
+        # Successful: 35 - 1 = 34
+        assert "34" in htmlContent
+
+    def test_tools_section_average_time(self, tmp_path) -> None:
+        """Test tools section correctly calculates average time."""
+        generator = StatsPageGenerator(outputDir=tmp_path)
+
+        toolRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "tool_call_count",
+                "metricValue": 10.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "elapsed_time",
+                "metricValue": 5.0,
+            },
+        ]
+
+        payload: StatsPayload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {"llm_tool_call": toolRows},
+        }
+
+        pageId, url = generator.generate(payload)
+        htmlContent = (tmp_path / url).read_text()
+
+        # Average time: 5.0 / 10 = 0.5
+        assert "0.50s" in htmlContent
+
+    def test_llm_section_token_totals(self, tmp_path) -> None:
+        """Test LLM section correctly totals input and output tokens."""
+        generator = StatsPageGenerator(outputDir=tmp_path)
+
+        llmRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "input_tokens",
+                "metricValue": 10000.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "output_tokens",
+                "metricValue": 5000.0,
+            },
+        ]
+
+        payload: StatsPayload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {"llm_request": llmRows},
+        }
+
+        pageId, url = generator.generate(payload)
+        htmlContent = (tmp_path / url).read_text()
+
+        # Check token counts
+        assert "10,000" in htmlContent  # input tokens
+        assert "5,000" in htmlContent  # output tokens
+        assert "15,000" in htmlContent  # total tokens
+
+
+class TestSvgCharts:
+    """Test inline SVG chart rendering."""
+
+    def test_svg_chart_rendered_for_hourly_data(self, tmp_path) -> None:
+        """Test that SVG chart is rendered for hourly time series."""
+        generator = StatsPageGenerator(outputDir=tmp_path)
+
+        messageRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "hourly",
+                "periodStart": "2026-08-18T10:00:00+00:00",
+                "labels": {},
+                "metricKey": "message_count",
+                "metricValue": 10.0,
+            },
+            {
+                "periodType": "hourly",
+                "periodStart": "2026-08-18T11:00:00+00:00",
+                "labels": {},
+                "metricKey": "message_count",
+                "metricValue": 20.0,
+            },
+            {
+                "periodType": "hourly",
+                "periodStart": "2026-08-18T12:00:00+00:00",
+                "labels": {},
+                "metricKey": "message_count",
+                "metricValue": 15.0,
+            },
+        ]
+
+        payload: StatsPayload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "3h",
+            "periodType": "hourly",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {"message": messageRows},
+        }
+
+        pageId, url = generator.generate(payload)
+        htmlContent = (tmp_path / url).read_text()
+
+        # Check SVG element is present
+        assert "<svg" in htmlContent
+        assert "</svg>" in htmlContent
+
+        # Check for bar elements
+        assert "<rect" in htmlContent
+
+    def test_no_svg_chart_for_total_granularity(self, tmp_path) -> None:
+        """Test that no SVG chart is rendered for total granularity."""
+        generator = StatsPageGenerator(outputDir=tmp_path)
+
+        messageRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "total",
+                "periodStart": "1970-01-01T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "message_count",
+                "metricValue": 100.0,
+            },
+        ]
+
+        payload: StatsPayload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "all",
+            "periodType": "total",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {"message": messageRows},
+        }
+
+        pageId, url = generator.generate(payload)
+        htmlContent = (tmp_path / url).read_text()
+
+        # Check NO SVG element is present
+        assert "<svg" not in htmlContent
+
+    def test_svg_chart_with_empty_time_series(self, tmp_path) -> None:
+        """Test that empty time series doesn't render chart."""
+        generator = StatsPageGenerator(outputDir=tmp_path)
+
+        payload: StatsPayload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {"message": []},
+        }
+
+        pageId, url = generator.generate(payload)
+        htmlContent = (tmp_path / url).read_text()
+
+        # Check NO SVG element is present (empty data)
+        assert "<svg" not in htmlContent
+
+
+class TestHonestyLine:
+    """Test honesty line rendering for 10000-row limit."""
+
+    def test_honesty_line_for_10000_rows(self, tmp_path) -> None:
+        """Test that honesty line appears when rows == 10000."""
+        generator = StatsPageGenerator(outputDir=tmp_path)
+
+        # Create exactly 10000 dummy rows
+        messageRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"user_id": f"user_{i}"},
+                "metricKey": "message_count",
+                "metricValue": 1.0,
+            }
+            for i in range(10000)
+        ]
+
+        payload: StatsPayload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {"message": messageRows},
+        }
+
+        pageId, url = generator.generate(payload)
+        htmlContent = (tmp_path / url).read_text()
+
+        # Check honesty line is present
+        assert "⚠ Результаты могут быть неполными (достигнут лимит запроса)" in htmlContent
+
+    def test_no_honesty_line_for_less_than_10000_rows(self, tmp_path) -> None:
+        """Test that honesty line does NOT appear when rows < 10000."""
+        generator = StatsPageGenerator(outputDir=tmp_path)
+
+        # Create only 9999 rows
+        messageRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"user_id": f"user_{i}"},
+                "metricKey": "message_count",
+                "metricValue": 1.0,
+            }
+            for i in range(9999)
+        ]
+
+        payload: StatsPayload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {"message": messageRows},
+        }
+
+        pageId, url = generator.generate(payload)
+        htmlContent = (tmp_path / url).read_text()
+
+        # Check honesty line is NOT present
+        assert "⚠ Результаты могут быть неполными (достигнут лимит запроса)" not in htmlContent
+
+    def test_honesty_line_from_truncatedEventTypes_with_sub_10000_rows(self, tmp_path) -> None:
+        """Test that honesty line appears from truncatedEventTypes flag with sub-10000 rows.
+
+        This tests the NEW path (not the len==10000 fallback) - proves the flag works
+        independently of row count.
+        """
+        generator = StatsPageGenerator(outputDir=tmp_path)
+
+        # Create only 50 rows (well below 10000)
+        messageRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"user_id": f"user_{i}"},
+                "metricKey": "message_count",
+                "metricValue": 1.0,
+            }
+            for i in range(50)
+        ]
+
+        payload: StatsPayload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {"message": messageRows},
+            "truncatedEventTypes": ["message"],  # Flag triggers honesty line despite sub-10000 rows
+        }
+
+        pageId, url = generator.generate(payload)
+        htmlContent = (tmp_path / url).read_text()
+
+        # Check honesty line IS present (from flag, not from row count)
+        assert "⚠ Результаты могут быть неполными (достигнут лимит запроса)" in htmlContent
+
+    def test_honesty_line_for_multiple_sections_from_truncatedEventTypes(self, tmp_path) -> None:
+        """Test that honesty line appears for multiple sections from truncatedEventTypes."""
+        generator = StatsPageGenerator(outputDir=tmp_path)
+
+        # Create sub-10000 rows for each section
+        commandRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"commandName": "/test"},
+                "metricKey": "command_count",
+                "metricValue": 1.0,
+            }
+            for _ in range(10)
+        ]
+
+        sttRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "request_count",
+                "metricValue": 1.0,
+            }
+            for _ in range(5)
+        ]
+
+        payload: StatsPayload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {
+                "command": commandRows,
+                "llm_request": [],
+                "stt_request": sttRows,
+            },
+            "truncatedEventTypes": ["command", "stt_request"],  # Multiple sections truncated
+        }
+
+        pageId, url = generator.generate(payload)
+        htmlContent = (tmp_path / url).read_text()
+
+        # Both sections should have honesty lines (verify no duplication)
+        # Count occurrences - should be exactly 2
+        count = htmlContent.count("⚠ Результаты могут быть неполными (достигнут лимит запроса)")
+        assert count == 2
+
+
+class TestLabelEscaping:
+    """Test that labels are properly escaped to prevent XSS."""
+
+    def test_hostile_labels_escaped_in_html(self, tmp_path) -> None:
+        """Test that hostile label values are properly escaped."""
+        generator = StatsPageGenerator(outputDir=tmp_path)
+
+        messageRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {
+                    "user_id": '<script>alert("xss")</script>',
+                    "sent": "False",
+                },
+                "metricKey": "message_count",
+                "metricValue": 10.0,
+            },
+        ]
+
+        payload: StatsPayload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {"message": messageRows},
+        }
+
+        pageId, url = generator.generate(payload)
+        htmlContent = (tmp_path / url).read_text()
+
+        # Check that the hostile string is NOT present
+        assert '<script>alert("xss")</script>' not in htmlContent
+
+        # Check that it's escaped
+        assert "&lt;script&gt;" in htmlContent
 
 
 class TestReadPayload:
@@ -564,7 +1258,9 @@ class TestReadPayload:
             "chatType": "group",
             "platform": "telegram",
             "period": "7d",
+            "periodType": "daily",
             "generatedAt": "2026-08-18T10:30:00+00:00",
+            "rows": {},
         }
 
         mockStdin = json.dumps(payloadDict)
@@ -576,9 +1272,9 @@ class TestReadPayload:
         try:
             payload = readPayload()
 
-            assert payload.get("userId") == "user123"
-            assert payload.get("chatId") == "chat456"
-            assert payload.get("chatTitle") == "Test Chat"
+            assert payload["userId"] == "user123"
+            assert payload["chatId"] == "chat456"
+            assert payload["chatTitle"] == "Test Chat"
         finally:
             sys.stdin = originalStdin
 
@@ -596,13 +1292,15 @@ class TestReadPayload:
 
     def test_read_missing_required_field_raises_error(self) -> None:
         """Test that missing required fields raise a ValueError."""
-        # Missing required field "period"
+        # Missing required field "rows"
         payloadDict = {
             "userId": "user123",
             "chatId": "chat456",
             "chatTitle": "Test Chat",
             "chatType": "group",
             "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
             "generatedAt": "2026-08-18T10:30:00+00:00",
         }
 
@@ -616,124 +1314,26 @@ class TestReadPayload:
         finally:
             sys.stdin = originalStdin
 
-    def test_rendering_possiblyIncomplete_flag(self, tmp_path) -> None:
-        """Test that possiblyIncomplete flag renders honesty line in sections."""
-        generator = StatsPageGenerator(outputDir=tmp_path)
-
-        payload: StatsPayload = {
+    def test_read_missing_period_type_raises_error(self) -> None:
+        """Test that missing periodType raises a ValueError."""
+        payloadDict = {
             "userId": "user123",
             "chatId": "chat456",
             "chatTitle": "Test Chat",
             "chatType": "group",
             "platform": "telegram",
             "period": "7d",
-            "generatedAt": datetime.now(timezone.utc).isoformat(),
-            "sections": {
-                "messages": {
-                    "totalMessages": 100,
-                    "totalLength": 5000,
-                    "userMessages": 80,
-                    "botMessages": 20,
-                    "historyMessages": 0,
-                    "avgLength": 50.0,
-                    "topUsers": [],
-                    "topTypes": [],
-                    "possiblyIncomplete": True,  # Flag set to True
-                },
-                "commands": {
-                    "totalCommands": 50,
-                    "errorCommands": 5,
-                    "topCommands": [],
-                    "possiblyIncomplete": False,  # Flag set to False
-                },
-                "tools": {
-                    "totalCalls": 30,
-                    "errorCalls": 2,
-                    "totalElapsed": 15.5,
-                    "avgElapsed": 0.517,
-                    "topTools": [],
-                    "possiblyIncomplete": True,  # Flag set to True
-                },
-                "llm": {
-                    "totalRequests": 20,
-                    "errorRequests": 1,
-                    "inputTokens": 10000,
-                    "outputTokens": 5000,
-                    "totalTokens": 15000,
-                    "totalElapsed": 10.0,
-                    "avgElapsed": 0.5,
-                    "topModels": [],
-                    "topProviders": [],
-                    "possiblyIncomplete": False,  # Flag set to False
-                },
-            },
+            # periodType missing
+            "generatedAt": "2026-08-18T10:30:00+00:00",
+            "rows": {},
         }
 
-        pageId, url = generator.generate(payload)
-        htmlContent = (tmp_path / url).read_text()
+        fakeStdin = io.StringIO(json.dumps(payloadDict))
+        originalStdin = sys.stdin
+        sys.stdin = fakeStdin
 
-        # Check that honesty line appears in sections with flag=True
-        assert "⚠ Результаты могут быть неполными (достигнут лимит запроса)" in htmlContent
-
-        # Check that messages section (flag=True) has honesty line
-        assert "💬 Messages" in htmlContent
-        messagesSectionStart = htmlContent.find("💬 Messages")
-        messagesSectionEnd = htmlContent.find("🔧 Commands", messagesSectionStart)
-        messagesHtml = htmlContent[messagesSectionStart:messagesSectionEnd]
-        assert "⚠ Результаты могут быть неполными (достигнут лимит запроса)" in messagesHtml
-
-        # Check that commands section (flag=False) does NOT have honesty line
-        assert "🔧 Commands" in htmlContent
-        commandsSectionStart = htmlContent.find("🔧 Commands")
-        commandsSectionEnd = htmlContent.find("🛠️ Tools", commandsSectionStart)
-        commandsHtml = htmlContent[commandsSectionStart:commandsSectionEnd]
-        assert "⚠ Результаты могут быть неполными (достигнут лимит запроса)" not in commandsHtml
-
-        # Check that tools section (flag=True) has honesty line
-        assert "🛠️ Tools" in htmlContent
-        toolsSectionStart = htmlContent.find("🛠️ Tools")
-        toolsSectionEnd = htmlContent.find("🧠 LLM", toolsSectionStart)
-        toolsHtml = htmlContent[toolsSectionStart:toolsSectionEnd]
-        assert "⚠ Результаты могут быть неполными (достигнут лимит запроса)" in toolsHtml
-
-        # Check that LLM section (flag=False) does NOT have honesty line
-        assert "🧠 LLM" in htmlContent
-        llmSectionStart = htmlContent.find("🧠 LLM")
-        llmHtml = htmlContent[llmSectionStart:]
-        assert "⚠ Результаты могут быть неполными (достигнут лимит запроса)" not in llmHtml
-
-        # Test with all flags=False - no honesty lines should appear
-        payload2: StatsPayload = {
-            "userId": "user123",
-            "chatId": "chat456",
-            "chatTitle": "Test Chat 2",
-            "chatType": "group",
-            "platform": "telegram",
-            "period": "7d",
-            "generatedAt": datetime.now(timezone.utc).isoformat(),
-            "sections": {
-                "messages": {
-                    "totalMessages": 100,
-                    "totalLength": 5000,
-                    "userMessages": 80,
-                    "botMessages": 20,
-                    "historyMessages": 0,
-                    "avgLength": 50.0,
-                    "topUsers": [],
-                    "topTypes": [],
-                    "possiblyIncomplete": False,
-                },
-                "commands": {
-                    "totalCommands": 50,
-                    "errorCommands": 5,
-                    "topCommands": [],
-                    "possiblyIncomplete": False,
-                },
-            },
-        }
-
-        pageId2, url2 = generator.generate(payload2)
-        htmlContent2 = (tmp_path / url2).read_text()
-
-        # No honesty lines should appear
-        assert "⚠ Результаты могут быть неполными (достигнут лимит запроса)" not in htmlContent2
+        try:
+            with pytest.raises(ValueError, match="Missing required field"):
+                readPayload()
+        finally:
+            sys.stdin = originalStdin

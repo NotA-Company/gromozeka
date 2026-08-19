@@ -8,7 +8,7 @@ import datetime
 import time
 import unittest.mock
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -1123,7 +1123,7 @@ class TestStatsHandlerWebTierConstruction:
 class TestStatsHandlerWebTierRateLimiting:
     """Tests for rate limiting in web mode (D13)."""
 
-    async def test_rate_limit_exceeded_sends_refusal_reply_no_cli_invocation(self):
+    async def test_rate_limit_applied_then_generation_proceeds(self):
         """U12-6: Rate limit is applyLimit-only - NO pre-check, NO refusal reply, just sleeps."""
 
         # Reset singleton
@@ -1989,8 +1989,6 @@ class TestStatsHandlerWebTierInterimBehavior:
         - Append the page link to the last chunk
         - NOT include list-repr artifacts in sent messages
         """
-        from unittest.mock import AsyncMock, MagicMock, patch
-
         # Reset singleton
         StatsAggregationService._instance = None
 
@@ -2031,8 +2029,9 @@ class TestStatsHandlerWebTierInterimBehavior:
                     "chatType": "private",
                     "platform": "telegram",
                     "period": "7d",
+                    "periodType": "daily",
                     "generatedAt": "2026-01-01T00:00:00Z",
-                    "sections": {"messages": {"totalMessages": 1000}},
+                    "rows": {},
                 }
             )
 
@@ -2085,8 +2084,6 @@ class TestStatsHandlerWebTierInterimBehavior:
         Regression test for ValueError escaping statsCommand when period is too large
         (would cause datetime(year > 9999) overflow).
         """
-        from unittest.mock import patch
-
         # Reset singleton
         StatsAggregationService._instance = None
 
@@ -2130,8 +2127,6 @@ class TestStatsHandlerWebTierInterimBehavior:
         Regression test for grammar tightening: +5d, 1_0h, and unicode digits
         should be rejected as usage errors.
         """
-        from unittest.mock import patch
-
         # Reset singleton
         StatsAggregationService._instance = None
 
@@ -2167,6 +2162,15 @@ class TestStatsHandlerWebTierInterimBehavior:
             callArgs = handler.sendMessage.call_args  # type: ignore[attr-defined]
             assert "❌ Неверный период: 1_0h" in callArgs.kwargs["messageText"]
 
+            # Test case 3: ٣d (Arabic-Indic digit should be rejected)
+            handler.sendMessage.reset_mock()  # type: ignore[attr-defined]
+            message = buildEnsuredMessage(chatId=123, chatType=ChatType.PRIVATE, userId=456)
+            await cast(Any, handler).statsCommand(
+                ensuredMessage=message, command="stats", args="--period=٣d", updateObj=None, typingManager=None
+            )
+            callArgs = handler.sendMessage.call_args  # type: ignore[attr-defined]
+            assert "❌ Неверный период: ٣d" in callArgs.kwargs["messageText"]
+
     async def testUserAtUsernameResolution(self) -> None:
         """Test --user=@username resolution (I3-3).
 
@@ -2176,8 +2180,6 @@ class TestStatsHandlerWebTierInterimBehavior:
         - @unknown → usage error reply
         - Bare --user (no value) → usage error
         """
-        from unittest.mock import patch
-
         # Reset singleton
         StatsAggregationService._instance = None
 
@@ -2233,8 +2235,6 @@ class TestStatsHandlerWebTierInterimBehavior:
 
     async def testUserBareArgumentError(self) -> None:
         """Test that bare --user (no value) triggers usage error (I3-3)."""
-        from unittest.mock import patch
-
         # Reset singleton
         StatsAggregationService._instance = None
 
@@ -2273,8 +2273,6 @@ class TestStatsHandlerWebTierInterimBehavior:
         - deleteMessage should be called once
         - NO stats reply should be sent
         """
-        from unittest.mock import patch
-
         # Reset singleton
         StatsAggregationService._instance = None
 
@@ -2321,8 +2319,6 @@ class TestStatsHandlerWebTierInterimBehavior:
         - Informative reply should be sent
         - deleteMessage should NOT be called
         """
-        from unittest.mock import patch
-
         # Reset singleton
         StatsAggregationService._instance = None
 
@@ -2371,8 +2367,6 @@ class TestStatsHandlerWebTierInterimBehavior:
         - All four sections should be rendered: messages, commands, tools, llm
         - This should trigger 4 storage query groups (one per section)
         """
-        from unittest.mock import patch
-
         # Reset singleton
         StatsAggregationService._instance = None
 

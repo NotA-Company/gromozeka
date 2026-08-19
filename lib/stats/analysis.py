@@ -49,7 +49,7 @@ def mapPeriodArgToPeriodType(periodArg: str) -> str:
     numberPart = periodArg[:-1]
 
     # Validate that numberPart consists only of ASCII digits (rejects +5d, 1_0h, unicode digits)
-    if not numberPart.isdigit():
+    if not (numberPart.isascii() and numberPart.isdigit()):
         raise ValueError(f"Invalid periodArg: {periodArg}")
 
     number = int(numberPart)
@@ -106,7 +106,7 @@ def computePeriodRange(
     numberPart = periodArg[:-1]
 
     # Validate that numberPart consists only of ASCII digits (rejects +5d, 1_0h, unicode digits)
-    if not numberPart.isdigit():
+    if not (numberPart.isascii() and numberPart.isdigit()):
         raise ValueError(f"Invalid periodArg: {periodArg}")
 
     number = int(numberPart)
@@ -165,6 +165,15 @@ class StatsAnalyzer:
             rows: List of StatsAggregateDict rows to analyze.
         """
         self._rows = rows
+
+    @property
+    def rows(self) -> list[StatsAggregateDict]:
+        """Get the current rows.
+
+        Returns:
+            List of StatsAggregateDict rows currently in the analyzer.
+        """
+        return self._rows
 
     def filterByLabelIn(self, key: str, values: set[str]) -> "StatsAnalyzer":
         """Filter rows where a label's value is in the given set.

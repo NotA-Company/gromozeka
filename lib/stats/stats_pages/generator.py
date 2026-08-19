@@ -1,8 +1,13 @@
 """Statistics page generator for Gromozeka.
 
-Provides HTML generation from stats view-model JSON and page lifecycle
+Provides HTML generation from raw aggregate row data and page lifecycle
 management. All dependencies are Python stdlib only (argparse, html, json,
 uuid, pathlib). No external resources, no JS dependencies.
+
+The generator accepts raw aggregate rows from the stat_aggregates table
+and performs server-side grouping, time-series construction, and rendering
+in pure Python. Inline SVG bar charts are rendered without external
+dependencies.
 """
 
 import argparse
@@ -10,157 +15,12 @@ import html
 import json
 import sys
 import uuid
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, NotRequired, TypedDict
+from typing import NotRequired, TypedDict
 
-
-class StatsPayload(TypedDict):
-    """Statistics view-model payload for page generation.
-
-    This is the JSON structure the bot passes to the CLI generator via stdin.
-    Contains metadata and section-level statistics for rendering.
-
-    Attributes:
-        userId: User ID who requested the page.
-        chatId: Chat ID the page is for.
-        chatTitle: Chat title or name.
-        chatType: Chat type ("private", "group", or "channel").
-        platform: Platform name ("telegram" or "max").
-        period: Period specifier ("1d", "7d", "30d", or "all").
-        generatedAt: ISO-8601 UTC timestamp of page generation.
-        sections: Dictionary containing statistics sections (messages, commands,
-            tools, llm, stt). Each section contains stats for that event type.
-        chatList: For private chats, list of user's chats with message counts.
-    """
-
-    userId: str
-    chatId: str
-    chatTitle: str
-    chatType: str
-    platform: str
-    period: str
-    generatedAt: str
-    sections: dict[str, dict[str, Any]]
-    chatList: NotRequired[list[dict[str, Any]]]
-
-
-class MessagesSectionData(TypedDict):
-    """Structured data for the messages section.
-
-    Attributes:
-        totalMessages: Total message count.
-        totalLength: Total character count across all messages.
-        userMessages: Count of messages sent by users.
-        botMessages: Count of messages sent by the bot.
-        historyMessages: Count of messages from before stats was enabled.
-        avgLength: Average message length in characters.
-        topUsers: Top 3 users by message count as [userId, count] pairs.
-        topTypes: Top 3 message types by count as [type, count] pairs.
-        possiblyIncomplete: Whether the query hit the 10k row limit.
-    """
-
-    totalMessages: int
-    totalLength: int
-    userMessages: int
-    botMessages: int
-    historyMessages: int
-    avgLength: float
-    topUsers: list[list[int | str]]
-    topTypes: list[list[str | int]]
-    possiblyIncomplete: NotRequired[bool]
-
-
-class CommandsSectionData(TypedDict):
-    """Structured data for the commands section.
-
-    Attributes:
-        totalCommands: Total command count.
-        errorCommands: Count of commands that errored.
-        totalElapsed: Total elapsed time in seconds.
-        avgElapsed: Average elapsed time in seconds.
-        topCommands: Top 3 commands by count as [commandName, count] pairs.
-        possiblyIncomplete: Whether the query hit the 10k row limit.
-    """
-
-    totalCommands: int
-    errorCommands: int
-    totalElapsed: float
-    avgElapsed: float
-    topCommands: list[list[str | int]]
-    possiblyIncomplete: NotRequired[bool]
-
-
-class ToolsSectionData(TypedDict):
-    """Structured data for the tools section.
-
-    Attributes:
-        totalCalls: Total tool call count.
-        errorCalls: Count of tool calls that errored.
-        totalElapsed: Total elapsed time in seconds.
-        avgElapsed: Average elapsed time in seconds.
-        topTools: Top 3 tools by count as [toolName, count] pairs.
-        possiblyIncomplete: Whether the query hit the 10k row limit.
-    """
-
-    totalCalls: int
-    errorCalls: int
-    totalElapsed: float
-    avgElapsed: float
-    topTools: list[list[str | int]]
-    possiblyIncomplete: NotRequired[bool]
-
-
-class SttSectionData(TypedDict):
-    """Structured data for the STT (speech-to-text) subsection.
-
-    Attributes:
-        totalRequests: Total STT request count.
-        errorRequests: Count of STT requests that errored.
-        totalAudioDuration: Total audio duration in seconds.
-        totalElapsed: Total elapsed time in seconds.
-        avgElapsed: Average elapsed time in seconds.
-        topProviders: Top 3 providers by count as [provider, count] pairs.
-        possiblyIncomplete: Whether the query hit the 10k row limit.
-    """
-
-    totalRequests: int
-    errorRequests: int
-    totalAudioDuration: float
-    totalElapsed: float
-    avgElapsed: float
-    topProviders: list[list[str | int]]
-    possiblyIncomplete: NotRequired[bool]
-
-
-class LlmSectionData(TypedDict):
-    """Structured data for the LLM section (including STT subsection).
-
-    Attributes:
-        totalRequests: Total LLM request count.
-        errorRequests: Count of LLM requests that errored.
-        inputTokens: Total input tokens.
-        outputTokens: Total output tokens.
-        totalTokens: Total tokens (input + output).
-        totalElapsed: Total elapsed time in seconds.
-        avgElapsed: Average elapsed time in seconds.
-        topModels: Top 3 models by count as [modelName, count] pairs.
-        topProviders: Top 3 providers by count as [provider, count] pairs.
-        stt: STT subsection data (speech-to-text stats).
-        possiblyIncomplete: Whether the query hit the 10k row limit.
-    """
-
-    totalRequests: int
-    errorRequests: int
-    inputTokens: int
-    outputTokens: int
-    totalTokens: int
-    totalElapsed: float
-    avgElapsed: float
-    topModels: list[list[str | int]]
-    topProviders: list[list[str | int]]
-    stt: NotRequired[SttSectionData]
-    possiblyIncomplete: NotRequired[bool]
+from lib.stats.types import StatsAggregateDict
 
 
 class ChatListEntry(TypedDict):
@@ -177,11 +37,49 @@ class ChatListEntry(TypedDict):
     messagesCount: int
 
 
-class StatsPageGenerator:
-    """Generates self-contained HTML statistics pages.
+class StatsPayload(TypedDict):
+    """Statistics payload for page generation (stdin JSON contract).
 
-    Reads a StatsPayload from JSON and produces a single static HTML file with
-    inline CSS. No external dependencies, no CDN links, no JavaScript.
+    This is the JSON structure the bot passes to the CLI generator via stdin.
+    Contains metadata and raw aggregate rows keyed by eventType. The bot
+    applies ONLY scope filters, granularity, range, and limit=10000; all
+    grouping, time-series construction, and rendering happens server-side.
+
+    Attributes:
+        userId: User ID who requested the page.
+        chatId: Chat ID the page is for.
+        chatTitle: Chat title or name.
+        chatType: Chat type ("private", "group", or "channel").
+        platform: Platform name ("telegram" or "max").
+        period: Period specifier (e.g., "7d", "6h", "2m", "all").
+        periodType: Period granularity ("hourly", "daily", "monthly", or "total").
+        generatedAt: ISO-8601 UTC timestamp of page generation.
+        rows: Dictionary keyed by eventType containing raw aggregate rows.
+            Keys: "message", "command", "llm_tool_call", "llm_request", "stt_request".
+        chatList: For private chats, list of user's chats with message counts.
+        truncatedEventTypes: List of event types that hit the 10000-row limit.
+    """
+
+    userId: str
+    chatId: str
+    chatTitle: str
+    chatType: str
+    platform: str
+    period: str
+    periodType: str
+    generatedAt: str
+    rows: dict[str, list[StatsAggregateDict]]
+    chatList: NotRequired[list[ChatListEntry]]
+    truncatedEventTypes: NotRequired[list[str]]
+
+
+class StatsPageGenerator:
+    """Generates self-contained HTML statistics pages from raw aggregate rows.
+
+    Reads a StatsPayload from JSON, performs server-side grouping and
+    time-series construction, and produces a single static HTML file with
+    inline CSS and inline SVG charts. No external dependencies, no CDN links,
+    no JavaScript.
 
     Attributes:
         outputDir: Directory where generated pages are stored.
@@ -197,16 +95,17 @@ class StatsPageGenerator:
         self.outputDir = Path(outputDir)
         self.outputDir.mkdir(parents=True, exist_ok=True)
 
-    def generate(self, payload: StatsPayload) -> tuple[str, str]:
+    def generate(self, payload: StatsPayload, baseUrl: str | None = None) -> tuple[str, str]:
         """Generate an HTML page from the payload.
 
         Args:
-            payload: Statistics view-model payload from stdin.
+            payload: Statistics payload with raw aggregate rows.
+            baseUrl: Optional base URL for constructing full URLs. If provided,
+                the returned URL will be baseUrl.rstrip("/") + "/" + filename.
 
         Returns:
-            tuple[str, str]: (pageId, relativeUrl) where pageId is the UUID
-                filename stem and relativeUrl is the filename with .html
-                extension.
+            tuple[str, str]: (pageId, url) where pageId is the UUID filename stem
+                and url is the full URL or bare filename depending on baseUrl.
 
         Raises:
             IOError: If the file cannot be written.
@@ -218,7 +117,13 @@ class StatsPageGenerator:
         htmlContent = self._renderHtml(payload)
         filePath.write_text(htmlContent, encoding="utf-8")
 
-        return pageId, filename
+        # Construct URL based on baseUrl
+        if baseUrl:
+            url = f"{baseUrl.rstrip('/')}/{filename}"
+        else:
+            url = filename
+
+        return pageId, url
 
     def delete(self, pageId: str) -> int:
         """Delete a page by ID.
@@ -235,23 +140,190 @@ class StatsPageGenerator:
             return 1
         return 0
 
+    def _groupRowsByMetric(self, rows: list[StatsAggregateDict]) -> dict[str, float]:
+        """Group rows by metricKey and sum metricValue.
+
+        Args:
+            rows: List of aggregate rows.
+
+        Returns:
+            Dictionary mapping metricKey to total sum.
+        """
+        grouped: dict[str, float] = defaultdict(float)
+        for row in rows:
+            grouped[row["metricKey"]] += row["metricValue"]
+        return dict(grouped)
+
+    def _shouldShowHonestyLine(
+        self, eventType: str, rows: list[StatsAggregateDict], truncatedEventTypes: list[str]
+    ) -> bool:
+        """Check if the truncation honesty line should be shown for a section.
+
+        The line appears when either:
+        - The eventType is explicitly in truncatedEventTypes (new path)
+        - The rows count is exactly 10000 (fallback legacy path)
+
+        Args:
+            eventType: The event type for this section (e.g., "message", "command").
+            rows: List of aggregate rows for this section.
+            truncatedEventTypes: List of event types that hit the 10000-row limit.
+
+        Returns:
+            bool: True if honesty line should be shown, False otherwise.
+        """
+        if eventType in truncatedEventTypes:
+            return True
+        if len(rows) == 10000:
+            return True
+        return False
+
+    def _buildTimeSeries(
+        self, rows: list[StatsAggregateDict], metricKey: str, periodType: str
+    ) -> list[tuple[str, float]]:
+        """Build a time series from rows for a specific metric.
+
+        Args:
+            rows: List of aggregate rows.
+            metricKey: The metric key to extract.
+            periodType: Period granularity ("hourly", "daily", "monthly", "total").
+
+        Returns:
+            List of (periodStart, value) tuples sorted by periodStart.
+            Empty list for "total" granularity or if no data.
+        """
+        if periodType == "total":
+            # No time series for total granularity (single sentinel bucket)
+            return []
+
+        timeSeries: dict[str, float] = defaultdict(float)
+        for row in rows:
+            if row["metricKey"] == metricKey:
+                timeSeries[row["periodStart"]] += row["metricValue"]
+
+        # Sort by periodStart (ISO strings compare lexicographically)
+        return sorted(timeSeries.items())
+
+    def _renderInlineSvgChart(self, timeSeries: list[tuple[str, float]], maxBars: int = 24) -> str:
+        """Render an inline SVG bar chart from time series data.
+
+        Args:
+            timeSeries: List of (periodStart, value) tuples.
+            maxBars: Maximum number of bars to render (for hourly data).
+
+        Returns:
+            SVG HTML string or empty string if no data.
+        """
+        if not timeSeries:
+            return ""
+
+        # Track truncation for caption
+        truncated = len(timeSeries) > maxBars
+        originalCount = len(timeSeries)
+
+        # Limit bars for hourly data to avoid overcrowding
+        if truncated:
+            timeSeries = timeSeries[-maxBars:]
+
+        # Find max value for scaling
+        maxValue = max(value for _, value in timeSeries)
+        if maxValue == 0:
+            return ""
+
+        # Chart dimensions
+        width = 600
+        height = 200
+        barWidth = (width - 100) / len(timeSeries)  # Leave space for labels
+        maxBarHeight = height - 40  # Leave space for axis labels
+
+        # Build SVG
+        svgParts = [
+            f'<svg width="{width}" height="{height}" '
+            f'viewBox="0 0 {width} {height}" '
+            'xmlns="http://www.w3.org/2000/svg">',
+            '<rect width="100%" height="100%" fill="#f8f9fa"/>',  # Background
+        ]
+
+        # Draw bars
+        for i, (periodStart, value) in enumerate(timeSeries):
+            barHeight = (value / maxValue) * maxBarHeight if maxValue > 0 else 0
+            x = 50 + i * barWidth
+            y = maxBarHeight - barHeight + 20
+
+            # Escape the value for display
+            valueEscaped = html.escape(str(int(value)))
+
+            svgParts.append(
+                f'<rect x="{x}" y="{y}" width="{barWidth - 2}" '
+                f'height="{barHeight}" fill="#3498db" '
+                f'stroke="#2980b9" stroke-width="1"/>'
+            )
+            svgParts.append(
+                f'<text x="{x + barWidth / 2}" y="{y - 5}" '
+                f'font-size="10" text-anchor="middle" '
+                f'fill="#2c3e50">{valueEscaped}</text>'
+            )
+
+        # X-axis labels (simplified - show first, middle, last)
+        if len(timeSeries) >= 3:
+            for i, (periodStart, _) in enumerate([timeSeries[0], timeSeries[len(timeSeries) // 2], timeSeries[-1]]):
+                x = 50 + i * (barWidth * (len(timeSeries) - 1) / 2)
+                # Extract just the time for display
+                if "T" in periodStart:
+                    label = periodStart.split("T")[1][:5]  # HH:MM
+                else:
+                    label = periodStart[:10]  # YYYY-MM-DD
+                labelEscaped = html.escape(label)
+                svgParts.append(
+                    f'<text x="{x + barWidth / 2}" y="{height - 5}" '
+                    f'font-size="9" text-anchor="middle" '
+                    f'fill="#7f8c8d">{labelEscaped}</text>'
+                )
+        elif timeSeries:
+            # Single point - show full timestamp
+            periodStart, _ = timeSeries[0]
+            if "T" in periodStart:
+                label = periodStart.split("T")[1][:5]
+            else:
+                label = periodStart[:10]
+            labelEscaped = html.escape(label)
+            x = 50 + barWidth / 2
+            svgParts.append(
+                f'<text x="{x}" y="{height - 5}" font-size="9" '
+                f'text-anchor="middle" fill="#7f8c8d">{labelEscaped}</text>'
+            )
+
+        svgParts.append("</svg>")
+
+        svg = "\n".join(svgParts)
+
+        # Add truncation caption if needed
+        if truncated:
+            remainingCount = originalCount - maxBars
+            svg += f'\n        <p class="neutral" style="margin-top: 10px;">… и ещё {remainingCount}</p>\n'
+
+        return svg
+
     def _renderHtml(self, payload: StatsPayload) -> str:
         """Render the complete HTML document.
 
         Args:
-            payload: Statistics view-model payload.
+            payload: Statistics payload with raw aggregate rows.
 
         Returns:
             str: Complete HTML document with inline CSS.
         """
-        # Extract payload fields with defaults
-        userId = payload.get("userId", "unknown")
-        chatId = payload.get("chatId", "unknown")
-        chatTitle = payload.get("chatTitle", "Unknown Chat")
-        chatType = payload.get("chatType", "unknown")
-        platform = payload.get("platform", "unknown")
-        period = payload.get("period", "unknown")
-        generatedAt = payload.get("generatedAt", datetime.now(timezone.utc).isoformat())
+        # Extract payload fields
+        userId = payload["userId"]
+        chatId = payload["chatId"]
+        chatTitle = payload["chatTitle"]
+        chatType = payload["chatType"]
+        platform = payload["platform"]
+        period = payload["period"]
+        periodType = payload["periodType"]
+        generatedAt = payload["generatedAt"]
+
+        rows = payload["rows"]
+        truncatedEventTypes = payload.get("truncatedEventTypes", [])
 
         # Parse generated_at for display
         try:
@@ -270,28 +342,28 @@ class StatsPageGenerator:
         platformEscaped = html.escape(platform)
         periodEscaped = html.escape(period)
         chatTypeEscaped = html.escape(chatType)
+        periodTypeEscaped = html.escape(periodType)
 
-        # Build sections HTML
+        # Build sections HTML from rows
         sectionsHtml = ""
-        sections = payload.get("sections", {})
 
-        # Messages section
-        if "messages" in sections:
-            sectionsHtml += self._renderMessagesSection(sections["messages"])
+        # Message section
+        if "message" in rows:
+            sectionsHtml += self._renderMessagesSection(rows["message"], periodType, truncatedEventTypes)
 
-        # Commands section
-        if "commands" in sections:
-            sectionsHtml += self._renderCommandsSection(sections["commands"])
+        # Command section
+        if "command" in rows:
+            sectionsHtml += self._renderCommandsSection(rows["command"], periodType, truncatedEventTypes)
 
-        # Tools section
-        if "tools" in sections:
-            sectionsHtml += self._renderToolsSection(sections["tools"])
+        # Tool calls section
+        if "llm_tool_call" in rows:
+            sectionsHtml += self._renderToolsSection(rows["llm_tool_call"], periodType, truncatedEventTypes)
 
-        # LLM section (includes STT per D6)
-        if "llm" in sections:
-            sectionsHtml += self._renderLlmSection(sections["llm"])
-        elif "stt" in sections:
-            sectionsHtml += self._renderSttSection(sections["stt"])
+        # LLM section (llm_request + stt_request)
+        llmRows = rows.get("llm_request", [])
+        sttRows = rows.get("stt_request", [])
+        if llmRows or sttRows:
+            sectionsHtml += self._renderLlmSection(llmRows, sttRows, periodType, truncatedEventTypes)
 
         # Chat list for private chats
         chatListHtml = ""
@@ -335,6 +407,12 @@ class StatsPageGenerator:
             margin-bottom: 15px;
             border-left: 4px solid #3498db;
             padding-left: 10px;
+        }}
+        h3 {{
+            color: #2c3e50;
+            margin-top: 20px;
+            margin-bottom: 10px;
+            font-size: 1.1em;
         }}
         .meta {{
             background-color: #ecf0f1;
@@ -394,6 +472,11 @@ class StatsPageGenerator:
             color: #e67e22;
             font-weight: 600;
         }}
+        svg {{
+            display: block;
+            margin: 20px 0;
+            max-width: 100%;
+        }}
     </style>
 </head>
 <body>
@@ -412,6 +495,9 @@ class StatsPageGenerator:
             <div class="meta-row">
                 <span class="meta-label">Period:</span> {periodEscaped}
                 <span class="utc">(UTC)</span>
+            </div>
+            <div class="meta-row">
+                <span class="meta-label">Granularity:</span> {periodTypeEscaped}
             </div>
             <div class="meta-row">
                 <span class="meta-label">Generated by:</span> {userIdEscaped}
@@ -437,35 +523,64 @@ class StatsPageGenerator:
 
         return htmlTemplate
 
-    def _renderMessagesSection(self, sectionData: dict[str, Any]) -> str:
-        """Render the messages statistics section.
+    def _renderMessagesSection(
+        self, rows: list[StatsAggregateDict], periodType: str, truncatedEventTypes: list[str]
+    ) -> str:
+        """Render the messages statistics section from raw rows.
 
         Args:
-            sectionData: Messages section data from the payload.
+            rows: Raw aggregate rows for message events.
+            periodType: Period granularity.
+            truncatedEventTypes: List of event types that hit the 10000-row limit.
 
         Returns:
             str: HTML for the messages section.
         """
-        totalMessages = sectionData.get("totalMessages", 0)
-        totalLength = sectionData.get("totalLength", 0)
-        userMessages = sectionData.get("userMessages", 0)
-        botMessages = sectionData.get("botMessages", 0)
-        historyMessages = sectionData.get("historyMessages", 0)
-        avgLength = sectionData.get("avgLength", 0.0)
-        topUsers = sectionData.get("topUsers", [])
-        topTypes = sectionData.get("topTypes", [])
-        possiblyIncomplete = sectionData.get("possiblyIncomplete", False)
+        # Group by metric
+        metrics = self._groupRowsByMetric(rows)
 
+        # Extract key metrics
+        totalMessages = int(metrics.get("message_count", 0))
+        totalLength = int(metrics.get("text_length", 0))
+
+        # Group by sent label (direction)
+        sentGroups: dict[str, float] = defaultdict(float)
+        for row in rows:
+            if row["metricKey"] == "message_count":
+                sent = row["labels"].get("sent", "")
+                sentGroups[sent] += row["metricValue"]
+
+        botMessages = int(sentGroups.get("True", 0))
+        userMessages = int(sentGroups.get("False", 0))
+        historyMessages = int(sentGroups.get("", 0))  # Backfill rows lack 'sent'
+
+        # Average message length (weighted by count)
+        avgLength = 0.0
+        if totalMessages > 0:
+            avgLength = totalLength / totalMessages
+
+        # Top users by message count (exclude bot rows)
+        userRows = [row for row in rows if row["labels"].get("sent") == "False"]
+        topUsers = self._groupRowsByLabelValue(userRows, "message_count", "user_id", 5)
         topUsersHtml = self._renderTopList("Top Users by Messages", topUsers)
+
+        # Top message types
+        topTypes = self._groupRowsByLabelValue(rows, "message_count", "message_type", 5)
         topTypesHtml = self._renderTopList("Top Message Types", topTypes)
 
+        # Time series chart
+        timeSeries = self._buildTimeSeries(rows, "message_count", periodType)
+        chartHtml = self._renderInlineSvgChart(timeSeries)
+
+        # Honesty line
         honestyLine = ""
-        if possiblyIncomplete:
+        if self._shouldShowHonestyLine("message", rows, truncatedEventTypes):
             honestyLine = '<p class="neutral">⚠ Результаты могут быть неполными (достигнут лимит запроса)</p>\n'
 
         return f"""        <div class="section">
             <h2>💬 Messages</h2>
             {honestyLine}
+            {chartHtml}
             <table>
                 <tr>
                     <th>Metric</th>
@@ -501,29 +616,43 @@ class StatsPageGenerator:
         </div>
 """
 
-    def _renderCommandsSection(self, sectionData: dict[str, Any]) -> str:
-        """Render the commands statistics section.
+    def _renderCommandsSection(
+        self, rows: list[StatsAggregateDict], periodType: str, truncatedEventTypes: list[str]
+    ) -> str:
+        """Render the commands statistics section from raw rows.
 
         Args:
-            sectionData: Commands section data from the payload.
+            rows: Raw aggregate rows for command events.
+            periodType: Period granularity.
+            truncatedEventTypes: List of event types that hit the 10000-row limit.
 
         Returns:
             str: HTML for the commands section.
         """
-        totalCommands = sectionData.get("totalCommands", 0)
-        errorCommands = sectionData.get("errorCommands", 0)
-        topCommands = sectionData.get("topCommands", [])
-        possiblyIncomplete = sectionData.get("possiblyIncomplete", False)
+        # Group by metric
+        metrics = self._groupRowsByMetric(rows)
 
+        # Extract key metrics
+        totalCommands = int(metrics.get("command_count", 0))
+        errorCommands = int(metrics.get("is_error", 0))
+
+        # Top commands by count
+        topCommands = self._groupRowsByLabelValue(rows, "command_count", "commandName", 10)
         topCommandsHtml = self._renderTopList("Top Commands", topCommands)
 
+        # Time series chart
+        timeSeries = self._buildTimeSeries(rows, "command_count", periodType)
+        chartHtml = self._renderInlineSvgChart(timeSeries)
+
+        # Honesty line
         honestyLine = ""
-        if possiblyIncomplete:
+        if self._shouldShowHonestyLine("command", rows, truncatedEventTypes):
             honestyLine = '<p class="neutral">⚠ Результаты могут быть неполными (достигнут лимит запроса)</p>\n'
 
         return f"""        <div class="section">
             <h2>🔧 Commands</h2>
             {honestyLine}
+            {chartHtml}
             <table>
                 <tr>
                     <th>Metric</th>
@@ -546,31 +675,49 @@ class StatsPageGenerator:
         </div>
 """
 
-    def _renderToolsSection(self, sectionData: dict[str, Any]) -> str:
-        """Render the tools statistics section.
+    def _renderToolsSection(
+        self, rows: list[StatsAggregateDict], periodType: str, truncatedEventTypes: list[str]
+    ) -> str:
+        """Render the tools statistics section from raw rows.
 
         Args:
-            sectionData: Tools section data from the payload.
+            rows: Raw aggregate rows for llm_tool_call events.
+            periodType: Period granularity.
+            truncatedEventTypes: List of event types that hit the 10000-row limit.
 
         Returns:
             str: HTML for the tools section.
         """
-        totalCalls = sectionData.get("totalCalls", 0)
-        errorCalls = sectionData.get("errorCalls", 0)
-        totalElapsed = sectionData.get("totalElapsed", 0.0)
-        avgElapsed = sectionData.get("avgElapsed", 0.0)
-        topTools = sectionData.get("topTools", [])
-        possiblyIncomplete = sectionData.get("possiblyIncomplete", False)
+        # Group by metric
+        metrics = self._groupRowsByMetric(rows)
 
+        # Extract key metrics
+        totalCalls = int(metrics.get("tool_call_count", 0))
+        errorCalls = int(metrics.get("is_error", 0))
+        totalElapsed = metrics.get("elapsed_time", 0)
+
+        # Average elapsed time (weighted by count)
+        avgElapsed = 0.0
+        if totalCalls > 0:
+            avgElapsed = totalElapsed / totalCalls
+
+        # Top tools by count
+        topTools = self._groupRowsByLabelValue(rows, "tool_call_count", "toolName", 10)
         topToolsHtml = self._renderTopList("Top Tools", topTools)
 
+        # Time series chart
+        timeSeries = self._buildTimeSeries(rows, "tool_call_count", periodType)
+        chartHtml = self._renderInlineSvgChart(timeSeries)
+
+        # Honesty line
         honestyLine = ""
-        if possiblyIncomplete:
+        if self._shouldShowHonestyLine("llm_tool_call", rows, truncatedEventTypes):
             honestyLine = '<p class="neutral">⚠ Результаты могут быть неполными (достигнут лимит запроса)</p>\n'
 
         return f"""        <div class="section">
             <h2>🛠️ Tools</h2>
             {honestyLine}
+            {chartHtml}
             <table>
                 <tr>
                     <th>Metric</th>
@@ -601,37 +748,69 @@ class StatsPageGenerator:
         </div>
 """
 
-    def _renderLlmSection(self, sectionData: dict[str, Any]) -> str:
-        """Render the LLM statistics section.
+    def _renderLlmSection(
+        self,
+        llmRows: list[StatsAggregateDict],
+        sttRows: list[StatsAggregateDict],
+        periodType: str,
+        truncatedEventTypes: list[str],
+    ) -> str:
+        """Render the LLM statistics section from raw rows.
 
         Args:
-            sectionData: LLM section data from the payload.
+            llmRows: Raw aggregate rows for llm_request events.
+            sttRows: Raw aggregate rows for stt_request events.
+            periodType: Period granularity.
+            truncatedEventTypes: List of event types that hit the 10000-row limit.
 
         Returns:
             str: HTML for the LLM section.
         """
-        totalRequests = sectionData.get("totalRequests", 0)
-        errorRequests = sectionData.get("errorRequests", 0)
-        inputTokens = sectionData.get("inputTokens", 0)
-        outputTokens = sectionData.get("outputTokens", 0)
-        totalTokens = sectionData.get("totalTokens", 0)
-        totalElapsed = sectionData.get("totalElapsed", 0.0)
-        avgElapsed = sectionData.get("avgElapsed", 0.0)
-        topModels = sectionData.get("topModels", [])
-        topProviders = sectionData.get("topProviders", [])
-        possiblyIncomplete = sectionData.get("possiblyIncomplete", False)
+        # Group LLM metrics
+        llmMetrics = self._groupRowsByMetric(llmRows)
 
-        # STT subsection (folded into LLM per D6)
+        # Extract key LLM metrics
+        totalRequests = int(llmMetrics.get("request_count", 0))
+        errorRequests = int(llmMetrics.get("is_error", 0))
+        inputTokens = int(llmMetrics.get("input_tokens", 0))
+        outputTokens = int(llmMetrics.get("output_tokens", 0))
+        totalTokens = inputTokens + outputTokens
+        totalElapsed = llmMetrics.get("elapsed_time", 0)
+
+        # Average elapsed time (weighted by count)
+        avgElapsed = 0.0
+        if totalRequests > 0:
+            avgElapsed = totalElapsed / totalRequests
+
+        # Top models by count
+        topModels = self._groupRowsByLabelValue(llmRows, "request_count", "modelName", 5)
+        topModelsHtml = self._renderTopList("Top Models", topModels)
+
+        # Top providers by count
+        topProviders = self._groupRowsByLabelValue(llmRows, "request_count", "provider", 5)
+        topProvidersHtml = self._renderTopList("Top Providers", topProviders)
+
+        # Time series chart
+        timeSeries = self._buildTimeSeries(llmRows, "request_count", periodType)
+        chartHtml = self._renderInlineSvgChart(timeSeries)
+
+        # Honesty line for LLM
+        honestyLine = ""
+        if self._shouldShowHonestyLine("llm_request", llmRows, truncatedEventTypes):
+            honestyLine = '<p class="neutral">⚠ Результаты могут быть неполными (достигнут лимит запроса)</p>\n'
+
+        # STT subsection
         sttHtml = ""
-        sttData = sectionData.get("stt", {})
-        if sttData:
-            sttTotal = sttData.get("totalRequests", 0)
-            sttErrors = sttData.get("errorRequests", 0)
-            sttAudioDuration = sttData.get("totalAudioDuration", 0.0)
-            sttPossiblyIncomplete = sttData.get("possiblyIncomplete", False)
+        if sttRows:
+            sttMetrics = self._groupRowsByMetric(sttRows)
 
+            sttTotal = int(sttMetrics.get("request_count", 0))
+            sttErrors = int(sttMetrics.get("is_error", 0))
+            sttAudioDuration = sttMetrics.get("audio_duration_ms", 0) / 1000.0  # Convert ms to seconds
+
+            # STT honesty line
             sttHonestyLine = ""
-            if sttPossiblyIncomplete:
+            if self._shouldShowHonestyLine("stt_request", sttRows, truncatedEventTypes):
                 sttHonestyLine = '<p class="neutral">⚠ Результаты могут быть неполными (достигнут лимит запроса)</p>\n'
 
             sttHtml = f"""
@@ -663,13 +842,6 @@ class StatsPageGenerator:
             </table>
 """
 
-        topModelsHtml = self._renderTopList("Top Models", topModels)
-        topProvidersHtml = self._renderTopList("Top Providers", topProviders)
-
-        honestyLine = ""
-        if possiblyIncomplete:
-            honestyLine = '<p class="neutral">⚠ Результаты могут быть неполными (достигнут лимит запроса)</p>\n'
-
         return f"""        <div class="section">
             <h2>🧠 LLM</h2>
             {honestyLine}
@@ -677,6 +849,7 @@ class StatsPageGenerator:
                 Note: LLM counts cover interactive generation only (embeddings
                 and background requests excluded).
             </p>
+            {chartHtml}
             <table>
                 <tr>
                     <th>Metric</th>
@@ -721,65 +894,35 @@ class StatsPageGenerator:
         </div>
 """
 
-    def _renderSttSection(self, sectionData: dict[str, Any]) -> str:
-        """Render a standalone STT statistics section.
+    def _groupRowsByLabelValue(
+        self, rows: list[StatsAggregateDict], metricKey: str, labelKey: str, topN: int
+    ) -> list[tuple[str, float]]:
+        """Group rows by a label value and sum a metric for each group.
 
         Args:
-            sectionData: STT section data from the payload.
+            rows: List of aggregate rows.
+            metricKey: The metric key to sum.
+            labelKey: The label key to group by.
+            topN: Maximum number of top items to return.
 
         Returns:
-            str: HTML for the STT section.
+            List of (labelValue, sum) tuples sorted by sum descending.
         """
-        totalRequests = sectionData.get("totalRequests", 0)
-        errorRequests = sectionData.get("errorRequests", 0)
-        totalAudioDuration = sectionData.get("totalAudioDuration", 0.0)
-        totalElapsed = sectionData.get("totalElapsed", 0.0)
-        avgElapsed = sectionData.get("avgElapsed", 0.0)
-        topProviders = sectionData.get("topProviders", [])
+        groups: dict[str, float] = defaultdict(float)
+        for row in rows:
+            if row["metricKey"] == metricKey:
+                labelValue = row["labels"].get(labelKey, "")
+                groups[labelValue] += row["metricValue"]
 
-        topProvidersHtml = self._renderTopList("Top Providers", topProviders)
+        # Sort by sum descending and take top N
+        sortedGroups = sorted(groups.items(), key=lambda x: x[1], reverse=True)
+        return sortedGroups[:topN]
 
-        return f"""        <div class="section">
-            <h2>🎤 Speech-to-Text</h2>
-            <table>
-                <tr>
-                    <th>Metric</th>
-                    <th>Value</th>
-                </tr>
-                <tr>
-                    <td>Total Requests</td>
-                    <td class="metric">{self._formatNumber(totalRequests)}</td>
-                </tr>
-                <tr>
-                    <td>Successful</td>
-                    <td class="metric positive">{self._formatNumber(totalRequests - errorRequests)}</td>
-                </tr>
-                <tr>
-                    <td>Errors</td>
-                    <td class="metric neutral">{self._formatNumber(errorRequests)}</td>
-                </tr>
-                <tr>
-                    <td>Total Audio Duration</td>
-                    <td class="metric">{self._formatNumber(totalAudioDuration, decimals=2)}s</td>
-                </tr>
-                <tr>
-                    <td>Total Time</td>
-                    <td class="metric">{self._formatNumber(totalElapsed, decimals=2)}s</td>
-                </tr>
-                <tr>
-                    <td>Average Time</td>
-                    <td class="metric">{self._formatNumber(avgElapsed, decimals=2)}s</td>
-                </tr>
-            </table>
-            {topProvidersHtml}
-        </div>
-"""
-
-    def _renderChatList(self, chatList: list[dict[str, Any]]) -> str:
+    def _renderChatList(self, chatList: list[ChatListEntry]) -> str:
         """Render the user's chat list (private scope).
 
         Args:
-            chatList: List of chat dictionaries with chatId, title, and
+            chatList: List of chat entries with chatId, title, and
                 messagesCount fields.
 
         Returns:
@@ -787,9 +930,9 @@ class StatsPageGenerator:
         """
         rows = ""
         for chat in chatList:
-            chatId = chat.get("chatId", "unknown")
-            title = chat.get("title", "Unknown")
-            messagesCount = chat.get("messagesCount", 0)
+            chatId = chat["chatId"]
+            title = chat["title"]
+            messagesCount = chat["messagesCount"]
 
             chatIdEscaped = html.escape(str(chatId))
             titleEscaped = html.escape(title)
@@ -877,11 +1020,21 @@ def readPayload() -> StatsPayload:
         payloadJson = sys.stdin.read()
         payload = json.loads(payloadJson)
 
-        # Validate required fields
-        requiredFields = ["userId", "chatId", "chatTitle", "chatType", "platform", "period", "generatedAt"]
+        # Validate required meta fields
+        requiredFields = [
+            "userId",
+            "chatId",
+            "chatTitle",
+            "chatType",
+            "platform",
+            "period",
+            "periodType",
+            "generatedAt",
+            "rows",
+        ]
         for field in requiredFields:
             if field not in payload:
-                raise KeyError(f"Missing required field: {field}")
+                raise ValueError(f"Missing required field: {field}")
 
         return StatsPayload(payload)
     except json.JSONDecodeError as e:
@@ -902,7 +1055,7 @@ def handleGenerate(args: argparse.Namespace) -> int:
     try:
         payload = readPayload()
         generator = StatsPageGenerator(outputDir=args.outputDir)
-        pageId, url = generator.generate(payload)
+        pageId, url = generator.generate(payload, baseUrl=args.baseUrl)
 
         # Output the result JSON to stdout
         result = {"pageId": pageId, "url": url}
@@ -952,22 +1105,11 @@ def main() -> int:
     # Generate command
     generateParser = subparsers.add_parser("generate", help="Generate a statistics page from stdin JSON")
     generateParser.add_argument(
-        "--user-id",
-        dest="userId",
-        help="User ID (for metadata only, not used in payload)",
+        "--base-url",
+        dest="baseUrl",
+        help="Base URL for constructing full URLs (e.g., https://example.com/pages)",
         default=None,
-    )
-    generateParser.add_argument(
-        "--chat-id",
-        dest="chatId",
-        help="Chat ID (for metadata only, not used in payload)",
-        default=None,
-    )
-    generateParser.add_argument(
-        "--platform",
-        dest="platform",
-        help="Platform name (for metadata only, not used in payload)",
-        default=None,
+        type=str,
     )
     generateParser.add_argument(
         "--output-dir",

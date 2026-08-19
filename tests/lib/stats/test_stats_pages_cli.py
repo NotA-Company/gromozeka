@@ -1,7 +1,7 @@
 """Tests for the stats-pages CLI contract.
 
 Tests subprocess invocation, stdin/stdout JSON handling, exit codes,
-and the delete command.
+and the delete command with the new rows-based payload contract.
 """
 
 import json
@@ -30,6 +30,7 @@ class TestStatsPagesCli:
         assert result.returncode == 0
         assert "generate" in result.stdout.lower()
         assert "output-dir" in result.stdout
+        assert "base-url" in result.stdout
 
     def test_delete_help(self) -> None:
         """Test that delete help is accessible."""
@@ -66,7 +67,9 @@ class TestStatsPagesCli:
             "chatType": "group",
             "platform": "telegram",
             "period": "7d",
+            "periodType": "daily",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {},
         }
 
         payloadJson = json.dumps(payload)
@@ -112,8 +115,8 @@ class TestStatsPagesCli:
         assert "Test Chat" in htmlContent
         assert "<style>" in htmlContent
 
-    def test_generate_with_sections_renders_all_sections(self, tmp_path) -> None:
-        """Test that all sections are rendered when provided."""
+    def test_generate_with_base_url_outputs_full_url(self, tmp_path) -> None:
+        """Test that --base-url outputs full URL in stdout."""
         payload = {
             "userId": "user123",
             "chatId": "chat456",
@@ -121,46 +124,234 @@ class TestStatsPagesCli:
             "chatType": "group",
             "platform": "telegram",
             "period": "7d",
+            "periodType": "daily",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
-            "sections": {
-                "messages": {
-                    "totalMessages": 100,
-                    "totalLength": 5000,
-                    "userMessages": 80,
-                    "botMessages": 20,
-                    "historyMessages": 0,
-                    "avgLength": 50.0,
-                    "topUsers": [("Alice", 30), ("Bob", 25)],
-                    "topTypes": [("text", 80)],
-                },
-                "commands": {
-                    "totalCommands": 50,
-                    "errorCommands": 5,
-                    "topCommands": [("/help", 20), ("/stats", 15)],
-                },
-                "tools": {
-                    "totalCalls": 30,
-                    "errorCalls": 2,
-                    "totalElapsed": 15.5,
-                    "avgElapsed": 0.517,
-                    "topTools": [("search", 20)],
-                },
-                "llm": {
-                    "totalRequests": 20,
-                    "errorRequests": 1,
-                    "inputTokens": 10000,
-                    "outputTokens": 5000,
-                    "totalTokens": 15000,
-                    "totalElapsed": 10.0,
-                    "avgElapsed": 0.5,
-                    "topModels": [("gpt-4o", 15)],
-                    "topProviders": [("openai", 15)],
-                    "stt": {
-                        "totalRequests": 5,
-                        "errorRequests": 0,
-                        "totalAudioDuration": 120.0,
-                    },
-                },
+            "rows": {},
+        }
+
+        payloadJson = json.dumps(payload)
+        baseUrl = "https://example.com/pages"
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "lib.stats.stats_pages",
+                "generate",
+                "--output-dir",
+                str(tmp_path),
+                "--base-url",
+                baseUrl,
+            ],
+            input=payloadJson,
+            capture_output=True,
+            text=True,
+            cwd=str(repoRoot),
+        )
+
+        assert result.returncode == 0
+
+        stdoutData = json.loads(result.stdout)
+
+        # Check URL is full URL
+        assert stdoutData["url"].startswith(baseUrl)
+        assert "https://example.com/pages" in stdoutData["url"]
+        assert stdoutData["url"].endswith(".html")
+
+    def test_generate_with_base_url_trailing_slash(self, tmp_path) -> None:
+        """Test that --base-url with trailing slash doesn't create double slashes."""
+        payload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {},
+        }
+
+        payloadJson = json.dumps(payload)
+        baseUrl = "https://example.com/pages/"
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "lib.stats.stats_pages",
+                "generate",
+                "--output-dir",
+                str(tmp_path),
+                "--base-url",
+                baseUrl,
+            ],
+            input=payloadJson,
+            capture_output=True,
+            text=True,
+            cwd=str(repoRoot),
+        )
+
+        assert result.returncode == 0
+
+        stdoutData = json.loads(result.stdout)
+
+        # Should not have double slashes
+        assert "//pages" not in stdoutData["url"]
+        # Should match exact format: https://example.com/pages/<id>.html
+        assert stdoutData["url"].startswith("https://example.com/pages/")
+        assert stdoutData["url"].endswith(".html")
+
+    def test_generate_without_base_url_outputs_filename(self, tmp_path) -> None:
+        """Test that without --base-url, only filename is output."""
+        payload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {},
+        }
+
+        payloadJson = json.dumps(payload)
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "lib.stats.stats_pages",
+                "generate",
+                "--output-dir",
+                str(tmp_path),
+            ],
+            input=payloadJson,
+            capture_output=True,
+            text=True,
+            cwd=str(repoRoot),
+        )
+
+        assert result.returncode == 0
+
+        stdoutData = json.loads(result.stdout)
+
+        # URL should just be the filename (no slashes)
+        assert "/" not in stdoutData["url"]
+        assert stdoutData["url"].endswith(".html")
+        assert stdoutData["url"] == f'{stdoutData["pageId"]}.html'
+
+    def test_generate_with_sections_renders_all_sections(self, tmp_path) -> None:
+        """Test that all sections are rendered from raw rows."""
+        # Create sample rows for each event type
+        messageRows = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"user_id": "alice"},
+                "metricKey": "message_count",
+                "metricValue": 80.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "text_length",
+                "metricValue": 5000.0,
+            },
+        ]
+
+        commandRows = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"commandName": "/help"},
+                "metricKey": "command_count",
+                "metricValue": 20.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"commandName": "/stats"},
+                "metricKey": "command_count",
+                "metricValue": 15.0,
+            },
+        ]
+
+        toolRows = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"toolName": "search"},
+                "metricKey": "tool_call_count",
+                "metricValue": 20.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "elapsed_time",
+                "metricValue": 15.5,
+            },
+        ]
+
+        llmRows = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {"modelName": "gpt-4o"},
+                "metricKey": "request_count",
+                "metricValue": 15.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "input_tokens",
+                "metricValue": 10000.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "output_tokens",
+                "metricValue": 5000.0,
+            },
+        ]
+
+        sttRows = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "request_count",
+                "metricValue": 5.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "audio_duration_ms",
+                "metricValue": 120000.0,
+            },
+        ]
+
+        payload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {
+                "message": messageRows,
+                "command": commandRows,
+                "llm_tool_call": toolRows,
+                "llm_request": llmRows,
+                "stt_request": sttRows,
             },
         }
 
@@ -194,6 +385,12 @@ class TestStatsPagesCli:
         assert "🧠 LLM" in htmlContent
         assert "🎤 Speech-to-Text" in htmlContent
 
+        # Check values are rendered correctly
+        assert "80" in htmlContent  # message count
+        assert "35" in htmlContent  # command count (20+15)
+        assert "20" in htmlContent  # tool calls
+        assert "15,000" in htmlContent  # total tokens
+
     def test_generate_with_chat_list_renders_chat_list(self, tmp_path) -> None:
         """Test that chat list is rendered for private chats."""
         payload = {
@@ -203,7 +400,9 @@ class TestStatsPagesCli:
             "chatType": "private",
             "platform": "telegram",
             "period": "7d",
+            "periodType": "daily",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {},
             "chatList": [
                 {"chatId": -1001234567890, "title": "Group A", "messagesCount": 300},
                 {"chatId": -1009876543210, "title": "Group B", "messagesCount": 210},
@@ -255,14 +454,43 @@ class TestStatsPagesCli:
 
     def test_generate_missing_required_field_returns_nonzero_exit(self) -> None:
         """Test that missing required fields cause nonzero exit."""
-        # Missing "period" field
+        # Missing "rows" field
         payload = {
             "userId": "user123",
             "chatId": "chat456",
             "chatTitle": "Test Chat",
             "chatType": "group",
             "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
+        }
+
+        payloadJson = json.dumps(payload)
+
+        result = subprocess.run(
+            [sys.executable, "-m", "lib.stats.stats_pages", "generate"],
+            input=payloadJson,
+            capture_output=True,
+            text=True,
+            cwd=str(repoRoot),
+        )
+
+        assert result.returncode != 0
+        assert "Missing required field" in result.stderr
+
+    def test_generate_missing_period_type_returns_nonzero_exit(self) -> None:
+        """Test that missing periodType causes nonzero exit."""
+        payload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            # periodType missing
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {},
         }
 
         payloadJson = json.dumps(payload)
@@ -288,7 +516,9 @@ class TestStatsPagesCli:
             "chatType": "group",
             "platform": "telegram",
             "period": "7d",
+            "periodType": "daily",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {},
         }
 
         payloadJson = json.dumps(payload)
@@ -372,7 +602,9 @@ class TestStatsPagesCli:
             "chatType": "group",
             "platform": "telegram",
             "period": "7d",
+            "periodType": "daily",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {},
         }
 
         payloadJson = json.dumps(payload)
@@ -399,33 +631,45 @@ class TestStatsPagesCli:
         htmlPath = nestedDir / stdoutData["url"]
         assert htmlPath.exists()
 
-    def test_generate_ignores_user_id_chat_id_platform_args(self, tmp_path) -> None:
-        """Test that --user-id, --chat-id, --platform args are ignored (metadata only)."""
+    def test_generate_svg_chart_present_for_time_series(self, tmp_path) -> None:
+        """Test that SVG chart is rendered for time-series data."""
+        messageRows = [
+            {
+                "periodType": "hourly",
+                "periodStart": "2026-08-18T10:00:00+00:00",
+                "labels": {},
+                "metricKey": "message_count",
+                "metricValue": 10.0,
+            },
+            {
+                "periodType": "hourly",
+                "periodStart": "2026-08-18T11:00:00+00:00",
+                "labels": {},
+                "metricKey": "message_count",
+                "metricValue": 20.0,
+            },
+        ]
+
         payload = {
-            "userId": "real_user_id",
-            "chatId": "real_chat_id",
+            "userId": "user123",
+            "chatId": "chat456",
             "chatTitle": "Test Chat",
             "chatType": "group",
             "platform": "telegram",
-            "period": "7d",
+            "period": "3h",
+            "periodType": "hourly",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {"message": messageRows},
         }
 
         payloadJson = json.dumps(payload)
 
-        # Pass different values as CLI args
         result = subprocess.run(
             [
                 sys.executable,
                 "-m",
                 "lib.stats.stats_pages",
                 "generate",
-                "--user-id",
-                "cli_user_id",
-                "--chat-id",
-                "cli_chat_id",
-                "--platform",
-                "max",
                 "--output-dir",
                 str(tmp_path),
             ],
@@ -441,17 +685,59 @@ class TestStatsPagesCli:
         htmlPath = tmp_path / stdoutData["url"]
         htmlContent = htmlPath.read_text()
 
-        # Should use payload values, not CLI args
-        assert "real_user_id" in htmlContent
-        assert "real_chat_id" in htmlContent
-        # The payload has "telegram" platform
-        assert "telegram" in htmlContent
-        # CLI args should NOT appear (check for specific values)
-        assert "cli_user_id" not in htmlContent
-        assert "cli_chat_id" not in htmlContent
-        # The payload platform should appear, not the CLI arg
-        # Check that we see telegram as the platform, not max
-        assert "telegram" in htmlContent.lower()
+        # Check SVG is present
+        assert "<svg" in htmlContent
+        assert "</svg>" in htmlContent
+
+    def test_generate_no_svg_chart_for_total_granularity(self, tmp_path) -> None:
+        """Test that no SVG chart is rendered for total granularity."""
+        messageRows = [
+            {
+                "periodType": "total",
+                "periodStart": "1970-01-01T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "message_count",
+                "metricValue": 100.0,
+            },
+        ]
+
+        payload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "all",
+            "periodType": "total",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {"message": messageRows},
+        }
+
+        payloadJson = json.dumps(payload)
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "lib.stats.stats_pages",
+                "generate",
+                "--output-dir",
+                str(tmp_path),
+            ],
+            input=payloadJson,
+            capture_output=True,
+            text=True,
+            cwd=str(repoRoot),
+        )
+
+        assert result.returncode == 0
+
+        stdoutData = json.loads(result.stdout)
+        htmlPath = tmp_path / stdoutData["url"]
+        htmlContent = htmlPath.read_text()
+
+        # Check SVG is NOT present
+        assert "<svg" not in htmlContent
 
     def test_generate_multiple_runs_produce_unique_ids(self, tmp_path) -> None:
         """Test that multiple generate calls produce unique IDs."""
@@ -462,7 +748,9 @@ class TestStatsPagesCli:
             "chatType": "group",
             "platform": "telegram",
             "period": "7d",
+            "periodType": "daily",
             "generatedAt": "2026-08-18T10:30:00+00:00",  # Fixed timestamp
+            "rows": {},
         }
 
         payloadJson = json.dumps(payload)
