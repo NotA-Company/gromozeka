@@ -6,7 +6,8 @@ rows to verify the Python-side analysis logic.
 """
 
 import datetime
-from unittest.mock import patch
+
+import pytest
 
 from lib.stats.analysis import (
     PeriodArg,
@@ -66,49 +67,28 @@ class TestPeriodMapping:
             None
         """
         # Invalid suffix
-        try:
+        with pytest.raises(ValueError):
             mapPeriodArgToPeriodType("7x")
-            assert False, "Expected ValueError for invalid period arg"
-        except ValueError:
-            pass
 
         # Out of range hours (0h, 25h)
-        try:
+        with pytest.raises(ValueError):
             mapPeriodArgToPeriodType("0h")
-            assert False, "Expected ValueError for invalid period arg"
-        except ValueError:
-            pass
-        try:
+        with pytest.raises(ValueError):
             mapPeriodArgToPeriodType("25h")
-            assert False, "Expected ValueError for invalid period arg"
-        except ValueError:
-            pass
 
         # Out of range days (0d, 32d)
-        try:
+        with pytest.raises(ValueError):
             mapPeriodArgToPeriodType("0d")
-            assert False, "Expected ValueError for invalid period arg"
-        except ValueError:
-            pass
-        try:
+        with pytest.raises(ValueError):
             mapPeriodArgToPeriodType("32d")
-            assert False, "Expected ValueError for invalid period arg"
-        except ValueError:
-            pass
 
         # Negative months (0m)
-        try:
+        with pytest.raises(ValueError):
             mapPeriodArgToPeriodType("0m")
-            assert False, "Expected ValueError for invalid period arg"
-        except ValueError:
-            pass
 
         # Invalid format (no number)
-        try:
+        with pytest.raises(ValueError):
             mapPeriodArgToPeriodType("h")
-            assert False, "Expected ValueError for invalid period arg"
-        except ValueError:
-            pass
 
 
 class TestPeriodRangeComputation:
@@ -133,13 +113,7 @@ class TestPeriodRangeComputation:
         # Fixed time for deterministic testing
         fixedNow = datetime.datetime(2024, 1, 2, 14, 30, 45, 123456, tzinfo=datetime.UTC)
 
-        with patch("lib.stats.analysis.datetime") as mockDatetime:
-            mockDatetime.datetime.now.return_value = fixedNow
-            mockDatetime.datetime.side_effect = lambda *args, **kwargs: datetime.datetime(*args, **kwargs)
-            mockDatetime.timezone = datetime.timezone
-            mockDatetime.timedelta = datetime.timedelta
-
-            periodStartFrom, periodStartTo = computePeriodRange("6h")
+        periodStartFrom, periodStartTo = computePeriodRange("6h", now=fixedNow)
 
         # periodStartTo should be the fixed now
         assert periodStartTo is not None
@@ -164,13 +138,7 @@ class TestPeriodRangeComputation:
         # Fixed time for deterministic testing
         fixedNow = datetime.datetime(2024, 1, 8, 14, 30, 45, 123456, tzinfo=datetime.UTC)
 
-        with patch("lib.stats.analysis.datetime") as mockDatetime:
-            mockDatetime.datetime.now.return_value = fixedNow
-            mockDatetime.datetime.side_effect = lambda *args, **kwargs: datetime.datetime(*args, **kwargs)
-            mockDatetime.timezone = datetime.timezone
-            mockDatetime.timedelta = datetime.timedelta
-
-            periodStartFrom, periodStartTo = computePeriodRange("7d")
+        periodStartFrom, periodStartTo = computePeriodRange("7d", now=fixedNow)
 
         # Verify both bounds are set
         assert periodStartFrom is not None
@@ -205,13 +173,7 @@ class TestPeriodRangeComputation:
         # Fixed time for deterministic testing (Jan 15, 2024)
         fixedNow = datetime.datetime(2024, 1, 15, 14, 30, 45, 123456, tzinfo=datetime.UTC)
 
-        with patch("lib.stats.analysis.datetime") as mockDatetime:
-            mockDatetime.datetime.now.return_value = fixedNow
-            mockDatetime.datetime.side_effect = lambda *args, **kwargs: datetime.datetime(*args, **kwargs)
-            mockDatetime.timezone = datetime.timezone
-            mockDatetime.timedelta = datetime.timedelta
-
-            periodStartFrom, periodStartTo = computePeriodRange("2m")
+        periodStartFrom, periodStartTo = computePeriodRange("2m", now=fixedNow)
 
         # Verify both bounds are set
         assert periodStartFrom is not None
@@ -241,42 +203,128 @@ class TestPeriodRangeComputation:
             None
         """
         # Invalid suffix
-        try:
+        with pytest.raises(ValueError):
             computePeriodRange("7x")
-            assert False, "Expected ValueError for invalid period arg"
-        except ValueError:
-            pass
 
         # Out of range hours (0h, 25h)
-        try:
+        with pytest.raises(ValueError):
             computePeriodRange("0h")
-            assert False, "Expected ValueError for invalid period arg"
-        except ValueError:
-            pass
-        try:
+        with pytest.raises(ValueError):
             computePeriodRange("25h")
-            assert False, "Expected ValueError for invalid period arg"
-        except ValueError:
-            pass
 
         # Out of range days (0d, 32d)
-        try:
+        with pytest.raises(ValueError):
             computePeriodRange("0d")
-            assert False, "Expected ValueError for invalid period arg"
-        except ValueError:
-            pass
-        try:
+        with pytest.raises(ValueError):
             computePeriodRange("32d")
-            assert False, "Expected ValueError for invalid period arg"
-        except ValueError:
-            pass
 
         # Negative months (0m)
-        try:
+        with pytest.raises(ValueError):
             computePeriodRange("0m")
-            assert False, "Expected ValueError for invalid period arg"
-        except ValueError:
-            pass
+
+    def testComputePeriodRange_midnightRollover(self) -> None:
+        """Verify that '1d' at midnight correctly returns previous day's midnight.
+
+        Tests the boundary condition at midnight rollover with +00:00 ISO output.
+
+        Returns:
+            None
+        """
+        # Fixed time at midnight
+        fixedNow = datetime.datetime(2026, 8, 21, 0, 0, 0, 0, tzinfo=datetime.UTC)
+
+        periodStartFrom, periodStartTo = computePeriodRange("1d", now=fixedNow)
+
+        # Verify both bounds are set
+        assert periodStartFrom is not None
+        assert periodStartTo is not None
+
+        actualFrom = datetime.datetime.fromisoformat(periodStartFrom)
+        actualTo = datetime.datetime.fromisoformat(periodStartTo)
+
+        # periodStartTo should be the fixed now
+        assert actualTo == fixedNow
+
+        # periodStartFrom should be 1 day ago at midnight
+        expectedFrom = datetime.datetime(2026, 8, 20, 0, 0, 0, tzinfo=datetime.UTC)
+        assert actualFrom == expectedFrom
+
+        # Verify ISO strings have +00:00
+        assert periodStartFrom.endswith("+00:00")
+        assert periodStartTo.endswith("+00:00")
+
+    def testComputePeriodRange_monthBoundaryYearUnderflow(self) -> None:
+        """Verify that '1m' correctly handles year underflow with calendar arithmetic.
+
+        Tests the boundary condition at month end with year*12+month arithmetic.
+        Now=2026-01-31 23:59:59 → '1m' → 2025-12-01 00:00:00.
+
+        Returns:
+            None
+        """
+        # Fixed time at end of January
+        fixedNow = datetime.datetime(2026, 1, 31, 23, 59, 59, 0, tzinfo=datetime.UTC)
+
+        periodStartFrom, periodStartTo = computePeriodRange("1m", now=fixedNow)
+
+        # Verify both bounds are set
+        assert periodStartFrom is not None
+        assert periodStartTo is not None
+
+        actualFrom = datetime.datetime.fromisoformat(periodStartFrom)
+        actualTo = datetime.datetime.fromisoformat(periodStartTo)
+
+        # periodStartTo should be the fixed now
+        assert actualTo == fixedNow
+
+        # periodStartFrom should be first day of previous month
+        # Using year*12+month arithmetic: 2026*12 + (1-1) - 1 = 24312 - 1 = 24311
+        # 24311 // 12 = 2025, 24311 % 12 + 1 = 11 + 1 = 12 → December 2025
+        expectedFrom = datetime.datetime(2025, 12, 1, 0, 0, 0, tzinfo=datetime.UTC)
+        assert actualFrom == expectedFrom
+
+        # Verify ISO strings have +00:00
+        assert periodStartFrom.endswith("+00:00")
+        assert periodStartTo.endswith("+00:00")
+
+    def testComputePeriodRange_naiveNowRaisesValueError(self) -> None:
+        """Verify that passing a naive datetime raises ValueError.
+
+        Returns:
+            None
+        """
+        naiveNow = datetime.datetime(2024, 1, 1, 0, 0, 0)  # No tzinfo
+        with pytest.raises(ValueError, match="now must be timezone-aware"):
+            computePeriodRange("1d", now=naiveNow)
+
+    def testComputePeriodRange_nonUtcNowConvertedToUtc(self) -> None:
+        """Verify that non-UTC timezone-aware datetimes are converted to UTC.
+
+        Returns:
+            None
+        """
+        # Fixed time in a different timezone (e.g., US/Eastern, UTC-5)
+        tz = datetime.timezone(datetime.timedelta(hours=-5))
+        fixedNow = datetime.datetime(2024, 1, 1, 12, 0, 0, 0, tzinfo=tz)
+
+        periodStartFrom, periodStartTo = computePeriodRange("1d", now=fixedNow)
+
+        # Verify both bounds are set (not None for non-"all" period)
+        assert periodStartFrom is not None
+        assert periodStartTo is not None
+
+        # The returned periodStartTo should be the UTC equivalent
+        actualTo = datetime.datetime.fromisoformat(periodStartTo)
+        # 2024-01-01 12:00:00 UTC-5 = 2024-01-01 17:00:00 UTC
+        expectedTo = datetime.datetime(2024, 1, 1, 17, 0, 0, 0, tzinfo=datetime.UTC)
+        assert actualTo == expectedTo
+
+        # The periodStartFrom should also be in UTC
+        actualFrom = datetime.datetime.fromisoformat(periodStartFrom)
+        # 1 day before 2024-01-01 17:00:00 UTC = 2023-12-31 17:00:00 UTC
+        # Truncated to day = 2023-12-31 00:00:00 UTC
+        expectedFrom = datetime.datetime(2023, 12, 31, 0, 0, 0, 0, tzinfo=datetime.UTC)
+        assert actualFrom == expectedFrom
 
 
 class TestStatsAnalyzerConsumerFilter:
@@ -319,8 +367,8 @@ class TestStatsAnalyzerConsumerFilter:
         filtered = analyzer.filterByLabelIn("consumer", {"123", "789"})
 
         # Should exclude the __global__ row
-        assert len(filtered._rows) == 2
-        consumerValues = [row["labels"]["consumer"] for row in filtered._rows]
+        assert len(filtered.rows) == 2
+        consumerValues = [row["labels"]["consumer"] for row in filtered.rows]
         assert "__global__" not in consumerValues
         assert "123" in consumerValues
         assert "789" in consumerValues
@@ -351,8 +399,8 @@ class TestStatsAnalyzerConsumerFilter:
         analyzer = StatsAnalyzer(rows)
         filtered = analyzer.filterByLabel("consumer", "123")
 
-        assert len(filtered._rows) == 1
-        assert filtered._rows[0]["labels"]["consumer"] == "123"
+        assert len(filtered.rows) == 1
+        assert filtered.rows[0]["labels"]["consumer"] == "123"
 
 
 class TestStatsAnalyzerSumMetric:
@@ -773,8 +821,8 @@ class TestStatsAnalyzerUserDrillDown:
         user123Analyzer = analyzer.filterByLabel("user_id", "123")
 
         # Should only include user 123's rows
-        assert len(user123Analyzer._rows) == 2
-        assert all(row["labels"]["user_id"] == "123" for row in user123Analyzer._rows)
+        assert len(user123Analyzer.rows) == 2
+        assert all(row["labels"]["user_id"] == "123" for row in user123Analyzer.rows)
 
         # Verify metrics are only for user 123
         messages = user123Analyzer.sumMetric("message_count")
@@ -828,11 +876,11 @@ class TestStatsAnalyzerUserDrillDown:
         user123Analyzer = analyzer.filterByLabel("user_id", "123")
 
         # Should only include rows with user_id label
-        assert len(user123Analyzer._rows) == 2
-        assert all("user_id" in row["labels"] for row in user123Analyzer._rows)
+        assert len(user123Analyzer.rows) == 2
+        assert all("user_id" in row["labels"] for row in user123Analyzer.rows)
 
         # llm_request and stt_request rows should be excluded
-        metricKeys = [row["metricKey"] for row in user123Analyzer._rows]
+        metricKeys = [row["metricKey"] for row in user123Analyzer.rows]
         assert "request_count" not in metricKeys  # llm_request/stt_request metric
 
 
@@ -862,7 +910,7 @@ class TestStatsAnalyzerImmutability:
         assert analyzer is not filtered
 
         # Original should be unchanged
-        assert len(analyzer._rows) == 1
+        assert len(analyzer.rows) == 1
 
     def testMultipleFilters_chainsCorrectly(self) -> None:
         """Verify that multiple filters can be chained.
@@ -900,5 +948,5 @@ class TestStatsAnalyzerImmutability:
         )
 
         # Should only match the first row
-        assert len(filtered._rows) == 1
-        assert filtered._rows[0]["metricValue"] == 100.0
+        assert len(filtered.rows) == 1
+        assert filtered.rows[0]["metricValue"] == 100.0

@@ -571,6 +571,9 @@ from lib.stats import StatsStorage, NullStatsStorage, GLOBAL_CONSUMER_ID
 | [`StatsStorage`](../../lib/stats/stats_storage.py:11) | `lib/stats/stats_storage.py` | ABC for statistics storage backends |
 | [`NullStatsStorage`](../../lib/stats/stats_storage.py:81) | `lib/stats/stats_storage.py` | No-op implementation (discards all events) |
 | [`StatsAnalyzer`](../../lib/stats/analysis.py) | `lib/stats/analysis.py` | Read-side filtering/grouping/aggregation over `query()` rows (pure Python) |
+| `StatsAggregateDict` + `STATS_QUERY_ROW_LIMIT` | `lib/stats/types.py` | TypedDict for one aggregated stats row (5 camelCase fields, labels parsed from JSON) and the shared default `query()` row limit (`STATS_QUERY_ROW_LIMIT: int = 10000`) |
+
+**Abstract property:** the `StatsStorage` ABC also defines an abstract `dataSource` property (`str`) — the data source identifier for this storage (`"null"` for `NullStatsStorage`; the aggregation service uses it to deduplicate purge operations across storages sharing a datasource).
 
 **Interface methods on `StatsStorage`:**
 ```python
@@ -600,6 +603,7 @@ await statsStorage.query(
     periodStartFrom: Optional[str] = None,
     periodStartTo: Optional[str] = None,
     limit: int = 10000,
+    offset: int = 0,
 ) -> list[StatsAggregateDict]
 ```
 
@@ -608,12 +612,12 @@ await statsStorage.query(
 - `record()`: Append a raw stat event to the log. Failures are logged but not raised.
 - `aggregate()`: Claim up to `limit` unprocessed (or orphaned) events, aggregate into hourly/daily/monthly/total buckets, upsert into the aggregation table, and mark events as processed. Returns the number of events processed (0 if nothing to do).
 - `purgeProcessed()`: Delete processed stat events older than the retention window (``processed = 1 AND created_at < cutoff`` through this storage's own data source). ``retentionDays <= 0`` is a no-op (returns 0, deletes nothing). Errors propagate to the caller (matching ``aggregate()``'s contract). Used by `StatsAggregationService` per storage after each aggregation cycle to clean up old processed events. `NullStatsStorage` returns 0.
-- `query()`: Read aggregated rows filtered by `eventType` (required), `periodType` (optional: `'hourly'`, `'daily'`, `'monthly'`, or `'total'`), and optional inclusive bounds `periodStartFrom` / `periodStartTo` (ISO-8601 UTC strings). Returns rows with labels parsed from JSON as `StatsAggregateDict` (fields: `periodStart`, `periodType`, `labels`, `metricKey`, `metricValue`). Applies `limit` via provider's `applyPagination()`. Raises on database/provider errors. `NullStatsStorage` returns `[]`.
+- `query()`: Read aggregated rows filtered by `eventType` (required), `periodType` (optional: `'hourly'`, `'daily'`, `'monthly'`, or `'total'`), and optional inclusive bounds `periodStartFrom` / `periodStartTo` (ISO-8601 UTC strings). Returns rows with labels parsed from JSON as `StatsAggregateDict` (fields: `periodStart`, `periodType`, `labels`, `metricKey`, `metricValue`). Applies `limit`/`offset` via provider's `applyPagination()`. Raises on database/provider errors. `NullStatsStorage` returns `[]`.
 
 **Analysis (read-side)** — [`lib/stats/analysis.py`](../../lib/stats/analysis.py), re-exported from the package root; pure-Python post-processing over `query()` rows (no SQL label filtering), used by `StatsHandler`:
 - `StatsAnalyzer(rows)` — immutable analyzer over `list[StatsAggregateDict]`; filter methods return new instances: `filterByLabelIn(key, values)` / `filterByLabel(key, value)` (callers filter the `consumer` label to concrete chat IDs, which naturally excludes `__global__` rows), plus `sumMetric(metricKey)`, `groupSum(groupLabel, metricKey)`, `topN(groupLabel, metricKey, n)`, and `average(valueKey, countKey)` (weighted average Σvalue / Σcount — never an average of averages).
-- `mapPeriodArgToPeriodType(periodArg)` — maps `/stats` period args to query granularity (constants in `PeriodArg` / `PeriodType`): `1d` → `hourly`, `7d`/`30d` → `daily`, `all` → `total`; `ValueError` otherwise.
-- `computePeriodRange(periodArg)` — returns `(periodStartFrom, periodStartTo)` ISO-8601 UTC bounds (`(None, None)` for `all`); the start is truncated to the period boundary so the partial current day is included (7d → 8 daily buckets, 30d → 31).
+- `mapPeriodArgToPeriodType(periodArg)` — maps `/stats` period args to query granularity (constants in `PeriodArg` / `PeriodType`, both `StrEnum`): `1h`–`24h` → `hourly`, `1d`–`31d` → `daily`, `Nm` (`N ≥ 1`, calendar months) → `monthly`, `all` → `total`; `ValueError` otherwise.
+- `computePeriodRange(periodArg, *, now=None)` — returns `(periodStartFrom, periodStartTo)` ISO-8601 UTC bounds (`(None, None)` for `all`); the start is truncated to the period boundary so the partial current day is included (7d → 8 daily buckets, 30d → 31). `now` is keyword-only; when supplied it MUST be timezone-aware (`ValueError` on a naive datetime) and is normalized to UTC; `None` defaults to the current UTC time.
 
 **Usage example:**
 ```python
@@ -908,12 +912,12 @@ Self-contained HTML page generator for statistics display. Used by `StatsHandler
 | [`lib/stats/stats_pages/__init__.py`](../../lib/stats/stats_pages/__init__.py) | Package exports (`StatsPageGenerator`, `StatsPayload`, `ChatListEntry`, `StatsCliError`/`StatsCliErrorReason`, `runCliCommand`) |
 | [`lib/stats/stats_pages/__main__.py`](../../lib/stats/stats_pages/__main__.py) | Main entry point for module invocation |
 | [`lib/stats/stats_pages/generator.py`](../../lib/stats/stats_pages/generator.py) | Core generator class (`StatsPageGenerator`), `StatsPayload`/`ChatListEntry` TypedDicts, server-side grouping + SVG rendering, CLI handlers |
-| [`lib/stats/stats_pages/launcher.py`](../../lib/stats/stats_pages/launcher.py) | Shared subprocess helper used by BOTH generation and deletion: `runCliCommand(argv, *, stdinPayload=None, timeoutSeconds=30.0) -> (returncode, stdout, stderr)` (async; kill-on-timeout; stdout/stderr decoded with `errors="replace"`) and `StatsCliError` with `StatsCliErrorReason.TIMEOUT`/`SPAWN`. Mirrors the subprocess conventions of `internal/services/proxy/lifecycle.py`. |
+| [`lib/stats/stats_pages/launcher.py`](../../lib/stats/stats_pages/launcher.py) | Shared subprocess helper used by BOTH generation and deletion: `runCliCommand(argv, *, stdinPayload=None, timeoutSeconds=30.0) -> (returncode, stdout, stderr)` (async; kills the child on timeout AND on cancellation of the awaiting task; stdout/stderr decoded with `errors="replace"`) and `StatsCliError` with `StatsCliErrorReason.TIMEOUT`/`SPAWN` (StrEnum values are lowercase `"timeout"`/`"spawn"`; only spawn-time `OSError` maps to `SPAWN` — `OSError`s raised during `communicate()` are a distinct failure path, not spawn failures). Mirrors the subprocess conventions of `internal/services/proxy/lifecycle.py`. |
 
 **CLI contract:**
 
 - `generate` — reads a raw-rows JSON payload from stdin (see `StatsPayload` TypedDict), renders a self-contained static HTML page server-side (UUID filename, inline CSS, inline SVG charts, no external resources, no JS), prints `{"pageId": "<uuid>", "url": ...}` to stdout. Flags: `--base-url` (when given, `url` = `baseUrl.rstrip("/") + "/" + <uuid>.html`; without it, `url` is the bare `<uuid>.html` filename) and `--output-dir` (default `.`).
-- `delete PAGE_ID` — removes a page by UUID filename stem, prints `{"deleted": 0\|1}` to stdout (0 = no such page, still a success exit). Accepts `--output-dir` flag.
+- `delete PAGE_ID` — validates the pageId against `^[0-9a-f]{32}$` first and prints `{"deleted": 0}` on mismatch without touching the filesystem (path-traversal guard); otherwise removes the page by UUID filename stem and prints `{"deleted": 0\|1}` to stdout (0 = no such page, still a success exit). Accepts `--output-dir` flag.
 - Exit codes: 0 for success, nonzero for any failure (with a human-readable stderr line).
 - Failure modes: invalid JSON on stdin → nonzero exit + error message; missing required fields in payload → nonzero exit + error message; file write errors → nonzero exit + error message.
 
@@ -941,7 +945,7 @@ class StatsPayload(TypedDict):
 **Rendering from raw rows** (no per-section view-model TypedDicts — those were deleted in the U12 raw-rows rework; the generator groups rows itself):
 - One section per eventType present in `rows`: messages, commands, tools (`llm_tool_call`), LLM (`llm_request` with an STT subsection for `stt_request`).
 - Each section gets an inline SVG bar chart of the time series built from the rows; `periodType == "total"` produces no time series (single sentinel bucket), so total-granularity pages skip charts. Hourly series are capped at 24 bars with an "… and N more" note.
-- Truncation honesty: a "results may be incomplete" line is rendered for a section when its eventType appears in `truncatedEventTypes` (recorded by the bot BEFORE consumer filtering, when the raw query returned exactly 10000 rows), with a fallback heuristic when the flag is absent.
+- Truncation honesty: a "results may be incomplete" line is rendered for a section when its eventType appears in `truncatedEventTypes` (recorded by the bot BEFORE consumer filtering, when the raw query returned exactly 10000 rows) — the flag is the ONLY input; there is no fallback heuristic when it is absent.
 
 **HTML rendering:**
 - Self-contained: inline `<style>` block only, no `<link rel="stylesheet">`, no `<script src`, no CDN references.

@@ -28,6 +28,7 @@ from internal.bot.common.models import CallbackButton, TypingAction
 from internal.bot.common.typing_manager import TypingManager
 from internal.bot.constants import (
     BOT_ID_CACHE_TTL_SECONDS,
+    BOT_ID_FAILURE_GRACE_SECONDS,
     TELEGRAM_RETRY_AFTER_CAP_SECONDS,
     TELEGRAM_SEND_MAX_ATTEMPTS,
     TELEGRAM_SEND_RETRY_DELAY_BASE,
@@ -134,6 +135,7 @@ class TheBot:
         # Cache for bot identity (stable for process lifetime, with TTL)
         self._botId: Optional[int] = None
         self._botIdCachedAt: float = 0.0
+        self._lastRefreshFailedAt: float = 0.0
 
         ###
 
@@ -152,32 +154,77 @@ class TheBot:
         useCache=False), so TheBot's TTL is the only caching layer; one uncached
         request per TTL window.
 
+        On refresh failure, if a stale cached value exists and the cache age is
+        less than (TTL + GRACE), the stale value is returned instead of raising.
+        This provides graceful degradation for transient platform issues. The
+        failure backoff reuses the same window to avoid network hammering.
+
         Returns:
             Bot's unique ID from the active platform
 
         Raises:
-            RuntimeError: If no active bot client; otherwise the platform client's exception.
+            RuntimeError: If no active bot client; or if refresh fails and no
+                stale cache is available (no cache, or cache older than TTL+GRACE).
         """
+        now = time.monotonic()
+        cacheAge = now - self._botIdCachedAt
+
         # Return cached value if it exists and hasn't expired
-        if self._botId is not None and (time.monotonic() - self._botIdCachedAt) < BOT_ID_CACHE_TTL_SECONDS:
+        if self._botId is not None and cacheAge < BOT_ID_CACHE_TTL_SECONDS:
             return self._botId
 
-        # Resolve from platform API
-        botId: Optional[int] = None
-        if self.tgBot:
-            botId = self.tgBot.id
-        elif self.maxBot:
-            botId = (await self.maxBot.getMyInfo(useCache=False)).user_id
-        else:
-            raise RuntimeError("No Active bot found")
+        # Check if we're within the failure backoff window
+        inFailureBackoff = (
+            self._lastRefreshFailedAt > 0 and (now - self._lastRefreshFailedAt) < BOT_ID_FAILURE_GRACE_SECONDS
+        )
 
-        # Cache only on successful resolution (raise propagates first, preserving retry behavior)
-        self._botId = botId
-        self._botIdCachedAt = time.monotonic()
-        return botId
+        # If we're in failure backoff window and have a cached value within grace, return stale
+        # This prevents hammering the network during an outage
+        if (
+            inFailureBackoff
+            and self._botId is not None
+            and cacheAge < (BOT_ID_CACHE_TTL_SECONDS + BOT_ID_FAILURE_GRACE_SECONDS)
+        ):
+            # Return stale value without retrying platform API
+            return self._botId
+
+        # Try a refresh
+        try:
+            # Resolve from platform API
+            botId: Optional[int] = None
+            if self.tgBot:
+                botId = self.tgBot.id
+            elif self.maxBot:
+                botId = (await self.maxBot.getMyInfo(useCache=False)).user_id
+            else:
+                raise RuntimeError("No Active bot found")
+
+            # Cache only on successful resolution
+            self._botId = botId
+            self._botIdCachedAt = now
+            self._lastRefreshFailedAt = 0.0  # Clear failure timestamp on success
+            return botId
+        except Exception:
+            # On failure, record the failure timestamp if we don't have a recent failure
+            if not inFailureBackoff:
+                self._lastRefreshFailedAt = now
+
+            # If we have a cached value within grace window, return it
+            if self._botId is not None and cacheAge < (BOT_ID_CACHE_TTL_SECONDS + BOT_ID_FAILURE_GRACE_SECONDS):
+                # Return stale value within grace window
+                return self._botId
+
+            # No cache or cache too old — raise the original exception
+            raise
 
     async def getBotUserName(self) -> Optional[str]:
         """Get bot's username.
+
+        Note: This method deliberately has no TTL cache — the username is
+        rarely used and reading it from the platform is cheap. Unlike getBotId,
+        which is used frequently and cached with TTL+grace, getBotUserName
+        reads fresh from the client layer (Telegram: direct attribute;
+        Max: via getMyInfo, which may use its own client cache).
 
         Returns:
             Bot's username from the active platform, or None if not set

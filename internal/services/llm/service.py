@@ -32,7 +32,7 @@ from lib.ai.models import (
     ModelStructuredResult,
 )
 from lib.rate_limiter.manager import RateLimiterManager
-from lib.stats.stats_storage import NullStatsStorage, StatsStorage
+from lib.stats import NullStatsStorage, StatsStorage
 
 from .constants import DEFAULT_MAX_ROUNDS, TOOLS_DEFAULT_DICT_KEY
 from .models import ExtraDataDict
@@ -987,6 +987,7 @@ class LLMService:
                 for toolCall in ret.toolCalls:
                     toolRet: Union[str, Dict[str, Any]] = ""
                     elapsed: float = 0.0
+                    toolExecuted: bool = False
                     if toolCall.errorMessage is not None:
                         # Synthesised from a broken-but-recognised tool call
                         # (_matchTextForBrokenKnownToolCall): do NOT execute the
@@ -996,6 +997,7 @@ class LLMService:
                         t0 = time.monotonic()
                         toolRet = await self.toolsHandlers[toolCall.name].call(extraData, **toolCall.parameters)
                         elapsed = time.monotonic() - t0
+                        toolExecuted = True
                     else:
                         # If wrong tool called, return error about it.
                         # Report only the actually-available (filtered) names so the LLM
@@ -1011,9 +1013,22 @@ class LLMService:
                     if ensuredMessage is not None:
                         userId = str(ensuredMessage.sender.id)
                         statsChatId = str(ensuredMessage.recipient.id)
-                        isError = isinstance(toolRet, dict) and ("error" in toolRet or "errorMessage" in toolRet)
+                        # isError True iff `toolRet.get("done") is False` OR (an "error"/"errorMessage" key
+                        # present with a truthy value)
+                        doneValue = toolRet.get("done") if isinstance(toolRet, dict) else None
+                        hasTruthyError = isinstance(toolRet, dict) and (
+                            toolRet.get("error") or toolRet.get("errorMessage")
+                        )
+                        isError = doneValue is False or hasTruthyError
+                        statsDict: Dict[str, Union[int, float]] = {
+                            "tool_call_count": 1,
+                            "elapsed_time": elapsed,
+                            "is_error": 1 if isError else 0,
+                        }
+                        if toolExecuted:
+                            statsDict["tool_exec_count"] = 1
                         await self.toolStatsStorage.record(
-                            stats={"tool_call_count": 1, "elapsed_time": elapsed, "is_error": 1 if isError else 0},
+                            stats=statsDict,
                             consumerId=statsChatId,
                             labels={"user_id": userId, "toolName": toolCall.name},
                         )

@@ -133,6 +133,7 @@ class BaseBotHandler(CommandHandlerMixin):
         chatDefaults: Default settings for all chats
         cache: Cache service instance
         queueService: Queue service for background tasks
+        messageStatsStorage: Stats storage for message events
     """
 
     def __init__(
@@ -195,6 +196,18 @@ class BaseBotHandler(CommandHandlerMixin):
             None
         """
         self._bot = bot
+
+    def injectStatsStorage(self, statsStorage: Optional[StatsStorage]) -> None:
+        """
+        Inject a stats storage instance for message event recording.
+
+        Args:
+            statsStorage: The stats storage instance to inject, or None to use NullStatsStorage
+
+        Returns:
+            None
+        """
+        self.messageStatsStorage = statsStorage or NullStatsStorage()
 
     ###
     # Chat settings Managenent

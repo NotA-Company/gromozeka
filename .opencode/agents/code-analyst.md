@@ -1,4 +1,6 @@
 ---
+name: code-analyst
+model: code-analyzer
 description: >-
   Use this agent when you need deep technical understanding of a codebase,
   including questions about architecture, control flow, dependencies, design
@@ -75,8 +77,6 @@ description: >-
 
   </example>
 mode: all
-model: code-analyzer
-temperature: 0.1
 steps: 50  # raised from 30 — deep control-flow tracing across many files needs the headroom
 color: "#FF2D55"
 permission:

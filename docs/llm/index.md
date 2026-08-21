@@ -12,6 +12,7 @@
 |---|---|
 | Understand project overview, commands, mandatory rules | **This file** (`index.md`) |
 | Understand architecture, ADRs, design decisions | [`architecture.md`](architecture.md) |
+| Set up Max webhook mode (two-process deployment) | [`docs/max-webhook-setup.md`](../max-webhook-setup.md) |
 | Create or modify a bot command handler | [`handlers.md`](handlers.md) |
 | Add/modify database tables, migrations, or queries | [`database.md`](database.md) |
 | Use Cache, Queue, LLM, Storage, or RateLimiter services | [`services.md`](services.md) |

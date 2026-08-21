@@ -402,6 +402,8 @@ class HandlersManager(CommandHandlerGetterInterface):
         db: Database wrapper for data persistence operations
         botProvider: Bot provider type (TELEGRAM or MAX)
         handlerTimeout: Default timeout for handler execution in seconds
+        messageStatsStorage: Stats storage for message events
+        commandStatsStorage: Stats storage for command events
         _commands: Cached dictionary mapping command names to handler info
         cache: Cache service for storing chat settings and user data
         storage: Storage service for file operations
@@ -610,6 +612,8 @@ class HandlersManager(CommandHandlerGetterInterface):
             )
 
         # Stats handler — /stats and /stats_web commands
+        # NOTE: The getStatsConfig().get("enabled") check here must agree with
+        # StatsAggregationService's cached enabled flag (config is startup-frozen today).
         if configManager.getStatsConfig().get("enabled", False):
             self.handlers.append(
                 (
@@ -647,7 +651,7 @@ class HandlersManager(CommandHandlerGetterInterface):
 
         # Post-construction injection: set messageStatsStorage on all handlers
         for handler, _ in self.handlers:
-            handler.messageStatsStorage = self.messageStatsStorage
+            handler.injectStatsStorage(self.messageStatsStorage)
 
     async def _dtOnExit(self, task: DelayedTask) -> None:
         """Handle application exit by delegating cleanup to _cleanupOldData().
@@ -1012,6 +1016,9 @@ class HandlersManager(CommandHandlerGetterInterface):
             case CommandCategory.TOOLS:
                 # BotOwners could bypass TollsAllowed check
                 canProcess = chatSettings[ChatSettingsKey.ALLOW_TOOLS_COMMANDS].toBool() or isBotOwner
+            case CommandCategory.UTILITIES:
+                # Utility commands are always allowed (gated by their own chat settings, e.g., ALLOW_SHOW_STATS)
+                canProcess = True
             case CommandCategory.SPAM:
                 canProcess = isAdmin or chatSettings[ChatSettingsKey.ALLOW_USER_SPAM_COMMAND].toBool()
             case CommandCategory.TECHNICAL:

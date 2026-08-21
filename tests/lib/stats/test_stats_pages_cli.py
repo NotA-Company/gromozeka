@@ -158,6 +158,9 @@ class TestStatsPagesCli:
         assert "https://example.com/pages" in stdoutData["url"]
         assert stdoutData["url"].endswith(".html")
 
+        # Check that NO warning was printed to stderr when baseUrl is provided
+        assert "WARNING: --base-url not provided" not in result.stderr
+
     def test_generate_with_base_url_trailing_slash(self, tmp_path) -> None:
         """Test that --base-url with trailing slash doesn't create double slashes."""
         payload = {
@@ -241,6 +244,10 @@ class TestStatsPagesCli:
         assert "/" not in stdoutData["url"]
         assert stdoutData["url"].endswith(".html")
         assert stdoutData["url"] == f'{stdoutData["pageId"]}.html'
+
+        # Check that warning was printed to stderr
+        assert "WARNING: --base-url not provided" in result.stderr
+        assert "generated URL is a bare filename" in result.stderr
 
     def test_generate_with_sections_renders_all_sections(self, tmp_path) -> None:
         """Test that all sections are rendered from raw rows."""
@@ -590,6 +597,49 @@ class TestStatsPagesCli:
         # Check output JSON
         deleteData = json.loads(result.stdout)
         assert deleteData["deleted"] == 0
+
+    def test_delete_hostile_pageId_does_not_escape_output_dir(self, tmp_path) -> None:
+        """Test that delete with hostile pageId does not escape outputDir.
+
+        Regression test for path traversal vulnerability: CLI delete should only
+        accept valid uuid4().hex pageIds and reject path traversal attempts.
+        Nothing outside tmp_path should be touched.
+        """
+        # Create a file that could be targeted by path traversal
+        # Using ../evil.html (one level up from tmp_path)
+        parentDir = tmp_path.parent
+        targetFile = parentDir / "evil.html"
+        targetFile.write_text("evil content")
+
+        # Try to delete the file using path traversal
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "lib.stats.stats_pages",
+                "delete",
+                "../evil",
+                "--output-dir",
+                str(tmp_path),
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(repoRoot),
+        )
+
+        # Should succeed with deleted: 0 (not-found semantics)
+        assert result.returncode == 0
+
+        # Check output JSON
+        deleteData = json.loads(result.stdout)
+        assert deleteData["deleted"] == 0
+
+        # The evil file should still exist (not deleted by path traversal)
+        assert targetFile.exists(), "Path traversal should not delete files outside outputDir"
+        assert targetFile.read_text() == "evil content"
+
+        # Clean up the evil file
+        targetFile.unlink()
 
     def test_generate_output_dir_created_if_not_exists(self, tmp_path) -> None:
         """Test that output directory is created if it doesn't exist."""

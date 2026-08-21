@@ -5,6 +5,7 @@ aggregated usage statistics (messages, commands, tools, LLM usage).
 Only active when [stats] enabled = true in config.
 """
 
+import asyncio
 import datetime
 import json
 import logging
@@ -38,7 +39,7 @@ from lib.stats.stats_pages import (
     StatsPayload,
     runCliCommand,
 )
-from lib.stats.types import StatsAggregateDict
+from lib.stats.types import STATS_QUERY_ROW_LIMIT, StatsAggregateDict
 
 from .base import BaseBotHandler
 
@@ -93,6 +94,9 @@ class StatsHandler(BaseBotHandler):
     """
 
     _OUTPUT_CHUNK_LENGTH = 3000
+
+    # Delay between consecutive chunk sends (seconds)
+    _CHUNK_SEND_DELAY_SECONDS: float = 0.5
 
     # Help text constants (deduplicated from three copies in the code)
     _USAGE_TEXT = (
@@ -165,6 +169,15 @@ class StatsHandler(BaseBotHandler):
                     "[stats.pages] generate-command must be a non-empty list[str] of non-empty strings when enabled"
                 )
 
+            # Validate that generate-command contains --base-url and --output-dir
+            hasBaseUrl = any(arg.startswith("--base-url") for arg in generateCommand)
+            hasOutputDir = any(arg.startswith("--output-dir") for arg in generateCommand)
+            if not hasBaseUrl or not hasOutputDir:
+                raise RuntimeError(
+                    "[stats.pages] generate-command must contain both --base-url and --output-dir "
+                    "arguments when enabled"
+                )
+
             # Validate delete-command (must be non-empty list[str] of non-empty strings)
             deleteCommand = statsPagesConfig.get("delete-command")
             if (
@@ -188,10 +201,10 @@ class StatsHandler(BaseBotHandler):
             self._statsPagesDeleteCommand = deleteCommand
             self._statsPagesRatelimiterQueue = statsPagesConfig.get("ratelimiter-queue", "stats-pages")
 
-            # D14: Register cleanup handler
-            QueueService.getInstance().registerDelayedTaskHandler(
-                DelayedTaskFunction.STATS_PAGES_CLEANUP, self._dtStatsPagesCleanup
-            )
+        # D14: Register cleanup handler (unconditionally when StatsHandler is constructed)
+        QueueService.getInstance().registerDelayedTaskHandler(
+            DelayedTaskFunction.STATS_PAGES_CLEANUP, self._dtStatsPagesCleanup
+        )
 
     @commandHandlerV2(
         commands=("stats", "stats_web"),
@@ -200,7 +213,7 @@ class StatsHandler(BaseBotHandler):
         visibility={CommandPermission.PRIVATE},
         availableFor={CommandPermission.DEFAULT},
         helpOrder=CommandHandlerOrder.NORMAL,
-        category=CommandCategory.TOOLS,
+        category=CommandCategory.UTILITIES,
     )
     async def statsCommand(
         self,
@@ -218,6 +231,9 @@ class StatsHandler(BaseBotHandler):
             args: Raw argument string after the command.
             updateObj: Raw update object from the platform (unused).
             typingManager: Optional typing indicator manager.
+
+        Returns:
+            None
         """
         # Apply ALLOW_SHOW_STATS gate for group/channel chats only
         if ensuredMessage.recipient.chatType != ChatType.PRIVATE:
@@ -350,7 +366,7 @@ class StatsHandler(BaseBotHandler):
                 await self.sendMessage(
                     ensuredMessage,
                     messageText=(
-                        "⚠ Генерация веб-страниц отключена. Спросите оператора о настройке " "секции [stats.pages]."
+                        "⚠ Генерация веб-страниц отключена. Спросите оператора о настройке секции [stats.pages]."
                     ),
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                     typingManager=typingManager,
@@ -465,6 +481,9 @@ class StatsHandler(BaseBotHandler):
                         options[optionName] = tokens[i + 1]
                         i += 1
                     else:
+                        # --period, --section, --user require a value
+                        if optionName in ("period", "section", "user"):
+                            raise StatsUsageError(f"Опция --{optionName} требует значения")
                         # Flag without value (boolean)
                         options[optionName] = ""
                 i += 1
@@ -494,7 +513,7 @@ class StatsHandler(BaseBotHandler):
             if positional[0] == "help" and len(options) > 0:
                 raise StatsUsageError("help не может сочетаться с другими аргументами")
             if positional[0] != "help":
-                # Token already validated as int at line ~484, so this conversion cannot fail
+                # Token already validated as int in _parseStatsArgs parsing loop, so this conversion cannot fail
                 chatId = int(positional[0])
             else:
                 chatId = None
@@ -652,6 +671,9 @@ class StatsHandler(BaseBotHandler):
             ensuredMessage: The originating user message.
             replyText: The reply text (string for single message, or list of strings for chunks).
             typingManager: Optional typing indicator manager.
+
+        Returns:
+            None
         """
         if isinstance(replyText, str):
             # Single message (most common case)
@@ -662,7 +684,7 @@ class StatsHandler(BaseBotHandler):
                 typingManager=typingManager,
             )
         else:
-            # Multiple chunks - send sequentially
+            # Multiple chunks - send sequentially with pacing
             for i, chunk in enumerate(replyText):
                 await self.sendMessage(
                     ensuredMessage,
@@ -670,6 +692,9 @@ class StatsHandler(BaseBotHandler):
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                     typingManager=typingManager,
                 )
+                # Sleep after each chunk except the last
+                if i < len(replyText) - 1:
+                    await asyncio.sleep(self._CHUNK_SEND_DELAY_SECONDS)
 
     async def _buildSectionView(
         self,
@@ -765,11 +790,11 @@ class StatsHandler(BaseBotHandler):
             periodType=periodType,
             periodStartFrom=periodStartFrom,
             periodStartTo=periodStartTo,
-            limit=10000,
+            limit=STATS_QUERY_ROW_LIMIT,
         )
 
         # D5 honesty line: check if we hit the limit
-        possiblyIncomplete = len(rows) == 10000
+        possiblyIncomplete = len(rows) == STATS_QUERY_ROW_LIMIT
 
         analyzer = StatsAnalyzer(rows)
         analyzer = analyzer.filterByLabelIn("consumer", consumerFilter)
@@ -839,11 +864,11 @@ class StatsHandler(BaseBotHandler):
             periodType=periodType,
             periodStartFrom=periodStartFrom,
             periodStartTo=periodStartTo,
-            limit=10000,
+            limit=STATS_QUERY_ROW_LIMIT,
         )
 
         # D5 honesty line: check if we hit the limit
-        possiblyIncomplete = len(rows) == 10000
+        possiblyIncomplete = len(rows) == STATS_QUERY_ROW_LIMIT
 
         analyzer = StatsAnalyzer(rows)
         analyzer = analyzer.filterByLabelIn("consumer", consumerFilter)
@@ -899,11 +924,11 @@ class StatsHandler(BaseBotHandler):
             periodType=periodType,
             periodStartFrom=periodStartFrom,
             periodStartTo=periodStartTo,
-            limit=10000,
+            limit=STATS_QUERY_ROW_LIMIT,
         )
 
         # D5 honesty line: check if we hit the limit
-        possiblyIncomplete = len(rows) == 10000
+        possiblyIncomplete = len(rows) == STATS_QUERY_ROW_LIMIT
 
         analyzer = StatsAnalyzer(rows)
         analyzer = analyzer.filterByLabelIn("consumer", consumerFilter)
@@ -913,7 +938,15 @@ class StatsHandler(BaseBotHandler):
 
         totalCalls = analyzer.sumMetric("tool_call_count")
         errorCalls = analyzer.sumMetric("is_error")
-        avgElapsed = analyzer.average("elapsed_time", "tool_call_count")
+
+        # Cross-group contract: use tool_exec_count when available, fallback to tool_call_count
+        toolExecCountSum = analyzer.sumMetric("tool_exec_count")
+        avgElapsed = 0.0
+        if toolExecCountSum > 0:
+            elapsedTimeSum = analyzer.sumMetric("elapsed_time")
+            avgElapsed = elapsedTimeSum / toolExecCountSum
+        else:
+            avgElapsed = analyzer.average("elapsed_time", "tool_call_count")
 
         topTools = analyzer.topN("toolName", "tool_call_count", 3)
 
@@ -964,11 +997,11 @@ class StatsHandler(BaseBotHandler):
             periodType=periodType,
             periodStartFrom=periodStartFrom,
             periodStartTo=periodStartTo,
-            limit=10000,
+            limit=STATS_QUERY_ROW_LIMIT,
         )
 
         # D5 honesty line: check if we hit the limit
-        possiblyIncomplete = len(rows) == 10000
+        possiblyIncomplete = len(rows) == STATS_QUERY_ROW_LIMIT
 
         analyzer = StatsAnalyzer(rows)
         analyzer = analyzer.filterByLabelIn("consumer", consumerFilter)
@@ -1005,11 +1038,11 @@ class StatsHandler(BaseBotHandler):
             periodType=periodType,
             periodStartFrom=periodStartFrom,
             periodStartTo=periodStartTo,
-            limit=10000,
+            limit=STATS_QUERY_ROW_LIMIT,
         )
 
         # D5 honesty line: check if we hit the STT limit
-        sttPossiblyIncomplete = len(sttRows) == 10000
+        sttPossiblyIncomplete = len(sttRows) == STATS_QUERY_ROW_LIMIT
 
         if sttRows:
             sttAnalyzer = StatsAnalyzer(sttRows)
@@ -1110,11 +1143,11 @@ class StatsHandler(BaseBotHandler):
                 periodType=periodType,
                 periodStartFrom=periodStartFrom,
                 periodStartTo=periodStartTo,
-                limit=10000,
+                limit=STATS_QUERY_ROW_LIMIT,
             )
 
             # Track truncation BEFORE filtering (honesty line needs this)
-            if len(queriedRows) == 10000:
+            if len(queriedRows) == STATS_QUERY_ROW_LIMIT:
                 truncatedEventTypes.append(eventType)
 
             # Filter by consumer label to exclude __global__ and other chats
@@ -1130,6 +1163,7 @@ class StatsHandler(BaseBotHandler):
         # Chat list for private scope (match reply path condition exactly)
         # Condition: private ∧ no user filter ∧ no positional chatId ∧ messages section
         chatList: list[ChatListEntry] = []
+        chatListTotal: int = 0
         if (
             chatType == ChatType.PRIVATE
             and filterUserId is None
@@ -1137,6 +1171,8 @@ class StatsHandler(BaseBotHandler):
             and section == "messages"
         ):
             userChats = await self.getUserChats(userId)
+            # Store total count before slicing (for trailer display)
+            chatListTotal = len(userChats)
             # Sort by messages_count descending, top 10
             userChats.sort(key=lambda c: c.get("messages_count", 0), reverse=True)
             for chat in userChats[:10]:
@@ -1179,6 +1215,7 @@ class StatsHandler(BaseBotHandler):
 
         if chatList:
             payload["chatList"] = chatList
+            payload["chatListTotal"] = chatListTotal
 
         if truncatedEventTypes:
             payload["truncatedEventTypes"] = truncatedEventTypes
@@ -1249,31 +1286,7 @@ class StatsHandler(BaseBotHandler):
         # No try/except here; outer D15 wrap covers the no-limiter RuntimeError
         await RateLimiterManager.getInstance().applyLimit(self._statsPagesRatelimiterQueue, rateLimiterKey)
 
-        # Build the in-chat reply first (D15: reply always wins)
-        try:
-            brief = await self._buildStatsReply(
-                targetChatId=targetChatId,
-                chatType=chatType,
-                userId=userId,
-                section=section,
-                periodArg=periodArg,
-                periodType=periodType,
-                periodStartFrom=periodStartFrom,
-                periodStartTo=periodStartTo,
-                filterUserId=filterUserId,
-                positionalChatIdUsed=positionalChatIdUsed,
-            )
-        except Exception:
-            logger.exception(f"Stats query failed for chat {targetChatId}")
-            await self.sendMessage(
-                ensuredMessage,
-                messageText="❌ Ошибка при запросе статистики.",
-                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
-                typingManager=typingManager,
-            )
-            return
-
-        # Build payload for subprocess
+        # Build payload for subprocess (single-pass: derive brief from payload)
         try:
             payload = await self._buildStatsPayload(
                 targetChatId=targetChatId,
@@ -1289,13 +1302,31 @@ class StatsHandler(BaseBotHandler):
             )
         except Exception:
             logger.exception(f"Stats payload build failed for chat {targetChatId}")
-            # Brief was already built, send it with failure note
-            await self._sendStatsReply(
+            # No brief yet, send generic error
+            await self.sendMessage(
                 ensuredMessage,
-                await self._appendWebSuffix(brief, "⚠ Генерация веб-страницы не удалась."),
-                typingManager,
+                messageText="❌ Ошибка при запросе статистики.",
+                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                typingManager=typingManager,
             )
             return
+
+        # Derive brief from payload (single-pass: no dual query)
+        try:
+            brief = await self._buildStatsReplyFromPayload(
+                payload=payload,
+                targetChatId=targetChatId,
+                chatType=chatType,
+                userId=userId,
+                section=section,
+                periodArg=periodArg,
+                filterUserId=filterUserId,
+                positionalChatIdUsed=positionalChatIdUsed,
+            )
+        except Exception:
+            logger.exception(f"Stats brief build from payload failed for chat {targetChatId}")
+            # Brief build failed - still have payload for subprocess, but send generic error
+            brief = "❌ Ошибка при формировании сводки."
 
         # Resolve generate-command argv with substitutions
         placeholders = {
@@ -1396,6 +1427,324 @@ class StatsHandler(BaseBotHandler):
             await self._appendWebSuffix(brief, f"📊 Страница: {fullLink}"),
             typingManager,
         )
+
+    async def _buildStatsReplyFromPayload(
+        self,
+        payload: StatsPayload,
+        targetChatId: int,
+        chatType: ChatType,
+        userId: int,
+        section: str,
+        periodArg: str,
+        filterUserId: Optional[int],
+        positionalChatIdUsed: bool = False,
+    ) -> str | list[str]:
+        """Build the stats reply message from an already-built payload.
+
+        Derives the brief from the payload data without additional queries.
+        Reuses the handler's rendering logic on the payload's rows/sections.
+
+        Args:
+            payload: The stats payload with rows and metadata.
+            targetChatId: Chat to show stats for (for header label).
+            chatType: Type of the target chat (for chat list condition).
+            userId: Current user ID (for chat list if private).
+            section: Section to display (for chat list condition).
+            periodArg: Original period argument string (for header label).
+            filterUserId: Optional user ID filter (for display).
+            positionalChatIdUsed: Whether a positional chatId was provided (gates chat list).
+
+        Returns:
+            Formatted markdown reply string (or list of strings for chunked output).
+        """
+        # Scope: group → this chat only, private → this chat or member chat
+        consumerFilter = {str(targetChatId)}
+
+        # D7 drill-down depth: --section=all renders all four sections
+        sectionsToRender: list[str]
+        if section == "all":
+            # --section=all: render all four sections
+            sectionsToRender = ["messages", "commands", "tools", "llm"]
+        else:
+            # Default: single section (the one specified)
+            sectionsToRender = [section]
+
+        # Build reply
+        lines: list[str] = []
+
+        # Header
+        periodLabel = periodArg if periodArg != "all" else "всё время"
+        chatIdentifier = f"#{targetChatId}"
+        lines.append(f"📊 Stats — {periodLabel} (UTC) — {chatIdentifier}")
+
+        # Build section views from payload rows
+        for renderSection in sectionsToRender:
+            sectionView = await self._buildSectionViewFromPayload(
+                payload=payload,
+                section=renderSection,
+                consumerFilter=consumerFilter,
+                targetChatId=targetChatId,
+            )
+            lines.append(sectionView)
+            if renderSection != sectionsToRender[-1]:
+                lines.append("")  # Blank line between sections
+
+        # In private scope, add chat list from payload if available
+        if (
+            chatType == ChatType.PRIVATE
+            and section == "messages"
+            and filterUserId is None
+            and positionalChatIdUsed is False
+            and "chatList" in payload
+        ):
+            lines.append("")
+            lines.append("Ваши чаты:")
+            for chat in payload["chatList"]:
+                chatId = chat["chatId"]
+                title = chat["title"]
+                msgCount = chat["messagesCount"]
+                lines.append(f"  #`{chatId}` {title} — {msgCount}")
+            if "chatListTotal" in payload and payload["chatListTotal"] > len(payload["chatList"]):
+                lines.append(f"  … и ещё {payload['chatListTotal'] - len(payload['chatList'])} чатов")
+
+        # Footer
+        lines.append("")
+        lines.append("/stats help — полная справка")
+
+        # Add honesty line for truncated data
+        if "truncatedEventTypes" in payload and payload["truncatedEventTypes"]:
+            lines.append("")
+            lines.append("  ⚠ результаты возможно неполные")
+
+        # Send output in chunks to avoid hitting message size limits
+        chunks: list[str] = []
+        currentChunk: list[str] = []
+        currentLength = 0
+
+        for line in lines:
+            lineLength = len(line) + 1  # +1 for newline
+            if currentLength + lineLength > self._OUTPUT_CHUNK_LENGTH and currentChunk:
+                # Flush current chunk before adding this line
+                chunks.append("\n".join(currentChunk))
+                currentChunk = [line]
+                currentLength = lineLength
+            else:
+                currentChunk.append(line)
+                currentLength += lineLength
+
+        # Don't forget the last chunk (ensure at least one message is sent)
+        if currentChunk:
+            chunks.append("\n".join(currentChunk))
+
+        return chunks[0] if len(chunks) == 1 else chunks
+
+    async def _buildSectionViewFromPayload(
+        self,
+        payload: StatsPayload,
+        section: str,
+        consumerFilter: set[str],
+        targetChatId: int,
+    ) -> str:
+        """Build the view for a specific stats section from payload data.
+
+        Args:
+            payload: The stats payload with all rows.
+            section: Section to display.
+            consumerFilter: Consumer IDs to filter by.
+            targetChatId: Chat to show stats for (for username resolution).
+
+        Returns:
+            Formatted section view string.
+        """
+        rows = payload["rows"][section] if section in payload["rows"] else []
+        analyzer = StatsAnalyzer(rows)
+        analyzer = analyzer.filterByLabelIn("consumer", consumerFilter)
+
+        # Section builders (reusing the same logic as _buildSectionView)
+        if section == "messages":
+            return await self._buildMessagesSectionFromAnalyzer(
+                analyzer, payload["truncatedEventTypes"] if "truncatedEventTypes" in payload else [], targetChatId
+            )
+        elif section == "commands":
+            return self._buildCommandsSectionFromAnalyzer(
+                analyzer, payload["truncatedEventTypes"] if "truncatedEventTypes" in payload else []
+            )
+        elif section == "tools":
+            return self._buildToolsSectionFromAnalyzer(
+                analyzer, payload["truncatedEventTypes"] if "truncatedEventTypes" in payload else []
+            )
+        elif section == "llm":
+            return self._buildLlmSectionFromAnalyzer(
+                analyzer, payload, payload["truncatedEventTypes"] if "truncatedEventTypes" in payload else []
+            )
+        else:
+            return f"❌ Неизвестный раздел: {section}"
+
+    async def _buildMessagesSectionFromAnalyzer(
+        self, analyzer: StatsAnalyzer, truncatedEventTypes: list[str], targetChatId: int
+    ) -> str:
+        """Build the messages section view from analyzer.
+
+        Args:
+            analyzer: StatsAnalyzer with filtered data.
+            truncatedEventTypes: List of event types that were truncated (unused, honesty line is global).
+            targetChatId: Chat to show stats for (for username resolution).
+
+        Returns:
+            Formatted messages section string.
+        """
+        # Direction breakdown: sent=True (bot), sent=False (users), absent (history)
+        userCount = analyzer.filterByLabel("sent", "False").sumMetric("message_count")
+        botCount = analyzer.filterByLabel("sent", "True").sumMetric("message_count")
+
+        # History count = rows without sent label
+        analyzerAll = analyzer  # All rows (including history)
+        totalMessageCount = analyzerAll.sumMetric("message_count")
+        historyCount = totalMessageCount - userCount - botCount
+
+        # Top users (by message count)
+        topUsers = analyzerAll.filterByLabel("sent", "False").topN("user_id", "message_count", 3)
+
+        # Build lines
+        lines: list[str] = [f"Messages: {int(totalMessageCount)}"]
+        lines.append(f"  users {int(userCount)} / bot {int(botCount)} / history {int(historyCount)}")
+
+        if topUsers:
+            topUserNames = []
+            for userIdStr, count in topUsers:
+                try:
+                    userIdInt = int(userIdStr)
+                except (ValueError, TypeError):
+                    userIdInt = 0  # Fallback for invalid user IDs
+                # Resolve username asynchronously, fallback to raw ID on miss
+                userName = await self._resolveUserName(targetChatId, userIdInt)
+                topUserNames.append(f"{userName} {int(count)}")
+            lines.append(f"  Top: {' · '.join(topUserNames)}")
+
+        return "\n".join(lines)
+
+    def _buildCommandsSectionFromAnalyzer(self, analyzer: StatsAnalyzer, truncatedEventTypes: list[str]) -> str:
+        """Build the commands section view from analyzer.
+
+        Args:
+            analyzer: StatsAnalyzer with filtered data.
+            truncatedEventTypes: List of event types that were truncated (unused, honesty line is global).
+
+        Returns:
+            Formatted commands section string.
+        """
+        totalCommands = analyzer.sumMetric("command_count")
+        errorCommands = analyzer.sumMetric("is_error")
+
+        topCommands = analyzer.topN("commandName", "command_count", 3)
+
+        lines: list[str] = [f"Commands: {int(totalCommands)}"]
+        if errorCommands > 0:
+            lines.append(f"  errors: {int(errorCommands)}")
+        if topCommands:
+            topCmdNames = []
+            for cmdName, count in topCommands:
+                topCmdNames.append(f"{cmdName} {int(count)}")
+            lines.append(f"  Top: {' · '.join(topCmdNames)}")
+
+        return "\n".join(lines)
+
+    def _buildToolsSectionFromAnalyzer(self, analyzer: StatsAnalyzer, truncatedEventTypes: list[str]) -> str:
+        """Build the tools section view from analyzer.
+
+        Args:
+            analyzer: StatsAnalyzer with filtered data.
+            truncatedEventTypes: List of event types that were truncated (unused, honesty line is global).
+
+        Returns:
+            Formatted tools section string.
+        """
+        totalCalls = analyzer.sumMetric("tool_call_count")
+        errorCalls = analyzer.sumMetric("is_error")
+
+        # Cross-group contract: use tool_exec_count when available, fallback to tool_call_count
+        toolExecCountSum = analyzer.sumMetric("tool_exec_count")
+        avgElapsed = 0.0
+        if toolExecCountSum > 0:
+            elapsedTimeSum = analyzer.sumMetric("elapsed_time")
+            avgElapsed = elapsedTimeSum / toolExecCountSum
+        else:
+            avgElapsed = analyzer.average("elapsed_time", "tool_call_count")
+
+        topTools = analyzer.topN("toolName", "tool_call_count", 3)
+
+        lines: list[str] = [f"Tools: {int(totalCalls)}"]
+        if errorCalls > 0:
+            lines.append(f"  errors: {int(errorCalls)}")
+        if avgElapsed > 0:
+            lines.append(f"  avg time: {avgElapsed:.2f}s")
+        if topTools:
+            topToolNames = []
+            for toolName, count in topTools:
+                topToolNames.append(f"{toolName} {int(count)}")
+            lines.append(f"  Top: {' · '.join(topToolNames)}")
+
+        return "\n".join(lines)
+
+    def _buildLlmSectionFromAnalyzer(
+        self, analyzer: StatsAnalyzer, payload: StatsPayload, truncatedEventTypes: list[str]
+    ) -> str:
+        """Build the LLM section view from analyzer.
+
+        Args:
+            analyzer: StatsAnalyzer with filtered data.
+            payload: The stats payload (for STT data and user filter annotation).
+            truncatedEventTypes: List of event types that were truncated (unused for LLM, honesty line is global).
+
+        Returns:
+            Formatted LLM section string.
+        """
+        totalRequests = analyzer.sumMetric("request_count")
+        errorRequests = analyzer.sumMetric("is_error")
+        totalInputTokens = analyzer.sumMetric("input_tokens")
+        totalOutputTokens = analyzer.sumMetric("output_tokens")
+
+        avgElapsed = analyzer.average("elapsed_time", "request_count")
+
+        topModels = analyzer.topN("modelName", "request_count", 3)
+
+        lines: list[str] = [f"LLM: {int(totalRequests)} requests"]
+        if errorRequests > 0:
+            lines.append(f"  errors: {int(errorRequests)}")
+        lines.append(f"  tokens: in {int(totalInputTokens)} / out {int(totalOutputTokens)}")
+        if avgElapsed > 0:
+            lines.append(f"  avg time: {avgElapsed:.2f}s")
+        if topModels:
+            topModelNames = []
+            for modelName, count in topModels:
+                topModelNames.append(f"{modelName} {int(count)}")
+            lines.append(f"  Top models: {' · '.join(topModelNames)}")
+
+        # Annotation for user-level filtering
+        if payload.get("userFilterApplied"):
+            lines.append("  (на уровне чата, не пользователя)")
+
+        # STT stats from payload
+        sttRows = payload["rows"].get("stt_request", [])
+        if sttRows:
+            sttAnalyzer = StatsAnalyzer(sttRows)
+
+            totalSttRequests = sttAnalyzer.sumMetric("request_count")
+            errorSttRequests = sttAnalyzer.sumMetric("is_error")
+            totalAudioDurationMs = sttAnalyzer.sumMetric("audio_duration_ms")
+            totalSttElapsedTime = sttAnalyzer.sumMetric("elapsed_time")
+
+            lines.append(f"  STT: {int(totalSttRequests)} запросов")
+            if errorSttRequests > 0:
+                lines.append(f"    errors: {int(errorSttRequests)}")
+            if totalAudioDurationMs > 0:
+                audioDurationSecs = totalAudioDurationMs / 1000.0
+                lines.append(f"    audio: {audioDurationSecs:.1f}s")
+            if totalSttRequests > 0:
+                avgSttTime = totalSttElapsedTime / totalSttRequests
+                lines.append(f"    avg time: {avgSttTime:.2f}s")
+
+        return "\n".join(lines)
 
     async def _dtStatsPagesCleanup(self, task: DelayedTask) -> None:
         """Handle delayed task for stats page cleanup (one-shot per-page deletion).

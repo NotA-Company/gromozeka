@@ -287,6 +287,7 @@ async def testSuccessfulToolCallRecordsStats(
     # Check stats dict
     stats = callArgs.kwargs["stats"]
     assert stats["tool_call_count"] == 1
+    assert stats["tool_exec_count"] == 1
     assert stats["elapsed_time"] > 0.0
     assert stats["is_error"] == 0
 
@@ -338,6 +339,7 @@ async def testErrorDictRecordsAsError(
     stats = callArgs.kwargs["stats"]
     assert stats["is_error"] == 1
     assert stats["tool_call_count"] == 1
+    assert stats["tool_exec_count"] == 1
     assert stats["elapsed_time"] > 0.0
 
 
@@ -378,6 +380,8 @@ async def testSynthesizedErrorRecordsAsError(
     callArgs = mockStatsStorage.record.call_args
     stats = callArgs.kwargs["stats"]
     assert stats["is_error"] == 1
+    assert stats["tool_call_count"] == 1
+    assert "tool_exec_count" not in stats
     assert stats["elapsed_time"] == 0.0
     assert callArgs.kwargs["labels"]["toolName"] == toolName
 
@@ -419,6 +423,8 @@ async def testUnavailableToolRecordsAsError(
     callArgs = mockStatsStorage.record.call_args
     stats = callArgs.kwargs["stats"]
     assert stats["is_error"] == 1
+    assert stats["tool_call_count"] == 1
+    assert "tool_exec_count" not in stats
     assert stats["elapsed_time"] == 0.0
     assert callArgs.kwargs["labels"]["toolName"] == toolName
 
@@ -600,6 +606,11 @@ async def testMultipleToolCallsRecordEach(
         assert call.kwargs["consumerId"] == "67890"
         assert call.kwargs["labels"]["user_id"] == "12345"
         assert call.kwargs["labels"]["toolName"] == toolName
+        stats = call.kwargs["stats"]
+        assert stats["tool_call_count"] == 1
+        assert stats["tool_exec_count"] == 1
+        assert stats["is_error"] == 0
+        assert stats["elapsed_time"] > 0.0
 
 
 async def testElapsedTimeIsNonNegativeFloat(
@@ -638,5 +649,64 @@ async def testElapsedTimeIsNonNegativeFloat(
 
     callArgs = mockStatsStorage.record.call_args
     elapsed = callArgs.kwargs["stats"]["elapsed_time"]
+    stats = callArgs.kwargs["stats"]
+    assert stats["tool_exec_count"] == 1
     assert isinstance(elapsed, float)
     assert elapsed >= 0.0
+
+
+async def testDoneTrueErrorNoneRecordsAsNonError(
+    llmService: LLMService,
+    mockStatsStorage: AsyncMock,
+    mockModel: Mock,
+    mockChatSettings: Mock,
+    extraData: ExtraDataDict,
+) -> None:
+    """Tool returning {"done": True, "error": None} records is_error=0.
+
+    Tests the new isError heuristic: a success dict with "error": None
+    should NOT be miscounted as an error.
+
+    Args:
+        llmService: LLM service fixture
+        mockStatsStorage: Mock stats storage
+        mockModel: Mock model fixture
+        mockChatSettings: Mock chat settings
+        extraData: Extra data dict with ensuredMessage
+    """
+
+    async def successWithNoneErrorHandler(
+        extraData: Optional[Dict[str, object]] = None, **kwargs: Any
+    ) -> Dict[str, Any]:
+        """Handler that returns {"done": True, "error": None}."""
+        return {"done": True, "error": None}
+
+    toolName = "success_with_none_error"
+    llmService.registerTool(toolName, "tool returning done=True with error=None", [], successWithNoneErrorHandler)
+    llmService.injectStatsStorage(mockStatsStorage)
+
+    _wireMocks(
+        llmService,
+        generateSideEffects=[
+            _makeToolCallResult(toolName, "call_1"),
+            _makeFinalResult("done"),
+        ],
+    )
+
+    await llmService.generateTextViaLLM(
+        messages=[ModelMessage(role="user", content="hi")],
+        chatId=67890,
+        chatSettings=mockChatSettings,
+        modelKey=mockModel,
+        fallbackModelKey=mockModel,
+        useTools=True,
+        extraData=extraData,
+    )
+
+    mockStatsStorage.record.assert_called_once()
+    callArgs = mockStatsStorage.record.call_args
+    stats = callArgs.kwargs["stats"]
+    assert stats["is_error"] == 0
+    assert stats["tool_call_count"] == 1
+    assert stats["tool_exec_count"] == 1
+    assert stats["elapsed_time"] > 0.0

@@ -519,6 +519,44 @@ class TestStatsPageGenerator:
 
         assert deleted == 0
 
+    def test_delete_path_traversal_does_not_escape_outputDir(self, tmp_path) -> None:
+        """Test that delete with path traversal attempts does not escape outputDir.
+
+        Regression test for path traversal vulnerability: delete() should only
+        accept valid uuid4().hex pageIds and reject path traversal attempts.
+        """
+        # Create a file that could be targeted by path traversal
+        # Using ../evil.html (one level up from outputDir)
+        parentDir = tmp_path.parent
+        targetFile = parentDir / "evil.html"
+        targetFile.write_text("evil content")
+
+        generator = StatsPageGenerator(outputDir=tmp_path)
+
+        # Try to delete the file using path traversal
+        hostilePageId = "../evil"
+        deleted = generator.delete(hostilePageId)
+
+        # The evil file should still exist (not deleted by path traversal)
+        assert targetFile.exists(), "Path traversal should not delete files outside outputDir"
+        assert targetFile.read_text() == "evil content"
+
+        # Clean up the evil file
+        targetFile.unlink()
+
+        # Try other traversal attempts - all should return 0 or not raise
+        hostilePageIds = [
+            "../../evil",
+            "../../../evil",
+            "   ",
+            "123",  # Too short
+            "z" * 32,  # Invalid hex chars
+        ]
+
+        for hostilePageId in hostilePageIds:
+            deleted = generator.delete(hostilePageId)
+            assert deleted == 0, f"hostilePageId '{hostilePageId}' should return 0, got {deleted}"
+
     def test_generates_unique_ids_for_multiple_pages(self, tmp_path) -> None:
         """Test that multiple generates produce unique page IDs."""
         generator = StatsPageGenerator(outputDir=tmp_path)
@@ -1100,7 +1138,7 @@ class TestHonestyLine:
     """Test honesty line rendering for 10000-row limit."""
 
     def test_honesty_line_for_10000_rows(self, tmp_path) -> None:
-        """Test that honesty line appears when rows == 10000."""
+        """Test that honesty line appears when rows == 10000 and truncatedEventTypes includes message."""
         generator = StatsPageGenerator(outputDir=tmp_path)
 
         # Create exactly 10000 dummy rows
@@ -1125,6 +1163,7 @@ class TestHonestyLine:
             "periodType": "daily",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
             "rows": {"message": messageRows},
+            "truncatedEventTypes": ["message"],  # Flag triggers honesty line
         }
 
         pageId, url = generator.generate(payload)

@@ -181,14 +181,16 @@ class ChatUsersRepository(BaseRepository):
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)
             caseInsensitiveComparison = sqlProvider.getCaseInsensitiveComparison("username", "username")
-            row = await sqlProvider.executeFetchOne(
-                f"""
+            query = f"""
                 SELECT * FROM chat_users
                 WHERE
                     chat_id = :chatId
                     AND {caseInsensitiveComparison}
-                LIMIT 1
-            """,
+                ORDER BY updated_at DESC
+            """
+            query = sqlProvider.applyPagination(query=query, limit=1)
+            row = await sqlProvider.executeFetchOne(
+                query,
                 {
                     "chatId": chatId,
                     "username": username,

@@ -1,13 +1,13 @@
 # Design: Statistics aggregation v1 — periodic trigger and retention
 
 **Date**: 2026-08-17
-**Status**: Phase 1 implemented (working tree, commit: `3c3c156a`); Phase 2 implemented (commit: `549d0a81` + follow-up fix)
+**Status**: **IMPLEMENTED — both phases committed.** Phase 1 implemented (commit `3c3c156a`); Phase 2 implemented (commit `549d0a81` + follow-up fix); amendment A4 (config cached at `initialize`, fail-loud parse, `aggregation-batch-limit`) shipped. Post-review remediation 2026-08-21 — see the amendments block below.
 **Owner**: TBD
 **Branch**: `lib-stat-improvement`
 
 ## Amendments (2026-08-17, user-ratified)
 
-Three user-ratified design changes supersede parts of the original Phase-2 decisions;
+Four user-ratified design changes supersede parts of the original Phase-2 decisions;
 the affected D-decisions are reworked in place and marked *(amended)*. Phase 1 is
 untouched except the purge-cutoff sentence (A2). All mechanics cited below were
 verified against source on 2026-08-17.
@@ -43,9 +43,49 @@ verified against source on 2026-08-17.
   constructions become five `createStatsStorage(...)` calls at the same sites; the
   returned storages flow to the existing consumers exactly as today. The static
   storages list and the `initialize(statsStorages=…)` parameter disappear.
-  Cyclic-import safety: `internal/services/stats` importing
-  `internal/database/stats_storage` is fine (main.py already imports both; services
-  import `internal.database` elsewhere, e.g. queue_service/service.py:36).
+   Cyclic-import safety: `internal/services/stats` importing
+   `internal/database/stats_storage` is fine (main.py already imports both; services
+   import `internal.database` elsewhere, e.g. queue_service/service.py:36).
+- **A4 — Config cached at initialize, fail-loudly on malformed (2026-08-17).**
+  `StatsAggregationService.initialize(configManager, database)` now reads `[stats]`
+  configuration once at startup, parsing and caching all values as typed scalars
+  (`self._statsEnabled`, `self._intervalSeconds`, `self._retentionDays`,
+  `self._batchLimit`). Config parsing MUST happen BEFORE setting
+  `self._initialized = True` and BEFORE registering the CRON_JOB handler — a failed
+  initialize leaves the service retryable (config fixed → initialize again succeeds).
+  On malformed values (TypeError/ValueError from `int()` parse), `initialize` RAISES
+  `ValueError` with a clear error message naming the offending key (chained `from e`);
+  startup fails loudly, forcing the user to fix the config. This replaces the
+  per-cycle guarded-parse block in `_dtCronJob` — there is no per-cycle config read
+  anymore; the handler uses the cached values directly. Summary logging uses
+  registry keys as labels (`eventType` keys from `_statsStorages.items()`), removing
+  the double derivation and `storageLabels` precompute dict.
+  New config key `aggregation-batch-limit` (default 1000, clamp >= 1) bounds the drain
+  batch size; the drain loop passes `limit=self._batchLimit` to `aggregate()`, and
+  `MAX_AGGREGATION_ROUNDS` bounds a cycle at `MAX_AGGREGATION_ROUNDS × batch-limit`
+  events per storage.
+
+## Amendments (2026-08-21, post-review remediation)
+
+Post-implementation remediation after review of the shipped phases; all facts
+verified against source on 2026-08-21.
+
+- **Retention purge runs once per distinct datasource** — the purge predicate is
+  type-agnostic and runs per datasource, not per storage; pinned by tests.
+  (Supersedes the per-storage purge wording in D2/D3/D8.)
+- **The purge DELETE is batched** — double-nested subquery + `applyPagination`,
+  safe against MySQL ERROR 1093/1235. (Supersedes D8's "no LIMIT batching"
+  unbounded-DELETE stance and closes §9 Q4's open question.)
+- **The cron handler iterates a registry snapshot** (a `list(...)` copy of
+  `_statsStorages`) — the dict-mutation race is fixed and regression-tested.
+- **`_parseIntKey` strictly validates** — bools, floats, and non-integral strings
+  are rejected with an error naming the offending key; integral strings are
+  accepted (so `${VAR}` env substitution keeps working).
+- **`query()` supports limit+offset paging** — `offset` is forwarded through
+  `applyPagination`.
+- **`main.py` registers all five storages before the event loop is first driven** —
+  every factory call completes during startup, ahead of any scheduler or handler
+  execution.
 
 **Scope**: Close the two operational gaps left open by
 [stats-collecting-v1](./stats-collecting-v1.md) §11 ("Future work"): (1) **nothing in
@@ -334,7 +374,7 @@ per hour is negligible).
 
 Decisions D1-D4 were **ratified by the user** (2026-08-17) and are encoded as
 decided; D5-D10 resolve the assigned open points against the evidence in §2. The
-**2026-08-17 amendments** (A1-A3, above) supersede the trigger/seeding design in
+**2026-08-17 amendments** (A1-A4, above) supersede the trigger/seeding design in
 D1/D6/D10, the wiring in D5, and the cutoff in D3/D8; amended decisions are marked
 *(amended)*.
 
@@ -830,68 +870,6 @@ GromozekBot.__init__ (main.py)
 Storage-side changes (Phase 1) are confined to `lib/stats/stats_storage.py` (ABC +
 Null), `internal/database/stats_storage.py` (`purgeProcessed`, truncation helpers),
 migration 027 (import shared helpers), and new migration 028 (retention index).
-
----
-
-## Amendments (2026-08-17, user-ratified)
-
-Three user-ratified design changes supersede parts of the original Phase-2 decisions;
-the affected D-decisions are reworked in place and marked *(amended)*. Phase 1 is
-untouched except the purge-cutoff sentence (A2). All mechanics cited below were
-verified against source on 2026-08-17.
-
-- **A1 — Trigger: ride the shared CRON_JOB tick, no dedicated task.** The
-  `DelayedTaskFunction.STATS_AGGREGATION` self-rescheduling task (old D1/D6/D10) is
-  dropped entirely — no new enum member, no seeding. `StatsAggregationService`
-  registers `registerDelayedTaskHandler(DelayedTaskFunction.CRON_JOB,
-  self._dtCronJob)` in `initialize`, and the handler gates on elapsed time
-  in-memory (`self._lastRunTime: float = 0.0`; per tick: skip if
-  `time.time() - _lastRunTime < intervalSeconds`). CRON_JOB is a shared 60-second
-  tick owned by QueueService (`_cronJobHandler` reschedules `time.time() + 60`,
-  service.py:190-201, seeded at service.py:302-307); handler lists are append-based
-  (service.py:233-266) and three consumers already coexist on it. First tick after
-  startup is an immediate catch-up (`_lastRunTime = 0.0`) — the ratified "first run
-  is catch-up" property without seeding. The old reschedule-first machinery and its
-  chain-death risk are obsolete: the tick survives handler exceptions structurally
-  (per-handler try/except, service.py:390-399).
-- **A2 — Purge cutoff day-truncation.**
-  `cutoff = truncateToDay(getCurrentTimestamp() - timedelta(days=retentionDays))` —
-  the UTC midnight of N days ago, reusing the Phase-1 shared helper
-  (stats_storage.py:313-327). An event is deleted only once it is beyond N **whole**
-  days; hours/minutes/seconds of age within the boundary day do not count. The
-  strict-`<` boundary is now midnight: a row created during the boundary day
-  survives.
-- **A3 — Storage factory + registry.**
-  `StatsAggregationService.createStatsStorage(eventType: str, dataSource: str | None
-  = None) -> StatsStorage` is the single construction seam: it reads `[stats]
-  enabled` itself — disabled returns an **unregistered** `NullStatsStorage`; enabled
-  constructs `DatabaseStatsStorage` (today's type; the seam exists for future
-  non-DB backends) and registers it in `self._statsStorages: Dict[str,
-  StatsStorage]` keyed by eventType, returning it. main.py's five per-event
-  constructions become five `createStatsStorage(...)` calls at the same sites; the
-  returned storages flow to the existing consumers exactly as today. The static
-  storages list and the `initialize(statsStorages=…)` parameter disappear.
-  Cyclic-import safety: `internal/services/stats` importing
-  `internal/database/stats_storage` is fine (main.py already imports both; services
-  import `internal.database` elsewhere, e.g. queue_service/service.py:36).
-- **A4 — Config cached at initialize, fail-loudly on malformed (2026-08-17).**
-  `StatsAggregationService.initialize(configManager, database)` now reads `[stats]`
-  configuration once at startup, parsing and caching all values as typed scalars
-  (`self._statsEnabled`, `self._intervalSeconds`, `self._retentionDays`,
-  `self._batchLimit`). Config parsing MUST happen BEFORE setting
-  `self._initialized = True` and BEFORE registering the CRON_JOB handler — a failed
-  initialize leaves the service retryable (config fixed → initialize again succeeds).
-  On malformed values (TypeError/ValueError from `int()` parse), `initialize` RAISES
-  `ValueError` with a clear error message naming the offending key (chained `from e`);
-  startup fails loudly, forcing the user to fix the config. This replaces the
-  per-cycle guarded-parse block in `_dtCronJob` — there is no per-cycle config read
-  anymore; the handler uses the cached values directly. Summary logging uses
-  registry keys as labels (`eventType` keys from `_statsStorages.items()`), removing
-  the double derivation and `storageLabels` precompute dict.
-  New config key `aggregation-batch-limit` (default 1000, clamp >= 1) bounds the drain
-  batch size; the drain loop passes `limit=self._batchLimit` to `aggregate()`, and
-  `MAX_AGGREGATION_ROUNDS` bounds a cycle at `MAX_AGGREGATION_ROUNDS × batch-limit`
-  events per storage.
 
 ---
 

@@ -7,6 +7,9 @@ These types follow the camelCase convention for API-level structures
 
 from typing import TypedDict
 
+# Default row limit for stats queries (10,000 rows balances memory usage and completeness)
+STATS_QUERY_ROW_LIMIT: int = 10000
+
 
 class StatsAggregateDict(TypedDict):
     """Single aggregated statistics row with parsed labels.

@@ -114,7 +114,8 @@ The receiver refuses to start if `secret` is empty or an unresolved `${VAR}`.
 In production, run the two as separate systemd units sharing the same config
 and `.env` (so they share the SQLite database).
 
-Full details: [docs/llm/architecture.md](docs/llm/architecture.md) (ADR-013),
+Full details: [docs/max-webhook-setup.md](docs/max-webhook-setup.md),
+[docs/llm/architecture.md](docs/llm/architecture.md) (ADR-013),
 [docs/llm/configuration.md](docs/llm/configuration.md) (`[webhook-receiver]`).
 
 ## Key Commands

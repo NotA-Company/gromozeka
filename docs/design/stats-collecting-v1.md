@@ -1,7 +1,7 @@
 # Design: Statistics collection v1 — messages, tool calls, commands
 
 **Date**: 2026-08-14
-**Status**: **IMPLEMENTED — all phases landed.** Phase 4 implemented (commit `b61c67aa` — both-direction `message` events, direction via sender identity, `sent`/`message_category` labels; fix-set `fcdf5663` — `getBotId()` 1 h TTL cache, stats recorded with `sent="False"` when the bot id is unresolvable, back-fill recomputed from `chat_messages`). Phase 3 implemented (commit `92040759` — `command` events via `HandlersManager.handleCommand`, gated on `[stats] enabled`). Phase 2 implemented (commit `ed378378` + fix `0fea86b6` — `llm_tool_call` events via `LLMService.injectStatsStorage`, gated on `[stats] enabled`). Phase 1 implemented (commits `46cac39f` + `f885702b` — `message` events + migration 027 back-fill/drop, gated on `[stats] enabled`). Remaining deferred items (next design): aggregation trigger, retention, query API, display. The body below is the original design rationale and is preserved as-is.
+**Status**: **IMPLEMENTED — all phases landed.** Phase 4 implemented (commit `b61c67aa` — both-direction `message` events, direction via sender identity, `sent`/`message_category` labels; fix-set `fcdf5663` — `getBotId()` 1 h TTL cache, stats recorded with `sent="False"` when the bot id is unresolvable, back-fill recomputed from `chat_messages`). Phase 3 implemented (commit `92040759` — `command` events via `HandlersManager.handleCommand`, gated on `[stats] enabled`). Phase 2 implemented (commit `ed378378` — `llm_tool_call` events via `LLMService.injectStatsStorage`, gated on `[stats] enabled`). Phase 1 implemented (commits `46cac39f` + `f885702b` + fix `0fea86b6` ("Count only inbound messages in message_received stats") — `message` events + migration 027 back-fill/drop, gated on `[stats] enabled`). The formerly deferred items — aggregation trigger, retention, query API, display — have all since shipped: [`stats-aggregation-v1.md`](./stats-aggregation-v1.md) (trigger + retention) and [`stats-display-v1.md`](./stats-display-v1.md) (query API + display); see §11 annotations. The body below is the original design rationale and is preserved as-is.
 
 **Caveats (post-implementation):** (a) a handler timed out by the manager's `wait_for` records no `command` event (CancelledError bypasses the except; accepted best-effort undercount); (b) denied/not-found commands record no events of any kind (saveChatMessage is post-gate) — command-origin message ⊇ command, minus denials; (c) label naming is mixed camelCase/snake_case across events (pre-existing; harmonizing would split labels_hash buckets — do not change).
 
@@ -55,6 +55,9 @@ reviewable commit. STT needs no work — it is already wired.
 - **G1** — Record a `message_received` event exactly once per inbound message
   (commands and regular messages alike), with `message_count`, `text_length`, and
   `user_id` / `chat_type` / `message_type` labels.
+  *Amended 2026-08-16: the shipped event type is `message` (not `message_received`), both
+  directions are recorded (direction via sender identity, not inbound-only), and the
+  migration-027 back-fill source is `chat_messages` — see the D3/D7 amendments.*
 - **G2** — Record an `llm_tool_call` event for every tool dispatch through the single
   centralized site in `LLMService`, with `tool_call_count`, `elapsed_time`, `is_error`,
   and `user_id` / `toolName` labels.
@@ -586,6 +589,12 @@ Construction (all three) in [`main.py`](../../main.py) beside
 
 ## 5. Database migration specification
 
+*Amended 2026-08-16: the shipped migration writes `event_type = "message"` (not
+`"message_received"`) and recomputes the back-fill from `chat_messages` (not
+`chat_user_stats`), with live-matching `message_category`/`message_type` labels,
+`text_length` sums, and exclusions — see the D3/D7 amendments. The spec below is
+the original design.*
+
 **File:** `internal/database/migrations/versions/migration_027_drop_chat_stats_backfill_aggregates.py`
 (number verified — `migration_026_*` is the highest today).
 
@@ -848,12 +857,23 @@ while leaving the migration in place is safe (no recording happens).
 
 ## 11. Future work (deferred per D8)
 
-- **Aggregation trigger** — a periodic `aggregate()` caller (scheduler task or startup
+*Annotated 2026-08-21: the first three items below have all since shipped —
+aggregation trigger + retention in [`stats-aggregation-v1.md`](./stats-aggregation-v1.md),
+query API + display in [`stats-display-v1.md`](./stats-display-v1.md). The original
+deferral text is preserved as history.*
+
+- **Aggregation trigger** — *SHIPPED (see
+  [`stats-aggregation-v1.md`](./stats-aggregation-v1.md): `StatsAggregationService`,
+  CRON_JOB-rider cycle).* A periodic `aggregate()` caller (scheduler task or startup
   loop) so `stat_events` actually rolls up into `stat_aggregates`. Required before any of
   the three new event types produce queryable aggregates from live data (the back-fill
   writes pre-aggregated rows directly, so it does not depend on this).
-- **Retention / cleanup** of processed `stat_events` rows.
-- **Query / read API** and **user-facing display** of stats.
+- **Retention / cleanup** of processed `stat_events` rows — *SHIPPED (see
+  [`stats-aggregation-v1.md`](./stats-aggregation-v1.md): `purgeProcessed` +
+  `events-retention-days`).*
+- **Query / read API** and **user-facing display** of stats — *SHIPPED (see
+  [`stats-display-v1.md`](./stats-display-v1.md): `query()` ABC read API +
+  `/stats` command + optional web pages).*
 - **Transactional aggregation** — wrap claim + upsert + mark in one transaction once the
   provider gains a transactional batch primitive (the `TODO` at
   [stats_storage.py:232](../../internal/database/stats_storage.py)).

@@ -23,8 +23,9 @@ are skipped.
 **Historical data note:** Unlike the legacy ``chat_user_stats`` counters (which
 unconditionally counted everything, including DELETED rewrites-era rows), the
 new back-fill matches live-event semantics — counts may differ slightly from the
-legacy counters. Both bot-authored and user-authored rows are included (direction
-is derivable at query time via ``user_id`` comparison with the bot's ID).
+legacy counters. Both bot-authored and user-authored rows are included. The
+display layer treats back-filled rows (which carry no ``sent`` label) as a
+separate "history" bucket, distinct from "sent" and "received".
 
 The ``down()`` migration recreates both legacy tables empty — the original data
 is not restorable (destroyed by the DROP in ``up()``).
@@ -64,8 +65,8 @@ class Migration027DropChatStatsBackfillAggregates(BaseMigration):
 
     **Label-sets:** Per-consumer (``consumer = str(chatId)``) and ``__global__``
     rollup. Labels include ``consumer``, ``user_id``, ``chat_type``,
-    ``message_category``, ``message_type``. Historical direction is derivable at
-    query time via ``user_id`` comparison with the bot's ID.
+    ``message_category``, ``message_type``. Back-filled rows carry no ``sent``
+    label; the display layer treats this as a separate "history" bucket.
 
     **Historical data note:** Unlike the legacy ``chat_user_stats`` counters
     (which unconditionally counted everything), the new back-fill matches
@@ -103,8 +104,10 @@ class Migration027DropChatStatsBackfillAggregates(BaseMigration):
 
         **Memory usage:** Messages are fetched chat-by-chat (``SELECT DISTINCT
         chat_id`` first, then rows per chat) to avoid loading the entire
-        ``chat_messages`` table into memory at once. The aggregates dict grows
-        with unique buckets (acceptable).
+        ``chat_messages`` table into memory at once. Per-consumer buckets are
+        flushed after each chat; ``__global__`` buckets accumulate across chats
+        and flush once after the loop. This bounds memory growth while maintaining
+        re-run idempotency via replace-semantics upserts.
 
         **Date handling:** Date-part truncation is done in Python (``rowDate.date()``)
         for portability across SQLite/PostgreSQL/MySQL — no SQL date functions are used.
@@ -132,9 +135,9 @@ class Migration027DropChatStatsBackfillAggregates(BaseMigration):
         totalSentinel = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc).isoformat()
         now = getCurrentTimestamp()
 
-        # Python-side pre-aggregation: accumulate all values in memory, then upsert once per bucket
+        # Accumulate __global__ buckets across all chats (per-consumer buckets flushed after each chat)
         # Key: (labelsJson, periodType, periodStart, metricKey) -> summed metric_value
-        aggregates: dict[tuple[str, str, str, str], float] = {}
+        runningTotal: dict[tuple[str, str, str, str], float] = {}
 
         if "chat_messages" in existingTables:
             for chatRow in distinctChats:
@@ -147,8 +150,21 @@ class Migration027DropChatStatsBackfillAggregates(BaseMigration):
                     {"chatId": chatId},
                 )
 
+                # Look up real chat_type from chat_info; fall back to sign-derived if missing
+                chatInfoRow = await sqlProvider.executeFetchOne(
+                    "SELECT type FROM chat_info WHERE chat_id = :chatId",
+                    {"chatId": chatId},
+                )
+                if chatInfoRow is not None and chatInfoRow["type"] is not None:
+                    chatType = chatInfoRow["type"]
+                else:
+                    # Fallback: derive from chat_id sign (repo convention)
+                    chatType = "private" if chatId > 0 else "group"
+
+                # Per-consumer aggregates for this chat only (flushed after processing this chat)
+                chatAggregates: dict[tuple[str, str, str, str], float] = {}
+
                 for row in chatMessages:
-                    chatId = row["chat_id"]
                     userId = row["user_id"]
                     dateVal = row["date"]
                     messageCategory = row["message_category"]
@@ -165,9 +181,6 @@ class Migration027DropChatStatsBackfillAggregates(BaseMigration):
                     # SQLite returns timestamps as strings; convert to datetime
                     if isinstance(dateVal, str):
                         dateVal = datetime.datetime.fromisoformat(dateVal)
-
-                    # Derive chat_type from chat_id sign (repo convention)
-                    chatType = "private" if chatId > 0 else "group"
 
                     # Date-part truncation in Python (portability rule)
                     datePart = dateVal.date()
@@ -213,20 +226,52 @@ class Migration027DropChatStatsBackfillAggregates(BaseMigration):
                     for periodType, periodStart in periods:
                         # Per-consumer: message_count = 1, text_length = len(messageText)
                         keyCount = (perConsumerLabelsJson, periodType, periodStart, "message_count")
-                        aggregates[keyCount] = aggregates.get(keyCount, 0.0) + 1.0
+                        chatAggregates[keyCount] = chatAggregates.get(keyCount, 0.0) + 1.0
 
                         keyLength = (perConsumerLabelsJson, periodType, periodStart, "text_length")
-                        aggregates[keyLength] = aggregates.get(keyLength, 0.0) + float(textLength)
+                        chatAggregates[keyLength] = chatAggregates.get(keyLength, 0.0) + float(textLength)
 
-                        # __global__ rollup: same metrics
+                        # __global__ rollup: same metrics (accumulate across chats)
                         globalKeyCount = (globalLabelsJson, periodType, periodStart, "message_count")
-                        aggregates[globalKeyCount] = aggregates.get(globalKeyCount, 0.0) + 1.0
+                        runningTotal[globalKeyCount] = runningTotal.get(globalKeyCount, 0.0) + 1.0
 
                         globalKeyLength = (globalLabelsJson, periodType, periodStart, "text_length")
-                        aggregates[globalKeyLength] = aggregates.get(globalKeyLength, 0.0) + float(textLength)
+                        runningTotal[globalKeyLength] = runningTotal.get(globalKeyLength, 0.0) + float(textLength)
 
-        # --- Step 1b: Upsert accumulated aggregates (one row per unique key) ---
-        for (labelsJson, periodType, periodStart, metricKey), total in aggregates.items():
+                # --- Step 1a: Flush per-consumer aggregates for this chat ---
+                # Note: BaseSQLProvider.upsert is single-row only; we iterate in a loop.
+                # A batch upsert implementation is left for future work.
+                for (labelsJson, periodType, periodStart, metricKey), total in chatAggregates.items():
+                    labelsHash = _hashLabels(labelsJson)
+                    await sqlProvider.upsert(
+                        table="stat_aggregates",
+                        values={
+                            "event_type": "message",
+                            "period_start": periodStart,
+                            "period_type": periodType,
+                            "labels_hash": labelsHash,
+                            "labels": labelsJson,
+                            "metric_key": metricKey,
+                            "metric_value": total,
+                            "updated_at": now,
+                        },
+                        conflictColumns=[
+                            "event_type",
+                            "period_start",
+                            "period_type",
+                            "labels_hash",
+                            "metric_key",
+                        ],
+                        updateExpressions={
+                            "metric_value": ExcludedValue(),  # Replace with final summed value (no incremental +)
+                            "updated_at": ExcludedValue(),
+                        },
+                    )
+
+        # --- Step 1b: Flush __global__ aggregates (accumulated across all chats) ---
+        # Note: BaseSQLProvider.upsert is single-row only; we iterate in a loop.
+        # A batch upsert implementation is left for future work.
+        for (labelsJson, periodType, periodStart, metricKey), total in runningTotal.items():
             labelsHash = _hashLabels(labelsJson)
             await sqlProvider.upsert(
                 table="stat_aggregates",

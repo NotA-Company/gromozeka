@@ -43,7 +43,7 @@ import pytest
 
 from lib.proxy import ProxyConfig, ProxyHelper, ProxyType
 from lib.stats.stats_storage import StatsStorage
-from lib.stats.types import StatsAggregateDict
+from lib.stats.types import STATS_QUERY_ROW_LIMIT, StatsAggregateDict
 from lib.stt import STTAttributionType
 from lib.stt.models import (
     AudioFormatSpec,
@@ -1741,6 +1741,15 @@ class _RecordingStatsStorage(StatsStorage):
         self.records: list[_StatsRecord] = []
         self.shouldRaise: Optional[Exception] = None
 
+    @property
+    def dataSource(self) -> str:
+        """Return 'null' as the data source identifier for this fake.
+
+        Returns:
+            The string 'null'.
+        """
+        return "null"
+
     async def record(
         self,
         stats: dict[str, float | int],
@@ -1802,7 +1811,8 @@ class _RecordingStatsStorage(StatsStorage):
         periodType: Optional[str] = None,
         periodStartFrom: Optional[str] = None,
         periodStartTo: Optional[str] = None,
-        limit: int = 10000,
+        limit: int = STATS_QUERY_ROW_LIMIT,
+        offset: int = 0,
     ) -> list[StatsAggregateDict]:
         """No-op for this fake.
 
@@ -1812,6 +1822,7 @@ class _RecordingStatsStorage(StatsStorage):
             periodStartFrom: Ignored.
             periodStartTo: Ignored.
             limit: Ignored.
+            offset: Ignored.
 
         Returns:
             Empty list.

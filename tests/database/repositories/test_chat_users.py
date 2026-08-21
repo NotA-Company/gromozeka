@@ -255,8 +255,9 @@ class TestChatUsersBotStatusFiltering:
         Args:
             testDatabase: Database fixture with initialized tables.
         """
-        # Create chat_info entries for groups with different bot_status values
         provider = await testDatabase.manager.getProvider(readonly=False)
+
+        # Create chat_info entries for groups with different bot_status values
         await provider.execute(
             "INSERT INTO chat_info "
             "(chat_id, title, username, type, is_forum, bot_status, created_at, updated_at) "
@@ -264,7 +265,6 @@ class TestChatUsersBotStatusFiltering:
             "(-100, 'Active Group', 'active_group', 'group', 0, 'active', "
             "datetime('now'), datetime('now'))"
         )
-        provider = await testDatabase.manager.getProvider(readonly=False)
         await provider.execute(
             "INSERT INTO chat_info "
             "(chat_id, title, username, type, is_forum, bot_status, created_at, updated_at) "
@@ -272,7 +272,6 @@ class TestChatUsersBotStatusFiltering:
             "(-200, 'Inaccessible Group', 'inaccessible_group', 'supergroup', 0, "
             "'inaccessible', datetime('now'), datetime('now'))"
         )
-        provider = await testDatabase.manager.getProvider(readonly=False)
         await provider.execute(
             "INSERT INTO chat_info "
             "(chat_id, title, username, type, is_forum, bot_status, created_at, updated_at) "
@@ -297,8 +296,9 @@ class TestChatUsersBotStatusFiltering:
         Args:
             testDatabase: Database fixture with initialized tables.
         """
-        # Create chat_info entries for groups with different bot_status values
         provider = await testDatabase.manager.getProvider(readonly=False)
+
+        # Create chat_info entries for groups with different bot_status values
         await provider.execute(
             "INSERT INTO chat_info "
             "(chat_id, title, username, type, is_forum, bot_status, created_at, updated_at) "
@@ -306,7 +306,6 @@ class TestChatUsersBotStatusFiltering:
             "(-100, 'Active Group', 'active_group', 'group', 0, 'active', "
             "datetime('now'), datetime('now'))"
         )
-        provider = await testDatabase.manager.getProvider(readonly=False)
         await provider.execute(
             "INSERT INTO chat_info "
             "(chat_id, title, username, type, is_forum, bot_status, created_at, updated_at) "
@@ -314,7 +313,6 @@ class TestChatUsersBotStatusFiltering:
             "(-200, 'Inaccessible Group', 'inaccessible_group', 'supergroup', 0, "
             "'inaccessible', datetime('now'), datetime('now'))"
         )
-        provider = await testDatabase.manager.getProvider(readonly=False)
         await provider.execute(
             "INSERT INTO chat_info "
             "(chat_id, title, username, type, is_forum, bot_status, created_at, updated_at) "
@@ -339,8 +337,9 @@ class TestChatUsersBotStatusFiltering:
         Args:
             testDatabase: Database fixture with initialized tables.
         """
-        # Create chat_info entries for different chat types
         provider = await testDatabase.manager.getProvider(readonly=False)
+
+        # Create chat_info entries for different chat types
         await provider.execute(
             "INSERT INTO chat_info "
             "(chat_id, title, username, type, is_forum, bot_status, created_at, updated_at) "
@@ -348,7 +347,6 @@ class TestChatUsersBotStatusFiltering:
             "(100, 'Private Chat', 'private', 'private', 0, 'active', "
             "datetime('now'), datetime('now'))"
         )
-        provider = await testDatabase.manager.getProvider(readonly=False)
         await provider.execute(
             "INSERT INTO chat_info "
             "(chat_id, title, username, type, is_forum, bot_status, created_at, updated_at) "
@@ -356,7 +354,6 @@ class TestChatUsersBotStatusFiltering:
             "(-100, 'Group', 'group_chat', 'group', 0, 'active', datetime('now'), "
             "datetime('now'))"
         )
-        provider = await testDatabase.manager.getProvider(readonly=False)
         await provider.execute(
             "INSERT INTO chat_info "
             "(chat_id, title, username, type, is_forum, bot_status, created_at, updated_at) "
@@ -409,8 +406,9 @@ class TestChatUsersBotStatusFiltering:
         Args:
             testDatabase: Database fixture with initialized tables.
         """
-        # Create chat_info entries
         provider = await testDatabase.manager.getProvider(readonly=False)
+
+        # Create chat_info entries
         await provider.execute(
             "INSERT INTO chat_info "
             "(chat_id, title, username, type, is_forum, bot_status, created_at, updated_at) "
@@ -418,7 +416,6 @@ class TestChatUsersBotStatusFiltering:
             "(100, 'Chat 1', 'chat1', 'group', 0, 'active', "
             "datetime('now'), datetime('now'))"
         )
-        provider = await testDatabase.manager.getProvider(readonly=False)
         await provider.execute(
             "INSERT INTO chat_info "
             "(chat_id, title, username, type, is_forum, bot_status, created_at, updated_at) "
@@ -428,14 +425,12 @@ class TestChatUsersBotStatusFiltering:
         )
 
         # Create chat_users entries with different messages_count values
-        provider = await testDatabase.manager.getProvider(readonly=False)
         await provider.execute(
             "INSERT INTO chat_users "
             "(chat_id, user_id, username, full_name, messages_count, created_at, updated_at) "
             "VALUES "
             "(100, 100, 'user100', 'User 100', 42, datetime('now'), datetime('now'))"
         )
-        provider = await testDatabase.manager.getProvider(readonly=False)
         await provider.execute(
             "INSERT INTO chat_users "
             "(chat_id, user_id, username, full_name, messages_count, created_at, updated_at) "
@@ -470,8 +465,9 @@ class TestChatUsersBotStatusFiltering:
         Args:
             testDatabase: Database fixture with initialized tables.
         """
-        # Create chat_info entries (no user_id column in chat_info)
         provider = await testDatabase.manager.getProvider(readonly=False)
+
+        # Create chat_info entries (no user_id column in chat_info)
         await provider.execute(
             "INSERT INTO chat_info "
             "(chat_id, title, username, type, is_forum, created_at, updated_at) "
@@ -500,3 +496,43 @@ class TestChatUsersBotStatusFiltering:
         chatIds = [chat["chat_id"] for chat in chats]
         assert 100 in chatIds
         assert 200 in chatIds
+
+    async def test_getChatUserByUsername_twoRowsSameUsername_returnsMostRecent(self, testDatabase) -> None:
+        """getChatUserByUsername returns the most-recent row when multiple rows have same username.
+
+        Regression test: When two chat_users rows exist for the same username with different
+        updated_at timestamps, getChatUserByUsername should return the most recent one.
+
+        Args:
+            testDatabase: Database fixture with initialized tables.
+        """
+        provider = await testDatabase.manager.getProvider(readonly=False)
+
+        # Create two chat_users rows with the same username but different users and timestamps
+        # Older entry (earlier updated_at)
+        await provider.execute(
+            "INSERT INTO chat_users "
+            "(chat_id, user_id, username, full_name, created_at, updated_at) "
+            "VALUES "
+            "(100, 100, '@testuser', 'Test User 100', "
+            "datetime('now', '-1 hour'), datetime('now', '-1 hour'))"
+        )
+
+        # Newer entry (more recent updated_at)
+        await provider.execute(
+            "INSERT INTO chat_users "
+            "(chat_id, user_id, username, full_name, created_at, updated_at) "
+            "VALUES "
+            "(100, 200, '@testuser', 'Test User 200', "
+            "datetime('now'), datetime('now'))"
+        )
+
+        # Call getChatUserByUsername - should return the most recent entry
+        user = await testDatabase.chatUsers.getChatUserByUsername(chatId=100, username="@testuser")
+
+        # Should return a user
+        assert user is not None
+
+        # Should be the most recent user (user_id 200)
+        assert user["user_id"] == 200
+        assert user["full_name"] == "Test User 200"

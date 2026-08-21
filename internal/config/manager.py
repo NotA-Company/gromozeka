@@ -278,6 +278,13 @@ class ConfigManager:
     def get(self, key: str, default: Any = None) -> Any:
         """Get configuration value by key.
 
+        Supports dot notation for nested keys (e.g., "bot.token" accesses
+        config["bot"]["token"]). Note that dot notation treats literal dots
+        as path separators, so a TOML key containing a literal dot (e.g.
+        "a.b" = 1, or a top-level "yandex.search") is unreachable via
+        get("a.b") since the split always navigates. No such keys exist
+        in the current configuration.
+
         Args:
             key: The configuration key to retrieve. Supports dot notation for nested keys.
             default: The default value to return if the key is not found. Defaults to None.

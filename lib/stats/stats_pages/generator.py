@@ -13,14 +13,18 @@ dependencies.
 import argparse
 import html
 import json
+import re
 import sys
 import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import NotRequired, TypedDict
+from typing import NotRequired, TypedDict, cast
 
 from lib.stats.types import StatsAggregateDict
+
+# Compiled pattern for validating pageId (must be uuid4().hex format)
+PAGE_ID_PATTERN = re.compile("^[0-9a-f]{32}$")
 
 
 class ChatListEntry(TypedDict):
@@ -57,6 +61,7 @@ class StatsPayload(TypedDict):
         rows: Dictionary keyed by eventType containing raw aggregate rows.
             Keys: "message", "command", "llm_tool_call", "llm_request", "stt_request".
         chatList: For private chats, list of user's chats with message counts.
+        chatListTotal: Total count of user's chats (for trailer display).
         truncatedEventTypes: List of event types that hit the 10000-row limit.
         userFilterApplied: Whether a user filter (--user) was applied by the requester.
     """
@@ -71,6 +76,7 @@ class StatsPayload(TypedDict):
     generatedAt: str
     rows: dict[str, list[StatsAggregateDict]]
     chatList: NotRequired[list[ChatListEntry]]
+    chatListTotal: NotRequired[int]
     truncatedEventTypes: NotRequired[list[str]]
     userFilterApplied: NotRequired[bool]
 
@@ -92,10 +98,9 @@ class StatsPageGenerator:
 
         Args:
             outputDir: Directory to store generated pages. Defaults to current
-                directory.
+                directory. The directory will be created when generating pages.
         """
         self.outputDir = Path(outputDir)
-        self.outputDir.mkdir(parents=True, exist_ok=True)
 
     def generate(self, payload: StatsPayload, baseUrl: str | None = None) -> tuple[str, str]:
         """Generate an HTML page from the payload.
@@ -117,6 +122,8 @@ class StatsPageGenerator:
         filePath = self.outputDir / filename
 
         htmlContent = self._renderHtml(payload)
+        # Create parent directories if they don't exist
+        self.outputDir.mkdir(parents=True, exist_ok=True)
         filePath.write_text(htmlContent, encoding="utf-8")
 
         # Construct URL based on baseUrl
@@ -131,16 +138,23 @@ class StatsPageGenerator:
         """Delete a page by ID.
 
         Args:
-            pageId: UUID filename stem of the page to delete.
+            pageId: UUID filename stem of the page to delete. Must match
+                uuid4().hex format (32 hexadecimal characters).
 
         Returns:
-            int: 1 if a file was deleted, 0 if no such file existed.
+            int: 1 if a file was deleted, 0 if no such file existed or
+                if pageId failed validation.
         """
+        # Validate pageId shape to prevent path traversal
+        if not PAGE_ID_PATTERN.match(pageId):
+            return 0
+
         filePath = self.outputDir / f"{pageId}.html"
-        if filePath.exists():
+        try:
             filePath.unlink()
             return 1
-        return 0
+        except FileNotFoundError:
+            return 0
 
     def _groupRowsByMetric(self, rows: list[StatsAggregateDict]) -> dict[str, float]:
         """Group rows by metricKey and sum metricValue.
@@ -161,23 +175,18 @@ class StatsPageGenerator:
     ) -> bool:
         """Check if the truncation honesty line should be shown for a section.
 
-        The line appears when either:
-        - The eventType is explicitly in truncatedEventTypes (new path)
-        - The rows count is exactly 10000 (fallback legacy path)
+        The line appears when the eventType is explicitly in truncatedEventTypes.
+        Trusts ONLY the flag from the payload; no fallback heuristics.
 
         Args:
             eventType: The event type for this section (e.g., "message", "command").
-            rows: List of aggregate rows for this section.
+            rows: List of aggregate rows for this section (unused, kept for API compatibility).
             truncatedEventTypes: List of event types that hit the 10000-row limit.
 
         Returns:
             bool: True if honesty line should be shown, False otherwise.
         """
-        if eventType in truncatedEventTypes:
-            return True
-        if len(rows) == 10000:
-            return True
-        return False
+        return eventType in truncatedEventTypes
 
     def _buildTimeSeries(
         self, rows: list[StatsAggregateDict], metricKey: str, periodType: str
@@ -213,7 +222,8 @@ class StatsPageGenerator:
             maxBars: Maximum number of bars to render (for hourly data).
 
         Returns:
-            SVG HTML string or empty string if no data.
+            str: SVG markup with inline chart, optionally followed by a caption
+                paragraph if the data was truncated. Empty string if no data.
         """
         if not timeSeries:
             return ""
@@ -267,8 +277,10 @@ class StatsPageGenerator:
 
         # X-axis labels (simplified - show first, middle, last)
         if len(timeSeries) >= 3:
-            for i, (periodStart, _) in enumerate([timeSeries[0], timeSeries[len(timeSeries) // 2], timeSeries[-1]]):
-                x = 50 + i * (barWidth * (len(timeSeries) - 1) / 2)
+            # Choose indices deterministically for even/odd counts
+            indices = [0, round((len(timeSeries) - 1) / 2), len(timeSeries) - 1]
+            for i, (periodStart, _) in enumerate([timeSeries[idx] for idx in indices]):
+                x = 50 + indices[i] * barWidth + barWidth / 2  # Anchor at bar center
                 # Extract just the time for display
                 if "T" in periodStart:
                     label = periodStart.split("T")[1][:5]  # HH:MM
@@ -276,7 +288,7 @@ class StatsPageGenerator:
                     label = periodStart[:10]  # YYYY-MM-DD
                 labelEscaped = html.escape(label)
                 svgParts.append(
-                    f'<text x="{x + barWidth / 2}" y="{height - 5}" '
+                    f'<text x="{x}" y="{height - 5}" '
                     f'font-size="9" text-anchor="middle" '
                     f'fill="#7f8c8d">{labelEscaped}</text>'
                 )
@@ -1010,10 +1022,10 @@ class StatsPageGenerator:
             decimals: Number of decimal places for floats.
 
         Returns:
-            str: Formatted number string.
+            str: Formatted number string with thousands separators.
         """
         if isinstance(value, float):
-            return f"{value:.{decimals}f}"
+            return f"{value:,.{decimals}f}"
         return f"{value:,}"
 
 
@@ -1024,12 +1036,16 @@ def readPayload() -> StatsPayload:
         StatsPayload: Parsed statistics payload.
 
     Raises:
-        ValueError: If stdin is not valid JSON, required fields are missing,
-            or payload structure is invalid.
+        ValueError: If stdin is not valid JSON, payload is not a dict,
+            or required fields are missing.
     """
     try:
         payloadJson = sys.stdin.read()
         payload = json.loads(payloadJson)
+
+        # Validate payload is a dict
+        if not isinstance(payload, dict):
+            raise ValueError("Payload must be a JSON object")
 
         # Validate required meta fields
         requiredFields = [
@@ -1047,11 +1063,9 @@ def readPayload() -> StatsPayload:
             if field not in payload:
                 raise ValueError(f"Missing required field: {field}")
 
-        return StatsPayload(payload)
+        return cast(StatsPayload, payload)
     except json.JSONDecodeError as e:
         raise ValueError(f"Invalid JSON on stdin: {e}") from e
-    except Exception as e:
-        raise ValueError(f"Failed to parse payload: {e}") from e
 
 
 def handleGenerate(args: argparse.Namespace) -> int:
@@ -1067,6 +1081,10 @@ def handleGenerate(args: argparse.Namespace) -> int:
         payload = readPayload()
         generator = StatsPageGenerator(outputDir=args.outputDir)
         pageId, url = generator.generate(payload, baseUrl=args.baseUrl)
+
+        # Warn if no baseUrl was provided
+        if not args.baseUrl:
+            print("WARNING: --base-url not provided; generated URL is a bare filename", file=sys.stderr)
 
         # Output the result JSON to stdout
         result = {"pageId": pageId, "url": url}

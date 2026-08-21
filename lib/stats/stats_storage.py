@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Optional
 
-from .types import StatsAggregateDict
+from .types import STATS_QUERY_ROW_LIMIT, StatsAggregateDict
 
 # Sentinel consumer ID for global (all-consumer) aggregation
 GLOBAL_CONSUMER_ID = "__global__"
@@ -24,6 +24,21 @@ class StatsStorage(ABC):
     automatically produces a ``__global__`` rollup for each unique labels
     combination (substituting consumer with ``GLOBAL_CONSUMER_ID``).
     """
+
+    @property
+    @abstractmethod
+    def dataSource(self) -> str:
+        """Return the data source identifier for this storage.
+
+        Multiple storages may share the same data source (e.g., multiple
+        event types using the same database). The aggregation service uses
+        this to deduplicate purge operations across storages on the same
+        datasource.
+
+        Returns:
+            The data source identifier (e.g., 'default', 'custom_ds', 'null').
+        """
+        ...
 
     @abstractmethod
     async def record(
@@ -90,6 +105,11 @@ class StatsStorage(ABC):
         contract — isolation is the coordinator's job); ``record()`` remains the
         only never-raise method.
 
+        Note: The database implementation (DatabaseStatsStorage) purges
+        type-agnostically across all event types on its datasource (no
+        ``event_type`` filter in the DELETE predicate), so the first purge
+        pass for a given datasource cleans all processed rows regardless of type.
+
         Args:
             retentionDays: Minimum age in days for a processed row to be deleted.
 
@@ -106,7 +126,8 @@ class StatsStorage(ABC):
         periodType: Optional[str] = None,
         periodStartFrom: Optional[str] = None,
         periodStartTo: Optional[str] = None,
-        limit: int = 10000,
+        limit: int = STATS_QUERY_ROW_LIMIT,
+        offset: int = 0,
     ) -> list[StatsAggregateDict]:
         """Read aggregated rows with parsed labels.
 
@@ -123,7 +144,8 @@ class StatsStorage(ABC):
                 (inclusive). String comparison works for lexicographic ordering.
             periodStartTo: Optional ISO-8601 UTC timestamp upper bound
                 (inclusive). String comparison works for lexicographic ordering.
-            limit: Maximum number of rows to return (default 10000).
+            limit: Maximum number of rows to return (default STATS_QUERY_ROW_LIMIT).
+            offset: Number of rows to skip before returning results (default 0).
 
         Returns:
             List of StatsAggregateDict objects with parsed labels dicts.
@@ -141,6 +163,15 @@ class NullStatsStorage(StatsStorage):
 
     Use when statistics collection is disabled in configuration.
     """
+
+    @property
+    def dataSource(self) -> str:
+        """Return 'null' as the data source identifier.
+
+        Returns:
+            The string 'null'.
+        """
+        return "null"
 
     async def record(
         self,
@@ -193,7 +224,8 @@ class NullStatsStorage(StatsStorage):
         periodType: Optional[str] = None,
         periodStartFrom: Optional[str] = None,
         periodStartTo: Optional[str] = None,
-        limit: int = 10000,
+        limit: int = STATS_QUERY_ROW_LIMIT,
+        offset: int = 0,
     ) -> list[StatsAggregateDict]:
         """No-op — returns empty list.
 
@@ -203,6 +235,7 @@ class NullStatsStorage(StatsStorage):
             periodStartFrom: Ignored.
             periodStartTo: Ignored.
             limit: Ignored.
+            offset: Ignored.
 
         Returns:
             Empty list.

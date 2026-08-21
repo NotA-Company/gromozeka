@@ -477,6 +477,93 @@ class TestInitializationValidation:
         # Verify retentionDays was clamped to 0
         assert statsAggregationService._retentionDays == 0
 
+    def testParseIntKeyRejectsBoolean(self, statsAggregationService, mockConfigManager, mockDatabase):
+        """Test that TOML boolean (true) raises ValueError naming the key."""
+        # Config with boolean instead of integer
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": True,  # Boolean, not integer!
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
+        }
+
+        # Initialize should raise ValueError
+        with pytest.raises(ValueError) as exc_info:
+            statsAggregationService.initialize(mockConfigManager, mockDatabase)
+
+        # Verify error message names the key and mentions boolean
+        msg = str(exc_info.value)
+        assert "Malformed [stats] configuration" in msg
+        assert "aggregation-interval-seconds" in msg
+        assert "boolean" in msg
+
+        # Verify service stays uninitialized
+        assert statsAggregationService._initialized is False
+
+    def testParseIntKeyRejectsFloat(self, statsAggregationService, mockConfigManager, mockDatabase):
+        """Test that float 1.5 raises ValueError naming the key."""
+        # Config with float instead of integer
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 1.5,  # Float, not integer!
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
+        }
+
+        # Initialize should raise ValueError
+        with pytest.raises(ValueError) as exc_info:
+            statsAggregationService.initialize(mockConfigManager, mockDatabase)
+
+        # Verify error message names the key and mentions float
+        msg = str(exc_info.value)
+        assert "Malformed [stats] configuration" in msg
+        assert "aggregation-interval-seconds" in msg
+        assert "float" in msg
+
+        # Verify service stays uninitialized
+        assert statsAggregationService._initialized is False
+
+    def testParseIntKeyRejectsNonIntegralString(self, statsAggregationService, mockConfigManager, mockDatabase):
+        """Test that string "3.5" raises ValueError (non-integral)."""
+        # Config with non-integral string instead of integer
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": "3.5",  # Non-integral string, not integer!
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
+        }
+
+        # Initialize should raise ValueError
+        with pytest.raises(ValueError) as exc_info:
+            statsAggregationService.initialize(mockConfigManager, mockDatabase)
+
+        # Verify error message names the key
+        msg = str(exc_info.value)
+        assert "Malformed [stats] configuration" in msg
+        assert "aggregation-interval-seconds" in msg
+        # Note: non-integral strings like "3.5" raise "not a valid integer" (not "non-integral")
+        # because they fail the float conversion check
+
+        # Verify service stays uninitialized
+        assert statsAggregationService._initialized is False
+
+    def testParseIntKeyAcceptsIntegralString(self, statsAggregationService, mockConfigManager, mockDatabase):
+        """Test that string "3600" parses correctly to 3600 (integral string)."""
+        # Config with integral string
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": "3600",  # String, but integral!
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
+        }
+
+        # Initialize should succeed
+        statsAggregationService.initialize(mockConfigManager, mockDatabase)
+
+        # Verify interval was parsed correctly
+        assert statsAggregationService._intervalSeconds == 3600
+        assert statsAggregationService._initialized is True
+
 
 # ============================================================================
 # Handler Registration Tests
@@ -1079,3 +1166,191 @@ class TestGetQueryStorage:
         # Query should return NullStatsStorage (registry is empty)
         result = statsAggregationService.getQueryStorage("llm_request")
         assert isinstance(result, NullStatsStorage)
+
+    async def testDictMutationRaceDuringIteration(
+        self, statsAggregationService, mockConfigManager, mockDatabase, sampleDelayedTask, caplog
+    ):
+        """Regression test: dict mutation during _dtCronJob iteration must not raise RuntimeError.
+
+        Before fix: _dtCronJob iterated `self._statsStorages.items()` bare with awaits inside.
+        If an aggregate() call triggered createStatsStorage (which mutates the dict), Python raised
+        RuntimeError: dictionary changed size during iteration. The per-storage try/except caught
+        aggregate() exceptions but NOT the dict-mutation RuntimeError, which escaped the handler.
+
+        Test: stub one storage's aggregate to create a new storage mid-iteration via the service's
+        factory method. Verify no RuntimeError escapes and the registry ends with the new storage.
+
+        Returns:
+            None
+        """
+        # Create mock storages with AsyncMock
+        storage1 = AsyncMock(spec=StatsStorage)
+        storage1.purgeProcessed.return_value = 10
+
+        storage2 = AsyncMock(spec=StatsStorage)
+        storage2.aggregate.return_value = 0
+        storage2.purgeProcessed.return_value = 5
+
+        # Track whether storage1.aggregate was called
+        aggregate1CallCount = 0
+
+        async def aggregateWithMutation(*args, **kwargs):
+            """First call triggers dict mutation, then returns 0 to stop drain."""
+            nonlocal aggregate1CallCount
+            aggregate1CallCount += 1
+            # First call: trigger storage creation (dict mutation)
+            if aggregate1CallCount == 1:
+                # Directly mutate the dict during iteration
+                statsAggregationService._statsStorages["new_storage"] = AsyncMock(spec=StatsStorage)
+                statsAggregationService._statsStorages["new_storage"].aggregate.return_value = 0
+                statsAggregationService._statsStorages["new_storage"].purgeProcessed.return_value = 3
+            return 0  # Return 0 to stop drain loop
+
+        storage1.aggregate = aggregateWithMutation
+
+        # Initialize and register two storages
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 60,
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
+        }
+
+        statsAggregationService.initialize(mockConfigManager, mockDatabase)
+        statsAggregationService._statsStorages["storage1"] = storage1
+        statsAggregationService._statsStorages["storage2"] = storage2
+
+        # Set _lastRunTime to allow cycle to run
+        statsAggregationService._lastRunTime = time.time() - 61
+
+        # Run the handler - should NOT raise RuntimeError
+        with caplog.at_level(logging.INFO):
+            await statsAggregationService._dtCronJob(sampleDelayedTask)
+
+        # Verify no RuntimeError was raised (handler completed)
+        # Verify the new storage was added to the registry
+        assert "new_storage" in statsAggregationService._statsStorages
+
+        # Verify the original storages were processed
+        assert aggregate1CallCount >= 1
+        assert storage2.aggregate.call_count >= 1
+
+        # Verify purge was called on the original storages
+        assert storage1.purgeProcessed.call_count >= 1
+        assert storage2.purgeProcessed.call_count >= 1
+
+        # The new storage should NOT have been processed in this cycle
+        # (it was added mid-iteration, so it waits for the next cycle)
+        assert statsAggregationService._statsStorages["new_storage"].purgeProcessed.call_count == 0
+
+        # Verify the summary line includes all three storages (even the unprocessed new one)
+        summaryLines = [r.message for r in caplog.records if "Stats aggregation cycle complete" in r.message]
+        assert len(summaryLines) == 1, "Expected 1 summary line"
+        summary = summaryLines[0]
+        assert "storage1:" in summary
+        assert "storage2:" in summary
+        assert "new_storage:" in summary
+
+    async def testPurgeDedupeSameDataSource(
+        self, statsAggregationService, mockConfigManager, mockDatabase, sampleDelayedTask
+    ):
+        """Test that _dtCronJob purges once per distinct dataSource.
+
+        When multiple storages share the same dataSource, only ONE purge call
+        should be made per unique dataSource during the CRON cycle.
+
+        Seed:
+        - Two AsyncMock storages, both with dataSource="default"
+        - Run the CRON cycle
+
+        Returns:
+            None
+        """
+        # Create two mock storages with the same dataSource
+        storage1 = AsyncMock(spec=StatsStorage)
+        storage1.dataSource = "default"
+        storage1.aggregate.return_value = 0
+        storage1.purgeProcessed.return_value = 10
+
+        storage2 = AsyncMock(spec=StatsStorage)
+        storage2.dataSource = "default"
+        storage2.aggregate.return_value = 0
+        storage2.purgeProcessed.return_value = 5
+
+        # Initialize and register both storages
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 60,
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
+        }
+
+        statsAggregationService.initialize(mockConfigManager, mockDatabase)
+        statsAggregationService._statsStorages["storage1"] = storage1
+        statsAggregationService._statsStorages["storage2"] = storage2
+
+        # Set _lastRunTime to allow cycle to run
+        statsAggregationService._lastRunTime = time.time() - 61
+
+        # Run the handler
+        await statsAggregationService._dtCronJob(sampleDelayedTask)
+
+        # Verify aggregate was called on both storages
+        assert storage1.aggregate.call_count >= 1
+        assert storage2.aggregate.call_count >= 1
+
+        # Verify purgeProcessed was called exactly ONCE (deduped by dataSource)
+        totalPurgeCalls = storage1.purgeProcessed.call_count + storage2.purgeProcessed.call_count
+        assert totalPurgeCalls == 1, f"Expected 1 purge call total, got {totalPurgeCalls}"
+
+    async def testPurgeDedupeDistinctDataSources(
+        self, statsAggregationService, mockConfigManager, mockDatabase, sampleDelayedTask
+    ):
+        """Test that _dtCronJob purges once per distinct dataSource.
+
+        When storages have different dataSource values, each unique dataSource
+        should result in a separate purge call.
+
+        Seed:
+        - Two AsyncMock storages with dataSource="default" and dataSource="other"
+        - Run the CRON cycle
+
+        Returns:
+            None
+        """
+        # Create two mock storages with different dataSources
+        storage1 = AsyncMock(spec=StatsStorage)
+        storage1.dataSource = "default"
+        storage1.aggregate.return_value = 0
+        storage1.purgeProcessed.return_value = 10
+
+        storage2 = AsyncMock(spec=StatsStorage)
+        storage2.dataSource = "other"
+        storage2.aggregate.return_value = 0
+        storage2.purgeProcessed.return_value = 5
+
+        # Initialize and register both storages
+        mockConfigManager.getStatsConfig.return_value = {
+            "enabled": True,
+            "aggregation-interval-seconds": 60,
+            "events-retention-days": 30,
+            "aggregation-batch-limit": 1000,
+        }
+
+        statsAggregationService.initialize(mockConfigManager, mockDatabase)
+        statsAggregationService._statsStorages["storage1"] = storage1
+        statsAggregationService._statsStorages["storage2"] = storage2
+
+        # Set _lastRunTime to allow cycle to run
+        statsAggregationService._lastRunTime = time.time() - 61
+
+        # Run the handler
+        await statsAggregationService._dtCronJob(sampleDelayedTask)
+
+        # Verify aggregate was called on both storages
+        assert storage1.aggregate.call_count >= 1
+        assert storage2.aggregate.call_count >= 1
+
+        # Verify purgeProcessed was called TWICE (once per dataSource)
+        totalPurgeCalls = storage1.purgeProcessed.call_count + storage2.purgeProcessed.call_count
+        assert totalPurgeCalls == 2, f"Expected 2 purge calls total, got {totalPurgeCalls}"

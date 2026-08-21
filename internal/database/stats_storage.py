@@ -17,13 +17,16 @@ from typing import Optional, TypedDict
 from lib import utils as libUtils
 from lib.stats.stats_storage import GLOBAL_CONSUMER_ID
 from lib.stats.stats_storage import StatsStorage as BaseStatsStorage
-from lib.stats.types import StatsAggregateDict
+from lib.stats.types import STATS_QUERY_ROW_LIMIT, StatsAggregateDict
 
 from . import utils as dbUtils
 from .database import Database
 from .providers.base import ExcludedValue
 
 logger = logging.getLogger(__name__)
+
+# Batch size for purge operations (same pattern as aggregate's claim step)
+PURGE_BATCH_SIZE = 1000
 
 
 class StatsEventDict(TypedDict):
@@ -56,7 +59,7 @@ class DatabaseStatsStorage(BaseStatsStorage):
         dataSource: Data source name for both stat_events and stat_aggregates.
     """
 
-    __slots__ = ("db", "eventType", "dataSource")
+    __slots__ = ("db", "eventType", "_dataSource")
 
     def __init__(self, db: Database, eventType: str, *, dataSource: str) -> None:
         """Initialize database-backed stats storage.
@@ -68,11 +71,20 @@ class DatabaseStatsStorage(BaseStatsStorage):
         """
         self.db = db
         self.eventType = eventType
-        self.dataSource = dataSource
+        self._dataSource = dataSource
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    @property
+    def dataSource(self) -> str:
+        """Return the data source identifier for this storage.
+
+        Returns:
+            The data source name (e.g., 'default', 'custom_ds').
+        """
+        return self._dataSource
 
     async def record(
         self,
@@ -291,11 +303,16 @@ class DatabaseStatsStorage(BaseStatsStorage):
         When multiple storages share one ``stat_events`` table, this ensures
         retention is applied uniformly across all event types.
 
+        Uses a batched DELETE loop (same pattern as aggregate()'s claim step)
+        with double-nested subqueries for MySQL compatibility (ERROR 1093/1235).
+
         Args:
             retentionDays: Minimum age in days for a processed row to be deleted.
 
         Returns:
             Number of rows deleted (0 if nothing was eligible or retention is off).
+            Note: The count is log-approximate if the provider doesn't expose
+            reliable rowcount; the actual deletion is exact.
         """
         if retentionDays <= 0:
             return 0
@@ -304,7 +321,7 @@ class DatabaseStatsStorage(BaseStatsStorage):
         cutoff = truncateToDay(dbUtils.getCurrentTimestamp() - datetime.timedelta(days=retentionDays))
         sqlProvider = await self.db.manager.getProvider(dataSource=self.dataSource, readonly=False)
 
-        # Count first — execute with NO_FETCH returns None, no portable rowcount
+        # Count first to know if there's work to do
         countRow = await sqlProvider.executeFetchOne(
             """SELECT COUNT(*) AS cnt FROM stat_events
                WHERE processed = 1 AND created_at < :cutoff""",
@@ -314,14 +331,47 @@ class DatabaseStatsStorage(BaseStatsStorage):
         if countRow is None or countRow["cnt"] == 0:
             return 0
 
-        # Delete the rows
-        await sqlProvider.execute(
-            """DELETE FROM stat_events
-               WHERE processed = 1 AND created_at < :cutoff""",
-            {"cutoff": cutoff},
-        )
+        totalDeleted = 0
 
-        return int(countRow["cnt"])
+        # Batched DELETE loop using double-nested subquery for MySQL compatibility
+        # (same pattern as aggregate()'s claim step)
+        while True:
+            # Inner select with LIMIT, wrapped in double nesting for MySQL ERROR 1093/1235
+            innerSelect = sqlProvider.applyPagination(
+                """SELECT event_id FROM stat_events
+                   WHERE processed = 1 AND created_at < :cutoff""",
+                limit=PURGE_BATCH_SIZE,
+            )
+            deleteQuery = (
+                "DELETE FROM stat_events WHERE event_id IN (SELECT event_id FROM (" + innerSelect + ") AS _purge)"
+            )
+
+            # Execute the delete
+            await sqlProvider.execute(deleteQuery, {"cutoff": cutoff})
+
+            # Check if we deleted anything by counting remaining rows
+            remainingRow = await sqlProvider.executeFetchOne(
+                """SELECT COUNT(*) AS cnt FROM stat_events
+                   WHERE processed = 1 AND created_at < :cutoff""",
+                {"cutoff": cutoff},
+            )
+
+            if remainingRow is None:
+                break
+
+            # Calculate how many we deleted in this batch
+            batchDeleted = countRow["cnt"] - remainingRow["cnt"]
+            if batchDeleted <= 0:
+                break
+
+            totalDeleted += batchDeleted
+            countRow = remainingRow  # Update for next iteration
+
+            # Safety: if we deleted fewer than batch size, we're done
+            if batchDeleted < PURGE_BATCH_SIZE:
+                break
+
+        return totalDeleted
 
     async def query(
         self,
@@ -330,7 +380,8 @@ class DatabaseStatsStorage(BaseStatsStorage):
         periodType: Optional[str] = None,
         periodStartFrom: Optional[str] = None,
         periodStartTo: Optional[str] = None,
-        limit: int = 10000,
+        limit: int = STATS_QUERY_ROW_LIMIT,
+        offset: int = 0,
     ) -> list[StatsAggregateDict]:
         """Read aggregated rows with parsed labels.
 
@@ -347,7 +398,8 @@ class DatabaseStatsStorage(BaseStatsStorage):
                 (inclusive). String comparison works for lexicographic ordering.
             periodStartTo: Optional ISO-8601 UTC timestamp upper bound
                 (inclusive). String comparison works for lexicographic ordering.
-            limit: Maximum number of rows to return (default 10000).
+            limit: Maximum number of rows to return (default STATS_QUERY_ROW_LIMIT).
+            offset: Number of rows to skip before returning results (default 0).
 
         Returns:
             List of StatsAggregateDict objects with parsed labels dicts.
@@ -382,7 +434,7 @@ class DatabaseStatsStorage(BaseStatsStorage):
         )
 
         # Apply pagination using provider (portable across RDBMS)
-        query = sqlProvider.applyPagination(baseQuery, limit=limit, offset=0)
+        query = sqlProvider.applyPagination(baseQuery, limit=limit, offset=offset)
 
         # Execute query
         rows = await sqlProvider.executeFetchAll(query, params)

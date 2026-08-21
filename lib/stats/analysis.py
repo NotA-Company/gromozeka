@@ -6,12 +6,13 @@ This module is reusable and has no bot dependencies.
 """
 
 import datetime
+from enum import StrEnum
 from typing import Optional
 
 from .types import StatsAggregateDict
 
 
-class PeriodType:
+class PeriodType(StrEnum):
     """Period type constants for stat aggregation."""
 
     HOURLY = "hourly"
@@ -20,7 +21,7 @@ class PeriodType:
     TOTAL = "total"
 
 
-class PeriodArg:
+class PeriodArg(StrEnum):
     """Period argument constants for the /stats command."""
 
     ALL = "all"
@@ -72,6 +73,8 @@ def mapPeriodArgToPeriodType(periodArg: str) -> str:
 
 def computePeriodRange(
     periodArg: str,
+    *,
+    now: Optional[datetime.datetime] = None,
 ) -> tuple[Optional[str], Optional[str]]:
     """Compute the period start/from/to range for a given period arg in UTC.
 
@@ -85,18 +88,25 @@ def computePeriodRange(
 
     Args:
         periodArg: The period argument (<N>h, <N>d, <N>m, or all).
+        now: Current time in UTC (timezone-aware). If None, uses current UTC time.
 
     Returns:
         A tuple of (periodStartFrom, periodStartTo). Both are ISO-8601 UTC
         strings, or None for the 'all' period.
 
     Raises:
-        ValueError: If periodArg is invalid or out of range.
+        ValueError: If periodArg is invalid, out of range, or now is not timezone-aware.
     """
     if periodArg == PeriodArg.ALL:
         return None, None
 
-    now = datetime.datetime.now(datetime.timezone.utc)
+    # Normalize now to UTC
+    if now is None:
+        now = datetime.datetime.now(datetime.timezone.utc)
+    elif now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    else:
+        now = now.astimezone(datetime.timezone.utc)
 
     # Parse <N><suffix> format
     if len(periodArg) < 2:
@@ -142,7 +152,7 @@ def computePeriodRange(
     else:
         raise ValueError(f"Invalid periodArg: {periodArg}")
 
-    # periodStartTo is the current time (exclusive upper bound)
+    # periodStartTo is the current time (inclusive upper bound)
     periodStartTo = now.isoformat()
 
     return periodStartFrom, periodStartTo

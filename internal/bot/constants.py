@@ -136,6 +136,19 @@ staleness in case of a platform glitch that changes the bot identity.
 Failed resolution is never cached — the next call retries the platform API.
 """
 
+BOT_ID_FAILURE_GRACE_SECONDS: float = 3600.0
+"""Grace period in seconds for using stale cached bot ID on refresh failure.
+
+When a refresh fails and a stale cached value exists with age < (TTL + GRACE),
+the stale value is returned instead of raising. The usable stale window is
+therefore TTL + GRACE (2 hours by default). The failure backoff reuses the same
+window deliberately: GRACE ≥ TTL coupling ensures we don't hammer the network
+while still providing a reasonable period of graceful degradation.
+
+Failed resolution never writes to the cache; successful refresh clears the
+failure timestamp and updates both cache and timestamp.
+"""
+
 RANDOM_ANSWER_CONTEXT_LENGTH: int = 64
 """Maximum number of messages to include in the context for random answer generation.
 

@@ -34,6 +34,7 @@ from internal.services.stt import STTService  # noqa: E402
 from lib.ai.manager import LLMManager  # noqa: E402
 from lib.logging_utils import initLogging  # noqa: E402
 from lib.rate_limiter import RateLimiterManager  # noqa: E402
+from lib.stats.stats_storage import StatsStorage  # noqa: E402
 
 # Configure basic logging first
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -66,36 +67,63 @@ class GromozekBot:
         )
 
         # Start the delayed task scheduler as a background task on the shared loop.
-        # This creates the coroutine so the scheduler registers its built-in
-        # DO_EXIT handler (_doExitHandler) before ProxyService does. On
-        # shutdown the handlers run in registration order — the queue drain
-        # runs first (proxy still available for HTTP/LLM calls), then proxy
-        # processes stop.
+        # The scheduler registers its built-in DO_EXIT handler (_doExitHandler) when
+        # the loop first runs. ProxyService.initialize registers _dtOnExit synchronously
+        # below. Since handlers execute in registration order, proxies stop BEFORE the
+        # queue drains on shutdown.
         self._schedulerTask = loop.create_task(
             QueueService.getInstance().startDelayedScheduler(self.database),
             name="delayed-scheduler",
         )
 
-        # Initialize proxy lifecycle management AFTER the scheduler task has
-        # started (loop.run_until_complete above drives the event loop, which
-        # runs the scheduler coroutine created earlier). This ensures
-        # QueueService._doExitHandler registers before ProxyService._dtOnExit,
-        # so on shutdown the queue drains background tasks (needing the proxy)
-        # before proxy processes are stopped.
+        # Initialize proxy lifecycle management.
+        # ProxyService.initialize registers _dtOnExit synchronously (below).
+        # The scheduler's _doExitHandler registers later, when the loop first runs.
+        # Handlers execute in registration order, so on shutdown proxies stop
+        # BEFORE the queue drains (reverse of the desired ordering).
         # In the same time it MUST be initialized BEFORE LLMManager as it uses proxy.
         ProxyService.getInstance().initialize(self.configManager.getProxyConfig(), loop=loop)
 
         # Initialize stats aggregation service (sync — registers CRON_JOB handler)
-        # Factory reads [stats] enabled itself, so call before any createStatsStorage
+        # Factory reads [stats] enabled itself, so call before any createStatsStorage.
+        # Registered synchronously during GromozekBot.__init__, before bot startup
+        # / before the first CRON tick in default deployments (no global proxy lifecycle)
         StatsAggregationService.getInstance().initialize(self.configManager, self.database)
 
         # Get stats config for data source resolution (factory handles enabled gate)
         statsConfig = self.configManager.getStatsConfig()
 
-        # Initialize stats storage for LLM usage tracking
-        llmStatsStorage = StatsAggregationService.getInstance().createStatsStorage(
-            "llm_request", statsConfig.get("llm-stats-data-source", self.database.manager.default)
-        )
+        # Initialize stats storages in registration order (llm_request, llm_tool_call, stt_request, message, command)
+        # EventType to config key mapping
+        statsStorageConfigs = [
+            ("llm_request", "llm-stats-data-source"),
+            ("llm_tool_call", "tool-stats-data-source"),
+            ("stt_request", "stt-stats-data-source"),
+            ("message", "message-stats-data-source"),
+            ("command", "command-stats-data-source"),
+        ]
+
+        # Create all stats storages preserving order and defaults
+        llmStatsStorage: Optional[StatsStorage] = None
+        toolStatsStorage: Optional[StatsStorage] = None
+        sttStatsStorage: Optional[StatsStorage] = None
+        messageStatsStorage: Optional[StatsStorage] = None
+        commandStatsStorage: Optional[StatsStorage] = None
+
+        for eventType, configKey in statsStorageConfigs:
+            storage = StatsAggregationService.getInstance().createStatsStorage(
+                eventType, statsConfig.get(configKey, self.database.manager.default)
+            )
+            if eventType == "llm_request":
+                llmStatsStorage = storage
+            elif eventType == "llm_tool_call":
+                toolStatsStorage = storage
+            elif eventType == "stt_request":
+                sttStatsStorage = storage
+            elif eventType == "message":
+                messageStatsStorage = storage
+            elif eventType == "command":
+                commandStatsStorage = storage
 
         # Initialize LLM Manager
         self.llmManager = LLMManager(
@@ -104,31 +132,16 @@ class GromozekBot:
         )
         LLMService.getInstance().injectLLMManager(self.llmManager)
 
-        # Initialize tool stats storage
-        toolStatsStorage = StatsAggregationService.getInstance().createStatsStorage(
-            "llm_tool_call", statsConfig.get("tool-stats-data-source", self.database.manager.default)
-        )
+        # Inject tool stats storage into LLMService
         LLMService.getInstance().injectStatsStorage(toolStatsStorage)
 
-        # Initialize rate limiter manager
-        self.rateLimiterManager = RateLimiterManager.getInstance()
-        loop.run_until_complete(self.rateLimiterManager.loadConfig(self.configManager.getRateLimiterConfig()))
-
         # Initialize STT service (default-OFF; constructs/skips the provider)
-        sttStatsStorage = StatsAggregationService.getInstance().createStatsStorage(
-            "stt_request", statsConfig.get("stt-stats-data-source", self.database.manager.default)
-        )
         STTService.getInstance().initialize(self.configManager, statsStorage=sttStatsStorage)
 
-        # Initialize message stats storage
-        messageStatsStorage = StatsAggregationService.getInstance().createStatsStorage(
-            "message", statsConfig.get("message-stats-data-source", self.database.manager.default)
-        )
-
-        # Initialize command stats storage
-        commandStatsStorage = StatsAggregationService.getInstance().createStatsStorage(
-            "command", statsConfig.get("command-stats-data-source", self.database.manager.default)
-        )
+        # Initialize rate limiter manager (must be after all stats storages are registered
+        # so the first CRON tick sees the complete registry; loadConfig feeds RateLimiterManager only)
+        self.rateLimiterManager = RateLimiterManager.getInstance()
+        loop.run_until_complete(self.rateLimiterManager.loadConfig(self.configManager.getRateLimiterConfig()))
 
         # Initialize bot application
         botConfig = self.configManager.getBotConfig()

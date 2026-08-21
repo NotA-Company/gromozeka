@@ -15,8 +15,9 @@ All tests use real EnsuredMessage objects and follow the conftest.py pattern.
 
 import datetime
 import hashlib
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
+from internal.bot.common.handlers.base import BaseBotHandler
 from internal.bot.models import BotProvider, ChatType, MessageType
 from internal.bot.models.ensured_message import EnsuredMessage, MessageRecipient, MessageSender
 from internal.database.models import MessageCategory
@@ -28,9 +29,8 @@ from lib.utils import jsonDumps
 class TestMessageStatsRecording:
     """Test suite for message stats event recording."""
 
-    async def test_inbound_user_message_records_with_sent_false(self, mockConfigManager, mockDatabaseWrapper):
+    async def test_inbound_user_message_records_with_sent_false(self, mockConfigManager, mockDatabaseWrapper) -> None:
         """Inbound USER message records with sent=False and correct labels."""
-        from internal.bot.common.handlers.base import BaseBotHandler
 
         mockStatsStorage = AsyncMock(spec=StatsStorage)
 
@@ -49,31 +49,29 @@ class TestMessageStatsRecording:
         handler.messageStatsStorage = mockStatsStorage
         handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
         handler.updateChatInfo = AsyncMock(return_value=None)
-        handler.cache.updateChatUser = AsyncMock(return_value=None)
+        with patch.object(handler.cache, "updateChatUser", AsyncMock(return_value=None)):
+            # Mock getBotId to return a different user ID (so sent=False)
+            handler.getBotId = AsyncMock(return_value=999)
 
-        # Mock getBotId to return a different user ID (so sent=False)
-        handler.getBotId = AsyncMock(return_value=999)
+            # Act
+            result = await handler.saveChatMessage(message, MessageCategory.USER)
 
-        # Act
-        result = await handler.saveChatMessage(message, MessageCategory.USER)
+            # Assert
+            assert result is True
+            assert mockStatsStorage.record.call_count == 1
 
-        # Assert
-        assert result is True
-        assert mockStatsStorage.record.call_count == 1
+            call = mockStatsStorage.record.call_args
+            assert call.kwargs["stats"] == {"message_count": 1, "text_length": 11}  # "Hello world" length
+            assert call.kwargs["consumerId"] == "100"
+            labels = call.kwargs["labels"]
+            assert labels["user_id"] == "42"
+            assert labels["chat_type"] == "private"
+            assert labels["message_type"] == MessageType.TEXT
+            assert labels["message_category"] == MessageCategory.USER
+            assert labels["sent"] == "False"  # sender (42) != bot (999)
 
-        call = mockStatsStorage.record.call_args
-        assert call.kwargs["stats"] == {"message_count": 1, "text_length": 11}  # "Hello world" length
-        assert call.kwargs["consumerId"] == "100"
-        labels = call.kwargs["labels"]
-        assert labels["user_id"] == "42"
-        assert labels["chat_type"] == "private"
-        assert labels["message_type"] == MessageType.TEXT
-        assert labels["message_category"] == MessageCategory.USER
-        assert labels["sent"] == "False"  # sender (42) != bot (999)
-
-    async def test_inbound_user_command_records_with_sent_false(self, mockConfigManager, mockDatabaseWrapper):
+    async def test_inbound_user_command_records_with_sent_false(self, mockConfigManager, mockDatabaseWrapper) -> None:
         """Inbound USER_COMMAND message records with sent=False and correct message_category."""
-        from internal.bot.common.handlers.base import BaseBotHandler
 
         mockStatsStorage = AsyncMock(spec=StatsStorage)
 
@@ -92,22 +90,21 @@ class TestMessageStatsRecording:
         handler.messageStatsStorage = mockStatsStorage
         handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
         handler.updateChatInfo = AsyncMock(return_value=None)
-        handler.cache.updateChatUser = AsyncMock(return_value=None)
-        handler.getBotId = AsyncMock(return_value=999)
+        with patch.object(handler.cache, "updateChatUser", AsyncMock(return_value=None)):
+            handler.getBotId = AsyncMock(return_value=999)
 
-        # Act
-        result = await handler.saveChatMessage(message, MessageCategory.USER_COMMAND)
+            # Act
+            result = await handler.saveChatMessage(message, MessageCategory.USER_COMMAND)
 
-        # Assert
-        assert result is True
-        assert mockStatsStorage.record.call_count == 1
-        labels = mockStatsStorage.record.call_args.kwargs["labels"]
-        assert labels["message_category"] == MessageCategory.USER_COMMAND
-        assert labels["sent"] == "False"
+            # Assert
+            assert result is True
+            assert mockStatsStorage.record.call_count == 1
+            labels = mockStatsStorage.record.call_args.kwargs["labels"]
+            assert labels["message_category"] == MessageCategory.USER_COMMAND
+            assert labels["sent"] == "False"
 
-    async def test_inbound_user_spam_records_with_sent_false(self, mockConfigManager, mockDatabaseWrapper):
+    async def test_inbound_user_spam_records_with_sent_false(self, mockConfigManager, mockDatabaseWrapper) -> None:
         """Inbound USER_SPAM message records with sent=False."""
-        from internal.bot.common.handlers.base import BaseBotHandler
 
         mockStatsStorage = AsyncMock(spec=StatsStorage)
 
@@ -126,22 +123,23 @@ class TestMessageStatsRecording:
         handler.messageStatsStorage = mockStatsStorage
         handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
         handler.updateChatInfo = AsyncMock(return_value=None)
-        handler.cache.updateChatUser = AsyncMock(return_value=None)
-        handler.getBotId = AsyncMock(return_value=999)
+        with patch.object(handler.cache, "updateChatUser", AsyncMock(return_value=None)):
+            handler.getBotId = AsyncMock(return_value=999)
 
-        # Act
-        result = await handler.saveChatMessage(message, MessageCategory.USER_SPAM)
+            # Act
+            result = await handler.saveChatMessage(message, MessageCategory.USER_SPAM)
 
-        # Assert
-        assert result is True
-        assert mockStatsStorage.record.call_count == 1
-        labels = mockStatsStorage.record.call_args.kwargs["labels"]
-        assert labels["message_category"] == MessageCategory.USER_SPAM
-        assert labels["sent"] == "False"
+            # Assert
+            assert result is True
+            assert mockStatsStorage.record.call_count == 1
+            labels = mockStatsStorage.record.call_args.kwargs["labels"]
+            assert labels["message_category"] == MessageCategory.USER_SPAM
+            assert labels["sent"] == "False"
 
-    async def test_inbound_user_config_answer_records_with_sent_false(self, mockConfigManager, mockDatabaseWrapper):
+    async def test_inbound_user_config_answer_records_with_sent_false(
+        self, mockConfigManager, mockDatabaseWrapper
+    ) -> None:
         """Inbound USER_CONFIG_ANSWER message records with sent=False."""
-        from internal.bot.common.handlers.base import BaseBotHandler
 
         mockStatsStorage = AsyncMock(spec=StatsStorage)
 
@@ -160,22 +158,21 @@ class TestMessageStatsRecording:
         handler.messageStatsStorage = mockStatsStorage
         handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
         handler.updateChatInfo = AsyncMock(return_value=None)
-        handler.cache.updateChatUser = AsyncMock(return_value=None)
-        handler.getBotId = AsyncMock(return_value=999)
+        with patch.object(handler.cache, "updateChatUser", AsyncMock(return_value=None)):
+            handler.getBotId = AsyncMock(return_value=999)
 
-        # Act
-        result = await handler.saveChatMessage(message, MessageCategory.USER_CONFIG_ANSWER)
+            # Act
+            result = await handler.saveChatMessage(message, MessageCategory.USER_CONFIG_ANSWER)
 
-        # Assert
-        assert result is True
-        assert mockStatsStorage.record.call_count == 1
-        labels = mockStatsStorage.record.call_args.kwargs["labels"]
-        assert labels["message_category"] == MessageCategory.USER_CONFIG_ANSWER
-        assert labels["sent"] == "False"
+            # Assert
+            assert result is True
+            assert mockStatsStorage.record.call_count == 1
+            labels = mockStatsStorage.record.call_args.kwargs["labels"]
+            assert labels["message_category"] == MessageCategory.USER_CONFIG_ANSWER
+            assert labels["sent"] == "False"
 
-    async def test_inbound_channel_records_with_sent_false(self, mockConfigManager, mockDatabaseWrapper):
+    async def test_inbound_channel_records_with_sent_false(self, mockConfigManager, mockDatabaseWrapper) -> None:
         """Inbound CHANNEL message records with sent=False."""
-        from internal.bot.common.handlers.base import BaseBotHandler
 
         mockStatsStorage = AsyncMock(spec=StatsStorage)
 
@@ -194,23 +191,22 @@ class TestMessageStatsRecording:
         handler.messageStatsStorage = mockStatsStorage
         handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
         handler.updateChatInfo = AsyncMock(return_value=None)
-        handler.cache.updateChatUser = AsyncMock(return_value=None)
-        handler.getBotId = AsyncMock(return_value=999)
+        with patch.object(handler.cache, "updateChatUser", AsyncMock(return_value=None)):
+            handler.getBotId = AsyncMock(return_value=999)
 
-        # Act
-        result = await handler.saveChatMessage(message, MessageCategory.CHANNEL)
+            # Act
+            result = await handler.saveChatMessage(message, MessageCategory.CHANNEL)
 
-        # Assert
-        assert result is True
-        assert mockStatsStorage.record.call_count == 1
-        labels = mockStatsStorage.record.call_args.kwargs["labels"]
-        assert labels["message_category"] == MessageCategory.CHANNEL
-        assert labels["sent"] == "False"
-        assert labels["chat_type"] == "channel"
+            # Assert
+            assert result is True
+            assert mockStatsStorage.record.call_count == 1
+            labels = mockStatsStorage.record.call_args.kwargs["labels"]
+            assert labels["message_category"] == MessageCategory.CHANNEL
+            assert labels["sent"] == "False"
+            assert labels["chat_type"] == "channel"
 
-    async def test_outbound_bot_category_records_with_sent_true(self, mockConfigManager, mockDatabaseWrapper):
+    async def test_outbound_bot_category_records_with_sent_true(self, mockConfigManager, mockDatabaseWrapper) -> None:
         """Outbound BOT message records with sent=True when sender is the bot."""
-        from internal.bot.common.handlers.base import BaseBotHandler
 
         mockStatsStorage = AsyncMock(spec=StatsStorage)
 
@@ -229,22 +225,23 @@ class TestMessageStatsRecording:
         handler.messageStatsStorage = mockStatsStorage
         handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
         handler.updateChatInfo = AsyncMock(return_value=None)
-        handler.cache.updateChatUser = AsyncMock(return_value=None)
-        handler.getBotId = AsyncMock(return_value=999)  # Bot ID matches sender
+        with patch.object(handler.cache, "updateChatUser", AsyncMock(return_value=None)):
+            handler.getBotId = AsyncMock(return_value=999)  # Bot ID matches sender
 
-        # Act
-        result = await handler.saveChatMessage(message, MessageCategory.BOT)
+            # Act
+            result = await handler.saveChatMessage(message, MessageCategory.BOT)
 
-        # Assert
-        assert result is True
-        assert mockStatsStorage.record.call_count == 1
-        labels = mockStatsStorage.record.call_args.kwargs["labels"]
-        assert labels["message_category"] == MessageCategory.BOT
-        assert labels["sent"] == "True"  # sender (999) == bot (999)
+            # Assert
+            assert result is True
+            assert mockStatsStorage.record.call_count == 1
+            labels = mockStatsStorage.record.call_args.kwargs["labels"]
+            assert labels["message_category"] == MessageCategory.BOT
+            assert labels["sent"] == "True"  # sender (999) == bot (999)
 
-    async def test_outbound_bot_command_reply_records_with_sent_true(self, mockConfigManager, mockDatabaseWrapper):
+    async def test_outbound_bot_command_reply_records_with_sent_true(
+        self, mockConfigManager, mockDatabaseWrapper
+    ) -> None:
         """Outbound BOT_COMMAND_REPLY message records with sent=True."""
-        from internal.bot.common.handlers.base import BaseBotHandler
 
         mockStatsStorage = AsyncMock(spec=StatsStorage)
 
@@ -263,22 +260,21 @@ class TestMessageStatsRecording:
         handler.messageStatsStorage = mockStatsStorage
         handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
         handler.updateChatInfo = AsyncMock(return_value=None)
-        handler.cache.updateChatUser = AsyncMock(return_value=None)
-        handler.getBotId = AsyncMock(return_value=999)
+        with patch.object(handler.cache, "updateChatUser", AsyncMock(return_value=None)):
+            handler.getBotId = AsyncMock(return_value=999)
 
-        # Act
-        result = await handler.saveChatMessage(message, MessageCategory.BOT_COMMAND_REPLY)
+            # Act
+            result = await handler.saveChatMessage(message, MessageCategory.BOT_COMMAND_REPLY)
 
-        # Assert
-        assert result is True
-        assert mockStatsStorage.record.call_count == 1
-        labels = mockStatsStorage.record.call_args.kwargs["labels"]
-        assert labels["message_category"] == MessageCategory.BOT_COMMAND_REPLY
-        assert labels["sent"] == "True"
+            # Assert
+            assert result is True
+            assert mockStatsStorage.record.call_count == 1
+            labels = mockStatsStorage.record.call_args.kwargs["labels"]
+            assert labels["message_category"] == MessageCategory.BOT_COMMAND_REPLY
+            assert labels["sent"] == "True"
 
-    async def test_outbound_bot_error_records_with_sent_true(self, mockConfigManager, mockDatabaseWrapper):
+    async def test_outbound_bot_error_records_with_sent_true(self, mockConfigManager, mockDatabaseWrapper) -> None:
         """Outbound BOT_ERROR message records with sent=True."""
-        from internal.bot.common.handlers.base import BaseBotHandler
 
         mockStatsStorage = AsyncMock(spec=StatsStorage)
 
@@ -297,22 +293,21 @@ class TestMessageStatsRecording:
         handler.messageStatsStorage = mockStatsStorage
         handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
         handler.updateChatInfo = AsyncMock(return_value=None)
-        handler.cache.updateChatUser = AsyncMock(return_value=None)
-        handler.getBotId = AsyncMock(return_value=999)
+        with patch.object(handler.cache, "updateChatUser", AsyncMock(return_value=None)):
+            handler.getBotId = AsyncMock(return_value=999)
 
-        # Act
-        result = await handler.saveChatMessage(message, MessageCategory.BOT_ERROR)
+            # Act
+            result = await handler.saveChatMessage(message, MessageCategory.BOT_ERROR)
 
-        # Assert
-        assert result is True
-        assert mockStatsStorage.record.call_count == 1
-        labels = mockStatsStorage.record.call_args.kwargs["labels"]
-        assert labels["message_category"] == MessageCategory.BOT_ERROR
-        assert labels["sent"] == "True"
+            # Assert
+            assert result is True
+            assert mockStatsStorage.record.call_count == 1
+            labels = mockStatsStorage.record.call_args.kwargs["labels"]
+            assert labels["message_category"] == MessageCategory.BOT_ERROR
+            assert labels["sent"] == "True"
 
-    async def test_outbound_bot_summary_records_with_sent_true(self, mockConfigManager, mockDatabaseWrapper):
+    async def test_outbound_bot_summary_records_with_sent_true(self, mockConfigManager, mockDatabaseWrapper) -> None:
         """Outbound BOT_SUMMARY message records with sent=True."""
-        from internal.bot.common.handlers.base import BaseBotHandler
 
         mockStatsStorage = AsyncMock(spec=StatsStorage)
 
@@ -331,22 +326,21 @@ class TestMessageStatsRecording:
         handler.messageStatsStorage = mockStatsStorage
         handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
         handler.updateChatInfo = AsyncMock(return_value=None)
-        handler.cache.updateChatUser = AsyncMock(return_value=None)
-        handler.getBotId = AsyncMock(return_value=999)
+        with patch.object(handler.cache, "updateChatUser", AsyncMock(return_value=None)):
+            handler.getBotId = AsyncMock(return_value=999)
 
-        # Act
-        result = await handler.saveChatMessage(message, MessageCategory.BOT_SUMMARY)
+            # Act
+            result = await handler.saveChatMessage(message, MessageCategory.BOT_SUMMARY)
 
-        # Assert
-        assert result is True
-        assert mockStatsStorage.record.call_count == 1
-        labels = mockStatsStorage.record.call_args.kwargs["labels"]
-        assert labels["message_category"] == MessageCategory.BOT_SUMMARY
-        assert labels["sent"] == "True"
+            # Assert
+            assert result is True
+            assert mockStatsStorage.record.call_count == 1
+            labels = mockStatsStorage.record.call_args.kwargs["labels"]
+            assert labels["message_category"] == MessageCategory.BOT_SUMMARY
+            assert labels["sent"] == "True"
 
-    async def test_outbound_bot_resended_records_with_sent_true(self, mockConfigManager, mockDatabaseWrapper):
+    async def test_outbound_bot_resended_records_with_sent_true(self, mockConfigManager, mockDatabaseWrapper) -> None:
         """Outbound BOT_RESENDED message records with sent=True."""
-        from internal.bot.common.handlers.base import BaseBotHandler
 
         mockStatsStorage = AsyncMock(spec=StatsStorage)
 
@@ -365,22 +359,23 @@ class TestMessageStatsRecording:
         handler.messageStatsStorage = mockStatsStorage
         handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
         handler.updateChatInfo = AsyncMock(return_value=None)
-        handler.cache.updateChatUser = AsyncMock(return_value=None)
-        handler.getBotId = AsyncMock(return_value=999)
+        with patch.object(handler.cache, "updateChatUser", AsyncMock(return_value=None)):
+            handler.getBotId = AsyncMock(return_value=999)
 
-        # Act
-        result = await handler.saveChatMessage(message, MessageCategory.BOT_RESENDED)
+            # Act
+            result = await handler.saveChatMessage(message, MessageCategory.BOT_RESENDED)
 
-        # Assert
-        assert result is True
-        assert mockStatsStorage.record.call_count == 1
-        labels = mockStatsStorage.record.call_args.kwargs["labels"]
-        assert labels["message_category"] == MessageCategory.BOT_RESENDED
-        assert labels["sent"] == "True"
+            # Assert
+            assert result is True
+            assert mockStatsStorage.record.call_count == 1
+            labels = mockStatsStorage.record.call_args.kwargs["labels"]
+            assert labels["message_category"] == MessageCategory.BOT_RESENDED
+            assert labels["sent"] == "True"
 
-    async def test_outbound_bot_spam_notification_records_with_sent_true(self, mockConfigManager, mockDatabaseWrapper):
+    async def test_outbound_bot_spam_notification_records_with_sent_true(
+        self, mockConfigManager, mockDatabaseWrapper
+    ) -> None:
         """Outbound BOT_SPAM_NOTIFICATION message records with sent=True."""
-        from internal.bot.common.handlers.base import BaseBotHandler
 
         mockStatsStorage = AsyncMock(spec=StatsStorage)
 
@@ -399,22 +394,21 @@ class TestMessageStatsRecording:
         handler.messageStatsStorage = mockStatsStorage
         handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
         handler.updateChatInfo = AsyncMock(return_value=None)
-        handler.cache.updateChatUser = AsyncMock(return_value=None)
-        handler.getBotId = AsyncMock(return_value=999)
+        with patch.object(handler.cache, "updateChatUser", AsyncMock(return_value=None)):
+            handler.getBotId = AsyncMock(return_value=999)
 
-        # Act
-        result = await handler.saveChatMessage(message, MessageCategory.BOT_SPAM_NOTIFICATION)
+            # Act
+            result = await handler.saveChatMessage(message, MessageCategory.BOT_SPAM_NOTIFICATION)
 
-        # Assert
-        assert result is True
-        assert mockStatsStorage.record.call_count == 1
-        labels = mockStatsStorage.record.call_args.kwargs["labels"]
-        assert labels["message_category"] == MessageCategory.BOT_SPAM_NOTIFICATION
-        assert labels["sent"] == "True"
+            # Assert
+            assert result is True
+            assert mockStatsStorage.record.call_count == 1
+            labels = mockStatsStorage.record.call_args.kwargs["labels"]
+            assert labels["message_category"] == MessageCategory.BOT_SPAM_NOTIFICATION
+            assert labels["sent"] == "True"
 
-    async def test_deleted_category_does_not_record(self, mockConfigManager, mockDatabaseWrapper):
+    async def test_deleted_category_does_not_record(self, mockConfigManager, mockDatabaseWrapper) -> None:
         """MessageCategory.DELETED does NOT record stats (excluded)."""
-        from internal.bot.common.handlers.base import BaseBotHandler
 
         mockStatsStorage = AsyncMock(spec=StatsStorage)
 
@@ -433,19 +427,18 @@ class TestMessageStatsRecording:
         handler.messageStatsStorage = mockStatsStorage
         handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
         handler.updateChatInfo = AsyncMock(return_value=None)
-        handler.cache.updateChatUser = AsyncMock(return_value=None)
-        handler.getBotId = AsyncMock(return_value=999)
+        with patch.object(handler.cache, "updateChatUser", AsyncMock(return_value=None)):
+            handler.getBotId = AsyncMock(return_value=999)
 
-        # Act
-        result = await handler.saveChatMessage(message, MessageCategory.DELETED)
+            # Act
+            result = await handler.saveChatMessage(message, MessageCategory.DELETED)
 
-        # Assert
-        assert result is True
-        assert mockStatsStorage.record.call_count == 0
+            # Assert
+            assert result is True
+            assert mockStatsStorage.record.call_count == 0
 
-    async def test_unspecified_category_does_not_record(self, mockConfigManager, mockDatabaseWrapper):
+    async def test_unspecified_category_does_not_record(self, mockConfigManager, mockDatabaseWrapper) -> None:
         """MessageCategory.UNSPECIFIED does NOT record stats (excluded)."""
-        from internal.bot.common.handlers.base import BaseBotHandler
 
         mockStatsStorage = AsyncMock(spec=StatsStorage)
 
@@ -464,23 +457,22 @@ class TestMessageStatsRecording:
         handler.messageStatsStorage = mockStatsStorage
         handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
         handler.updateChatInfo = AsyncMock(return_value=None)
-        handler.cache.updateChatUser = AsyncMock(return_value=None)
-        handler.getBotId = AsyncMock(return_value=999)
+        with patch.object(handler.cache, "updateChatUser", AsyncMock(return_value=None)):
+            handler.getBotId = AsyncMock(return_value=999)
 
-        # Act
-        result = await handler.saveChatMessage(message, MessageCategory.UNSPECIFIED)
+            # Act
+            result = await handler.saveChatMessage(message, MessageCategory.UNSPECIFIED)
 
-        # Assert
-        assert result is True
-        assert mockStatsStorage.record.call_count == 0
+            # Assert
+            assert result is True
+            assert mockStatsStorage.record.call_count == 0
 
-    async def test_direction_rule_sender_driven_not_category(self, mockConfigManager, mockDatabaseWrapper):
+    async def test_direction_rule_sender_driven_not_category(self, mockConfigManager, mockDatabaseWrapper) -> None:
         """Direction is determined by sender.id == botId, NOT by messageCategory.
 
         BOT-category message from a user → sent=False.
         USER-category message from the bot → sent=True.
         """
-        from internal.bot.common.handlers.base import BaseBotHandler
 
         mockStatsStorage = AsyncMock(spec=StatsStorage)
 
@@ -490,46 +482,45 @@ class TestMessageStatsRecording:
         handler.messageStatsStorage = mockStatsStorage
         handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
         handler.updateChatInfo = AsyncMock(return_value=None)
-        handler.cache.updateChatUser = AsyncMock(return_value=None)
-        handler.getBotId = AsyncMock(return_value=999)  # Bot ID is 999
+        with patch.object(handler.cache, "updateChatUser", AsyncMock(return_value=None)):
+            handler.getBotId = AsyncMock(return_value=999)  # Bot ID is 999
 
-        # Case 1: BOT-category message from a USER (not the bot) → sent=False
-        botCategoryFromUser = EnsuredMessage(
-            sender=MessageSender(id=42, name="Alice", username="@alice"),  # User ID
-            recipient=MessageRecipient(id=100, chatType=ChatType.PRIVATE),
-            messageId=MessageId(200),
-            date=datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
-            messageText="Bot-category from user",
-        )
-        botCategoryFromUser.messageType = MessageType.TEXT
+            # Case 1: BOT-category message from a USER (not the bot) → sent=False
+            botCategoryFromUser = EnsuredMessage(
+                sender=MessageSender(id=42, name="Alice", username="@alice"),  # User ID
+                recipient=MessageRecipient(id=100, chatType=ChatType.PRIVATE),
+                messageId=MessageId(200),
+                date=datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
+                messageText="Bot-category from user",
+            )
+            botCategoryFromUser.messageType = MessageType.TEXT
 
-        result = await handler.saveChatMessage(botCategoryFromUser, MessageCategory.BOT)
-        assert result is True
-        labels = mockStatsStorage.record.call_args.kwargs["labels"]
-        assert labels["sent"] == "False", "BOT-category from user should have sent=False"
+            result = await handler.saveChatMessage(botCategoryFromUser, MessageCategory.BOT)
+            assert result is True
+            labels = mockStatsStorage.record.call_args.kwargs["labels"]
+            assert labels["sent"] == "False", "BOT-category from user should have sent=False"
 
-        # Case 2: USER-category message from the BOT → sent=True
-        mockStatsStorage.reset_mock()
-        userCategoryFromBot = EnsuredMessage(
-            sender=MessageSender(id=999, name="Bot", username="@bot"),  # Bot ID
-            recipient=MessageRecipient(id=100, chatType=ChatType.PRIVATE),
-            messageId=MessageId(201),
-            date=datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
-            messageText="User-category from bot",
-        )
-        userCategoryFromBot.messageType = MessageType.TEXT
+            # Case 2: USER-category message from the BOT → sent=True
+            mockStatsStorage.reset_mock()
+            userCategoryFromBot = EnsuredMessage(
+                sender=MessageSender(id=999, name="Bot", username="@bot"),  # Bot ID
+                recipient=MessageRecipient(id=100, chatType=ChatType.PRIVATE),
+                messageId=MessageId(201),
+                date=datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
+                messageText="User-category from bot",
+            )
+            userCategoryFromBot.messageType = MessageType.TEXT
 
-        result = await handler.saveChatMessage(userCategoryFromBot, MessageCategory.USER)
-        assert result is True
-        labels = mockStatsStorage.record.call_args.kwargs["labels"]
-        assert labels["sent"] == "True", "USER-category from bot should have sent=True"
+            result = await handler.saveChatMessage(userCategoryFromBot, MessageCategory.USER)
+            assert result is True
+            labels = mockStatsStorage.record.call_args.kwargs["labels"]
+            assert labels["sent"] == "True", "USER-category from bot should have sent=True"
 
-    async def test_getbotid_raises_records_as_not_sent(self, mockConfigManager, mockDatabaseWrapper):
+    async def test_getbotid_raises_records_as_not_sent(self, mockConfigManager, mockDatabaseWrapper) -> None:
         """When getBotId raises, stats are recorded with sent=False and message save still succeeds.
 
         Unknown bot identity counts as non-bot (belt-and-suspenders; shouldn't happen).
         """
-        from internal.bot.common.handlers.base import BaseBotHandler
 
         mockStatsStorage = AsyncMock(spec=StatsStorage)
         mockStatsStorage.record = AsyncMock(return_value=None)
@@ -549,25 +540,24 @@ class TestMessageStatsRecording:
         handler.messageStatsStorage = mockStatsStorage
         handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
         handler.updateChatInfo = AsyncMock(return_value=None)
-        handler.cache.updateChatUser = AsyncMock(return_value=None)
-        # Mock getBotId to raise an exception
-        handler.getBotId = AsyncMock(side_effect=RuntimeError("API error"))
+        with patch.object(handler.cache, "updateChatUser", AsyncMock(return_value=None)):
+            # Mock getBotId to raise an exception
+            handler.getBotId = AsyncMock(side_effect=RuntimeError("API error"))
 
-        # Act - should not raise
-        result = await handler.saveChatMessage(message, MessageCategory.USER)
+            # Act - should not raise
+            result = await handler.saveChatMessage(message, MessageCategory.USER)
 
-        # Assert
-        assert result is True, "Message save should succeed even if getBotId fails"
-        assert mockStatsStorage.record.call_count == 1, "Stats should be recorded even when getBotId fails"
-        # Verify the record call had sent="False"
-        call_args = mockStatsStorage.record.call_args
-        assert call_args is not None, "record() should have been called"
-        labels = call_args.kwargs.get("labels") or call_args[1].get("labels")
-        assert labels["sent"] == "False", "sent should be False when getBotId fails"
+            # Assert
+            assert result is True, "Message save should succeed even if getBotId fails"
+            assert mockStatsStorage.record.call_count == 1, "Stats should be recorded even when getBotId fails"
+            # Verify the record call had sent="False"
+            call_args = mockStatsStorage.record.call_args
+            assert call_args is not None, "record() should have been called"
+            labels = call_args.kwargs.get("labels") or call_args[1].get("labels")
+            assert labels["sent"] == "False", "sent should be False when getBotId fails"
 
-    async def test_null_stats_storage_path_no_explosions(self, mockConfigManager, mockDatabaseWrapper):
+    async def test_null_stats_storage_path_no_explosions(self, mockConfigManager, mockDatabaseWrapper) -> None:
         """Default NullStatsStorage path: save works, nothing explodes (stats disabled = zero behavior change)."""
-        from internal.bot.common.handlers.base import BaseBotHandler
 
         # Handler uses NullStatsStorage by default
         handler = BaseBotHandler(
@@ -585,19 +575,20 @@ class TestMessageStatsRecording:
         message.messageType = MessageType.TEXT
         handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
         handler.updateChatInfo = AsyncMock(return_value=None)
-        handler.cache.updateChatUser = AsyncMock(return_value=None)
-        handler.getBotId = AsyncMock(return_value=999)
+        with patch.object(handler.cache, "updateChatUser", AsyncMock(return_value=None)):
+            handler.getBotId = AsyncMock(return_value=999)
 
-        # Act - should not raise
-        result = await handler.saveChatMessage(message, MessageCategory.USER)
+            # Act - should not raise
+            result = await handler.saveChatMessage(message, MessageCategory.USER)
 
-        # Assert
-        assert result is True
-        # NullStatsStorage.record is a no-op, so no calls were made
+            # Assert
+            assert result is True
+            # NullStatsStorage.record is a no-op, so no calls were made
 
-    async def test_media_message_message_type_and_text_length_zero(self, mockConfigManager, mockDatabaseWrapper):
+    async def test_media_message_message_type_and_text_length_zero(
+        self, mockConfigManager, mockDatabaseWrapper
+    ) -> None:
         """Media message → message_type=<non-TEXT enum value>, text_length=0 (media-only message)."""
-        from internal.bot.common.handlers.base import BaseBotHandler
 
         mockStatsStorage = AsyncMock(spec=StatsStorage)
 
@@ -618,22 +609,21 @@ class TestMessageStatsRecording:
         handler.messageStatsStorage = mockStatsStorage
         handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
         handler.updateChatInfo = AsyncMock(return_value=None)
-        handler.cache.updateChatUser = AsyncMock(return_value=None)
-        handler.getBotId = AsyncMock(return_value=999)
+        with patch.object(handler.cache, "updateChatUser", AsyncMock(return_value=None)):
+            handler.getBotId = AsyncMock(return_value=999)
 
-        # Act
-        result = await handler.saveChatMessage(message, MessageCategory.USER)
+            # Act
+            result = await handler.saveChatMessage(message, MessageCategory.USER)
 
-        # Assert
-        assert result is True
-        call = mockStatsStorage.record.call_args
-        assert call.kwargs["stats"] == {"message_count": 1, "text_length": 0}
-        labels = call.kwargs["labels"]
-        assert labels["message_type"] == MessageType.IMAGE  # Media message type
+            # Assert
+            assert result is True
+            call = mockStatsStorage.record.call_args
+            assert call.kwargs["stats"] == {"message_count": 1, "text_length": 0}
+            labels = call.kwargs["labels"]
+            assert labels["message_type"] == MessageType.IMAGE  # Media message type
 
-    async def test_group_chat_type_label(self, mockConfigManager, mockDatabaseWrapper):
+    async def test_group_chat_type_label(self, mockConfigManager, mockDatabaseWrapper) -> None:
         """Group chat message has chat_type="group" in labels."""
-        from internal.bot.common.handlers.base import BaseBotHandler
 
         mockStatsStorage = AsyncMock(spec=StatsStorage)
 
@@ -653,21 +643,20 @@ class TestMessageStatsRecording:
         handler.messageStatsStorage = mockStatsStorage
         handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
         handler.updateChatInfo = AsyncMock(return_value=None)
-        handler.cache.updateChatUser = AsyncMock(return_value=None)
-        handler.getBotId = AsyncMock(return_value=999)
+        with patch.object(handler.cache, "updateChatUser", AsyncMock(return_value=None)):
+            handler.getBotId = AsyncMock(return_value=999)
 
-        # Act
-        result = await handler.saveChatMessage(message, MessageCategory.USER)
+            # Act
+            result = await handler.saveChatMessage(message, MessageCategory.USER)
 
-        # Assert
-        assert result is True
-        call = mockStatsStorage.record.call_args
-        labels = call.kwargs["labels"]
-        assert labels["chat_type"] == "group"
+            # Assert
+            assert result is True
+            call = mockStatsStorage.record.call_args
+            labels = call.kwargs["labels"]
+            assert labels["chat_type"] == "group"
 
-    async def test_channel_chat_type_label(self, mockConfigManager, mockDatabaseWrapper):
+    async def test_channel_chat_type_label(self, mockConfigManager, mockDatabaseWrapper) -> None:
         """Channel chat message has chat_type="channel" in labels."""
-        from internal.bot.common.handlers.base import BaseBotHandler
 
         mockStatsStorage = AsyncMock(spec=StatsStorage)
 
@@ -687,25 +676,24 @@ class TestMessageStatsRecording:
         handler.messageStatsStorage = mockStatsStorage
         handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
         handler.updateChatInfo = AsyncMock(return_value=None)
-        handler.cache.updateChatUser = AsyncMock(return_value=None)
-        handler.getBotId = AsyncMock(return_value=999)
+        with patch.object(handler.cache, "updateChatUser", AsyncMock(return_value=None)):
+            handler.getBotId = AsyncMock(return_value=999)
 
-        # Act
-        result = await handler.saveChatMessage(message, MessageCategory.CHANNEL)
+            # Act
+            result = await handler.saveChatMessage(message, MessageCategory.CHANNEL)
 
-        # Assert
-        assert result is True
-        call = mockStatsStorage.record.call_args
-        labels = call.kwargs["labels"]
-        assert labels["chat_type"] == "channel"
+            # Assert
+            assert result is True
+            call = mockStatsStorage.record.call_args
+            labels = call.kwargs["labels"]
+            assert labels["chat_type"] == "channel"
 
-    async def test_command_path_through_save_chat_message(self, mockConfigManager, mockDatabaseWrapper):
+    async def test_command_path_through_save_chat_message(self, mockConfigManager, mockDatabaseWrapper) -> None:
         """Command messages route through the same saveChatMessage wrapper (one test suffices).
 
         Commands are saved by HandlersManager.handleCommand which calls handler.saveChatMessage.
         This test verifies the wrapper works for the command path by invoking it directly.
         """
-        from internal.bot.common.handlers.base import BaseBotHandler
 
         mockStatsStorage = AsyncMock(spec=StatsStorage)
 
@@ -725,20 +713,20 @@ class TestMessageStatsRecording:
         handler.messageStatsStorage = mockStatsStorage
         handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
         handler.updateChatInfo = AsyncMock(return_value=None)
-        handler.cache.updateChatUser = AsyncMock(return_value=None)
-        handler.getBotId = AsyncMock(return_value=999)
+        with patch.object(handler.cache, "updateChatUser", AsyncMock(return_value=None)):
+            handler.getBotId = AsyncMock(return_value=999)
 
-        # Act
-        result = await handler.saveChatMessage(message, MessageCategory.USER_COMMAND)
+            # Act
+            result = await handler.saveChatMessage(message, MessageCategory.USER_COMMAND)
 
-        # Assert
-        assert result is True
-        assert mockStatsStorage.record.call_count == 1
-        # Commands are text messages, so message_type should be MessageType.TEXT
-        call = mockStatsStorage.record.call_args
-        assert call.kwargs["labels"]["message_type"] == MessageType.TEXT
+            # Assert
+            assert result is True
+            assert mockStatsStorage.record.call_count == 1
+            # Commands are text messages, so message_type should be MessageType.TEXT
+            call = mockStatsStorage.record.call_args
+            assert call.kwargs["labels"]["message_type"] == MessageType.TEXT
 
-    async def test_live_and_backfill_label_buckets_differ(self, mockConfigManager, mockDatabaseWrapper):
+    async def test_live_and_backfill_label_buckets_differ(self, mockConfigManager, mockDatabaseWrapper) -> None:
         """Live labels include sent; backfill labels never do → different labels_hash buckets.
 
         Verifies bucket separation: live recording emits labels with sent,
@@ -749,7 +737,6 @@ class TestMessageStatsRecording:
         (changed in migration 027 rework to source from chat_messages instead of
         chat_user_stats), but only live adds the sent label.
         """
-        from internal.bot.common.handlers.base import BaseBotHandler
 
         mockStatsStorage = AsyncMock(spec=StatsStorage)
 
@@ -769,44 +756,43 @@ class TestMessageStatsRecording:
         handler.messageStatsStorage = mockStatsStorage
         handler.db.chatMessages.saveChatMessage = AsyncMock(return_value=None)
         handler.updateChatInfo = AsyncMock(return_value=None)
-        handler.cache.updateChatUser = AsyncMock(return_value=None)
-        handler.getBotId = AsyncMock(return_value=999)
+        with patch.object(handler.cache, "updateChatUser", AsyncMock(return_value=None)):
+            handler.getBotId = AsyncMock(return_value=999)
 
-        # Act
-        result = await handler.saveChatMessage(message, MessageCategory.USER)
+            # Act
+            result = await handler.saveChatMessage(message, MessageCategory.USER)
 
-        # Assert
-        assert result is True
-        assert mockStatsStorage.record.call_count == 1
-        call = mockStatsStorage.record.call_args
+            # Assert
+            assert result is True
+            assert mockStatsStorage.record.call_count == 1
+            call = mockStatsStorage.record.call_args
 
-        # Verify live labels include message_category, message_type, and sent
-        liveLabels = call.kwargs["labels"]
-        assert "message_category" in liveLabels
-        assert "message_type" in liveLabels
-        assert "sent" in liveLabels
-        assert liveLabels["message_category"] == MessageCategory.USER
-        assert liveLabels["message_type"] == MessageType.TEXT
-        assert liveLabels["sent"] == "False"
+            # Verify live labels include message_category, message_type, and sent
+            liveLabels = call.kwargs["labels"]
+            assert "message_category" in liveLabels
+            assert "message_type" in liveLabels
+            assert "sent" in liveLabels
+            assert liveLabels["message_category"] == MessageCategory.USER
+            assert liveLabels["message_type"] == MessageType.TEXT
+            assert liveLabels["sent"] == "False"
 
-        # Compute live labels hash
-        liveLabelsJson = jsonDumps(liveLabels)
-        liveLabelsHash = hashlib.md5(liveLabelsJson.encode("utf-8")).hexdigest()
+            # Compute live labels hash
+            liveLabelsJson = jsonDumps(liveLabels)
+            liveLabelsHash = hashlib.md5(liveLabelsJson.encode("utf-8")).hexdigest()
 
-        # Backfill-shape labels are the same but WITHOUT sent (message_category and message_type are now included)
-        backfillLabels = {k: v for k, v in liveLabels.items() if k != "sent"}
-        backfillLabelsJson = jsonDumps(backfillLabels)
-        backfillLabelsHash = hashlib.md5(backfillLabelsJson.encode("utf-8")).hexdigest()
+            # Backfill-shape labels are the same but WITHOUT sent (message_category and message_type are now included)
+            backfillLabels = {k: v for k, v in liveLabels.items() if k != "sent"}
+            backfillLabelsJson = jsonDumps(backfillLabels)
+            backfillLabelsHash = hashlib.md5(backfillLabelsJson.encode("utf-8")).hexdigest()
 
-        # Assert hashes differ
-        assert backfillLabelsHash != liveLabelsHash, "Backfill and live labels_hash must differ"
+            # Assert hashes differ
+            assert backfillLabelsHash != liveLabelsHash, "Backfill and live labels_hash must differ"
 
-        # Since sent is always present in live labels and never in backfill labels,
-        # their label-sets (and thus hashes) will always differ → no accidental merge/double-count.
+            # Since sent is always present in live labels and never in backfill labels,
+            # their label-sets (and thus hashes) will always differ → no accidental merge/double-count.
 
-    async def test_no_record_when_save_fails_unknown_type(self, mockConfigManager, mockDatabaseWrapper):
+    async def test_no_record_when_save_fails_unknown_type(self, mockConfigManager, mockDatabaseWrapper) -> None:
         """No stats record when saveChatMessage returns False (UNKNOWN message type early return)."""
-        from internal.bot.common.handlers.base import BaseBotHandler
 
         mockStatsStorage = AsyncMock(spec=StatsStorage)
 

@@ -1,4 +1,6 @@
 ---
+name: software-developer
+model: developer
 description: >-
   Use this agent for implementing and refactoring code: building features,
   evolving existing modules, large mechanical refactors, and writing
@@ -66,8 +68,6 @@ description: >-
 
   </example>
 mode: all
-model: developer
-temperature: 0.1
 steps: 60
 color: "#5E5CE6"
 permission:

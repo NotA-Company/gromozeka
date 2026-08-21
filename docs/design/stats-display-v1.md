@@ -1,7 +1,7 @@
 # Design: Statistics display v1 — `/stats` command and optional web pages
 
 **Date**: 2026-08-18
-**Status**: **Amended 2026-08-18 (user round 3 + U11 same-day)** (PROPOSED content as amended)
+**Status**: **IMPLEMENTED — all phases landed.** Content as amended 2026-08-18 (user round 3 + U11 same-day), then U12 (2026-08-19, user round 4), then a post-review remediation (2026-08-21 — see the amendment block below). The body is the amended design record, preserved with supersession markers; the amendment blocks carry the shipped deltas.
 **Owner**: TBD
 **Branch**: `lib-stat-improvement`
 
@@ -182,11 +182,41 @@ U9's ratified text below stays as history.
      filtering on the page is future work. Honesty line: per-eventType
      len(rows) == 10000.
   10. **User edits ratified (2026-08-19):** stats.py
-      `visibility={CommandPermission.PRIVATE}` = HELP-LISTING ONLY
-      (user-confirmed — group execution unchanged); chat-list line format
-      `` #`chatId` title — N `` (backticked id); title fallback chain
-      title→username→""; chat list only when NOT positionalChatIdUsed;
-      chat_users.py `cu.user_id` JOIN-column qualification (bug fix).
+       `visibility={CommandPermission.PRIVATE}` = HELP-LISTING ONLY
+       (user-confirmed — group execution unchanged); chat-list line format
+       `` #`chatId` title — N `` (backticked id); title fallback chain
+       title→username→""; chat list only when NOT positionalChatIdUsed;
+       chat_users.py `cu.user_id` JOIN-column qualification (bug fix).
+
+## Amendments (2026-08-21, post-review remediation)
+
+Post-implementation remediation after review of the shipped tiers; all facts
+verified against source on 2026-08-21. These amend (do not replace) the
+U-decisions above.
+
+- **StatsHandler's category is a NEW `CommandCategory.UTILITIES`** — the
+  manager's central category gate is always-allow for it (`canProcess = True`,
+  manager.py `case CommandCategory.UTILITIES`), so the `ALLOW_SHOW_STATS` chat
+  setting (D16) is the SOLE gate on `/stats`. Supersedes the D1 sketch's
+  `category=CommandCategory.TOOLS` (sketch amended inline below).
+- **`[stats.pages] enabled = true` requires the `--base-url` and `--output-dir`
+  argv tokens in `generate-command`** — validated fail-loudly at
+  `StatsHandler` construction (a template missing either token is a
+  construction error); the default template carries placeholder flags for both.
+- **`STATS_PAGES_CLEANUP` is registered whenever `StatsHandler` is
+  constructed** (i.e. whenever `[stats] enabled`), regardless of
+  pages-enabled — D14's construction-gating claim is now TRUE in code, and
+  R10's no-handler window is closed (R10 amended in §8).
+- **Web mode is a single query pass** — the payload is built first (one pass
+  over the queried rows), and the `FromPayload` brief output is
+  output-identical to the direct-render path: global-only honesty line,
+  username-resolved top users, `chatListTotal`-based trailer.
+- **CLI hardening**: `pageId` uuid-hex validation in the `delete` verb; the
+  launcher kills the process on cancel and scopes `OSError` handling to the
+  spawn itself; the honesty line trusts `truncatedEventTypes` only; a stderr
+  warning is emitted when `--base-url` is absent.
+- **Args grammar**: space-form options missing values raise a specific usage
+  error — «Опция --X требует значения».
 
 **Scope**: The read/display tier over `stat_aggregates`: a `query()` read API on the
 `lib/stats` `StatsStorage` ABC, ONE user-facing `/stats` bot command with a
@@ -370,7 +400,7 @@ the fallback loop threads `consumerId` through each model's `generateText`,
   deliberate per its docstring :532-534) and
   background memory refinement ([user_memories.py:1301](../../internal/bot/common/handlers/user_memories.py),
   synthetic-ensuredMessage refinement uses `chatId=None` for rate limiting). `None` →
-  `consumer = "__global__"` ([stats_storage.py:107](../../internal/database/stats_storage.py)).
+   `consumer = "__global__"` ([stats_storage.py:121](../../internal/database/stats_storage.py)).
 - **Exception 3 — the history-condensing call bypasses the wrapper entirely**:
   `condensingModel.generateText(reqMessages)` with no `consumerId`
   ([llm/service.py:1239](../../internal/services/llm/service.py)).
@@ -749,10 +779,10 @@ the `__init__` self-check raising `RuntimeError` when stats are off
     commands=("stats", "stats_web"),
     shortDescription="[--period=…] [--section=…] [--user=<id>] [chatId] [--web] - Statistics",
     helpMessage=" … ",                       # usage text, Russian per repo precedent
-    visibility={CommandPermission.DEFAULT},
+    visibility={CommandPermission.PRIVATE},  # (amended 2026-08-19, U12-10 — help-listing only; was DEFAULT)
     availableFor={CommandPermission.DEFAULT},
     helpOrder=CommandHandlerOrder.NORMAL,
-    category=CommandCategory.TOOLS,
+    category=CommandCategory.UTILITIES,      # (amended 2026-08-21 — NEW category, manager always-allow; was TOOLS)
 )
 async def statsCommand(self, ensuredMessage, command, args, updateObj, typingManager) -> None:
 ```
@@ -772,7 +802,10 @@ async def statsCommand(self, ensuredMessage, command, args, updateObj, typingMan
   untouched). Stats recording notes each alias separately (`commandName`
   label, [manager.py:1045](../../internal/bot/common/handlers/manager.py)) —
   fine.
-- **Coarse category gate (documented consequence)**: `category=TOOLS` means
+- **Coarse category gate (documented consequence)** *(superseded 2026-08-21 —
+  the category is now `UTILITIES`, for which the manager's central gate is
+  always-allow; `ALLOW_SHOW_STATS` is the sole gate; original TOOLS-era text
+  follows)*: `category=TOOLS` means
   `handleCommand` centrally requires `ALLOW_TOOLS_COMMANDS` or bot owner
   ([manager.py:1002-1004](../../internal/bot/common/handlers/manager.py)) — the
   same coarse gate `/users` already rides
@@ -827,7 +860,9 @@ options (both --opt=value and --opt value accepted):
   rule; the previous grammar's "dangling `user`/`chat` token" concept is
   **superseded and removed** (options carry their values; a missing value is
   just a bad invocation).
-- **Period → bucket mapping (unchanged, previously validated):** `1d →
+- **Period → bucket mapping (unchanged, previously validated):** *(superseded
+  2026-08-19 by U12-1 — see amendment block: `--period=<N><suffix>|all` grammar;
+  `h` → hourly, `d` → daily, `m` → monthly, `all` → total)* `1d →
   period_type=hourly` (last 24 hourly buckets), `7d`/`30d → daily`, `all →
   total` (sentinel row, no range). Mechanical note: a 7d daily window spans 8
   buckets (7 full days + the partial current day) — bucket-granularity
@@ -1108,6 +1143,9 @@ reply link), `ttl-hours` (per-page deletion task delay *(superseded
   `base-url` is deployment config that would otherwise be duplicated into the
   CLI (and could drift). An absolute URL would require passing `base-url`
   into every invocation.
+  *(Superseded 2026-08-19 by U12-5 — see amendment block: stdout is now
+  `{"pageId", "url"}` with a FULL url used VERBATIM by the bot; no
+  base-url composition.)*
 - In-repo generator placement *(amended 2026-08-18, U8 — user decision)*:
   **`lib/stats/stats_pages/`** with a `__main__.py`, run as
   `./venv/bin/python3 -m lib.stats.stats_pages` (the module-invocation
@@ -1408,6 +1446,12 @@ lib/stats/stats_pages/ [NEW package, ./venv/bin/python3 -m lib.stats.stats_pages
   └─ launcher.py   the one subprocess invocation helper (timeout 30 s, kill, JSON stdout parse)
 ```
 
+> *(Superseded by U12-4/U12-5/U12-6 — see amendment block: the `[stats-pages]`
+> section in the diagram is now `[stats.pages]` (U12-4), the rate-limit
+> pre-check is gone (applyLimit-only, U12-6), and the generate stdout line
+> `{"id": …}` + `base-url + "/" + url` composition is now `{"pageId","url"}`
+> used verbatim (U12-5).)*
+
 Read path over `stat_aggregates` (provider, `readonly=True`) is unchanged;
 `stat_events` untouched. Schema delta: NONE (U11 removed the page registry —
 no migration, no new table); the only data-model change is the additive
@@ -1605,7 +1649,8 @@ for the web path.
     construct recipients of each type); positional chatId membership
     (in-scope ok / out-of-scope informative error);
   - `--user=<id>` excludes `llm_request`;
-  - period→bucket mapping (1d→hourly, 7d/30d→daily, all→total+no range);
+  - period→bucket mapping (1d→hourly, 7d/30d→daily, all→total+no range)
+    *(superseded by U12-1 — see amendment block)*;
   - chat-setting gate (D16): `ALLOW_SHOW_STATS = false` (complete-dict
     `chatSettings` mock) → informative reply, **no storage queries**;
     default `true` → normal reply; private chat → gate not consulted;
@@ -1647,7 +1692,9 @@ the U11 removals; there is no migration-vs-generator split left.)
   footer with meta incl. user/chat/platform ids); storage location is the
   CLI's own internal default/flag (no bot-config coupling).
 - [`configs/00-defaults/stats-pages.toml`](../../configs/00-defaults) — **new**
-  (§5); [`configs/00-defaults/00-config.toml`](../../configs/00-defaults/00-config.toml) —
+  (§5) *(superseded by U12-4 — see amendment block: the standalone
+  `stats-pages.toml` file was deleted; the keys live under `[stats.pages]` in
+  `stats.toml`)*; [`configs/00-defaults/00-config.toml`](../../configs/00-defaults/00-config.toml) —
   limiter + queue binding (§5).
 - [`internal/config/manager.py`](../../internal/config/manager.py) —
   `getStatsPagesConfig()`.
@@ -1757,7 +1804,7 @@ the past (or temporarily lower `ttl-hours`) and watch the task invoke
 | Stats-off silence | entire feature (command + pages) inert when `[stats] enabled = false` | every phase |
 | CLI contract | generate/delete + stdout JSON + failure exits | Phase 3 |
 | Subprocess safety | timeout-kill, nonzero-exit, unparseable-stdout tests | Phase 3 |
-| Rate limit | refusal path never invokes the CLI | Phase 3 |
+| Rate limit | refusal path never invokes the CLI *(superseded by U12-6 — see amendment block: applyLimit-only, no refusal path)* | Phase 3 |
 | Deletion task *(amended 2026-08-18, U11)* | ONE task scheduled on generation with the RESOLVED delete argv in kwargs (`skipDB=False`); single attempt — failure → WARNING, no retry; `{"deleted": 0}` tolerated | Phase 3 |
 | Offline page | generated HTML contains no external resource references | Phase 3 |
 
@@ -1779,8 +1826,8 @@ No live/operator smoke gate is mandatory beyond the optional Phase 3 local smoke
 | R7 | **CLI hangs / misbehaves** | Low | Med | 30 s `wait_for` + kill (§2.9 conventions); JSON-validated stdout; D15 failure table; external commands are operator-supplied (WARNING not ERROR, proxy precedent) | `--web` off / fix the command templates |
 | R8 | **Command-template misconfiguration** *(reworked 2026-08-18 — no more output-dir)*: missing/malformed `generate-command`/`delete-command`, wrong bin path | Med | Low | Construction-time validation when enabled (fail loudly — `StatsHandler.__init__`, D10/U11); strict `format_map` → KeyError → D15 note + WARNING log naming the key | Fix the templates |
 | R9 | **Unguessable-URL-only "auth"** — link sharing exposes scope aggregates | — (ratified) | Low | Ratified for non-sensitive aggregates (NG4); UUIDv4 hex; TTL; scope already bounds what is visible | Lower ttl-hours |
-| R10 | **Pending deletion task while stats disabled** — handler not constructed → the task hits the no-handler re-delay path (+60 s, error log, §2.13) and waits; pages generated before disabling outlive their TTL until re-enable | Low | Low | Accepted & documented (D14/U11): the waiting task costs ~nothing and fires once stats is re-enabled and the handler registers again; meanwhile the operator can invoke `delete-command` manually per page_id (from the reply link / logs) | Re-enable stats, or delete pages manually |
-| R11 | **Check-then-apply rate-limit race** over-admits a few concurrent `--web` | Low | Low | Single event loop bounds interleaving; consequence ≤ a few extra files per window (D13) | n/a |
+| R10 | **Pending deletion task while stats disabled** — handler not constructed → the task hits the no-handler re-delay path (+60 s, error log, §2.13) and waits; pages generated before disabling outlive their TTL until re-enable *(amended 2026-08-21: `STATS_PAGES_CLEANUP` is now registered whenever `StatsHandler` is constructed — i.e. whenever `[stats] enabled`, regardless of pages-enabled — so the no-handler window is closed; see amendment block)* | Low | Low | Accepted & documented (D14/U11): the waiting task costs ~nothing and fires once stats is re-enabled and the handler registers again; meanwhile the operator can invoke `delete-command` manually per page_id (from the reply link / logs) | Re-enable stats, or delete pages manually |
+| R11 | **Check-then-apply rate-limit race** over-admits a few concurrent `--web` *(Superseded by U12-6 — see amendment block: no pre-check exists anymore; applyLimit-only)* | Low | Low | Single event loop bounds interleaving; consequence ≤ a few extra files per window (D13) | n/a |
 | R12 | **Template placeholder drift** (unknown placeholder in a custom template) | Med | Low | Strict `format_map` → KeyError → D15 note + WARNING log naming the command | Fix the templates |
 | R13 | **Orphaned page on failed deletion** — the one-shot task's delete-command call fails (external tool broken/removed); SINGLE attempt, no retry | Low | Low | WARNING log naming the page id; **accepted** (U11): the page just outlives TTL — no data risk, only storage | Fix or remove the external tool; manual delete |
 | R14 | **`request_count` counts attempts, not logical requests** (fallback loop, §2.2) | — (documented) | Low | Rendered as "requests (attempts)" in help/footnote; not fixable display-side | n/a |

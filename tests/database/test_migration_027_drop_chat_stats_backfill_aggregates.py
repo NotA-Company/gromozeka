@@ -15,14 +15,16 @@ The test verifies:
 - Both bot-authored and user-authored messages are included.
 - Multiple message_category and message_type values are handled correctly.
 - DELETED and UNSPECIFIED message_category rows are excluded.
-- NULL message_category rows are excluded (count assertion would catch regression).
+- NULL message_category rows are excluded (branch exists for schema-drift robustness).
 - NULL message_text results in text_length=0.
 - down() recreates both tables empty (data not restorable).
 - After migration, ChatMessagesRepository.saveChatMessage() no longer
   references the dropped tables (no exception).
+- chat_type lookup from chat_info table works; falls back to sign-derived when missing.
 """
 
 import datetime
+import json
 
 import lib.utils as libUtils
 from internal.database import Database
@@ -39,11 +41,13 @@ from lib.stats.stats_storage import GLOBAL_CONSUMER_ID
 CHAT_PRIVATE_1 = 123  # > 0 means private
 CHAT_PRIVATE_2 = 456  # > 0 means private, same month as CHAT_PRIVATE_1
 CHAT_GROUP_1 = -789  # < 0 means group
+CHAT_CHANNEL_1 = -1000  # < 0 means group by sign, but channel in chat_info
 USER_1 = 111
 USER_2 = 222
 DATE_JAN_15 = datetime.datetime(2024, 1, 15, tzinfo=datetime.timezone.utc)
 DATE_JAN_20 = datetime.datetime(2024, 1, 20, tzinfo=datetime.timezone.utc)
 DATE_FEB_10 = datetime.datetime(2024, 2, 10, tzinfo=datetime.timezone.utc)
+DATE_FEB_11 = datetime.datetime(2024, 2, 11, tzinfo=datetime.timezone.utc)
 TOTAL_SENTINEL = "1970-01-01T00:00:00+00:00"
 
 
@@ -197,6 +201,38 @@ async def _seedChatStats(
     )
 
 
+async def _seedChatInfo(
+    provider,
+    chatId: int,
+    chatType: str,
+) -> None:
+    """Insert a single chat_info row for chat_type testing.
+
+    Args:
+        provider: Writable SQL provider.
+        chatId: Chat id.
+        chatType: Chat type string value (e.g., "private", "group", "channel").
+
+    Returns:
+        None
+    """
+    now = libUtils.now()
+    await provider.execute(
+        """
+        INSERT INTO chat_info
+            (chat_id, type, created_at, updated_at)
+        VALUES
+            (:chatId, :chatType, :createdAt, :updatedAt)
+        """,
+        {
+            "chatId": chatId,
+            "chatType": chatType,
+            "createdAt": now,
+            "updatedAt": now,
+        },
+    )
+
+
 async def test_up_backfillsAndDropsLegacyTables(testDatabase: Database) -> None:
     """up() back-fills chat_messages to stat_aggregates and drops both legacy tables.
 
@@ -226,12 +262,7 @@ async def test_up_backfillsAndDropsLegacyTables(testDatabase: Database) -> None:
     # - Multiple message_type values (text, image)
     # - NULL message_text (text_length=0)
     # - DELETED and UNSPECIFIED message_category rows (should be excluded)
-    # - NULL message_category row (should be excluded; adds 0 expected rows)
     BOT_ID = 999
-
-    # NULL message_category row is NOT testable - the column has NOT NULL constraint.
-    # The is None exclusion branch in the migration exists for robustness against
-    # schema drift, but production data cannot have NULL message_category.
 
     # CHAT_PRIVATE_1, USER_1 messages
     await _seedChatMessage(
@@ -526,6 +557,137 @@ async def test_up_backfillsAndDropsLegacyTables(testDatabase: Database) -> None:
     assert len(rows) == 70, f"Expected 70 rows, got {len(rows)}"
 
 
+async def test_up_usesRealChatTypeFromChatInfo(testDatabase: Database) -> None:
+    """up() uses real chat_type from chat_info; falls back to sign-derived when missing.
+
+    Args:
+        testDatabase: Fresh in-memory database (all migrations applied).
+
+    Returns:
+        None
+    """
+    provider = await testDatabase.manager.getProvider(chatId=CHAT_PRIVATE_1, readonly=False)
+    await _rollbackToPre027(provider)
+
+    # Seed a channel chat_info row (negative chatId with type="channel")
+    await _seedChatInfo(provider, CHAT_CHANNEL_1, "channel")
+
+    # Seed messages for the channel chat (category=channel, same as existing test)
+    await _seedChatMessage(
+        provider,
+        CHAT_CHANNEL_1,
+        USER_2,
+        DATE_FEB_10,
+        10,
+        "Channel message",
+        MessageCategory.CHANNEL,
+        MessageType.TEXT,
+    )
+
+    # Seed a private chat without chat_info (should fall back to sign-derived "private")
+    await _seedChatMessage(
+        provider,
+        CHAT_PRIVATE_1,
+        USER_1,
+        DATE_JAN_15,
+        11,
+        "Private message",
+        MessageCategory.USER,
+        MessageType.TEXT,
+    )
+
+    # Seed a group chat without chat_info (should fall back to sign-derived "group")
+    await _seedChatMessage(
+        provider,
+        CHAT_GROUP_1,
+        USER_2,
+        DATE_FEB_11,  # Different date to avoid collision with channel message
+        12,
+        "Group message",
+        MessageCategory.CHANNEL,
+        MessageType.TEXT,
+    )
+
+    migration = Migration027DropChatStatsBackfillAggregates()
+    await migration.up(provider)
+
+    # Verify channel message has chat_type="channel" (not "group" from sign)
+    channelPerConsumerRows = await provider.executeFetchAll(
+        """
+        SELECT labels, metric_value
+        FROM stat_aggregates
+        WHERE event_type = 'message'
+          AND labels LIKE :consumerPattern
+          AND period_type = 'daily'
+          AND metric_key = 'message_count'
+        """,
+        {"consumerPattern": '%"consumer":"-1000"%'},  # Compact JSON: no space after colon
+    )
+    assert (
+        len(channelPerConsumerRows) == 1
+    ), f"Expected 1 per-consumer daily row for channel, got {len(channelPerConsumerRows)}"
+    for row in channelPerConsumerRows:
+        labels = json.loads(row["labels"])
+        assert (
+            labels["chat_type"] == "channel"
+        ), f"Expected chat_type='channel' for per-consumer, got {labels['chat_type']}"
+
+    # Verify __global__ channel message also has chat_type="channel"
+    channelGlobalRows = await provider.executeFetchAll(
+        """
+        SELECT labels, metric_value
+        FROM stat_aggregates
+        WHERE event_type = 'message'
+          AND labels LIKE :consumerPattern
+          AND labels LIKE :channelTypePattern
+          AND period_type = 'daily'
+          AND metric_key = 'message_count'
+        """,
+        {
+            "consumerPattern": '%"consumer":"__global__"%',
+            "channelTypePattern": '%"chat_type":"channel"%',
+        },
+    )
+    assert len(channelGlobalRows) == 1, f"Expected 1 __global__ daily row for channel, got {len(channelGlobalRows)}"
+    for row in channelGlobalRows:
+        labels = json.loads(row["labels"])
+        assert (
+            labels["chat_type"] == "channel"
+        ), f"Expected chat_type='channel' for __global__, got {labels['chat_type']}"
+
+    # Verify private message (no chat_info) uses sign-derived "private"
+    privateRows = await provider.executeFetchAll(
+        """
+        SELECT labels
+        FROM stat_aggregates
+        WHERE event_type = 'message'
+          AND labels LIKE :consumerPattern
+          AND period_type = 'daily'
+          AND metric_key = 'message_count'
+        """,
+        {"consumerPattern": '%"consumer":"123"%'},  # Compact JSON: no space after colon
+    )
+    assert len(privateRows) == 1, f"Expected 1 per-consumer daily row for private, got {len(privateRows)}"
+    labels = json.loads(privateRows[0]["labels"])
+    assert labels["chat_type"] == "private", f"Expected chat_type='private' (sign-derived), got {labels['chat_type']}"
+
+    # Verify group message (no chat_info) uses sign-derived "group"
+    groupRows = await provider.executeFetchAll(
+        """
+        SELECT labels
+        FROM stat_aggregates
+        WHERE event_type = 'message'
+          AND labels LIKE :consumerPattern
+          AND period_type = 'daily'
+          AND metric_key = 'message_count'
+        """,
+        {"consumerPattern": '%"consumer":"-789"%'},  # Compact JSON: no space after colon
+    )
+    assert len(groupRows) == 1, f"Expected 1 per-consumer daily row for group, got {len(groupRows)}"
+    labels = json.loads(groupRows[0]["labels"])
+    assert labels["chat_type"] == "group", f"Expected chat_type='group' (sign-derived), got {labels['chat_type']}"
+
+
 async def test_down_recreatesLegacyTablesEmpty(testDatabase: Database) -> None:
     """down() recreates both legacy tables empty (original data not restorable).
 
@@ -666,3 +828,114 @@ async def test_up_idempotentWhenLegacyTablesGone(testDatabase: Database) -> None
     )
     # Should still be 12 rows from the first run (1 bucket × 3 periods × 2 label-sets × 2 metrics)
     assert aggCount is not None and int(aggCount["cnt"]) == 12
+
+
+async def test_upTwiceWithLegacyTablesPresentDoesNotDoubleAggregates(testDatabase: Database) -> None:
+    """up() run twice with legacy tables present (or re-seeded) does NOT double aggregates.
+
+    Tests the replace-semantics convergence that the runningTotal split depends on.
+    After the first up(), legacy tables are dropped. We re-seed them and run up() again,
+    verifying that the second pass produces the same totals (no double-counting).
+
+    Args:
+        testDatabase: Fresh in-memory database (all migrations applied).
+
+    Returns:
+        None
+    """
+    provider = await testDatabase.manager.getProvider(chatId=CHAT_PRIVATE_1, readonly=False)
+    await _rollbackToPre027(provider)
+
+    # Seed initial data
+    await _seedChatMessage(
+        provider,
+        CHAT_PRIVATE_1,
+        USER_1,
+        DATE_JAN_15,
+        1,
+        "First message",
+        MessageCategory.USER,
+        MessageType.TEXT,
+    )
+
+    migration = Migration027DropChatStatsBackfillAggregates()
+    await migration.up(provider)
+
+    # Get aggregate totals after first run
+    firstRunTotals = await provider.executeFetchAll("""
+        SELECT metric_key, metric_value, labels_hash
+        FROM stat_aggregates
+        WHERE event_type = 'message'
+        ORDER BY labels_hash, period_type, metric_key
+        """)
+    firstRunDict = {(r["metric_key"], r["labels_hash"]): r["metric_value"] for r in firstRunTotals}
+
+    # Re-create legacy tables manually (they were dropped after first up())
+    # This simulates the migration being run again in an environment where
+    # legacy tables exist (e.g., partial rollback + re-migration)
+    await provider.execute("""
+        CREATE TABLE IF NOT EXISTS chat_stats (
+            chat_id INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            messages_count INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (chat_id, date)
+        )
+        """)
+    await provider.execute("""
+        CREATE TABLE IF NOT EXISTS chat_user_stats (
+            chat_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            messages_count INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (chat_id, user_id, date)
+        )
+        """)
+
+    # Re-seed legacy tables (simulate the tables being present again)
+    await _seedChatStats(provider, CHAT_PRIVATE_1, DATE_JAN_15, 1)
+    await _seedChatUserStats(provider, CHAT_PRIVATE_1, USER_1, DATE_JAN_15, 1)
+
+    # Re-seed more chat_messages to verify new data is added correctly
+    await _seedChatMessage(
+        provider,
+        CHAT_PRIVATE_1,
+        USER_2,
+        DATE_FEB_10,
+        2,
+        "Second message",
+        MessageCategory.USER,
+        MessageType.TEXT,
+    )
+
+    # Run up() again
+    await migration.up(provider)
+
+    # Verify tables are dropped again
+    assert not await _tableExists(provider, "chat_stats")
+    assert not await _tableExists(provider, "chat_user_stats")
+
+    # Get aggregate totals after second run
+    secondRunTotals = await provider.executeFetchAll("""
+        SELECT metric_key, metric_value, labels_hash
+        FROM stat_aggregates
+        WHERE event_type = 'message'
+        ORDER BY labels_hash, period_type, metric_key
+        """)
+
+    # Verify totals for the original data are unchanged (not doubled)
+    for row in secondRunTotals:
+        key = (row["metric_key"], row["labels_hash"])
+        if key in firstRunDict:
+            # Original data should not be doubled
+            assert (
+                row["metric_value"] == firstRunDict[key]
+            ), f"Aggregate {key} was doubled: {row['metric_value']} != {firstRunDict[key]}"
+
+    # Verify we have more aggregate rows now (added the second message)
+    # The first run had 12 rows (1 bucket × 3 periods × 2 label-sets × 2 metrics)
+    # The second run should have more due to the new message
+    assert len(secondRunTotals) > len(firstRunTotals)

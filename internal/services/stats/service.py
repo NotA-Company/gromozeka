@@ -51,10 +51,22 @@ def _parseIntKey(statsConfig: Dict[str, Any], key: str, default: int) -> int:
         ValueError: If the value is not a valid integer, with a message naming the key.
     """
     rawValue = statsConfig.get(key, default)
+
+    # Reject bool explicitly (bool is a subclass of int, so check first)
+    if isinstance(rawValue, bool):
+        raise ValueError(f"Malformed [stats] configuration: {key}={rawValue!r} is a boolean, not an integer")
+
+    # Reject float type
+    if isinstance(rawValue, float):
+        raise ValueError(f"Malformed [stats] configuration: {key}={rawValue!r} is a float, not an integer")
+
+    # Parse the value
     try:
-        return int(rawValue)
+        parsedValue = int(rawValue)
     except (TypeError, ValueError) as e:
         raise ValueError(f"Malformed [stats] configuration: {key}={rawValue!r} is not a valid integer") from e
+
+    return parsedValue
 
 
 class StatsAggregationService:
@@ -71,7 +83,7 @@ class StatsAggregationService:
     - Gates on elapsed time in-memory (``_lastRunTime``)
     - Owns the storage factory + registry (``createStatsStorage``)
     - Drains all registered storages sequentially with per-storage isolation
-    - Purges processed events past the retention window per storage
+    - Purges processed events past the retention window per-datasource (deduplicated)
 
     Usage::
 
@@ -267,7 +279,7 @@ class StatsAggregationService:
         1. Gate on elapsed time: ``time.time() - _lastRunTime < intervalSeconds`` → return.
         2. For each storage in ``_statsStorages.items()`` (sequential order, using eventType key as label):
             a. Drain loop: call ``aggregate(limit=self._batchLimit)`` repeatedly until 0 or MAX_AGGREGATION_ROUNDS.
-            b. Retention purge: if ``retentionDays > 0``, call ``purgeProcessed``.
+            b. Retention purge: if ``retentionDays > 0``, call ``purgeProcessed`` once per DISTINCT datasource.
             Per-storage try/except isolation — one storage's failure never blocks others.
         3. One INFO summary line: per-storage processed/purged counts + errors.
         4. Set ``_lastRunTime`` to cycle-start timestamp.
@@ -290,8 +302,15 @@ class StatsAggregationService:
         perStoragePurged: Dict[str, int] = {}
         perStorageErrors: Dict[str, str] = {}
 
+        # Track which datasources have been purged to avoid duplicate work
+        # (purgeProcessed is type-agnostic, so multiple storages on the same
+        # datasource would redundantly purge the same rows)
+        purgedDatasources: set[str] = set()
+
         # Iterate over registry items: eventType keys ARE the labels (unique by dict construction)
-        for eventType, storage in self._statsStorages.items():
+        # CRITICAL: Wrap in list() to avoid RuntimeError if dict is mutated during iteration
+        # (e.g., if aggregate() triggers createStatsStorage which adds a new storage)
+        for eventType, storage in list(self._statsStorages.items()):
             try:
                 # Drain loop: repeated aggregate() until 0 or MAX_AGGREGATION_ROUNDS
                 processedTotal = 0
@@ -304,9 +323,16 @@ class StatsAggregationService:
                 perStorageProcessed[eventType] = processedTotal
 
                 # Retention purge: delete processed events older than retention window
+                # Deduplicated per datasource (first storage per datasource wins)
                 purged = 0
                 if self._retentionDays > 0:
-                    purged = await storage.purgeProcessed(retentionDays=self._retentionDays)
+                    dataSource = storage.dataSource
+                    if dataSource not in purgedDatasources:
+                        purged = await storage.purgeProcessed(retentionDays=self._retentionDays)
+                        purgedDatasources.add(dataSource)
+                        logger.debug(f"Purged {purged} processed events from datasource '{dataSource}'")
+                    else:
+                        logger.debug(f"Skipping duplicate purge for datasource '{dataSource}' (already processed)")
 
                 perStoragePurged[eventType] = purged
 

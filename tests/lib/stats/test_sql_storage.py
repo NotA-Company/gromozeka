@@ -1,6 +1,7 @@
 """Integration tests for DatabaseStatsStorage."""
 
 import datetime
+import json
 import uuid
 from typing import Any
 from unittest.mock import patch
@@ -205,8 +206,6 @@ async def testMultipleConsumers(statsStorage: DatabaseStatsStorage) -> None:
     assert len(consumerValues) >= 2
 
     # Each consumer's tokens should be correct
-    import json
-
     valuesByConsumer = {}
     for r in consumerValues:
         labels = json.loads(r["labels"])
@@ -655,6 +654,81 @@ async def testPurgeBoundaryExactCutoffSurvives(statsStorage: DatabaseStatsStorag
         )
         remainingIds = {r["event_id"] for r in remainingRows}
         assert remainingIds == {"exact-midnight", "late-in-boundary-day"}
+
+
+async def testPurgeIsTypeAgnostic(statsStorage: DatabaseStatsStorage) -> None:
+    """Verify purgeProcessed deletes all event types on its datasource.
+
+    The DB implementation's purge is deliberately type-agnostic (no event_type
+    filter) because the first purge pass cleans all processed rows regardless of type.
+    When multiple storages share one stat_events table, this ensures retention is
+    applied uniformly across all event types.
+
+    Seed:
+    - Old processed rows of two event types (command and message)
+    - One storage's purgeProcessed should delete BOTH event types
+
+    Returns:
+        None
+    """
+    now = datetime.datetime.now(datetime.UTC)
+    oldTimestamp = now - datetime.timedelta(days=40)
+
+    provider = await statsStorage.db.manager.getProvider(dataSource=statsStorage.dataSource, readonly=False)
+
+    # Insert old processed command event
+    await provider.execute(
+        """INSERT INTO stat_events
+           (event_id, event_type, event_time, data, labels,
+            processed, processed_id, claimed_at, created_at)
+           VALUES
+           (:eventId1, :eventType1, :eventTime, :data, :labels,
+            1, NULL, NULL, :createdAt)""",
+        {
+            "eventId1": "old-command-1",
+            "eventType1": "command",
+            "eventTime": oldTimestamp,
+            "data": '{"count": 1}',
+            "labels": '{"consumer":"test"}',
+            "createdAt": oldTimestamp,
+        },
+    )
+
+    # Insert old processed message event
+    await provider.execute(
+        """INSERT INTO stat_events
+           (event_id, event_type, event_time, data, labels,
+            processed, processed_id, claimed_at, created_at)
+           VALUES
+           (:eventId2, :eventType2, :eventTime, :data, :labels,
+            1, NULL, NULL, :createdAt)""",
+        {
+            "eventId2": "old-message-1",
+            "eventType2": "message",
+            "eventTime": oldTimestamp,
+            "data": '{"tokens": 100}',
+            "labels": '{"consumer":"test"}',
+            "createdAt": oldTimestamp,
+        },
+    )
+
+    # Verify 2 old processed events exist
+    allRows = await provider.executeFetchAll(
+        """SELECT COUNT(*) AS cnt FROM stat_events""",
+    )
+    assert allRows[0]["cnt"] == 2
+
+    # Purge with 30-day retention using llm_request storage (should delete ALL types)
+    deleted = await statsStorage.purgeProcessed(retentionDays=30)
+
+    # Should delete exactly 2 rows (both command and message)
+    assert deleted == 2
+
+    # Verify zero rows remain
+    remainingRows = await provider.executeFetchAll(
+        """SELECT COUNT(*) AS cnt FROM stat_events""",
+    )
+    assert remainingRows[0]["cnt"] == 0
 
 
 # ----------------------------------------------------------------------
@@ -1154,3 +1228,62 @@ async def testQueryTotalSentinelPeriods(statsStorage: DatabaseStatsStorage) -> N
     # Should only return non-total rows (hourly/daily/monthly), not total rows
     totalRowsAfter = [r for r in rowsAfterSentinel if r["periodType"] == "total"]
     assert len(totalRowsAfter) == 0
+
+
+async def testQueryOffsetPaging(statsStorage: DatabaseStatsStorage) -> None:
+    """Verify query() offset paging with deterministic order.
+
+    Seed:
+    - Record 15 events with different labels to create many aggregate rows
+    - Aggregate produces rows ordered by period_start, labels_hash, metric_key
+    - Query with limit=10 should return first 10 rows
+    - Query with limit=10 offset=10 should return remaining rows (page2)
+    - Verify no overlap between pages and deterministic ordering
+
+    Returns:
+        None
+    """
+    # Record 15 events with different labels to create many rows
+    for i in range(15):
+        await statsStorage.record(
+            {"tokens": 100 + i},
+            consumerId=f"chat_{i}",
+            labels={"model": f"model_{i}", "provider": "openai"},
+        )
+    await statsStorage.aggregate()
+
+    # Get all rows to determine total count
+    allRows = await statsStorage.query(eventType="llm_request", limit=10000)
+    assert len(allRows) > 10, "Need more than 10 rows for pagination test"
+
+    # Query first page with limit=10
+    page1 = await statsStorage.query(eventType="llm_request", limit=10, offset=0)
+    assert len(page1) == 10, "First page should have exactly 10 rows"
+
+    # Query second page with limit=10 offset=10
+    page2 = await statsStorage.query(eventType="llm_request", limit=10, offset=10)
+    assert len(page2) > 0, "Second page should have at least one row"
+
+    # Verify no overlap between pages (rows should be distinct)
+    page1Ids = {(r["periodStart"], r["metricKey"], str(r["labels"])) for r in page1}
+    page2Ids = {(r["periodStart"], r["metricKey"], str(r["labels"])) for r in page2}
+    overlap = page1Ids & page2Ids
+    assert len(overlap) == 0, f"Pages should not overlap, found {len(overlap)} overlapping rows"
+
+    # Verify deterministic order by checking that combined pages match allRows
+    combinedPages = page1 + page2
+    # The combined pages should be a prefix of allRows (ordered query)
+    for i, row in enumerate(combinedPages):
+        assert row == allRows[i], f"Row {i} doesn't match allRows at position {i}"
+
+    # Verify deterministic ordering: same query twice returns same results
+    page1Again = await statsStorage.query(eventType="llm_request", limit=10, offset=0)
+    assert page1 == page1Again, "Same query should return same results (deterministic order)"
+
+    # Verify second query returns different results from first query
+    assert page1 != page2, "Different pages should return different results"
+
+    # Verify that querying beyond the available rows returns empty list
+    # Get total count and query way beyond it
+    emptyPage = await statsStorage.query(eventType="llm_request", limit=10, offset=10000)
+    assert emptyPage == [], "Querying beyond available rows should return empty list"

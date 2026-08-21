@@ -9,7 +9,7 @@ against source on 2026-08-18.
 
 `consumerId` (= chat id) is how per-chat stats scoping works: it is merged into
 `labels["consumer"]` at
-[internal/database/stats_storage.py:107](../../internal/database/stats_storage.py)
+[internal/database/stats_storage.py:121](../../internal/database/stats_storage.py)
 (`None` → `__global__`). The `message`, `command`, and `llm_tool_call` event types
 carry it correctly. All known gaps are in `llm_request`.
 

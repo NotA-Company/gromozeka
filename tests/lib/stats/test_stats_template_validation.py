@@ -8,6 +8,7 @@ substitution). This is a regression test for the seam bug where the template had
 
 from pathlib import Path
 
+import pytest
 import tomli  # tomllib is Python 3.11+, tomli is the backport
 
 # Compute repo root at module top for portability
@@ -48,14 +49,22 @@ class TestStatsTemplateValidation:
         # Placeholders are: {user_id}, {chat_id}, {platform}
         placeholders = {"user_id": "123", "chat_id": "456", "platform": "telegram"}
 
-        resolvedArgv = []
-        for arg in generateCommand:
-            try:
-                resolvedArg = arg.format_map(placeholders)
-            except (KeyError, AttributeError):
-                # If an arg doesn't have placeholders, keep it as-is
-                resolvedArg = arg
-            resolvedArgv.append(resolvedArg)
+        try:
+            resolvedArgv = [arg.format_map(placeholders) for arg in generateCommand]
+        except (KeyError, AttributeError):
+            # Identify the placeholder that caused the failure
+            for arg in generateCommand:
+                try:
+                    arg.format_map(placeholders)
+                except (KeyError, AttributeError) as argError:
+                    if isinstance(argError, KeyError):
+                        pytest.fail(
+                            f"Template generate-command contains unknown placeholder: {argError}. "
+                            f"Template: {generateCommand}"
+                        )
+                    else:
+                        raise
+            raise  # Re-raise if we couldn't identify the problematic arg
 
         # Extract only the subcommand and its arguments (skip Python invocation)
         # The template is: ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate"]
@@ -113,13 +122,22 @@ class TestStatsTemplateValidation:
         # Strip placeholder substitutions (page_id is the only placeholder)
         placeholders = {"page_id": "some-uuid-1234567890abcdef"}
 
-        resolvedArgv = []
-        for arg in deleteCommand:
-            try:
-                resolvedArg = arg.format_map(placeholders)
-            except (KeyError, AttributeError):
-                resolvedArg = arg
-            resolvedArgv.append(resolvedArg)
+        try:
+            resolvedArgv = [arg.format_map(placeholders) for arg in deleteCommand]
+        except (KeyError, AttributeError):
+            # Identify the placeholder that caused the failure
+            for arg in deleteCommand:
+                try:
+                    arg.format_map(placeholders)
+                except (KeyError, AttributeError) as argError:
+                    if isinstance(argError, KeyError):
+                        pytest.fail(
+                            f"Template delete-command contains unknown placeholder: {argError}. "
+                            f"Template: {deleteCommand}"
+                        )
+                    else:
+                        raise
+            raise  # Re-raise if we couldn't identify the problematic arg
 
         # Extract only the subcommand and its arguments (skip Python invocation)
         try:
