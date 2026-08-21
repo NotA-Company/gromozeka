@@ -29,6 +29,8 @@ from internal.bot.common.typing_manager import TypingManager
 from internal.bot.constants import (
     BOT_ID_CACHE_TTL_SECONDS,
     BOT_ID_FAILURE_GRACE_SECONDS,
+    BOT_USERNAME_CACHE_TTL_SECONDS,
+    BOT_USERNAME_FAILURE_GRACE_SECONDS,
     TELEGRAM_RETRY_AFTER_CAP_SECONDS,
     TELEGRAM_SEND_MAX_ATTEMPTS,
     TELEGRAM_SEND_RETRY_DELAY_BASE,
@@ -135,6 +137,8 @@ class TheBot:
         # Cache for bot identity (stable for process lifetime, with TTL)
         self._botId: Optional[int] = None
         self._botIdCachedAt: float = 0.0
+        self._botUserName: Optional[str] = None
+        self._botUserNameCachedAt: float = 0.0
 
         ###
 
@@ -167,9 +171,12 @@ class TheBot:
         """
         now = time.monotonic()
         cacheAge = now - self._botIdCachedAt
+        hasCachedValue = self._botIdCachedAt > 0
 
         # Return cached value if it exists and hasn't expired
-        if self._botId is not None and cacheAge < BOT_ID_CACHE_TTL_SECONDS:
+        if hasCachedValue and cacheAge < BOT_ID_CACHE_TTL_SECONDS:
+            # hasCachedValue > 0 guarantees _botId was set on a prior successful resolution
+            assert self._botId is not None
             return self._botId
 
         # Try a refresh
@@ -189,8 +196,10 @@ class TheBot:
             return botId
         except Exception:
             # If we have a cached value within grace window, return it
-            if self._botId is not None and cacheAge < (BOT_ID_CACHE_TTL_SECONDS + BOT_ID_FAILURE_GRACE_SECONDS):
+            if hasCachedValue and cacheAge < (BOT_ID_CACHE_TTL_SECONDS + BOT_ID_FAILURE_GRACE_SECONDS):
                 logger.exception("Bot ID refresh failed, returning stale value")
+                # hasCachedValue > 0 guarantees _botId was set on a prior successful resolution
+                assert self._botId is not None
                 # Return stale value within grace window
                 return self._botId
 
@@ -200,24 +209,59 @@ class TheBot:
     async def getBotUserName(self) -> Optional[str]:
         """Get bot's username.
 
-        Note: This method deliberately has no TTL cache — the username is
-        rarely used and reading it from the platform is cheap. Unlike getBotId,
-        which is used frequently and cached with TTL+grace, getBotUserName
-        reads fresh from the client layer (Telegram: direct attribute;
-        Max: via getMyInfo, which may use its own client cache).
+        The bot username is cached for BOT_USERNAME_CACHE_TTL_SECONDS (3600 seconds) to avoid
+        repeated platform API calls. After the TTL expires, the username is re-resolved
+        from the platform, enabling recovery from temporary glitches (e.g., bot
+        re-creation or username change on the platform).
+
+        For Max, the refresh bypasses the client-level cache (getMyInfo with
+        useCache=False), so TheBot's TTL is the only caching layer; one uncached
+        request per TTL window.
+
+        On refresh failure, if a stale cached value exists and the cache age is
+        less than (TTL + GRACE), the stale value is returned instead of raising.
+        This provides graceful degradation for transient platform issues.
+        Failures are never cached.
 
         Returns:
             Bot's username from the active platform, or None if not set
 
         Raises:
-            RuntimeError: If no active bot client is configured
+            RuntimeError: If no active bot client; or if refresh fails and no
+                stale cache is available (no cache, or cache older than TTL+GRACE).
         """
-        if self.tgBot:
-            return self.tgBot.username
-        elif self.maxBot:
-            return (await self.maxBot.getMyInfo()).username
+        now = time.monotonic()
+        cacheAge = now - self._botUserNameCachedAt
+        hasCachedValue = self._botUserNameCachedAt > 0
 
-        raise RuntimeError("No Active bot found")
+        # Return cached value if it exists and hasn't expired
+        if hasCachedValue and cacheAge < BOT_USERNAME_CACHE_TTL_SECONDS:
+            return self._botUserName
+
+        # Try a refresh
+        try:
+            # Resolve from platform API
+            botUserName: Optional[str] = None
+            if self.tgBot:
+                botUserName = self.tgBot.username
+            elif self.maxBot:
+                botUserName = (await self.maxBot.getMyInfo(useCache=False)).username
+            else:
+                raise RuntimeError("No Active bot found")
+
+            # Cache only on successful resolution
+            self._botUserName = botUserName
+            self._botUserNameCachedAt = now
+            return botUserName
+        except Exception:
+            # If we have a cached value within grace window, return it
+            if hasCachedValue and cacheAge < (BOT_USERNAME_CACHE_TTL_SECONDS + BOT_USERNAME_FAILURE_GRACE_SECONDS):
+                logger.exception("Bot username refresh failed, returning stale value")
+                # Return stale value within grace window
+                return self._botUserName
+
+            # No cache or cache too old — raise the original exception
+            raise
 
     def isBotOwner(self, user: MessageSender) -> bool:
         """Check if a user is a bot owner.

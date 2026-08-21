@@ -484,7 +484,7 @@ Parse-structure-template placeholders: `{systemId}`, `{layoutName}`, `{descripti
 
 ### `[stats.pages]`
 
-Optional web-page generation tier for `/stats --web` (or the `/stats_web` alias). A child section of `[stats]` — defaults live in [`configs/00-defaults/stats.toml`](../../configs/00-defaults/stats.toml) (the former standalone `stats-pages.toml` was deleted when the section merged). Read via `ConfigManager.getStatsPagesConfig()`, which fetches the dotted key `"stats.pages"`. The feature is tier-default-off: with `enabled = false` (the default) `--web`/`/stats_web` respond with an informative "disabled" message and no validation occurs. When `enabled = true`, the bot invokes the configured `generate-command` as a subprocess (raw-rows JSON payload on stdin, stdout `{"pageId","url"}` JSON), uses the returned `url` VERBATIM as the reply link (full URLs are built by the CLI when its `--base-url` flag appears in the generate-command template), and schedules one persisted one-shot delayed deletion task per page (delay = `ttl-hours × 3600`). The deletion task runs the `delete-command` with `{page_id}` substituted; the bot stores no page registry.
+Optional web-page generation tier for `/stats --web` (or the `/stats_web` alias). A child section of `[stats]` — defaults live in [`configs/00-defaults/stats.toml`](../../configs/00-defaults/stats.toml) (the former standalone `stats-pages.toml` was deleted when the section merged). Read via `ConfigManager.getStatsPagesConfig()`, which reads the `[stats.pages]` table through an inline nested lookup (`self.get("stats", {})` with an `isinstance(dict)` guard, then `.get("pages", {})`) — `ConfigManager.get()` itself is literal-key-only (no dot navigation). The feature is tier-default-off: with `enabled = false` (the default) `--web`/`/stats_web` respond with an informative "disabled" message and no validation occurs. When `enabled = true`, the bot invokes the configured `generate-command` as a subprocess (raw-rows JSON payload on stdin, stdout `{"pageId","url"}` JSON), uses the returned `url` VERBATIM as the reply link (full URLs are built by the CLI when its `--base-url` flag appears in the generate-command template), and schedules one persisted one-shot delayed deletion task per page (delay = `ttl-hours × 3600`). The deletion task runs the `delete-command` with `{page_id}` substituted; the bot stores no page registry.
 
 | Key | Type | Default | Purpose |
 |---|---|---|---|
@@ -987,7 +987,7 @@ global-ratelimiter-queue = "stt-global"
 
 | Method | Returns | Purpose |
 |---|---|---|
-| `get(key, default)` | `Any` | Generic config value getter |
+| `get(key, default)` | `Any` | Generic config value getter — literal key match only, no dot navigation |
 | `getBotConfig()` | `Dict[str, Any]` | `[bot]` section |
 | `getDatabaseConfig()` | `Dict[str, Any]` | `[database]` section |
 | `getLoggingConfig()` | `Dict[str, Any]` | `[logging]` section |
@@ -999,7 +999,7 @@ global-ratelimiter-queue = "stt-global"
 | `getStorageConfig()` | `Dict[str, Any]` | `[storage]` section |
 | `getGeocodeMapsConfig()` | `Dict[str, Any]` | `[geocode-maps]` section |
 | `getStatsConfig()` | `Dict[str, Any]` | `[stats]` section |
-| `getStatsPagesConfig()` | `Dict[str, Any]` | `[stats.pages]` child section via the dotted key `"stats.pages"` (returns `{}` when missing); consumed by `StatsHandler` |
+| `getStatsPagesConfig()` | `Dict[str, Any]` | `[stats.pages]` child section via an inline nested lookup (`self.get("stats", {})` → `.get("pages", {})`; `get()` is literal-key-only, no dot navigation); returns `{}` when missing; consumed by `StatsHandler` |
 | `getProxyConfig()` | `ProxyConfigDict` | `[proxy]` section (typed `TypedDict` from [`lib/proxy`](../../lib/proxy/__init__.py)) |
 | `getSearchHistoryConfig()` | `Dict[str, Any]` | `[search-history]` section (returns `{}` when missing) |
 | `getSttConfig()` | `Dict[str, Any]` | `[stt]` section (returns `{}` when missing); consumed by `STTService.initialize()` |

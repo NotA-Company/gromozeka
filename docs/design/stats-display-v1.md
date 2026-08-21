@@ -136,9 +136,13 @@ U9's ratified text below stays as history.
   4. **Config merge (amends D10/§5):** the `[stats-pages]` section and the
      `configs/00-defaults/stats-pages.toml` file are DELETED; all keys move
      under `[stats.pages]` in `configs/00-defaults/stats.toml`.
-     `getStatsPagesConfig()` reads `self.get("stats.pages", {})`
-     (dotted-path get confirmed at manager.py:278-293). The `base-url` key
-     is REMOVED entirely (see 5).
+      `getStatsPagesConfig()` reads `self.get("stats.pages", {})`
+      (dotted-path get confirmed at manager.py:278-293). The `base-url` key
+      is REMOVED entirely (see 5).
+      *(Corrected 2026-08-22: dot-notation in `ConfigManager.get` was
+      reverted — `get()` is literal-key-only; `getStatsPagesConfig()` now
+      does an inline nested lookup (`self.get("stats", {})` →
+      `.get("pages", {})`).)*
   5. **CLI contract (amends D11/D12):** generate stdout JSON =
      `{"pageId", "url"}` (key `id` renamed `pageId`). `url` is FULL and
      used VERBATIM by the bot (no composition). The CLI accepts an
@@ -533,7 +537,10 @@ acceptable for an operational counter. **No new query.**
 - `ConfigManager.getStatsConfig()` is `return self.get("stats", {})`
   ([manager.py:492-506](../../internal/config/manager.py)); the generic
   dot-notation `get(key, default)` is at
-  [manager.py:278-293](../../internal/config/manager.py). Typed section accessors
+  [manager.py:278-293](../../internal/config/manager.py).
+  *(Corrected 2026-08-22: dot-notation reverted — `get(key, default)` is
+  literal-key-only; nested sections are read with inline `.get()` chains,
+  e.g. `getStatsPagesConfig()`.)* Typed section accessors
   are the dominant pattern for named sections (`getSearchHistoryConfig`
   [manager.py:532-539](../../internal/config/manager.py), `getSttConfig`
   :541+); ad-hoc inline `self.configManager.get("resender", {})` also exists
@@ -1537,8 +1544,11 @@ table — windowSeconds revised 2026-08-19 by U12-6):
 
 `[stats]` itself gains only the `[stats.pages]` child section (U12-4); its
 existing keys are unchanged. Reader: typed accessor
-`ConfigManager.getStatsPagesConfig()` reading `self.get("stats.pages", {})`
-(D10/U12-4). Validation errors (empty `generate-command`/`delete-command`
+  `ConfigManager.getStatsPagesConfig()` reading `self.get("stats.pages", {})`
+  (D10/U12-4).
+  *(Corrected 2026-08-22: reads `self.get("stats", {})` → `.get("pages", {})`
+  inline — dot-notation in `ConfigManager.get` was reverted; `get()` is
+  literal-key-only.)* Validation errors (empty `generate-command`/`delete-command`
 when enabled, non-positive-int `ttl-hours`) fail loudly at the single
 validation site — `StatsHandler` construction (D10/U11; construction raises →
 bot startup fails). No validation when `enabled = false` (default).

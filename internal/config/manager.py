@@ -278,15 +278,11 @@ class ConfigManager:
     def get(self, key: str, default: Any = None) -> Any:
         """Get configuration value by key.
 
-        Supports dot notation for nested keys (e.g., "bot.token" accesses
-        config["bot"]["token"]). Note that dot notation treats literal dots
-        as path separators, so a TOML key containing a literal dot (e.g.
-        "a.b" = 1, or a top-level "yandex.search") is unreachable via
-        get("a.b") since the split always navigates. No such keys exist
-        in the current configuration.
+        The key is treated as a literal TOML key - no dot navigation or
+        splitting is performed.
 
         Args:
-            key: The configuration key to retrieve. Supports dot notation for nested keys.
+            key: The configuration key to retrieve (literal match only).
             default: The default value to return if the key is not found. Defaults to None.
 
         Returns:
@@ -294,21 +290,10 @@ class ConfigManager:
 
         Example:
             >>> config_manager = ConfigManager()
-            >>> bot_token = config_manager.get("bot.token")
-            >>> db_type = config_manager.get("database.type", "sqlite")
+            >>> bot_config = config_manager.get("bot")
+            >>> db_config = config_manager.get("database", {})
         """
-        if "." not in key:
-            return self.config.get(key, default)
-
-        # Handle dot notation for nested keys
-        keys = key.split(".")
-        value = self.config
-        for k in keys:
-            if isinstance(value, dict) and k in value:
-                value = value[k]
-            else:
-                return default
-        return value
+        return self.config.get(key, default)
 
     def getBotConfig(self) -> Dict[str, Any]:
         """Get bot-specific configuration.
@@ -537,7 +522,10 @@ class ConfigManager:
             >>> print(stats_pages_config.get("enabled"))
             False
         """
-        return self.get("stats.pages", {})
+        statsSection = self.get("stats", {})
+        if isinstance(statsSection, dict):
+            return statsSection.get("pages", {})
+        return {}
 
     def getProxyConfig(self) -> ProxyConfigDict:
         """Get global proxy configuration.
