@@ -279,7 +279,8 @@ class StatsAggregationService:
         1. Gate on elapsed time: ``time.time() - _lastRunTime < intervalSeconds`` → return.
         2. For each storage in ``_statsStorages.items()`` (sequential order, using eventType key as label):
             a. Drain loop: call ``aggregate(limit=self._batchLimit)`` repeatedly until 0 or MAX_AGGREGATION_ROUNDS.
-            b. Retention purge: if ``retentionDays > 0``, call ``purgeProcessed`` once per DISTINCT datasource.
+            b. Retention purge: if ``retentionDays > 0``, call ``purgeProcessed`` once per storage
+               (each storage is scoped to its own event_type via its own data source).
             Per-storage try/except isolation — one storage's failure never blocks others.
         3. One INFO summary line: per-storage processed/purged counts + errors.
         4. Set ``_lastRunTime`` to cycle-start timestamp.
@@ -302,11 +303,6 @@ class StatsAggregationService:
         perStoragePurged: Dict[str, int] = {}
         perStorageErrors: Dict[str, str] = {}
 
-        # Track which datasources have been purged to avoid duplicate work
-        # (purgeProcessed is type-agnostic, so multiple storages on the same
-        # datasource would redundantly purge the same rows)
-        purgedDatasources: set[str] = set()
-
         # Iterate over registry items: eventType keys ARE the labels (unique by dict construction)
         # CRITICAL: Wrap in list() to avoid RuntimeError if dict is mutated during iteration
         # (e.g., if aggregate() triggers createStatsStorage which adds a new storage)
@@ -323,16 +319,10 @@ class StatsAggregationService:
                 perStorageProcessed[eventType] = processedTotal
 
                 # Retention purge: delete processed events older than retention window
-                # Deduplicated per datasource (first storage per datasource wins)
                 purged = 0
                 if self._retentionDays > 0:
-                    dataSource = storage.dataSource
-                    if dataSource not in purgedDatasources:
-                        purged = await storage.purgeProcessed(retentionDays=self._retentionDays)
-                        purgedDatasources.add(dataSource)
-                        logger.debug(f"Purged {purged} processed events from datasource '{dataSource}'")
-                    else:
-                        logger.debug(f"Skipping duplicate purge for datasource '{dataSource}' (already processed)")
+                    purged = await storage.purgeProcessed(retentionDays=self._retentionDays)
+                    logger.debug(f"Purged {purged} processed events for '{eventType}'")
 
                 perStoragePurged[eventType] = purged
 

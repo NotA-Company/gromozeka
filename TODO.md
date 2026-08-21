@@ -2,6 +2,8 @@
 - [ ] Work on the stats display v2 design (owner global/per-model/per-chat-per-model) — see docs/design/stats-display-v2-draft.md
 - [ ] Fix consumerId logging gaps in llm_request stats (embeddings/background/condensing) — see docs/design/stats-consumerid-gaps.md
 - [ ] Add non-blocking rate-limiter variant (applyLimit that returns False instead of waiting) — surfaced by stats web tier (U12)
+- [ ] add cache for botUsername
+- [ ] revert dot-notation in internal/config/manager.py:get
 - [x] short-term memories - add score
 - [x] retry to send message on `telegram.error.TimedOut: Timed out`
 - [ ] add ability to add bot-memory. think how to inject it
@@ -11,7 +13,8 @@
 - [ ] per-chat settings - how often to do memory-refinement
 - [ ] script for moving chat to separate db
 - [ ] refactor models
-- [ ] more statistics thing (more sources, consolidation, export + cleanup of old statistics)
+- [x] more statistics thing (more sources, consolidation, export + cleanup of old statistics)
+- [ ] Add proper web stats
 - [ ] slash-commands for getting description, prompt
 - [x] migrate to httpx2
 

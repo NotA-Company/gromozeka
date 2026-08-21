@@ -59,7 +59,7 @@ class DatabaseStatsStorage(BaseStatsStorage):
         dataSource: Data source name for both stat_events and stat_aggregates.
     """
 
-    __slots__ = ("db", "eventType", "_dataSource")
+    __slots__ = ("db", "eventType", "dataSource")
 
     def __init__(self, db: Database, eventType: str, *, dataSource: str) -> None:
         """Initialize database-backed stats storage.
@@ -71,20 +71,11 @@ class DatabaseStatsStorage(BaseStatsStorage):
         """
         self.db = db
         self.eventType = eventType
-        self._dataSource = dataSource
+        self.dataSource = dataSource
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-
-    @property
-    def dataSource(self) -> str:
-        """Return the data source identifier for this storage.
-
-        Returns:
-            The data source name (e.g., 'default', 'custom_ds').
-        """
-        return self._dataSource
 
     async def record(
         self,
@@ -298,10 +289,9 @@ class DatabaseStatsStorage(BaseStatsStorage):
         beyond N **whole** days. The cutoff is UTC midnight of ``now - N days``,
         so events created during the boundary day survive (strict ``<`` comparison).
 
-        The purge predicate is deliberately type-agnostic (no ``event_type`` filter)
-        because the first purge pass cleans all processed rows regardless of type.
-        When multiple storages share one ``stat_events`` table, this ensures
-        retention is applied uniformly across all event types.
+        The purge predicate is scoped to this storage's own ``event_type`` and
+        data source — each storage purges only its own processed rows past the
+        retention window, via its own data source.
 
         Uses a batched DELETE loop (same pattern as aggregate()'s claim step)
         with double-nested subqueries for MySQL compatibility (ERROR 1093/1235).
@@ -324,8 +314,14 @@ class DatabaseStatsStorage(BaseStatsStorage):
         # Count first to know if there's work to do
         countRow = await sqlProvider.executeFetchOne(
             """SELECT COUNT(*) AS cnt FROM stat_events
-               WHERE processed = 1 AND created_at < :cutoff""",
-            {"cutoff": cutoff},
+               WHERE
+                processed = 1 AND
+                event_type = :eventType AND
+                created_at < :cutoff""",
+            {
+                "cutoff": cutoff,
+                "eventType": self.eventType,
+            },
         )
 
         if countRow is None or countRow["cnt"] == 0:
@@ -339,7 +335,10 @@ class DatabaseStatsStorage(BaseStatsStorage):
             # Inner select with LIMIT, wrapped in double nesting for MySQL ERROR 1093/1235
             innerSelect = sqlProvider.applyPagination(
                 """SELECT event_id FROM stat_events
-                   WHERE processed = 1 AND created_at < :cutoff""",
+                   WHERE
+                    processed = 1 AND
+                    event_type = :eventType AND
+                    created_at < :cutoff""",
                 limit=PURGE_BATCH_SIZE,
             )
             deleteQuery = (
@@ -347,13 +346,19 @@ class DatabaseStatsStorage(BaseStatsStorage):
             )
 
             # Execute the delete
-            await sqlProvider.execute(deleteQuery, {"cutoff": cutoff})
+            await sqlProvider.execute(deleteQuery, {"cutoff": cutoff, "eventType": self.eventType})
 
             # Check if we deleted anything by counting remaining rows
             remainingRow = await sqlProvider.executeFetchOne(
                 """SELECT COUNT(*) AS cnt FROM stat_events
-                   WHERE processed = 1 AND created_at < :cutoff""",
-                {"cutoff": cutoff},
+                   WHERE
+                    processed = 1 AND
+                    event_type = :eventType AND
+                    created_at < :cutoff""",
+                {
+                    "cutoff": cutoff,
+                    "eventType": self.eventType,
+                },
             )
 
             if remainingRow is None:

@@ -568,12 +568,10 @@ from lib.stats import StatsStorage, NullStatsStorage, GLOBAL_CONSUMER_ID
 
 | Class | File | Purpose |
 |---|---|---|
-| [`StatsStorage`](../../lib/stats/stats_storage.py:11) | `lib/stats/stats_storage.py` | ABC for statistics storage backends |
-| [`NullStatsStorage`](../../lib/stats/stats_storage.py:81) | `lib/stats/stats_storage.py` | No-op implementation (discards all events) |
+| [`StatsStorage`](../../lib/stats/stats_storage.py:13) | `lib/stats/stats_storage.py` | ABC for statistics storage backends |
+| [`NullStatsStorage`](../../lib/stats/stats_storage.py:141) | `lib/stats/stats_storage.py` | No-op implementation (discards all events) |
 | [`StatsAnalyzer`](../../lib/stats/analysis.py) | `lib/stats/analysis.py` | Read-side filtering/grouping/aggregation over `query()` rows (pure Python) |
 | `StatsAggregateDict` + `STATS_QUERY_ROW_LIMIT` | `lib/stats/types.py` | TypedDict for one aggregated stats row (5 camelCase fields, labels parsed from JSON) and the shared default `query()` row limit (`STATS_QUERY_ROW_LIMIT: int = 10000`) |
-
-**Abstract property:** the `StatsStorage` ABC also defines an abstract `dataSource` property (`str`) — the data source identifier for this storage (`"null"` for `NullStatsStorage`; the aggregation service uses it to deduplicate purge operations across storages sharing a datasource).
 
 **Interface methods on `StatsStorage`:**
 ```python
@@ -611,7 +609,7 @@ await statsStorage.query(
 
 - `record()`: Append a raw stat event to the log. Failures are logged but not raised.
 - `aggregate()`: Claim up to `limit` unprocessed (or orphaned) events, aggregate into hourly/daily/monthly/total buckets, upsert into the aggregation table, and mark events as processed. Returns the number of events processed (0 if nothing to do).
-- `purgeProcessed()`: Delete processed stat events older than the retention window (``processed = 1 AND created_at < cutoff`` through this storage's own data source). ``retentionDays <= 0`` is a no-op (returns 0, deletes nothing). Errors propagate to the caller (matching ``aggregate()``'s contract). Used by `StatsAggregationService` per storage after each aggregation cycle to clean up old processed events. `NullStatsStorage` returns 0.
+- `purgeProcessed()`: Delete this storage's own event type's processed events older than the retention window (``processed = 1 AND event_type = :eventType AND created_at < cutoff`` through this storage's own data source). ``retentionDays <= 0`` is a no-op (returns 0, deletes nothing). Errors propagate to the caller (matching ``aggregate()``'s contract). Used by `StatsAggregationService` per storage after each aggregation cycle to clean up old processed events. `NullStatsStorage` returns 0.
 - `query()`: Read aggregated rows filtered by `eventType` (required), `periodType` (optional: `'hourly'`, `'daily'`, `'monthly'`, or `'total'`), and optional inclusive bounds `periodStartFrom` / `periodStartTo` (ISO-8601 UTC strings). Returns rows with labels parsed from JSON as `StatsAggregateDict` (fields: `periodStart`, `periodType`, `labels`, `metricKey`, `metricValue`). Applies `limit`/`offset` via provider's `applyPagination()`. Raises on database/provider errors. `NullStatsStorage` returns `[]`.
 
 **Analysis (read-side)** — [`lib/stats/analysis.py`](../../lib/stats/analysis.py), re-exported from the package root; pure-Python post-processing over `query()` rows (no SQL label filtering), used by `StatsHandler`:
@@ -631,7 +629,7 @@ await storage.record(
 )
 ```
 
-**DB-backed implementation:** [`DatabaseStatsStorage`](../../internal/database/stats_storage.py:39) in `internal/database/stats_storage.py` — backed by `stat_events` (append-only log) and `stat_aggregates` (period buckets). Created in `main.py` when `stats.enabled = true`.
+**DB-backed implementation:** [`DatabaseStatsStorage`](../../internal/database/stats_storage.py:44) in `internal/database/stats_storage.py` — backed by `stat_events` (append-only log) and `stat_aggregates` (period buckets). Keeps a plain `dataSource` attribute (`str`) used for provider routing (`getProvider(dataSource=...)`); there is no `dataSource` member on the `StatsStorage` ABC. Created in `main.py` when `stats.enabled = true`.
 
 **Integration points:**
 - `LLMManager` receives `statsStorage` in constructor and propagates to all `AbstractModel` instances

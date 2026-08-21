@@ -169,15 +169,6 @@ class StatsHandler(BaseBotHandler):
                     "[stats.pages] generate-command must be a non-empty list[str] of non-empty strings when enabled"
                 )
 
-            # Validate that generate-command contains --base-url and --output-dir
-            hasBaseUrl = any(arg.startswith("--base-url") for arg in generateCommand)
-            hasOutputDir = any(arg.startswith("--output-dir") for arg in generateCommand)
-            if not hasBaseUrl or not hasOutputDir:
-                raise RuntimeError(
-                    "[stats.pages] generate-command must contain both --base-url and --output-dir "
-                    "arguments when enabled"
-                )
-
             # Validate delete-command (must be non-empty list[str] of non-empty strings)
             deleteCommand = statsPagesConfig.get("delete-command")
             if (
@@ -365,9 +356,7 @@ class StatsHandler(BaseBotHandler):
             if not self._statsPagesEnabled:
                 await self.sendMessage(
                     ensuredMessage,
-                    messageText=(
-                        "⚠ Генерация веб-страниц отключена. Спросите оператора о настройке секции [stats.pages]."
-                    ),
+                    messageText=("⚠ Генерация веб-страниц отключена."),
                     messageCategory=MessageCategory.BOT_COMMAND_REPLY,
                     typingManager=typingManager,
                 )

@@ -25,21 +25,6 @@ class StatsStorage(ABC):
     combination (substituting consumer with ``GLOBAL_CONSUMER_ID``).
     """
 
-    @property
-    @abstractmethod
-    def dataSource(self) -> str:
-        """Return the data source identifier for this storage.
-
-        Multiple storages may share the same data source (e.g., multiple
-        event types using the same database). The aggregation service uses
-        this to deduplicate purge operations across storages on the same
-        datasource.
-
-        Returns:
-            The data source identifier (e.g., 'default', 'custom_ds', 'null').
-        """
-        ...
-
     @abstractmethod
     async def record(
         self,
@@ -98,17 +83,12 @@ class StatsStorage(ABC):
     async def purgeProcessed(self, *, retentionDays: int) -> int:
         """Delete processed stat events older than the retention window.
 
-        Deletes rows with ``processed = 1 AND created_at < truncateToDay(now -
-        retentionDays)`` (UTC midnight of N days ago, day-truncated) through
-        this storage's own data source. ``retentionDays <= 0`` is a no-op
-        (keep forever). Errors propagate to the caller (matching ``aggregate()``'s
-        contract — isolation is the coordinator's job); ``record()`` remains the
-        only never-raise method.
-
-        Note: The database implementation (DatabaseStatsStorage) purges
-        type-agnostically across all event types on its datasource (no
-        ``event_type`` filter in the DELETE predicate), so the first purge
-        pass for a given datasource cleans all processed rows regardless of type.
+        Deletes rows with ``processed = 1 AND event_type = <storage's own type>
+        AND created_at < truncateToDay(now - retentionDays)`` (UTC midnight of
+        N days ago, day-truncated) through this storage's own data source.
+        ``retentionDays <= 0`` is a no-op (keep forever). Errors propagate to the
+        caller (matching ``aggregate()``'s contract — isolation is the coordinator's
+        job); ``record()`` remains the only never-raise method.
 
         Args:
             retentionDays: Minimum age in days for a processed row to be deleted.
@@ -163,15 +143,6 @@ class NullStatsStorage(StatsStorage):
 
     Use when statistics collection is disabled in configuration.
     """
-
-    @property
-    def dataSource(self) -> str:
-        """Return 'null' as the data source identifier.
-
-        Returns:
-            The string 'null'.
-        """
-        return "null"
 
     async def record(
         self,

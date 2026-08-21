@@ -135,7 +135,6 @@ class TheBot:
         # Cache for bot identity (stable for process lifetime, with TTL)
         self._botId: Optional[int] = None
         self._botIdCachedAt: float = 0.0
-        self._lastRefreshFailedAt: float = 0.0
 
         ###
 
@@ -156,8 +155,8 @@ class TheBot:
 
         On refresh failure, if a stale cached value exists and the cache age is
         less than (TTL + GRACE), the stale value is returned instead of raising.
-        This provides graceful degradation for transient platform issues. The
-        failure backoff reuses the same window to avoid network hammering.
+        This provides graceful degradation for transient platform issues.
+        Failures are never cached.
 
         Returns:
             Bot's unique ID from the active platform
@@ -171,21 +170,6 @@ class TheBot:
 
         # Return cached value if it exists and hasn't expired
         if self._botId is not None and cacheAge < BOT_ID_CACHE_TTL_SECONDS:
-            return self._botId
-
-        # Check if we're within the failure backoff window
-        inFailureBackoff = (
-            self._lastRefreshFailedAt > 0 and (now - self._lastRefreshFailedAt) < BOT_ID_FAILURE_GRACE_SECONDS
-        )
-
-        # If we're in failure backoff window and have a cached value within grace, return stale
-        # This prevents hammering the network during an outage
-        if (
-            inFailureBackoff
-            and self._botId is not None
-            and cacheAge < (BOT_ID_CACHE_TTL_SECONDS + BOT_ID_FAILURE_GRACE_SECONDS)
-        ):
-            # Return stale value without retrying platform API
             return self._botId
 
         # Try a refresh
@@ -202,15 +186,11 @@ class TheBot:
             # Cache only on successful resolution
             self._botId = botId
             self._botIdCachedAt = now
-            self._lastRefreshFailedAt = 0.0  # Clear failure timestamp on success
             return botId
         except Exception:
-            # On failure, record the failure timestamp if we don't have a recent failure
-            if not inFailureBackoff:
-                self._lastRefreshFailedAt = now
-
             # If we have a cached value within grace window, return it
             if self._botId is not None and cacheAge < (BOT_ID_CACHE_TTL_SECONDS + BOT_ID_FAILURE_GRACE_SECONDS):
+                logger.exception("Bot ID refresh failed, returning stale value")
                 # Return stale value within grace window
                 return self._botId
 

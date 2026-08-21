@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import sys
-from typing import Optional
+from typing import Dict, Optional
 
 import httpx2
 
@@ -103,40 +103,25 @@ class GromozekBot:
             ("command", "command-stats-data-source"),
         ]
 
+        statsStorageMap: Dict[str, StatsStorage] = {}
         # Create all stats storages preserving order and defaults
-        llmStatsStorage: Optional[StatsStorage] = None
-        toolStatsStorage: Optional[StatsStorage] = None
-        sttStatsStorage: Optional[StatsStorage] = None
-        messageStatsStorage: Optional[StatsStorage] = None
-        commandStatsStorage: Optional[StatsStorage] = None
-
         for eventType, configKey in statsStorageConfigs:
-            storage = StatsAggregationService.getInstance().createStatsStorage(
+            statsStorageMap[eventType] = StatsAggregationService.getInstance().createStatsStorage(
                 eventType, statsConfig.get(configKey, self.database.manager.default)
             )
-            if eventType == "llm_request":
-                llmStatsStorage = storage
-            elif eventType == "llm_tool_call":
-                toolStatsStorage = storage
-            elif eventType == "stt_request":
-                sttStatsStorage = storage
-            elif eventType == "message":
-                messageStatsStorage = storage
-            elif eventType == "command":
-                commandStatsStorage = storage
 
         # Initialize LLM Manager
         self.llmManager = LLMManager(
             self.configManager.getModelsConfig(),
-            statsStorage=llmStatsStorage,
+            statsStorage=statsStorageMap["llm_request"],
         )
         LLMService.getInstance().injectLLMManager(self.llmManager)
 
         # Inject tool stats storage into LLMService
-        LLMService.getInstance().injectStatsStorage(toolStatsStorage)
+        LLMService.getInstance().injectStatsStorage(statsStorageMap["llm_tool_call"])
 
         # Initialize STT service (default-OFF; constructs/skips the provider)
-        STTService.getInstance().initialize(self.configManager, statsStorage=sttStatsStorage)
+        STTService.getInstance().initialize(self.configManager, statsStorage=statsStorageMap["stt_request"])
 
         # Initialize rate limiter manager (must be after all stats storages are registered
         # so the first CRON tick sees the complete registry; loadConfig feeds RateLimiterManager only)
@@ -153,16 +138,16 @@ class GromozekBot:
                     configManager=self.configManager,
                     botToken=self.configManager.getBotToken(),
                     database=self.database,
-                    messageStatsStorage=messageStatsStorage,
-                    commandStatsStorage=commandStatsStorage,
+                    messageStatsStorage=statsStorageMap["message"],
+                    commandStatsStorage=statsStorageMap["command"],
                 )
             case BotProvider.MAX:
                 self.botApp = MaxBotApplication(
                     configManager=self.configManager,
                     botToken=self.configManager.getBotToken(),
                     database=self.database,
-                    messageStatsStorage=messageStatsStorage,
-                    commandStatsStorage=commandStatsStorage,
+                    messageStatsStorage=statsStorageMap["message"],
+                    commandStatsStorage=statsStorageMap["command"],
                 )
             case _:
                 raise ValueError(f"Unknown bot mode: {self.botMode}")

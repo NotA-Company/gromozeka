@@ -1173,60 +1173,7 @@ class TestStatsHandlerRegistrationInvariant:
 
 
 class TestStatsHandlerWebTierConstruction:
-    """Tests for stats-pages config validation at construction (D10, base-url/output-dir validation)."""
-
-    def test_stats_pages_enabled_with_missing_base_url_and_output_dir_raises_error(self):
-        """generate-command must contain both --base-url and --output-dir when enabled."""
-
-        # Reset singleton
-        StatsAggregationService._instance = None
-
-        mockConfigManager = MagicMock()
-        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
-        mockConfigManager.getStatsPagesConfig.return_value = {
-            "enabled": True,
-            "generate-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate"],
-            "delete-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}"],
-            "ttl-hours": 24,
-        }
-        mockDatabase = MagicMock()
-
-        # Patch QueueService.getInstance to avoid registration during construction
-        with unittest.mock.patch.object(QueueService, "getInstance", return_value=MagicMock()):
-            # Should raise RuntimeError - missing --base-url and --output-dir
-            with pytest.raises(
-                RuntimeError, match=r"\[stats\.pages\] generate-command must contain both --base-url and --output-dir"
-            ):
-                StatsHandler(configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM)
-
-    def test_stats_pages_enabled_with_base_url_only_raises_error(self):
-        """generate-command must contain BOTH --base-url AND --output-dir."""
-
-        # Reset singleton
-        StatsAggregationService._instance = None
-
-        mockConfigManager = MagicMock()
-        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
-        mockConfigManager.getStatsPagesConfig.return_value = {
-            "enabled": True,
-            "generate-command": [
-                "./venv/bin/python3",
-                "-m",
-                "lib.stats.stats_pages",
-                "generate",
-                "--base-url=https://stats.example.com",
-            ],
-            "delete-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}"],
-            "ttl-hours": 24,
-        }
-        mockDatabase = MagicMock()
-
-        with unittest.mock.patch.object(QueueService, "getInstance", return_value=MagicMock()):
-            # Should raise RuntimeError - missing --output-dir
-            with pytest.raises(
-                RuntimeError, match=r"\[stats\.pages\] generate-command must contain both --base-url and --output-dir"
-            ):
-                StatsHandler(configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM)
+    """Tests for stats-pages handler construction shape (commands list, ttl-hours, cleanup-handler registration)."""
 
     def test_stats_pages_enabled_with_valid_config_constructs_and_registers_handler(self):
         """Test that construction succeeds and cleanup handler is registered when config is valid."""
@@ -1304,35 +1251,6 @@ class TestStatsHandlerWebTierConstruction:
             mockQueueService.registerDelayedTaskHandler.assert_called_once()
             callArgs = mockQueueService.registerDelayedTaskHandler.call_args
             assert callArgs[0][0] == DelayedTaskFunction.STATS_PAGES_CLEANUP
-
-    def test_stats_pages_enabled_with_output_dir_only_raises_error(self):
-        """generate-command must contain BOTH --base-url AND --output-dir."""
-
-        # Reset singleton
-        StatsAggregationService._instance = None
-
-        mockConfigManager = MagicMock()
-        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
-        mockConfigManager.getStatsPagesConfig.return_value = {
-            "enabled": True,
-            "generate-command": [
-                "./venv/bin/python3",
-                "-m",
-                "lib.stats.stats_pages",
-                "generate",
-                "--output-dir=./stats-pages",
-            ],
-            "delete-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}"],
-            "ttl-hours": 24,
-        }
-        mockDatabase = MagicMock()
-
-        with unittest.mock.patch.object(QueueService, "getInstance", return_value=MagicMock()):
-            # Should raise RuntimeError - missing --base-url
-            with pytest.raises(
-                RuntimeError, match=r"\[stats\.pages\] generate-command must contain both --base-url and --output-dir"
-            ):
-                StatsHandler(configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM)
 
 
 class TestStatsHandlerWebTierRateLimiting:
@@ -2300,7 +2218,6 @@ class TestStatsHandlerWebTierInterimBehavior:
             handler.sendMessage.assert_called_once()
             callArgs = handler.sendMessage.call_args
             assert "Генерация веб-страниц отключена" in callArgs.kwargs["messageText"]
-            assert "[stats.pages]" in callArgs.kwargs["messageText"]
 
     async def testWebModeChunkedBrief(self) -> None:
         """Test that web mode correctly handles chunked brief output (I3-1).

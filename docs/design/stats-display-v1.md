@@ -203,6 +203,10 @@ U-decisions above.
   argv tokens in `generate-command`** — validated fail-loudly at
   `StatsHandler` construction (a template missing either token is a
   construction error); the default template carries placeholder flags for both.
+  *(Corrected 2026-08-21 later the same day, commit aee2463b: token validation
+  removed — construction validates command shape (non-empty `list[str]` of
+  non-empty strings) and a positive `ttl-hours` only; the default template
+  still carries both tokens as operator guidance.)*
 - **`STATS_PAGES_CLEANUP` is registered whenever `StatsHandler` is
   constructed** (i.e. whenever `[stats] enabled`), regardless of
   pages-enabled — D14's construction-gating claim is now TRUE in code, and

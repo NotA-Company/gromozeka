@@ -73,6 +73,9 @@ verified against source on 2026-08-21.
 - **Retention purge runs once per distinct datasource** — the purge predicate is
   type-agnostic and runs per datasource, not per storage; pinned by tests.
   (Supersedes the per-storage purge wording in D2/D3/D8.)
+  *(Corrected 2026-08-21 later the same day, commit aee2463b: per-storage
+  event_type-scoped purge restored; the datasource-dedupe mechanism was
+  removed.)*
 - **The purge DELETE is batched** — double-nested subquery + `applyPagination`,
   safe against MySQL ERROR 1093/1235. (Supersedes D8's "no LIMIT batching"
   unbounded-DELETE stance and closes §9 Q4's open question.)

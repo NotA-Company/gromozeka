@@ -141,12 +141,9 @@ BOT_ID_FAILURE_GRACE_SECONDS: float = 3600.0
 
 When a refresh fails and a stale cached value exists with age < (TTL + GRACE),
 the stale value is returned instead of raising. The usable stale window is
-therefore TTL + GRACE (2 hours by default). The failure backoff reuses the same
-window deliberately: GRACE ≥ TTL coupling ensures we don't hammer the network
-while still providing a reasonable period of graceful degradation.
+therefore TTL + GRACE (2 hours by default).
 
-Failed resolution never writes to the cache; successful refresh clears the
-failure timestamp and updates both cache and timestamp.
+Failed resolution never writes to the cache.
 """
 
 RANDOM_ANSWER_CONTEXT_LENGTH: int = 64
