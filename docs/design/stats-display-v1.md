@@ -1,7 +1,7 @@
 # Design: Statistics display v1 — `/stats` command and optional web pages
 
 **Date**: 2026-08-18
-**Status**: **IMPLEMENTED — all phases landed.** Content as amended 2026-08-18 (user round 3 + U11 same-day), then U12 (2026-08-19, user round 4), then a post-review remediation (2026-08-21 — see the amendment block below). The body is the amended design record, preserved with supersession markers; the amendment blocks carry the shipped deltas.
+**Status**: **IMPLEMENTED — all phases landed.** Content as amended 2026-08-18 (user round 3 + U11 same-day), then U12 (2026-08-19, user round 4), then a post-review remediation (2026-08-21), then a binary-direction + backfill-merge amendment (2026-08-22), then a reply-format redesign amendment (2026-08-22, later the same day), then a pretty-numbers formatting amendment (2026-08-22, third round of the day — see the amendment blocks below), then a caption-in-fence amendment (2026-08-23, user-authored change — see the amendment block below). The body is the amended design record, preserved with supersession markers; the amendment blocks carry the shipped deltas.
 **Owner**: TBD
 **Branch**: `lib-stat-improvement`
 
@@ -225,6 +225,149 @@ U-decisions above.
   warning is emitted when `--base-url` is absent.
 - **Args grammar**: space-form options missing values raise a specific usage
   error — «Опция --X требует значения».
+
+## Amendments (2026-08-22, binary direction breakdown + backfill merge)
+
+User-decided change set (2026-08-22); facts verified against source the same
+day. Supersedes every three-bucket `sent` claim in the body below — §2.4
+("Backfill rows (migration 027) and the `sent` consequence"), the D6 reply
+sketches, the D6 "Direction split with the three-bucket honesty rule" bullet,
+the 2026-08-18 preamble's "three-bucket `sent` rendering … stands unchanged"
+clause, and the §10 three-bucket grouping note. Original text preserved as
+history.
+
+- **Direction breakdown is strictly BINARY everywhere**: bot = `sent`
+  "True"; users = `sent` "False" OR absent (absent covers legacy dev DBs that
+  ran the older migration 027, whose backfill rows carried no `sent` label —
+  they fold into users). The "history (before stats enabled)" bucket is
+  removed from both the chat handler and the HTML page generator.
+- **migration 027 backfill labeled `sent = "False"`** (edited in place —
+  not yet deployed to production). Backfill and live user-message rows now
+  share the same label-set and `labels_hash`, so they MERGE into one
+  `stat_aggregates` bucket; the migration's replace-semantics upsert keeps
+  re-runs recompute-only (never double-count).
+- **Top users format:** header line `  Top:` then ONE line per user
+  (`  `@name` N`) — usernames rendered as backticked inline code (cannot
+  trigger mentions) with exactly one `@` (stored usernames already carry the
+  prefix — fixes a doubled `@@` rendering); `full_name` / raw-id fallbacks
+  unchanged.
+- **Handler dedup:** shared `_buildMessagesBreakdownLines` helper; both call
+  sites (the default group/private reply and
+  `_buildMessagesSectionFromAnalyzer`) route through it.
+- **Generator** ([`lib/stats/stats_pages/generator.py`](../../lib/stats/stats_pages/generator.py)):
+  the "History (before stats enabled)" table row deleted; absent-`sent` rows
+  fold into User Messages; top-N user selection aligned with the handler
+  (absent folds into users).
+- **Tests:** `TestStatsAnalyzerThreeBucketSent` deleted; merge contract
+  locked by `test_liveAndBackfillLabelBucketsMerge` (asserts equal
+  `labels_hash` and true migration-shape parity with a simulated consumer
+  merge); format regression tests added for the per-line Top rendering.
+
+## Amendments (2026-08-22, later the same day — reply-format redesign)
+
+User-ratified redesign of the `/stats` chat-reply format (all changes in
+[`internal/bot/common/handlers/stats.py`](../../internal/bot/common/handlers/stats.py));
+facts verified against source the same day. **Supersedes the "Top users
+format" bullet of the binary amendment above** (backticked inline-code Top
+rendering) **and the chat-reply side of its "Direction breakdown is strictly
+BINARY everywhere" claim** — the chat reply no longer renders ANY direction
+split; the binary users/bot semantics survive in the HTML page generator
+(users/bot columns) and at query time (bot = `sent` "True"; users = "False"
+or absent).
+
+- **Args normalization:** a LEADING run of `—` (U+2014) / `–` (U+2013) in a
+  token normalizes to `--` (phone/laptop autocorrect often replaces `--` with
+  a dash); a single `-` is untouched, so negative chatIds stay positional
+  (`_parseStatsArgs`).
+- **Header:** `📊 Stats — {period} (UTC) — {prettyChat}` where prettyChat =
+  `getChatTitle(chatInfo, useMarkdown=True, addChatId=True, addChatType=False)`
+  → chat-type emoji + bold title + backticked `#id`; plain `#id` fallback when
+  chat info is unavailable.
+- **users/bot line DELETED from the chat reply** — the messages section is
+  `**Messages:** N` + Top block only. The HTML generator keeps its binary
+  users/bot columns.
+- **Bold section headers:** `**Messages:** N`, `**Commands:** N`,
+  `**Tools:** N · avg X.XXs`, `**LLM:** N requests · avg X.XXs` — the avg is
+  folded into the header and rendered only when >0.
+- **All Top lists (users / commands / tools / LLM models) render as a label
+  line (`Top:` / `Top models:`) + fenced code block**, one item per line,
+  `• {key}{pad}  {count}` with `ljust`/`rjust` column alignment (shared
+  `_renderFencedTopBlock`, 7 call sites). Usernames inside blocks are BARE
+  `@name` — backticks are stripped (the fence, not inline code, now prevents
+  accidental mentions).
+- **`⚠ ` prefix on error lines** (rendered only when >0); the STT count line
+  dropped its noun (`STT: N`); the STT sub-block keeps its `    avg time:`
+  line.
+- **Fence-atomic chunking:** `_chunkLinesWithFenceAtomicity` groups lines
+  into atomic units (lone lines or complete fenced blocks) before the
+  ~3000-char chunk split — a fenced Top block is never split across message
+  chunks.
+- **Shared `_buildMessagesBreakdownLines`** builds the messages section for
+  both reply paths (direct-query and from-payload); the format is unified
+  across Telegram and Max (no per-platform fork — Max `TextFormat.MARKDOWN`
+  covers `**bold**` → Strong and fenced/monospaced content → Monospaced).
+
+## Amendments (2026-08-22 (pretty numbers) — third round of the day)
+
+Pretty-numbers formatting pass over BOTH render paths (direct-query and
+from-payload) in
+[`internal/bot/common/handlers/stats.py`](../../internal/bot/common/handlers/stats.py);
+facts verified against source the same day. Amends the redesign block above:
+the `X.XXs` avg shape and the noun-less `STT: N` line gain pretty/compound
+forms; the Top-block shape is UNCHANGED and re-pinned.
+
+- **`_formatCount(value)` — every count in the reply.** Values <1000 render
+  plain; ≥1000 scale to k/m/g with 3 significant digits via ROUND-FIRST
+  (round to 3 sig figs, THEN pick the tier: `999999` → `1m`, `9999` →
+  `10k`, `389924` → `390k`, `1484` → `1,48k`, `1234567` → `1,23m`), comma
+  decimal separator, trailing zeros stripped. Applied to section totals,
+  tokens in/out, error lines, fenced Top-block counts (column widths
+  computed on the FORMATTED strings), the private chat-list
+  `messages_count`, and the `и ещё N чатов` overflow count.
+- **`_formatDuration(seconds, subMinuteDecimals=2)` — every duration.**
+  <60s keeps per-site decimals (STT `audio:` 1, all avgs 2); 60s–1h →
+  `1m 15.4s`; ≥1h → `1h 02m 25.0s`. Applied to the STT `audio:` line and
+  all avg renderings: the folded `· avg` in the `**Tools:**`/`**LLM:**`
+  headers and the STT `avg time:` sub-line. A double-`s` regression
+  (`0.50ss`) was caught in review and fixed; the formats are pinned by
+  exact first-line assertions.
+ - **`**STT:** N` is now a bold sub-header** (the noun stays dropped); the
+   STT errors sub-line is numbered but carries NO `⚠` — `⚠` remains on the
+   top-level Commands/Tools/LLM error lines only.
+ - **Top-block shape unchanged, re-pinned strictly:** label line
+   (`Top:`/`Top models:`) on its own line, bare three-backtick fence,
+   `• {key}{ljust}  {count|rjust}` per item, closing fence.
+
+## Amendments (2026-08-23, caption-in-fence user change)
+
+User-hand-edited change in [`internal/bot/common/handlers/stats.py:859`](../../internal/bot/common/handlers/stats.py:831-860)
+(caption moved into the fenced block opening); facts verified against source the same day.
+**Supersedes the "Top-block shape unchanged, re-pinned strictly" bullet of the pretty-numbers amendment above** — the caption is now ON the fence line, not on a separate line.
+
+ - **Caption moves to fence line (Telegram block-caption rendering)**:
+   `internal/bot/common/handlers/stats.py:859` now emits `["```" + blockTitle.replace(" "," "), *blockLines, "```"]`
+   — the caption (`Top:`/`Top models:`) is concatenated directly to the opening fence marker,
+   becoming the language/info-string that Telegram renders as the block's caption. Spaces in
+   multi-word captions are replaced with non-breaking spaces (U+00A0) via `blockTitle.replace(" "," ")`.
+ - **New shape examples:**
+   - `  ```Top:\n• @alice  336\n• @bob    257\n`````
+   - `  ```Top\xa0models:\n• gpt-4      42\n• gpt-3.5-turbo  100\n`````
+ - **Markdown pipeline verification (STEP 2 of task 86425309-50a5):** the `lib/markdown`
+   parser accepts any characters in the language tag (no validation/sanitization beyond
+   `.strip()`) and the renderer re-emits it unchanged (`f"```{node.language}\n{content}\n```"`).
+   Round-trip testing confirmed both shapes (`Top:` and `Top\xa0models:`) pass through
+   `markdownToMarkdownV2` identically.
+ - **Test pins flipped (STEP 3 of task 86425309-50a5):** all shape-verifying tests now expect
+   the caption-in-fence form:
+   - `testMessagesSection_topUsersFormat` — looks for `lines[topSectionStart].strip() == "```Top:"` instead of `"Top:"`
+   - `testLlmSection_topModelsFormat` — looks for `"```Top\xa0models:"` instead of `"Top models:"`
+   - `testFencedTopBlock_exactAlignment_threeUsers` — asserts `"```Top:" in result`
+   - `testCommandsTop_renderAsFencedBlock` — asserts `"```Top:" in result`
+   - `test_renderFencedTopBlock_kFormattedAlignment` — expects `len(result) == 5` (caption on fence line, not 6)
+   - Chunker atomicity test (`testChunkerAtomicity_preservesFenceBlocks`) — uses `"```Top:"` in mock lines
+ - **Docstring-only production change allowed:** per task constraints, only the docstring of
+   `_renderFencedTopBlock` may be edited to describe the new shape; the implementation itself
+   is the user's authoritative hand-edit and must not be touched.
 
 **Scope**: The read/display tier over `stat_aggregates`: a `query()` read API on the
 `lib/stats` `StatsStorage` ABC, ONE user-facing `/stats` bot command with a

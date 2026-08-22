@@ -9,6 +9,7 @@ import asyncio
 import datetime
 import json
 import logging
+import math
 import time
 from typing import Optional, TypedDict
 
@@ -196,6 +197,102 @@ class StatsHandler(BaseBotHandler):
         QueueService.getInstance().registerDelayedTaskHandler(
             DelayedTaskFunction.STATS_PAGES_CLEANUP, self._dtStatsPagesCleanup
         )
+
+    def _formatCount(self, value: int) -> str:
+        """Format a count value with k/m/g suffixes for readability.
+
+        Values below 1000 are rendered as-is. Values >= 1000 are scaled to k/m/g
+        with 3 significant digits, using comma as the decimal separator.
+
+        Args:
+            value: The count value to format.
+
+        Returns:
+            Formatted string representation.
+        """
+        if value < 1000:
+            return str(value)
+
+        # Round to 3 significant digits first
+        # Example: 999999 → 1_000_000 (3 sig figs), 1234567 → 1_230_000 (3 sig figs)
+        roundedValue = self._roundToSignificantDigits(value, 3)
+
+        # Determine divisor tier based on rounded value
+        if roundedValue < 1_000_000:
+            divisor = 1_000
+            suffix = "k"
+        elif roundedValue < 1_000_000_000:
+            divisor = 1_000_000
+            suffix = "m"
+        else:
+            divisor = 1_000_000_000
+            suffix = "g"
+
+        scaled = roundedValue / divisor
+
+        # Determine decimal places for 3 significant digits
+        if scaled < 10:
+            decimals = 2
+        elif scaled < 100:
+            decimals = 1
+        else:
+            decimals = 0
+
+        # Format with specified decimals
+        formatted = f"{scaled:.{decimals}f}"
+
+        # Strip trailing zeros and dangling separator, but only if there was a decimal point
+        # This prevents stripping trailing zeros from integer representations like "390"
+        if decimals > 0:
+            formatted = formatted.rstrip("0").rstrip(".")
+
+        # Replace dot with comma for Russian locale
+        formatted = formatted.replace(".", ",")
+
+        return formatted + suffix
+
+    def _roundToSignificantDigits(self, value: int, sigFigs: int) -> int:
+        """Round a value to the specified number of significant digits.
+
+        Args:
+            value: The value to round.
+            sigFigs: Number of significant digits.
+
+        Returns:
+            Rounded integer value.
+        """
+        if value == 0:
+            return 0
+
+        order = int(math.log10(abs(value)))
+        divisor = 10 ** (order - sigFigs + 1)
+        return int(round(value / divisor) * divisor)
+
+    def _formatDuration(self, seconds: float, subMinuteDecimals: int = 2) -> str:
+        """Format a duration in seconds to human-readable compound format.
+
+        Sub-minute values keep their decimal precision via subMinuteDecimals param.
+        Values >= 60s use compound format (Xm Ys), values >= 3600s use (Xh Ym Zs).
+
+        Args:
+            seconds: Duration in seconds.
+            subMinuteDecimals: Number of decimals for sub-minute values (default 2).
+
+        Returns:
+            Formatted duration string.
+        """
+        if seconds < 60:
+            return f"{seconds:.{subMinuteDecimals}f}s"
+        elif seconds < 3600:
+            minutes = int(seconds // 60)
+            secs = seconds % 60
+            return f"{minutes}m {secs:.1f}s"
+        else:
+            hours = int(seconds // 3600)
+            remainingSeconds = seconds % 3600
+            minutes = int(remainingSeconds // 60)
+            secs = remainingSeconds % 60
+            return f"{hours}h {minutes:02d}m {secs:.1f}s"
 
     @commandHandlerV2(
         commands=("stats", "stats_web"),
@@ -445,6 +542,30 @@ class StatsHandler(BaseBotHandler):
         # Split into tokens
         tokens = args.split()
 
+        # Normalize em-dash/en-dash to double dash for autocorrect compatibility
+        # Phone/laptop autocorrect often replaces -- with — (U+2014) or – (U+2013)
+        # We normalize ONLY leading runs of these characters to avoid breaking negative chatIds
+        normalizedTokens: list[str] = []
+        for token in tokens:
+            # Find leading run of em-dash or en-dash characters
+            leadingDashRun = ""
+            remainingPart = token
+            for char in token:
+                if char in ("—", "–"):  # U+2014 em-dash, U+2013 en-dash
+                    leadingDashRun += char
+                else:
+                    remainingPart = token[len(leadingDashRun) :]
+                    break
+            else:
+                # Loop completed without hitting non-dash (entire token is dashes)
+                remainingPart = ""
+            # Replace leading dash run with -- if present, otherwise keep original token
+            if leadingDashRun:
+                normalizedTokens.append("--" + remainingPart)
+            else:
+                normalizedTokens.append(token)
+        tokens = normalizedTokens
+
         # Positional arguments (at most one: help OR chatId)
         positional: list[str] = []
         options: dict[str, str] = {}
@@ -583,7 +704,15 @@ class StatsHandler(BaseBotHandler):
         # Header
         periodLabel = periodArg if periodArg != "all" else "всё время"
 
+        # Get chat title for pretty header, fallback to #id if unavailable
         chatIdentifier = f"#{targetChatId}"
+        try:
+            chatInfo = await self.cache.getChatInfo(chatId=targetChatId)
+            if chatInfo:
+                chatIdentifier = self.getChatTitle(chatInfo, useMarkdown=True, addChatId=True, addChatType=False)
+        except Exception:
+            # Fallback to simple #id format if chat info is unavailable
+            logger.debug(f"Failed to get chat info for chat {targetChatId}, using #id fallback")
         lines.append(f"📊 Stats — {periodLabel} (UTC) — {chatIdentifier}")
 
         # Build section views
@@ -617,36 +746,125 @@ class StatsHandler(BaseBotHandler):
                 chatId = chat["chat_id"]
                 title = chat["title"] or chat["username"] or ""
                 msgCount = chat.get("messages_count", 0)
-                lines.append(f"  #`{chatId}` {title} — {msgCount}")
+                lines.append(f"  #`{chatId}` {title} — {self._formatCount(msgCount)}")
             if len(userChats) > 10:
-                lines.append(f"  … и ещё {len(userChats) - 10} чатов")
+                lines.append(f"  … и ещё {self._formatCount(len(userChats) - 10)} чатов")
 
         # Footer
         lines.append("")
         lines.append("/stats help — полная справка")
 
         # Send output in chunks to avoid hitting message size limits
-        # Accumulate lines and flush when exceeding _OUTPUT_CHUNK_LENGTH
+        # Pre-group lines into atomic units (lone lines or fenced blocks) to ensure fence atomicity
+        chunks = self._chunkLinesWithFenceAtomicity(lines)
+
+        return chunks[0] if len(chunks) == 1 else chunks
+
+    def _chunkLinesWithFenceAtomicity(self, lines: list[str]) -> list[str]:
+        """Chunk lines into output messages while preserving fence atomicity.
+
+        A fenced code block must never be split across chunks. This method
+        pre-groups lines into atomic units (lone lines or complete fenced blocks),
+        then chunks by units with the existing length accounting.
+
+        Note on current usage: callers typically pass whole multi-line section
+        strings as single `lines` elements (e.g., entire LLM or STT sub-blocks
+        as one unit). In this mode, the fence-detection branch (below) is dead
+        code because "```" never matches a flat line element. Atomicity is
+        guaranteed by the unit granularity (whole sections are never split).
+        However, if flat lines are ever passed in the future, the fence-tracking
+        branch will enforce atomicity for fenced blocks that span multiple lines.
+        The fence-tracking branch handles caption-in-fence openers (e.g., ```` ```Top: ````)
+        by detecting any line whose stripped form starts with "```".
+
+        Args:
+            lines: List of lines to chunk. May contain flat lines or multi-line
+                   section strings as elements.
+
+        Returns:
+            List of chunk strings.
+        """
+        # Pre-group lines into atomic units
+        units: list[list[str]] = []
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            if line.strip().startswith("```"):
+                # Start of a fenced block - collect the entire block as one unit
+                # (handles caption-in-fence openers like "```Top:" or "```Top\xa0models:")
+                unit = [line]
+                i += 1
+                # Collect lines until closing ```
+                while i < len(lines) and lines[i].strip() != "```":
+                    unit.append(lines[i])
+                    i += 1
+                if i < len(lines):
+                    # Add closing ``` to the unit
+                    unit.append(lines[i])
+                    i += 1
+                units.append(unit)
+            else:
+                # Lone line is its own unit
+                units.append([line])
+                i += 1
+
+        # Now chunk by units with length accounting
         chunks: list[str] = []
         currentChunk: list[str] = []
         currentLength = 0
 
-        for line in lines:
-            lineLength = len(line) + 1  # +1 for newline
-            if currentLength + lineLength > self._OUTPUT_CHUNK_LENGTH and currentChunk:
-                # Flush current chunk before adding this line
+        for unit in units:
+            unitLength = sum(len(line) + 1 for line in unit)  # +1 for newline per line
+
+            if currentLength + unitLength > self._OUTPUT_CHUNK_LENGTH and currentChunk:
+                # Flush current chunk before adding this unit
                 chunks.append("\n".join(currentChunk))
-                currentChunk = [line]
-                currentLength = lineLength
+                currentChunk = unit[:]
+                currentLength = unitLength
             else:
-                currentChunk.append(line)
-                currentLength += lineLength
+                currentChunk.extend(unit)
+                currentLength += unitLength
 
         # Don't forget the last chunk (ensure at least one message is sent)
         if currentChunk:
             chunks.append("\n".join(currentChunk))
 
-        return chunks[0] if len(chunks) == 1 else chunks
+        return chunks
+
+    def _renderFencedTopBlock(self, items: list[tuple[str, int]], blockTitle: str = "Top:") -> list[str]:
+        """Render a fenced code block with aligned columns for top items.
+
+        The caption (blockTitle) is rendered as the language/info-string on the
+        opening fence line, which Telegram renders as the block's caption.
+        Spaces in multi-word captions are replaced with non-breaking spaces (U+00A0).
+
+        Args:
+            items: List of (key, count) tuples to render.
+            blockTitle: Title to render as the fence caption (e.g., "Top:", "Top models:").
+
+        Returns:
+            List of strings representing the fenced block (caption-in-fence opening,
+            bullet lines, closing fence). Example: ["```Top:", "• key  123", "```"]
+        """
+        if not items:
+            return []
+
+        blockLines: list[str] = []
+        maxKeyWidth = 0
+        maxCountWidth = 0
+        itemsWithFormattedCounts: list[tuple[str, str]] = []
+        for key, count in items:
+            formattedCount = self._formatCount(int(count))
+            itemsWithFormattedCounts.append((key, formattedCount))
+            maxKeyWidth = max(maxKeyWidth, len(key))
+            maxCountWidth = max(maxCountWidth, len(formattedCount))
+
+        for key, formattedCount in itemsWithFormattedCounts:
+            blockLines.append(f"• {key.ljust(maxKeyWidth)}  {formattedCount.rjust(maxCountWidth)}")
+
+        if blockLines:
+            return ["```" + blockTitle.replace(" ", " "), *blockLines, "```"]
+        return []
 
     async def _sendStatsReply(
         self,
@@ -792,36 +1010,12 @@ class StatsHandler(BaseBotHandler):
         if filterUserId is not None:
             analyzer = analyzer.filterByLabel("user_id", str(filterUserId))
 
-        # Direction breakdown: sent=True (bot), sent=False (users), absent (history)
-        userCount = analyzer.filterByLabel("sent", "False").sumMetric("message_count")
-        botCount = analyzer.filterByLabel("sent", "True").sumMetric("message_count")
-
-        # History count = rows without sent label
-        analyzerAll = analyzer  # All rows (including history)
-        totalMessageCount = analyzerAll.sumMetric("message_count")
-        historyCount = totalMessageCount - userCount - botCount
-
-        # Top users (by message count)
-        topUsers = analyzerAll.filterByLabel("sent", "False").topN("user_id", "message_count", 3)
-
-        # Build lines
-        lines: list[str] = [f"Messages: {int(totalMessageCount)}"]
-        lines.append(f"  users {int(userCount)} / bot {int(botCount)} / history {int(historyCount)}")
-
-        if topUsers:
-            topUserNames = []
-            for userIdStr, count in topUsers:
-                try:
-                    userIdInt = int(userIdStr)
-                except (ValueError, TypeError):
-                    userIdInt = 0  # Fallback for invalid user IDs
-                userName = await self._resolveUserName(targetChatId, userIdInt)
-                topUserNames.append(f"{userName} {int(count)}")
-            lines.append(f"  Top: {' · '.join(topUserNames)}")
+        # Build lines using the shared helper
+        lines = await self._buildMessagesBreakdownLines(analyzer, targetChatId)
 
         # D5 honesty line
         if possiblyIncomplete:
-            lines.append("  ⚠ результаты возможно неполные")
+            lines.append("  ⚠ результаты возможно неполны")
 
         return "\n".join(lines)
 
@@ -870,18 +1064,16 @@ class StatsHandler(BaseBotHandler):
 
         topCommands = analyzer.topN("commandName", "command_count", 3)
 
-        lines: list[str] = [f"Commands: {int(totalCommands)}"]
+        lines: list[str] = [f"**Commands:** {self._formatCount(int(totalCommands))}"]
         if errorCommands > 0:
-            lines.append(f"  errors: {int(errorCommands)}")
+            lines.append(f"  ⚠ errors: {self._formatCount(int(errorCommands))}")
         if topCommands:
-            topCmdNames = []
-            for cmdName, count in topCommands:
-                topCmdNames.append(f"{cmdName} {int(count)}")
-            lines.append(f"  Top: {' · '.join(topCmdNames)}")
+            cmdNamesWithCounts: list[tuple[str, int]] = [(cmdName, int(count)) for cmdName, count in topCommands]
+            lines.extend(self._renderFencedTopBlock(cmdNamesWithCounts))
 
         # D5 honesty line
         if possiblyIncomplete:
-            lines.append("  ⚠ результаты возможно неполные")
+            lines.append("  ⚠ результаты возможно неполны")
 
         return "\n".join(lines)
 
@@ -939,20 +1131,20 @@ class StatsHandler(BaseBotHandler):
 
         topTools = analyzer.topN("toolName", "tool_call_count", 3)
 
-        lines: list[str] = [f"Tools: {int(totalCalls)}"]
-        if errorCalls > 0:
-            lines.append(f"  errors: {int(errorCalls)}")
+        # Build header with optional avg time folded in
+        header = f"**Tools:** {self._formatCount(int(totalCalls))}"
         if avgElapsed > 0:
-            lines.append(f"  avg time: {avgElapsed:.2f}s")
+            header += f" · avg {self._formatDuration(avgElapsed)}"
+        lines: list[str] = [header]
+        if errorCalls > 0:
+            lines.append(f"  ⚠ errors: {self._formatCount(int(errorCalls))}")
         if topTools:
-            topToolNames = []
-            for toolName, count in topTools:
-                topToolNames.append(f"{toolName} {int(count)}")
-            lines.append(f"  Top: {' · '.join(topToolNames)}")
+            toolNamesWithCounts: list[tuple[str, int]] = [(toolName, int(count)) for toolName, count in topTools]
+            lines.extend(self._renderFencedTopBlock(toolNamesWithCounts))
 
         # D5 honesty line
         if possiblyIncomplete:
-            lines.append("  ⚠ результаты возможно неполные")
+            lines.append("  ⚠ результаты возможно неполны")
 
         return "\n".join(lines)
 
@@ -1004,17 +1196,20 @@ class StatsHandler(BaseBotHandler):
 
         topModels = analyzer.topN("modelName", "request_count", 3)
 
-        lines: list[str] = [f"LLM: {int(totalRequests)} requests"]
-        if errorRequests > 0:
-            lines.append(f"  errors: {int(errorRequests)}")
-        lines.append(f"  tokens: in {int(totalInputTokens)} / out {int(totalOutputTokens)}")
+        # Build header with avg time folded in
+        header = f"**LLM:** {self._formatCount(int(totalRequests))} requests"
         if avgElapsed > 0:
-            lines.append(f"  avg time: {avgElapsed:.2f}s")
+            header += f" · avg {self._formatDuration(avgElapsed)}"
+        lines: list[str] = [header]
+        if errorRequests > 0:
+            lines.append(f"  ⚠ errors: {self._formatCount(int(errorRequests))}")
+        tokensLine = (
+            f"tokens: in {self._formatCount(int(totalInputTokens))} / out {self._formatCount(int(totalOutputTokens))}"
+        )
+        lines.append(tokensLine)
         if topModels:
-            topModelNames = []
-            for modelName, count in topModels:
-                topModelNames.append(f"{modelName} {int(count)}")
-            lines.append(f"  Top models: {' · '.join(topModelNames)}")
+            modelNamesWithCounts: list[tuple[str, int]] = [(modelName, int(count)) for modelName, count in topModels]
+            lines.extend(self._renderFencedTopBlock(modelNamesWithCounts, "Top models:"))
 
         # Annotation for user-level filtering
         if filterUserId is not None:
@@ -1042,35 +1237,36 @@ class StatsHandler(BaseBotHandler):
             totalAudioDurationMs = sttAnalyzer.sumMetric("audio_duration_ms")
             totalSttElapsedTime = sttAnalyzer.sumMetric("elapsed_time")
 
-            lines.append(f"  STT: {int(totalSttRequests)} запросов")
+            lines.append(f"  **STT:** {self._formatCount(int(totalSttRequests))}")
             if errorSttRequests > 0:
-                lines.append(f"    errors: {int(errorSttRequests)}")
+                lines.append(f"    errors: {self._formatCount(int(errorSttRequests))}")
             if totalAudioDurationMs > 0:
                 audioDurationSecs = totalAudioDurationMs / 1000.0
-                lines.append(f"    audio: {audioDurationSecs:.1f}s")
+                lines.append(f"    audio: {self._formatDuration(audioDurationSecs, subMinuteDecimals=1)}")
             if totalSttRequests > 0:
                 avgSttTime = totalSttElapsedTime / totalSttRequests
-                lines.append(f"    avg time: {avgSttTime:.2f}s")
+                lines.append(f"    avg time: {self._formatDuration(avgSttTime)}")
 
             # D5 honesty line for STT
             if sttPossiblyIncomplete:
-                lines.append("    ⚠ результаты возможно неполные")
+                lines.append("    ⚠ результаты возможно неполны")
 
         # D5 honesty line
         if possiblyIncomplete:
-            lines.append("  ⚠ результаты возможно неполные")
+            lines.append("  ⚠ результаты возможно неполны")
 
         return "\n".join(lines)
 
     async def _resolveUserName(self, chatId: int, userId: int) -> str:
-        """Resolve a user ID to a display name.
+        """Resolve a user ID to a display name for stats.
 
         Args:
-            chatId: Chat to look up the user in.
+            chatId: Chat ID to look up user in.
             userId: User ID to resolve.
 
         Returns:
-            Display name (username or full_name or raw ID as fallback).
+            Display name (plain @username, or full_name, or raw ID as fallback).
+            Note: Backticks are NOT added here; callers wrap when needed.
         """
         try:
             chatUser = await self.cache.getChatUser(chatId=chatId, userId=userId)
@@ -1078,7 +1274,11 @@ class StatsHandler(BaseBotHandler):
                 username = chatUser.get("username")
                 fullName = chatUser.get("full_name")
                 if username:
-                    return f"@{username}"
+                    # Normalize to exactly one @
+                    if username.startswith("@"):
+                        return username
+                    else:
+                        return f"@{username}"
                 elif fullName:
                     return fullName
         except Exception:
@@ -1463,7 +1663,15 @@ class StatsHandler(BaseBotHandler):
 
         # Header
         periodLabel = periodArg if periodArg != "all" else "всё время"
+        # Get chat title for pretty header, fallback to #id if unavailable
         chatIdentifier = f"#{targetChatId}"
+        try:
+            chatInfo = await self.cache.getChatInfo(chatId=targetChatId)
+            if chatInfo:
+                chatIdentifier = self.getChatTitle(chatInfo, useMarkdown=True, addChatId=True, addChatType=False)
+        except Exception:
+            # Fallback to simple #id format if chat info is unavailable
+            logger.debug(f"Failed to get chat info for chat {targetChatId}, using #id fallback")
         lines.append(f"📊 Stats — {periodLabel} (UTC) — {chatIdentifier}")
 
         # Build section views from payload rows
@@ -1492,9 +1700,11 @@ class StatsHandler(BaseBotHandler):
                 chatId = chat["chatId"]
                 title = chat["title"]
                 msgCount = chat["messagesCount"]
-                lines.append(f"  #`{chatId}` {title} — {msgCount}")
+                lines.append(f"  #`{chatId}` {title} — {self._formatCount(msgCount)}")
             if "chatListTotal" in payload and payload["chatListTotal"] > len(payload["chatList"]):
-                lines.append(f"  … и ещё {payload['chatListTotal'] - len(payload['chatList'])} чатов")
+                lines.append(
+                    f"  … и ещё {self._formatCount(payload['chatListTotal'] - len(payload['chatList']))} чатов"
+                )
 
         # Footer
         lines.append("")
@@ -1503,27 +1713,11 @@ class StatsHandler(BaseBotHandler):
         # Add honesty line for truncated data
         if "truncatedEventTypes" in payload and payload["truncatedEventTypes"]:
             lines.append("")
-            lines.append("  ⚠ результаты возможно неполные")
+            lines.append("  ⚠ результаты возможно неполны")
 
         # Send output in chunks to avoid hitting message size limits
-        chunks: list[str] = []
-        currentChunk: list[str] = []
-        currentLength = 0
-
-        for line in lines:
-            lineLength = len(line) + 1  # +1 for newline
-            if currentLength + lineLength > self._OUTPUT_CHUNK_LENGTH and currentChunk:
-                # Flush current chunk before adding this line
-                chunks.append("\n".join(currentChunk))
-                currentChunk = [line]
-                currentLength = lineLength
-            else:
-                currentChunk.append(line)
-                currentLength += lineLength
-
-        # Don't forget the last chunk (ensure at least one message is sent)
-        if currentChunk:
-            chunks.append("\n".join(currentChunk))
+        # Pre-group lines into atomic units (lone lines or fenced blocks) to ensure fence atomicity
+        chunks = self._chunkLinesWithFenceAtomicity(lines)
 
         return chunks[0] if len(chunks) == 1 else chunks
 
@@ -1569,6 +1763,44 @@ class StatsHandler(BaseBotHandler):
         else:
             return f"❌ Неизвестный раздел: {section}"
 
+    async def _buildMessagesBreakdownLines(self, analyzer: StatsAnalyzer, targetChatId: int) -> list[str]:
+        """Build messages breakdown and top users lines.
+
+        Args:
+            analyzer: StatsAnalyzer with filtered data.
+            targetChatId: Chat to show stats for (for username resolution).
+
+        Returns:
+            List of formatted message breakdown lines.
+        """
+        totalMessageCount = analyzer.sumMetric("message_count")
+
+        # Top users (by message count) - rows with sent=False or absent
+        userRows = [row for row in analyzer.rows if row["labels"].get("sent", "False") == "False"]
+        userAnalyzer = StatsAnalyzer(userRows)
+        topUsers = userAnalyzer.topN("user_id", "message_count", 3)
+
+        # Build lines
+        lines: list[str] = [f"**Messages:** {self._formatCount(int(totalMessageCount))}"]
+
+        if topUsers:
+            # Process user names before rendering (unique to messages section)
+            userNamesWithCounts: list[tuple[str, int]] = []
+            for userIdStr, count in topUsers:
+                try:
+                    userIdInt = int(userIdStr)
+                except (ValueError, TypeError):
+                    userIdInt = 0  # Fallback for invalid user IDs
+                userName = await self._resolveUserName(targetChatId, userIdInt)
+                # Strip backticks from usernames (returned by _resolveUserName)
+                # since they'll be inside a code block. Also protects fenced-block
+                # content when the full_name fallback contains a backtick.
+                userName = userName.replace("`", "")
+                userNamesWithCounts.append((userName, int(count)))
+            lines.extend(self._renderFencedTopBlock(userNamesWithCounts))
+
+        return lines
+
     async def _buildMessagesSectionFromAnalyzer(
         self, analyzer: StatsAnalyzer, truncatedEventTypes: list[str], targetChatId: int
     ) -> str:
@@ -1582,34 +1814,7 @@ class StatsHandler(BaseBotHandler):
         Returns:
             Formatted messages section string.
         """
-        # Direction breakdown: sent=True (bot), sent=False (users), absent (history)
-        userCount = analyzer.filterByLabel("sent", "False").sumMetric("message_count")
-        botCount = analyzer.filterByLabel("sent", "True").sumMetric("message_count")
-
-        # History count = rows without sent label
-        analyzerAll = analyzer  # All rows (including history)
-        totalMessageCount = analyzerAll.sumMetric("message_count")
-        historyCount = totalMessageCount - userCount - botCount
-
-        # Top users (by message count)
-        topUsers = analyzerAll.filterByLabel("sent", "False").topN("user_id", "message_count", 3)
-
-        # Build lines
-        lines: list[str] = [f"Messages: {int(totalMessageCount)}"]
-        lines.append(f"  users {int(userCount)} / bot {int(botCount)} / history {int(historyCount)}")
-
-        if topUsers:
-            topUserNames = []
-            for userIdStr, count in topUsers:
-                try:
-                    userIdInt = int(userIdStr)
-                except (ValueError, TypeError):
-                    userIdInt = 0  # Fallback for invalid user IDs
-                # Resolve username asynchronously, fallback to raw ID on miss
-                userName = await self._resolveUserName(targetChatId, userIdInt)
-                topUserNames.append(f"{userName} {int(count)}")
-            lines.append(f"  Top: {' · '.join(topUserNames)}")
-
+        lines = await self._buildMessagesBreakdownLines(analyzer, targetChatId)
         return "\n".join(lines)
 
     def _buildCommandsSectionFromAnalyzer(self, analyzer: StatsAnalyzer, truncatedEventTypes: list[str]) -> str:
@@ -1627,14 +1832,12 @@ class StatsHandler(BaseBotHandler):
 
         topCommands = analyzer.topN("commandName", "command_count", 3)
 
-        lines: list[str] = [f"Commands: {int(totalCommands)}"]
+        lines: list[str] = [f"**Commands:** {self._formatCount(int(totalCommands))}"]
         if errorCommands > 0:
-            lines.append(f"  errors: {int(errorCommands)}")
+            lines.append(f"  ⚠ errors: {self._formatCount(int(errorCommands))}")
         if topCommands:
-            topCmdNames = []
-            for cmdName, count in topCommands:
-                topCmdNames.append(f"{cmdName} {int(count)}")
-            lines.append(f"  Top: {' · '.join(topCmdNames)}")
+            cmdNamesWithCounts: list[tuple[str, int]] = [(cmdName, int(count)) for cmdName, count in topCommands]
+            lines.extend(self._renderFencedTopBlock(cmdNamesWithCounts))
 
         return "\n".join(lines)
 
@@ -1662,16 +1865,16 @@ class StatsHandler(BaseBotHandler):
 
         topTools = analyzer.topN("toolName", "tool_call_count", 3)
 
-        lines: list[str] = [f"Tools: {int(totalCalls)}"]
-        if errorCalls > 0:
-            lines.append(f"  errors: {int(errorCalls)}")
+        # Build header with optional avg time folded in
+        header = f"**Tools:** {self._formatCount(int(totalCalls))}"
         if avgElapsed > 0:
-            lines.append(f"  avg time: {avgElapsed:.2f}s")
+            header += f" · avg {self._formatDuration(avgElapsed)}"
+        lines: list[str] = [header]
+        if errorCalls > 0:
+            lines.append(f"  ⚠ errors: {self._formatCount(int(errorCalls))}")
         if topTools:
-            topToolNames = []
-            for toolName, count in topTools:
-                topToolNames.append(f"{toolName} {int(count)}")
-            lines.append(f"  Top: {' · '.join(topToolNames)}")
+            toolNamesWithCounts: list[tuple[str, int]] = [(toolName, int(count)) for toolName, count in topTools]
+            lines.extend(self._renderFencedTopBlock(toolNamesWithCounts))
 
         return "\n".join(lines)
 
@@ -1697,17 +1900,20 @@ class StatsHandler(BaseBotHandler):
 
         topModels = analyzer.topN("modelName", "request_count", 3)
 
-        lines: list[str] = [f"LLM: {int(totalRequests)} requests"]
-        if errorRequests > 0:
-            lines.append(f"  errors: {int(errorRequests)}")
-        lines.append(f"  tokens: in {int(totalInputTokens)} / out {int(totalOutputTokens)}")
+        # Build header with avg time folded in
+        header = f"**LLM:** {self._formatCount(int(totalRequests))} requests"
         if avgElapsed > 0:
-            lines.append(f"  avg time: {avgElapsed:.2f}s")
+            header += f" · avg {self._formatDuration(avgElapsed)}"
+        lines: list[str] = [header]
+        if errorRequests > 0:
+            lines.append(f"  ⚠ errors: {self._formatCount(int(errorRequests))}")
+        tokensLine = (
+            f"tokens: in {self._formatCount(int(totalInputTokens))} / out {self._formatCount(int(totalOutputTokens))}"
+        )
+        lines.append(tokensLine)
         if topModels:
-            topModelNames = []
-            for modelName, count in topModels:
-                topModelNames.append(f"{modelName} {int(count)}")
-            lines.append(f"  Top models: {' · '.join(topModelNames)}")
+            modelNamesWithCounts: list[tuple[str, int]] = [(modelName, int(count)) for modelName, count in topModels]
+            lines.extend(self._renderFencedTopBlock(modelNamesWithCounts, "Top models:"))
 
         # Annotation for user-level filtering
         if payload.get("userFilterApplied"):
@@ -1723,15 +1929,15 @@ class StatsHandler(BaseBotHandler):
             totalAudioDurationMs = sttAnalyzer.sumMetric("audio_duration_ms")
             totalSttElapsedTime = sttAnalyzer.sumMetric("elapsed_time")
 
-            lines.append(f"  STT: {int(totalSttRequests)} запросов")
+            lines.append(f"  **STT:** {self._formatCount(int(totalSttRequests))}")
             if errorSttRequests > 0:
-                lines.append(f"    errors: {int(errorSttRequests)}")
+                lines.append(f"    errors: {self._formatCount(int(errorSttRequests))}")
             if totalAudioDurationMs > 0:
                 audioDurationSecs = totalAudioDurationMs / 1000.0
-                lines.append(f"    audio: {audioDurationSecs:.1f}s")
+                lines.append(f"    audio: {self._formatDuration(audioDurationSecs, subMinuteDecimals=1)}")
             if totalSttRequests > 0:
                 avgSttTime = totalSttElapsedTime / totalSttRequests
-                lines.append(f"    avg time: {avgSttTime:.2f}s")
+                lines.append(f"    avg time: {self._formatDuration(avgSttTime)}")
 
         return "\n".join(lines)
 

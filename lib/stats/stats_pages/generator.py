@@ -562,12 +562,11 @@ class StatsPageGenerator:
         sentGroups: dict[str, float] = defaultdict(float)
         for row in rows:
             if row["metricKey"] == "message_count":
-                sent = row["labels"].get("sent", "")
+                sent = row["labels"].get("sent", "False")
                 sentGroups[sent] += row["metricValue"]
 
         botMessages = int(sentGroups.get("True", 0))
         userMessages = int(sentGroups.get("False", 0))
-        historyMessages = int(sentGroups.get("", 0))  # Backfill rows lack 'sent'
 
         # Average message length (weighted by count)
         avgLength = 0.0
@@ -575,7 +574,7 @@ class StatsPageGenerator:
             avgLength = totalLength / totalMessages
 
         # Top users by message count (exclude bot rows)
-        userRows = [row for row in rows if row["labels"].get("sent") == "False"]
+        userRows = [row for row in rows if row["labels"].get("sent", "False") == "False"]
         topUsers = self._groupRowsByLabelValue(userRows, "message_count", "user_id", 5)
         topUsersHtml = self._renderTopList("Top Users by Messages", topUsers)
 
@@ -612,10 +611,6 @@ class StatsPageGenerator:
                 <tr>
                     <td>Bot Messages</td>
                     <td class="metric neutral">{self._formatNumber(botMessages)}</td>
-                </tr>
-                <tr>
-                    <td>History (before stats enabled)</td>
-                    <td class="metric neutral">{self._formatNumber(historyMessages)}</td>
                 </tr>
                 <tr>
                     <td>Total Characters</td>

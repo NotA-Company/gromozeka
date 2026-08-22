@@ -434,6 +434,7 @@ async def test_up_backfillsAndDropsLegacyTables(testDatabase: Database) -> None:
             "chat_type": chatType,
             "message_category": messageCategory,
             "message_type": messageType,
+            "sent": "False",
         }
         labelsJson = libUtils.jsonDumps(labels)
         labelsHash = _hashLabels(labelsJson)

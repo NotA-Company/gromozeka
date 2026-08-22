@@ -726,16 +726,17 @@ class TestMessageStatsRecording:
             call = mockStatsStorage.record.call_args
             assert call.kwargs["labels"]["message_type"] == MessageType.TEXT
 
-    async def test_live_and_backfill_label_buckets_differ(self, mockConfigManager, mockDatabaseWrapper) -> None:
-        """Live labels include sent; backfill labels never do → different labels_hash buckets.
+    async def test_liveAndBackfillLabelBucketsMerge(self, mockConfigManager, mockDatabaseWrapper) -> None:
+        """Live and backfill rows with identical labels produce the same labels_hash and merge.
 
-        Verifies bucket separation: live recording emits labels with sent,
-        while backfill rows (migration 027) never have this label. Their labels_hash
-        values therefore differ, and no backfill-shape row exists among live aggregates.
+        Migration 027 writes backfill rows with sent="False", matching live user rows.
+        This ensures that live user rows and backfill user rows collide on labels_hash
+        and merge into one aggregate bucket. The migration upsert is replace-semantics
+        (full recompute from chat_messages), so no double-counting occurs.
 
-        Both live and backfill now include message_category and message_type labels
-        (changed in migration 027 rework to source from chat_messages instead of
-        chat_user_stats), but only live adds the sent label.
+        Both live and backfill include message_category and message_type labels
+        (changed in migration 027 to source from chat_messages instead of chat_user_stats),
+        and both now include the sent label (backfill uses uniform "False" for all historical messages).
         """
 
         mockStatsStorage = AsyncMock(spec=StatsStorage)
@@ -776,20 +777,39 @@ class TestMessageStatsRecording:
             assert liveLabels["message_type"] == MessageType.TEXT
             assert liveLabels["sent"] == "False"
 
-            # Compute live labels hash
-            liveLabelsJson = jsonDumps(liveLabels)
+            # Live recording builds labels WITHOUT consumer (consumerId is merged in StatsStorage.record)
+            # and uses enum objects directly. Simulate the merge as production does.
+            liveMergedLabels = {**liveLabels, "consumer": str(message.recipient.id)}
+            liveLabelsJson = jsonDumps(liveMergedLabels)
             liveLabelsHash = hashlib.md5(liveLabelsJson.encode("utf-8")).hexdigest()
 
-            # Backfill-shape labels are the same but WITHOUT sent (message_category and message_type are now included)
-            backfillLabels = {k: v for k, v in liveLabels.items() if k != "sent"}
+            # Backfill-shaped labels as migration_027 constructs them (plain string values)
+            # Migration lines 206-213 build labels with all keys including consumer and sent="False".
+            # Plain string values: user_id=str(userId), chat_type="private"/"group", message_category/ message_type
+            # from chat_messages columns (stored as StrEnum value strings), sent="False" for all historical messages.
+            backfillLabels = {
+                "consumer": str(message.recipient.id),  # str(chatId) from migration line 207
+                "user_id": str(message.sender.id),  # str(userId) from migration line 208
+                "chat_type": "private",  # from chat_info.type or sign-derived at migration lines 156-164
+                "message_category": "user",  # MessageCategory.USER.value, from migration line 210
+                "message_type": "text",  # MessageType.TEXT.value, from migration line 211
+                "sent": "False",  # uniform non-bot direction from migration line 212
+            }
             backfillLabelsJson = jsonDumps(backfillLabels)
             backfillLabelsHash = hashlib.md5(backfillLabelsJson.encode("utf-8")).hexdigest()
 
-            # Assert hashes differ
-            assert backfillLabelsHash != liveLabelsHash, "Backfill and live labels_hash must differ"
+            # Assert hashes are equal (rows merge into one bucket)
+            assert backfillLabelsHash == liveLabelsHash, (
+                f"Backfill and live labels_hash must be equal for merge\n"
+                f"  liveMergedLabels: {liveMergedLabels}\n"
+                f"  backfillLabels: {backfillLabels}\n"
+                f"  liveLabelsJson: {liveLabelsJson}\n"
+                f"  backfillLabelsJson: {backfillLabelsJson}"
+            )
 
-            # Since sent is always present in live labels and never in backfill labels,
-            # their label-sets (and thus hashes) will always differ → no accidental merge/double-count.
+            # Since both live and backfill rows have identical labels (including sent="False"),
+            # they collide on labels_hash and merge into one aggregate bucket. This is safe
+            # because the migration upsert is replace-semantics (full recompute).
 
     async def test_no_record_when_save_fails_unknown_type(self, mockConfigManager, mockDatabaseWrapper) -> None:
         """No stats record when saveChatMessage returns False (UNKNOWN message type early return)."""

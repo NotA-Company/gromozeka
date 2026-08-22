@@ -23,9 +23,10 @@ are skipped.
 **Historical data note:** Unlike the legacy ``chat_user_stats`` counters (which
 unconditionally counted everything, including DELETED rewrites-era rows), the
 new back-fill matches live-event semantics — counts may differ slightly from the
-legacy counters. Both bot-authored and user-authored rows are included. The
-display layer treats back-filled rows (which carry no ``sent`` label) as a
-separate "history" bucket, distinct from "sent" and "received".
+legacy counters. Both bot-authored and user-authored rows are included. All
+back-filled rows carry ``sent = "False"`` (user decision 2026-08-22: uniform
+non-bot direction for history). This migration is edited in place; it is not
+yet deployed to production.
 
 The ``down()`` migration recreates both legacy tables empty — the original data
 is not restorable (destroyed by the DROP in ``up()``).
@@ -65,8 +66,9 @@ class Migration027DropChatStatsBackfillAggregates(BaseMigration):
 
     **Label-sets:** Per-consumer (``consumer = str(chatId)``) and ``__global__``
     rollup. Labels include ``consumer``, ``user_id``, ``chat_type``,
-    ``message_category``, ``message_type``. Back-filled rows carry no ``sent``
-    label; the display layer treats this as a separate "history" bucket.
+    ``message_category``, ``message_type``, and ``sent = "False"`` (uniform
+    non-bot direction for all historical messages). This migration is edited
+    in place; it is not yet deployed to production.
 
     **Historical data note:** Unlike the legacy ``chat_user_stats`` counters
     (which unconditionally counted everything), the new back-fill matches
@@ -207,6 +209,7 @@ class Migration027DropChatStatsBackfillAggregates(BaseMigration):
                         "chat_type": chatType,
                         "message_category": messageCategory,
                         "message_type": messageType,
+                        "sent": "False",
                     }
 
                     perConsumerLabelsJson = libUtils.jsonDumps(perConsumerLabels)
@@ -218,6 +221,7 @@ class Migration027DropChatStatsBackfillAggregates(BaseMigration):
                         "chat_type": chatType,
                         "message_category": messageCategory,
                         "message_type": messageType,
+                        "sent": "False",
                     }
 
                     globalLabelsJson = libUtils.jsonDumps(globalLabels)

@@ -47,7 +47,9 @@ from internal.services.queue_service import QueueService
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
 from internal.services.stats.service import StatsAggregationService
 from internal.services.storage import StorageService
-from lib.stats import NullStatsStorage
+from lib.stats import NullStatsStorage, StatsAnalyzer
+from lib.stats.stats_pages import StatsPayload
+from lib.stats.types import StatsAggregateDict
 
 # Helper to build EnsuredMessage
 
@@ -509,7 +511,7 @@ class TestStatsHandlerScope:
         callArgs = handler.sendMessage.call_args
         replyText = callArgs.kwargs["messageText"]
         assert "789" in replyText  # Header carries the target chat id
-        assert "Messages:" in replyText  # Only default section (messages) is rendered
+        assert "**Messages:**" in replyText  # Only default section (messages) is rendered with bold header
 
     async def test_private_positional_chatId_not_in_user_chats_error(self):
         """Test that private with positional chatId not in getUserChats returns error."""
@@ -864,8 +866,146 @@ class TestStatsHandlerUsageErrors:
         handler.sendMessage.assert_called_once()
         callArgs = handler.sendMessage.call_args
         replyText = callArgs.kwargs["messageText"]
-        assert "LLM:" in replyText
+        assert "**LLM:**" in replyText
         assert "(на уровне чата, не пользователя)" in replyText
+
+    async def testLlmSection_topModelsFormat(self):
+        """Test that Top models section uses caption-in-fence format (caption on fence line)."""
+
+        # Reset singleton
+        StatsAggregationService._instance = None
+
+        # Setup handler
+        mockConfigManager = MagicMock()
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+        mockDatabase = MagicMock()
+        handler = StatsHandler(configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM)
+
+        # Mock chat settings
+        chatSettings = {k: ChatSettingsValue("") for k in ChatSettingsKey}
+        chatSettings[ChatSettingsKey.ALLOW_SHOW_STATS] = ChatSettingsValue("true")
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+
+        # Mock storage with LLM data including top models
+        llmRows = [
+            StatsAggregateDict(
+                periodType="daily",
+                periodStart="2026-08-20T00:00:00+00:00",
+                labels={"consumer": "456", "modelName": "gpt-4"},
+                metricKey="request_count",
+                metricValue=10.0,
+            ),
+            StatsAggregateDict(
+                periodType="daily",
+                periodStart="2026-08-20T00:00:00+00:00",
+                labels={"consumer": "456", "modelName": "gpt-3.5-turbo"},
+                metricKey="request_count",
+                metricValue=5.0,
+            ),
+            StatsAggregateDict(
+                periodType="daily",
+                periodStart="2026-08-20T00:00:00+00:00",
+                labels={"consumer": "456", "modelName": "gpt-4"},
+                metricKey="input_tokens",
+                metricValue=1000.0,
+            ),
+            StatsAggregateDict(
+                periodType="daily",
+                periodStart="2026-08-20T00:00:00+00:00",
+                labels={"consumer": "456", "modelName": "gpt-4"},
+                metricKey="output_tokens",
+                metricValue=2000.0,
+            ),
+            StatsAggregateDict(
+                periodType="daily",
+                periodStart="2026-08-20T00:00:00+00:00",
+                labels={"consumer": "456", "modelName": "gpt-3.5-turbo"},
+                metricKey="input_tokens",
+                metricValue=500.0,
+            ),
+            StatsAggregateDict(
+                periodType="daily",
+                periodStart="2026-08-20T00:00:00+00:00",
+                labels={"consumer": "456", "modelName": "gpt-3.5-turbo"},
+                metricKey="output_tokens",
+                metricValue=1000.0,
+            ),
+            StatsAggregateDict(
+                periodType="daily",
+                periodStart="2026-08-20T00:00:00+00:00",
+                labels={"consumer": "456", "modelName": "gpt-4"},
+                metricKey="elapsed_time",
+                metricValue=5000.0,
+            ),
+            StatsAggregateDict(
+                periodType="daily",
+                periodStart="2026-08-20T00:00:00+00:00",
+                labels={"consumer": "456", "modelName": "gpt-3.5-turbo"},
+                metricKey="elapsed_time",
+                metricValue=3000.0,
+            ),
+        ]
+
+        # Make mock return data regardless of period filter (this is a format test, not a filter test)
+        async def mockQuery(**kwargs):
+            return llmRows
+
+        mockStorage = MagicMock(spec=NullStatsStorage)
+        mockStorage.query = AsyncMock(side_effect=mockQuery)
+        handler.statsAggregationService.getQueryStorage = MagicMock(return_value=mockStorage)
+
+        # Mock sendMessage
+        handler.sendMessage = AsyncMock()
+
+        # Build group chat message
+        message = buildEnsuredMessage(chatId=456, chatType=ChatType.GROUP, userId=123)
+
+        # Execute command with --section=llm
+        await cast(Any, handler).statsCommand(
+            ensuredMessage=message,
+            command="stats",
+            args="--section=llm",
+            updateObj=None,
+            typingManager=None,
+        )
+
+        # Verify LLM section was rendered
+        handler.sendMessage.assert_called_once()
+        callArgs = handler.sendMessage.call_args
+        replyText = callArgs.kwargs["messageText"]
+
+        # Verify Top models format
+        lines = replyText.split("\n")
+
+        # Find Top models section - look for "```Top models:" fence line (caption on fence)
+        # Note: space in "Top models:" becomes non-breaking space (U+00A0) in fence
+        topModelsStart = None
+        for i, line in enumerate(lines):
+            if line.strip() == "```Top\xa0models:":
+                topModelsStart = i
+                break
+
+        assert topModelsStart is not None, f"Top models section not found in result: {replyText}"
+
+        # Verify strict format: "```Top models:" on fence line (caption-in-fence), followed by bullets, then "```"
+        assert (
+            lines[topModelsStart].strip() == "```Top\xa0models:"
+        ), f"Expected fence line '```Top\xa0models:' but got '{lines[topModelsStart].strip()}'"
+
+        # Verify merged fence exists (new shape: caption on fence line)
+        assert "```Top\xa0models:" in replyText, f"Result should contain merged fence '```Top\xa0models:': {replyText}"
+
+        # Check that old separate "Top models:" line is NOT present
+        assert "\nTop models:\n" not in replyText, f"Result should not contain separate 'Top models:' line: {replyText}"
+
+        # Verify bullet markers and model names
+        assert "• gpt-4" in replyText, f"Expected '• gpt-4' in result: {replyText}"
+        assert "• gpt-3.5-turbo" in replyText, f"Expected '• gpt-3.5-turbo' in result: {replyText}"
+
+        # Check that fences are balanced
+        fenceCount = replyText.count("```")
+        assert fenceCount == 2, f"Expected 2 fence markers (opening + closing) but found {fenceCount}: {replyText}"
 
     async def test_negative_positional_chatId_in_private_chat_returns_error(self):
         """Test that negative positional chatId in private chat returns usage error.
@@ -938,6 +1078,74 @@ class TestStatsHandlerUsageErrors:
         callArgs = handler.sendMessage.call_args
         assert "❌" in callArgs.kwargs["messageText"]
         assert "Неизвестные опции" in callArgs.kwargs["messageText"]
+
+    async def test_bare_em_dash_returns_usage_error(self):
+        """Test that bare '—' token (all-dash) returns same usage error as '--'."""
+        # Reset singleton
+        StatsAggregationService._instance = None
+
+        # Setup handler
+        mockConfigManager = MagicMock()
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+        mockDatabase = MagicMock()
+        handler = StatsHandler(configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM)
+
+        # Mock sendMessage
+        handler.sendMessage = AsyncMock()
+
+        # Build message
+        message = buildEnsuredMessage(chatId=123, chatType=ChatType.PRIVATE, userId=456)
+
+        # Execute command with bare '—' token (em-dash, all-dash)
+        await cast(Any, handler).statsCommand(
+            ensuredMessage=message,
+            command="stats",
+            args="—",
+            updateObj=None,
+            typingManager=None,
+        )
+
+        # Verify usage error was sent (same as bare '--')
+        handler.sendMessage.assert_called_once()
+        callArgs = handler.sendMessage.call_args
+        assert "❌" in callArgs.kwargs["messageText"]
+        assert "Неизвестные опции" in callArgs.kwargs["messageText"]
+
+    async def test_mid_token_dash_preserved_in_error(self):
+        """Test that mid-token dash is preserved: '—a—b' → error with '--a—b'."""
+        # Reset singleton
+        StatsAggregationService._instance = None
+
+        # Setup handler
+        mockConfigManager = MagicMock()
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+        mockDatabase = MagicMock()
+        handler = StatsHandler(configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM)
+
+        # Mock sendMessage
+        handler.sendMessage = AsyncMock()
+
+        # Build message
+        message = buildEnsuredMessage(chatId=123, chatType=ChatType.PRIVATE, userId=456)
+
+        # Execute command with mid-token dash: '—a—b'
+        await cast(Any, handler).statsCommand(
+            ensuredMessage=message,
+            command="stats",
+            args="—a—b",
+            updateObj=None,
+            typingManager=None,
+        )
+
+        # Verify error message contains the normalized token with mid-dash preserved
+        handler.sendMessage.assert_called_once()
+        callArgs = handler.sendMessage.call_args
+        assert "❌" in callArgs.kwargs["messageText"]
+        # Leading dashes normalized to '--', but mid-token '—' is preserved
+        # The error shows the option name (after '--'), so 'a—b' not '--a—b'
+        assert "a—b" in callArgs.kwargs["messageText"]
 
     async def test_unknown_short_option_returns_usage_error(self):
         """Test that unknown short option '-x' returns 'Неизвестные опции' usage error."""
@@ -2178,6 +2386,941 @@ class TestStatsHandlerWebTierCleanupHandler:
                 mockQueueService.addDelayedTask.assert_not_called()
 
 
+class TestStatsHandlerFormatRedesign:
+    """Tests for /stats format redesign (items 1-9 in production code)."""
+
+    def testEmDashPeriodParsing_normalizesToDoubleDash(self, mockConfigManager, mockDatabaseWrapper) -> None:
+        """Test that em-dash before period normalizes to double dash.
+
+        Tests that —period=7d (U+2014 em-dash) parses like --period=7d.
+        This fixes autocorrect issues where -- gets replaced with —.
+        """
+        # Mock config
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Parse with em-dash
+            result = handler._parseStatsArgs("—period=7d", forceWeb=False)
+
+            assert result is not None
+            assert result["period"] == "7d"
+            assert result["section"] == "messages"
+            assert result["web"] is False
+
+    def testEnDashWebParsing_normalizesToDoubleDash(self, mockConfigManager, mockDatabaseWrapper) -> None:
+        """Test that en-dash before web normalizes to double dash.
+
+        Tests that –web (U+2013 en-dash) parses like --web.
+        This fixes autocorrect issues where -- gets replaced with –.
+        """
+        # Mock config
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Parse with en-dash
+            result = handler._parseStatsArgs("–web", forceWeb=False)
+
+            assert result is not None
+            assert result["web"] is True
+            assert result["period"] == "7d"  # default
+
+    def testNegativePositionalChatId_targetsCorrectChat(self, mockConfigManager, mockDatabaseWrapper) -> None:
+        """Test that negative positional chatId still targets that chat.
+
+        Tests that -1002998620962 is treated as a positional chatId,
+        not as an option. Negative chatIds represent groups in Telegram.
+        """
+        # Mock config
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Parse with negative positional chatId
+            result = handler._parseStatsArgs("-1002998620962", forceWeb=False)
+
+            assert result is not None
+            assert result["chatId"] == -1002998620962
+            assert result["period"] == "7d"  # default
+            assert result["section"] == "messages"  # default
+
+    async def testPrettyHeader_withChatInfo_showsEmojiBoldTitleAndChatId(self) -> None:
+        """Test pretty header format with available chat info.
+
+        Tests that header contains:
+        - Emoji 📊
+        - Bold title (from getChatTitle)
+        - Backticked chat id
+        """
+        # Reset singleton
+        StatsAggregationService._instance = None
+
+        mockConfigManager = MagicMock()
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        mockDatabase = MagicMock()
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Mock cache.getChatInfo to return chat info
+            mockChatInfo = {
+                "id": 123,
+                "title": "Test Chat",
+                "chat_type": "group",
+                "username": "testchat",
+            }
+            handler.cache.getChatInfo = AsyncMock(return_value=mockChatInfo)
+
+            # Mock getChatTitle to return formatted title (real method's shape: backticked id, emoji, bold title)
+            handler.getChatTitle = MagicMock(return_value="#`123`, 👥 **Test Chat**")
+
+            # Mock getChatSettings to avoid LLM initialization
+            chatSettings = {k: ChatSettingsValue("") for k in ChatSettingsKey}
+            chatSettings[ChatSettingsKey.ALLOW_SHOW_STATS] = ChatSettingsValue("true")
+            handler.getChatSettings = AsyncMock(return_value=chatSettings)
+
+            # Mock storage to return empty
+            mockStorage = MagicMock(spec=NullStatsStorage)
+            mockStorage.query = AsyncMock(return_value=[])
+            handler.statsAggregationService.getQueryStorage = MagicMock(return_value=mockStorage)
+
+            # Mock sendMessage to capture output
+            mockSendMessage = AsyncMock()
+            handler.sendMessage = mockSendMessage
+
+            # Build message
+            message = buildEnsuredMessage(chatId=123, chatType=ChatType.GROUP, userId=456)
+
+            # Execute command
+            await cast(Any, handler).statsCommand(
+                ensuredMessage=message, command="stats", args="", updateObj=None, typingManager=None
+            )
+
+            # Verify header format
+            mockSendMessage.assert_called_once()
+            callArgs = mockSendMessage.call_args
+            replyText = callArgs.kwargs["messageText"]
+
+            # Check for emoji
+            assert "📊" in replyText
+
+            # Check for bold title
+            assert "*" in replyText  # Bold markers
+
+            # Check for backticked chat id
+            assert "#`123`" in replyText
+
+            # Verify getChatTitle was called with correct params
+            handler.getChatTitle.assert_called_once_with(
+                mockChatInfo, useMarkdown=True, addChatId=True, addChatType=False
+            )
+
+    async def testPrettyHeader_withoutChatInfo_fallsBackToHashId(self) -> None:
+        """Test pretty header format with unavailable chat info.
+
+        Tests that when chat info is unavailable, header falls back to plain #id format.
+        """
+        # Reset singleton
+        StatsAggregationService._instance = None
+
+        mockConfigManager = MagicMock()
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        mockDatabase = MagicMock()
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Mock cache.getChatInfo to raise exception (unavailable)
+            handler.cache.getChatInfo = AsyncMock(side_effect=Exception("Chat not found"))
+
+            # Mock getChatSettings to avoid LLM initialization
+            chatSettings = {k: ChatSettingsValue("") for k in ChatSettingsKey}
+            chatSettings[ChatSettingsKey.ALLOW_SHOW_STATS] = ChatSettingsValue("true")
+            handler.getChatSettings = AsyncMock(return_value=chatSettings)
+
+            # Mock storage to return empty
+            mockStorage = MagicMock(spec=NullStatsStorage)
+            mockStorage.query = AsyncMock(return_value=[])
+            handler.statsAggregationService.getQueryStorage = MagicMock(return_value=mockStorage)
+
+            # Mock sendMessage to capture output
+            mockSendMessage = AsyncMock()
+            handler.sendMessage = mockSendMessage
+
+            # Build message
+            message = buildEnsuredMessage(chatId=999, chatType=ChatType.GROUP, userId=456)
+
+            # Execute command
+            await cast(Any, handler).statsCommand(
+                ensuredMessage=message, command="stats", args="", updateObj=None, typingManager=None
+            )
+
+            # Verify header falls back to #id
+            mockSendMessage.assert_called_once()
+            callArgs = mockSendMessage.call_args
+            replyText = callArgs.kwargs["messageText"]
+
+            # Check for plain #id format (no bold title)
+            assert "#999" in replyText
+
+    async def testMessagesSection_noUsersBotLine_usesBoldHeader(self, mockConfigManager, mockDatabaseWrapper) -> None:
+        """Test messages section has no users/bot line and uses bold header.
+
+        Tests:
+        - Header is **Messages:** {total} (bold)
+        - No users/bot breakdown line exists
+        - Total count is correct
+        """
+        # Mock config
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Create mock rows
+            rows = [
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"user_id": "123", "sent": "False"},
+                    metricKey="message_count",
+                    metricValue=100.0,
+                ),
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"user_id": "bot", "sent": "True"},
+                    metricKey="message_count",
+                    metricValue=50.0,
+                ),
+            ]
+
+            analyzer = StatsAnalyzer(rows)
+
+            # Call _buildMessagesSectionFromAnalyzer
+            result = await handler._buildMessagesSectionFromAnalyzer(
+                analyzer=analyzer, truncatedEventTypes=[], targetChatId=123
+            )
+
+            # Check bold header format
+            assert "**Messages:** 150" in result, f"Expected '**Messages:** 150' in result: {result}"
+
+            # Check that users/bot breakdown line does NOT exist
+            assert "users" not in result.lower(), f"Result should not contain 'users': {result}"
+            assert "bot" not in result.lower(), f"Result should not contain 'bot': {result}"
+
+    async def testFencedTopBlock_exactAlignment_threeUsers(self, mockConfigManager, mockDatabaseWrapper) -> None:
+        """Test fenced Top block renders with exact alignment.
+
+        Tests:
+        - Caption on fence line: "```Top:"
+        - Fenced code block with ``` markers
+        - Bullet markers: •
+        - Aligned columns (ljust name, rjust count)
+        - One item per line
+        """
+        # Mock config
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Create mock rows with 3 users (different name lengths)
+            rows = [
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"user_id": "123", "sent": "False"},
+                    metricKey="message_count",
+                    metricValue=794.0,  # 3 digits
+                ),
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"user_id": "456", "sent": "False"},
+                    metricKey="message_count",
+                    metricValue=42.0,  # 2 digits
+                ),
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"user_id": "789", "sent": "False"},
+                    metricKey="message_count",
+                    metricValue=7.0,  # 1 digit
+                ),
+            ]
+
+            analyzer = StatsAnalyzer(rows)
+
+            # Mock _resolveUserName with specific name widths
+            # @alice (6 chars), @verylongusername (18 chars), @xyz (4 chars)
+            def mockResolve(chatId: int, userId: int) -> str:
+                if userId == 123:
+                    return "@verylongusername"  # 18 chars
+                elif userId == 456:
+                    return "@alice"  # 6 chars
+                else:
+                    return "@xyz"  # 4 chars
+
+            handler._resolveUserName = AsyncMock(side_effect=mockResolve)
+
+            # Call _buildMessagesSectionFromAnalyzer
+            result = await handler._buildMessagesSectionFromAnalyzer(
+                analyzer=analyzer, truncatedEventTypes=[], targetChatId=123
+            )
+
+            # Check caption-in-fence
+            assert "```Top:" in result
+
+            # Check fences
+            fenceCount = result.count("```")
+            assert fenceCount == 2, f"Expected 2 fence markers but found {fenceCount}: {result}"
+
+            # Check bullet lines with exact alignment
+            # The production code uses ljust(maxKeyWidth) + 2 spaces + rjust(maxCountWidth)
+            # Max name width is 18 (@verylongusername), max count width is 3 (794)
+            # Expected format: "• {name.ljust(18)}  {count.rjust(3)}"
+            expectedLines = [
+                "• @verylongusername  794",  # 18 + 2 + 3 = 23
+                "• @alice              42",  # 6 + 12 + 2 + 2 = 22
+                "• @xyz                 7",  # 4 + 14 + 2 + 1 = 21
+            ]
+
+            for expected in expectedLines:
+                assert expected in result, f"Expected aligned line '{expected}' in result: {result}"
+
+            # Check that bullet markers exist
+            assert "• " in result
+
+    async def testCommandsTop_renderAsFencedBlock(self, mockConfigManager, mockDatabaseWrapper) -> None:
+        """Test Commands Top renders as fenced code block.
+
+        Tests:
+        - Caption on fence line: "```Top:"
+        - Fenced code block with ``` markers
+        - Bullet markers: •
+        - Commands listed one per line
+        """
+        # Mock config
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Create mock rows
+            rows = [
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"commandName": "stats"},
+                    metricKey="command_count",
+                    metricValue=10.0,
+                ),
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"commandName": "help"},
+                    metricKey="command_count",
+                    metricValue=5.0,
+                ),
+            ]
+
+            analyzer = StatsAnalyzer(rows)
+
+            # Call _buildCommandsSectionFromAnalyzer
+            result = handler._buildCommandsSectionFromAnalyzer(analyzer=analyzer, truncatedEventTypes=[])
+
+            # Check bold header
+            assert "**Commands:** 15" in result
+
+            # Check caption-in-fence
+            assert "```Top:" in result
+
+            # Check fences
+            fenceCount = result.count("```")
+            assert fenceCount == 2, f"Expected 2 fence markers but found {fenceCount}: {result}"
+
+            # Check bullet markers
+            assert "• stats" in result
+            assert "• help" in result
+
+    async def testErrorsPrefix_showsWhenErrorsExist(self, mockConfigManager, mockDatabaseWrapper) -> None:
+        """Test ⚠ errors: prefix when errors > 0.
+
+        Tests:
+        - Commands section: "  ⚠ errors: {count}" when errors > 0
+        - Tools section: "  ⚠ errors: {count}" when errors > 0
+        - LLM section: "  ⚠ errors: {count}" when errors > 0
+        """
+        # Mock config
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Test Commands section with errors
+            cmdRows = [
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"commandName": "test"},
+                    metricKey="command_count",
+                    metricValue=10.0,
+                ),
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"commandName": "test"},
+                    metricKey="is_error",
+                    metricValue=2.0,
+                ),
+            ]
+
+            cmdAnalyzer = StatsAnalyzer(cmdRows)
+            cmdResult = handler._buildCommandsSectionFromAnalyzer(analyzer=cmdAnalyzer, truncatedEventTypes=[])
+
+            assert "**Commands:** 10" in cmdResult
+            assert "  ⚠ errors: 2" in cmdResult
+
+            # Test Tools section with errors
+            toolRows = [
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"toolName": "python"},
+                    metricKey="tool_call_count",
+                    metricValue=5.0,
+                ),
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"toolName": "python"},
+                    metricKey="is_error",
+                    metricValue=1.0,
+                ),
+            ]
+
+            toolAnalyzer = StatsAnalyzer(toolRows)
+            toolResult = handler._buildToolsSectionFromAnalyzer(analyzer=toolAnalyzer, truncatedEventTypes=[])
+
+            assert "**Tools:** 5" in toolResult
+            assert "  ⚠ errors: 1" in toolResult
+
+    async def testErrorsPrefix_absentWhenNoErrors(self, mockConfigManager, mockDatabaseWrapper) -> None:
+        """Test ⚠ errors: prefix is absent when errors = 0.
+
+        Tests:
+        - No error line when all commands succeed
+        - No error line when all tools succeed
+        """
+        # Mock config
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Test Commands section with no errors
+            cmdRows = [
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"commandName": "test"},
+                    metricKey="command_count",
+                    metricValue=10.0,
+                ),
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"commandName": "test"},
+                    metricKey="is_error",
+                    metricValue=0.0,
+                ),
+            ]
+
+            cmdAnalyzer = StatsAnalyzer(cmdRows)
+            cmdResult = handler._buildCommandsSectionFromAnalyzer(analyzer=cmdAnalyzer, truncatedEventTypes=[])
+
+            assert "**Commands:** 10" in cmdResult
+            assert "⚠ errors:" not in cmdResult
+
+            # Test Tools section with no errors
+            toolRows = [
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"toolName": "python"},
+                    metricKey="tool_call_count",
+                    metricValue=5.0,
+                ),
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"toolName": "python"},
+                    metricKey="is_error",
+                    metricValue=0.0,
+                ),
+            ]
+
+            toolAnalyzer = StatsAnalyzer(toolRows)
+            toolResult = handler._buildToolsSectionFromAnalyzer(analyzer=toolAnalyzer, truncatedEventTypes=[])
+
+            assert "**Tools:** 5" in toolResult
+            assert "⚠ errors:" not in toolResult
+
+    async def testToolsLlmHeaders_foldAvgTime_noSeparateLine(self, mockConfigManager, mockDatabaseWrapper) -> None:
+        """Test Tools/LLM headers fold avg time, no separate avg line.
+
+        Tests:
+        - Tools header: "**Tools:** N · avg X.XXs" when avg > 0
+        - LLM header: "**LLM:** N requests · avg X.XXs" when avg > 0
+        - No separate avg time line below header
+        """
+        # Mock config
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Test Tools section with avg time
+            toolRows = [
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"toolName": "python"},
+                    metricKey="tool_call_count",
+                    metricValue=2.0,
+                ),
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"toolName": "python"},
+                    metricKey="elapsed_time",
+                    metricValue=3.5,  # avg = 3.5 / 2 = 1.75s
+                ),
+            ]
+
+            toolAnalyzer = StatsAnalyzer(toolRows)
+            toolResult = handler._buildToolsSectionFromAnalyzer(analyzer=toolAnalyzer, truncatedEventTypes=[])
+
+            # Derivation: total_calls=2.0, elapsed_time=3.5 → avg=3.5/2=1.75s → _formatDuration returns "1.75s"
+            # Check header folds avg time with exact first-line pin
+            assert toolResult.split("\n")[0] == "**Tools:** 2 · avg 1.75s"
+
+            # Check no separate avg line exists
+            assert "avg" not in toolResult.split("\n")[1]  # First line after header
+
+            # Test LLM section with avg time
+            llmRows = [
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"modelName": "gpt-4"},
+                    metricKey="request_count",
+                    metricValue=3.0,
+                ),
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"modelName": "gpt-4"},
+                    metricKey="elapsed_time",
+                    metricValue=6.0,  # avg = 6.0 / 3 = 2.00s
+                ),
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"modelName": "gpt-4"},
+                    metricKey="input_tokens",
+                    metricValue=100.0,
+                ),
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"modelName": "gpt-4"},
+                    metricKey="output_tokens",
+                    metricValue=200.0,
+                ),
+            ]
+
+            llmAnalyzer = StatsAnalyzer(llmRows)
+
+            # Create minimal StatsPayload for LLM test
+            llmPayload: StatsPayload = {
+                "userId": "123",
+                "chatId": "456",
+                "chatTitle": "Test Chat",
+                "chatType": "private",
+                "platform": "telegram",
+                "period": "7d",
+                "periodType": "daily",
+                "generatedAt": "2026-01-01T00:00:00Z",
+                "rows": {},
+                "userFilterApplied": False,
+            }
+            llmResult = handler._buildLlmSectionFromAnalyzer(
+                analyzer=llmAnalyzer, payload=llmPayload, truncatedEventTypes=[]
+            )
+
+            # Derivation: total_requests=3.0, elapsed_time=6.0 → avg=6.0/3=2.00s → _formatDuration returns "2.00s"
+            # Check header folds avg time with exact first-line pin
+            assert llmResult.split("\n")[0] == "**LLM:** 3 requests · avg 2.00s"
+
+            # Check no separate avg line exists
+            lines = llmResult.split("\n")
+            # Second line should be tokens line, not avg line
+            assert "tokens: in 100 / out 200" in lines[1]
+            assert "avg" not in lines[1]
+
+    async def testSttLine_noNoun_justSttColonN(self, mockConfigManager, mockDatabaseWrapper) -> None:
+        """Test STT line is 'STT: N' (noun dropped).
+
+        Tests:
+        - STT line format: "  STT: {total}" (no noun like "requests")
+        """
+        # Mock config
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Create LLM section with STT data
+            llmRows = [
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"modelName": "gpt-4"},
+                    metricKey="request_count",
+                    metricValue=1.0,
+                ),
+            ]
+
+            llmAnalyzer = StatsAnalyzer(llmRows)
+
+            # Mock STT rows in payload with required StatsPayload fields
+            payload: StatsPayload = {
+                "userId": "123",
+                "chatId": "456",
+                "chatTitle": "Test Chat",
+                "chatType": "private",
+                "platform": "telegram",
+                "period": "7d",
+                "periodType": "daily",
+                "generatedAt": "2026-01-01T00:00:00Z",
+                "rows": {
+                    "stt_request": [
+                        StatsAggregateDict(
+                            periodType="daily",
+                            periodStart="2024-01-01T00:00:00+00:00",
+                            labels={},
+                            metricKey="request_count",
+                            metricValue=15.0,
+                        ),
+                        StatsAggregateDict(
+                            periodType="daily",
+                            periodStart="2024-01-01T00:00:00+00:00",
+                            labels={},
+                            metricKey="is_error",
+                            metricValue=0.0,
+                        ),
+                        StatsAggregateDict(
+                            periodType="daily",
+                            periodStart="2024-01-01T00:00:00+00:00",
+                            labels={},
+                            metricKey="audio_duration_ms",
+                            metricValue=30000.0,
+                        ),
+                        StatsAggregateDict(
+                            periodType="daily",
+                            periodStart="2024-01-01T00:00:00+00:00",
+                            labels={},
+                            metricKey="elapsed_time",
+                            metricValue=5.0,
+                        ),
+                    ]
+                },
+                "userFilterApplied": False,
+            }
+
+            llmResult = handler._buildLlmSectionFromAnalyzer(
+                analyzer=llmAnalyzer, payload=payload, truncatedEventTypes=[]
+            )
+
+            # Check STT line format (noun dropped, bold header)
+            assert "  **STT:** 15" in llmResult
+
+            # Check no noun like "requests" in STT line
+            assert "STT: 15 requests" not in llmResult
+            assert "STT: 15 запросов" not in llmResult
+
+            # Check avg time line appears when STT requests > 0
+            # elapsed_time = 5.0, request_count = 15.0 → avg = 0.33s
+            assert "    avg time: 0.33s" in llmResult
+
+    async def testSttErrorsLine_subLineIndentNoWarning(self, mockConfigManager, mockDatabaseWrapper) -> None:
+        """Test STT errors sub-line format: 4-space indent, NO ⚠ on errors line.
+
+        Tests:
+        - STT errors sub-line is indented with 4 spaces (no warning symbol)
+        - Errors line does NOT contain ⚠
+        - Line format: "    errors: N" (N formatted with _formatCount)
+        """
+        # Mock config
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Create LLM section with STT data that has errors
+            llmRows = [
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"modelName": "gpt-4"},
+                    metricKey="request_count",
+                    metricValue=1.0,
+                ),
+            ]
+
+            llmAnalyzer = StatsAnalyzer(llmRows)
+
+            # Mock STT rows in payload with 2 errors
+            payload: StatsPayload = {
+                "userId": "123",
+                "chatId": "456",
+                "chatTitle": "Test Chat",
+                "chatType": "private",
+                "platform": "telegram",
+                "period": "7d",
+                "periodType": "daily",
+                "generatedAt": "2026-01-01T00:00:00Z",
+                "rows": {
+                    "stt_request": [
+                        StatsAggregateDict(
+                            periodType="daily",
+                            periodStart="2024-01-01T00:00:00+00:00",
+                            labels={},
+                            metricKey="request_count",
+                            metricValue=10.0,
+                        ),
+                        StatsAggregateDict(
+                            periodType="daily",
+                            periodStart="2024-01-01T00:00:00+00:00",
+                            labels={},
+                            metricKey="is_error",
+                            metricValue=2.0,  # 2 errors
+                        ),
+                    ]
+                },
+                "userFilterApplied": False,
+            }
+
+            llmResult = handler._buildLlmSectionFromAnalyzer(
+                analyzer=llmAnalyzer, payload=payload, truncatedEventTypes=[]
+            )
+
+            # Check STT errors sub-line format (4-space indent, no ⚠)
+            assert "    errors: 2" in llmResult
+
+            # Verify the errors line does NOT contain ⚠ (warning symbol only on honesty lines)
+            lines = llmResult.split("\n")
+            errorsLine = [line for line in lines if "errors:" in line][0]
+            assert "⚠" not in errorsLine
+
+    def testChunkerAtomicity_preservesFenceBlocks(self) -> None:
+        """Test chunker atomicity preserves fence blocks across chunks.
+
+        Tests:
+        - Fenced code blocks are never split across chunks
+        - Each chunk has balanced fences (0 or 2 fence markers)
+        - Naive line chunking would split inside block, but atomicity prevents it
+        """
+        mockConfigManager = MagicMock()
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+        mockDatabase = MagicMock()
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Derivation of total length (>3000 to trigger chunking):
+            #   Header: "📊 Stats — 7d (UTC) — #123" = 25 chars
+            #   Messages header: "**Messages:** 1000" = 18 chars
+            #   Fence opener: "```Top:" = 7 chars
+            #   Long line: "• @verylongusername" + 2848 spaces + "1" = 2867 chars
+            #   Second line: "• @anotheruser                        2" = 39 chars
+            #   Third line: "• @thirduser                           3" = 40 chars
+            #   Fence closer: "```" = 3 chars
+            #   Commands header: "**Commands:** 500" = 17 chars
+            #   Command line: "/stats help — полная справка" = 28 chars
+            #   Tools header: "**Tools:** 50" = 13 chars
+            #   Tool lines (4 entries, 41/41/40/40 chars): 162 chars
+            #   Total: 25 + 18 + 7 + 2867 + 39 + 40 + 3 + 17 + 28 + 13 + 162 = 3219 chars
+            # Naive line-by-line chunking at 3000 chars would split inside the fenced block
+            #   (between the second and third bullets at cumulative ~3001), breaking fence atomicity.
+            # Atomic chunking keeps the entire fence block (2979 chars) together as one unit,
+            #   producing 3 chunks: header, fence block, remaining content.
+            lines = [
+                "📊 Stats — 7d (UTC) — #123",
+                "**Messages:** 1000",
+                "```Top:",
+                "• @verylongusername" + " " * 2848 + "1",  # This line is 2867 chars
+                "• @anotheruser                        2",
+                "• @thirduser                           3",
+                "```",
+                "**Commands:** 500",
+                "/stats help — полная справка",
+                "**Tools:** 50",
+                "• /configure                           25",
+                "• /list_chats                          15",
+                "• /stats                               8",
+                "• /help                                2",
+            ]
+
+            # Total is 3219 chars, so naive chunking would split the block
+            chunks = handler._chunkLinesWithFenceAtomicity(lines)
+
+            # Should produce 3 chunks due to size, but block must be intact
+            assert len(chunks) == 3
+
+            # Verify each chunk has balanced fences
+            for chunk in chunks:
+                fenceCount = chunk.count("```")
+                # Each chunk must have 0 or 2 fence markers (no unbalanced fences)
+                assert fenceCount in [0, 2], f"Chunk has unbalanced fences ({fenceCount}): {chunk[:100]}..."
+
+            # Verify the block is fully contained in one chunk
+            # Find which chunk contains the opening fence
+            blockChunk = None
+            for chunk in chunks:
+                if "```" in chunk and "• @verylongusername" in chunk:
+                    blockChunk = chunk
+                    break
+
+            assert blockChunk is not None, "Block should be fully contained in one chunk"
+
+            # Verify both opening and closing fences are in the same chunk
+            assert blockChunk.count("```") == 2, "Block should have both fences in the same chunk"
+
+            # Verify the long line is fully preserved
+            assert "• @verylongusername" in blockChunk
+            assert "1" in blockChunk  # The count should be there too
+
+    def testRenderFencedTopBlock_multiWordCaption_nbspEscape(self):
+        """Test _renderFencedTopBlock with multi-word caption escapes with NBSP.
+
+        Tests that a multi-word caption like "Top models:" is rendered as
+        ```` ```Top\xa0models: ```` (NBSP between words) to prevent the caption
+        from being interpreted as separate tokens in some markdown parsers.
+
+        Derivation: The multi-word caption "Top models:" is rendered with NBSP
+        as ```` ```Top\xa0models: ```` (source-level \xa0 escape). This ensures
+        the caption is treated as a single language string rather than being
+        split at the space.
+        """
+        mockConfigManager = MagicMock()
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+        mockDatabase = MagicMock()
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Render a fenced block with multi-word caption
+            result = handler._renderFencedTopBlock([("gpt-4", 42)], "Top models:")
+
+            # First element should be the fence opener with NBSP escape
+            assert result[0] == "```Top\xa0models:", f"Expected NBSP-escaped caption, got: {repr(result[0])}"
+
+    async def testUsernamesInBlocks_notBackticked(self, mockConfigManager, mockDatabaseWrapper) -> None:
+        """Test usernames inside blocks are NOT backticked.
+
+        Tests:
+        - Usernames in fenced code blocks are bare @name (no backticks)
+        - _resolveUserName returns plain @name, backticks are stripped for block rendering
+        """
+        # Mock config
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Create mock rows
+            rows = [
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"user_id": "123", "sent": "False"},
+                    metricKey="message_count",
+                    metricValue=100.0,
+                ),
+            ]
+
+            analyzer = StatsAnalyzer(rows)
+
+            # Mock _resolveUserName to return plain @name (as it should)
+            handler._resolveUserName = AsyncMock(return_value="@alice")
+
+            # Call _buildMessagesSectionFromAnalyzer
+            result = await handler._buildMessagesSectionFromAnalyzer(
+                analyzer=analyzer, truncatedEventTypes=[], targetChatId=123
+            )
+
+            # Check that username in block is NOT backticked
+            assert "• @alice" in result, f"Expected '• @alice' (no backticks) in result: {result}"
+            assert "`@alice`" not in result, f"Result should not contain backticked username in block: {result}"
+
+
 class TestStatsHandlerWebTierInterimBehavior:
     """Tests for interim disabled behavior when stats-pages is disabled."""
 
@@ -2254,8 +3397,8 @@ class TestStatsHandlerWebTierInterimBehavior:
             cast(Any, handler)._sendStatsReply = AsyncMock()  # Use this instead to test chunk handling
 
             # Mock _buildStatsReplyFromPayload to return a long chunked list (simulating >3000 chars)
-            longChunk1 = "📊 Stats — 7d (UTC) — #123\n" + "Messages: 1000\n" + ("x" * 2900) + "\n"
-            longChunk2 = "Commands: 500\n" + "Tools: 250\n" + "/stats help — полная справка"
+            longChunk1 = "📊 Stats — 7d (UTC) — #123\n" + "**Messages:** 1000\n" + ("x" * 2900) + "\n"
+            longChunk2 = "**Commands:** 500\n" + "**Tools:** 250\n" + "/stats help — полная справка"
             handler._buildStatsReplyFromPayload = AsyncMock(return_value=[longChunk1, longChunk2])
 
             # Mock _buildStatsPayload to avoid subprocess call
@@ -2368,7 +3511,7 @@ class TestStatsHandlerWebTierInterimBehavior:
                 lines.append(lineText)
 
             # Create pre-chunked reply (simulating _buildStatsReply output)
-            briefHeader = "📊 Stats — 7d (UTC) — #123\nMessages:\n"
+            briefHeader = "📊 Stats — 7d (UTC) — #123\n**Messages:**\n"
             briefFooter = "\n/stats help — полная справка"
             fullBrief = briefHeader + "\n".join(lines) + briefFooter
 
@@ -2587,7 +3730,7 @@ class TestStatsHandlerWebTierInterimBehavior:
             )
 
             # Mock sendMessage to capture the usage error reply
-            cast(Any, handler).sendMessage = AsyncMock()
+            cast(Any, handler).sendMessage = cast(Any, AsyncMock())
 
             # Build message
             message = buildEnsuredMessage(chatId=123, chatType=ChatType.PRIVATE, userId=456)
@@ -2597,10 +3740,275 @@ class TestStatsHandlerWebTierInterimBehavior:
                 ensuredMessage=message, command="stats", args="--user", updateObj=None, typingManager=None
             )
 
-            # Verify usage error reply was sent
-            handler.sendMessage.assert_called_once()  # type: ignore[attr-defined]
-            callArgs = handler.sendMessage.call_args  # type: ignore[attr-defined]
-            assert "❌ Опция --user требует значения" in callArgs.kwargs["messageText"]
+            # Assert sendMessage was called once with the error
+            mockSendMessage = cast(Any, handler.sendMessage)
+            mockSendMessage.assert_called_once()
+            callArgs = mockSendMessage.call_args
+            messageText = callArgs.kwargs.get("messageText") or callArgs[1].get("messageText")
+            assert "❌ Опция --user требует значения" in messageText
+
+    async def testResolveUserName_doubleAtBug(self, mockConfigManager, mockDatabaseWrapper) -> None:
+        """Test _resolveUserName fixes double-@ bug.
+
+        Tests:
+        - Stored username with leading @ → single @, no backticks
+        - Stored username without leading @ → single @ prefixed, no backticks
+        - full_name fallback → unchanged
+        - str(userId) fallback → unchanged
+        Note: _resolveUserName now returns plain @name (no backticks) since they're
+        rendered inside fenced code blocks where backticks would interfere.
+        """
+        # Reset singleton
+        CacheService._instance = None
+
+        # Mock config to enable stats
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Mock cache.getChatUser
+            handler.cache.getChatUser = AsyncMock()
+
+            # Test case 1: Stored username with leading @
+            handler.cache.getChatUser.return_value = {"username": "@Cthulho", "full_name": "Cthulhu"}
+            result = await handler._resolveUserName(chatId=123, userId=42)
+            assert result == "@Cthulho", f"Expected '@Cthulho' but got '{result}'"
+
+            # Test case 2: Stored username without leading @
+            handler.cache.getChatUser.return_value = {"username": "alice", "full_name": "Alice"}
+            result = await handler._resolveUserName(chatId=123, userId=42)
+            assert result == "@alice", f"Expected '@alice' but got '{result}'"
+
+            # Test case 3: full_name fallback (NOT backticked)
+            handler.cache.getChatUser.return_value = {"username": None, "full_name": "Bob Builder"}
+            result = await handler._resolveUserName(chatId=123, userId=42)
+            assert result == "Bob Builder", f"Expected 'Bob Builder' but got '{result}'"
+
+            # Test case 4: str(userId) fallback (NOT backticked)
+            handler.cache.getChatUser.return_value = None
+            result = await handler._resolveUserName(chatId=123, userId=42)
+            assert result == "42", f"Expected '42' but got '{result}'"
+
+    async def testMessagesSection_topUsersFormat(self, mockConfigManager, mockDatabaseWrapper) -> None:
+        """Test Top users renders as fenced code block with bullet markers.
+
+        Tests:
+        - Caption on fence line: "```Top:"
+        - Fenced code block with ``` markers
+        - One user per line with • bullet marker
+        - Usernames are bare @name without backticks (inside code block)
+        - Aligned columns (ljust name, rjust count)
+        """
+        # Mock config
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Create mock rows with multiple users
+            rows = [
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"user_id": "123", "sent": "False"},
+                    metricKey="message_count",
+                    metricValue=336.0,
+                ),
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"user_id": "456", "sent": "False"},
+                    metricKey="message_count",
+                    metricValue=257.0,
+                ),
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"user_id": "789", "sent": "False"},
+                    metricKey="message_count",
+                    metricValue=100.0,
+                ),
+            ]
+
+            analyzer = StatsAnalyzer(rows)
+
+            # Mock _resolveUserName with bare usernames (no backticks inside blocks)
+            def mockResolve(chatId: int, userId: int) -> str:
+                """Mock resolver for testing top users format.
+
+                Args:
+                    chatId: Chat ID (unused in this mock).
+                    userId: User ID to resolve.
+
+                Returns:
+                    Bare username string for display (no backticks).
+                """
+                if userId == 123:
+                    return "@Cthulho"
+                elif userId == 456:
+                    return "@YukiOnnaTheCat"
+                else:
+                    return "@user789"
+
+            handler._resolveUserName = AsyncMock(side_effect=mockResolve)
+
+            # Call _buildMessagesSectionFromAnalyzer
+            result = await handler._buildMessagesSectionFromAnalyzer(
+                analyzer=analyzer,
+                truncatedEventTypes=[],
+                targetChatId=123,
+            )
+
+            # Check Top format
+            lines = result.split("\n")
+
+            # Find Top section - look for "```Top:" fence line (caption on fence)
+            topSectionStart = None
+            for i, line in enumerate(lines):
+                if line.strip() == "```Top:":
+                    topSectionStart = i
+                    break
+
+            assert topSectionStart is not None, f"Top section not found in result: {result}"
+
+            # Verify strict format: "```Top:" on fence line (caption-in-fence), followed by bullets, then "```"
+            assert (
+                lines[topSectionStart].strip() == "```Top:"
+            ), f"Expected fence line '```Top:' but got '{lines[topSectionStart].strip()}'"
+
+            # Verify merged fence exists (new shape: caption on fence line)
+            assert "```Top:" in result, f"Result should contain merged fence '```Top:': {result}"
+
+            # Check that old separate "Top:" line is NOT present
+            assert "\nTop:\n" not in result, f"Result should not contain separate 'Top:' line: {result}"
+
+            # Check bullet markers and alignment
+            assert "• @Cthulho" in result, f"Expected '• @Cthulho' in result: {result}"
+            assert "• @YukiOnnaTheCat" in result, f"Expected '• @YukiOnnaTheCat' in result: {result}"
+            assert "• @user789" in result, f"Expected '• @user789' in result: {result}"
+
+            # Check that users are NOT backticked inside the block
+            assert "`@Cthulho`" not in result, f"Result should not contain backticked username in block: {result}"
+            assert (
+                "`@YukiOnnaTheCat`" not in result
+            ), f"Result should not contain backticked username in block: {result}"
+            assert "`@user789`" not in result, f"Result should not contain backticked username in block: {result}"
+
+            # Check that fences are balanced
+            fenceCount = result.count("```")
+            assert fenceCount == 2, f"Expected 2 fence markers (opening + closing) but found {fenceCount}: {result}"
+
+            # Check alignment: all usernames should be left-justified to same width
+            # Extract bullet lines
+            bulletLines = [line for line in lines if line.strip().startswith("•")]
+            assert len(bulletLines) == 3, f"Expected 3 bullet lines but found {len(bulletLines)}"
+
+            # Check exact format with alignment (widths based on longest username)
+            # @YukiOnnaTheCat is longest (15 chars), @Cthulho is 8, @user789 is 8
+            # So padding should make them all 15 chars, followed by 2 spaces, then right-justified count
+            # 336 is 3 chars, 257 is 3 chars, 100 is 3 chars
+            expectedLines = [
+                "• @Cthulho         336",  # ljust(15): 8+7 pad, then 2-space gap, then rjust(3)
+                "• @YukiOnnaTheCat  257",  # ljust(15): 15+0 pad, then 2-space gap, then rjust(3)
+                "• @user789         100",  # ljust(15): 8+7 pad, then 2-space gap, then rjust(3)
+            ]
+            for expected in expectedLines:
+                assert expected in result, f"Expected aligned line '{expected}' in result: {result}"
+
+    async def testMessagesSection_botRowExcludedFromTop(self, mockConfigManager, mockDatabaseWrapper) -> None:
+        """Test that bot rows (sent=True) are excluded from Top users but included in total.
+
+        Tests:
+        - Total message count includes bot messages
+        - Top fenced block contains only non-bot entries
+        - Bot's username (@somebot) is not in the Top block
+        - Bot's message count is absent from Top block
+        """
+        # Mock config
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+
+        with patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabaseWrapper, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Create mock rows with both users and a bot
+            rows = [
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"user_id": "123", "sent": "False"},  # Normal user
+                    metricKey="message_count",
+                    metricValue=336.0,
+                ),
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"user_id": "456", "sent": "False"},  # Normal user
+                    metricKey="message_count",
+                    metricValue=257.0,
+                ),
+                StatsAggregateDict(
+                    periodType="daily",
+                    periodStart="2024-01-01T00:00:00+00:00",
+                    labels={"user_id": "999", "sent": "True"},  # Bot user (sent=True)
+                    metricKey="message_count",
+                    metricValue=500.0,  # Bot has highest count
+                ),
+            ]
+
+            analyzer = StatsAnalyzer(rows)
+
+            # Mock _resolveUserName to return @somebot for the bot user
+            def mockResolve(chatId: int, userId: int) -> str:
+                """Mock resolver for testing bot row exclusion.
+
+                Args:
+                    chatId: Chat ID (unused in this mock).
+                    userId: User ID to resolve.
+
+                Returns:
+                    Username string for display.
+                """
+                if userId == 123:
+                    return "@alice"
+                elif userId == 456:
+                    return "@bob"
+                elif userId == 999:
+                    return "@somebot"
+                else:
+                    return f"@user{userId}"
+
+            handler._resolveUserName = AsyncMock(side_effect=mockResolve)
+
+            # Call _buildMessagesSectionFromAnalyzer
+            result = await handler._buildMessagesSectionFromAnalyzer(
+                analyzer=analyzer,
+                truncatedEventTypes=[],
+                targetChatId=123,
+            )
+
+            # Check that total includes bot messages (336 + 257 + 500 = 1093)
+            assert "**Messages:** 1,09k" in result, f"Expected total count to include bot messages: {result}"
+
+            # Check that Top fenced block does NOT contain the bot
+            assert "@somebot" not in result, f"Bot username '@somebot' should not appear in Top block: {result}"
+
+            # Check that only non-bot users are in the Top block
+            assert "@alice" in result, f"Expected '@alice' in Top block: {result}"
+            assert "@bob" in result, f"Expected '@bob' in Top block: {result}"
+
+            # Verify the counts shown are only for non-bot users (336 and 257)
+            # The bot's count (500) should not appear in the Top block
+            assert "500" not in result, f"Bot's count '500' should not appear in Top block: {result}"
 
     async def testDeleteDeniedCommandsTrueBranch(self) -> None:
         """Test DELETE_DENIED_COMMANDS=true branch (I3-4).
@@ -2743,21 +4151,153 @@ class TestStatsHandlerWebTierInterimBehavior:
             callArgs = handler._sendStatsReply.call_args
             replyText = callArgs.kwargs["replyText"]
 
-            # If it's a string, check for all 4 section markers
+            # If it's a string, check for all 4 section markers with bold
             if isinstance(replyText, str):
-                assert "Messages:" in replyText
-                assert "Commands:" in replyText
-                assert "Tools:" in replyText
-                assert "LLM:" in replyText
+                assert "**Messages:**" in replyText
+                assert "**Commands:**" in replyText
+                assert "**Tools:**" in replyText
+                assert "**LLM:**" in replyText
             else:
                 # If it's a list, join and check
                 joined = "\n".join(replyText)  # type: ignore[arg-type]
-                assert "Messages:" in joined
-                assert "Commands:" in joined
-                assert "Tools:" in joined
-                assert "LLM:" in joined
+                assert "**Messages:**" in joined
+                assert "**Commands:**" in joined
+                assert "**Tools:**" in joined
+                assert "**LLM:**" in joined
 
             # Verify all 4 storage queries were made (message, command, llm_tool_call, llm_request, stt_request)
             # Actually it's 5 types: message, command, llm_tool_call, llm_request, stt_request
             # But we should have at least 4 basic sections
             assert mockStorage.query.call_count >= 4
+
+
+class TestStatsHandlerFormattingHelpers:
+    """Tests for formatting helper methods _formatCount and _formatDuration."""
+
+    def test_formatCount_reference_table(self):
+        """Test _formatCount against the full reference table.
+
+        Reference table from spec:
+        999→"999", 1000→"1k", 1484→"1,48k", 1500→"1,5k", 79662→"79,7k",
+        389924→"390k", 9999→"10k", 999999→"1m", 1234567→"1,23m", 2400000000→"2,4g".
+        """
+        mockConfigManager = MagicMock()
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+        mockDatabase = MagicMock()
+
+        with unittest.mock.patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Test each reference case
+            # Values < 1000 (no formatting)
+            assert handler._formatCount(999) == "999"
+            assert handler._formatCount(0) == "0"
+            assert handler._formatCount(1) == "1"
+
+            # Values >= 1000 (k suffix)
+            # 1000 / 1000 = 1.0 → decimals=2 → "1.00" → strip trailing "0" → strip "." → "1" → "1k"
+            assert handler._formatCount(1000) == "1k"
+            # 1484 / 1000 = 1.484 → scaled<10 so decimals=2 → "1.48" → "1,48k"
+            assert handler._formatCount(1484) == "1,48k"
+            # 1500 / 1000 = 1.5 → scaled<10 so decimals=2 → "1.50" → strip trailing "0" → "1.5" → "1,5k"
+            assert handler._formatCount(1500) == "1,5k"
+            # 79662 / 1000 = 79.662 → 10<=scaled<100 so decimals=1 → "79.7" → "79,7k"
+            assert handler._formatCount(79662) == "79,7k"
+            # 389924 / 1000 = 389.924 → scaled>=100 so decimals=0 → "390" → "390k"
+            assert handler._formatCount(389924) == "390k"
+            # ROUND-FIRST: 9999 → round to 3 sig figs → 10000 → 10k (1e4 → tier=k)
+            assert handler._formatCount(9999) == "10k"
+
+            # Values >= 1_000_000 (m suffix)
+            # ROUND-FIRST: 999999 → round to 3 sig figs → 1000000 → 1m (1e6 → tier=m)
+            assert handler._formatCount(999999) == "1m"
+            # 1234567 / 1_000_000 = 1.234567 → scaled<10 so decimals=2 → "1.23" → "1,23m"
+            assert handler._formatCount(1234567) == "1,23m"
+
+            # Values >= 1_000_000_000 (g suffix)
+            # 2400000000 / 1_000_000_000 = 2.4 → scaled<10 so decimals=2 → "2.40" → strip trailing "0" → "2.4" → "2,4g"
+            assert handler._formatCount(2400000000) == "2,4g"
+
+    def test_formatDuration_reference_cases(self):
+        """Test _formatDuration against reference cases from spec.
+
+        Reference cases:
+        0.5→"0.50s", 33.3(audio)→"33.3s", 59.99→"59.99s", 75.43→"1m 15.4s",
+        3660→"1h 01m 0.0s", 3745→"1h 02m 25.0s".
+        """
+        mockConfigManager = MagicMock()
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+        mockDatabase = MagicMock()
+
+        with unittest.mock.patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Sub-minute values (seconds < 60)
+            # 0.5 with default decimals=2 → "0.50s"
+            assert handler._formatDuration(0.5) == "0.50s"
+            # 33.3 with decimals=1 (audio uses subMinuteDecimals=1) → "33.3s"
+            assert handler._formatDuration(33.3, subMinuteDecimals=1) == "33.3s"
+            # 59.99 with default decimals=2 → "59.99s"
+            assert handler._formatDuration(59.99) == "59.99s"
+            # Edge case: exactly 60 seconds uses minute format
+            assert handler._formatDuration(60.0) == "1m 0.0s"
+
+            # Minute-scale values (60 <= seconds < 3600)
+            # 75.43 seconds = 1 minute + 15.43 seconds → "1m 15.4s"
+            # 1m = 60s, remaining = 15.43s, format with .1f → "15.4s"
+            assert handler._formatDuration(75.43) == "1m 15.4s"
+            # 125 seconds = 2 minutes + 5 seconds → "2m 5.0s"
+            assert handler._formatDuration(125.0) == "2m 5.0s"
+
+            # Hour-scale values (seconds >= 3600)
+            # 3660 seconds = 1 hour + 1 minute + 0 seconds
+            # 3660 / 3600 = 1.0166... → 1h
+            # remaining = 60s = 1m 0s
+            assert handler._formatDuration(3660.0) == "1h 01m 0.0s"
+            # 3745 seconds = 1 hour + 2 minutes + 25 seconds
+            # 3745 / 3600 = 1.0402... → 1h
+            # remaining = 145s = 2m 25s (145 / 60 = 2.4166...)
+            assert handler._formatDuration(3745.0) == "1h 02m 25.0s"
+
+    def test_renderFencedTopBlock_kFormattedAlignment(self):
+        """Test _renderFencedTopBlock with k-formatted counts alignment.
+
+        Derivation:
+        - Keys: "alpha", "bb", "c" → max key width = 5 ("alpha")
+        - Counts: 1234, 794, 999
+        - Formatted: 1234→"1,23k", 794→"794", 999→"999"
+        - Max formatted count width = 5 ("1,23k" and "999" and "794")
+        - Format: "• {key.ljust(5)}  {count.rjust(5)}"
+        - Expected lines:
+          "• alpha  1,23k"
+          "• bb       999"
+          "• c        794"
+        - New shape: caption on fence line ("```Top:"), not separate header line
+        """
+        mockConfigManager = MagicMock()
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+        mockDatabase = MagicMock()
+
+        with unittest.mock.patch("internal.services.queue_service.QueueService"):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM
+            )
+
+            items = [("alpha", 1234), ("bb", 999), ("c", 794)]
+            result = handler._renderFencedTopBlock(items)
+
+            # Check exact line-by-line output (new shape: caption on fence line)
+            # Expected: ["```Top:", "• alpha  1,23k", "• bb       999", "• c        794", "```"]
+            assert len(result) == 5  # "```Top:", 3 bullets, "```"
+            assert result[0] == "```Top:"
+            assert result[1] == "• alpha  1,23k"
+            assert result[2] == "• bb       999"
+            assert result[3] == "• c        794"
+            assert result[4] == "```"

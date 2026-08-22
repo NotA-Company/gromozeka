@@ -729,7 +729,7 @@ class TestGroupingCorrectness:
     """Test server-side grouping correctness from raw rows."""
 
     def test_message_section_grouping_by_sent(self, tmp_path) -> None:
-        """Test message section correctly groups by sent label."""
+        """Test message section correctly groups by sent label (binary: users/bot)."""
         generator = StatsPageGenerator(outputDir=tmp_path)
 
         messageRows: list[StatsAggregateDict] = [
@@ -757,7 +757,7 @@ class TestGroupingCorrectness:
             {
                 "periodType": "daily",
                 "periodStart": "2026-08-18T00:00:00+00:00",
-                "labels": {},  # Backfill - no sent label
+                "labels": {},  # Backfill - no sent label, now folds into users
                 "metricKey": "message_count",
                 "metricValue": 5.0,
             },
@@ -781,14 +781,14 @@ class TestGroupingCorrectness:
         # Total messages: 30 + 25 + 20 + 5 = 80
         assert re.search(r"Total Messages</td>\s*<td[^>]*>80<", htmlContent)
 
-        # User messages (sent=False): 30 + 25 = 55
-        assert re.search(r"User Messages</td>\s*<td[^>]*>55<", htmlContent)
+        # User messages (sent=False or absent): 30 + 25 + 5 = 60
+        assert re.search(r"User Messages</td>\s*<td[^>]*>60<", htmlContent)
 
         # Bot messages (sent=True): 20
         assert re.search(r"Bot Messages</td>\s*<td[^>]*>20<", htmlContent)
 
-        # History (no sent label): 5
-        assert re.search(r"History \(before stats enabled\)</td>\s*<td[^>]*>5<", htmlContent)
+        # History cell should NOT exist (now folded into users)
+        assert "History" not in htmlContent
 
     def test_message_section_average_length_calculation(self, tmp_path) -> None:
         """Test message section correctly calculates average length."""
