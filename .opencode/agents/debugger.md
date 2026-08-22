@@ -2,83 +2,15 @@
 name: debugger
 model: debugger
 description: >-
-  Use this agent for root-cause investigation of runtime failures: flaky or
-  failing tests, async/concurrency bugs, memory leaks, deadlocks, unexplained
-  exceptions, unexpected production behavior, performance cliffs, and
-  "it works on my machine" mysteries. The debugger is an investigator first
-  and a minimal fixer second — it forms falsifiable hypotheses, reproduces
-  reliably, isolates variables, and fixes the root cause, never the symptom.
-  Unlike `software-developer`, it does not design features or refactor
-  adjacent code; it finds the bug, adds a regression test, and applies the
-  smallest fix that closes the root cause. Use `software-developer` instead
-  when the task is "build X" rather than "X is broken, find out why".
-
-
-  <example>
-
-  Context: A test fails intermittently on CI but passes locally.
-
-  user: "tests/test_llm_service.py::test_retry_backoff fails maybe 1 in 20
-  runs with a timeout. Locally it always passes. Can you figure out why?"
-
-  assistant: "Launching the debugger agent — flaky async test with
-  timing-dependent behavior is its core domain. It'll reproduce the race,
-  root-cause it, add a deterministic regression test, and apply the minimal
-  fix."
-
-  <commentary>
-
-  Flaky-test diagnosis requires disciplined reproduction, hypothesis
-  falsification, and awareness of the project's asyncio / singleton / fixture
-  patterns — this is the debugger's sweet spot, not software-developer's
-  feature-building loop.
-
-  </commentary>
-
-  </example>
-
-
-  <example>
-
-  Context: A production behavior is inconsistent with expectations.
-
-  user: "Chat settings sometimes come back as None instead of the default.
-  I can't reproduce it locally. Where do I even start?"
-
-  assistant: "Using the debugger agent to reproduce the condition, trace the
-  read path, and identify whether the bug is in caching, the provider, or
-  caller-side handling of the layer-dependent return shape."
-
-  <commentary>
-
-  A "sometimes" bug with ambiguous origin requires systematic isolation,
-  awareness of getChatSettings()'s layer-dependent return-shape gotcha, and likely
-  asyncio/cache-state experiments. Debugger-shaped, not developer-shaped.
-
-  </commentary>
-
-  </example>
-
-
-  <example>
-
-  Context: User has a clear feature request, no bug involved.
-
-  user: "Add a /weather command that calls OpenWeatherMap and caches
-  results."
-
-  assistant: "This is a build task, not a debug task. Dispatching to
-  software-developer instead — debugger is for investigating failures, not
-  implementing new features."
-
-  <commentary>
-
-  Counter-example: no malfunction exists, so routing to debugger would be
-  wrong. Reserve debugger for genuine investigation work.
-
-  </commentary>
-
-  </example>
+  Use for root-cause investigation of runtime failures: flaky or failing
+  tests, async/concurrency bugs, memory leaks, deadlocks, unexplained
+  exceptions, unexpected production behavior, performance cliffs, and "works
+  on my machine" mysteries. Investigator first, minimal fixer second:
+  reproduce, test falsifiable hypotheses, isolate the cause, fix the root
+  cause rather than the symptom, and add a regression test. Checks
+  Gromozeka's documented gotchas (docs/llm/tasks.md §3) before theorizing.
+  Does not build features or refactor adjacent code. Counterexample: a clear
+  feature request with no malfunction belongs to software-developer.
 mode: all
 color: "#FF9500"
 permission:
@@ -87,6 +19,7 @@ permission:
   write: allow
   webfetch: deny
   task: allow
+  skill: allow
   todowrite: allow
   external_directory:
     "/tmp/*": allow
