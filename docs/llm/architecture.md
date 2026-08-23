@@ -154,7 +154,7 @@ timeout = 10
 **SQL Portability Notes:**
 - Migration 013 removed `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns for cross-database compatibility
 - All timestamp values are now explicitly set in application code
-- Provider abstraction layer (`internal/database/providers/`) handles database-specific SQL dialects
+- Provider abstraction layer (`lib/db/providers/`) handles database-specific SQL dialects
 - Supports SQLite3, PostgreSQL, MySQL, and SQLink (SQLite3 over REST) providers
 
 **Repository Structure:**
@@ -816,6 +816,26 @@ The originals are **always retained** in `chat_messages` (condensing adds summar
 
 ---
 
+### ADR-022: SQL providers and DatabaseManager extracted to `lib/db`
+
+**Decision:** The generic SQL layer moved out of `internal/` into a bot-free `lib/db/` package: all seven provider modules (`base.py`, `sqlite3.py`, `sqlink.py`, `mysql.py`, `postgresql.py`, `utils.py`, and `__init__.py` with the `getSqlProvider` factory + `SQLProviderConfig`) now live at `lib/db/providers/` (mirroring the `lib/stt/providers/` layout), and `DatabaseManager` / `DatabaseManagerConfig` / `SQLProviderInitializationHook` live at `lib/db/manager.py`. A new `lib/db/__init__.py` re-exports the public API. `internal/database/` SURVIVES with everything bot-specific — migrations, repositories, the `Database` wrapper, `stats_storage.py`, `bayes_storage.py`, internal `utils.py` (`sqlToTypedDict`), `models.py` — and imports the SQL layer from `lib.db`. Cutover was big-bang: the old locations were deleted in the same commit the copies landed (git-mv, history preserved); there is no shim and no dual-home. Dependency direction is now `internal → lib.db → {lib.proxy, lib.utils, stdlib, 3rd-party}` — no cycles (the `make lint` `import main` gate guards this).
+
+**Why:** the provider layer and `DatabaseManager` contain zero bot knowledge but sat under `internal/`, blocking `lib/` code from using them. The concrete case is `lib/stats`: its `StatsStorage` ABC is bot-free, but the only SQL implementation (`DatabaseStatsStorage`) lives in `internal/database/stats_storage.py` as an ABC-in-lib / impl-in-internal split that existed solely because the provider layer was internal. Extracting to `lib/db` makes a `lib/stats` SQL storage possible (that move itself is a separate follow-up arc). Design doc with the D1–D8 decisions and the full consumer census: [`docs/design/lib-db-extraction-v1.md`](../design/lib-db-extraction-v1.md).
+
+**The MessageId cut:** `providers/utils.py`'s `convertToSQLite` had the layer's single `internal.*` import (`from internal.models import MessageId` + an `isinstance` branch). It was replaced with a module-local `@runtime_checkable` Protocol (`SQLStringifiable`, `def asStr(self) -> str`) and an `isinstance(data, SQLStringifiable)` branch. `MessageId.__str__` already returned `asStr()`, so stored values are identical before and after; the Protocol keeps the explicit intent and the warning suppression without the internal import. Locked by a fail-first regression test (`tests/lib/db/providers/test_utils.py`) using a double whose `asStr()` returns `"42"` while `__str__` returns `"WRONG"`.
+
+**Known temporary deviation (mysql/postgresql):** `lib/db/providers/mysql.py` and `postgresql.py` moved AS-IS with hard module-level `import aiomysql` / `import asyncpg` (+ `# type: ignore[reportMissingImports]`), unregistered in the factory. This deviates from the repo's optional-dependency convention (module-level `try/except ImportError` + `_AVAILABLE` flag). Rationale: the drivers are not in requirements, both files are unimportable and untested today, and their class-level annotations (`Optional[aiomysql.Pool]`) evaluate at import time, making conversion non-trivial. Convert to the `_AVAILABLE` pattern only when the providers are actually wired.
+
+**Status:** Implemented (Phase 1 code arc + Phase 2/3 doc sync). `make test` green; `make check-docs` green at every arc.
+
+**References:**
+
+- [`docs/design/lib-db-extraction-v1.md`](../design/lib-db-extraction-v1.md) — the ratified design (D1–D8), consumer census, phased plan.
+- [`database.md`](database.md) — provider section (post-rewrite).
+- [`libraries.md`](libraries.md) — the `lib/db` library entry.
+
+---
+
 ## 2. Dependency Map
 
 ### 2.1 Component Dependency Graph
@@ -823,7 +843,7 @@ The originals are **always retained** in `chat_messages` (condensing adds summar
 ```
 GromozekBot (main.py)
 ├── ConfigManager (internal/config/manager.py)
-├── DatabaseManager (internal/database/manager.py)
+├── DatabaseManager (lib/db/manager.py)
 │   └── Database (internal/database/database.py)
 │       └── MigrationManager (internal/database/migrations/manager.py)
 ├── LLMManager (lib/ai/manager.py)

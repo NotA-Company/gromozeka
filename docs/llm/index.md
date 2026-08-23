@@ -277,7 +277,7 @@ vanishingly rare in the Gromozeka codebase.
 | [`internal/bot/max/application.py`](../../internal/bot/max/application.py) | Max Messenger bot application |
 | [`internal/bot/models/`](../../internal/bot/models/) | Bot model types (EnsuredMessage, ChatSettings, etc.) |
 | [`internal/config/manager.py`](../../internal/config/manager.py) | `ConfigManager` — TOML config loading |
-| [`internal/database/database.py`](../../internal/database/database.py) | `Database` — all DB operations with repository pattern |
+| [`internal/database/database.py`](../../internal/database/database.py) | `Database` — all DB operations with repository pattern (SQL provider layer lives in `lib/db/` — see ADR-022) |
 | [`internal/database/migrations/`](../../internal/database/migrations/) | `MigrationManager`, `BaseMigration`, version files |
 | [`internal/models/`](../../internal/models/) | Shared types (`MessageId` class, `MessageType` enum) |
 | [`internal/services/cache/service.py`](../../internal/services/cache/service.py) | `CacheService` singleton |
@@ -296,6 +296,7 @@ vanishingly rare in the Gromozeka codebase.
 | [`lib/ai/manager.py`](../../lib/ai/manager.py) | `LLMManager` — model + provider registry |
 | [`lib/ai/models.py`](../../lib/ai/models.py) | `ModelMessage`, `ModelRunResult`, `LLMToolFunction`, etc. |
 | [`lib/ai/providers/`](../../lib/ai/providers/) | Provider implementations (OpenAI-compatible, OpenRouter, Yandex Cloud, `fastembed`) |
+| [`lib/db/`](../../lib/db/) | SQL provider abstraction + `DatabaseManager` — `BaseSQLProvider`, SQLite3/SQLink provider impls (`mysql.py`/`postgresql.py` exist but are unregistered), the `getSqlProvider` factory, and `DatabaseManager` multi-source routing. Bot-free; `internal/database/` (Database wrapper, repositories, migrations) imports the SQL layer from here. See [`architecture.md`](architecture.md) ADR-022. |
 | [`lib/cache/interface.py`](../../lib/cache/interface.py) | `CacheInterface[K,V]` — generic cache ABC |
 | [`lib/cache/dict_cache.py`](../../lib/cache/dict_cache.py) | In-memory dict-based cache impl |
 | [`lib/rate_limiter/interface.py`](../../lib/rate_limiter/interface.py) | `RateLimiterInterface` — ABC |

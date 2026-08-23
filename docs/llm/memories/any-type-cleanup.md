@@ -14,7 +14,7 @@ Full audit and fix of `Any` type annotations in production code. 61 usages found
 | `lib/ai/providers/basic_openai_provider.py` | `id=tool.id`→`id=tool.id or str(uuid.uuid4())` (null guard for `Optional[str]` from SDK) |
 | `lib/ai/providers/fastembed_provider.py` | `embedOne` return: `Any`→`"np.ndarray"` (string forward ref) |
 | `internal/database/database.py` | `__aexit__`: `Any`→`Optional[type[BaseException]]`, `Optional[BaseException]`, `Optional[types.TracebackType]` |
-| `internal/database/providers/base.py` | Same `__aexit__` fix + logging bug fix (`exc_info=`) |
+| `lib/db/providers/base.py` | Same `__aexit__` fix + logging bug fix (`exc_info=`) |
 | `lib/max_bot/client.py` | `exc_tb: Optional[Any]`→`Optional[types.TracebackType]` |
 | `internal/bot/common/handlers/spam.py` | `extra: Any = None`→`extra: bool = False` |
 | `internal/services/llm/models.py` | `ExtraDataDict` fields: `TYPE_CHECKING`+forward refs (`"EnsuredMessage"`, `"Optional[TypingManager]"`) |

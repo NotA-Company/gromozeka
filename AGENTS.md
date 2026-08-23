@@ -172,12 +172,15 @@ Layout (see [`docs/llm/index.md`](docs/llm/index.md) §4 for line-level map):
   `storage/`. All singletons; access via `Service.getInstance()`, never
   `Service()` directly.
 - [`internal/database/`](internal/database/) — `Database` repo wrapper +
-  versioned migrations under `migrations/versions/NNN_*.py`. Before adding a
-  migration, find the next number with
+  repositories + versioned migrations under `migrations/versions/NNN_*.py`
+  (the SQL provider layer itself lives in `lib/db/` — see the `lib/` bullet).
+  Before adding a migration, find the next number with
   `ls -1 internal/database/migrations/versions/ | grep migration_ | sort -V | tail -1`.
 - [`lib/`](lib/) — reusable, no bot deps. `lib/ai/` (provider registry in
-  [`lib/ai/manager.py`](lib/ai/manager.py)), `lib/rate_limiter/`,
-  `lib/max_bot/`, `lib/markdown/`, `lib/bayes_filter/`,
+  [`lib/ai/manager.py`](lib/ai/manager.py)), `lib/db/` (SQL provider
+  abstraction + `DatabaseManager` at
+  [`lib/db/providers/`](lib/db/providers/); imported by `internal/database/`),
+  `lib/rate_limiter/`, `lib/max_bot/`, `lib/markdown/`, `lib/bayes_filter/`,
   `lib/sandbox/` (sandboxed code execution in Docker), etc.
 - [`lib/ext_modules/`](lib/ext_modules/) — vendored/extension subpackages
   (e.g. `grabliarium`) with their own `pyproject.toml`/tests. Treated

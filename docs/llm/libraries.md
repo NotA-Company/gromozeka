@@ -25,6 +25,7 @@
 15. [aiohttp — HTTP Server for the Webhook Receiver](#15-aiohttp--http-server-for-the-webhook-receiver)
 16. [lib/stt — Provider-neutral Speech-to-Text](#16-libstt--provider-neutral-speech-to-text)
 17. [lib/stats/stats_pages/ — Statistics Page Generator](#17-libstatsstats_pages--statistics-page-generator)
+18. [lib/db — SQL Provider Abstraction + DatabaseManager](#18-libdb--sql-provider-abstraction--databasemanager)
 
 ---
 
@@ -849,7 +850,7 @@ async with httpx.AsyncClient(**proxyKwargs, timeout=30) as client:
 
 **Purpose:** provides the `vec0` virtual table module for native cosine-similarity KNN search inside the SQLite process, eliminating the transfer of all embedding BLOBs to Python on every search. Loaded by `SQLite3Provider.connect()` via aiosqlite's `enable_load_extension` / `load_extension` / `enable_load_extension(False)` (wrapped in `try/finally`).
 
-**Used by:** `internal/database/providers/sqlite3.py` (`SQLite3Provider`), `internal/database/repositories/chat_embeddings.py` (writes to `vec_message_embeddings_{N}`; the previous dual-write to the `message_embeddings` BLOB table was retired in `migration_025` — embeddings now live only in vec0 with the model tracked via `chat_messages.model_id`), `internal/database/repositories/chat_search.py` (`_nativeVectorSearch`). See [`database.md`](database.md) §7 "Vector search types" for the provider interface and the vec0 schema, and [`docs/design/vector-search-native.md`](../design/vector-search-native.md) for the design.
+**Used by:** `lib/db/providers/sqlite3.py` (`SQLite3Provider`), `internal/database/repositories/chat_embeddings.py` (writes to `vec_message_embeddings_{N}`; the previous dual-write to the `message_embeddings` BLOB table was retired in `migration_025` — embeddings now live only in vec0 with the model tracked via `chat_messages.model_id`), `internal/database/repositories/chat_search.py` (`_nativeVectorSearch`). See [`database.md`](database.md) §7 "Vector search types" for the provider interface and the vec0 schema, and [`docs/design/vector-search-native.md`](../design/vector-search-native.md) for the design.
 
 **No config key** — auto-detected at connect time. To disable native search: `pip uninstall sqlite-vec`.
 
@@ -963,6 +964,38 @@ class StatsPayload(TypedDict):
 - `tests/lib/stats/test_stats_pages_generator.py` — in-process generator tests with rows-shaped payloads (UUID filenames, base-URL construction, per-eventType grouping from raw rows, `sent`-direction split, top-users, SVG chart rendering for time series, file I/O, deletion).
 - `tests/lib/stats/test_stats_pages_cli.py` — subprocess CLI contract tests (`{"pageId","url"}` stdout, `--base-url` full-URL and bare-filename variants, missing-field and invalid-JSON nonzero exits, SVG present for time series / absent for `total`, delete verb).
 - `tests/lib/stats/test_stats_pages_launcher.py` — `runCliCommand` tests (success capture, stdin delivery, timeout kill, spawn failure → `StatsCliError`).
+
+---
+
+## 18. `lib/db` — SQL Provider Abstraction + `DatabaseManager`
+
+Bot-free SQL layer: the `BaseSQLProvider` abstraction (portable `execute` / `executeFetchOne` / `executeFetchAll` / `batchExecute` / `upsert` + dialect hooks like `applyPagination` / `getTextType` / `getCaseInsensitiveComparison`), concrete SQLite3 and SQLink provider implementations, the `getSqlProvider` factory, and `DatabaseManager` (multi-source provider routing: `dataSource` > `chatId` mapping > default source). Extracted from `internal/database/` in a single big-bang move (git-mv, no shim, no dual-home) — see [`architecture.md`](architecture.md) ADR-022 and [`docs/design/lib-db-extraction-v1.md`](../design/lib-db-extraction-v1.md).
+
+**Import:**
+```python
+from lib.db import BaseSQLProvider, DatabaseManager, DatabaseManagerConfig, getSqlProvider, SQLProviderConfig
+from lib.db.providers.base import ExcludedValue, ParametrizedQuery, VectorColumnDef
+```
+
+(`lib/db/__init__.py` also re-exports `FetchType`, `QueryResult*`, `SQLite3Provider`, `SQLinkProvider`, `SQLProviderInitializationHook`, and the vector-search types — `VectorColumnType`, `VectorDistanceMetric`, `VectorSearchResult`.)
+
+**Key modules:**
+
+| Module | Purpose |
+|---|---|
+| [`lib/db/providers/base.py`](../../lib/db/providers/base.py) | `BaseSQLProvider` ABC, `ParametrizedQuery`, `FetchType`, `QueryResult*`, `ExcludedValue` (portable upsert marker), vector-search TypedDicts/enums (`VectorColumnDef`, `VectorDistanceMetric`, `VectorSearchResult`) |
+| [`lib/db/providers/__init__.py`](../../lib/db/providers/__init__.py) | `getSqlProvider` factory + `SQLProviderConfig`; registers exactly `sqlite3` + `sqlink` |
+| [`lib/db/providers/sqlite3.py`](../../lib/db/providers/sqlite3.py) | `SQLite3Provider` (aiosqlite; optional `sqlite-vec` vector search via the `_SQLITE_VEC_AVAILABLE` guarded-import flag — module name deliberately shadows stdlib `sqlite3` in name only) |
+| [`lib/db/providers/sqlink.py`](../../lib/db/providers/sqlink.py) | `SQLinkProvider` (SQLite-over-REST; proxy config resolved lazily via `lib.proxy` — see §13 "SQLink proxy") |
+| [`lib/db/providers/mysql.py`](../../lib/db/providers/mysql.py) / [`lib/db/providers/postgresql.py`](../../lib/db/providers/postgresql.py) | Dormant providers — moved AS-IS with hard `aiomysql` / `asyncpg` imports, unregistered in the factory (known temporary deviation from the `_AVAILABLE` convention; ADR-022) |
+| [`lib/db/providers/utils.py`](../../lib/db/providers/utils.py) | `convertToSQLite` and friends; defines the module-local `SQLStringifiable` `@runtime_checkable` Protocol (`.asStr()`) that replaced the former `internal.models.MessageId` import |
+| [`lib/db/manager.py`](../../lib/db/manager.py) | `DatabaseManager` (provider routing + lifecycle), `DatabaseManagerConfig`, `SQLProviderInitializationHook` |
+
+**Dependency firewall (load-bearing):** `lib/db` is bot-free — it imports only `lib.proxy`, `lib.utils`, stdlib, and third-party packages; never `internal.*`. Dependency direction is `internal → lib.db → {lib.proxy, lib.utils, stdlib, 3rd-party}`, guarded by the `make lint` `import main` cycle check. `internal/database/` survives with everything bot-specific (`Database` wrapper, repositories, migrations, internal utils, models) and imports the SQL layer from here.
+
+**Used by:** [`internal/database/`](../../internal/database/) — the `Database` wrapper, `MigrationManager` + versioned migrations, and the repositories. See [`database.md`](database.md) §7 for the provider helper-method reference (paths, upserts, vector search) and [`database.md`](database.md) §3 for multi-source routing.
+
+**Tests:** `tests/lib/db/providers/` — provider unit tests (`test_base_provider.py`, `test_sqlite3_provider.py`, `test_sqlite3_vector_search.py`, `test_vector_search.py`) and `test_utils.py` (the `SQLStringifiable` Protocol regression test — ADR-022).
 
 ---
 

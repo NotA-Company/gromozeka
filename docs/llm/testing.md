@@ -53,7 +53,6 @@ tests/
 │   ├── integration/
 │   ├── migrations/
 │   ├── performance/
-│   ├── providers/
 │   └── repositories/
 ├── dependencies/                            # Dependency-usage regression tests (pin pinned-library behavior; exception to mirror layout)
 ├── fixtures/                                # Golden data / test fixtures
@@ -63,6 +62,8 @@ tests/
 │   ├── aurumentation/
 │   ├── bayes_filter/
 │   ├── cache/
+│   ├── db/                                  # SQL provider abstraction tests (mirrors lib/db/)
+│   │   └── providers/                       # BaseSQLProvider / sqlite3 / vector search
 │   ├── divination/                          # Divination tests + golden data
 │   ├── geocode_maps/                        # Geocoding tests + golden data
 │   ├── markdown/

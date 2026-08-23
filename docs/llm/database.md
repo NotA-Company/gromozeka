@@ -231,7 +231,7 @@ db.chatMessages.saveChatMessage(..., dataSource="readonly")  # ERROR!
 
 from typing import Type
 
-from ...providers import BaseSQLProvider, ParametrizedQuery
+from lib.db.providers import BaseSQLProvider, ParametrizedQuery
 from ..base import BaseMigration
 
 
@@ -298,7 +298,7 @@ def getMigration() -> Type[BaseMigration]:
 3. **No `DEFAULT CURRENT_TIMESTAMP`** — application sets timestamps explicitly
 4. **Use `ParametrizedQuery`** for DDL and `batchExecute` for multiple statements
 5. **Use `:named` placeholders** for any parametrised DDL/DML (never `?` or `%s`)
-6. **For backfill upserts**, call `sqlProvider.upsert(table, values, conflictColumns, updateExpressions=...)` with the `ExcludedValue` marker from `internal.database.providers.base` rather than hand-writing `ON CONFLICT … DO UPDATE` — the marker translates to `excluded.col` on SQLite/PostgreSQL and `VALUES(col)` on MySQL
+6. **For backfill upserts**, call `sqlProvider.upsert(table, values, conflictColumns, updateExpressions=...)` with the `ExcludedValue` marker from `lib.db.providers.base` rather than hand-writing `ON CONFLICT … DO UPDATE` — the marker translates to `excluded.col` on SQLite/PostgreSQL and `VALUES(col)` on MySQL
 7. **Provide `getMigration()` function** for auto-discovery
 8. **Always implement both `up()` and `down()`** for rollback support (a no-op `down()` that logs is acceptable when a portable `DROP COLUMN` is unavailable — see `migration_021`)
 
@@ -567,7 +567,7 @@ import logging
 from typing import Optional
 
 from .. import utils as dbUtils
-from ..manager import DatabaseManager
+from lib.db.manager import DatabaseManager
 from ..models import SomeDict
 from .base import BaseRepository
 
@@ -675,7 +675,7 @@ query = sqlProvider.getLikeComparison("name", "searchTerm")
 
 **Example - Divination layout search:**
 ```python
-from internal.database.providers.base import BaseSQLProvider
+from lib.db.providers.base import BaseSQLProvider
 
 async def getLayout(self, systemId: str, layoutName: str) -> Optional[DivinationLayoutDict]:
     """Search for layout with multiple strategies."""
