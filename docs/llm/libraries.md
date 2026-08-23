@@ -811,7 +811,7 @@ from lib.proxy import ProxyConfig, ProxyHelper, ProxyType, ProxyKwargs
 | Class | Purpose |
 |---|---|
 | `ProxyConfig` | Immutable proxy configuration (`__slots__`). Created via `fromServiceConfig()` or `fromDict()`. Methods: `getCombined()` (merge with global), `getProxyURL(maskPassword=False)` (build URL), `toKwargs()` (httpx2 kwargs — a single-key `{proxy: str}` for both HTTP and SOCKS5; no `transport` key, no `verify` argument). Has optional `lifecycle` field of type `ProxyLifecycleConfigDict`. |
-| `ProxyHelper` | Singleton storing the global proxy config. `setGlobalProxyConfig()` called once from `main.py`; `getGlobalProxyConfig()` used internally by `ProxyConfig.getCombined()`. |
+| `ProxyHelper` | Singleton storing the global proxy config. `setGlobalProxyConfig()` called once at startup inside `ProxyService.initialize()` (triggered from `main.py`; standalone scripts use `scripts/_lib/bootstrap.py`); `getGlobalProxyConfig()` used internally by `ProxyConfig.getCombined()`. |
 
 **Helper functions:**
 
@@ -841,8 +841,6 @@ async with httpx.AsyncClient(**proxyKwargs, timeout=30) as client:
 **SQLink proxy — lazy resolution:** `SQLinkProvider.__init__` accepts `proxy` and `use-proxy` inside `parameters` (see `configuration.md`) and stores a `ProxyConfig` object. The proxy URL is not resolved at construction time — resolution happens in `connect()` via `self._proxy.getProxyURL()`. This ensures the global proxy config (set by `main.py`) is available at resolution time.
 
 ---
-
-## See Also
 
 ## 14. `sqlite-vec` — Native Vector Search Extension
 
