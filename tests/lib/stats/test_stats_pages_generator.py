@@ -1025,6 +1025,96 @@ class TestGroupingCorrectness:
         assert "5,000" in htmlContent  # output tokens
         assert "15,000" in htmlContent  # total tokens
 
+    def test_llm_section_token_detail_metrics(self, tmp_path) -> None:
+        """Test LLM section renders cached/reasoning tokens, cost, tool calls."""
+        generator = StatsPageGenerator(outputDir=tmp_path)
+
+        llmRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "cached_input_tokens",
+                "metricValue": 800.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "reasoning_tokens",
+                "metricValue": 300.0,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "cost",
+                "metricValue": 0.001234,
+            },
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "tool_calls_count",
+                "metricValue": 7.0,
+            },
+        ]
+
+        payload: StatsPayload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {"llm_request": llmRows},
+        }
+
+        pageId, url = generator.generate(payload)
+        htmlContent = (tmp_path / url).read_text()
+
+        assert "Cached Input Tokens" in htmlContent
+        assert "800" in htmlContent
+        assert "Reasoning Tokens" in htmlContent
+        assert "300" in htmlContent
+        assert "$0.001234" in htmlContent
+        assert "Tool Calls" in htmlContent
+        assert "n/a" not in htmlContent
+
+    def test_llm_section_token_detail_metrics_na_when_absent(self, tmp_path) -> None:
+        """Test LLM section shows n/a for metrics no provider ever reported."""
+        generator = StatsPageGenerator(outputDir=tmp_path)
+
+        llmRows: list[StatsAggregateDict] = [
+            {
+                "periodType": "daily",
+                "periodStart": "2026-08-18T00:00:00+00:00",
+                "labels": {},
+                "metricKey": "input_tokens",
+                "metricValue": 100.0,
+            },
+        ]
+
+        payload: StatsPayload = {
+            "userId": "user123",
+            "chatId": "chat456",
+            "chatTitle": "Test Chat",
+            "chatType": "group",
+            "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "rows": {"llm_request": llmRows},
+        }
+
+        pageId, url = generator.generate(payload)
+        htmlContent = (tmp_path / url).read_text()
+
+        # Cached / reasoning / cost cells must show n/a (metric key absent)
+        assert "n/a" in htmlContent
+
 
 class TestSvgCharts:
     """Test inline SVG chart rendering."""

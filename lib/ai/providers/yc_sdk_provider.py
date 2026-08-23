@@ -498,6 +498,7 @@ class YcAIModel(AbstractModel):
                 inputTokens=result.usage.input_text_tokens,
                 outputTokens=result.usage.completion_tokens,
                 totalTokens=result.usage.total_tokens,
+                reasoningTokens=result.usage.reasoning_tokens,
             )
 
         except Exception as e:
@@ -607,6 +608,7 @@ class YcAIModel(AbstractModel):
                     inputTokens=result.usage.input_text_tokens,
                     outputTokens=result.usage.completion_tokens,
                     totalTokens=result.usage.total_tokens,
+                    reasoningTokens=result.usage.reasoning_tokens,
                 )
 
             return ModelStructuredResult(
@@ -617,6 +619,7 @@ class YcAIModel(AbstractModel):
                 inputTokens=result.usage.input_text_tokens,
                 outputTokens=result.usage.completion_tokens,
                 totalTokens=result.usage.total_tokens,
+                reasoningTokens=result.usage.reasoning_tokens,
             )
 
         except Exception as e:

@@ -788,6 +788,18 @@ class StatsPageGenerator:
         outputTokens = int(llmMetrics.get("output_tokens", 0))
         totalTokens = inputTokens + outputTokens
         totalElapsed = llmMetrics.get("elapsed_time", 0)
+        toolCallsCount = int(llmMetrics.get("tool_calls_count", 0))
+
+        # Optional provider-reported metrics: show "n/a" when no model in the
+        # period ever reported them (metric key absent from aggregates).
+        hasCachedTokens = "cached_input_tokens" in llmMetrics
+        cachedTokensValue = self._formatNumber(int(llmMetrics.get("cached_input_tokens", 0)))
+        cachedTokensCell = cachedTokensValue if hasCachedTokens else "n/a"
+        hasReasoningTokens = "reasoning_tokens" in llmMetrics
+        reasoningTokensValue = self._formatNumber(int(llmMetrics.get("reasoning_tokens", 0)))
+        reasoningTokensCell = reasoningTokensValue if hasReasoningTokens else "n/a"
+        hasCost = "cost" in llmMetrics
+        costCell = f"${llmMetrics.get('cost', 0):,.6f}" if hasCost else "n/a"
 
         # Average elapsed time (weighted by count)
         avgElapsed = 0.0
@@ -896,6 +908,22 @@ class StatsPageGenerator:
                 <tr>
                     <td>Total Tokens</td>
                     <td class="metric">{self._formatNumber(totalTokens)}</td>
+                </tr>
+                <tr>
+                    <td>Cached Input Tokens (subset of input)</td>
+                    <td class="metric">{cachedTokensCell}</td>
+                </tr>
+                <tr>
+                    <td>Reasoning Tokens (subset of output)</td>
+                    <td class="metric">{reasoningTokensCell}</td>
+                </tr>
+                <tr>
+                    <td>Reported Cost (USD)</td>
+                    <td class="metric">{costCell}</td>
+                </tr>
+                <tr>
+                    <td>Tool Calls</td>
+                    <td class="metric">{self._formatNumber(toolCallsCount)}</td>
                 </tr>
                 <tr>
                     <td>Total Time</td>

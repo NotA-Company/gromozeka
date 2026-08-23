@@ -41,6 +41,9 @@ def testModelStructuredResultAllFields() -> None:
         inputTokens=10,
         outputTokens=5,
         totalTokens=15,
+        cachedInputTokens=8,
+        reasoningTokens=3,
+        cost=0.0005,
     )
 
     assert result.status is ModelResultStatus.FINAL
@@ -50,6 +53,9 @@ def testModelStructuredResultAllFields() -> None:
     assert result.inputTokens == 10
     assert result.outputTokens == 5
     assert result.totalTokens == 15
+    assert result.cachedInputTokens == 8
+    assert result.reasoningTokens == 3
+    assert result.cost == 0.0005
     assert result.result is rawResult
     assert result.isFallback is False
 
@@ -71,6 +77,9 @@ def testModelStructuredResultDefaults() -> None:
     assert result.inputTokens is None
     assert result.outputTokens is None
     assert result.totalTokens is None
+    assert result.cachedInputTokens is None
+    assert result.reasoningTokens is None
+    assert result.cost is None
 
 
 def testModelStructuredResultDataDefaultsToNone() -> None:

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 from lib.ai.abstract import AbstractLLMProvider, AbstractModel
 from lib.ai.models import (
     LLMAbstractTool,
+    LLMToolCall,
     ModelMessage,
     ModelResultStatus,
     ModelRunResult,
@@ -397,6 +398,67 @@ async def testRecordsTokenCounts() -> None:
     assert callArgs.kwargs["stats"]["input_tokens"] == 50
     assert callArgs.kwargs["stats"]["output_tokens"] == 30
     assert callArgs.kwargs["stats"]["total_tokens"] == 80
+
+
+async def testRecordsTokenDetailAndCostStats() -> None:
+    """Verify stats recording includes cached/reasoning tokens, cost, tool calls.
+
+    Returns:
+        None
+    """
+    # Create a mock statsStorage
+    mockStorage = MagicMock()
+    mockStorage.record = AsyncMock()
+
+    # Create a result with token-detail fields, cost, and tool calls
+    resultWithDetails = ModelRunResult(
+        rawResult=None,
+        status=ModelResultStatus.FINAL,
+        resultText="Response",
+        inputTokens=100,
+        outputTokens=50,
+        totalTokens=150,
+        cachedInputTokens=80,
+        reasoningTokens=30,
+        cost=0.00055,
+        toolCalls=[LLMToolCall(id="call-1", name="getWeather", parameters={"city": "Berlin"})],
+    )
+    model = _makeModel(mockResult=resultWithDetails)
+    model.statsStorage = mockStorage
+
+    messages = [ModelMessage(role="user", content="Hello")]
+    await model.generateText(messages, consumerId="chat_details")
+
+    assert mockStorage.record.called
+    stats = mockStorage.record.call_args.kwargs["stats"]
+    assert stats["cached_input_tokens"] == 80
+    assert stats["reasoning_tokens"] == 30
+    assert stats["cost"] == 0.00055
+    assert stats["tool_calls_count"] == 1
+
+
+async def testOmitsUnreportedTokenDetailStats() -> None:
+    """Verify unreported token details / cost are omitted, not recorded as 0.
+
+    Returns:
+        None
+    """
+    mockStorage = MagicMock()
+    mockStorage.record = AsyncMock()
+
+    # Default result: no token fields, no tool calls
+    model = _makeModel()
+    model.statsStorage = mockStorage
+
+    messages = [ModelMessage(role="user", content="Hello")]
+    await model.generateText(messages, consumerId="chat_nodetails")
+
+    assert mockStorage.record.called
+    stats = mockStorage.record.call_args.kwargs["stats"]
+    assert "cached_input_tokens" not in stats
+    assert "reasoning_tokens" not in stats
+    assert "cost" not in stats
+    assert stats["tool_calls_count"] == 0
 
 
 # ============================================================================

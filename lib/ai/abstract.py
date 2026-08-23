@@ -862,17 +862,28 @@ class AbstractModel(ABC):
         """
         try:
             info = self.getInfo()
+            stats: dict[str, float | int] = {
+                f"generation_{generationType}": 1,
+                "request_count": 1,
+                "input_tokens": result.inputTokens or 0,
+                "output_tokens": result.outputTokens or 0,
+                "total_tokens": result.totalTokens or 0,
+                "is_error": 1 if result.status in ERROR_STATUSES else 0,
+                "tool_calls_count": len(result.toolCalls),
+                f"status_{result.status.name}": 1,
+                "elapsed_time": result.elapsedTime or 0,
+            }
+            # Optional provider-reported metrics: recorded only when the
+            # provider actually reported them, so aggregates stay truthful
+            # (absent metric == not reported, not zero).
+            if result.cachedInputTokens is not None:
+                stats["cached_input_tokens"] = result.cachedInputTokens
+            if result.reasoningTokens is not None:
+                stats["reasoning_tokens"] = result.reasoningTokens
+            if result.cost is not None:
+                stats["cost"] = result.cost
             await self.statsStorage.record(
-                stats={
-                    f"generation_{generationType}": 1,
-                    "request_count": 1,
-                    "input_tokens": result.inputTokens or 0,
-                    "output_tokens": result.outputTokens or 0,
-                    "total_tokens": result.totalTokens or 0,
-                    "is_error": 1 if result.status in ERROR_STATUSES else 0,
-                    f"status_{result.status.name}": 1,
-                    "elapsed_time": result.elapsedTime or 0,
-                },
+                stats=stats,
                 consumerId=consumerId,
                 labels={
                     "modelName": info.get("model_id", "unknown"),

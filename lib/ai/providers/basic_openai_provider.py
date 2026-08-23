@@ -112,6 +112,12 @@ class _OpenAICallOutcome:
         inputTokens: From ``response.usage.prompt_tokens`` (or None on error).
         outputTokens: From ``response.usage.completion_tokens`` (or None on error).
         totalTokens: From ``response.usage.total_tokens`` (or None on error).
+        cachedInputTokens: From ``response.usage.prompt_tokens_details.cached_tokens``
+            (None when the provider does not report prompt-cache details).
+        reasoningTokens: From ``response.usage.completion_tokens_details.reasoning_tokens``
+            (None when the provider does not report reasoning-token details).
+        cost: From ``response.usage.cost`` — an extra field only some vendors
+            (e.g. OpenRouter) report; None otherwise.
         error: The captured exception when an early-exit happened.
     """
 
@@ -132,6 +138,12 @@ class _OpenAICallOutcome:
     """Total number of tokens or None on error."""
     error: Optional[Exception]
     """The captured exception when an early-exit happened."""
+    cachedInputTokens: Optional[int] = None
+    """Input tokens served from the provider's prompt cache, or None."""
+    reasoningTokens: Optional[int] = None
+    """Hidden reasoning/thinking tokens, or None when not reported."""
+    cost: Optional[float] = None
+    """Provider-reported request cost in USD, or None when not reported."""
 
 
 class OpenAIModelRunResult(ModelRunResult):
@@ -358,6 +370,29 @@ class BasicOpenAIModel(AbstractModel):
         outputTokens: Optional[int] = response.usage.completion_tokens if response.usage else None
         totalTokens: Optional[int] = response.usage.total_tokens if response.usage else None
 
+        # Token-detail / cost extraction. All reads are defensive: vendor
+        # SDK shapes vary (and unittest Mocks would leak Mock objects through
+        # plain getattr), so every value is validated with isinstance before
+        # being accepted — anything non-numeric degrades to None.
+        usage = response.usage
+        promptTokensDetails = getattr(usage, "prompt_tokens_details", None) if usage is not None else None
+        completionTokensDetails = getattr(usage, "completion_tokens_details", None) if usage is not None else None
+        cachedInputTokens: Optional[int] = None
+        if promptTokensDetails is not None:
+            rawCached = getattr(promptTokensDetails, "cached_tokens", None)
+            if isinstance(rawCached, int):
+                cachedInputTokens = rawCached
+        reasoningTokens: Optional[int] = None
+        if completionTokensDetails is not None:
+            rawReasoning = getattr(completionTokensDetails, "reasoning_tokens", None)
+            if isinstance(rawReasoning, int):
+                reasoningTokens = rawReasoning
+        cost: Optional[float] = None
+        if usage is not None:
+            rawCost = getattr(usage, "cost", None)
+            if isinstance(rawCost, (int, float)):
+                cost = float(rawCost)
+
         finishReason = response.choices[0].finish_reason
         status = ModelResultStatus.UNSPECIFIED
         match finishReason:
@@ -395,12 +430,10 @@ class BasicOpenAIModel(AbstractModel):
             )
             and not resText.strip()
         ):
-            usage = response.usage
-            completionTokensDetails = getattr(usage, "completion_tokens_details", None) if usage is not None else None
-            promptTokensDetails = getattr(usage, "prompt_tokens_details", None) if usage is not None else None
             # pydantic models expose model_dump(); fall back to str() for non-pydantic vendors
             # or if the serializer itself raises (so a vendor subclass can't mask the
-            # successful API outcome we are trying to observe).
+            # successful API outcome we are trying to observe). The detail objects
+            # were already extracted (defensively) during token-detail extraction above.
             if completionTokensDetails is None:
                 completionTokensDetailsDump = "None"
             elif hasattr(completionTokensDetails, "model_dump"):
@@ -446,6 +479,9 @@ class BasicOpenAIModel(AbstractModel):
             outputTokens=outputTokens,
             totalTokens=totalTokens,
             error=None,
+            cachedInputTokens=cachedInputTokens,
+            reasoningTokens=reasoningTokens,
+            cost=cost,
         )
 
     async def _generateText(
@@ -506,6 +542,9 @@ class BasicOpenAIModel(AbstractModel):
                 inputTokens=outcome.inputTokens,
                 outputTokens=outcome.outputTokens,
                 totalTokens=outcome.totalTokens,
+                cachedInputTokens=outcome.cachedInputTokens,
+                reasoningTokens=outcome.reasoningTokens,
+                cost=outcome.cost,
             )
 
         # --- text-specific tail: tool calls ---
@@ -534,6 +573,9 @@ class BasicOpenAIModel(AbstractModel):
             inputTokens=outcome.inputTokens,
             outputTokens=outcome.outputTokens,
             totalTokens=outcome.totalTokens,
+            cachedInputTokens=outcome.cachedInputTokens,
+            reasoningTokens=outcome.reasoningTokens,
+            cost=outcome.cost,
         )
 
     async def _generateStructured(
@@ -617,6 +659,9 @@ class BasicOpenAIModel(AbstractModel):
                 inputTokens=outcome.inputTokens,
                 outputTokens=outcome.outputTokens,
                 totalTokens=outcome.totalTokens,
+                cachedInputTokens=outcome.cachedInputTokens,
+                reasoningTokens=outcome.reasoningTokens,
+                cost=outcome.cost,
             )
 
         # --- structured-specific tail: JSON parse ---
@@ -640,6 +685,9 @@ class BasicOpenAIModel(AbstractModel):
                     inputTokens=outcome.inputTokens,
                     outputTokens=outcome.outputTokens,
                     totalTokens=outcome.totalTokens,
+                    cachedInputTokens=outcome.cachedInputTokens,
+                    reasoningTokens=outcome.reasoningTokens,
+                    cost=outcome.cost,
                 )
 
         return ModelStructuredResult(
@@ -650,6 +698,9 @@ class BasicOpenAIModel(AbstractModel):
             inputTokens=outcome.inputTokens,
             outputTokens=outcome.outputTokens,
             totalTokens=outcome.totalTokens,
+            cachedInputTokens=outcome.cachedInputTokens,
+            reasoningTokens=outcome.reasoningTokens,
+            cost=outcome.cost,
         )
 
     async def _generateImage(self, messages: Sequence[ModelMessage]) -> ModelRunResult:
@@ -728,6 +779,9 @@ class BasicOpenAIModel(AbstractModel):
                 inputTokens=outcome.inputTokens,
                 outputTokens=outcome.outputTokens,
                 totalTokens=outcome.totalTokens,
+                cachedInputTokens=outcome.cachedInputTokens,
+                reasoningTokens=outcome.reasoningTokens,
+                cost=outcome.cost,
             )
 
         # --- image-specific tail: extract images from retMessage ---
@@ -759,6 +813,9 @@ class BasicOpenAIModel(AbstractModel):
                     inputTokens=outcome.inputTokens,
                     outputTokens=outcome.outputTokens,
                     totalTokens=outcome.totalTokens,
+                    cachedInputTokens=outcome.cachedInputTokens,
+                    reasoningTokens=outcome.reasoningTokens,
+                    cost=outcome.cost,
                 )
 
         # No images field in response — fall back to text-only result
@@ -770,6 +827,9 @@ class BasicOpenAIModel(AbstractModel):
             inputTokens=outcome.inputTokens,
             outputTokens=outcome.outputTokens,
             totalTokens=outcome.totalTokens,
+            cachedInputTokens=outcome.cachedInputTokens,
+            reasoningTokens=outcome.reasoningTokens,
+            cost=outcome.cost,
         )
 
     async def _generateImageViaImagesApi(self, messages: Sequence[ModelMessage]) -> ModelRunResult:

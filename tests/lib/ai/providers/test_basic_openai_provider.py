@@ -1848,6 +1848,116 @@ async def testExecuteChatCompletionUnknownFinishReason(
     assert outcome.error is None
 
 
+@pytest.mark.asyncio
+async def testExecuteChatCompletionTokenDetailsAndCost(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test _executeChatCompletion extracts token-detail and cost fields from usage.
+
+    Usage is a real ``CompletionUsage`` carrying ``prompt_tokens_details.cached_tokens``,
+    ``completion_tokens_details.reasoning_tokens``, and an OpenRouter-style extra
+    ``cost`` field. Asserts all three land on the outcome.
+
+    Args:
+        testModel: Test model instance wired to the mock client.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample conversation messages.
+
+    Raises:
+        AssertionError: If token-detail / cost fields are not extracted.
+    """
+    mockResponse = _makeStructuredResponse("Hello", "stop")
+    mockResponse.usage = CompletionUsage.model_validate(
+        {
+            "prompt_tokens": 100,
+            "completion_tokens": 50,
+            "total_tokens": 150,
+            "prompt_tokens_details": {"cached_tokens": 80},
+            "completion_tokens_details": {"reasoning_tokens": 30},
+            "cost": 0.00055,
+        }
+    )
+    mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
+
+    params: Dict[str, Any] = {
+        "model": testModel._getModelId(),
+        "messages": [m.toDict("content") for m in sampleMessages],  # type: ignore
+    }
+    outcome = await testModel._executeChatCompletion(params)
+
+    assert outcome.inputTokens == 100
+    assert outcome.outputTokens == 50
+    assert outcome.cachedInputTokens == 80
+    assert outcome.reasoningTokens == 30
+    assert outcome.cost == pytest.approx(0.00055)
+
+
+@pytest.mark.asyncio
+async def testExecuteChatCompletionTokenDetailsAbsent(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test token-detail / cost fields degrade to None when not reported.
+
+    Uses the standard ``Mock(spec=CompletionUsage)`` usage (no real detail
+    objects). The isinstance validation in the provider must reject the
+    auto-created Mock children and leave all optional fields None.
+
+    Args:
+        testModel: Test model instance wired to the mock client.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample conversation messages.
+
+    Raises:
+        AssertionError: If optional fields are not None.
+    """
+    mockAsyncOpenAI.chat.completions.create.return_value = _makeStructuredResponse("Hello", "stop")
+
+    params: Dict[str, Any] = {
+        "model": testModel._getModelId(),
+        "messages": [m.toDict("content") for m in sampleMessages],  # type: ignore
+    }
+    outcome = await testModel._executeChatCompletion(params)
+
+    assert outcome.cachedInputTokens is None
+    assert outcome.reasoningTokens is None
+    assert outcome.cost is None
+
+
+@pytest.mark.asyncio
+async def testGenerateTextCarriesTokenDetailsAndCost(
+    testModel: BasicOpenAIModel, mockAsyncOpenAI: Mock, sampleMessages: list[ModelMessage]
+) -> None:
+    """Test generateText surfaces token details and cost on ModelRunResult.
+
+    Args:
+        testModel: Test model instance wired to the mock client.
+        mockAsyncOpenAI: Mock AsyncOpenAI client.
+        sampleMessages: Sample conversation messages.
+
+    Raises:
+        AssertionError: If the result does not carry the extracted fields.
+    """
+    mockResponse = _makeStructuredResponse("Hello with details!", "stop")
+    mockResponse.usage = CompletionUsage.model_validate(
+        {
+            "prompt_tokens": 100,
+            "completion_tokens": 50,
+            "total_tokens": 150,
+            "prompt_tokens_details": {"cached_tokens": 80},
+            "completion_tokens_details": {"reasoning_tokens": 30},
+            "cost": 0.00055,
+        }
+    )
+    mockAsyncOpenAI.chat.completions.create.return_value = mockResponse
+
+    result = await testModel.generateText(sampleMessages)
+
+    assert result.status == ModelResultStatus.FINAL
+    assert result.cachedInputTokens == 80
+    assert result.reasoningTokens == 30
+    assert result.cost == pytest.approx(0.00055)
+
+
 # =======
 # OpenAI Images API tests
 # =======
