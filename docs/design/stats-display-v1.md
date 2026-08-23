@@ -981,7 +981,7 @@ it serves both Telegram and Max.
 
 ```
 /stats [help | chatId] [--period=1d|7d|30d|all] [--section=messages|commands|tools|llm]
-       [--user=<id>] [--web]
+       [--user=<id>] [--top=<N>] [--web]
 
 positional (at most one):
   help    usage text (Russian per repo precedent)
@@ -993,6 +993,11 @@ options (both --opt=value and --opt value accepted):
   --period=…    default 7d
   --section=…   default messages
   --user=<id>   user drill-down (replaces the old "user <id>" subcommand form)
+  --top=<N>     top-list length per section *(added 2026-08-23)*;
+                integer 1-50, default 3; applies to the chat reply's
+                Top blocks (users/commands/tools/models) and the
+                web-mode brief — the --web HTML page keeps its own
+                per-section limits
   --web         web-page generation (boolean flag; equivalent to /stats_web)
 ```
 

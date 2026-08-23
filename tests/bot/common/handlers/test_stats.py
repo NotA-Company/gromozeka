@@ -27,7 +27,7 @@ from internal.bot.common.handlers.react_on_user import ReactOnUserMessageHandler
 from internal.bot.common.handlers.resender import ResenderHandler
 from internal.bot.common.handlers.sandbox import SandboxHandler
 from internal.bot.common.handlers.spam import SpamHandler
-from internal.bot.common.handlers.stats import StatsHandler
+from internal.bot.common.handlers.stats import StatsHandler, StatsUsageError
 from internal.bot.common.handlers.summarization import SummarizationHandler
 from internal.bot.common.handlers.topic_manager import TopicManagerHandler
 from internal.bot.common.handlers.user_memories import UserMemoriesHandler
@@ -141,6 +141,98 @@ class TestStatsHandlerGrammar:
 
         assert result is not None
         assert result["web"] is True
+
+
+class TestStatsHandlerTopOptionGrammar:
+    """Tests for --top option parsing grammar and validation."""
+
+    def _buildHandler(self) -> StatsHandler:
+        """Build a StatsHandler with mocked dependencies.
+
+        Returns:
+            StatsHandler instance with stats enabled and pages disabled.
+        """
+        mockConfigManager = MagicMock()
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+        mockDatabase = MagicMock()
+        return StatsHandler(configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM)
+
+    def test_top_defaults_to_3(self):
+        """Test that default top is 3."""
+        handler = self._buildHandler()
+
+        result = handler._parseStatsArgs("", forceWeb=False)
+
+        assert result["top"] == 3
+
+    def test_top_equals_form(self):
+        """Test that --top=5 parses to top=5."""
+        handler = self._buildHandler()
+
+        result = handler._parseStatsArgs("--top=5", forceWeb=False)
+
+        assert result["top"] == 5
+
+    def test_top_space_form(self):
+        """Test that '--top 5' space form parses to top=5."""
+        handler = self._buildHandler()
+
+        result = handler._parseStatsArgs("--top 5", forceWeb=False)
+
+        assert result["top"] == 5
+
+    def test_top_boundary_values_accepted(self):
+        """Test that --top accepts boundary values 1 and 50."""
+        handler = self._buildHandler()
+
+        assert handler._parseStatsArgs("--top=1", forceWeb=False)["top"] == 1
+        assert handler._parseStatsArgs("--top=50", forceWeb=False)["top"] == 50
+
+    def test_top_zero_rejected(self):
+        """Test that --top=0 raises usage error."""
+        handler = self._buildHandler()
+
+        with pytest.raises(StatsUsageError, match="--top"):
+            handler._parseStatsArgs("--top=0", forceWeb=False)
+
+    def test_top_over_max_rejected(self):
+        """Test that --top=51 (over max) raises usage error."""
+        handler = self._buildHandler()
+
+        with pytest.raises(StatsUsageError, match="--top"):
+            handler._parseStatsArgs("--top=51", forceWeb=False)
+
+    def test_top_non_numeric_rejected(self):
+        """Test that --top=abc raises usage error."""
+        handler = self._buildHandler()
+
+        with pytest.raises(StatsUsageError, match="--top"):
+            handler._parseStatsArgs("--top=abc", forceWeb=False)
+
+    def test_top_negative_rejected(self):
+        """Test that --top=-5 raises usage error (negative values are options-looking tokens)."""
+        handler = self._buildHandler()
+
+        with pytest.raises(StatsUsageError):
+            handler._parseStatsArgs("--top=-5", forceWeb=False)
+
+    def test_dangling_top_option(self):
+        """Test that dangling --top without value raises usage error."""
+        handler = self._buildHandler()
+
+        with pytest.raises(StatsUsageError, match="Опция --top требует значения"):
+            handler._parseStatsArgs("--top", forceWeb=False)
+
+    def test_top_composes_with_other_options(self):
+        """Test that --top composes with --period and --section."""
+        handler = self._buildHandler()
+
+        result = handler._parseStatsArgs("--period=30d --section=commands --top=7", forceWeb=False)
+
+        assert result["top"] == 7
+        assert result["period"] == "30d"
+        assert result["section"] == "commands"
 
 
 class TestStatsHandlerRegistration:
@@ -1179,6 +1271,198 @@ class TestStatsHandlerUsageErrors:
         callArgs = handler.sendMessage.call_args
         assert "❌" in callArgs.kwargs["messageText"]
         assert "Неизвестная опция" in callArgs.kwargs["messageText"]
+
+
+class TestStatsHandlerTopRendering:
+    """E2E tests for --top rendering across sections."""
+
+    def _buildHandler(self) -> tuple[StatsHandler, AsyncMock]:
+        """Build a StatsHandler with mocked dependencies and captured sendMessage.
+
+        Returns:
+            Tuple of (handler, sendMessage AsyncMock).
+        """
+        StatsAggregationService._instance = None
+
+        mockConfigManager = MagicMock()
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+        mockDatabase = MagicMock()
+        handler = StatsHandler(configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM)
+
+        chatSettings = {k: ChatSettingsValue("") for k in ChatSettingsKey}
+        chatSettings[ChatSettingsKey.ALLOW_SHOW_STATS] = ChatSettingsValue("true")
+        handler.getChatSettings = AsyncMock(return_value=chatSettings)
+        handler.getUserChats = AsyncMock(return_value=[])
+        handler.sendMessage = AsyncMock()
+        return handler, handler.sendMessage
+
+    @staticmethod
+    def _messageRows(userCount: int, chatId: int = 123) -> list[StatsAggregateDict]:
+        """Build message rows with N users having distinct message counts.
+
+        Args:
+            userCount: Number of users to generate (user i has (userCount - i) * 10 messages).
+            chatId: Consumer chat ID for the rows.
+
+        Returns:
+            List of StatsAggregateDict rows.
+        """
+        return [
+            StatsAggregateDict(
+                periodType="daily",
+                periodStart="2026-08-20T00:00:00+00:00",
+                labels={"consumer": str(chatId), "user_id": str(1000 + i)},
+                metricKey="message_count",
+                metricValue=float((userCount - i) * 10),
+            )
+            for i in range(userCount)
+        ]
+
+    async def test_messages_section_top_expands_top_users_list(self):
+        """Test that --top=5 renders 5 top users while default renders 3."""
+        for args, expectedBullets in [("", 3), ("--top=5", 5)]:
+            handler, sendMessage = self._buildHandler()
+            mockStorage = MagicMock(spec=NullStatsStorage)
+            mockStorage.query = AsyncMock(return_value=self._messageRows(5))
+            handler.statsAggregationService.getQueryStorage = MagicMock(return_value=mockStorage)
+            handler._resolveUserName = AsyncMock(side_effect=lambda chatId, userId: f"@user{userId}")
+
+            message = buildEnsuredMessage(chatId=123, chatType=ChatType.PRIVATE, userId=456)
+            await cast(Any, handler).statsCommand(
+                ensuredMessage=message,
+                command="stats",
+                args=args,
+                updateObj=None,
+                typingManager=None,
+            )
+
+            sendMessage.assert_called_once()
+            replyText = sendMessage.call_args.kwargs["messageText"]
+            bulletCount = sum(1 for line in replyText.split("\n") if line.startswith("• @user"))
+            assert (
+                bulletCount == expectedBullets
+            ), f"args={args!r}: expected {expectedBullets} bullets, got {bulletCount}"
+
+    async def test_messages_section_top_lower_than_data(self):
+        """Test that --top=1 renders only the single top user."""
+        handler, sendMessage = self._buildHandler()
+        mockStorage = MagicMock(spec=NullStatsStorage)
+        mockStorage.query = AsyncMock(return_value=self._messageRows(5))
+        handler.statsAggregationService.getQueryStorage = MagicMock(return_value=mockStorage)
+        handler._resolveUserName = AsyncMock(side_effect=lambda chatId, userId: f"@user{userId}")
+
+        message = buildEnsuredMessage(chatId=123, chatType=ChatType.PRIVATE, userId=456)
+        await cast(Any, handler).statsCommand(
+            ensuredMessage=message,
+            command="stats",
+            args="--top=1",
+            updateObj=None,
+            typingManager=None,
+        )
+
+        sendMessage.assert_called_once()
+        replyText = sendMessage.call_args.kwargs["messageText"]
+        bulletLines = [line for line in replyText.split("\n") if line.startswith("• @user")]
+        assert len(bulletLines) == 1
+        # The single top user is user1000 (50 messages)
+        assert "@user1000" in bulletLines[0]
+
+    async def test_commands_section_top_renders_n_commands(self):
+        """Test that --top=2 renders only 2 top commands in the commands section."""
+        handler, sendMessage = self._buildHandler()
+        commandRows = [
+            StatsAggregateDict(
+                periodType="daily",
+                periodStart="2026-08-20T00:00:00+00:00",
+                labels={"consumer": "123", "commandName": name},
+                metricKey="command_count",
+                metricValue=float(count),
+            )
+            for name, count in [("/stats", 40), ("/help", 30), ("/weather", 20), ("/joke", 10)]
+        ]
+        mockStorage = MagicMock(spec=NullStatsStorage)
+        mockStorage.query = AsyncMock(return_value=commandRows)
+        handler.statsAggregationService.getQueryStorage = MagicMock(return_value=mockStorage)
+
+        message = buildEnsuredMessage(chatId=123, chatType=ChatType.PRIVATE, userId=456)
+        await cast(Any, handler).statsCommand(
+            ensuredMessage=message,
+            command="stats",
+            args="--section=commands --top=2",
+            updateObj=None,
+            typingManager=None,
+        )
+
+        sendMessage.assert_called_once()
+        replyText = sendMessage.call_args.kwargs["messageText"]
+        bulletLines = [line for line in replyText.split("\n") if line.startswith("• /")]
+        assert len(bulletLines) == 2
+        assert "/stats" in bulletLines[0]
+        assert "/help" in bulletLines[1]
+
+    async def test_llm_section_top_renders_n_models(self):
+        """Test that --top=4 renders 4 top models in the llm section."""
+        handler, sendMessage = self._buildHandler()
+        llmRows = [
+            StatsAggregateDict(
+                periodType="daily",
+                periodStart="2026-08-20T00:00:00+00:00",
+                labels={"consumer": "123", "modelName": model},
+                metricKey="request_count",
+                metricValue=float(count),
+            )
+            for model, count in [
+                ("gpt-4", 40),
+                ("gpt-3.5", 30),
+                ("llama-3", 20),
+                ("claude-3", 15),
+                ("mistral", 10),
+            ]
+        ]
+
+        async def mockQuery(**kwargs):
+            return llmRows
+
+        mockStorage = MagicMock(spec=NullStatsStorage)
+        mockStorage.query = AsyncMock(side_effect=mockQuery)
+        handler.statsAggregationService.getQueryStorage = MagicMock(return_value=mockStorage)
+
+        message = buildEnsuredMessage(chatId=123, chatType=ChatType.PRIVATE, userId=456)
+        await cast(Any, handler).statsCommand(
+            ensuredMessage=message,
+            command="stats",
+            args="--section=llm --top=4",
+            updateObj=None,
+            typingManager=None,
+        )
+
+        sendMessage.assert_called_once()
+        replyText = sendMessage.call_args.kwargs["messageText"]
+        bulletCount = sum(1 for line in replyText.split("\n") if line.startswith("• "))
+        assert bulletCount == 4, f"Expected 4 top-model bullets, got {bulletCount}: {replyText}"
+        assert "mistral" not in replyText
+
+    async def test_invalid_top_value_returns_usage_error(self):
+        """Test that --top=999 returns a usage error mentioning --top."""
+        handler, sendMessage = self._buildHandler()
+
+        message = buildEnsuredMessage(chatId=123, chatType=ChatType.PRIVATE, userId=456)
+        await cast(Any, handler).statsCommand(
+            ensuredMessage=message,
+            command="stats",
+            args="--top=999",
+            updateObj=None,
+            typingManager=None,
+        )
+
+        sendMessage.assert_called_once()
+        replyText = sendMessage.call_args.kwargs["messageText"]
+        assert "❌" in replyText
+        assert "--top" in replyText
+        # No stats queries should have been made
+        handler.statsAggregationService.getQueryStorage = MagicMock()
+        handler.statsAggregationService.getQueryStorage.assert_not_called()
 
 
 class TestStatsHandlerRegistrationInvariant:

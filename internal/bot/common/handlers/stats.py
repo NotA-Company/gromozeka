@@ -73,6 +73,7 @@ class ParsedStatsArgs(TypedDict):
         section: Section to display (messages, commands, tools, llm, all).
         user: Optional user ID filter (numeric ID or @username string).
         web: Whether web mode is enabled.
+        top: Number of top items to show per section (1.._MAX_TOP_N).
     """
 
     help: bool
@@ -81,6 +82,7 @@ class ParsedStatsArgs(TypedDict):
     section: str
     user: Optional[str]
     web: bool
+    top: int
 
 
 class StatsHandler(BaseBotHandler):
@@ -98,6 +100,12 @@ class StatsHandler(BaseBotHandler):
 
     # Delay between consecutive chunk sends (seconds)
     _CHUNK_SEND_DELAY_SECONDS: float = 0.5
+
+    # Default number of top items shown per section (--top override)
+    _DEFAULT_TOP_N: int = 3
+
+    # Maximum accepted --top value (output is chunked, but keep replies sane)
+    _MAX_TOP_N: int = 50
 
     # Maps display section names to the event types backing them
     _SECTION_EVENT_TYPES: dict[str, str] = {
@@ -120,12 +128,14 @@ class StatsHandler(BaseBotHandler):
         "                  all (все время; по умолчанию 7d)\n"
         "  --section=...  - раздел: messages (по умолчанию), commands, tools, llm, all\n"
         "  --user=<id>    - показать статистику только для пользователя с ID или @username\n"
+        "  --top=<N>      - количество позиций в топ-списках (1-50; по умолчанию 3)\n"
         "  --web          - сгенерировать веб-страницу (если включено оператором)\n"
         "\n"
         "Примеры:\n"
         "  /stats                    - статистика за 7 дней для текущего чата\n"
         "  /stats --period=30d       - статистика за 30 дней\n"
         "  /stats --section=llm      - статистика использования LLM\n"
+        "  /stats --top=10           - топ-10 в каждом разделе\n"
         "  /stats --user=12345       - статистика пользователя\n"
         "  /stats --user=@john       - статистика пользователя @john\n"
         "  /stats_web                - псевдоним для /stats --web"
@@ -310,7 +320,7 @@ class StatsHandler(BaseBotHandler):
 
     @commandHandlerV2(
         commands=("stats", "stats_web"),
-        shortDescription="[help|chatId] [--period=...] [--section=...] [--user=<id>] [--web] - Statistics",
+        shortDescription="[help|chatId] [--period=...] [--section=...] [--user=<id>] [--top=<N>] [--web] - Statistics",
         helpMessage=_HELP_TEXT,
         visibility={CommandPermission.PRIVATE},
         availableFor={CommandPermission.DEFAULT},
@@ -482,6 +492,7 @@ class StatsHandler(BaseBotHandler):
                     userId=userId,
                     periodArg=periodArg,
                     section=parsedArgs["section"],
+                    top=parsedArgs["top"],
                     periodType=periodType,
                     periodStartFrom=periodStartFrom,
                     periodStartTo=periodStartTo,
@@ -507,6 +518,7 @@ class StatsHandler(BaseBotHandler):
                 chatType=chatType,
                 userId=userId,
                 section=parsedArgs["section"],
+                top=parsedArgs["top"],
                 periodArg=periodArg,
                 periodType=periodType,
                 periodStartFrom=periodStartFrom,
@@ -551,6 +563,7 @@ class StatsHandler(BaseBotHandler):
                 "section": "messages",
                 "user": None,
                 "web": forceWeb,
+                "top": self._DEFAULT_TOP_N,
             }
 
         # Split into tokens
@@ -592,8 +605,8 @@ class StatsHandler(BaseBotHandler):
                         options[optionName] = tokens[i + 1]
                         i += 1
                     else:
-                        # --period, --section, --user require a value
-                        if optionName in ("period", "section", "user"):
+                        # --period, --section, --user, --top require a value
+                        if optionName in ("period", "section", "user", "top"):
                             raise StatsUsageError(f"Опция --{optionName} требует значения")
                         # Flag without value (boolean)
                         options[optionName] = ""
@@ -632,7 +645,7 @@ class StatsHandler(BaseBotHandler):
             chatId = None
 
         # Whitelist known options
-        knownOptions = {"period", "section", "user", "web"}
+        knownOptions = {"period", "section", "user", "web", "top"}
         if not set(options.keys()).issubset(knownOptions):
             unknownOptions = set(options.keys()) - knownOptions
             raise StatsUsageError(f"Неизвестные опции: {', '.join(unknownOptions)}")
@@ -648,6 +661,18 @@ class StatsHandler(BaseBotHandler):
 
         web: bool = "web" in options or forceWeb
 
+        # Top N items per section: integer in 1.._MAX_TOP_N
+        top: int = self._DEFAULT_TOP_N
+        if "top" in options:
+            topValue = options["top"]
+            if not (topValue.isascii() and topValue.isdigit()):
+                raise StatsUsageError(
+                    f"Неверное значение --top: {topValue}. Используйте целое число от 1 до {self._MAX_TOP_N}"
+                )
+            top = int(topValue)
+            if not 1 <= top <= self._MAX_TOP_N:
+                raise StatsUsageError(f"Значение --top должно быть от 1 до {self._MAX_TOP_N}")
+
         return ParsedStatsArgs(
             help=positional == ["help"],
             chatId=chatId,
@@ -655,6 +680,7 @@ class StatsHandler(BaseBotHandler):
             section=section,
             user=user,
             web=web,
+            top=top,
         )
 
     async def _buildStatsReply(
@@ -669,6 +695,7 @@ class StatsHandler(BaseBotHandler):
         periodStartTo: Optional[str],
         filterUserId: Optional[int],
         positionalChatIdUsed: bool = False,
+        top: int = 3,
     ) -> str | list[str]:
         """Build the stats reply message.
 
@@ -683,6 +710,7 @@ class StatsHandler(BaseBotHandler):
             periodStartTo: ISO-8601 UTC end bound (None for 'all').
             filterUserId: Optional user ID filter for drill-down.
             positionalChatIdUsed: Whether a positional chatId was provided (gates chat list).
+            top: Number of top items to show per section.
 
         Returns:
             Formatted markdown reply string (or list of strings for chunked output).
@@ -704,6 +732,7 @@ class StatsHandler(BaseBotHandler):
                 periodStartTo=periodStartTo,
                 consumerFilter=consumerFilter,
                 filterUserId=filterUserId,
+                top=top,
             )
             lines.append(sectionView)
             if renderSection != sectionsToRender[-1]:
@@ -954,6 +983,7 @@ class StatsHandler(BaseBotHandler):
         periodStartTo: Optional[str],
         consumerFilter: set[str],
         filterUserId: Optional[int],
+        top: int = 3,
     ) -> str:
         """Build the view for a specific stats section.
 
@@ -965,6 +995,7 @@ class StatsHandler(BaseBotHandler):
             periodStartTo: ISO-8601 UTC end bound (None for 'all').
             consumerFilter: Consumer IDs to filter by.
             filterUserId: Optional user ID filter for drill-down.
+            top: Number of top items to show per section.
 
         Returns:
             Formatted section view string.
@@ -984,6 +1015,7 @@ class StatsHandler(BaseBotHandler):
                 truncated=truncated,
                 sttTruncated=sttTruncated,
                 userFilterApplied=filterUserId is not None,
+                top=top,
             )
 
         eventType = self._SECTION_EVENT_TYPES.get(section)
@@ -996,10 +1028,10 @@ class StatsHandler(BaseBotHandler):
             eventType, periodType, periodStartFrom, periodStartTo, consumerFilter, filterUserId
         )
         if section == "messages":
-            return await self._renderMessagesSection(analyzer, targetChatId, truncated=truncated)
+            return await self._renderMessagesSection(analyzer, targetChatId, truncated=truncated, top=top)
         if section == "commands":
-            return self._renderCommandsSection(analyzer, truncated=truncated)
-        return self._renderToolsSection(analyzer, truncated=truncated)
+            return self._renderCommandsSection(analyzer, truncated=truncated, top=top)
+        return self._renderToolsSection(analyzer, truncated=truncated, top=top)
 
     async def _querySectionAnalyzer(
         self,
@@ -1043,19 +1075,22 @@ class StatsHandler(BaseBotHandler):
             analyzer = analyzer.filterByLabel("user_id", str(filterUserId))
         return analyzer, possiblyIncomplete
 
-    async def _renderMessagesSection(self, analyzer: StatsAnalyzer, targetChatId: int, truncated: bool = False) -> str:
+    async def _renderMessagesSection(
+        self, analyzer: StatsAnalyzer, targetChatId: int, truncated: bool = False, top: int = 3
+    ) -> str:
         """Render the messages section view from an analyzer.
 
         Args:
             analyzer: StatsAnalyzer with consumer/user-filtered rows.
             targetChatId: Chat to show stats for (for username resolution).
             truncated: Whether the underlying query hit the row limit (honesty line).
+            top: Number of top users to show.
 
         Returns:
             Formatted messages section string.
         """
         # Build lines using the shared helper
-        lines = await self._buildMessagesBreakdownLines(analyzer, targetChatId)
+        lines = await self._buildMessagesBreakdownLines(analyzer, targetChatId, top=top)
 
         # D5 honesty line
         if truncated:
@@ -1063,12 +1098,13 @@ class StatsHandler(BaseBotHandler):
 
         return "\n".join(lines)
 
-    def _renderCommandsSection(self, analyzer: StatsAnalyzer, truncated: bool = False) -> str:
+    def _renderCommandsSection(self, analyzer: StatsAnalyzer, truncated: bool = False, top: int = 3) -> str:
         """Render the commands section view from an analyzer.
 
         Args:
             analyzer: StatsAnalyzer with consumer/user-filtered rows.
             truncated: Whether the underlying query hit the row limit (honesty line).
+            top: Number of top commands to show.
 
         Returns:
             Formatted commands section string.
@@ -1076,7 +1112,7 @@ class StatsHandler(BaseBotHandler):
         totalCommands = analyzer.sumMetric("command_count")
         errorCommands = analyzer.sumMetric("is_error")
 
-        topCommands = analyzer.topN("commandName", "command_count", 3)
+        topCommands = analyzer.topN("commandName", "command_count", top)
 
         lines: list[str] = [f"**Commands:** {self._formatCount(int(totalCommands))}"]
         if errorCommands > 0:
@@ -1091,12 +1127,13 @@ class StatsHandler(BaseBotHandler):
 
         return "\n".join(lines)
 
-    def _renderToolsSection(self, analyzer: StatsAnalyzer, truncated: bool = False) -> str:
+    def _renderToolsSection(self, analyzer: StatsAnalyzer, truncated: bool = False, top: int = 3) -> str:
         """Render the tools section view from an analyzer.
 
         Args:
             analyzer: StatsAnalyzer with consumer/user-filtered rows.
             truncated: Whether the underlying query hit the row limit (honesty line).
+            top: Number of top tools to show.
 
         Returns:
             Formatted tools section string.
@@ -1113,7 +1150,7 @@ class StatsHandler(BaseBotHandler):
         else:
             avgElapsed = analyzer.average("elapsed_time", "tool_call_count")
 
-        topTools = analyzer.topN("toolName", "tool_call_count", 3)
+        topTools = analyzer.topN("toolName", "tool_call_count", top)
 
         # Build header with optional avg time folded in
         header = f"**Tools:** {self._formatCount(int(totalCalls))}"
@@ -1139,6 +1176,7 @@ class StatsHandler(BaseBotHandler):
         truncated: bool = False,
         sttTruncated: bool = False,
         userFilterApplied: bool = False,
+        top: int = 3,
     ) -> str:
         """Render the LLM section view (with optional STT sub-block) from analyzers.
 
@@ -1150,6 +1188,7 @@ class StatsHandler(BaseBotHandler):
             sttTruncated: Whether the stt_request query hit the row limit (honesty line).
             userFilterApplied: Whether a user filter was requested (annotation only —
                 llm_request events don't carry user_id).
+            top: Number of top models to show.
 
         Returns:
             Formatted LLM section string.
@@ -1161,7 +1200,7 @@ class StatsHandler(BaseBotHandler):
 
         avgElapsed = analyzer.average("elapsed_time", "request_count")
 
-        topModels = analyzer.topN("modelName", "request_count", 3)
+        topModels = analyzer.topN("modelName", "request_count", top)
 
         # Build header with avg time folded in
         header = f"**LLM:** {self._formatCount(int(totalRequests))} requests"
@@ -1389,6 +1428,7 @@ class StatsHandler(BaseBotHandler):
         filterUserId: Optional[int],
         positionalChatIdUsed: bool,
         typingManager: Optional[TypingManager],
+        top: int = 3,
     ) -> None:
         """Handle web mode: generate stats page via subprocess and send link.
 
@@ -1405,6 +1445,7 @@ class StatsHandler(BaseBotHandler):
             filterUserId: Optional user ID filter.
             positionalChatIdUsed: Whether positional chatId was used.
             typingManager: Optional typing indicator manager.
+            top: Number of top items to show per section (in the brief).
         """
         # D13: Rate limit check FIRST - U12-6: applyLimit-only
         # Key limiter on ISSUING chat (ensuredMessage.recipient.id), not target chat
@@ -1451,6 +1492,7 @@ class StatsHandler(BaseBotHandler):
                 periodArg=periodArg,
                 filterUserId=filterUserId,
                 positionalChatIdUsed=positionalChatIdUsed,
+                top=top,
             )
         except Exception:
             logger.exception(f"Stats brief build from payload failed for chat {targetChatId}")
@@ -1567,6 +1609,7 @@ class StatsHandler(BaseBotHandler):
         periodArg: str,
         filterUserId: Optional[int],
         positionalChatIdUsed: bool = False,
+        top: int = 3,
     ) -> str | list[str]:
         """Build the stats reply message from an already-built payload.
 
@@ -1582,6 +1625,7 @@ class StatsHandler(BaseBotHandler):
             periodArg: Original period argument string (for header label).
             filterUserId: Optional user ID filter (for display).
             positionalChatIdUsed: Whether a positional chatId was provided (gates chat list).
+            top: Number of top items to show per section.
 
         Returns:
             Formatted markdown reply string (or list of strings for chunked output).
@@ -1600,6 +1644,7 @@ class StatsHandler(BaseBotHandler):
                 section=renderSection,
                 consumerFilter=consumerFilter,
                 targetChatId=targetChatId,
+                top=top,
             )
             lines.append(sectionView)
             if renderSection != sectionsToRender[-1]:
@@ -1638,6 +1683,7 @@ class StatsHandler(BaseBotHandler):
         section: str,
         consumerFilter: set[str],
         targetChatId: int,
+        top: int = 3,
     ) -> str:
         """Build the view for a specific stats section from payload data.
 
@@ -1651,6 +1697,7 @@ class StatsHandler(BaseBotHandler):
             section: Section to display.
             consumerFilter: Consumer IDs to filter by.
             targetChatId: Chat to show stats for (for username resolution).
+            top: Number of top items to show per section.
 
         Returns:
             Formatted section view string.
@@ -1661,25 +1708,29 @@ class StatsHandler(BaseBotHandler):
 
         # Section renderers (same logic as the query path in _buildSectionView)
         if section == "messages":
-            return await self._renderMessagesSection(analyzer, targetChatId)
+            return await self._renderMessagesSection(analyzer, targetChatId, top=top)
         if section == "commands":
-            return self._renderCommandsSection(analyzer)
+            return self._renderCommandsSection(analyzer, top=top)
         if section == "tools":
-            return self._renderToolsSection(analyzer)
+            return self._renderToolsSection(analyzer, top=top)
         if section == "llm":
             sttRows = payload["rows"].get("stt_request", [])
             sttAnalyzer = StatsAnalyzer(sttRows) if sttRows else None
             return self._renderLlmSection(
-                analyzer, sttAnalyzer=sttAnalyzer, userFilterApplied=payload.get("userFilterApplied", False)
+                analyzer,
+                sttAnalyzer=sttAnalyzer,
+                userFilterApplied=payload.get("userFilterApplied", False),
+                top=top,
             )
         return f"❌ Неизвестный раздел: {section}"
 
-    async def _buildMessagesBreakdownLines(self, analyzer: StatsAnalyzer, targetChatId: int) -> list[str]:
+    async def _buildMessagesBreakdownLines(self, analyzer: StatsAnalyzer, targetChatId: int, top: int = 3) -> list[str]:
         """Build messages breakdown and top users lines.
 
         Args:
             analyzer: StatsAnalyzer with filtered data.
             targetChatId: Chat to show stats for (for username resolution).
+            top: Number of top users to show.
 
         Returns:
             List of formatted message breakdown lines.
@@ -1689,7 +1740,7 @@ class StatsHandler(BaseBotHandler):
         # Top users (by message count) - rows with sent=False or absent
         userRows = [row for row in analyzer.rows if row["labels"].get("sent", "False") == "False"]
         userAnalyzer = StatsAnalyzer(userRows)
-        topUsers = userAnalyzer.topN("user_id", "message_count", 3)
+        topUsers = userAnalyzer.topN("user_id", "message_count", top)
 
         # Build lines
         lines: list[str] = [f"**Messages:** {self._formatCount(int(totalMessageCount))}"]
