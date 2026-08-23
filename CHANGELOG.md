@@ -7,6 +7,7 @@ process governing this file, see [docs/llm/changelog.md](docs/llm/changelog.md).
 ## [Unreleased]
 
 ### Changed
+- `STTService.transcribeMedia` now requires a real chat id: `chatId` is a mandatory `int` (was `Optional[int]`). It is used both as the per-chat rate-limit key and as the stats `consumerId` — every transcription is attributed to its chat; the old `None` branch that skipped the per-chat limiter and dropped attribution no longer exists (the only production caller already passed the real chat id, so behavior is unchanged in practice).
 - `LLMService` generation methods (`generateText` / `generateStructured` / `generateImage` / `generateEmbedding` / `generateTextViaLLM`) now require a real chat id: `chatId` is a mandatory `int` and a new `doRateLimit: bool = True` keyword-only flag independently controls rate limiting. Passing `None` to skip the limiter (the old behaviour) is no longer possible.
 - `/stats --web`/`/stats_web` rate limiting is now a bounded wait: when the issuing chat has exhausted its page budget (3 per 600 s) and no slot frees within 60 s, the command replies "⏳ Лимит генерации веб-страниц исчерпан, попробуйте позже." instead of sleeping up to the full window, and the generation CLI is not invoked.
 

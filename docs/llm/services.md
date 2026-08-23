@@ -485,7 +485,7 @@ await STTService.getInstance().aclose()
 
 ### `transcribeMedia` — the stateless pipeline
 
-**Signature:** `async def transcribeMedia(self, data: bytes, *, chatId: Optional[int]) -> STTOutcome`.
+**Signature:** `async def transcribeMedia(self, data: bytes, *, chatId: int) -> STTOutcome` (since 2026-08-23 `chatId` is a mandatory `int` — the old `Optional[int]` branch that skipped the per-chat limiter and dropped stats attribution on `None` was removed; every transcription is attributed to its chat).
 
 This is a **thin, stateless** entry (ADR-020 decision 1). It performs no DB I/O. Admission is **unbounded** — there is no `asyncio.timeout` around the semaphore; the **handler bounds the originating turn** (via its pipeline timeout).
 
@@ -495,7 +495,7 @@ This is a **thin, stateless** entry (ADR-020 decision 1). It performs no DB I/O.
 
 1. **`STT_DISABLED`** — early return when `not self._enabled` (i.e. `[stt] enabled = false`).
 2. **`SOURCE_TOO_LARGE`** — early return when `len(data) > self._maxSourceBytes` (source bytes are caller-supplied — bounding is post-download; `max-source-bytes` default is 1 GiB).
-3. **Rate limiters** — per-chat (`chat-ratelimiter-queue`, keyed by `str(chatId)`) then global (`global-ratelimiter-queue`), applied when configured and `chatId is not None`. (Duration bounding is the handler's job — see ADR-020 decision 3.)
+3. **Rate limiters** — per-chat (`chat-ratelimiter-queue`, keyed by `str(chatId)`) then global (`global-ratelimiter-queue`), applied when configured. (Duration bounding is the handler's job — see ADR-020 decision 3.)
 4. **`async with self._semaphore`** — concurrency limiter (`max-concurrency` size). **No `asyncio.timeout`** (admission is unbounded; the handler bounds the turn).
 5. **`await self._provider.stt(data)`** — the `lib/stt` provider's extract + transcribe never-raise entry (ADR-020 decision 2). Yandex requests speaker labeling for final mono extracted audio; an unexpected raise is caught defense-in-depth → `FAILED` + `PROVIDER_ERROR`.
 6. **`_mapOutcome`** — `FINAL`/`NO_SPEECH` → `success=True` + `formatTranscript(result)` (the thin formatter uses generic tags plus the result role: `[Speaker#<tag>]` for `SPEAKER`, `[Ch#<tag>]` only for multi-tag `CHANNEL`; equal timestamps render once; `NO_SPEECH` yields `success=True` with `description=""`); `ERROR` → `success=False` + the provider's `errorCode`.

@@ -536,9 +536,11 @@ the fallback loop threads `consumerId` through each model's `generateText`,
   [:1460](../../internal/services/llm/service.py)); handler callers pass the real
   chat id (e.g. [summarization.py:278-284](../../internal/bot/common/handlers/summarization.py)).
 - `stt_request`: `STTService.transcribeMedia` passes
-  `consumerId=str(chatId) if chatId is not None else None`
+  `consumerId=str(chatId)`
   ([stt/service.py:311-314](../../internal/services/stt/service.py)). **Verified —
-  the brief's "MUST REVERIFY" concern is resolved affirmatively.**
+  the brief's "MUST REVERIFY" concern is resolved affirmatively.** *(Since 2026-08-23
+  `chatId` is a mandatory `int` on `transcribeMedia` — the former `None` branch that
+  dropped attribution is gone.)*
 - **Exception 1 — embeddings never carry consumerId**: `LLMService.generateEmbedding`
   calls `embeddingModel.generateEmbeddings(text)` **without** the `consumerId`
   argument ([llm/service.py:1499](../../internal/services/llm/service.py)), even

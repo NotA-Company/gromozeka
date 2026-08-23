@@ -490,7 +490,9 @@ consumerId=None)` (concrete on the base) forwards to
 the abstract override `_transcribe(audio)` does NOT receive `consumerId`).
 `STTService.transcribeMedia` passes
 `str(chatId) if chatId is not None else None`. Default `None` → global rollup only
-(`GLOBAL_CONSUMER_ID`). This is a minor, backward-compatible contract evolution of
+(`GLOBAL_CONSUMER_ID`). *(Amended 2026-08-23: `transcribeMedia`'s `chatId` is now a
+mandatory `int` — the `None` branch no longer exists, and the stats `consumerId` is
+always `str(chatId)`.)* This is a minor, backward-compatible contract evolution of
 the `lib/stt` abstract surface; [`lib-stt-v1.md`](./lib-stt-v1.md) §8 ("takes
 `ExtractedAudio` only") must be updated when implemented to note the new keyword-only
 `consumerId` (a stats dimension, not a chat-settings argument).

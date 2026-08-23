@@ -263,7 +263,7 @@ class STTService:
             except Exception:  # noqa: BLE001 — best-effort shutdown
                 logger.exception("Error closing STT provider during shutdown")
 
-    async def transcribeMedia(self, data: bytes, *, chatId: Optional[int]) -> STTOutcome:
+    async def transcribeMedia(self, data: bytes, *, chatId: int) -> STTOutcome:
         """Transcribe raw audio bytes through the provider.
 
         Thin never-raise pipeline: ``STT_DISABLED`` early return when
@@ -275,8 +275,9 @@ class STTService:
 
         Args:
             data: Raw audio bytes to transcribe.
-            chatId: Chat ID for per-chat rate limiting, or ``None`` to skip
-                the per-chat limiter.
+            chatId: Chat ID the media came from.  Used BOTH as the per-chat
+                rate-limit key AND as the stats ``consumerId`` — every
+                transcription is attributed to its chat.
 
         Returns:
             STTOutcome: ``status=DONE`` with the formatted transcript on
@@ -295,7 +296,7 @@ class STTService:
             # ------------------------------------------------------------------
             # Step 5: Admission (semaphore + limiters + timeout)
             # ------------------------------------------------------------------
-            if self._chatLimiterQueue is not None and chatId is not None:
+            if self._chatLimiterQueue is not None:
                 await RateLimiterManager.getInstance().applyLimit(self._chatLimiterQueue, key=str(chatId))
             if self._globalLimiterQueue is not None:
                 await RateLimiterManager.getInstance().applyLimit(self._globalLimiterQueue)
@@ -310,7 +311,7 @@ class STTService:
                     assert self._provider is not None, "transcribeMedia: _provider is None"
                     result: TranscriptionResult = await self._provider.stt(
                         data,
-                        consumerId=str(chatId) if chatId is not None else None,
+                        consumerId=str(chatId),
                     )
                 except Exception:  # noqa: BLE001 — provider never-raise defense-in-depth
                     logger.exception("transcribeMedia: unexpected provider exception")

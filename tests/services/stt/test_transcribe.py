@@ -487,15 +487,15 @@ class TestRateLimitersAppliedDuringAdmission:
 
 class TestConsumerIdPlumbedToProvider:
     """Regression: transcribeMedia threads ``chatId`` as ``consumerId``
-    (``str(chatId)`` or ``None``) to ``provider.stt()``.
+    (``str(chatId)``) to ``provider.stt()``.
 
     Without this, the per-consumer STT stats rollup in ``_recordStats``
     receives ``consumerId=None`` for every call — the feature ships dead.
     """
 
-    @pytest.mark.parametrize("chatId,expectedConsumerId", [(42, "42"), (0, "0"), (None, None)])
-    async def test_consumerIdPassedThrough(self, chatId: Optional[int], expectedConsumerId: Optional[str]) -> None:
-        """transcribeMedia forwards ``str(chatId)`` (or None) as ``consumerId`` to the provider.
+    @pytest.mark.parametrize("chatId,expectedConsumerId", [(42, "42"), (0, "0"), (-100, "-100")])
+    async def test_consumerIdPassedThrough(self, chatId: int, expectedConsumerId: str) -> None:
+        """transcribeMedia forwards ``str(chatId)`` as ``consumerId`` to the provider.
 
         Args:
             chatId: Chat ID passed to transcribeMedia.

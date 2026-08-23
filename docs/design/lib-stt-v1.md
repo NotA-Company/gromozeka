@@ -833,8 +833,9 @@ and returns a `TranscriptionResult` for every outcome).
 
 **v1.1 `consumerId` keyword-only parameter.** As of v1.1 both `transcribe(self, audio, *,
 consumerId: Optional[str] = None)` and the base `stt(self, data, *, consumerId: Optional[str] = None)`
-accept a keyword-only `consumerId`. `STTService.transcribeMedia` threads `str(chatId)` through (None
-when `chatId` is None); the Yandex provider uses it for per-consumer best-effort stats rollup
+accept a keyword-only `consumerId`. `STTService.transcribeMedia` threads `str(chatId)`
+through (always, since 2026-08-23 — its `chatId` is a mandatory `int`); the Yandex
+provider uses it for per-consumer best-effort stats rollup
 (gate-4, mirroring `lib/ai`'s `_recordAttemptStats`). The parameter is **backward-compatible** —
 default `None` — so existing callers that ignore it keep working. It does NOT participate in routing,
 caps, or the never-raise contract; it is a stats label only.
