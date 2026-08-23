@@ -764,7 +764,7 @@ class LLMService:
         self,
         messages: Sequence[ModelMessage],
         *,
-        chatId: Optional[int],
+        chatId: int,
         chatSettings: ChatSettingsDict,
         modelKey: Optional[Union[AbstractModel, ChatSettingsKey]],
         fallbackModelKey: Optional[Union[AbstractModel, ChatSettingsKey]],
@@ -779,6 +779,7 @@ class LLMService:
         condensingSystemPromptKey: Optional[Union[str, ChatSettingsKey]] = None,
         condensingModelKey: Optional[Union[AbstractModel, ChatSettingsKey]] = None,
         maxRounds: Optional[int] = DEFAULT_MAX_ROUNDS,
+        doRateLimit: bool = True,
     ) -> ModelRunResult:
         """Generate text using an LLM with automatic tool execution support.
 
@@ -794,7 +795,9 @@ class LLMService:
 
         Args:
             messages: List of conversation messages to send to the LLM
-            chatId: The Telegram/Max chat identifier used for rate-limiting
+            chatId: The Telegram/Max chat identifier. Always used for
+                ``llm_request`` stats attribution (``consumerId``); also used
+                for rate-limiting unless ``doRateLimit=False``
             chatSettings: Chat-level settings dict used to resolve models and the rate limiter name
             modelKey: Primary model selector - an AbstractModel instance, a ChatSettingsKey,
                 or None to fall back to ChatSettingsKey.CHAT_MODEL
@@ -831,6 +834,11 @@ class LLMService:
                 UNKNOWN) propagate untouched so callers can detect the failure.
                 Pass ``None`` to disable the limit (unlimited rounds); ``0``
                 drops tools on the very first call.
+            doRateLimit: When False, skip the per-chat rate limit for every
+                model call in this loop (including the condensing path, which
+                never rate-limits anyway). Stats attribution via ``chatId`` is
+                NOT affected — use this for background/system-initiated work
+                that must not consume the per-chat hot-path budget.
 
         Returns:
             ModelRunResult containing the final LLM response, with toolsUsed flag set
@@ -906,6 +914,7 @@ class LLMService:
                 condensingModel=condensingModel,
                 condensingPrompt=condensingPrompt,
                 condensingSystemPrompt=condensingSystemPrompt,
+                consumerId=str(chatId),
             )
 
             # Inject the steering directive AFTER condense (which returns a
@@ -953,6 +962,7 @@ class LLMService:
                 fallbackKey=fallbackModel,
                 tools=tools,
                 doDebugLogging=False,
+                doRateLimit=doRateLimit,
             )
             roundN += 1
             logger.debug(f"LLM returned: {ret} for callId #{callId}")
@@ -1105,6 +1115,7 @@ class LLMService:
         condensingSystemPrompt: Optional[str] = None,
         maxTokens: Optional[int] = None,
         force: bool = False,
+        consumerId: Optional[str] = None,
     ) -> Tuple[Sequence[ModelMessage], Dict[int, CondensingDict]]:
         """Condense a sequence of messages to fit within a token limit.
 
@@ -1126,6 +1137,11 @@ class LLMService:
                 When provided, replaces the chat personality system prompt during condensing.
             maxTokens: Maximum number of tokens allowed in the condensed result
             force: Whether to force condensing even if the result would fit within the token limit
+            consumerId: Optional consumer identifier threaded into the
+                condensing model's stats recording (``llm_request`` events).
+                The condensing path never rate-limits, so this is a stats-only
+                attribution parameter — pass ``None`` only when the caller has
+                no chat to attribute the work to
 
         Returns:
             A ``(messages, coverage)`` tuple. The first element is the
@@ -1251,7 +1267,7 @@ class LLMService:
             mlRet: Optional[ModelRunResult] = None
             try:
                 logger.debug(f"LLM Request messages: {reqMessages}")
-                mlRet = await condensingModel.generateText(reqMessages)
+                mlRet = await condensingModel.generateText(reqMessages, consumerId=consumerId)
                 logger.debug(f"LLM Response: {mlRet}")
             except Exception as e:
                 logger.error(
@@ -1279,12 +1295,13 @@ class LLMService:
         self,
         prompt: Sequence[ModelMessage],
         *,
-        chatId: Optional[int],
+        chatId: int,
         chatSettings: ChatSettingsDict,
         modelKey: Union[ChatSettingsKey, AbstractModel, None],
         fallbackKey: Union[ChatSettingsKey, AbstractModel, None],
         tools: Optional[Sequence[LLMAbstractTool]] = None,
         doDebugLogging: bool = True,
+        doRateLimit: bool = True,
     ) -> ModelRunResult:
         """Generate text via the configured chat model with fallback support.
 
@@ -1294,8 +1311,9 @@ class LLMService:
 
         Args:
             prompt: Sequence of ModelMessage objects representing the conversation history
-            chatId: The Telegram/Max chat identifier used for rate-limiting. Pass None
-                to skip rate-limiting (e.g. internal/background calls)
+            chatId: The Telegram/Max chat identifier. Always used for
+                ``llm_request`` stats attribution (``consumerId``); also used
+                for rate-limiting unless ``doRateLimit=False``
             chatSettings: Chat-level settings dict used to resolve models and the rate
                 limiter name
             modelKey: Primary model selector - an AbstractModel instance, a
@@ -1306,6 +1324,9 @@ class LLMService:
             tools: Optional sequence of tools that the LLM can call during generation
             doDebugLogging: When True, emit DEBUG log entries before and after the
                 model call. Set to False for tight loops to reduce log noise
+            doRateLimit: When False, skip the per-chat rate limit (background /
+                system-initiated calls that must not consume the hot-path
+                budget). Stats attribution via ``chatId`` is NOT affected
 
         Returns:
             ModelRunResult containing the generated text response, status, and any tool
@@ -1316,7 +1337,7 @@ class LLMService:
             fallbackKey, chatSettings=chatSettings, defaultKey=ChatSettingsKey.FALLBACK_MODEL
         )
 
-        if chatId is not None:
+        if doRateLimit:
             await self.rateLimit(chatId, chatSettings)
         if doDebugLogging:
             logger.debug(
@@ -1332,7 +1353,7 @@ class LLMService:
             prompt,
             tools=tools,
             fallbackModels=[fallbackModel],
-            consumerId=str(chatId) if chatId is not None else None,
+            consumerId=str(chatId),
         )
 
         if doDebugLogging:
@@ -1344,13 +1365,14 @@ class LLMService:
         prompt: Sequence[ModelMessage],
         schema: Dict[str, Any],
         *,
-        chatId: Optional[int],
+        chatId: int,
         chatSettings: ChatSettingsDict,
         modelKey: Union[ChatSettingsKey, AbstractModel, None],
         fallbackKey: Union[ChatSettingsKey, AbstractModel, None],
         schemaName: str = "response",
         strict: bool = True,
         doDebugLogging: bool = True,
+        doRateLimit: bool = True,
     ) -> ModelStructuredResult:
         """Generate structured (JSON) output via the configured chat model.
 
@@ -1368,8 +1390,9 @@ class LLMService:
         Args:
             prompt: Sequence of ModelMessage objects representing the conversation history
             schema: A JSON Schema dict describing the expected response shape
-            chatId: The Telegram/Max chat identifier used for rate-limiting. Pass None
-                to skip rate-limiting (e.g. internal/background calls)
+            chatId: The Telegram/Max chat identifier. Always used for
+                ``llm_request`` stats attribution (``consumerId``); also used
+                for rate-limiting unless ``doRateLimit=False``
             chatSettings: Chat-level settings dict used to resolve models and the rate
                 limiter name
             modelKey: Primary model selector - an AbstractModel instance, a
@@ -1383,6 +1406,9 @@ class LLMService:
                 strict: true). Some providers silently ignore this flag
             doDebugLogging: When True, emit DEBUG log entries before and after the
                 model call. Set to False for tight loops to reduce log noise
+            doRateLimit: When False, skip the per-chat rate limit (background /
+                system-initiated calls). Stats attribution via ``chatId`` is
+                NOT affected
 
         Returns:
             ModelStructuredResult with data populated on success, or status=ERROR
@@ -1412,7 +1438,7 @@ class LLMService:
             )
             llmModel, fallbackModel = fallbackModel, llmModel
 
-        if chatId is not None:
+        if doRateLimit:
             await self.rateLimit(chatId, chatSettings)
 
         if doDebugLogging:
@@ -1427,7 +1453,7 @@ class LLMService:
             schemaName=schemaName,
             strict=strict,
             fallbackModels=[fallbackModel],
-            consumerId=str(chatId) if chatId is not None else None,
+            consumerId=str(chatId),
         )
 
         if doDebugLogging:
@@ -1438,8 +1464,9 @@ class LLMService:
         self,
         prompt: str,
         *,
-        chatId: Optional[int],
+        chatId: int,
         chatSettings: ChatSettingsDict,
+        doRateLimit: bool = True,
     ) -> ModelRunResult:
         """Generate image with given prompt and chat settings.
 
@@ -1449,9 +1476,14 @@ class LLMService:
 
         Args:
             prompt: The text prompt describing the image to generate
-            chatId: The Telegram/Max chat identifier used for rate-limiting
+            chatId: The Telegram/Max chat identifier. Always used for
+                ``llm_request`` stats attribution (``consumerId``); also used
+                for rate-limiting unless ``doRateLimit=False``
             chatSettings: Chat-level settings dict containing the image generation model
                 configuration
+            doRateLimit: When False, skip the per-chat rate limit (background /
+                system-initiated calls). Stats attribution via ``chatId`` is
+                NOT affected
 
         Returns:
             ModelRunResult containing the generated image response and metadata
@@ -1467,37 +1499,45 @@ class LLMService:
             defaultKey=ChatSettingsKey.IMAGE_GENERATION_FALLBACK_MODEL,
         )
 
-        if chatId is not None:
+        if doRateLimit:
             await self.rateLimit(chatId, chatSettings)
         return await imageGenerationModel.generateImage(
             [ModelMessage(content=prompt)],
             fallbackModels=[fallbackImageLLM],
-            consumerId=str(chatId) if chatId is not None else None,
+            consumerId=str(chatId),
         )
 
     async def generateEmbedding(
         self,
         text: str,
         *,
-        chatId: Optional[int],
+        chatId: int,
         chatSettings: ChatSettingsDict,
+        doRateLimit: bool = True,
     ) -> Optional[Tuple[str, List[float]]]:
         """Generate an embedding vector for ``text`` using the chat's embedding model.
 
         Resolves the embedding model from ``EMBEDDING_MODEL`` in chat settings,
-        applies the chat's rate limit when ``chatId`` is not ``None``, and asks
-        the model to embed the text. The returned model name is read back from
-        the resolved chat setting (not the model instance) so callers can
-        persist it alongside the vector for later stale-detection. Any failure
-        (bad model, rate-limit, provider error) is caught, logged, and surfaced
-        as ``None`` so the cron/tool path can skip the row without raising.
+        applies the chat's rate limit when ``doRateLimit`` is ``True``, and asks
+        the model to embed the text with ``consumerId=str(chatId)`` so the
+        ``llm_request`` stats row is attributed to the chat. The returned model
+        name is read back from the resolved chat setting (not the model
+        instance) so callers can persist it alongside the vector for later
+        stale-detection. Any failure (bad model, rate-limit, provider error) is
+        caught, logged, and surfaced as ``None`` so the cron/tool path can skip
+        the row without raising.
 
         Args:
             text: The text to embed.
-            chatId: Chat identifier used for rate limiting; pass ``None`` to
-                skip rate limiting (e.g. for a background regen tick).
+            chatId: Chat identifier. Always used for ``llm_request`` stats
+                attribution (``consumerId``); also used for rate-limiting
+                unless ``doRateLimit=False`` (e.g. for a background regen
+                tick).
             chatSettings: Chat-level settings dict — must contain a resolved
                 ``EMBEDDING_MODEL`` value.
+            doRateLimit: When False, skip the per-chat rate limit (background
+                regen / backfill batches that must not consume the hot-path
+                budget). Stats attribution via ``chatId`` is NOT affected.
 
         Returns:
             A ``(modelName, embeddingVector)`` tuple on success, or ``None``
@@ -1509,9 +1549,9 @@ class LLMService:
                 ChatSettingsKey.EMBEDDING_MODEL, chatSettings=chatSettings, defaultKey=ChatSettingsKey.EMBEDDING_MODEL
             )
 
-            if chatId is not None:
+            if doRateLimit:
                 await self.rateLimit(chatId, chatSettings)
-            embeddingVector = await embeddingModel.generateEmbeddings(text)
+            embeddingVector = await embeddingModel.generateEmbeddings(text, consumerId=str(chatId))
             return (chatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr(), embeddingVector)
         except Exception:
             logger.exception("Failed to generate embeddings:")

@@ -295,7 +295,8 @@ async def testMaxRoundsDropsToolsWhenBudgetExhausted(
 
     await llmService.generateTextViaLLM(
         messages=[ModelMessage(role="user", content="hi")],
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockModel,
@@ -349,7 +350,8 @@ async def testMaxRoundsClosesHealingBypass(llmService: LLMService, mockModel: Mo
 
     result = await llmService.generateTextViaLLM(
         messages=[ModelMessage(role="user", content="hi")],
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockModel,
@@ -394,7 +396,8 @@ async def testMaxRoundsInjectsSteeringMessage(llmService: LLMService, mockModel:
             ModelMessage(role="system", content="You are a helpful assistant."),
             ModelMessage(role="user", content="hi"),
         ],
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockModel,
@@ -436,7 +439,8 @@ async def testMaxRoundsNoneIsUnlimited(llmService: LLMService, mockModel: Mock, 
 
     await llmService.generateTextViaLLM(
         messages=[ModelMessage(role="user", content="hi")],
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockModel,
@@ -469,7 +473,8 @@ async def testMaxRoundsZeroDropsImmediately(llmService: LLMService, mockModel: M
 
     await llmService.generateTextViaLLM(
         messages=[ModelMessage(role="user", content="hi")],
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockModel,
@@ -510,7 +515,8 @@ async def testMaxRoundsTerminatesWhenModelKeepsReturningToolCallsPostBudget(
 
     result = await llmService.generateTextViaLLM(
         messages=[ModelMessage(role="user", content="hi")],
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockModel,
@@ -548,7 +554,8 @@ async def testMaxRoundsNegativeRaises(llmService: LLMService, mockModel: Mock, m
     with pytest.raises(ValueError):
         await llmService.generateTextViaLLM(
             messages=[ModelMessage(role="user", content="hi")],
-            chatId=None,
+            chatId=-1,
+            doRateLimit=False,
             chatSettings=mockChatSettings,
             modelKey=mockModel,
             fallbackModelKey=mockModel,
@@ -584,7 +591,8 @@ async def testMaxRoundsSteeringUsesUserRoleWhenNoSystemMessage(
     await llmService.generateTextViaLLM(
         # No leading system message.
         messages=[ModelMessage(role="user", content="hi")],
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockModel,
@@ -637,7 +645,8 @@ async def testMaxRounds_setsRoundLimitHitOnExhaustion(
     with caplog.at_level(logging.WARNING, logger="internal.services.llm.service"):
         result = await llmService.generateTextViaLLM(
             messages=[ModelMessage(role="user", content="hi")],
-            chatId=None,
+            chatId=-1,
+            doRateLimit=False,
             chatSettings=mockChatSettings,
             modelKey=mockModel,
             fallbackModelKey=mockModel,
@@ -677,7 +686,8 @@ async def testMaxRounds_noRoundLimitHitWhenWithinBudget(
 
     result = await llmService.generateTextViaLLM(
         messages=[ModelMessage(role="user", content="hi")],
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockModel,
@@ -731,7 +741,8 @@ async def testMaxRounds_propagatesErrorStatusPostBudget(
 
     result = await llmService.generateTextViaLLM(
         messages=[ModelMessage(role="user", content="hi")],
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockModel,

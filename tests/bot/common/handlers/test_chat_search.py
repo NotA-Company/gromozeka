@@ -1089,6 +1089,29 @@ class TestEmbedAndSaveMessage:
         assert result is False
         saveMock.assert_awaited_once()
 
+    async def test_passesRealChatIdAndSkipsRateLimit(self) -> None:
+        """``generateEmbedding`` gets the real chatId + ``doRateLimit=False``.
+
+        Regression for the consumerId gap (docs/design/stats-consumerid-gaps.md
+        Gap 2): the background backfill used to pass ``chatId=None`` to skip
+        the per-chat hot-path rate budget, which also dropped the
+        ``llm_request`` stats attribution to ``__global__``. It must pass the
+        recipient chat id and skip only the limiter.
+        """
+        handler, mocks = _makeHandler()
+        generateMock = AsyncMock(return_value=("text-embedding-3-small", [0.1]))
+        cast(Any, handler).llmService.generateEmbedding = generateMock  # type: ignore[method-assign]
+        mocks["db"].chatEmbeddings.saveMessageEmbedding = AsyncMock(return_value=True)
+
+        result = await handler.embedAndSaveMessage(ensuredMessage=_makeEnsuredMessage(chatId=100))
+
+        assert result is True
+        generateMock.assert_awaited_once()
+        assert generateMock.await_args is not None
+        kwargs = generateMock.await_args.kwargs
+        assert kwargs["chatId"] == 100
+        assert kwargs["doRateLimit"] is False
+
 
 # ---------------------------------------------------------------------------
 # 3. Backfill CRON_JOB tests

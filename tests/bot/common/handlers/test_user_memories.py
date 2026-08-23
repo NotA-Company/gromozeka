@@ -720,6 +720,41 @@ class TestCronJobAndRefinement:
         assert entry.get("lastProcessedMessageDate") == "2026-07-01T12:04:00+00:00"
         assert entry.get("lastProcessedMessageId") == "1004"
 
+    async def test_refinementPassesRealChatIdAndSkipsRateLimit(self, testDatabase: Database) -> None:
+        """Refinement LLM call carries the real ``chatId`` + ``doRateLimit=False``.
+
+        Regression for the consumerId gap (docs/design/stats-consumerid-gaps.md
+        Gap 2): the background refinement used to pass ``chatId=None`` to skip
+        the per-chat hot-path rate budget, which also dropped the
+        ``llm_request`` stats attribution to ``__global__`` — even though the
+        chat id is known (it builds the synthetic ensuredMessage from it). The
+        call must pass the real chat id and skip only the limiter.
+        """
+        handler = await _makeHandler(testDatabase, configManager=_makeUserMemoryConfigManager(enabled=True))
+        _stubGetChatSettings(handler, memoryRefinementEnabled=True)
+
+        refineResult = ModelRunResult(
+            rawResult={},
+            status=ModelResultStatus.FINAL,
+            resultText="Refined summary text",
+        )
+        mockGenerate = AsyncMock(return_value=refineResult)
+        handler.llmService.generateTextViaLLM = mockGenerate  # type: ignore[method-assign]
+
+        chatId, userId, threadId = 340, 11, DEFAULT_THREAD_ID
+        await testDatabase.chatUsers.updateChatUser(chatId, userId, "@user11", "Carol")
+        await _seedChatMessages(testDatabase, chatId=chatId, userId=userId, count=5)
+
+        handler._accounting[(chatId, userId, threadId)] = 5  # type: ignore[attr-defined]
+
+        await handler._dtCronJob(task=_makeDelayedTask())  # type: ignore[attr-defined]
+
+        mockGenerate.assert_awaited_once()
+        assert mockGenerate.await_args is not None
+        kwargs = mockGenerate.await_args.kwargs
+        assert kwargs["chatId"] == chatId
+        assert kwargs["doRateLimit"] is False
+
     async def test_runSingleRefinementBailsWhenFewerThanMinMessages(self, testDatabase: Database) -> None:
         """Below ``min-messages`` → ``_runSingleRefinement`` returns with no LLM call.
 

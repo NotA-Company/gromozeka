@@ -1298,7 +1298,11 @@ class UserMemoriesHandler(BaseBotHandler):
                     ModelMessage(role="system", content=systemPrompt),
                     ModelMessage(role="user", content=userPrompt),
                 ],
-                chatId=None,  # skip rate-limiting for the background call
+                # Skip the per-chat hot-path rate budget for the background
+                # call, but keep the real chatId so llm_request stats (and the
+                # condensing requests inside) stay attributed to this chat.
+                chatId=chatId,
+                doRateLimit=False,
                 chatSettings=chatSettings,
                 callback=intermediateCallback,
                 modelKey=ChatSettingsKey.MEMORY_REFINE_MODEL,

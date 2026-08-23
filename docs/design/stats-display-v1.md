@@ -564,6 +564,14 @@ small follow-up (thread `consumerId=str(chatId)` at service.py:1499 and :1239;
 optionally thread real chat ids into the background callers), see O2. Design assumes
 the current state.
 
+> **Update 2026-08-23:** all three exceptions are FIXED (see
+> [stats-consumerid-gaps.md](stats-consumerid-gaps.md) §Resolution) — `chatId` is
+> now a mandatory `int` on `LLMService` generation methods with a separate
+> `doRateLimit` flag, and embeddings / background calls / condensing all carry
+> `consumerId`. The `help`/reply wording "LLM counts cover interactive
+> generation" is now overly conservative for data collected after this fix;
+> rows collected before it remain undercounted.
+
 ### 2.4 Backfill rows (migration 027) and the `sent` consequence
 
 Backfilled history (sourced from `chat_messages`, fix-set `fcdf5663`) carries every
@@ -1981,7 +1989,7 @@ No live/operator smoke gate is mandatory beyond the optional Phase 3 local smoke
 |---|---|---|---|---|---|
 | R1 | **Query cost / cardinality** — `stat_aggregates` grows with distinct label combos × periods; a scope query scans all label buckets of the window | Med | Med | PK prefix `(event_type, period_start)` serves the SQL predicate; `limit=10000` cap + explicit truncation line (D5); SUM-only buckets stay small vs `stat_events` (aggregation-v1 NG3 analysis); revisit retention per its §9 Q2 | Raise nothing — read-only; lower `limit` |
 | R2 | **Double counting via `__global__` rows** — naively summing a window counts every event twice | Med | High | The D3 consumer-scope filter structurally excludes `__global__`; pinned by an explicit analysis test (Gate: no-double-count) | n/a (test-locked) |
-| R3 | **Per-chat LLM undercount** (§2.3 exceptions: embeddings, background calls, condensing land in `__global__`) | Certain (today) | Low | Documented in `help`/reply honesty ("LLM counts cover interactive generation"); fix path is a small follow-up (O2), not a display-layer concern | n/a |
+| R3 | **Per-chat LLM undercount** (§2.3 exceptions: embeddings, background calls, condensing land in `__global__`) — **fixed 2026-08-23**, see [stats-consumerid-gaps.md](stats-consumerid-gaps.md) §Resolution; residual risk applies only to rows collected before the fix | Certain (pre-fix data) | Low | Documented in `help`/reply honesty ("LLM counts cover interactive generation"); fix path is a small follow-up (O2), not a display-layer concern | n/a |
 | R4 | **Backfill/live label split** — direction breakdown misread as undercount | Low | Low | Three-bucket rendering (users/bot/history) per §2.4/D6 | n/a |
 | R5 | **Reply too long → mechanical split breaks MarkdownV2** | Low | Low | Bounded reply (< 3500 chars, Gate); top-3 lists; drill-downs bounded to top-10; chat list truncation with "and K more" | Shorten reply |
 | R6 | **Disk exhaustion via page generation** | Med | Med | Per-chat rate limit (3/h default) + UUID names (no overwrite) + per-page TTL deletion via persisted one-shot tasks (D14/U11) | Disable `[stats-pages]`; run `delete-command` manually per page_id |
@@ -2014,13 +2022,13 @@ removed the page registry before implementation); the
    deliberately keeps NO page list (U11), so such a UI implies re-introducing
    lightweight tracking; page ids live only in reply links and WARNING logs.
    Verification plan: none needed now.
-2. **O2 — Per-user `llm_request` attribution** (R3): thread `consumerId`
-   through `LLMService.generateEmbedding` ([service.py:1499](../../internal/services/llm/service.py))
-   and the condensing call (:1239), and optionally real chat ids into the two
-   background callers; separately consider a `user_id` label for interactive
-   generation (would change label vocabulary → new buckets only going forward —
-   same freeze caveat as stats-collecting-v1 Caveats). Follow-up design/task, not
-   a blocker; display layer needs no change either way.
+2. **O2 — Per-user `llm_request` attribution** (R3): ~~thread `consumerId`
+   through `LLMService.generateEmbedding` and the condensing call~~ **done
+   2026-08-23** (see [stats-consumerid-gaps.md](stats-consumerid-gaps.md)
+   §Resolution — mandatory `chatId: int` + `doRateLimit` flag). Still open:
+   a `user_id` label for interactive generation (would change label
+   vocabulary → new buckets only going forward — same freeze caveat as
+   stats-collecting-v1 Caveats). Display layer needs no change either way.
 3. **Aggregates retention**: still open repo-wide (aggregation-v1 §9 Q2); with a
    query API now landing, row counts become observable — revisit after real-world
    cardinality data exists.

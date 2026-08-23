@@ -151,10 +151,11 @@ llmService = LLMService.getInstance()
 # Generate text response
 result: ModelRunResult = await llmService.generateText(
     messages,                    # List[ModelMessage]
-    chatId=chatId,
+    chatId=chatId,               # mandatory int: stats consumerId + rate limiting
     chatSettings=chatSettings,
     modelKey=ChatSettingsKey.CHAT_MODEL,
     fallbackKey=ChatSettingsKey.CHAT_FALLBACK_MODEL,
+    doRateLimit=True,            # optional; False = skip limiter, keep attribution
 )
 
 if result.status == ModelResultStatus.FINAL:
@@ -197,6 +198,8 @@ llmService.injectStatsStorage(toolStatsStorage)  # or None for NullStatsStorage 
 ```
 
 **Rule:** Always use a `ToolName` member (from `internal.bot.constants`) for the `name=` argument. See the [add-handler skill](../../.agents/skills/add-handler/SKILL.md) Step 5 for the full registration workflow.
+
+**`chatId` / `doRateLimit` semantics (all generation methods):** `chatId` is a **mandatory `int`** on `generateText` / `generateStructured` / `generateImage` / `generateEmbedding` / `generateTextViaLLM`. It always threads `consumerId=str(chatId)` into the model call for `llm_request` stats attribution (merged into `labels["consumer"]` by `StatsStorage`; chats are never conflated into `__global__`). Rate limiting is controlled independently by the keyword-only `doRateLimit: bool = True` flag: background/system-initiated work (embedding backfill, memory refinement) passes the **real** chat id with `doRateLimit=False` — the per-chat hot-path limiter is skipped while attribution is preserved. `condenseContext` takes a stats-only keyword-only `consumerId: Optional[str]` (the condensing path never rate-limits); `generateTextViaLLM` threads it automatically for every per-round condense.
 
 **`generateTextViaLLM` — tool-execution loop:**
 
@@ -265,20 +268,21 @@ async def generateStructured(
     prompt: Sequence[ModelMessage],
     schema: Dict[str, Any],
     *,
-    chatId: Optional[int],
+    chatId: int,
     chatSettings: ChatSettingsDict,
     modelKey: Union[ChatSettingsKey, AbstractModel, None],
     fallbackKey: Union[ChatSettingsKey, AbstractModel, None],
     schemaName: str = "response",
     strict: bool = True,
     doDebugLogging: bool = True,
+    doRateLimit: bool = True,
 ) -> ModelStructuredResult
 ```
 
 `generateStructured` mirrors `generateText` end-to-end: it resolves
 the primary and fallback models from `chatSettings`, applies rate
-limiting for non-`None` `chatId`, then delegates to
- `AbstractModel.generateStructured` (with `fallbackModels` parameter). Key differences:
+limiting unless `doRateLimit=False`, then delegates to
+  `AbstractModel.generateStructured` (with `fallbackModels` parameter). Key differences:
 
 - Raises `NotImplementedError` if **neither** the primary nor the
   fallback model has `support_structured_output = true` in its config.

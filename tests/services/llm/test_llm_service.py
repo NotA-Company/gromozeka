@@ -453,7 +453,8 @@ async def testGenerateTextWithoutTools(
 
     result = await llmService.generateTextViaLLM(
         messages=sampleMessages,
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
@@ -487,7 +488,8 @@ async def testGenerateTextWithCallId(
     customCallId = "custom-call-123"
     result = await llmService.generateTextViaLLM(
         messages=sampleMessages,
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
@@ -517,7 +519,8 @@ async def testGenerateTextAutoGeneratesCallId(
 
         await llmService.generateTextViaLLM(
             messages=sampleMessages,
-            chatId=None,
+            chatId=-1,
+            doRateLimit=False,
             chatSettings=mockChatSettings,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
@@ -572,7 +575,8 @@ async def testGenerateTextWithToolCall(
 
     result = await llmService.generateTextViaLLM(
         messages=sampleMessages,
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
@@ -626,7 +630,8 @@ async def testGenerateTextWithMultipleToolCalls(
 
     result = await llmService.generateTextViaLLM(
         messages=sampleMessages,
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
@@ -678,7 +683,8 @@ async def testGenerateTextWithMultipleToolCallRounds(
 
     result = await llmService.generateTextViaLLM(
         messages=sampleMessages,
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
@@ -724,7 +730,8 @@ async def testGenerateTextWithToolCallCallback(
 
     await llmService.generateTextViaLLM(
         messages=sampleMessages,
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
@@ -769,7 +776,8 @@ async def testGenerateTextToolCallResultFormatting(
 
     await llmService.generateTextViaLLM(
         messages=sampleMessages,
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
@@ -828,7 +836,8 @@ async def testToolCallMessageConstruction(
 
     await llmService.generateTextViaLLM(
         messages=sampleMessages,
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
@@ -882,7 +891,8 @@ async def testConversationContextPreserved(
 
     await llmService.generateTextViaLLM(
         messages=sampleMessages,
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
@@ -928,7 +938,8 @@ async def testToolExecutionException(
     with pytest.raises(RuntimeError, match="Tool failed!"):
         await llmService.generateTextViaLLM(
             messages=sampleMessages,
-            chatId=None,
+            chatId=-1,
+            doRateLimit=False,
             chatSettings=mockChatSettings,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
@@ -964,7 +975,8 @@ async def testCallbackException(
     with pytest.raises(ValueError, match="Callback failed!"):
         await llmService.generateTextViaLLM(
             messages=sampleMessages,
-            chatId=None,
+            chatId=-1,
+            doRateLimit=False,
             chatSettings=mockChatSettings,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
@@ -1162,7 +1174,8 @@ async def testFullWorkflowRegisterGenerateExecute(
     # Step 3: Execute
     result = await llmService.generateTextViaLLM(
         messages=messages,
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
@@ -1226,7 +1239,8 @@ async def testConversationWithMultipleToolCallRounds(
 
     result = await llmService.generateTextViaLLM(
         messages=messages,
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
@@ -1270,7 +1284,8 @@ async def testToolResultsAffectSubsequentResponses(
 
     await llmService.generateTextViaLLM(
         messages=messages,
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
@@ -1324,7 +1339,8 @@ async def testExtraDataPassedToTools(llmService, mockModel, mockFallbackModel, m
 
     await llmService.generateTextViaLLM(
         messages=messages,
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
@@ -1364,7 +1380,8 @@ async def testEmptyToolCallsList(
 
     result = await llmService.generateTextViaLLM(
         messages=sampleMessages,
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
@@ -1404,7 +1421,8 @@ async def testToolReturnsNone(
 
     result = await llmService.generateTextViaLLM(
         messages=sampleMessages,
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
@@ -1450,7 +1468,8 @@ async def testToolReturnsComplexObject(
 
     await llmService.generateTextViaLLM(
         messages=sampleMessages,
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
@@ -1499,7 +1518,8 @@ async def testNoCallbackProvided(
     # No callback provided
     result = await llmService.generateTextViaLLM(
         messages=sampleMessages,
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
@@ -1537,7 +1557,8 @@ async def testToolsListPassedToModel(
 
     await llmService.generateTextViaLLM(
         messages=sampleMessages,
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
@@ -1651,7 +1672,8 @@ async def testManySequentialToolCalls(llmService, mockModel, mockFallbackModel, 
 
     result = await llmService.generateTextViaLLM(
         messages=messages,
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=mockModel,
         fallbackModelKey=mockFallbackModel,
@@ -1743,7 +1765,8 @@ async def testGenerateStructuredHappyPath(llmService, mockChatSettings, mockLlmM
     result = await llmService.generateStructured(
         [ModelMessage(content="give me x")],
         sampleSchema,
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=primaryModel,
         fallbackKey=fallbackModel,
@@ -1775,7 +1798,8 @@ async def testGenerateStructuredCustomSchemaNameAndStrict(llmService, mockChatSe
     await llmService.generateStructured(
         [ModelMessage(content="give me x")],
         sampleSchema,
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=primaryModel,
         fallbackKey=fallbackModel,
@@ -1805,7 +1829,8 @@ async def testGenerateStructuredPrimaryUnsupportedFallbackSupported(
     result = await llmService.generateStructured(
         [ModelMessage(content="give me x")],
         sampleSchema,
-        chatId=None,
+        chatId=-1,
+        doRateLimit=False,
         chatSettings=mockChatSettings,
         modelKey=primaryModel,
         fallbackKey=fallbackModel,
@@ -1828,7 +1853,8 @@ async def testGenerateStructuredNeitherSupports(llmService, mockChatSettings, mo
         await llmService.generateStructured(
             [ModelMessage(content="give me x")],
             sampleSchema,
-            chatId=None,
+            chatId=-1,
+            doRateLimit=False,
             chatSettings=mockChatSettings,
             modelKey=primaryModel,
             fallbackKey=fallbackModel,
@@ -1869,8 +1895,13 @@ async def testGenerateStructuredAppliesRateLimit(llmService, mockChatSettings, m
     llmService.rateLimit.assert_called_once_with(42, mockChatSettings)
 
 
-async def testGenerateStructuredNoRateLimitWhenChatIdNone(llmService, mockChatSettings, mockLlmManager, sampleSchema):
-    """Rate limiter is NOT invoked when chatId is None"""
+async def testGenerateStructuredNoRateLimitWhenDisabled(llmService, mockChatSettings, mockLlmManager, sampleSchema):
+    """Rate limiter is NOT invoked when ``doRateLimit=False``.
+
+    The flag decouples rate-limit skipping from stats attribution: a real
+    ``chatId`` is still passed (and threaded into ``consumerId``), but the
+    per-chat limiter must not fire.
+    """
     primaryModel = _makeStructuredModel(True)
     fallbackModel = _makeStructuredModel(True)
 
@@ -1886,13 +1917,17 @@ async def testGenerateStructuredNoRateLimitWhenChatIdNone(llmService, mockChatSe
     await llmService.generateStructured(
         [ModelMessage(content="give me x")],
         sampleSchema,
-        chatId=None,
+        chatId=42,
         chatSettings=mockChatSettings,
         modelKey=primaryModel,
         fallbackKey=fallbackModel,
+        doRateLimit=False,
     )
 
     llmService.rateLimit.assert_not_called()
+    # Attribution is preserved: consumerId still threads the real chat id.
+    assert primaryModel.generateStructured.await_args is not None
+    assert primaryModel.generateStructured.await_args.kwargs["consumerId"] == "42"
 
 
 # ============================================================================
@@ -2515,3 +2550,206 @@ class TestCondenseContextCoverage:
         # Sanity: the summary text came back and the result holds the summary.
         assert cov["text"] == "multi-emit-summary"
         assert result[1].source is coverage[0]
+
+
+# ============================================================================
+# consumerId attribution Tests
+# (regression: llm_request stats used to land under __global__ for embeddings,
+#  background generation, and context-condensing — see
+#  docs/design/stats-consumerid-gaps.md)
+# ============================================================================
+
+
+class TestConsumerIdAttribution:
+    """Regression tests for per-chat consumerId attribution in LLMService.
+
+    Pins the three consumerId gaps documented in
+    ``docs/design/stats-consumerid-gaps.md``: embeddings omitted consumerId
+    entirely, condensing bypassed the consumerId-threading call path, and
+    background callers passed ``chatId=None`` (skipping rate-limiting also
+    dropped attribution). After the fix: ``chatId`` is a mandatory int,
+    attribution always derives from it, and the separate ``doRateLimit``
+    flag alone controls rate limiting.
+    """
+
+    def _chatSettingsForModel(self, model: AbstractModel) -> Mock:
+        """Build a chatSettings mock resolving EMBEDDING_MODEL to ``model``.
+
+        Args:
+            model: The AbstractModel mock that ``resolveModel`` should return
+                for ``ChatSettingsKey.EMBEDDING_MODEL``.
+
+        Returns:
+            A ``Mock(spec=ChatSettingsDict)`` whose ``__getitem__`` returns a
+            value mock with ``toModel() -> model`` and a string ``toStr()``.
+        """
+        settings = Mock(spec=ChatSettingsDict)
+        valueMock = Mock(toModel=Mock(return_value=model), toStr=Mock(return_value="test-model"))
+        settings.__getitem__ = Mock(return_value=valueMock)
+        return settings
+
+    async def testGenerateEmbeddingPassesConsumerIdToModel(self, llmService) -> None:
+        """``generateEmbedding`` forwards ``consumerId=str(chatId)`` to the model.
+
+        Before the fix the service call site dropped ``chatId`` after rate
+        limiting, so every embedding ``llm_request`` stats row landed under
+        ``__global__``. The model-level ``generateEmbeddings`` must receive
+        ``consumerId="123"``.
+        """
+        embeddingModel = _makeCountingModel(4096)
+        embeddingModel.generateEmbeddings = createAsyncMock(returnValue=[0.1, 0.2])
+        chatSettings = self._chatSettingsForModel(embeddingModel)
+        llmService.rateLimit = createAsyncMock()
+
+        ret = await llmService.generateEmbedding("hello", chatId=123, chatSettings=chatSettings)
+
+        assert ret is not None
+        embeddingModel.generateEmbeddings.assert_awaited_once()
+        assert embeddingModel.generateEmbeddings.await_args is not None
+        kwargs = embeddingModel.generateEmbeddings.await_args.kwargs
+        assert kwargs.get("consumerId") == "123"
+
+    async def testGenerateEmbeddingSkipsRateLimitButAttributesWhenDisabled(self, llmService) -> None:
+        """``doRateLimit=False`` skips the limiter but keeps chat attribution.
+
+        Decouples "rate-limit skip" (the flag) from "attribution" (always
+        derived from ``chatId``): background callers must be able to skip the
+        per-chat hot-path budget without losing consumerId.
+        """
+        embeddingModel = _makeCountingModel(4096)
+        embeddingModel.generateEmbeddings = createAsyncMock(returnValue=[0.1])
+        chatSettings = self._chatSettingsForModel(embeddingModel)
+        rateLimitMock = createAsyncMock()
+        llmService.rateLimit = rateLimitMock
+
+        ret = await llmService.generateEmbedding("hello", chatId=123, chatSettings=chatSettings, doRateLimit=False)
+
+        assert ret is not None
+        rateLimitMock.assert_not_called()
+        assert embeddingModel.generateEmbeddings.await_args is not None
+        kwargs = embeddingModel.generateEmbeddings.await_args.kwargs
+        assert kwargs.get("consumerId") == "123"
+
+    async def testGenerateTextAttributesEvenWhenRateLimitDisabled(
+        self, llmService, mockChatSettings, mockModel
+    ) -> None:
+        """``generateText`` passes ``consumerId`` even with ``doRateLimit=False``.
+
+        Before the fix ``chatId=None`` was the only way to skip rate limiting
+        and it also nulled consumerId; now the flag alone skips the limiter
+        while ``consumerId="42"`` still reaches the model.
+        """
+        mockModel.generateText = createAsyncMock(
+            returnValue=ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="ok")
+        )
+        rateLimitMock = createAsyncMock()
+        llmService.rateLimit = rateLimitMock
+
+        await llmService.generateText(
+            [ModelMessage(role="user", content="hi")],
+            chatId=42,
+            chatSettings=mockChatSettings,
+            modelKey=mockModel,
+            fallbackKey=mockModel,
+            doRateLimit=False,
+        )
+
+        rateLimitMock.assert_not_called()
+        assert mockModel.generateText.await_args is not None
+        kwargs = mockModel.generateText.await_args.kwargs
+        assert kwargs.get("consumerId") == "42"
+
+    async def testCondenseContextPassesConsumerIdToCondensingModel(self, llmService) -> None:
+        """``condenseContext`` forwards ``consumerId`` to the condensing model.
+
+        Before the fix the condensing path called
+        ``condensingModel.generateText(reqMessages)`` directly, bypassing the
+        consumerId-threading wrapper, so condense ``llm_request`` rows landed
+        under ``__global__``.
+        """
+        messages = [
+            ModelMessage(role="system", content="sys"),
+            ModelMessage(role="user", content="hello world"),
+            ModelMessage(role="user", content="bye"),
+        ]
+        model = _makeCountingModel(4096)
+        condensing = _makeCondensingModel(1000, ["summary-0"])
+
+        await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=0,
+            force=True,
+            condensingModel=condensing,
+            condensingPrompt="Summarize.",
+            condensingSystemPrompt="Condenser.",
+            maxTokens=1000,
+            consumerId="555",
+        )
+
+        condensing.generateText.assert_awaited_once()
+        assert condensing.generateText.await_args is not None
+        kwargs = condensing.generateText.await_args.kwargs
+        assert kwargs.get("consumerId") == "555"
+
+    async def testGenerateTextViaLLMThreadsConsumerIdIntoCondenseContext(
+        self, llmService, mockChatSettings, mockModel
+    ) -> None:
+        """``generateTextViaLLM`` threads its ``chatId`` into ``condenseContext``.
+
+        The per-round condensing inside the tool-calling loop must receive
+        ``consumerId=str(chatId)`` so condense requests stay attributed to the
+        chat even when ``doRateLimit=False`` (background refinement path).
+        """
+        mockModel.generateText = createAsyncMock(
+            returnValue=ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="ok")
+        )
+        condenseMock = createAsyncMock(
+            sideEffect=lambda messages, *args, **kwargs: (messages, {})  # type: ignore[misc]
+        )
+        llmService.condenseContext = condenseMock  # type: ignore[method-assign]
+        llmService.rateLimit = createAsyncMock()
+
+        await llmService.generateTextViaLLM(
+            messages=[ModelMessage(role="user", content="hi")],
+            chatId=555,
+            chatSettings=mockChatSettings,
+            modelKey=mockModel,
+            fallbackModelKey=mockModel,
+            extraData={},
+            doRateLimit=False,
+        )
+
+        condenseMock.assert_awaited()
+        assert condenseMock.await_args is not None
+        kwargs = condenseMock.await_args.kwargs
+        assert kwargs.get("consumerId") == "555"
+
+    async def testGenerateTextViaLLMSkipsRateLimitWhenDisabled(self, llmService, mockChatSettings, mockModel) -> None:
+        """``generateTextViaLLM(doRateLimit=False)`` never calls ``rateLimit``.
+
+        The background memory-refinement path must be able to skip the
+        per-chat hot-path budget while still passing a real ``chatId`` for
+        attribution (the per-round ``generateText`` inherits the skip).
+        """
+        mockModel.generateText = createAsyncMock(
+            returnValue=ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="ok")
+        )
+        llmService.condenseContext = createAsyncMock(  # type: ignore[method-assign]
+            sideEffect=lambda messages, *a, **k: (messages, {})
+        )
+        rateLimitMock = createAsyncMock()
+        llmService.rateLimit = rateLimitMock
+
+        await llmService.generateTextViaLLM(
+            messages=[ModelMessage(role="user", content="hi")],
+            chatId=777,
+            chatSettings=mockChatSettings,
+            modelKey=mockModel,
+            fallbackModelKey=mockModel,
+            extraData={},
+            doRateLimit=False,
+        )
+
+        rateLimitMock.assert_not_called()

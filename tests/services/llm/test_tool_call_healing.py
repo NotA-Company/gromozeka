@@ -482,7 +482,8 @@ class TestToolCallHealing:
 
         result = await llmService.generateTextViaLLM(
             messages=sampleMessages,
-            chatId=None,
+            chatId=-1,
+            doRateLimit=False,
             chatSettings=mockChatSettings,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
@@ -531,7 +532,8 @@ class TestToolCallHealing:
 
         result = await llmService.generateTextViaLLM(
             messages=sampleMessages,
-            chatId=None,
+            chatId=-1,
+            doRateLimit=False,
             chatSettings=mockChatSettings,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,
@@ -586,7 +588,8 @@ class TestToolCallHealing:
 
         result = await llmService.generateTextViaLLM(
             messages=sampleMessages,
-            chatId=None,
+            chatId=-1,
+            doRateLimit=False,
             chatSettings=mockChatSettings,
             modelKey=mockModel,
             fallbackModelKey=mockFallbackModel,

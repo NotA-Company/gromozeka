@@ -1,9 +1,37 @@
 # Design: consumerId gaps in llm_request stats — issue parking lot
 
-**Status: DRAFT — issue parking lot.** Documents every place where stats events are
-recorded WITHOUT the proper chat consumerId, so it can be thought about later. No
-decisions made; fix directions are bullets only. All file:line citations verified
-against source on 2026-08-18.
+**Status: IMPLEMENTED (2026-08-23).** Originally a DRAFT issue parking lot
+documenting places where stats events were recorded WITHOUT the proper chat
+consumerId. All three gaps are now fixed; see [Resolution](#resolution) below.
+The gap descriptions are kept as the historical record — file:line citations
+refer to the pre-fix code (verified 2026-08-18).
+
+## Resolution
+
+`chatId` on `LLMService` generation methods is now a **mandatory `int`**, and
+the "skip rate limiting" escape hatch moved to a dedicated keyword-only
+`doRateLimit: bool = True` flag, decoupling rate-limit skipping from stats
+attribution:
+
+- `generateText` / `generateStructured` / `generateImage` / `generateEmbedding`
+  / `generateTextViaLLM` all take `chatId: int` + `doRateLimit` and always
+  thread `consumerId=str(chatId)` into the model call.
+- **Gap 1 (embeddings):** `generateEmbedding` passes
+  `consumerId=str(chatId)` to `AbstractModel.generateEmbeddings`.
+- **Gap 2 (background callers):** `chat_search.embedAndSaveMessage` and the
+  `user_memories` background refinement now pass the real chat id with
+  `doRateLimit=False` — the limiter is skipped, attribution is kept.
+- **Gap 3 (condensing):** `condenseContext` accepts keyword-only
+  `consumerId: Optional[str]` (stats-only; the condensing path never
+  rate-limits) and threads it into `condensingModel.generateText`.
+  `generateTextViaLLM` passes `consumerId=str(chatId)` for every per-round
+  condense.
+
+Regression tests: `TestConsumerIdAttribution` in
+[`tests/services/llm/test_llm_service.py`](../../tests/services/llm/test_llm_service.py),
+plus handler-level assertions in `TestEmbedAndSaveMessage`
+(`tests/bot/common/handlers/test_chat_search.py`) and
+`TestCronJobAndRefinement` (`tests/bot/common/handlers/test_user_memories.py`).
 
 ## Context
 
@@ -63,7 +91,12 @@ condensing land in `__global__`); global totals unaffected. Registered as risk R
 with follow-up O2 in [stats-display-v1.md](stats-display-v1.md) §8/§9; the
 per-event-type detail is in its §2.3.
 
-## Fix directions (bullets, not decisions)
+## Fix directions (historical — executed per the Resolution above)
+
+The "accept `__global__` for system-initiated work" alternative was rejected:
+`llm_tool_call` events from the same background refinement call were already
+correctly attributed via the synthetic ensuredMessage, and consistency within
+one logical operation matters more. The implemented bullets:
 
 - Thread `consumerId` at the embeddings call site (`generateEmbedding` in
   `LLMService` already has `chatId`; pass it through).

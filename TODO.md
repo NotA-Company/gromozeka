@@ -1,12 +1,6 @@
 # Our TODO list
 
 - [ ] Work on the stats display v2 design (owner global/per-model/per-chat-per-model) — see docs/design/stats-display-v2-draft.md
-- [ ] Fix consumerId logging gaps in llm_request stats (embeddings/background/condensing) — see docs/design/stats-consumerid-gaps.md
-- [x] Add non-blocking rate-limiter variant (applyLimit that returns False instead of waiting) — surfaced by stats web tier (U12)
-- [x] add cache for botUsername
-- [x] revert dot-notation in internal/config/manager.py:get
-- [x] short-term memories - add score
-- [x] retry to send message on `telegram.error.TimedOut: Timed out`
 - [ ] add ability to add bot-memory. think how to inject it
 - [ ] move Max Webhook reciver to lib
 - [ ] move database providers to lib
@@ -14,10 +8,8 @@
 - [ ] per-chat settings - how often to do memory-refinement
 - [ ] script for moving chat to separate db
 - [ ] refactor models
-- [x] more statistics thing (more sources, consolidation, export + cleanup of old statistics)
 - [ ] Add proper web stats
 - [ ] slash-commands for getting description, prompt
-- [x] migrate to httpx2
 
 - [ ] Subagent with conversation history
 - [ ] Topic-level configs
@@ -55,3 +47,13 @@
 - [ ] Logging: try to not log same messages if possible
 - [ ] ConfigManager: Use TypedDict's
 - [ ] Add replied message to context more close to message (maybe in message metadata)
+
+# Done:
+- [x] Add non-blocking rate-limiter variant (applyLimit that returns False instead of waiting) — surfaced by stats web tier (U12)
+- [x] add cache for botUsername
+- [x] revert dot-notation in internal/config/manager.py:get
+- [x] short-term memories - add score
+- [x] retry to send message on `telegram.error.TimedOut: Timed out`
+- [x] more statistics thing (more sources, consolidation, export + cleanup of old statistics)
+- [x] migrate to httpx2
+- [x] Fix consumerId logging gaps in llm_request stats (embeddings/background/condensing) — see docs/design/stats-consumerid-gaps.md

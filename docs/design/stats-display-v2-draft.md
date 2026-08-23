@@ -53,5 +53,6 @@ bot_owner-only ability to get:
 
 - [stats-display-v1.md](stats-display-v1.md) — the v1 design this builds on.
 - [stats-collecting-v1.md](stats-collecting-v1.md) — collection-side contracts.
-- [stats-consumerid-gaps.md](stats-consumerid-gaps.md) — known per-chat attribution
-  gaps in `llm_request` (affects per-chat and per-chat-per-model accuracy).
+- [stats-consumerid-gaps.md](stats-consumerid-gaps.md) — per-chat attribution
+  gaps in `llm_request` — **fixed 2026-08-23** (see its §Resolution); only
+  pre-fix rows remain affected.

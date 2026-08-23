@@ -7,7 +7,11 @@ process governing this file, see [docs/llm/changelog.md](docs/llm/changelog.md).
 ## [Unreleased]
 
 ### Changed
+- `LLMService` generation methods (`generateText` / `generateStructured` / `generateImage` / `generateEmbedding` / `generateTextViaLLM`) now require a real chat id: `chatId` is a mandatory `int` and a new `doRateLimit: bool = True` keyword-only flag independently controls rate limiting. Passing `None` to skip the limiter (the old behaviour) is no longer possible.
 - `/stats --web`/`/stats_web` rate limiting is now a bounded wait: when the issuing chat has exhausted its page budget (3 per 600 s) and no slot frees within 60 s, the command replies "⏳ Лимит генерации веб-страниц исчерпан, попробуйте позже." instead of sleeping up to the full window, and the generation CLI is not invoked.
+
+### Fixed
+- Per-chat `llm_request` stats undercount: embedding requests, background memory-refinement / chat-search-indexing calls, and context-condensing requests now carry the chat `consumerId` and land under the chat instead of `__global__` (background work keeps skipping the per-chat rate limit via the new `doRateLimit=False`). Per-chat LLM views count these requests from now on; historical rows remain under `__global__`.
 
 ### Added
 - `RateLimiterManager.applyLimit(queue, key, timeout=...)` (and `SlidingWindowRateLimiter.applyLimit`) now returns `bool` — `True` when the limit was applied, `False` when something went wrong (no limiter registered, limiter error) — and accepts an optional `timeout` (seconds): when the required wait for a free slot exceeds it, the call returns `False` immediately instead of sleeping (no slot is consumed). Without `timeout` the previous blocking behavior is preserved. Existing callers that ignore the return value are unaffected, except that the former `RuntimeError` for unregistered limiters is now reported as `False` instead of raising.

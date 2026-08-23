@@ -529,9 +529,11 @@ class ChatSearchHandler(BaseBotHandler):
         surfaced as ``False`` so a single bad row never aborts the batch
         (the caller relies on this never-crash contract).
 
-        Passes ``chatId=None`` to :meth:`LLMService.generateEmbedding` so the
-        background backfill does NOT consume the per-chat hot-path rate budget
-        (``generateEmbedding`` skips rate-limiting when ``chatId is None``).
+        Passes ``doRateLimit=False`` to :meth:`LLMService.generateEmbedding`
+        so the background backfill does NOT consume the per-chat hot-path
+        rate budget, while still passing the real ``chatId`` so the
+        ``llm_request`` stats row is attributed to the chat instead of
+        landing under ``__global__``.
 
         Args:
             ensuredMessage: The message to embed + persist.
@@ -551,8 +553,9 @@ class ChatSearchHandler(BaseBotHandler):
             if messageText.strip():
                 embeddings = await self.llmService.generateEmbedding(
                     messageText,
-                    chatId=None,
+                    chatId=ensuredMessage.recipient.id,
                     chatSettings=await self.getChatSettings(ensuredMessage.recipient.id),
+                    doRateLimit=False,
                 )
             if embeddings is not None:
                 return await self.db.chatEmbeddings.saveMessageEmbedding(
