@@ -684,7 +684,7 @@ Each migration inherits from [`BaseMigration`](/internal/database/migrations/bas
 
 ```python
 from internal.database.migrations.base import BaseMigration
-from internal.database.providers import BaseSQLProvider
+from lib.db.providers import BaseSQLProvider
 
 class Migration(BaseMigration):
     version = 13          # Must be unique sequential integer!

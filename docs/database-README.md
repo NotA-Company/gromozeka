@@ -213,7 +213,7 @@ The `BaseSQLProvider` class defines a common interface that all providers implem
 Perform an "insert or update" operation with provider-specific SQL syntax.
 
 ```python
-from internal.database.providers.base import ExcludedValue
+from lib.db.providers.base import ExcludedValue
 
 # Insert or update a chat message
 await db.chatMessages.saveChatMessage(
@@ -300,7 +300,7 @@ textType = provider.getTextType()
 The `ExcludedValue` class is a special marker that allows provider-specific translation of upsert update expressions:
 
 ```python
-from internal.database.providers.base import ExcludedValue
+from lib.db.providers.base import ExcludedValue
 
 # In an upsert operation, use ExcludedValue to reference the new value
 update_expressions = {
@@ -656,7 +656,7 @@ expr = provider.getCaseInsensitiveComparison("name", "searchName")
 
 #### Cross-Provider Upsert
 ```python
-from internal.database.providers.base import ExcludedValue
+from lib.db.providers.base import ExcludedValue
 
 # Upsert operation works the same across all providers
 await db.chatMessages.saveChatMessage(

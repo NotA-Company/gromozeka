@@ -83,7 +83,7 @@ Add an `upsert` method to each provider implementation that receives table, dict
 To handle the DB-specific syntax for referencing excluded values (e.g., `excluded.column` in PostgreSQL/SQLite, `VALUES(column)` in MySQL), introduce a special constant that providers can recognize and translate appropriately:
 
 ```python
-# internal/database/providers/base.py
+# lib/db/providers/base.py
 class ExcludedValue:
     """Special marker to indicate a column should be set to the excluded value.
     
@@ -114,7 +114,7 @@ class ExcludedValue:
 code; parameter names match the `BaseSQLProvider.upsert` camelCase signature):
 
 ```python
-# internal/database/providers/sqlite3.py
+# lib/db/providers/sqlite3.py
 async def upsert(
     self,
     table: str,
@@ -162,7 +162,7 @@ async def upsert(
     
     return await self.execute(query, values)
 
-# internal/database/providers/mysql.py
+# lib/db/providers/mysql.py
 async def upsert(
     self,
     table: str,
@@ -209,7 +209,7 @@ async def upsert(
     
     return await self.execute(query, values)
 
-# internal/database/providers/postgresql.py
+# lib/db/providers/postgresql.py
 async def upsert(
     self,
     table: str,
@@ -261,7 +261,7 @@ async def upsert(
 **Usage Examples**:
 
 ```python
-from internal.database.providers.base import ExcludedValue
+from lib.db.providers.base import ExcludedValue
 
 # Simple upsert - update all non-conflict columns with excluded values
 # NOTE: kwargs are camelCase (conflictColumns / updateExpressions) to match
@@ -588,7 +588,7 @@ This affects text search queries where you want to match patterns regardless of 
 **Base Provider Abstract Method**: Added `getLikeComparison()` to `BaseSQLProvider` to abstract RDBMS-specific syntax:
 
 ```python
-# internal/database/providers/base.py
+# lib/db/providers/base.py
 @abstractmethod
 def getLikeComparison(self, column: str, param: str) -> str:
     """Get RDBMS-specific case-insensitive LIKE comparison.
@@ -609,7 +609,7 @@ def getLikeComparison(self, column: str, param: str) -> str:
 **Provider Implementations**:
 
 ```python
-# internal/database/providers/mysql.py
+# lib/db/providers/mysql.py
 def getLikeComparison(self, column: str, param: str) -> str:
     """Get MySQL-specific case-insensitive LIKE comparison expression.
 
@@ -633,7 +633,7 @@ def getLikeComparison(self, column: str, param: str) -> str:
     """
     return f"LOWER({column}) LIKE LOWER(:{param})"
 
-# internal/database/providers/postgresql.py
+# lib/db/providers/postgresql.py
 def getLikeComparison(self, column: str, param: str) -> str:
     """Get PostgreSQL-specific case-insensitive LIKE comparison expression.
 
@@ -650,7 +650,7 @@ def getLikeComparison(self, column: str, param: str) -> str:
     """
     return f"LOWER({column}) LIKE LOWER(:{param})"
 
-# internal/database/providers/sqlink.py (SQLite)
+# lib/db/providers/sqlink.py (SQLite)
 def getLikeComparison(self, column: str, param: str) -> str:
     """Get SQLite-specific case-insensitive LIKE comparison expression.
 
@@ -740,7 +740,7 @@ query = f"""
 Create a pagination helper for consistent LIMIT/OFFSET handling:
 
 ```python
-# internal/database/providers/base.py
+# lib/db/providers/base.py
 def applyPagination(self, query: str, limit: Optional[int], 
                     offset: Optional[int] = 0) -> str:
     """Apply RDBMS-specific pagination to query."""
@@ -854,7 +854,7 @@ metadata: str = ""  # JSON as string
 Create a JSON abstraction layer:
 
 ```python
-# internal/database/providers/base.py
+# lib/db/providers/base.py
 import json
 
 def serializeJson(self, data: Any) -> str:
@@ -959,7 +959,7 @@ TEXT type behavior differs:
 Use appropriate TEXT types based on expected data size:
 
 ```python
-# internal/database/providers/base.py
+# lib/db/providers/base.py
 def getTextType(self, max_length: Optional[int] = None) -> str:
     """Get RDBMS-specific TEXT type."""
     provider_type = self.getProviderType()
@@ -1064,7 +1064,7 @@ Foreign key enforcement differs:
 Add a parameter to all SQLite-based providers to enable foreign key constraints, off by default for backward compatibility.
 
 ```python
-# internal/database/providers/sqlite3.py
+# lib/db/providers/sqlite3.py
 class SQLite3Provider(BaseSQLProvider):
     def __init__(self, connection_string: str, enable_foreign_keys: bool = False):
         """Initialize SQLite3 provider.
@@ -1083,7 +1083,7 @@ class SQLite3Provider(BaseSQLProvider):
         if self.enableForeignKeys:
             await self.execute("PRAGMA foreign_keys = ON")
 
-# internal/database/providers/sqlink.py
+# lib/db/providers/sqlink.py
 class SqlinkProvider(BaseSQLProvider):
     def __init__(self, connection_string: str, enable_foreign_keys: bool = False):
         """Initialize Sqlink provider.
@@ -1152,7 +1152,7 @@ Add a `keepConnection` parameter to all database providers to control when conne
 **Implementation:**
 
 ```python
-# internal/database/providers/sqlite3.py
+# lib/db/providers/sqlite3.py
 class SQLite3Provider(BaseSQLProvider):
     def __init__(self, dbPath: str, keepConnection: Optional[bool] = None, ...):
         """Initialize SQLite3 provider.
@@ -1164,7 +1164,7 @@ class SQLite3Provider(BaseSQLProvider):
         # Special handling for in-memory databases to prevent data loss
         self.keepConnection: bool = dbPath == ":memory:" if keepConnection is None else keepConnection
 
-# internal/database/providers/sqlink.py
+# lib/db/providers/sqlink.py
 class SQLinkProvider(BaseSQLProvider):
     def __init__(self, dbPath: str, keepConnection: Optional[bool] = None, ...):
         """Initialize SQLink provider.
@@ -1175,7 +1175,7 @@ class SQLinkProvider(BaseSQLProvider):
         """
         self.keepConnection: bool = keepConnection if keepConnection is not None else False
 
-# internal/database/providers/mysql.py
+# lib/db/providers/mysql.py
 class MySQLProvider(BaseSQLProvider):
     def __init__(self, host: str, port: int, user: str, password: str, database: str,
                  keepConnection: Optional[bool] = None, ...):
@@ -1191,7 +1191,7 @@ class MySQLProvider(BaseSQLProvider):
         """
         self.keepConnection: bool = keepConnection if keepConnection is not None else False
 
-# internal/database/providers/postgresql.py
+# lib/db/providers/postgresql.py
 class PostgreSQLProvider(BaseSQLProvider):
     def __init__(self, host: str, port: int, user: str, password: str, database: str,
                  keepConnection: Optional[bool] = None, ...):
@@ -1254,7 +1254,7 @@ override these; providers without vector support inherit the default
 
 ### API Surface
 
-All of the following live in `internal/database/providers/base.py`:
+All of the following live in `lib/db/providers/base.py`:
 
 | Member | Kind | Notes |
 |--------|------|-------|
@@ -1287,7 +1287,7 @@ All of the following live in `internal/database/providers/base.py`:
 ### Usage Example
 
 ```python
-from internal.database.providers.base import VectorDistanceMetric
+from lib.db.providers.base import VectorDistanceMetric
 
 if not await sqlProvider.isVectorSearchSupported():
     raise RuntimeError("Provider does not support native vector search")
@@ -1464,7 +1464,7 @@ The following items have been intentionally skipped for now:
   - [ ] Add MySQL-specific optimizations
 
 - [ ] **Implement PostgreSQL provider**
-  - [ ] Create `internal/database/providers/postgresql.py`
+  - [ ] Create `lib/db/providers/postgresql.py`
   - [ ] Implement `upsert()` method
   - [ ] Implement `applyPagination()` method
   - [ ] Implement `getTextType()` method
@@ -1556,8 +1556,8 @@ async def test_cache_entry_ttl(db_manager):
 ```python
 # tests/database/providers/test_sqlite3_provider.py
 # NOTE: asyncio_mode = "auto" in pyproject.toml — no @pytest.mark.asyncio needed.
-from internal.database.providers.base import BaseSQLProvider, ExcludedValue
-from internal.database.providers.sqlite3 import SQLite3Provider
+from lib.db.providers.base import BaseSQLProvider, ExcludedValue
+from lib.db.providers.sqlite3 import SQLite3Provider
 
 
 async def test_execute_upsert(testDatabase):
@@ -1617,7 +1617,7 @@ await sqlProvider.execute(
 ```python
 # tests/database/integration/test_multi_source_routing.py
 import pytest
-from internal.database.manager import DatabaseManager
+from lib.db.manager import DatabaseManager
 
 @pytest.mark.asyncio
 async def test_chat_routing(db_manager):
@@ -1659,7 +1659,7 @@ async def test_aggregation_across_sources(db_manager):
 # tests/database/performance/benchmark_queries.py
 import pytest
 import time
-from internal.database.manager import DatabaseManager
+from lib.db.manager import DatabaseManager
 
 @pytest.mark.asyncio
 async def test_cache_performance(db_manager):
@@ -1748,7 +1748,7 @@ await sqlProvider.execute(
 **✅ Prefer**:
 ```python
 # Use provider-specific upsert method. Kwargs are camelCase.
-from internal.database.providers.base import ExcludedValue
+from lib.db.providers.base import ExcludedValue
 
 await sqlProvider.upsert(
     table="users",
@@ -1925,4 +1925,4 @@ For questions or clarifications regarding this portability guide, please contact
 **Document Version**: 1.1  
 **Last Updated**: 2026-07-11  
 **Author**: Database Team  
-**Status**: Audited — provider API claims re-verified against `internal/database/providers/base.py`; vector search section added; upsert examples corrected to actual camelCase signature.
+**Status**: Audited — provider API claims re-verified against `lib/db/providers/base.py`; vector search section added; upsert examples corrected to actual camelCase signature.

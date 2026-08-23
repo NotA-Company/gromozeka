@@ -1,3 +1,5 @@
+> **Superseded (2026-08-23):** provider paths discussed here moved to `lib/db/` — see ADR-022 in [docs/llm/architecture.md](../../llm/architecture.md).
+
 # Review stats library v2 feature plan
 
 **Session ID:** ses_1f3e9fa6effe9HBq8cPgp98bZz

@@ -8,7 +8,7 @@ that are NOT stable API guarantees of vec0:
 1. **``ORDER BY distance`` honoured** — the KNN queries carry an explicit
    ``ORDER BY distance`` (see the test queries at lines ~327, ~353), which is
    exactly what production emits at
-   ``internal/database/providers/sqlite3.py:540``. What is pinned here is that
+   ``lib/db/providers/sqlite3.py:544``. What is pinned here is that
    vec0 HONOURS ``ORDER BY`` on the ``distance`` pseudo-column of a vec0
    virtual table and returns rows ascending by distance. This is NOT a pin on
    vec0's implicit (no-ORDER-BY) ordering — production never relies on that. A
@@ -113,7 +113,7 @@ EXPECTED_ORDER: List[str] = ["memA", "memB", "memC", "memD"]
 # ---------------------------------------------------------------------------
 # Helpers — each test spins its OWN in-memory connection (self-contained, no
 # shared state, mirrors the extension-load path in
-# internal/database/providers/sqlite3.py:200,209).
+# lib/db/providers/sqlite3.py:202,213).
 # ---------------------------------------------------------------------------
 
 
@@ -159,7 +159,7 @@ def loadVecConnection() -> sqlite3.Connection:
     Mirrors the production load path
     (``enable_load_extension(True)`` -> ``load_extension(sqlite_vec.loadable_path())``
     -> ``enable_load_extension(False)``) from
-    ``internal/database/providers/sqlite3.py:63-76,200,209``. Each test calls
+    ``lib/db/providers/sqlite3.py:65-78,202,213``. Each test calls
     this so vec0 state never leaks between tests.
 
     Returns:
