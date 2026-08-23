@@ -1,12 +1,12 @@
 """Database providers package.
 
-This package provides the database provider abstraction layer for the Gromozeka
-database system. It defines the base interfaces and concrete implementations for
-different SQL database backends, enabling a unified API for database operations
-across multiple database technologies.
+This package provides the database provider abstraction layer for
+cross-RDBMS SQL portability. It defines the base interfaces and concrete
+implementations for different SQL database backends, enabling a unified API
+for database operations across multiple database technologies.
 
-The providers package is part of Stage 2: Database Layer and serves as the
-foundation for all database interactions in the system. It abstracts away the
+The providers package is independent of bot-specific code and can be used by
+any application requiring cross-RDBMS SQL portability. It abstracts away the
 differences between various SQL database implementations (SQLite3, SQLink, etc.)
 and provides a consistent interface for executing queries, managing transactions,
 and handling database connections.
@@ -26,7 +26,7 @@ The provider architecture supports:
     - Type-safe query results
 
 Usage Example:
-    >>> from internal.database.providers import getSqlProvider, SQLProviderConfig
+    >>> from lib.db.providers import getSqlProvider, SQLProviderConfig
     >>> config: SQLProviderConfig = {
     ...     "provider": "sqlite3",
     ...     "parameters": {"database": ":memory:"}

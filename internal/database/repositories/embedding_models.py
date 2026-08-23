@@ -28,9 +28,9 @@ import logging
 from typing import Dict, List, Optional, Tuple
 
 import lib.utils as libUtils
+from lib.db.manager import DatabaseManager
 
 from .. import utils as dbUtils
-from ..manager import DatabaseManager
 from ..models import ModelDict
 from .base import BaseRepository
 

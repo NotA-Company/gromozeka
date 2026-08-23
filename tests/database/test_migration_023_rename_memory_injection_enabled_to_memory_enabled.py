@@ -27,7 +27,7 @@ from internal.database.migrations.versions.migration_023_rename_memory_injection
     OLD_KEY,
     Migration023RenameMemoryInjectionEnabledToMemoryEnabled,
 )
-from internal.database.providers.base import BaseSQLProvider, QueryResultFetchOne
+from lib.db.providers.base import BaseSQLProvider, QueryResultFetchOne
 
 CHAT_ID = 1
 

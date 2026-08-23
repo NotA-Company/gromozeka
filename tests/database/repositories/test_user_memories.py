@@ -27,10 +27,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from internal.database import Database
-from internal.database.manager import DatabaseManager
 from internal.database.models import MemoryType, UserMemorySource
-from internal.database.providers.sqlite3 import _SQLITE_VEC_AVAILABLE, SQLite3Provider
 from internal.database.repositories.user_memories import UserMemoriesRepository, UserMemoryDict
+from lib.db.manager import DatabaseManager
+from lib.db.providers.sqlite3 import _SQLITE_VEC_AVAILABLE, SQLite3Provider
 
 CHAT_ID = 1
 USER_ID = 100

@@ -12,7 +12,7 @@ import pytest
 from internal.database import Database
 from internal.database import utils as dbUtils
 from internal.database.bayes_storage import DatabaseBayesStorage
-from internal.database.manager import DatabaseManagerConfig
+from lib.db.manager import DatabaseManagerConfig
 
 
 @pytest.fixture

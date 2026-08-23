@@ -14,8 +14,8 @@ import time
 import pytest
 
 from internal.database import Database
-from internal.database.manager import DatabaseManagerConfig
 from internal.database.models import CacheType
+from lib.db.manager import DatabaseManagerConfig
 
 
 @pytest.fixture
@@ -291,7 +291,7 @@ class TestBatchPerformance:
         await provider.execute("CREATE TABLE test_batch (id INTEGER PRIMARY KEY, name TEXT)")
 
         # Prepare batch queries
-        from internal.database.providers.base import ParametrizedQuery
+        from lib.db.providers.base import ParametrizedQuery
 
         queries = [
             ParametrizedQuery("INSERT INTO test_batch (id, name) VALUES (:id, :name)", {"id": i, "name": f"test{i}"})
@@ -324,7 +324,7 @@ class TestBatchPerformance:
         individualTime = time.time() - start
 
         # Batch inserts
-        from internal.database.providers.base import ParametrizedQuery
+        from lib.db.providers.base import ParametrizedQuery
 
         queries = [
             ParametrizedQuery("INSERT INTO test_batch (id, name) VALUES (:id, :name)", {"id": i, "name": f"test{i}"})

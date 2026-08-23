@@ -5,11 +5,11 @@ from typing import Any
 
 import pytest
 
-from internal.database.providers.base import (
+from lib.db.providers.base import (
     VectorColumnType,
     VectorDistanceMetric,
 )
-from internal.database.providers.sqlite3 import SQLite3Provider
+from lib.db.providers.sqlite3 import SQLite3Provider
 
 
 class TestSQLite3VectorSearchFallback:
@@ -27,7 +27,7 @@ class TestSQLite3VectorSearchFallback:
             ``_SQLITE_VEC_AVAILABLE`` flag patched to ``False``.
         """
         monkeypatch.setattr(
-            "internal.database.providers.sqlite3._SQLITE_VEC_AVAILABLE",
+            "lib.db.providers.sqlite3._SQLITE_VEC_AVAILABLE",
             False,
         )
         provider = SQLite3Provider(dbPath=str(tmp_path / "test.db"))
@@ -71,7 +71,7 @@ async def providerWithVec(tmp_path):
         A connected :class:`SQLite3Provider` with ``isVectorSearchSupported()``
         returning ``True``.
     """
-    from internal.database.providers.sqlite3 import _SQLITE_VEC_AVAILABLE
+    from lib.db.providers.sqlite3 import _SQLITE_VEC_AVAILABLE
 
     if not _SQLITE_VEC_AVAILABLE:
         pytest.skip("sqlite-vec not installed")
@@ -100,7 +100,7 @@ class TestSQLite3VectorSearchReal:
         ``keepConnection=False`` lifecycle by leaving ``wasConnected=True``
         for subsequent ``cursor()`` invocations).
         """
-        from internal.database.providers.sqlite3 import _SQLITE_VEC_AVAILABLE
+        from lib.db.providers.sqlite3 import _SQLITE_VEC_AVAILABLE
 
         if not _SQLITE_VEC_AVAILABLE:
             pytest.skip("sqlite-vec not installed")

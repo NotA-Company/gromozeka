@@ -190,7 +190,7 @@ handler list (it's the catch-all). Registration site:
 ## SQL portability
 
 SQLite3 is the only backend wired up in production right now (the factory in
-[`internal/database/providers/__init__.py`](internal/database/providers/__init__.py)
+[`lib/db/providers/__init__.py`](lib/db/providers/__init__.py)
 registers `sqlite3` + `sqlink`; `mysql.py` / `postgresql.py` providers exist
 but are not yet selectable). Even so, **all SQL the app emits must stay
 portable across SQLite, PostgreSQL, and MySQL** so the other providers can be
@@ -199,7 +199,7 @@ turned on without rewriting queries. See
 analysis; key rules in practice:
 
 - Go through the provider, not raw `sqlite3` calls. Repositories use
-  `BaseSQLProvider` (see [`internal/database/providers/base.py`](internal/database/providers/base.py)) —
+  `BaseSQLProvider` (see [`lib/db/providers/base.py`](lib/db/providers/base.py)) —
   `execute` / `executeFetchOne` / `executeFetchAll` / `batchExecute` / `upsert`.
 - For upserts, call `provider.upsert(table, values, conflictColumns, updateExpressions=...)`
   instead of writing `ON CONFLICT … DO UPDATE` by hand. Use the
@@ -216,7 +216,7 @@ analysis; key rules in practice:
   explicitly (see notes in [`docs/llm/database.md`](docs/llm/database.md) §7).
 - Stick to portable column types in migrations: `TEXT`, `INTEGER`, `REAL`,
   `TIMESTAMP`, `BOOLEAN` (stored as int — see `convertToSQLite` in
-  [`internal/database/providers/utils.py`](internal/database/providers/utils.py)).
+  [`lib/db/providers/utils.py`](lib/db/providers/utils.py)).
   Store JSON as `TEXT`; don't reach for SQLite's `JSON1` functions.
 - **Primary keys: no `AUTOINCREMENT`.** SQLite `AUTOINCREMENT`, MySQL
   `AUTO_INCREMENT`, and PostgreSQL `SERIAL` / `BIGSERIAL` all spell it

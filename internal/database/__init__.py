@@ -47,8 +47,9 @@ Note:
     and portability across different database backends.
 """
 
+from lib.db.providers import ParametrizedQuery
+
 from .database import Database
-from .providers import ParametrizedQuery
 
 __all__ = [
     "Database",

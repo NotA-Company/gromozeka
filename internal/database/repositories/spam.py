@@ -7,7 +7,7 @@ database routing based on chat IDs, allowing for flexible data distribution
 across different database instances.
 
 Example:
-    >>> from internal.database.manager import DatabaseManager
+    >>> from lib.db.manager import DatabaseManager
     >>> from internal.database.repositories.spam import SpamRepository
     >>>
     >>> manager = DatabaseManager(config)
@@ -32,9 +32,9 @@ import logging
 from typing import List, Optional
 
 from internal.models import MessageId
+from lib.db.manager import DatabaseManager
 
 from .. import utils as dbUtils
-from ..manager import DatabaseManager
 from ..models import SpamMessageDict, SpamReason
 from .base import BaseRepository
 

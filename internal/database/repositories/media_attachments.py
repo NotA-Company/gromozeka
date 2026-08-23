@@ -22,9 +22,9 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from internal.models import MessageType
+from lib.db.manager import DatabaseManager
 
 from .. import utils as dbUtils
-from ..manager import DatabaseManager
 from ..models import MediaAttachmentDict, MediaStatus
 from .base import BaseRepository
 

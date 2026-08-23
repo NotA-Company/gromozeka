@@ -10,7 +10,7 @@
 
 This module provides a robust database migration system for the Gromozeka bot, dood! It allows for:
 
-- **Version Tracking**: Tracks migration versions using the [`settings`](../manager.py:14) table
+- **Version Tracking**: Tracks migration versions using the [`settings`](../../../lib/db/manager.py:14) table
 - **Sequential Execution**: Runs migrations in order automatically
 - **Rollback Support**: Can rollback migrations when needed
 - **Auto-Discovery**: Automatically discovers and loads migrations from the versions directory
@@ -494,7 +494,7 @@ All tests create temporary databases and clean up automatically, dood!
 
 ### Storage
 
-Migration versions are stored in the [`settings`](../manager.py:14) table:
+Migration versions are stored in the [`settings`](../../../lib/db/manager.py:14) table:
 
 - **Key:** `db-migration-version` - Current version (integer)
 - **Key:** `db-migration-last-run` - ISO timestamp of last migration
@@ -684,8 +684,8 @@ Potential features for future versions, dood!
 ### Internal Documentation
 
 - [`internal/database/database.py`](../database.py:28) - Database wrapper and migration orchestration
-- [`internal/database/manager.py`](../manager.py:14) - Database manager
-- [`internal/database/providers/base.py`](../providers/base.py:1) - SQL provider interface
+- [`lib/db/manager.py`](../../../lib/db/manager.py:14) - Database manager
+- [`lib/db/providers/base.py`](../../../lib/db/providers/base.py:1) - SQL provider interface
 - [`internal/database/utils.py`](../utils.py:1) - Database utilities
 
 ### External Resources

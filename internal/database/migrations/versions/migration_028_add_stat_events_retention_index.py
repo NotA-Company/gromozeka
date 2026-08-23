@@ -20,7 +20,8 @@ performance. The migration uses ``CREATE INDEX IF NOT EXISTS`` to be idempotent.
 
 from typing import Type
 
-from ...providers import BaseSQLProvider, ParametrizedQuery
+from lib.db.providers import BaseSQLProvider, ParametrizedQuery
+
 from ..base import BaseMigration
 
 

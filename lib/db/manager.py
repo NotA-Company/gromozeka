@@ -1,4 +1,8 @@
-"""Database manager for Gromozeka bot with configuration and wrapper initialization."""
+"""Database manager with configuration and wrapper initialization.
+
+Provides multi-database source management, provider routing, and lifecycle
+management for applications requiring cross-RDBMS SQL portability.
+"""
 
 import logging
 from collections.abc import Awaitable, Callable

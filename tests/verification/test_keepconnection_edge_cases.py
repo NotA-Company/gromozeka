@@ -13,8 +13,8 @@ from pathlib import Path
 import pytest
 
 from internal.database import Database
-from internal.database.manager import DatabaseManagerConfig
-from internal.database.providers.sqlite3 import SQLite3Provider
+from lib.db.manager import DatabaseManagerConfig
+from lib.db.providers.sqlite3 import SQLite3Provider
 
 
 class TestKeepConnectionEdgeCases:

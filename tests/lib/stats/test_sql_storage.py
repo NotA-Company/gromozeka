@@ -8,9 +8,9 @@ from unittest.mock import patch
 
 from internal.database import Database
 from internal.database import utils as dbUtils
-from internal.database.manager import DatabaseManagerConfig
 from internal.database.migrations.versions.migration_016_add_stat_tables import getMigration
 from internal.database.stats_storage import DatabaseStatsStorage
+from lib.db.manager import DatabaseManagerConfig
 from lib.stats.stats_storage import GLOBAL_CONSUMER_ID
 
 
@@ -692,10 +692,10 @@ async def testMultiEventTypeIsolation(statsStorage: DatabaseStatsStorage) -> Non
         None
     """
     from internal.database import Database
-    from internal.database.manager import DatabaseManagerConfig
     from internal.database.migrations.versions.migration_016_add_stat_tables import (
         getMigration,
     )
+    from lib.db.manager import DatabaseManagerConfig
 
     # Create a shared in-memory database
     config: DatabaseManagerConfig = {

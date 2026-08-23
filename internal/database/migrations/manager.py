@@ -13,7 +13,7 @@ Usage Example:
     .. code-block:: python
 
         from internal.database.migrations.manager import MigrationManager
-        from internal.database.providers import PostgreSQLProvider
+        from lib.db.providers import PostgreSQLProvider
 
         # Create migration manager
         manager = MigrationManager()
@@ -34,8 +34,9 @@ import logging
 from datetime import datetime
 from typing import List, Optional, Type
 
-from ..providers import BaseSQLProvider
-from ..providers.base import ExcludedValue
+from lib.db.providers import BaseSQLProvider
+from lib.db.providers.base import ExcludedValue
+
 from ..utils import getCurrentTimestamp
 from .base import BaseMigration
 

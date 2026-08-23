@@ -581,7 +581,7 @@ Database(
 
 ### DatabaseManager
 
-The [`DatabaseManager`](../internal/database/manager.py:39) handles provider routing and connection management:
+The [`DatabaseManager`](../lib/db/manager.py:39) handles provider routing and connection management:
 
 ```python
 async def getProvider(
@@ -845,7 +845,7 @@ config = {
 
 ## Configuration Validation
 
-The [`DatabaseManager`](../internal/database/manager.py:39) validates configuration on initialization:
+The [`DatabaseManager`](../lib/db/manager.py:39) validates configuration on initialization:
 
 ### Validation Rules
 
@@ -875,7 +875,7 @@ config = {"providers": {"primary": {"parameters": {"dbPath": "bot.db"}}}}
 
 - [Multi-Source Database Architecture Design](archive/design/multi-source-database-architecture-v2.md)
 - [Database Implementation](../internal/database/database.py)
-- [DatabaseManager Implementation](../internal/database/manager.py)
+- [DatabaseManager Implementation](../lib/db/manager.py)
 - [Configuration Examples](../docs/examples/)
 - [Migration System Documentation](../internal/database/migrations/README.md)
 

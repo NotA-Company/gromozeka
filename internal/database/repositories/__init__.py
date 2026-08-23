@@ -32,7 +32,7 @@ Key Components:
 
 Usage Example:
     >>> from internal.database.repositories import ChatInfoRepository
-    >>> from internal.database.manager import DatabaseManager
+    >>> from lib.db.manager import DatabaseManager
     >>>
     >>> db_manager = DatabaseManager()
     >>> chat_repo = ChatInfoRepository(db_manager)

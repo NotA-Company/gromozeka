@@ -214,7 +214,7 @@ Facts verified against source on 2026-08-17.
   **No index covers `(processed, created_at)`** — the retention DELETE's predicate.
 - Timestamps cross the wire as ISO-8601 strings:
   `convertToSQLite` maps `datetime.datetime` → `data.isoformat()`
-  ([`internal/database/providers/utils.py`](../../internal/database/providers/utils.py):55-56).
+  ([`lib/db/providers/utils.py`](../../lib/db/providers/utils.py):55-56).
   The existing timestamp-comparison precedent binds a **Python datetime** as a
   `:named` parameter and compares directly: `claimed_at < :orphanTimeout`
   (stats_storage.py:176, 189).
@@ -320,7 +320,7 @@ per-storage routing.
 ### 2.5 Provider rowcount limitation
 
 `BaseSQLProvider.execute` with `FetchType.NO_FETCH` returns `None`
-([`internal/database/providers/base.py`](../../internal/database/providers/base.py):301-321)
+([`lib/db/providers/base.py`](../../lib/db/providers/base.py):301-321)
 — there is no portable "rows affected" return. A rows-deleted **count** must come
 from a `SELECT COUNT(*)` with the same predicate issued before the DELETE (the app
 is single-writer per datasource; the count is for logging only, so a count/delete

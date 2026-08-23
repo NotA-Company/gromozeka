@@ -456,7 +456,7 @@ Long-term: migrate `_getConnection()` to use `aiosqlite.connect()`
 
 #### Affected Files
 
-- [`internal/database/providers/`](../../internal/database/providers/) (add aiosqlite provider)
+- [`lib/db/providers/`](../../lib/db/providers/) (add aiosqlite provider)
 - [`internal/bot/common/handlers/base.py`](/internal/bot/common/handlers/base.py)
 - Handlers that call `self.db.*` (now through repositories)
 

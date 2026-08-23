@@ -39,8 +39,9 @@ import datetime
 import logging
 from typing import List, Optional
 
+from lib.db.manager import DatabaseManager
+
 from .. import utils as dbUtils
-from ..manager import DatabaseManager
 from ..models import (
     DelayedTaskDict,
 )

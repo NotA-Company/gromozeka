@@ -20,10 +20,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from dateutil import parser
 
+from lib.db.manager import DatabaseManager
+from lib.db.providers import ParametrizedQuery
+
 from .. import utils as dbUtils
-from ..manager import DatabaseManager
 from ..models import WebhookUpdatesRow
-from ..providers import ParametrizedQuery
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)

@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 import pytest
 
-from internal.database.providers.base import (
+from lib.db.providers.base import (
     BaseSQLProvider,
     ParametrizedQuery,
     QueryResult,

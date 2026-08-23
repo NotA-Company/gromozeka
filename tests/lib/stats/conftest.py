@@ -8,11 +8,11 @@ from typing import AsyncGenerator
 import pytest
 
 from internal.database import Database
-from internal.database.manager import DatabaseManagerConfig
 from internal.database.migrations.versions.migration_016_add_stat_tables import (
     getMigration,
 )
 from internal.database.stats_storage import DatabaseStatsStorage
+from lib.db.manager import DatabaseManagerConfig
 
 
 @pytest.fixture

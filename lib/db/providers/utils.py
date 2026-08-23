@@ -9,15 +9,23 @@ to ensure consistent data type handling across different database systems.
 import datetime
 import logging
 from collections.abc import Mapping, Sequence
-from typing import Any, Union
+from typing import Protocol, Union, runtime_checkable
 
 import lib.utils as libUtils
-from internal.models import MessageId
 
 logger = logging.getLogger(__name__)
 
 
-def convertToSQLite(data: Any) -> Union[str, int, float, bytes, bytearray, None]:
+@runtime_checkable
+class SQLStringifiable(Protocol):
+    """Objects that serialize to SQL values via their asStr() representation."""
+
+    def asStr(self) -> str: ...  # noqa: E704
+
+
+def convertToSQLite(
+    data: Union[str, int, float, bytes, bytearray, None, object],
+) -> Union[str, int, float, bytes, bytearray, None]:
     """Convert data to a SQL-compatible type.
 
     Converts various Python data types to formats suitable for SQL storage across
@@ -31,6 +39,7 @@ def convertToSQLite(data: Any) -> Union[str, int, float, bytes, bytearray, None]
     - bool: converted to int (0 for False, 1 for True)
     - datetime.datetime: converted to ISO format string
     - None: returned as None (SQL NULL)
+    - SQLStringifiable (objects providing asStr()): converted via asStr()
     - Other types: converted to string with a warning logged
 
     Args:
@@ -42,9 +51,9 @@ def convertToSQLite(data: Any) -> Union[str, int, float, bytes, bytearray, None]
     """
     if data is None:
         return None
-    elif isinstance(data, MessageId):
-        # Exclusive handling for MessageId isn't needed, actually,
-        # but this way we'll suppress warning message
+    elif isinstance(data, SQLStringifiable):
+        # Exclusive handling for SQLStringifiable objects (e.g., MessageId).
+        # This uses asStr() directly and suppresses the warning message.
         return data.asStr()
     elif isinstance(data, bool):
         return int(data)

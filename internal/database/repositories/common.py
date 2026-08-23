@@ -6,7 +6,7 @@ These functions allow storing and retrieving key-value configuration settings
 that can be used across the application.
 
 Example:
-    >>> from internal.database.manager import DatabaseManager
+    >>> from lib.db.manager import DatabaseManager
     >>> from internal.database.repositories.common import CommonFunctionsRepository
     >>>
     >>> async def example_usage():
@@ -25,8 +25,9 @@ Classes:
 import logging
 from typing import Dict, Optional
 
+from lib.db.manager import DatabaseManager
+
 from .. import utils as dbUtils
-from ..manager import DatabaseManager
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)

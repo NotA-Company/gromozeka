@@ -21,7 +21,7 @@ Key Features:
 
 Example:
     >>> from internal.database.database import Database
-    >>> from internal.database.manager import DatabaseManagerConfig
+    >>> from lib.db.manager import DatabaseManagerConfig
     >>>
     >>> config = DatabaseManagerConfig(...)
     >>> async with Database(config) as db:
@@ -34,9 +34,10 @@ import logging
 import types
 from typing import Optional
 
-from .manager import DatabaseManager, DatabaseManagerConfig
+from lib.db.manager import DatabaseManager, DatabaseManagerConfig
+from lib.db.providers import BaseSQLProvider
+
 from .migrations import MigrationManager
-from .providers import BaseSQLProvider
 from .repositories import (
     CacheRepository,
     ChatEmbeddingsRepository,
@@ -105,7 +106,7 @@ class Database:
 
     Example:
         >>> from internal.database.database import Database
-        >>> from internal.database.manager import DatabaseManagerConfig
+        >>> from lib.db.manager import DatabaseManagerConfig
         >>>
         >>> config = DatabaseManagerConfig(...)
         >>> async with Database(config) as db:

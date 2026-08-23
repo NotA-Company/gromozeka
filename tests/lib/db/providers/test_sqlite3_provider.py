@@ -11,8 +11,8 @@ This module tests the SQLite3Provider class including:
 
 import pytest
 
-from internal.database.providers.base import ExcludedValue, FetchType, ParametrizedQuery
-from internal.database.providers.sqlite3 import SQLite3Provider
+from lib.db.providers.base import ExcludedValue, FetchType, ParametrizedQuery
+from lib.db.providers.sqlite3 import SQLite3Provider
 
 
 @pytest.fixture

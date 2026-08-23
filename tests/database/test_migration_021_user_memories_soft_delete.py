@@ -30,7 +30,7 @@ from internal.database.migrations.versions.migration_020_user_memories import Mi
 from internal.database.migrations.versions.migration_021_user_memories_soft_delete import (
     Migration021UserMemoriesSoftDelete,
 )
-from internal.database.providers.base import BaseSQLProvider
+from lib.db.providers.base import BaseSQLProvider
 
 CHAT_ID = 1
 USER_ID = 100

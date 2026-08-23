@@ -132,8 +132,8 @@ A streamlined reference optimized for LLM consumption, featuring:
 
 ### SQL Portability
 The database system is designed for cross-RDBMS compatibility, supporting multiple database backends:
-- **Registered providers**: SQLite (`sqlite3`) and SQLink (`sqlink`) — the only two wired into the `getSqlProvider` factory today (see [`internal/database/providers/__init__.py`](../internal/database/providers/__init__.py:90))
-- **Implemented, not yet selectable**: MySQL and PostgreSQL provider classes exist at [`internal/database/providers/mysql.py`](../internal/database/providers/mysql.py) and [`internal/database/providers/postgresql.py`](../internal/database/providers/postgresql.py) but are not registered in the factory. SQL must still stay portable so they can be turned on without rewrites.
+- **Registered providers**: SQLite (`sqlite3`) and SQLink (`sqlink`) — the only two wired into the `getSqlProvider` factory today (see [`lib/db/providers/__init__.py`](../lib/db/providers/__init__.py:90))
+- **Implemented, not yet selectable**: MySQL and PostgreSQL provider classes exist at [`lib/db/providers/mysql.py`](../lib/db/providers/mysql.py) and [`lib/db/providers/postgresql.py`](../lib/db/providers/postgresql.py) but are not registered in the factory. SQL must still stay portable so they can be turned on without rewrites.
 - **Provider abstraction**: Common interface through `BaseSQLProvider` class
 - **Portable operations**: Provider-specific methods handle SQL dialect differences
 - **Type safety**: Consistent TypedDict models across all providers
@@ -178,28 +178,28 @@ The Gromozeka database system is designed to work with multiple relational datab
 ### Supported Database Providers
 
 #### SQLite (Default)
-- **Provider**: [`SQLite3Provider`](../internal/database/providers/sqlite3.py:1)
+- **Provider**: [`SQLite3Provider`](../lib/db/providers/sqlite3.py:1)
 - **Library**: `aiosqlite` (async wrapper over Python's `sqlite3` stdlib module)
 - **Use case**: Embedded databases, development, testing, small to medium deployments
 - **Features**: Zero configuration, file-based, ACID compliant, optional `sqlite-vec` extension for native vector search
 - **Status**: Registered in `getSqlProvider` factory
 
 #### MySQL
-- **Provider**: [`MySQLProvider`](../internal/database/providers/mysql.py:1)
+- **Provider**: [`MySQLProvider`](../lib/db/providers/mysql.py:1)
 - **Library**: `aiomysql` (async MySQL driver)
 - **Use case**: Production deployments, high concurrency, large datasets
 - **Features**: Connection pooling, async operations, enterprise-grade
 - **Status**: Implemented but **not yet registered** in the `getSqlProvider` factory; cannot be selected via config today
 
 #### PostgreSQL
-- **Provider**: [`PostgreSQLProvider`](../internal/database/providers/postgresql.py:1)
+- **Provider**: [`PostgreSQLProvider`](../lib/db/providers/postgresql.py:1)
 - **Library**: `asyncpg` (async PostgreSQL driver)
 - **Use case**: Production deployments, complex queries, advanced features
 - **Features**: Connection pooling, async operations, rich data types
 - **Status**: Implemented but **not yet registered** in the `getSqlProvider` factory; cannot be selected via config today
 
 #### SQLink
-- **Provider**: [`SQLinkProvider`](../internal/database/providers/sqlink.py:1)
+- **Provider**: [`SQLinkProvider`](../lib/db/providers/sqlink.py:1)
 - **Library**: `sqlink` (HTTP client for a remote SQLink database server)
 - **Use case**: Remote database operations via a SQLink HTTP server (with optional HTTP/HTTPS proxy)
 - **Features**: Async operations, HTTP-based remote access, proxy support
@@ -415,11 +415,11 @@ To switch between database providers:
 ### Related Documentation
 
 - **SQL Portability Guide**: [`sql-portability-guide.md`](sql-portability-guide.md)
-- **Provider Base Class**: [`internal/database/providers/base.py`](../internal/database/providers/base.py:1)
-- **SQLite Provider**: [`internal/database/providers/sqlite3.py`](../internal/database/providers/sqlite3.py:1)
-- **MySQL Provider**: [`internal/database/providers/mysql.py`](../internal/database/providers/mysql.py:1)
-- **PostgreSQL Provider**: [`internal/database/providers/postgresql.py`](../internal/database/providers/postgresql.py:1)
-- **SQLink Provider**: [`internal/database/providers/sqlink.py`](../internal/database/providers/sqlink.py:1)
+- **Provider Base Class**: [`lib/db/providers/base.py`](../lib/db/providers/base.py:1)
+- **SQLite Provider**: [`lib/db/providers/sqlite3.py`](../lib/db/providers/sqlite3.py:1)
+- **MySQL Provider**: [`lib/db/providers/mysql.py`](../lib/db/providers/mysql.py:1)
+- **PostgreSQL Provider**: [`lib/db/providers/postgresql.py`](../lib/db/providers/postgresql.py:1)
+- **SQLink Provider**: [`lib/db/providers/sqlink.py`](../lib/db/providers/sqlink.py:1)
 
 ### Repository Pattern Architecture
 
@@ -707,7 +707,7 @@ database = "gromozeka_db"
 ## 🔗 Related Documentation
 
 - **Database Class**: [`internal/database/database.py`](../internal/database/database.py:1)
-- **Database Manager**: [`internal/database/manager.py`](../internal/database/manager.py:1)
+- **Database Manager**: [`lib/db/manager.py`](../lib/db/manager.py:1)
 - **Repository Base Class**: [`internal/database/repositories/base.py`](../internal/database/repositories/base.py:1)
 - **Database Models**: [`internal/database/models.py`](../internal/database/models.py:1)
 - **Migration Manager**: [`internal/database/migrations/manager.py`](../internal/database/migrations/manager.py:59)

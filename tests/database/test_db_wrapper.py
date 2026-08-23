@@ -13,7 +13,6 @@ from pathlib import Path
 import pytest
 
 from internal.database import Database
-from internal.database.manager import DatabaseManagerConfig
 from internal.database.models import (
     CacheType,
     MediaStatus,
@@ -21,6 +20,7 @@ from internal.database.models import (
     SpamReason,
 )
 from internal.models import MessageType
+from lib.db.manager import DatabaseManagerConfig
 
 # ============================================================================
 # Fixtures

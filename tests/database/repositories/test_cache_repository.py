@@ -13,8 +13,8 @@ import pytest
 
 from internal.database import Database
 from internal.database import utils as dbUtils
-from internal.database.manager import DatabaseManagerConfig
 from internal.database.models import CacheType
+from lib.db.manager import DatabaseManagerConfig
 
 
 @pytest.fixture

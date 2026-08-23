@@ -110,7 +110,7 @@ class ExcludedValue:
 ```
 
 **Provider Implementations** (illustrative — see
-[`internal/database/providers/`](/internal/database/providers/) for the real
+[`lib/db/providers/`](/lib/db/providers/) for the real
 code; parameter names match the `BaseSQLProvider.upsert` camelCase signature):
 
 ```python
@@ -1247,7 +1247,7 @@ The migration system now relies on the provider's `keepConnection` parameter for
 **Status**: ✅ Implemented on `BaseSQLProvider` (default implementations raise `NotImplementedError`; providers with vector extensions override)
 
 Native vector similarity search is exposed through four hooks on
-[`BaseSQLProvider`](/internal/database/providers/base.py) plus a small type
+[`BaseSQLProvider`](/lib/db/providers/base.py) plus a small type
 surface. Providers that load a vector extension (e.g. sqlite-vec, pgvector)
 override these; providers without vector support inherit the default
 `NotImplementedError`-raising implementations.
@@ -1344,10 +1344,10 @@ the higher-level design and the chat-embeddings consumer that drives this API.
    - Review and update `convertToSQLite()` function for cross-RDBMS compatibility
 
 3. **Update Provider Implementations**
-   - Extend [`internal/database/providers/sqlite3.py`](/internal/database/providers/sqlite3.py)
-   - Extend [`internal/database/providers/sqlink.py`](/internal/database/providers/sqlink.py)
-   - Create [`internal/database/providers/mysql.py`](/internal/database/providers/mysql.py)
-   - Create [`internal/database/providers/postgresql.py`](/internal/database/providers/postgresql.py)
+  - Extend [`lib/db/providers/sqlite3.py`](/lib/db/providers/sqlite3.py)
+  - Extend [`lib/db/providers/sqlink.py`](/lib/db/providers/sqlink.py)
+  - Create [`lib/db/providers/mysql.py`](/lib/db/providers/mysql.py)
+  - Create [`lib/db/providers/postgresql.py`](/lib/db/providers/postgresql.py)
 
 ### Phase 2: Migration (Week 3-4)
 
@@ -1444,17 +1444,17 @@ The following items have been intentionally skipped for now:
   - [ ] Review and update `convertToSQLite()` for cross-RDBMS compatibility
 
 - [ ] **Update SQLite providers**
-  - [ ] Add `upsert()` method to [`internal/database/providers/sqlite3.py`](/internal/database/providers/sqlite3.py)
-  - [ ] Add `applyPagination()` method to [`internal/database/providers/sqlite3.py`](/internal/database/providers/sqlite3.py)
-  - [ ] Add `getTextType()` method to [`internal/database/providers/sqlite3.py`](/internal/database/providers/sqlite3.py)
-  - [ ] Add `enable_foreign_keys` parameter to [`internal/database/providers/sqlite3.py`](/internal/database/providers/sqlite3.py)
-  - [ ] Add `upsert()` method to [`internal/database/providers/sqlink.py`](/internal/database/providers/sqlink.py)
-  - [ ] Add `applyPagination()` method to [`internal/database/providers/sqlink.py`](/internal/database/providers/sqlink.py)
-  - [ ] Add `getTextType()` method to [`internal/database/providers/sqlink.py`](/internal/database/providers/sqlink.py)
-  - [ ] Add `enable_foreign_keys` parameter to [`internal/database/providers/sqlink.py`](/internal/database/providers/sqlink.py)
+  - [ ] Add `upsert()` method to [`lib/db/providers/sqlite3.py`](/lib/db/providers/sqlite3.py)
+  - [ ] Add `applyPagination()` method to [`lib/db/providers/sqlite3.py`](/lib/db/providers/sqlite3.py)
+  - [ ] Add `getTextType()` method to [`lib/db/providers/sqlite3.py`](/lib/db/providers/sqlite3.py)
+  - [ ] Add `enable_foreign_keys` parameter to [`lib/db/providers/sqlite3.py`](/lib/db/providers/sqlite3.py)
+  - [ ] Add `upsert()` method to [`lib/db/providers/sqlink.py`](/lib/db/providers/sqlink.py)
+  - [ ] Add `applyPagination()` method to [`lib/db/providers/sqlink.py`](/lib/db/providers/sqlink.py)
+  - [ ] Add `getTextType()` method to [`lib/db/providers/sqlink.py`](/lib/db/providers/sqlink.py)
+  - [ ] Add `enable_foreign_keys` parameter to [`lib/db/providers/sqlink.py`](/lib/db/providers/sqlink.py)
 
 - [ ] **Implement MySQL provider**
-  - [ ] Create `internal/database/providers/mysql.py`
+  - [ ] Create `lib/db/providers/mysql.py`
   - [ ] Implement `upsert()` method
   - [ ] Implement `applyPagination()` method
   - [ ] Implement `getTextType()` method

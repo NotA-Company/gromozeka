@@ -140,7 +140,7 @@ keepConnection = true  # Connect immediately (good for readonly replicas)
 
 **Key classes:**
 - `SourceConfig` — config for one DB provider
-- [`SQLProviderConfig`](../../internal/database/providers/__init__.py) — provider config dict with `provider` and `parameters`
+- [`SQLProviderConfig`](../../lib/db/providers/__init__.py) — provider config dict with `provider` and `parameters`
 
 **Routing priority:** `dataSource` param → `chatId` mapping → default source
 
@@ -340,7 +340,7 @@ All defined in `internal/database/models.py`. Dict keys are snake_case to mirror
 | `DivinationLayoutDict` | Cached layout definition (composite PK `(system_id, layout_id)`) |
 | `UserMemoryDict` | Row from `user_memories` (per-(chat, user, thread) memory store; carries optional `score: NotRequired[float]` from semantic `searchMemories`) |
 | `ThreadResultDict` | Row returned by `chatMessages.getMessageThread` — root + target + chronological thread |
-| `VectorSearchResult` | Row from `BaseSQLProvider.vectorSearch` (`rowKey` dict + `distance: float`; lives in `internal/database/providers/base.py`) |
+| `VectorSearchResult` | Row from `BaseSQLProvider.vectorSearch` (`rowKey` dict + `distance: float`; lives in `lib/db/providers/base.py`) |
 
 > **Note on `SearchResultDict`:** this TypedDict was **deleted**. `chatSearch.searchChatMessages` now returns `List[ChatMessageDict]` with `score: NotRequired[float]` set to `0.0` in filter-only mode and the cosine similarity (0.0–1.0) in semantic mode. The same `ChatMessageDict` (minus `score`) is returned by every other chat-message repository method.
 
@@ -637,7 +637,7 @@ Also export the new class from `internal/database/repositories/__init__.py` and 
 
 ## 7. Provider Helper Methods
 
-**File:** [`internal/database/providers/base.py`](../../internal/database/providers/base.py)
+**File:** [`lib/db/providers/base.py`](../../lib/db/providers/base.py)
 
 The `BaseSQLProvider` abstract class provides cross-database compatibility methods for common SQL operations. Use these methods instead of writing RDBMS-specific SQL directly
 
@@ -712,7 +712,7 @@ async def getLayout(self, systemId: str, layoutName: str) -> Optional[Divination
 | `listTables(likePattern: str = "%") -> list[str]` | List table names matching a SQL LIKE pattern via native introspection. SQLite: `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE :pattern`. Default raises `NotImplementedError`. Used to discover `vec_message_embeddings_%` tables for model-change cleanup. |
 | `createVectorTable(tableName, columns: list[VectorColumnDef]) -> None` | Create a provider-native vector table/index. SQLite maps `VectorColumnDef` to vec0 DDL (`FLOAT[N] distance_metric=cosine`, `PARTITION KEY` suffix). `CREATE VIRTUAL TABLE IF NOT EXISTS` (idempotent). Default raises `NotImplementedError`. |
 
-### Vector search types (`internal/database/providers/base.py`)
+### Vector search types (`lib/db/providers/base.py`)
 
 | Type | Kind | Purpose |
 |---|---|---|

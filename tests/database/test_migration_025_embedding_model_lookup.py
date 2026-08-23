@@ -33,7 +33,7 @@ from internal.database.migrations import MigrationManager
 from internal.database.migrations.versions.migration_025_embedding_model_lookup import (
     Migration025EmbeddingModelLookup,
 )
-from internal.database.providers.base import BaseSQLProvider, ParametrizedQuery
+from lib.db.providers.base import BaseSQLProvider, ParametrizedQuery
 
 CHAT_ID = 1
 USER_ID = 100

@@ -661,7 +661,7 @@ vec0 shadow tables (`vec_*_chunks`, `vec_*_rowids`, `vec_*_info`) are dropped
 implicitly with their parent virtual table on SQLite. Enumerate parents
 through the provider abstraction — `BaseSQLProvider.listTables(likePattern)`
 already abstracts the per-dialect introspection query (see
-[`internal/database/providers/base.py`](../../internal/database/providers/base.py)
+[`lib/db/providers/base.py`](../../lib/db/providers/base.py)
 line 558), and the existing `ChatEmbeddingsRepository.deleteObsoleteModelEmbeddings`
 at [`chat_embeddings.py:420`](../../internal/database/repositories/chat_embeddings.py)
 already uses `sqlProvider.listTables("vec_message_embeddings_%")` for the
@@ -852,8 +852,8 @@ class ModelsRepository(BaseRepository):
         # Allocate next id app-side (AGENTS.md: never delegate ID generation
         # to the DB). ``upsert(..., updateExpressions={})`` maps to
         # ``ON CONFLICT(model, dimensions) DO NOTHING`` on every provider
-        # (verified in ``SQLite3Provider.upsert`` at
-        # internal/database/providers/sqlite3.py:426-439 — empty
+         # (verified in ``SQLite3Provider.upsert`` at
+         # lib/db/providers/sqlite3.py:426-439 — empty
         # updateExpressions triggers the DO NOTHING branch). The subsequent
         # SELECT-back returns the canonical id regardless of whether the
         # INSERT actually inserted or was short-circuited by the conflict.
@@ -923,7 +923,7 @@ class ModelsRepository(BaseRepository):
 NOTHING`). This is unnecessary — `BaseSQLProvider.upsert(table, values,
 conflictColumns, updateExpressions={})` already implements the
 `ON CONFLICT ... DO NOTHING` semantics portably (see
-[`SQLite3Provider.upsert`](../../internal/database/providers/sqlite3.py)
+  [`SQLite3Provider.upsert`](../../lib/db/providers/sqlite3.py)
 lines 426-439: an empty `updateExpressions` dict triggers the DO-NOTHING
 branch). The plan therefore goes through `provider.upsert(...)` and the
 `insertOrIgnore` helper is **not** added. See Risk R5 in §13 (resolved).
@@ -1802,7 +1802,7 @@ Requirements and changelog:
   `provider.upsert(table, values, conflictColumns, updateExpressions={})`,
   which already maps to `ON CONFLICT … DO NOTHING` portably across all
   three providers (verified in
-  [`SQLite3Provider.upsert`](../../internal/database/providers/sqlite3.py)
+[`SQLite3Provider.upsert`](../../lib/db/providers/sqlite3.py)
   lines 426-439). No `insertOrIgnore` helper is added.
 - ~~Q4 — `deleted_at` membership in `_SELECT_COLUMNS`.~~ → **resolved
   affirmatively** by reading every consumer of the constant:

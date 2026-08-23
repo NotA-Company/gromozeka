@@ -2,6 +2,10 @@
 
 Provides :class:`SQLite3Provider`, a concrete :class:`BaseSQLProvider` that
 wraps the :mod:`aiosqlite` library with a fully async interface.
+
+Note: This module's name (``sqlite3``) shadows stdlib's :mod:`sqlite3` in name
+only. All imports in the codebase are absolute imports, so this name choice
+does not conflict with the stdlib module.
 """
 
 import asyncio

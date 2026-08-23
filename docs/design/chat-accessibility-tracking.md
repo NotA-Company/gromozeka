@@ -342,17 +342,17 @@ All `bot_status` writes go through dedicated accessibility-subsystem methods on
 **Proof that the non-clobber rule holds** (this is the load-bearing claim, so it is
 verified against the actual provider, not asserted):
 
-- The SQLite provider's `upsert` ([`internal/database/providers/sqlite3.py:404`](../../internal/database/providers/sqlite3.py))
+- The SQLite provider's `upsert` ([`lib/db/providers/sqlite3.py:404`](../../lib/db/providers/sqlite3.py))
   builds the INSERT column list **only** from the `values` dict keys
-  ([`sqlite3.py:429`](../../internal/database/providers/sqlite3.py): `colsStr = ", ".join(values.keys())`)
+  ([`sqlite3.py:429`](../../lib/db/providers/sqlite3.py): `colsStr = ", ".join(values.keys())`)
   and the `ON CONFLICT … DO UPDATE SET` clause **only** from the `updateExpressions` dict
-  ([`sqlite3.py:450`](../../internal/database/providers/sqlite3.py):
+  ([`sqlite3.py:450`](../../lib/db/providers/sqlite3.py):
   `updateStr = ", ".join([f"{col} = {expr}" for col, expr in translatedExpressions.items()])`).
 - Therefore a column absent from **both** dicts is: omitted from the INSERT column list
   on the INSERT path → the row takes the column `DEFAULT 'active'`; and omitted from the
   SET clause on the CONFLICT path → the existing value is preserved.
 - The abstract contract on `BaseSQLProvider.upsert`
-  ([`internal/database/providers/base.py:390`](../../internal/database/providers/base.py))
+  ([`lib/db/providers/base.py:390`](../../lib/db/providers/base.py))
   specifies the same semantics ("`values`: Dictionary of column names and values to
   insert"; "`updateExpressions`: Optional dict of column -> expression for UPDATE clause.
   If None, all non-conflict columns are updated with their values"). `updateChatInfo`

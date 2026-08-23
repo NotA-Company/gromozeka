@@ -7,7 +7,7 @@ This module tests the BaseSQLProvider abstract class and its helper methods:
 
 from typing import Optional
 
-from internal.database.providers.base import (
+from lib.db.providers.base import (
     BaseSQLProvider,
     ExcludedValue,
     FetchType,

@@ -12,12 +12,12 @@ The test verifies:
 import pytest
 
 from internal.database import Database
-from internal.database.manager import DatabaseManagerConfig
 from internal.database.migrations import MigrationManager
 from internal.database.migrations.versions.migration_028_add_stat_events_retention_index import (
     Migration028AddStatEventsRetentionIndex,
 )
-from internal.database.providers import BaseSQLProvider
+from lib.db.manager import DatabaseManagerConfig
+from lib.db.providers import BaseSQLProvider
 
 
 async def _tableExists(provider: BaseSQLProvider, tableName: str) -> bool:

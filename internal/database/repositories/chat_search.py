@@ -32,11 +32,11 @@ from collections.abc import Sequence
 from typing import Awaitable, Callable, List, Optional
 
 from internal.models import MessageId
+from lib.db.manager import DatabaseManager
+from lib.db.providers.base import BaseSQLProvider, VectorDistanceMetric
 
 from .. import utils as dbUtils
-from ..manager import DatabaseManager
 from ..models import ChatMessageDict, MessageCategory
-from ..providers.base import BaseSQLProvider, VectorDistanceMetric
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)

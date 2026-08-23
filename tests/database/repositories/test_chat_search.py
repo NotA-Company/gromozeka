@@ -40,10 +40,10 @@ import pytest
 
 from internal.database import Database
 from internal.database.models import MessageCategory
-from internal.database.providers.base import BaseSQLProvider
-from internal.database.providers.sqlite3 import _SQLITE_VEC_AVAILABLE
 from internal.database.repositories.chat_search import _MESSAGE_ID_FILTER_BATCH_SIZE, ChatSearchRepository
 from internal.models import MessageId
+from lib.db.providers.base import BaseSQLProvider
+from lib.db.providers.sqlite3 import _SQLITE_VEC_AVAILABLE
 
 
 class TestSearchChatMessages:
