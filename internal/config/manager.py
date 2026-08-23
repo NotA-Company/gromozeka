@@ -278,8 +278,11 @@ class ConfigManager:
     def get(self, key: str, default: Any = None) -> Any:
         """Get configuration value by key.
 
+        The key is treated as a literal TOML key - no dot navigation or
+        splitting is performed.
+
         Args:
-            key: The configuration key to retrieve. Supports dot notation for nested keys.
+            key: The configuration key to retrieve (literal match only).
             default: The default value to return if the key is not found. Defaults to None.
 
         Returns:
@@ -287,8 +290,8 @@ class ConfigManager:
 
         Example:
             >>> config_manager = ConfigManager()
-            >>> bot_token = config_manager.get("bot.token")
-            >>> db_type = config_manager.get("database.type", "sqlite")
+            >>> bot_config = config_manager.get("bot")
+            >>> db_config = config_manager.get("database", {})
         """
         return self.config.get(key, default)
 
@@ -504,6 +507,25 @@ class ConfigManager:
             False
         """
         return self.get("stats", {})
+
+    def getStatsPagesConfig(self) -> Dict[str, Any]:
+        """Get stats-pages-specific configuration.
+
+        Returns:
+            A dictionary containing stats-pages configuration settings including
+            enabled flag, ttl-hours, ratelimiter-queue, and command templates.
+            Returns an empty dict if not configured.
+
+        Example:
+            >>> config_manager = ConfigManager()
+            >>> stats_pages_config = config_manager.getStatsPagesConfig()
+            >>> print(stats_pages_config.get("enabled"))
+            False
+        """
+        statsSection = self.get("stats", {})
+        if isinstance(statsSection, dict):
+            return statsSection.get("pages", {})
+        return {}
 
     def getProxyConfig(self) -> ProxyConfigDict:
         """Get global proxy configuration.

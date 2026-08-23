@@ -126,6 +126,46 @@ TELEGRAM_RETRY_AFTER_CAP_SECONDS: float = 60.0
 Protects against absurdly large ``retry_after`` values stalling a handler.
 """
 
+BOT_ID_CACHE_TTL_SECONDS: float = 3600.0
+"""Time-to-live in seconds for the cached bot ID.
+
+The bot ID is cached after the first successful platform API call and reused
+for subsequent calls within this window (1 hour by default). This bounds
+staleness in case of a platform glitch that changes the bot identity.
+
+Failed resolution is never cached — the next call retries the platform API.
+"""
+
+BOT_ID_FAILURE_GRACE_SECONDS: float = 3600.0
+"""Grace period in seconds for using stale cached bot ID on refresh failure.
+
+When a refresh fails and a stale cached value exists with age < (TTL + GRACE),
+the stale value is returned instead of raising. The usable stale window is
+therefore TTL + GRACE (2 hours by default).
+
+Failed resolution never writes to the cache.
+"""
+
+BOT_USERNAME_CACHE_TTL_SECONDS: float = 3600.0
+"""Time-to-live in seconds for the cached bot username.
+
+The bot username is cached after the first successful platform API call and reused
+for subsequent calls within this window (1 hour by default). This bounds
+staleness in case of a platform glitch that changes the bot username.
+
+Failed resolution is never cached — the next call retries the platform API.
+"""
+
+BOT_USERNAME_FAILURE_GRACE_SECONDS: float = 3600.0
+"""Grace period in seconds for using stale cached bot username on refresh failure.
+
+When a refresh fails and a stale cached value exists with age < (TTL + GRACE),
+the stale value is returned instead of raising. The usable stale window is
+therefore TTL + GRACE (2 hours by default).
+
+Failed resolution never writes to the cache.
+"""
+
 RANDOM_ANSWER_CONTEXT_LENGTH: int = 64
 """Maximum number of messages to include in the context for random answer generation.
 

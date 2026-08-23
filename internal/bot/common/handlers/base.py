@@ -76,6 +76,7 @@ from lib.ai import (
     ModelMessage,
     ModelResultStatus,
 )
+from lib.stats import NullStatsStorage, StatsStorage
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +133,7 @@ class BaseBotHandler(CommandHandlerMixin):
         chatDefaults: Default settings for all chats
         cache: Cache service instance
         queueService: Queue service for background tasks
+        messageStatsStorage: Stats storage for message events
     """
 
     def __init__(
@@ -162,6 +164,9 @@ class BaseBotHandler(CommandHandlerMixin):
         self.storage = StorageService.getInstance()
         self.llmService = LLMService.getInstance()
 
+        # Stats storage for message events (default: no-op) — covers both directions
+        self.messageStatsStorage: StatsStorage = NullStatsStorage()
+
         # Cached config flags — read once at init, require restart to take effect.
         # Mirrors the _searchEnabled pattern in MessagePreprocessorHandler.
         self._sttEnabled: bool = bool(self.configManager.getSttConfig().get("enabled", False))
@@ -191,6 +196,18 @@ class BaseBotHandler(CommandHandlerMixin):
             None
         """
         self._bot = bot
+
+    def injectStatsStorage(self, statsStorage: Optional[StatsStorage]) -> None:
+        """
+        Inject a stats storage instance for message event recording.
+
+        Args:
+            statsStorage: The stats storage instance to inject, or None to use NullStatsStorage
+
+        Returns:
+            None
+        """
+        self.messageStatsStorage = statsStorage or NullStatsStorage()
 
     ###
     # Chat settings Managenent
@@ -1135,6 +1152,34 @@ class BaseBotHandler(CommandHandlerMixin):
             metadata=message.metadata,
             mediaGroupId=message.mediaGroupId,
         )
+
+        # Record message stats event (best-effort, never raises).
+        # Both directions recorded; direction determined by sender.id == botId (not by messageCategory).
+        # Split parts each count as raw saves. Exclude only DELETED/UNSPECIFIED (rewrites/defaults).
+        if messageCategory not in (MessageCategory.DELETED, MessageCategory.UNSPECIFIED):
+            # Resolve bot id ONCE per call, guarded — getBotId can raise RuntimeError / hit Max API on first call.
+            # Best-effort stats must never break message saving.
+            # Unknown bot identity counts as non-bot (belt-and-suspenders; rare: TTL expiry plus transient API failure).
+            try:
+                botId = await self.getBotId()
+            except Exception as e:
+                logger.debug(f"Failed to get bot id for stats recording: {e}")
+                botId = None
+
+            # Direction: sent=True if sender is the bot, sent=False if sender is a user.
+            # When botId is None, sent=False (treat as non-bot).
+            sent = botId is not None and sender.id == botId
+            await self.messageStatsStorage.record(
+                stats={"message_count": 1, "text_length": len(message.messageText) if message.messageText else 0},
+                consumerId=str(chat.id),
+                labels={
+                    "user_id": str(sender.id),
+                    "chat_type": chat.chatType.value,
+                    "message_type": message.messageType,
+                    "message_category": messageCategory,
+                    "sent": str(sent),
+                },
+            )
 
         return True
 

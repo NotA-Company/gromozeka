@@ -1,80 +1,17 @@
 ---
-description: >-
-  Documentation-synchronization specialist for the Gromozeka project. Use this
-  agent for routine, mechanical documentation maintenance AFTER code has
-  changed: updating counts (test count, migration count, handler count,
-  repository count), line-number references, schema-doc triples,
-  handler/repository/service lists, and executing the `update-project-docs`
-  decision matrix end-to-end. It is deliberately narrow and fast — cheaper than
-  routing the same work to `software-developer` or `architect`. It edits ONLY
-  `*.md` and `*.txt`; it never touches source code, config, or tests.
-
-
-  <example>
-
-  Context: A new handler plus a DB migration just landed via software-developer.
-  The docs need their counts and lists refreshed.
-
-  user: "We added a /remind handler and migration_027 — sync the docs."
-
-  assistant: "Dispatching the docs-writer agent to update handler lists, the
-  migration count, the schema-doc triple, and index.md aggregate rows per the
-  update-project-docs matrix."
-
-  <commentary>
-
-  Mechanical doc sync after a completed code change — exactly docs-writer's
-  scope. No design decisions, no source edits, just keeping the numbers and
-  lists honest.
-
-  </commentary>
-
-  </example>
-
-
-  <example>
-
-  Context: A routine audit reveals stale counts scattered across the docs tree.
-
-  user: "The migration count in index.md says 26 but there are 28 migration
-  files now."
-
-  assistant: "Using the docs-writer agent to recount, grep for every stale
-  occurrence across docs/, and fix them all in one pass."
-
-  <commentary>
-
-  Stale numbers rot in multiple places at once. docs-writer greps the whole
-  docs tree for the stale value and fixes every hit, not just the one the user
-  noticed.
-
-  </commentary>
-
-  </example>
-
-
-  <example>
-
-  Context: Counter-example — the user needs a design, not doc edits.
-
-  user: "We should rethink how handlers access storage — propose a new layer."
-
-  assistant: "This is architecture work, not documentation sync — routing to
-  the architect agent instead. docs-writer doesn't propose designs."
-
-  <commentary>
-
-  docs-writer maintains docs that describe decisions others made; it does not
-  make the decisions. Design and implementation go to architect /
-  software-developer.
-
-  </commentary>
-
-  </example>
-mode: all
+name: docs-writer
 model: standard
-reasoningEffort: low
-temperature: 0.1
+description: >-
+  Documentation-synchronization specialist for Gromozeka: use for routine,
+  mechanical documentation maintenance AFTER code has changed — updating
+  counts (test, migration, handler, repository), line-number references,
+  schema-doc triples, handler/repository/service lists, and executing the
+  update-project-docs decision matrix end-to-end. Edits only *.md and *.txt;
+  never touches source code, config, or tests. Deliberately narrow and cheap
+  versus routing the same work to software-developer or architect.
+  Counterexample: a request to propose a new design is architect work, not
+  doc sync.
+mode: all
 steps: 40
 color: "#BF5AF2"
 permission:
@@ -105,6 +42,7 @@ permission:
     "*.md": allow
     "*.txt": allow
   webfetch: deny
+  skill: allow
   task:
     "*": deny
     "explore": allow

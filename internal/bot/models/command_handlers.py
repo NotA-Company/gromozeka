@@ -64,6 +64,8 @@ class CommandCategory(Enum):
     """SPAM-related commands for Admins"""
     TECHNICAL = auto()
     """Technical commands"""
+    UTILITIES = auto()
+    """Utility commands (stats, etc.)"""
 
 
 class CommandHandlerOrder(IntEnum):

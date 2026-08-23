@@ -18,6 +18,9 @@ class DelayedTaskFunction(StrEnum):
     DO_EXIT = "doExit"
     """Actully - it's onExit event"""
 
+    STATS_PAGES_CLEANUP = "statsPagesCleanup"
+    """One-shot per-page deletion task for generated stats pages"""
+
 
 class DelayedTask:
     """Represents a delayed task to be executed at a specific time.

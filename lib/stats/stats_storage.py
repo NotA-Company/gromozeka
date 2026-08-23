@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Optional
 
+from .types import STATS_QUERY_ROW_LIMIT, StatsAggregateDict
+
 # Sentinel consumer ID for global (all-consumer) aggregation
 GLOBAL_CONSUMER_ID = "__global__"
 
@@ -77,6 +79,64 @@ class StatsStorage(ABC):
         """
         ...
 
+    @abstractmethod
+    async def purgeProcessed(self, *, retentionDays: int) -> int:
+        """Delete processed stat events older than the retention window.
+
+        Deletes rows with ``processed = 1 AND event_type = <storage's own type>
+        AND created_at < truncateToDay(now - retentionDays)`` (UTC midnight of
+        N days ago, day-truncated) through this storage's own data source.
+        ``retentionDays <= 0`` is a no-op (keep forever). Errors propagate to the
+        caller (matching ``aggregate()``'s contract — isolation is the coordinator's
+        job); ``record()`` remains the only never-raise method.
+
+        Args:
+            retentionDays: Minimum age in days for a processed row to be deleted.
+
+        Returns:
+            Number of rows deleted (0 if nothing was eligible or retention is off).
+        """
+        ...
+
+    @abstractmethod
+    async def query(
+        self,
+        *,
+        eventType: str,
+        periodType: Optional[str] = None,
+        periodStartFrom: Optional[str] = None,
+        periodStartTo: Optional[str] = None,
+        limit: int = STATS_QUERY_ROW_LIMIT,
+        offset: int = 0,
+    ) -> list[StatsAggregateDict]:
+        """Read aggregated rows with parsed labels.
+
+        Queries the ``stat_aggregates`` table for rows matching the given
+        criteria and returns them with labels parsed from JSON into dicts.
+        The ``eventType`` parameter is a query filter (not tied to this
+        storage's per-instance eventType), enabling cross-eventType views.
+
+        Args:
+            eventType: Event type discriminator to filter on (required).
+            periodType: Optional period type filter ('hourly', 'daily',
+                'monthly', or 'total'). None = all period types.
+            periodStartFrom: Optional ISO-8601 UTC timestamp lower bound
+                (inclusive). String comparison works for lexicographic ordering.
+            periodStartTo: Optional ISO-8601 UTC timestamp upper bound
+                (inclusive). String comparison works for lexicographic ordering.
+            limit: Maximum number of rows to return (default STATS_QUERY_ROW_LIMIT).
+            offset: Number of rows to skip before returning results (default 0).
+
+        Returns:
+            List of StatsAggregateDict objects with parsed labels dicts.
+            Empty list if no rows match.
+
+        Raises:
+            Database or provider errors on failure (raise-on-error contract,
+            matching ``aggregate()`` and ``purgeProcessed()``).
+        """
+        ...
+
 
 class NullStatsStorage(StatsStorage):
     """No-op storage — discards all events, ``aggregate()`` is a no-op.
@@ -116,3 +176,39 @@ class NullStatsStorage(StatsStorage):
             0
         """
         return 0
+
+    async def purgeProcessed(self, *, retentionDays: int) -> int:
+        """No-op — returns 0.
+
+        Args:
+            retentionDays: Ignored.
+
+        Returns:
+            0
+        """
+        return 0
+
+    async def query(
+        self,
+        *,
+        eventType: str,
+        periodType: Optional[str] = None,
+        periodStartFrom: Optional[str] = None,
+        periodStartTo: Optional[str] = None,
+        limit: int = STATS_QUERY_ROW_LIMIT,
+        offset: int = 0,
+    ) -> list[StatsAggregateDict]:
+        """No-op — returns empty list.
+
+        Args:
+            eventType: Ignored.
+            periodType: Ignored.
+            periodStartFrom: Ignored.
+            periodStartTo: Ignored.
+            limit: Ignored.
+            offset: Ignored.
+
+        Returns:
+            Empty list.
+        """
+        return []

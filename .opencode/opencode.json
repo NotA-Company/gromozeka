@@ -36,6 +36,9 @@
             "url": "https://api.sourcecraft.tech/mcp",
             "timeout": 300000
         }
+    },
+
+    "lsp": {
     }
 
 }

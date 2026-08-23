@@ -6,7 +6,7 @@
 **Database Class**: [`Database`](../internal/database/database.py:1)
 **Models**: [`internal/database/models.py`](../internal/database/models.py:1)
 **Repositories**: [`internal/database/repositories/`](../internal/database/repositories/)
-**Migrations**: 26 (up to `migration_026`)
+**Migrations**: 28 (up to `migration_028`)
 
 ---
 
@@ -290,41 +290,6 @@ CREATE TABLE bayes_classes (
 
 ---
 
-### chat_stats
-**Purpose**: Daily chat statistics
-**Primary Key**: `(chat_id, date)`
-
-```sql
-CREATE TABLE chat_stats (
-    chat_id INTEGER NOT NULL,
-    date TIMESTAMP NOT NULL,
-    messages_count INTEGER NOT NULL DEFAULT 0,
-    created_at TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP NOT NULL,
-    PRIMARY KEY (chat_id, date)
-)
-```
-
----
-
-### chat_user_stats
-**Purpose**: Daily per-user chat statistics
-**Primary Key**: `(chat_id, user_id, date)`
-
-```sql
-CREATE TABLE chat_user_stats (
-    chat_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
-    date TIMESTAMP NOT NULL,
-    messages_count INTEGER NOT NULL DEFAULT 0,
-    created_at TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP NOT NULL,
-    PRIMARY KEY (chat_id, user_id, date)
-)
-```
-
----
-
 ### chat_summarization_cache
 **Purpose**: Cached chat summaries
 **Primary Key**: `csid`
@@ -506,11 +471,11 @@ CREATE TABLE stat_events (
 )
 ```
 
-**Indexes**: `idx_stat_events_unprocessed`, `idx_stat_events_lookup`
+**Indexes**: `idx_stat_events_unprocessed`, `idx_stat_events_lookup`, `idx_stat_events_retention`
 
 **Repository**: `DatabaseStatsStorage.record()` in `internal/database/stats_storage.py`
 
-**Note**: Created by `migration_016`. Part of the v3 statistics library (`lib/stats/`). Used to record LLM events (tokens, errors, fallbacks) and other metrics before aggregation into `stat_aggregates`.
+**Note**: Created by `migration_016` (tables) + `migration_028` (retention index). Part of the v3 statistics library (`lib/stats/`). Used to record LLM events (tokens, errors, fallbacks) and other metrics before aggregation into `stat_aggregates`.
 
 ---
 
@@ -534,7 +499,7 @@ CREATE TABLE stat_aggregates (
 
 **Repository**: `DatabaseStatsStorage.aggregate()` in `internal/database/stats_storage.py`
 
-**Period types**: `hour`, `day`, `month`, `total`
+**Period types**: `hourly`, `daily`, `monthly`, `total`
 
 **Labels**: consumer, modelName, modelId, provider, generationType (for LLM events)
 
@@ -1542,4 +1507,3 @@ chat_messages (1) ──< (N) chat_messages (self-reference via reply_id, root_m
 7. **JSON fields** (metadata, markup) are stored as TEXT strings
 8. **Read-only sources** reject write operations with ValueError
 9. **Thread-safe** - uses thread-local connections per source
-10. **Auto-updates** - `chat_stats` and `chat_user_stats` updated automatically on message save

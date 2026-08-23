@@ -20,6 +20,11 @@
 10. [lib/divination — Tarot & Runes Logic](#10-libdivination--tarot--runes-logic)
 11. [lib/sandbox — Sandboxed Code Execution](#11-libsandbox--sandboxed-code-execution)
 12. [lib/utils — Utilities & TTLDict](#12-libutils--utilities--ttldict)
+13. [lib/proxy — Proxy Resolution](#13-libproxy--proxy-resolution)
+14. [sqlite-vec — Native Vector Search Extension](#14-sqlite-vec--native-vector-search-extension)
+15. [aiohttp — HTTP Server for the Webhook Receiver](#15-aiohttp--http-server-for-the-webhook-receiver)
+16. [lib/stt — Provider-neutral Speech-to-Text](#16-libstt--provider-neutral-speech-to-text)
+17. [lib/stats/stats_pages/ — Statistics Page Generator](#17-libstatsstats_pages--statistics-page-generator)
 
 ---
 
@@ -563,8 +568,10 @@ from lib.stats import StatsStorage, NullStatsStorage, GLOBAL_CONSUMER_ID
 
 | Class | File | Purpose |
 |---|---|---|
-| [`StatsStorage`](../../lib/stats/stats_storage.py:11) | `lib/stats/stats_storage.py` | ABC for statistics storage backends |
-| [`NullStatsStorage`](../../lib/stats/stats_storage.py:81) | `lib/stats/stats_storage.py` | No-op implementation (discards all events) |
+| [`StatsStorage`](../../lib/stats/stats_storage.py:13) | `lib/stats/stats_storage.py` | ABC for statistics storage backends |
+| [`NullStatsStorage`](../../lib/stats/stats_storage.py:141) | `lib/stats/stats_storage.py` | No-op implementation (discards all events) |
+| [`StatsAnalyzer`](../../lib/stats/analysis.py) | `lib/stats/analysis.py` | Read-side filtering/grouping/aggregation over `query()` rows (pure Python) |
+| `StatsAggregateDict` + `STATS_QUERY_ROW_LIMIT` | `lib/stats/types.py` | TypedDict for one aggregated stats row (5 camelCase fields, labels parsed from JSON) and the shared default `query()` row limit (`STATS_QUERY_ROW_LIMIT: int = 10000`) |
 
 **Interface methods on `StatsStorage`:**
 ```python
@@ -581,7 +588,34 @@ await statsStorage.aggregate(
     limit: int = 1000,
     orphanTimeoutSeconds: int = 3600,
 ) -> int
+
+await statsStorage.purgeProcessed(
+    *,
+    retentionDays: int,
+) -> int
+
+await statsStorage.query(
+    *,
+    eventType: str,
+    periodType: Optional[str] = None,
+    periodStartFrom: Optional[str] = None,
+    periodStartTo: Optional[str] = None,
+    limit: int = 10000,
+    offset: int = 0,
+) -> list[StatsAggregateDict]
 ```
+
+**Method details:**
+
+- `record()`: Append a raw stat event to the log. Failures are logged but not raised.
+- `aggregate()`: Claim up to `limit` unprocessed (or orphaned) events, aggregate into hourly/daily/monthly/total buckets, upsert into the aggregation table, and mark events as processed. Returns the number of events processed (0 if nothing to do).
+- `purgeProcessed()`: Delete this storage's own event type's processed events older than the retention window (``processed = 1 AND event_type = :eventType AND created_at < cutoff`` through this storage's own data source). ``retentionDays <= 0`` is a no-op (returns 0, deletes nothing). Errors propagate to the caller (matching ``aggregate()``'s contract). Used by `StatsAggregationService` per storage after each aggregation cycle to clean up old processed events. `NullStatsStorage` returns 0.
+- `query()`: Read aggregated rows filtered by `eventType` (required), `periodType` (optional: `'hourly'`, `'daily'`, `'monthly'`, or `'total'`), and optional inclusive bounds `periodStartFrom` / `periodStartTo` (ISO-8601 UTC strings). Returns rows with labels parsed from JSON as `StatsAggregateDict` (fields: `periodStart`, `periodType`, `labels`, `metricKey`, `metricValue`). Applies `limit`/`offset` via provider's `applyPagination()`. Raises on database/provider errors. `NullStatsStorage` returns `[]`.
+
+**Analysis (read-side)** — [`lib/stats/analysis.py`](../../lib/stats/analysis.py), re-exported from the package root; pure-Python post-processing over `query()` rows (no SQL label filtering), used by `StatsHandler`:
+- `StatsAnalyzer(rows)` — immutable analyzer over `list[StatsAggregateDict]`; filter methods return new instances: `filterByLabelIn(key, values)` / `filterByLabel(key, value)` (callers filter the `consumer` label to concrete chat IDs, which naturally excludes `__global__` rows), plus `sumMetric(metricKey)`, `groupSum(groupLabel, metricKey)`, `topN(groupLabel, metricKey, n)`, and `average(valueKey, countKey)` (weighted average Σvalue / Σcount — never an average of averages).
+- `mapPeriodArgToPeriodType(periodArg)` — maps `/stats` period args to query granularity (constants in `PeriodArg` / `PeriodType`, both `StrEnum`): `1h`–`24h` → `hourly`, `1d`–`31d` → `daily`, `Nm` (`N ≥ 1`, calendar months) → `monthly`, `all` → `total`; `ValueError` otherwise.
+- `computePeriodRange(periodArg, *, now=None)` — returns `(periodStartFrom, periodStartTo)` ISO-8601 UTC bounds (`(None, None)` for `all`); the start is truncated to the period boundary so the partial current day is included (7d → 8 daily buckets, 30d → 31). `now` is keyword-only; when supplied it MUST be timezone-aware (`ValueError` on a naive datetime) and is normalized to UTC; `None` defaults to the current UTC time.
 
 **Usage example:**
 ```python
@@ -595,12 +629,15 @@ await storage.record(
 )
 ```
 
-**DB-backed implementation:** [`DatabaseStatsStorage`](../../internal/database/stats_storage.py:39) in `internal/database/stats_storage.py` — backed by `stat_events` (append-only log) and `stat_aggregates` (period buckets). Created in `main.py` when `stats.enabled = true`.
+**DB-backed implementation:** [`DatabaseStatsStorage`](../../internal/database/stats_storage.py:44) in `internal/database/stats_storage.py` — backed by `stat_events` (append-only log) and `stat_aggregates` (period buckets). Keeps a plain `dataSource` attribute (`str`) used for provider routing (`getProvider(dataSource=...)`); there is no `dataSource` member on the `StatsStorage` ABC. Created in `main.py` when `stats.enabled = true`.
 
 **Integration points:**
 - `LLMManager` receives `statsStorage` in constructor and propagates to all `AbstractModel` instances
 - `AbstractModel` records generation stats (tokens, errors, status) via `_recordAttemptStats()`
 - `LLMService` passes `consumerId=str(chatId)` to LLM generation methods
+- `message` events — `BaseBotHandler.saveChatMessage` records `message_count`/`text_length` for messages in **both directions** (stats `{message_count: 1, text_length: len(text)}`). Direction comes from sender identity, not category: the `sent` label is `"True"` when `sender.id` equals the bot id (resolved via `TheBot.getBotId()`, memoized with a 1 h TTL — `BOT_ID_CACHE_TTL_SECONDS`; failures are never cached, and if resolution fails recording still proceeds with `sent = "False"` — unknown identity counts as non-bot) and `"False"` otherwise. Labels: `user_id`/`chat_type`/`message_type`/`message_category`/`sent`. Only `DELETED`/`UNSPECIFIED` categories are excluded (rewrites/defaults); every raw save counts, so split message parts each record one event. `main.py` builds the `messageStatsStorage` (gated on `[stats].enabled`) and threads it through both bot applications into `HandlersManager`, which injects it post-construction onto every handler. Default is `NullStatsStorage` so stats-off needs no `None` checks.
+- `llm_tool_call` events — `LLMService.injectStatsStorage` receives a `DatabaseStatsStorage` built in `main.py` (key `[stats].tool-stats-data-source`); every tool dispatch in the `generateTextViaLLM` loop records `tool_call_count`/`elapsed_time`/`is_error` with `user_id`/`toolName` labels. Tools that raise propagate unrecorded (never-raise contract makes that a bug, not a stats gap).
+- `command` events — `HandlersManager.handleCommand` records `command_count`/`is_error` with `user_id`/`commandName` (lowercased) labels for every **executed** command (denials/unrecognized commands are not recorded); `consumerId` is the chat ID. `main.py` builds the storage (key `[stats].command-stats-data-source`, gated on `[stats].enabled`) and threads it through both bot applications into `HandlersManager`.
 
 **Best-effort design:** `record()` implementations must never raise — log and return silently on error.
 
@@ -859,6 +896,73 @@ Provider-neutral Speech-to-Text library: PyAV-based audio extraction with contai
 **PyAV prerequisite:** pins `av==18.0.0` (parent §8.4). The `import av` is now **unconditional** — the pre-simplification `_PYAV_AVAILABLE` guarded-import pattern is gone, so any `import lib.stt.*` hard-requires PyAV at import time (latent breakage only, since `av` is always in the frozen env).
 
 **Tests:** `tests/lib/stt/` mirrors source paths, with service formatter coverage in `tests/services/stt/test_formatter.py` and `tests/services/stt/test_transcribe.py`, plus a golden-data suite under `tests/lib/stt/golden/`. Two sanitized live SpeechKit replays require `FINAL`, non-empty segments, generic attribution-tag set `{"0", "1"}`, and role `SPEAKER`; no transcript text is asserted. `async def test_...` needs no decorator (`asyncio_mode = "auto"`).
+
+---
+
+## 17. `lib/stats/stats_pages/` — Statistics Page Generator
+
+Self-contained HTML page generator for statistics display. Used by `StatsHandler` via subprocess invocation for the `--web` tier. Module-invocable: `./venv/bin/python3 -m lib.stats.stats_pages`. Zero new runtime dependencies (stdlib `argparse`/`html`/`json`/`uuid`/`pathlib` only).
+
+**Layout:**
+
+| Path | Purpose |
+|---|---|
+| [`lib/stats/stats_pages/__init__.py`](../../lib/stats/stats_pages/__init__.py) | Package exports (`StatsPageGenerator`, `StatsPayload`, `ChatListEntry`, `StatsCliError`/`StatsCliErrorReason`, `runCliCommand`) |
+| [`lib/stats/stats_pages/__main__.py`](../../lib/stats/stats_pages/__main__.py) | Main entry point for module invocation |
+| [`lib/stats/stats_pages/generator.py`](../../lib/stats/stats_pages/generator.py) | Core generator class (`StatsPageGenerator`), `StatsPayload`/`ChatListEntry` TypedDicts, server-side grouping + SVG rendering, CLI handlers |
+| [`lib/stats/stats_pages/launcher.py`](../../lib/stats/stats_pages/launcher.py) | Shared subprocess helper used by BOTH generation and deletion: `runCliCommand(argv, *, stdinPayload=None, timeoutSeconds=30.0) -> (returncode, stdout, stderr)` (async; kills the child on timeout AND on cancellation of the awaiting task; stdout/stderr decoded with `errors="replace"`) and `StatsCliError` with `StatsCliErrorReason.TIMEOUT`/`SPAWN` (StrEnum values are lowercase `"timeout"`/`"spawn"`; only spawn-time `OSError` maps to `SPAWN` — `OSError`s raised during `communicate()` are a distinct failure path, not spawn failures). Mirrors the subprocess conventions of `internal/services/proxy/lifecycle.py`. |
+
+**CLI contract:**
+
+- `generate` — reads a raw-rows JSON payload from stdin (see `StatsPayload` TypedDict), renders a self-contained static HTML page server-side (UUID filename, inline CSS, inline SVG charts, no external resources, no JS), prints `{"pageId": "<uuid>", "url": ...}` to stdout. Flags: `--base-url` (when given, `url` = `baseUrl.rstrip("/") + "/" + <uuid>.html`; without it, `url` is the bare `<uuid>.html` filename) and `--output-dir` (default `.`).
+- `delete PAGE_ID` — validates the pageId against `^[0-9a-f]{32}$` first and prints `{"deleted": 0}` on mismatch without touching the filesystem (path-traversal guard); otherwise removes the page by UUID filename stem and prints `{"deleted": 0\|1}` to stdout (0 = no such page, still a success exit). Accepts `--output-dir` flag.
+- Exit codes: 0 for success, nonzero for any failure (with a human-readable stderr line).
+- Failure modes: invalid JSON on stdin → nonzero exit + error message; missing required fields in payload → nonzero exit + error message; file write errors → nonzero exit + error message.
+
+**StatsPayload TypedDict** (stdin JSON contract — the bot applies ONLY scope/granularity/range filters and the 10000-row limit; ALL grouping, time-series construction, and rendering happens server-side in the generator):
+```python
+class StatsPayload(TypedDict):
+    userId: str                    # User ID who requested the page
+    chatId: str                    # Chat ID the page is for
+    chatTitle: str                 # Chat title or name
+    chatType: str                  # "private", "group", or "channel"
+    platform: str                  # "telegram" or "max"
+    period: str                    # e.g., "6h", "7d", "2m", "all"
+    periodType: str                # "hourly", "daily", "monthly", or "total"
+    generatedAt: str               # ISO-8601 UTC timestamp
+    rows: dict[str, list[StatsAggregateDict]]
+                                   # raw aggregate rows keyed by eventType:
+                                   # "message", "command", "llm_tool_call",
+                                   # "llm_request", "stt_request"
+    chatList: NotRequired[list[ChatListEntry]]  # user's chats (private scope)
+    truncatedEventTypes: NotRequired[list[str]]  # eventTypes that hit the 10000-row limit
+```
+
+`ChatListEntry` (`chatId`, `title`, `messagesCount`) is the TypedDict for `chatList` rows. `rows` values are `StatsAggregateDict` (from [`lib/stats/types.py`](../../lib/stats/types.py)) — already consumer-filtered to the target chat by the bot, and user-filtered for the user-level event types (`message`, `command`, `llm_tool_call`) when a `--user` filter is active.
+
+**Rendering from raw rows** (no per-section view-model TypedDicts — those were deleted in the U12 raw-rows rework; the generator groups rows itself):
+- One section per eventType present in `rows`: messages, commands, tools (`llm_tool_call`), LLM (`llm_request` with an STT subsection for `stt_request`).
+- Each section gets an inline SVG bar chart of the time series built from the rows; `periodType == "total"` produces no time series (single sentinel bucket), so total-granularity pages skip charts. Hourly series are capped at 24 bars with an "… and N more" note.
+- Truncation honesty: a "results may be incomplete" line is rendered for a section when its eventType appears in `truncatedEventTypes` (recorded by the bot BEFORE consumer filtering, when the raw query returned exactly 10000 rows) — the flag is the ONLY input; there is no fallback heuristic when it is absent.
+
+**HTML rendering:**
+- Self-contained: inline `<style>` block only, no `<link rel="stylesheet">`, no `<script src`, no CDN references.
+- Escapes all text content via `html.escape()`.
+- UTC timestamps labeled explicitly.
+- Large numbers formatted with commas (e.g., `15,000`).
+- Emojis used as section headers: 💬 Messages, 🔧 Commands, 🛠️ Tools, 🧠 LLM, 📋 Your Chats, 🎤 Speech-to-Text.
+- Responsive design: max-width 900px container, clean table layout, hover effects.
+
+**Integration with bot:**
+- Not imported as a handler dependency for state — pure lib package; `StatsHandler` imports only the payload/entry TypedDicts and the launcher.
+- Generation and deletion both go through `launcher.runCliCommand` (one subprocess helper, per D11 "exactly once" at the subprocess level): stdin payload JSON, 30-second timeout, kill-on-timeout, `StatsCliError` on TIMEOUT/SPAWN.
+- The bot uses the stdout `url` VERBATIM as the reply link — it never composes URLs itself. Full URLs come from putting `--base-url` in the configured `generate-command` template; without it the CLI returns the bare `<uuid>.html` filename.
+- Deletion is bot-managed via one-shot per-page `DelayedTaskFunction.STATS_PAGES_CLEANUP` tasks (scheduled after each successful generation; delay = `ttl-hours × 3600`; single attempt, no reschedule) — the CLI itself only provides the `delete` verb.
+
+**Tests:**
+- `tests/lib/stats/test_stats_pages_generator.py` — in-process generator tests with rows-shaped payloads (UUID filenames, base-URL construction, per-eventType grouping from raw rows, `sent`-direction split, top-users, SVG chart rendering for time series, file I/O, deletion).
+- `tests/lib/stats/test_stats_pages_cli.py` — subprocess CLI contract tests (`{"pageId","url"}` stdout, `--base-url` full-URL and bare-filename variants, missing-field and invalid-JSON nonzero exits, SVG present for time series / absent for `total`, delete verb).
+- `tests/lib/stats/test_stats_pages_launcher.py` — `runCliCommand` tests (success capture, stdin delivery, timeout kill, spawn failure → `StatsCliError`).
 
 ---
 

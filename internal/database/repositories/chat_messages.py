@@ -23,7 +23,6 @@ from internal.models import MessageId, MessageType
 from .. import utils as dbUtils
 from ..manager import DatabaseManager
 from ..models import ChatMessageDict, MessageCategory, ThreadResultDict
-from ..providers.base import ExcludedValue
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -74,8 +73,8 @@ class ChatMessagesRepository(BaseRepository):
         """Save a chat message with detailed information.
 
         This method stores a chat message in the database along with its metadata,
-        updates related statistics (chat_users, chat_stats, chat_user_stats), and
-        handles threaded conversations and media groups.
+        and updates related statistics (chat_users). Handles threaded conversations
+        and media groups.
 
         Args:
             date (datetime.datetime): Message timestamp
@@ -111,7 +110,6 @@ class ChatMessagesRepository(BaseRepository):
             threadId = dbUtils.DEFAULT_THREAD_ID
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, readonly=False)
-            today = date.replace(hour=0, minute=0, second=0, microsecond=0)
             currentTimestamp = dbUtils.getCurrentTimestamp()
 
             # Insert chat message
@@ -162,41 +160,6 @@ class ChatMessagesRepository(BaseRepository):
                     "chatId": chatId,
                     "userId": userId,
                     "updatedAt": currentTimestamp,
-                },
-            )
-
-            # Upsert chat stats
-            await sqlProvider.upsert(
-                table="chat_stats",
-                values={
-                    "chat_id": chatId,
-                    "date": today,
-                    "messages_count": 1,
-                    "updated_at": currentTimestamp,
-                    "created_at": currentTimestamp,
-                },
-                conflictColumns=["chat_id", "date"],
-                updateExpressions={
-                    "messages_count": "messages_count + 1",
-                    "updated_at": ExcludedValue(),
-                },
-            )
-
-            # Upsert chat user stats
-            await sqlProvider.upsert(
-                table="chat_user_stats",
-                values={
-                    "chat_id": chatId,
-                    "user_id": userId,
-                    "date": today,
-                    "messages_count": 1,
-                    "updated_at": currentTimestamp,
-                    "created_at": currentTimestamp,
-                },
-                conflictColumns=["chat_id", "user_id", "date"],
-                updateExpressions={
-                    "messages_count": "messages_count + 1",
-                    "updated_at": ExcludedValue(),
                 },
             )
 

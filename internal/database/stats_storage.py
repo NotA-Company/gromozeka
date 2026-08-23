@@ -8,6 +8,7 @@ upsert + mark-processed operations.
 
 import datetime
 import hashlib
+import json
 import logging
 import math
 import uuid
@@ -16,12 +17,16 @@ from typing import Optional, TypedDict
 from lib import utils as libUtils
 from lib.stats.stats_storage import GLOBAL_CONSUMER_ID
 from lib.stats.stats_storage import StatsStorage as BaseStatsStorage
+from lib.stats.types import STATS_QUERY_ROW_LIMIT, StatsAggregateDict
 
 from . import utils as dbUtils
 from .database import Database
 from .providers.base import ExcludedValue
 
 logger = logging.getLogger(__name__)
+
+# Batch size for purge operations (same pattern as aggregate's claim step)
+PURGE_BATCH_SIZE = 1000
 
 
 class StatsEventDict(TypedDict):
@@ -132,6 +137,7 @@ class DatabaseStatsStorage(BaseStatsStorage):
         **v3 flow — claim-first, reclaim-in-place, global rollup, total period:**
 
             1. UPDATE claim: claims up to ``limit`` rows with ``processed = 0``
+               whose ``event_type`` matches this storage's ``eventType`` AND
                whose ``processed_id IS NULL`` (never claimed) OR whose
                ``claimed_at`` is older than the orphan timeout (stale claim
                from a crashed previous run). Uses ``applyPagination()`` for
@@ -145,6 +151,10 @@ class DatabaseStatsStorage(BaseStatsStorage):
 
         No separate orphan-reclaim pass — stale rows are reclaimed as part
         of the claim UPDATE itself.
+
+        The claim predicate is scoped to this storage's ``eventType`` to
+        ensure isolation when multiple storages share one ``stat_events``
+        table (e.g., 'llm_request', 'command', 'message' event types).
 
         Args:
             limit: Maximum number of unprocessed events to claim.
@@ -173,6 +183,7 @@ class DatabaseStatsStorage(BaseStatsStorage):
         innerSelect = sqlProvider.applyPagination(
             """SELECT event_id FROM stat_events
                WHERE processed = 0
+                 AND event_type = :eventType
                  AND (processed_id IS NULL OR claimed_at < :orphanTimeout)
                ORDER BY event_time""",
             limit=limit,
@@ -187,6 +198,7 @@ class DatabaseStatsStorage(BaseStatsStorage):
                 "batchId": batchId,
                 "now": now,
                 "orphanTimeout": orphanTimeout,
+                "eventType": self.eventType,
             },
         )
 
@@ -266,10 +278,228 @@ class DatabaseStatsStorage(BaseStatsStorage):
 
         return nClaimed
 
+    async def purgeProcessed(self, *, retentionDays: int) -> int:
+        """Delete processed stat events older than the retention window.
+
+        Deletes rows with ``processed = 1 AND created_at < cutoff`` through
+        this storage's own data source. ``retentionDays <= 0`` is a no-op.
+        Errors propagate to the caller (matching ``aggregate()``'s contract).
+
+        The cutoff is day-truncated: events are deleted only once they are
+        beyond N **whole** days. The cutoff is UTC midnight of ``now - N days``,
+        so events created during the boundary day survive (strict ``<`` comparison).
+
+        The purge predicate is scoped to this storage's own ``event_type`` and
+        data source — each storage purges only its own processed rows past the
+        retention window, via its own data source.
+
+        Uses a batched DELETE loop (same pattern as aggregate()'s claim step)
+        with double-nested subqueries for MySQL compatibility (ERROR 1093/1235).
+
+        Args:
+            retentionDays: Minimum age in days for a processed row to be deleted.
+
+        Returns:
+            Number of rows deleted (0 if nothing was eligible or retention is off).
+            Note: The count is log-approximate if the provider doesn't expose
+            reliable rowcount; the actual deletion is exact.
+        """
+        if retentionDays <= 0:
+            return 0
+
+        # A2: day-truncated cutoff — UTC midnight of N days ago
+        cutoff = truncateToDay(dbUtils.getCurrentTimestamp() - datetime.timedelta(days=retentionDays))
+        sqlProvider = await self.db.manager.getProvider(dataSource=self.dataSource, readonly=False)
+
+        # Count first to know if there's work to do
+        countRow = await sqlProvider.executeFetchOne(
+            """SELECT COUNT(*) AS cnt FROM stat_events
+               WHERE
+                processed = 1 AND
+                event_type = :eventType AND
+                created_at < :cutoff""",
+            {
+                "cutoff": cutoff,
+                "eventType": self.eventType,
+            },
+        )
+
+        if countRow is None or countRow["cnt"] == 0:
+            return 0
+
+        totalDeleted = 0
+
+        # Batched DELETE loop using double-nested subquery for MySQL compatibility
+        # (same pattern as aggregate()'s claim step)
+        while True:
+            # Inner select with LIMIT, wrapped in double nesting for MySQL ERROR 1093/1235
+            innerSelect = sqlProvider.applyPagination(
+                """SELECT event_id FROM stat_events
+                   WHERE
+                    processed = 1 AND
+                    event_type = :eventType AND
+                    created_at < :cutoff""",
+                limit=PURGE_BATCH_SIZE,
+            )
+            deleteQuery = (
+                "DELETE FROM stat_events WHERE event_id IN (SELECT event_id FROM (" + innerSelect + ") AS _purge)"
+            )
+
+            # Execute the delete
+            await sqlProvider.execute(deleteQuery, {"cutoff": cutoff, "eventType": self.eventType})
+
+            # Check if we deleted anything by counting remaining rows
+            remainingRow = await sqlProvider.executeFetchOne(
+                """SELECT COUNT(*) AS cnt FROM stat_events
+                   WHERE
+                    processed = 1 AND
+                    event_type = :eventType AND
+                    created_at < :cutoff""",
+                {
+                    "cutoff": cutoff,
+                    "eventType": self.eventType,
+                },
+            )
+
+            if remainingRow is None:
+                break
+
+            # Calculate how many we deleted in this batch
+            batchDeleted = countRow["cnt"] - remainingRow["cnt"]
+            if batchDeleted <= 0:
+                break
+
+            totalDeleted += batchDeleted
+            countRow = remainingRow  # Update for next iteration
+
+            # Safety: if we deleted fewer than batch size, we're done
+            if batchDeleted < PURGE_BATCH_SIZE:
+                break
+
+        return totalDeleted
+
+    async def query(
+        self,
+        *,
+        eventType: str,
+        periodType: Optional[str] = None,
+        periodStartFrom: Optional[str] = None,
+        periodStartTo: Optional[str] = None,
+        limit: int = STATS_QUERY_ROW_LIMIT,
+        offset: int = 0,
+    ) -> list[StatsAggregateDict]:
+        """Read aggregated rows with parsed labels.
+
+        Queries the ``stat_aggregates`` table for rows matching the given
+        criteria and returns them with labels parsed from JSON into dicts.
+        The ``eventType`` parameter is a query filter (not tied to this
+        storage's per-instance eventType), enabling cross-eventType views.
+
+        Args:
+            eventType: Event type discriminator to filter on (required).
+            periodType: Optional period type filter ('hourly', 'daily',
+                'monthly', or 'total'). None = all period types.
+            periodStartFrom: Optional ISO-8601 UTC timestamp lower bound
+                (inclusive). String comparison works for lexicographic ordering.
+            periodStartTo: Optional ISO-8601 UTC timestamp upper bound
+                (inclusive). String comparison works for lexicographic ordering.
+            limit: Maximum number of rows to return (default STATS_QUERY_ROW_LIMIT).
+            offset: Number of rows to skip before returning results (default 0).
+
+        Returns:
+            List of StatsAggregateDict objects with parsed labels dicts.
+            Empty list if no rows match.
+
+        Raises:
+            Database or provider errors on failure (raise-on-error contract).
+        """
+        sqlProvider = await self.db.manager.getProvider(dataSource=self.dataSource, readonly=True)
+
+        # Build WHERE conditions
+        conditions: list[str] = ["event_type = :eventType"]
+        params: dict[str, str | int] = {"eventType": eventType}
+
+        if periodType is not None:
+            conditions.append("period_type = :periodType")
+            params["periodType"] = periodType
+
+        if periodStartFrom is not None:
+            conditions.append("period_start >= :periodStartFrom")
+            params["periodStartFrom"] = periodStartFrom
+
+        if periodStartTo is not None:
+            conditions.append("period_start <= :periodStartTo")
+            params["periodStartTo"] = periodStartTo
+
+        # Build base query
+        baseQuery = (
+            "SELECT period_start, period_type, labels, metric_key, metric_value "
+            "FROM stat_aggregates "
+            "WHERE " + " AND ".join(conditions) + " ORDER BY period_start, labels_hash, metric_key"
+        )
+
+        # Apply pagination using provider (portable across RDBMS)
+        query = sqlProvider.applyPagination(baseQuery, limit=limit, offset=offset)
+
+        # Execute query
+        rows = await sqlProvider.executeFetchAll(query, params)
+
+        # Convert rows to StatsAggregateDict with parsed labels
+        result: list[StatsAggregateDict] = []
+        for row in rows:
+            # Parse labels from JSON
+            labelsDict = json.loads(row["labels"]) if isinstance(row["labels"], str) else row["labels"]
+
+            # Build result dict with camelCase field names
+            aggregateRow: StatsAggregateDict = {
+                "periodStart": row["period_start"],
+                "periodType": row["period_type"],
+                "labels": labelsDict,
+                "metricKey": row["metric_key"],
+                "metricValue": float(row["metric_value"]),
+            }
+            result.append(aggregateRow)
+
+        return result
+
 
 # ------------------------------------------------------------------
 # Internal helpers
 # ------------------------------------------------------------------
+
+
+def truncateToDay(eventTime: datetime.datetime) -> str:
+    """Truncate a datetime to the start of its day and return ISO-8601 string.
+
+    Performs plain `.replace()` truncation to midnight; does NOT handle
+    naive datetime normalization — callers must pass aware-UTC datetimes.
+
+    Args:
+        eventTime: The event timestamp (must be UTC, aware).
+
+    Returns:
+        ISO-8601 UTC string for the daily period start (hour, minute, second,
+        microsecond all zero).
+    """
+    truncated = eventTime.replace(hour=0, minute=0, second=0, microsecond=0)
+    return truncated.isoformat()
+
+
+def truncateToMonth(eventTime: datetime.datetime) -> str:
+    """Truncate a datetime to the start of its month and return ISO-8601 string.
+
+    Performs plain `.replace()` truncation to first of month; does NOT handle
+    naive datetime normalization — callers must pass aware-UTC datetimes.
+
+    Args:
+        eventTime: The event timestamp (must be UTC, aware).
+
+    Returns:
+        ISO-8601 UTC string for the monthly period start (day=1, hour,
+        minute, second, microsecond all zero).
+    """
+    truncated = eventTime.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return truncated.isoformat()
 
 
 def _hashLabels(labelsJson: str) -> str:
@@ -302,14 +532,14 @@ def _computePeriods(eventTime: datetime.datetime) -> dict[str, str]:
     Returns:
         dict mapping periodType to truncated ISO 8601 string.
     """
-    hourly = eventTime.replace(minute=0, second=0, microsecond=0)
-    daily = hourly.replace(hour=0)
-    monthly = daily.replace(day=1)
-    total = datetime.datetime(1970, 1, 1, tzinfo=datetime.UTC)
+    hourly = eventTime.replace(minute=0, second=0, microsecond=0).isoformat()
+    daily = truncateToDay(eventTime)
+    monthly = truncateToMonth(eventTime)
+    total = datetime.datetime(1970, 1, 1, tzinfo=datetime.UTC).isoformat()
 
     return {
-        "hourly": hourly.isoformat(),
-        "daily": daily.isoformat(),
-        "monthly": monthly.isoformat(),
-        "total": total.isoformat(),
+        "hourly": hourly,
+        "daily": daily,
+        "monthly": monthly,
+        "total": total,
     }

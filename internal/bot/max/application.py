@@ -19,9 +19,8 @@ from internal.database import Database
 from internal.services.proxy import ProxyService
 from internal.services.queue_service.service import QueueService
 from lib import utils
-
-# from lib import utils
 from lib.rate_limiter import RateLimiterManager
+from lib.stats import StatsStorage
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +55,8 @@ class MaxBotApplication:
         configManager: ConfigManager,
         botToken: str,
         database: Database,
+        messageStatsStorage: Optional[StatsStorage] = None,
+        commandStatsStorage: Optional[StatsStorage] = None,
     ):
         """Initialize Max bot application with token, database, and LLM model.
 
@@ -63,13 +64,19 @@ class MaxBotApplication:
             configManager: Configuration manager instance for accessing bot settings
             botToken: Max bot token for authentication with Max Messenger API
             database: Database object for data persistence and state management
+            messageStatsStorage: Stats storage for message events
+            commandStatsStorage: Stats storage for command events
         """
         self.configManager = configManager
         self.botToken = botToken
         self.database = database
 
         self.handlerManager = HandlersManager(
-            configManager=configManager, database=database, botProvider=BotProvider.MAX
+            configManager=configManager,
+            database=database,
+            botProvider=BotProvider.MAX,
+            messageStatsStorage=messageStatsStorage,
+            commandStatsStorage=commandStatsStorage,
         )
         self.queueService = QueueService.getInstance()
         self.maxBot: Optional[libMax.MaxBotClient] = None

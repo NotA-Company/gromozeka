@@ -12,6 +12,7 @@
 |---|---|
 | Understand project overview, commands, mandatory rules | **This file** (`index.md`) |
 | Understand architecture, ADRs, design decisions | [`architecture.md`](architecture.md) |
+| Set up Max webhook mode (two-process deployment) | [`docs/max-webhook-setup.md`](../max-webhook-setup.md) |
 | Create or modify a bot command handler | [`handlers.md`](handlers.md) |
 | Add/modify database tables, migrations, or queries | [`database.md`](database.md) |
 | Use Cache, Queue, LLM, Storage, or RateLimiter services | [`services.md`](services.md) |
@@ -244,6 +245,7 @@ vanishingly rare in the Gromozeka codebase.
 | [`STTService`](../../internal/services/stt/service.py) | `from internal.services.stt import STTService` | `STTService.getInstance()` (default-off; see ADR-020) |
 | [`SandboxManager`](../../lib/sandbox/manager.py) | `from lib.sandbox import SandboxManager` | `SandboxManager.getInstance()` |
 | [`ProxyHelper`](../../lib/proxy/__init__.py) | `from lib.proxy import ProxyHelper` | `ProxyHelper.getInstance()` |
+| [`StatsAggregationService`](../../internal/services/stats/service.py) | `from internal.services.stats import StatsAggregationService` | `StatsAggregationService.getInstance()` |
 
 ### 4.4 Critical File Paths
 
@@ -259,6 +261,7 @@ vanishingly rare in the Gromozeka codebase.
 | [`internal/services/llm/service.py`](../../internal/services/llm/service.py) | `LLMService` singleton |
 | [`internal/services/queue_service/service.py`](../../internal/services/queue_service/service.py) | `QueueService` singleton |
 | [`internal/services/storage/service.py`](../../internal/services/storage/service.py) | `StorageService` singleton |
+| [`internal/services/stats/service.py`](../../internal/services/stats/service.py) | `StatsAggregationService` singleton |
 | [`lib/ai/abstract.py`](../../lib/ai/abstract.py) | `AbstractModel`, `AbstractLLMProvider` |
 | [`lib/ai/manager.py`](../../lib/ai/manager.py) | `LLMManager` – provider + model registry |
 
@@ -267,7 +270,7 @@ vanishingly rare in the Gromozeka codebase.
  | Path | Purpose |
 |---|---|
 | [`internal/bot/common/bot.py`](../../internal/bot/common/bot.py) | `TheBot` — platform-agnostic bot API |
-  | [`internal/bot/common/handlers/`](../../internal/bot/common/handlers/) | All 20+ handler implementations (incl. `DivinationHandler` for `/taro` & `/runes`, `SandboxHandler` for code execution, `ChatSearchHandler` for `/search` command and `search_messages`/`list_users`/`get_thread`/`get_messages_by_ids` LLM tools, plus base/manager/module_loader, tests, examples, and 15+ functional handlers) |
+  | [`internal/bot/common/handlers/`](../../internal/bot/common/handlers/) | All 20+ handler implementations (incl. `DivinationHandler` for `/taro` & `/runes`, `SandboxHandler` for code execution, `ChatSearchHandler` for `/search` command and `search_messages`/`list_users`/`get_thread`/`get_messages_by_ids` LLM tools, `StatsHandler` for `/stats`/`/stats_web`, plus base/manager/module_loader, tests, examples, and 15+ functional handlers) |
 | [`internal/bot/common/handlers/base.py`](../../internal/bot/common/handlers/base.py) | `BaseBotHandler` — handler base class |
 | [`internal/bot/common/handlers/manager.py`](../../internal/bot/common/handlers/manager.py) | `HandlersManager` — handler chain |
 | [`internal/bot/telegram/application.py`](../../internal/bot/telegram/application.py) | Telegram-specific bot application |
@@ -306,7 +309,8 @@ vanishingly rare in the Gromozeka codebase.
 | [`internal/services/proxy/`](../../internal/services/proxy/) | `ProxyService` singleton (lifecycle orchestration) + `ProxyLifecycle` (per-config process manager) |
 | [`lib/yandex_search/`](../../lib/yandex_search/) | Yandex Search API client |
 | [`lib/geocode_maps/client.py`](../../lib/geocode_maps/client.py) | Geocode Maps API client |
-| [`lib/stats/`](../../lib/stats/) | Statistics collection library (`StatsStorage`, `NullStatsStorage`, `GLOBAL_CONSUMER_ID`) |
+| [`lib/stats/`](../../lib/stats/) | Statistics collection library (`StatsStorage`, `NullStatsStorage`, `GLOBAL_CONSUMER_ID`; read-side `StatsAnalyzer` + period helpers in `analysis.py`) |
+| [`lib/stats/stats_pages/`](../../lib/stats/stats_pages/) | Module-invocable stats-page HTML generator: STDIN JSON → self-contained HTML file → stdout `{"pageId","url"}` (subprocess CLI contract), plus `launcher.runCliCommand` — the shared subprocess helper `StatsHandler` uses for both generation and TTL deletion; zero new deps |
 | [`lib/ext_modules/`](../../lib/ext_modules/) | External custom modules (Grabliarium etc.) |
 | [`lib/divination/`](../../lib/divination/) | Tarot & runes pure-logic library (decks, layouts, drawing); used by `DivinationHandler` |
 | [`lib/sandbox/`](../../lib/sandbox/) | Sandboxed code execution (Docker + Python); `SandboxManager` singleton |

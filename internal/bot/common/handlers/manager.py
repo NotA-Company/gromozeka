@@ -65,6 +65,7 @@ from internal.services.queue_service import DelayedTask, DelayedTaskFunction, Qu
 from internal.services.storage import StorageService
 from lib import utils
 from lib.rate_limiter.manager import RateLimiterManager
+from lib.stats import NullStatsStorage, StatsStorage
 
 from .base import BaseBotHandler, HandlerResultStatus
 from .chat_search import ChatSearchHandler
@@ -81,6 +82,7 @@ from .react_on_user import ReactOnUserMessageHandler
 from .resender import ResenderHandler
 from .sandbox import SandboxHandler
 from .spam import SpamHandler
+from .stats import StatsHandler
 from .summarization import SummarizationHandler
 from .topic_manager import TopicManagerHandler
 from .user_memories import UserMemoriesHandler
@@ -400,6 +402,8 @@ class HandlersManager(CommandHandlerGetterInterface):
         db: Database wrapper for data persistence operations
         botProvider: Bot provider type (TELEGRAM or MAX)
         handlerTimeout: Default timeout for handler execution in seconds
+        messageStatsStorage: Stats storage for message events
+        commandStatsStorage: Stats storage for command events
         _commands: Cached dictionary mapping command names to handler info
         cache: Cache service for storing chat settings and user data
         storage: Storage service for file operations
@@ -413,7 +417,15 @@ class HandlersManager(CommandHandlerGetterInterface):
         _shutdownEvent: Event set when the manager is shutting down
     """
 
-    def __init__(self, *, configManager: ConfigManager, database: Database, botProvider: BotProvider) -> None:
+    def __init__(
+        self,
+        *,
+        configManager: ConfigManager,
+        database: Database,
+        botProvider: BotProvider,
+        messageStatsStorage: Optional[StatsStorage] = None,
+        commandStatsStorage: Optional[StatsStorage] = None,
+    ) -> None:
         """Initialize the handlers manager with required services.
 
         Initializes all core services, sets up default chat settings, configures
@@ -424,11 +436,15 @@ class HandlersManager(CommandHandlerGetterInterface):
             configManager: Configuration manager instance
             database: Database wrapper for data persistence
             botProvider: Bot provider type (TELEGRAM or MAX)
+            messageStatsStorage: Stats storage for message events
+            commandStatsStorage: Stats storage for command events
         """
         self.configManager = configManager
         self.db = database
         self.botProvider: BotProvider = botProvider
         self.handlerTimeout = 60 * 30
+        self.messageStatsStorage: StatsStorage = messageStatsStorage or NullStatsStorage()
+        self.commandStatsStorage: StatsStorage = commandStatsStorage or NullStatsStorage()
 
         # Map of command name -> CommandHandlerInfo
         self._commands: Dict[str, CommandHandlerInfoV2] = {}
@@ -595,6 +611,17 @@ class HandlersManager(CommandHandlerGetterInterface):
                 )
             )
 
+        # Stats handler — /stats and /stats_web commands
+        # NOTE: The getStatsConfig().get("enabled") check here must agree with
+        # StatsAggregationService's cached enabled flag (config is startup-frozen today).
+        if configManager.getStatsConfig().get("enabled", False):
+            self.handlers.append(
+                (
+                    StatsHandler(configManager=configManager, database=database, botProvider=botProvider),
+                    HandlerParallelism.PARALLEL,
+                )
+            )
+
         # Load custom handlers from config
         # We have to import module_loader here to avoid circular imports
         from .module_loader import CustomHandlerLoader
@@ -621,6 +648,10 @@ class HandlersManager(CommandHandlerGetterInterface):
         self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.CRON_JOB, self._dtCronJob)
         self.queueService.registerDelayedTaskHandler(DelayedTaskFunction.DO_EXIT, self._dtOnExit)
         self._shutdownEvent = asyncio.Event()
+
+        # Post-construction injection: set messageStatsStorage on all handlers
+        for handler, _ in self.handlers:
+            handler.injectStatsStorage(self.messageStatsStorage)
 
     async def _dtOnExit(self, task: DelayedTask) -> None:
         """Handle application exit by delegating cleanup to _cleanupOldData().
@@ -985,6 +1016,9 @@ class HandlersManager(CommandHandlerGetterInterface):
             case CommandCategory.TOOLS:
                 # BotOwners could bypass TollsAllowed check
                 canProcess = chatSettings[ChatSettingsKey.ALLOW_TOOLS_COMMANDS].toBool() or isBotOwner
+            case CommandCategory.UTILITIES:
+                # Utility commands are always allowed (gated by their own chat settings, e.g., ALLOW_SHOW_STATS)
+                canProcess = True
             case CommandCategory.SPAM:
                 canProcess = isAdmin or chatSettings[ChatSettingsKey.ALLOW_USER_SPAM_COMMAND].toBool()
             case CommandCategory.TECHNICAL:
@@ -1021,10 +1055,22 @@ class HandlersManager(CommandHandlerGetterInterface):
             else:
                 await handlerInfo.boundHandler(ensuredMessage, command, args, updateObj, None)
 
+            # Record successful command execution
+            await self.commandStatsStorage.record(
+                stats={"command_count": 1, "is_error": 0},
+                consumerId=str(ensuredMessage.recipient.id),
+                labels={"user_id": str(ensuredMessage.sender.id), "commandName": commandLower},
+            )
             return True
         except Exception as e:
             logger.error(f"Error while handling command {command}: {e}")
             logger.exception(e)
+            # Record failed command execution before sending error reply
+            await self.commandStatsStorage.record(
+                stats={"command_count": 1, "is_error": 1},
+                consumerId=str(ensuredMessage.recipient.id),
+                labels={"user_id": str(ensuredMessage.sender.id), "commandName": commandLower},
+            )
             if handlerInfo.replyErrorOnException:
                 await handlerObj.sendMessage(
                     ensuredMessage,

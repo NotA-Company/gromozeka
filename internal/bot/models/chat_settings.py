@@ -390,6 +390,8 @@ class ChatSettingsKey(StrEnum):
     """Whether tool commands (/draw, /analyze, etc.) are allowed."""
     ALLOW_SANDBOX = "allow-sandbox"
     """Whether sandbox code execution is enabled for this chat."""
+    ALLOW_SHOW_STATS = "allow-show-stats"
+    """Whether /stats (and /stats_web) command is allowed in this chat."""
     TRANSCRIBE_MEDIA = "transcribe-media"
     """Whether to transcribe voice/audio/video media messages to text (STT)."""
     DELETE_DENIED_COMMANDS = "delete-denied-commands"
@@ -920,6 +922,12 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
             "Команды /run и /sandbox станут доступны."
         ),
         "page": ChatSettingsPage.FRIEND,
+    },
+    ChatSettingsKey.ALLOW_SHOW_STATS: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Показывать статистику чата",
+        "long": "Разрешить команду /stats (и /stats_web) в этом чате",
+        "page": ChatSettingsPage.STANDARD,
     },
     ChatSettingsKey.TRANSCRIBE_MEDIA: {
         "type": ChatSettingsType.BOOL,

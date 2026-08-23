@@ -64,8 +64,6 @@ A streamlined reference optimized for LLM consumption, featuring:
 - [`chat_settings`](database-schema.md#chat_settings) - Per-chat configuration
 
 #### Statistics Tables
-- [`chat_stats`](database-schema.md#chat_stats) - Daily chat statistics
-- [`chat_user_stats`](database-schema.md#chat_user_stats) - Daily per-user statistics
 - [`stat_events`](database-schema.md#stat_events) - Raw stat events
 - [`stat_aggregates`](database-schema.md#stat_aggregates) - Aggregated statistics
 
@@ -747,8 +745,8 @@ See: [Best Practices](database-schema.md#best-practices)
 - **Core Tables**: 5 (`chat_messages`, `chat_users`, `chat_info`, `chat_topics`, `chat_settings`)
 - **Cache Tables**: 3 explicit (`chat_summarization_cache`, `cache_storage`, `cache`) plus dynamic per-`CacheType` tables
 - **Spam Detection Tables**: 4 (`spam_messages`, `ham_messages`, `bayes_tokens`, `bayes_classes`)
-- **Statistics Tables**: 4 (`chat_stats`, `chat_user_stats`, `stat_events`, `stat_aggregates`)
-- **Current Migration Version**: 25
+- **Statistics Tables**: 2 (`stat_events`, `stat_aggregates`) — legacy `chat_stats` and `chat_user_stats` dropped in migration_027
+- **Current Migration Version**: 28
 - **Total Repositories**: 16 specialised repositories on the `Database` class
 
 ## 🤝 Contributing

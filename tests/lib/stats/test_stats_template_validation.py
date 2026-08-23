@@ -1,0 +1,167 @@
+"""Test for stats.toml default template validation.
+
+Ensures the shipped default generate-command template in configs/00-defaults/stats.toml
+parses correctly under the CLI's argparse (no unrecognized args after placeholder
+substitution). This is a regression test for the seam bug where the template had
+--user-id/--chat-id/--platform flags that the CLI didn't accept.
+"""
+
+from pathlib import Path
+
+import pytest
+import tomli  # tomllib is Python 3.11+, tomli is the backport
+
+# Compute repo root at module top for portability
+# tests/lib/stats/test_stats_template_validation.py → parents[3] = repo root
+repoRoot = Path(__file__).resolve().parents[3]
+
+
+class TestStatsTemplateValidation:
+    """Test stats.toml default template validation."""
+
+    def test_default_generate_command_template_parses_correctly(self) -> None:
+        """Test that the shipped default generate-command template parses correctly.
+
+        Reads configs/00-defaults/stats.toml, extracts the generate-command,
+        strips placeholder substitutions, and validates it against the CLI's
+        argparse setup. The CLI only accepts --base-url and --output-dir for
+        the generate subcommand; other flags cause SystemExit.
+
+        This is a regression test for the seam bug where the template had
+        --user-id/--chat-id/--platform flags that the CLI doesn't accept
+        (the CLI reads these values from the stdin JSON payload).
+        """
+        # Read the default stats config
+        statsConfigPath = repoRoot / "configs" / "00-defaults" / "stats.toml"
+        assert statsConfigPath.exists(), f"Config not found: {statsConfigPath}"
+
+        with statsConfigPath.open("rb") as f:
+            config = tomli.load(f)
+
+        # Extract generate-command from [stats.pages]
+        statsPagesConfig = config.get("stats", {}).get("pages", {})
+        generateCommand = statsPagesConfig.get("generate-command")
+
+        assert generateCommand is not None, "[stats.pages] generate-command not found in config"
+        assert isinstance(generateCommand, list), "generate-command must be a list"
+
+        # Strip placeholder substitutions (simulating what StatsHandler does)
+        # Placeholders are: {user_id}, {chat_id}, {platform}
+        placeholders = {"user_id": "123", "chat_id": "456", "platform": "telegram"}
+
+        try:
+            resolvedArgv = [arg.format_map(placeholders) for arg in generateCommand]
+        except (KeyError, AttributeError):
+            # Identify the placeholder that caused the failure
+            for arg in generateCommand:
+                try:
+                    arg.format_map(placeholders)
+                except (KeyError, AttributeError) as argError:
+                    if isinstance(argError, KeyError):
+                        pytest.fail(
+                            f"Template generate-command contains unknown placeholder: {argError}. "
+                            f"Template: {generateCommand}"
+                        )
+                    else:
+                        raise
+            raise  # Re-raise if we couldn't identify the problematic arg
+
+        # Extract only the subcommand and its arguments (skip Python invocation)
+        # The template is: ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "generate"]
+        # We want: ["generate"]
+        try:
+            pythonIndex = resolvedArgv.index("python3")
+            # Find "-m" and skip the module name after it
+            if "-m" in resolvedArgv:
+                dashMIndex = resolvedArgv.index("-m")
+                cliArgs = resolvedArgv[dashMIndex + 2 :]  # Skip "-m", "lib.stats.stats_pages"
+            else:
+                cliArgs = resolvedArgv[pythonIndex + 1 :]
+        except ValueError:
+            # Fallback: skip the first 3 elements (python, -m, module)
+            cliArgs = resolvedArgv[3:]
+
+        # Use the real parser from generator.py
+        from lib.stats.stats_pages.generator import buildParser
+
+        parser = buildParser()
+
+        # Parse the resolved argv
+        # If this raises SystemExit, the template has unrecognized arguments
+        try:
+            args = parser.parse_args(cliArgs)
+            assert args.command == "generate", f"Expected 'generate' command, got '{args.command}'"
+        except SystemExit as e:
+            # SystemExit with code 2 means argparse error (unrecognized args)
+            if e.code == 2:
+                raise AssertionError(
+                    f"Default generate-command template has unrecognized arguments. "
+                    f"Template: {generateCommand}. "
+                    f"Resolved: {resolvedArgv}. "
+                    f"CLI only accepts --base-url and --output-dir for generate command."
+                )
+            else:
+                raise
+
+    def test_default_delete_command_template_parses_correctly(self) -> None:
+        """Test that the shipped default delete-command template parses correctly."""
+        # Read the default stats config
+        statsConfigPath = repoRoot / "configs" / "00-defaults" / "stats.toml"
+        assert statsConfigPath.exists(), f"Config not found: {statsConfigPath}"
+
+        with statsConfigPath.open("rb") as f:
+            config = tomli.load(f)
+
+        # Extract delete-command from [stats.pages]
+        statsPagesConfig = config.get("stats", {}).get("pages", {})
+        deleteCommand = statsPagesConfig.get("delete-command")
+
+        assert deleteCommand is not None, "[stats.pages] delete-command not found in config"
+        assert isinstance(deleteCommand, list), "delete-command must be a list"
+
+        # Strip placeholder substitutions (page_id is the only placeholder)
+        placeholders = {"page_id": "some-uuid-1234567890abcdef"}
+
+        try:
+            resolvedArgv = [arg.format_map(placeholders) for arg in deleteCommand]
+        except (KeyError, AttributeError):
+            # Identify the placeholder that caused the failure
+            for arg in deleteCommand:
+                try:
+                    arg.format_map(placeholders)
+                except (KeyError, AttributeError) as argError:
+                    if isinstance(argError, KeyError):
+                        pytest.fail(
+                            f"Template delete-command contains unknown placeholder: {argError}. "
+                            f"Template: {deleteCommand}"
+                        )
+                    else:
+                        raise
+            raise  # Re-raise if we couldn't identify the problematic arg
+
+        # Extract only the subcommand and its arguments (skip Python invocation)
+        try:
+            dashMIndex = resolvedArgv.index("-m")
+            cliArgs = resolvedArgv[dashMIndex + 2 :]  # Skip "-m", "lib.stats.stats_pages"
+        except ValueError:
+            cliArgs = resolvedArgv[3:]  # Fallback: skip first 3 elements
+
+        # Use the real parser from generator.py
+        from lib.stats.stats_pages.generator import buildParser
+
+        parser = buildParser()
+
+        # Parse the resolved argv
+        try:
+            args = parser.parse_args(cliArgs)
+            assert args.command == "delete", f"Expected 'delete' command, got '{args.command}'"
+            assert args.pageId == "some-uuid-1234567890abcdef", "pageId placeholder not substituted"
+        except SystemExit as e:
+            if e.code == 2:
+                raise AssertionError(
+                    f"Default delete-command template has unrecognized arguments. "
+                    f"Template: {deleteCommand}. "
+                    f"Resolved: {resolvedArgv}."
+                )
+            else:
+                raise

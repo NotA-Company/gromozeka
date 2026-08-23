@@ -16,6 +16,7 @@
 6. [ProxyService](#6-proxyservice)
 7. [STTService](#7-sttservice)
 8. [Service Singleton Pattern](#8-service-singleton-pattern)
+9. [StatsAggregationService](#9-statsaggregationservice)
 
 ---
 
@@ -130,9 +131,11 @@ emptyTask: asyncio.Task = makeEmptyAsyncTask()
 ```
 
 **`DelayedTaskFunction` enum** (from `internal/services/queue_service/types.py`):
+- `SEND_MESSAGE` — scheduled message sending
+- `DELETE_MESSAGE` — scheduled message deletion
 - `CRON_JOB` — periodic cron tasks
 - `DO_EXIT` — cleanup on exit
-- `SEND_MESSAGE` — scheduled message sending
+- `STATS_PAGES_CLEANUP` — one-shot per-page deletion of a generated stats page: `StatsHandler` registers the handler (and schedules one such task per successful page generation) when `[stats.pages] enabled = true`; `kwargs` carry `pageId` + the resolved delete argv; single attempt, no reschedule. A pending task with no registered handler (stats disabled) hits the queue's no-handler path and is re-delayed 60 s in memory for the process lifetime, but the DB row is marked done on first firing — after restart the task is gone; orphaned page file is the accepted R13 outcome.
 
 ---
 
@@ -140,6 +143,7 @@ emptyTask: asyncio.Task = makeEmptyAsyncTask()
 
 **File:** [`internal/services/llm/service.py:144`](../../internal/services/llm/service.py:144)  
 **Import:** `from internal.services.llm import LLMService`
+**Optional import:** `from lib.stats.stats_storage import StatsStorage, NullStatsStorage` (for tool call statistics, gated by `[stats]` enabled)
 
 ```python
 llmService = LLMService.getInstance()
@@ -187,6 +191,9 @@ llmService.registerTool(
     ],
     handler=mySearchHandler,  # async def mySearchHandler(param1, ...) -> dict
 )
+
+# Inject stats storage for tool call statistics (optional, gated by [stats] enabled)
+llmService.injectStatsStorage(toolStatsStorage)  # or None for NullStatsStorage default
 ```
 
 **Rule:** Always use a `ToolName` member (from `internal.bot.constants`) for the `name=` argument. See the [add-handler skill](../../.agents/skills/add-handler/SKILL.md) Step 5 for the full registration workflow.
@@ -228,6 +235,8 @@ useTools={TOOLS_DEFAULT_DICT_KEY: True, ToolName.SANDBOX_SEND_FILE: False}
 ```
 
 Resolution happens in the private `_resolveTools(useTools)` method, which returns the filtered `List[LLMToolFunction]` sent to the model. The execution guard also uses this filtered set: if the LLM requests a dict-disabled tool, the loop returns an error listing only the **actually available** tool names (not the full registry), so the model is not tempted to retry a disabled tool.
+
+**Tool call statistics:** When `injectStatsStorage` is called with a `StatsStorage` instance (constructed in `main.py` gated by `[stats] enabled`), each tool dispatch in the `generateTextViaLLM` loop records an `llm_tool_call` event with stats `tool_call_count=1` (every dispatch), `tool_exec_count=1` (**executed-only** — present only when the tool actually executed, not merely was requested), `elapsed_time` (seconds, float), and `is_error` (0/1; `1` when the dict result has `done is False` **or** a truthy `error`/`errorMessage` field). Labels are `user_id` (from `extraData["ensuredMessage"].sender.id`) and `toolName`. The `consumerId` is the chat ID from `ensuredMessage.recipient.id`. Recording is skipped when `ensuredMessage` is absent. Tools that raise exceptions propagate unrecorded (per the never-raise contract).
 
 **`maxRounds` — tool-calling round budget** (`Optional[int]`, default `DEFAULT_MAX_ROUNDS` = 32, defined in [`internal/services/llm/constants.py`](../../internal/services/llm/constants.py) and re-exported from [`internal.services.llm`](../../internal/services/llm/__init__.py)): bounds the number of rounds the model may call tools before the budget is considered exhausted. Must be a non-negative integer or `None` (negative raises `ValueError`). Once `roundN >= maxRounds`: tool schemas are dropped (`tools=[]`), the `filteredToolNames` execution allowlist is cleared (so even healed tool calls cannot execute), tool-call healing is disabled, a steering directive is folded into the leading system message (or a `user` message when none exists), and the loop is hard-bounded to a single additional round — terminating regardless of the model's response. On any post-budget termination `ModelRunResult.roundLimitHit` is set to `True` and a service-level `logger.warning` fires, so callers can detect that the result may be incomplete. A fallback answer is synthesized **only** when the model returned no usable text and the status is `FINAL` or a post-budget `TOOL_CALLS` (a glitching model that ignored the empty `tools=[]`); genuine error statuses (`ERROR` / `CONTENT_FILTER` / `UNKNOWN`) propagate with their original status and empty text so callers can detect the failure. Pass `maxRounds=None` to disable the limit (unlimited rounds, legacy behavior); `maxRounds=0` drops tools on the very first call.
 
@@ -564,6 +573,80 @@ class MyService:
 - Thread safety via `RLock`
 - `hasattr(self, "initialized")` guard prevents double-init
 - In tests, reset with `MyService._instance = None` (use autouse fixture)
+
+---
+
+## 9. StatsAggregationService
+
+**File:** [`internal/services/stats/service.py`](../../internal/services/stats/service.py)  
+**Import:** `from internal.services.stats import StatsAggregationService`
+
+`StatsAggregationService` is a **singleton coordinator** for periodic stats aggregation and event retention. It owns the storage factory + registry — the single construction seam for stats storages — and registers a handler on the shared CRON_JOB 60-second tick, gated in-memory by a configurable interval. Mirrors `STTService` exactly: class-level `_instance` / `_lock`, `getInstance()`, `hasattr(self, 'initialized')` guard, separate `initialize(...)`.
+
+**Status (2026-08-17):** implemented, tested, and **wired into `main.py`** — `StatsAggregationService.getInstance().initialize(configManager, database)` is called once (synchronous) before the first storage factory call. The factory `createStatsStorage(eventType, dataSource)` reads `[stats] enabled` itself: disabled returns an **unregistered** `NullStatsStorage` (registry stays empty, handler no-ops every tick); enabled constructs `DatabaseStatsStorage` and registers it in the registry keyed by eventType. `main.py` registers **all five storages** (llm_request, llm_tool_call, stt_request, message, command) synchronously, **registered synchronously during GromozekBot.__init__, before bot startup / before the first CRON tick in default deployments (no global proxy lifecycle)** — no storage is constructed lazily after startup.
+
+**Initialization:** Reads and parses `[stats]` configuration once at startup, caching the values. Raises `ValueError` on malformed configuration values (startup fails loudly — user decision). Validation is **strict**: booleans, floats, and non-integral strings (e.g. `"3.5"`) are all rejected with a `ValueError` naming the offending key; integral strings (`"3600"`) are accepted, so `${VAR}` env substitution in TOML is safe. The service is not marked as initialized until config parse succeeds, and the handler is not registered until then — a failed initialize leaves the service retryable (config fixed → initialize again succeeds). Configuration changes after initialization have no effect (config frozen at init).
+
+**Per-cycle behavior (runs on CRON_JOB tick, gated by elapsed time):**
+1. **Gate check:** if registry is empty → immediate return (stats disabled). If `time.time() - _lastRunTime < intervalSeconds` → return (interval not elapsed).
+2. For each storage in a **registry snapshot** — `list(_statsStorages.items())` (guards against `RuntimeError` if the registry is mutated mid-iteration, e.g. by a `createStatsStorage` call; insertion order: llm_request, llm_tool_call, stt_request, message, command):
+   - **Drain loop:** call `aggregate(limit=self._batchLimit)` repeatedly until it returns 0 **or** a safety cap of `MAX_AGGREGATION_ROUNDS = 10` is hit (bounds a cycle at `MAX_AGGREGATION_ROUNDS × batch-limit` events per storage).
+   - **Retention purge:** if `self._retentionDays > 0`, call `purgeProcessed(retentionDays=N)` **once per storage, every cycle** — the purge predicate is **event_type-scoped** (`event_type = :eventType`): each storage deletes its own event type's processed rows past the retention cutoff via its own data source. Deletes rows with `processed = 1 AND event_type = :eventType AND created_at < truncateToDay(now - N days)`. The cutoff is day-truncated: events are deleted only once they are beyond N **whole** days (UTC midnight comparison).
+   - Per-storage try/except isolation — one storage's failure never blocks others.
+3. One INFO summary line: per-storage processed/purged counts + errors (using registry keys as labels).
+4. Set `_lastRunTime = cycleStart` (gate advanced to cycle-start timestamp).
+
+**First tick after startup is an immediate catch-up run** (`_lastRunTime = 0.0` → the gate always passes).
+
+**Configuration:**
+- `[stats] enabled` (default `false`): master switch; when false, the factory returns unregistered `NullStatsStorage` and the registry stays empty — zero per-tick cost.
+- `[stats] aggregation-interval-seconds` (default `3600`): cycle cadence in seconds; clamped to minimum 60 (the tick granularity). Cached at initialization; malformed values raise ValueError.
+- `[stats] aggregation-batch-limit` (default `1000`): number of events to process per `aggregate()` call in the drain loop; clamped to minimum 1. Bounds a cycle at `MAX_AGGREGATION_ROUNDS × batch-limit` events per storage. Cached at initialization; malformed values raise ValueError.
+- `[stats] events-retention-days` (default `30`): retention window; `0` = keep forever. Cached at initialization; malformed values raise ValueError.
+
+**Public read accessor:** `getQueryStorage(eventType: str) -> StatsStorage` — returns the registered storage for that eventType (e.g., `llm_request`, `message`, `command`) or `NullStatsStorage()` if the registry is uninitialized, empty, or the eventType is unregistered. Enables handlers to reach storages for read queries without construction side effects. `query()` supports `limit` + `offset` paging (keyword-only args; defaults `limit=STATS_QUERY_ROW_LIMIT` = 10000, `offset=0`) for segmented reads of large aggregate sets.
+
+```python
+from internal.services.stats import StatsAggregationService
+
+# Initialize (called once from main.py, synchronous, before first factory call):
+StatsAggregationService.getInstance().initialize(configManager, database)
+
+# Get stats config for data source resolution:
+statsConfig = configManager.getStatsConfig()
+
+# Construct storages via factory (reads [stats] enabled itself):
+llmStatsStorage = StatsAggregationService.getInstance().createStatsStorage(
+    "llm_request", statsConfig.get("llm-stats-data-source", database.manager.default)
+)
+toolStatsStorage = StatsAggregationService.getInstance().createStatsStorage(
+    "llm_tool_call", statsConfig.get("tool-stats-data-source", database.manager.default)
+)
+sttStatsStorage = StatsAggregationService.getInstance().createStatsStorage(
+    "stt_request", statsConfig.get("stt-stats-data-source", database.manager.default)
+)
+messageStatsStorage = StatsAggregationService.getInstance().createStatsStorage(
+    "message", statsConfig.get("message-stats-data-source", database.manager.default)
+)
+commandStatsStorage = StatsAggregationService.getInstance().createStatsStorage(
+    "command", statsConfig.get("command-stats-data-source", database.manager.default)
+)
+
+# Read accessor for query() calls (returns NullStatsStorage if unregistered):
+storage = StatsAggregationService.getInstance().getQueryStorage("llm_request")
+rows = await storage.query(eventType="llm_request", periodType="daily")
+
+# Storages flow to consumers exactly as today (LLMService, STTService, bot applications).
+```
+
+**Factory semantics:**
+- **Disabled config** (`[stats] enabled = false`): `createStatsStorage` returns `NullStatsStorage()` and does NOT register it in the registry. The registry stays empty, so the handler returns after one truthiness check per tick — zero per-tick cost.
+- **Enabled config**: `createStatsStorage` constructs `DatabaseStatsStorage`, registers it in `_statsStorages[eventType]`, and returns it. Duplicate eventType calls overwrite last-wins.
+- **DataSource resolution**: `dataSource=None` uses the database manager's default datasource; main.py passes `statsConfig.get("<key>-stats-data-source")` (which is `None` when the key is absent).
+
+**Failure isolation:** Per-storage try/except means one broken datasource or missing table never prevents the other storages from being processed. Errors are logged at exception level with storage context, and the summary line names failing storages (using registry keys as labels).
+
+**Stats-off silence:** When `[stats] enabled = false`, the factory hands out unregistered `NullStatsStorage`s, the registry stays empty, and the registered handler returns after one truthiness check per tick — equivalent to the old nothing-seeded state, with zero per-tick cost.
 
 ---
 

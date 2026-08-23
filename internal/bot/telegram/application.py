@@ -29,6 +29,7 @@ from internal.services.proxy import ProxyService
 from internal.services.queue_service import QueueService
 from lib import utils
 from lib.proxy import ProxyType
+from lib.stats import StatsStorage
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,8 @@ class TelegramBotApplication:
         configManager: ConfigManager,
         botToken: str,
         database: Database,
+        messageStatsStorage: Optional[StatsStorage] = None,
+        commandStatsStorage: Optional[StatsStorage] = None,
     ):
         """Initialize Telegram bot application.
 
@@ -77,14 +80,19 @@ class TelegramBotApplication:
             configManager: Configuration manager instance
             botToken: Telegram bot token for authentication
             database: Database object for data persistence
-            llmManager: LLM manager for language model operations
+            messageStatsStorage: Stats storage for message events
+            commandStatsStorage: Stats storage for command events
         """
         self.configManager = configManager
         self.botToken = botToken
         self.database = database
         self.application = None
         self.handlerManager = HandlersManager(
-            configManager=configManager, database=database, botProvider=BotProvider.TELEGRAM
+            configManager=configManager,
+            database=database,
+            botProvider=BotProvider.TELEGRAM,
+            messageStatsStorage=messageStatsStorage,
+            commandStatsStorage=commandStatsStorage,
         )
         self.queueService = QueueService.getInstance()
 

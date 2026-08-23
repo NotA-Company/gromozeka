@@ -181,14 +181,16 @@ class ChatUsersRepository(BaseRepository):
         try:
             sqlProvider = await self.manager.getProvider(chatId=chatId, dataSource=dataSource, readonly=True)
             caseInsensitiveComparison = sqlProvider.getCaseInsensitiveComparison("username", "username")
-            row = await sqlProvider.executeFetchOne(
-                f"""
+            query = f"""
                 SELECT * FROM chat_users
                 WHERE
                     chat_id = :chatId
                     AND {caseInsensitiveComparison}
-                LIMIT 1
-            """,
+                ORDER BY updated_at DESC
+            """
+            query = sqlProvider.applyPagination(query=query, limit=1)
+            row = await sqlProvider.executeFetchOne(
+                query,
                 {
                     "chatId": chatId,
                     "username": username,
@@ -278,6 +280,8 @@ class ChatUsersRepository(BaseRepository):
         """
         Get chats user was seen in.
 
+        Returns chat information including the user's message count per chat.
+
         Args:
             userId: User identifier
             dataSource: Optional data source name. If None in multi-source mode,
@@ -287,7 +291,12 @@ class ChatUsersRepository(BaseRepository):
                        ``None`` to return all chats regardless of status.
 
         Returns:
-            List of ChatInfoDict
+            List of ChatInfoDict with messages_count field populated per chat.
+
+        Note:
+            Multi-source deduplication keeps the first source's messages_count.
+            This is acceptable for an operational counter that may have minor
+            discrepancies across sources.
         """
 
         # Multi-source aggregation
@@ -302,10 +311,10 @@ class ChatUsersRepository(BaseRepository):
                 sqlProvider = await self.manager.getProvider(dataSource=sourceName, readonly=True)
                 rows = await sqlProvider.executeFetchAll(
                     """
-                    SELECT ci.* FROM chat_info ci
+                    SELECT ci.*, cu.messages_count FROM chat_info ci
                     JOIN chat_users cu ON cu.chat_id = ci.chat_id
                     WHERE
-                        user_id = :userId
+                        cu.user_id = :userId
                         AND (:botStatus IS NULL OR ci.bot_status = :botStatus)
                 """,
                     {
