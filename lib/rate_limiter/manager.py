@@ -300,7 +300,9 @@ class RateLimiterManager:
 
         return self._rateLimiters[self._defaultLimiter]
 
-    async def applyLimit(self, queue: str = "default", key: Optional[str] = None) -> None:
+    async def applyLimit(
+        self, queue: str = "default", key: Optional[str] = None, timeout: Optional[int] = None
+    ) -> bool:
         """Apply rate limiting for the specified queue.
 
         Routes the request to the appropriate rate limiter based on
@@ -310,19 +312,30 @@ class RateLimiterManager:
             queue: Name of the queue to apply rate limiting to. Defaults to "default".
             key: Optional key for rate limiting. If None, uses the queue name as the key.
                 This allows multiple keys within the same queue to have separate limits.
+            timeout: Optional maximum number of seconds to wait for a free slot.
+                If the limit cannot be applied within this time, returns False
+                without consuming a slot.
 
-        Raises:
-            RuntimeError: If no rate limiters are registered
+        Returns:
+            True if the rate limit was applied (slot acquired);
+            False if something went wrong (no limiter registered, limiter
+            failure) or the limit could not be applied within ``timeout``
+            seconds.
 
         Example:
             >>> await manager.applyLimit("yandex_search")  # Uses mapped limiter
             >>> await manager.applyLimit()  # Uses default limiter
             >>> await manager.applyLimit("api", "user_123")  # Custom key within queue
+            >>> await manager.applyLimit("api", timeout=5)  # Gives up after 5 seconds
         """
         if key is None:
             key = queue
-        limiter = self._getLimiterForQueue(queue)
-        await limiter.applyLimit(key)
+        try:
+            limiter = self._getLimiterForQueue(queue)
+            return await limiter.applyLimit(key, timeout=timeout)
+        except Exception:
+            logger.exception(f"applyLimit failed for queue '{queue}'")
+            return False
 
     def getStats(self, queue: str = "default", key: Optional[str] = None) -> Dict[str, Any]:
         """Get rate limiting statistics for a queue.

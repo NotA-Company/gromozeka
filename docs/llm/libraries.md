@@ -410,7 +410,7 @@ from lib.rate_limiter import RateLimiterManager, RateLimiterInterface, SlidingWi
 ```python
 await limiter.initialize() -> None
 await limiter.destroy() -> None
-await limiter.applyLimit(queue: str = "default") -> None
+await limiter.applyLimit(queue: str = "default", timeout: Optional[int] = None) -> bool  # True = applied; False = wait would exceed timeout (slot not consumed)
 limiter.getStats(queue: str = "default") -> Dict[str, Any]
 limiter.listQueues() -> List[str]
 ```

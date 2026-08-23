@@ -360,7 +360,15 @@ keys: List[str] = storage.list(prefix="attachments/", limit=100)
 manager = RateLimiterManager.getInstance()
 
 # Apply rate limit for a named queue
-await manager.applyLimit("yandex-search")  # Blocks if over limit
+# Blocks if over limit; returns True when applied
+applied: bool = await manager.applyLimit("yandex-search")
+
+# Bounded waiting: returns False instead of sleeping when the required
+# wait exceeds `timeout` seconds (slot not consumed); also False on
+# internal failure (no limiter registered, limiter error)
+applied = await manager.applyLimit("yandex-search", timeout=30)
+if not applied:
+    ...  # limit saturated — degrade gracefully
 
 # Get stats
 stats = manager.getStats("yandex-search")

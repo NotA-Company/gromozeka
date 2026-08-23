@@ -13,7 +13,7 @@ Example:
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 class RateLimiterInterface(ABC):
@@ -47,7 +47,7 @@ class RateLimiterInterface(ABC):
         pass
 
     @abstractmethod
-    async def applyLimit(self, queue: str = "default") -> None:
+    async def applyLimit(self, queue: str = "default", timeout: Optional[int] = None) -> bool:
         """
         Apply rate limiting for the specified queue.
 
@@ -57,7 +57,15 @@ class RateLimiterInterface(ABC):
 
         Args:
             queue: Name of the queue to apply rate limiting to.
-                   Will be auto-registered if not seen before.
+                    Will be auto-registered if not seen before.
+            timeout: Optional maximum number of seconds to wait for a free
+                    slot. If the limit cannot be applied within this time,
+                    the method gives up without consuming a slot.
+
+        Returns:
+            True if the rate limit was applied (slot acquired);
+            False if the limit could not be applied within ``timeout``
+            seconds (only possible when ``timeout`` is set).
         """
         pass
 

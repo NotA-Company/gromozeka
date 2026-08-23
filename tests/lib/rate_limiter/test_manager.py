@@ -9,6 +9,7 @@ queue mapping, and error handling scenarios.
 import asyncio
 import time
 import unittest
+from typing import Optional
 from unittest.mock import AsyncMock, Mock, patch
 
 from lib.rate_limiter.interface import RateLimiterInterface
@@ -28,6 +29,8 @@ class MockRateLimiter(RateLimiterInterface):
         initialized: Flag indicating if the limiter has been initialized.
         destroyed: Flag indicating if the limiter has been destroyed.
         applied_limits: List of queue names where limits were applied.
+        applied_timeouts: List of timeout values passed to applyLimit,
+            aligned by index with applied_limits.
         stats: Dictionary mapping queue names to their statistics.
     """
 
@@ -36,6 +39,7 @@ class MockRateLimiter(RateLimiterInterface):
         self.initialized = False
         self.destroyed = False
         self.applied_limits = []
+        self.applied_timeouts = []
         self.stats = {}
 
     async def initialize(self) -> None:
@@ -52,13 +56,19 @@ class MockRateLimiter(RateLimiterInterface):
         """
         self.destroyed = True
 
-    async def applyLimit(self, queue: str = "default") -> None:
+    async def applyLimit(self, queue: str = "default", timeout: Optional[int] = None) -> bool:
         """Apply rate limit for a queue.
 
         Args:
             queue: The queue name to apply the limit for. Defaults to "default".
+            timeout: Optional maximum seconds to wait for a free slot.
+
+        Returns:
+            True, indicating the limit was applied (mock never blocks).
         """
         self.applied_limits.append(queue)
+        self.applied_timeouts.append(timeout)
+        return True
 
     def getStats(self, queue: str = "default") -> dict:
         """Get statistics for a queue.
@@ -323,30 +333,92 @@ class TestRateLimiterManager(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("unmapped_queue", self.mockLimiter2.applied_limits)
 
     async def testApplyLimitNoLimitersRegistered(self) -> None:
-        """Test error when applying limit with no limiters registered.
+        """Test applyLimit returns False when no limiters are registered.
 
-        Verifies that attempting to apply a limit when no rate limiters
-        are registered raises a RuntimeError with an appropriate message.
+        Verifies that applying a limit with no registered rate limiters
+        reports failure via False (with no exception raised).
         """
-        with self.assertRaises(RuntimeError) as context:
-            await self.manager.applyLimit("test_queue")
+        result = await self.manager.applyLimit("test_queue")
 
-        self.assertIn("No rate limiters registered", str(context.exception))
+        self.assertFalse(result)
 
     async def testApplyLimitNoDefaultLimiter(self) -> None:
-        """Test error when no default limiter is set.
+        """Test applyLimit returns False when no default limiter is set.
 
-        Verifies that attempting to apply a limit when no default limiter
-        is set raises a RuntimeError with an appropriate message.
+        Verifies that applying a limit when the default limiter is not
+        set (and the queue is unmapped) reports failure via False.
         """
         # Register limiter but clear default
         self.manager.registerRateLimiter("limiter1", self.mockLimiter1)
         self.manager._defaultLimiter = None
 
-        with self.assertRaises(RuntimeError) as context:
-            await self.manager.applyLimit("test_queue")
+        result = await self.manager.applyLimit("test_queue")
 
-        self.assertIn("No default rate limiter set", str(context.exception))
+        self.assertFalse(result)
+
+    async def testApplyLimitLimiterFailureReturnsFalse(self) -> None:
+        """Test applyLimit returns False when the limiter raises.
+
+        Verifies that an exception raised by the underlying limiter is
+        caught by the manager and reported as False instead of
+        propagating to the caller.
+        """
+        failingLimiter = MockRateLimiter()
+        failingLimiter.applyLimit = AsyncMock(side_effect=RuntimeError("limiter boom"))
+        self.manager.registerRateLimiter("failing", failingLimiter)
+        self.manager.bindQueue("queue_boom", "failing")
+
+        result = await self.manager.applyLimit("queue_boom")
+
+        self.assertFalse(result)
+
+    async def testApplyLimitReturnsTrueOnSuccess(self) -> None:
+        """Test applyLimit returns True when the limit is applied.
+
+        Verifies the success path: with a registered limiter and a free
+        slot, applyLimit reports True.
+        """
+        self.manager.registerRateLimiter("limiter1", self.mockLimiter1)
+        self.manager.bindQueue("test_queue", "limiter1")
+
+        result = await self.manager.applyLimit("test_queue")
+
+        self.assertTrue(result)
+
+    async def testApplyLimitTimeoutPassthrough(self) -> None:
+        """Test applyLimit forwards the timeout to the limiter.
+
+        Verifies that the timeout argument is routed to the underlying
+        limiter's applyLimit together with the resolved key.
+        """
+        self.manager.registerRateLimiter("limiter1", self.mockLimiter1)
+        self.manager.bindQueue("test_queue", "limiter1")
+
+        result = await self.manager.applyLimit("test_queue", key="custom_key", timeout=7)
+
+        self.assertTrue(result)
+        idx = self.mockLimiter1.applied_limits.index("custom_key")
+        self.assertEqual(self.mockLimiter1.applied_timeouts[idx], 7)
+
+    async def testApplyLimitTimeoutExpiryThroughManager(self) -> None:
+        """Test timeout expiry through the manager with a real limiter.
+
+        Verifies end-to-end that when a real SlidingWindowRateLimiter is
+        saturated, the manager returns False for a timeout shorter than
+        the remaining window wait, and True for one longer than it.
+        """
+        limiter = SlidingWindowRateLimiter(config=QueueConfig(maxRequests=1, windowSeconds=10))
+        await limiter.initialize()
+        self.manager.registerRateLimiter("real", limiter)
+        self.manager.bindQueue("real_queue", "real")
+
+        # Fill the single slot
+        self.assertTrue(await self.manager.applyLimit("real_queue"))
+        # Required wait is ~10s: timeout=3 must fail, timeout=15 must succeed
+        self.assertFalse(await self.manager.applyLimit("real_queue", timeout=3))
+        self.assertTrue(await self.manager.applyLimit("real_queue", timeout=15))
+
+        await limiter.destroy()
 
     async def testGetStatsWithMapping(self) -> None:
         """Test getStats routes to correct limiter based on mapping.

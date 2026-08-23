@@ -107,6 +107,11 @@ class StatsHandler(BaseBotHandler):
     # Maximum accepted --top value (output is chunked, but keep replies sane)
     _MAX_TOP_N: int = 50
 
+    # How long --web waits for a free rate-limit slot before refusing
+    # (the stats-pages window is 600s; refusing early keeps the command
+    # handler from sleeping the full window)
+    _STATS_PAGES_RATELIMIT_TIMEOUT_SECONDS: int = 60
+
     # Maps display section names to the event types backing them
     _SECTION_EVENT_TYPES: dict[str, str] = {
         "messages": "message",
@@ -1447,14 +1452,27 @@ class StatsHandler(BaseBotHandler):
             typingManager: Optional typing indicator manager.
             top: Number of top items to show per section (in the brief).
         """
-        # D13: Rate limit check FIRST - U12-6: applyLimit-only
+        # D13: Rate limit check FIRST - U12-6: applyLimit-only, bounded by a timeout
         # Key limiter on ISSUING chat (ensuredMessage.recipient.id), not target chat
         rateLimiterKey = f"stats-pages-{ensuredMessage.recipient.id}"
 
-        # U12-6: applyLimit-only - NO pre-check, NO refusal reply
-        # Just apply the limit (this may sleep until a slot is available)
-        # No try/except here; outer D15 wrap covers the no-limiter RuntimeError
-        await RateLimiterManager.getInstance().applyLimit(self._statsPagesRatelimiterQueue, rateLimiterKey)
+        # Bounded wait: when the chat exhausted its page budget and no slot
+        # frees within the timeout, refuse politely instead of sleeping up to
+        # the full 600s window inside the command handler. False also covers
+        # limiter-misconfiguration failures (manager no longer raises).
+        limitsApplied = await RateLimiterManager.getInstance().applyLimit(
+            self._statsPagesRatelimiterQueue,
+            rateLimiterKey,
+            timeout=self._STATS_PAGES_RATELIMIT_TIMEOUT_SECONDS,
+        )
+        if not limitsApplied:
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="⏳ Лимит генерации веб-страниц исчерпан, попробуйте позже.",
+                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                typingManager=typingManager,
+            )
+            return
 
         # Build payload for subprocess (single-pass: derive brief from payload)
         try:

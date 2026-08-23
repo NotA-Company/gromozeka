@@ -1362,7 +1362,7 @@ surfaces as the D15 failure note, logged):
 - The built-in CLI's own storage flags/defaults are its internal affair
   (D11); external tools honor the same stdin/stdout JSON contracts.
 
-### D13 — Rate limiting: per-chat, check-then-apply *(user-ratified purpose; mechanism flagged; unchanged by the 2026-08-18 round; SUPERSEDED 2026-08-19 by U12-6: applyLimit-only — no pre-check, no refusal reply, windowSeconds 600)*
+### D13 — Rate limiting: per-chat, check-then-apply *(user-ratified purpose; mechanism flagged; unchanged by the 2026-08-18 round; SUPERSEDED 2026-08-19 by U12-6: applyLimit-only — no pre-check, no refusal reply, windowSeconds 600; AMENDED 2026-08-23: applyLimit-only with BOUNDED wait — `timeout=60`, refusal reply "лимит исчерпан" when no slot frees within 60 s, CLI not invoked)*
 
 - Purpose (user's words): "so users can't generate millions of stat files and eat
   all space". Only `--web`/`/stats_web` is limited — never the in-chat reply

@@ -1834,6 +1834,78 @@ class TestStatsHandlerWebTierRateLimiting:
                 assert "Страница:" in messageText  # Link was sent
                 assert "https://example.com/abc123.html" in messageText
 
+    async def test_rate_limit_timeout_refuses_generation(self):
+        """Bounded wait: applyLimit returning False sends a refusal reply, CLI never invoked."""
+        # Reset singleton
+        StatsAggregationService._instance = None
+
+        mockConfigManager = MagicMock()
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {
+            "enabled": True,
+            "generate-command": [
+                "./venv/bin/python3",
+                "-m",
+                "lib.stats.stats_pages",
+                "generate",
+                "--base-url=https://stats.example.com",
+                "--output-dir=./stats-pages",
+            ],
+            "delete-command": ["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}"],
+            "ttl-hours": 24,
+            "ratelimiter-queue": "stats-pages",
+        }
+        mockDatabase = MagicMock()
+
+        # Mock QueueService
+        mockQueueService = MagicMock()
+        mockQueueService.registerDelayedTaskHandler = MagicMock()
+        mockQueueService.addDelayedTask = AsyncMock()
+
+        with unittest.mock.patch.object(QueueService, "getInstance", return_value=mockQueueService):
+            handler = StatsHandler(
+                configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM
+            )
+
+            # Mock RateLimiterManager - applyLimit gives up (timeout expired / failure)
+            mockRateLimiter = MagicMock()
+            mockRateLimiter.applyLimit = AsyncMock(return_value=False)
+
+            with unittest.mock.patch("internal.bot.common.handlers.stats.RateLimiterManager") as MockRl:
+                MockRl.getInstance.return_value = mockRateLimiter
+
+                handler.sendMessage = AsyncMock()
+                handler.getUserChats = AsyncMock(return_value=[])
+
+                mockExec = unittest.mock.patch(
+                    "lib.stats.stats_pages.launcher.asyncio.create_subprocess_exec", new=MagicMock()
+                )
+                with mockExec as mockCreate:
+                    message = buildEnsuredMessage(chatId=123, chatType=ChatType.PRIVATE, userId=456)
+
+                    await cast(Any, handler).statsCommand(
+                        ensuredMessage=message,
+                        command="stats",
+                        args="--web",
+                        updateObj=None,
+                        typingManager=None,
+                    )
+
+                # applyLimit called with the bounded timeout
+                mockRateLimiter.applyLimit.assert_called_once()
+                callArgs = mockRateLimiter.applyLimit.call_args
+                assert callArgs[0][0] == "stats-pages"
+                assert callArgs[0][1] == "stats-pages-123"
+                assert callArgs.kwargs["timeout"] == StatsHandler._STATS_PAGES_RATELIMIT_TIMEOUT_SECONDS
+
+                # CLI never invoked
+                mockCreate.assert_not_called()
+
+                # Refusal reply sent
+                handler.sendMessage.assert_called_once()
+                messageText = handler.sendMessage.call_args.kwargs["messageText"]
+                assert "исчерпан" in messageText
+
     async def test_rate_limit_apply_limit_only_always_proceeds_with_generation(self):
         """U12-6: Rate limit is applyLimit-only - limiter sleeps, never refuses.
 
