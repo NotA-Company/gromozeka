@@ -10,7 +10,7 @@
 
 This module provides a robust database migration system for the Gromozeka bot, dood! It allows for:
 
-- **Version Tracking**: Tracks migration versions using the [`settings`](../../../lib/db/manager.py:14) table
+- **Version Tracking**: Tracks migration versions using the [`settings`](../database.py:309) table
 - **Sequential Execution**: Runs migrations in order automatically
 - **Rollback Support**: Can rollback migrations when needed
 - **Auto-Discovery**: Automatically discovers and loads migrations from the versions directory
@@ -149,7 +149,7 @@ Migrations run automatically when [`Database`](../database.py:28) is initialized
 
 ```python
 from internal.database import Database
-from internal.database.manager import DatabaseManagerConfig
+from lib.db.manager import DatabaseManagerConfig
 
 # Migrations run automatically during initialization
 config = DatabaseManagerConfig(...)
@@ -494,7 +494,7 @@ All tests create temporary databases and clean up automatically, dood!
 
 ### Storage
 
-Migration versions are stored in the [`settings`](../../../lib/db/manager.py:14) table:
+Migration versions are stored in the [`settings`](../database.py:309) table:
 
 - **Key:** `db-migration-version` - Current version (integer)
 - **Key:** `db-migration-last-run` - ISO timestamp of last migration

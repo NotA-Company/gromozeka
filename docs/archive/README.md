@@ -20,7 +20,7 @@ When reading archived files, be aware of these known architectural changes:
 
 ### Database Layer Migration (completed ~2026-05-02)
 - **Old path:** `internal/database/wrapper.py` (3,000+ line monolith) — **DELETED**
-- **New pattern:** `internal/database/database.py` (Database façade) + `internal/database/repositories/` (11 domain repositories) + `internal/database/providers/` (sql abstraction)
+- **New pattern:** `internal/database/database.py` (Database façade) + `internal/database/repositories/` (11 domain repositories) + `internal/database/providers/` (sql abstraction) (since moved to `lib/db/providers/` — see ADR-022)
 - Many archive docs reference `DatabaseWrapper` — see current code instead
 
 ### Handler Architecture

@@ -1,7 +1,7 @@
 # Design: Extract SQL providers and DatabaseManager into `lib/db` (v1)
 
 **Date**: 2026-08-23
-**Status**: **Ratified 2026-08-23 — implementation in progress.** All decisions (D1–D8) were user-approved on 2026-08-23; this document is the implementation blueprint. Implementer briefs are derived from it. Phase 0 is this doc's own landing.
+**Status**: **IMPLEMENTED — all phases landed** (code `1a953117`, agent docs `67e3edb7`, user docs `db101e74`). All decisions (D1–D8) user-approved 2026-08-23. See ADR-022.
 **Owner**: TBD
 **Scope**: Move `internal/database/providers/` (all 7 modules) and `internal/database/manager.py` into a new bot-free `lib/db/` package, cutting the one `internal.*` dependency (MessageId) via a Protocol, rewriting every consumer import in one big-bang arc, and syncing all documentation across three doc arcs. `internal/database/` survives (migrations, repositories, `Database` wrapper, utils, models) and flips its imports to `lib.db`.
 
