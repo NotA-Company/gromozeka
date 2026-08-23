@@ -2621,10 +2621,8 @@ class TestStatsHandlerFormatRedesign:
 
             analyzer = StatsAnalyzer(rows)
 
-            # Call _buildMessagesSectionFromAnalyzer
-            result = await handler._buildMessagesSectionFromAnalyzer(
-                analyzer=analyzer, truncatedEventTypes=[], targetChatId=123
-            )
+            # Call _renderMessagesSection
+            result = await handler._renderMessagesSection(analyzer=analyzer, targetChatId=123)
 
             # Check bold header format
             assert "**Messages:** 150" in result, f"Expected '**Messages:** 150' in result: {result}"
@@ -2691,10 +2689,8 @@ class TestStatsHandlerFormatRedesign:
 
             handler._resolveUserName = AsyncMock(side_effect=mockResolve)
 
-            # Call _buildMessagesSectionFromAnalyzer
-            result = await handler._buildMessagesSectionFromAnalyzer(
-                analyzer=analyzer, truncatedEventTypes=[], targetChatId=123
-            )
+            # Call _renderMessagesSection
+            result = await handler._renderMessagesSection(analyzer=analyzer, targetChatId=123)
 
             # Check caption-in-fence
             assert "```Top:" in result
@@ -2757,8 +2753,8 @@ class TestStatsHandlerFormatRedesign:
 
             analyzer = StatsAnalyzer(rows)
 
-            # Call _buildCommandsSectionFromAnalyzer
-            result = handler._buildCommandsSectionFromAnalyzer(analyzer=analyzer, truncatedEventTypes=[])
+            # Call _renderCommandsSection
+            result = handler._renderCommandsSection(analyzer=analyzer)
 
             # Check bold header
             assert "**Commands:** 15" in result
@@ -2810,7 +2806,7 @@ class TestStatsHandlerFormatRedesign:
             ]
 
             cmdAnalyzer = StatsAnalyzer(cmdRows)
-            cmdResult = handler._buildCommandsSectionFromAnalyzer(analyzer=cmdAnalyzer, truncatedEventTypes=[])
+            cmdResult = handler._renderCommandsSection(analyzer=cmdAnalyzer)
 
             assert "**Commands:** 10" in cmdResult
             assert "  ⚠ errors: 2" in cmdResult
@@ -2834,7 +2830,7 @@ class TestStatsHandlerFormatRedesign:
             ]
 
             toolAnalyzer = StatsAnalyzer(toolRows)
-            toolResult = handler._buildToolsSectionFromAnalyzer(analyzer=toolAnalyzer, truncatedEventTypes=[])
+            toolResult = handler._renderToolsSection(analyzer=toolAnalyzer)
 
             assert "**Tools:** 5" in toolResult
             assert "  ⚠ errors: 1" in toolResult
@@ -2874,7 +2870,7 @@ class TestStatsHandlerFormatRedesign:
             ]
 
             cmdAnalyzer = StatsAnalyzer(cmdRows)
-            cmdResult = handler._buildCommandsSectionFromAnalyzer(analyzer=cmdAnalyzer, truncatedEventTypes=[])
+            cmdResult = handler._renderCommandsSection(analyzer=cmdAnalyzer)
 
             assert "**Commands:** 10" in cmdResult
             assert "⚠ errors:" not in cmdResult
@@ -2898,7 +2894,7 @@ class TestStatsHandlerFormatRedesign:
             ]
 
             toolAnalyzer = StatsAnalyzer(toolRows)
-            toolResult = handler._buildToolsSectionFromAnalyzer(analyzer=toolAnalyzer, truncatedEventTypes=[])
+            toolResult = handler._renderToolsSection(analyzer=toolAnalyzer)
 
             assert "**Tools:** 5" in toolResult
             assert "⚠ errors:" not in toolResult
@@ -2939,7 +2935,7 @@ class TestStatsHandlerFormatRedesign:
             ]
 
             toolAnalyzer = StatsAnalyzer(toolRows)
-            toolResult = handler._buildToolsSectionFromAnalyzer(analyzer=toolAnalyzer, truncatedEventTypes=[])
+            toolResult = handler._renderToolsSection(analyzer=toolAnalyzer)
 
             # Derivation: total_calls=2.0, elapsed_time=3.5 → avg=3.5/2=1.75s → _formatDuration returns "1.75s"
             # Check header folds avg time with exact first-line pin
@@ -2982,22 +2978,7 @@ class TestStatsHandlerFormatRedesign:
 
             llmAnalyzer = StatsAnalyzer(llmRows)
 
-            # Create minimal StatsPayload for LLM test
-            llmPayload: StatsPayload = {
-                "userId": "123",
-                "chatId": "456",
-                "chatTitle": "Test Chat",
-                "chatType": "private",
-                "platform": "telegram",
-                "period": "7d",
-                "periodType": "daily",
-                "generatedAt": "2026-01-01T00:00:00Z",
-                "rows": {},
-                "userFilterApplied": False,
-            }
-            llmResult = handler._buildLlmSectionFromAnalyzer(
-                analyzer=llmAnalyzer, payload=llmPayload, truncatedEventTypes=[]
-            )
+            llmResult = handler._renderLlmSection(analyzer=llmAnalyzer)
 
             # Derivation: total_requests=3.0, elapsed_time=6.0 → avg=6.0/3=2.00s → _formatDuration returns "2.00s"
             # Check header folds avg time with exact first-line pin
@@ -3082,9 +3063,8 @@ class TestStatsHandlerFormatRedesign:
                 "userFilterApplied": False,
             }
 
-            llmResult = handler._buildLlmSectionFromAnalyzer(
-                analyzer=llmAnalyzer, payload=payload, truncatedEventTypes=[]
-            )
+            sttAnalyzer = StatsAnalyzer(payload["rows"]["stt_request"])
+            llmResult = handler._renderLlmSection(analyzer=llmAnalyzer, sttAnalyzer=sttAnalyzer)
 
             # Check STT line format (noun dropped, bold header)
             assert "  **STT:** 15" in llmResult
@@ -3158,9 +3138,8 @@ class TestStatsHandlerFormatRedesign:
                 "userFilterApplied": False,
             }
 
-            llmResult = handler._buildLlmSectionFromAnalyzer(
-                analyzer=llmAnalyzer, payload=payload, truncatedEventTypes=[]
-            )
+            sttAnalyzer = StatsAnalyzer(payload["rows"]["stt_request"])
+            llmResult = handler._renderLlmSection(analyzer=llmAnalyzer, sttAnalyzer=sttAnalyzer)
 
             # Check STT errors sub-line format (4-space indent, no ⚠)
             assert "    errors: 2" in llmResult
@@ -3311,10 +3290,8 @@ class TestStatsHandlerFormatRedesign:
             # Mock _resolveUserName to return plain @name (as it should)
             handler._resolveUserName = AsyncMock(return_value="@alice")
 
-            # Call _buildMessagesSectionFromAnalyzer
-            result = await handler._buildMessagesSectionFromAnalyzer(
-                analyzer=analyzer, truncatedEventTypes=[], targetChatId=123
-            )
+            # Call _renderMessagesSection
+            result = await handler._renderMessagesSection(analyzer=analyzer, targetChatId=123)
 
             # Check that username in block is NOT backticked
             assert "• @alice" in result, f"Expected '• @alice' (no backticks) in result: {result}"
@@ -3859,10 +3836,9 @@ class TestStatsHandlerWebTierInterimBehavior:
 
             handler._resolveUserName = AsyncMock(side_effect=mockResolve)
 
-            # Call _buildMessagesSectionFromAnalyzer
-            result = await handler._buildMessagesSectionFromAnalyzer(
+            # Call _renderMessagesSection
+            result = await handler._renderMessagesSection(
                 analyzer=analyzer,
-                truncatedEventTypes=[],
                 targetChatId=123,
             )
 
@@ -3989,10 +3965,9 @@ class TestStatsHandlerWebTierInterimBehavior:
 
             handler._resolveUserName = AsyncMock(side_effect=mockResolve)
 
-            # Call _buildMessagesSectionFromAnalyzer
-            result = await handler._buildMessagesSectionFromAnalyzer(
+            # Call _renderMessagesSection
+            result = await handler._renderMessagesSection(
                 analyzer=analyzer,
-                truncatedEventTypes=[],
                 targetChatId=123,
             )
 

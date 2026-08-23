@@ -11,6 +11,8 @@ from internal.bot.models import BotProvider, ChatType, EnsuredMessage
 from internal.models.types import MessageId
 from internal.services.stats.service import StatsAggregationService
 from lib.stats import NullStatsStorage
+from lib.stats.stats_pages import StatsPayload
+from lib.stats.types import StatsAggregateDict
 
 
 def buildEnsuredMessage(
@@ -281,6 +283,87 @@ class TestStatsHandlerPayloadDataRegression:
         assert len(sttRows) == 1
         assert sttRows[0]["labels"]["consumer"] == "123"
         assert "user_id" not in sttRows[0]["labels"]  # stt_request has no user_id label
+
+    async def test_brief_from_payload_reads_rows_by_event_type_keys(self):
+        """Test regression: web brief reads payload rows by event-type keys.
+
+        _buildSectionViewFromPayload used to look up payload["rows"] by
+        section name ("messages"), but the payload keys rows by event type
+        ("message"), so every brief rendered from an empty analyzer and
+        showed zeroed counts. The brief must read rows by event type.
+        """
+        # Reset singleton
+        StatsAggregationService._instance = None
+
+        mockConfigManager = MagicMock()
+        mockConfigManager.getStatsConfig.return_value = {"enabled": True}
+        mockConfigManager.getStatsPagesConfig.return_value = {"enabled": False}
+        mockDatabase = MagicMock()
+        handler = StatsHandler(configManager=mockConfigManager, database=mockDatabase, botProvider=BotProvider.TELEGRAM)
+
+        handler._resolveUserName = AsyncMock(return_value="@alice")
+
+        payload: StatsPayload = {
+            "userId": "456",
+            "chatId": "123",
+            "chatTitle": "Test User",
+            "chatType": "private",
+            "platform": "telegram",
+            "period": "7d",
+            "periodType": "daily",
+            "generatedAt": "2026-01-01T00:00:00+00:00",
+            "rows": {
+                "message": [
+                    StatsAggregateDict(
+                        periodType="daily",
+                        periodStart="2024-01-01T00:00:00+00:00",
+                        labels={"consumer": "123", "user_id": "1", "sent": "False"},
+                        metricKey="message_count",
+                        metricValue=150.0,
+                    ),
+                ],
+                "command": [
+                    StatsAggregateDict(
+                        periodType="daily",
+                        periodStart="2024-01-01T00:00:00+00:00",
+                        labels={"consumer": "123", "commandName": "stats"},
+                        metricKey="command_count",
+                        metricValue=7.0,
+                    ),
+                ],
+                "llm_tool_call": [],
+                "llm_request": [],
+                "stt_request": [],
+            },
+        }
+
+        reply = await handler._buildStatsReplyFromPayload(
+            payload=payload,
+            targetChatId=123,
+            chatType=ChatType.PRIVATE,
+            userId=456,
+            section="messages",
+            periodArg="7d",
+            filterUserId=None,
+            positionalChatIdUsed=False,
+        )
+
+        # The messages section must render the payload's real counts,
+        # not zeros from a missed rows lookup.
+        assert "**Messages:** 150" in reply, f"Expected real message count in brief: {reply}"
+
+        # Section=all variant: the commands section must also read real rows.
+        replyAll = await handler._buildStatsReplyFromPayload(
+            payload=payload,
+            targetChatId=123,
+            chatType=ChatType.PRIVATE,
+            userId=456,
+            section="all",
+            periodArg="7d",
+            filterUserId=None,
+            positionalChatIdUsed=False,
+        )
+        assert "**Commands:** 7" in replyAll, f"Expected real command count in brief: {replyAll}"
 
     async def test_payload_chatlist_condition_matches_reply_path(self):
         """Test regression: chatList condition matches reply path exactly.

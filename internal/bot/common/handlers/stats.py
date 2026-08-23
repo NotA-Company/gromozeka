@@ -99,6 +99,14 @@ class StatsHandler(BaseBotHandler):
     # Delay between consecutive chunk sends (seconds)
     _CHUNK_SEND_DELAY_SECONDS: float = 0.5
 
+    # Maps display section names to the event types backing them
+    _SECTION_EVENT_TYPES: dict[str, str] = {
+        "messages": "message",
+        "commands": "command",
+        "tools": "llm_tool_call",
+        "llm": "llm_request",
+    }
+
     # Help text constants (deduplicated from three copies in the code)
     _USAGE_TEXT = (
         "Показать статистику использования бота.\n"
@@ -158,36 +166,18 @@ class StatsHandler(BaseBotHandler):
         self._statsPagesEnabled = statsPagesConfig.get("enabled", False)
 
         if self._statsPagesEnabled:
-            # Validate generate-command (must be non-empty list[str] of non-empty strings)
-            generateCommand = statsPagesConfig.get("generate-command")
-            if (
-                not generateCommand
-                or not isinstance(generateCommand, list)
-                or len(generateCommand) == 0
-                or not all(isinstance(item, str) and item.strip() for item in generateCommand)
-            ):
-                raise RuntimeError(
-                    "[stats.pages] generate-command must be a non-empty list[str] of non-empty strings when enabled"
-                )
-
-            # Validate delete-command (must be non-empty list[str] of non-empty strings)
-            deleteCommand = statsPagesConfig.get("delete-command")
-            if (
-                not deleteCommand
-                or not isinstance(deleteCommand, list)
-                or len(deleteCommand) == 0
-                or not all(isinstance(item, str) and item.strip() for item in deleteCommand)
-            ):
-                raise RuntimeError(
-                    "[stats.pages] delete-command must be a non-empty list[str] of non-empty strings when enabled"
-                )
+            # Validate generate/delete commands (must be non-empty list[str] of non-empty strings)
+            generateCommand = self._validateStatsPagesCommand(
+                statsPagesConfig.get("generate-command"), "generate-command"
+            )
+            deleteCommand = self._validateStatsPagesCommand(statsPagesConfig.get("delete-command"), "delete-command")
 
             # Validate ttl-hours is positive int
             ttlHours = statsPagesConfig.get("ttl-hours", 24)
             if not isinstance(ttlHours, int) or ttlHours <= 0:
                 raise RuntimeError("[stats.pages] ttl-hours must be a positive integer when enabled")
 
-            # Cache validated config values (already lists from above validation)
+            # Cache validated config values
             self._statsPagesTtlHours = ttlHours
             self._statsPagesGenerateCommand = generateCommand
             self._statsPagesDeleteCommand = deleteCommand
@@ -197,6 +187,30 @@ class StatsHandler(BaseBotHandler):
         QueueService.getInstance().registerDelayedTaskHandler(
             DelayedTaskFunction.STATS_PAGES_CLEANUP, self._dtStatsPagesCleanup
         )
+
+    def _validateStatsPagesCommand(self, command: object, configKey: str) -> list[str]:
+        """Validate a stats-pages command config value.
+
+        Args:
+            command: Config value to validate.
+            configKey: Config key name for error messages.
+
+        Returns:
+            The validated command as a list of non-empty strings.
+
+        Raises:
+            RuntimeError: If the value is not a non-empty list[str] of non-empty strings.
+        """
+        if not isinstance(command, list) or not command:
+            raise RuntimeError(
+                f"[stats.pages] {configKey} must be a non-empty list[str] of non-empty strings when enabled"
+            )
+        validated: list[str] = [item for item in command if isinstance(item, str) and item.strip()]
+        if len(validated) != len(command):
+            raise RuntimeError(
+                f"[stats.pages] {configKey} must be a non-empty list[str] of non-empty strings when enabled"
+            )
+        return validated
 
     def _formatCount(self, value: int) -> str:
         """Format a count value with k/m/g suffixes for readability.
@@ -547,23 +561,10 @@ class StatsHandler(BaseBotHandler):
         # We normalize ONLY leading runs of these characters to avoid breaking negative chatIds
         normalizedTokens: list[str] = []
         for token in tokens:
-            # Find leading run of em-dash or en-dash characters
-            leadingDashRun = ""
-            remainingPart = token
-            for char in token:
-                if char in ("—", "–"):  # U+2014 em-dash, U+2013 en-dash
-                    leadingDashRun += char
-                else:
-                    remainingPart = token[len(leadingDashRun) :]
-                    break
-            else:
-                # Loop completed without hitting non-dash (entire token is dashes)
-                remainingPart = ""
-            # Replace leading dash run with -- if present, otherwise keep original token
-            if leadingDashRun:
-                normalizedTokens.append("--" + remainingPart)
-            else:
-                normalizedTokens.append(token)
+            strippedToken = token.lstrip("—–")  # U+2014 em-dash, U+2013 en-dash
+            if strippedToken != token:
+                token = "--" + strippedToken
+            normalizedTokens.append(token)
         tokens = normalizedTokens
 
         # Positional arguments (at most one: help OR chatId)
@@ -689,33 +690,11 @@ class StatsHandler(BaseBotHandler):
         # Scope: group → this chat only, private → this chat or member chat
         consumerFilter = {str(targetChatId)}
 
-        # D7 drill-down depth: --section=all renders all four sections
-        sectionsToRender: list[str]
-        if section == "all":
-            # --section=all: render all four sections
-            sectionsToRender = ["messages", "commands", "tools", "llm"]
-        else:
-            # Default: single section (the one specified)
-            sectionsToRender = [section]
-
         # Build reply
-        lines: list[str] = []
-
-        # Header
-        periodLabel = periodArg if periodArg != "all" else "всё время"
-
-        # Get chat title for pretty header, fallback to #id if unavailable
-        chatIdentifier = f"#{targetChatId}"
-        try:
-            chatInfo = await self.cache.getChatInfo(chatId=targetChatId)
-            if chatInfo:
-                chatIdentifier = self.getChatTitle(chatInfo, useMarkdown=True, addChatId=True, addChatType=False)
-        except Exception:
-            # Fallback to simple #id format if chat info is unavailable
-            logger.debug(f"Failed to get chat info for chat {targetChatId}, using #id fallback")
-        lines.append(f"📊 Stats — {periodLabel} (UTC) — {chatIdentifier}")
+        lines: list[str] = [await self._buildStatsHeaderLine(targetChatId, periodArg)]
 
         # Build section views
+        sectionsToRender = self._sectionsToRender(section)
         for renderSection in sectionsToRender:
             sectionView = await self._buildSectionView(
                 targetChatId=targetChatId,
@@ -739,16 +718,8 @@ class StatsHandler(BaseBotHandler):
         ):
             lines.append("")
             lines.append("Ваши чаты:")
-            userChats = await self.getUserChats(userId)
-            # Sort by messages_count descending, top 10
-            userChats.sort(key=lambda c: c.get("messages_count", 0), reverse=True)
-            for chat in userChats[:10]:
-                chatId = chat["chat_id"]
-                title = chat["title"] or chat["username"] or ""
-                msgCount = chat.get("messages_count", 0)
-                lines.append(f"  #`{chatId}` {title} — {self._formatCount(msgCount)}")
-            if len(userChats) > 10:
-                lines.append(f"  … и ещё {self._formatCount(len(userChats) - 10)} чатов")
+            chatListEntries, chatListTotal = await self._collectChatListEntries(userId)
+            self._appendChatListLines(lines, chatListEntries, chatListTotal)
 
         # Footer
         lines.append("")
@@ -759,6 +730,78 @@ class StatsHandler(BaseBotHandler):
         chunks = self._chunkLinesWithFenceAtomicity(lines)
 
         return chunks[0] if len(chunks) == 1 else chunks
+
+    def _sectionsToRender(self, section: str) -> list[str]:
+        """Expand a section argument into the list of sections to render.
+
+        Args:
+            section: Requested section (messages, commands, tools, llm, all).
+
+        Returns:
+            List of section names to render ("all" expands to all four sections).
+        """
+        # D7 drill-down depth: --section=all renders all four sections
+        if section == "all":
+            return ["messages", "commands", "tools", "llm"]
+        return [section]
+
+    async def _buildStatsHeaderLine(self, targetChatId: int, periodArg: str) -> str:
+        """Build the header line for a stats reply.
+
+        Args:
+            targetChatId: Chat to show stats for.
+            periodArg: Original period argument string (for the period label).
+
+        Returns:
+            Formatted header line ("📊 Stats — <period> (UTC) — <chat>").
+        """
+        periodLabel = periodArg if periodArg != "all" else "всё время"
+
+        # Get chat title for pretty header, fallback to #id if unavailable
+        chatIdentifier = f"#{targetChatId}"
+        try:
+            chatInfo = await self.cache.getChatInfo(chatId=targetChatId)
+            if chatInfo:
+                chatIdentifier = self.getChatTitle(chatInfo, useMarkdown=True, addChatId=True, addChatType=False)
+        except Exception:
+            # Fallback to simple #id format if chat info is unavailable
+            logger.debug(f"Failed to get chat info for chat {targetChatId}, using #id fallback")
+        return f"📊 Stats — {periodLabel} (UTC) — {chatIdentifier}"
+
+    async def _collectChatListEntries(self, userId: int) -> tuple[list[ChatListEntry], int]:
+        """Collect the user's chats sorted by message count, capped at 10 entries.
+
+        Args:
+            userId: User ID whose chats to list.
+
+        Returns:
+            Tuple of (top-10 chat list entries, total chat count before capping).
+        """
+        userChats = await self.getUserChats(userId)
+        # Sort by messages_count descending, top 10
+        userChats.sort(key=lambda c: c.get("messages_count", 0), reverse=True)
+        chatList: list[ChatListEntry] = [
+            {
+                "chatId": chat["chat_id"],
+                "title": chat["title"] or chat["username"] or "",
+                "messagesCount": chat.get("messages_count", 0),
+            }
+            for chat in userChats[:10]
+        ]
+        return chatList, len(userChats)
+
+    def _appendChatListLines(self, lines: list[str], chats: list[ChatListEntry], total: int) -> None:
+        """Append chat list entry lines to the output.
+
+        Args:
+            lines: Output lines list to append to.
+            chats: Chat list entries to render (already capped at 10).
+            total: Total number of chats before capping (gates the trailer line).
+        """
+        for chat in chats:
+            lines.append(f"  #`{chat['chatId']}` {chat['title']} — {self._formatCount(chat['messagesCount'])}")
+        if total > len(chats):
+            lines.append(f"  … и ещё {self._formatCount(total - len(chats))} чатов")
 
     def _chunkLinesWithFenceAtomicity(self, lines: list[str]) -> list[str]:
         """Chunk lines into output messages while preserving fence atomicity.
@@ -862,9 +905,8 @@ class StatsHandler(BaseBotHandler):
         for key, formattedCount in itemsWithFormattedCounts:
             blockLines.append(f"• {key.ljust(maxKeyWidth)}  {formattedCount.rjust(maxCountWidth)}")
 
-        if blockLines:
-            return ["```" + blockTitle.replace(" ", " "), *blockLines, "```"]
-        return []
+        # items is non-empty, so blockLines is non-empty too
+        return ["```" + blockTitle.replace(" ", " "), *blockLines, "```"]
 
     async def _sendStatsReply(
         self,
@@ -927,138 +969,110 @@ class StatsHandler(BaseBotHandler):
         Returns:
             Formatted section view string.
         """
-        # Section builders
-        if section == "messages":
-            return await self._buildMessagesSection(
-                targetChatId=targetChatId,
-                periodType=periodType,
-                periodStartFrom=periodStartFrom,
-                periodStartTo=periodStartTo,
-                consumerFilter=consumerFilter,
-                filterUserId=filterUserId,
+        if section == "llm":
+            # Note: llm_request/stt_request events don't carry user_id, so filterUserId
+            # does not filter their rows (it only drives the display annotation).
+            analyzer, truncated = await self._querySectionAnalyzer(
+                "llm_request", periodType, periodStartFrom, periodStartTo, consumerFilter, filterUserId
             )
-        elif section == "commands":
-            return await self._buildCommandsSection(
-                targetChatId=targetChatId,
-                periodType=periodType,
-                periodStartFrom=periodStartFrom,
-                periodStartTo=periodStartTo,
-                consumerFilter=consumerFilter,
-                filterUserId=filterUserId,
+            sttAnalyzer, sttTruncated = await self._querySectionAnalyzer(
+                "stt_request", periodType, periodStartFrom, periodStartTo, consumerFilter, filterUserId
             )
-        elif section == "tools":
-            return await self._buildToolsSection(
-                targetChatId=targetChatId,
-                periodType=periodType,
-                periodStartFrom=periodStartFrom,
-                periodStartTo=periodStartTo,
-                consumerFilter=consumerFilter,
-                filterUserId=filterUserId,
+            return self._renderLlmSection(
+                analyzer,
+                sttAnalyzer=sttAnalyzer if sttAnalyzer.rows else None,
+                truncated=truncated,
+                sttTruncated=sttTruncated,
+                userFilterApplied=filterUserId is not None,
             )
-        elif section == "llm":
-            return await self._buildLlmSection(
-                targetChatId=targetChatId,
-                periodType=periodType,
-                periodStartFrom=periodStartFrom,
-                periodStartTo=periodStartTo,
-                consumerFilter=consumerFilter,
-                filterUserId=filterUserId,
-            )
-        else:
+
+        eventType = self._SECTION_EVENT_TYPES.get(section)
+        if eventType is None:
             # This should be unreachable because section is validated in _parseStatsArgs,
             # but we keep it for type safety and defensive programming.
             return f"❌ Неизвестный раздел: {section}"
 
-    async def _buildMessagesSection(
+        analyzer, truncated = await self._querySectionAnalyzer(
+            eventType, periodType, periodStartFrom, periodStartTo, consumerFilter, filterUserId
+        )
+        if section == "messages":
+            return await self._renderMessagesSection(analyzer, targetChatId, truncated=truncated)
+        if section == "commands":
+            return self._renderCommandsSection(analyzer, truncated=truncated)
+        return self._renderToolsSection(analyzer, truncated=truncated)
+
+    async def _querySectionAnalyzer(
         self,
-        targetChatId: int,
+        eventType: str,
         periodType: str,
         periodStartFrom: Optional[str],
         periodStartTo: Optional[str],
         consumerFilter: set[str],
         filterUserId: Optional[int],
-    ) -> str:
-        """Build the messages section view.
+    ) -> tuple[StatsAnalyzer, bool]:
+        """Query aggregate rows for one event type and apply scope filters.
 
         Args:
-            targetChatId: Chat to show stats for.
+            eventType: Event type to query (e.g. "message", "llm_request").
             periodType: Period granularity for queries.
             periodStartFrom: ISO-8601 UTC start bound (None for 'all').
             periodStartTo: ISO-8601 UTC end bound (None for 'all').
-            consumerFilter: Consumer IDs to filter by.
-            filterUserId: Optional user ID filter for drill-down.
+            consumerFilter: Consumer IDs to filter by (excludes __global__ and other chats).
+            filterUserId: Optional user ID filter; applied to user-level event
+                types only (message, command, llm_tool_call).
+
+        Returns:
+            Tuple of (analyzer over the filtered rows, whether the raw query hit
+            STATS_QUERY_ROW_LIMIT and results may be incomplete).
+        """
+        storage = self.statsAggregationService.getQueryStorage(eventType)
+        rows = await storage.query(
+            eventType=eventType,
+            periodType=periodType,
+            periodStartFrom=periodStartFrom,
+            periodStartTo=periodStartTo,
+            limit=STATS_QUERY_ROW_LIMIT,
+        )
+
+        # D5 honesty line: check if we hit the limit
+        possiblyIncomplete = len(rows) == STATS_QUERY_ROW_LIMIT
+
+        analyzer = StatsAnalyzer(rows)
+        analyzer = analyzer.filterByLabelIn("consumer", consumerFilter)
+        if filterUserId is not None and eventType in ("message", "command", "llm_tool_call"):
+            analyzer = analyzer.filterByLabel("user_id", str(filterUserId))
+        return analyzer, possiblyIncomplete
+
+    async def _renderMessagesSection(self, analyzer: StatsAnalyzer, targetChatId: int, truncated: bool = False) -> str:
+        """Render the messages section view from an analyzer.
+
+        Args:
+            analyzer: StatsAnalyzer with consumer/user-filtered rows.
+            targetChatId: Chat to show stats for (for username resolution).
+            truncated: Whether the underlying query hit the row limit (honesty line).
 
         Returns:
             Formatted messages section string.
         """
-        storage = self.statsAggregationService.getQueryStorage("message")
-        rows = await storage.query(
-            eventType="message",
-            periodType=periodType,
-            periodStartFrom=periodStartFrom,
-            periodStartTo=periodStartTo,
-            limit=STATS_QUERY_ROW_LIMIT,
-        )
-
-        # D5 honesty line: check if we hit the limit
-        possiblyIncomplete = len(rows) == STATS_QUERY_ROW_LIMIT
-
-        analyzer = StatsAnalyzer(rows)
-        analyzer = analyzer.filterByLabelIn("consumer", consumerFilter)
-
-        # Apply user filter if specified
-        if filterUserId is not None:
-            analyzer = analyzer.filterByLabel("user_id", str(filterUserId))
-
         # Build lines using the shared helper
         lines = await self._buildMessagesBreakdownLines(analyzer, targetChatId)
 
         # D5 honesty line
-        if possiblyIncomplete:
+        if truncated:
             lines.append("  ⚠ результаты возможно неполны")
 
         return "\n".join(lines)
 
-    async def _buildCommandsSection(
-        self,
-        targetChatId: int,
-        periodType: str,
-        periodStartFrom: Optional[str],
-        periodStartTo: Optional[str],
-        consumerFilter: set[str],
-        filterUserId: Optional[int],
-    ) -> str:
-        """Build the commands section view.
+    def _renderCommandsSection(self, analyzer: StatsAnalyzer, truncated: bool = False) -> str:
+        """Render the commands section view from an analyzer.
 
         Args:
-            targetChatId: Chat to show stats for.
-            periodType: Period granularity for queries.
-            periodStartFrom: ISO-8601 UTC start bound (None for 'all').
-            periodStartTo: ISO-8601 UTC end bound (None for 'all').
-            consumerFilter: Consumer IDs to filter by.
-            filterUserId: Optional user ID filter for drill-down.
+            analyzer: StatsAnalyzer with consumer/user-filtered rows.
+            truncated: Whether the underlying query hit the row limit (honesty line).
 
         Returns:
             Formatted commands section string.
         """
-        storage = self.statsAggregationService.getQueryStorage("command")
-        rows = await storage.query(
-            eventType="command",
-            periodType=periodType,
-            periodStartFrom=periodStartFrom,
-            periodStartTo=periodStartTo,
-            limit=STATS_QUERY_ROW_LIMIT,
-        )
-
-        # D5 honesty line: check if we hit the limit
-        possiblyIncomplete = len(rows) == STATS_QUERY_ROW_LIMIT
-
-        analyzer = StatsAnalyzer(rows)
-        analyzer = analyzer.filterByLabelIn("consumer", consumerFilter)
-
-        if filterUserId is not None:
-            analyzer = analyzer.filterByLabel("user_id", str(filterUserId))
-
         totalCommands = analyzer.sumMetric("command_count")
         errorCommands = analyzer.sumMetric("is_error")
 
@@ -1072,51 +1086,21 @@ class StatsHandler(BaseBotHandler):
             lines.extend(self._renderFencedTopBlock(cmdNamesWithCounts))
 
         # D5 honesty line
-        if possiblyIncomplete:
+        if truncated:
             lines.append("  ⚠ результаты возможно неполны")
 
         return "\n".join(lines)
 
-    async def _buildToolsSection(
-        self,
-        targetChatId: int,
-        periodType: str,
-        periodStartFrom: Optional[str],
-        periodStartTo: Optional[str],
-        consumerFilter: set[str],
-        filterUserId: Optional[int],
-    ) -> str:
-        """Build the tools section view.
+    def _renderToolsSection(self, analyzer: StatsAnalyzer, truncated: bool = False) -> str:
+        """Render the tools section view from an analyzer.
 
         Args:
-            targetChatId: Chat to show stats for.
-            periodType: Period granularity for queries.
-            periodStartFrom: ISO-8601 UTC start bound (None for 'all').
-            periodStartTo: ISO-8601 UTC end bound (None for 'all').
-            consumerFilter: Consumer IDs to filter by.
-            filterUserId: Optional user ID filter for drill-down.
+            analyzer: StatsAnalyzer with consumer/user-filtered rows.
+            truncated: Whether the underlying query hit the row limit (honesty line).
 
         Returns:
             Formatted tools section string.
         """
-        storage = self.statsAggregationService.getQueryStorage("llm_tool_call")
-        rows = await storage.query(
-            eventType="llm_tool_call",
-            periodType=periodType,
-            periodStartFrom=periodStartFrom,
-            periodStartTo=periodStartTo,
-            limit=STATS_QUERY_ROW_LIMIT,
-        )
-
-        # D5 honesty line: check if we hit the limit
-        possiblyIncomplete = len(rows) == STATS_QUERY_ROW_LIMIT
-
-        analyzer = StatsAnalyzer(rows)
-        analyzer = analyzer.filterByLabelIn("consumer", consumerFilter)
-
-        if filterUserId is not None:
-            analyzer = analyzer.filterByLabel("user_id", str(filterUserId))
-
         totalCalls = analyzer.sumMetric("tool_call_count")
         errorCalls = analyzer.sumMetric("is_error")
 
@@ -1143,50 +1127,33 @@ class StatsHandler(BaseBotHandler):
             lines.extend(self._renderFencedTopBlock(toolNamesWithCounts))
 
         # D5 honesty line
-        if possiblyIncomplete:
+        if truncated:
             lines.append("  ⚠ результаты возможно неполны")
 
         return "\n".join(lines)
 
-    async def _buildLlmSection(
+    def _renderLlmSection(
         self,
-        targetChatId: int,
-        periodType: str,
-        periodStartFrom: Optional[str],
-        periodStartTo: Optional[str],
-        consumerFilter: set[str],
-        filterUserId: Optional[int],
+        analyzer: StatsAnalyzer,
+        sttAnalyzer: Optional[StatsAnalyzer] = None,
+        truncated: bool = False,
+        sttTruncated: bool = False,
+        userFilterApplied: bool = False,
     ) -> str:
-        """Build the LLM section view.
+        """Render the LLM section view (with optional STT sub-block) from analyzers.
 
         Args:
-            targetChatId: Chat to show stats for.
-            periodType: Period granularity for queries.
-            periodStartFrom: ISO-8601 UTC start bound (None for 'all').
-            periodStartTo: ISO-8601 UTC end bound (None for 'all').
-            consumerFilter: Consumer IDs to filter by.
-            filterUserId: Optional user ID filter for drill-down (ignored for llm_request).
+            analyzer: StatsAnalyzer over llm_request rows (consumer-filtered).
+            sttAnalyzer: Optional StatsAnalyzer over stt_request rows; when None
+                the STT sub-block is omitted.
+            truncated: Whether the llm_request query hit the row limit (honesty line).
+            sttTruncated: Whether the stt_request query hit the row limit (honesty line).
+            userFilterApplied: Whether a user filter was requested (annotation only —
+                llm_request events don't carry user_id).
 
         Returns:
             Formatted LLM section string.
         """
-        # Note: llm_request events don't carry user_id, so filterUserId is ignored for this section
-
-        storage = self.statsAggregationService.getQueryStorage("llm_request")
-        rows = await storage.query(
-            eventType="llm_request",
-            periodType=periodType,
-            periodStartFrom=periodStartFrom,
-            periodStartTo=periodStartTo,
-            limit=STATS_QUERY_ROW_LIMIT,
-        )
-
-        # D5 honesty line: check if we hit the limit
-        possiblyIncomplete = len(rows) == STATS_QUERY_ROW_LIMIT
-
-        analyzer = StatsAnalyzer(rows)
-        analyzer = analyzer.filterByLabelIn("consumer", consumerFilter)
-
         totalRequests = analyzer.sumMetric("request_count")
         errorRequests = analyzer.sumMetric("is_error")
         totalInputTokens = analyzer.sumMetric("input_tokens")
@@ -1212,26 +1179,11 @@ class StatsHandler(BaseBotHandler):
             lines.extend(self._renderFencedTopBlock(modelNamesWithCounts, "Top models:"))
 
         # Annotation for user-level filtering
-        if filterUserId is not None:
+        if userFilterApplied:
             lines.append("  (на уровне чата, не пользователя)")
 
         # STT stats (stt_request event type)
-        sttStorage = self.statsAggregationService.getQueryStorage("stt_request")
-        sttRows = await sttStorage.query(
-            eventType="stt_request",
-            periodType=periodType,
-            periodStartFrom=periodStartFrom,
-            periodStartTo=periodStartTo,
-            limit=STATS_QUERY_ROW_LIMIT,
-        )
-
-        # D5 honesty line: check if we hit the STT limit
-        sttPossiblyIncomplete = len(sttRows) == STATS_QUERY_ROW_LIMIT
-
-        if sttRows:
-            sttAnalyzer = StatsAnalyzer(sttRows)
-            sttAnalyzer = sttAnalyzer.filterByLabelIn("consumer", consumerFilter)
-
+        if sttAnalyzer is not None:
             totalSttRequests = sttAnalyzer.sumMetric("request_count")
             errorSttRequests = sttAnalyzer.sumMetric("is_error")
             totalAudioDurationMs = sttAnalyzer.sumMetric("audio_duration_ms")
@@ -1248,11 +1200,11 @@ class StatsHandler(BaseBotHandler):
                 lines.append(f"    avg time: {self._formatDuration(avgSttTime)}")
 
             # D5 honesty line for STT
-            if sttPossiblyIncomplete:
+            if sttTruncated:
                 lines.append("    ⚠ результаты возможно неполны")
 
         # D5 honesty line
-        if possiblyIncomplete:
+        if truncated:
             lines.append("  ⚠ результаты возможно неполны")
 
         return "\n".join(lines)
@@ -1359,19 +1311,7 @@ class StatsHandler(BaseBotHandler):
             and positionalChatIdUsed is False
             and section == "messages"
         ):
-            userChats = await self.getUserChats(userId)
-            # Store total count before slicing (for trailer display)
-            chatListTotal = len(userChats)
-            # Sort by messages_count descending, top 10
-            userChats.sort(key=lambda c: c.get("messages_count", 0), reverse=True)
-            for chat in userChats[:10]:
-                chatList.append(
-                    {
-                        "chatId": chat["chat_id"],
-                        "title": chat["title"] or chat["username"] or "",
-                        "messagesCount": chat.get("messages_count", 0),
-                    }
-                )
+            chatList, chatListTotal = await self._collectChatListEntries(userId)
 
         # Resolve chat title
         chatTitle = str(targetChatId)
@@ -1649,32 +1589,11 @@ class StatsHandler(BaseBotHandler):
         # Scope: group → this chat only, private → this chat or member chat
         consumerFilter = {str(targetChatId)}
 
-        # D7 drill-down depth: --section=all renders all four sections
-        sectionsToRender: list[str]
-        if section == "all":
-            # --section=all: render all four sections
-            sectionsToRender = ["messages", "commands", "tools", "llm"]
-        else:
-            # Default: single section (the one specified)
-            sectionsToRender = [section]
-
         # Build reply
-        lines: list[str] = []
-
-        # Header
-        periodLabel = periodArg if periodArg != "all" else "всё время"
-        # Get chat title for pretty header, fallback to #id if unavailable
-        chatIdentifier = f"#{targetChatId}"
-        try:
-            chatInfo = await self.cache.getChatInfo(chatId=targetChatId)
-            if chatInfo:
-                chatIdentifier = self.getChatTitle(chatInfo, useMarkdown=True, addChatId=True, addChatType=False)
-        except Exception:
-            # Fallback to simple #id format if chat info is unavailable
-            logger.debug(f"Failed to get chat info for chat {targetChatId}, using #id fallback")
-        lines.append(f"📊 Stats — {periodLabel} (UTC) — {chatIdentifier}")
+        lines: list[str] = [await self._buildStatsHeaderLine(targetChatId, periodArg)]
 
         # Build section views from payload rows
+        sectionsToRender = self._sectionsToRender(section)
         for renderSection in sectionsToRender:
             sectionView = await self._buildSectionViewFromPayload(
                 payload=payload,
@@ -1696,15 +1615,7 @@ class StatsHandler(BaseBotHandler):
         ):
             lines.append("")
             lines.append("Ваши чаты:")
-            for chat in payload["chatList"]:
-                chatId = chat["chatId"]
-                title = chat["title"]
-                msgCount = chat["messagesCount"]
-                lines.append(f"  #`{chatId}` {title} — {self._formatCount(msgCount)}")
-            if "chatListTotal" in payload and payload["chatListTotal"] > len(payload["chatList"]):
-                lines.append(
-                    f"  … и ещё {self._formatCount(payload['chatListTotal'] - len(payload['chatList']))} чатов"
-                )
+            self._appendChatListLines(lines, payload["chatList"], payload.get("chatListTotal", 0))
 
         # Footer
         lines.append("")
@@ -1730,6 +1641,11 @@ class StatsHandler(BaseBotHandler):
     ) -> str:
         """Build the view for a specific stats section from payload data.
 
+        Rows in the payload are keyed by event type, so the section name is
+        mapped through _SECTION_EVENT_TYPES before lookup. Honesty lines are
+        omitted per-section here: truncation is reported by a single global
+        line appended by _buildStatsReplyFromPayload.
+
         Args:
             payload: The stats payload with all rows.
             section: Section to display.
@@ -1739,29 +1655,24 @@ class StatsHandler(BaseBotHandler):
         Returns:
             Formatted section view string.
         """
-        rows = payload["rows"][section] if section in payload["rows"] else []
+        rows = payload["rows"].get(self._SECTION_EVENT_TYPES.get(section, section), [])
         analyzer = StatsAnalyzer(rows)
         analyzer = analyzer.filterByLabelIn("consumer", consumerFilter)
 
-        # Section builders (reusing the same logic as _buildSectionView)
+        # Section renderers (same logic as the query path in _buildSectionView)
         if section == "messages":
-            return await self._buildMessagesSectionFromAnalyzer(
-                analyzer, payload["truncatedEventTypes"] if "truncatedEventTypes" in payload else [], targetChatId
+            return await self._renderMessagesSection(analyzer, targetChatId)
+        if section == "commands":
+            return self._renderCommandsSection(analyzer)
+        if section == "tools":
+            return self._renderToolsSection(analyzer)
+        if section == "llm":
+            sttRows = payload["rows"].get("stt_request", [])
+            sttAnalyzer = StatsAnalyzer(sttRows) if sttRows else None
+            return self._renderLlmSection(
+                analyzer, sttAnalyzer=sttAnalyzer, userFilterApplied=payload.get("userFilterApplied", False)
             )
-        elif section == "commands":
-            return self._buildCommandsSectionFromAnalyzer(
-                analyzer, payload["truncatedEventTypes"] if "truncatedEventTypes" in payload else []
-            )
-        elif section == "tools":
-            return self._buildToolsSectionFromAnalyzer(
-                analyzer, payload["truncatedEventTypes"] if "truncatedEventTypes" in payload else []
-            )
-        elif section == "llm":
-            return self._buildLlmSectionFromAnalyzer(
-                analyzer, payload, payload["truncatedEventTypes"] if "truncatedEventTypes" in payload else []
-            )
-        else:
-            return f"❌ Неизвестный раздел: {section}"
+        return f"❌ Неизвестный раздел: {section}"
 
     async def _buildMessagesBreakdownLines(self, analyzer: StatsAnalyzer, targetChatId: int) -> list[str]:
         """Build messages breakdown and top users lines.
@@ -1800,146 +1711,6 @@ class StatsHandler(BaseBotHandler):
             lines.extend(self._renderFencedTopBlock(userNamesWithCounts))
 
         return lines
-
-    async def _buildMessagesSectionFromAnalyzer(
-        self, analyzer: StatsAnalyzer, truncatedEventTypes: list[str], targetChatId: int
-    ) -> str:
-        """Build the messages section view from analyzer.
-
-        Args:
-            analyzer: StatsAnalyzer with filtered data.
-            truncatedEventTypes: List of event types that were truncated (unused, honesty line is global).
-            targetChatId: Chat to show stats for (for username resolution).
-
-        Returns:
-            Formatted messages section string.
-        """
-        lines = await self._buildMessagesBreakdownLines(analyzer, targetChatId)
-        return "\n".join(lines)
-
-    def _buildCommandsSectionFromAnalyzer(self, analyzer: StatsAnalyzer, truncatedEventTypes: list[str]) -> str:
-        """Build the commands section view from analyzer.
-
-        Args:
-            analyzer: StatsAnalyzer with filtered data.
-            truncatedEventTypes: List of event types that were truncated (unused, honesty line is global).
-
-        Returns:
-            Formatted commands section string.
-        """
-        totalCommands = analyzer.sumMetric("command_count")
-        errorCommands = analyzer.sumMetric("is_error")
-
-        topCommands = analyzer.topN("commandName", "command_count", 3)
-
-        lines: list[str] = [f"**Commands:** {self._formatCount(int(totalCommands))}"]
-        if errorCommands > 0:
-            lines.append(f"  ⚠ errors: {self._formatCount(int(errorCommands))}")
-        if topCommands:
-            cmdNamesWithCounts: list[tuple[str, int]] = [(cmdName, int(count)) for cmdName, count in topCommands]
-            lines.extend(self._renderFencedTopBlock(cmdNamesWithCounts))
-
-        return "\n".join(lines)
-
-    def _buildToolsSectionFromAnalyzer(self, analyzer: StatsAnalyzer, truncatedEventTypes: list[str]) -> str:
-        """Build the tools section view from analyzer.
-
-        Args:
-            analyzer: StatsAnalyzer with filtered data.
-            truncatedEventTypes: List of event types that were truncated (unused, honesty line is global).
-
-        Returns:
-            Formatted tools section string.
-        """
-        totalCalls = analyzer.sumMetric("tool_call_count")
-        errorCalls = analyzer.sumMetric("is_error")
-
-        # Cross-group contract: use tool_exec_count when available, fallback to tool_call_count
-        toolExecCountSum = analyzer.sumMetric("tool_exec_count")
-        avgElapsed = 0.0
-        if toolExecCountSum > 0:
-            elapsedTimeSum = analyzer.sumMetric("elapsed_time")
-            avgElapsed = elapsedTimeSum / toolExecCountSum
-        else:
-            avgElapsed = analyzer.average("elapsed_time", "tool_call_count")
-
-        topTools = analyzer.topN("toolName", "tool_call_count", 3)
-
-        # Build header with optional avg time folded in
-        header = f"**Tools:** {self._formatCount(int(totalCalls))}"
-        if avgElapsed > 0:
-            header += f" · avg {self._formatDuration(avgElapsed)}"
-        lines: list[str] = [header]
-        if errorCalls > 0:
-            lines.append(f"  ⚠ errors: {self._formatCount(int(errorCalls))}")
-        if topTools:
-            toolNamesWithCounts: list[tuple[str, int]] = [(toolName, int(count)) for toolName, count in topTools]
-            lines.extend(self._renderFencedTopBlock(toolNamesWithCounts))
-
-        return "\n".join(lines)
-
-    def _buildLlmSectionFromAnalyzer(
-        self, analyzer: StatsAnalyzer, payload: StatsPayload, truncatedEventTypes: list[str]
-    ) -> str:
-        """Build the LLM section view from analyzer.
-
-        Args:
-            analyzer: StatsAnalyzer with filtered data.
-            payload: The stats payload (for STT data and user filter annotation).
-            truncatedEventTypes: List of event types that were truncated (unused for LLM, honesty line is global).
-
-        Returns:
-            Formatted LLM section string.
-        """
-        totalRequests = analyzer.sumMetric("request_count")
-        errorRequests = analyzer.sumMetric("is_error")
-        totalInputTokens = analyzer.sumMetric("input_tokens")
-        totalOutputTokens = analyzer.sumMetric("output_tokens")
-
-        avgElapsed = analyzer.average("elapsed_time", "request_count")
-
-        topModels = analyzer.topN("modelName", "request_count", 3)
-
-        # Build header with avg time folded in
-        header = f"**LLM:** {self._formatCount(int(totalRequests))} requests"
-        if avgElapsed > 0:
-            header += f" · avg {self._formatDuration(avgElapsed)}"
-        lines: list[str] = [header]
-        if errorRequests > 0:
-            lines.append(f"  ⚠ errors: {self._formatCount(int(errorRequests))}")
-        tokensLine = (
-            f"tokens: in {self._formatCount(int(totalInputTokens))} / out {self._formatCount(int(totalOutputTokens))}"
-        )
-        lines.append(tokensLine)
-        if topModels:
-            modelNamesWithCounts: list[tuple[str, int]] = [(modelName, int(count)) for modelName, count in topModels]
-            lines.extend(self._renderFencedTopBlock(modelNamesWithCounts, "Top models:"))
-
-        # Annotation for user-level filtering
-        if payload.get("userFilterApplied"):
-            lines.append("  (на уровне чата, не пользователя)")
-
-        # STT stats from payload
-        sttRows = payload["rows"].get("stt_request", [])
-        if sttRows:
-            sttAnalyzer = StatsAnalyzer(sttRows)
-
-            totalSttRequests = sttAnalyzer.sumMetric("request_count")
-            errorSttRequests = sttAnalyzer.sumMetric("is_error")
-            totalAudioDurationMs = sttAnalyzer.sumMetric("audio_duration_ms")
-            totalSttElapsedTime = sttAnalyzer.sumMetric("elapsed_time")
-
-            lines.append(f"  **STT:** {self._formatCount(int(totalSttRequests))}")
-            if errorSttRequests > 0:
-                lines.append(f"    errors: {self._formatCount(int(errorSttRequests))}")
-            if totalAudioDurationMs > 0:
-                audioDurationSecs = totalAudioDurationMs / 1000.0
-                lines.append(f"    audio: {self._formatDuration(audioDurationSecs, subMinuteDecimals=1)}")
-            if totalSttRequests > 0:
-                avgSttTime = totalSttElapsedTime / totalSttRequests
-                lines.append(f"    avg time: {self._formatDuration(avgSttTime)}")
-
-        return "\n".join(lines)
 
     async def _dtStatsPagesCleanup(self, task: DelayedTask) -> None:
         """Handle delayed task for stats page cleanup (one-shot per-page deletion).

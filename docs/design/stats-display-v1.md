@@ -253,7 +253,7 @@ history.
   unchanged.
 - **Handler dedup:** shared `_buildMessagesBreakdownLines` helper; both call
   sites (the default group/private reply and
-  `_buildMessagesSectionFromAnalyzer`) route through it.
+  `_renderMessagesSection`) route through it.
 - **Generator** ([`lib/stats/stats_pages/generator.py`](../../lib/stats/stats_pages/generator.py)):
   the "History (before stats enabled)" table row deleted; absent-`sent` rows
   fold into User Messages; top-N user selection aligned with the handler

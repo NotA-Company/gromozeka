@@ -42,6 +42,7 @@ process governing this file, see [docs/llm/changelog.md](docs/llm/changelog.md).
 - Markdown-formatted inline tool names followed by JSON arguments now execute as tool calls instead of being sent as plain text.
 - `/configure` and other admin-checking flows no longer crash when the bot has been kicked from a chat; `TheBot.getChatAdmins` now catches Telegram `Forbidden` and Max `NotFoundError`, logs a warning, and returns an empty admin set so the inaccessible chat is silently skipped.
 - `/stats` Top usernames no longer render with a doubled `@@` prefix (stored usernames already carry the leading `@`).
+- `/stats --web` in-chat briefs no longer show zeroed sections: the brief builder looked up payload rows by section name (`"messages"`) instead of event type (`"message"`), so every section rendered from an empty analyzer (the STT sub-block was the only part showing real data).
 
 ## [1.0.0] - 2026-07-21
 
