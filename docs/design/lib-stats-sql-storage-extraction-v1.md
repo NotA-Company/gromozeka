@@ -1,9 +1,9 @@
 # Design: Decode trio → `lib/db` and `DatabaseStatsStorage` → `lib/stats` (v1)
 
 **Date**: 2026-08-24
-**Status**: **Ratified 2026-08-24, amended 2026-08-24 — implementation in progress.** All
-decisions (D1–D11) user-ratified 2026-08-24; the same-day amendment (below) rescoped Arc 1
-from decode-trio-only extraction to a whole-module move. Arcs 1–3 are authorized to proceed.
+**Status**: **IMPLEMENTED — all phases landed** (utils move d60bb1e5, storage move
+ff51563a, docs 84f9f0a4). All decisions (D1–D11) user-ratified 2026-08-24 (same-day
+amendment included). See ADR-023.
 **Owner**: TBD
 **Scope**: Two chained extractions. First, move the SQL decode trio (`sqlToTypedDict`,
 `sqlToCustomType`, `_checkType` + its private constants) out of
@@ -318,7 +318,7 @@ New ADR (text ready to paste, §6). It records BOTH supersessions of ADR-022's
 `stats_storage.py` (this design) and internal `utils.py` (`sqlToTypedDict`) — S2 scope
 change. ADR-022's body is never edited; history is immutable, successors supersede.
 
-### D10 — Implementation in progress (supersedes the original doc-only round)
+### D10 — Implementation landed (supersedes the original doc-only round)
 
 Originally ratified as doc-only; the 2026-08-24 amendment authorized implementation to
 proceed immediately: Arc 1a/1b → Arc 2 → Arc 3 (§4). The Status line records it.

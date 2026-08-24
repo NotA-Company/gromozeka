@@ -654,7 +654,7 @@ CREATE TABLE messages (
 When inserting records, always set timestamps explicitly:
 
 ```python
-from internal.database.utils import getCurrentTimestamp
+from lib.db.utils import getCurrentTimestamp
 
 currentTimestamp = getCurrentTimestamp()
 

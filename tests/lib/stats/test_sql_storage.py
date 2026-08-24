@@ -558,7 +558,7 @@ async def testPurgeBoundaryExactCutoffSurvives(statsStorage: DatabaseStatsStorag
     """Verify row created during the boundary day survives (day-truncated cutoff).
 
     Uses a frozen clock to guarantee deterministic timing:
-    - Monkeypatch lib.db.utils.getCurrentTimestamp to return fixedNow
+    - Monkeypatch lib.utils.now to return fixedNow
     - Cutoff is UTC midnight of (fixedNow - 30 days) = boundaryDayMidnight
     - Row at midnight EXACTLY → survives (strict < comparison)
     - Row at 23:59:59 on the boundary day → survives (created during the boundary day)
