@@ -1722,7 +1722,7 @@ await sqlProvider.execute(
 **✅ Prefer**:
 ```python
 # Use helper function for consistent timestamps
-from internal.database.utils import getCurrentTimestamp
+from lib.db.utils import getCurrentTimestamp
 
 current_time = getCurrentTimestamp()
 await sqlProvider.execute(

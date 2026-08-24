@@ -29,7 +29,7 @@ verified against source on 2026-08-17.
 - **A2 — Purge cutoff day-truncation.**
   `cutoff = truncateToDay(getCurrentTimestamp() - timedelta(days=retentionDays))` —
   the UTC midnight of N days ago, reusing the Phase-1 shared helper
-  (stats_storage.py:313-327). An event is deleted only once it is beyond N **whole**
+  (sql_storage.py:471). An event is deleted only once it is beyond N **whole**
   days; hours/minutes/seconds of age within the boundary day do not count. The
   strict-`<` boundary is now midnight: a row created during the boundary day
   survives.
@@ -188,7 +188,7 @@ Facts verified against source on 2026-08-17.
   `aggregate(*, limit=1000, orphanTimeoutSeconds=3600) -> int` (lines 55-78 — returns
   events processed; claim-based). `NullStatsStorage` no-ops both (lines 81-118).
 - `DatabaseStatsStorage.aggregate()`
-   ([`lib/stats/sql_storage.py`](../../lib/stats/sql_storage.py):129-267):
+   ([`lib/stats/sql_storage.py`](../../lib/stats/sql_storage.py):134):
    1. **Claim** (lines 163-191): single `UPDATE` setting `processed_id = batchId,
       claimed_at = now` on up to `limit` rows with `processed = 0 AND
       event_type = :eventType AND (processed_id IS NULL OR claimed_at < :orphanTimeout)`,
@@ -217,7 +217,7 @@ Facts verified against source on 2026-08-17.
   ([`lib/db/providers/utils.py`](../../lib/db/providers/utils.py):55-56).
   The existing timestamp-comparison precedent binds a **Python datetime** as a
   `:named` parameter and compares directly: `claimed_at < :orphanTimeout`
-  (stats_storage.py:176, 189).
+  (sql_storage.py:187).
 
 ### 2.2 Storage construction and datasources
 
@@ -234,7 +234,7 @@ Five storages in [`main.py`](../../main.py), all gated on `statsEnabled`
 
 Each key may name a **different datasource** (all default `"default"`). The provider
 is obtained per storage as `await self.db.manager.getProvider(dataSource=self.dataSource,
-readonly=False)` (stats_storage.py:109, 161) — retention **must** use the same
+readonly=False)` (sql_storage.py:114, 171) — retention **must** use the same
 per-storage routing.
 
 ### 2.3 The QueueService delayed-task mechanism
@@ -328,7 +328,7 @@ race is immaterial).
 
 ### 2.6 Migration 027 and its parity lock
 
-- Migration 027 already imports `_hashLabels` from `internal.database.stats_storage`
+- Migration 027 already imports `_hashLabels` from `lib.stats.sql_storage`
   ([`migration_027_drop_chat_stats_backfill_aggregates.py`](../../internal/database/migrations/versions/migration_027_drop_chat_stats_backfill_aggregates.py):40)
   and defines **local duplicates** of the period truncation: `_dayISO` (lines 323-343)
   and `_monthISO` (lines 346-366), each docstring'd "Mirrors the daily/monthly
@@ -472,7 +472,7 @@ defensive in-impl guard). Exact SQL mechanics in D8.
 **Day-truncated cutoff (A2):** the cutoff is
 `truncateToDay(getCurrentTimestamp() - timedelta(days=retentionDays))` — the **UTC
 midnight of N days ago**, reusing the Phase-1 shared helper
-(stats_storage.py:313-327). Semantics: an event is deleted only once it is beyond
+(sql_storage.py:471). Semantics: an event is deleted only once it is beyond
 **N whole days** — hours/minutes/seconds of age within the boundary day do not
 count, so effective retention is between N and N+1 days depending on time of day.
 Truncation can only delay a deletion, never accelerate it, which strictly
@@ -484,7 +484,7 @@ next `aggregate()` and only then become eligible.
 
 ### D4 — Refactor fold-in: shared period-truncation helpers *(ratified)*
 
-Extract from `_computePeriods` (stats_storage.py:293-315) two module-level helpers
+Extract from `_computePeriods` (sql_storage.py:523) two module-level helpers
 in [`lib/stats/sql_storage.py`](../../lib/stats/sql_storage.py):
 
 ```python
@@ -493,7 +493,7 @@ def truncateToMonth(eventTime: datetime.datetime) -> str: ...
 ```
 
 Both return the ISO-8601 UTC string exactly as `_computePeriods` emits today —
-plain `.replace()` truncation reproduced **byte-for-byte** (stats_storage.py:305-307
+plain `.replace()` truncation reproduced **byte-for-byte** (sql_storage.py:484
 contains no naive handling, and none may be added). The contract is pinned on the
 input: callers must pass **aware-UTC** datetimes — all live callers do
 (`getCurrentTimestamp()` is aware-UTC; migration 027 combines its values with
@@ -579,9 +579,9 @@ later, one factory call at a time (D6).
 
 > **Flagged deviation from the ratified note:** A3's note says "`initialize(configManager)`
 > only". Taken literally, the service cannot construct `DatabaseStatsStorage` that
-> way: the storage constructor requires the `Database` reference
-> (stats_storage.py:59-66), `Database` is a plain class — not a singleton
-> (database.py:62) — and the only reference lives in `GromozekBot.__init__`
+> way: the storage constructor requires the `DatabaseManager` reference
+> (sql_storage.py:64-74), `DatabaseManager` is a plain class — not a singleton
+> (manager.py:43) — and the only reference lives in `GromozekBot.__init__`
 > (main.py:66-68). The ratified intent — the static storages list and its parameter
 > disappear — is preserved; `database` rides along as the factory's unavoidable
 > dependency. The alternative (a `db=` parameter on `createStatsStorage` per call)
@@ -661,7 +661,7 @@ async def purgeProcessed(self, *, retentionDays: int) -> int:
 
 - `NullStatsStorage.purgeProcessed` returns 0 (mirrors its `aggregate`).
 - **Raise vs never-raise:** `aggregate()` has **no** internal try/except — provider
-  errors propagate (stats_storage.py:129-267); only `record()` is contractually
+  errors propagate (sql_storage.py:134); only `record()` is contractually
   never-raise (stats_storage.py:41-43 "Implementations SHOULD be best-effort").
   `purgeProcessed` follows `aggregate`: it may raise, the coordinator's per-storage
   `try/except` (D2) isolates. This keeps isolation in exactly one place instead of
@@ -671,7 +671,7 @@ async def purgeProcessed(self, *, retentionDays: int) -> int:
   summary log line.)
 - **Cutoff computation lives in the implementation** (`DatabaseStatsStorage`), as
   `truncateToDay(dbUtils.getCurrentTimestamp() - datetime.timedelta(days=retentionDays))`
-  (A2) — the same-module Phase-1 helper (stats_storage.py:313-327), so no import is
+  (A2) — the same-module Phase-1 helper (sql_storage.py:471), so no import is
   needed; the un-truncated cache-repo shape (cache.py:352) remains the precedent for
   the `timedelta` subtraction itself.
 - **Keep-forever guard in both layers:** the coordinator skips the call when
@@ -682,7 +682,7 @@ async def purgeProcessed(self, *, retentionDays: int) -> int:
 
 Inside `DatabaseStatsStorage.purgeProcessed`, through **this storage's** provider
 (`await self.db.manager.getProvider(dataSource=self.dataSource, readonly=False)` —
-same call as `record`/`aggregate`, stats_storage.py:109/161):
+same call as `record`/`aggregate`, sql_storage.py:114/171):
 
 ```python
 if retentionDays <= 0:
@@ -712,7 +712,7 @@ Portability notes (each per `AGENTS.md` "SQL portability" /
   `convertToSQLite` would map a datetime to `isoformat()` anyway
   (providers/utils.py:55-56) and string params pass through unchanged. ISO-8601
   strings compare correctly lexicographically across SQLite/PostgreSQL/MySQL — the
-  identical argument backing `claimed_at < :orphanTimeout` (stats_storage.py:176)
+  identical argument backing `claimed_at < :orphanTimeout` (sql_storage.py:176)
   and `updated_at < :cutoffTime` (cache.py:362), whose stored values share the same
   `isoformat()` shape.
 - **No dialect functions** — no `DATE()`, no `NOW()`, no `COLLATE`, no
@@ -1079,7 +1079,7 @@ the parity lock is the safety net (same stance as stats-collecting-v1 §8).
 
 | # | Risk | Likelihood | Impact | Mitigation | Rollback |
 |---|---|---|---|---|---|
-| R1 | **Non-transactional aggregation (accepted gap)** — claim → upsert → mark-processed is not one transaction (TODO at stats_storage.py:232); a crash mid-batch leaves claimed rows that orphan-reclaim re-processes → **double-counted buckets** | Low | Med | **Accepted by decision** (2026-08-17). Bounded exposure: batches ≤ 1000 events; worst case one batch double-counted per crash; hourly cadence; aggregates are approximate telemetry, not billing. Orphan reclaim (stats_storage.py:176) prevents permanent stalls. A transactional batch API on `BaseSQLProvider` is an explicit **future follow-up (NG1)**, not a blocker | n/a (pre-existing); long-term fix = provider transaction primitive |
+| R1 | **Non-transactional aggregation (accepted gap)** — claim → upsert → mark-processed is not one transaction (TODO at sql_storage.py:244); a crash mid-batch leaves claimed rows that orphan-reclaim re-processes → **double-counted buckets** | Low | Med | **Accepted by decision** (2026-08-17). Bounded exposure: batches ≤ 1000 events; worst case one batch double-counted per crash; hourly cadence; aggregates are approximate telemetry, not billing. Orphan reclaim (sql_storage.py:176) prevents permanent stalls. A transactional batch API on `BaseSQLProvider` is an explicit **future follow-up (NG1)**, not a blocker | n/a (pre-existing); long-term fix = provider transaction primitive |
 | R2 | **Orphan timeout vs batch runtime** — a claimed-but-unfinished batch is eligible for reclaim after `orphanTimeoutSeconds` (default 3600, fixed — not tied to the interval). If a process freeze/very slow cycle holds a claim > 1 h, the next cycle reclaims and re-processes it (same double-count as R1). Conversely, cycles cannot overlap in-process: the singleton's in-memory gate plus the tick's sequential handler list (service.py:390) make concurrent/duplicate cycles structurally impossible (R10) | Low | Med | Drain cap (10 rounds) bounds cycle runtime to seconds-minutes; the freeze must exceed the orphan timeout, not the interval, to matter; lowering the interval does **not** lower the reclaim bar. Document; optionally expose the timeout as config later (§9 Q1) | n/a |
 | R3 | **Retention deletes needed data** — a predicate bug could purge unprocessed events (permanent loss — events are append-only) | Low | High | `processed = 1` is part of the ABC contract docstring AND pinned by tests (old-unprocessed row survives); count-before-delete makes the summary line an audit trail; default 30 days far exceeds the aggregation lag (≤ 1 h); the day-truncated cutoff (A2) can only delay a deletion, never accelerate it — retention is effectively N..N+1 days, never less than N | Set `events-retention-days = 0` (keep forever) — instant, no code |
 | R4 | **Refactor changes truncation bytes** — back-fill buckets and live buckets split or shift | Low | Med | Shared helpers are the *only* truncation code path after D4; the 70-row test independently recomputes every expected byte and must pass unmodified | Revert Phase 1 |

@@ -752,7 +752,7 @@ CREATE VIRTUAL TABLE vec_message_embeddings_384 USING vec0(
 Convert SQL response data to the expected Python type with smart type coercion.
 
 ```python
-from internal.database.utils import sqlToCustomType
+from lib.db.utils import sqlToCustomType
 
 # Handle Optional types gracefully
 success, value = sqlToCustomType(rawValue, Optional[datetime.datetime])
@@ -826,7 +826,7 @@ success, value = sqlToCustomType("123", Union[int, str])
 - `migration_013`: Removes `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns (explicit timestamp handling)
 - `migration_014`: Adds the [`divinations`](#divinations) table (composite PK `(chat_id, message_id)`) plus `idx_divinations_user_created` index for tarot/runes readings
 - `migration_015`: Adds the [`divination_layouts`](#divination_layouts) table (composite PK `(system_id, layout_id)`) plus `idx_divination_layouts_system` index for layout discovery cache
-- `migration_016`: Adds [`stat_events`](../../lib/stats/stats_storage.py) (append-only event log) and [`stat_aggregates`](../../lib/stats/stats_storage.py) (period buckets) tables for statistics collection
+- `migration_016`: Adds [`stat_events`](../../lib/stats/sql_storage.py) (append-only event log) and [`stat_aggregates`](../../lib/stats/sql_storage.py) (period buckets) tables for statistics collection
 - `migration_017`: Originally added the `message_embeddings` BLOB side table (composite PK `(chat_id, message_id)`) for semantic chat-history search. **Table + index subsequently DROPPED by `migration_025`** — chat-history embeddings now live in vec0 only with `chat_messages.model_id` (FK to `models`) carrying the provenance
 - `migration_018`: Originally added `idx_message_embeddings_chat_model` index on `message_embeddings (chat_id, model)`. **Index + table subsequently DROPPED by `migration_025`**
 - `migration_019`: Adds the [`webhook_updates`](../../docs/database-schema-llm.md#webhook_updates) table (`id TEXT PRIMARY KEY`) for Max webhook ingestion — raw webhook payloads are written here by the standalone webhook receiver and consumed via the `webhookUpdates` repository. Plus `idx_webhook_updates_unprocessed` on `(processed, received_at)` to back the unprocessed-rows query

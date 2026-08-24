@@ -37,7 +37,7 @@ plus handler-level assertions in `TestEmbedAndSaveMessage`
 
 `consumerId` (= chat id) is how per-chat stats scoping works: it is merged into
 `labels["consumer"]` at
-[lib/stats/sql_storage.py:121](../../lib/stats/sql_storage.py)
+[lib/stats/sql_storage.py:112](../../lib/stats/sql_storage.py)
 (`None` → `__global__`). The `message`, `command`, and `llm_tool_call` event types
 carry it correctly. All known gaps are in `llm_request`.
 

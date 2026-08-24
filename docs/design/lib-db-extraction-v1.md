@@ -671,10 +671,12 @@ Convert to the `_AVAILABLE` pattern only when the providers are actually wired.
 
 ## 8. Follow-ups (out of scope, tracked here)
 
-1. **`DatabaseStatsStorage` → `lib/stats`** — separate arc, own design pass (D6). Chief
-   design question: replacing the `Database`-handle dependency with
-   `DatabaseManager`/provider access (the repository pattern), so the impl can live in
-   lib while staying config-source-aware.
+1. **`DatabaseStatsStorage` → `lib/stats` — DONE (2026-08-24, commits `d60bb1e5` +
+   `ff51563a`; ADR-023).** The separate design pass happened —
+   [`lib-stats-sql-storage-extraction-v1.md`](./lib-stats-sql-storage-extraction-v1.md) —
+   and resolved the chief design question by taking `DatabaseManager` directly in the
+   constructor (per-call `manager.getProvider(dataSource=…, readonly=…)`), so the impl can
+   live in lib while staying config-source-aware.
 2. **MySQL/PostgreSQL activation arc** — wiring the providers into the factory +
    requirements; includes converting their hard imports to the `_AVAILABLE` convention
    (D5 deviation resolved then).

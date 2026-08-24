@@ -296,7 +296,7 @@ vanishingly rare in the Gromozeka codebase.
 | [`lib/ai/manager.py`](../../lib/ai/manager.py) | `LLMManager` — model + provider registry |
 | [`lib/ai/models.py`](../../lib/ai/models.py) | `ModelMessage`, `ModelRunResult`, `LLMToolFunction`, etc. |
 | [`lib/ai/providers/`](../../lib/ai/providers/) | Provider implementations (OpenAI-compatible, OpenRouter, Yandex Cloud, `fastembed`) |
-| [`lib/db/`](../../lib/db/) | SQL provider abstraction + `DatabaseManager` — `BaseSQLProvider`, SQLite3/SQLink provider impls (`mysql.py`/`postgresql.py` exist but are unregistered), the `getSqlProvider` factory, and `DatabaseManager` multi-source routing. Bot-free; `internal/database/` (Database wrapper, repositories, migrations) imports the SQL layer from here. See [`architecture.md`](architecture.md) ADR-022. |
+| [`lib/db/`](../../lib/db/) | SQL provider abstraction + `DatabaseManager` — `BaseSQLProvider`, SQLite3/SQLink provider impls (`mysql.py`/`postgresql.py` exist but are unregistered), the `getSqlProvider` factory, `DatabaseManager` multi-source routing, and `utils.py` (SQL decode trio + `getCurrentTimestamp`/`DEFAULT_THREAD_ID`). Bot-free; `internal/database/` (Database wrapper, repositories, migrations) imports the SQL layer from here. See [`architecture.md`](architecture.md) ADR-022/ADR-023. |
 | [`lib/cache/interface.py`](../../lib/cache/interface.py) | `CacheInterface[K,V]` — generic cache ABC |
 | [`lib/cache/dict_cache.py`](../../lib/cache/dict_cache.py) | In-memory dict-based cache impl |
 | [`lib/rate_limiter/interface.py`](../../lib/rate_limiter/interface.py) | `RateLimiterInterface` — ABC |
@@ -310,7 +310,7 @@ vanishingly rare in the Gromozeka codebase.
 | [`internal/services/proxy/`](../../internal/services/proxy/) | `ProxyService` singleton (lifecycle orchestration) + `ProxyLifecycle` (per-config process manager) |
 | [`lib/yandex_search/`](../../lib/yandex_search/) | Yandex Search API client |
 | [`lib/geocode_maps/client.py`](../../lib/geocode_maps/client.py) | Geocode Maps API client |
-| [`lib/stats/`](../../lib/stats/) | Statistics collection library (`StatsStorage`, `NullStatsStorage`, `GLOBAL_CONSUMER_ID`; read-side `StatsAnalyzer` + period helpers in `analysis.py`) |
+| [`lib/stats/`](../../lib/stats/) | Statistics collection library (`StatsStorage`, `NullStatsStorage`, `GLOBAL_CONSUMER_ID`; SQL impl `DatabaseStatsStorage` in `sql_storage.py` — takes `DatabaseManager`, constructed by the `StatsAggregationService` factory, see ADR-023; read-side `StatsAnalyzer` + period helpers in `analysis.py`) |
 | [`lib/stats/stats_pages/`](../../lib/stats/stats_pages/) | Module-invocable stats-page HTML generator: STDIN JSON → self-contained HTML file → stdout `{"pageId","url"}` (subprocess CLI contract), plus `launcher.runCliCommand` — the shared subprocess helper `StatsHandler` uses for both generation and TTL deletion; zero new deps |
 | [`lib/ext_modules/`](../../lib/ext_modules/) | External custom modules (Grabliarium etc.) |
 | [`lib/divination/`](../../lib/divination/) | Tarot & runes pure-logic library (decks, layouts, drawing); used by `DivinationHandler` |

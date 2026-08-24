@@ -378,24 +378,25 @@ await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
                                │       │
                      creates    │       │  creates
                                ▼       ▼
-               ┌────────────────┐   ┌──────────────────────┐
-               │  LLMManager    │   │ DatabaseStatsStorage │
-               │  (lib/ai)      │◄──│ (internal/database/  │
-               │                │   │  stats_storage.py)   │
-               │ .statsStorage ─┼──►│                      │
-               └───────┬────────┘   │ - record()           │
-                       │            │ - aggregate()        │
-                       │ propagate  │ - db: Database       │
-                       ▼            │ - dataSource: "stats"│
-               ┌─────────────────┐  └──────────┬───────────┘
-               │ AbstractModel   │             │
-               │ (lib/ai)        │             │ single provider
-               │                 │             ▼
-               │ .statsStorage   │  ┌──────────────────────┐
-               │ _runWithFallback│  │   DatabaseManager    │
-               └─────────────────┘  │                      │
-                                    │ "stats" provider     │
-                                    └──────────┬───────────┘
+                ┌────────────────┐   ┌──────────────────────┐
+                │  LLMManager    │   │ DatabaseStatsStorage │
+                │  (lib/ai)      │◄──│ (lib/stats/          │
+                │                │   │  sql_storage.py)     │
+                │ .statsStorage ─┼──►│                      │
+                └───────┬────────┘   │ - record()           │
+                        │            │ - aggregate()        │
+                        │ propagate  │ - manager:           │
+                        ▼            │   DatabaseManager    │
+                ┌─────────────────┐  │ - dataSource: "stats"│
+                │ AbstractModel   │  └──────────┬───────────┘
+                │ (lib/ai)        │             │
+                │                 │             │ single provider
+                │ .statsStorage   │             ▼
+                │ _runWithFallback│  ┌──────────────────────┐
+                └─────────────────┘  │   DatabaseManager    │
+                                     │                      │
+                                     │ "stats" provider     │
+                                     └──────────┬───────────┘
                                                │
                            ┌───────────────────┼───────────────────┐
                            ▼                   ▼
@@ -833,6 +834,47 @@ The originals are **always retained** in `chat_messages` (condensing adds summar
 - [`docs/design/lib-db-extraction-v1.md`](../design/lib-db-extraction-v1.md) — the ratified design (D1–D8), consumer census, phased plan.
 - [`database.md`](database.md) — provider section (post-rewrite).
 - [`libraries.md`](libraries.md) — the `lib/db` library entry.
+
+---
+
+### ADR-023: `internal/database/utils.py` to `lib/db/utils.py`; `DatabaseStatsStorage` to `lib/stats`
+
+**Date:** 2026-08-24 (ratified + same-day amendment: whole-module move; implementation per
+its design doc arcs)
+
+**Status:** Accepted (supersedes two scope clauses of ADR-022)
+
+**Decision:** Two chained extractions, both whole-file big-bang with no re-export shim
+(ADR-022 precedent). (1) The ENTIRE `internal/database/utils.py` module moved via git-mv to
+a bot-free [`lib/db/utils.py`](../../lib/db/utils.py) — the SQL decode trio (`sqlToTypedDict`, `sqlToCustomType`,
+`_checkType`, `FORCE_SQL_TIMEZONE`, container-type constants) plus `getCurrentTimestamp` and
+`DEFAULT_THREAD_ID`; the decode names are facade-exported from
+[`lib/db/__init__.py`](../../lib/db/__init__.py).
+Nothing survives at the internal path; `internal/database/utils.py` is deleted. Note: BOTH
+`lib/db/utils.py` (decode+timestamps) and [`lib/db/providers/utils.py`](../../lib/db/providers/utils.py) (encode:
+`convertToSQLite`) now exist — deliberate naming, disambiguated by the `providers.` segment.
+(2) `DatabaseStatsStorage` moved from `internal/database/stats_storage.py` to
+[`lib/stats/sql_storage.py`](../../lib/stats/sql_storage.py), exported from the `lib/stats` package; its constructor changed
+from `(db: Database, eventType, *, dataSource)` to `(manager: DatabaseManager, eventType, *,
+dataSource)` with per-call `manager.getProvider(dataSource=…, readonly=…)`. The
+`StatsAggregationService` factory (`createStatsStorage`) stays internal and unchanged in
+signature; migration_027's helper imports (`_hashLabels`, `truncateToDay`,
+`truncateToMonth`) were flipped in place (its header sanctions in-place edits). Stats tables
+remain owned by internal migrations (016/027/028).
+
+**Why:** ADR-022 extracted the provider layer precisely to make a `lib/stats` SQL storage
+possible; the two remaining blockers were the storage's `Database`-wrapper dependency and
+its dependence on internal decode utilities. Moving the whole utils module (user decision S2
+widened by same-day amendment, over a narrower trio-only or local-decoder alternative) keeps
+one canonical decode implementation, unblocks the parked `lib/cache`
+`GenericDatabaseCache` extraction, and makes the storage move a pure relocation.
+
+**Supersessions of ADR-022:** its "internal/database/ SURVIVES with … stats_storage.py …"
+clause is superseded by the storage move; its "internal utils.py (`sqlToTypedDict`)"
+survives-item is superseded ENTIRELY by the whole-module move (not just the decode symbols).
+ADR-022's text stands as history.
+
+Design doc: [`docs/design/lib-stats-sql-storage-extraction-v1.md`](../design/lib-stats-sql-storage-extraction-v1.md).
 
 ---
 

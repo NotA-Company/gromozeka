@@ -477,20 +477,20 @@ Facts verified against source on 2026-08-18 unless attributed to a prior design 
   The PK's **leading columns `(event_type, period_start)`** match exactly the
   predicate `event_type = :t AND period_start >= :from` — no new index is needed.
 - All metrics are **SUM**-accumulated
-  ([lib/stats/sql_storage.py](../../lib/stats/sql_storage.py):260-262,
+  ([lib/stats/sql_storage.py](../../lib/stats/sql_storage.py):266,
   `metric_value = metric_value + :metric_value` upsert).
 - `period_type ∈ {hourly, daily, monthly, total}`; `period_start` is the ISO-8601
   string of the UTC timestamp truncated to the period
-  (`_computePeriods`, [stats_storage.py:382-404](../../lib/stats/sql_storage.py));
+  (`_computePeriods`, [sql_storage.py:523](../../lib/stats/sql_storage.py));
   `total` uses the fixed sentinel `1970-01-01T00:00:00+00:00`
-  ([stats_storage.py:397](../../lib/stats/sql_storage.py)). Because every
+  ([sql_storage.py:538](../../lib/stats/sql_storage.py)). Because every
   stored value is `datetime.isoformat()` of an aware-UTC datetime, ISO strings
   **compare correctly lexicographically** — the identical argument that backs the
   retention DELETE's string cutoff (aggregation-v1 D8).
 - `labels` holds human-readable canonical JSON — sorted keys, compact separators —
   produced by `lib.utils.jsonDumps` ([lib/utils/utils.py:108-123](../../lib/utils/utils.py),
   `sort_keys=True`, `separators=(",", ":")`); `labels_hash` is its MD5 hex
-  (`_hashLabels`, [stats_storage.py:364-379](../../lib/stats/sql_storage.py)).
+  (`_hashLabels`, [sql_storage.py:505](../../lib/stats/sql_storage.py)).
 - **`labels_hash` is useless for partial-label filtering**: it hashes the *full*
   label combo, so `WHERE labels_hash = ...` only matches an exact combo. Combined
   with the JSON1 ban, the consequence is fixed: **SQL filters only on
@@ -498,7 +498,7 @@ Facts verified against source on 2026-08-18 unless attributed to a prior design 
   label filtering / grouping / top-N / true totals happen in Python above the
   query layer** (D4/D5).
 - **`__global__` rollup rows are a second row per event with ONLY the `consumer`
-  label replaced** ([stats_storage.py:216-222](../../lib/stats/sql_storage.py),
+  label replaced** ([sql_storage.py:226](../../lib/stats/sql_storage.py),
   `globalLabelsDict["consumer"] = GLOBAL_CONSUMER_ID`) — they do **not** strip
   `user_id`/`modelName`/etc. True cross-label totals therefore require a post-query
   SUM over rows. Load-bearing corollary (D5): the analysis layer must filter
@@ -553,7 +553,7 @@ the fallback loop threads `consumerId` through each model's `generateText`,
   deliberate per its docstring :532-534) and
   background memory refinement ([user_memories.py:1301](../../internal/bot/common/handlers/user_memories.py),
   synthetic-ensuredMessage refinement uses `chatId=None` for rate limiting). `None` →
-   `consumer = "__global__"` ([stats_storage.py:121](../../lib/stats/sql_storage.py)).
+   `consumer = "__global__"` ([sql_storage.py:112](../../lib/stats/sql_storage.py)).
 - **Exception 3 — the history-condensing call bypasses the wrapper entirely**:
   `condensingModel.generateText(reqMessages)` with no `consumerId`
   ([llm/service.py:1239](../../internal/services/llm/service.py)).
@@ -773,7 +773,7 @@ patch `…asyncio.create_subprocess_exec`
 
 - DB row TypedDicts live next to their consumers and mirror **DB column names** in
   snake_case when produced by `dbUtils.sqlToTypedDict` (e.g. `StatsEventDict`,
-  [lib/stats/sql_storage.py:27-36](../../lib/stats/sql_storage.py);
+  [lib/stats/sql_storage.py:32](../../lib/stats/sql_storage.py);
   `ChatUserDict`, [models.py:187-210](../../internal/database/models.py)).
   API-level TypedDicts that are *not* direct row mappings use camelCase fields
   (e.g. `RateLimiterStatsEntry`, [lib/rate_limiter/manager.py:37-54](../../lib/rate_limiter/manager.py)).
@@ -1102,7 +1102,7 @@ async def query(
 
 - **`eventType` is a query parameter** (user decision): the per-instance
   `eventType` stays **write-only** (one `DatabaseStatsStorage` per event type keeps
-  its write isolation, [stats_storage.py:59-69](../../lib/stats/sql_storage.py));
+  its write isolation, [sql_storage.py:44](../../lib/stats/sql_storage.py));
   one table per datasource serves cross-eventType overview views.
 - SQL (provider-routed, `:named`, no JSON1, `applyPagination` for LIMIT):
 
