@@ -308,7 +308,7 @@ CREATE TABLE chat_summarization_cache (
 )
 ```
 
-**TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:348)
+**TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:355)
 **Indexes**: `chat_summarization_cache_ctfl_index`
 
 ---
@@ -327,7 +327,7 @@ CREATE TABLE cache_storage (
 )
 ```
 
-**TypedDict**: [`CacheStorageDict`](../internal/database/models.py:386)
+**TypedDict**: [`CacheStorageDict`](../internal/database/models.py:380)
 
 ---
 
@@ -408,7 +408,7 @@ CREATE TABLE models (
 )
 ```
 
-**TypedDict**: [`ModelDict`](../internal/database/models.py:579)
+**TypedDict**: [`ModelDict`](../internal/database/models.py:596)
 
 **Repository** (`EmbeddingModelsRepository`, accessed as `db.embeddingModels`): process-local cache `{(model, dimensions): model_id}` so the common path (a hot model that's already been allocated) is a single dict hit. Constructed FIRST in `Database.__init__` so its bound `getOrCreateModelId` method can be injected as the `modelIdResolver` kwarg into the three embedding-touching repos (`chatEmbeddings`, `chatSearch`, `userMemories` — Decision D10). Methods:
 - `getOrCreateModelId(model, dimensions) -> int` — cache-first allocation via `COALESCE(MAX(model_id), 0) + 1` + `provider.upsert(..., updateExpressions={})` (portable `ON CONFLICT DO NOTHING`) + SELECT-back. Runtime probe-then-insert against the `UNIQUE(model, dimensions)` constraint.
@@ -584,9 +584,9 @@ CREATE TABLE user_memories (
 - `idx_user_memories_chat_user_permanent` on `(chat_id, user_id, permanent, updated_at DESC)` — backs `getPermanentMemories`.
 - `idx_user_memories_type` on `(chat_id, user_id, type)` — backs type-filtered scans.
 
-**TypedDict**: [`UserMemoryDict`](../internal/database/models.py:528) (snake_case keys matching columns; `score` is `NotRequired[float]` populated by semantic search). Post-`migration_025`, `model_id: Optional[int]` replaces the legacy `embedding_model` / `embedding_dimensions` pair.
+**TypedDict**: [`UserMemoryDict`](../internal/database/models.py:545) (snake_case keys matching columns; `score` is `NotRequired[float]` populated by semantic search). Post-`migration_025`, `model_id: Optional[int]` replaces the legacy `embedding_model` / `embedding_dimensions` pair.
 
-**Enum**: [`MemoryType`](../internal/database/models.py:450) (`BIO`/`PREFERENCE`/`FACT`/`EVENT`/`RELATIONSHIP`); [`UserMemorySource`](../internal/database/models.py:492) (`REFINEMENT`/`CHAT`/`MIGRATION`/`USER`).
+**Enum**: [`MemoryType`](../internal/database/models.py:467) (`BIO`/`PREFERENCE`/`FACT`/`EVENT`/`RELATIONSHIP`); [`UserMemorySource`](../internal/database/models.py:509) (`REFINEMENT`/`CHAT`/`MIGRATION`/`USER`).
 
 **Repository** (`UserMemoriesRepository`, accessed as `db.userMemories`) — 12 public methods; all SQL goes through `BaseSQLProvider`. Constructed with a constructor-injected `modelIdResolver: Callable[[str, int], Awaitable[int]]` (Decision D10 — bound `EmbeddingModelsRepository.getOrCreateModelId`) so the `(model, dimensions)` pair is resolved to a `model_id` internally without leaking that detail into handler-facing signatures (Decision D6 — signatures stay stable):
 - `addMemory(chatId, userId, memoryId, *, type, content, tags, permanent, source, embedding=None, embeddingModel=None, threadId=None) -> None` — INSERT (caller generates the UUID). `source` is a `UserMemorySource`; `threadId` is keyword-only; when both `embedding` (`List[float]`) and `embeddingModel` are provided the row is embedded during add.
@@ -675,7 +675,7 @@ UNBAN = "unban"
 ---
 
 ### CacheType
-**Location**: [`internal/database/models.py:399`](../internal/database/models.py:399)
+**Location**: [`internal/database/models.py:393`](../internal/database/models.py:393)
 
 ```python
 WEATHER = "weather"

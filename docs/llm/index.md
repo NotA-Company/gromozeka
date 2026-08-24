@@ -297,8 +297,9 @@ vanishingly rare in the Gromozeka codebase.
 | [`lib/ai/models.py`](../../lib/ai/models.py) | `ModelMessage`, `ModelRunResult`, `LLMToolFunction`, etc. |
 | [`lib/ai/providers/`](../../lib/ai/providers/) | Provider implementations (OpenAI-compatible, OpenRouter, Yandex Cloud, `fastembed`) |
 | [`lib/db/`](../../lib/db/) | SQL provider abstraction + `DatabaseManager` — `BaseSQLProvider`, SQLite3/SQLink provider impls (`mysql.py`/`postgresql.py` exist but are unregistered), the `getSqlProvider` factory, `DatabaseManager` multi-source routing, and `utils.py` (SQL decode trio + `getCurrentTimestamp`/`DEFAULT_THREAD_ID`). Bot-free; `internal/database/` (Database wrapper, repositories, migrations) imports the SQL layer from here. See [`architecture.md`](architecture.md) ADR-022/ADR-023. |
-| [`lib/cache/interface.py`](../../lib/cache/interface.py) | `CacheInterface[K,V]` — generic cache ABC |
+| [`lib/cache/interface.py`](../../lib/cache/interface.py) | `CacheInterface[K,V]` — generic cache ABC (get/set/clear/`clearOld`/getStats) |
 | [`lib/cache/dict_cache.py`](../../lib/cache/dict_cache.py) | In-memory dict-based cache impl |
+| [`lib/cache/sql_cache.py`](../../lib/cache/sql_cache.py) | `GenericDatabaseCache[K,V]` — database-backed cache impl; owns the `cache`-table SQL inline via `DatabaseManager` (see [`architecture.md`](architecture.md) ADR-024) |
 | [`lib/rate_limiter/interface.py`](../../lib/rate_limiter/interface.py) | `RateLimiterInterface` — ABC |
 | [`lib/rate_limiter/manager.py`](../../lib/rate_limiter/manager.py) | `RateLimiterManager` singleton |
 | [`lib/rate_limiter/sliding_window.py`](../../lib/rate_limiter/sliding_window.py) | `SlidingWindowRateLimiter` impl |

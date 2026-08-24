@@ -631,7 +631,7 @@ Caches chat message summaries to avoid regenerating them.
 **Indexes**:
 - `chat_summarization_cache_ctfl_index` on `(chat_id, topic_id, first_message_id, last_message_id, prompt)`
 
-**TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:348)
+**TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:355)
 
 **Cache Key Generation**: Implemented in the chatMessages repository
 
@@ -653,7 +653,7 @@ Generic key-value cache storage with namespace support.
 **Indexes**:
 - `idx_cache_namespace` on `namespace` — for faster lookups by namespace (created by `migration_004`)
 
-**TypedDict**: [`CacheStorageDict`](../internal/database/models.py:386)
+**TypedDict**: [`CacheStorageDict`](../internal/database/models.py:380)
 
 ---
 
@@ -675,7 +675,7 @@ Unified cache table for all cache types (replaces separate cache tables from mig
 - `idx_cache_namespace_key` on `(namespace, key)`
 - `idx_cache_updated_at` on `updated_at` (for TTL cleanup)
 
-**TypedDict**: [`CacheDict`](../internal/database/models.py:373)
+**Access**: [`GenericDatabaseCache`](../lib/cache/sql_cache.py) (`lib/cache`) owns all `cache`-table SQL inline — get/set/clear + the `clearOld(ttl)` TTL sweep (ADR-024). The former `CacheDict` TypedDict was deleted with the repository quartet; rows now decode via the private `_CacheRowDict` local to the lib module.
 
 **Available Namespaces**: See [`CacheType`](#cachetype) enum for all available cache namespaces including:
 - `WEATHER` - Weather API responses
@@ -920,9 +920,9 @@ Semantic search runs over a vec0 virtual table (`vec_user_memories_{dim}`, cosin
 - `idx_user_memories_chat_user_permanent` on `(chat_id, user_id, permanent, updated_at DESC)` — backs `getPermanentMemories`.
 - `idx_user_memories_type` on `(chat_id, user_id, type)` — backs type-filtered scans.
 
-**TypedDict**: [`UserMemoryDict`](../internal/database/models.py:528) (snake_case keys; `score: NotRequired[float]` populated by semantic search). Post-`migration_025`, `model_id: Optional[int]` replaces the legacy `embedding_model` / `embedding_dimensions` pair (see [`ModelDict`](#typeddict-models)).
+**TypedDict**: [`UserMemoryDict`](../internal/database/models.py:545) (snake_case keys; `score: NotRequired[float]` populated by semantic search). Post-`migration_025`, `model_id: Optional[int]` replaces the legacy `embedding_model` / `embedding_dimensions` pair (see [`ModelDict`](#typeddict-models)).
 
-**Enum**: [`MemoryType`](../internal/database/models.py:473) (`BIO`/`PREFERENCE`/`FACT`/`EVENT`/`RELATIONSHIP`); [`UserMemorySource`](../internal/database/models.py:515) (`REFINEMENT`/`CHAT`/`MIGRATION`/`USER`).
+**Enum**: [`MemoryType`](../internal/database/models.py:467) (`BIO`/`PREFERENCE`/`FACT`/`EVENT`/`RELATIONSHIP`); [`UserMemorySource`](../internal/database/models.py:509) (`REFINEMENT`/`CHAT`/`MIGRATION`/`USER`).
 
 **Repository** (`UserMemoriesRepository`, accessed as `db.userMemories`) — 10 public methods; all SQL goes through `BaseSQLProvider`:
 - `addMemory(chatId, userId, memoryId, *, type, content, tags, permanent, source, embedding=None, embeddingModel=None, threadId=None) -> None` — INSERT (caller generates the UUID). `source` is a `UserMemorySource`; `threadId` is keyword-only; when both `embedding` (`List[float]`) and `embeddingModel` are provided the row is embedded during add.
@@ -1025,7 +1025,7 @@ Indicates why a message was marked as spam.
 
 Defines available cache types for dynamic cache tables.
 
-**Defined in**: [`internal/database/models.py:399`](../internal/database/models.py:399)
+**Defined in**: [`internal/database/models.py:393`](../internal/database/models.py:393)
 
 | Value | Description |
 |-------|-------------|
@@ -1054,11 +1054,10 @@ All database queries return strongly-typed dictionaries defined in [`internal/da
 | [`DelayedTaskDict`](../internal/database/models.py:284) | Delayed task information | Lines 284-300 |
 | [`SpamMessageDict`](../internal/database/models.py:325) | Spam message details | Lines 325-347 |
 | [`WebhookUpdatesRow`](../internal/database/models.py:303) | Max webhook payload awaiting consumption | Lines 303-324 |
-| [`ChatSummarizationCacheDict`](../internal/database/models.py:348) | Cached summary information | Lines 348-372 |
-| [`CacheDict`](../internal/database/models.py:373) | Generic cache entry | Lines 373-385 |
-| [`CacheStorageDict`](../internal/database/models.py:386) | Cache storage entry | Lines 386-398 |
-| [`UserMemoryDict`](../internal/database/models.py:528) | Per-(chat, user, thread) memory row (with optional `score` from semantic search) | Lines 528-576 |
-| [`ModelDict`](../internal/database/models.py:579) | Row in the `models` embedding-provenance lookup table (created by `migration_025`) | Lines 579-611 |
+| [`ChatSummarizationCacheDict`](../internal/database/models.py:355) | Cached summary information | Lines 355-377 |
+| [`CacheStorageDict`](../internal/database/models.py:380) | Cache storage entry | Lines 380-390 |
+| [`UserMemoryDict`](../internal/database/models.py:545) | Per-(chat, user, thread) memory row (with optional `score` from semantic search) | Lines 545-593 |
+| [`ModelDict`](../internal/database/models.py:596) | Row in the `models` embedding-provenance lookup table (created by `migration_025`) | Lines 596-628 |
 
 These TypedDict models provide:
 - **Type safety**: IDE autocomplete and type checking

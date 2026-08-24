@@ -16,7 +16,7 @@ Use these files as companions to [`../teamlead-memory.md`](../teamlead-memory.md
 - [`chat-history-search.md`](chat-history-search.md) — durable notes for the chat history search feature: implementation decisions, anti-patterns learned (20 items), Step 2 gotchas, embedding pipeline, and all review fix rounds.
 - [`chat-users-cache.md`](chat-users-cache.md) — ADR-015 write-through `chat_users` cache in `CacheService`: `_chatUsersMetadataLock`, `messages_count` staleness hazard.
 - [`condensed-context-retrieval.md`](condensed-context-retrieval.md) — ADR-019 context-condensing subsystem: `condenseContext` primitive, three pathways (A/B/C), `CondensingDict`/`renderCondensedSummary`, `get_messages_by_ids` LLM tool.
-- [`db-cache-cleanup.md`](db-cache-cleanup.md) — Durable notes for the DB cache cleanup mechanism: `clearOldCacheEntries`, weekly cron + on-shutdown triggers, per-namespace TTLs, Bayes tokens cleanup, `cache_storage` exemption.
+- [`db-cache-cleanup.md`](db-cache-cleanup.md) — Durable notes for the DB cache cleanup mechanism: `GenericDatabaseCache.clearOld` instance sweeps, weekly cron + on-shutdown triggers, per-namespace TTLs, Bayes tokens cleanup, `cache_storage` exemption.
 - [`db-maintenance-scripts.md`](db-maintenance-scripts.md) — Standalone `/scripts/` DB-maintenance conventions: direct `sqlite3.connect` precedent, `dest="dryRun"`, `StrEnum` over literals, JSON serializer for `chat_users.metadata`.
 - [`dedoodization.md`](dedoodization.md) — durable notes for the dedoodization script and repo-wide cleanup of informal language.
 - [`delete-from-user.md`](delete-from-user.md) — durable notes for the `DeleteFromUserMessageHandler`: message deletion commands, author extraction gotchas.

@@ -683,9 +683,11 @@ Convert to the `_AVAILABLE` pattern only when the providers are actually wired.
 3. **`SQLinkProvider` test coverage** — no dedicated test module exists under the
    (pre-move) provider test directory (4 files, none sqlink); audit incidental coverage
    and add a real suite when the provider next changes.
-4. **ABC-in-lib / impl-in-internal audit** — `lib/cache` was flagged in planning as a
-   possible second instance of the pattern that motivated this extraction; audit and
-   either extract or document why internal is correct there.
+4. **ABC-in-lib / impl-in-internal audit — DONE (2026-08-25, commit `c1ac3395`; ADR-024).**
+   `lib/cache` was the flagged instance and it WAS extracted:
+   [`lib-cache-sql-cache-extraction-v1.md`](./lib-cache-sql-cache-extraction-v1.md) moved
+   `GenericDatabaseCache` to `lib/cache/sql_cache.py` over a direct `DatabaseManager`
+   (per-call `manager.getProvider(...)`), closing the last split of this shape.
 
 ---
 

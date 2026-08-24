@@ -474,12 +474,11 @@ The database system uses a repository pattern with 16 specialized repositories, 
    - `updateDelayedTask()` - Mark a task as done
    - `cleanupOldCompletedDelayedTasks()` - Remove old completed tasks
 
-9. **[`cache`](../internal/database/repositories/cache.py:1)** - Generic caching
-   - `setCacheEntry()` - Store a cached value
-   - `getCacheEntry()` - Retrieve a cached value
-   - `clearCache()` - Remove cache entries by type
-   - `getCacheStorage()` - List storage namespaces
-   - `setCacheStorage()` - Set a storage namespace
+9. **[`cache`](../internal/database/repositories/cache.py:1)** - `cache_storage` persistence (backing for `CacheService`)
+   - `getCacheStorage()` - List all `cache_storage` entries
+   - `setCacheStorage()` - Store a `cache_storage` entry
+   - `unsetCacheStorage()` - Remove a `cache_storage` entry
+   - The `cache` table itself is owned by `GenericDatabaseCache` in [`lib/cache/sql_cache.py`](../lib/cache/sql_cache.py) (ADR-024)
 
 10. **[`common`](../internal/database/repositories/common.py:1)** - Common operations
     - `getSettings()` - Get global system settings
@@ -619,19 +618,23 @@ settingValue = await db.chatSettings.getChatSetting(
 
 ### Cache Operations
 ```python
+from lib.cache import GenericDatabaseCache
 from internal.database.models import CacheType
 
-# Set cache value
-await db.cache.setCacheEntry(
-    key='weather-123',
-    data='{"temp": 20}',
-    cacheType=CacheType.WEATHER,
+cache = GenericDatabaseCache(
+    manager=db.manager,
+    namespace=CacheType.WEATHER,
 )
 
-# Get cache value
-cachedData = await db.cache.getCacheEntry(
+# Set cache value
+await cache.set(
     key='weather-123',
-    cacheType=CacheType.WEATHER,
+    value={"temp": 20},
+)
+
+# Get cache value (TTL-aware)
+cachedData = await cache.get(
+    key='weather-123',
     ttl=3600
 )
 ```
@@ -741,9 +744,9 @@ See: [Best Practices](database-schema.md#best-practices)
 > [`database-schema.md`](database-schema.md); for migration files see
 > [`internal/database/migrations/versions/`](../internal/database/migrations/versions/).
 
-- **Total Tables**: 25+ base tables (plus dynamic vec0 tables per embedding dimension and per-`CacheType` cache tables)
+- **Total Tables**: 25+ base tables (plus dynamic vec0 tables per embedding dimension)
 - **Core Tables**: 5 (`chat_messages`, `chat_users`, `chat_info`, `chat_topics`, `chat_settings`)
-- **Cache Tables**: 3 explicit (`chat_summarization_cache`, `cache_storage`, `cache`) plus dynamic per-`CacheType` tables
+- **Cache Tables**: 3 (`chat_summarization_cache`, `cache_storage`, `cache` — unified into one namespace-keyed table by `migration_012`; the `cache` table's SQL is owned by `GenericDatabaseCache` in `lib/cache`)
 - **Spam Detection Tables**: 4 (`spam_messages`, `ham_messages`, `bayes_tokens`, `bayes_classes`)
 - **Statistics Tables**: 2 (`stat_events`, `stat_aggregates`) — legacy `chat_stats` and `chat_user_stats` dropped in migration_027
 - **Current Migration Version**: 28

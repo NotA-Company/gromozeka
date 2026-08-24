@@ -878,6 +878,54 @@ Design doc: [`docs/design/lib-stats-sql-storage-extraction-v1.md`](../design/lib
 
 ---
 
+### ADR-024: `GenericDatabaseCache` to `lib/cache/sql_cache.py`; `clearOld` joins `CacheInterface`
+
+**Date:** 2026-08-24 (ratified with user modifications; implementation per its design doc arcs)
+
+**Status:** Implemented (code arc landed 2026-08-25; realizes the ADR-023 "unblocks lib/cache"
+clause; supersedes nothing)
+
+**Decision:** `GenericDatabaseCache` moved via git-mv from `internal/database/generic_cache.py`
+(the internal path is deleted; no re-export shim) to
+[`lib/cache/sql_cache.py`](../../lib/cache/sql_cache.py) and now owns ALL `cache`-table SQL inline
+through a [`DatabaseManager`](../../lib/db/manager.py): constructor changed from
+`(db: Database, namespace: CacheType, …)` to `(manager: DatabaseManager, namespace: str, …)` with
+per-call `manager.getProvider(dataSource=…, readonly=…)`; the get/set/clear SQL was ported verbatim
+from the former `CacheRepository` quartet, including the `ttl <= 0 → None` read early-return.
+[`CacheInterface`](../../lib/cache/interface.py) gained the abstract instance method
+`clearOld(ttl: Optional[int]) -> bool` — namespace/dataSource come from the instance; `None`
+normalizes to `0` (delete all namespace entries); returns True on success including no-op, False on
+backend error, never raises — implemented by `GenericDatabaseCache` (SQL port of the former
+`clearOldCacheEntries`, cutoff `updated_at < now - ttl`),
+[`DictCache`](../../lib/cache/dict_cache.py) (direct age comparison `now - timestamp > ttl` —
+deliberately NOT the get-semantics `_isExpired` helper), and [`NullCache`](../../lib/cache/null_cache.py)
+(no-op, True). [`CacheRepository`](../../internal/database/repositories/cache.py) shrank to the
+`cache_storage` trio — the live `CacheService` persistence backing (load/persist/flush); its name
+and the `db.cache` attribute are kept. `CacheDict` was deleted from
+[`internal/database/models.py`](../../internal/database/models.py) (sole consumer was the quartet);
+the lib module keeps a local row TypedDict (stats `StatsEventDict` pattern). The weekly
+[`HandlersManager`](../../internal/bot/common/handlers/manager.py) `_cleanupOldData` sweep now
+loops `CacheType` members constructing transient per-namespace instances (~8 cheap weekly DELETEs
+replace 1; StrEnum members bind as `namespace: str`); sweep coverage narrows to the 8 known
+namespaces — accepted, since the verified writer census is exactly those 8. Adding an abstract
+method is a breaking change for any external `CacheInterface` implementor — accepted per
+single-app repo culture (all three implementors are in-repo and updated in the same arc).
+
+**Why:** closes the last ABC-in-lib / impl-in-internal split flagged by the ADR-022 follow-up audit
+and parked in the teamlead memory ("different shape, still blocked on decode trio — which has NOW
+landed in lib/db"); ADR-023 explicitly listed this extraction as unblocked by the utils move. Pure
+pattern hygiene — no lib package needs a SQL cache today (lib clients default to DictCache/
+NullCache via DI); this lets lib packages offer SQL-backed caches later without internal
+pre-wiring, and gives every CacheInterface implementation a uniform age-purge verb.
+
+**Realization, not supersession:** ADR-023's body is untouched; its "unblocks the parked
+`lib/cache` `GenericDatabaseCache` extraction" clause is hereby realized. No earlier ADR scope
+clause is contradicted by this move.
+
+Design doc: [`docs/design/lib-cache-sql-cache-extraction-v1.md`](../design/lib-cache-sql-cache-extraction-v1.md).
+
+---
+
 ## 2. Dependency Map
 
 ### 2.1 Component Dependency Graph

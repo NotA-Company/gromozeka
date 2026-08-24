@@ -359,7 +359,7 @@ The vector is a plain `list[float]` — same shape every embedding backend in th
 
 **Import:**
 ```python
-from lib.cache import CacheInterface, DictCache
+from lib.cache import CacheInterface, DictCache, NullCache, GenericDatabaseCache
 from lib.cache import StringKeyGenerator, HashKeyGenerator, JsonKeyGenerator
 from lib.cache import ValueConverter, JsonValueConverter, StringValueConverter
 ```
@@ -370,6 +370,8 @@ from lib.cache import ValueConverter, JsonValueConverter, StringValueConverter
 |---|---|---|
 | [`CacheInterface[K,V]`](../../lib/cache/interface.py:15) | `lib/cache/interface.py` | Generic ABC for any cache |
 | `DictCache[K,V]` | `lib/cache/dict_cache.py` | In-memory dict implementation |
+| `NullCache[K,V]` | `lib/cache/null_cache.py` | No-op cache (testing / disabled caching) |
+| [`GenericDatabaseCache[K,V]`](../../lib/cache/sql_cache.py:38) | `lib/cache/sql_cache.py` | Database-backed implementation (owns `cache`-table SQL; ADR-024) |
 | `StringKeyGenerator` | `lib/cache/key_generator.py` | Simple string key gen |
 | `HashKeyGenerator` | `lib/cache/key_generator.py` | SHA512 hash key gen |
 | `JsonKeyGenerator` | `lib/cache/key_generator.py` | JSON serialization + hash |
@@ -382,19 +384,21 @@ from lib.cache import ValueConverter, JsonValueConverter, StringValueConverter
 await cache.get(key: K, ttl: Optional[int] = None) -> Optional[V]
 await cache.set(key: K, value: V) -> bool
 await cache.clear() -> None
+await cache.clearOld(ttl: Optional[int]) -> bool
 cache.getStats() -> Dict[str, Any]
 ```
 
 **DictCache constructor:**
 ```python
 cache = DictCache[K, V](
-    keyGenerator: KeyGenerator[K],  # Required: strategy for converting keys
-    defaultTtl: int = 3600,         # Optional: default TTL in seconds
-    maxSize: Optional[int] = 1000,  # Optional: max entries before eviction
-    threadSafe: bool = True,        # Optional: enable thread safety with RLock
-    valueConverter: ValueConverter = None  # Optional: value conversion strategy
+    keyGenerator: KeyGenerator[K],        # Required: strategy for converting keys
+    defaultTtl: int = 3600,               # Optional: default TTL in seconds
+    maxSize: Optional[int] = 1000,        # Optional: max entries before eviction
 )
 ```
+(Thread safety is unconditional — all mutations run under an internal `threading.RLock`.)
+
+**DB-backed implementation:** [`GenericDatabaseCache`](../../lib/cache/sql_cache.py:38) in `lib/cache/sql_cache.py` — backed by the `cache` table (namespace/key/data with `updated_at`, per `migration_012`). Takes a `DatabaseManager` directly (`__init__(manager, namespace: str, keyGenerator=None, valueConverter=None, *, dataSource=None)`; per-call `manager.getProvider(...)`) — no `Database` wrapper (ADR-024). Owns ALL `cache`-table SQL inline (`get`/`set`/`clear` + the `clearOld(ttl)` TTL sweep; `ttl > 0` deletes entries strictly older than `now − ttl`, `ttl` of `0`/`None` deletes every namespace entry); `CacheRepository` (`db.cache`) no longer touches this table — it keeps only the `cache_storage` trio backing `CacheService` persistence. Constructed by the `weather` (5 caches) and `yandex_search` (3 caches) handlers over `self.db.manager`, passing `CacheType` StrEnum members as `namespace` (they bind directly as `str`); `HandlersManager._cleanupOldData` builds transient per-namespace instances for the weekly TTL sweep (365-day default floor over all `CacheType` members, then a 7-day aggressive pass for `WEATHER`/`YANDEX_SEARCH`/`URL_CONTENT`/`URL_CONTENT_CONDENSED`).
 
 **NOTE:** For bot cache operations (chat settings, user data, admin cache), use [`CacheService`](services.md) instead of `lib/cache` directly
 

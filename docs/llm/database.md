@@ -53,7 +53,7 @@
 | `chatSettings` | `setChatSetting(chatId, key, value, *, updatedBy)` | `None` | Set a chat setting with audit trail |
 | `chatSettings` | `getChatSetting(chatId, setting)` | `Optional[str]` | Get single setting value |
 | `chatSettings` | `getChatSettings(chatId)` | `Dict[str, tuple[str, int]]` | Get all settings as (value, updated_by) |
-| `cache` | `clearOldCacheEntries(ttl, cacheType=None)` | `bool` | Delete `cache` rows whose `updated_at < now − ttl`. `cacheType=None` purges ALL namespaces; pass a `CacheType` member to scope to one namespace. Driven by `HandlersManager._cleanupOldData()` on a per-namespace schedule (see `docs/llm/teamlead-memory.md` § "DB Cache Cleanup"): 365-day default floor for all namespaces, then a 7-day aggressive pass for `WEATHER`/`YANDEX_SEARCH`/`URL_CONTENT`/`URL_CONTENT_CONDENSED`. Constants live at the top of `internal/bot/common/handlers/manager.py` (`CACHE_CLEANUP_DEFAULT_TTL_SECS`, `CACHE_CLEANUP_AGGRESSIVE_TTL_SECS`, `AGGRESSIVE_CLEANUP_CACHE_TYPES`). Triggers: weekly cron (Monday 00:00 UTC via `_dtCronJob`) and on-shutdown (`_dtOnExit`) |
+| `cache` | `getCacheStorage(*, dataSource?)` / `setCacheStorage(namespace, key, value, *, dataSource?)` / `unsetCacheStorage(namespace, key)` | `List[CacheStorageDict]` / `bool` / `bool` | The `cache_storage` trio — persistence backing for `CacheService` (startup load via `getCacheStorage`, save-on-write via `setCacheStorage`, flush drops via `unsetCacheStorage`). The `cache` table itself is NOT accessed via the `Database` wrapper anymore: its SQL is owned inline by [`GenericDatabaseCache`](../../lib/cache/sql_cache.py) (`lib/cache`, ADR-024). The weekly TTL sweep runs as `GenericDatabaseCache(self.db.manager, namespace=<CacheType member>).clearOld(ttl)` from `HandlersManager._cleanupOldData()` (see `docs/llm/teamlead-memory.md` § "DB Cache Cleanup"): 365-day default floor looping ALL `CacheType` members, then a 7-day aggressive pass for `WEATHER`/`YANDEX_SEARCH`/`URL_CONTENT`/`URL_CONTENT_CONDENSED`. Constants live at the top of `internal/bot/common/handlers/manager.py` (`CACHE_CLEANUP_DEFAULT_TTL_SECS`, `CACHE_CLEANUP_AGGRESSIVE_TTL_SECS`, `AGGRESSIVE_CLEANUP_CACHE_TYPES`). Triggers: weekly cron (Monday 00:00 UTC via `_dtCronJob`) and on-shutdown (`_dtOnExit`) |
 | `delayedTasks` | `cleanupOldCompletedDelayedTasks(ttl)` | `bool` | Cleanup old completed delayed tasks. Called from `_cleanupOldData()` with `DELAYED_TASKS_CLEANUP_TTL_SECS` (30 days) |
 | `DatabaseBayesStorage` | `cleanupOldTokens(rules)` | `bool` | Delete old/rare rows from `bayes_tokens`. `rules` is a sequence of `(ttlSeconds, maxCount)` tuples; for each rule, runs `DELETE FROM bayes_tokens WHERE updated_at < :cutoffTime AND total_count <= :maxCount` across ALL tokens regardless of `chat_id` (one DELETE per rule). Returns `True` if all rules applied, `False` on any exception. NOTE: `DatabaseBayesStorage` is NOT a standard `self.db.<name>` repository — it's a separate class at [`internal/database/bayes_storage.py`](../../internal/database/bayes_storage.py), instantiated as `DatabaseBayesStorage(self.db)`. Called from `HandlersManager._cleanupOldData()` with `BAYES_TOKEN_CLEANUP_RULES` (defined near the top of `internal/bot/common/handlers/manager.py`; defaults: tokens with `total_count <= 1` older than 90 days, OR `total_count <= 2` older than 180 days). Sibling method `cleanupRareTokens(minCount, chatId=None)` is unrelated (no production caller in the cleanup path) |
 | `divinations` | `insertReading(...)` | `None` | Persist a tarot/runes reading row in `divinations` |
@@ -179,7 +179,6 @@ db.chatMessages.saveChatMessage(..., dataSource="readonly")  # ERROR!
 - `getAllGroupChats()`: `chat_id` — chat uniqueness
 - `getSpamMessages()`: `(chat_id, message_id)` — message uniqueness within chat
 - `getCacheStorage()`: `(namespace, key)` — cache entry uniqueness
-- `getCacheEntry()`: First match (no deduplication) — performance optimization
 
 **Migration Connection Management:**
 - Migrations rely on the provider's `keepConnection` parameter for connection management
@@ -385,7 +384,7 @@ All defined in `internal/database/models.py`. Dict keys are snake_case to mirror
 
 #### `CacheType`
 
-Namespaces for the `cache` table. Members: `WEATHER`, `GEOCODING`, `YANDEX_SEARCH`, `URL_CONTENT`, `URL_CONTENT_CONDENSED`, `GM_SEARCH`, `GM_REVERSE`, `GM_LOOKUP`. Used by `cache.clearOldCacheEntries(ttl, cacheType=...)` to scope cleanup (see §1) and by `CacheService` for hot-path access.
+Namespaces for the `cache` table. Members: `WEATHER`, `GEOCODING`, `YANDEX_SEARCH`, `URL_CONTENT`, `URL_CONTENT_CONDENSED`, `GM_SEARCH`, `GM_REVERSE`, `GM_LOOKUP`. StrEnum — members bind directly as the `namespace: str` of [`GenericDatabaseCache`](../../lib/cache/sql_cache.py) (`lib/cache/sql_cache.py`, ADR-024): passed by the `weather` / `yandex_search` handlers when constructing their caches, and enumerated by `HandlersManager._cleanupOldData` for the weekly TTL sweep (see §1). NOT used by `CacheService` — its hot path is in-memory LRUs keyed by its own `CacheNamespace` enum ([`internal/services/cache/models.py`](../../internal/services/cache/models.py)), with the `cache_storage` table (not `cache`) as its persistence backing.
 
 #### `MemoryType`
 
@@ -474,7 +473,7 @@ This keeps handler-facing signatures stable (Decision D6 — `embeddingModel: st
 | `spam` | `SpamRepository` | `spam.py` |
 | `delayedTasks` | `DelayedTasksRepository` | `delayed_tasks.py` |
 | `divinations` | `DivinationsRepository` | `divinations.py` (reading rows + cached layout definitions) |
-| `cache` | `CacheRepository` | `cache.py` |
+| `cache` | `CacheRepository` | `cache.py` (the `cache_storage` trio only — `CacheService` persistence backing; the `cache` table itself is owned by `GenericDatabaseCache` in `lib/cache/sql_cache.py`, see ADR-024) |
 | `embeddingModels` | `EmbeddingModelsRepository` | `embedding_models.py` (embedding-provenance lookup table; constructed FIRST so its bound `getOrCreateModelId` method can be injected as `modelIdResolver` into `chatEmbeddings` / `chatSearch` / `userMemories` — Decision D10) |
 | `webhookUpdates` | `WebhookUpdatesRepository` | `webhook_updates.py` |
 

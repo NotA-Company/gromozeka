@@ -3,7 +3,7 @@
 **Date**: 2026-08-24
 **Status**: **Ratified 2026-08-24 — implementation deferred (design-doc round).**
 **Owner**: TBD
-**Scope**: Extract [`lib/cache/sql_cache.py`](../../lib/cache/sql_cache.py)
+**Scope**: Extract `internal/database/generic_cache.py`
 (`GenericDatabaseCache`, 161 lines) to `lib/cache/sql_cache.py` (path in backticks: does not exist
 today) following the ADR-023 house pattern — `git mv` + tight dependency-cut overlay
 (`manager=`/`namespace: str`), ALL `cache`-table SQL owned inline by the lib class. In the same
@@ -46,7 +46,7 @@ explicitly naming this extraction as unblocked
 ([`docs/llm/architecture.md`](../llm/architecture.md):869-870). What remains split today:
 `CacheInterface` ([`lib/cache/interface.py`](../../lib/cache/interface.py)) is bot-free, but its
 only SQL-backed implementation, `GenericDatabaseCache`, lives in
-[`lib/cache/sql_cache.py`](../../lib/cache/sql_cache.py) because it goes
+`internal/database/generic_cache.py` because it goes
 through the `Database` wrapper and the `db.cache` repository
 ([`internal/database/repositories/cache.py`](../../internal/database/repositories/cache.py)).
 
@@ -210,7 +210,7 @@ it, all in-repo:**
 |---|---|---|
 | `DictCache` | [`lib/cache/dict_cache.py`](../../lib/cache/dict_cache.py):41 | Entries are `(value, timestamp)` tuples in `Dict[str, Tuple[V, float]]` (:81); timestamp = `time.time()` at `set` (:210); `_isExpired(timestamp, ttl)` (:92-107) special-cases `ttl == 0 → always expired` and `ttl < 0 → never` (**get-semantics — must NOT be reused for `clearOld`**, see D9); `_cleanupExpired` (:109-124) and all mutations under `threading.RLock` (:89) |
 | `NullCache` | [`lib/cache/null_cache.py`](../../lib/cache/null_cache.py):15 | `get → None`, `set → True`, `clear → pass`, `getStats → {"enabled": False}` |
-| `GenericDatabaseCache` | [`lib/cache/sql_cache.py`](../../lib/cache/sql_cache.py):20 | This design's subject |
+| `GenericDatabaseCache` | `internal/database/generic_cache.py`:20 | This design's subject |
 
 All other 46 grep hits are **type-only DI references** (constructor params / annotations), not
 implementors: `lib/openweathermap/client.py`:105-106,135-138,
@@ -427,7 +427,7 @@ Commit: **"Add lib/cache sql_cache extraction design doc"**.
 | 2 | `lib/cache/interface.py` | add abstract `clearOld` + contract docstring (D5/D6) |
 | 3 | `lib/cache/dict_cache.py` | implement `clearOld` — direct comparison, NOT `_isExpired` (D9) |
 | 4 | `lib/cache/null_cache.py` | implement `clearOld` — no-op `True` (D10) |
-| 5 | `lib/cache/__init__.py` | export `GenericDatabaseCache` (`__all__` 15 → 16) |
+| 5 | `lib/cache/__init__.py` | export `GenericDatabaseCache` (`__all__` 13 → 14) |
 | 6 | `internal/database/repositories/cache.py` | delete quartet (:182-375); import shrink (§2.2) |
 | 7 | `internal/database/models.py` | delete `CacheDict` (:380) |
 | 8 | `internal/bot/common/handlers/manager.py` | rewire :726-729 to the D7 loops; add lib import (`CacheType`/`Tuple` already imported) |
