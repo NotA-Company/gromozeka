@@ -212,7 +212,6 @@ gromozeka/
 │   │   ├── manager.py              # DatabaseManager - lifecycle management
 │   │   ├── models.py               # TypedDict models for DB rows
 │   │   ├── bayes_storage.py        # Bayes filter DB storage
-│   │   ├── generic_cache.py        # Generic DB cache storage
 │   │   ├── providers/              # Database provider implementations
 │   │   │   ├── base.py             # BaseProvider abstract class
 │   │   │   ├── sqlite3.py          # SQLite provider

@@ -1539,15 +1539,18 @@ async def test_set_cache_storage(db_manager):
 @pytest.mark.asyncio
 async def test_cache_entry_ttl(db_manager):
     """Test cache entry with TTL."""
-    repo = CacheRepository(db_manager)
-    await repo.setCacheEntry("key1", "data1", CacheType.WEATHER)
-    
+    from lib.cache import GenericDatabaseCache
+    from internal.database.models import CacheType
+
+    cache = GenericDatabaseCache(db_manager, namespace=CacheType.WEATHER)
+    await cache.set("key1", "data1")
+
     # Should return entry
-    entry = await repo.getCacheEntry("key1", CacheType.WEATHER, ttl=3600)
+    entry = await cache.get("key1", ttl=3600)
     assert entry is not None
-    
+
     # Should not return entry (TTL expired)
-    entry = await repo.getCacheEntry("key1", CacheType.WEATHER, ttl=-1)
+    entry = await cache.get("key1", ttl=-1)
     assert entry is None
 ```
 
@@ -1664,20 +1667,23 @@ from lib.db.manager import DatabaseManager
 @pytest.mark.asyncio
 async def test_cache_performance(db_manager):
     """Test cache query performance."""
-    repo = CacheRepository(db_manager)
-    
+    from lib.cache import GenericDatabaseCache
+    from internal.database.models import CacheType
+
+    cache = GenericDatabaseCache(db_manager, namespace=CacheType.WEATHER)
+
     # Insert 1000 cache entries
     start = time.time()
     for i in range(1000):
-        await repo.setCacheEntry(f"key{i}", f"data{i}", CacheType.WEATHER)
+        await cache.set(f"key{i}", f"data{i}")
     insert_time = time.time() - start
-    
+
     # Query 1000 cache entries
     start = time.time()
     for i in range(1000):
-        await repo.getCacheEntry(f"key{i}", CacheType.WEATHER)
+        await cache.get(f"key{i}")
     query_time = time.time() - start
-    
+
     print(f"Insert: {insert_time:.3f}s, Query: {query_time:.3f}s")
     assert insert_time < 10.0  # Should complete in under 10 seconds
     assert query_time < 5.0    # Should complete in under 5 seconds

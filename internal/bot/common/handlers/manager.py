@@ -64,6 +64,7 @@ from internal.services.cache import CacheService
 from internal.services.queue_service import DelayedTask, DelayedTaskFunction, QueueService
 from internal.services.storage import StorageService
 from lib import utils
+from lib.cache import GenericDatabaseCache
 from lib.rate_limiter.manager import RateLimiterManager
 from lib.stats import NullStatsStorage, StatsStorage
 
@@ -722,11 +723,12 @@ class HandlersManager(CommandHandlerGetterInterface):
         Returns:
             None
         """
-        # Purge all namespaces with the default TTL floor first
-        await self.db.cache.clearOldCacheEntries(ttl=CACHE_CLEANUP_DEFAULT_TTL_SECS)
+        # Purge every known namespace with the default TTL floor first
+        for member in CacheType:
+            await GenericDatabaseCache(self.db.manager, namespace=member).clearOld(CACHE_CLEANUP_DEFAULT_TTL_SECS)
         # Then purge fast-staling namespaces with the aggressive TTL
         for cacheType in AGGRESSIVE_CLEANUP_CACHE_TYPES:
-            await self.db.cache.clearOldCacheEntries(ttl=CACHE_CLEANUP_AGGRESSIVE_TTL_SECS, cacheType=cacheType)
+            await GenericDatabaseCache(self.db.manager, namespace=cacheType).clearOld(CACHE_CLEANUP_AGGRESSIVE_TTL_SECS)
         # Drop completed delayed tasks older than a month
         await self.db.delayedTasks.cleanupOldCompletedDelayedTasks(ttl=DELAYED_TASKS_CLEANUP_TTL_SECS)
         # Purge old/rare bayes tokens based on configurable age+count rules

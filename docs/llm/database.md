@@ -330,7 +330,6 @@ All defined in `internal/database/models.py`. Dict keys are snake_case to mirror
 | `ChatUserDict` | User in chat |
 | `MediaAttachmentDict` | Media file record |
 | `DelayedTaskDict` | Delayed task record |
-| `CacheDict` | Row from the `cache` table (single-namespace weather-style cache) |
 | `CacheStorageDict` | Row from the `cache_storage` table (multi-namespace key/value cache) |
 | `MessageEmbeddingDict` | **DELETED** in `migration_025` — the `message_embeddings` BLOB side table was dropped; chat-history embeddings now live in vec0 only with `chat_messages.model_id` (FK to `models`) carrying the provenance |
 | `ModelDict` | Row from the `models` embedding-provenance lookup table (created by `migration_025`); `model_id` / `model` / `dimensions` / `created_at` |

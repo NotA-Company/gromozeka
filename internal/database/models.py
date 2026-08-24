@@ -377,19 +377,6 @@ class ChatSummarizationCacheDict(TypedDict):
     """Record last update timestamp."""
 
 
-class CacheDict(TypedDict):
-    """Weather cache entry from database."""
-
-    key: str
-    """Cache key."""
-    data: str
-    """JSON-serialized response data."""
-    created_at: datetime.datetime
-    """Record creation timestamp."""
-    updated_at: datetime.datetime
-    """Record last update timestamp."""
-
-
 class CacheStorageDict(TypedDict):
     """Cache storage entry from cache_storage table."""
 

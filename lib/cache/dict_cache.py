@@ -231,6 +231,56 @@ class DictCache(CacheInterface[K, V]):
             self._cache.clear()
             logger.debug("Cleared all cache data")
 
+    async def clearOld(self, ttl: Optional[int]) -> bool:
+        """
+        Delete this cache's entries older than the given TTL.
+
+        Scoped to the instance's own namespace (and data source, where the
+        implementation has one). Best-effort: implementation errors are logged
+        and reported through the return value, never raised.
+
+        For ttl > 0, entries strictly older than now - ttl are deleted;
+        ttl of 0 or None deletes every entry of the namespace outright.
+
+        Args:
+            ttl: Age threshold in seconds. For ttl > 0, entries strictly
+                older than ``now - ttl`` are deleted. ``ttl`` of ``0`` or
+                ``None`` deletes every entry of the namespace outright.
+                Negative values are not part of the contract (legacy SQL
+                happened to delete everything; implementations need not
+                honor them).
+
+        Returns:
+            bool: True if the sweep completed successfully — regardless of
+                whether any entries matched — False on backend error.
+        """
+        try:
+            # normalizedTtl: None -> 0, matching the SQL sweep's cutoff semantics
+            normalizedTtl = 0 if ttl is None else ttl
+            cutoffAge = normalizedTtl  # delete entries with age > cutoffAge seconds
+
+            with self._lock:
+                # Delete every (key, (value, timestamp)) where
+                # time.time() - timestamp > cutoffAge (strict >, like SQL's updated_at < now - ttl)
+                # Special case: ttl=0 means delete everything (even age 0 entries)
+                now = time.time()
+                if cutoffAge == 0:
+                    # Delete all entries
+                    oldKeys = list(self._cache.keys())
+                else:
+                    # Delete only entries strictly older than cutoffAge
+                    oldKeys = [key for key, (_, timestamp) in self._cache.items() if now - timestamp > cutoffAge]
+                for key in oldKeys:
+                    del self._cache[key]
+
+                if oldKeys:
+                    logger.debug(f"Cleared {len(oldKeys)} old cache entries (age > {cutoffAge}s)")
+
+            return True
+        except Exception as e:
+            logger.error(f"Failed to clear old cache entries: {e}")
+            return False
+
     def getStats(self) -> Dict[str, Any]:
         """
         Get cache statistics

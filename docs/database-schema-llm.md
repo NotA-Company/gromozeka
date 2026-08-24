@@ -1215,51 +1215,46 @@ Note the asymmetric parameter names: `getTokenStats` / `getClassStats` use `chat
 
 ### Cache Operations
 
-The `db.cache` repository (`CacheRepository`) owns **two** distinct tables — `cache` (typed entries with TTL) and `cache_storage` (simple namespace/key/value). All methods take a keyword-only `dataSource: Optional[str] = None`.
+The `cache` table is owned by the `GenericDatabaseCache` class in [`lib/cache/sql_cache.py`](../lib/cache/sql_cache.py). The `db.cache` repository (`CacheRepository`) owns only the `cache_storage` table (simple namespace/key/value persistence for `CacheService`). All `GenericDatabaseCache` methods take a keyword-only `dataSource: Optional[str] = None` via the constructor.
 
 **Get Cache Entry (TTL-aware)**
 ```python
-db.cache.getCacheEntry(
-    key: str,
-    cacheType: CacheType,
-    ttl: Optional[int] = None,
-    *,
-    dataSource: Optional[str] = None
-) -> Optional[CacheDict]
+from lib.cache import GenericDatabaseCache
+from internal.database.models import CacheType
+
+cache = GenericDatabaseCache(
+    manager=db.manager,
+    namespace=CacheType.WEATHER,
+    dataSource=None  # Optional
+)
+
+# Get with optional TTL check
+value = await cache.get(
+    key="moscow",
+    ttl=3600  # Optional TTL in seconds
+)
 ```
-Returns `None` immediately (without querying) when `ttl is not None and ttl <= 0`. When `ttl > 0`, only rows whose `updated_at >= now - ttl seconds` match. Note parameter order: `key` first, `cacheType` second.
+Returns `None` immediately (without querying) when `ttl is not None and ttl <= 0`. When `ttl > 0`, only rows whose `updated_at >= now - ttl seconds` match.
 
 **Set Cache Entry**
 ```python
-db.cache.setCacheEntry(
-    key: str,
-    data: str,
-    cacheType: CacheType,
-    *,
-    dataSource: Optional[str] = None
-) -> bool
+success = await cache.set(
+    key="moscow",
+    value={"temp": 20, "humidity": 50}
+)
 ```
-Upsert keyed on `(namespace=cacheType, key)`; on conflict `data` and `updated_at` are refreshed (`created_at` stays).
+Upsert keyed on `(namespace, key)`; on conflict `data` and `updated_at` are refreshed (`created_at` stays).
 
-**Clear Entire Cache Type**
+**Clear Entire Cache Namespace**
 ```python
-db.cache.clearCache(
-    cacheType: CacheType,
-    *,
-    dataSource: Optional[str] = None
-) -> None
+await cache.clear()
 ```
 
-**Clear Old Cache Entries**
+**Clear Old Cache Entries (TTL sweep)**
 ```python
-db.cache.clearOldCacheEntries(
-    ttl: Optional[int],
-    cacheType: Optional[CacheType] = None,
-    *,
-    dataSource: Optional[str] = None
-) -> bool
+success = await cache.clearOld(ttl=7 * 86400)  # 7 days
 ```
-`ttl=None` or `0` removes **all** entries of the matching type(s). `cacheType=None` applies the cleanup across every namespace.
+`ttl=None` or `0` removes **all** entries of this instance's namespace. The sweep is scoped to the instance's namespace only.
 
 **Get Cache Storage Entries (list all)**
 ```python
@@ -1444,21 +1439,28 @@ use_tools = settings.get('use-tools', ('false', 0))[0] == 'true'
 
 ### Cache API Response
 ```python
-# Set cache (note: positional order is key, data, cacheType)
-db.cache.setCacheEntry(
+from lib.cache import GenericDatabaseCache
+from internal.database.models import CacheType
+
+# Create cache instance for weather namespace
+weatherCache = GenericDatabaseCache(
+    manager=db.manager,
+    namespace=CacheType.WEATHER
+)
+
+# Set cache
+await weatherCache.set(
     key=f"{lat},{lon}",
-    data=json.dumps(weather_data),
-    cacheType=CacheType.WEATHER
+    value=weather_data
 )
 
 # Get cache (TTL in seconds; pass ttl=None for "no expiry")
-cached = db.cache.getCacheEntry(
+cached = await weatherCache.get(
     key=f"{lat},{lon}",
-    cacheType=CacheType.WEATHER,
     ttl=3600
 )
 if cached:
-    weather_data = json.loads(cached['data'])
+    weather_data = cached
 ```
 
 ---
@@ -1476,7 +1478,6 @@ if cached:
 | `WebhookUpdatesRow` | `webhook_updates` | None |
 | `SpamMessageDict` | `spam_messages` | None |
 | `ChatSummarizationCacheDict` | `chat_summarization_cache` | None |
-| `CacheDict` | `cache` | None |
 | `CacheStorageDict` | `cache_storage` | None |
 | `UserMemoryDict` | `user_memories` | None |
 | `ModelDict` | `models` | None |

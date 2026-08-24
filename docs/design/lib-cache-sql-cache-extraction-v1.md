@@ -3,7 +3,7 @@
 **Date**: 2026-08-24
 **Status**: **Ratified 2026-08-24 — implementation deferred (design-doc round).**
 **Owner**: TBD
-**Scope**: Extract [`internal/database/generic_cache.py`](../../internal/database/generic_cache.py)
+**Scope**: Extract [`lib/cache/sql_cache.py`](../../lib/cache/sql_cache.py)
 (`GenericDatabaseCache`, 161 lines) to `lib/cache/sql_cache.py` (path in backticks: does not exist
 today) following the ADR-023 house pattern — `git mv` + tight dependency-cut overlay
 (`manager=`/`namespace: str`), ALL `cache`-table SQL owned inline by the lib class. In the same
@@ -46,7 +46,7 @@ explicitly naming this extraction as unblocked
 ([`docs/llm/architecture.md`](../llm/architecture.md):869-870). What remains split today:
 `CacheInterface` ([`lib/cache/interface.py`](../../lib/cache/interface.py)) is bot-free, but its
 only SQL-backed implementation, `GenericDatabaseCache`, lives in
-[`internal/database/generic_cache.py`](../../internal/database/generic_cache.py) because it goes
+[`lib/cache/sql_cache.py`](../../lib/cache/sql_cache.py) because it goes
 through the `Database` wrapper and the `db.cache` repository
 ([`internal/database/repositories/cache.py`](../../internal/database/repositories/cache.py)).
 
@@ -210,7 +210,7 @@ it, all in-repo:**
 |---|---|---|
 | `DictCache` | [`lib/cache/dict_cache.py`](../../lib/cache/dict_cache.py):41 | Entries are `(value, timestamp)` tuples in `Dict[str, Tuple[V, float]]` (:81); timestamp = `time.time()` at `set` (:210); `_isExpired(timestamp, ttl)` (:92-107) special-cases `ttl == 0 → always expired` and `ttl < 0 → never` (**get-semantics — must NOT be reused for `clearOld`**, see D9); `_cleanupExpired` (:109-124) and all mutations under `threading.RLock` (:89) |
 | `NullCache` | [`lib/cache/null_cache.py`](../../lib/cache/null_cache.py):15 | `get → None`, `set → True`, `clear → pass`, `getStats → {"enabled": False}` |
-| `GenericDatabaseCache` | [`internal/database/generic_cache.py`](../../internal/database/generic_cache.py):20 | This design's subject |
+| `GenericDatabaseCache` | [`lib/cache/sql_cache.py`](../../lib/cache/sql_cache.py):20 | This design's subject |
 
 All other 46 grep hits are **type-only DI references** (constructor params / annotations), not
 implementors: `lib/openweathermap/client.py`:105-106,135-138,
@@ -634,7 +634,7 @@ encoded as D1–D15. Implementation proceeds arc by arc when scheduled.
   §8 follow-up list (the lib/cache audit this closes).
 - [`docs/llm/architecture.md`](../llm/architecture.md) — ADR-023 (:840-877, the "unblocks
   lib/cache" clause :869-870); ADR-024 insertion point after it.
-- [`internal/database/generic_cache.py`](../../internal/database/generic_cache.py),
+- [`lib/cache/sql_cache.py`](../../lib/cache/sql_cache.py),
   [`internal/database/repositories/cache.py`](../../internal/database/repositories/cache.py),
   [`internal/database/models.py`](../../internal/database/models.py),
   [`internal/database/database.py`](../../internal/database/database.py) — the moved / shrunk /
