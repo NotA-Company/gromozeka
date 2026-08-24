@@ -25,7 +25,7 @@ layering convention means "bot-specific". The standing wish is even tracked in
 
 The concrete pressure: `lib/stats` (bot-free) defines the `StatsStorage` ABC, but its only
 SQL implementation is `DatabaseStatsStorage` in
-[`internal/database/stats_storage.py`](../../internal/database/stats_storage.py) — an
+[`lib/stats/sql_storage.py`](../../lib/stats/sql_storage.py) — an
 ABC-in-lib / impl-in-internal split that exists **only because** the provider layer sits in
 `internal/` and a `lib/` implementation would have to import `internal.*` to reach it.
 Extracting the provider layer to `lib/db/` makes a `lib/stats` SQL storage possible and

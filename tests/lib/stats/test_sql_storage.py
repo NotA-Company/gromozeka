@@ -8,9 +8,9 @@ from unittest.mock import patch
 
 from internal.database import Database
 from internal.database.migrations.versions.migration_016_add_stat_tables import getMigration
-from internal.database.stats_storage import DatabaseStatsStorage
-from lib.db import utils as dbUtils
+from lib import utils as libUtils
 from lib.db.manager import DatabaseManagerConfig
+from lib.stats import DatabaseStatsStorage
 from lib.stats.stats_storage import GLOBAL_CONSUMER_ID
 
 
@@ -29,7 +29,7 @@ async def testRecordAndAggregateSingleEvent(statsStorage: DatabaseStatsStorage) 
     assert processed == 1
 
     # Read back from stat_aggregates directly
-    provider = await statsStorage.db.manager.getProvider(dataSource=statsStorage.dataSource, readonly=True)
+    provider = await statsStorage.manager.getProvider(dataSource=statsStorage.dataSource, readonly=True)
     rows = await provider.executeFetchAll(
         "SELECT * FROM stat_aggregates WHERE event_type = :eventType",
         {"eventType": "llm_request"},
@@ -93,7 +93,7 @@ async def testOrphanReclaim(statsStorage: DatabaseStatsStorage) -> None:
     )
 
     # Manually claim the event with an old timestamp
-    provider = await statsStorage.db.manager.getProvider(dataSource=statsStorage.dataSource, readonly=False)
+    provider = await statsStorage.manager.getProvider(dataSource=statsStorage.dataSource, readonly=False)
     oldClaimed = datetime.datetime(2000, 1, 1, tzinfo=datetime.UTC)
     batchId = str(uuid.uuid4())
     await provider.execute(
@@ -121,7 +121,7 @@ async def testOrphanNotReclaimedWhenFresh(statsStorage: DatabaseStatsStorage) ->
     )
 
     # Claim normally (fresh timestamp)
-    provider = await statsStorage.db.manager.getProvider(dataSource=statsStorage.dataSource, readonly=False)
+    provider = await statsStorage.manager.getProvider(dataSource=statsStorage.dataSource, readonly=False)
     now = datetime.datetime.now(datetime.UTC)
     batchId = str(uuid.uuid4())
     await provider.execute(
@@ -152,7 +152,7 @@ async def testMultiplePeriods(statsStorage: DatabaseStatsStorage) -> None:
     processed = await statsStorage.aggregate()
     assert processed == 1
 
-    provider = await statsStorage.db.manager.getProvider(dataSource=statsStorage.dataSource, readonly=True)
+    provider = await statsStorage.manager.getProvider(dataSource=statsStorage.dataSource, readonly=True)
     rows = await provider.executeFetchAll(
         """SELECT period_type, period_start, labels_hash FROM stat_aggregates
            WHERE event_type = :eventType AND metric_key = 'tokens'
@@ -193,7 +193,7 @@ async def testMultipleConsumers(statsStorage: DatabaseStatsStorage) -> None:
     processed = await statsStorage.aggregate()
     assert processed == 2
 
-    provider = await statsStorage.db.manager.getProvider(dataSource=statsStorage.dataSource, readonly=True)
+    provider = await statsStorage.manager.getProvider(dataSource=statsStorage.dataSource, readonly=True)
     rows = await provider.executeFetchAll(
         """SELECT labels, metric_value FROM stat_aggregates
            WHERE event_type = :eventType AND metric_key = 'tokens' AND period_type = 'total'
@@ -237,7 +237,7 @@ async def testGlobalRollup(statsStorage: DatabaseStatsStorage) -> None:
     processed = await statsStorage.aggregate()
     assert processed == 1
 
-    provider = await statsStorage.db.manager.getProvider(dataSource=statsStorage.dataSource, readonly=True)
+    provider = await statsStorage.manager.getProvider(dataSource=statsStorage.dataSource, readonly=True)
     rows = await provider.executeFetchAll(
         """SELECT labels, metric_value FROM stat_aggregates
            WHERE event_type = :eventType AND metric_key = 'tokens' AND period_type = 'total'""",
@@ -255,7 +255,7 @@ async def testTimestampNormalization(statsStorage: DatabaseStatsStorage) -> None
     Returns:
         None
     """
-    provider = await statsStorage.db.manager.getProvider(dataSource=statsStorage.dataSource, readonly=False)
+    provider = await statsStorage.manager.getProvider(dataSource=statsStorage.dataSource, readonly=False)
     eventId = testTimestampNormalization.__name__  # Use test name as unique ID
     now = datetime.datetime.now(datetime.UTC)
 
@@ -280,7 +280,7 @@ async def testTimestampNormalization(statsStorage: DatabaseStatsStorage) -> None
     assert processed == 1
 
     # Verify it was aggregated
-    readProvider = await statsStorage.db.manager.getProvider(dataSource=statsStorage.dataSource, readonly=True)
+    readProvider = await statsStorage.manager.getProvider(dataSource=statsStorage.dataSource, readonly=True)
     rows = await readProvider.executeFetchAll(
         """SELECT * FROM stat_aggregates WHERE event_type = :eventType""",
         {"eventType": "llm_request"},
@@ -301,7 +301,7 @@ async def testRecordNonFiniteValues(statsStorage: DatabaseStatsStorage) -> None:
     processed = await statsStorage.aggregate()
     assert processed == 1
 
-    provider = await statsStorage.db.manager.getProvider(dataSource=statsStorage.dataSource, readonly=True)
+    provider = await statsStorage.manager.getProvider(dataSource=statsStorage.dataSource, readonly=True)
     rows = await provider.executeFetchAll(
         """SELECT metric_key, metric_value FROM stat_aggregates
            WHERE event_type = :eventType""",
@@ -360,7 +360,7 @@ async def testPurgeDeletesOnlyProcessedOldEvents(statsStorage: DatabaseStatsStor
     now = datetime.datetime.now(datetime.UTC)
     oldTimestamp = now - datetime.timedelta(days=40)
 
-    provider = await statsStorage.db.manager.getProvider(dataSource=statsStorage.dataSource, readonly=False)
+    provider = await statsStorage.manager.getProvider(dataSource=statsStorage.dataSource, readonly=False)
 
     # Insert old processed event
     await provider.execute(
@@ -439,7 +439,7 @@ async def testPurgeReturnsCorrectCount(statsStorage: DatabaseStatsStorage) -> No
     now = datetime.datetime.now(datetime.UTC)
     oldTimestamp = now - datetime.timedelta(days=40)
 
-    provider = await statsStorage.db.manager.getProvider(dataSource=statsStorage.dataSource, readonly=False)
+    provider = await statsStorage.manager.getProvider(dataSource=statsStorage.dataSource, readonly=False)
 
     # Insert 5 old processed events
     for i in range(5):
@@ -481,7 +481,7 @@ async def testPurgeRetentionZeroIsNoOp(statsStorage: DatabaseStatsStorage) -> No
     now = datetime.datetime.now(datetime.UTC)
     oldTimestamp = now - datetime.timedelta(days=40)
 
-    provider = await statsStorage.db.manager.getProvider(dataSource=statsStorage.dataSource, readonly=False)
+    provider = await statsStorage.manager.getProvider(dataSource=statsStorage.dataSource, readonly=False)
 
     # Insert old processed event
     await provider.execute(
@@ -522,7 +522,7 @@ async def testPurgeRetentionNegativeIsNoOp(statsStorage: DatabaseStatsStorage) -
     now = datetime.datetime.now(datetime.UTC)
     oldTimestamp = now - datetime.timedelta(days=40)
 
-    provider = await statsStorage.db.manager.getProvider(dataSource=statsStorage.dataSource, readonly=False)
+    provider = await statsStorage.manager.getProvider(dataSource=statsStorage.dataSource, readonly=False)
 
     # Insert old processed event
     await provider.execute(
@@ -584,8 +584,8 @@ async def testPurgeBoundaryExactCutoffSurvives(statsStorage: DatabaseStatsStorag
     # At 23:00:00 on the boundary day (2024-05-16 23:00:00) → SURVIVES
     lateInBoundaryDay = boundaryDayMidnight + datetime.timedelta(hours=23)
 
-    with patch.object(dbUtils, "getCurrentTimestamp", return_value=fixedNow):
-        provider = await statsStorage.db.manager.getProvider(dataSource=statsStorage.dataSource, readonly=False)
+    with patch.object(libUtils, "now", return_value=fixedNow):
+        provider = await statsStorage.manager.getProvider(dataSource=statsStorage.dataSource, readonly=False)
 
         # Insert row exactly at midnight (should SURVIVE - strict <)
         await provider.execute(
@@ -720,12 +720,12 @@ async def testMultiEventTypeIsolation(statsStorage: DatabaseStatsStorage) -> Non
 
         # Create two storages with different eventTypes, same data source
         commandStorage = DatabaseStatsStorage(
-            db=sharedDb,
+            manager=sharedDb.manager,
             eventType="command",
             dataSource="default",
         )
         messageStorage = DatabaseStatsStorage(
-            db=sharedDb,
+            manager=sharedDb.manager,
             eventType="message",
             dataSource="default",
         )
@@ -1064,17 +1064,17 @@ async def testQueryIsolationFromOtherEventTypes(statsStorage: DatabaseStatsStora
 
         # Create three storages with different eventTypes
         commandStorage = DatabaseStatsStorage(
-            db=sharedDb,
+            manager=sharedDb.manager,
             eventType="command",
             dataSource="default",
         )
         messageStorage = DatabaseStatsStorage(
-            db=sharedDb,
+            manager=sharedDb.manager,
             eventType="message",
             dataSource="default",
         )
         llmStorage = DatabaseStatsStorage(
-            db=sharedDb,
+            manager=sharedDb.manager,
             eventType="llm_request",
             dataSource="default",
         )

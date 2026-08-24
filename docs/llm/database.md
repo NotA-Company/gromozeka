@@ -479,7 +479,7 @@ This keeps handler-facing signatures stable (Decision D6 — `embeddingModel: st
 | `embeddingModels` | `EmbeddingModelsRepository` | `embedding_models.py` (embedding-provenance lookup table; constructed FIRST so its bound `getOrCreateModelId` method can be injected as `modelIdResolver` into `chatEmbeddings` / `chatSearch` / `userMemories` — Decision D10) |
 | `webhookUpdates` | `WebhookUpdatesRepository` | `webhook_updates.py` |
 
-> `DatabaseBayesStorage` (`internal/database/bayes_storage.py`) and `DatabaseStatsStorage` (`internal/database/stats_storage.py`) are sibling classes that wrap a `Database` (not `DatabaseManager`) and are NOT exposed as `db.<name>` attributes — see §1 for the cleanup-path usage of the Bayes one.
+> `DatabaseBayesStorage` (`internal/database/bayes_storage.py`) wraps a `Database` and is not exposed as `db.<name>`; `DatabaseStatsStorage` now lives at `lib/stats/sql_storage.py` and takes a `DatabaseManager` directly, constructed via the `StatsAggregationService` factory — see §1 for the Bayes cleanup-path usage.
 
 **Adding a method to an existing repository:**
 

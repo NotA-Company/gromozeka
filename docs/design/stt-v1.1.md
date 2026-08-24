@@ -73,7 +73,7 @@ The following are facts verified against source, not assumptions:
   imports it guarded (§3.1). STT does **not** reuse `S3StorageBackend` — it has its
   own Yandex-specific helper next to the provider (§3.1, §12).
 - **A concrete `StatsStorage` exists and is wired** for `lib/ai`
-  ([`internal/database/stats_storage.py`](../../internal/database/stats_storage.py)
+  ([`lib/stats/sql_storage.py`](../../lib/stats/sql_storage.py)
   `DatabaseStatsStorage`, constructed in [`main.py`](../../main.py):82-94; `lib/ai`
    records via `_recordAttemptStats`,
    [`lib/ai/abstract.py:850-887`](../../lib/ai/abstract.py)). See §5.1 for the full
@@ -429,7 +429,7 @@ The research open question — "is a concrete `StatsStorage` wired in the servic
 layer, or does everything hit `NullStatsStorage`?" — is **resolved: a concrete,
 DB-backed `StatsStorage` exists and is wired for `lib/ai`.**
 
-- [`internal/database/stats_storage.py`](../../internal/database/stats_storage.py)
+- [`lib/stats/sql_storage.py`](../../lib/stats/sql_storage.py)
   `DatabaseStatsStorage` (line 39) subclasses `lib.stats.StatsStorage`. It writes raw
   events to `stat_events` and aggregates into `stat_aggregates`, both in a named data
   source.

@@ -630,7 +630,7 @@ await storage.record(
 )
 ```
 
-**DB-backed implementation:** [`DatabaseStatsStorage`](../../internal/database/stats_storage.py:44) in `internal/database/stats_storage.py` — backed by `stat_events` (append-only log) and `stat_aggregates` (period buckets). Keeps a plain `dataSource` attribute (`str`) used for provider routing (`getProvider(dataSource=...)`); there is no `dataSource` member on the `StatsStorage` ABC. Created in `main.py` when `stats.enabled = true`.
+**DB-backed implementation:** [`DatabaseStatsStorage`](../../lib/stats/sql_storage.py:44) in `lib/stats/sql_storage.py` — backed by `stat_events` (append-only log) and `stat_aggregates` (period buckets). Keeps a plain `dataSource` attribute (`str`) used for provider routing (`getProvider(dataSource=...)`); there is no `dataSource` member on the `StatsStorage` ABC. Created in `main.py` when `stats.enabled = true`.
 
 **Integration points:**
 - `LLMManager` receives `statsStorage` in constructor and propagates to all `AbstractModel` instances

@@ -17,6 +17,7 @@ consumer, model, provider, generation type, and any future dimensions.
 """
 
 from .analysis import PeriodArg, PeriodType, StatsAnalyzer, computePeriodRange, mapPeriodArgToPeriodType
+from .sql_storage import DatabaseStatsStorage
 from .stats_storage import GLOBAL_CONSUMER_ID, NullStatsStorage, StatsStorage
 from .types import StatsAggregateDict
 
@@ -30,4 +31,5 @@ __all__ = [
     "StatsAnalyzer",
     "computePeriodRange",
     "mapPeriodArgToPeriodType",
+    "DatabaseStatsStorage",
 ]

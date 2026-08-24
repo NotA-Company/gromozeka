@@ -29,7 +29,7 @@ Gromozeka already has a working statistics pipeline:
 
 - An abstract [`StatsStorage`](../../lib/stats/stats_storage.py) with a no-op
   `NullStatsStorage`, and a database-backed
-  [`DatabaseStatsStorage`](../../internal/database/stats_storage.py) that appends raw
+  [`DatabaseStatsStorage`](../../lib/stats/sql_storage.py) that appends raw
   events to `stat_events` and rolls them up into `stat_aggregates`
   (hourly/daily/monthly/`total` periods, per-consumer + `__global__` rollup).
 - Two consumers wired today: `llm_request`
@@ -96,20 +96,20 @@ Facts verified against source on 2026-08-14. Line numbers are current as of bran
   `record(stats: dict[str, float|int], *, consumerId=None, labels=None, eventTime=None)`.
   `NullStatsStorage.record` ([stats_storage.py:87](../../lib/stats/stats_storage.py))
   is a no-op.
-- [`DatabaseStatsStorage`](../../internal/database/stats_storage.py):39 — constructed as
+- [`DatabaseStatsStorage`](../../lib/stats/sql_storage.py):39 — constructed as
   `DatabaseStatsStorage(db, eventType, *, dataSource)`; **one `eventType` per instance**
-  ([stats_storage.py:59](../../internal/database/stats_storage.py)).
-  `record()` ([stats_storage.py:75](../../internal/database/stats_storage.py)) merges
+  ([stats_storage.py:59](../../lib/stats/sql_storage.py)).
+  `record()` ([stats_storage.py:75](../../lib/stats/sql_storage.py)) merges
   `consumerId` into `labels["consumer"]` (default `GLOBAL_CONSUMER_ID = "__global__"`,
   [stats_storage.py:8,107](../../lib/stats/stats_storage.py)) before hashing.
-- `aggregate()` ([stats_storage.py:129](../../internal/database/stats_storage.py)) is
+- `aggregate()` ([stats_storage.py:129](../../lib/stats/sql_storage.py)) is
   the v3 claim-first flow. For each event it writes **two label-sets**: the event's own
   labels (per-consumer) and a `__global__` rollup where **only** `consumer` is replaced
-  ([stats_storage.py:209-229](../../internal/database/stats_storage.py)). All metrics
+  ([stats_storage.py:209-229](../../lib/stats/sql_storage.py)). All metrics
   are **SUM**. The claim/upsert/mark steps are **not** wrapped in one transaction
-  (Step 4 upsert at [stats_storage.py:233](../../internal/database/stats_storage.py),
-  Step 5 mark at [stats_storage.py:260](../../internal/database/stats_storage.py); a
-  `TODO` at [stats_storage.py:232](../../internal/database/stats_storage.py) flags this).
+  (Step 4 upsert at [stats_storage.py:233](../../lib/stats/sql_storage.py),
+  Step 5 mark at [stats_storage.py:260](../../lib/stats/sql_storage.py); a
+  `TODO` at [stats_storage.py:232](../../lib/stats/sql_storage.py) flags this).
 
 ### 2.2 The `stat_aggregates` shape (the back-fill target)
 
@@ -129,11 +129,11 @@ PRIMARY KEY (event_type, period_start, period_type, labels_hash, metric_key)
 Canonical labels JSON = `lib.utils.jsonDumps(labelsDict)`
 ([utils.py:108](../../lib/utils/utils.py), `sort_keys=True`, compact separators
 `(",", ":")`); `labels_hash = hashlib.md5(canonicalJson.encode()).hexdigest()`
-([stats_storage.py:275-290](../../internal/database/stats_storage.py)). The back-fill
+([stats_storage.py:275-290](../../lib/stats/sql_storage.py)). The back-fill
 **must** produce byte-identical JSON so its `labels_hash` collides with live-aggregated
 rows for the same label set.
 
-Period truncation ([stats_storage.py:293-315](../../internal/database/stats_storage.py)):
+Period truncation ([stats_storage.py:293-315](../../lib/stats/sql_storage.py)):
 `hourly`/`daily`/`monthly` are the ISO form of the UTC timestamp truncated to
 hour/day/month; `total` is the fixed epoch sentinel above.
 
@@ -428,8 +428,8 @@ Migrate **all** `chat_user_stats` history into `stat_aggregates` as
   (see §11).
 - **Canonicalization (load-bearing):** the labels JSON **must** be produced with
   `lib.utils.jsonDumps(labelsDict)` (same call the aggregator makes at
-  [stats_storage.py:211](../../internal/database/stats_storage.py)) and hashed with the
-  `_hashLabels` helper from [`internal/database/stats_storage.py`](../../internal/database/stats_storage.py):275.
+  [stats_storage.py:211](../../lib/stats/sql_storage.py)) and hashed with the
+  `_hashLabels` helper from [`lib/stats/sql_storage.py`](../../lib/stats/sql_storage.py):275.
   Reusing both guarantees `labels_hash` collides with live-aggregated rows for an
   identical label set.
 - **Write target:** `stat_aggregates` only — **never synthesize `stat_events` rows**.
@@ -437,7 +437,7 @@ Migrate **all** `chat_user_stats` history into `stat_aggregates` as
   pre-aggregated rows bypasses the event pipeline entirely.
 - **Accumulation:** upsert with the same on-conflict SUM the aggregator uses
   (`metric_value = metric_value + :metric_value`,
-  [stats_storage.py:253-254](../../internal/database/stats_storage.py)) so multiple
+  [stats_storage.py:253-254](../../lib/stats/sql_storage.py)) so multiple
   source rows contributing to the same `(period, labels_hash)` bucket accumulate
   correctly (notably the `__global__` rollup, which sums across chats per
   `(user_id, chat_type)`).
@@ -643,7 +643,7 @@ the original design.*
    ```
 
    - `_dayISO`/`_monthISO` normalize the stored `date` (midnight timestamp) to the same
-     ISO-8601 UTC form `_computePeriods` emits ([stats_storage.py:305-314](../../internal/database/stats_storage.py)).
+     ISO-8601 UTC form `_computePeriods` emits ([stats_storage.py:305-314](../../lib/stats/sql_storage.py)).
    - `libUtils.jsonDumps` + `_hashLabels` are imported from existing modules so the bytes
      and hashes match the live aggregator exactly.
 
@@ -828,7 +828,7 @@ default, and the existing test suite plus the migration test are the safety net.
 | **Back-fill partial failure** — crash between back-fill and DROP leaves the `chat_messages` source intact but `stat_aggregates` already populated; a re-run is idempotent (*Amended 2026-08-16, fix-set `fcdf5663`*: source is now `chat_messages`; Python pre-aggregation + replace-style upsert recomputes each bucket instead of incrementing) | Low | High | Migration is one-shot (standard for this codebase); document the window; operator can `DELETE FROM stat_aggregates WHERE event_type='message' AND labels NOT LIKE '%"sent"%'` to undo a partial back-fill before re-running — the absent `sent` label identifies backfilled rows, which now carry `message_type` (*Amended 2026-08-16*) | Manual cleanup per above, then re-run |
 | **`labels_hash` mismatch** — back-fill produces a different canonical JSON than the aggregator, splitting buckets | Low | Med | Reuse `lib.utils.jsonDumps` + `_hashLabels` verbatim ([D7](#d7--back-fill-semantics)); migration test asserts a back-filled row and a live-aggregated row for the same labels share a `labels_hash` | Revert migration; regenerate after fixing canonicalization |
 | **Label cardinality** — `user_id` is a high-cardinality label; `stat_aggregates` grows with distinct (consumer, user_id, chat_type, …) combos | Med | Low | SUM-only aggregation keeps row count = distinct combos × periods; `message_type` multiplies by the bounded `MessageType` enum cardinality. Monitor row count; a future retention/cleanup pass is NG2 | n/a |
-| **Non-atomic aggregation** (claim → upsert → mark) — a crash mid-`aggregate()` can double-count or leave orphans | Low | Med | Already accepted in the v3 design (`TODO` at [stats_storage.py:232](../../internal/database/stats_storage.py)); orphan reclaim is built into the claim step. Not introduced by this design | n/a (pre-existing) |
+| **Non-atomic aggregation** (claim → upsert → mark) — a crash mid-`aggregate()` can double-count or leave orphans | Low | Med | Already accepted in the v3 design (`TODO` at [stats_storage.py:232](../../lib/stats/sql_storage.py)); orphan reclaim is built into the claim step. Not introduced by this design | n/a (pre-existing) |
 | **Multi data-source mismatch** — if an operator sets `message-stats-data-source` to a non-`default` source, the migration (which runs where `chat_user_stats` lives) writes `stat_aggregates` to a different source than live events | Low | Med | Default config puts everything in `"default"` (no mismatch). Document that non-default stats data sources require `stat_aggregates` to exist there (already a precondition for `llm_request`/`stt_request` to work) | Keep `*-stats-data-source = "default"` |
 | **Tool-exception blind spot** (D4) — a raising tool is not recorded | Low | Low | Never-raise contract makes this a bug, not a stats gap; catching would change behavior | n/a |
 | **`chat_users` regression** — accidentally removing the operational increment along with the legacy upserts | Low | High | The increment ([chat_messages.py:154-166](../../internal/database/repositories/chat_messages.py)) is a distinct block; regression test asserts it still fires with stats off | Revert Phase 1 repo edit |
@@ -878,7 +878,7 @@ deferral text is preserved as history.*
   `/stats` command + optional web pages).*
 - **Transactional aggregation** — wrap claim + upsert + mark in one transaction once the
   provider gains a transactional batch primitive (the `TODO` at
-  [stats_storage.py:232](../../internal/database/stats_storage.py)).
+  [stats_storage.py:232](../../lib/stats/sql_storage.py)).
 - **True cross-user global totals.** The current `__global__` rollup replaces only
   `consumer` and keeps `user_id`, so it is a per-user-across-chats rollup, not a
   grand total. Cross-user totals today require a post-query SUM across `user_id`
@@ -913,7 +913,7 @@ per `AGENTS.md`).
 ## 13. References
 
 - Stats interface: [`lib/stats/stats_storage.py`](../../lib/stats/stats_storage.py)
-- DB backend: [`internal/database/stats_storage.py`](../../internal/database/stats_storage.py)
+- DB backend: [`lib/stats/sql_storage.py`](../../lib/stats/sql_storage.py)
 - Stat-tables migration: [`migration_016_add_stat_tables.py`](../../internal/database/migrations/versions/migration_016_add_stat_tables.py)
 - Legacy tables: [`migration_001_initial_schema.py`](../../internal/database/migrations/versions/migration_001_initial_schema.py):132-150
 - Construction pattern: [`main.py`:89-119](../../main.py)

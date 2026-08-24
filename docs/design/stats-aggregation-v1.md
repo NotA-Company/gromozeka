@@ -44,7 +44,7 @@ verified against source on 2026-08-17.
   returned storages flow to the existing consumers exactly as today. The static
   storages list and the `initialize(statsStorages=…)` parameter disappear.
    Cyclic-import safety: `internal/services/stats` importing
-   `internal/database/stats_storage` is fine (main.py already imports both; services
+   `lib/stats` is fine (main.py already imports both; services
    import `internal.database` elsewhere, e.g. queue_service/service.py:36).
 - **A4 — Config cached at initialize, fail-loudly on malformed (2026-08-17).**
   `StatsAggregationService.initialize(configManager, database)` now reads `[stats]`
@@ -188,7 +188,7 @@ Facts verified against source on 2026-08-17.
   `aggregate(*, limit=1000, orphanTimeoutSeconds=3600) -> int` (lines 55-78 — returns
   events processed; claim-based). `NullStatsStorage` no-ops both (lines 81-118).
 - `DatabaseStatsStorage.aggregate()`
-   ([`internal/database/stats_storage.py`](../../internal/database/stats_storage.py):129-267):
+   ([`lib/stats/sql_storage.py`](../../lib/stats/sql_storage.py):129-267):
    1. **Claim** (lines 163-191): single `UPDATE` setting `processed_id = batchId,
       claimed_at = now` on up to `limit` rows with `processed = 0 AND
       event_type = :eventType AND (processed_id IS NULL OR claimed_at < :orphanTimeout)`,
@@ -485,7 +485,7 @@ next `aggregate()` and only then become eligible.
 ### D4 — Refactor fold-in: shared period-truncation helpers *(ratified)*
 
 Extract from `_computePeriods` (stats_storage.py:293-315) two module-level helpers
-in [`internal/database/stats_storage.py`](../../internal/database/stats_storage.py):
+in [`lib/stats/sql_storage.py`](../../lib/stats/sql_storage.py):
 
 ```python
 def truncateToDay(eventTime: datetime.datetime) -> str: ...
@@ -536,7 +536,7 @@ registry** — the single construction seam for stats storages.
   after A3, the factory + registry must be reachable from main.py's five
   construction sites — the same object via `getInstance()` in every case.
 - **Cyclic-import safety (verified):** `internal/services/stats` importing
-  `internal/database/stats_storage` is safe — main.py already imports both
+  `lib/stats` is safe — main.py already imports both
   (main.py:33 plus the storage import), and services already import
   `internal.database` elsewhere (`internal/services/queue_service/service.py:36`).
 
@@ -871,7 +871,7 @@ GromozekBot.__init__ (main.py)
 ```
 
 Storage-side changes (Phase 1) are confined to `lib/stats/stats_storage.py` (ABC +
-Null), `internal/database/stats_storage.py` (`purgeProcessed`, truncation helpers),
+Null), `lib/stats/sql_storage.py` (`purgeProcessed`, truncation helpers),
 migration 027 (import shared helpers), and new migration 028 (retention index).
 
 ---
@@ -928,7 +928,7 @@ test files.
 - [`lib/stats/stats_storage.py`](../../lib/stats/stats_storage.py) — abstract
   `purgeProcessed(*, retentionDays: int) -> int` (D7 docstring contract).
 - Null implementation: `purgeProcessed` returns 0.
-- [`internal/database/stats_storage.py`](../../internal/database/stats_storage.py) —
+- [`lib/stats/sql_storage.py`](../../lib/stats/sql_storage.py) —
   `purgeProcessed` implementation per D8; extract `truncateToDay` /
   `truncateToMonth`; `_computePeriods` recomposed over them (byte-identical output).
 - [`internal/database/migrations/versions/migration_027_drop_chat_stats_backfill_aggregates.py`](../../internal/database/migrations/versions/migration_027_drop_chat_stats_backfill_aggregates.py) —
@@ -1157,7 +1157,7 @@ skill and update:
 - Predecessor design (event taxonomy, wiring): [`stats-collecting-v1.md`](./stats-collecting-v1.md)
 - Archived stats-library design (aggregate() v3 flow): [`docs/archive/plans/lib-stats-stats-library-v3.md`](../archive/plans/lib-stats-stats-library-v3.md)
 - Stats interface: [`lib/stats/stats_storage.py`](../../lib/stats/stats_storage.py)
-- DB backend: [`internal/database/stats_storage.py`](../../internal/database/stats_storage.py)
+- DB backend: [`lib/stats/sql_storage.py`](../../lib/stats/sql_storage.py)
 - Stat tables schema: [`migration_016_add_stat_tables.py`](../../internal/database/migrations/versions/migration_016_add_stat_tables.py)
 - Parity lock: [`tests/database/test_migration_027_drop_chat_stats_backfill_aggregates.py`](../../tests/database/test_migration_027_drop_chat_stats_backfill_aggregates.py)
 - Delayed-task mechanism: [`internal/services/queue_service/service.py`](../../internal/services/queue_service/service.py),

@@ -1,7 +1,7 @@
 """Database-backed stats storage implementation.
 
-Provides a database-backed implementation of StatsStorage that uses the
-Database manager to store raw stat events and materialized aggregates.
+Provides a database-backed implementation of StatsStorage that uses a
+DatabaseManager to store raw stat events and materialized aggregates.
 Both tables live in a single data source, enabling future transactional
 upsert + mark-processed operations.
 """
@@ -16,12 +16,12 @@ from typing import Optional, TypedDict
 
 from lib import utils as libUtils
 from lib.db import utils as dbUtils
+from lib.db.manager import DatabaseManager
 from lib.db.providers.base import ExcludedValue
-from lib.stats.stats_storage import GLOBAL_CONSUMER_ID
-from lib.stats.stats_storage import StatsStorage as BaseStatsStorage
-from lib.stats.types import STATS_QUERY_ROW_LIMIT, StatsAggregateDict
 
-from .database import Database
+from .stats_storage import GLOBAL_CONSUMER_ID
+from .stats_storage import StatsStorage as BaseStatsStorage
+from .types import STATS_QUERY_ROW_LIMIT, StatsAggregateDict
 
 logger = logging.getLogger(__name__)
 
@@ -54,22 +54,22 @@ class DatabaseStatsStorage(BaseStatsStorage):
     wrapped in a single transaction for exactly-once semantics.
 
     Attributes:
-        db: Database instance for provider access.
+        manager: DatabaseManager instance for provider access.
         eventType: Event type discriminator (e.g. 'llm_request').
         dataSource: Data source name for both stat_events and stat_aggregates.
     """
 
-    __slots__ = ("db", "eventType", "dataSource")
+    __slots__ = ("manager", "eventType", "dataSource")
 
-    def __init__(self, db: Database, eventType: str, *, dataSource: str) -> None:
+    def __init__(self, manager: DatabaseManager, eventType: str, *, dataSource: str) -> None:
         """Initialize database-backed stats storage.
 
         Args:
-            db: Database instance from internal.database.database.
+            manager: DatabaseManager instance from lib.db.manager.
             eventType: Event type discriminator written to every event.
             dataSource: Named data source for both tables.
         """
-        self.db = db
+        self.manager = manager
         self.eventType = eventType
         self.dataSource = dataSource
 
@@ -102,7 +102,7 @@ class DatabaseStatsStorage(BaseStatsStorage):
         """
         try:
             eventId = str(uuid.uuid4())
-            now = dbUtils.getCurrentTimestamp()
+            now = libUtils.now()
 
             if eventTime is None:
                 eventTime = now
@@ -111,7 +111,7 @@ class DatabaseStatsStorage(BaseStatsStorage):
             mergedLabels = dict(labels or {})
             mergedLabels["consumer"] = consumerId or GLOBAL_CONSUMER_ID
 
-            sqlProvider = await self.db.manager.getProvider(dataSource=self.dataSource, readonly=False)
+            sqlProvider = await self.manager.getProvider(dataSource=self.dataSource, readonly=False)
             await sqlProvider.execute(
                 """INSERT INTO stat_events
                    (event_id, event_type, event_time, data, labels,
@@ -165,10 +165,10 @@ class DatabaseStatsStorage(BaseStatsStorage):
             Number of events processed (0 if nothing to aggregate).
         """
         batchId = str(uuid.uuid4())
-        now = dbUtils.getCurrentTimestamp()
+        now = libUtils.now()
         orphanTimeout = now - datetime.timedelta(seconds=orphanTimeoutSeconds)
 
-        sqlProvider = await self.db.manager.getProvider(dataSource=self.dataSource, readonly=False)
+        sqlProvider = await self.manager.getProvider(dataSource=self.dataSource, readonly=False)
 
         # --- Step 1: claim batch (includes orphan reclaim) ---
         #
@@ -308,8 +308,8 @@ class DatabaseStatsStorage(BaseStatsStorage):
             return 0
 
         # A2: day-truncated cutoff — UTC midnight of N days ago
-        cutoff = truncateToDay(dbUtils.getCurrentTimestamp() - datetime.timedelta(days=retentionDays))
-        sqlProvider = await self.db.manager.getProvider(dataSource=self.dataSource, readonly=False)
+        cutoff = truncateToDay(libUtils.now() - datetime.timedelta(days=retentionDays))
+        sqlProvider = await self.manager.getProvider(dataSource=self.dataSource, readonly=False)
 
         # Count first to know if there's work to do
         countRow = await sqlProvider.executeFetchOne(
@@ -413,7 +413,7 @@ class DatabaseStatsStorage(BaseStatsStorage):
         Raises:
             Database or provider errors on failure (raise-on-error contract).
         """
-        sqlProvider = await self.db.manager.getProvider(dataSource=self.dataSource, readonly=True)
+        sqlProvider = await self.manager.getProvider(dataSource=self.dataSource, readonly=True)
 
         # Build WHERE conditions
         conditions: list[str] = ["event_type = :eventType"]

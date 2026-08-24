@@ -24,9 +24,8 @@ from typing import Any, Dict, Optional
 
 from internal.config.manager import ConfigManager
 from internal.database import Database
-from internal.database.stats_storage import DatabaseStatsStorage
 from internal.services.queue_service import DelayedTask, DelayedTaskFunction, QueueService
-from lib.stats import NullStatsStorage, StatsStorage
+from lib.stats import DatabaseStatsStorage, NullStatsStorage, StatsStorage
 
 logger = logging.getLogger(__name__)
 
@@ -249,7 +248,9 @@ class StatsAggregationService:
         # Resolve dataSource: None → default, otherwise use provided
         resolvedDataSource = dataSource or self._database.manager.default
 
-        storage = DatabaseStatsStorage(db=self._database, eventType=eventType, dataSource=resolvedDataSource)
+        storage = DatabaseStatsStorage(
+            manager=self._database.manager, eventType=eventType, dataSource=resolvedDataSource
+        )
 
         # Register in the registry (insertion order preserved)
         self._statsStorages[eventType] = storage

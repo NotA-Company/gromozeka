@@ -473,7 +473,7 @@ CREATE TABLE stat_events (
 
 **Indexes**: `idx_stat_events_unprocessed`, `idx_stat_events_lookup`, `idx_stat_events_retention`
 
-**Repository**: `DatabaseStatsStorage.record()` in `internal/database/stats_storage.py`
+**Repository**: `DatabaseStatsStorage.record()` in `lib/stats/sql_storage.py`
 
 **Note**: Created by `migration_016` (tables) + `migration_028` (retention index). Part of the v3 statistics library (`lib/stats/`). Used to record LLM events (tokens, errors, fallbacks) and other metrics before aggregation into `stat_aggregates`.
 
@@ -497,7 +497,7 @@ CREATE TABLE stat_aggregates (
 )
 ```
 
-**Repository**: `DatabaseStatsStorage.aggregate()` in `internal/database/stats_storage.py`
+**Repository**: `DatabaseStatsStorage.aggregate()` in `lib/stats/sql_storage.py`
 
 **Period types**: `hourly`, `daily`, `monthly`, `total`
 

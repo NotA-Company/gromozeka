@@ -33,8 +33,8 @@ from internal.database.migrations.versions.migration_027_drop_chat_stats_backfil
     Migration027DropChatStatsBackfillAggregates,
 )
 from internal.database.models import MessageCategory
-from internal.database.stats_storage import _hashLabels
 from internal.models import MessageId, MessageType
+from lib.stats.sql_storage import _hashLabels
 from lib.stats.stats_storage import GLOBAL_CONSUMER_ID
 
 # Test constants

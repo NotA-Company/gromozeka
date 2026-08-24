@@ -9,7 +9,7 @@ from decode-trio-only extraction to a whole-module move. Arcs 1–3 are authoriz
 `sqlToCustomType`, `_checkType` + its private constants) out of
 [`lib/db/utils.py`](../../lib/db/utils.py) into a new bot-free
 `lib/db` module (decision S2 — supersedes the ADR-022 scope item "internal `utils.py`
-survives"). Second, move [`internal/database/stats_storage.py`](../../internal/database/stats_storage.py)
+survives"). Second, move [`lib/stats/sql_storage.py`](../../lib/stats/sql_storage.py)
 (`DatabaseStatsStorage`, 545 lines) to `lib/stats/` with a `DatabaseManager`-based
 constructor. Big-bang cutover per file, no re-export shims (ADR-022 precedent). Also
 unblocks the parked `lib/cache` `GenericDatabaseCache` extraction as a follow-up (§9).
@@ -509,7 +509,7 @@ All are encoded as D1-D11 + the amendment block. Implementation proceeds arc by 
 - [`docs/llm/architecture.md`](../llm/architecture.md) — ADR-022 (:819-823; the superseded
   clauses), ADR-023 insertion point
 - [`lib/db/utils.py`](../../lib/db/utils.py),
-  [`internal/database/stats_storage.py`](../../internal/database/stats_storage.py),
+  [`lib/stats/sql_storage.py`](../../lib/stats/sql_storage.py),
   [`lib/db/manager.py`](../../lib/db/manager.py), [`lib/stats/stats_storage.py`](../../lib/stats/stats_storage.py)
   — the moved/modified sources
 - [`docs/design/stats-aggregation-v1.md`](./stats-aggregation-v1.md) — the stats architecture

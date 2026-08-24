@@ -423,7 +423,7 @@ Append-only event log for raw statistics events. Used by the statistics collecti
 - `idx_stat_events_lookup` on `(event_type, event_time)` — for event lookup by type and time
 - `idx_stat_events_retention` on `(processed, created_at)` — for efficient deletion of processed events older than the retention window
 
-**Note:** Created by `migration_016` (tables + unprocessed/lookup indexes) + `migration_028` (retention index). Part of the v3 statistics library (`lib/stats/`). See [`internal/database/stats_storage.py`](../internal/database/stats_storage.py) for `DatabaseStatsStorage` implementation.
+**Note:** Created by `migration_016` (tables + unprocessed/lookup indexes) + `migration_028` (retention index). Part of the v3 statistics library (`lib/stats/`). See [`lib/stats/sql_storage.py`](../lib/stats/sql_storage.py) for `DatabaseStatsStorage` implementation.
 
 ---
 
@@ -457,7 +457,7 @@ Pre-computed period buckets for aggregated statistics metrics. Produced by aggre
 - `provider` — LLM provider name
 - `generationType` — Type of generation ('text', 'structured', 'image')
 
-**Note:** Created by `migration_016`. Part of the v3 statistics library (`lib/stats/`). Automatically updated when `DatabaseStatsStorage.aggregate()` is called. See [`internal/database/stats_storage.py`](../internal/database/stats_storage.py) for implementation details.
+**Note:** Created by `migration_016`. Part of the v3 statistics library (`lib/stats/`). Automatically updated when `DatabaseStatsStorage.aggregate()` is called. See [`lib/stats/sql_storage.py`](../lib/stats/sql_storage.py) for implementation details.
 
 ---
 
