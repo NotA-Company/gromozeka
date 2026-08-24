@@ -27,7 +27,7 @@
 | 8 | [ ] | [Replace if/elif Platform Dispatch with Strategy Pattern in `TheBot`](#8-replace-ifelif-platform-dispatch-with-strategy-pattern-in-thebot) | High | M | [`bot.py`](../../internal/bot/common/bot.py) |
 | 9 | [ ] | [Extract `LLMContextBuilder` from `LLMMessageHandler`](#9-extract-llmcontextbuilder-from-llmmessagehandler) | High | M | [`llm_messages.py`](../../internal/bot/common/handlers/llm_messages.py) |
 | 10 | [ ] | [Eliminate Circular-Import Workaround in `CacheService`](#10-eliminate-circular-import-workaround-in-cacheservice) | High | S | [`service.py`](../../internal/services/cache/service.py) |
-| 11 | ✅ DONE | [Extract `DatabaseRowValidator` from `DatabaseWrapper`](#11-extract-databaserowvalidator-from-databasewrapper) | Medium | S | [`utils.py`](../../internal/database/utils.py) |
+| 11 | ✅ DONE | [Extract `DatabaseRowValidator` from `DatabaseWrapper`](#11-extract-databaserowvalidator-from-databasewrapper) | Medium | S | [`utils.py`](../../lib/db/utils.py) |
 | 12 | [ ] | [Abstract Application Lifecycle into `BaseBotApplication`](#12-abstract-application-lifecycle-into-basebotapplication) | Medium | M | [`telegram/application.py`](../../internal/bot/telegram/application.py), [`max/application.py`](../../internal/bot/max/application.py) |
 | 13 | [ ] | [Extract `BotOwnerResolver` from `HandlersManager.injectBot`](#13-extract-botownerresolver-from-handlersmanagerinjectbot) | Medium | S | [`manager.py`](../../internal/bot/common/handlers/manager.py) |
 | 14 | [ ] | [Make `QueueService` Shutdown Deterministic with Structured Concurrency](#14-make-queueservice-shutdown-deterministic-with-structured-concurrency) | Medium | M | [`queue_service/service.py`](../../internal/services/queue_service/service.py) |
@@ -743,7 +743,7 @@ Alternatively, define a `ChatSettingsProtocol` in `internal/services/cache/types
 
 **Priority:** Medium | **Effort:** S (hours)
 
-> **✅ DONE (as of 2026-05-02):** Row validation has been extracted into [`internal/database/utils.py`](../../internal/database/utils.py). The generic [`sqlToTypedDict()`](../../internal/database/utils.py:164) function validates and coerces raw SQL row dicts against any `TypedDict` class, with a reusable [`sqlToCustomType()`](../../internal/database/utils.py:69) helper for type conversion (datetime, bool, dict, list, enums). The old `_validateDict*` methods in `DatabaseWrapper` no longer exist. This was done as part of the broader database refactoring (#1).
+> **✅ DONE (as of 2026-05-02):** Row validation has been extracted into [`lib/db/utils.py`](../../lib/db/utils.py). The generic [`sqlToTypedDict()`](../../lib/db/utils.py:164) function validates and coerces raw SQL row dicts against any `TypedDict` class, with a reusable [`sqlToCustomType()`](../../lib/db/utils.py:69) helper for type conversion (datetime, bool, dict, list, enums). The old `_validateDict*` methods in `DatabaseWrapper` no longer exist. This was done as part of the broader database refactoring (#1).
 
 #### Current Problem (HISTORICAL)
 

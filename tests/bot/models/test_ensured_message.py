@@ -34,9 +34,9 @@ from internal.bot.models import (
 )
 from internal.database import Database
 from internal.database.models import MemoryType
-from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
 from lib.ai import ModelMessage
+from lib.db.utils import DEFAULT_THREAD_ID
 
 
 def _makeEnsuredMessage() -> EnsuredMessage:

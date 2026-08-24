@@ -39,6 +39,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import lib.utils as libUtils
 from internal.models import MessageId
+from lib.db import utils as dbUtils
 from lib.db.manager import DatabaseManager
 from lib.db.providers.base import (
     BaseSQLProvider,
@@ -46,7 +47,6 @@ from lib.db.providers.base import (
     VectorDistanceMetric,
 )
 
-from .. import utils as dbUtils
 from ..models import ChatMessageDict
 from .base import BaseRepository
 

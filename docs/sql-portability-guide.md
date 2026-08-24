@@ -1340,7 +1340,7 @@ the higher-level design and the chat-embeddings consumer that drives this API.
    - Add `enable_foreign_keys` parameter to SQLite-based providers
 
 2. **Create Utility Functions**
-   - Add `getCurrentTimestamp()` helper in [`internal/database/utils.py`](/internal/database/utils.py)
+   - Add `getCurrentTimestamp()` helper in [`lib/db/utils.py`](../lib/db/utils.py)
    - Review and update `convertToSQLite()` function for cross-RDBMS compatibility
 
 3. **Update Provider Implementations**
@@ -1440,7 +1440,7 @@ The following items have been intentionally skipped for now:
 ### Code Changes
 
 - [ ] **Add utility functions**
-  - [ ] Add `getCurrentTimestamp()` in [`internal/database/utils.py`](/internal/database/utils.py)
+  - [ ] Add `getCurrentTimestamp()` in [`lib/db/utils.py`](../lib/db/utils.py)
   - [ ] Review and update `convertToSQLite()` for cross-RDBMS compatibility
 
 - [ ] **Update SQLite providers**
@@ -1592,7 +1592,7 @@ async def test_case_insensitive_comparison(testDatabase):
 ```
 
 **Note on `getCurrentTimestamp()`**: it is a **module-level function** in
-[`internal/database/utils.py`](/internal/database/utils.py), not a method on
+[`lib/db/utils.py`](../lib/db/utils.py), not a method on
 the provider, and returns a `datetime.datetime` (UTC) — not a SQL expression.
 Use it to populate bind parameters, never to inline into a query string:
 

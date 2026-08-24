@@ -7,7 +7,7 @@ from decode-trio-only extraction to a whole-module move. Arcs 1–3 are authoriz
 **Owner**: TBD
 **Scope**: Two chained extractions. First, move the SQL decode trio (`sqlToTypedDict`,
 `sqlToCustomType`, `_checkType` + its private constants) out of
-[`internal/database/utils.py`](../../internal/database/utils.py) into a new bot-free
+[`lib/db/utils.py`](../../lib/db/utils.py) into a new bot-free
 `lib/db` module (decision S2 — supersedes the ADR-022 scope item "internal `utils.py`
 survives"). Second, move [`internal/database/stats_storage.py`](../../internal/database/stats_storage.py)
 (`DatabaseStatsStorage`, 545 lines) to `lib/stats/` with a `DatabaseManager`-based
@@ -508,7 +508,7 @@ All are encoded as D1-D11 + the amendment block. Implementation proceeds arc by 
   ADR-022 grounding, §8 follow-up list (item 1 = this design)
 - [`docs/llm/architecture.md`](../llm/architecture.md) — ADR-022 (:819-823; the superseded
   clauses), ADR-023 insertion point
-- [`internal/database/utils.py`](../../internal/database/utils.py),
+- [`lib/db/utils.py`](../../lib/db/utils.py),
   [`internal/database/stats_storage.py`](../../internal/database/stats_storage.py),
   [`lib/db/manager.py`](../../lib/db/manager.py), [`lib/stats/stats_storage.py`](../../lib/stats/stats_storage.py)
   — the moved/modified sources

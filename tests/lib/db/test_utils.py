@@ -1,5 +1,5 @@
 """
-Test suite for internal/database/utils.py.
+Test suite for lib/db/utils.py.
 
 Tests the utility functions for type conversion and SQL response handling:
 - _checkType: Type checking with support for Optional, Union, and generic types
@@ -17,11 +17,11 @@ from typing import Any, Optional, Union
 import pytest
 
 from internal.bot.models.message_metadata import CondensingDict, MetadataDict
-from internal.database.utils import (
+from internal.models.types import MessageId
+from lib.db.utils import (
     _checkType,
     sqlToCustomType,
 )
-from internal.models.types import MessageId
 
 
 class TestCheckType:

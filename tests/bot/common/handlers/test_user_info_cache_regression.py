@@ -50,9 +50,9 @@ from internal.bot.models import (
 from internal.database import Database
 from internal.database.models import MessageCategory
 from internal.database.repositories.chat_users import ChatUsersRepository
-from internal.database.utils import DEFAULT_THREAD_ID
 from internal.services.cache import CacheService
 from internal.services.queue_service.service import QueueService
+from lib.db.utils import DEFAULT_THREAD_ID
 
 # Fixed identifiers used across every test — keeping them constant makes the
 # pre-seed / warm / drive steps line up unambiguously.

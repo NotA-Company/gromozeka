@@ -32,7 +32,7 @@ from collections import OrderedDict
 from threading import RLock
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Tuple, Type
 
-import internal.database.utils as dbUtils
+import lib.db.utils as dbUtils
 from internal.bot.models.message_metadata import SingleMemoryDict, convertDBMemoryToSingleMemoryDict
 from internal.bot.models.user_metadata import UserMetadataDict
 from internal.database.models import ChatBotStatus, ChatInfoDict, ChatTopicInfoDict, ChatUserDict

@@ -11,10 +11,10 @@ import logging
 from typing import Optional
 
 from internal.models import MessageId
+from lib.db import utils as dbUtils
 from lib.db.manager import DatabaseManager
 from lib.db.providers.base import ExcludedValue
 
-from .. import utils as dbUtils
 from ..models import ChatSummarizationCacheDict
 from .base import BaseRepository
 

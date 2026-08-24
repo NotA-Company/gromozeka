@@ -27,7 +27,7 @@ import importlib.metadata
 import dateutil.parser
 import pytest
 
-from internal.database.utils import sqlToCustomType
+from lib.db.utils import sqlToCustomType
 
 #: Pinned ``python-dateutil`` distribution version these assertions were observed
 #: against. A bump that changes parsing output must be re-verified against every

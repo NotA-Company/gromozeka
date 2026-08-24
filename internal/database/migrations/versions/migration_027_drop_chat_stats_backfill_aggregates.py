@@ -36,11 +36,11 @@ import datetime
 
 from lib import utils as libUtils
 from lib.db.providers import BaseSQLProvider, ExcludedValue, ParametrizedQuery
+from lib.db.utils import getCurrentTimestamp
 from lib.stats.stats_storage import GLOBAL_CONSUMER_ID
 
 from ...models import MessageCategory
 from ...stats_storage import _hashLabels, truncateToDay, truncateToMonth
-from ...utils import getCurrentTimestamp
 from ..base import BaseMigration
 
 

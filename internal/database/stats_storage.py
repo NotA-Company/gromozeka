@@ -15,12 +15,12 @@ import uuid
 from typing import Optional, TypedDict
 
 from lib import utils as libUtils
+from lib.db import utils as dbUtils
 from lib.db.providers.base import ExcludedValue
 from lib.stats.stats_storage import GLOBAL_CONSUMER_ID
 from lib.stats.stats_storage import StatsStorage as BaseStatsStorage
 from lib.stats.types import STATS_QUERY_ROW_LIMIT, StatsAggregateDict
 
-from . import utils as dbUtils
 from .database import Database
 
 logger = logging.getLogger(__name__)

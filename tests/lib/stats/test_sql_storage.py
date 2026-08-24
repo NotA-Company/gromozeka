@@ -7,9 +7,9 @@ from typing import Any
 from unittest.mock import patch
 
 from internal.database import Database
-from internal.database import utils as dbUtils
 from internal.database.migrations.versions.migration_016_add_stat_tables import getMigration
 from internal.database.stats_storage import DatabaseStatsStorage
+from lib.db import utils as dbUtils
 from lib.db.manager import DatabaseManagerConfig
 from lib.stats.stats_storage import GLOBAL_CONSUMER_ID
 
@@ -558,7 +558,7 @@ async def testPurgeBoundaryExactCutoffSurvives(statsStorage: DatabaseStatsStorag
     """Verify row created during the boundary day survives (day-truncated cutoff).
 
     Uses a frozen clock to guarantee deterministic timing:
-    - Monkeypatch internal.database.utils.getCurrentTimestamp to return fixedNow
+    - Monkeypatch lib.db.utils.getCurrentTimestamp to return fixedNow
     - Cutoff is UTC midnight of (fixedNow - 30 days) = boundaryDayMidnight
     - Row at midnight EXACTLY → survives (strict < comparison)
     - Row at 23:59:59 on the boundary day → survives (created during the boundary day)

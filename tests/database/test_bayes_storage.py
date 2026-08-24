@@ -10,8 +10,8 @@ import datetime
 import pytest
 
 from internal.database import Database
-from internal.database import utils as dbUtils
 from internal.database.bayes_storage import DatabaseBayesStorage
+from lib.db import utils as dbUtils
 from lib.db.manager import DatabaseManagerConfig
 
 

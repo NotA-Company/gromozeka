@@ -12,8 +12,8 @@ import datetime
 import pytest
 
 from internal.database import Database
-from internal.database import utils as dbUtils
 from internal.database.models import CacheType
+from lib.db import utils as dbUtils
 from lib.db.manager import DatabaseManagerConfig
 
 

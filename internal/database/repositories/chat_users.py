@@ -14,10 +14,10 @@ from typing import List, Optional
 from telegram import Chat
 
 import lib.utils as libUtils
+from lib.db import utils as dbUtils
 from lib.db.manager import DatabaseManager
 from lib.db.providers.base import ExcludedValue
 
-from .. import utils as dbUtils
 from ..models import ChatBotStatus, ChatInfoDict, ChatUserDict
 from .base import BaseRepository
 

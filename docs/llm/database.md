@@ -745,7 +745,7 @@ CREATE VIRTUAL TABLE vec_message_embeddings_384 USING vec0(
 
 ## 8. Utility Functions
 
-**File:** [`internal/database/utils.py`](../../internal/database/utils.py)
+**File:** [`lib/db/utils.py`](../../lib/db/utils.py)
 
 ### `sqlToCustomType(data, expectedType)`
 

@@ -25,9 +25,9 @@ Classes:
 import logging
 from typing import Dict, Optional
 
+from lib.db import utils as dbUtils
 from lib.db.manager import DatabaseManager
 
-from .. import utils as dbUtils
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)

@@ -13,10 +13,10 @@ from collections.abc import Sequence
 from typing import Optional
 
 from internal.models import MessageId
+from lib.db import utils as dbUtils
 from lib.db.manager import DatabaseManager
 from lib.db.providers import ExcludedValue, QueryResultFetchOne
 
-from .. import utils as dbUtils
 from ..models import DivinationLayoutDict
 from .base import BaseRepository
 

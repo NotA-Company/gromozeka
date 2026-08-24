@@ -20,10 +20,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from dateutil import parser
 
+from lib.db import utils as dbUtils
 from lib.db.manager import DatabaseManager
 from lib.db.providers import ParametrizedQuery
 
-from .. import utils as dbUtils
 from ..models import WebhookUpdatesRow
 from .base import BaseRepository
 

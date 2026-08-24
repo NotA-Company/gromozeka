@@ -32,9 +32,9 @@ import logging
 from typing import List, Optional
 
 from internal.models import MessageId
+from lib.db import utils as dbUtils
 from lib.db.manager import DatabaseManager
 
-from .. import utils as dbUtils
 from ..models import SpamMessageDict, SpamReason
 from .base import BaseRepository
 

@@ -10,8 +10,8 @@ from typing import Any, Dict, Optional
 
 from lib.db.manager import DatabaseManager
 from lib.db.providers.base import ExcludedValue
+from lib.db.utils import getCurrentTimestamp
 
-from ..utils import getCurrentTimestamp
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)

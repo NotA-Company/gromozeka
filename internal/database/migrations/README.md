@@ -686,7 +686,7 @@ Potential features for future versions, dood!
 - [`internal/database/database.py`](../database.py:28) - Database wrapper and migration orchestration
 - [`lib/db/manager.py`](../../../lib/db/manager.py:14) - Database manager
 - [`lib/db/providers/base.py`](../../../lib/db/providers/base.py:1) - SQL provider interface
-- [`internal/database/utils.py`](../utils.py:1) - Database utilities
+- [`lib/db/utils.py`](../../../lib/db/utils.py:1) - Database utilities
 
 ### External Resources
 
