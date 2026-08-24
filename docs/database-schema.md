@@ -1046,14 +1046,14 @@ All database queries return strongly-typed dictionaries defined in [`internal/da
 
 | TypedDict | Description | Definition |
 |-----------|-------------|------------|
-| [`ChatMessageDict`](../internal/database/models.py:129) | Chat message with user and media info | Lines 108-160 |
-| [`ChatUserDict`](../internal/database/models.py:187) | Chat user information | Lines 163-186 |
-| [`ChatInfoDict`](../internal/database/models.py:213) | Chat metadata | Lines 215-231 |
-| [`ChatTopicInfoDict`](../internal/database/models.py:241) | Forum topic information | Lines 234-252 |
-| [`MediaAttachmentDict`](../internal/database/models.py:262) | Media attachment details | Lines 255-281 |
-| [`DelayedTaskDict`](../internal/database/models.py:291) | Delayed task information | Lines 284-300 |
-| [`SpamMessageDict`](../internal/database/models.py:332) | Spam message details | Lines 325-347 |
-| [`WebhookUpdatesRow`](../internal/database/models.py:310) | Max webhook payload awaiting consumption | Lines 303-324 |
+| [`ChatMessageDict`](../internal/database/models.py:129) | Chat message with user and media info | Lines 129-184 |
+| [`ChatUserDict`](../internal/database/models.py:187) | Chat user information | Lines 187-210 |
+| [`ChatInfoDict`](../internal/database/models.py:213) | Chat metadata | Lines 213-238 |
+| [`ChatTopicInfoDict`](../internal/database/models.py:241) | Forum topic information | Lines 241-259 |
+| [`MediaAttachmentDict`](../internal/database/models.py:262) | Media attachment details | Lines 262-288 |
+| [`DelayedTaskDict`](../internal/database/models.py:291) | Delayed task information | Lines 291-307 |
+| [`WebhookUpdatesRow`](../internal/database/models.py:310) | Max webhook payload awaiting consumption | Lines 310-329 |
+| [`SpamMessageDict`](../internal/database/models.py:332) | Spam message details | Lines 332-352 |
 | [`ChatSummarizationCacheDict`](../internal/database/models.py:355) | Cached summary information | Lines 355-377 |
 | [`CacheStorageDict`](../internal/database/models.py:380) | Cache storage entry | Lines 380-390 |
 | [`UserMemoryDict`](../internal/database/models.py:545) | Per-(chat, user, thread) memory row (with optional `score` from semantic search) | Lines 545-593 |
