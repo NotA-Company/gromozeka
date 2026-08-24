@@ -134,7 +134,7 @@ Open Qs put to user: package name; cut mechanism; manager now/later; big-bang vs
 
 ## DB Cache Cleanup (verified 2026-07-15)
 
-See [`memories/db-cache-cleanup.md`](memories/db-cache-cleanup.md) — durable notes for the cache cleanup mechanism: `clearOldCacheEntries`, weekly cron + on-shutdown triggers, per-namespace TTLs, Bayes tokens cleanup, `cache_storage` exemption.
+See [`memories/db-cache-cleanup.md`](memories/db-cache-cleanup.md) — durable notes for the cache cleanup mechanism: `GenericDatabaseCache.clearOld` (since ADR-024; was `CacheRepository.clearOldCacheEntries`), weekly cron + on-shutdown triggers, per-namespace TTLs, Bayes tokens cleanup, `cache_storage` exemption.
 
 ## Repo Facts And Gotchas
 

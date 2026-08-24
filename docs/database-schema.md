@@ -241,7 +241,7 @@ Stores all chat messages with detailed metadata.
 - References [`media_groups`](#media_groups) via `media_group_id`
 - Self-references via `reply_id` and `root_message_id`
 
-**TypedDict**: [`ChatMessageDict`](../internal/database/models.py:108)
+**TypedDict**: [`ChatMessageDict`](../internal/database/models.py:129)
 
 **`metadata` JSON convention:** the column holds a JSON object (`internal/bot/models/message_metadata.py` → `MetadataDict`, `total=False`) with optional keys. The keys relevant to the condensed-context-retrieval feature (ADR-019) are:
 
@@ -293,7 +293,7 @@ Stores per-chat user information and statistics.
 
 **`metadata` JSON convention:** the column holds a JSON object (`internal/bot/models/user_metadata.py` → `UserMetadataDict`, `total=False`) with boolean flags (`isSpammer`, `notSpammer`, `dropMessages`, `leftChat`) plus an optional `memoryRefinement` sub-dict keyed by `str(threadId)` (e.g. `"0"` for the main thread). Each `memoryRefinement[threadId]` entry (`UserMemoryThreadDict`) carries: `summary` (rolling short bio), `lastProcessedMessageId` + `lastProcessedMessageDate` (message cursor for `getChatMessagesSince`). The `lastRefinedTS` (unix timestamp of the last refinement run) is NO LONGER persisted here — it is tracked in-memory on `UserMemoriesHandler._lastRefinedTS` (lost on restart; absent → 0 → treated as due). Read via `CacheService.getUserMetadata()`; the nested `memoryRefinement` sub-dict must be written via read-modify-write through `CacheService.updateUserMetadata()` (full-dict replace, NO merge — see [`docs/llm/tasks.md`](llm/tasks.md) §3: `setUserMetadata(isUpdate=True)` shallow-merges at the top level and would wipe sibling threads). Single-row `(chatId, userId)` reads/writes are cached via `CacheService` (ADR-015; the cached `messages_count` is best-effort stale — incremented by raw SQL in `saveChatMessage`, bypassing the cache).
 
-**TypedDict**: [`ChatUserDict`](../internal/database/models.py:163)
+**TypedDict**: [`ChatUserDict`](../internal/database/models.py:187)
 
 **Example Query**:
 ```python
@@ -323,7 +323,7 @@ Stores chat metadata and configuration.
 | `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
-**TypedDict**: [`ChatInfoDict`](../internal/database/models.py:226) — `bot_status` is a REQUIRED `ChatBotStatus` field (the key can never be omitted). Both DB-row-backed reads (`SELECT ci.*`) and platform-sourced write dicts from `TheBot.getChatInfo` populate it (the platform dict hardcodes `ChatBotStatus.ACTIVE`).
+**TypedDict**: [`ChatInfoDict`](../internal/database/models.py:213) — `bot_status` is a REQUIRED `ChatBotStatus` field (the key can never be omitted). Both DB-row-backed reads (`SELECT ci.*`) and platform-sourced write dicts from `TheBot.getChatInfo` populate it (the platform dict hardcodes `ChatBotStatus.ACTIVE`).
 
 **Example Query**:
 ```python
@@ -354,7 +354,7 @@ Stores forum topic information for chats with topics enabled.
 **Relationships**:
 - References [`chat_info`](#chat_info) via `chat_id`
 
-**TypedDict**: [`ChatTopicInfoDict`](../internal/database/models.py:234)
+**TypedDict**: [`ChatTopicInfoDict`](../internal/database/models.py:241)
 
 ---
 
@@ -507,7 +507,7 @@ Stores information about media attachments (images, documents, etc.).
 **Relationships**:
 - Referenced by [`chat_messages`](#chat_messages) via `media_id`
 
-**TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:255)
+**TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:262)
 
 **STT (media-transcription) semantics:** For STT semantics (lifecycle, gating, CAS-removal), see [ADR-020](llm/architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall).
 
@@ -541,7 +541,7 @@ Stores messages identified as spam for training and analysis.
 | `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
-**TypedDict**: [`SpamMessageDict`](../internal/database/models.py:325)
+**TypedDict**: [`SpamMessageDict`](../internal/database/models.py:332)
 
 ---
 
@@ -707,7 +707,7 @@ Stores tasks scheduled for delayed execution.
 | `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
-**TypedDict**: [`DelayedTaskDict`](../internal/database/models.py:284)
+**TypedDict**: [`DelayedTaskDict`](../internal/database/models.py:291)
 
 ---
 
@@ -883,7 +883,7 @@ Stores raw incoming Max Messenger webhook payloads awaiting consumption by the b
 **Indexes**:
 - `idx_webhook_updates_unprocessed` on `(processed, received_at)` — backs the unprocessed-updates query (`WHERE processed = 0 ORDER BY received_at ASC`)
 
-**TypedDict**: [`WebhookUpdatesRow`](../internal/database/models.py:303)
+**TypedDict**: [`WebhookUpdatesRow`](../internal/database/models.py:310)
 
 **Note**: Created by `migration_019`. No `AUTOINCREMENT`/`SERIAL` and no `DEFAULT CURRENT_TIMESTAMP` — `id` is a caller-generated UUID and both timestamps are set by application code, mirroring the repo-wide portability rules. Processed rows are reaped by the receiver's background cleanup task (default TTL 1 hour). The bot only writes to this table when webhook mode is on; the receiver process always writes here regardless of the bot's `enabled` flag.
 
@@ -1046,14 +1046,14 @@ All database queries return strongly-typed dictionaries defined in [`internal/da
 
 | TypedDict | Description | Definition |
 |-----------|-------------|------------|
-| [`ChatMessageDict`](../internal/database/models.py:108) | Chat message with user and media info | Lines 108-160 |
-| [`ChatUserDict`](../internal/database/models.py:163) | Chat user information | Lines 163-186 |
-| [`ChatInfoDict`](../internal/database/models.py:215) | Chat metadata | Lines 215-231 |
-| [`ChatTopicInfoDict`](../internal/database/models.py:234) | Forum topic information | Lines 234-252 |
-| [`MediaAttachmentDict`](../internal/database/models.py:255) | Media attachment details | Lines 255-281 |
-| [`DelayedTaskDict`](../internal/database/models.py:284) | Delayed task information | Lines 284-300 |
-| [`SpamMessageDict`](../internal/database/models.py:325) | Spam message details | Lines 325-347 |
-| [`WebhookUpdatesRow`](../internal/database/models.py:303) | Max webhook payload awaiting consumption | Lines 303-324 |
+| [`ChatMessageDict`](../internal/database/models.py:129) | Chat message with user and media info | Lines 108-160 |
+| [`ChatUserDict`](../internal/database/models.py:187) | Chat user information | Lines 163-186 |
+| [`ChatInfoDict`](../internal/database/models.py:213) | Chat metadata | Lines 215-231 |
+| [`ChatTopicInfoDict`](../internal/database/models.py:241) | Forum topic information | Lines 234-252 |
+| [`MediaAttachmentDict`](../internal/database/models.py:262) | Media attachment details | Lines 255-281 |
+| [`DelayedTaskDict`](../internal/database/models.py:291) | Delayed task information | Lines 284-300 |
+| [`SpamMessageDict`](../internal/database/models.py:332) | Spam message details | Lines 325-347 |
+| [`WebhookUpdatesRow`](../internal/database/models.py:310) | Max webhook payload awaiting consumption | Lines 303-324 |
 | [`ChatSummarizationCacheDict`](../internal/database/models.py:355) | Cached summary information | Lines 355-377 |
 | [`CacheStorageDict`](../internal/database/models.py:380) | Cache storage entry | Lines 380-390 |
 | [`UserMemoryDict`](../internal/database/models.py:545) | Per-(chat, user, thread) memory row (with optional `score` from semantic search) | Lines 545-593 |

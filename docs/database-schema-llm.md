@@ -41,7 +41,7 @@ CREATE TABLE chat_messages (
 
 Schema above is the post-`migration_025` shape (canonical form with no `DEFAULT CURRENT_TIMESTAMP`). Columns `markup`/`metadata` were added by `migration_007`; `media_group_id` by `migration_008`; `model_id` by `migration_025` (Phase 2 of the embedding-model-lookup refactor — replaces the legacy `message_embeddings` BLOB side table; chat-history embeddings now live in vec0 only with `model_id` carrying the provenance). **No `updated_at` column** — only `created_at`. **No SQL `FOREIGN KEY` declarations** — the relationships below are logical (enforced by the application, not by DDL).
 
-**TypedDict**: [`ChatMessageDict`](../internal/database/models.py:108)
+**TypedDict**: [`ChatMessageDict`](../internal/database/models.py:129)
 **Relationships**: References [`chat_users`](#chat_users) (logical, via `(chat_id, user_id)`), [`media_attachments`](#media_attachments) (logical, via `media_id`), [`media_groups`](#media_groups) (logical, via `media_group_id`).
 
 **Note**: The `media_group_id` column links messages that are part of a media group (album of photos/videos sent together).
@@ -78,7 +78,7 @@ CREATE TABLE chat_users (
 )
 ```
 
-**TypedDict**: [`ChatUserDict`](../internal/database/models.py:163)
+**TypedDict**: [`ChatUserDict`](../internal/database/models.py:187)
 
 **`metadata` JSON convention**: the column holds a JSON object (`internal/bot/models/user_metadata.py` → `UserMetadataDict`, `total=False`) with boolean flags (`isSpammer`, `notSpammer`, `dropMessages`, `leftChat`) plus an optional `memoryRefinement: Dict[str(threadId), UserMemoryThreadDict]` sub-dict. Each per-thread entry carries `summary`, `lastProcessedMessageId`, `lastProcessedMessageDate` (cursor for `getChatMessagesSince`). The `lastRefinedTS` is NO LONGER persisted — it is tracked in-memory on `UserMemoriesHandler._lastRefinedTS` (lost on restart; absent → 0). The nested sub-dict must be written via read-modify-write through `CacheService.updateUserMetadata()` (full-dict replace, NO merge) — `setUserMetadata(isUpdate=True)` does a shallow top-level merge and would wipe sibling threads (see [`docs/llm/tasks.md`](llm/tasks.md) §3). Single-row `(chatId, userId)` reads/writes are cached via `CacheService` (ADR-015); the cached `messages_count` is best-effort stale (incremented by raw SQL in `saveChatMessage`, bypassing the cache).
 
@@ -103,7 +103,7 @@ CREATE TABLE chat_info (
 
 Schema above is the post-`migration_026` shape. The `bot_status` column (added by `migration_026`; column only — no supporting index) backs the chat-accessibility-tracking subsystem — values of the [`ChatBotStatus`](#chatbotstatus) StrEnum (`'active'` / `'inaccessible'`). The string-literal `DEFAULT 'active'` is portable across SQLite/PostgreSQL/MySQL and backfills every existing row to `'active'` as part of the `ALTER TABLE` (no separate backfill; satisfies the optimistic-default binding decision). **Self-heal behaviour (shipped):** `ChatInfoRepository.updateChatInfo` takes a keyword-only `botStatus: Optional[ChatBotStatus] = ChatBotStatus.ACTIVE` (default `ACTIVE`, NOT `None`). `bot_status` is unconditionally included in BOTH the INSERT `values` and the `CONFLICT`-UPDATE expressions of the provider upsert (via `ExcludedValue`); `CacheService.setChatInfo` forwards `info["bot_status"]` (direct subscript, NOT `.get(...)`), so `markChatInaccessible` / `markChatActive` reach the column via the same upsert path as every other `chat_info` write. Because `TheBot.getChatInfo` hardcodes `bot_status = ChatBotStatus.ACTIVE` and `updateChatInfo`'s default is `ACTIVE`, the every-message refresh path ALWAYS writes `ACTIVE` — a transient `INACCESSIBLE` set by `markChatInaccessible` self-heals to `ACTIVE` on the next inbound message (which proves the chat is accessible). `bot_status` is a short-lived "getChatAdmins probe failed" flag, not a permanent state.
 
-**TypedDict**: [`ChatInfoDict`](../internal/database/models.py:226) — `bot_status` is a REQUIRED `ChatBotStatus` field (the key can never be omitted). Both DB-row-backed reads (`SELECT ci.*`) and platform-sourced write dicts from `TheBot.getChatInfo` populate it (the platform dict hardcodes `ChatBotStatus.ACTIVE`).
+**TypedDict**: [`ChatInfoDict`](../internal/database/models.py:213) — `bot_status` is a REQUIRED `ChatBotStatus` field (the key can never be omitted). Both DB-row-backed reads (`SELECT ci.*`) and platform-sourced write dicts from `TheBot.getChatInfo` populate it (the platform dict hardcodes `ChatBotStatus.ACTIVE`).
 
 ---
 
@@ -125,7 +125,7 @@ CREATE TABLE chat_topics (
 )
 ```
 
-**TypedDict**: [`ChatTopicInfoDict`](../internal/database/models.py:234)
+**TypedDict**: [`ChatTopicInfoDict`](../internal/database/models.py:241)
 
 ---
 
@@ -191,7 +191,7 @@ CREATE TABLE media_attachments (
 )
 ```
 
-**TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:255)
+**TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:262)
 
 **STT (media-transcription) semantics:** For STT semantics (lifecycle, gating, CAS-removal), see [ADR-020](llm/architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall).
 
@@ -224,7 +224,7 @@ CREATE TABLE spam_messages (
 )
 ```
 
-**TypedDict**: [`SpamMessageDict`](../internal/database/models.py:325)
+**TypedDict**: [`SpamMessageDict`](../internal/database/models.py:332)
 
 ---
 
@@ -523,7 +523,7 @@ CREATE TABLE delayed_tasks (
 )
 ```
 
-**TypedDict**: [`DelayedTaskDict`](../internal/database/models.py:284)
+**TypedDict**: [`DelayedTaskDict`](../internal/database/models.py:291)
 
 ---
 
@@ -544,7 +544,7 @@ CREATE TABLE webhook_updates (
 
 **Indexes**: `idx_webhook_updates_unprocessed` on `(processed, received_at)` — backs `WHERE processed = 0 ORDER BY received_at ASC`
 
-**TypedDict**: [`WebhookUpdatesRow`](../internal/database/models.py:303)
+**TypedDict**: [`WebhookUpdatesRow`](../internal/database/models.py:310)
 
 **Repository** (`WebhookUpdatesRepository`, accessed as `db.webhookUpdates`):
 - `addUpdate(updateId, updateType, rawJson) -> bool` — store a raw payload (caller generates the UUID; `received_at` set by the repo).

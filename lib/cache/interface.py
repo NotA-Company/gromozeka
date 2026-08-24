@@ -96,7 +96,7 @@ class CacheInterface(ABC, Generic[K, V]):
         Clear all cached data
 
         Removes all entries from the cache, resetting it to an empty state.
-        This operation is synchronous and should complete immediately
+        This operation is asynchronous and should complete immediately
 
         Example:
             >>> cache = DictCache[str, str](StringKeyGenerator())

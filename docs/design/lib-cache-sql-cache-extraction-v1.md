@@ -1,7 +1,7 @@
 # Design: `GenericDatabaseCache` → `lib/cache/sql_cache.py` + `clearOld` on `CacheInterface` (v1)
 
 **Date**: 2026-08-24
-**Status**: **Ratified 2026-08-24 — implementation deferred (design-doc round).**
+**Status**: **IMPLEMENTED — all phases landed** (code `c1ac3395`, docs `2bb9b2fb`). All decisions (D1–D15) user-ratified 2026-08-24. See ADR-024.
 **Owner**: TBD
 **Scope**: Extract `internal/database/generic_cache.py`
 (`GenericDatabaseCache`, 161 lines) to `lib/cache/sql_cache.py` (path in backticks: does not exist
@@ -315,6 +315,14 @@ The namespace and `dataSource` come from the instance; there is no cross-namespa
 on the ABC (the cross-namespace case is composed by callers looping instances — D7). Return
 contract ported from the repository: `True` on success including no-op (pinned today by
 `testReturnsTrueOnSuccess`), `False` only on exception, never raises.
+
+> **Deviation note (2026-08-25):** The shipped `clearOld` implements `ttl=0`/`None` as an
+> unconditional namespace DELETE, deliberately diverging from the legacy
+> `clearOldCacheEntries` behavior (`cutoff = now`, `updated_at < now` — same-instant and
+> future-dated rows survived that sweep). Sanctioned by parity item 6(c), D5's normalization
+> parenthetical above, and the ADR-024 draft. Rationale: deterministic testability under
+> frozen clocks — a just-set entry has age exactly `0.0`, and a strict `age > 0` comparison
+> cannot delete it.
 
 ### D6 — Method name: `clearOld`
 
