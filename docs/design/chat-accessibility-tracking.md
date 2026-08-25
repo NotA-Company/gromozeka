@@ -273,7 +273,7 @@ class Migration026ChatAccessibilityBotStatus(BaseMigration):
 ### 3.3 `ChatInfoDict` extension
 
 In [`internal/database/models.py`](../../internal/database/models.py) (`ChatInfoDict` at
-[`internal/database/models.py:192`](../../internal/database/models.py)):
+[`internal/database/models.py:213`](../../internal/database/models.py)):
 
 ```python
 class ChatInfoDict(TypedDict):
@@ -296,7 +296,7 @@ class ChatInfoDict(TypedDict):
 ```
 
 `NotRequired` (not plain required) mirrors the existing `score` / `model_id` pattern in
-`ChatMessageDict` ([`internal/database/models.py:144`](../../internal/database/models.py)):
+`ChatMessageDict` ([`internal/database/models.py:129`](../../internal/database/models.py)):
 DB rows always carry the column, platform-sourced write dicts omit it, and the upsert
 (§3.4) intentionally does not thread it. `from typing import NotRequired` is already
 imported in that module.
