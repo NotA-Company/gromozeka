@@ -31,6 +31,7 @@ from .utils import (
     packDict,
     parseDelay,
     slottedObjectToDict,
+    substituteEnvVars,
     unpackDict,
 )
 
@@ -48,6 +49,7 @@ __all__ = [
     "packDict",
     "parseDelay",
     "slottedObjectToDict",
+    "substituteEnvVars",
     "unpackDict",
     # ttl_dict
     "TTLDict",
