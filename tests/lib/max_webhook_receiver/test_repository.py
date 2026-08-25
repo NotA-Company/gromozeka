@@ -1,16 +1,26 @@
 """Tests for WebhookUpdatesRepository.
 
 Integration tests exercising :class:`WebhookUpdatesRepository` against a real
-in-memory SQLite database (all migrations applied via the ``testDatabase``
-fixture). Covers storing raw webhook payloads, polling unprocessed rows in
-arrival order, batch-marking them processed, and TTL-based reaping of old
-processed rows.
+in-memory SQLite database (schema self-healed via ``ensureWebhookUpdatesSchema``).
+Covers storing raw webhook payloads, polling unprocessed rows in arrival order,
+batch-marking them processed, and TTL-based reaping of old processed rows.
+
+This test file was moved from ``tests/database/repositories/test_webhook_updates.py``
+as part of the webhook receiver extraction to lib/. The fixture now builds a
+standalone DatabaseManager and self-heals the schema via
+``ensureWebhookUpdatesSchema`` instead of relying on the bot's migration chain,
+mirroring the receiver's actual bring-up path.
 """
 
 import asyncio
+from typing import AsyncGenerator
 
-from internal.database import Database
-from internal.database.models import WebhookUpdatesRow
+import pytest
+
+from lib.db.manager import DatabaseManager, DatabaseManagerConfig
+from lib.max_webhook_receiver.models import WebhookUpdatesRow
+from lib.max_webhook_receiver.repository import WebhookUpdatesRepository
+from lib.max_webhook_receiver.schema import ensureWebhookUpdatesSchema
 
 #: Minimum delay between two ``getCurrentTimestamp()`` calls to guarantee the
 #: second timestamp strictly exceeds the first at microsecond resolution. Used
@@ -18,24 +28,56 @@ from internal.database.models import WebhookUpdatesRow
 TIMESTAMP_TICK: float = 0.02
 
 
+@pytest.fixture
+async def webhookRepository(inMemoryDbPath) -> AsyncGenerator[WebhookUpdatesRepository, None]:
+    """Fresh manager over in-memory SQLite with the webhook_updates schema self-healed.
+
+    Mirrors the standalone receiver's bring-up exactly: DatabaseManager over
+    the receiver-own config shape + ensureWebhookUpdatesSchema (table AND
+    index, D15), no migration chain.
+
+    Args:
+        inMemoryDbPath: In-memory database path fixture from conftest.py.
+
+    Yields:
+        WebhookUpdatesRepository: Repository instance with schema self-healed.
+    """
+    config: DatabaseManagerConfig = {
+        "default": "default",
+        "chatMapping": {},
+        "providers": {
+            "default": {
+                "provider": "sqlite3",
+                "parameters": {"dbPath": inMemoryDbPath},
+            }
+        },
+    }
+    manager = DatabaseManager(config)
+    sqlProvider = await manager.getProvider(readonly=False)
+    await ensureWebhookUpdatesSchema(sqlProvider)
+    yield WebhookUpdatesRepository(manager)
+    await manager.closeAll()
+
+
 class TestWebhookUpdatesRepository:
     """Integration tests for the webhook_updates repository.
 
-    Each test writes through the public repository API on top of the shared
-    ``testDatabase`` fixture (a fresh in-memory SQLite database with all
-    migrations applied) and reads back through it to verify observable state.
+    Each test writes through the public repository API on top of a local
+    ``webhookRepository`` fixture (a fresh in-memory SQLite database with the
+    webhook_updates schema self-healed) and reads back through it to verify
+    observable state.
     """
 
-    async def test_addUpdate_storesEvent(self, testDatabase: Database) -> None:
+    async def test_addUpdate_storesEvent(self, webhookRepository) -> None:
         """addUpdate reports success and the row is retrievable as pending.
 
         Args:
-            testDatabase: Fresh in-memory Database with migrations applied.
+            webhookRepository: Repository with self-healed schema.
 
         Returns:
             None
         """
-        repo = testDatabase.webhookUpdates
+        repo = webhookRepository
 
         result = await repo.addUpdate("evt-1", "message_created", '{"hello":"world"}')
 
@@ -44,7 +86,7 @@ class TestWebhookUpdatesRepository:
         assert len(pending) == 1
         assert pending[0]["id"] == "evt-1"
 
-    async def test_getUnprocessedUpdates_returnsStoredUpdates(self, testDatabase: Database) -> None:
+    async def test_getUnprocessedUpdates_returnsStoredUpdates(self, webhookRepository) -> None:
         """Pending rows come back in ascending received_at order.
 
         Two updates are inserted with a small gap so their received_at
@@ -52,12 +94,12 @@ class TestWebhookUpdatesRepository:
         oldest-first.
 
         Args:
-            testDatabase: Fresh in-memory Database with migrations applied.
+            webhookRepository: Repository with self-healed schema.
 
         Returns:
             None
         """
-        repo = testDatabase.webhookUpdates
+        repo = webhookRepository
 
         await repo.addUpdate("first", "message_created", '{"a":1}')
         await asyncio.sleep(TIMESTAMP_TICK)
@@ -68,16 +110,16 @@ class TestWebhookUpdatesRepository:
         assert len(pending) == 2
         assert [row["id"] for row in pending] == ["first", "second"]
 
-    async def test_getUnprocessedUpdates_respectsLimit(self, testDatabase: Database) -> None:
+    async def test_getUnprocessedUpdates_respectsLimit(self, webhookRepository) -> None:
         """The limit argument caps the number of returned rows.
 
         Args:
-            testDatabase: Fresh in-memory Database with migrations applied.
+            webhookRepository: Repository with self-healed schema.
 
         Returns:
             None
         """
-        repo = testDatabase.webhookUpdates
+        repo = webhookRepository
 
         for i in range(10):
             await repo.addUpdate(f"lim-{i}", "message_created", "{}")
@@ -86,16 +128,16 @@ class TestWebhookUpdatesRepository:
 
         assert len(pending) == 3
 
-    async def test_markProcessed_marksCorrectRows(self, testDatabase: Database) -> None:
+    async def test_markProcessed_marksCorrectRows(self, webhookRepository) -> None:
         """Only the supplied IDs are marked; the rest stay pending.
 
         Args:
-            testDatabase: Fresh in-memory Database with migrations applied.
+            webhookRepository: Repository with self-healed schema.
 
         Returns:
             None
         """
-        repo = testDatabase.webhookUpdates
+        repo = webhookRepository
 
         await repo.addUpdate("keep", "message_created", "{}")
         await repo.addUpdate("drop", "message_created", "{}")
@@ -106,16 +148,16 @@ class TestWebhookUpdatesRepository:
         assert len(pending) == 1
         assert pending[0]["id"] == "keep"
 
-    async def test_markProcessed_withEmptyList(self, testDatabase: Database) -> None:
+    async def test_markProcessed_withEmptyList(self, webhookRepository) -> None:
         """An empty ID list is a no-op that does not raise or mutate rows.
 
         Args:
-            testDatabase: Fresh in-memory Database with migrations applied.
+            webhookRepository: Repository with self-healed schema.
 
         Returns:
             None
         """
-        repo = testDatabase.webhookUpdates
+        repo = webhookRepository
 
         await repo.addUpdate("evt", "message_created", "{}")
 
@@ -124,7 +166,7 @@ class TestWebhookUpdatesRepository:
 
         assert len(await repo.getUnprocessedUpdates()) == 1
 
-    async def test_markProcessed_atomicAllOrNothing(self, testDatabase: Database) -> None:
+    async def test_markProcessed_atomicAllOrNothing(self, webhookRepository) -> None:
         """A batch containing a non-existent ID does not abort processing.
 
         Note: the original spec expected this to "fail on the nonexistent one",
@@ -136,12 +178,12 @@ class TestWebhookUpdatesRepository:
         marks every ID that does exist.
 
         Args:
-            testDatabase: Fresh in-memory Database with migrations applied.
+            webhookRepository: Repository with self-healed schema.
 
         Returns:
             None
         """
-        repo = testDatabase.webhookUpdates
+        repo = webhookRepository
 
         await repo.addUpdate("exists-1", "message_created", "{}")
         await repo.addUpdate("exists-2", "message_created", "{}")
@@ -152,7 +194,7 @@ class TestWebhookUpdatesRepository:
         pending = await repo.getUnprocessedUpdates()
         assert [row["id"] for row in pending] == ["exists-2"]
 
-    async def test_deleteProcessedOlderThan_removesOldEvents(self, testDatabase: Database) -> None:
+    async def test_deleteProcessedOlderThan_removesOldEvents(self, webhookRepository) -> None:
         """Processed rows past the TTL cutoff are physically deleted.
 
         After marking processed, a short sleep guarantees ``processed_at``
@@ -162,12 +204,12 @@ class TestWebhookUpdatesRepository:
         empty either way once the row is processed).
 
         Args:
-            testDatabase: Fresh in-memory Database with migrations applied.
+            webhookRepository: Repository with self-healed schema.
 
         Returns:
             None
         """
-        repo = testDatabase.webhookUpdates
+        repo = webhookRepository
 
         await repo.addUpdate("old", "message_created", "{}")
         await repo.markProcessed(["old"])
@@ -175,7 +217,7 @@ class TestWebhookUpdatesRepository:
 
         assert await repo.deleteProcessedOlderThan(ttlSeconds=0) is True
 
-        provider = await testDatabase.manager.getProvider(readonly=True)
+        provider = await repo.manager.getProvider(readonly=True)
         rows = await provider.executeFetchAll(
             "SELECT COUNT(*) AS c FROM webhook_updates WHERE id = :id",
             {"id": "old"},
@@ -183,19 +225,19 @@ class TestWebhookUpdatesRepository:
         assert (rows[0]["c"] if rows else 0) == 0
         assert await repo.getUnprocessedUpdates() == []
 
-    async def test_deleteProcessedOlderThan_keepsUnprocessedEvents(self, testDatabase: Database) -> None:
+    async def test_deleteProcessedOlderThan_keepsUnprocessedEvents(self, webhookRepository) -> None:
         """Unprocessed rows are never reaped regardless of TTL.
 
         The delete predicate filters on ``processed = 1``, so a pending row
         (``processed = 0``) survives even with ``ttlSeconds=0``.
 
         Args:
-            testDatabase: Fresh in-memory Database with migrations applied.
+            webhookRepository: Repository with self-healed schema.
 
         Returns:
             None
         """
-        repo = testDatabase.webhookUpdates
+        repo = webhookRepository
 
         await repo.addUpdate("unprocessed", "message_created", "{}")
         await asyncio.sleep(TIMESTAMP_TICK)
@@ -206,19 +248,19 @@ class TestWebhookUpdatesRepository:
         assert len(pending) == 1
         assert pending[0]["id"] == "unprocessed"
 
-    async def test_addUpdate_duplicateIdsFail(self, testDatabase: Database) -> None:
+    async def test_addUpdate_duplicateIdsFail(self, webhookRepository) -> None:
         """Re-inserting an existing id returns False (PRIMARY KEY conflict).
 
         The IntegrityError is caught inside ``addUpdate`` and surfaced as
         ``False``; the originally inserted row is left intact.
 
         Args:
-            testDatabase: Fresh in-memory Database with migrations applied.
+            webhookRepository: Repository with self-healed schema.
 
         Returns:
             None
         """
-        repo = testDatabase.webhookUpdates
+        repo = webhookRepository
 
         assert await repo.addUpdate("dup", "message_created", "{}") is True
         assert await repo.addUpdate("dup", "message_created", "{}") is False
@@ -227,16 +269,16 @@ class TestWebhookUpdatesRepository:
         assert len(pending) == 1
         assert pending[0]["id"] == "dup"
 
-    async def test_getUnprocessedUpdates_returnsTypedDict(self, testDatabase: Database) -> None:
+    async def test_getUnprocessedUpdates_returnsTypedDict(self, webhookRepository) -> None:
         """Returned rows expose every WebhookUpdatesRow field with typed values.
 
         Args:
-            testDatabase: Fresh in-memory Database with migrations applied.
+            webhookRepository: Repository with self-healed schema.
 
         Returns:
             None
         """
-        repo = testDatabase.webhookUpdates
+        repo = webhookRepository
 
         await repo.addUpdate("typed", "message_created", '{"k":1}')
 
@@ -253,7 +295,7 @@ class TestWebhookUpdatesRepository:
         assert row["processed"] == 0
         assert row["processed_at"] is None
 
-    async def test_getUnprocessedUpdates_withMarker_filtersRows(self, testDatabase: Database) -> None:
+    async def test_getUnprocessedUpdates_withMarker_filtersRows(self, webhookRepository) -> None:
         """A marker excludes every row at or before its position.
 
         Three rows are inserted with strictly increasing ``received_at``. A
@@ -261,12 +303,12 @@ class TestWebhookUpdatesRepository:
         (strictly after the marker) should come back.
 
         Args:
-            testDatabase: Fresh in-memory Database with migrations applied.
+            webhookRepository: Repository with self-healed schema.
 
         Returns:
             None
         """
-        repo = testDatabase.webhookUpdates
+        repo = webhookRepository
 
         await repo.addUpdate("first", "message_created", "{}")
         await asyncio.sleep(TIMESTAMP_TICK)
@@ -284,16 +326,16 @@ class TestWebhookUpdatesRepository:
 
         assert [row["id"] for row in filtered] == ["third"]
 
-    async def test_getUnprocessedUpdates_withoutMarkerReturnsAll(self, testDatabase: Database) -> None:
+    async def test_getUnprocessedUpdates_withoutMarkerReturnsAll(self, webhookRepository) -> None:
         """A None marker returns every unprocessed row (unchanged behaviour).
 
         Args:
-            testDatabase: Fresh in-memory Database with migrations applied.
+            webhookRepository: Repository with self-healed schema.
 
         Returns:
             None
         """
-        repo = testDatabase.webhookUpdates
+        repo = webhookRepository
 
         await repo.addUpdate("a", "message_created", "{}")
         await repo.addUpdate("b", "message_created", "{}")
@@ -302,7 +344,7 @@ class TestWebhookUpdatesRepository:
 
         assert [row["id"] for row in pending] == ["a", "b"]
 
-    async def test_markProcessedBeforeMarker_marksCorrectRows(self, testDatabase: Database) -> None:
+    async def test_markProcessedBeforeMarker_marksCorrectRows(self, webhookRepository) -> None:
         """markProcessedBeforeMarker acks rows at/before the marker only.
 
         Three rows are inserted with strictly increasing ``received_at``. The
@@ -311,12 +353,12 @@ class TestWebhookUpdatesRepository:
         pending. Verified by re-polling unprocessed rows without a marker.
 
         Args:
-            testDatabase: Fresh in-memory Database with migrations applied.
+            webhookRepository: Repository with self-healed schema.
 
         Returns:
             None
         """
-        repo = testDatabase.webhookUpdates
+        repo = webhookRepository
 
         await repo.addUpdate("first", "message_created", "{}")
         await asyncio.sleep(TIMESTAMP_TICK)
@@ -333,16 +375,16 @@ class TestWebhookUpdatesRepository:
         remaining = await repo.getUnprocessedUpdates()
         assert [row["id"] for row in remaining] == ["third"]
 
-    async def test_markProcessedBeforeMarker_isIdempotent(self, testDatabase: Database) -> None:
+    async def test_markProcessedBeforeMarker_isIdempotent(self, webhookRepository) -> None:
         """Re-acking the same marker is a no-op on already-processed rows.
 
         Args:
-            testDatabase: Fresh in-memory Database with migrations applied.
+            webhookRepository: Repository with self-healed schema.
 
         Returns:
             None
         """
-        repo = testDatabase.webhookUpdates
+        repo = webhookRepository
 
         await repo.addUpdate("only", "message_created", "{}")
         row = (await repo.getUnprocessedUpdates())[0]
@@ -353,3 +395,44 @@ class TestWebhookUpdatesRepository:
         await repo.markProcessedBeforeMarker(marker)
 
         assert await repo.getUnprocessedUpdates() == []
+
+
+class TestReceiverBringUp:
+    """Standalone bring-up: manager-only + self-heal is a complete schema authority."""
+
+    async def testSelfHealCreatesTableAndIndexAndAcceptsWrites(self, inMemoryDbPath) -> None:
+        """Manager + self-heal creates table/index and accepts writes.
+
+        Args:
+            inMemoryDbPath: In-memory database path fixture from conftest.py.
+
+        Returns:
+            None
+        """
+        config: DatabaseManagerConfig = {
+            "default": "default",
+            "chatMapping": {},
+            "providers": {
+                "default": {
+                    "provider": "sqlite3",
+                    "parameters": {"dbPath": inMemoryDbPath},
+                }
+            },
+        }
+        manager = DatabaseManager(config)
+        try:
+            sqlProvider = await manager.getProvider(readonly=False)
+            await ensureWebhookUpdatesSchema(sqlProvider)
+
+            rows = await sqlProvider.executeFetchAll(
+                "SELECT name, type FROM sqlite_master WHERE name IN (:t, :i)",
+                {"t": "webhook_updates", "i": "idx_webhook_updates_unprocessed"},
+            )
+            actual = {(row["name"], row["type"]) for row in rows}
+            expected = {("webhook_updates", "table"), ("idx_webhook_updates_unprocessed", "index")}
+            assert actual == expected
+
+            result = await WebhookUpdatesRepository(manager).addUpdate("boot-1", "message_created", "{}")
+            assert result is True
+        finally:
+            await manager.closeAll()
