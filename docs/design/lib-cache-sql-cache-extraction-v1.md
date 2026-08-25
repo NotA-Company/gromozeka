@@ -350,6 +350,8 @@ single `cacheType=None` sweep deleted rows in ANY namespace, including stray val
 enum; the loop covers exactly the 8 known namespaces. Verified writers are exactly those 8
 (§2.5 census), so only legacy pre-migration_012 rows could be affected — see Risks and §8.2.
 
+> **Supersession note (2026-08-25):** landed code (user change, post-ADR-024) collapsed the two passes into a single loop with per-member conditional TTL — aggressive members (WEATHER, YANDEX_SEARCH, URL_CONTENT, URL_CONTENT_CONDENSED) receive the 7-day TTL inline, all others the 365-day floor; 8 `clearOld` calls total. Final DB state provably identical (the 7-day predicate is a strict superset of the 365-day one for aggressive namespaces). See ADR-024's "~8 cheap weekly DELETEs" gloss.
+
 ### D8 — `CacheDict` deleted; local row TypedDict in the lib module
 
 Sole consumer is the dying quartet (§2.2). The lib module defines a private `_CacheRowDict`

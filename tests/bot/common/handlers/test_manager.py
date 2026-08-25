@@ -262,56 +262,10 @@ class TestCleanupOldData:
         return mgr, mockDb
 
     async def testDefaultTtlAllNamespaceSweep(self) -> None:
-        """_cleanupOldData calls clearOld for all CacheType members with default TTL."""
-        manager, mockDb = self._buildManager()
+        """_cleanupOldData calls clearOld for all CacheType members once with conditional TTL.
 
-        with (
-            patch("internal.bot.common.handlers.manager.GenericDatabaseCache") as MockCacheClass,
-            patch("internal.bot.common.handlers.manager.DatabaseBayesStorage", return_value=AsyncMock()),
-        ):
-            mockCacheInstance = AsyncMock()
-            MockCacheClass.return_value = mockCacheInstance
-
-            await manager._cleanupOldData()
-
-            # Verify GenericDatabaseCache was constructed len(CacheType) + len(AGGRESSIVE_CLEANUP_CACHE_TYPES) times
-            # (8 default + 4 aggressive = 12 total)
-            expectedConstructCalls = len(list(CacheType)) + len(AGGRESSIVE_CLEANUP_CACHE_TYPES)
-            assert MockCacheClass.call_count == expectedConstructCalls
-
-            # Verify clearOld was called len(CacheType) + len(AGGRESSIVE_CLEANUP_CACHE_TYPES) times
-            expectedClearOldCalls = len(list(CacheType)) + len(AGGRESSIVE_CLEANUP_CACHE_TYPES)
-            assert mockCacheInstance.clearOld.call_count == expectedClearOldCalls
-
-            # Verify the sequence of calls:
-            # First, len(CacheType) calls with DEFAULT_TTL
-            # Then, len(AGGRESSIVE_CLEANUP_CACHE_TYPES) calls with AGGRESSIVE_TTL
-            callArgsList = mockCacheInstance.clearOld.call_args_list
-
-            # First loop: all CacheType members with DEFAULT_TTL
-            for i, cacheType in enumerate(CacheType):
-                args, _ = callArgsList[i]
-                assert args[0] == CACHE_CLEANUP_DEFAULT_TTL_SECS
-                # Verify namespace identity (default sweep, all CacheType members)
-                assert MockCacheClass.call_args_list[i].kwargs["namespace"] is cacheType
-
-            # Second loop: AGGRESSIVE_CLEANUP_CACHE_TYPES with AGGRESSIVE_TTL
-            for i, cacheType in enumerate(AGGRESSIVE_CLEANUP_CACHE_TYPES):
-                args, _ = callArgsList[len(list(CacheType)) + i]
-                assert args[0] == CACHE_CLEANUP_AGGRESSIVE_TTL_SECS
-                # Verify namespace identity (aggressive sweep, specific types)
-                assert MockCacheClass.call_args_list[len(list(CacheType)) + i].kwargs["namespace"] is cacheType
-
-            # Verify manager identity (first iteration sufficient if pattern is uniform)
-            assert MockCacheClass.call_args_list[0].args[0] is mockDb.manager
-
-    async def testAggressivePerNamespaceSweeps(self) -> None:
-        """_cleanupOldData calls clearOld with aggressive TTL for aggressive types.
-
-        Asserts:
-        - First loop: len(CacheType) calls with DEFAULT_TTL (8 calls)
-        - Second loop: len(AGGRESSIVE_CLEANUP_CACHE_TYPES) calls with AGGRESSIVE_TTL (4 calls)
-        - Total = len(CacheType) + len(AGGRESSIVE_CLEANUP_CACHE_TYPES) = 12 calls
+        Each CacheType namespace is swept once: aggressive types get the 7-day TTL,
+        all others get the 365-day default floor. Total of len(CacheType) calls.
         """
         manager, mockDb = self._buildManager()
 
@@ -324,17 +278,69 @@ class TestCleanupOldData:
 
             await manager._cleanupOldData()
 
-            # Total calls = len(CacheType) + len(AGGRESSIVE_CLEANUP_CACHE_TYPES)
-            expectedTotalCalls = len(list(CacheType)) + len(AGGRESSIVE_CLEANUP_CACHE_TYPES)
+            # Verify GenericDatabaseCache was constructed len(CacheType) times (once per namespace)
+            expectedConstructCalls = len(list(CacheType))
+            assert MockCacheClass.call_count == expectedConstructCalls
+
+            # Verify clearOld was called len(CacheType) times (once per namespace)
+            expectedClearOldCalls = len(list(CacheType))
+            assert mockCacheInstance.clearOld.call_count == expectedClearOldCalls
+
+            # Verify each call has the correct TTL for its namespace
+            callArgsList = mockCacheInstance.clearOld.call_args_list
+
+            for i, cacheType in enumerate(CacheType):
+                args, _ = callArgsList[i]
+                expectedTtl = (
+                    CACHE_CLEANUP_AGGRESSIVE_TTL_SECS
+                    if cacheType in AGGRESSIVE_CLEANUP_CACHE_TYPES
+                    else CACHE_CLEANUP_DEFAULT_TTL_SECS
+                )
+                assert args[0] == expectedTtl
+                # Verify namespace identity (single sweep, all CacheType members)
+                assert MockCacheClass.call_args_list[i].kwargs["namespace"] is cacheType
+
+            # Verify manager identity (first iteration sufficient if pattern is uniform)
+            assert MockCacheClass.call_args_list[0].args[0] is mockDb.manager
+
+    async def testAggressivePerNamespaceSweeps(self) -> None:
+        """_cleanupOldData applies aggressive TTL to aggressive namespaces in the single pass.
+
+        Asserts:
+        - Total calls = len(CacheType) (one sweep per namespace)
+        - Aggressive types (4 namespaces) receive AGGRESSIVE_TTL (7 days)
+        - Non-aggressive types (4 namespaces) receive DEFAULT_TTL (365 days)
+        """
+        manager, mockDb = self._buildManager()
+
+        with (
+            patch("internal.bot.common.handlers.manager.GenericDatabaseCache") as MockCacheClass,
+            patch("internal.bot.common.handlers.manager.DatabaseBayesStorage", return_value=AsyncMock()),
+        ):
+            mockCacheInstance = AsyncMock()
+            MockCacheClass.return_value = mockCacheInstance
+
+            await manager._cleanupOldData()
+
+            # Total calls = len(CacheType) (single sweep)
+            expectedTotalCalls = len(list(CacheType))
             assert mockCacheInstance.clearOld.call_count == expectedTotalCalls
 
-            # Verify aggressive types get aggressive TTL in second loop
+            # Verify aggressive types get aggressive TTL in the single sweep
             aggressiveCalls = []
             defaultCalls = []
 
-            for call in mockCacheInstance.clearOld.call_args_list:
+            for i, cacheType in enumerate(CacheType):
+                call = mockCacheInstance.clearOld.call_args_list[i]
                 args, _ = call
                 ttl = args[0]
+                expectedTtl = (
+                    CACHE_CLEANUP_AGGRESSIVE_TTL_SECS
+                    if cacheType in AGGRESSIVE_CLEANUP_CACHE_TYPES
+                    else CACHE_CLEANUP_DEFAULT_TTL_SECS
+                )
+                assert ttl == expectedTtl, f"CacheType {cacheType} got TTL {ttl}, expected {expectedTtl}"
+
                 if ttl == CACHE_CLEANUP_AGGRESSIVE_TTL_SECS:
                     aggressiveCalls.append(call)
                 elif ttl == CACHE_CLEANUP_DEFAULT_TTL_SECS:
@@ -343,8 +349,8 @@ class TestCleanupOldData:
             # Should have exactly len(AGGRESSIVE_CLEANUP_CACHE_TYPES) aggressive calls
             assert len(aggressiveCalls) == len(AGGRESSIVE_CLEANUP_CACHE_TYPES)
 
-            # Should have len(CacheType) default calls (first loop only)
-            assert len(defaultCalls) == len(list(CacheType))
+            # Should have len(CacheType) - len(AGGRESSIVE_CLEANUP_CACHE_TYPES) default calls
+            assert len(defaultCalls) == len(list(CacheType)) - len(AGGRESSIVE_CLEANUP_CACHE_TYPES)
 
     async def testDelayedTasksCleanup(self) -> None:
         """_cleanupOldData calls delayedTasks.cleanupOldCompletedDelayedTasks with 30-day TTL."""
