@@ -76,8 +76,9 @@ class SQLinkProvider(BaseSQLProvider):
             proxy: Optional HTTP/HTTPS proxy configuration dictionary. Stored as
                 a :class:`~lib.proxy.ProxyConfig` object and resolved lazily
                 (via :meth:`~lib.proxy.ProxyConfig.getProxyURL`) at connection time.
-                When ``None``, no proxy is configured and sqlink falls back to
-                ``HTTPS_PROXY`` / ``HTTP_PROXY`` environment variables.
+                When ``None``, no proxy is configured and ``proxy=None`` is passed
+                explicitly to sqlink, meaning a direct connection with no
+                environment-variable fallback to ``HTTPS_PROXY``/``HTTP_PROXY``.
 
         Returns:
             None.
@@ -110,6 +111,27 @@ class SQLinkProvider(BaseSQLProvider):
         """Active SQLink connection, or ``None`` if not connected."""
         self._connectLock: asyncio.Lock = asyncio.Lock()
         """Lock to prevent race conditions during connection creation."""
+
+    def __repr__(self) -> str:
+        """Return a human-readable representation of the SQLink provider.
+
+        Redacts the password field for security. Mirrors the base class
+        format for other public slot attributes.
+
+        Returns:
+            A string in the form ``SQLinkProvider(url=..., user=..., password='***',
+            database=..., timeout=..., keepConnection=...)``.
+        """
+        params = []
+        for attr in self.__slots__:
+            if attr[0] == "_":
+                continue
+            if attr == "password":
+                params.append(f"{attr}='***'")
+            else:
+                params.append(f"{attr}={getattr(self, attr)}")
+
+        return type(self).__name__ + "(" + ", ".join(params) + ")"
 
     async def connect(self) -> None:
         """Open the SQLink connection if not already open.

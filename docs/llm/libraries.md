@@ -998,7 +998,7 @@ from lib.db.providers.base import ExcludedValue, ParametrizedQuery, VectorColumn
 
 **Used by:** [`internal/database/`](../../internal/database/) — the `Database` wrapper, `MigrationManager` + versioned migrations, and the repositories. See [`database.md`](database.md) §7 for the provider helper-method reference (paths, upserts, vector search) and [`database.md`](database.md) §3 for multi-source routing.
 
-**Tests:** `tests/lib/db/providers/` — provider unit tests (`test_base_provider.py`, `test_sqlite3_provider.py`, `test_sqlite3_vector_search.py`, `test_vector_search.py`) and `test_utils.py` (the `SQLStringifiable` Protocol regression test — ADR-022); plus decode/timestamp unit tests at `tests/lib/db/test_utils.py` (moved from `tests/database/` with the module — ADR-023).
+**Tests:** `tests/lib/db/providers/` — provider unit tests (`test_base_provider.py`, `test_sqlite3_provider.py`, `test_sqlite3_vector_search.py`, `test_vector_search.py`), `test_sqlink_provider.py` (SQLinkProvider hermetic suite with FakeAsyncConnection mocking at the sqlink.asyncConnect boundary — no live server; also locks in the `__repr__` password redaction as `***`), `test_get_sql_provider.py` (factory tests), and `test_utils.py` (the `SQLStringifiable` Protocol regression test — ADR-022); plus decode/timestamp unit tests at `tests/lib/db/test_utils.py` (moved from `tests/database/` with the module — ADR-023).
 
 ---
 

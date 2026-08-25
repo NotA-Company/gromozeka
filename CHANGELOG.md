@@ -13,6 +13,7 @@ process governing this file, see [docs/llm/changelog.md](docs/llm/changelog.md).
 
 ### Fixed
 - Per-chat `llm_request` stats undercount: embedding requests, background memory-refinement / chat-search-indexing calls, and context-condensing requests now carry the chat `consumerId` and land under the chat instead of `__global__` (background work keeps skipping the per-chat rate limit via the new `doRateLimit=False`). Per-chat LLM views count these requests from now on; historical rows remain under `__global__`.
+- SQLinkProvider `__repr__` no longer leaks the configured database password into logs (redacted as `***`).
 
 ### Added
 - `RateLimiterManager.applyLimit(queue, key, timeout=...)` (and `SlidingWindowRateLimiter.applyLimit`) now returns `bool` — `True` when the limit was applied, `False` when something went wrong (no limiter registered, limiter error) — and accepts an optional `timeout` (seconds): when the required wait for a free slot exceeds it, the call returns `False` immediately instead of sleeping (no slot is consumed). Without `timeout` the previous blocking behavior is preserved. Existing callers that ignore the return value are unaffected, except that the former `RuntimeError` for unregistered limiters is now reported as `False` instead of raising.
