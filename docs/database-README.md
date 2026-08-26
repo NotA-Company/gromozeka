@@ -509,11 +509,11 @@ The database system uses a repository pattern with 16 specialized repositories, 
    - `saveMemoryEmbedding()` - Store a memory embedding vector (model provenance resolved internally to `model_id` via the injected `modelIdResolver`; handler signature stays model-agnostic)
    - `getMemoriesWithoutEmbeddings()` - Backfill helper for missing embeddings
 
-15. **[`webhookUpdates`](../internal/database/repositories/webhook_updates.py:1)** - Max webhook payload buffer (two-process webhook mode; see ADR-013)
-   - `addUpdate()` - Enqueue an incoming webhook payload
-   - `getUnprocessedUpdates()` - Pull pending payloads for consumption
-   - `markProcessed()` - Mark payloads as consumed
-   - `markProcessedBeforeMarker()` - Bulk-mark up to a marker
+15. **[`webhookUpdates`](../lib/max_webhook_receiver/repository.py)** - Max webhook payload buffer (two-process webhook mode; see ADR-013)
+    - `addUpdate()` - Enqueue an incoming webhook payload
+    - `getUnprocessedUpdates()` - Pull pending payloads for consumption
+    - `markProcessed()` - Mark payloads as consumed
+    - `markProcessedBeforeMarker()` - Bulk-mark up to a marker
    - `deleteProcessedOlderThan()` - Reap old processed payloads
 
 16. **[`embedding_models`](../internal/database/repositories/embedding_models.py:1)** - Embedding-model provenance lookup (process-local cache; injected as `modelIdResolver` into `chatEmbeddings`, `chatSearch`, and `userMemories`)

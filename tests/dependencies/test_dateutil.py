@@ -6,7 +6,7 @@ These tests pin the CURRENT behaviour of the pinned ``python-dateutil``
 - ``internal/database/utils.py`` — ``sqlToCustomType`` parses SQL/LLM-emitted
   timestamp strings via ``dateutil.parser.parse`` and then force-applies UTC
   (``FORCE_SQL_TIMEZONE``) when the parsed value has no ``tzinfo``.
-- ``internal/database/repositories/webhook_updates.py`` — parses Max webhook
+- ``lib/max_webhook_receiver/repository.py`` — parses Max webhook
   ``received_at`` markers directly with ``dateutil.parser.parse``.
 - ``internal/bot/common/handlers/user_memories.py`` — parses an
   LLM/human-written ``lastProcessedMessageDate`` string directly with
@@ -82,10 +82,10 @@ class TestDateutilParseResolution:
     def testIsoWithTimezonePreservesTzinfo(self) -> None:
         """ISO string with a ``+00:00`` offset keeps a non-None tzinfo at offset 0.
 
-        ``internal/database/repositories/webhook_updates.py`` stamps
+        ``lib/max_webhook_receiver/repository.py`` stamps
         ``received_at`` via ``dbUtils.getCurrentTimestamp()`` =
         ``datetime.now(timezone.utc)`` then ``.isoformat()``, which always emits
-        ``+00:00``; the marker is re-parsed at ``webhook_updates.py:95`` to
+        ``+00:00``; the marker is re-parsed at ``lib/max_webhook_receiver/repository.py:101`` to
         order buffered rows. This is the ONLY offset form production
         round-trips, so a bump that silently dropped ``tzinfo`` (or shifted the
         offset) would mis-order those rows.

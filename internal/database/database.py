@@ -54,7 +54,6 @@ from .repositories import (
     MediaAttachmentsRepository,
     SpamRepository,
     UserMemoriesRepository,
-    WebhookUpdatesRepository,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,7 +95,6 @@ class Database:
         delayedTasks: Repository for delayed task scheduling and management.
         divinations: Repository for tarot/runes divination readings.
         cache: Repository for caching operations.
-        webhookUpdates: Repository for Max webhook payload storage and consumption.
         embeddingModels: Repository for the ``models`` embedding-provenance lookup
             table. Constructed first so its bound ``getOrCreateModelId``
             method can be injected as ``modelIdResolver`` into the
@@ -131,7 +129,6 @@ class Database:
         "delayedTasks",
         "divinations",
         "cache",
-        "webhookUpdates",
         "embeddingModels",
         "_migrationManager",
     )
@@ -187,9 +184,6 @@ class Database:
 
     cache: CacheRepository
     """Repository for caching operations."""
-
-    webhookUpdates: WebhookUpdatesRepository
-    """Repository for Max webhook payload storage and consumption."""
 
     embeddingModels: EmbeddingModelsRepository
     """Repository for the ``models`` embedding-provenance lookup table.
@@ -254,7 +248,6 @@ class Database:
         self.delayedTasks = DelayedTasksRepository(self.manager)
         self.divinations = DivinationsRepository(self.manager)
         self.cache = CacheRepository(self.manager)
-        self.webhookUpdates = WebhookUpdatesRepository(self.manager)
 
         self._migrationManager = MigrationManager()
         try:

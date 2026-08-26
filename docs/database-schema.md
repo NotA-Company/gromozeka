@@ -1087,7 +1087,7 @@ The database uses a repository pattern with 16 specialized repositories, each ha
 | `embeddingModels` | [`embedding_models.py`](../internal/database/repositories/embedding_models.py) | Embedding-provenance lookup table (`migration_025`); process-local cache + portable upsert-as-DO-NOTHING. Constructed FIRST in `Database.__init__` so its bound `getOrCreateModelId` method can be injected as `modelIdResolver` into `chatEmbeddings` / `chatSearch` / `userMemories` (Decision D10) |
 | `spam` | [`spam.py`](../internal/database/repositories/spam.py) | Spam detection and ham classification |
 | `userMemories` | [`user_memories.py`](../internal/database/repositories/user_memories.py) | Unified per-(chat, user, thread) structured memory store (`migration_020`; vec0-backed semantic search) |
-| `webhookUpdates` | [`webhook_updates.py`](../internal/database/repositories/webhook_updates.py) | Max webhook payload storage and consumption |
+| `webhookUpdates` | [`repository.py`](../lib/max_webhook_receiver/repository.py) | Max webhook payload storage and consumption |
 
 ### Accessing Repositories
 

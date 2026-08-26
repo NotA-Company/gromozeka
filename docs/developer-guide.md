@@ -609,7 +609,7 @@ The database layer uses a repository pattern with 15 specialized repositories Ea
 | [`MediaAttachmentsRepository`](/internal/database/repositories/media_attachments.py) | `media_attachments.py` | Media metadata operations |
 | [`SpamRepository`](/internal/database/repositories/spam.py) | `spam.py` | Spam detection operations |
 | [`UserMemoriesRepository`](/internal/database/repositories/user_memories.py) | `user_memories.py` | Per-(chat, user, thread) structured memory operations (permanent + ephemeral, vec0-backed) |
-| [`WebhookUpdatesRepository`](/internal/database/repositories/webhook_updates.py) | `webhook_updates.py` | Max webhook payload storage and consumption |
+| [`WebhookUpdatesRepository`](/lib/max_webhook_receiver/repository.py) | `repository.py` | Max webhook payload storage and consumption |
 
 ### Multi-Source Routing
 
