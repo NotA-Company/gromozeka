@@ -6,11 +6,12 @@ standalone process with its own database file. The table and index are now
 owned exclusively by ``lib/max_webhook_receiver/`` and live in the receiver's
 ``webhook_receiver_data.db`` file.
 
-The migration is safe to deploy: the bot never read from or wrote to
-``webhook_updates`` — only the webhook receiver process did, and it now uses
-its own database. The receiver's ``schema.py`` module is the single source
-of truth for the DDL; migrations and the receiver's self-heal share it via
-``getForwardDDL()``.
+The bot has had no code path to ``webhook_updates`` since the receiver
+extraction began, but the OLD receiver process wrote pending rows into this
+database — unconsumed buffered updates are destroyed on upgrade (see the
+upgrade note in ``docs/max-webhook-setup.md``). The receiver's ``schema.py``
+module is the single source of truth for the DDL; migrations and the
+receiver's self-heal share it via ``getForwardDDL()``.
 
 **Schema change:**
 
