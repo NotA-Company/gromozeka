@@ -20,7 +20,7 @@ captures only what an agent would likely get wrong without help.
   `basePollingUrl` override so its existing `_pollingLoop()` polls the receiver
   instead of `platform-api2.max.ru`. See
   [`docs/llm/architecture.md`](docs/llm/architecture.md) ADR-013. Run it with
-  `./venv/bin/python3 -m lib.max_webhook_receiver`.
+  `./venv/bin/python3 -m lib.max_webhook_receiver --config webhook-receiver.toml`.
 - Entry point: [`main.py`](main.py) → `GromozekBot` → `TelegramBotApplication`
   or `MaxBotApplication`.
 
@@ -166,8 +166,10 @@ Layout (see [`docs/llm/index.md`](docs/llm/index.md) §4 for line-level map):
 - [`internal/bot/{telegram,max}/`](internal/bot/) — platform adapters.
 - [`lib/max_webhook_receiver/`](lib/max_webhook_receiver/) — standalone
   Max webhook receiver process (aiohttp). Only deployed in Max webhook mode;
-  see ADR-013 above. Not a bot handler — it shares the `webhook_updates` table
-  and `[webhook-receiver]` config with the bot.
+  see ADR-013 above. Not a bot handler — it owns `webhook_updates` in its own
+  `webhook_receiver_data.db` and reads its own `webhook-receiver.toml` (only
+  `secret` / `get-updates-secret` must match the bot's values; see
+  ADR-013/ADR-025).
 - [`internal/services/`](internal/services/) — `cache/`, `llm/`, `queue_service/`,
   `storage/`. All singletons; access via `Service.getInstance()`, never
   `Service()` directly.

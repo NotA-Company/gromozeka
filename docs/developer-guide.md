@@ -233,13 +233,12 @@ gromozeka/
 │   │   │   ├── chat_search.py      # Chat search (filter + semantic) repository
 │   │   │   ├── chat_embeddings.py  # Message embeddings repository
 │   │   │   ├── divinations.py      # Divination readings + layout discovery repository
-│   │   │   ├── webhook_updates.py  # Max webhook payload repository
 │   │   │   └── user_memories.py    # User memories repository
 │   │   └── migrations/             # Migration system
 │   │       ├── base.py             # BaseMigration abstract class
 │   │       ├── manager.py          # MigrationManager - auto-discovery + apply
 │   │       ├── create_migration.py # Script to scaffold new migrations
-│   │       └── versions/           # Migration files (migration_001 to migration_024)
+│   │       └── versions/           # Migration files (migration_001 to migration_029)
 │   │
 │   ├── services/                   # Service layer (singletons)
 │   │   ├── cache/                  # Cache service
@@ -2125,9 +2124,9 @@ api-key = "${OPENROUTER_API_KEY}"
 
 ### Max Messenger Webhook Receiver (Two-Process Mode)
 
-In Max webhook mode the deployment is **two processes**: the normal bot process plus a standalone aiohttp webhook receiver (`internal/max_webhook_receiver/`) that accepts Max's webhook POSTs and serves them back to the bot via a local `GET /updates` endpoint. See [`docs/llm/architecture.md`](llm/architecture.md) ADR-013.
+In Max webhook mode the deployment is **two processes**: the normal bot process plus a standalone aiohttp webhook receiver (`lib/max_webhook_receiver/`) that accepts Max's webhook POSTs and serves them back to the bot via a local `GET /updates` endpoint. See [`docs/llm/architecture.md`](llm/architecture.md) ADR-013.
 
-**1. Configure** the receiver + bot under `[webhook-receiver]` (defaults live in `configs/00-defaults/webhook-receiver.toml`):
+**1. Configure** the bot under `[webhook-receiver]` (defaults live in `configs/00-defaults/webhook-receiver.toml`; the receiver process reads its own single TOML file — see step 2):
 
 ```toml
 [webhook-receiver]
@@ -2146,16 +2145,15 @@ Set `MAX_WEBHOOK_SECRET` in your `.env`:
 MAX_WEBHOOK_SECRET=some-long-random-secret
 ```
 
-**2. Start the receiver process** (it must be reachable before the bot registers the webhook):
+**2. Start the receiver process** (it must be reachable before the bot registers the webhook). The receiver reads its OWN single TOML config file (`--config`; cwd-relative default `webhook-receiver.toml`) — not the bot's `--config-dir` stack — and stores updates in its own SQLite database (`webhook_receiver_data.db`), created and self-healed on startup. A complete example file (including the `[webhook-receiver.database]` section) lives in [`docs/max-webhook-setup.md`](max-webhook-setup.md):
 
 ```bash
-./venv/bin/python3 -m internal.max_webhook_receiver \
-    --config-dir configs/00-defaults \
-    --config-dir configs/local \
+./venv/bin/python3 -m lib.max_webhook_receiver \
+    --config webhook-receiver.toml \
     --dotenv-file .env
 ```
 
-The receiver binds `127.0.0.1:8443` by default and refuses to start when `secret` is empty or an unresolved `${VAR}` placeholder. Put it behind a reverse proxy (nginx/Caddy) that terminates TLS and forwards `POST /webhook` to the receiver; alternatively set `tls-cert-file` + `tls-key-file` to have the receiver serve HTTPS directly.
+The receiver binds `127.0.0.1:8443` by default and refuses to start when `secret` is empty or an unresolved `${VAR}` placeholder, or when the config file is missing/unreadable. `secret` / `get-updates-secret` are maintained in BOTH the bot's config and the receiver's file — keep them identical (drift = 403s). Put it behind a reverse proxy (nginx/Caddy) that terminates TLS and forwards `POST /webhook` to the receiver; alternatively set `tls-cert-file` + `tls-key-file` in the receiver's config file to have it serve HTTPS directly.
 
 **3. Start the bot** as usual. When `webhook-receiver.enabled = true`, the bot's `MaxBotClient` polls the receiver's `GET /updates` (via `base-polling-url`) instead of `platform-api2.max.ru`; on startup it calls Max's `POST /subscriptions` (when `register-webhook = true`, the default), and on shutdown `DELETE /subscriptions` (when `unregister-webhook = true`; defaults to `false`, so the subscription survives a restart unless you opt in).
 
@@ -2166,7 +2164,7 @@ The receiver binds `127.0.0.1:8443` by default and refuses to start when `secret
     --dotenv-file .env
 ```
 
-**Systemd**: run the two processes as separate units (e.g. `gromozeka.service` for the bot and `gromozeka-webhook.service` for the receiver), both pointing at the same config dirs / `.env` so they share the `[webhook-receiver]` section and the SQLite database.
+**Systemd**: run the two processes as separate units (e.g. `gromozeka.service` for the bot and `gromozeka-webhook.service` for the receiver). They no longer share a config stack or a database: the bot points at the usual `--config-dir` dirs / `.env`, while the receiver takes its own `--config` file (plus `--dotenv-file` for `${VAR}` substitution) and keeps its own SQLite file — only `secret` / `get-updates-secret` must match across the two.
 
 ---
 
