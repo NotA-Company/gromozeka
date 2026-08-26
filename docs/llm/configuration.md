@@ -786,7 +786,7 @@ Used by `scripts/sandbox_bootstrap.py` — not by the library itself.
 
 ### `[webhook-receiver]`
 
-Max Messenger webhook receiver configuration. Defaults live in [`configs/00-defaults/webhook-receiver.toml`](../../configs/00-defaults/webhook-receiver.toml). This section is read by **both** the standalone webhook receiver process ([`internal/max_webhook_receiver/`](../../internal/max_webhook_receiver/)) and the bot process (Max mode). See [`architecture.md`](architecture.md) ADR-013 for the two-process model.
+Max Messenger webhook receiver configuration. Defaults live in [`configs/00-defaults/webhook-receiver.toml`](../../configs/00-defaults/webhook-receiver.toml). This section is read by **both** the standalone webhook receiver process ([`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/)) and the bot process (Max mode). See [`architecture.md`](architecture.md) ADR-013 for the two-process model.
 
 | Key | Type | Default | Purpose |
 |---|---|---|---|

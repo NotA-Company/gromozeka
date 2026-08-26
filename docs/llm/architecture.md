@@ -442,7 +442,7 @@ await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
 
 ### ADR-013: Max Webhook Receiver (Two-Process Local API Proxy)
 
-**Decision:** Max Messenger webhook ingestion runs as a separate standalone aiohttp process ([`internal/max_webhook_receiver/`](../../internal/max_webhook_receiver/)) that accepts webhook POSTs from the Max API, stores raw payloads in the local `webhook_updates` table, and serves them back to the bot via a GET /updates endpoint that speaks the Max API protocol.
+**Decision:** Max Messenger webhook ingestion runs as a separate standalone aiohttp process ([`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/)) that accepts webhook POSTs from the Max API, stores raw payloads in the local `webhook_updates` table, and serves them back to the bot via a GET /updates endpoint that speaks the Max API protocol.
 
 **Why:** Max's webhook model pushes updates to an HTTPS URL the operator controls. Rather than threading a second ingestion path into the bot process, a thin local receiver decouples the public HTTPS endpoint from the bot: it persists payloads durably, then the bot's existing long-poll loop consumes them unchanged.
 

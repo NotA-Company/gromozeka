@@ -286,7 +286,7 @@ vanishingly rare in the Gromozeka codebase.
 | [`internal/services/proxy/service.py`](../../internal/services/proxy/service.py) | `ProxyService` singleton — proxy lifecycle management |
 | [`internal/services/proxy/lifecycle.py`](../../internal/services/proxy/lifecycle.py) | `ProxyLifecycle` — per-config proxy process manager |
 | [`internal/services/storage/service.py`](../../internal/services/storage/service.py) | `StorageService` singleton |
-| [`internal/max_webhook_receiver/`](../../internal/max_webhook_receiver/) | Standalone Max webhook receiver process (`aiohttp.web`): accepts Max webhook POSTs, stores raw payloads in `webhook_updates`, serves them to the bot via GET /updates. Run with `./venv/bin/python3 -m internal.max_webhook_receiver`. See [`architecture.md`](architecture.md) ADR-013. |
+| [`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/) | Standalone Max webhook receiver process (`aiohttp.web`): accepts Max webhook POSTs, stores raw payloads in `webhook_updates`, serves them to the bot via GET /updates. Run with `./venv/bin/python3 -m lib.max_webhook_receiver`. See [`architecture.md`](architecture.md) ADR-013. |
 
 ### 4.6 `lib/` Directory
 

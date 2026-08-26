@@ -864,7 +864,7 @@ async with httpx.AsyncClient(**proxyKwargs, timeout=30) as client:
 
 **Purpose:** provides the `aiohttp.web` server that the standalone Max webhook receiver process runs on. The receiver is **not** a library — it lives under `internal/`, not `lib/` — but its only web-framework dependency is `aiohttp`.
 
-**Used by:** [`internal/max_webhook_receiver/`](../../internal/max_webhook_receiver/) — `__main__.py` (`web.run_app`) and `app.py` (`createApp`, `handleWebhook`, `handleGetUpdates`). See [`architecture.md`](architecture.md) ADR-013 and [`configuration.md`](configuration.md) §`[webhook-receiver]`.
+**Used by:** [`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/) — `__main__.py` (`web.run_app`) and `app.py` (`createApp`, `handleWebhook`, `handleGetUpdates`). See [`architecture.md`](architecture.md) ADR-013 and [`configuration.md`](configuration.md) §`[webhook-receiver]`.
 
 **No config key of its own** — the receiver's listen address, port, and TLS are configured under `[webhook-receiver]` (see [`configuration.md`](configuration.md)).
 

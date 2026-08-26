@@ -14,13 +14,13 @@ captures only what an agent would likely get wrong without help.
 - Multi-platform bot: Telegram **and** Max Messenger. Mode picked by config
   (`bot.mode`), wired in [`main.py`](main.py).
 - **Max webhook mode is two-process.** When `webhook-receiver.enabled = true`,
-  a standalone aiohttp receiver ([`internal/max_webhook_receiver/`](internal/max_webhook_receiver/))
+  a standalone aiohttp receiver ([`lib/max_webhook_receiver/`](lib/max_webhook_receiver/))
   buffers Max webhook POSTs in the `webhook_updates` table and serves them to
   the bot via a local `GET /updates`. The bot's `MaxBotClient` gets a
   `basePollingUrl` override so its existing `_pollingLoop()` polls the receiver
   instead of `platform-api2.max.ru`. See
   [`docs/llm/architecture.md`](docs/llm/architecture.md) ADR-013. Run it with
-  `./venv/bin/python3 -m internal.max_webhook_receiver`.
+  `./venv/bin/python3 -m lib.max_webhook_receiver`.
 - Entry point: [`main.py`](main.py) → `GromozekBot` → `TelegramBotApplication`
   or `MaxBotApplication`.
 
@@ -164,7 +164,7 @@ Layout (see [`docs/llm/index.md`](docs/llm/index.md) §4 for line-level map):
   `TheBot`, `BaseBotHandler`, `HandlersManager`. Handlers are registered as
   an ordered list with parallelism flags.
 - [`internal/bot/{telegram,max}/`](internal/bot/) — platform adapters.
-- [`internal/max_webhook_receiver/`](internal/max_webhook_receiver/) — standalone
+- [`lib/max_webhook_receiver/`](lib/max_webhook_receiver/) — standalone
   Max webhook receiver process (aiohttp). Only deployed in Max webhook mode;
   see ADR-013 above. Not a bot handler — it shares the `webhook_updates` table
   and `[webhook-receiver]` config with the bot.

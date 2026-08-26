@@ -171,7 +171,7 @@ out unregistered `NullStatsStorage`s and the handler no-ops every tick.
   future reload capability, but **today changing them still requires a restart**
   (honest caveat on D1's rationale — flagged, not relitigated).
 - **NG5** — No multi-process coordination. The Max webhook receiver
-  ([`internal/max_webhook_receiver/`](../../internal/max_webhook_receiver/)) does not
+  ([`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/)) does not
   touch stats; aggregation runs only in the bot process.
 
 ---
