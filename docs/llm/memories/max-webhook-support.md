@@ -1,6 +1,8 @@
-# Max Webhook Support
+# Max Webhook Support (superseded by ADR-025 — updated 2026-08-26)
 
-Durable notes from the Max Messenger webhook receiver implementation. Read this when working on `internal/max_webhook_receiver/`, Max webhook infrastructure, `webhook_updates` table, or the two-process local-API-proxy architecture.
+Durable notes from the Max Messenger webhook receiver implementation. Read this when working on `lib/max_webhook_receiver/`, Max webhook infrastructure, `webhook_updates` table, or the two-process local-API-proxy architecture.
+
+> **Since ADR-025** ([`../architecture.md`](../architecture.md); design: [`docs/design/lib-max-webhook-receiver-extraction-v1.md`](../../design/lib-max-webhook-receiver-extraction-v1.md)): the receiver lives at `lib/max_webhook_receiver/` with its OWN single TOML config file and its OWN SQLite database (`webhook_receiver_data.db`) — `internal/max_webhook_receiver/` was deleted, the bot's `webhookUpdates` repository handle and the internal `WebhookUpdatesRow` model are gone, and `migration_029` dropped `webhook_updates` from the bot's database. The details below remain as history (they describe the pre-extraction `internal/` layout).
 
 ## Architecture
 

@@ -1,7 +1,7 @@
 # Design: Extract the Max webhook receiver into `lib/max_webhook_receiver/` (v1)
 
 **Date**: 2026-08-25
-**Status:** Ratified — implementation in progress (Arc 0 of the commit series; amendments #1 and #2 applied 2026-08-25)
+**Status:** Implemented — code arcs landed (commits 622eb060..f72f026a); docs arcs landing
 **Owner**: TBD
 **Scope**: Move the Max webhook receiver implementation — the aiohttp app (`app.py`), the `WebhookUpdatesRepository`, and the `WebhookUpdatesRow` TypedDict — out of `internal/` into a new bot-free `lib/max_webhook_receiver/` package, keeping the deployed command `-m internal.max_webhook_receiver` byte-identical via a thin internal launcher. The lib package becomes the single owner of the canonical `webhook_updates` DDL; `migration_019` delegates to it in place; the receiver's startup self-heals its table instead of triggering the full migration chain. Big-bang, no re-export shims, docs synced across arcs.
 *(Amended 2026-08-25, amendment #2: the thin internal launcher is GONE — the launcher

@@ -68,13 +68,13 @@ tests/
 │   ├── geocode_maps/                        # Geocoding tests + golden data
 │   ├── markdown/
 │   ├── max_bot/                             # MaxBotClient tests
+│   ├── max_webhook_receiver/                # Max webhook receiver tests (ADR-025): test_repository.py (15) + test_app.py (20) + test_main.py (5) over the receiver's OWN database; bot-side table drop covered by tests/database/test_migration_029_drop_webhook_updates.py (6)
 │   ├── openweathermap/                      # Weather tests + golden data
 │   ├── rate_limiter/
 │   ├── sandbox/
 │   ├── stats/
 │   ├── utils/
 │   └── yandex_search/                       # Search tests + golden data
-├── max_webhook_receiver/                    # Max webhook receiver process tests
 ├── models/                                  # Model tests
 ├── scripts/                                 # Script tests
 ├── services/                                # Service tests

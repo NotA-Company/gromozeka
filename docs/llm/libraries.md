@@ -26,6 +26,7 @@
 16. [lib/stt — Provider-neutral Speech-to-Text](#16-libstt--provider-neutral-speech-to-text)
 17. [lib/stats/stats_pages/ — Statistics Page Generator](#17-libstatsstats_pages--statistics-page-generator)
 18. [lib/db — SQL Provider Abstraction + DatabaseManager](#18-libdb--sql-provider-abstraction--databasemanager)
+19. [lib/max_webhook_receiver — Standalone Max Webhook Receiver](#19-libmax_webhook_receiver--standalone-max-webhook-receiver)
 
 ---
 
@@ -860,13 +861,13 @@ async with httpx.AsyncClient(**proxyKwargs, timeout=30) as client:
 
 ## 15. `aiohttp` — HTTP Server for the Webhook Receiver
 
-**Pinned dependency:** `aiohttp==3.14.1` (in `requirements.direct.txt` under `# Runtime`). Promoted from a transitive dependency (pulled in via `aiodocker`) to a direct one because the Max webhook receiver imports it directly.
+**Pinned dependency:** `aiohttp==3.14.3` (in `requirements.direct.txt` under `# Runtime`). Promoted from a transitive dependency (pulled in via `aiodocker`) to a direct one because the Max webhook receiver imports it directly.
 
-**Purpose:** provides the `aiohttp.web` server that the standalone Max webhook receiver process runs on. The receiver is **not** a library — it lives under `internal/`, not `lib/` — but its only web-framework dependency is `aiohttp`.
+**Purpose:** provides the `aiohttp.web` server that the standalone Max webhook receiver process runs on. The receiver itself is documented as a lib package in §19 below.
 
-**Used by:** [`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/) — `__main__.py` (`web.run_app`) and `app.py` (`createApp`, `handleWebhook`, `handleGetUpdates`). See [`architecture.md`](architecture.md) ADR-013 and [`configuration.md`](configuration.md) §`[webhook-receiver]`.
+**Used by:** [`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/) — `__main__.py` (`web.run_app`) and `app.py` (`createApp`, `handleWebhook`, `handleGetUpdates`). See [`architecture.md`](architecture.md) ADR-013/ADR-025, §19 below, and [`configuration.md`](configuration.md) §`[webhook-receiver]`.
 
-**No config key of its own** — the receiver's listen address, port, and TLS are configured under `[webhook-receiver]` (see [`configuration.md`](configuration.md)).
+**No config key of its own** — the receiver's listen address, port, and TLS are configured in the receiver's own config file (see §19 and [`configuration.md`](configuration.md)).
 
 ---
 
@@ -999,6 +1000,45 @@ from lib.db.providers.base import ExcludedValue, ParametrizedQuery, VectorColumn
 **Used by:** [`internal/database/`](../../internal/database/) — the `Database` wrapper, `MigrationManager` + versioned migrations, and the repositories. See [`database.md`](database.md) §7 for the provider helper-method reference (paths, upserts, vector search) and [`database.md`](database.md) §3 for multi-source routing.
 
 **Tests:** `tests/lib/db/providers/` — provider unit tests (`test_base_provider.py`, `test_sqlite3_provider.py`, `test_sqlite3_vector_search.py`, `test_vector_search.py`), `test_sqlink_provider.py` (SQLinkProvider hermetic suite with FakeAsyncConnection mocking at the sqlink.asyncConnect boundary — no live server; also locks in the `__repr__` password redaction as `***`), `test_get_sql_provider.py` (factory tests), and `test_utils.py` (the `SQLStringifiable` Protocol regression test — ADR-022); plus decode/timestamp unit tests at `tests/lib/db/test_utils.py` (moved from `tests/database/` with the module — ADR-023).
+
+---
+
+## 19. `lib/max_webhook_receiver` — Standalone Max Webhook Receiver
+
+Fully standalone aiohttp receiver process implementing ADR-013's two-process webhook architecture: accepts Max webhook POSTs, buffers them in the `webhook_updates` table in its OWN SQLite database, and serves them back to the bot via a `GET /updates` endpoint speaking the Max API protocol. Extracted from `internal/` in a single big-bang move (the old `internal/max_webhook_receiver/` package deleted; no shims) — see [`architecture.md`](architecture.md) ADR-025 and [`docs/design/lib-max-webhook-receiver-extraction-v1.md`](../design/lib-max-webhook-receiver-extraction-v1.md).
+
+**Entry point** (module-invocable like `lib.stats.stats_pages`):
+
+```bash
+./venv/bin/python3 -m lib.max_webhook_receiver --config webhook-receiver.toml [--dotenv-file .env]
+```
+
+**Import:**
+
+```python
+from lib.max_webhook_receiver.app import createApp
+from lib.max_webhook_receiver.models import WebhookUpdatesRow
+from lib.max_webhook_receiver.repository import WebhookUpdatesRepository
+from lib.max_webhook_receiver.schema import ensureWebhookUpdatesSchema, getForwardDDL
+```
+
+(The package `__init__.py` also re-exports `WebhookUpdatesRow`, `WebhookUpdatesRepository`, `WEBHOOK_UPDATES_TABLE_DDL`, `WEBHOOK_UPDATES_INDEX_DDL`, `ensureWebhookUpdatesSchema`, and `getForwardDDL` — but deliberately NOT `createApp`; see the firewall note below.)
+
+**Key modules:**
+
+| Module | Purpose |
+|---|---|
+| [`app.py`](../../lib/max_webhook_receiver/app.py) | `createApp(*, repository, manager, secret, getUpdatesSecret="", webhookPath="/webhook", enableCleanup=True, markOnSubsequentPoll=True) -> web.Application`; the two handlers (`handleWebhook` POST with `X-Max-Bot-Api-Secret` verification, `handleGetUpdates` GET /updates with the compound-marker deferred/immediate acknowledgment protocol); the 1h-TTL background cleanup task; and the `ensureSchema` startup self-heal |
+| [`repository.py`](../../lib/max_webhook_receiver/repository.py) | `WebhookUpdatesRepository(manager)` — `addUpdate`, `getUnprocessedUpdates(limit=100)` (marker filtering), `markProcessed`, `markProcessedBeforeMarker`, `deleteProcessedOlderThan(ttlSeconds=3600)`; provider-level portable SQL (`:named` placeholders, `applyPagination`, app-side timestamps); deliberately does NOT subclass the internal `BaseRepository` (inlined `__slots__ = ("manager",)` — it lives outside the internal repository tree) |
+| [`models.py`](../../lib/max_webhook_receiver/models.py) | `WebhookUpdatesRow` TypedDict (moved verbatim from `internal/database/models.py`) |
+| [`schema.py`](../../lib/max_webhook_receiver/schema.py) | Canonical `webhook_updates` DDL (`WEBHOOK_UPDATES_TABLE_DDL`, `WEBHOOK_UPDATES_INDEX_DDL`), `getForwardDDL()` — the migration-side batch consumed by `migration_019.up()` and `migration_029.down()` — and `ensureWebhookUpdatesSchema(sqlProvider)`, the startup self-heal that creates BOTH the table and the index |
+| [`__main__.py`](../../lib/max_webhook_receiver/__main__.py) | The launcher: `load_dotenv` → stdlib `tomllib` → `substituteEnvVars` ([`lib/utils/utils.py`](../../lib/utils/utils.py)) → `[webhook-receiver]` reads → `${VAR}` secret guard (`SystemExit(1)`) → `DatabaseManager` over `[webhook-receiver.database]` (pure passthrough) → `createApp(...)` → optional TLS → `web.run_app` |
+
+**Own config + own database (ADR-025):** the receiver does NOT use `ConfigManager` — it reads its OWN single TOML config file (`--config`, default `webhook-receiver.toml`; `[webhook-receiver]`-rooted, dotenv + `${VAR}` substitution). Its `[webhook-receiver.database]` section (same shape as the bot's `[database]`) feeds a bare `DatabaseManager` pointing at the receiver's own file (`webhook_receiver_data.db` by default). The receiver never runs the bot's migrations and never touches the bot's database — the bot's chain dropped `webhook_updates` via `migration_029`, so the startup self-heal is the only schema authority for the receiver's database. `secret`/`get-updates-secret` are maintained in BOTH the bot config and the receiver file (drift = 403s) — see [`configuration.md`](configuration.md) §`[webhook-receiver]` for the split and the dual-secret cost.
+
+**Dependency firewall (load-bearing):** the package is bot-free — zero `internal.*` imports anywhere (including the launcher), and `ConfigManager` must never re-enter it. The package `__init__.py` deliberately does NOT import `.app`: the bot's migrations (019 `up()` / 029 `down()`) import `.schema` transitively at bot startup, and aiohttp must stay out of that import chain — import `createApp` from `lib.max_webhook_receiver.app` directly.
+
+**Tests:** `tests/lib/max_webhook_receiver/` — `test_repository.py` (15 tests, incl. the `TestReceiverBringUp` self-heal pin over a manager-only bring-up), `test_app.py` (20 endpoint/lifecycle tests via `aiohttp.test_utils`), `test_main.py` (5 `TestLauncherConfig` tests over real temp TOML/dotenv files — no config mocks); plus the bot-side migration test `tests/database/test_migration_029_drop_webhook_updates.py`.
 
 ---
 

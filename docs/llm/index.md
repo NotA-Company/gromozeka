@@ -43,7 +43,7 @@
 ### Key Features
 
 - Multi-platform bot support (Telegram and Max Messenger)
-- Max Messenger webhook mode: standalone aiohttp webhook-receiver process that buffers Max webhook POSTs in `webhook_updates` and serves them back to the bot via a local GET /updates endpoint (two-process local-API-proxy pattern; see [`architecture.md`](architecture.md) ADR-013)
+- Max Messenger webhook mode: standalone aiohttp webhook-receiver process ([`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/) — own config file + own database since ADR-025) that buffers Max webhook POSTs in `webhook_updates` and serves them back to the bot via a local GET /updates endpoint (two-process local-API-proxy pattern; see [`architecture.md`](architecture.md) ADR-013/ADR-025)
 - Advanced LLM integration with multiple providers (YC SDK, OpenAI-compatible, OpenRouter)
 - Comprehensive API integrations (Weather, Search, Geocoding)
 - ML-powered spam detection with Bayes filter
@@ -286,7 +286,6 @@ vanishingly rare in the Gromozeka codebase.
 | [`internal/services/proxy/service.py`](../../internal/services/proxy/service.py) | `ProxyService` singleton — proxy lifecycle management |
 | [`internal/services/proxy/lifecycle.py`](../../internal/services/proxy/lifecycle.py) | `ProxyLifecycle` — per-config proxy process manager |
 | [`internal/services/storage/service.py`](../../internal/services/storage/service.py) | `StorageService` singleton |
-| [`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/) | Standalone Max webhook receiver process (`aiohttp.web`): accepts Max webhook POSTs, stores raw payloads in `webhook_updates`, serves them to the bot via GET /updates. Run with `./venv/bin/python3 -m lib.max_webhook_receiver`. See [`architecture.md`](architecture.md) ADR-013. |
 
 ### 4.6 `lib/` Directory
 
@@ -306,6 +305,7 @@ vanishingly rare in the Gromozeka codebase.
 | [`lib/bayes_filter/bayes_filter.py`](../../lib/bayes_filter/bayes_filter.py) | Naive Bayes spam filter |
 | [`lib/markdown/parser.py`](../../lib/markdown/parser.py) | Markdown → MarkdownV2 parser |
 | [`lib/max_bot/client.py`](../../lib/max_bot/client.py) | Max Messenger HTTP client |
+| [`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/) | Standalone Max webhook receiver process (`aiohttp.web`): accepts Max webhook POSTs, stores raw payloads in `webhook_updates` in its OWN SQLite file (`webhook_receiver_data.db`), serves them to the bot via GET /updates. Fully standalone — own TOML config file, own `DatabaseManager`, zero internal imports (see [`architecture.md`](architecture.md) ADR-025). Run with `./venv/bin/python3 -m lib.max_webhook_receiver --config webhook-receiver.toml`. Two-process model: ADR-013. |
 | [`lib/openweathermap/client.py`](../../lib/openweathermap/client.py) | OpenWeatherMap API client |
 | [`lib/proxy/__init__.py`](../../lib/proxy/__init__.py) | Proxy resolution package — `ProxyConfig` class, `ProxyHelper` singleton, `ProxyType`/`HealthCheckType` StrEnums, `ProxyKwargs`/`ProxyLifecycleConfigDict` TypedDicts |
 | [`internal/services/proxy/`](../../internal/services/proxy/) | `ProxyService` singleton (lifecycle orchestration) + `ProxyLifecycle` (per-config process manager) |

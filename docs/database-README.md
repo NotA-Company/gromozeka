@@ -89,7 +89,7 @@ A streamlined reference optimized for LLM consumption, featuring:
 - [`vec_message_embeddings_N`](database-schema.md#vec_message_embeddings_n-virtual-table) - vec0 virtual tables (one per embedding dimension; partition key = `model_id`)
 
 #### Webhook Tables
-- [`webhook_updates`](database-schema.md#webhook_updates) - Max webhook payload buffer (two-process webhook mode)
+- `webhook_updates` - moved to the webhook receiver's own database (ADR-025); dropped from the bot's schema by `migration_029`
 
 #### Cache Tables
 - [`chat_summarization_cache`](database-schema.md#chat_summarization_cache) - Cached summaries
@@ -509,11 +509,11 @@ The database system uses a repository pattern with 16 specialized repositories, 
    - `saveMemoryEmbedding()` - Store a memory embedding vector (model provenance resolved internally to `model_id` via the injected `modelIdResolver`; handler signature stays model-agnostic)
    - `getMemoriesWithoutEmbeddings()` - Backfill helper for missing embeddings
 
-15. **[`webhookUpdates`](../lib/max_webhook_receiver/repository.py)** - Max webhook payload buffer (two-process webhook mode; see ADR-013)
-    - `addUpdate()` - Enqueue an incoming webhook payload
-    - `getUnprocessedUpdates()` - Pull pending payloads for consumption
-    - `markProcessed()` - Mark payloads as consumed
-    - `markProcessedBeforeMarker()` - Bulk-mark up to a marker
+15. **[`webhookUpdates`](../lib/max_webhook_receiver/repository.py)** - Max webhook payload buffer (two-process webhook mode; see ADR-013). Since ADR-025 this repository lives in the webhook receiver and works over the receiver's OWN database — it is NOT on the bot's `Database` wrapper
+   - `addUpdate()` - Enqueue an incoming webhook payload
+   - `getUnprocessedUpdates()` - Pull pending payloads for consumption
+   - `markProcessed()` - Mark payloads as consumed
+   - `markProcessedBeforeMarker()` - Bulk-mark up to a marker
    - `deleteProcessedOlderThan()` - Reap old processed payloads
 
 16. **[`embedding_models`](../internal/database/repositories/embedding_models.py:1)** - Embedding-model provenance lookup (process-local cache; injected as `modelIdResolver` into `chatEmbeddings`, `chatSearch`, and `userMemories`)
@@ -523,7 +523,7 @@ The database system uses a repository pattern with 16 specialized repositories, 
 
 #### Accessing Repositories
 
-All repositories are accessed through the main `Database` instance:
+All internal repositories are accessed through the main `Database` instance (the webhook receiver's `webhookUpdates` repository is the one exception — the receiver constructs it over its own database, ADR-025):
 
 ```python
 # Access repositories via the db instance
@@ -744,13 +744,13 @@ See: [Best Practices](database-schema.md#best-practices)
 > [`database-schema.md`](database-schema.md); for migration files see
 > [`internal/database/migrations/versions/`](../internal/database/migrations/versions/).
 
-- **Total Tables**: 25+ base tables (plus dynamic vec0 tables per embedding dimension)
+- **Total Tables**: 22 base tables (plus dynamic vec0 tables per embedding dimension; `webhook_updates` moved to the webhook receiver's own database — ADR-025, `migration_029`)
 - **Core Tables**: 5 (`chat_messages`, `chat_users`, `chat_info`, `chat_topics`, `chat_settings`)
 - **Cache Tables**: 3 (`chat_summarization_cache`, `cache_storage`, `cache` — unified into one namespace-keyed table by `migration_012`; the `cache` table's SQL is owned by `GenericDatabaseCache` in `lib/cache`)
 - **Spam Detection Tables**: 4 (`spam_messages`, `ham_messages`, `bayes_tokens`, `bayes_classes`)
 - **Statistics Tables**: 2 (`stat_events`, `stat_aggregates`) — legacy `chat_stats` and `chat_user_stats` dropped in migration_027
-- **Current Migration Version**: 28
-- **Total Repositories**: 16 specialised repositories on the `Database` class
+- **Current Migration Version**: 29
+- **Total Repositories**: 15 specialised repositories on the `Database` class (plus the webhook receiver's own `WebhookUpdatesRepository` in `lib/max_webhook_receiver/` — ADR-025)
 
 ## 🤝 Contributing
 
@@ -770,6 +770,6 @@ This documentation is part of the Gromozeka bot project.
 
 ---
 
-**Last Updated**: 2026-07-21
-**Database Version**: 25
+**Last Updated**: 2026-08-26
+**Database Version**: 29
 **Documentation Version**: 2.4

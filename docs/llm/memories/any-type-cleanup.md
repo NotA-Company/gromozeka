@@ -26,6 +26,13 @@ Full audit and fix of `Any` type annotations in production code. 61 usages found
 | `lib/markdown/parser.py` | `_OptionValue = Union[bool, int, str, Dict[str, Any]]` for `set_option`/`get_option` |
 | `lib/aurumentation/types.py` | `cache: Optional[Any]`→`Optional[CacheInterface[str, Any]]` |
 
+> **Correction (2026-08-26):** the `internal/config/manager.py` row above is stale as to
+> location — `substituteEnvVars` moved to
+> [`lib/utils/utils.py`](../../../lib/utils/utils.py) in the ADR-025 arc; `ConfigManager`
+> now calls it via `utils.substituteEnvVars`
+> ([`internal/config/manager.py:87`](../../../internal/config/manager.py)). The narrowing
+> the row describes (`TypeVar` + `cast(T, ...)`) moved with the function unchanged.
+
 ## Patterns established for future use:
 - **`_OmitSentinel` class** with `__slots__`, `__repr__`, `__bool__` — enables real discriminated union `str | SentinelType`
 - **`TYPE_CHECKING` + string forward refs** — textbook solution for circular-import workarounds (used in `ExtraDataDict`, `CommandHandlerFunc*`)

@@ -786,7 +786,12 @@ Used by `scripts/sandbox_bootstrap.py` — not by the library itself.
 
 ### `[webhook-receiver]`
 
-Max Messenger webhook receiver configuration. Defaults live in [`configs/00-defaults/webhook-receiver.toml`](../../configs/00-defaults/webhook-receiver.toml). This section is read by **both** the standalone webhook receiver process ([`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/)) and the bot process (Max mode). See [`architecture.md`](architecture.md) ADR-013 for the two-process model.
+Max Messenger webhook receiver configuration — **split across two files since ADR-025** (see [`architecture.md`](architecture.md) ADR-013 for the two-process model and ADR-025 for the extraction):
+
+- The **bot** reads its `[webhook-receiver]` keys from the ConfigManager hierarchy; defaults live in [`configs/00-defaults/webhook-receiver.toml`](../../configs/00-defaults/webhook-receiver.toml) (bot-read keys only).
+- The **receiver process** ([`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/)) reads its OWN single TOML config file — passed via `--config` (default `webhook-receiver.toml`, cwd-relative), NOT part of the ConfigManager hierarchy. It is `[webhook-receiver]`-rooted and also holds the `[webhook-receiver.database]` section (same shape as the bot's `[database]`, pointing at the receiver's own SQLite file, `webhook_receiver_data.db` by default). Dotenv (`--dotenv-file`, default `.env`) + `${VAR}` substitution apply — the launcher uses stdlib `tomllib` + `substituteEnvVars` from [`lib/utils/utils.py`](../../lib/utils/utils.py), no `ConfigManager`.
+
+**Bot-read keys** (ConfigManager hierarchy):
 
 | Key | Type | Default | Purpose |
 |---|---|---|---|
@@ -794,22 +799,30 @@ Max Messenger webhook receiver configuration. Defaults live in [`configs/00-defa
 | `register-webhook` | bool | `true` | Whether the **bot** registers the webhook subscription with Max on startup (`POST /subscriptions`). Set `false` to manage the subscription externally. |
 | `unregister-webhook` | bool | `false` | Whether the **bot** unregisters the webhook subscription on shutdown (`DELETE /subscriptions`). Independent of `register-webhook`; only applies when `enabled = true`. Defaults to `false` so a bot restart does not tear down the Max subscription; set `true` to clean up on shutdown. |
 | `webhook-url` | str | `""` | Public HTTPS URL (port 443, CA-trusted cert) that Max POSTs to. Required when `register-webhook = true`. |
-| `secret` | str | `"${MAX_WEBHOOK_SECRET}"` | Shared secret verifying webhook POSTs. Max sends it in the `X-Max-Bot-Api-Secret` header. Set via the `MAX_WEBHOOK_SECRET` env var — never commit the value. The receiver refuses to start when this is empty or an unresolved `${VAR}` placeholder; the bot likewise rejects an unresolved `${VAR}` whenever `enabled = true` and requires it non-empty when `register-webhook = true`. |
+| `secret` | str | `"${MAX_WEBHOOK_SECRET}"` | Shared secret verifying webhook POSTs. Max sends it in the `X-Max-Bot-Api-Secret` header. Set via the `MAX_WEBHOOK_SECRET` env var — never commit the value. The bot rejects an unresolved `${VAR}` whenever `enabled = true` and requires it non-empty when `register-webhook = true`. **Dual-maintained** — see below. |
 | `webhook-update-types` | list[str] | `[]` | Update types to subscribe to. Empty list = all types. |
 | `base-polling-url` | str | `"http://127.0.0.1:8443"` | URL of the receiver's `GET /updates` endpoint. The bot polls this when `enabled = true`. Becomes `MaxBotClient.basePollingUrl` (trailing slash stripped). |
-| `mark-on-subsequent-poll` | bool | `true` | Delivery semantics for `GET /updates`. When `true` (deferred mode, at-least-once), fetched updates are NOT marked processed on read — they are acknowledged only when the bot passes the returned marker back on its next poll (`markProcessedBeforeMarker`), so a crash between polls re-delivers unacknowledged updates. When `false` (immediate mode, at-most-once), updates are marked processed on read (`markProcessed`); a crash after serving but before handling loses them. |
+| `get-updates-secret` | str | `""` | Optional secret for the `GET /updates` endpoint (the bot sends it as the `Authorization` header when polling; the receiver checks it when set). Empty disables the check — relies on localhost binding. The bot rejects an unresolved `${VAR}` here whenever `enabled = true` (it would otherwise be sent verbatim as the `Authorization` header). **Dual-maintained** — see below. |
+
+**Receiver-file keys** (the receiver's own TOML file; missing non-secret keys fall back to the launcher's inline defaults):
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
 | `listen-host` | str | `"127.0.0.1"` | Receiver HTTP listen address. Default localhost-only — use a reverse proxy for external TLS. |
 | `listen-port` | int | `8443` | Receiver HTTP listen port. |
+| `secret` | str | `""` | Same shared secret as the bot's key. The receiver refuses to start when this is empty or an unresolved `${VAR}` placeholder (it would otherwise be a publicly-known secret). **Dual-maintained** — see below. |
+| `get-updates-secret` | str | `""` | Same optional `GET /updates` auth secret as the bot's key. **Dual-maintained** — see below. |
 | `webhook-path` | str | `"/webhook"` | URL path for the webhook POST endpoint. Change if your reverse proxy routes to a different path. |
-| `get-updates-secret` | str | `""` | Optional secret for the `GET /updates` endpoint (checked against the `Authorization` header). Empty disables the check — relies on localhost binding. The bot rejects an unresolved `${VAR}` here whenever `enabled = true` (it would otherwise be sent verbatim as the `Authorization` header). |
 | `enable-cleanup` | bool | `true` | Whether the receiver's background task periodically deletes processed updates past the TTL. Set `false` to keep all updates indefinitely (useful for debugging). |
-| `datasource` | str | `""` | Optional data source name (must match a `[database.providers]` entry) used by the receiver for all webhook DB operations. Empty uses the default database provider, so webhook data can live in a separate DB from the main bot. |
-| `tls-cert-file` | str | unset | Optional path to a TLS cert. When both this and `tls-key-file` are set, the receiver serves HTTPS directly (no reverse proxy needed). |
-| `tls-key-file` | str | unset | Optional path to a TLS key. See `tls-cert-file`. |
+| `mark-on-subsequent-poll` | bool | `true` | Delivery semantics for `GET /updates`. When `true` (deferred mode, at-least-once), fetched updates are NOT marked processed on read — they are acknowledged only when the bot passes the returned marker back on its next poll (`markProcessedBeforeMarker`), so a crash between polls re-delivers unacknowledged updates. When `false` (immediate mode, at-most-once), updates are marked processed on read (`markProcessed`); a crash after serving but before handling loses them. |
+| `tls-cert-file` / `tls-key-file` | str | unset | Optional TLS cert/key paths. When both are set, the receiver serves HTTPS directly (no reverse proxy needed). |
+| `[webhook-receiver.database]` | table | see below | The receiver's OWN database config — same shape as the bot's `[database]` (`default` + `[webhook-receiver.database.providers.<name>]` with `provider` and a `parameters` sub-table; default `dbPath = "webhook_receiver_data.db"`). The receiver never runs the bot's migrations and never touches the bot's DB; pointing it at `bot_data.db` is unsupported (two processes writing one SQLite file contend) and not enforced. |
+
+**Dual-secret maintenance cost (ADR-025):** `secret` and `get-updates-secret` must be maintained in BOTH the bot config and the receiver's own file — the bot sends them, the receiver verifies them, and drift between the two copies yields 403s. In the standard deployment both values are `${VAR}`-substituted from the same dotenv source, which keeps single-env setups honest. Cross-reference comments in both example files point at each other.
 
 **Deployment modes:**
 - **Reverse proxy (default)** — receiver binds `127.0.0.1:8443` plain HTTP; a reverse proxy (nginx/Caddy) terminates TLS and forwards to `<listen-host>:<listen-port>`.
-- **Direct TLS** — set `tls-cert-file` + `tls-key-file` and the receiver serves HTTPS itself.
+- **Direct TLS** — set `tls-cert-file` + `tls-key-file` (receiver file) and the receiver serves HTTPS itself.
 
 **Secrets discipline:** `secret` uses `${MAX_WEBHOOK_SECRET}` substitution. Document the env var name only — never paste the value. See [`docs/llm/tasks.md`](tasks.md) and root `AGENTS.md` for the project's secrets rules.
 
@@ -983,7 +996,7 @@ global-ratelimiter-queue = "stt-global"
 
 ## 3. ConfigManager Methods
 
-**File:** [`internal/config/manager.py`](../../internal/config/manager.py) — class `ConfigManager` (singleton instantiated from `main.py`). The module-level `substituteEnvVars(value: T) -> T` helper performs the recursive `${VAR}` substitution and is called once from `ConfigManager.__init__`; `__init__` also calls `os.chdir(rootDir)` when `application.root-dir` is set.
+**File:** [`internal/config/manager.py`](../../internal/config/manager.py) — class `ConfigManager` (singleton instantiated from `main.py`). The recursive `${VAR}` substitution helper `substituteEnvVars(value: T) -> T` lives in [`lib/utils/utils.py`](../../lib/utils/utils.py) (moved there in the ADR-025 arc so the webhook receiver launcher could share it; `ConfigManager.__init__` calls it via `utils.substituteEnvVars`); `__init__` also calls `os.chdir(rootDir)` when `application.root-dir` is set.
 
 | Method | Returns | Purpose |
 |---|---|---|

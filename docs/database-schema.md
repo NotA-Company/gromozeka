@@ -33,8 +33,6 @@ This document provides comprehensive documentation for the Gromozeka bot's datab
   - [divination_layouts](#divination_layouts)
 - [Embedding Lookup Tables](#embedding-lookup-tables)
   - [models](#models)
-- [Webhook Tables](#webhook-tables)
-  - [webhook_updates](#webhook_updates)
 - [System Tables](#system-tables)
   - [settings](#settings)
 - [Enums](#enums)
@@ -158,7 +156,7 @@ Migrations are located in [`internal/database/migrations/versions/`](../internal
 | 16 | [`migration_016_add_stat_tables.py`](../internal/database/migrations/versions/migration_016_add_stat_tables.py:1) | Creates [`stat_events`](#stat_events) and [`stat_aggregates`](#stat_aggregates) tables |
 | 17 | [`migration_017_message_embeddings.py`](../internal/database/migrations/versions/migration_017_message_embeddings.py:1) | Creates [`message_embeddings`](#message_embeddings) table for semantic search |
 | 18 | [`migration_018_message_embeddings_index.py`](../internal/database/migrations/versions/migration_018_message_embeddings_index.py:1) | Adds secondary index on `message_embeddings` (chat_id, model) |
-| 19 | [`migration_019_add_webhook_updates_table.py`](../internal/database/migrations/versions/migration_019_add_webhook_updates_table.py:1) | Creates [`webhook_updates`](#webhook_updates) table for Max webhook ingestion |
+| 19 | [`migration_019_add_webhook_updates_table.py`](../internal/database/migrations/versions/migration_019_add_webhook_updates_table.py:1) | Creates `webhook_updates` table for Max webhook ingestion; `up()` delegates its DDL to the lib-owned schema (`getForwardDDL()`). Table + index subsequently DROPPED from the bot's database by migration_029 — moved to the webhook receiver's own database (ADR-025) |
 | 20 | [`migration_020_user_memories.py`](../internal/database/migrations/versions/migration_020_user_memories.py:1) | Creates [`user_memories`](#user_memories) table (unified per-user memory store) with backfills from `user_data` + rolling-bio |
 | 21 | [`migration_021_user_memories_soft_delete.py`](../internal/database/migrations/versions/migration_021_user_memories_soft_delete.py:1) | Adds nullable `deleted_at` to [`user_memories`](#user_memories) for soft-delete semantics (`down()` is a no-op — portable `DROP COLUMN` unavailable) |
 | 22 | [`migration_022_drop_user_data.py`](../internal/database/migrations/versions/migration_022_drop_user_data.py:1) | DROP TABLE `user_data` (superseded by `user_memories`; backfilled in migration_020). No-op downgrade is intentional — re-creating the table would orphan the backfilled rows |
@@ -168,6 +166,7 @@ Migrations are located in [`internal/database/migrations/versions/`](../internal
 | 26 | [`migration_026_chat_accessibility_bot_status.py`](../internal/database/migrations/versions/migration_026_chat_accessibility_bot_status.py:1) | Adds `bot_status TEXT NOT NULL DEFAULT 'active'` to [`chat_info`](#chat_info) (column only — no supporting index). Backs the chat-accessibility-tracking subsystem (lazy mark-on-failure at `TheBot.getChatAdmins` catch sites, activity-based recovery in `MessagePreprocessorHandler`, and an optional `botStatus` filter on every chat-listing repository method). Portable DDL: string-literal `DEFAULT 'active'` backfills every existing row to `ACTIVE` as part of the `ALTER TABLE` (no separate backfill; no `AUTOINCREMENT`/`SERIAL`/`DEFAULT CURRENT_TIMESTAMP`). `down()` runs `DROP COLUMN bot_status` (SQLite ≥3.35). See [`docs/design/chat-accessibility-tracking.md`](design/chat-accessibility-tracking.md). |
 | 27 | [`migration_027_drop_chat_stats_backfill_aggregates.py`](../internal/database/migrations/versions/migration_027_drop_chat_stats_backfill_aggregates.py:1) | Backfill chat_messages history into stat_aggregates (real categories/types, text_length) and drop chat_stats/chat_user_stats; tables: chat_stats, chat_user_stats, stat_aggregates |
 | 28 | [`migration_028_add_stat_events_retention_index.py`](../internal/database/migrations/versions/migration_028_add_stat_events_retention_index.py:1) | Add retention index on stat_events (processed, created_at) to support efficient deletion of processed events older than the retention window |
+| 29 | [`migration_029_drop_webhook_updates.py`](../internal/database/migrations/versions/migration_029_drop_webhook_updates.py:1) | Drops `webhook_updates` + `idx_webhook_updates_unprocessed` from the bot's database — the table moved to the webhook receiver's own database (ADR-025; `lib/max_webhook_receiver/` self-heals both objects at startup over `webhook_receiver_data.db`). `down()` recreates both from the same lib-owned DDL |
 
 ### Creating New Migrations
 
@@ -541,7 +540,7 @@ Stores messages identified as spam for training and analysis.
 | `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
 | `updated_at` | TIMESTAMP | No | - | Last update timestamp (must be provided explicitly) |
 
-**TypedDict**: [`SpamMessageDict`](../internal/database/models.py:332)
+**TypedDict**: [`SpamMessageDict`](../internal/database/models.py:310)
 
 ---
 
@@ -631,7 +630,7 @@ Caches chat message summaries to avoid regenerating them.
 **Indexes**:
 - `chat_summarization_cache_ctfl_index` on `(chat_id, topic_id, first_message_id, last_message_id, prompt)`
 
-**TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:355)
+**TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:333)
 
 **Cache Key Generation**: Implemented in the chatMessages repository
 
@@ -653,7 +652,7 @@ Generic key-value cache storage with namespace support.
 **Indexes**:
 - `idx_cache_namespace` on `namespace` — for faster lookups by namespace (created by `migration_004`)
 
-**TypedDict**: [`CacheStorageDict`](../internal/database/models.py:380)
+**TypedDict**: [`CacheStorageDict`](../internal/database/models.py:358)
 
 ---
 
@@ -863,32 +862,6 @@ CREATE VIRTUAL TABLE vec_message_embeddings_384 USING vec0(
 
 ---
 
-## Webhook Tables
-
-### webhook_updates
-
-Stores raw incoming Max Messenger webhook payloads awaiting consumption by the bot. Written by the standalone webhook receiver process (`internal/max_webhook_receiver/`) on every webhook POST; the bot's normal long-poll loop reads and marks rows processed. See [`docs/llm/architecture.md`](llm/architecture.md) for the two-process webhook model.
-
-**Primary Key**: `id` (application-generated UUID)
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `id` | TEXT | No | - | Application-generated UUID identifying the update (no `AUTOINCREMENT`) |
-| `received_at` | TIMESTAMP | No | - | When the webhook payload was received and stored (set by application code) |
-| `update_type` | TEXT | No | - | Coarse `update_type` tag extracted from the Max payload, used for routing |
-| `raw_json` | TEXT | No | - | Full webhook request body serialized as a JSON string |
-| `processed` | INTEGER | No | 0 | Whether the update has been consumed (0 = pending, 1 = processed) |
-| `processed_at` | TIMESTAMP | Yes | NULL | When the update was marked processed, or NULL if still pending |
-
-**Indexes**:
-- `idx_webhook_updates_unprocessed` on `(processed, received_at)` — backs the unprocessed-updates query (`WHERE processed = 0 ORDER BY received_at ASC`)
-
-**TypedDict**: [`WebhookUpdatesRow`](../internal/database/models.py:310)
-
-**Note**: Created by `migration_019`. No `AUTOINCREMENT`/`SERIAL` and no `DEFAULT CURRENT_TIMESTAMP` — `id` is a caller-generated UUID and both timestamps are set by application code, mirroring the repo-wide portability rules. Processed rows are reaped by the receiver's background cleanup task (default TTL 1 hour). The bot only writes to this table when webhook mode is on; the receiver process always writes here regardless of the bot's `enabled` flag.
-
----
-
 ## User Memory Tables
 
 ### user_memories
@@ -920,9 +893,9 @@ Semantic search runs over a vec0 virtual table (`vec_user_memories_{dim}`, cosin
 - `idx_user_memories_chat_user_permanent` on `(chat_id, user_id, permanent, updated_at DESC)` — backs `getPermanentMemories`.
 - `idx_user_memories_type` on `(chat_id, user_id, type)` — backs type-filtered scans.
 
-**TypedDict**: [`UserMemoryDict`](../internal/database/models.py:545) (snake_case keys; `score: NotRequired[float]` populated by semantic search). Post-`migration_025`, `model_id: Optional[int]` replaces the legacy `embedding_model` / `embedding_dimensions` pair (see [`ModelDict`](#typeddict-models)).
+**TypedDict**: [`UserMemoryDict`](../internal/database/models.py:523) (snake_case keys; `score: NotRequired[float]` populated by semantic search). Post-`migration_025`, `model_id: Optional[int]` replaces the legacy `embedding_model` / `embedding_dimensions` pair (see [`ModelDict`](#typeddict-models)).
 
-**Enum**: [`MemoryType`](../internal/database/models.py:467) (`BIO`/`PREFERENCE`/`FACT`/`EVENT`/`RELATIONSHIP`); [`UserMemorySource`](../internal/database/models.py:509) (`REFINEMENT`/`CHAT`/`MIGRATION`/`USER`).
+**Enum**: [`MemoryType`](../internal/database/models.py:445) (`BIO`/`PREFERENCE`/`FACT`/`EVENT`/`RELATIONSHIP`); [`UserMemorySource`](../internal/database/models.py:487) (`REFINEMENT`/`CHAT`/`MIGRATION`/`USER`).
 
 **Repository** (`UserMemoriesRepository`, accessed as `db.userMemories`) — 10 public methods; all SQL goes through `BaseSQLProvider`:
 - `addMemory(chatId, userId, memoryId, *, type, content, tags, permanent, source, embedding=None, embeddingModel=None, threadId=None) -> None` — INSERT (caller generates the UUID). `source` is a `UserMemorySource`; `threadId` is keyword-only; when both `embedding` (`List[float]`) and `embeddingModel` are provided the row is embedded during add.
@@ -1025,7 +998,7 @@ Indicates why a message was marked as spam.
 
 Defines available cache types for dynamic cache tables.
 
-**Defined in**: [`internal/database/models.py:393`](../internal/database/models.py:393)
+**Defined in**: [`internal/database/models.py:371`](../internal/database/models.py:371)
 
 | Value | Description |
 |-------|-------------|
@@ -1052,12 +1025,11 @@ All database queries return strongly-typed dictionaries defined in [`internal/da
 | [`ChatTopicInfoDict`](../internal/database/models.py:241) | Forum topic information | Lines 241-259 |
 | [`MediaAttachmentDict`](../internal/database/models.py:262) | Media attachment details | Lines 262-288 |
 | [`DelayedTaskDict`](../internal/database/models.py:291) | Delayed task information | Lines 291-307 |
-| [`WebhookUpdatesRow`](../internal/database/models.py:310) | Max webhook payload awaiting consumption | Lines 310-329 |
-| [`SpamMessageDict`](../internal/database/models.py:332) | Spam message details | Lines 332-352 |
-| [`ChatSummarizationCacheDict`](../internal/database/models.py:355) | Cached summary information | Lines 355-377 |
-| [`CacheStorageDict`](../internal/database/models.py:380) | Cache storage entry | Lines 380-390 |
-| [`UserMemoryDict`](../internal/database/models.py:545) | Per-(chat, user, thread) memory row (with optional `score` from semantic search) | Lines 545-593 |
-| [`ModelDict`](../internal/database/models.py:596) | Row in the `models` embedding-provenance lookup table (created by `migration_025`) | Lines 596-628 |
+| [`SpamMessageDict`](../internal/database/models.py:310) | Spam message details | Lines 310-330 |
+| [`ChatSummarizationCacheDict`](../internal/database/models.py:333) | Cached summary information | Lines 333-355 |
+| [`CacheStorageDict`](../internal/database/models.py:358) | Cache storage entry | Lines 358-368 |
+| [`UserMemoryDict`](../internal/database/models.py:523) | Per-(chat, user, thread) memory row (with optional `score` from semantic search) | Lines 523-571 |
+| [`ModelDict`](../internal/database/models.py:574) | Row in the `models` embedding-provenance lookup table (created by `migration_025`) | Lines 574-606 |
 
 These TypedDict models provide:
 - **Type safety**: IDE autocomplete and type checking
@@ -1068,7 +1040,7 @@ These TypedDict models provide:
 
 ## Repository Pattern
 
-The database uses a repository pattern with 16 specialized repositories, each handling a specific domain:
+The database uses a repository pattern with 15 specialized repositories, each handling a specific domain:
 
 | Repository | File | Purpose |
 |---|---|---|
@@ -1087,7 +1059,8 @@ The database uses a repository pattern with 16 specialized repositories, each ha
 | `embeddingModels` | [`embedding_models.py`](../internal/database/repositories/embedding_models.py) | Embedding-provenance lookup table (`migration_025`); process-local cache + portable upsert-as-DO-NOTHING. Constructed FIRST in `Database.__init__` so its bound `getOrCreateModelId` method can be injected as `modelIdResolver` into `chatEmbeddings` / `chatSearch` / `userMemories` (Decision D10) |
 | `spam` | [`spam.py`](../internal/database/repositories/spam.py) | Spam detection and ham classification |
 | `userMemories` | [`user_memories.py`](../internal/database/repositories/user_memories.py) | Unified per-(chat, user, thread) structured memory store (`migration_020`; vec0-backed semantic search) |
-| `webhookUpdates` | [`repository.py`](../lib/max_webhook_receiver/repository.py) | Max webhook payload storage and consumption |
+
+The webhook-receiver repository (`WebhookUpdatesRepository`, formerly `db.webhookUpdates`) left the internal `Database` wrapper with ADR-025 — it lives at [`lib/max_webhook_receiver/repository.py`](../lib/max_webhook_receiver/repository.py) over the webhook receiver's own database.
 
 ### Accessing Repositories
 

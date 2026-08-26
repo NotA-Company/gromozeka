@@ -6,7 +6,7 @@
 **Database Class**: [`Database`](../internal/database/database.py:1)
 **Models**: [`internal/database/models.py`](../internal/database/models.py:1)
 **Repositories**: [`internal/database/repositories/`](../internal/database/repositories/)
-**Migrations**: 28 (up to `migration_028`)
+**Migrations**: 29 (up to `migration_029`)
 
 ---
 
@@ -224,7 +224,7 @@ CREATE TABLE spam_messages (
 )
 ```
 
-**TypedDict**: [`SpamMessageDict`](../internal/database/models.py:332)
+**TypedDict**: [`SpamMessageDict`](../internal/database/models.py:310)
 
 ---
 
@@ -308,7 +308,7 @@ CREATE TABLE chat_summarization_cache (
 )
 ```
 
-**TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:355)
+**TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:333)
 **Indexes**: `chat_summarization_cache_ctfl_index`
 
 ---
@@ -327,7 +327,7 @@ CREATE TABLE cache_storage (
 )
 ```
 
-**TypedDict**: [`CacheStorageDict`](../internal/database/models.py:380)
+**TypedDict**: [`CacheStorageDict`](../internal/database/models.py:358)
 
 ---
 
@@ -408,7 +408,7 @@ CREATE TABLE models (
 )
 ```
 
-**TypedDict**: [`ModelDict`](../internal/database/models.py:596)
+**TypedDict**: [`ModelDict`](../internal/database/models.py:574)
 
 **Repository** (`EmbeddingModelsRepository`, accessed as `db.embeddingModels`): process-local cache `{(model, dimensions): model_id}` so the common path (a hot model that's already been allocated) is a single dict hit. Constructed FIRST in `Database.__init__` so its bound `getOrCreateModelId` method can be injected as the `modelIdResolver` kwarg into the three embedding-touching repos (`chatEmbeddings`, `chatSearch`, `userMemories` — Decision D10). Methods:
 - `getOrCreateModelId(model, dimensions) -> int` — cache-first allocation via `COALESCE(MAX(model_id), 0) + 1` + `provider.upsert(..., updateExpressions={})` (portable `ON CONFLICT DO NOTHING`) + SELECT-back. Runtime probe-then-insert against the `UNIQUE(model, dimensions)` constraint.
@@ -527,32 +527,7 @@ CREATE TABLE delayed_tasks (
 
 ---
 
-### webhook_updates
-**Purpose**: Raw incoming Max Messenger webhook payloads awaiting consumption by the bot. Written by the standalone webhook receiver process (`internal/max_webhook_receiver/`) on every webhook POST; the bot's long-poll loop reads and marks rows processed.
-**Primary Key**: `id` (application-generated UUID)
-
-```sql
-CREATE TABLE webhook_updates (
-    id           TEXT      PRIMARY KEY NOT NULL,
-    received_at  TIMESTAMP NOT NULL,
-    update_type  TEXT      NOT NULL,
-    raw_json     TEXT      NOT NULL,
-    processed    INTEGER   NOT NULL DEFAULT 0,
-    processed_at TIMESTAMP
-)
-```
-
-**Indexes**: `idx_webhook_updates_unprocessed` on `(processed, received_at)` — backs `WHERE processed = 0 ORDER BY received_at ASC`
-
-**TypedDict**: [`WebhookUpdatesRow`](../internal/database/models.py:310)
-
-**Repository** (`WebhookUpdatesRepository`, accessed as `db.webhookUpdates`):
-- `addUpdate(updateId, updateType, rawJson) -> bool` — store a raw payload (caller generates the UUID; `received_at` set by the repo).
-- `getUnprocessedUpdates(limit=100) -> List[WebhookUpdatesRow]` — pending rows oldest-first; pagination via `provider.applyPagination`.
-- `markProcessed(updateIds) -> None` — atomic batch update (single `batchExecute`) so the whole batch commits together; prevents duplicate delivery.
-- `deleteProcessedOlderThan(ttlSeconds=3600) -> bool` — reap processed rows past the TTL; cutoff computed in Python for cross-RDBMS portability.
-
-**Note**: Created by `migration_019`. No `AUTOINCREMENT`/`SERIAL`, no `DEFAULT CURRENT_TIMESTAMP` — `id` is caller-generated and timestamps are application-set. Processed rows are reaped by the receiver's background cleanup task (default TTL 1h).
+`webhook_updates` — moved to the webhook receiver's own database (ADR-025 in [`docs/llm/architecture.md`](llm/architecture.md)); dropped from the bot's database by `migration_029`.
 
 ---
 
@@ -584,9 +559,9 @@ CREATE TABLE user_memories (
 - `idx_user_memories_chat_user_permanent` on `(chat_id, user_id, permanent, updated_at DESC)` — backs `getPermanentMemories`.
 - `idx_user_memories_type` on `(chat_id, user_id, type)` — backs type-filtered scans.
 
-**TypedDict**: [`UserMemoryDict`](../internal/database/models.py:545) (snake_case keys matching columns; `score` is `NotRequired[float]` populated by semantic search). Post-`migration_025`, `model_id: Optional[int]` replaces the legacy `embedding_model` / `embedding_dimensions` pair.
+**TypedDict**: [`UserMemoryDict`](../internal/database/models.py:523) (snake_case keys matching columns; `score` is `NotRequired[float]` populated by semantic search). Post-`migration_025`, `model_id: Optional[int]` replaces the legacy `embedding_model` / `embedding_dimensions` pair.
 
-**Enum**: [`MemoryType`](../internal/database/models.py:467) (`BIO`/`PREFERENCE`/`FACT`/`EVENT`/`RELATIONSHIP`); [`UserMemorySource`](../internal/database/models.py:509) (`REFINEMENT`/`CHAT`/`MIGRATION`/`USER`).
+**Enum**: [`MemoryType`](../internal/database/models.py:445) (`BIO`/`PREFERENCE`/`FACT`/`EVENT`/`RELATIONSHIP`); [`UserMemorySource`](../internal/database/models.py:487) (`REFINEMENT`/`CHAT`/`MIGRATION`/`USER`).
 
 **Repository** (`UserMemoriesRepository`, accessed as `db.userMemories`) — 12 public methods; all SQL goes through `BaseSQLProvider`. Constructed with a constructor-injected `modelIdResolver: Callable[[str, int], Awaitable[int]]` (Decision D10 — bound `EmbeddingModelsRepository.getOrCreateModelId`) so the `(model, dimensions)` pair is resolved to a `model_id` internally without leaking that detail into handler-facing signatures (Decision D6 — signatures stay stable):
 - `addMemory(chatId, userId, memoryId, *, type, content, tags, permanent, source, embedding=None, embeddingModel=None, threadId=None) -> None` — INSERT (caller generates the UUID). `source` is a `UserMemorySource`; `threadId` is keyword-only; when both `embedding` (`List[float]`) and `embeddingModel` are provided the row is embedded during add.
@@ -675,7 +650,7 @@ UNBAN = "unban"
 ---
 
 ### CacheType
-**Location**: [`internal/database/models.py:393`](../internal/database/models.py:393)
+**Location**: [`internal/database/models.py:371`](../internal/database/models.py:371)
 
 ```python
 WEATHER = "weather"
@@ -1475,7 +1450,6 @@ if cached:
 | `ChatTopicInfoDict` | `chat_topics` | None |
 | `MediaAttachmentDict` | `media_attachments` | None |
 | `DelayedTaskDict` | `delayed_tasks` | None |
-| `WebhookUpdatesRow` | `webhook_updates` | None |
 | `SpamMessageDict` | `spam_messages` | None |
 | `ChatSummarizationCacheDict` | `chat_summarization_cache` | None |
 | `CacheStorageDict` | `cache_storage` | None |
