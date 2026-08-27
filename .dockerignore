@@ -1,0 +1,46 @@
+# Trims the Docker build context for the webhook receiver image (and any future
+# root-context builds) so only the sources the image needs are sent to the
+# daemon — and secrets never end up baked into images or layers.
+
+.git
+.opencode
+.agents
+.sourcecraft
+venv
+**/__pycache__
+**/*.pyc
+lib/ext_modules
+docs
+tests
+internal
+configs
+scripts
+examples
+bak
+
+# Databases: the ** anchoring is deliberate — the live databases sit deep in
+# storage/, which bare root-anchored patterns would miss.
+**/*.db
+**/*.db-wal
+**/*.db-shm
+
+# Runtime data and generated artifacts that never belong in a build context.
+storage
+logs
+certs
+htmlcov
+.coverage
+*.mp4
+error.log
+**/*.jsonl
+
+# Secrets stay outside build contexts entirely: the image gets its secrets as
+# environment variables or run-time mounts instead.
+.env*
+# webhook-receiver*.toml keeps the operator's root-level receiver config (Step
+# 4 artifact) out of build contexts — the container mounts it read-only at run
+# time instead.
+webhook-receiver*.toml
+
+TODO.md
+TASK_STATE.md

@@ -1,0 +1,33 @@
+# Standalone pinned lockfile for the Max webhook receiver container image
+# (lib.max_webhook_receiver). This file is independent of the root requirements.txt.
+#
+# Derived from the receiver's module-level import closure:
+#   lib/, lib/utils/, lib/db/ (+ lib/db/providers/), lib/proxy/, lib/max_webhook_receiver/
+#
+# Version pins mirror the root requirements.txt lockfile. Update this file
+# whenever the root pins for these packages change, and re-derive the whole
+# list if the lib/ import closure of the receiver changes.
+#
+# httpx exception: httpx==0.28.1 is NOT in the root lockfile. In the bot it is a
+# shadowed transitive dependency remapped by alias_httpx() to httpx2; this image
+# runs without that alias, so sqlink's hard `import httpx` needs the real
+# package pinned explicitly here.
+
+aiohappyeyeballs==2.7.1
+aiohttp==3.14.3
+aiosignal==1.4.0
+aiosqlite==0.22.1
+anyio==4.14.2
+attrs==26.1.0
+certifi==2026.7.22
+frozenlist==1.8.0
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.18
+multidict==6.7.1
+propcache==0.5.2
+python-dateutil==2.9.0.post0
+six==1.17.0
+sqlink @ git+https://git@git.sourcecraft.dev/notacompany/py-sqlink-client.git@035d1f45b5b3c5f2c9f40cdf666056da7768fd5e
+yarl==1.24.5

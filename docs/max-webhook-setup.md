@@ -389,6 +389,109 @@ Verify:
    log shows incoming POSTs; the bot log shows the update being processed.
 4. **End-to-end** — the bot replies. If replies work, the full loop is good.
 
+## Docker deployment
+
+The receiver ships its own container artifacts: a pinned standalone lockfile
+([`lib/max_webhook_receiver/requirements.txt`](../lib/max_webhook_receiver/requirements.txt))
+and a [`Dockerfile`](../lib/max_webhook_receiver/Dockerfile) under
+`lib/max_webhook_receiver/`, plus a root [`.dockerignore`](../.dockerignore).
+The lockfile pins mirror the root `requirements.txt` and cover only the
+receiver's import closure — with one deliberate exception: `httpx==0.28.1` is
+NOT in the root lockfile (inside the bot it is a shadowed transitive dep,
+remapped to httpx2 by `alias_httpx()`), but the receiver runs without that
+alias and sqlink hard-imports httpx, so the real package is pinned explicitly.
+
+Build from the **repo root** so the `.dockerignore` applies:
+
+```sh
+docker build -f lib/max_webhook_receiver/Dockerfile -t gromozeka-webhook-receiver .
+```
+
+The commit-pinned `sqlink` dependency is fetched from a private git host. If
+anonymous fetch fails, pass credentials via a BuildKit secret instead of
+baking them into the image or layers:
+
+```sh
+printf 'machine git.sourcecraft.dev login <user> password <token>' > /tmp/netrc
+docker build --secret id=netrc,src=/tmp/netrc \
+    -f lib/max_webhook_receiver/Dockerfile -t gromozeka-webhook-receiver .
+```
+
+As of August 2026, anonymous fetches from `git.sourcecraft.dev` still succeed
+with no credentials at all — confirmed in a real smoke build — so try the plain
+build command above first and set up this netrc secret only if the `sqlink`
+fetch fails authentication.
+
+Run the image with the receiver config mounted read-only at
+`/app/webhook-receiver.toml` and a named volume on `/data`; pass the secrets
+as environment variables instead of mounting a `.env` file — the receiver
+substitutes `${VAR}` from the process environment:
+
+```sh
+docker run -d --name gromozeka-webhook-receiver \
+    -p 127.0.0.1:8443:8443 \
+    -v ./webhook-receiver.docker.toml:/app/webhook-receiver.toml:ro \
+    -v webhook-receiver-data:/data \
+    -e MAX_WEBHOOK_SECRET -e MAX_WEBHOOK_GET_UPDATES_SECRET \
+    gromozeka-webhook-receiver
+```
+
+> **colima note:** on colima-based Docker daemons, host paths outside `$HOME`
+> (notably `/tmp`) are not shared into the VM — bind-mounting a config from
+> such a path silently mounts an **empty directory** and crashes startup.
+> Keep `webhook-receiver.docker.toml` under `$HOME`, or use `docker create` +
+> `docker cp` + `docker start` instead of a bind mount.
+
+Without `--dotenv-file`, the launcher still probes its default `/app/.env`, so
+the boot log shows one `ERROR - File .env not found` line at startup — this is
+harmless, since `${VAR}` substitution reads the real environment and the `-e`
+values still work.
+
+This TOML block is a **fragment**, not a complete file — start from the full
+receiver config file from Step 4 and apply these two overrides; the fragment
+alone is missing required `[webhook-receiver.database]` keys and would fail
+DatabaseManager validation:
+
+```toml
+[webhook-receiver]
+# The built-in default 127.0.0.1 is unreachable outside the container; publish
+# the port (-p) against this bind.
+listen-host = "0.0.0.0"
+
+# listen-port, secret, get-updates-secret, webhook-path, cleanup keys:
+# exactly as in Step 4 -- ${VAR} secrets still resolve, now from the
+# container's environment variables.
+
+[webhook-receiver.database.providers.default.parameters]
+# Keep the database on the persisted volume.
+dbPath = "/data/webhook_receiver_data.db"
+```
+
+Docker notes:
+
+- **Dual-secret rule unchanged.** The bot's config stack and the receiver's
+  file must carry identical `secret` / `get-updates-secret` values (Step 8);
+  export both variables into the container environment (`-e`).
+- **No built-in `HEALTHCHECK`.** Once `get-updates-secret` is set, every
+  endpoint requires auth, so an unauthenticated probe would just collect 403s.
+  Check liveness manually — any HTTP response proves the process is
+  listening; `timeout=0` avoids the 90-second long poll:
+
+  ```sh
+  curl -s -o /dev/null -w "%{http_code}\n" "http://127.0.0.1:8443/updates?timeout=0&limit=1"
+  # 200 when get-updates-secret is empty;
+  # 403 when it is set (append -H "Authorization: $MAX_WEBHOOK_GET_UPDATES_SECRET" for a real 200)
+  ```
+
+- **Data persistence.** Run with the `/data` volume (declared by the image):
+  SQLite WAL mode creates `-wal` / `-shm` sibling files next to `dbPath`, so
+  the directory must stay writable by the container's non-root user
+  (`uid 10001`). Never point `dbPath` at the bot's database (see Invariants).
+- The image handles `SIGTERM` gracefully. Buffered updates are never lost —
+  they are already persisted to SQLite when the shutdown signal arrives — but
+  in-flight long-polls drain only up to aiohttp's 60-second shutdown timeout,
+  then are dropped, exactly as on a plain restart (see Operations below).
+
 ## Operations
 
 - **Config changes require restarting both processes.** Each loads the config

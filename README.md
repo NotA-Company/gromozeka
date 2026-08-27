@@ -123,6 +123,12 @@ In production, run the two as separate service units. Keep `secret` /
 `get-updates-secret` identical in the bot's config and the receiver's file
 (drift = 403s).
 
+For container deployments, the receiver ships a pinned standalone
+[`lib/max_webhook_receiver/requirements.txt`](lib/max_webhook_receiver/requirements.txt)
+and a [`lib/max_webhook_receiver/Dockerfile`](lib/max_webhook_receiver/Dockerfile)
+— see the Docker deployment section in
+[docs/max-webhook-setup.md](docs/max-webhook-setup.md).
+
 Full details: [docs/max-webhook-setup.md](docs/max-webhook-setup.md),
 [docs/llm/architecture.md](docs/llm/architecture.md) (ADR-013),
 [docs/llm/configuration.md](docs/llm/configuration.md) (`[webhook-receiver]`).
