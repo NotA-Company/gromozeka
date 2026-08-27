@@ -13,8 +13,12 @@ RUN apk add --no-cache git
 WORKDIR /app
 
 COPY lib/max_webhook_receiver/requirements.txt ./requirements.txt
+# --no-deps is deliberate: sqlink's metadata requires real httpx, but the
+# receiver aliases httpx→httpx2 at package import (see lib.max_webhook_receiver),
+# so plain dependency resolution must be bypassed — requirements.txt carries the
+# complete closure.
 RUN --mount=type=secret,id=netrc,target=/root/.netrc,required=false \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir --no-deps -r requirements.txt
 
 # Runtime source closure of the receiver — the five lib packages it imports.
 # If the receiver ever gains another lib dependency, add it here AND to requirements.txt.

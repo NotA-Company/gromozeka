@@ -9,6 +9,10 @@
 /*.jsonl
 /*.yaml
 /storage
+# Webhook receiver: operator's root-level config (secret-bearing) and the
+# project-local docker data dir bind-mounted at run time.
+/webhook-receiver*.toml
+/data/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

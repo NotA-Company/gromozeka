@@ -396,10 +396,13 @@ The receiver ships its own container artifacts: a pinned standalone lockfile
 and a [`Dockerfile`](../lib/max_webhook_receiver/Dockerfile) under
 `lib/max_webhook_receiver/`, plus a root [`.dockerignore`](../.dockerignore).
 The lockfile pins mirror the root `requirements.txt` and cover only the
-receiver's import closure — with one deliberate exception: `httpx==0.28.1` is
-NOT in the root lockfile (inside the bot it is a shadowed transitive dep,
-remapped to httpx2 by `alias_httpx()`), but the receiver runs without that
-alias and sqlink hard-imports httpx, so the real package is pinned explicitly.
+receiver's import closure. There is NO real `httpx` in the image: the receiver
+aliases `httpx` → `httpx2` at package import (`httpx2.alias_httpx()` in
+[`lib/max_webhook_receiver/__init__.py`](../lib/max_webhook_receiver/__init__.py)),
+so sqlink's hard `import httpx` resolves to httpx2 and the image carries
+`httpx2` / `httpcore2` / `truststore` instead. The Dockerfile installs with
+`pip install --no-deps` because sqlink's metadata declares `httpx>=0.28`, and
+plain dependency resolution would pull the real package right back in.
 
 Build from the **repo root** so the `.dockerignore` applies:
 
@@ -422,25 +425,40 @@ with no credentials at all — confirmed in a real smoke build — so try the pl
 build command above first and set up this netrc secret only if the `sqlink`
 fetch fails authentication.
 
+Create the project-local data directory before the first run. On Linux the
+host directory must be writable by the container user (`uid 10001`) — either
+chown it to that uid or run the container under your own uid/gid; on
+macOS/colima bind mounts are typically permissive as-is:
+
+```sh
+mkdir -p ./data
+# Linux, option A: hand the dir to the container user ...
+sudo chown -R 10001:10001 ./data
+# ... or Linux, option B: run the container with your own identity instead:
+#   docker run -u "$(id -u):$(id -g)" ...
+```
+
 Run the image with the receiver config mounted read-only at
-`/app/webhook-receiver.toml` and a named volume on `/data`; pass the secrets
-as environment variables instead of mounting a `.env` file — the receiver
-substitutes `${VAR}` from the process environment:
+`/app/webhook-receiver.toml` and the project-local `./data` directory bound to
+`/data`; pass the secrets as environment variables instead of mounting a
+`.env` file — the receiver substitutes `${VAR}` from the process environment:
 
 ```sh
 docker run -d --name gromozeka-webhook-receiver \
     -p 127.0.0.1:8443:8443 \
     -v ./webhook-receiver.docker.toml:/app/webhook-receiver.toml:ro \
-    -v webhook-receiver-data:/data \
+    -v ./data:/data \
     -e MAX_WEBHOOK_SECRET -e MAX_WEBHOOK_GET_UPDATES_SECRET \
     gromozeka-webhook-receiver
 ```
 
-> **colima note:** on colima-based Docker daemons, host paths outside `$HOME`
-> (notably `/tmp`) are not shared into the VM — bind-mounting a config from
+> **colima note:** both bind mounts above live inside the project directory,
+> which sits under `$HOME` — shared into the VM on colima-based daemons, so
+> they work as-is. The warning applies to paths OUTSIDE `$HOME` (notably
+> `/tmp`): those are not shared into the VM, and bind-mounting a config from
 > such a path silently mounts an **empty directory** and crashes startup.
-> Keep `webhook-receiver.docker.toml` under `$HOME`, or use `docker create` +
-> `docker cp` + `docker start` instead of a bind mount.
+> Keep host files under `$HOME`, or use `docker create` + `docker cp` +
+> `docker start` instead of a bind mount.
 
 Without `--dotenv-file`, the launcher still probes its default `/app/.env`, so
 the boot log shows one `ERROR - File .env not found` line at startup — this is
@@ -483,10 +501,12 @@ Docker notes:
   # 403 when it is set (append -H "Authorization: $MAX_WEBHOOK_GET_UPDATES_SECRET" for a real 200)
   ```
 
-- **Data persistence.** Run with the `/data` volume (declared by the image):
-  SQLite WAL mode creates `-wal` / `-shm` sibling files next to `dbPath`, so
-  the directory must stay writable by the container's non-root user
-  (`uid 10001`). Never point `dbPath` at the bot's database (see Invariants).
+- **Data persistence.** The database lives in `./data/` inside the project
+  (gitignored), bind-mounted onto the image-declared `/data` volume — not a
+  docker-managed named volume. SQLite WAL mode creates `-wal` / `-shm`
+  sibling files next to `dbPath`, so the directory must stay writable by the
+  container's non-root user (`uid 10001`). Never point `dbPath` at the bot's
+  database (see Invariants).
 - The image handles `SIGTERM` gracefully. Buffered updates are never lost —
   they are already persisted to SQLite when the shutdown signal arrives — but
   in-flight long-polls drain only up to aiohttp's 60-second shutdown timeout,

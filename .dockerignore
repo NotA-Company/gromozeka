@@ -33,6 +33,9 @@ htmlcov
 *.mp4
 error.log
 **/*.jsonl
+# Project-local docker data dir for the webhook receiver (bind-mounted at run
+# time); **/*.db* only catches its files, not the directory itself.
+data
 
 # Secrets stay outside build contexts entirely: the image gets its secrets as
 # environment variables or run-time mounts instead.
