@@ -65,7 +65,7 @@ if _REPO_ROOT not in sys.path:
 # Silence noisy libraries before importing project code.
 # ---------------------------------------------------------------------------
 logging.basicConfig(level=logging.WARNING, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-logging.getLogger("httpx").setLevel(logging.ERROR)
+logging.getLogger("httpx2").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.ERROR)
 logging.getLogger("openai._base_client").setLevel(logging.ERROR)
 

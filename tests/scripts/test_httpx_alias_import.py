@@ -35,14 +35,17 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Scripts that import project code (internal.*/lib.*) and therefore must
-# install the httpx→httpx2 alias BEFORE their first project import. Each of
-# these crashed at import time with the RuntimeError above before the fix.
+# install the httpx→httpx2 alias BEFORE their first project import. All but
+# prune_unknown_chat_settings.py crashed at import time with the RuntimeError
+# above before the fix; prune_unknown_chat_settings.py imported cleanly but
+# silently ran on real httpx (no alias, no crash) — same assertion covers it.
 _ALIASING_SCRIPTS = [
     "check_condensing.py",
     "check_image_parsing.py",
     "check_structured_output.py",
     "check_tool_calling.py",
     "list_models.py",
+    "prune_unknown_chat_settings.py",
     "reproduce_layout_extraction.py",
     "reproduce_llm_dialog.py",
     "run_llm_debug_query.py",

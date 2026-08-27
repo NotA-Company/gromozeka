@@ -41,7 +41,7 @@ import json  # noqa: E402
 import logging  # noqa: E402
 
 logging.basicConfig(level=logging.WARNING)
-logging.getLogger("httpx").setLevel(logging.ERROR)
+logging.getLogger("httpx2").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.ERROR)
 
 import httpx2  # noqa: E402

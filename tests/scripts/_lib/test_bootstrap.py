@@ -146,6 +146,8 @@ _SCRIPTS_DIR = _REPO_ROOT / "scripts"
 #   - LLMManager(...)  → its providers run _initClient() which resolves proxy
 #   - Database(...)    → sqlink backend resolves proxy at connect time
 #   - ProviderClass(...) → direct provider construction runs _initClient()
+#   - STT_PROVIDERS_MAP[providerName](...) → direct STT provider construction
+#     with a resolved proxyConfig (scripts/transcribe.py)
 #
 # Each entry anchors the bootstrapProxy() call to sit strictly between
 # ConfigManager(...) (line of last occurrence) and the first proxy consumer.
@@ -158,6 +160,7 @@ _PROXY_BOOTSTRAPPING_SCRIPTS: List[Tuple[str, str]] = [
     ("reproduce_layout_extraction.py", "Database("),
     ("run_llm_debug_query.py", "LLMManager("),
     ("list_models.py", "ProviderClass("),
+    ("transcribe.py", "STT_PROVIDERS_MAP[providerName]("),
 ]
 
 
