@@ -811,15 +811,18 @@ class TheBot:
                 if attempt == TELEGRAM_SEND_MAX_ATTEMPTS - 1:
                     # Last attempt exhausted, re-raise
                     raise
+                # Read the property exactly once: each access may emit a
+                # PTBDeprecationWarning while PTB_TIMEDELTA is unset (int mode).
+                retryAfterValue: Union[int, timedelta] = e.retry_after
                 # Honor retry_after, capped to prevent absurdly long sleeps
-                if isinstance(e.retry_after, timedelta):
-                    delaySeconds = e.retry_after.total_seconds()
+                if isinstance(retryAfterValue, timedelta):
+                    delaySeconds = retryAfterValue.total_seconds()
                 else:
-                    delaySeconds = float(e.retry_after)
+                    delaySeconds = float(retryAfterValue)
                 delaySeconds = min(delaySeconds, TELEGRAM_RETRY_AFTER_CAP_SECONDS)
                 logger.warning(
                     f"Telegram send (attempt {attempt + 1}/{TELEGRAM_SEND_MAX_ATTEMPTS}), "
-                    f"honoring retry_after={e.retry_after}, sleeping {delaySeconds:.1f}s: "
+                    f"honoring retry_after={retryAfterValue}, sleeping {delaySeconds:.1f}s: "
                     f"{type(e).__name__}#{e}"
                 )
                 await asyncio.sleep(delaySeconds)

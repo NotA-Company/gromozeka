@@ -869,6 +869,109 @@ class TestTelegramSendRetry:
         assert result[0].messageId.asInt() == successMessage.message_id
 
 
+class TestTelegramSendRetryTimedeltaMode:
+    """Tests for _retryTelegramSend's timedelta branch under PTB_TIMEDELTA=1.
+
+    PTB's ``PTB_TIMEDELTA=1`` mode makes ``RetryAfter.retry_after`` return a
+    ``datetime.timedelta`` on every access WITHOUT emitting ``PTBDeprecationWarning``
+    (that is why these tests carry no ``pytest.warns``). This exercises the
+    ``isinstance(..., timedelta)`` branch of ``_retryTelegramSend``, which is dead
+    under the default environment (the property converts timedelta to int there).
+    ``monkeypatch.setenv`` restores the env var after each test.
+    """
+
+    @patch("internal.bot.common.bot.asyncio.sleep", new_callable=AsyncMock)
+    async def test_timedeltaConstructed_sleepsTotalSeconds(
+        self, mockSleep: AsyncMock, telegramBot: TheBot, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Timedelta-constructed RetryAfter sleeps its total_seconds() in timedelta mode.
+
+        Args:
+            mockSleep: Mocked asyncio.sleep for delay verification.
+            telegramBot: The TheBot instance with Telegram provider.
+            monkeypatch: Sets PTB_TIMEDELTA=1, restored after the test.
+        """
+        # Arrange: timedelta mode must be set before constructing RetryAfter
+        monkeypatch.setenv("PTB_TIMEDELTA", "1")
+        mockCallable = AsyncMock(
+            side_effect=[
+                telegram.error.RetryAfter(retry_after=timedelta(seconds=3)),
+                "ok",
+            ]
+        )
+
+        # Act: Call _retryTelegramSend
+        result = await telegramBot._retryTelegramSend(mockCallable)
+
+        # Assert: Returns result, slept once with total_seconds of the timedelta
+        assert result == "ok"
+        assert mockCallable.call_count == 2
+        assert mockSleep.call_count == 1
+        assert mockSleep.call_args.args[0] == 3.0
+
+    @patch("internal.bot.common.bot.asyncio.sleep", new_callable=AsyncMock)
+    async def test_intConstructed_convertedToTimedelta_sleepsSame(
+        self, mockSleep: AsyncMock, telegramBot: TheBot, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Int-constructed RetryAfter yields timedelta in timedelta mode; sleeps the same delay.
+
+        Pins the symmetric-conversion forward-compat claim: ``to_timedelta``
+        canonicalizes at ``__init__``, so int construction in ``PTB_TIMEDELTA=1``
+        mode produces ``timedelta(seconds=3)`` and the delay is identical.
+
+        Args:
+            mockSleep: Mocked asyncio.sleep for delay verification.
+            telegramBot: The TheBot instance with Telegram provider.
+            monkeypatch: Sets PTB_TIMEDELTA=1, restored after the test.
+        """
+        # Arrange: timedelta mode must be set before constructing RetryAfter
+        monkeypatch.setenv("PTB_TIMEDELTA", "1")
+        mockCallable = AsyncMock(
+            side_effect=[
+                telegram.error.RetryAfter(retry_after=3),
+                "ok",
+            ]
+        )
+
+        # Act: Call _retryTelegramSend
+        result = await telegramBot._retryTelegramSend(mockCallable)
+
+        # Assert: Returns result, slept once with the same delay
+        assert result == "ok"
+        assert mockCallable.call_count == 2
+        assert mockSleep.call_count == 1
+        assert mockSleep.call_args.args[0] == 3.0
+
+    @patch("internal.bot.common.bot.asyncio.sleep", new_callable=AsyncMock)
+    async def test_overCap_cappedAt60(
+        self, mockSleep: AsyncMock, telegramBot: TheBot, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Timedelta delay over the cap is capped at 60 seconds in timedelta mode.
+
+        Args:
+            mockSleep: Mocked asyncio.sleep for delay verification.
+            telegramBot: The TheBot instance with Telegram provider.
+            monkeypatch: Sets PTB_TIMEDELTA=1, restored after the test.
+        """
+        # Arrange: timedelta mode must be set before constructing RetryAfter
+        monkeypatch.setenv("PTB_TIMEDELTA", "1")
+        mockCallable = AsyncMock(
+            side_effect=[
+                telegram.error.RetryAfter(retry_after=timedelta(seconds=120)),
+                "ok",
+            ]
+        )
+
+        # Act: Call _retryTelegramSend
+        result = await telegramBot._retryTelegramSend(mockCallable)
+
+        # Assert: Returns result, slept once with the capped delay
+        assert result == "ok"
+        assert mockCallable.call_count == 2
+        assert mockSleep.call_count == 1
+        assert mockSleep.call_args.args[0] == 60.0
+
+
 class TestGetBotIdMemoization:
     """Tests for TheBot.getBotId() memoization to avoid repeated platform API calls."""
 
