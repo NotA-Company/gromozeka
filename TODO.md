@@ -5,6 +5,7 @@
 - [ ] gifs from sandbox sent as static image
 - [ ] Work on the stats display v2 design (owner global/per-model/per-chat-per-model) — see docs/design/stats-display-v2-draft.md
 - [ ] add ability to add bot-memory. think how to inject it
+- [ ] `Handler MessagePreprocessorHandler returned next` - add messageID+chatID
 - [x] move Max Webhook reciver to lib
 - [x] move database providers to lib
 - [ ] On llm-tool-call-fix save wrong + fixed call to file
