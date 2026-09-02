@@ -55,3 +55,6 @@ lib/ext_modules/*/
 .opencode/audit
 .opencode/memory-audit-manifest.json
 /*.mp4
+
+# markdown-mcp local index state
+.markdown-mcp/
