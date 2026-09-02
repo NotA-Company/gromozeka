@@ -1,5 +1,8 @@
 # Our TODO list
 
+- [ ] `/sandbox update` to update packages
+- [ ] ```✍️Опять тихий краш без вывода — инструмент прячет stdout при ненулевом exit code, значит падает сам рендер. Оберну его в дочерний процесс и вытащу вывод оттуда, как следователь — улики:```
+- [ ] gifs from sandbox sent as static image
 - [ ] Work on the stats display v2 design (owner global/per-model/per-chat-per-model) — see docs/design/stats-display-v2-draft.md
 - [ ] add ability to add bot-memory. think how to inject it
 - [x] move Max Webhook reciver to lib
