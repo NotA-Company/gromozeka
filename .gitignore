@@ -4,6 +4,8 @@
 /configs/*
 !/configs/00-defaults
 /*.db
+/*.db-wal
+/*.db-shm
 /bak/
 /*.json
 /*.jsonl

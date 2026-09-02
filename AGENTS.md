@@ -20,7 +20,7 @@ captures only what an agent would likely get wrong without help.
   `basePollingUrl` override so its existing `_pollingLoop()` polls the receiver
   instead of `platform-api2.max.ru`. See
   [`docs/llm/architecture.md`](docs/llm/architecture.md) ADR-013. Run it with
-  `./venv/bin/python3 -m lib.max_webhook_receiver --config webhook-receiver.toml`.
+  `./venv/bin/python3 -m lib.max_webhook_receiver --config webhook-receiver.toml --dotenv-file .env`.
 - Entry point: [`main.py`](main.py) → `GromozekBot` → `TelegramBotApplication`
   or `MaxBotApplication`.
 

@@ -374,14 +374,28 @@ First time, start manually in dependency order:
 
 ```sh
 rc-service gromozeka-webhook-receiver start
-# wait for "======== Running on http://127.0.0.1:8443 ========" in the log
+# wait until the receiver's port answers (see below)
 rc-service gromozeka-bot start
 ```
 
 Verify:
 
-1. **Receiver is listening** — `tail -f /var/log/gromozeka-webhook-receiver.log`
-   shows the aiohttp startup banner on `127.0.0.1:8443`.
+1. **Receiver is listening** — probe the port:
+   `curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:8443/updates?timeout=0'`.
+   Any HTTP answer — including `403` once a get-updates-secret is set — means
+   the listener is up. When scripting the start order, wait for it, e.g.
+
+   ```sh
+   until curl -s -o /dev/null 'http://127.0.0.1:8443/updates?timeout=0'; do sleep 1; done
+   ```
+
+   (without `--fail`, curl exits 0 on any HTTP answer, including 403, and
+   fails only on connection-level errors). The first immediately-visible log
+   line, `Database initialized: {...}` from `lib.db.manager`, only marks
+   startup progress — it is written before the listener binds, so do not use
+   it as the readiness signal. Note: the `======== Running on ========` banner
+   goes to stdout and may lag in redirected log files until shutdown (block
+   buffering); it appears immediately on a terminal and in the Docker image.
 2. **Bot registered the webhook** — the bot log shows the Max
    `POST /subscriptions` succeeding. On failure it raises `RuntimeError` at
    startup (usually a bad `webhook-url` or Max rejecting the cert).
