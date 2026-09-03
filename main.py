@@ -11,7 +11,10 @@ import json
 import logging
 import os
 import sys
-from typing import Dict, Optional
+import threading
+import time
+import traceback
+from typing import Callable, Dict, List, Optional, cast
 
 import httpx2
 
@@ -41,6 +44,10 @@ logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s
 # set higher logging level for httpx2 to avoid all GET and POST requests being logged
 logging.getLogger("httpx2").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
+
+# Seconds the exit guard waits for straggler non-daemon threads to finish
+# before forcing process termination (see installExitGuard).
+EXIT_GUARD_GRACE_SECONDS: float = 5.0
 
 
 class GromozekBot:
@@ -337,9 +344,127 @@ def prettyPrintConfig(config_manager: ConfigManager):
     print("=== Configuration loaded successfully, dood! ===")
 
 
+def strandedNonDaemonThreads() -> List[threading.Thread]:
+    """List live non-daemon threads (excluding the main thread).
+
+    These are exactly the threads ``threading._shutdown()`` joins during
+    interpreter finalization — any of them stuck in a non-returning call
+    hangs the process forever after ``main()`` returns.
+
+    Returns:
+        Live non-daemon threads other than the main thread.
+    """
+    return [
+        thread
+        for thread in threading.enumerate()
+        if thread is not threading.main_thread() and not thread.daemon and thread.is_alive()
+    ]
+
+
+def forceExitIfStrandedThreads(gracePeriodSeconds: float) -> None:
+    """Force-quit the process if non-daemon threads are still alive at exit.
+
+    Context (Max/Telegram Ctrl+C hang, 2026-09-03): httpx2 defaults to
+    ``truststore.SSLContext``, a subclass of ``ssl.SSLContext``. anyio's
+    ``TLSStream.wrap()`` offloads ``wrap_bio`` of any non-stdlib context to a
+    NON-daemon "AnyIO worker thread" — one thread per process, reused for every
+    HTTPS connection. anyio stops that worker via a root-task callback that
+    only takes effect AFTER the currently running function returns; a function
+    blocked forever on a ``threading`` lock therefore survives shutdown, and
+    ``Py_Finalize → threading._shutdown → join`` hangs the process after
+    "Bot stopped by user" is logged (all graceful cleanup already done).
+
+    This guard gives such threads a grace period, dumps their stacks for
+    diagnosis, then terminates via ``os._exit(0)`` — the graceful shutdown has
+    already completed at this point, so stranded threads are leaked resources,
+    not pending work.
+
+    Args:
+        gracePeriodSeconds: Seconds to wait for straggler threads to exit
+            before forcing termination.
+
+    Returns:
+        None: Never returns normally when threads remain stranded.
+    """
+    if not strandedNonDaemonThreads():
+        return
+
+    deadline = time.monotonic() + gracePeriodSeconds
+    while strandedNonDaemonThreads() and time.monotonic() < deadline:
+        time.sleep(0.1)
+
+    stranded = strandedNonDaemonThreads()
+    if not stranded:
+        return
+
+    framesById = sys._current_frames()
+    for thread in stranded:
+        stackText = "<no frame available>"
+        if thread.ident is not None:
+            frame = framesById.get(thread.ident)
+            if frame is not None:
+                stackText = "".join(traceback.format_stack(frame))
+        logger.warning("Stranded non-daemon thread %s (ident=%s) stack:\n%s", thread.name, thread.ident, stackText)
+    logger.warning(
+        "%d non-daemon thread(s) still alive after graceful shutdown; forcing process exit: %s",
+        len(stranded),
+        [thread.name for thread in stranded],
+    )
+    sys.stdout.flush()
+    sys.stderr.flush()
+    try:
+        logging.shutdown()
+    except Exception:  # noqa: BLE001 — last-resort guard; must never prevent os._exit below
+        pass
+    os._exit(0)
+
+
+def installExitGuard(gracePeriodSeconds: float = EXIT_GUARD_GRACE_SECONDS) -> None:
+    """Install a last-resort guard against non-daemon threads blocking exit.
+
+    Uses ``threading._register_atexit`` (the same private-but-stable hook
+    ``concurrent.futures`` uses; the public ``atexit`` module fires only
+    AFTER the join that hangs, so it cannot help). ``threading._shutdown()``
+    runs registered callbacks in REVERSE registration order BEFORE joining
+    non-daemon threads. Installing this at the very start of ``main()`` —
+    before any executor or anyio worker thread exists — makes the guard run
+    last: after ``concurrent.futures``' own cleanup (so idle executor threads
+    are already gone and never trigger false positives), but before the joins
+    that would hang. Note for profiling runs: cProfile dumps its output when
+    ``main()`` returns, i.e. BEFORE this guard can fire, so profiles are not
+    lost.
+
+    Args:
+        gracePeriodSeconds: Seconds to wait for straggler threads to exit
+            before forcing termination.
+
+    Returns:
+        None.
+    """
+    # ``_register_atexit`` is underscore-private (absent from typeshed), hence
+    # the getattr indirection; it has been stable since Python 3.9 and is the
+    # mechanism concurrent.futures itself relies on for thread cleanup.
+    registerThreadingAtexit = cast(
+        Optional[Callable[[Callable[..., None], float], None]],
+        getattr(threading, "_register_atexit", None),
+    )
+    if registerThreadingAtexit is None:
+        logger.warning(
+            "threading._register_atexit is unavailable on this Python; " "stranded-thread exit guard disabled"
+        )
+        return
+    registerThreadingAtexit(forceExitIfStrandedThreads, gracePeriodSeconds)
+
+
 def main():
     """Main entry point."""
     args = parse_arguments()
+
+    # Install BEFORE any component init: registration order vs the executor
+    # cleanup callback determines execution order in threading._shutdown()
+    # (see installExitGuard docstring).
+    installExitGuard()
+
     configManager = ConfigManager(
         configPath=args.config,
         configDirs=args.config_dir,
