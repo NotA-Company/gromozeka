@@ -24,7 +24,6 @@ from internal.bot.models import (
 )
 from internal.config.manager import ConfigManager
 from internal.database import Database
-from internal.database.generic_cache import GenericDatabaseCache
 from internal.database.models import (
     CacheType,
     MessageCategory,
@@ -35,7 +34,7 @@ from lib.ai import (
     LLMFunctionParameter,
     LLMParameterType,
 )
-from lib.cache import JsonKeyGenerator, JsonValueConverter, StringKeyGenerator
+from lib.cache import GenericDatabaseCache, JsonKeyGenerator, JsonValueConverter, StringKeyGenerator
 from lib.geocode_maps import GeocodeMapsClient, SearchResult
 from lib.openweathermap import OpenWeatherMapClient, WeatherData
 
@@ -86,13 +85,13 @@ class WeatherHandler(BaseBotHandler):
         self.openWeatherMapClient = OpenWeatherMapClient(
             apiKey=openWeatherMapConfig["api-key"],
             weatherCache=GenericDatabaseCache(
-                self.db,
+                self.db.manager,
                 CacheType.WEATHER,
                 keyGenerator=StringKeyGenerator(),
                 valueConverter=JsonValueConverter(),
             ),
             geocodingCache=GenericDatabaseCache(
-                self.db,
+                self.db.manager,
                 CacheType.GEOCODING,
                 keyGenerator=StringKeyGenerator(),
                 valueConverter=JsonValueConverter(),
@@ -119,19 +118,19 @@ class WeatherHandler(BaseBotHandler):
             self.geocodeMapsClient = GeocodeMapsClient(
                 apiKey=geocodeMapsConfig["api-key"],
                 searchCache=GenericDatabaseCache(
-                    self.db,
+                    self.db.manager,
                     CacheType.GM_SEARCH,
                     keyGenerator=JsonKeyGenerator(hash=False),
                     valueConverter=JsonValueConverter(),
                 ),
                 reverseCache=GenericDatabaseCache(
-                    self.db,
+                    self.db.manager,
                     CacheType.GM_REVERSE,
                     keyGenerator=JsonKeyGenerator(hash=False),
                     valueConverter=JsonValueConverter(),
                 ),
                 lookupCache=GenericDatabaseCache(
-                    self.db,
+                    self.db.manager,
                     CacheType.GM_LOOKUP,
                     keyGenerator=JsonKeyGenerator(hash=False),
                     valueConverter=JsonValueConverter(),

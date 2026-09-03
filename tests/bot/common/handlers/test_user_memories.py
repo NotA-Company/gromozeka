@@ -69,12 +69,12 @@ from internal.bot.models import (
 from internal.database import Database
 from internal.database.models import MemoryType, UserMemorySource
 from internal.database.repositories.user_memories import UserMemoriesRepository, UserMemoryDict
-from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
 from internal.services.cache import CacheService, UserActiveActionEnum
 from internal.services.queue_service.service import QueueService
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
 from lib.ai import LLMToolCall, ModelMessage, ModelResultStatus, ModelRunResult
+from lib.db.utils import DEFAULT_THREAD_ID
 
 # ---------------------------------------------------------------------------
 # Singleton hygiene

@@ -38,9 +38,9 @@ import tempfile
 import pytest
 
 from internal.database import Database
-from internal.database.manager import DatabaseManagerConfig
 from internal.database.migrations import MigrationError, MigrationManager
 from internal.database.migrations.versions import DISCOVERED_MIGRATIONS
+from lib.db.manager import DatabaseManagerConfig
 
 # Use DISCOVERED_MIGRATIONS as MIGRATIONS for backward compatibility
 MIGRATIONS = DISCOVERED_MIGRATIONS

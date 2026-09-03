@@ -1,0 +1,9 @@
+# markdown-mcp configuration for the gromozeka docs tree.
+# Minimal on purpose (zero-config dogfood): everything not set here uses the
+# built-in defaults - e5-small embeddings, the measured min_score floor,
+# no exclude patterns, and the default index location ./.markdown-mcp/index.db
+# (resolved relative to this file and covered by .gitignore).
+# Discovered by walking upward from the working directory.
+
+[docs]
+root = "./docs"

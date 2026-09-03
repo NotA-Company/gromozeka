@@ -13,14 +13,13 @@ from pathlib import Path
 import pytest
 
 from internal.database import Database
-from internal.database.manager import DatabaseManagerConfig
 from internal.database.models import (
-    CacheType,
     MediaStatus,
     MessageCategory,
     SpamReason,
 )
 from internal.models import MessageType
+from lib.db.manager import DatabaseManagerConfig
 
 # ============================================================================
 # Fixtures
@@ -899,82 +898,12 @@ class TestMediaOperations:
 
 
 # ============================================================================
-# Cache Operations Tests
+# Cache Storage Tests
 # ============================================================================
 
 
-class TestCacheOperations:
-    """Test cache storage and retrieval operations."""
-
-    @pytest.mark.asyncio
-    async def testSetCacheEntry(self, inMemoryDb):
-        """Test setting a cache entry."""
-        result = await inMemoryDb.cache.setCacheEntry(
-            key="test_key",
-            data=json.dumps({"result": "data"}),
-            cacheType=CacheType.WEATHER,
-        )
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def testGetCacheEntry(self, inMemoryDb):
-        """Test retrieving a cache entry."""
-        key = "weather_key"
-        data = json.dumps({"temp": 20, "condition": "sunny"})
-
-        await inMemoryDb.cache.setCacheEntry(key, data, CacheType.WEATHER)
-
-        entry = await inMemoryDb.cache.getCacheEntry(key, CacheType.WEATHER)
-        assert entry is not None
-        assert entry["key"] == key
-        assert entry["data"] == data
-
-    @pytest.mark.asyncio
-    async def testGetCacheEntryNotFound(self, inMemoryDb):
-        """Test retrieving non-existent cache entry returns None."""
-        entry = await inMemoryDb.cache.getCacheEntry("nonexistent", CacheType.WEATHER)
-        assert entry is None
-
-    @pytest.mark.asyncio
-    async def testGetCacheEntryWithTTL(self, inMemoryDb):
-        """Test cache entry expiration with TTL."""
-        key = "ttl_key"
-        data = json.dumps({"data": "value"})
-
-        await inMemoryDb.cache.setCacheEntry(key, data, CacheType.WEATHER)
-
-        # Should be found with long TTL
-        entry = await inMemoryDb.cache.getCacheEntry(key, CacheType.WEATHER, ttl=3600)
-        assert entry is not None
-
-        # Should not be found with very short TTL (entry is "old")
-        entry = await inMemoryDb.cache.getCacheEntry(key, CacheType.WEATHER, ttl=0)
-        assert entry is None
-
-    @pytest.mark.asyncio
-    async def testCacheEntryUpdate(self, inMemoryDb):
-        """Test updating an existing cache entry."""
-        key = "update_key"
-
-        await inMemoryDb.cache.setCacheEntry(key, "old_data", CacheType.WEATHER)
-        await inMemoryDb.cache.setCacheEntry(key, "new_data", CacheType.WEATHER)
-
-        entry = await inMemoryDb.cache.getCacheEntry(key, CacheType.WEATHER)
-        assert entry["data"] == "new_data"
-
-    @pytest.mark.asyncio
-    async def testCacheTypeIsolation(self, inMemoryDb):
-        """Test that different cache types are isolated."""
-        key = "same_key"
-
-        await inMemoryDb.cache.setCacheEntry(key, "weather_data", CacheType.WEATHER)
-        await inMemoryDb.cache.setCacheEntry(key, "geocoding_data", CacheType.GEOCODING)
-
-        weatherEntry = await inMemoryDb.cache.getCacheEntry(key, CacheType.WEATHER)
-        geocodingEntry = await inMemoryDb.cache.getCacheEntry(key, CacheType.GEOCODING)
-
-        assert weatherEntry["data"] == "weather_data"
-        assert geocodingEntry["data"] == "geocoding_data"
+class TestCacheStorageOperations:
+    """Test cache storage operations."""
 
     @pytest.mark.asyncio
     async def testSetCacheStorage(self, inMemoryDb):

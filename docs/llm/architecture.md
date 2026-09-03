@@ -122,7 +122,7 @@ class MyService:
 **Why:** Allows read replicas, separate databases for different data types, cross-bot data reading
 
 **Architecture Principles:**
-- **Repository Pattern**: 15 specialized repositories handle specific data domains (chat_info, chat_messages, chat_settings, chat_users, chat_summarization, cache, spam, media_attachments, delayed_tasks, common, chat_search, chat_embeddings, divinations, webhook_updates, user_memories)
+- **Repository Pattern**: 15 specialized repositories handle specific data domains (chat_info, chat_messages, chat_settings, chat_users, chat_summarization, cache, spam, media_attachments, delayed_tasks, common, chat_search, chat_embeddings, divinations, embedding_models, user_memories)
 - **Simple Priority Routing**: `dataSource` param → `chatId` mapping → default source
 - **Readonly Protection**: Sources marked `readonly=True` reject write operations
 - **Cross-Bot Communication**: Can read from external bot databases via `dataSource` param
@@ -154,7 +154,7 @@ timeout = 10
 **SQL Portability Notes:**
 - Migration 013 removed `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns for cross-database compatibility
 - All timestamp values are now explicitly set in application code
-- Provider abstraction layer (`internal/database/providers/`) handles database-specific SQL dialects
+- Provider abstraction layer (`lib/db/providers/`) handles database-specific SQL dialects
 - Supports SQLite3, PostgreSQL, MySQL, and SQLink (SQLite3 over REST) providers
 
 **Repository Structure:**
@@ -171,7 +171,6 @@ timeout = 10
 - `DivinationsRepository` — Tarot/runes divination data
 - `MediaAttachmentsRepository` — Media file attachments
 - `SpamRepository` — Spam detection and messages
-- `WebhookUpdatesRepository` — Max webhook payload storage and consumption (backed by `migration_019`)
 - `UserMemoriesRepository` — Unified per-`(chat, user, thread)` structured memory store (backed by `migration_020`; supersedes the legacy `user_data` key-value table, dropped in `migration_022`, + rolling-bio blob — see ADR-016)
 - `EmbeddingModelsRepository` — Embedding-model lookup table (`models` table, backed by `migration_025_embedding_model_lookup`); resolves model name + dimensions to a stable `model_id` integer that the embedding repos (chat-search + user-memories) FK into. Process-local cache; constructor-injected `modelIdResolver` (D10) in the three refactored repos.
 - `BaseRepository` — Abstract base with common functionality
@@ -378,24 +377,25 @@ await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
                                │       │
                      creates    │       │  creates
                                ▼       ▼
-               ┌────────────────┐   ┌──────────────────────┐
-               │  LLMManager    │   │ DatabaseStatsStorage │
-               │  (lib/ai)      │◄──│ (internal/database/  │
-               │                │   │  stats_storage.py)   │
-               │ .statsStorage ─┼──►│                      │
-               └───────┬────────┘   │ - record()           │
-                       │            │ - aggregate()        │
-                       │ propagate  │ - db: Database       │
-                       ▼            │ - dataSource: "stats"│
-               ┌─────────────────┐  └──────────┬───────────┘
-               │ AbstractModel   │             │
-               │ (lib/ai)        │             │ single provider
-               │                 │             ▼
-               │ .statsStorage   │  ┌──────────────────────┐
-               │ _runWithFallback│  │   DatabaseManager    │
-               └─────────────────┘  │                      │
-                                    │ "stats" provider     │
-                                    └──────────┬───────────┘
+                ┌────────────────┐   ┌──────────────────────┐
+                │  LLMManager    │   │ DatabaseStatsStorage │
+                │  (lib/ai)      │◄──│ (lib/stats/          │
+                │                │   │  sql_storage.py)     │
+                │ .statsStorage ─┼──►│                      │
+                └───────┬────────┘   │ - record()           │
+                        │            │ - aggregate()        │
+                        │ propagate  │ - manager:           │
+                        ▼            │   DatabaseManager    │
+                ┌─────────────────┐  │ - dataSource: "stats"│
+                │ AbstractModel   │  └──────────┬───────────┘
+                │ (lib/ai)        │             │
+                │                 │             │ single provider
+                │ .statsStorage   │             ▼
+                │ _runWithFallback│  ┌──────────────────────┐
+                └─────────────────┘  │   DatabaseManager    │
+                                     │                      │
+                                     │ "stats" provider     │
+                                     └──────────┬───────────┘
                                                │
                            ┌───────────────────┼───────────────────┐
                            ▼                   ▼
@@ -441,7 +441,15 @@ await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
 
 ### ADR-013: Max Webhook Receiver (Two-Process Local API Proxy)
 
-**Decision:** Max Messenger webhook ingestion runs as a separate standalone aiohttp process ([`internal/max_webhook_receiver/`](../../internal/max_webhook_receiver/)) that accepts webhook POSTs from the Max API, stores raw payloads in the local `webhook_updates` table, and serves them back to the bot via a GET /updates endpoint that speaks the Max API protocol.
+> **Updated by ADR-025 (2026-08-26):** the two-process architecture below is unchanged, but
+> the receiver's implementation now lives in [`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/)
+> (started with `python -m lib.max_webhook_receiver --config webhook-receiver.toml`, no
+> `ConfigManager` — it reads its own single TOML file) and stores `webhook_updates` in its OWN
+> SQLite file (`webhook_receiver_data.db` via `[webhook-receiver.database]`), not in the bot's
+> database — `migration_029` dropped the table from the bot DB. The stale "shared SQLite" and
+> `db.webhookUpdates` wording below is corrected in place; see ADR-025 for the extraction.
+
+**Decision:** Max Messenger webhook ingestion runs as a separate standalone aiohttp process ([`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/)) that accepts webhook POSTs from the Max API, stores raw payloads in the local `webhook_updates` table, and serves them back to the bot via a GET /updates endpoint that speaks the Max API protocol.
 
 **Why:** Max's webhook model pushes updates to an HTTPS URL the operator controls. Rather than threading a second ingestion path into the bot process, a thin local receiver decouples the public HTTPS endpoint from the bot: it persists payloads durably, then the bot's existing long-poll loop consumes them unchanged.
 
@@ -449,15 +457,15 @@ await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
 
 ```
    Max API ──POST /webhook──▶  webhook receiver process
-   (platform-api2.max.ru)      (internal/max_webhook_receiver/, aiohttp.web)
+   (platform-api2.max.ru)      (lib/max_webhook_receiver/, aiohttp.web)
                                        │
-                                       │ addUpdate() / db.webhookUpdates
+                                       │ repository.addUpdate()
                                        ▼
                                ┌──────────────────┐
-                               │ webhook_updates  │  (shared SQLite)
-                               └──────────────────┘
+                               │ webhook_updates  │  (receiver's OWN SQLite:
+                               └──────────────────┘   webhook_receiver_data.db)
                                        ▲
-                                       │ getUnprocessedUpdates() / markProcessed()
+                                       │ repository.getUnprocessedUpdates() / markProcessed()
                                        │
    bot process (MaxBotApplication) ────┘
        MaxBotClient._pollingLoop()
@@ -466,20 +474,20 @@ await repo.saveNegativeCache(systemId='tarot', layoutId='invalid')
 ```
 
 **Components:**
-- **Receiver process** — `internal/max_webhook_receiver/__main__.py` (`python -m internal.max_webhook_receiver`). aiohttp.web app (`app.py`) with two routes: `POST <webhook-path>` (verifies `X-Max-Bot-Api-Secret`, stores raw body) and `GET /updates` (long-polls `webhook_updates`, marks rows processed, returns Max-shaped `{"updates": [...], "marker": ...}`). The webhook handler returns **500 on a DB write failure so the Max API retries the delivery** rather than silently acknowledging a transient loss (full status map: 403 bad secret, 400 malformed JSON, 500 DB write failure, 200 success). A background cleanup task reaps processed rows past a 1h TTL.
-- **`webhook_updates` table** (`migration_019`) — durable buffer between the two processes. The receiver only writes; the bot (via the receiver's GET /updates handler) reads and marks processed. See [`database.md`](database.md) and [`docs/database-schema.md`](../../docs/database-schema.md).
+- **Receiver process** — [`lib/max_webhook_receiver/__main__.py`](../../lib/max_webhook_receiver/__main__.py) (`python -m lib.max_webhook_receiver --config webhook-receiver.toml`). aiohttp.web app (`app.py`) with two routes: `POST <webhook-path>` (verifies `X-Max-Bot-Api-Secret`, stores raw body) and `GET /updates` (long-polls `webhook_updates`, marks rows processed, returns Max-shaped `{"updates": [...], "marker": ...}`). The webhook handler returns **500 on a DB write failure so the Max API retries the delivery** rather than silently acknowledging a transient loss (full status map: 403 bad secret, 400 malformed JSON, 500 DB write failure, 200 success). A background cleanup task reaps processed rows past a 1h TTL.
+- **`webhook_updates` table** — durable buffer between the two processes, living in the RECEIVER's own database (`webhook_receiver_data.db` via `[webhook-receiver.database]`; created in the bot's chain by `migration_019`, dropped from it by `migration_029` — see ADR-025). The receiver self-heals both the table and its index at startup and is the sole writer; the bot reads and marks processed via the receiver's GET /updates handler. See [`database.md`](database.md) and [`docs/database-schema.md`](../../docs/database-schema.md).
 - **`MaxBotClient.basePollingUrl`** ([`lib/max_bot/client.py`](../../lib/max_bot/client.py)) — when set, the client's existing `_pollingLoop()` routes getUpdates to the local receiver's `GET /updates` instead of `platform-api2.max.ru`. Trailing slash is stripped at construction. Authenticated via `Authorization` header when the receiver's `get-updates-secret` is set.
 - **Webhook subscription** — managed by the bot process. When `webhook-receiver.register-webhook = true` (the default), the bot calls Max's `POST /subscriptions` on startup; when `webhook-receiver.unregister-webhook = true`, it calls `DELETE /subscriptions` on shutdown. The two keys default independently — `register-webhook` defaults to `true`, `unregister-webhook` defaults to `false` — so a bot restart does not tear down the Max subscription unless unregistering is explicitly opted in.
 
 **Key invariants:**
-- The bot never writes to `webhook_updates` directly in webhook mode — the receiver is the sole writer. The bot's poll loop hits the receiver's `GET /updates`, which internally calls `db.webhookUpdates.getUnprocessedUpdates()` / `markProcessed()` on the shared database.
+- The bot never writes to `webhook_updates` — it has no `webhookUpdates` repository handle at all (removed with ADR-025); the receiver is the sole writer AND owns the sole database. The bot's poll loop hits the receiver's `GET /updates`, which internally calls `repository.getUnprocessedUpdates()` / `markProcessed()` on the receiver's own database.
 - **Delivery semantics** are controlled by `webhook-receiver.mark-on-subsequent-poll` (default `true` = deferred/at-least-once): `GET /updates` does NOT mark rows on read; instead it returns a compound marker `"{received_at}|{id}"` for the last served row, and rows are acknowledged via `markProcessedBeforeMarker()` only when the bot passes that marker back on its next poll. A bot crash between polls leaves the rows unprocessed → re-delivered. When `false` (immediate/at-most-once), rows are marked processed on read via `markProcessed()` and the response carries `marker: null` (there is nothing to acknowledge on the next poll); a crash after serving loses them. A malformed marker passed back by a client is caught narrowly (`ValueError`/`OverflowError`/`TypeError` raised inside `_parseMarker`) and treated as a no-marker poll rather than 500-ing — this prevents the bot from wedging in an infinite retry loop against the same bad marker.
 - `webhook-receiver.enabled = false` keeps the bot on normal long-polling to the real Max API; the receiver process still runs and still writes any webhook POSTs it receives, but the bot ignores them. This is the safe default.
 - The receiver refuses to start when `webhook-receiver.secret` is empty or an unresolved `${VAR}` placeholder (it would otherwise be a publicly-known secret). The bot mirrors this guard in webhook mode: whenever `webhook-receiver.enabled = true` it rejects unresolved `${VAR}` placeholders in both `secret` and `get-updates-secret` at startup (an unresolved placeholder would otherwise be sent verbatim as a credential — to the Max API for `secret`, or as the `Authorization` header to the local receiver for `get-updates-secret`), and additionally requires `secret` to be non-empty when `register-webhook = true`.
 
 **Local API proxy pattern:** the receiver's `GET /updates` re-shapes stored rows into the Max API `UpdateList` response, so the bot's polling code path is identical whether it points at the receiver or the real platform API. Only the base URL differs. This keeps the webhook feature a config flip rather than a parallel code path.
 
-**Config:** `[webhook-receiver]` in [`configs/00-defaults/webhook-receiver.toml`](../../configs/00-defaults/webhook-receiver.toml). See [`configuration.md`](configuration.md) §`[webhook-receiver]`.
+**Config (split since ADR-025):** the bot reads its `[webhook-receiver]` keys (enabled, base-polling-url, secret, get-updates-secret, register/unregister, webhook-url, webhook-update-types) from the ConfigManager hierarchy ([`configs/00-defaults/webhook-receiver.toml`](../../configs/00-defaults/webhook-receiver.toml)); the receiver reads its OWN single TOML file (`--config`, default `webhook-receiver.toml`) holding the receiver-only keys plus `[webhook-receiver.database]`. See [`configuration.md`](configuration.md) §`[webhook-receiver]`.
 
 ---
 
@@ -816,6 +824,167 @@ The originals are **always retained** in `chat_messages` (condensing adds summar
 
 ---
 
+### ADR-022: SQL providers and DatabaseManager extracted to `lib/db`
+
+**Decision:** The generic SQL layer moved out of `internal/` into a bot-free `lib/db/` package: all seven provider modules (`base.py`, `sqlite3.py`, `sqlink.py`, `mysql.py`, `postgresql.py`, `utils.py`, and `__init__.py` with the `getSqlProvider` factory + `SQLProviderConfig`) now live at `lib/db/providers/` (mirroring the `lib/stt/providers/` layout), and `DatabaseManager` / `DatabaseManagerConfig` / `SQLProviderInitializationHook` live at `lib/db/manager.py`. A new `lib/db/__init__.py` re-exports the public API. `internal/database/` SURVIVES with everything bot-specific — migrations, repositories, the `Database` wrapper, `stats_storage.py`, `bayes_storage.py`, internal `utils.py` (`sqlToTypedDict`), `models.py` — and imports the SQL layer from `lib.db`. Cutover was big-bang: the old locations were deleted in the same commit the copies landed (git-mv, history preserved); there is no shim and no dual-home. Dependency direction is now `internal → lib.db → {lib.proxy, lib.utils, stdlib, 3rd-party}` — no cycles (the `make lint` `import main` gate guards this).
+
+**Why:** the provider layer and `DatabaseManager` contain zero bot knowledge but sat under `internal/`, blocking `lib/` code from using them. The concrete case is `lib/stats`: its `StatsStorage` ABC is bot-free, but the only SQL implementation (`DatabaseStatsStorage`) lives in `internal/database/stats_storage.py` as an ABC-in-lib / impl-in-internal split that existed solely because the provider layer was internal. Extracting to `lib/db` makes a `lib/stats` SQL storage possible (that move itself is a separate follow-up arc). Design doc with the D1–D8 decisions and the full consumer census: [`docs/design/lib-db-extraction-v1.md`](../design/lib-db-extraction-v1.md).
+
+**The MessageId cut:** `providers/utils.py`'s `convertToSQLite` had the layer's single `internal.*` import (`from internal.models import MessageId` + an `isinstance` branch). It was replaced with a module-local `@runtime_checkable` Protocol (`SQLStringifiable`, `def asStr(self) -> str`) and an `isinstance(data, SQLStringifiable)` branch. `MessageId.__str__` already returned `asStr()`, so stored values are identical before and after; the Protocol keeps the explicit intent and the warning suppression without the internal import. Locked by a fail-first regression test (`tests/lib/db/providers/test_utils.py`) using a double whose `asStr()` returns `"42"` while `__str__` returns `"WRONG"`.
+
+**Known temporary deviation (mysql/postgresql):** `lib/db/providers/mysql.py` and `postgresql.py` moved AS-IS with hard module-level `import aiomysql` / `import asyncpg` (+ `# type: ignore[reportMissingImports]`), unregistered in the factory. This deviates from the repo's optional-dependency convention (module-level `try/except ImportError` + `_AVAILABLE` flag). Rationale: the drivers are not in requirements, both files are unimportable and untested today, and their class-level annotations (`Optional[aiomysql.Pool]`) evaluate at import time, making conversion non-trivial. Convert to the `_AVAILABLE` pattern only when the providers are actually wired.
+
+**Status:** Implemented (Phase 1 code arc + Phase 2/3 doc sync). `make test` green; `make check-docs` green at every arc.
+
+**References:**
+
+- [`docs/design/lib-db-extraction-v1.md`](../design/lib-db-extraction-v1.md) — the ratified design (D1–D8), consumer census, phased plan.
+- [`database.md`](database.md) — provider section (post-rewrite).
+- [`libraries.md`](libraries.md) — the `lib/db` library entry.
+
+---
+
+### ADR-023: `internal/database/utils.py` to `lib/db/utils.py`; `DatabaseStatsStorage` to `lib/stats`
+
+**Date:** 2026-08-24 (ratified + same-day amendment: whole-module move; implementation per
+its design doc arcs)
+
+**Status:** Accepted (supersedes two scope clauses of ADR-022)
+
+**Decision:** Two chained extractions, both whole-file big-bang with no re-export shim
+(ADR-022 precedent). (1) The ENTIRE `internal/database/utils.py` module moved via git-mv to
+a bot-free [`lib/db/utils.py`](../../lib/db/utils.py) — the SQL decode trio (`sqlToTypedDict`, `sqlToCustomType`,
+`_checkType`, `FORCE_SQL_TIMEZONE`, container-type constants) plus `getCurrentTimestamp` and
+`DEFAULT_THREAD_ID`; the decode names are facade-exported from
+[`lib/db/__init__.py`](../../lib/db/__init__.py).
+Nothing survives at the internal path; `internal/database/utils.py` is deleted. Note: BOTH
+`lib/db/utils.py` (decode+timestamps) and [`lib/db/providers/utils.py`](../../lib/db/providers/utils.py) (encode:
+`convertToSQLite`) now exist — deliberate naming, disambiguated by the `providers.` segment.
+(2) `DatabaseStatsStorage` moved from `internal/database/stats_storage.py` to
+[`lib/stats/sql_storage.py`](../../lib/stats/sql_storage.py), exported from the `lib/stats` package; its constructor changed
+from `(db: Database, eventType, *, dataSource)` to `(manager: DatabaseManager, eventType, *,
+dataSource)` with per-call `manager.getProvider(dataSource=…, readonly=…)`. The
+`StatsAggregationService` factory (`createStatsStorage`) stays internal and unchanged in
+signature; migration_027's helper imports (`_hashLabels`, `truncateToDay`,
+`truncateToMonth`) were flipped in place (its header sanctions in-place edits). Stats tables
+remain owned by internal migrations (016/027/028).
+
+**Why:** ADR-022 extracted the provider layer precisely to make a `lib/stats` SQL storage
+possible; the two remaining blockers were the storage's `Database`-wrapper dependency and
+its dependence on internal decode utilities. Moving the whole utils module (user decision S2
+widened by same-day amendment, over a narrower trio-only or local-decoder alternative) keeps
+one canonical decode implementation, unblocks the parked `lib/cache`
+`GenericDatabaseCache` extraction, and makes the storage move a pure relocation.
+
+**Supersessions of ADR-022:** its "internal/database/ SURVIVES with … stats_storage.py …"
+clause is superseded by the storage move; its "internal utils.py (`sqlToTypedDict`)"
+survives-item is superseded ENTIRELY by the whole-module move (not just the decode symbols).
+ADR-022's text stands as history.
+
+Design doc: [`docs/design/lib-stats-sql-storage-extraction-v1.md`](../design/lib-stats-sql-storage-extraction-v1.md).
+
+---
+
+### ADR-024: `GenericDatabaseCache` to `lib/cache/sql_cache.py`; `clearOld` joins `CacheInterface`
+
+**Date:** 2026-08-24 (ratified with user modifications; implementation per its design doc arcs)
+
+**Status:** Implemented (code arc landed 2026-08-25; realizes the ADR-023 "unblocks lib/cache"
+clause; supersedes nothing)
+
+**Decision:** `GenericDatabaseCache` moved via git-mv from `internal/database/generic_cache.py`
+(the internal path is deleted; no re-export shim) to
+[`lib/cache/sql_cache.py`](../../lib/cache/sql_cache.py) and now owns ALL `cache`-table SQL inline
+through a [`DatabaseManager`](../../lib/db/manager.py): constructor changed from
+`(db: Database, namespace: CacheType, …)` to `(manager: DatabaseManager, namespace: str, …)` with
+per-call `manager.getProvider(dataSource=…, readonly=…)`; the get/set/clear SQL was ported verbatim
+from the former `CacheRepository` quartet, including the `ttl <= 0 → None` read early-return.
+[`CacheInterface`](../../lib/cache/interface.py) gained the abstract instance method
+`clearOld(ttl: Optional[int]) -> bool` — namespace/dataSource come from the instance; `None`
+normalizes to `0` (delete all namespace entries); returns True on success including no-op, False on
+backend error, never raises — implemented by `GenericDatabaseCache` (SQL port of the former
+`clearOldCacheEntries`, cutoff `updated_at < now - ttl`),
+[`DictCache`](../../lib/cache/dict_cache.py) (direct age comparison `now - timestamp > ttl` —
+deliberately NOT the get-semantics `_isExpired` helper), and [`NullCache`](../../lib/cache/null_cache.py)
+(no-op, True). [`CacheRepository`](../../internal/database/repositories/cache.py) shrank to the
+`cache_storage` trio — the live `CacheService` persistence backing (load/persist/flush); its name
+and the `db.cache` attribute are kept. `CacheDict` was deleted from
+[`internal/database/models.py`](../../internal/database/models.py) (sole consumer was the quartet);
+the lib module keeps a local row TypedDict (stats `StatsEventDict` pattern). The weekly
+[`HandlersManager`](../../internal/bot/common/handlers/manager.py) `_cleanupOldData` sweep now
+loops `CacheType` members constructing transient per-namespace instances (~8 cheap weekly DELETEs
+replace 1; StrEnum members bind as `namespace: str`); sweep coverage narrows to the 8 known
+namespaces — accepted, since the verified writer census is exactly those 8. Adding an abstract
+method is a breaking change for any external `CacheInterface` implementor — accepted per
+single-app repo culture (all three implementors are in-repo and updated in the same arc).
+
+**Why:** closes the last ABC-in-lib / impl-in-internal split flagged by the ADR-022 follow-up audit
+and parked in the teamlead memory ("different shape, still blocked on decode trio — which has NOW
+landed in lib/db"); ADR-023 explicitly listed this extraction as unblocked by the utils move. Pure
+pattern hygiene — no lib package needs a SQL cache today (lib clients default to DictCache/
+NullCache via DI); this lets lib packages offer SQL-backed caches later without internal
+pre-wiring, and gives every CacheInterface implementation a uniform age-purge verb.
+
+**Realization, not supersession:** ADR-023's body is untouched; its "unblocks the parked
+`lib/cache` `GenericDatabaseCache` extraction" clause is hereby realized. No earlier ADR scope
+clause is contradicted by this move.
+
+Design doc: [`docs/design/lib-cache-sql-cache-extraction-v1.md`](../design/lib-cache-sql-cache-extraction-v1.md).
+
+---
+
+### ADR-025: Max webhook receiver extracted to `lib/max_webhook_receiver/` — fully standalone (own config file, own database)
+
+**Date:** 2026-08-25 (decision forks + full-database-independence amendment + full-lib-launcher amendment #2 ratified by user; implementation per its design doc arcs)
+**Status:** Implemented (code arc landed 2026-08-26, commits 622eb060..f72f026a)
+
+**Decision:** The Max webhook receiver moved out of `internal/` into a bot-free
+`lib/max_webhook_receiver/` package — the ENTIRE receiver, launcher included:
+`internal/max_webhook_receiver/` was deleted. The package holds the aiohttp app (`app.py`,
+handlers and lifecycle unchanged), `WebhookUpdatesRepository` (now `repository.py`, taking a
+`DatabaseManager` directly with `BaseRepository` inlined — it was a manager-holding ABC with
+no methods), the `WebhookUpdatesRow` TypedDict (now `models.py`), a new `schema.py` owning
+the canonical `webhook_updates` DDL, and the launcher itself (`__main__.py`, module-invocable
+like `lib.stats.stats_pages`). The receiver is fully lib-standalone: it is started with
+`./venv/bin/python3 -m lib.max_webhook_receiver --config <path> [--dotenv-file <path>]`,
+reads its OWN single TOML config file (dotenv → stdlib `tomllib` → lib-side
+`substituteEnvVars`, which moved to `lib/utils/utils.py` for the purpose — `ConfigManager`
+imports it from lib), and has ZERO internal imports. It also owns its DATABASE: the
+`[webhook-receiver.database]` section in its own config file (same shape as the bot's
+`[database]`) points it at its own file (`webhook_receiver_data.db` by default); the
+launcher constructs a bare `DatabaseManager` from that section as a pure passthrough. The
+receiver never runs the bot's migrations and never touches the bot's database: its startup
+self-heals BOTH the table and the index from `schema.py` (its database has no migration
+side, so the self-heal must be complete; the `CREATE INDEX IF NOT EXISTS` form follows the
+13-migration house precedent — MySQL activation will address it once, centrally). The bot's
+chain dropped the table via migration_029 (`DROP INDEX`/`DROP TABLE IF EXISTS`; `down()`
+recreates from the same lib-owned DDL — single-sourced with migration_019's delegated
+`up()`). The internal `Database` wrapper lost its `webhookUpdates` attribute (verified
+receiver-only consumer), `internal/database/repositories/webhook_updates.py` was deleted
+(big-bang, no shims), and the `[webhook-receiver]` `datasource` key was removed
+(separate-storage is the default now). The package `__init__.py` deliberately does not
+import `.app`: the migrations execute it transitively at bot startup, and aiohttp must stay
+out of that import chain.
+
+**Why:** the receiver is a deployment peer, not a bot feature (own process, own config
+file, own database); after ADR-022/023/024 its implementation had zero bot-side
+dependencies left in `app.py`. Full-lib standing eliminates the two-process migration race
+and the shared-SQLite write contention in one move (ADR-013 known limitations become moot),
+enforces ADR-013's "receiver is the sole writer" invariant structurally (the bot literally
+lacks the handle AND the table), keeps the deployed surface honest (one module, one config
+file, one database file), and lets either process restart without the other's schema
+involvement. Operational costs accepted: two DB files on disk (backups must cover both),
+and `secret`/`get-updates-secret` maintained in both the bot config and the receiver file
+(cross-reference comments in both example files; drift = 403s). Pointing the receiver at
+the bot's `bot_data.db` is documented as unsupported and not enforced.
+
+**Explicitly unchanged:** ADR-013's two-process architecture, the `webhook_updates` schema,
+the marker protocol, delivery semantics, TLS handling, and `lib/max_bot/client.py`. Design
+doc with the D1–D19 decisions and the full census:
+[`docs/design/lib-max-webhook-receiver-extraction-v1.md`](../design/lib-max-webhook-receiver-extraction-v1.md).
+
+---
+
 ## 2. Dependency Map
 
 ### 2.1 Component Dependency Graph
@@ -823,7 +992,7 @@ The originals are **always retained** in `chat_messages` (condensing adds summar
 ```
 GromozekBot (main.py)
 ├── ConfigManager (internal/config/manager.py)
-├── DatabaseManager (internal/database/manager.py)
+├── DatabaseManager (lib/db/manager.py)
 │   └── Database (internal/database/database.py)
 │       └── MigrationManager (internal/database/migrations/manager.py)
 ├── LLMManager (lib/ai/manager.py)
@@ -852,13 +1021,13 @@ GromozekBot (main.py)
                          instead of platform-api2.max.ru — see ADR-013)
 ```
 
-**Separate process — Max webhook receiver** (only when webhook mode is deployed; see ADR-013):
+**Separate process — Max webhook receiver** (only when webhook mode is deployed; see ADR-013/ADR-025):
 
 ```
-python -m internal.max_webhook_receiver  (aiohttp.web)
-├── ConfigManager (internal/config/manager.py)
-├── Database (internal/database/database.py)  [shared SQLite with the bot]
-│   └── webhookUpdates repository  →  webhook_updates table (migration_019)
+python -m lib.max_webhook_receiver --config webhook-receiver.toml  (aiohttp.web)
+├── DatabaseManager (lib/db/manager.py)  [receiver's OWN SQLite: webhook_receiver_data.db]
+│   └── WebhookUpdatesRepository (lib/max_webhook_receiver/repository.py)
+│       └── webhook_updates table (self-healed at startup; DDL owned by schema.py)
 ├── POST <webhook-path>  ← Max API webhook POSTs
 └── GET /updates          → MaxBotClient._pollingLoop() via basePollingUrl
 ```

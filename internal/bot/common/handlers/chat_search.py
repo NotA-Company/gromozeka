@@ -56,11 +56,11 @@ from internal.bot.models.enums import LLMMessageFormat
 from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import ChatMessageDict, ChatUserDict, MessageCategory
-from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
 from internal.services.llm.models import ExtraDataDict
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
 from lib.ai import LLMFunctionParameter, LLMParameterType
+from lib.db.utils import DEFAULT_THREAD_ID
 
 from .base import BaseBotHandler, HandlerResultStatus
 

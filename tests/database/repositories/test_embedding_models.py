@@ -16,7 +16,7 @@ import datetime
 from unittest.mock import AsyncMock, patch
 
 from internal.database import Database
-from internal.database.manager import DatabaseManager
+from lib.db.manager import DatabaseManager
 
 
 class TestEmbeddingModelsRepository:

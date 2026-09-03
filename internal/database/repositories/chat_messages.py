@@ -19,9 +19,9 @@ from typing import Any, List, Optional
 
 from internal.database.constants import MAX_SQL_VARIABLES
 from internal.models import MessageId, MessageType
+from lib.db import utils as dbUtils
+from lib.db.manager import DatabaseManager
 
-from .. import utils as dbUtils
-from ..manager import DatabaseManager
 from ..models import ChatMessageDict, MessageCategory, ThreadResultDict
 from .base import BaseRepository
 

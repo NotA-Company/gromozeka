@@ -70,14 +70,14 @@ from internal.database.constants import (
     PERMANENT_INJECTION_CAP,
 )
 from internal.database.models import UserMemoryDict, UserMemorySource
-
-from .. import utils as dbUtils
-from ..manager import DatabaseManager
-from ..providers.base import (
+from lib.db import utils as dbUtils
+from lib.db.manager import DatabaseManager
+from lib.db.providers.base import (
     BaseSQLProvider,
     VectorColumnType,
     VectorDistanceMetric,
 )
+
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)

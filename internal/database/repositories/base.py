@@ -26,7 +26,7 @@ Example:
 
 from abc import ABC
 
-from ..manager import DatabaseManager
+from lib.db.manager import DatabaseManager
 
 
 class BaseRepository(ABC):

@@ -64,7 +64,7 @@ from typing import Optional
 # shared library and exposes its path via loadable_path(). When unavailable
 # (e.g. Alpine Linux with no musl wheel), the caller must pass --vec-extension
 # with a source-built path. Mirrors the production provider's pattern
-# (internal/database/providers/sqlite3.py).
+# (lib/db/providers/sqlite3.py).
 try:
     import sqlite_vec  # pyright: ignore[reportMissingImports]
 
@@ -136,7 +136,7 @@ def _loadVecExtension(conn: sqlite3.Connection, vecExtensionPath: Optional[str])
     SQLite cannot DROP a vec0 virtual table unless the vec0 module is
     registered, which only happens once the shared library is loaded. This
     mirrors the production provider's loading sequence
-    (internal/database/providers/sqlite3.py) but uses the synchronous
+    (lib/db/providers/sqlite3.py) but uses the synchronous
     stdlib ``sqlite3`` API since this script is not async.
 
     Extension-source resolution, in priority order:

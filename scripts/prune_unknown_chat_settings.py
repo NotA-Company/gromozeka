@@ -64,6 +64,18 @@ _REPO_ROOT = str(Path(__file__).parent.parent.resolve())
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+import httpx2  # noqa: E402
+
+# Process-wide: make `import httpx` resolve to `httpx2` so third-party clients
+# used by project code (sqlink's transport via lib.db.providers, the openai SDK
+# via lib.ai providers) share the bot's httpx2 stack. MUST run before the
+# first project import below: internal.* / lib.* modules transitively perform
+# a real `import httpx`, after which scripts._lib.bootstrap's module-level
+# alias_httpx() would raise RuntimeError. The call is idempotent, so
+# bootstrap's later repeat invocation is a no-op. House pattern: main.py:16-37;
+# background: docs/design/httpx2-migration-v1.md §6.
+httpx2.alias_httpx()
+
 from internal.bot.models.chat_settings import ChatSettingsKey  # noqa: E402
 
 

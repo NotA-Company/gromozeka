@@ -14,7 +14,7 @@ from typing import Any, AsyncGenerator, Dict
 import pytest
 
 from internal.database import Database
-from internal.database.manager import DatabaseManagerConfig
+from lib.db.manager import DatabaseManagerConfig
 
 
 @pytest.fixture

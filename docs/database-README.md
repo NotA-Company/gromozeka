@@ -89,7 +89,7 @@ A streamlined reference optimized for LLM consumption, featuring:
 - [`vec_message_embeddings_N`](database-schema.md#vec_message_embeddings_n-virtual-table) - vec0 virtual tables (one per embedding dimension; partition key = `model_id`)
 
 #### Webhook Tables
-- [`webhook_updates`](database-schema.md#webhook_updates) - Max webhook payload buffer (two-process webhook mode)
+- `webhook_updates` - moved to the webhook receiver's own database (ADR-025); dropped from the bot's schema by `migration_029`
 
 #### Cache Tables
 - [`chat_summarization_cache`](database-schema.md#chat_summarization_cache) - Cached summaries
@@ -132,8 +132,8 @@ A streamlined reference optimized for LLM consumption, featuring:
 
 ### SQL Portability
 The database system is designed for cross-RDBMS compatibility, supporting multiple database backends:
-- **Registered providers**: SQLite (`sqlite3`) and SQLink (`sqlink`) — the only two wired into the `getSqlProvider` factory today (see [`internal/database/providers/__init__.py`](../internal/database/providers/__init__.py:90))
-- **Implemented, not yet selectable**: MySQL and PostgreSQL provider classes exist at [`internal/database/providers/mysql.py`](../internal/database/providers/mysql.py) and [`internal/database/providers/postgresql.py`](../internal/database/providers/postgresql.py) but are not registered in the factory. SQL must still stay portable so they can be turned on without rewrites.
+- **Registered providers**: SQLite (`sqlite3`) and SQLink (`sqlink`) — the only two wired into the `getSqlProvider` factory today (see [`lib/db/providers/__init__.py`](../lib/db/providers/__init__.py:90))
+- **Implemented, not yet selectable**: MySQL and PostgreSQL provider classes exist at [`lib/db/providers/mysql.py`](../lib/db/providers/mysql.py) and [`lib/db/providers/postgresql.py`](../lib/db/providers/postgresql.py) but are not registered in the factory. SQL must still stay portable so they can be turned on without rewrites.
 - **Provider abstraction**: Common interface through `BaseSQLProvider` class
 - **Portable operations**: Provider-specific methods handle SQL dialect differences
 - **Type safety**: Consistent TypedDict models across all providers
@@ -178,28 +178,28 @@ The Gromozeka database system is designed to work with multiple relational datab
 ### Supported Database Providers
 
 #### SQLite (Default)
-- **Provider**: [`SQLite3Provider`](../internal/database/providers/sqlite3.py:1)
+- **Provider**: [`SQLite3Provider`](../lib/db/providers/sqlite3.py:1)
 - **Library**: `aiosqlite` (async wrapper over Python's `sqlite3` stdlib module)
 - **Use case**: Embedded databases, development, testing, small to medium deployments
 - **Features**: Zero configuration, file-based, ACID compliant, optional `sqlite-vec` extension for native vector search
 - **Status**: Registered in `getSqlProvider` factory
 
 #### MySQL
-- **Provider**: [`MySQLProvider`](../internal/database/providers/mysql.py:1)
+- **Provider**: [`MySQLProvider`](../lib/db/providers/mysql.py:1)
 - **Library**: `aiomysql` (async MySQL driver)
 - **Use case**: Production deployments, high concurrency, large datasets
 - **Features**: Connection pooling, async operations, enterprise-grade
 - **Status**: Implemented but **not yet registered** in the `getSqlProvider` factory; cannot be selected via config today
 
 #### PostgreSQL
-- **Provider**: [`PostgreSQLProvider`](../internal/database/providers/postgresql.py:1)
+- **Provider**: [`PostgreSQLProvider`](../lib/db/providers/postgresql.py:1)
 - **Library**: `asyncpg` (async PostgreSQL driver)
 - **Use case**: Production deployments, complex queries, advanced features
 - **Features**: Connection pooling, async operations, rich data types
 - **Status**: Implemented but **not yet registered** in the `getSqlProvider` factory; cannot be selected via config today
 
 #### SQLink
-- **Provider**: [`SQLinkProvider`](../internal/database/providers/sqlink.py:1)
+- **Provider**: [`SQLinkProvider`](../lib/db/providers/sqlink.py:1)
 - **Library**: `sqlink` (HTTP client for a remote SQLink database server)
 - **Use case**: Remote database operations via a SQLink HTTP server (with optional HTTP/HTTPS proxy)
 - **Features**: Async operations, HTTP-based remote access, proxy support
@@ -213,7 +213,7 @@ The `BaseSQLProvider` class defines a common interface that all providers implem
 Perform an "insert or update" operation with provider-specific SQL syntax.
 
 ```python
-from internal.database.providers.base import ExcludedValue
+from lib.db.providers.base import ExcludedValue
 
 # Insert or update a chat message
 await db.chatMessages.saveChatMessage(
@@ -300,7 +300,7 @@ textType = provider.getTextType()
 The `ExcludedValue` class is a special marker that allows provider-specific translation of upsert update expressions:
 
 ```python
-from internal.database.providers.base import ExcludedValue
+from lib.db.providers.base import ExcludedValue
 
 # In an upsert operation, use ExcludedValue to reference the new value
 update_expressions = {
@@ -415,11 +415,11 @@ To switch between database providers:
 ### Related Documentation
 
 - **SQL Portability Guide**: [`sql-portability-guide.md`](sql-portability-guide.md)
-- **Provider Base Class**: [`internal/database/providers/base.py`](../internal/database/providers/base.py:1)
-- **SQLite Provider**: [`internal/database/providers/sqlite3.py`](../internal/database/providers/sqlite3.py:1)
-- **MySQL Provider**: [`internal/database/providers/mysql.py`](../internal/database/providers/mysql.py:1)
-- **PostgreSQL Provider**: [`internal/database/providers/postgresql.py`](../internal/database/providers/postgresql.py:1)
-- **SQLink Provider**: [`internal/database/providers/sqlink.py`](../internal/database/providers/sqlink.py:1)
+- **Provider Base Class**: [`lib/db/providers/base.py`](../lib/db/providers/base.py:1)
+- **SQLite Provider**: [`lib/db/providers/sqlite3.py`](../lib/db/providers/sqlite3.py:1)
+- **MySQL Provider**: [`lib/db/providers/mysql.py`](../lib/db/providers/mysql.py:1)
+- **PostgreSQL Provider**: [`lib/db/providers/postgresql.py`](../lib/db/providers/postgresql.py:1)
+- **SQLink Provider**: [`lib/db/providers/sqlink.py`](../lib/db/providers/sqlink.py:1)
 
 ### Repository Pattern Architecture
 
@@ -474,12 +474,11 @@ The database system uses a repository pattern with 16 specialized repositories, 
    - `updateDelayedTask()` - Mark a task as done
    - `cleanupOldCompletedDelayedTasks()` - Remove old completed tasks
 
-9. **[`cache`](../internal/database/repositories/cache.py:1)** - Generic caching
-   - `setCacheEntry()` - Store a cached value
-   - `getCacheEntry()` - Retrieve a cached value
-   - `clearCache()` - Remove cache entries by type
-   - `getCacheStorage()` - List storage namespaces
-   - `setCacheStorage()` - Set a storage namespace
+9. **[`cache`](../internal/database/repositories/cache.py:1)** - `cache_storage` persistence (backing for `CacheService`)
+   - `getCacheStorage()` - List all `cache_storage` entries
+   - `setCacheStorage()` - Store a `cache_storage` entry
+   - `unsetCacheStorage()` - Remove a `cache_storage` entry
+   - The `cache` table itself is owned by `GenericDatabaseCache` in [`lib/cache/sql_cache.py`](../lib/cache/sql_cache.py) (ADR-024)
 
 10. **[`common`](../internal/database/repositories/common.py:1)** - Common operations
     - `getSettings()` - Get global system settings
@@ -510,7 +509,7 @@ The database system uses a repository pattern with 16 specialized repositories, 
    - `saveMemoryEmbedding()` - Store a memory embedding vector (model provenance resolved internally to `model_id` via the injected `modelIdResolver`; handler signature stays model-agnostic)
    - `getMemoriesWithoutEmbeddings()` - Backfill helper for missing embeddings
 
-15. **[`webhookUpdates`](../internal/database/repositories/webhook_updates.py:1)** - Max webhook payload buffer (two-process webhook mode; see ADR-013)
+15. **[`webhookUpdates`](../lib/max_webhook_receiver/repository.py)** - Max webhook payload buffer (two-process webhook mode; see ADR-013). Since ADR-025 this repository lives in the webhook receiver and works over the receiver's OWN database — it is NOT on the bot's `Database` wrapper
    - `addUpdate()` - Enqueue an incoming webhook payload
    - `getUnprocessedUpdates()` - Pull pending payloads for consumption
    - `markProcessed()` - Mark payloads as consumed
@@ -524,7 +523,7 @@ The database system uses a repository pattern with 16 specialized repositories, 
 
 #### Accessing Repositories
 
-All repositories are accessed through the main `Database` instance:
+All internal repositories are accessed through the main `Database` instance (the webhook receiver's `webhookUpdates` repository is the one exception — the receiver constructs it over its own database, ADR-025):
 
 ```python
 # Access repositories via the db instance
@@ -619,19 +618,23 @@ settingValue = await db.chatSettings.getChatSetting(
 
 ### Cache Operations
 ```python
+from lib.cache import GenericDatabaseCache
 from internal.database.models import CacheType
 
-# Set cache value
-await db.cache.setCacheEntry(
-    key='weather-123',
-    data='{"temp": 20}',
-    cacheType=CacheType.WEATHER,
+cache = GenericDatabaseCache(
+    manager=db.manager,
+    namespace=CacheType.WEATHER,
 )
 
-# Get cache value
-cachedData = await db.cache.getCacheEntry(
+# Set cache value
+await cache.set(
     key='weather-123',
-    cacheType=CacheType.WEATHER,
+    value={"temp": 20},
+)
+
+# Get cache value (TTL-aware)
+cachedData = await cache.get(
+    key='weather-123',
     ttl=3600
 )
 ```
@@ -656,7 +659,7 @@ expr = provider.getCaseInsensitiveComparison("name", "searchName")
 
 #### Cross-Provider Upsert
 ```python
-from internal.database.providers.base import ExcludedValue
+from lib.db.providers.base import ExcludedValue
 
 # Upsert operation works the same across all providers
 await db.chatMessages.saveChatMessage(
@@ -707,7 +710,7 @@ database = "gromozeka_db"
 ## 🔗 Related Documentation
 
 - **Database Class**: [`internal/database/database.py`](../internal/database/database.py:1)
-- **Database Manager**: [`internal/database/manager.py`](../internal/database/manager.py:1)
+- **Database Manager**: [`lib/db/manager.py`](../lib/db/manager.py:1)
 - **Repository Base Class**: [`internal/database/repositories/base.py`](../internal/database/repositories/base.py:1)
 - **Database Models**: [`internal/database/models.py`](../internal/database/models.py:1)
 - **Migration Manager**: [`internal/database/migrations/manager.py`](../internal/database/migrations/manager.py:59)
@@ -741,13 +744,13 @@ See: [Best Practices](database-schema.md#best-practices)
 > [`database-schema.md`](database-schema.md); for migration files see
 > [`internal/database/migrations/versions/`](../internal/database/migrations/versions/).
 
-- **Total Tables**: 25+ base tables (plus dynamic vec0 tables per embedding dimension and per-`CacheType` cache tables)
+- **Total Tables**: 22 base tables (plus dynamic vec0 tables per embedding dimension; `webhook_updates` moved to the webhook receiver's own database — ADR-025, `migration_029`)
 - **Core Tables**: 5 (`chat_messages`, `chat_users`, `chat_info`, `chat_topics`, `chat_settings`)
-- **Cache Tables**: 3 explicit (`chat_summarization_cache`, `cache_storage`, `cache`) plus dynamic per-`CacheType` tables
+- **Cache Tables**: 3 (`chat_summarization_cache`, `cache_storage`, `cache` — unified into one namespace-keyed table by `migration_012`; the `cache` table's SQL is owned by `GenericDatabaseCache` in `lib/cache`)
 - **Spam Detection Tables**: 4 (`spam_messages`, `ham_messages`, `bayes_tokens`, `bayes_classes`)
 - **Statistics Tables**: 2 (`stat_events`, `stat_aggregates`) — legacy `chat_stats` and `chat_user_stats` dropped in migration_027
-- **Current Migration Version**: 28
-- **Total Repositories**: 16 specialised repositories on the `Database` class
+- **Current Migration Version**: 29
+- **Total Repositories**: 15 specialised repositories on the `Database` class (plus the webhook receiver's own `WebhookUpdatesRepository` in `lib/max_webhook_receiver/` — ADR-025)
 
 ## 🤝 Contributing
 
@@ -767,6 +770,6 @@ This documentation is part of the Gromozeka bot project.
 
 ---
 
-**Last Updated**: 2026-07-21
-**Database Version**: 25
+**Last Updated**: 2026-08-26
+**Database Version**: 29
 **Documentation Version**: 2.4

@@ -8,11 +8,11 @@ from typing import AsyncGenerator
 import pytest
 
 from internal.database import Database
-from internal.database.manager import DatabaseManagerConfig
 from internal.database.migrations.versions.migration_016_add_stat_tables import (
     getMigration,
 )
-from internal.database.stats_storage import DatabaseStatsStorage
+from lib.db.manager import DatabaseManagerConfig
+from lib.stats import DatabaseStatsStorage
 
 
 @pytest.fixture
@@ -47,7 +47,7 @@ async def statsStorage() -> AsyncGenerator[DatabaseStatsStorage, None]:
 
         # Create storage with default data source
         storage = DatabaseStatsStorage(
-            db=db,
+            manager=db.manager,
             eventType="llm_request",
             dataSource="default",
         )

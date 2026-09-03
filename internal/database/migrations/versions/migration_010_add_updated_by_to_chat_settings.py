@@ -16,7 +16,8 @@ enabling audit trail functionality for chat configuration changes.
 
 from typing import Type
 
-from ...providers import BaseSQLProvider, ParametrizedQuery
+from lib.db.providers import BaseSQLProvider, ParametrizedQuery
+
 from ..base import BaseMigration
 
 

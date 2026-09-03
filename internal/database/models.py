@@ -307,28 +307,6 @@ class DelayedTaskDict(TypedDict):
     """Record last update timestamp."""
 
 
-class WebhookUpdatesRow(TypedDict):
-    """Dictionary representing a webhook_updates row.
-
-    Each row stores one incoming Max webhook payload awaiting consumption.
-    ``processed`` is an integer boolean (0/1). ``processed_at`` is ``None``
-    for rows that have not yet been consumed.
-    """
-
-    id: str
-    """Application-generated UUID identifying the update."""
-    received_at: datetime.datetime
-    """When the webhook payload was received and stored."""
-    update_type: str
-    """Coarse update_type tag extracted from the Max payload."""
-    raw_json: str
-    """Full webhook request body serialized as a JSON string."""
-    processed: int
-    """Whether the update has been consumed (0 = pending, 1 = processed)."""
-    processed_at: Optional[datetime.datetime]
-    """When the update was marked processed, or None if still pending."""
-
-
 class SpamMessageDict(TypedDict):
     """Dictionary representing a spam message record."""
 
@@ -371,19 +349,6 @@ class ChatSummarizationCacheDict(TypedDict):
     summary: str
     """Generated summary."""
 
-    created_at: datetime.datetime
-    """Record creation timestamp."""
-    updated_at: datetime.datetime
-    """Record last update timestamp."""
-
-
-class CacheDict(TypedDict):
-    """Weather cache entry from database."""
-
-    key: str
-    """Cache key."""
-    data: str
-    """JSON-serialized response data."""
     created_at: datetime.datetime
     """Record creation timestamp."""
     updated_at: datetime.datetime

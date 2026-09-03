@@ -18,7 +18,6 @@ import sqlite3
 import pytest
 
 from internal.database import Database
-from internal.database.manager import DatabaseManagerConfig
 from internal.database.models import (
     CacheType,
     MediaStatus,
@@ -26,6 +25,8 @@ from internal.database.models import (
     SpamReason,
 )
 from internal.models import MessageType
+from lib.cache import GenericDatabaseCache
+from lib.db.manager import DatabaseManagerConfig
 
 
 @pytest.fixture
@@ -853,36 +854,57 @@ async def testSpamHamMessagesCrud(inMemoryDb):
 
 @pytest.mark.asyncio
 async def testCacheOperationsCrud(inMemoryDb):
-    """Test CRUD operations for cache"""
+    """Test CRUD operations for cache using GenericDatabaseCache."""
     db = inMemoryDb
 
-    # CREATE weather cache
+    # Create a cache instance for WEATHER namespace
+    cache = GenericDatabaseCache(db.manager, namespace=CacheType.WEATHER)
+
+    # CREATE
     key = "weather:london"
-    data = json.dumps({"temp": 20, "condition": "sunny"})
-    success = await db.cache.setCacheEntry(key, data, CacheType.WEATHER)
+    data = {"temp": 20, "condition": "sunny"}
+    success = await cache.set(key, data)
     assert success is True
 
     # READ
-    entry = await db.cache.getCacheEntry(key, CacheType.WEATHER)
+    entry = await cache.get(key)
     assert entry is not None
-    assert entry["key"] == key
-    assert entry["data"] == data
+    assert entry == data
 
     # UPDATE
-    newData = json.dumps({"temp": 22, "condition": "cloudy"})
-    success = await db.cache.setCacheEntry(key, newData, CacheType.WEATHER)
+    newData = {"temp": 22, "condition": "cloudy"}
+    success = await cache.set(key, newData)
     assert success is True
 
-    entry = await db.cache.getCacheEntry(key, CacheType.WEATHER)
-    assert entry["data"] == newData
+    entry = await cache.get(key)
+    assert entry == newData
 
     # Test TTL
-    entry = await db.cache.getCacheEntry(key, CacheType.WEATHER, ttl=3600)
+    entry = await cache.get(key, ttl=3600)
     assert entry is not None
 
     # Test expired TTL
-    entry = await db.cache.getCacheEntry(key, CacheType.WEATHER, ttl=0)
+    entry = await cache.get(key, ttl=0)
     assert entry is None
+
+    # Test CLEAR - clear the namespace
+    await cache.clear()  # Returns None
+
+    # Verify cleared
+    entry = await cache.get(key)
+    assert entry is None
+
+    # Add entries for clearOld test
+    await cache.set("key1", "data1")
+    await cache.set("key2", "data2")
+
+    # Test CLEAROLD with no-op (no old entries)
+    result = await cache.clearOld(ttl=365 * 86400)
+    assert result is True
+
+    # Both entries should still exist
+    assert await cache.get("key1") is not None
+    assert await cache.get("key2") is not None
 
 
 @pytest.mark.asyncio

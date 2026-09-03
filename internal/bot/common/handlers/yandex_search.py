@@ -43,7 +43,6 @@ from internal.bot.models import (
 from internal.bot.models.chat_settings import ChatSettingsKey
 from internal.config.manager import ConfigManager
 from internal.database import Database
-from internal.database.generic_cache import GenericDatabaseCache
 from internal.database.models import (
     CacheType,
     MessageCategory,
@@ -55,7 +54,13 @@ from lib.ai import (
     LLMParameterType,
 )
 from lib.ai.models import ModelMessage, ModelResultStatus
-from lib.cache import JsonKeyGenerator, JsonValueConverter, StringKeyGenerator, StringValueConverter
+from lib.cache import (
+    GenericDatabaseCache,
+    JsonKeyGenerator,
+    JsonValueConverter,
+    StringKeyGenerator,
+    StringValueConverter,
+)
 from lib.yandex_search import SearchRequestKeyGenerator, YandexSearchClient
 
 from .base import BaseBotHandler
@@ -121,7 +126,7 @@ class YandexSearchHandler(BaseBotHandler):
             folderId=ysConfig["folder-id"],
             requestTimeout=int(ysConfig.get("request-timeout", 30)),
             cache=GenericDatabaseCache(
-                database,
+                database.manager,
                 namespace=CacheType.YANDEX_SEARCH,
                 keyGenerator=SearchRequestKeyGenerator(),
                 valueConverter=JsonValueConverter(),
@@ -239,13 +244,13 @@ class YandexSearchHandler(BaseBotHandler):
         )
 
         self.urlContentCache = GenericDatabaseCache(
-            database,
+            database.manager,
             namespace=CacheType.URL_CONTENT,
             keyGenerator=StringKeyGenerator(),
             valueConverter=JsonValueConverter[Dict[str, Any]](),
         )
         self.urlContentCondensedCache = GenericDatabaseCache(
-            database,
+            database.manager,
             namespace=CacheType.URL_CONTENT_CONDENSED,
             keyGenerator=JsonKeyGenerator[Dict[str, Any]](hash=True),
             valueConverter=StringValueConverter(),

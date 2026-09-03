@@ -8,10 +8,11 @@ as managing forum topic information.
 import logging
 from typing import List, Optional
 
-from .. import utils as dbUtils
-from ..manager import DatabaseManager
+from lib.db import utils as dbUtils
+from lib.db.manager import DatabaseManager
+from lib.db.providers.base import ExcludedValue
+
 from ..models import ChatBotStatus, ChatInfoDict, ChatTopicInfoDict
-from ..providers.base import ExcludedValue
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)

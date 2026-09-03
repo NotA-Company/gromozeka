@@ -60,7 +60,7 @@ Copy the shape from a recent migration, e.g. [`migration_015_add_divination_layo
 
 from typing import Type
 
-from ...providers import BaseSQLProvider, ParametrizedQuery
+from lib.db.providers import BaseSQLProvider, ParametrizedQuery
 from ..base import BaseMigration
 
 

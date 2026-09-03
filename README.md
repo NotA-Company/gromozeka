@@ -24,7 +24,7 @@ See [CHANGELOG.md](CHANGELOG.md) for notable changes.
 - **Web search**: Yandex Search integration with caching and rate limiting
 - **Chat summarization**: Summarize conversations and topics
 - **Hierarchical TOML config**: Layered `--config-dir` overrides with `${VAR}` substitution
-- **SQLite with provider abstraction**: PostgreSQL and MySQL providers exist; 26 versioned migrations
+- **SQLite with provider abstraction**: PostgreSQL and MySQL providers exist; 29 versioned migrations
 - **Rate limiting**: Sliding window algorithm with multiple queues
 - **File storage**: Local filesystem or S3-compatible via `StorageService`
 - **Custom handler loading**: Dynamic handler loading via TOML config
@@ -73,8 +73,10 @@ mode, the deployment is **two processes**: a standalone webhook receiver that
 accepts Max's `POST /webhook` calls, plus the bot itself, which polls the
 receiver's local `GET /updates` instead of the real Max API.
 
-**1. Configure** `[webhook-receiver]` (defaults in
-[`configs/00-defaults/webhook-receiver.toml`](configs/00-defaults/webhook-receiver.toml)):
+**1. Configure** the bot under `[webhook-receiver]` (defaults in
+[`configs/00-defaults/webhook-receiver.toml`](configs/00-defaults/webhook-receiver.toml));
+the receiver process reads its own single TOML file — see step 3 and
+[docs/max-webhook-setup.md](docs/max-webhook-setup.md):
 
 ```toml
 [bot]
@@ -85,6 +87,7 @@ enabled = true                                          # bot polls the local re
 register-webhook = true                                 # bot registers the subscription with Max
 webhook-url = "https://bot.example.com/webhook"         # public HTTPS URL (port 443, CA-trusted cert)
 secret = "${MAX_WEBHOOK_SECRET}"                        # shared secret (env var)
+get-updates-secret = "${MAX_WEBHOOK_GET_UPDATES_SECRET}"    # GET /updates poll secret (env var)
 base-polling-url = "http://127.0.0.1:8443"              # where the bot polls
 ```
 
@@ -92,27 +95,39 @@ Set the shared secret in your `.env` (never commit it):
 
 ```bash
 MAX_WEBHOOK_SECRET=some-long-random-secret
+MAX_WEBHOOK_GET_UPDATES_SECRET=another-long-random-secret
 ```
 
 **2. TLS.** Max requires a CA-trusted HTTPS certificate on port 443. Run a
 reverse proxy (nginx, Caddy, …) that terminates TLS and forwards `POST /webhook`
 to the receiver's `127.0.0.1:8443`; alternatively set `tls-cert-file` and
-`tls-key-file` under `[webhook-receiver]` so the receiver serves HTTPS directly.
+`tls-key-file` in the receiver's own config file so it serves HTTPS directly.
 
-**3. Start both processes** (start the receiver first):
+**3. Start both processes** (start the receiver first). The receiver takes a
+single `--config` TOML file of its own (default `webhook-receiver.toml`) — not
+the bot's config stack — and stores updates in its own SQLite database
+(`webhook_receiver_data.db`); a complete example file lives in
+[docs/max-webhook-setup.md](docs/max-webhook-setup.md):
 
 ```bash
 # Receiver process
-./venv/bin/python3 -m internal.max_webhook_receiver \
-    --config-dir configs/00-defaults --config-dir configs/local
+./venv/bin/python3 -m lib.max_webhook_receiver \
+    --config webhook-receiver.toml --dotenv-file .env
 
 # Bot process
 ./venv/bin/python3 main.py --config-dir configs/00-defaults --config-dir configs/local
 ```
 
 The receiver refuses to start if `secret` is empty or an unresolved `${VAR}`.
-In production, run the two as separate systemd units sharing the same config
-and `.env` (so they share the SQLite database).
+In production, run the two as separate service units. Keep `secret` /
+`get-updates-secret` identical in the bot's config and the receiver's file
+(drift = 403s).
+
+For container deployments, the receiver ships a pinned standalone
+[`lib/max_webhook_receiver/requirements.txt`](lib/max_webhook_receiver/requirements.txt)
+and a [`lib/max_webhook_receiver/Dockerfile`](lib/max_webhook_receiver/Dockerfile)
+— see the Docker deployment section in
+[docs/max-webhook-setup.md](docs/max-webhook-setup.md).
 
 Full details: [docs/max-webhook-setup.md](docs/max-webhook-setup.md),
 [docs/llm/architecture.md](docs/llm/architecture.md) (ADR-013),

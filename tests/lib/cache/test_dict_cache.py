@@ -689,3 +689,191 @@ class TestDictCachePerformance:
 
         assert stats["entries"] == 0  # All entries should be cleaned up
         assert cleanup_time < 1.0  # Should complete quickly
+
+
+class TestDictCacheClearOld:
+    """Tests for DictCache.clearOld age-based purge.
+
+    Tests direct age comparison (not _isExpired), None→0 normalization,
+    recent-entry survival, bool return, and negative-ttl parity with SQL.
+    """
+
+    @pytest.mark.asyncio
+    async def test_clearold_deletes_old_entries(self, fakeClock: List[float]) -> None:
+        """clearOld deletes entries older than the TTL threshold.
+
+        Args:
+            fakeClock: Mutable fake clock ([now]); used to age entries.
+
+        Returns:
+            None
+
+        Raises:
+            AssertionError: If old entries aren't deleted correctly.
+        """
+        cache = DictCache[str, str](keyGenerator=StringKeyGenerator())
+
+        # Set entries at different times
+        await cache.set("old", "old_value")
+        fakeClock[0] += 10  # Advance 10 seconds
+        await cache.set("recent", "recent_value")
+
+        # clearOld with TTL=5 should delete old entry (age 10 > 5)
+        result = await cache.clearOld(ttl=5)
+        assert result is True
+
+        assert await cache.get("old") is None
+        assert await cache.get("recent") == "recent_value"
+
+    @pytest.mark.asyncio
+    async def test_clearold_none_normalizes_to_zero(self, fakeClock: List[float]) -> None:
+        """clearOld(None) normalizes to 0 and deletes all entries.
+
+        Args:
+            fakeClock: Mutable fake clock ([now]); unused but required.
+
+        Returns:
+            None
+
+        Raises:
+            AssertionError: If None doesn't delete everything.
+        """
+        cache = DictCache[str, str](keyGenerator=StringKeyGenerator())
+
+        await cache.set("key1", "value1")
+        await cache.set("key2", "value2")
+
+        # clearOld(None) should delete everything
+        result = await cache.clearOld(ttl=None)
+        assert result is True
+
+        assert await cache.get("key1") is None
+        assert await cache.get("key2") is None
+
+    @pytest.mark.asyncio
+    async def test_clearold_zero_deletes_all(self, fakeClock: List[float]) -> None:
+        """clearOld(0) deletes all entries.
+
+        Args:
+            fakeClock: Mutable fake clock ([now]); unused but required.
+
+        Returns:
+            None
+
+        Raises:
+            AssertionError: If 0 doesn't delete everything.
+        """
+        cache = DictCache[str, str](keyGenerator=StringKeyGenerator())
+
+        await cache.set("key1", "value1")
+        await cache.set("key2", "value2")
+
+        # clearOld(0) should delete everything
+        result = await cache.clearOld(ttl=0)
+        assert result is True
+
+        assert await cache.get("key1") is None
+        assert await cache.get("key2") is None
+
+    @pytest.mark.asyncio
+    async def test_clearold_recent_entries_survive(self, fakeClock: List[float]) -> None:
+        """Recent entries (younger than TTL) survive the sweep.
+
+        Args:
+            fakeClock: Mutable fake clock ([now]); used to age entries.
+
+        Returns:
+            None
+
+        Raises:
+            AssertionError: If recent entries are deleted.
+        """
+        cache = DictCache[str, str](keyGenerator=StringKeyGenerator())
+
+        await cache.set("key1", "value1")
+        fakeClock[0] += 3  # Age is 3 seconds
+        await cache.set("key2", "value2")
+
+        # clearOld with TTL=10 should keep both (ages 3 and 0 < 10)
+        result = await cache.clearOld(ttl=10)
+        assert result is True
+
+        assert await cache.get("key1") == "value1"
+        assert await cache.get("key2") == "value2"
+
+    @pytest.mark.asyncio
+    async def test_clearold_returns_true_on_noop(self, fakeClock: List[float]) -> None:
+        """clearOld returns True on successful no-op (empty cache).
+
+        Args:
+            fakeClock: Mutable fake clock ([now]); unused but required.
+
+        Returns:
+            None
+
+        Raises:
+            AssertionError: If clearOld doesn't return True on no-op.
+        """
+        cache = DictCache[str, str](keyGenerator=StringKeyGenerator())
+
+        # No-op sweep on empty cache
+        result = await cache.clearOld(ttl=365 * 86400)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_clearold_negative_ttl_deletes_all(self, fakeClock: List[float]) -> None:
+        """Negative TTL deletes everything (legacy SQL behavior parity).
+
+        Args:
+            fakeClock: Mutable fake clock ([now]); unused but required.
+
+        Returns:
+            None
+
+        Raises:
+            AssertionError: If negative TTL doesn't delete everything.
+        """
+        cache = DictCache[str, str](keyGenerator=StringKeyGenerator())
+
+        await cache.set("key1", "value1")
+        await cache.set("key2", "value2")
+
+        # Negative TTL should delete everything (matches legacy SQL)
+        result = await cache.clearOld(ttl=-1)
+        assert result is True
+
+        assert await cache.get("key1") is None
+        assert await cache.get("key2") is None
+
+    @pytest.mark.asyncio
+    async def test_clearold_strict_age_comparison(self, fakeClock: List[float]) -> None:
+        """Age comparison is strict: age > TTL deletes, age <= TTL survives.
+
+        Args:
+            fakeClock: Mutable fake clock ([now]); used to age entries.
+
+        Returns:
+            None
+
+        Raises:
+            AssertionError: If strict comparison isn't used.
+        """
+        cache = DictCache[str, str](keyGenerator=StringKeyGenerator())
+
+        await cache.set("key1", "value1")
+        fakeClock[0] += 5  # Age is exactly 5 seconds
+
+        # clearOld with TTL=5 should keep entry (age 5 is NOT > 5)
+        result = await cache.clearOld(ttl=5)
+        assert result is True
+
+        assert await cache.get("key1") == "value1"
+
+        # Now advance past the threshold
+        fakeClock[0] += 0.1  # Age is now 5.1 seconds
+
+        # clearOld with TTL=5 should delete (age 5.1 > 5)
+        result = await cache.clearOld(ttl=5)
+        assert result is True
+
+        assert await cache.get("key1") is None

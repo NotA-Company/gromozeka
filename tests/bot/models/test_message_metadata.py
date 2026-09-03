@@ -20,8 +20,8 @@ from internal.bot.models.message_metadata import (
 )
 from internal.database import Database
 from internal.database.models import ChatMessageDict, MessageCategory
-from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
+from lib.db.utils import DEFAULT_THREAD_ID
 
 # ---------------------------------------------------------------------------
 # Helpers

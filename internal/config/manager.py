@@ -24,10 +24,9 @@ Example:
 
 import logging
 import os
-import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TypeVar, cast
+from typing import Any, Dict, List, Optional
 
 import tomli
 
@@ -36,48 +35,6 @@ from lib.proxy import ProxyConfigDict
 from lib.rate_limiter import RateLimiterManagerConfig
 
 logger = logging.getLogger(__name__)
-
-
-def replaceMatchToEnv(match: re.Match[str]) -> str:
-    """Replace environment variable placeholders with actual values.
-
-    Args:
-        match: A regex match object containing the environment variable name.
-
-    Returns:
-        str: The value of the environment variable or the original placeholder
-             if the variable is not set.
-    """
-    key = match.group(1)
-    return os.getenv(key, match.group(0))
-
-
-T = TypeVar("T")
-
-
-def substituteEnvVars(value: T) -> T:
-    """Recursively substitute environment variable placeholders in configuration values.
-
-    This function processes strings, dictionaries, and lists to replace placeholders
-    in the format ${VAR_NAME} with their corresponding environment variable values.
-
-    Args:
-        value: The configuration value to process. Can be a string, dict, list, or other type.
-
-    Returns:
-        The processed value with environment variables substituted:
-        - For strings: returns the string with placeholders replaced
-        - For dictionaries: returns a new dict with substituted values
-        - For lists: returns a new list with substituted items
-        - For other types: returns the original value unchanged
-    """
-    if isinstance(value, str):
-        return cast(T, re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_-]*)\}", replaceMatchToEnv, value))
-    elif isinstance(value, dict):
-        return cast(T, {k: substituteEnvVars(v) for k, v in value.items()})
-    elif isinstance(value, list):
-        return cast(T, [substituteEnvVars(item) for item in value])
-    return value
 
 
 class ConfigManager:
@@ -127,7 +84,7 @@ class ConfigManager:
         self.configPath: str = configPath
         self.configDirs: List[str] = configDirs or []
         utils.load_dotenv(path=dotEnvFile)
-        self.config: Dict[str, Any] = substituteEnvVars(self._loadConfig())
+        self.config: Dict[str, Any] = utils.substituteEnvVars(self._loadConfig())
 
         rootDir: Optional[str] = self.config.get("application", {}).get("root-dir", None)
         if rootDir is not None:

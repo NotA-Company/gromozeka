@@ -10,7 +10,8 @@ This enables storing rich formatting and extensible metadata for chat messages.
 
 from typing import Type
 
-from ...providers import BaseSQLProvider, ParametrizedQuery
+from lib.db.providers import BaseSQLProvider, ParametrizedQuery
+
 from ..base import BaseMigration
 
 

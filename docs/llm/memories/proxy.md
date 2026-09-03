@@ -20,7 +20,7 @@ How to use this file:
 
 ## Key Files
 
-`lib/proxy/__init__.py` (package), `lib/ai/abstract.py` (aclose), `lib/ai/providers/basic_openai_provider.py` (proxy + aclose), `internal/bot/telegram/application.py` (PTB proxy), `lib/max_bot/client.py`, `lib/openweathermap/client.py`, `lib/geocode_maps/client.py`, `lib/yandex_search/client.py`, `internal/bot/common/handlers/yandex_search.py`, `internal/bot/common/handlers/weather.py`, `internal/database/providers/sqlink.py`, `internal/database/providers/__init__.py` (sqlink proxy resolution), `main.py` (`ProxyService.getInstance().initialize(configManager.getProxyConfig(), loop=loop)` at line 78). Note: `main.py` no longer calls `ProxyHelper.setGlobalProxyConfig()` directly — that call now lives inside `ProxyService.initialize()` at `internal/services/proxy/service.py:103`. See `proxy-lifecycle.md` for the ProxyService layer.
+`lib/proxy/__init__.py` (package), `lib/ai/abstract.py` (aclose), `lib/ai/providers/basic_openai_provider.py` (proxy + aclose), `internal/bot/telegram/application.py` (PTB proxy), `lib/max_bot/client.py`, `lib/openweathermap/client.py`, `lib/geocode_maps/client.py`, `lib/yandex_search/client.py`, `internal/bot/common/handlers/yandex_search.py`, `internal/bot/common/handlers/weather.py`, `lib/db/providers/sqlink.py`, `lib/db/providers/__init__.py` (sqlink proxy resolution), `main.py` (`ProxyService.getInstance().initialize(configManager.getProxyConfig(), loop=loop)` at line 78). Note: `main.py` no longer calls `ProxyHelper.setGlobalProxyConfig()` directly — that call now lives inside `ProxyService.initialize()` at `internal/services/proxy/service.py:103`. See `proxy-lifecycle.md` for the ProxyService layer.
 
 ## Proxy-Specific Conventions
 
@@ -110,7 +110,7 @@ use-proxy = true
 # address = "${DB_PROXY_ADDRESS}"
 ```
 
-The `use-proxy` key and optional `proxy` sub-table must be inside `parameters` because `getSqlProvider()` in `internal/database/providers/__init__.py` extracts `config["parameters"]` and passes it as `**parameters` to the provider constructor (`SQLinkProvider(**parameters)`). Keys placed directly under the provider block (e.g. `[database.providers.archive]`) are not forwarded to the constructor.
+The `use-proxy` key and optional `proxy` sub-table must be inside `parameters` because `getSqlProvider()` in `lib/db/providers/__init__.py` extracts `config["parameters"]` and passes it as `**parameters` to the provider constructor (`SQLinkProvider(**parameters)`). Keys placed directly under the provider block (e.g. `[database.providers.archive]`) are not forwarded to the constructor.
 
 ## Anti-Patterns Learned
 

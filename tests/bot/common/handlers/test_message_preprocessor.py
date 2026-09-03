@@ -47,12 +47,12 @@ from internal.bot.models import (
 )
 from internal.bot.models.ensured_message import MediaContent
 from internal.database.models import MemoryType, UserMemoryDict
-from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
 from internal.services.cache.service import CacheService
 from internal.services.llm.service import LLMService
 from internal.services.queue_service.service import QueueService
 from internal.services.storage.service import StorageService
+from lib.db.utils import DEFAULT_THREAD_ID
 
 # ---------------------------------------------------------------------------
 # Fixtures

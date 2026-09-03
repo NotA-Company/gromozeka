@@ -25,6 +25,8 @@
 15. [aiohttp — HTTP Server for the Webhook Receiver](#15-aiohttp--http-server-for-the-webhook-receiver)
 16. [lib/stt — Provider-neutral Speech-to-Text](#16-libstt--provider-neutral-speech-to-text)
 17. [lib/stats/stats_pages/ — Statistics Page Generator](#17-libstatsstats_pages--statistics-page-generator)
+18. [lib/db — SQL Provider Abstraction + DatabaseManager](#18-libdb--sql-provider-abstraction--databasemanager)
+19. [lib/max_webhook_receiver — Standalone Max Webhook Receiver](#19-libmax_webhook_receiver--standalone-max-webhook-receiver)
 
 ---
 
@@ -358,7 +360,7 @@ The vector is a plain `list[float]` — same shape every embedding backend in th
 
 **Import:**
 ```python
-from lib.cache import CacheInterface, DictCache
+from lib.cache import CacheInterface, DictCache, NullCache, GenericDatabaseCache
 from lib.cache import StringKeyGenerator, HashKeyGenerator, JsonKeyGenerator
 from lib.cache import ValueConverter, JsonValueConverter, StringValueConverter
 ```
@@ -369,6 +371,8 @@ from lib.cache import ValueConverter, JsonValueConverter, StringValueConverter
 |---|---|---|
 | [`CacheInterface[K,V]`](../../lib/cache/interface.py:15) | `lib/cache/interface.py` | Generic ABC for any cache |
 | `DictCache[K,V]` | `lib/cache/dict_cache.py` | In-memory dict implementation |
+| `NullCache[K,V]` | `lib/cache/null_cache.py` | No-op cache (testing / disabled caching) |
+| [`GenericDatabaseCache[K,V]`](../../lib/cache/sql_cache.py:38) | `lib/cache/sql_cache.py` | Database-backed implementation (owns `cache`-table SQL; ADR-024) |
 | `StringKeyGenerator` | `lib/cache/key_generator.py` | Simple string key gen |
 | `HashKeyGenerator` | `lib/cache/key_generator.py` | SHA512 hash key gen |
 | `JsonKeyGenerator` | `lib/cache/key_generator.py` | JSON serialization + hash |
@@ -381,19 +385,21 @@ from lib.cache import ValueConverter, JsonValueConverter, StringValueConverter
 await cache.get(key: K, ttl: Optional[int] = None) -> Optional[V]
 await cache.set(key: K, value: V) -> bool
 await cache.clear() -> None
+await cache.clearOld(ttl: Optional[int]) -> bool
 cache.getStats() -> Dict[str, Any]
 ```
 
 **DictCache constructor:**
 ```python
 cache = DictCache[K, V](
-    keyGenerator: KeyGenerator[K],  # Required: strategy for converting keys
-    defaultTtl: int = 3600,         # Optional: default TTL in seconds
-    maxSize: Optional[int] = 1000,  # Optional: max entries before eviction
-    threadSafe: bool = True,        # Optional: enable thread safety with RLock
-    valueConverter: ValueConverter = None  # Optional: value conversion strategy
+    keyGenerator: KeyGenerator[K],        # Required: strategy for converting keys
+    defaultTtl: int = 3600,               # Optional: default TTL in seconds
+    maxSize: Optional[int] = 1000,        # Optional: max entries before eviction
 )
 ```
+(Thread safety is unconditional — all mutations run under an internal `threading.RLock`.)
+
+**DB-backed implementation:** [`GenericDatabaseCache`](../../lib/cache/sql_cache.py:38) in `lib/cache/sql_cache.py` — backed by the `cache` table (namespace/key/data with `updated_at`, per `migration_012`). Takes a `DatabaseManager` directly (`__init__(manager, namespace: str, keyGenerator=None, valueConverter=None, *, dataSource=None)`; per-call `manager.getProvider(...)`) — no `Database` wrapper (ADR-024). Owns ALL `cache`-table SQL inline (`get`/`set`/`clear` + the `clearOld(ttl)` TTL sweep; `ttl > 0` deletes entries strictly older than `now − ttl`, `ttl` of `0`/`None` deletes every namespace entry); `CacheRepository` (`db.cache`) no longer touches this table — it keeps only the `cache_storage` trio backing `CacheService` persistence. Constructed by the `weather` (5 caches) and `yandex_search` (3 caches) handlers over `self.db.manager`, passing `CacheType` StrEnum members as `namespace` (they bind directly as `str`); `HandlersManager._cleanupOldData` builds transient per-namespace instances for the weekly TTL sweep (single pass over all `CacheType` members with conditional TTL: 7-day aggressive TTL for `WEATHER`/`YANDEX_SEARCH`/`URL_CONTENT`/`URL_CONTENT_CONDENSED`, 365-day default floor for the rest).
 
 **NOTE:** For bot cache operations (chat settings, user data, admin cache), use [`CacheService`](services.md) instead of `lib/cache` directly
 
@@ -629,15 +635,15 @@ await storage.record(
 )
 ```
 
-**DB-backed implementation:** [`DatabaseStatsStorage`](../../internal/database/stats_storage.py:44) in `internal/database/stats_storage.py` — backed by `stat_events` (append-only log) and `stat_aggregates` (period buckets). Keeps a plain `dataSource` attribute (`str`) used for provider routing (`getProvider(dataSource=...)`); there is no `dataSource` member on the `StatsStorage` ABC. Created in `main.py` when `stats.enabled = true`.
+**DB-backed implementation:** [`DatabaseStatsStorage`](../../lib/stats/sql_storage.py:44) in `lib/stats/sql_storage.py` — backed by `stat_events` (append-only log) and `stat_aggregates` (period buckets). Takes a `DatabaseManager` directly (`__init__(manager, eventType, *, dataSource)`; per-call `manager.getProvider(...)`) — no `Database` wrapper (ADR-023). Keeps a plain `dataSource` attribute (`str`) used for provider routing (`getProvider(dataSource=...)`); there is no `dataSource` member on the `StatsStorage` ABC. Constructed solely by the `StatsAggregationService` factory (`createStatsStorage`, [`internal/services/stats/service.py`](../../internal/services/stats/service.py:251)); `main.py` initializes the service and loops the event types — each call gated on `[stats].enabled` inside the factory.
 
 **Integration points:**
 - `LLMManager` receives `statsStorage` in constructor and propagates to all `AbstractModel` instances
 - `AbstractModel` records generation stats (tokens, errors, status) via `_recordAttemptStats()`: per attempt — `generation_{text|structured|image}`, `request_count`, `input_tokens`, `output_tokens`, `total_tokens`, `is_error`, `tool_calls_count` (`len(result.toolCalls)`), `status_{STATUS}`, `elapsed_time`, plus optional `cached_input_tokens` / `reasoning_tokens` / `cost` recorded **only when the provider reported them** (absent metric = not reported, not zero)
 - `LLMService` passes `consumerId=str(chatId)` to LLM generation methods
-- `message` events — `BaseBotHandler.saveChatMessage` records `message_count`/`text_length` for messages in **both directions** (stats `{message_count: 1, text_length: len(text)}`). Direction comes from sender identity, not category: the `sent` label is `"True"` when `sender.id` equals the bot id (resolved via `TheBot.getBotId()`, memoized with a 1 h TTL — `BOT_ID_CACHE_TTL_SECONDS`; failures are never cached, and if resolution fails recording still proceeds with `sent = "False"` — unknown identity counts as non-bot) and `"False"` otherwise. Labels: `user_id`/`chat_type`/`message_type`/`message_category`/`sent`. Only `DELETED`/`UNSPECIFIED` categories are excluded (rewrites/defaults); every raw save counts, so split message parts each record one event. `main.py` builds the `messageStatsStorage` (gated on `[stats].enabled`) and threads it through both bot applications into `HandlersManager`, which injects it post-construction onto every handler. Default is `NullStatsStorage` so stats-off needs no `None` checks.
-- `llm_tool_call` events — `LLMService.injectStatsStorage` receives a `DatabaseStatsStorage` built in `main.py` (key `[stats].tool-stats-data-source`); every tool dispatch in the `generateTextViaLLM` loop records `tool_call_count`/`elapsed_time`/`is_error` with `user_id`/`toolName` labels. Tools that raise propagate unrecorded (never-raise contract makes that a bug, not a stats gap).
-- `command` events — `HandlersManager.handleCommand` records `command_count`/`is_error` with `user_id`/`commandName` (lowercased) labels for every **executed** command (denials/unrecognized commands are not recorded); `consumerId` is the chat ID. `main.py` builds the storage (key `[stats].command-stats-data-source`, gated on `[stats].enabled`) and threads it through both bot applications into `HandlersManager`.
+- `message` events — `BaseBotHandler.saveChatMessage` records `message_count`/`text_length` for messages in **both directions** (stats `{message_count: 1, text_length: len(text)}`). Direction comes from sender identity, not category: the `sent` label is `"True"` when `sender.id` equals the bot id (resolved via `TheBot.getBotId()`, memoized with a 1 h TTL — `BOT_ID_CACHE_TTL_SECONDS`; failures are never cached, and if resolution fails recording still proceeds with `sent = "False"` — unknown identity counts as non-bot) and `"False"` otherwise. Labels: `user_id`/`chat_type`/`message_type`/`message_category`/`sent`. Only `DELETED`/`UNSPECIFIED` categories are excluded (rewrites/defaults); every raw save counts, so split message parts each record one event. The `StatsAggregationService` factory builds the `messageStatsStorage` (gated on `[stats].enabled`; `main.py` loops the event types) and threads it through both bot applications into `HandlersManager`, which injects it post-construction onto every handler. Default is `NullStatsStorage` so stats-off needs no `None` checks.
+- `llm_tool_call` events — `LLMService.injectStatsStorage` receives a `DatabaseStatsStorage` built by the `StatsAggregationService` factory (key `[stats].tool-stats-data-source`; wired from `main.py`); every tool dispatch in the `generateTextViaLLM` loop records `tool_call_count`/`elapsed_time`/`is_error` with `user_id`/`toolName` labels. Tools that raise propagate unrecorded (never-raise contract makes that a bug, not a stats gap).
+- `command` events — `HandlersManager.handleCommand` records `command_count`/`is_error` with `user_id`/`commandName` (lowercased) labels for every **executed** command (denials/unrecognized commands are not recorded); `consumerId` is the chat ID. The `StatsAggregationService` factory builds the storage (key `[stats].command-stats-data-source`, gated on `[stats].enabled`); `main.py` threads it through both bot applications into `HandlersManager`.
 
 **Best-effort design:** `record()` implementations must never raise — log and return silently on error.
 
@@ -810,7 +816,7 @@ from lib.proxy import ProxyConfig, ProxyHelper, ProxyType, ProxyKwargs
 | Class | Purpose |
 |---|---|
 | `ProxyConfig` | Immutable proxy configuration (`__slots__`). Created via `fromServiceConfig()` or `fromDict()`. Methods: `getCombined()` (merge with global), `getProxyURL(maskPassword=False)` (build URL), `toKwargs()` (httpx2 kwargs — a single-key `{proxy: str}` for both HTTP and SOCKS5; no `transport` key, no `verify` argument). Has optional `lifecycle` field of type `ProxyLifecycleConfigDict`. |
-| `ProxyHelper` | Singleton storing the global proxy config. `setGlobalProxyConfig()` called once from `main.py`; `getGlobalProxyConfig()` used internally by `ProxyConfig.getCombined()`. |
+| `ProxyHelper` | Singleton storing the global proxy config. `setGlobalProxyConfig()` called once at startup inside `ProxyService.initialize()` (triggered from `main.py`; standalone scripts use `scripts/_lib/bootstrap.py`); `getGlobalProxyConfig()` used internally by `ProxyConfig.getCombined()`. |
 
 **Helper functions:**
 
@@ -841,15 +847,13 @@ async with httpx.AsyncClient(**proxyKwargs, timeout=30) as client:
 
 ---
 
-## See Also
-
 ## 14. `sqlite-vec` — Native Vector Search Extension
 
 **Pinned dependency:** `sqlite-vec==0.1.9` (in `requirements.direct.txt` under `# Runtime`). Optional at runtime — the `SQLite3Provider` guards the import with a module-level `try/except ImportError` and an `_SQLITE_VEC_AVAILABLE` flag; if absent, `isVectorSearchSupported()` returns `False` and semantic search returns `[]` (no numpy fallback — the previous numpy fallback path in `chat_search.py` / `user_memories.py` was retired in `migration_025_embedding_model_lookup`).
 
 **Purpose:** provides the `vec0` virtual table module for native cosine-similarity KNN search inside the SQLite process, eliminating the transfer of all embedding BLOBs to Python on every search. Loaded by `SQLite3Provider.connect()` via aiosqlite's `enable_load_extension` / `load_extension` / `enable_load_extension(False)` (wrapped in `try/finally`).
 
-**Used by:** `internal/database/providers/sqlite3.py` (`SQLite3Provider`), `internal/database/repositories/chat_embeddings.py` (writes to `vec_message_embeddings_{N}`; the previous dual-write to the `message_embeddings` BLOB table was retired in `migration_025` — embeddings now live only in vec0 with the model tracked via `chat_messages.model_id`), `internal/database/repositories/chat_search.py` (`_nativeVectorSearch`). See [`database.md`](database.md) §7 "Vector search types" for the provider interface and the vec0 schema, and [`docs/design/vector-search-native.md`](../design/vector-search-native.md) for the design.
+**Used by:** `lib/db/providers/sqlite3.py` (`SQLite3Provider`), `internal/database/repositories/chat_embeddings.py` (writes to `vec_message_embeddings_{N}`; the previous dual-write to the `message_embeddings` BLOB table was retired in `migration_025` — embeddings now live only in vec0 with the model tracked via `chat_messages.model_id`), `internal/database/repositories/chat_search.py` (`_nativeVectorSearch`). See [`database.md`](database.md) §7 "Vector search types" for the provider interface and the vec0 schema, and [`docs/design/vector-search-native.md`](../design/vector-search-native.md) for the design.
 
 **No config key** — auto-detected at connect time. To disable native search: `pip uninstall sqlite-vec`.
 
@@ -857,13 +861,13 @@ async with httpx.AsyncClient(**proxyKwargs, timeout=30) as client:
 
 ## 15. `aiohttp` — HTTP Server for the Webhook Receiver
 
-**Pinned dependency:** `aiohttp==3.14.1` (in `requirements.direct.txt` under `# Runtime`). Promoted from a transitive dependency (pulled in via `aiodocker`) to a direct one because the Max webhook receiver imports it directly.
+**Pinned dependency:** `aiohttp==3.14.3` (in `requirements.direct.txt` under `# Runtime`). Promoted from a transitive dependency (pulled in via `aiodocker`) to a direct one because the Max webhook receiver imports it directly.
 
-**Purpose:** provides the `aiohttp.web` server that the standalone Max webhook receiver process runs on. The receiver is **not** a library — it lives under `internal/`, not `lib/` — but its only web-framework dependency is `aiohttp`.
+**Purpose:** provides the `aiohttp.web` server that the standalone Max webhook receiver process runs on. The receiver itself is documented as a lib package in §19 below.
 
-**Used by:** [`internal/max_webhook_receiver/`](../../internal/max_webhook_receiver/) — `__main__.py` (`web.run_app`) and `app.py` (`createApp`, `handleWebhook`, `handleGetUpdates`). See [`architecture.md`](architecture.md) ADR-013 and [`configuration.md`](configuration.md) §`[webhook-receiver]`.
+**Used by:** [`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/) — `__main__.py` (`web.run_app`) and `app.py` (`createApp`, `handleWebhook`, `handleGetUpdates`). See [`architecture.md`](architecture.md) ADR-013/ADR-025, §19 below, and [`configuration.md`](configuration.md) §`[webhook-receiver]`.
 
-**No config key of its own** — the receiver's listen address, port, and TLS are configured under `[webhook-receiver]` (see [`configuration.md`](configuration.md)).
+**No config key of its own** — the receiver's listen address, port, and TLS are configured in the receiver's own config file (see §19 and [`configuration.md`](configuration.md)).
 
 ---
 
@@ -963,6 +967,80 @@ class StatsPayload(TypedDict):
 - `tests/lib/stats/test_stats_pages_generator.py` — in-process generator tests with rows-shaped payloads (UUID filenames, base-URL construction, per-eventType grouping from raw rows, `sent`-direction split, top-users, SVG chart rendering for time series, file I/O, deletion).
 - `tests/lib/stats/test_stats_pages_cli.py` — subprocess CLI contract tests (`{"pageId","url"}` stdout, `--base-url` full-URL and bare-filename variants, missing-field and invalid-JSON nonzero exits, SVG present for time series / absent for `total`, delete verb).
 - `tests/lib/stats/test_stats_pages_launcher.py` — `runCliCommand` tests (success capture, stdin delivery, timeout kill, spawn failure → `StatsCliError`).
+
+---
+
+## 18. `lib/db` — SQL Provider Abstraction + `DatabaseManager`
+
+Bot-free SQL layer: the `BaseSQLProvider` abstraction (portable `execute` / `executeFetchOne` / `executeFetchAll` / `batchExecute` / `upsert` + dialect hooks like `applyPagination` / `getTextType` / `getCaseInsensitiveComparison`), concrete SQLite3 and SQLink provider implementations, the `getSqlProvider` factory, and `DatabaseManager` (multi-source provider routing: `dataSource` > `chatId` mapping > default source). Extracted from `internal/database/` in a single big-bang move (git-mv, no shim, no dual-home) — see [`architecture.md`](architecture.md) ADR-022 and [`docs/design/lib-db-extraction-v1.md`](../design/lib-db-extraction-v1.md).
+
+**Import:**
+```python
+from lib.db import BaseSQLProvider, DatabaseManager, DatabaseManagerConfig, getSqlProvider, SQLProviderConfig
+from lib.db.providers.base import ExcludedValue, ParametrizedQuery, VectorColumnDef
+```
+
+(`lib/db/__init__.py` also re-exports `FetchType`, `QueryResult*`, `SQLite3Provider`, `SQLinkProvider`, `SQLProviderInitializationHook`, the vector-search types — `VectorColumnType`, `VectorDistanceMetric`, `VectorSearchResult` — and the decode exports from `utils.py`: `sqlToTypedDict`, `sqlToCustomType`, `FORCE_SQL_TIMEZONE` — ADR-023.)
+
+**Key modules:**
+
+| Module | Purpose |
+|---|---|
+| [`lib/db/providers/base.py`](../../lib/db/providers/base.py) | `BaseSQLProvider` ABC, `ParametrizedQuery`, `FetchType`, `QueryResult*`, `ExcludedValue` (portable upsert marker), vector-search TypedDicts/enums (`VectorColumnDef`, `VectorDistanceMetric`, `VectorSearchResult`) |
+| [`lib/db/providers/__init__.py`](../../lib/db/providers/__init__.py) | `getSqlProvider` factory + `SQLProviderConfig`; registers exactly `sqlite3` + `sqlink` |
+| [`lib/db/providers/sqlite3.py`](../../lib/db/providers/sqlite3.py) | `SQLite3Provider` (aiosqlite; optional `sqlite-vec` vector search via the `_SQLITE_VEC_AVAILABLE` guarded-import flag — module name deliberately shadows stdlib `sqlite3` in name only) |
+| [`lib/db/providers/sqlink.py`](../../lib/db/providers/sqlink.py) | `SQLinkProvider` (SQLite-over-REST; proxy config resolved lazily via `lib.proxy` — see §13 "SQLink proxy") |
+| [`lib/db/providers/mysql.py`](../../lib/db/providers/mysql.py) / [`lib/db/providers/postgresql.py`](../../lib/db/providers/postgresql.py) | Dormant providers — moved AS-IS with hard `aiomysql` / `asyncpg` imports, unregistered in the factory (known temporary deviation from the `_AVAILABLE` convention; ADR-022) |
+| [`lib/db/providers/utils.py`](../../lib/db/providers/utils.py) | `convertToSQLite` and friends; defines the module-local `SQLStringifiable` `@runtime_checkable` Protocol (`.asStr()`) that replaced the former `internal.models.MessageId` import |
+| [`lib/db/manager.py`](../../lib/db/manager.py) | `DatabaseManager` (provider routing + lifecycle), `DatabaseManagerConfig`, `SQLProviderInitializationHook` |
+| [`lib/db/utils.py`](../../lib/db/utils.py) | SQL decode trio `sqlToTypedDict` / `sqlToCustomType` (plus private `_checkType` + container-type constants), `getCurrentTimestamp`, `DEFAULT_THREAD_ID`, `FORCE_SQL_TIMEZONE` — the whole module moved from `internal/database/utils.py` (ADR-023); deliberate coexistence with `providers/utils.py`, which is the ENCODE side (`convertToSQLite`) |
+
+**Dependency firewall (load-bearing):** `lib/db` is bot-free — it imports only `lib.proxy`, `lib.utils`, stdlib, and third-party packages; never `internal.*`. Dependency direction is `internal → lib.db → {lib.proxy, lib.utils, stdlib, 3rd-party}`, guarded by the `make lint` `import main` cycle check. `internal/database/` survives with everything bot-specific (`Database` wrapper, repositories, migrations, models) and imports the SQL layer from here.
+
+**Used by:** [`internal/database/`](../../internal/database/) — the `Database` wrapper, `MigrationManager` + versioned migrations, and the repositories. See [`database.md`](database.md) §7 for the provider helper-method reference (paths, upserts, vector search) and [`database.md`](database.md) §3 for multi-source routing.
+
+**Tests:** `tests/lib/db/providers/` — provider unit tests (`test_base_provider.py`, `test_sqlite3_provider.py`, `test_sqlite3_vector_search.py`, `test_vector_search.py`), `test_sqlink_provider.py` (SQLinkProvider hermetic suite with FakeAsyncConnection mocking at the sqlink.asyncConnect boundary — no live server; also locks in the `__repr__` password redaction as `***`), `test_get_sql_provider.py` (factory tests), and `test_utils.py` (the `SQLStringifiable` Protocol regression test — ADR-022); plus decode/timestamp unit tests at `tests/lib/db/test_utils.py` (moved from `tests/database/` with the module — ADR-023).
+
+---
+
+## 19. `lib/max_webhook_receiver` — Standalone Max Webhook Receiver
+
+Fully standalone aiohttp receiver process implementing ADR-013's two-process webhook architecture: accepts Max webhook POSTs, buffers them in the `webhook_updates` table in its OWN SQLite database, and serves them back to the bot via a `GET /updates` endpoint speaking the Max API protocol. Extracted from `internal/` in a single big-bang move (the old `internal/max_webhook_receiver/` package deleted; no shims) — see [`architecture.md`](architecture.md) ADR-025 and [`docs/design/lib-max-webhook-receiver-extraction-v1.md`](../design/lib-max-webhook-receiver-extraction-v1.md).
+
+**Entry point** (module-invocable like `lib.stats.stats_pages`):
+
+```bash
+./venv/bin/python3 -m lib.max_webhook_receiver --config webhook-receiver.toml [--dotenv-file .env]
+```
+
+**Import:**
+
+```python
+from lib.max_webhook_receiver.app import createApp
+from lib.max_webhook_receiver.models import WebhookUpdatesRow
+from lib.max_webhook_receiver.repository import WebhookUpdatesRepository
+from lib.max_webhook_receiver.schema import ensureWebhookUpdatesSchema, getForwardDDL
+```
+
+(The package `__init__.py` also re-exports `WebhookUpdatesRow`, `WebhookUpdatesRepository`, `WEBHOOK_UPDATES_TABLE_DDL`, `WEBHOOK_UPDATES_INDEX_DDL`, `ensureWebhookUpdatesSchema`, and `getForwardDDL` — but deliberately NOT `createApp`; see the firewall note below.)
+
+**Key modules:**
+
+| Module | Purpose |
+|---|---|
+| [`app.py`](../../lib/max_webhook_receiver/app.py) | `createApp(*, repository, manager, secret, getUpdatesSecret="", webhookPath="/webhook", enableCleanup=True, markOnSubsequentPoll=True) -> web.Application`; the two handlers (`handleWebhook` POST with `X-Max-Bot-Api-Secret` verification, `handleGetUpdates` GET /updates with the compound-marker deferred/immediate acknowledgment protocol); the 1h-TTL background cleanup task; and the `ensureSchema` startup self-heal |
+| [`repository.py`](../../lib/max_webhook_receiver/repository.py) | `WebhookUpdatesRepository(manager)` — `addUpdate`, `getUnprocessedUpdates(limit=100)` (marker filtering), `markProcessed`, `markProcessedBeforeMarker`, `deleteProcessedOlderThan(ttlSeconds=3600)`; provider-level portable SQL (`:named` placeholders, `applyPagination`, app-side timestamps); deliberately does NOT subclass the internal `BaseRepository` (inlined `__slots__ = ("manager",)` — it lives outside the internal repository tree) |
+| [`models.py`](../../lib/max_webhook_receiver/models.py) | `WebhookUpdatesRow` TypedDict (moved verbatim from `internal/database/models.py`) |
+| [`schema.py`](../../lib/max_webhook_receiver/schema.py) | Canonical `webhook_updates` DDL (`WEBHOOK_UPDATES_TABLE_DDL`, `WEBHOOK_UPDATES_INDEX_DDL`), `getForwardDDL()` — the migration-side batch consumed by `migration_019.up()` and `migration_029.down()` — and `ensureWebhookUpdatesSchema(sqlProvider)`, the startup self-heal that creates BOTH the table and the index |
+| [`__main__.py`](../../lib/max_webhook_receiver/__main__.py) | The launcher: `load_dotenv` → stdlib `tomllib` → `substituteEnvVars` ([`lib/utils/utils.py`](../../lib/utils/utils.py)) → `[webhook-receiver]` reads → `${VAR}` secret guard (`SystemExit(1)`) → `DatabaseManager` over `[webhook-receiver.database]` (pure passthrough) → `createApp(...)` → optional TLS → `web.run_app` |
+
+**Own config + own database (ADR-025):** the receiver does NOT use `ConfigManager` — it reads its OWN single TOML config file (`--config`, default `webhook-receiver.toml`; `[webhook-receiver]`-rooted, dotenv + `${VAR}` substitution). Its `[webhook-receiver.database]` section (same shape as the bot's `[database]`) feeds a bare `DatabaseManager` pointing at the receiver's own file (`webhook_receiver_data.db` by default). The receiver never runs the bot's migrations and never touches the bot's database — the bot's chain dropped `webhook_updates` via `migration_029`, so the startup self-heal is the only schema authority for the receiver's database. `secret`/`get-updates-secret` are maintained in BOTH the bot config and the receiver file (drift = 403s) — see [`configuration.md`](configuration.md) §`[webhook-receiver]` for the split and the dual-secret cost.
+
+**Dependency firewall (load-bearing):** the package is bot-free — zero `internal.*` imports anywhere (including the launcher), and `ConfigManager` must never re-enter it. The package `__init__.py` deliberately does NOT import `.app`: the bot's migrations (019 `up()` / 029 `down()`) import `.schema` transitively at bot startup, and aiohttp must stay out of that import chain — import `createApp` from `lib.max_webhook_receiver.app` directly.
+
+**Deployment artifacts:** the package ships its own container support — a pinned standalone [`requirements.txt`](../../lib/max_webhook_receiver/requirements.txt) covering exactly the receiver's module-level import closure (aiohttp+deps, python-dateutil+six, aiosqlite+sqlink via the eagerly-imported providers; pins mirror the root lockfile with NO real `httpx`: the package `__init__` calls `httpx2.alias_httpx()` BEFORE its own imports — under `python -m lib.max_webhook_receiver` this `__init__` runs before `__main__`, and in the bot process `main.py` aliases first, so the repeat call is a no-op — so sqlink's hard `import httpx` resolves to httpx2 and the deployment lockfile therefore carries `httpx2`/`httpcore2`/`truststore` instead; because sqlink's metadata still declares `httpx>=0.28`, the Dockerfile installs with `pip install --no-deps`, which plain resolution would defeat by pulling real httpx back in) and a [`Dockerfile`](../../lib/max_webhook_receiver/Dockerfile) (python:3.13-alpine, non-root uid 10001, `/data` volume, config mounted at `/app/webhook-receiver.toml`) built from the repo root so the root [`.dockerignore`](../../.dockerignore) trims the context; sqlink is commit-pinned to a private git host, fetched at build time via a BuildKit `--secret id=netrc`. Operator-facing build/run instructions: [`max-webhook-setup.md`](../max-webhook-setup.md) §Docker deployment.
+
+**Tests:** `tests/lib/max_webhook_receiver/` — `test_repository.py` (15 tests, incl. the `TestReceiverBringUp` self-heal pin over a manager-only bring-up), `test_app.py` (20 endpoint/lifecycle tests via `aiohttp.test_utils`), `test_main.py` (5 `TestLauncherConfig` tests over real temp TOML/dotenv files — no config mocks), `test_init.py` (fresh-subprocess guard that a bare package import aliases httpx→httpx2 without pytest's conftest aliasing); plus the bot-side migration test `tests/database/test_migration_029_drop_webhook_updates.py`.
 
 ---
 

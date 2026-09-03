@@ -43,7 +43,7 @@
 ### Key Features
 
 - Multi-platform bot support (Telegram and Max Messenger)
-- Max Messenger webhook mode: standalone aiohttp webhook-receiver process that buffers Max webhook POSTs in `webhook_updates` and serves them back to the bot via a local GET /updates endpoint (two-process local-API-proxy pattern; see [`architecture.md`](architecture.md) ADR-013)
+- Max Messenger webhook mode: standalone aiohttp webhook-receiver process ([`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/) — own config file + own database since ADR-025) that buffers Max webhook POSTs in `webhook_updates` and serves them back to the bot via a local GET /updates endpoint (two-process local-API-proxy pattern; see [`architecture.md`](architecture.md) ADR-013/ADR-025)
 - Advanced LLM integration with multiple providers (YC SDK, OpenAI-compatible, OpenRouter)
 - Comprehensive API integrations (Weather, Search, Geocoding)
 - ML-powered spam detection with Bayes filter
@@ -277,7 +277,7 @@ vanishingly rare in the Gromozeka codebase.
 | [`internal/bot/max/application.py`](../../internal/bot/max/application.py) | Max Messenger bot application |
 | [`internal/bot/models/`](../../internal/bot/models/) | Bot model types (EnsuredMessage, ChatSettings, etc.) |
 | [`internal/config/manager.py`](../../internal/config/manager.py) | `ConfigManager` — TOML config loading |
-| [`internal/database/database.py`](../../internal/database/database.py) | `Database` — all DB operations with repository pattern |
+| [`internal/database/database.py`](../../internal/database/database.py) | `Database` — all DB operations with repository pattern (SQL provider layer lives in `lib/db/` — see ADR-022) |
 | [`internal/database/migrations/`](../../internal/database/migrations/) | `MigrationManager`, `BaseMigration`, version files |
 | [`internal/models/`](../../internal/models/) | Shared types (`MessageId` class, `MessageType` enum) |
 | [`internal/services/cache/service.py`](../../internal/services/cache/service.py) | `CacheService` singleton |
@@ -286,7 +286,6 @@ vanishingly rare in the Gromozeka codebase.
 | [`internal/services/proxy/service.py`](../../internal/services/proxy/service.py) | `ProxyService` singleton — proxy lifecycle management |
 | [`internal/services/proxy/lifecycle.py`](../../internal/services/proxy/lifecycle.py) | `ProxyLifecycle` — per-config proxy process manager |
 | [`internal/services/storage/service.py`](../../internal/services/storage/service.py) | `StorageService` singleton |
-| [`internal/max_webhook_receiver/`](../../internal/max_webhook_receiver/) | Standalone Max webhook receiver process (`aiohttp.web`): accepts Max webhook POSTs, stores raw payloads in `webhook_updates`, serves them to the bot via GET /updates. Run with `./venv/bin/python3 -m internal.max_webhook_receiver`. See [`architecture.md`](architecture.md) ADR-013. |
 
 ### 4.6 `lib/` Directory
 
@@ -296,20 +295,23 @@ vanishingly rare in the Gromozeka codebase.
 | [`lib/ai/manager.py`](../../lib/ai/manager.py) | `LLMManager` — model + provider registry |
 | [`lib/ai/models.py`](../../lib/ai/models.py) | `ModelMessage`, `ModelRunResult`, `LLMToolFunction`, etc. |
 | [`lib/ai/providers/`](../../lib/ai/providers/) | Provider implementations (OpenAI-compatible, OpenRouter, Yandex Cloud, `fastembed`) |
-| [`lib/cache/interface.py`](../../lib/cache/interface.py) | `CacheInterface[K,V]` — generic cache ABC |
+| [`lib/db/`](../../lib/db/) | SQL provider abstraction + `DatabaseManager` — `BaseSQLProvider`, SQLite3/SQLink provider impls (`mysql.py`/`postgresql.py` exist but are unregistered), the `getSqlProvider` factory, `DatabaseManager` multi-source routing, and `utils.py` (SQL decode trio + `getCurrentTimestamp`/`DEFAULT_THREAD_ID`). Bot-free; `internal/database/` (Database wrapper, repositories, migrations) imports the SQL layer from here. See [`architecture.md`](architecture.md) ADR-022/ADR-023. |
+| [`lib/cache/interface.py`](../../lib/cache/interface.py) | `CacheInterface[K,V]` — generic cache ABC (get/set/clear/`clearOld`/getStats) |
 | [`lib/cache/dict_cache.py`](../../lib/cache/dict_cache.py) | In-memory dict-based cache impl |
+| [`lib/cache/sql_cache.py`](../../lib/cache/sql_cache.py) | `GenericDatabaseCache[K,V]` — database-backed cache impl; owns the `cache`-table SQL inline via `DatabaseManager` (see [`architecture.md`](architecture.md) ADR-024) |
 | [`lib/rate_limiter/interface.py`](../../lib/rate_limiter/interface.py) | `RateLimiterInterface` — ABC |
 | [`lib/rate_limiter/manager.py`](../../lib/rate_limiter/manager.py) | `RateLimiterManager` singleton |
 | [`lib/rate_limiter/sliding_window.py`](../../lib/rate_limiter/sliding_window.py) | `SlidingWindowRateLimiter` impl |
 | [`lib/bayes_filter/bayes_filter.py`](../../lib/bayes_filter/bayes_filter.py) | Naive Bayes spam filter |
 | [`lib/markdown/parser.py`](../../lib/markdown/parser.py) | Markdown → MarkdownV2 parser |
 | [`lib/max_bot/client.py`](../../lib/max_bot/client.py) | Max Messenger HTTP client |
+| [`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/) | Standalone Max webhook receiver process (`aiohttp.web`): accepts Max webhook POSTs, stores raw payloads in `webhook_updates` in its OWN SQLite file (`webhook_receiver_data.db`), serves them to the bot via GET /updates. Fully standalone — own TOML config file, own `DatabaseManager`, zero internal imports (see [`architecture.md`](architecture.md) ADR-025). Run with `./venv/bin/python3 -m lib.max_webhook_receiver --config webhook-receiver.toml`. Two-process model: ADR-013. |
 | [`lib/openweathermap/client.py`](../../lib/openweathermap/client.py) | OpenWeatherMap API client |
 | [`lib/proxy/__init__.py`](../../lib/proxy/__init__.py) | Proxy resolution package — `ProxyConfig` class, `ProxyHelper` singleton, `ProxyType`/`HealthCheckType` StrEnums, `ProxyKwargs`/`ProxyLifecycleConfigDict` TypedDicts |
 | [`internal/services/proxy/`](../../internal/services/proxy/) | `ProxyService` singleton (lifecycle orchestration) + `ProxyLifecycle` (per-config process manager) |
 | [`lib/yandex_search/`](../../lib/yandex_search/) | Yandex Search API client |
 | [`lib/geocode_maps/client.py`](../../lib/geocode_maps/client.py) | Geocode Maps API client |
-| [`lib/stats/`](../../lib/stats/) | Statistics collection library (`StatsStorage`, `NullStatsStorage`, `GLOBAL_CONSUMER_ID`; read-side `StatsAnalyzer` + period helpers in `analysis.py`) |
+| [`lib/stats/`](../../lib/stats/) | Statistics collection library (`StatsStorage`, `NullStatsStorage`, `GLOBAL_CONSUMER_ID`; SQL impl `DatabaseStatsStorage` in `sql_storage.py` — takes `DatabaseManager`, constructed by the `StatsAggregationService` factory, see ADR-023; read-side `StatsAnalyzer` + period helpers in `analysis.py`) |
 | [`lib/stats/stats_pages/`](../../lib/stats/stats_pages/) | Module-invocable stats-page HTML generator: STDIN JSON → self-contained HTML file → stdout `{"pageId","url"}` (subprocess CLI contract), plus `launcher.runCliCommand` — the shared subprocess helper `StatsHandler` uses for both generation and TTL deletion; zero new deps |
 | [`lib/ext_modules/`](../../lib/ext_modules/) | External custom modules (Grabliarium etc.) |
 | [`lib/divination/`](../../lib/divination/) | Tarot & runes pure-logic library (decks, layouts, drawing); used by `DivinationHandler` |

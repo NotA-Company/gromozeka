@@ -16,6 +16,7 @@ import pytest
 import telegram
 import telegram.error
 import telegram.ext
+from telegram.warnings import PTBDeprecationWarning
 
 import lib.max_bot as libMax
 import lib.max_bot.exceptions as maxExceptions
@@ -424,7 +425,14 @@ class TestGetChatAdminsRegression:
 
 
 class TestTelegramSendRetry:
-    """Tests for Telegram send retry logic in _retryTelegramSend."""
+    """Tests for Telegram send retry logic in _retryTelegramSend.
+
+    The int-form ``retry_after`` is deliberately exercised for forward-compat: while
+    ``PTB_TIMEDELTA`` is unset, PTB emits a ``PTBDeprecationWarning`` on every
+    ``retry_after`` property access, so the RetryAfter tests wrap their bodies in
+    ``pytest.warns(PTBDeprecationWarning)`` to assert that expectation instead of
+    filtering it — a tripwire that fails when PTB flips the default.
+    """
 
     @pytest.fixture
     def replyToMessage(self) -> EnsuredMessage:
@@ -553,22 +561,23 @@ class TestTelegramSendRetry:
             mockSleep: Mocked asyncio.sleep for delay verification.
             telegramBot: The TheBot instance with Telegram provider.
         """
-        # Arrange: Callable fails with RetryAfter, then succeeds
-        mockCallable = AsyncMock(
-            side_effect=[
-                telegram.error.RetryAfter(retry_after=2),
-                "ok",
-            ]
-        )
+        with pytest.warns(PTBDeprecationWarning):
+            # Arrange: Callable fails with RetryAfter, then succeeds
+            mockCallable = AsyncMock(
+                side_effect=[
+                    telegram.error.RetryAfter(retry_after=2),
+                    "ok",
+                ]
+            )
 
-        # Act: Call _retryTelegramSend
-        result = await telegramBot._retryTelegramSend(mockCallable)
+            # Act: Call _retryTelegramSend
+            result = await telegramBot._retryTelegramSend(mockCallable)
 
-        # Assert: Returns result, called twice, slept once with exact delay
-        assert result == "ok"
-        assert mockCallable.call_count == 2
-        assert mockSleep.call_count == 1
-        assert mockSleep.call_args.args[0] == 2.0
+            # Assert: Returns result, called twice, slept once with exact delay
+            assert result == "ok"
+            assert mockCallable.call_count == 2
+            assert mockSleep.call_count == 1
+            assert mockSleep.call_args.args[0] == 2.0
 
     @patch("internal.bot.common.bot.asyncio.sleep", new_callable=AsyncMock)
     async def test_retryTelegramSend_retryAfterOverCap_cappedAt60(
@@ -580,24 +589,25 @@ class TestTelegramSendRetry:
             mockSleep: Mocked asyncio.sleep for delay verification.
             telegramBot: The TheBot instance with Telegram provider.
         """
-        # Arrange: Callable fails with RetryAfter(999) twice, then succeeds
-        mockCallable = AsyncMock(
-            side_effect=[
-                telegram.error.RetryAfter(retry_after=999),
-                telegram.error.RetryAfter(retry_after=999),
-                "ok",
-            ]
-        )
+        with pytest.warns(PTBDeprecationWarning):
+            # Arrange: Callable fails with RetryAfter(999) twice, then succeeds
+            mockCallable = AsyncMock(
+                side_effect=[
+                    telegram.error.RetryAfter(retry_after=999),
+                    telegram.error.RetryAfter(retry_after=999),
+                    "ok",
+                ]
+            )
 
-        # Act: Call _retryTelegramSend
-        result = await telegramBot._retryTelegramSend(mockCallable)
+            # Act: Call _retryTelegramSend
+            result = await telegramBot._retryTelegramSend(mockCallable)
 
-        # Assert: Returns result, called 3 times, slept twice with capped delay
-        assert result == "ok"
-        assert mockCallable.call_count == 3
-        assert mockSleep.call_count == 2
-        assert mockSleep.call_args_list[0].args[0] == 60.0
-        assert mockSleep.call_args_list[1].args[0] == 60.0
+            # Assert: Returns result, called 3 times, slept twice with capped delay
+            assert result == "ok"
+            assert mockCallable.call_count == 3
+            assert mockSleep.call_count == 2
+            assert mockSleep.call_args_list[0].args[0] == 60.0
+            assert mockSleep.call_args_list[1].args[0] == 60.0
 
     @patch("internal.bot.common.bot.asyncio.sleep", new_callable=AsyncMock)
     async def test_retryTelegramSend_retryAfterAsTimedelta_honored(
@@ -609,22 +619,23 @@ class TestTelegramSendRetry:
             mockSleep: Mocked asyncio.sleep for delay verification.
             telegramBot: The TheBot instance with Telegram provider.
         """
-        # Arrange: Callable fails with RetryAfter(timedelta), then succeeds
-        mockCallable = AsyncMock(
-            side_effect=[
-                telegram.error.RetryAfter(retry_after=timedelta(seconds=3)),
-                "ok",
-            ]
-        )
+        with pytest.warns(PTBDeprecationWarning):
+            # Arrange: Callable fails with RetryAfter(timedelta), then succeeds
+            mockCallable = AsyncMock(
+                side_effect=[
+                    telegram.error.RetryAfter(retry_after=timedelta(seconds=3)),
+                    "ok",
+                ]
+            )
 
-        # Act: Call _retryTelegramSend
-        result = await telegramBot._retryTelegramSend(mockCallable)
+            # Act: Call _retryTelegramSend
+            result = await telegramBot._retryTelegramSend(mockCallable)
 
-        # Assert: Returns result, slept with converted delay
-        assert result == "ok"
-        assert mockCallable.call_count == 2
-        assert mockSleep.call_count == 1
-        assert mockSleep.call_args.args[0] == 3.0
+            # Assert: Returns result, slept with converted delay
+            assert result == "ok"
+            assert mockCallable.call_count == 2
+            assert mockSleep.call_count == 1
+            assert mockSleep.call_args.args[0] == 3.0
 
     @patch("internal.bot.common.bot.asyncio.sleep", new_callable=AsyncMock)
     async def test_retryTelegramSend_networkErrorThenSuccess_retries(
@@ -685,26 +696,27 @@ class TestTelegramSendRetry:
             mockSleep: Mocked asyncio.sleep for delay verification.
             telegramBot: The TheBot instance with Telegram provider.
         """
-        # Arrange: Callable always fails with RetryAfter(retry_after=1)
-        mockCallable = AsyncMock(
-            side_effect=[
-                telegram.error.RetryAfter(retry_after=1),
-                telegram.error.RetryAfter(retry_after=1),
-                telegram.error.RetryAfter(retry_after=1),
-            ]
-        )
+        with pytest.warns(PTBDeprecationWarning):
+            # Arrange: Callable always fails with RetryAfter(retry_after=1)
+            mockCallable = AsyncMock(
+                side_effect=[
+                    telegram.error.RetryAfter(retry_after=1),
+                    telegram.error.RetryAfter(retry_after=1),
+                    telegram.error.RetryAfter(retry_after=1),
+                ]
+            )
 
-        # Act/Assert: Raises RetryAfter after max attempts
-        with pytest.raises(telegram.error.RetryAfter):
-            await telegramBot._retryTelegramSend(mockCallable)
+            # Act/Assert: Raises RetryAfter after max attempts
+            with pytest.raises(telegram.error.RetryAfter):
+                await telegramBot._retryTelegramSend(mockCallable)
 
-        # Assert: Called 3 times (max), slept twice (no sleep after last attempt)
-        assert mockCallable.call_count == 3
-        assert mockSleep.call_count == 2
+            # Assert: Called 3 times (max), slept twice (no sleep after last attempt)
+            assert mockCallable.call_count == 3
+            assert mockSleep.call_count == 2
 
-        # Verify both sleeps honored retry_after=1.0 (under cap)
-        assert mockSleep.call_args_list[0].args[0] == 1.0
-        assert mockSleep.call_args_list[1].args[0] == 1.0
+            # Verify both sleeps honored retry_after=1.0 (under cap)
+            assert mockSleep.call_args_list[0].args[0] == 1.0
+            assert mockSleep.call_args_list[1].args[0] == 1.0
 
     # B. Integration tests via TheBot.sendMessage
 
@@ -855,6 +867,109 @@ class TestTelegramSendRetry:
         assert mockSleep.call_count == 1
         assert len(result) == 1
         assert result[0].messageId.asInt() == successMessage.message_id
+
+
+class TestTelegramSendRetryTimedeltaMode:
+    """Tests for _retryTelegramSend's timedelta branch under PTB_TIMEDELTA=1.
+
+    PTB's ``PTB_TIMEDELTA=1`` mode makes ``RetryAfter.retry_after`` return a
+    ``datetime.timedelta`` on every access WITHOUT emitting ``PTBDeprecationWarning``
+    (that is why these tests carry no ``pytest.warns``). This exercises the
+    ``isinstance(..., timedelta)`` branch of ``_retryTelegramSend``, which is dead
+    under the default environment (the property converts timedelta to int there).
+    ``monkeypatch.setenv`` restores the env var after each test.
+    """
+
+    @patch("internal.bot.common.bot.asyncio.sleep", new_callable=AsyncMock)
+    async def test_timedeltaConstructed_sleepsTotalSeconds(
+        self, mockSleep: AsyncMock, telegramBot: TheBot, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Timedelta-constructed RetryAfter sleeps its total_seconds() in timedelta mode.
+
+        Args:
+            mockSleep: Mocked asyncio.sleep for delay verification.
+            telegramBot: The TheBot instance with Telegram provider.
+            monkeypatch: Sets PTB_TIMEDELTA=1, restored after the test.
+        """
+        # Arrange: timedelta mode must be set before constructing RetryAfter
+        monkeypatch.setenv("PTB_TIMEDELTA", "1")
+        mockCallable = AsyncMock(
+            side_effect=[
+                telegram.error.RetryAfter(retry_after=timedelta(seconds=3)),
+                "ok",
+            ]
+        )
+
+        # Act: Call _retryTelegramSend
+        result = await telegramBot._retryTelegramSend(mockCallable)
+
+        # Assert: Returns result, slept once with total_seconds of the timedelta
+        assert result == "ok"
+        assert mockCallable.call_count == 2
+        assert mockSleep.call_count == 1
+        assert mockSleep.call_args.args[0] == 3.0
+
+    @patch("internal.bot.common.bot.asyncio.sleep", new_callable=AsyncMock)
+    async def test_intConstructed_convertedToTimedelta_sleepsSame(
+        self, mockSleep: AsyncMock, telegramBot: TheBot, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Int-constructed RetryAfter yields timedelta in timedelta mode; sleeps the same delay.
+
+        Pins the symmetric-conversion forward-compat claim: ``to_timedelta``
+        canonicalizes at ``__init__``, so int construction in ``PTB_TIMEDELTA=1``
+        mode produces ``timedelta(seconds=3)`` and the delay is identical.
+
+        Args:
+            mockSleep: Mocked asyncio.sleep for delay verification.
+            telegramBot: The TheBot instance with Telegram provider.
+            monkeypatch: Sets PTB_TIMEDELTA=1, restored after the test.
+        """
+        # Arrange: timedelta mode must be set before constructing RetryAfter
+        monkeypatch.setenv("PTB_TIMEDELTA", "1")
+        mockCallable = AsyncMock(
+            side_effect=[
+                telegram.error.RetryAfter(retry_after=3),
+                "ok",
+            ]
+        )
+
+        # Act: Call _retryTelegramSend
+        result = await telegramBot._retryTelegramSend(mockCallable)
+
+        # Assert: Returns result, slept once with the same delay
+        assert result == "ok"
+        assert mockCallable.call_count == 2
+        assert mockSleep.call_count == 1
+        assert mockSleep.call_args.args[0] == 3.0
+
+    @patch("internal.bot.common.bot.asyncio.sleep", new_callable=AsyncMock)
+    async def test_overCap_cappedAt60(
+        self, mockSleep: AsyncMock, telegramBot: TheBot, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Timedelta delay over the cap is capped at 60 seconds in timedelta mode.
+
+        Args:
+            mockSleep: Mocked asyncio.sleep for delay verification.
+            telegramBot: The TheBot instance with Telegram provider.
+            monkeypatch: Sets PTB_TIMEDELTA=1, restored after the test.
+        """
+        # Arrange: timedelta mode must be set before constructing RetryAfter
+        monkeypatch.setenv("PTB_TIMEDELTA", "1")
+        mockCallable = AsyncMock(
+            side_effect=[
+                telegram.error.RetryAfter(retry_after=timedelta(seconds=120)),
+                "ok",
+            ]
+        )
+
+        # Act: Call _retryTelegramSend
+        result = await telegramBot._retryTelegramSend(mockCallable)
+
+        # Assert: Returns result, slept once with the capped delay
+        assert result == "ok"
+        assert mockCallable.call_count == 2
+        assert mockSleep.call_count == 1
+        assert mockSleep.call_args.args[0] == 60.0
 
 
 class TestGetBotIdMemoization:

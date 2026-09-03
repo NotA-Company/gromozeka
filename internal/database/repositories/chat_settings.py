@@ -8,9 +8,10 @@ setting, unsetting, clearing, and retrieving settings for individual chats.
 import logging
 from typing import Any, Dict, Optional
 
-from ..manager import DatabaseManager
-from ..providers.base import ExcludedValue
-from ..utils import getCurrentTimestamp
+from lib.db.manager import DatabaseManager
+from lib.db.providers.base import ExcludedValue
+from lib.db.utils import getCurrentTimestamp
+
 from .base import BaseRepository
 
 logger = logging.getLogger(__name__)

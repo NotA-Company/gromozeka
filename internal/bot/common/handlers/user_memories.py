@@ -54,7 +54,6 @@ from internal.config.manager import ConfigManager
 from internal.database import Database
 from internal.database.models import ChatMessageDict, MemoryType, MessageCategory, UserMemorySource
 from internal.database.repositories.user_memories import UserMemoryDict
-from internal.database.utils import DEFAULT_THREAD_ID
 from internal.models import MessageId
 from internal.services.cache import UserActiveActionEnum
 from internal.services.llm import LLMService
@@ -66,6 +65,7 @@ from lib.ai import (
     ModelMessage,
 )
 from lib.ai.models import ModelRunResult
+from lib.db.utils import DEFAULT_THREAD_ID
 
 from .base import BaseBotHandler, HandlerResultStatus
 

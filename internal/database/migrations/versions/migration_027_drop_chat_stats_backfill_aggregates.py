@@ -11,7 +11,7 @@ and ``__global__`` rollup). No ``hourly`` rows are written; hourly rows are
 intentionally not back-filled (historical intra-day distribution is not preserved).
 
 The back-fill uses the same canonicalization (``lib.utils.jsonDumps``) and hashing
-(``_hashLabels`` from ``internal.database.stats_storage``) as the live aggregator,
+(`_hashLabels` from ``lib.stats.sql_storage``) as the live aggregator,
 ensuring identical hashes for identical label sets.
 
 **Source data:** ``chat_messages`` table (full message history with real
@@ -35,12 +35,12 @@ is not restorable (destroyed by the DROP in ``up()``).
 import datetime
 
 from lib import utils as libUtils
+from lib.db.providers import BaseSQLProvider, ExcludedValue, ParametrizedQuery
+from lib.db.utils import getCurrentTimestamp
+from lib.stats.sql_storage import _hashLabels, truncateToDay, truncateToMonth
 from lib.stats.stats_storage import GLOBAL_CONSUMER_ID
 
 from ...models import MessageCategory
-from ...providers import BaseSQLProvider, ExcludedValue, ParametrizedQuery
-from ...stats_storage import _hashLabels, truncateToDay, truncateToMonth
-from ...utils import getCurrentTimestamp
 from ..base import BaseMigration
 
 

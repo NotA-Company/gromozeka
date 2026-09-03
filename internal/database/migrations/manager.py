@@ -13,7 +13,7 @@ Usage Example:
     .. code-block:: python
 
         from internal.database.migrations.manager import MigrationManager
-        from internal.database.providers import PostgreSQLProvider
+        from lib.db.providers import PostgreSQLProvider
 
         # Create migration manager
         manager = MigrationManager()
@@ -34,9 +34,10 @@ import logging
 from datetime import datetime
 from typing import List, Optional, Type
 
-from ..providers import BaseSQLProvider
-from ..providers.base import ExcludedValue
-from ..utils import getCurrentTimestamp
+from lib.db import utils as dbUtils
+from lib.db.providers import BaseSQLProvider
+from lib.db.providers.base import ExcludedValue
+
 from .base import BaseMigration
 
 logger = logging.getLogger(__name__)
@@ -131,7 +132,7 @@ class MigrationManager:
         Raises:
             Exception: If the database operation fails.
         """
-        currentTimestamp: datetime = getCurrentTimestamp()
+        currentTimestamp: datetime = dbUtils.getCurrentTimestamp()
         await sqlProvider.upsert(
             table=SETTINGS_TABLE,
             values={
@@ -208,7 +209,9 @@ class MigrationManager:
             Exception: If the database operation fails.
         """
         await self.setSetting(MIGRATION_VERSION_KEY, str(version), sqlProvider=sqlProvider)
-        await self.setSetting(MIGRATION_LAST_RUN_KEY, getCurrentTimestamp().isoformat(), sqlProvider=sqlProvider)
+        await self.setSetting(
+            MIGRATION_LAST_RUN_KEY, dbUtils.getCurrentTimestamp().isoformat(), sqlProvider=sqlProvider
+        )
         logger.info(f"Updated migration in {sqlProvider} version to {version}")
 
     def getAvailableMigrations(self) -> List[Type[BaseMigration]]:
@@ -288,9 +291,9 @@ class MigrationManager:
             logger.info(f"Applying migration {migration.version}: {migration.description}")
 
             try:
-                startTime: datetime = getCurrentTimestamp()
+                startTime: datetime = dbUtils.getCurrentTimestamp()
                 await migration.up(sqlProvider)
-                duration: float = (getCurrentTimestamp() - startTime).total_seconds()
+                duration: float = (dbUtils.getCurrentTimestamp() - startTime).total_seconds()
 
                 await self._setVersion(migration.version, sqlProvider=sqlProvider)
                 logger.info(f"Migration {migration.version} completed in {duration:.2f}s")
@@ -378,9 +381,9 @@ class MigrationManager:
             logger.info(f"Rolling back migration {migration.version}: {migration.description}")
 
             try:
-                startTime: datetime = getCurrentTimestamp()
+                startTime: datetime = dbUtils.getCurrentTimestamp()
                 await migration.down(sqlProvider)
-                duration: float = (getCurrentTimestamp() - startTime).total_seconds()
+                duration: float = (dbUtils.getCurrentTimestamp() - startTime).total_seconds()
 
                 # Set version to previous migration
                 newVersion: int = migration.version - 1

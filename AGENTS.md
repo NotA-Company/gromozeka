@@ -14,13 +14,13 @@ captures only what an agent would likely get wrong without help.
 - Multi-platform bot: Telegram **and** Max Messenger. Mode picked by config
   (`bot.mode`), wired in [`main.py`](main.py).
 - **Max webhook mode is two-process.** When `webhook-receiver.enabled = true`,
-  a standalone aiohttp receiver ([`internal/max_webhook_receiver/`](internal/max_webhook_receiver/))
+  a standalone aiohttp receiver ([`lib/max_webhook_receiver/`](lib/max_webhook_receiver/))
   buffers Max webhook POSTs in the `webhook_updates` table and serves them to
   the bot via a local `GET /updates`. The bot's `MaxBotClient` gets a
   `basePollingUrl` override so its existing `_pollingLoop()` polls the receiver
   instead of `platform-api2.max.ru`. See
   [`docs/llm/architecture.md`](docs/llm/architecture.md) ADR-013. Run it with
-  `./venv/bin/python3 -m internal.max_webhook_receiver`.
+  `./venv/bin/python3 -m lib.max_webhook_receiver --config webhook-receiver.toml --dotenv-file .env`.
 - Entry point: [`main.py`](main.py) → `GromozekBot` → `TelegramBotApplication`
   or `MaxBotApplication`.
 
@@ -164,20 +164,25 @@ Layout (see [`docs/llm/index.md`](docs/llm/index.md) §4 for line-level map):
   `TheBot`, `BaseBotHandler`, `HandlersManager`. Handlers are registered as
   an ordered list with parallelism flags.
 - [`internal/bot/{telegram,max}/`](internal/bot/) — platform adapters.
-- [`internal/max_webhook_receiver/`](internal/max_webhook_receiver/) — standalone
+- [`lib/max_webhook_receiver/`](lib/max_webhook_receiver/) — standalone
   Max webhook receiver process (aiohttp). Only deployed in Max webhook mode;
-  see ADR-013 above. Not a bot handler — it shares the `webhook_updates` table
-  and `[webhook-receiver]` config with the bot.
+  see ADR-013 above. Not a bot handler — it owns `webhook_updates` in its own
+  `webhook_receiver_data.db` and reads its own `webhook-receiver.toml` (only
+  `secret` / `get-updates-secret` must match the bot's values; see
+  ADR-013/ADR-025).
 - [`internal/services/`](internal/services/) — `cache/`, `llm/`, `queue_service/`,
   `storage/`. All singletons; access via `Service.getInstance()`, never
   `Service()` directly.
 - [`internal/database/`](internal/database/) — `Database` repo wrapper +
-  versioned migrations under `migrations/versions/NNN_*.py`. Before adding a
-  migration, find the next number with
+  repositories + versioned migrations under `migrations/versions/NNN_*.py`
+  (the SQL provider layer itself lives in `lib/db/` — see the `lib/` bullet).
+  Before adding a migration, find the next number with
   `ls -1 internal/database/migrations/versions/ | grep migration_ | sort -V | tail -1`.
 - [`lib/`](lib/) — reusable, no bot deps. `lib/ai/` (provider registry in
-  [`lib/ai/manager.py`](lib/ai/manager.py)), `lib/rate_limiter/`,
-  `lib/max_bot/`, `lib/markdown/`, `lib/bayes_filter/`,
+  [`lib/ai/manager.py`](lib/ai/manager.py)), `lib/db/` (SQL provider
+  abstraction + `DatabaseManager` at
+  [`lib/db/providers/`](lib/db/providers/); imported by `internal/database/`),
+  `lib/rate_limiter/`, `lib/max_bot/`, `lib/markdown/`, `lib/bayes_filter/`,
   `lib/sandbox/` (sandboxed code execution in Docker), etc.
 - [`lib/ext_modules/`](lib/ext_modules/) — vendored/extension subpackages
   (e.g. `grabliarium`) with their own `pyproject.toml`/tests. Treated
@@ -190,7 +195,7 @@ handler list (it's the catch-all). Registration site:
 ## SQL portability
 
 SQLite3 is the only backend wired up in production right now (the factory in
-[`internal/database/providers/__init__.py`](internal/database/providers/__init__.py)
+[`lib/db/providers/__init__.py`](lib/db/providers/__init__.py)
 registers `sqlite3` + `sqlink`; `mysql.py` / `postgresql.py` providers exist
 but are not yet selectable). Even so, **all SQL the app emits must stay
 portable across SQLite, PostgreSQL, and MySQL** so the other providers can be
@@ -199,7 +204,7 @@ turned on without rewriting queries. See
 analysis; key rules in practice:
 
 - Go through the provider, not raw `sqlite3` calls. Repositories use
-  `BaseSQLProvider` (see [`internal/database/providers/base.py`](internal/database/providers/base.py)) —
+  `BaseSQLProvider` (see [`lib/db/providers/base.py`](lib/db/providers/base.py)) —
   `execute` / `executeFetchOne` / `executeFetchAll` / `batchExecute` / `upsert`.
 - For upserts, call `provider.upsert(table, values, conflictColumns, updateExpressions=...)`
   instead of writing `ON CONFLICT … DO UPDATE` by hand. Use the
@@ -216,7 +221,7 @@ analysis; key rules in practice:
   explicitly (see notes in [`docs/llm/database.md`](docs/llm/database.md) §7).
 - Stick to portable column types in migrations: `TEXT`, `INTEGER`, `REAL`,
   `TIMESTAMP`, `BOOLEAN` (stored as int — see `convertToSQLite` in
-  [`internal/database/providers/utils.py`](internal/database/providers/utils.py)).
+  [`lib/db/providers/utils.py`](lib/db/providers/utils.py)).
   Store JSON as `TEXT`; don't reach for SQLite's `JSON1` functions.
 - **Primary keys: no `AUTOINCREMENT`.** SQLite `AUTOINCREMENT`, MySQL
   `AUTO_INCREMENT`, and PostgreSQL `SERIAL` / `BIGSERIAL` all spell it

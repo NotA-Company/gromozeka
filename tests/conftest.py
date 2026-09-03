@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, Mock  # noqa: E402
 
 import pytest  # noqa: E402
 
-from internal.database.manager import DatabaseManagerConfig  # noqa: E402
+from lib.db.manager import DatabaseManagerConfig  # noqa: E402
 
 # Import test utilities  # noqa: E402
 from tests.utils import (  # noqa: E402

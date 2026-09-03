@@ -28,9 +28,9 @@ import logging
 from typing import Dict, List, Optional, Tuple
 
 import lib.utils as libUtils
+from lib.db import utils as dbUtils
+from lib.db.manager import DatabaseManager
 
-from .. import utils as dbUtils
-from ..manager import DatabaseManager
 from ..models import ModelDict
 from .base import BaseRepository
 
@@ -124,7 +124,7 @@ class EmbeddingModelsRepository(BaseRepository):
         # to the DB). ``upsert(..., updateExpressions={})`` maps to
         # ``ON CONFLICT(model, dimensions) DO NOTHING`` on every provider
         # (verified in ``SQLite3Provider.upsert`` at
-        # internal/database/providers/sqlite3.py:426-439 — empty
+        # lib/db/providers/sqlite3.py:430-443 — empty
         # updateExpressions triggers the DO NOTHING branch). The subsequent
         # SELECT-back returns the canonical id regardless of whether the
         # INSERT actually inserted or was short-circuited by the conflict.

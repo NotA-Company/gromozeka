@@ -64,6 +64,7 @@ from internal.services.cache import CacheService
 from internal.services.queue_service import DelayedTask, DelayedTaskFunction, QueueService
 from internal.services.storage import StorageService
 from lib import utils
+from lib.cache import GenericDatabaseCache
 from lib.rate_limiter.manager import RateLimiterManager
 from lib.stats import NullStatsStorage, StatsStorage
 
@@ -712,9 +713,10 @@ class HandlersManager(CommandHandlerGetterInterface):
         """Clean up old data from the database.
 
         Applies a per-namespace TTL strategy for the cache:
-            - All namespaces are first purged with the default 365-day floor.
-            - Fast-staling namespaces (WEATHER, YANDEX_SEARCH, URL_CONTENT,
-              URL_CONTENT_CONDENSED) are then purged with an aggressive 7-day TTL.
+            - Each CacheType namespace is swept once with a conditional TTL:
+              fast-staling namespaces (WEATHER, YANDEX_SEARCH, URL_CONTENT,
+              URL_CONTENT_CONDENSED) receive the aggressive 7-day TTL,
+              all others receive the 365-day default floor.
         Completed delayed tasks are purged with a 30-day TTL.
         Old/rare bayes tokens are purged based on BAYES_TOKEN_CLEANUP_RULES
         (age+count rules applied across all chats).
@@ -722,11 +724,13 @@ class HandlersManager(CommandHandlerGetterInterface):
         Returns:
             None
         """
-        # Purge all namespaces with the default TTL floor first
-        await self.db.cache.clearOldCacheEntries(ttl=CACHE_CLEANUP_DEFAULT_TTL_SECS)
-        # Then purge fast-staling namespaces with the aggressive TTL
-        for cacheType in AGGRESSIVE_CLEANUP_CACHE_TYPES:
-            await self.db.cache.clearOldCacheEntries(ttl=CACHE_CLEANUP_AGGRESSIVE_TTL_SECS, cacheType=cacheType)
+        # Purge each namespace once: aggressive TTL for fast-staling types, default floor for the rest
+        for member in CacheType:
+            await GenericDatabaseCache(self.db.manager, namespace=member).clearOld(
+                CACHE_CLEANUP_AGGRESSIVE_TTL_SECS
+                if member in AGGRESSIVE_CLEANUP_CACHE_TYPES
+                else CACHE_CLEANUP_DEFAULT_TTL_SECS
+            )
         # Drop completed delayed tasks older than a month
         await self.db.delayedTasks.cleanupOldCompletedDelayedTasks(ttl=DELAYED_TASKS_CLEANUP_TTL_SECS)
         # Purge old/rare bayes tokens based on configurable age+count rules

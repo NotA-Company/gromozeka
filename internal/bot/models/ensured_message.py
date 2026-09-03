@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tupl
 import telegram
 import telegram.constants
 
-import internal.database.utils as dbUtils
+import lib.db.utils as dbUtils
 import lib.max_bot as libMax
 import lib.max_bot.models as maxModels
 import lib.utils as utils

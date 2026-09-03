@@ -21,6 +21,16 @@ which internally calls ``ProxyHelper.getInstance().setGlobalProxyConfig(...)``
 at ``internal/services/proxy/service.py:103``. Scripts do not need the full
 ``ProxyService`` machinery (CRON health checks, lifecycle hooks, event-loop
 registration), so they call the lower-level helper directly.
+
+Alias timing note: importing this module does call ``httpx2.alias_httpx()``
+at import time, but that is NOT sufficient to install the alias early.
+isort's alphabetical ordering places the ``scripts._lib.bootstrap`` import
+AFTER the ``internal.*`` / ``lib.*`` imports in a script's import block, and
+those already pull a real ``httpx`` (e.g. sqlink via ``lib.db.providers``) —
+by the time bootstrap executes, the alias call is too late. Every
+project-importing script must therefore call ``httpx2.alias_httpx()``
+itself, directly before its first project import (the ``main.py`` pattern;
+see commit 712bf22c and ``tests/scripts/test_httpx_alias_import.py``).
 """
 
 import httpx2

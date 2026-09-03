@@ -24,6 +24,18 @@
     },
 
     "mcp": {
+        "markdown-mcp": {
+            "enabled": true,
+            "type": "local",
+            "command": [
+                "markdown-mcp",
+                "serve"
+            ],
+            "environment": {
+                "MARKDOWN_MCP_CONFIG": ".markdown-mcp.toml"
+            },
+            "timeout": 300000
+        },
         "yandex-cloud-documentation": {
             "enabled": false,
             "type": "remote",

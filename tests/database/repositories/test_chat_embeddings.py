@@ -34,9 +34,9 @@ import pytest
 
 from internal.database import Database
 from internal.database.models import MessageCategory
-from internal.database.providers.sqlite3 import _SQLITE_VEC_AVAILABLE
 from internal.database.repositories.chat_embeddings import ChatEmbeddingsRepository
 from internal.models import MessageId
+from lib.db.providers.sqlite3 import _SQLITE_VEC_AVAILABLE
 
 
 class TestChatEmbeddingsRepository:

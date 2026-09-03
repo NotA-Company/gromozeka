@@ -16,7 +16,8 @@ to ensure each media item belongs to exactly one media group.
 
 from typing import Type
 
-from ...providers import BaseSQLProvider, ParametrizedQuery
+from lib.db.providers import BaseSQLProvider, ParametrizedQuery
+
 from ..base import BaseMigration
 
 

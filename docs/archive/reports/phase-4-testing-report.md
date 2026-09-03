@@ -110,7 +110,7 @@ grep -rn "CURRENT_TIMESTAMP" internal/database/
   - [`migration_013_remove_timestamp_defaults.py`](internal/database/migrations/versions/migration_013_remove_timestamp_defaults.py:586) `down()` method (acceptable for rollback)
   - [`migrations/README.md`](internal/database/migrations/README.md:190) (documentation, acceptable)
 
-**Status**: All SQL queries have been successfully updated to use Python-generated timestamps via [`dbUtils.getCurrentTimestamp()`](internal/database/utils.py:219).
+**Status**: All SQL queries have been successfully updated to use Python-generated timestamps via [`dbUtils.getCurrentTimestamp()`](../../../lib/db/utils.py:219).
 
 ---
 
@@ -222,7 +222,7 @@ Migration_013 needs to be completely rewritten to:
 **Findings**:
 - ✅ All INSERT operations explicitly supply `created_at` and `updated_at` where applicable
 - ✅ All UPDATE operations explicitly supply `updated_at`
-- ✅ [`dbUtils.getCurrentTimestamp()`](internal/database/utils.py:219) is used consistently for timestamp generation
+- ✅ [`dbUtils.getCurrentTimestamp()`](../../../lib/db/utils.py:219) is used consistently for timestamp generation
 - ✅ Upsert operations properly handle `created_at` (only on INSERT) and `updated_at` (on both INSERT and UPDATE)
 
 **Example**: [`chat_users.py`](internal/database/repositories/chat_users.py:69-85)

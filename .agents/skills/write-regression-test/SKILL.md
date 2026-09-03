@@ -277,7 +277,7 @@ For `testDatabase`-backed tests, also re-inject the DB into the reset singleton 
 ```python
 import datetime
 from internal.bot.models import ChatType, EnsuredMessage, MessageRecipient, MessageSender, MessageType
-from internal.database.utils import DEFAULT_THREAD_ID  # 0, NOT None
+from lib.db.utils import DEFAULT_THREAD_ID  # 0, NOT None
 
 em = EnsuredMessage(
     sender=MessageSender(id=7, name="Alice", username="alice"),

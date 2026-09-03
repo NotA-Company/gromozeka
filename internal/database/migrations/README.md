@@ -10,7 +10,7 @@
 
 This module provides a robust database migration system for the Gromozeka bot, dood! It allows for:
 
-- **Version Tracking**: Tracks migration versions using the [`settings`](../manager.py:14) table
+- **Version Tracking**: Tracks migration versions using the [`settings`](../database.py:309) table
 - **Sequential Execution**: Runs migrations in order automatically
 - **Rollback Support**: Can rollback migrations when needed
 - **Auto-Discovery**: Automatically discovers and loads migrations from the versions directory
@@ -49,7 +49,8 @@ internal/database/migrations/
     ├── migration_013_remove_timestamp_defaults.py
     ├── migration_026_chat_accessibility_bot_status.py
     ├── migration_027_drop_chat_stats_backfill_aggregates.py
-    └── migration_028_add_stat_events_retention_index.py
+    ├── migration_028_add_stat_events_retention_index.py
+    └── migration_029_drop_webhook_updates.py
 ```
 
 > **Note (pre-existing drift):** migrations 014–025 are not listed in the file tree or the Migration History table below — they were never backfilled into this README. The authoritative, complete migration list lives in [`docs/database-schema.md`](../../../docs/database-schema.md) §"Migration Files" and [`docs/database-schema-llm.md`](../../../docs/database-schema-llm.md). Adding `migration_026` here for the chat-accessibility feature; backfilling 014–025 is out of scope for this change.
@@ -130,8 +131,9 @@ This section documents all migrations in the system, dood!
 | 026 | [`migration_026_chat_accessibility_bot_status.py`](versions/migration_026_chat_accessibility_bot_status.py:1) | Add `bot_status` column to `chat_info` for chat-accessibility tracking | chat_info |
 | 027 | [`migration_027_drop_chat_stats_backfill_aggregates.py`](versions/migration_027_drop_chat_stats_backfill_aggregates.py:1) | Backfill chat_messages history into stat_aggregates (real categories/types, text_length) and drop legacy tables | chat_stats, chat_user_stats, stat_aggregates |
 | 028 | [`migration_028_add_stat_events_retention_index.py`](versions/migration_028_add_stat_events_retention_index.py:1) | Add retention index on stat_events (processed, created_at) | stat_events |
+| 029 | [`migration_029_drop_webhook_updates.py`](versions/migration_029_drop_webhook_updates.py:1) | Drop webhook_updates table (moved to the webhook receiver's own database) | webhook_updates |
 
-**Total Migrations:** 28
+**Total Migrations:** 29
 
 **Important Notes:**
 - Migration 013 is critical for SQL portability - it recreates 19 tables to remove `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns
@@ -149,7 +151,7 @@ Migrations run automatically when [`Database`](../database.py:28) is initialized
 
 ```python
 from internal.database import Database
-from internal.database.manager import DatabaseManagerConfig
+from lib.db.manager import DatabaseManagerConfig
 
 # Migrations run automatically during initialization
 config = DatabaseManagerConfig(...)
@@ -494,7 +496,7 @@ All tests create temporary databases and clean up automatically, dood!
 
 ### Storage
 
-Migration versions are stored in the [`settings`](../manager.py:14) table:
+Migration versions are stored in the [`settings`](../database.py:309) table:
 
 - **Key:** `db-migration-version` - Current version (integer)
 - **Key:** `db-migration-last-run` - ISO timestamp of last migration
@@ -654,7 +656,7 @@ CREATE TABLE messages (
 When inserting records, always set timestamps explicitly:
 
 ```python
-from internal.database.utils import getCurrentTimestamp
+from lib.db.utils import getCurrentTimestamp
 
 currentTimestamp = getCurrentTimestamp()
 
@@ -684,9 +686,9 @@ Potential features for future versions, dood!
 ### Internal Documentation
 
 - [`internal/database/database.py`](../database.py:28) - Database wrapper and migration orchestration
-- [`internal/database/manager.py`](../manager.py:14) - Database manager
-- [`internal/database/providers/base.py`](../providers/base.py:1) - SQL provider interface
-- [`internal/database/utils.py`](../utils.py:1) - Database utilities
+- [`lib/db/manager.py`](../../../lib/db/manager.py:14) - Database manager
+- [`lib/db/providers/base.py`](../../../lib/db/providers/base.py:1) - SQL provider interface
+- [`lib/db/utils.py`](../../../lib/db/utils.py:1) - Database utilities
 
 ### External Resources
 

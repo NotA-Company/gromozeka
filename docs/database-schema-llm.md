@@ -6,7 +6,7 @@
 **Database Class**: [`Database`](../internal/database/database.py:1)
 **Models**: [`internal/database/models.py`](../internal/database/models.py:1)
 **Repositories**: [`internal/database/repositories/`](../internal/database/repositories/)
-**Migrations**: 28 (up to `migration_028`)
+**Migrations**: 29 (up to `migration_029`)
 
 ---
 
@@ -41,7 +41,7 @@ CREATE TABLE chat_messages (
 
 Schema above is the post-`migration_025` shape (canonical form with no `DEFAULT CURRENT_TIMESTAMP`). Columns `markup`/`metadata` were added by `migration_007`; `media_group_id` by `migration_008`; `model_id` by `migration_025` (Phase 2 of the embedding-model-lookup refactor — replaces the legacy `message_embeddings` BLOB side table; chat-history embeddings now live in vec0 only with `model_id` carrying the provenance). **No `updated_at` column** — only `created_at`. **No SQL `FOREIGN KEY` declarations** — the relationships below are logical (enforced by the application, not by DDL).
 
-**TypedDict**: [`ChatMessageDict`](../internal/database/models.py:108)
+**TypedDict**: [`ChatMessageDict`](../internal/database/models.py:129)
 **Relationships**: References [`chat_users`](#chat_users) (logical, via `(chat_id, user_id)`), [`media_attachments`](#media_attachments) (logical, via `media_id`), [`media_groups`](#media_groups) (logical, via `media_group_id`).
 
 **Note**: The `media_group_id` column links messages that are part of a media group (album of photos/videos sent together).
@@ -78,7 +78,7 @@ CREATE TABLE chat_users (
 )
 ```
 
-**TypedDict**: [`ChatUserDict`](../internal/database/models.py:163)
+**TypedDict**: [`ChatUserDict`](../internal/database/models.py:187)
 
 **`metadata` JSON convention**: the column holds a JSON object (`internal/bot/models/user_metadata.py` → `UserMetadataDict`, `total=False`) with boolean flags (`isSpammer`, `notSpammer`, `dropMessages`, `leftChat`) plus an optional `memoryRefinement: Dict[str(threadId), UserMemoryThreadDict]` sub-dict. Each per-thread entry carries `summary`, `lastProcessedMessageId`, `lastProcessedMessageDate` (cursor for `getChatMessagesSince`). The `lastRefinedTS` is NO LONGER persisted — it is tracked in-memory on `UserMemoriesHandler._lastRefinedTS` (lost on restart; absent → 0). The nested sub-dict must be written via read-modify-write through `CacheService.updateUserMetadata()` (full-dict replace, NO merge) — `setUserMetadata(isUpdate=True)` does a shallow top-level merge and would wipe sibling threads (see [`docs/llm/tasks.md`](llm/tasks.md) §3). Single-row `(chatId, userId)` reads/writes are cached via `CacheService` (ADR-015); the cached `messages_count` is best-effort stale (incremented by raw SQL in `saveChatMessage`, bypassing the cache).
 
@@ -103,7 +103,7 @@ CREATE TABLE chat_info (
 
 Schema above is the post-`migration_026` shape. The `bot_status` column (added by `migration_026`; column only — no supporting index) backs the chat-accessibility-tracking subsystem — values of the [`ChatBotStatus`](#chatbotstatus) StrEnum (`'active'` / `'inaccessible'`). The string-literal `DEFAULT 'active'` is portable across SQLite/PostgreSQL/MySQL and backfills every existing row to `'active'` as part of the `ALTER TABLE` (no separate backfill; satisfies the optimistic-default binding decision). **Self-heal behaviour (shipped):** `ChatInfoRepository.updateChatInfo` takes a keyword-only `botStatus: Optional[ChatBotStatus] = ChatBotStatus.ACTIVE` (default `ACTIVE`, NOT `None`). `bot_status` is unconditionally included in BOTH the INSERT `values` and the `CONFLICT`-UPDATE expressions of the provider upsert (via `ExcludedValue`); `CacheService.setChatInfo` forwards `info["bot_status"]` (direct subscript, NOT `.get(...)`), so `markChatInaccessible` / `markChatActive` reach the column via the same upsert path as every other `chat_info` write. Because `TheBot.getChatInfo` hardcodes `bot_status = ChatBotStatus.ACTIVE` and `updateChatInfo`'s default is `ACTIVE`, the every-message refresh path ALWAYS writes `ACTIVE` — a transient `INACCESSIBLE` set by `markChatInaccessible` self-heals to `ACTIVE` on the next inbound message (which proves the chat is accessible). `bot_status` is a short-lived "getChatAdmins probe failed" flag, not a permanent state.
 
-**TypedDict**: [`ChatInfoDict`](../internal/database/models.py:226) — `bot_status` is a REQUIRED `ChatBotStatus` field (the key can never be omitted). Both DB-row-backed reads (`SELECT ci.*`) and platform-sourced write dicts from `TheBot.getChatInfo` populate it (the platform dict hardcodes `ChatBotStatus.ACTIVE`).
+**TypedDict**: [`ChatInfoDict`](../internal/database/models.py:213) — `bot_status` is a REQUIRED `ChatBotStatus` field (the key can never be omitted). Both DB-row-backed reads (`SELECT ci.*`) and platform-sourced write dicts from `TheBot.getChatInfo` populate it (the platform dict hardcodes `ChatBotStatus.ACTIVE`).
 
 ---
 
@@ -125,7 +125,7 @@ CREATE TABLE chat_topics (
 )
 ```
 
-**TypedDict**: [`ChatTopicInfoDict`](../internal/database/models.py:234)
+**TypedDict**: [`ChatTopicInfoDict`](../internal/database/models.py:241)
 
 ---
 
@@ -191,7 +191,7 @@ CREATE TABLE media_attachments (
 )
 ```
 
-**TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:255)
+**TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:262)
 
 **STT (media-transcription) semantics:** For STT semantics (lifecycle, gating, CAS-removal), see [ADR-020](llm/architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall).
 
@@ -224,7 +224,7 @@ CREATE TABLE spam_messages (
 )
 ```
 
-**TypedDict**: [`SpamMessageDict`](../internal/database/models.py:325)
+**TypedDict**: [`SpamMessageDict`](../internal/database/models.py:310)
 
 ---
 
@@ -308,7 +308,7 @@ CREATE TABLE chat_summarization_cache (
 )
 ```
 
-**TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:348)
+**TypedDict**: [`ChatSummarizationCacheDict`](../internal/database/models.py:333)
 **Indexes**: `chat_summarization_cache_ctfl_index`
 
 ---
@@ -327,7 +327,7 @@ CREATE TABLE cache_storage (
 )
 ```
 
-**TypedDict**: [`CacheStorageDict`](../internal/database/models.py:386)
+**TypedDict**: [`CacheStorageDict`](../internal/database/models.py:358)
 
 ---
 
@@ -408,7 +408,7 @@ CREATE TABLE models (
 )
 ```
 
-**TypedDict**: [`ModelDict`](../internal/database/models.py:579)
+**TypedDict**: [`ModelDict`](../internal/database/models.py:574)
 
 **Repository** (`EmbeddingModelsRepository`, accessed as `db.embeddingModels`): process-local cache `{(model, dimensions): model_id}` so the common path (a hot model that's already been allocated) is a single dict hit. Constructed FIRST in `Database.__init__` so its bound `getOrCreateModelId` method can be injected as the `modelIdResolver` kwarg into the three embedding-touching repos (`chatEmbeddings`, `chatSearch`, `userMemories` — Decision D10). Methods:
 - `getOrCreateModelId(model, dimensions) -> int` — cache-first allocation via `COALESCE(MAX(model_id), 0) + 1` + `provider.upsert(..., updateExpressions={})` (portable `ON CONFLICT DO NOTHING`) + SELECT-back. Runtime probe-then-insert against the `UNIQUE(model, dimensions)` constraint.
@@ -473,7 +473,7 @@ CREATE TABLE stat_events (
 
 **Indexes**: `idx_stat_events_unprocessed`, `idx_stat_events_lookup`, `idx_stat_events_retention`
 
-**Repository**: `DatabaseStatsStorage.record()` in `internal/database/stats_storage.py`
+**Repository**: `DatabaseStatsStorage.record()` in `lib/stats/sql_storage.py`
 
 **Note**: Created by `migration_016` (tables) + `migration_028` (retention index). Part of the v3 statistics library (`lib/stats/`). Used to record LLM events (tokens, errors, fallbacks) and other metrics before aggregation into `stat_aggregates`.
 
@@ -497,7 +497,7 @@ CREATE TABLE stat_aggregates (
 )
 ```
 
-**Repository**: `DatabaseStatsStorage.aggregate()` in `internal/database/stats_storage.py`
+**Repository**: `DatabaseStatsStorage.aggregate()` in `lib/stats/sql_storage.py`
 
 **Period types**: `hourly`, `daily`, `monthly`, `total`
 
@@ -523,36 +523,11 @@ CREATE TABLE delayed_tasks (
 )
 ```
 
-**TypedDict**: [`DelayedTaskDict`](../internal/database/models.py:284)
+**TypedDict**: [`DelayedTaskDict`](../internal/database/models.py:291)
 
 ---
 
-### webhook_updates
-**Purpose**: Raw incoming Max Messenger webhook payloads awaiting consumption by the bot. Written by the standalone webhook receiver process (`internal/max_webhook_receiver/`) on every webhook POST; the bot's long-poll loop reads and marks rows processed.
-**Primary Key**: `id` (application-generated UUID)
-
-```sql
-CREATE TABLE webhook_updates (
-    id           TEXT      PRIMARY KEY NOT NULL,
-    received_at  TIMESTAMP NOT NULL,
-    update_type  TEXT      NOT NULL,
-    raw_json     TEXT      NOT NULL,
-    processed    INTEGER   NOT NULL DEFAULT 0,
-    processed_at TIMESTAMP
-)
-```
-
-**Indexes**: `idx_webhook_updates_unprocessed` on `(processed, received_at)` — backs `WHERE processed = 0 ORDER BY received_at ASC`
-
-**TypedDict**: [`WebhookUpdatesRow`](../internal/database/models.py:303)
-
-**Repository** (`WebhookUpdatesRepository`, accessed as `db.webhookUpdates`):
-- `addUpdate(updateId, updateType, rawJson) -> bool` — store a raw payload (caller generates the UUID; `received_at` set by the repo).
-- `getUnprocessedUpdates(limit=100) -> List[WebhookUpdatesRow]` — pending rows oldest-first; pagination via `provider.applyPagination`.
-- `markProcessed(updateIds) -> None` — atomic batch update (single `batchExecute`) so the whole batch commits together; prevents duplicate delivery.
-- `deleteProcessedOlderThan(ttlSeconds=3600) -> bool` — reap processed rows past the TTL; cutoff computed in Python for cross-RDBMS portability.
-
-**Note**: Created by `migration_019`. No `AUTOINCREMENT`/`SERIAL`, no `DEFAULT CURRENT_TIMESTAMP` — `id` is caller-generated and timestamps are application-set. Processed rows are reaped by the receiver's background cleanup task (default TTL 1h).
+`webhook_updates` — moved to the webhook receiver's own database (ADR-025 in [`docs/llm/architecture.md`](llm/architecture.md)); dropped from the bot's database by `migration_029`.
 
 ---
 
@@ -584,9 +559,9 @@ CREATE TABLE user_memories (
 - `idx_user_memories_chat_user_permanent` on `(chat_id, user_id, permanent, updated_at DESC)` — backs `getPermanentMemories`.
 - `idx_user_memories_type` on `(chat_id, user_id, type)` — backs type-filtered scans.
 
-**TypedDict**: [`UserMemoryDict`](../internal/database/models.py:528) (snake_case keys matching columns; `score` is `NotRequired[float]` populated by semantic search). Post-`migration_025`, `model_id: Optional[int]` replaces the legacy `embedding_model` / `embedding_dimensions` pair.
+**TypedDict**: [`UserMemoryDict`](../internal/database/models.py:523) (snake_case keys matching columns; `score` is `NotRequired[float]` populated by semantic search). Post-`migration_025`, `model_id: Optional[int]` replaces the legacy `embedding_model` / `embedding_dimensions` pair.
 
-**Enum**: [`MemoryType`](../internal/database/models.py:450) (`BIO`/`PREFERENCE`/`FACT`/`EVENT`/`RELATIONSHIP`); [`UserMemorySource`](../internal/database/models.py:492) (`REFINEMENT`/`CHAT`/`MIGRATION`/`USER`).
+**Enum**: [`MemoryType`](../internal/database/models.py:445) (`BIO`/`PREFERENCE`/`FACT`/`EVENT`/`RELATIONSHIP`); [`UserMemorySource`](../internal/database/models.py:487) (`REFINEMENT`/`CHAT`/`MIGRATION`/`USER`).
 
 **Repository** (`UserMemoriesRepository`, accessed as `db.userMemories`) — 12 public methods; all SQL goes through `BaseSQLProvider`. Constructed with a constructor-injected `modelIdResolver: Callable[[str, int], Awaitable[int]]` (Decision D10 — bound `EmbeddingModelsRepository.getOrCreateModelId`) so the `(model, dimensions)` pair is resolved to a `model_id` internally without leaking that detail into handler-facing signatures (Decision D6 — signatures stay stable):
 - `addMemory(chatId, userId, memoryId, *, type, content, tags, permanent, source, embedding=None, embeddingModel=None, threadId=None) -> None` — INSERT (caller generates the UUID). `source` is a `UserMemorySource`; `threadId` is keyword-only; when both `embedding` (`List[float]`) and `embeddingModel` are provided the row is embedded during add.
@@ -675,7 +650,7 @@ UNBAN = "unban"
 ---
 
 ### CacheType
-**Location**: [`internal/database/models.py:399`](../internal/database/models.py:399)
+**Location**: [`internal/database/models.py:371`](../internal/database/models.py:371)
 
 ```python
 WEATHER = "weather"
@@ -1215,51 +1190,46 @@ Note the asymmetric parameter names: `getTokenStats` / `getClassStats` use `chat
 
 ### Cache Operations
 
-The `db.cache` repository (`CacheRepository`) owns **two** distinct tables — `cache` (typed entries with TTL) and `cache_storage` (simple namespace/key/value). All methods take a keyword-only `dataSource: Optional[str] = None`.
+The `cache` table is owned by the `GenericDatabaseCache` class in [`lib/cache/sql_cache.py`](../lib/cache/sql_cache.py). The `db.cache` repository (`CacheRepository`) owns only the `cache_storage` table (simple namespace/key/value persistence for `CacheService`). All `GenericDatabaseCache` methods take a keyword-only `dataSource: Optional[str] = None` via the constructor.
 
 **Get Cache Entry (TTL-aware)**
 ```python
-db.cache.getCacheEntry(
-    key: str,
-    cacheType: CacheType,
-    ttl: Optional[int] = None,
-    *,
-    dataSource: Optional[str] = None
-) -> Optional[CacheDict]
+from lib.cache import GenericDatabaseCache
+from internal.database.models import CacheType
+
+cache = GenericDatabaseCache(
+    manager=db.manager,
+    namespace=CacheType.WEATHER,
+    dataSource=None  # Optional
+)
+
+# Get with optional TTL check
+value = await cache.get(
+    key="moscow",
+    ttl=3600  # Optional TTL in seconds
+)
 ```
-Returns `None` immediately (without querying) when `ttl is not None and ttl <= 0`. When `ttl > 0`, only rows whose `updated_at >= now - ttl seconds` match. Note parameter order: `key` first, `cacheType` second.
+Returns `None` immediately (without querying) when `ttl is not None and ttl <= 0`. When `ttl > 0`, only rows whose `updated_at >= now - ttl seconds` match.
 
 **Set Cache Entry**
 ```python
-db.cache.setCacheEntry(
-    key: str,
-    data: str,
-    cacheType: CacheType,
-    *,
-    dataSource: Optional[str] = None
-) -> bool
+success = await cache.set(
+    key="moscow",
+    value={"temp": 20, "humidity": 50}
+)
 ```
-Upsert keyed on `(namespace=cacheType, key)`; on conflict `data` and `updated_at` are refreshed (`created_at` stays).
+Upsert keyed on `(namespace, key)`; on conflict `data` and `updated_at` are refreshed (`created_at` stays).
 
-**Clear Entire Cache Type**
+**Clear Entire Cache Namespace**
 ```python
-db.cache.clearCache(
-    cacheType: CacheType,
-    *,
-    dataSource: Optional[str] = None
-) -> None
+await cache.clear()
 ```
 
-**Clear Old Cache Entries**
+**Clear Old Cache Entries (TTL sweep)**
 ```python
-db.cache.clearOldCacheEntries(
-    ttl: Optional[int],
-    cacheType: Optional[CacheType] = None,
-    *,
-    dataSource: Optional[str] = None
-) -> bool
+success = await cache.clearOld(ttl=7 * 86400)  # 7 days
 ```
-`ttl=None` or `0` removes **all** entries of the matching type(s). `cacheType=None` applies the cleanup across every namespace.
+`ttl=None` or `0` removes **all** entries of this instance's namespace. The sweep is scoped to the instance's namespace only.
 
 **Get Cache Storage Entries (list all)**
 ```python
@@ -1444,21 +1414,28 @@ use_tools = settings.get('use-tools', ('false', 0))[0] == 'true'
 
 ### Cache API Response
 ```python
-# Set cache (note: positional order is key, data, cacheType)
-db.cache.setCacheEntry(
+from lib.cache import GenericDatabaseCache
+from internal.database.models import CacheType
+
+# Create cache instance for weather namespace
+weatherCache = GenericDatabaseCache(
+    manager=db.manager,
+    namespace=CacheType.WEATHER
+)
+
+# Set cache
+await weatherCache.set(
     key=f"{lat},{lon}",
-    data=json.dumps(weather_data),
-    cacheType=CacheType.WEATHER
+    value=weather_data
 )
 
 # Get cache (TTL in seconds; pass ttl=None for "no expiry")
-cached = db.cache.getCacheEntry(
+cached = await weatherCache.get(
     key=f"{lat},{lon}",
-    cacheType=CacheType.WEATHER,
     ttl=3600
 )
 if cached:
-    weather_data = json.loads(cached['data'])
+    weather_data = cached
 ```
 
 ---
@@ -1473,10 +1450,8 @@ if cached:
 | `ChatTopicInfoDict` | `chat_topics` | None |
 | `MediaAttachmentDict` | `media_attachments` | None |
 | `DelayedTaskDict` | `delayed_tasks` | None |
-| `WebhookUpdatesRow` | `webhook_updates` | None |
 | `SpamMessageDict` | `spam_messages` | None |
 | `ChatSummarizationCacheDict` | `chat_summarization_cache` | None |
-| `CacheDict` | `cache` | None |
 | `CacheStorageDict` | `cache_storage` | None |
 | `UserMemoryDict` | `user_memories` | None |
 | `ModelDict` | `models` | None |

@@ -857,3 +857,7 @@ consolidation landed, three deploy artifacts cleaned up the legacy surface:
 - [`../handlers.md`](../handlers.md) `UserMemoriesHandler` row;
   [`../configuration.md`](../configuration.md) §`[user-memory]`;
   [`../database.md`](../database.md) for migration patterns.
+
+## Semantic Relevance Score (2026-08-11)
+
+- **User-memories relevance score (2026-08-11, IMPLEMENTED):** Ephemeral ("short-term") memories now carry a semantic-relevance score through to the LLM context. Contract: score originates in `UserMemoriesRepository.searchMemories` as `score = 1.0 - cosine_distance` (vec0 COSINE); `MessagePreprocessorHandler.injectMemories` captures `{memory_id -> score}` into `metadata["memories"]["shortTermScores"]` in semantic-search mode ONLY; `EnsuredMessage.formatForLLM` merges it into resolved short-term `SingleMemoryDict` entries (by `mid`, via shallow copy — see gotcha above). Scoping: semantic ephemeral ONLY — permanent memories and latest-mode (`getLatestMemories`) ephemeral never carry a score; the field is simply absent. No DB migration (score is transient per-message JSON metadata). Tools (`search_memories`/`add_memory`) already returned score pre-feature. Docs: `docs/llm/memories/user-memories.md`, `memories-context-dedup.md`. Terminology: code says "ephemeral" (`permanent = 0`) = user-facing "short-term".

@@ -456,7 +456,7 @@ Long-term: migrate `_getConnection()` to use `aiosqlite.connect()`
 
 #### Affected Files
 
-- [`internal/database/providers/`](../../internal/database/providers/) (add aiosqlite provider)
+- [`lib/db/providers/`](../../lib/db/providers/) (add aiosqlite provider)
 - [`internal/bot/common/handlers/base.py`](/internal/bot/common/handlers/base.py)
 - Handlers that call `self.db.*` (now through repositories)
 
@@ -515,6 +515,11 @@ Create a migration for each batch
 > [`internal/config/manager.py`](/internal/config/manager.py) resolves `${VAR}`
 > placeholders at load time, and shipped configs use it (`providers.toml`,
 > `storage.toml`, `webhook-receiver.toml`). Kept below for historical reference.
+
+> **Correction (2026-08-26):** `substituteEnvVars()` is no longer defined in
+> `internal/config/manager.py` — it moved to
+> [`lib/utils/utils.py`](../../lib/utils/utils.py) in the ADR-025 arc; `ConfigManager`
+> now calls it via `utils.substituteEnvVars`.
 
 **Category:** Security  
 **Priority:** Critical  
@@ -1442,6 +1447,9 @@ Simple read-only panel that connects to the existing SQLite file via the `readon
 >   is live in [`internal/config/manager.py`](/internal/config/manager.py) and
 >   shipped configs use `${...}` placeholders (`providers.toml`, `storage.toml`,
 >   `webhook-receiver.toml`). Marked `[x]` in the summary table.
+>   - **Correction (2026-08-26):** `substituteEnvVars()` has since moved to
+>     [`lib/utils/utils.py`](../../lib/utils/utils.py) (ADR-025 arc); `ConfigManager`
+>     now calls it via `utils.substituteEnvVars`.
 > - **#9 Per-User Rate Limiting — partial.** `RateLimiterManager.applyLimit()`
 >   and `getStats()` now take a `key` arg; handler wiring still missing.
 > - **#25 Makefile — partial.** `make ci` exists but runs the Alpine-container

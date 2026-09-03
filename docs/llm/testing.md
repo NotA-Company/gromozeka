@@ -53,7 +53,6 @@ tests/
 │   ├── integration/
 │   ├── migrations/
 │   ├── performance/
-│   ├── providers/
 │   └── repositories/
 ├── dependencies/                            # Dependency-usage regression tests (pin pinned-library behavior; exception to mirror layout)
 ├── fixtures/                                # Golden data / test fixtures
@@ -63,17 +62,19 @@ tests/
 │   ├── aurumentation/
 │   ├── bayes_filter/
 │   ├── cache/
+│   ├── db/                                  # SQL provider abstraction tests (mirrors lib/db/)
+│   │   └── providers/                       # BaseSQLProvider / sqlite3 / vector search
 │   ├── divination/                          # Divination tests + golden data
 │   ├── geocode_maps/                        # Geocoding tests + golden data
 │   ├── markdown/
 │   ├── max_bot/                             # MaxBotClient tests
+│   ├── max_webhook_receiver/                # Max webhook receiver tests (ADR-025): test_repository.py (15) + test_app.py (20) + test_main.py (5) over the receiver's OWN database; bot-side table drop covered by tests/database/test_migration_029_drop_webhook_updates.py (6)
 │   ├── openweathermap/                      # Weather tests + golden data
 │   ├── rate_limiter/
 │   ├── sandbox/
 │   ├── stats/
 │   ├── utils/
 │   └── yandex_search/                       # Search tests + golden data
-├── max_webhook_receiver/                    # Max webhook receiver process tests
 ├── models/                                  # Model tests
 ├── scripts/                                 # Script tests
 ├── services/                                # Service tests
