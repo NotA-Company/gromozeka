@@ -907,7 +907,7 @@ class SandboxManager:
         *,
         runtime: RuntimeName,
         upgrade: bool = False,
-        timeoutSeconds: int = 600,
+        timeoutSeconds: int | None = None,
     ) -> bool:
         """Install packages into the runtime library pool.
 
@@ -919,7 +919,9 @@ class SandboxManager:
             packages: Package specs (PEP 508 names, possibly with version constraints).
             runtime: The runtime to install into.
             upgrade: If True, upgrade existing packages.
-            timeoutSeconds: Timeout for the install operation.
+            timeoutSeconds: Timeout for the install operation. When None (default),
+                falls back to the runtime's ``install-container.timeout-seconds``
+                config value.
 
         Returns:
             True if installation succeeded, False otherwise.
@@ -993,7 +995,9 @@ class SandboxManager:
                         memorySwapMb=installContainerConfig.memoryMb,
                         cpuCount=defaultLimits.cpuCount,
                         pidsLimit=installContainerConfig.pidsLimit,
-                        timeoutSeconds=timeoutSeconds,
+                        timeoutSeconds=(
+                            timeoutSeconds if timeoutSeconds is not None else installContainerConfig.timeoutSeconds
+                        ),
                         timeoutGraceSeconds=60,
                     ),
                     network="bridge",  # install needs internet

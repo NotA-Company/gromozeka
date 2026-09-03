@@ -5,6 +5,9 @@ Covers:
   workspace-relative path format and the work/ directory is created on disk.
 - RunResult.workDir default: the field defaults to empty string when not
   provided.
+- installRuntimeLibraries() timeout sourcing: the container timeout comes
+  from the runtime's ``install-container.timeout-seconds`` config unless the
+  caller passes an explicit ``timeoutSeconds`` argument.
 
 The DockerBackend is replaced with a mock so that no real Docker daemon is
 required.
@@ -31,11 +34,17 @@ from lib.sandbox.types import ContainerOutcome, RunResult
 # ============================================================================
 
 
-def _makeSandboxConfig(rootDir: str) -> SandboxConfig:
+def _makeSandboxConfig(
+    rootDir: str,
+    *,
+    installContainer: InstallContainerConfig | None = None,
+) -> SandboxConfig:
     """Create a minimal SandboxConfig for testing.
 
     Args:
         rootDir: Host-side root directory for sandbox storage.
+        installContainer: Optional install-container limits; defaults to
+            ``InstallContainerConfig()`` defaults.
 
     Returns:
         A SandboxConfig with a Python runtime and test-friendly defaults.
@@ -50,7 +59,7 @@ def _makeSandboxConfig(rootDir: str) -> SandboxConfig:
                 installDockerfile="lib/sandbox/runtimes/python/Dockerfile.install",
                 libMountPath="/sandbox/libs/python",
                 env={},
-                installContainer=InstallContainerConfig(),
+                installContainer=installContainer if installContainer is not None else InstallContainerConfig(),
             )
         },
     )
@@ -279,3 +288,114 @@ async def testRunCodeWorkDirIsWorkspaceRelative(tmp_path: Path) -> None:
     assert result.workDir.startswith(".run/"), f"workDir must start with '.run/', got: {result.workDir}"
     # workDir must end with '/work'
     assert result.workDir.endswith("/work"), f"workDir must end with '/work', got: {result.workDir}"
+
+
+# ============================================================================
+# Tests — installRuntimeLibraries() timeout sourcing (mocked backend)
+# ============================================================================
+
+
+class TestInstallRuntimeLibrariesTimeout:
+    """Pins the dead-config bug: install-container.timeout-seconds was ignored.
+
+    Before the fix, ``installRuntimeLibraries()`` took ``timeoutSeconds: int = 600``
+    as a method-parameter default and never read the parsed
+    ``InstallContainerConfig.timeoutSeconds``. Every caller (the ``/sandbox install``
+    handler, the bootstrap script) omitted the argument, so the configured timeout
+    was dead config and installs were watchdog-killed at 600s+60s+1s regardless of
+    configuration.
+    """
+
+    async def testInstallUsesConfiguredInstallTimeout(self, tmp_path: Path) -> None:
+        """Install container timeout must come from install-container config.
+
+        With ``install-container.timeout-seconds = 7200`` configured and no explicit
+        ``timeoutSeconds`` argument, the ContainerSpec passed to runOneshot must
+        carry ``limits.timeoutSeconds == 7200``. Before the fix it carried the
+        hard-coded method default 600.
+
+        Args:
+            tmp_path: pytest-provided temporary directory.
+
+        Returns:
+            None
+        """
+        rootDir = str(tmp_path / "sandbox")
+        config = _makeSandboxConfig(
+            rootDir,
+            installContainer=InstallContainerConfig(timeoutSeconds=7200, memoryMb=2048, pidsLimit=128),
+        )
+        SandboxManager.injectConfig(config)
+
+        manager = SandboxManager.getInstance()
+        manager._backend = _makeMockBackend(_makeContainerOutcome(exitCode=0))
+
+        success = await manager.installRuntimeLibraries(
+            packages=["pybullet"],
+            runtime=RuntimeName.PYTHON,
+        )
+        assert success is True
+
+        # First runOneshot call is the install container (a second one may
+        # follow from _refreshPackageList on the success path).
+        installSpec = manager._backend.runOneshot.await_args_list[0].kwargs["spec"]
+        assert (
+            installSpec.limits.timeoutSeconds == 7200
+        ), "install-container.timeout-seconds config must drive the install container timeout"
+
+    async def testInstallExplicitTimeoutOverridesConfig(self, tmp_path: Path) -> None:
+        """An explicit timeoutSeconds argument must win over the config value.
+
+        Args:
+            tmp_path: pytest-provided temporary directory.
+
+        Returns:
+            None
+        """
+        rootDir = str(tmp_path / "sandbox")
+        config = _makeSandboxConfig(
+            rootDir,
+            installContainer=InstallContainerConfig(timeoutSeconds=7200),
+        )
+        SandboxManager.injectConfig(config)
+
+        manager = SandboxManager.getInstance()
+        manager._backend = _makeMockBackend(_makeContainerOutcome(exitCode=0))
+
+        success = await manager.installRuntimeLibraries(
+            packages=["pybullet"],
+            runtime=RuntimeName.PYTHON,
+            timeoutSeconds=300,
+        )
+        assert success is True
+
+        installSpec = manager._backend.runOneshot.await_args_list[0].kwargs["spec"]
+        assert installSpec.limits.timeoutSeconds == 300, "explicit timeoutSeconds argument must override config"
+
+    async def testInstallDefaultConfigTimeoutRemains600(self, tmp_path: Path) -> None:
+        """Default config (no timeout-seconds override) must keep the 600s timeout.
+
+        Pins that the fallback does not change behaviour for deployments that
+        rely on the default install timeout.
+
+        Args:
+            tmp_path: pytest-provided temporary directory.
+
+        Returns:
+            None
+        """
+        rootDir = str(tmp_path / "sandbox")
+        config = _makeSandboxConfig(rootDir)
+        SandboxManager.injectConfig(config)
+
+        manager = SandboxManager.getInstance()
+        manager._backend = _makeMockBackend(_makeContainerOutcome(exitCode=0))
+
+        success = await manager.installRuntimeLibraries(
+            packages=["pybullet"],
+            runtime=RuntimeName.PYTHON,
+        )
+        assert success is True
+
+        installSpec = manager._backend.runOneshot.await_args_list[0].kwargs["spec"]
+        assert installSpec.limits.timeoutSeconds == 600
