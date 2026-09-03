@@ -913,6 +913,8 @@ class SandboxManager:
 
         Acquires an fcntl.flock on pool.lock, validates package specs,
         runs a dedicated install container, and refreshes the package list.
+        On success the install container is removed; on failure it is kept
+        for post-mortem log inspection (``docker logs <containerId>``).
 
         Args:
             self: The SandboxManager instance.
@@ -1020,6 +1022,23 @@ class SandboxManager:
                     outcome.exitCode == 0,
                 ]
             )
+
+            if success:
+                # Best-effort removal of the install container (runOneshot contract:
+                # the caller removes the container after collecting the outcome).
+                try:
+                    await self._backend.removeContainer(outcome.containerId)
+                except Exception as exc:
+                    logger.error("Failed to remove install container %s: %s", outcome.containerId, exc)
+            else:
+                # Keep the failed install container for post-mortem log inspection
+                # (docker logs <containerId>); GC reaps it per
+                # orphan-container-retention-minutes.
+                logger.warning(
+                    "Install failed; keeping container %s for inspection (docker logs %s)",
+                    outcome.containerId,
+                    outcome.containerId,
+                )
 
             # Refresh package metadata after successful install so that
             # listRuntimeLibraries() reflects the newly installed packages.

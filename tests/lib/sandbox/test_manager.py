@@ -8,6 +8,9 @@ Covers:
 - installRuntimeLibraries() timeout sourcing: the container timeout comes
   from the runtime's ``install-container.timeout-seconds`` config unless the
   caller passes an explicit ``timeoutSeconds`` argument.
+- installRuntimeLibraries() container cleanup: the install container is
+  removed after a successful install and kept (for log inspection via
+  ``docker logs``) when the install fails.
 
 The DockerBackend is replaced with a mock so that no real Docker daemon is
 required.
@@ -65,17 +68,18 @@ def _makeSandboxConfig(
     )
 
 
-def _makeContainerOutcome(*, exitCode: int = 0) -> ContainerOutcome:
+def _makeContainerOutcome(*, exitCode: int = 0, containerId: str = "fake-container-id") -> ContainerOutcome:
     """Create a minimal ContainerOutcome for testing.
 
     Args:
         exitCode: Process exit code to return.
+        containerId: Container id to embed in the outcome.
 
     Returns:
         A ContainerOutcome with the specified exit code.
     """
     return ContainerOutcome(
-        containerId="fake-container-id",
+        containerId=containerId,
         exitCode=exitCode,
         signal=None,
         oomKilled=False,
@@ -399,3 +403,116 @@ class TestInstallRuntimeLibrariesTimeout:
 
         installSpec = manager._backend.runOneshot.await_args_list[0].kwargs["spec"]
         assert installSpec.limits.timeoutSeconds == 600
+
+
+# ============================================================================
+# Tests — installRuntimeLibraries() container cleanup (mocked backend)
+# ============================================================================
+
+
+class TestInstallRuntimeLibrariesContainerCleanup:
+    """Pins the install-container leak: successful installs must remove the container.
+
+    Before the fix, ``installRuntimeLibraries()`` never removed the install
+    container (success or failure), violating the ``runOneshot`` contract that the
+    caller collects artifacts and then calls ``removeContainer``. Failed installs
+    deliberately KEEP the container so the operator can inspect logs via
+    ``docker logs <containerId>``.
+    """
+
+    def _makeManager(self, tmp_path: Path, backend: MagicMock) -> SandboxManager:
+        """Build a SandboxManager wired to the given mock backend.
+
+        Args:
+            tmp_path: pytest-provided temporary directory.
+            backend: Mock backend to inject.
+
+        Returns:
+            A SandboxManager instance with the mock backend installed.
+        """
+        SandboxManager.injectConfig(_makeSandboxConfig(str(tmp_path / "sandbox")))
+        manager = SandboxManager.getInstance()
+        manager._backend = backend
+        return manager
+
+    async def testInstallRemovesInstallContainerOnSuccess(self, tmp_path: Path) -> None:
+        """A successful install must remove the install container.
+
+        The success path launches two containers (install, then the package-list
+        refresh); both must be removed. Before the fix only the list container was
+        removed — the install container leaked.
+
+        Args:
+            tmp_path: pytest-provided temporary directory.
+
+        Returns:
+            None
+        """
+        backend = _makeMockBackend(_makeContainerOutcome(exitCode=0, containerId="install-cid-1"))
+        backend.runOneshot = AsyncMock(
+            side_effect=[
+                _makeContainerOutcome(exitCode=0, containerId="install-cid-1"),
+                _makeContainerOutcome(exitCode=0, containerId="list-cid-2"),
+            ]
+        )
+        manager = self._makeManager(tmp_path, backend)
+
+        success = await manager.installRuntimeLibraries(
+            packages=["pybullet"],
+            runtime=RuntimeName.PYTHON,
+        )
+        assert success is True
+
+        removedIds = [call.args[0] for call in backend.removeContainer.await_args_list]
+        assert "install-cid-1" in removedIds, "install container must be removed after a successful install"
+
+    async def testInstallKeepsContainerOnFailureForLogInspection(self, tmp_path: Path) -> None:
+        """A failed install must NOT remove the install container.
+
+        The container is kept on purpose so the operator can inspect pip output
+        via ``docker logs <containerId>``.
+
+        Args:
+            tmp_path: pytest-provided temporary directory.
+
+        Returns:
+            None
+        """
+        backend = _makeMockBackend(_makeContainerOutcome(exitCode=1, containerId="install-cid-fail"))
+        manager = self._makeManager(tmp_path, backend)
+
+        success = await manager.installRuntimeLibraries(
+            packages=["pybullet"],
+            runtime=RuntimeName.PYTHON,
+        )
+        assert success is False
+
+        backend.removeContainer.assert_not_awaited()
+
+    async def testInstallRemoveFailureDoesNotFailInstall(self, tmp_path: Path) -> None:
+        """A removeContainer error after a successful install must not fail the install.
+
+        Cleanup is best-effort: the install already succeeded, so a removal
+        failure is logged and the method still returns True.
+
+        Args:
+            tmp_path: pytest-provided temporary directory.
+
+        Returns:
+            None
+        """
+        backend = _makeMockBackend(_makeContainerOutcome(exitCode=0, containerId="install-cid-3"))
+        backend.runOneshot = AsyncMock(
+            side_effect=[
+                _makeContainerOutcome(exitCode=0, containerId="install-cid-3"),
+                _makeContainerOutcome(exitCode=0, containerId="list-cid-4"),
+            ]
+        )
+        backend.removeContainer = AsyncMock(side_effect=RuntimeError("docker daemon gone"))
+        manager = self._makeManager(tmp_path, backend)
+
+        success = await manager.installRuntimeLibraries(
+            packages=["pybullet"],
+            runtime=RuntimeName.PYTHON,
+        )
+        assert success is True

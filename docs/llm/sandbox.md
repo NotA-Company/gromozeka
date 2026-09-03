@@ -256,6 +256,8 @@ The container's `timeout` command sends SIGTERM at `timeoutSeconds`, then waits 
 
 `installRuntimeLibraries()` calls `_refreshPackageList()` after a successful install to ensure `listRuntimeLibraries()` reflects the newly installed packages. The refresh is wrapped in a try/except guard — a refresh failure does not cause the install to be reported as failed.
 
+Install-container lifecycle: on success the install container is removed (best-effort — a removal failure is logged but does not fail the install); on failure the container is deliberately **kept** so the operator can inspect pip output with `docker logs <containerId>` (the container id is logged in the warning). GC eventually reaps kept containers per `sandbox.gc.orphan-container-retention-minutes`.
+
 ### 13. Bootstrap script config lookup uses nested dict access
 
 `sandbox_bootstrap.py` accesses the `sandbox` config section via `configManager.get("sandbox", {})` and then navigates nested dicts with `.get()`. **NEVER** use dotted-key access like `configManager.get("sandbox.bootstrap.starter-packages")` — ConfigManager returns nested dicts, not flat dotted-key namespaces.
