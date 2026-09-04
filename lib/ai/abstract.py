@@ -25,6 +25,7 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from contextvars import ContextVar
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Type, TypeVar
 
 from lib import utils
@@ -42,6 +43,32 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 _R = TypeVar("_R", ModelRunResult, ModelStructuredResult)
+
+_requestSessionIdVar: ContextVar[Optional[str]] = ContextVar("llmRequestSessionId", default=None)
+"""Task-local session identifier for the in-flight LLM request.
+
+Set by the public ``AbstractModel.generate*`` wrappers for the duration of
+a single request so provider code that builds per-request payloads (e.g.
+``_getExtraParams`` implementations adding ``extra_headers`` like
+``x-opencode-session``) can read the conversation identity without
+extending every internal method signature. Each asyncio task gets its own
+copy, so concurrent requests never observe each other's session ID.
+"""
+
+
+def getCurrentRequestSessionId() -> Optional[str]:
+    """Return the session ID of the in-flight LLM request, if any.
+
+    Reads the task-local ``ContextVar`` populated by the public
+    ``AbstractModel.generate*`` wrappers. Provider/model code that needs the
+    conversation identity (e.g. to fill the ``x-opencode-session`` header
+    used by OpenCode Go for prompt-cache affinity) should call this helper.
+
+    Returns:
+        The session ID string for the current request, or ``None`` when
+        called outside a ``generate*`` call that received one.
+    """
+    return _requestSessionIdVar.get()
 
 
 class AbstractModel(ABC):
@@ -166,6 +193,7 @@ class AbstractModel(ABC):
         *,
         fallbackModels: Optional[Sequence["AbstractModel"]] = None,
         consumerId: Optional[str] = None,
+        sessionId: Optional[str] = None,
     ) -> ModelRunResult:
         """Generate text using the model with optional tools and fallback models.
 
@@ -184,6 +212,9 @@ class AbstractModel(ABC):
                 subsequent models are fallbacks. When provided, this method
                 delegates to _runWithFallback for automatic fallback logic.
             consumerId: Optional consumer identifier for stats recording (e.g., chat ID).
+            sessionId: Optional conversation identifier exposed to provider code
+                via :func:`getCurrentRequestSessionId` for the duration of this
+                call (e.g. to fill the ``x-opencode-session`` request header).
 
         Returns:
             ModelRunResult containing the generated text, status, and metadata.
@@ -194,53 +225,58 @@ class AbstractModel(ABC):
                 CONTENT_FILTER, UNKNOWN, or ERROR) and no fallback models are provided,
                 or if all models (primary + fallbacks) fail.
         """
-        if fallbackModels:
-            # Use fallback mechanism when fallback models are provided
-            return await self._runWithFallback(
-                [self, *fallbackModels],
-                lambda model: model.generateText(
-                    messages=messages,
-                    tools=tools,
-                    fallbackModels=None,
-                    consumerId=consumerId,
-                ),
-                ModelRunResult,
-            )
-
-        # Original logic when no fallbacks
-        tokensCount = self.getEstimateTokensCount(messages)
-        logger.debug(
-            f"generateText(messages={len(messages)}, tools={len(tools) if tools else None}), "
-            f"estimateTokens={tokensCount}, model: {self.provider}/{self.modelId}"
-        )
-
-        if self.contextSize and tokensCount > self.contextSize * 2:
-            # If estimated tokens twice exceed model context, return error immediately
-            return ModelRunResult(
-                rawResult=None,
-                status=ModelResultStatus.ERROR,
-                error=Exception(
-                    f"Context too large: Estimated tokens: {tokensCount} model context: {self.contextSize}"
-                ),
-            )
-
-        startTime = time.time()
+        token = _requestSessionIdVar.set(sessionId)
         try:
-            ret = await self._generateText(messages=messages, tools=tools)
-            ret.elapsedTime = time.time() - startTime
-        except Exception as e:
-            await self._recordAttemptStats(
-                consumerId,
-                ModelRunResult(
-                    rawResult=None, status=ModelResultStatus.ERROR, error=e, elapsedTime=time.time() - startTime
-                ),
-                "text",
-            )
-            raise
+            if fallbackModels:
+                # Use fallback mechanism when fallback models are provided
+                return await self._runWithFallback(
+                    [self, *fallbackModels],
+                    lambda model: model.generateText(
+                        messages=messages,
+                        tools=tools,
+                        fallbackModels=None,
+                        consumerId=consumerId,
+                        sessionId=sessionId,
+                    ),
+                    ModelRunResult,
+                )
 
-        await self._recordAttemptStats(consumerId, ret, "text")
-        self.printJSONLog(messages, ret, consumerId=consumerId)
-        return ret
+            # Original logic when no fallbacks
+            tokensCount = self.getEstimateTokensCount(messages)
+            logger.debug(
+                f"generateText(messages={len(messages)}, tools={len(tools) if tools else None}), "
+                f"estimateTokens={tokensCount}, model: {self.provider}/{self.modelId}"
+            )
+
+            if self.contextSize and tokensCount > self.contextSize * 2:
+                # If estimated tokens twice exceed model context, return error immediately
+                return ModelRunResult(
+                    rawResult=None,
+                    status=ModelResultStatus.ERROR,
+                    error=Exception(
+                        f"Context too large: Estimated tokens: {tokensCount} model context: {self.contextSize}"
+                    ),
+                )
+
+            startTime = time.time()
+            try:
+                ret = await self._generateText(messages=messages, tools=tools)
+                ret.elapsedTime = time.time() - startTime
+            except Exception as e:
+                await self._recordAttemptStats(
+                    consumerId,
+                    ModelRunResult(
+                        rawResult=None, status=ModelResultStatus.ERROR, error=e, elapsedTime=time.time() - startTime
+                    ),
+                    "text",
+                )
+                raise
+
+            await self._recordAttemptStats(consumerId, ret, "text")
+            self.printJSONLog(messages, ret, consumerId=consumerId)
+            return ret
+        finally:
+            _requestSessionIdVar.reset(token)
 
     @abstractmethod
     async def _generateImage(self, messages: Sequence[ModelMessage]) -> ModelRunResult:
@@ -270,6 +306,7 @@ class AbstractModel(ABC):
         *,
         fallbackModels: Optional[Sequence["AbstractModel"]] = None,
         consumerId: Optional[str] = None,
+        sessionId: Optional[str] = None,
     ) -> ModelRunResult:
         """Generate an image using the model with optional fallback models.
 
@@ -286,6 +323,9 @@ class AbstractModel(ABC):
                 subsequent models are fallbacks. When provided, this method
                 delegates to _runWithFallback for automatic fallback logic.
             consumerId: Optional consumer identifier for stats recording (e.g., chat ID).
+            sessionId: Optional conversation identifier exposed to provider code
+                via :func:`getCurrentRequestSessionId` for the duration of this
+                call (e.g. to fill the ``x-opencode-session`` request header).
 
         Returns:
             ModelRunResult containing the generated image URL or data, status,
@@ -300,35 +340,40 @@ class AbstractModel(ABC):
             estimation or context size validation before calling the provider.
             This preserves existing behavior for image generation.
         """
-        if fallbackModels:
-            return await self._runWithFallback(
-                [self, *fallbackModels],
-                lambda model: model.generateImage(
-                    messages=messages,
-                    fallbackModels=None,
-                    consumerId=consumerId,
-                ),
-                ModelRunResult,
-            )
-
-        # Direct call with no fallbacks - invoke _generateImage and handle JSON logging
-        startTime = time.time()
+        token = _requestSessionIdVar.set(sessionId)
         try:
-            ret = await self._generateImage(messages=messages)
-            ret.elapsedTime = time.time() - startTime
-        except Exception as e:
-            await self._recordAttemptStats(
-                consumerId,
-                ModelRunResult(
-                    rawResult=None, status=ModelResultStatus.ERROR, error=e, elapsedTime=time.time() - startTime
-                ),
-                "image",
-            )
-            raise
+            if fallbackModels:
+                return await self._runWithFallback(
+                    [self, *fallbackModels],
+                    lambda model: model.generateImage(
+                        messages=messages,
+                        fallbackModels=None,
+                        consumerId=consumerId,
+                        sessionId=sessionId,
+                    ),
+                    ModelRunResult,
+                )
 
-        await self._recordAttemptStats(consumerId, ret, "image")
-        self.printJSONLog(messages, ret, consumerId=consumerId)
-        return ret
+            # Direct call with no fallbacks - invoke _generateImage and handle JSON logging
+            startTime = time.time()
+            try:
+                ret = await self._generateImage(messages=messages)
+                ret.elapsedTime = time.time() - startTime
+            except Exception as e:
+                await self._recordAttemptStats(
+                    consumerId,
+                    ModelRunResult(
+                        rawResult=None, status=ModelResultStatus.ERROR, error=e, elapsedTime=time.time() - startTime
+                    ),
+                    "image",
+                )
+                raise
+
+            await self._recordAttemptStats(consumerId, ret, "image")
+            self.printJSONLog(messages, ret, consumerId=consumerId)
+            return ret
+        finally:
+            _requestSessionIdVar.reset(token)
 
     async def _generateStructured(
         self,
@@ -378,6 +423,7 @@ class AbstractModel(ABC):
         strict: bool = True,
         fallbackModels: Optional[Sequence["AbstractModel"]] = None,
         consumerId: Optional[str] = None,
+        sessionId: Optional[str] = None,
     ) -> ModelStructuredResult:
         """Generate structured output with automatic fallback to another model.
 
@@ -396,6 +442,9 @@ class AbstractModel(ABC):
                 subsequent models are fallbacks. When provided, this method
                 delegates to _runWithFallback for automatic fallback logic.
             consumerId: Optional consumer identifier for stats recording (e.g., chat ID).
+            sessionId: Optional conversation identifier exposed to provider code
+                via :func:`getCurrentRequestSessionId` for the duration of this
+                call (e.g. to fill the ``x-opencode-session`` request header).
 
         Returns:
             ModelStructuredResult with status, parsed data, token usage, etc.
@@ -409,59 +458,64 @@ class AbstractModel(ABC):
         if not self._config.get("support_structured_output", False):
             raise NotImplementedError(f"Structured output isn't supported by {self.modelId}")
 
-        # If fallback models provided, use the fallback mechanism
-        if fallbackModels:
-            return await self._runWithFallback(
-                [self, *fallbackModels],
-                lambda model: model.generateStructured(
+        token = _requestSessionIdVar.set(sessionId)
+        try:
+            # If fallback models provided, use the fallback mechanism
+            if fallbackModels:
+                return await self._runWithFallback(
+                    [self, *fallbackModels],
+                    lambda model: model.generateStructured(
+                        messages=messages,
+                        schema=schema,
+                        schemaName=schemaName,
+                        strict=strict,
+                        fallbackModels=None,
+                        consumerId=consumerId,
+                        sessionId=sessionId,
+                    ),
+                    ModelStructuredResult,
+                )
+
+            # Original logic when no fallbacks
+            tokensCount = self.getEstimateTokensCount(messages) + self.getEstimateTokensCount(schema)
+            logger.debug(
+                f"generateStructured(messages={len(messages)}, schema_keys={list(schema.keys())}), "
+                f"estimateTokens={tokensCount}, model: {self.provider}/{self.modelId}"
+            )
+
+            if self.contextSize and tokensCount > self.contextSize * 2:
+                return ModelStructuredResult(
+                    rawResult=None,
+                    status=ModelResultStatus.ERROR,
+                    error=Exception(
+                        f"Context too large: estimated tokens {tokensCount} " f"vs model context {self.contextSize}"
+                    ),
+                )
+
+            startTime = time.time()
+            try:
+                ret = await self._generateStructured(
                     messages=messages,
                     schema=schema,
                     schemaName=schemaName,
                     strict=strict,
-                    fallbackModels=None,
-                    consumerId=consumerId,
-                ),
-                ModelStructuredResult,
-            )
+                )
+                ret.elapsedTime = time.time() - startTime
+            except Exception as e:
+                await self._recordAttemptStats(
+                    consumerId,
+                    ModelRunResult(
+                        rawResult=None, status=ModelResultStatus.ERROR, error=e, elapsedTime=time.time() - startTime
+                    ),
+                    "structured",
+                )
+                raise
 
-        # Original logic when no fallbacks
-        tokensCount = self.getEstimateTokensCount(messages) + self.getEstimateTokensCount(schema)
-        logger.debug(
-            f"generateStructured(messages={len(messages)}, schema_keys={list(schema.keys())}), "
-            f"estimateTokens={tokensCount}, model: {self.provider}/{self.modelId}"
-        )
-
-        if self.contextSize and tokensCount > self.contextSize * 2:
-            return ModelStructuredResult(
-                rawResult=None,
-                status=ModelResultStatus.ERROR,
-                error=Exception(
-                    f"Context too large: estimated tokens {tokensCount} " f"vs model context {self.contextSize}"
-                ),
-            )
-
-        startTime = time.time()
-        try:
-            ret = await self._generateStructured(
-                messages=messages,
-                schema=schema,
-                schemaName=schemaName,
-                strict=strict,
-            )
-            ret.elapsedTime = time.time() - startTime
-        except Exception as e:
-            await self._recordAttemptStats(
-                consumerId,
-                ModelRunResult(
-                    rawResult=None, status=ModelResultStatus.ERROR, error=e, elapsedTime=time.time() - startTime
-                ),
-                "structured",
-            )
-            raise
-
-        await self._recordAttemptStats(consumerId, ret, "structured")
-        self.printJSONLog(messages, ret, consumerId=consumerId)
-        return ret
+            await self._recordAttemptStats(consumerId, ret, "structured")
+            self.printJSONLog(messages, ret, consumerId=consumerId)
+            return ret
+        finally:
+            _requestSessionIdVar.reset(token)
 
     @property
     def supportsEmbedding(self) -> bool:
@@ -506,12 +560,13 @@ class AbstractModel(ABC):
         *,
         attempts: int = 3,
         consumerId: Optional[str] = None,
+        sessionId: Optional[str] = None,
     ) -> list[float]:
         """Generate an embedding vector for the given text, with retry on transient failures.
 
         This is the public method for embedding generation. It validates the
-        input, then retries the underlying ``_generateEmbeddings`` call up
-        to ``attempts`` times with exponential backoff on transient errors,
+        input, then retries the underlying ``_generateEmbeddings`` call up to
+        ``attempts`` times with exponential backoff on transient errors,
         records stats, and returns the embedding on success.
 
         Unlike :meth:`generateText` / :meth:`generateImage`, this method
@@ -528,6 +583,9 @@ class AbstractModel(ABC):
             attempts: Max retry attempts on transient failures (default: 3).
             consumerId: Optional consumer identifier for stats recording
                 (e.g. chat ID).
+            sessionId: Optional conversation identifier exposed to provider code
+                via :func:`getCurrentRequestSessionId` for the duration of this
+                call (e.g. to fill the ``x-opencode-session`` request header).
 
         Returns:
             Embedding vector as list of floats.
@@ -547,44 +605,50 @@ class AbstractModel(ABC):
         if not isinstance(attempts, int) or attempts < 1:
             raise ValueError("attempts must be a positive integer")
 
-        lastError: Optional[Exception] = None
-        lastElapsed: float = 0.0
-        for attempt in range(1, attempts + 1):
-            startTime = time.time()
-            try:
-                embedding = await self._generateEmbeddings(text)
-                elapsed = time.time() - startTime
-                await self._recordEmbeddingStats(
-                    consumerId,
-                    success=True,
-                    error=None,
-                    elapsed=elapsed,
-                    attempts=attempt,
-                )
-                return embedding
-            except (NotImplementedError, ValueError, TypeError):
-                # Deterministic failures: never retry.
-                raise
-            except Exception as e:
-                lastError = e
-                lastElapsed = time.time() - startTime
-                logger.warning(f"generateEmbeddings attempt {attempt}/{attempts} failed for " f"{self.modelId}: {e}")
-                if attempt < attempts:
-                    # Exponential backoff: 0.5s, 1s, 2s, ...
-                    backoff = 0.5 * (2 ** (attempt - 1))
-                    await asyncio.sleep(backoff)
+        token = _requestSessionIdVar.set(sessionId)
+        try:
+            lastError: Optional[Exception] = None
+            lastElapsed: float = 0.0
+            for attempt in range(1, attempts + 1):
+                startTime = time.time()
+                try:
+                    embedding = await self._generateEmbeddings(text)
+                    elapsed = time.time() - startTime
+                    await self._recordEmbeddingStats(
+                        consumerId,
+                        success=True,
+                        error=None,
+                        elapsed=elapsed,
+                        attempts=attempt,
+                    )
+                    return embedding
+                except (NotImplementedError, ValueError, TypeError):
+                    # Deterministic failures: never retry.
+                    raise
+                except Exception as e:
+                    lastError = e
+                    lastElapsed = time.time() - startTime
+                    logger.warning(
+                        f"generateEmbeddings attempt {attempt}/{attempts} failed for " f"{self.modelId}: {e}"
+                    )
+                    if attempt < attempts:
+                        # Exponential backoff: 0.5s, 1s, 2s, ...
+                        backoff = 0.5 * (2 ** (attempt - 1))
+                        await asyncio.sleep(backoff)
 
-        # All attempts failed.
-        await self._recordEmbeddingStats(
-            consumerId,
-            success=False,
-            error=lastError,
-            elapsed=lastElapsed,
-            attempts=attempts,
-        )
-        raise RuntimeError(
-            f"Embedding generation failed for {self.modelId} after {attempts} attempts: {lastError}"
-        ) from lastError
+            # All attempts failed.
+            await self._recordEmbeddingStats(
+                consumerId,
+                success=False,
+                error=lastError,
+                elapsed=lastElapsed,
+                attempts=attempts,
+            )
+            raise RuntimeError(
+                f"Embedding generation failed for {self.modelId} after {attempts} attempts: {lastError}"
+            ) from lastError
+        finally:
+            _requestSessionIdVar.reset(token)
 
     async def getDimensions(self, forceDetect: bool = False) -> int:
         """Return the number of dimensions in the embedding vector.

@@ -47,6 +47,15 @@ from ..models import (
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_USER_AGENT = "GromozekaBot/1.0.0 (+https://notacompany.org/products/gromozeka)"
+"""Default ``User-Agent`` sent by every OpenAI-compatible provider client.
+
+Replaces the broad ``Python OpenAI client`` SDK default so hosted gateways
+(e.g. OpenCode Go, which monitors for unidentified traffic) can attribute
+requests to Gromozeka. Keep the version in sync with ``[project].version``
+in ``pyproject.toml``.
+"""
+
 
 # === Image generation helpers ===
 
@@ -1160,6 +1169,13 @@ class BasicOpenAIProvider(AbstractLLMProvider):
                 "base_url": base_url,
             }
             client_params.update(self._getClientParams())
+
+            # Identify the client to hosted gateways (replaces the broad
+            # "Python OpenAI client" SDK default). Subclass-provided
+            # default_headers win per header name.
+            defaultHeaders: Dict[str, str] = dict(client_params.get("default_headers") or {})
+            defaultHeaders.setdefault("User-Agent", DEFAULT_USER_AGENT)
+            client_params["default_headers"] = defaultHeaders
 
             # Proxy support: resolve from provider config + stored global proxy
             proxyConfig = ProxyConfig.fromServiceConfig(self.config)

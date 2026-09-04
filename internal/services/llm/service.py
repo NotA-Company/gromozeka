@@ -780,6 +780,7 @@ class LLMService:
         condensingModelKey: Optional[Union[AbstractModel, ChatSettingsKey]] = None,
         maxRounds: Optional[int] = DEFAULT_MAX_ROUNDS,
         doRateLimit: bool = True,
+        sessionId: Optional[str] = None,
     ) -> ModelRunResult:
         """Generate text using an LLM with automatic tool execution support.
 
@@ -839,6 +840,10 @@ class LLMService:
                 never rate-limits anyway). Stats attribution via ``chatId`` is
                 NOT affected — use this for background/system-initiated work
                 that must not consume the per-chat hot-path budget.
+            sessionId: Optional conversation identifier (e.g.
+                ``gromozeka-<chatId>-<rootMessageId>``) forwarded to every
+                model call in this loop so providers can optimize prompt
+                caching (OpenCode Go's ``x-opencode-session`` header).
 
         Returns:
             ModelRunResult containing the final LLM response, with toolsUsed flag set
@@ -915,6 +920,7 @@ class LLMService:
                 condensingPrompt=condensingPrompt,
                 condensingSystemPrompt=condensingSystemPrompt,
                 consumerId=str(chatId),
+                sessionId=sessionId,
             )
 
             # Inject the steering directive AFTER condense (which returns a
@@ -963,6 +969,7 @@ class LLMService:
                 tools=tools,
                 doDebugLogging=False,
                 doRateLimit=doRateLimit,
+                sessionId=sessionId,
             )
             roundN += 1
             logger.debug(f"LLM returned: {ret} for callId #{callId}")
@@ -1116,6 +1123,7 @@ class LLMService:
         maxTokens: Optional[int] = None,
         force: bool = False,
         consumerId: Optional[str] = None,
+        sessionId: Optional[str] = None,
     ) -> Tuple[Sequence[ModelMessage], Dict[int, CondensingDict]]:
         """Condense a sequence of messages to fit within a token limit.
 
@@ -1142,6 +1150,9 @@ class LLMService:
                 The condensing path never rate-limits, so this is a stats-only
                 attribution parameter — pass ``None`` only when the caller has
                 no chat to attribute the work to
+            sessionId: Optional conversation identifier forwarded to the
+                condensing model calls (OpenCode Go's ``x-opencode-session``
+                prompt-cache affinity)
 
         Returns:
             A ``(messages, coverage)`` tuple. The first element is the
@@ -1267,7 +1278,7 @@ class LLMService:
             mlRet: Optional[ModelRunResult] = None
             try:
                 logger.debug(f"LLM Request messages: {reqMessages}")
-                mlRet = await condensingModel.generateText(reqMessages, consumerId=consumerId)
+                mlRet = await condensingModel.generateText(reqMessages, consumerId=consumerId, sessionId=sessionId)
                 logger.debug(f"LLM Response: {mlRet}")
             except Exception as e:
                 logger.error(
@@ -1302,6 +1313,7 @@ class LLMService:
         tools: Optional[Sequence[LLMAbstractTool]] = None,
         doDebugLogging: bool = True,
         doRateLimit: bool = True,
+        sessionId: Optional[str] = None,
     ) -> ModelRunResult:
         """Generate text via the configured chat model with fallback support.
 
@@ -1327,6 +1339,10 @@ class LLMService:
             doRateLimit: When False, skip the per-chat rate limit (background /
                 system-initiated calls that must not consume the hot-path
                 budget). Stats attribution via ``chatId`` is NOT affected
+            sessionId: Optional conversation identifier (e.g.
+                ``gromozeka-<chatId>-<rootMessageId>``) forwarded to the model
+                call so providers can optimize prompt caching (OpenCode Go's
+                ``x-opencode-session`` header)
 
         Returns:
             ModelRunResult containing the generated text response, status, and any tool
@@ -1354,6 +1370,7 @@ class LLMService:
             tools=tools,
             fallbackModels=[fallbackModel],
             consumerId=str(chatId),
+            sessionId=sessionId,
         )
 
         if doDebugLogging:
@@ -1373,6 +1390,7 @@ class LLMService:
         strict: bool = True,
         doDebugLogging: bool = True,
         doRateLimit: bool = True,
+        sessionId: Optional[str] = None,
     ) -> ModelStructuredResult:
         """Generate structured (JSON) output via the configured chat model.
 
@@ -1409,6 +1427,9 @@ class LLMService:
             doRateLimit: When False, skip the per-chat rate limit (background /
                 system-initiated calls). Stats attribution via ``chatId`` is
                 NOT affected
+            sessionId: Optional conversation identifier forwarded to the model
+                call (OpenCode Go's ``x-opencode-session`` prompt-cache
+                affinity)
 
         Returns:
             ModelStructuredResult with data populated on success, or status=ERROR
@@ -1454,6 +1475,7 @@ class LLMService:
             strict=strict,
             fallbackModels=[fallbackModel],
             consumerId=str(chatId),
+            sessionId=sessionId,
         )
 
         if doDebugLogging:
@@ -1467,6 +1489,7 @@ class LLMService:
         chatId: int,
         chatSettings: ChatSettingsDict,
         doRateLimit: bool = True,
+        sessionId: Optional[str] = None,
     ) -> ModelRunResult:
         """Generate image with given prompt and chat settings.
 
@@ -1484,6 +1507,9 @@ class LLMService:
             doRateLimit: When False, skip the per-chat rate limit (background /
                 system-initiated calls). Stats attribution via ``chatId`` is
                 NOT affected
+            sessionId: Optional conversation identifier forwarded to the model
+                call (OpenCode Go's ``x-opencode-session`` prompt-cache
+                affinity)
 
         Returns:
             ModelRunResult containing the generated image response and metadata
@@ -1505,6 +1531,7 @@ class LLMService:
             [ModelMessage(content=prompt)],
             fallbackModels=[fallbackImageLLM],
             consumerId=str(chatId),
+            sessionId=sessionId,
         )
 
     async def generateEmbedding(
@@ -1514,6 +1541,7 @@ class LLMService:
         chatId: int,
         chatSettings: ChatSettingsDict,
         doRateLimit: bool = True,
+        sessionId: Optional[str] = None,
     ) -> Optional[Tuple[str, List[float]]]:
         """Generate an embedding vector for ``text`` using the chat's embedding model.
 
@@ -1538,6 +1566,9 @@ class LLMService:
             doRateLimit: When False, skip the per-chat rate limit (background
                 regen / backfill batches that must not consume the hot-path
                 budget). Stats attribution via ``chatId`` is NOT affected.
+            sessionId: Optional conversation identifier forwarded to the model
+                call (OpenCode Go's ``x-opencode-session`` prompt-cache
+                affinity)
 
         Returns:
             A ``(modelName, embeddingVector)`` tuple on success, or ``None``
@@ -1551,7 +1582,7 @@ class LLMService:
 
             if doRateLimit:
                 await self.rateLimit(chatId, chatSettings)
-            embeddingVector = await embeddingModel.generateEmbeddings(text, consumerId=str(chatId))
+            embeddingVector = await embeddingModel.generateEmbeddings(text, consumerId=str(chatId), sessionId=sessionId)
             return (chatSettings[ChatSettingsKey.EMBEDDING_MODEL].toStr(), embeddingVector)
         except Exception:
             logger.exception("Failed to generate embeddings:")

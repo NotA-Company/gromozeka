@@ -177,7 +177,7 @@ use-proxy = true
 
 ```toml
 [models.providers.<name>]
-type = "yc-openai"  # or "openrouter", "yc-sdk", "custom-openai"
+type = "yc-openai"  # or "openrouter", "yc-sdk", "custom-openai", "opencode-go"
 # provider-specific config...
 
 [models.models.<name>]
@@ -203,6 +203,13 @@ section.
 - `openrouter` — OpenRouter multi-model API
 - `yc-sdk` — Yandex Cloud native SDK (supports `auth_type`: `"auto"`, `"api_key"`, `"iam_token"`, `"yc_cli"`)
 - `custom-openai` — Custom OpenAI-compatible API
+- `opencode-go` — OpenCode Go subscription endpoint (`base_url` + `api_key`,
+  optional `session_fallback`). Like `custom-openai`, but attaches the
+  mandatory `x-opencode-session` header to every request (OpenCode Go
+  requires it from 2026-09-06 for prompt-cache optimization). The header
+  value follows the in-flight conversation — the bot passes
+  `gromozeka-<chatId>-<rootMessageId>` per request; without a request
+  session the `session_fallback` value (default `gromozeka`) is used.
 
 **YC SDK auth configuration (`auth_type`):**
 - `"auto"` (default) — detects `YC_API_KEY` env var, then `YC_IAM_TOKEN`, then falls back to `yc` CLI

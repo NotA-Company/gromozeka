@@ -732,6 +732,37 @@ class BaseBotHandler(CommandHandlerMixin):
     # Chat Management
     ###
 
+    async def getLLMRequestSessionId(self, ensuredMessage: EnsuredMessage) -> str:
+        """Build the LLM request session ID for a message's conversation.
+
+        The session ID identifies the conversation the message belongs to
+        (chat + thread root) and is forwarded to LLM providers that use it
+        for prompt-cache affinity — OpenCode Go's mandatory
+        ``x-opencode-session`` header. The thread root is resolved exactly
+        like :meth:`saveChatMessage` / :meth:`getThreadByMessageForLLM` do:
+        a message that is itself a thread start is its own root, otherwise
+        the stored ``root_message_id`` of the thread is used. Each top-level
+        message therefore starts a fresh session and every reply in the
+        thread shares the root's session.
+
+        Args:
+            ensuredMessage: The incoming message to resolve the conversation
+                session for
+
+        Returns:
+            Session ID string in the form
+            ``gromozeka-<chatId>-<rootMessageId>``, stable across restarts
+        """
+        chatId = ensuredMessage.recipient.id
+        rootMessageId: MessageId = ensuredMessage.messageId
+        try:
+            dbMessage = await self.db.chatMessages.getChatMessageByMessageId(chatId, ensuredMessage.messageId)
+            if dbMessage is not None and dbMessage["root_message_id"] is not None:
+                rootMessageId = dbMessage["root_message_id"]
+        except Exception as e:
+            logger.debug(f"Failed to resolve thread root for session ID, falling back to message ID: {e}")
+        return f"gromozeka-{chatId}-{rootMessageId.asStr()}"
+
     async def getThreadByMessageForLLM(
         self,
         ensuredMessage: EnsuredMessage,

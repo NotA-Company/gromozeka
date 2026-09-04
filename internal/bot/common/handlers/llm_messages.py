@@ -222,6 +222,7 @@ class LLMMessageHandler(BaseBotHandler):
             keepFirstN=keepFirstN,
             keepLastN=keepLastN,
             maxTokensCoeff=maxTokensCoeff,
+            sessionId=await self.getLLMRequestSessionId(ensuredMessage),
         )
         return ret
 
@@ -1057,6 +1058,7 @@ class LLMMessageHandler(BaseBotHandler):
                 "ensuredMessage": ensuredMessage,
                 "typingManager": typingManager,
             },
+            sessionId=await self.getLLMRequestSessionId(ensuredMessage),
         )
 
         logger.debug(f"Request: {mReq}")

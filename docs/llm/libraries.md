@@ -58,6 +58,7 @@ from lib.ai.models import (
 | [`LLMManager`](../../lib/ai/manager.py:49) | `lib/ai/manager.py` | Registry for providers and models |
 | [`AbstractModel`](../../lib/ai/abstract.py:47) | `lib/ai/abstract.py` | ABC for all LLM models |
 | [`AbstractLLMProvider`](../../lib/ai/abstract.py) | `lib/ai/abstract.py` | ABC for LLM providers |
+| [`OpencodeGoProvider`](../../lib/ai/providers/opencode_go_provider.py) / [`OpencodeGoModel`](../../lib/ai/providers/opencode_go_provider.py) | `lib/ai/providers/opencode_go_provider.py` | OpenCode Go endpoint — like `custom-openai`, but attaches the mandatory `x-opencode-session` header to every request (see "Request session identification" below) |
 | [`ModelMessage`](../../lib/ai/models.py:550) | `lib/ai/models.py` | Standard text message for LLM. `__slots__ = (role, content, contentKey, toolCalls, toolCallId, weight, source)` — `source` is an optional passthrough for the originating handler message (used by the llm-messages-handler to round-trip provenance, see [`memories/llm-messages-handler.md`](memories/llm-messages-handler.md)) |
 | [`ModelImageMessage`](../../lib/ai/models.py) | `lib/ai/models.py` | Message with embedded image |
 | [`ModelRunResult`](../../lib/ai/models.py:965) | `lib/ai/models.py` | LLM response container. `__slots__` add `isFallback`, `isToolsUsed`, `roundLimitHit` (set by `LLMService.generateTextViaLLM` when the `maxRounds` tool-loop budget is exhausted, regardless of resulting status — see [`memories/user-memory-refinement.md`](memories/user-memory-refinement.md)), and the optional provider-reported usage fields `cachedInputTokens` (subset of `inputTokens`, from `prompt_tokens_details.cached_tokens`), `reasoningTokens` (subset of `outputTokens`, from `completion_tokens_details.reasoning_tokens` / YC SDK `usage.reasoning_tokens`), and `cost` (USD, e.g. OpenRouter's extra `usage.cost`) — all `None` when the provider doesn't report them |
@@ -75,12 +76,14 @@ model.generateText(
     *,
     fallbackModels: Optional[Sequence[AbstractModel]] = None,
     consumerId: Optional[str] = None,
+    sessionId: Optional[str] = None,
 ) -> ModelRunResult
 model.generateImage(
     messages: Sequence[ModelMessage],
     *,
     fallbackModels: Optional[Sequence[AbstractModel]] = None,
     consumerId: Optional[str] = None,
+    sessionId: Optional[str] = None,
 ) -> ModelRunResult
 model.generateStructured(
     messages: Sequence[ModelMessage],
@@ -90,12 +93,14 @@ model.generateStructured(
     strict: bool = True,
     fallbackModels: Optional[Sequence[AbstractModel]] = None,
     consumerId: Optional[str] = None,
+    sessionId: Optional[str] = None,
 ) -> ModelStructuredResult
 model.generateEmbeddings(
     text: str,
     *,
     attempts: int = 3,
     consumerId: Optional[str] = None,
+    sessionId: Optional[str] = None,
 ) -> list[float]
 model.getEstimateTokensCount(data: Any) -> int
 model.contextSize  # int
@@ -104,6 +109,27 @@ model.modelId      # str
 ```
 
 `consumerId` (typically `str(chatId)`) is forwarded by `LLMService` to every generation method and used as the stats-storage partition key — see [`services.md`](services.md). Embeddings have **no** `fallbackModels` parameter: vectors from different models live in incompatible spaces, so swapping mid-stream would silently corrupt downstream cosine scores.
+
+**Request session identification (`sessionId`):** every public generation
+method accepts an optional `sessionId` — a stable conversation identifier
+the bot fills as `gromozeka-<chatId>-<rootMessageId>` (built by
+`BaseBotHandler.getLLMRequestSessionId`, `internal/bot/common/handlers/base.py`).
+For the duration of the call it is exposed to provider code via a
+task-local `ContextVar` (`getCurrentRequestSessionId()` in
+[`lib/ai/abstract.py`](../../lib/ai/abstract.py)) — task-local means
+concurrent requests never observe each other's session. `LLMService`
+threads `sessionId` through `generateTextViaLLM` / `generateText` /
+`generateStructured` / `generateImage` / `generateEmbedding`, including the
+condensing path inside the tool loop. Consumer: the `opencode-go` provider
+uses it to fill the mandatory `x-opencode-session` header (OpenCode Go
+requires it from 2026-09-06 for prompt-cache optimization); when no
+request session is set, the provider falls back to its `session_fallback`
+config value (default `"gromozeka"`). User `customParams.extra_headers`
+merge at the header level and win per header name. Separately, all
+OpenAI-compatible clients identify themselves with a
+`User-Agent: GromozekaBot/<version>` `default_headers` entry
+(`DEFAULT_USER_AGENT` in `basic_openai_provider.py`) instead of the broad
+`Python OpenAI client` SDK default.
 
 **Fallback mechanism:**
 All three public generation methods (`generateText`, `generateImage`, `generateStructured`)
@@ -181,7 +207,7 @@ Combining structured output with tool calls is not supported in v1.
 hinting at JSON output; the wrapper does not inject one.
 
 **Provider support:** implemented for OpenAI-compatible providers
-(`custom-openai`, `openrouter`, `yc-openai`) and the `yc-sdk` provider.
+(`custom-openai`, `openrouter`, `yc-openai`, `opencode-go`) and the `yc-sdk` provider.
 The `yc-sdk` provider implements `_generateStructured` via `response_format`
 with JSON Schema (see [`lib/ai/providers/yc_sdk_provider.py`](../../lib/ai/providers/yc_sdk_provider.py)).
 

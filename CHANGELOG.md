@@ -6,6 +6,9 @@ process governing this file, see [docs/llm/changelog.md](docs/llm/changelog.md).
 
 ## [Unreleased]
 
+### Added
+- `opencode-go` LLM provider type (replaces `custom-openai` for the OpenCode Go endpoint in `configs/common/01-opencode-go.toml`): attaches the mandatory `x-opencode-session` header to every request — OpenCode Go requires it from 2026-09-06 for prompt-cache optimization and may error without it. The header value follows the in-flight conversation as `gromozeka-<chatId>-<rootMessageId>` (per-thread granularity; stable across restarts), threaded from the bot handlers through `LLMService` into all generation methods via a task-local context variable; requests without a conversation identity fall back to the provider's `session_fallback` config value (default `gromozeka`). All OpenAI-compatible providers also now identify themselves with `User-Agent: GromozekaBot/<version>` instead of the generic `Python OpenAI client` SDK default (OpenCode flagged the broad user agent).
+
 ### Changed
 - `STTService.transcribeMedia` now requires a real chat id: `chatId` is a mandatory `int` (was `Optional[int]`). It is used both as the per-chat rate-limit key and as the stats `consumerId` — every transcription is attributed to its chat; the old `None` branch that skipped the per-chat limiter and dropped attribution no longer exists (the only production caller already passed the real chat id, so behavior is unchanged in practice).
 - `LLMService` generation methods (`generateText` / `generateStructured` / `generateImage` / `generateEmbedding` / `generateTextViaLLM`) now require a real chat id: `chatId` is a mandatory `int` and a new `doRateLimit: bool = True` keyword-only flag independently controls rate limiting. Passing `None` to skip the limiter (the old behaviour) is no longer possible.
