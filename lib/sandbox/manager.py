@@ -1965,7 +1965,7 @@ class SandboxManager:
             stagingRun = runtimeImpl.reportRun(ioDir, list(specs))
             outcome = await self._backend.runOneshot(
                 spec=ContainerSpec(
-                    name=f"sandbox-update-{runId}",
+                    name=f"sandbox-{StagingPurpose.UPDATE}-{runId}",
                     image=runtimeImpl._config.installImageTag,
                     command=stagingRun.command,
                     mounts=stagingRun.mounts,
@@ -1978,7 +1978,7 @@ class SandboxManager:
                     securityOpt=["no-new-privileges"] if self._config.security.noNewPrivileges else [],
                     labels={
                         "sandbox.managed": "true",
-                        "sandbox.purpose": "update",
+                        "sandbox.purpose": StagingPurpose.UPDATE,
                         "sandbox.runtime": runtime.value,
                         # Liveness marker for container GC: while this dir
                         # exists under tmp/, the container is a legitimate

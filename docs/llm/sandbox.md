@@ -12,7 +12,7 @@
 |--------|---------|
 | `manager.py` | `SandboxManager` singleton — sessions, runs, files, libraries, GC, health, recovery |
 | `types.py` | Public dataclasses (`RunResult`, `SessionInfo`, `ResourceLimits`, etc.) |
-| `enums.py` | `RuntimeName`, `BackendName` |
+| `enums.py` | `RuntimeName`, `BackendName`, `RunStatus`, `StagingPurpose` |
 | `config.py` | Configuration dataclasses (`SandboxConfig`, `StorageConfig`, etc.) |
 | `errors.py` | Exception hierarchy (`SandboxError` → `ConfigError`, `BackendError`, `SessionError`, `SandboxRuntimeError`, `RunError`, `LibraryError`, `FileError`, `SandboxBusy`, `SessionBusy`, `SessionDropped`) |
 | `locks.py` | Per-session mutex registry with bounded waiters and force-cancel, global run semaphore, pool flock |

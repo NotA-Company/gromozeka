@@ -2099,6 +2099,48 @@ class TestUpdateRuntimeLibraries:
         assert versions == {"foo": "1.0", "bar": "0.9"}, "the FIRST enumerated entry per name must win"
         assert duplicateNames == {"foo"}
 
+    def testEnumeratePoolWithDuplicatesPropagatesOSError(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """_enumeratePoolWithDuplicates PROPAGATES OSError (fail-loud contract).
+
+        An unreadable pool must abort the update rather than silently pass
+        the duplicates check: the merged single-walk helper propagates
+        ``enumerateDistInfos``'s ``OSError`` — only the missing-directory
+        case is tolerated (as empty results). The deleted second walk
+        (``_collectDuplicatePoolNames``) was the only ``OSError`` swallower
+        on the Step-3 path, so this pins that the swallow did not survive
+        the merge (plan §6, OSError posture resolved as PROPAGATE).
+
+        Args:
+            tmp_path: pytest-provided temporary directory.
+            monkeypatch: pytest monkeypatch fixture.
+
+        Returns:
+            None
+        """
+        libsDir = self._libsDir(tmp_path)
+        libsDir.mkdir(parents=True)
+
+        def raiseOSError(poolRoot: Path) -> dict[str, list[DistInfoEntry]]:
+            """Simulate a pool that became unreadable mid-walk.
+
+            Args:
+                poolRoot: Pool directory handed to the helper.
+
+            Returns:
+                Never returns; always raises OSError.
+
+            Raises:
+                OSError: Always — models an unreadable pool directory.
+            """
+            raise OSError(f"unreadable pool: {poolRoot}")
+
+        monkeypatch.setattr("lib.sandbox.manager.enumerateDistInfos", raiseOSError)
+
+        manager = self._makeManager(tmp_path, _makeMockBackend(_makeContainerOutcome(exitCode=0)))
+
+        with pytest.raises(OSError):
+            manager._enumeratePoolWithDuplicates(libsDir)
+
     def testEnumeratePoolWithDuplicatesMissingPoolYieldsEmpty(self, tmp_path: Path) -> None:
         """_enumeratePoolWithDuplicates tolerates a MISSING pool directory.
 

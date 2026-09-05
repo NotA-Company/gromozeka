@@ -1,6 +1,6 @@
 # Sandbox Update Simplification v1
 
-Status: **approved 2026-09-05, implementation in progress.** Companion to
+Status: **approved 2026-09-05, implemented 2026-09-05.** Companion to
 [`docs/plans/sandbox-update-v1.md`](sandbox-update-v1.md) (the feature design
 record — read §4.2/§5 for the mechanism being preserved). Out of scope by
 design: the staged-swap core, the recovery/reconcile cluster, the
@@ -201,8 +201,8 @@ remain kept as registered).
 - `metadataRefreshed: bool | None` tri-state in `LibraryUpdateResult`
   (types.py:429) — semantically accurate; no production consumer, 8 tests pin
   it; collapsing would make no-op paths report "refresh failed".
-- Single-caller pure helpers `_splitOutdatedSpecs`, `_diffPoolVersions`,
-  `_collectDuplicatePoolNames` — module-level for direct unit testability.
+- Single-caller pure helpers `_splitOutdatedSpecs`, `_diffPoolVersions` —
+  module-level for direct unit testability.
 - `_collectUpdateAllNames` retry-under-lock (manager.py:1252-1259) — ratified
   fail-closed empty-find guard (feature plan §4.5).
 - `pool_staging.py` defensive surface — every guard is a test-pinned response
