@@ -1771,6 +1771,37 @@ class TestUpdateRuntimeLibraries:
         assert result.metadataRefreshed is None
         backend.runOneshot.assert_not_awaited()
 
+    async def testEmptyPoolUpdateAllSucceedsWithMissingHelper(self, tmp_path: Path) -> None:
+        """Update-all on an empty pool succeeds with no containers even if the helper is missing.
+
+        Regression pin for the pre-check consolidation: the empty-pool
+        short-circuit precedes the pre-filter container, so the helper
+        pre-check inside ``_runPrefilterContainer`` never fires for this
+        path. Restoring the old outer pre-check in ``updateRuntimeLibraries``
+        would raise ``ConfigError`` here instead.
+
+        Args:
+            tmp_path: pytest-provided temporary directory.
+
+        Returns:
+            None
+        """
+        backend = _makeMockBackend(_makeContainerOutcome(exitCode=0))
+        manager = self._makeManager(tmp_path, backend)
+        manager._runtimes[RuntimeName.PYTHON].updateHelperHostPath = (  # type: ignore[method-assign]
+            lambda: tmp_path / "missing-dir" / "pool_pip_runner.py"
+        )
+
+        result = await manager.updateRuntimeLibraries(None, runtime=RuntimeName.PYTHON)
+
+        assert result.success is True
+        assert result.updated == []
+        assert result.unchanged == []
+        assert result.upToDate == []
+        assert result.containerId is None
+        assert result.metadataRefreshed is None
+        backend.runOneshot.assert_not_awaited()
+
     async def testEmptyNamedListUpdatesNothing(self, tmp_path: Path) -> None:
         """A named-but-empty request updates nothing; only None means "all".
 

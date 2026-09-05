@@ -24,7 +24,7 @@ from . import locks
 from .backends.base import SandboxBackend
 from .backends.docker import DockerBackend
 from .config import SandboxConfig
-from .enums import RunStatus, RuntimeName
+from .enums import RunStatus, RuntimeName, StagingPurpose
 from .errors import (
     ConfigError,
     ImageBuildFailed,
@@ -1107,7 +1107,7 @@ class SandboxManager:
             # §5.5). pip never writes the live pool. On stage failure the
             # container is kept for post-mortem and the pool is untouched.
             success, _keptContainerId = await self._runStagedInstall(
-                runtime, runtimeImpl, validated, timeoutSeconds, purpose="install"
+                runtime, runtimeImpl, validated, timeoutSeconds, purpose=StagingPurpose.INSTALL
             )
 
             # Step 4: Refresh package metadata after a successful swap so
@@ -1228,16 +1228,7 @@ class SandboxManager:
                 failedList = ", ".join([f"{spec}: {reason}" for spec, reason in failedSpecs])
                 raise InvalidPackageSpec(spec=packages[0], reason=f"All package specs failed validation: {failedList}")
 
-        # Step 2: Pre-check the helper script exists on the host — a missing
-        # file-bind silently becomes a directory in Docker. Both update
-        # containers (pre-filter and stage) bind it read-only.
-        helperPath = runtimeImpl.updateHelperHostPath()
-        if not helperPath.is_file():
-            raise ConfigError(
-                f"Update helper script not found on host: {helperPath} (expected next to the install Dockerfile)"
-            )
-
-        # Step 3: Build the pre-filter spec set. Update-all is driven host-side
+        # Step 2: Build the pre-filter spec set. Update-all is driven host-side
         # (plan §6): pool dist-info enumeration ∪ packages.json names. An empty
         # pool short-circuits with a "Nothing installed" result — no container,
         # no lock — but ONLY when the opportunistic recovery pass succeeded.
@@ -1272,7 +1263,7 @@ class SandboxManager:
         else:
             prefilterSpecs = validated
 
-        # Step 4: Baseline enumeration — the host-side dist-info parse doubles
+        # Step 3: Baseline enumeration — the host-side dist-info parse doubles
         # as the diff baseline and the already-current comparison source
         # (plan §5.1; packages.json is no longer the diff source). Names with
         # multiple dist-info entries are tracked separately: they are forced
@@ -1280,7 +1271,7 @@ class SandboxManager:
         baselineVersions = self._enumeratePoolVersions(libsDir)
         duplicateNames = self._collectDuplicatePoolNames(libsDir)
 
-        # Step 5: Outdated pre-filter — read-only dry-run report container,
+        # Step 4: Outdated pre-filter — read-only dry-run report container,
         # run BEFORE the pool lock; the live pool is not mounted (plan §4.1
         # step 1). Report resolution is fail-safe: an unparseable report
         # treats every spec as outdated.
@@ -1319,7 +1310,7 @@ class SandboxManager:
 
             # Mechanism steps 3-6: copy → stage → merge → swap.
             success, keptContainerId = await self._runStagedInstall(
-                runtime, runtimeImpl, outdatedSpecs, timeoutSeconds, purpose="update"
+                runtime, runtimeImpl, outdatedSpecs, timeoutSeconds, purpose=StagingPurpose.UPDATE
             )
             if not success:
                 return LibraryUpdateResult(
@@ -1952,6 +1943,9 @@ class SandboxManager:
 
         Returns:
             Tuple of (outdatedSpecs, upToDateSpecs).
+
+        Raises:
+            ConfigError: If the helper script is missing on the host.
         """
         runId = uuid.uuid4().hex
         runDir = self._tmpDir / runId
@@ -1960,6 +1954,13 @@ class SandboxManager:
             # The container's rw mount is scoped to this io/ subtree only.
             ioDir = runDir / STAGING_IO_DIRNAME
             ioDir.mkdir(exist_ok=True)
+            # Pre-check the helper file-bind: a missing file-bind silently
+            # becomes a directory in Docker.
+            helperPath = runtimeImpl.updateHelperHostPath()
+            if not helperPath.is_file():
+                raise ConfigError(
+                    f"Update helper script not found on host: {helperPath} (expected next to the install Dockerfile)"
+                )
             stagingRun = runtimeImpl.reportRun(ioDir, list(specs))
             outcome = await self._backend.runOneshot(
                 spec=ContainerSpec(
@@ -2001,7 +2002,7 @@ class SandboxManager:
         specs: Sequence[str],
         timeoutSeconds: int | None,
         *,
-        purpose: str,
+        purpose: StagingPurpose,
     ) -> tuple[bool, str | None]:
         """Run the shared staged-install core: copy → stage → merge → swap.
 
@@ -2031,9 +2032,8 @@ class SandboxManager:
             timeoutSeconds: Timeout override for the stage container; None
                 falls back to the runtime's ``install-container.timeout-seconds``
                 config value.
-            purpose: Value for the ``sandbox.purpose`` container label and the
-                container-name prefix (``"update"`` today, ``"install"`` from
-                Phase 1I on).
+            purpose: StagingPurpose value for the ``sandbox.purpose`` container
+                label and the container-name prefix (``sandbox-{purpose}-{runId}``).
 
         Returns:
             Tuple of (success, keptContainerId): success is True when the

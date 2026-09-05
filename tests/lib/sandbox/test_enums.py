@@ -1,4 +1,4 @@
-"""Tests for sandbox enums (RuntimeName, BackendName).
+"""Tests for sandbox enums (RuntimeName, BackendName, StagingPurpose).
 
 Covers:
 - StrEnum construction from string values.
@@ -15,6 +15,7 @@ from enum import StrEnum
 import lib.sandbox
 from lib.sandbox import BackendName, LibraryUpdateResult, PackageUpdate, RuntimeName
 from lib.sandbox import types as sandboxTypes
+from lib.sandbox.enums import StagingPurpose
 
 # ============================================================================
 # RuntimeName
@@ -72,6 +73,47 @@ def testBackendNameValue() -> None:
 
 
 # ============================================================================
+# StagingPurpose
+# ============================================================================
+
+
+def testStagingPurposeConstructionFromValue() -> None:
+    """Verify that StagingPurpose('install'/'update') returns the matching member.
+
+    Returns:
+        None
+    """
+    assert StagingPurpose("install") is StagingPurpose.INSTALL
+    assert StagingPurpose("update") is StagingPurpose.UPDATE
+
+
+def testStagingPurposeValues() -> None:
+    """Verify the StagingPurpose member values are the ratified strings.
+
+    The values feed the container-name prefix (``sandbox-{purpose}-{runId}``)
+    and the ``sandbox.purpose`` container label and must stay byte-identical.
+
+    Returns:
+        None
+    """
+    assert StagingPurpose.INSTALL.value == "install"
+    assert StagingPurpose.UPDATE.value == "update"
+
+
+def testStagingPurposeStringCompatibility() -> None:
+    """Verify that str(StagingPurpose...) returns the raw value.
+
+    Container-name interpolation (f"sandbox-{purpose}-{runId}") relies on the
+    StrEnum string representation.
+
+    Returns:
+        None
+    """
+    assert str(StagingPurpose.INSTALL) == "install"
+    assert str(StagingPurpose.UPDATE) == "update"
+
+
+# ============================================================================
 # General StrEnum behaviour
 # ============================================================================
 
@@ -90,6 +132,11 @@ def testIterationOverEnumMembers() -> None:
     assert len(backendMembers) == 1
     assert BackendName.DOCKER in backendMembers
 
+    stagingPurposeMembers = list(StagingPurpose)
+    assert len(stagingPurposeMembers) == 2
+    assert StagingPurpose.INSTALL in stagingPurposeMembers
+    assert StagingPurpose.UPDATE in stagingPurposeMembers
+
 
 def testStrEnumIsStrSubclass() -> None:
     """Verify that sandbox enums are proper StrEnum subclasses (string-compatible).
@@ -99,8 +146,10 @@ def testStrEnumIsStrSubclass() -> None:
     """
     assert isinstance(RuntimeName.PYTHON, str)
     assert isinstance(BackendName.DOCKER, str)
+    assert isinstance(StagingPurpose.INSTALL, str)
     assert issubclass(RuntimeName, StrEnum)
     assert issubclass(BackendName, StrEnum)
+    assert issubclass(StagingPurpose, StrEnum)
 
 
 def testPackageReExport() -> None:

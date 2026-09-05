@@ -83,7 +83,7 @@ outside `lib/sandbox` references the removed ABC members;
 
 ## 4. Work item 2 — Helper pre-check consolidation + StagingPurpose
 
-- [ ] Implement
+- [x] Implement
 
 **What:**
 
@@ -94,8 +94,12 @@ outside `lib/sandbox` references the removed ABC members;
 - MOVE the check into `_runPrefilterContainer` (before its runOneshot);
   delete the outer block at :1231-1238. Result: every container-runner
   verifies its own file-binds uniformly. Behavior delta (accepted, more
-  correct): `ConfigError` now fires after the empty-pool and
-  nothing-outdated short-circuits — only when a container will actually run.
+  correct): the check now fires after the update-all empty-pool
+  short-circuit but before the pre-filter container — update-all on an
+  empty pool succeeds with no containers even when the helper is missing,
+  while any request that reaches the pre-filter (including all-current
+  pools, since "nothing-outdated" is determined by the pre-filter) still
+  raises `ConfigError` when the helper is missing.
 - Add `StagingPurpose(StrEnum)` to `lib/sandbox/enums.py`:
   `INSTALL = "install"`, `UPDATE = "update"` (string values MUST stay
   identical — container-name prefix `sandbox-{purpose}-{runId}` at
@@ -105,6 +109,14 @@ outside `lib/sandbox` references the removed ABC members;
 
 **Tests:** `tests/lib/sandbox/test_manager.py:1793-1811` (`ConfigError` +
 backend.runOneshot not awaited) must still hold.
+
+Amended during implementation: deleting the outer pre-check left a gap in
+`updateRuntimeLibraries`'s local step-number comments, so they were
+renumbered (pre-filter spec set = Step 2, baseline enumeration = Step 3,
+pre-filter container = Step 4). The pinned `ConfigError` test passed
+unchanged (named-specs requests never hit the short-circuits before the
+pre-filter runner). `StagingPurpose` is exported from `lib.sandbox.enums`
+only (same treatment as `RunStatus`), not re-exported from the package root.
 
 **Acceptance:** `make format lint` + `make test` green; exactly one pre-check
 per container-runner; no free-form purpose strings at call sites.
@@ -135,7 +147,7 @@ per container-runner; no free-form purpose strings at call sites.
 **Acceptance:** `make format lint` + `make test` green;
 `rg sandbox_bootstrap` returns nothing; CHANGELOG entry present.
 
-## 6. Work item 4 — Single pool walk at update Step 4
+## 6. Work item 4 — Single pool walk at update Step 3
 
 - [ ] Implement
 
@@ -148,7 +160,7 @@ per container-runner; no free-form purpose strings at call sites.
   derivable from the same inventory.
 - Introduce one helper (e.g.
   `_enumeratePoolWithDuplicates(libsDir) -> tuple[dict[str, str], set[str]]`)
-  used at Step 4; `_enumeratePoolVersions` remains available for its other
+  used at Step 3; `_enumeratePoolVersions` remains available for its other
   callers (:1318 re-enumerate under lock, :1336 after-enumeration).
 - Resolve the inconsistent OSError posture deliberately:
   `_collectDuplicatePoolNames` swallows OSError (:1851-1855) while
@@ -157,7 +169,7 @@ per container-runner; no free-form purpose strings at call sites.
   check). If an existing test pins graceful degradation, keep the swallow but
   document it in the helper docstring.
 
-**Acceptance:** `make format lint` + `make test` green; Step 4 performs
+**Acceptance:** `make format lint` + `make test` green; Step 3 performs
 exactly one dist-info walk; OSError posture documented.
 
 ## 7. Keep-as-is register (audited 2026-09-05 — do NOT "simplify" these)
