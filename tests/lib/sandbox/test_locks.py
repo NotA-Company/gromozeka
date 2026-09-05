@@ -7,6 +7,9 @@ Covers:
 - GlobalRunLimiter: acquire/release, SandboxBusy on timeout, release frees slot.
 - acquirePoolLock / releasePoolLock: basic acquisition, LibraryPoolLocked on
   contention.
+- Pool-lock placement invariant (docs/plans/sandbox-update-v1.md §4.4): the
+  lock file resolves OUTSIDE the swapped libs directory, and mutual
+  exclusion survives a libs-directory swap.
 """
 
 import asyncio
@@ -621,3 +624,70 @@ async def testSessionLockRegistryForceCancelAcquireReleaseClearSequence() -> Non
 
     registry.release(sessionId)
     assert newState.waiters == 0
+
+
+# ============================================================================
+# Pool-lock placement — §4.4 pinned invariant (docs/plans/sandbox-update-v1.md)
+# ============================================================================
+
+
+async def testPoolLockPathIsSiblingOfLibsNotInsideIt(tmp_path: Path) -> None:
+    """Verify the pool lock file resolves OUTSIDE the swapped libs directory.
+
+    The staged update swaps only ``<root>/runtimes/<runtime>/libs``; a lock
+    file inside the swapped dir would let a waiter hold the OLD inode's lock
+    while the next process locks a NEW ``pool.lock``, breaking mutual
+    exclusion. The lock must therefore be a sibling of ``libs`` — the manager
+    passes ``<root>/runtimes/<runtime>`` itself as ``poolDir``.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+
+    Returns:
+        None
+    """
+    poolDir = tmp_path / "runtimes" / "python"  # manager layout: <root>/runtimes/<runtime>
+    libsDir = poolDir / "libs"
+    libsDir.mkdir(parents=True)
+
+    handle = await acquirePoolLock(RuntimeName.PYTHON, poolDir)
+    try:
+        lockPath = poolDir / "pool.lock"
+        assert lockPath.is_file(), "the lock file must be created as a sibling of libs"
+        assert not lockPath.is_relative_to(libsDir), "the lock must never resolve inside the swapped libs dir"
+        assert not (libsDir / "pool.lock").exists()
+    finally:
+        releasePoolLock(handle)
+
+
+async def testPoolLockExclusionSurvivesLibsSwap(tmp_path: Path) -> None:
+    """Verify mutual exclusion holds while the libs directory is swapped under the lock.
+
+    While the lock is held, the ``libs`` directory is replaced exactly the
+    way the staged update does (rename away, rename the replacement in).
+    Because the lock lives outside the swapped dir, the same lock path must
+    still be exclusive — a second acquirer must get LibraryPoolLocked, and
+    the replacement directory must pick up no lock file of its own.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+
+    Returns:
+        None
+    """
+    poolDir = tmp_path / "runtimes" / "python"
+    libsDir = poolDir / "libs"
+    libsDir.mkdir(parents=True)
+    newLibs = tmp_path / "staging" / "newlibs"
+    newLibs.mkdir(parents=True)
+
+    handle = await acquirePoolLock(RuntimeName.PYTHON, poolDir)
+    try:
+        libsDir.rename(tmp_path / "oldlibs")
+        newLibs.rename(libsDir)
+
+        with pytest.raises(LibraryPoolLocked):
+            await acquirePoolLock(RuntimeName.PYTHON, poolDir)
+        assert not (libsDir / "pool.lock").exists()
+    finally:
+        releasePoolLock(handle)

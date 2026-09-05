@@ -719,7 +719,7 @@ singleton `SandboxManager` entry point that composes a backend (Docker),
 runtimes (Python), metadata store (filesystem), and lock registry.
 
 - **Coding patterns & constraints:** [`sandbox.md`](sandbox.md)
-- **Design:** [`docs/plans/python-sandboxing-v1.md`](../plans/python-sandboxing-v1.md)
+- **Design:** [`docs/plans/python-sandboxing-v1.md`](../plans/python-sandboxing-v1.md), [`docs/plans/sandbox-update-v1.md`](../plans/sandbox-update-v1.md) (staged install + atomic swap for pool installs/updates)
 - **Integration:** [`docs/archive/plans/python-sandboxing-v1-integration.md`](../archive/plans/python-sandboxing-v1-integration.md) (archived)
 
 Key modules:
@@ -733,9 +733,11 @@ Key modules:
 | [`errors.py`](../../lib/sandbox/errors.py) | Exception hierarchy (`SandboxError` → `ConfigError`, `BackendError`, `SessionError`, `SandboxRuntimeError`, `RunError`, `LibraryError`, `FileError`, `SandboxBusy`, `SessionBusy`, `SessionDropped`) |
 | [`locks.py`](../../lib/sandbox/locks.py) | Per-session mutex registry with bounded waiters and force-cancel, global run semaphore, pool flock |
 | [`storage.py`](../../lib/sandbox/storage.py) | Workspace path resolution, atomic JSON writes, directory layout |
-| [`gc.py`](../../lib/sandbox/gc.py) | Garbage collector for expired sessions, orphan workspaces, run records |
+| [`gc.py`](../../lib/sandbox/gc.py) | Garbage collector for expired sessions, orphan workspaces, run records, stale staging artifacts under `<root>/tmp` |
 | [`backends/docker.py`](../../lib/sandbox/backends/docker.py) | Docker backend via `aiodocker` |
 | [`runtimes/python/runtime.py`](../../lib/sandbox/runtimes/python/runtime.py) | Python runtime with `timeout` wrapper and artifact detection |
+| [`runtimes/python/pool_pip_runner.py`](../../lib/sandbox/runtimes/python/pool_pip_runner.py) | In-container pip runner for staged pool installs/updates (dry-run `--report` and `--install-into` modes; mounted into containers, not baked into the image) |
+| [`runtimes/python/pool_staging.py`](../../lib/sandbox/runtimes/python/pool_staging.py) | Host-side staging module — dist-info/METADATA enumeration, RECORD parsing with jail checks, staged-delta merge, atomic pool swap |
 | [`metadata/filesystem.py`](../../lib/sandbox/metadata/filesystem.py) | Filesystem-backed metadata store (JSON) |
 
 **Import:**

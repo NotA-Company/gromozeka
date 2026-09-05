@@ -11,6 +11,7 @@ Commands implemented:
 - /sandbox status: Show sandbox session status
 - /sandbox packages: List installed Python packages
 - /sandbox install <packages...>: Install Python packages (admin only)
+- /sandbox update [packages...]: Update Python packages (admin only)
 
 Per-chat gating is supported via the `allow-sandbox` chat setting.
 """
@@ -45,6 +46,9 @@ from internal.services.queue_service import DelayedTask, DelayedTaskFunction
 from lib.ai import LLMFunctionParameter, LLMParameterType
 from lib.sandbox import (
     InvalidPackageSpec,
+    LibraryPoolLocked,
+    LibraryUpdateResult,
+    PackageUpdate,
     PathOutsideWorkspace,
     RuntimeName,
     SandboxBusy,
@@ -57,6 +61,11 @@ from lib.sandbox.types import NetworkPolicy
 from .base import BaseBotHandler
 
 logger = logging.getLogger(__name__)
+
+# Cap for the /sandbox update reply text, mirroring the /run output limit.
+MAX_UPDATE_REPLY_LENGTH = 3000
+# Marker appended to /sandbox update replies when content was cut off.
+UPDATE_REPLY_TRUNCATION_MARKER = "...and more lines omitted"
 
 
 class SandboxHandler(BaseBotHandler):
@@ -847,7 +856,7 @@ class SandboxHandler(BaseBotHandler):
     @commandHandlerV2(
         commands=("sandbox",),
         shortDescription="Sandbox file management commands",
-        helpMessage=" <files|read|status|install> [args]: Manage sandbox workspace files.",
+        helpMessage=" <files|read|status|packages|install|update> [args]: Manage sandbox workspace files and packages.",
         visibility={CommandPermission.PRIVATE},
         availableFor={CommandPermission.DEFAULT},
         helpOrder=CommandHandlerOrder.NORMAL,
@@ -889,7 +898,8 @@ class SandboxHandler(BaseBotHandler):
                     "  read <path> - Read a file from workspace\n"
                     "  status - Show sandbox session status\n"
                     "  packages - List installed Python packages\n"
-                    "  install <packages...> - Install Python packages (admin only)"
+                    "  install <packages...> - Install Python packages (admin only)\n"
+                    "  update [packages...] - Update Python packages (admin only)"
                 ),
                 messageCategory=MessageCategory.BOT_ERROR,
             )
@@ -911,6 +921,8 @@ class SandboxHandler(BaseBotHandler):
             await self._handleInstallCommand(ensuredMessage, sessionId, subArgs, manager, typingManager)
         elif subcommand == "packages":
             await self._handlePackagesCommand(ensuredMessage, sessionId, manager, typingManager)
+        elif subcommand == "update":
+            await self._handleUpdateCommand(ensuredMessage, sessionId, subArgs, manager, typingManager)
         else:
             await self.sendMessage(
                 ensuredMessage,
@@ -1213,6 +1225,12 @@ class SandboxHandler(BaseBotHandler):
                 messageText=f"Invalid package spec: {e}",
                 messageCategory=MessageCategory.BOT_ERROR,
             )
+        except LibraryPoolLocked:
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="Another sandbox install/update is in progress, try again later.",
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
         except Exception as e:
             logger.error(f"Error installing packages: {e}")
             await self.sendMessage(
@@ -1220,6 +1238,194 @@ class SandboxHandler(BaseBotHandler):
                 messageText=f"Error: {e}",
                 messageCategory=MessageCategory.BOT_ERROR,
             )
+
+    async def _handleUpdateCommand(
+        self,
+        ensuredMessage: EnsuredMessage,
+        sessionId: str,
+        packagesArg: str,
+        manager: SandboxManager,
+        typingManager: Optional[TypingManager],
+    ) -> None:
+        """Handle the 'update' subcommand to update Python packages (admin only).
+
+        Updates all packages (no args) or the named packages in the python
+        library pool via SandboxManager.updateRuntimeLibraries and reports the
+        old→new diff.
+
+        Args:
+            ensuredMessage: The ensured message object containing message context.
+            sessionId: The sandbox session ID (derived from chat ID).
+            packagesArg: Space-separated list of package specs to update; empty
+                means "update every package in the pool".
+            manager: The SandboxManager instance.
+            typingManager: Optional typing manager for showing typing indicators.
+
+        Returns:
+            None
+
+        Note:
+            This command is restricted to bot owners only.
+        """
+        # Check if user is bot owner
+        if not self.isBotOwner(ensuredMessage.sender):
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="This command is restricted to bot owners only.",
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+            return
+
+        packages = packagesArg.strip().split()
+
+        try:
+            ackText = "Updating all packages..." if not packages else "Updating packages..."
+            await self.sendMessage(
+                ensuredMessage,
+                messageText=ackText,
+                messageCategory=MessageCategory.BOT_COMMAND_REPLY,
+                typingManager=typingManager,
+            )
+
+            result = await manager.updateRuntimeLibraries(packages=packages or None, runtime=RuntimeName.PYTHON)
+
+            await self.sendMessage(
+                ensuredMessage,
+                messageText=self._renderUpdateReply(result),
+                messageCategory=MessageCategory.BOT_ERROR if not result.success else MessageCategory.BOT_COMMAND_REPLY,
+                typingManager=typingManager,
+            )
+
+        except InvalidPackageSpec as e:
+            await self.sendMessage(
+                ensuredMessage,
+                messageText=f"Invalid package spec: {e}",
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+        except LibraryPoolLocked:
+            await self.sendMessage(
+                ensuredMessage,
+                messageText="Another sandbox install/update is in progress, try again later.",
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+        except Exception as e:
+            logger.error(f"Error updating packages: {e}")
+            await self.sendMessage(
+                ensuredMessage,
+                messageText=f"Error: {e}",
+                messageCategory=MessageCategory.BOT_ERROR,
+            )
+
+    @staticmethod
+    def _formatPackageUpdate(update: PackageUpdate) -> str:
+        """Format one package's old→new transition line, handling absent versions.
+
+        Args:
+            update: The package transition to render.
+
+        Returns:
+            "name old → new" for a normal transition;
+            "name → new (no prior version recorded)" when the old version is
+            unknown (fresh install or stale metadata);
+            "name old → absent after update" when the package is absent from
+            the pool after the run;
+            "name → absent after update (no prior version recorded)" when both
+            versions are unknown.
+        """
+        newVersionText = update.newVersion if update.newVersion is not None else "absent after update"
+        if update.oldVersion is None:
+            return f"{update.name} → {newVersionText} (no prior version recorded)"
+        return f"{update.name} {update.oldVersion} → {newVersionText}"
+
+    @staticmethod
+    def _formatFailedSpecs(failedSpecs: list[tuple[str, str]]) -> str:
+        """Format the invalid-specs suffix line for update replies.
+
+        Args:
+            failedSpecs: (spec, reason) pairs rejected at validation time.
+
+        Returns:
+            "Skipped invalid specs: <spec> (<reason>), ..." line.
+        """
+        return "Skipped invalid specs: " + ", ".join([f"{spec} ({reason})" for spec, reason in failedSpecs])
+
+    @staticmethod
+    def _capUpdateReply(reply: str) -> str:
+        """Cap an update reply to MAX_UPDATE_REPLY_LENGTH, reserving room for the marker.
+
+        When the reply exceeds the cap it is cut at a whole-line boundary
+        leaving room for UPDATE_REPLY_TRUNCATION_MARKER, which is then always
+        appended so truncation is visible. Short replies pass through intact.
+
+        Args:
+            reply: Fully rendered reply text (any variant).
+
+        Returns:
+            The reply unchanged when within the cap; otherwise the longest
+            whole-line prefix that fits plus the truncation marker, never
+            longer than MAX_UPDATE_REPLY_LENGTH characters.
+        """
+        if len(reply) <= MAX_UPDATE_REPLY_LENGTH:
+            return reply
+        truncated = reply[: MAX_UPDATE_REPLY_LENGTH - len(UPDATE_REPLY_TRUNCATION_MARKER) - 1]
+        lastNewline = truncated.rfind("\n")
+        if lastNewline != -1:
+            truncated = truncated[:lastNewline]
+        return truncated + "\n" + UPDATE_REPLY_TRUNCATION_MARKER
+
+    @staticmethod
+    def _renderUpdateReply(result: LibraryUpdateResult) -> str:
+        """Render the /sandbox update reply text from the manager result.
+
+        Every reply variant (failure, empty pool, all-current, diff) is built
+        in full first, then a single common cap truncates the joined text to
+        MAX_UPDATE_REPLY_LENGTH characters, reserving room for the truncation
+        marker so the marker is always present when content was cut off.
+
+        Args:
+            result: Update outcome reported by SandboxManager.
+
+        Returns:
+            Multi-line reply text capped at MAX_UPDATE_REPLY_LENGTH characters.
+        """
+        if not result.success:
+            lines = ["Update failed (pip error); the pool is untouched — nothing was partially applied."]
+            if result.containerId:
+                lines.append(
+                    f"Keeping container {result.containerId} for inspection (docker logs {result.containerId})."
+                )
+        elif not result.updated and not result.unchanged and not result.upToDate:
+            # Update-all on an empty pool: the manager short-circuits to a no-op success.
+            lines = ["Nothing installed in the python sandbox pool. Use /sandbox install <packages...> first."]
+        else:
+            runtimeLabel = result.runtime.value
+
+            if not result.updated:
+                # Nothing changed: every package was already current (or got an
+                # idempotent same-version reinstall).
+                total = len(result.upToDate) + len(result.unchanged)
+                lines = [f"All sandbox packages are up to date ({runtimeLabel}, {total} packages)."]
+            else:
+                lines = [f"Sandbox packages updated ({runtimeLabel}):"]
+                lines.extend([f"  {SandboxHandler._formatPackageUpdate(pkgUpdate)}" for pkgUpdate in result.updated])
+                if result.upToDate:
+                    lines.append(f"Already up to date, skipped ({len(result.upToDate)}): {', '.join(result.upToDate)}")
+                if result.unchanged:
+                    unchangedNames = ", ".join([pkgUpdate.name for pkgUpdate in result.unchanged])
+                    lines.append(f"Unchanged ({len(result.unchanged)}): {unchangedNames}")
+
+            if result.updated or result.unchanged:
+                # A staged pool swap occurred (version changes and/or
+                # same-version reinstalls): in-flight runs keep the old pool.
+                lines.append(
+                    "Note: sandbox runs started before this update keep seeing their previous pool; "
+                    "new runs see the updated one."
+                )
+
+        if result.failedSpecs:
+            lines.append(SandboxHandler._formatFailedSpecs(result.failedSpecs))
+
+        return SandboxHandler._capUpdateReply("\n".join(lines))
 
     async def _handlePackagesCommand(
         self,

@@ -11,6 +11,7 @@ Classes:
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from pathlib import Path
 from typing import List
 
 from ..config import BasicRuntimeConfig
@@ -27,6 +28,24 @@ class Runtime(ABC):
     """
 
     name: RuntimeName
+
+    UPDATE_HELPER_CONTAINER_PATH: str
+    """Container-side path where the update helper script is mounted.
+
+    Set by concrete runtimes; the manager mounts the file returned by
+    ``updateHelperHostPath()`` at this path, read-only.
+    """
+
+    STAGING_CONTAINER_PATH: str
+    """Container-side mount target of the per-run staging directory.
+
+    Set by concrete runtimes; the manager mounts the per-run staging
+    directory's container I/O subtree (``io/``) read-write at this path for
+    the update containers (dry-run report, staged pip delta). The live pool,
+    the pool copies (``newpool``/``oldpool``) and the rest of the run dir are
+    never mounted into staging containers
+    (docs/plans/sandbox-update-v1.md §4.2).
+    """
 
     def __init__(self, config: BasicRuntimeConfig) -> None:
         """Initialize the runtime with configuration.
@@ -83,20 +102,37 @@ class Runtime(ABC):
         ...
 
     @abstractmethod
-    def installCommand(
-        self,
-        packages: Sequence[str],
-        *,
-        upgrade: bool,
-    ) -> list[str]:
-        """Build the command-line invocation for installing packages.
+    def reportCommand(self, specs: Sequence[str]) -> list[str]:
+        """Build the dry-run pre-filter container command (report mode).
 
         Args:
-            packages: Package names to install.
-            upgrade: If True, upgrade existing packages.
+            specs: Package specs to resolve (already validated host-side).
 
         Returns:
-            Command and arguments as a list of strings.
+            Command and arguments as a single argv list (no shell).
+        """
+        ...
+
+    @abstractmethod
+    def stageInstallCommand(self, specs: Sequence[str]) -> list[str]:
+        """Build the staged-install container command (install mode).
+
+        Args:
+            specs: Package specs to install into the staging delta.
+
+        Returns:
+            Command and arguments as a single argv list (no shell).
+        """
+        ...
+
+    @abstractmethod
+    def updateHelperHostPath(self) -> Path:
+        """Return the host-side path of the update helper script.
+
+        The manager mounts this file read-only into the update container.
+
+        Returns:
+            Path derived from the install Dockerfile's directory.
         """
         ...
 

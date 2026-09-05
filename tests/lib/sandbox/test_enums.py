@@ -6,11 +6,15 @@ Covers:
 - String compatibility (str() returns the value).
 - Iteration over enum members.
 - Package-level re-export via ``from lib.sandbox import``.
+- Public-surface re-export of the package-update result types
+  (``PackageUpdate``, ``LibraryUpdateResult``).
 """
 
 from enum import StrEnum
 
-from lib.sandbox import BackendName, RuntimeName
+import lib.sandbox
+from lib.sandbox import BackendName, LibraryUpdateResult, PackageUpdate, RuntimeName
+from lib.sandbox import types as sandboxTypes
 
 # ============================================================================
 # RuntimeName
@@ -112,3 +116,21 @@ def testPackageReExport() -> None:
 
     assert ImportedRuntimeName is RuntimeName
     assert ImportedBackendName is BackendName
+
+
+def testPackageResultTypesReExport() -> None:
+    """Verify PackageUpdate and LibraryUpdateResult are public from lib.sandbox.
+
+    Both dataclasses are part of the public updateRuntimeLibraries() result
+    surface and must be re-exported from the package root (importable, bound
+    to the canonical types, and listed in ``__all__``).
+
+    Returns:
+        None
+    """
+    # The module-level imports already prove importability; assert the
+    # re-exports are the canonical types, not accidental rebinds.
+    assert PackageUpdate is sandboxTypes.PackageUpdate
+    assert LibraryUpdateResult is sandboxTypes.LibraryUpdateResult
+    assert "PackageUpdate" in lib.sandbox.__all__
+    assert "LibraryUpdateResult" in lib.sandbox.__all__

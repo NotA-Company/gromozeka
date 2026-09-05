@@ -11,6 +11,7 @@ Classes:
 
 import json
 import logging
+from pathlib import Path
 from typing import List, Sequence
 
 from packaging.requirements import Requirement
@@ -36,6 +37,20 @@ class PythonRuntime(Runtime):
     """
 
     name: RuntimeName = RuntimeName.PYTHON
+
+    UPDATE_HELPER_CONTAINER_PATH = "/sandbox/pool_pip_runner.py"
+    """Container-side path where the manager mounts the update helper script."""
+
+    STAGING_CONTAINER_PATH = "/sandbox/staging"
+    """Container-side mount target of the per-run staging directory.
+
+    Both update containers mount the run dir's ``io/`` subtree
+    (``<storage-root>/tmp/<runId>/io``) rw here: the dry-run report lands at
+    ``<staging>/report.json`` and the pip delta at ``<staging>/delta``. The
+    live pool, the pool copies (``newpool``/``oldpool``) and the rest of the
+    run dir are never mounted into update containers
+    (docs/plans/sandbox-update-v1.md §4.2).
+    """
 
     def getScriptName(self) -> str:
         """Get the script file name for this runtime.
@@ -86,35 +101,61 @@ class PythonRuntime(Runtime):
         ]
         return cmd
 
-    def installCommand(
-        self,
-        packages: Sequence[str],
-        *,
-        upgrade: bool,
-    ) -> list[str]:
-        """Build the Docker command for installing packages into the lib pool.
+    def reportCommand(self, specs: Sequence[str]) -> list[str]:
+        """Build the dry-run pre-filter container command (report mode).
+
+        Single argv, no shell: the helper execs
+        ``pip install --dry-run --report <staging>/report.json`` inside the
+        container; the live pool is not mounted into this container.
 
         Args:
-            packages: Package specs to install.
-            upgrade: If True, pass ``--upgrade`` to pip.
+            specs: Package specs to resolve (already validated host-side).
 
         Returns:
-            Command list for the install container.
+            Command and arguments as a single argv list (no shell).
         """
-        cmd = [
+        return [
             "python",
-            "-m",
-            "pip",
-            "install",
-            "--target",
-            self._config.libMountPath,
-            "--no-cache-dir",
-            "--no-input",
+            self.UPDATE_HELPER_CONTAINER_PATH,
+            "--report",
+            f"{self.STAGING_CONTAINER_PATH}/report.json",
+            "--",
+            *specs,
         ]
-        if upgrade:
-            cmd.append("--upgrade")
-        cmd.extend(packages)
-        return cmd
+
+    def stageInstallCommand(self, specs: Sequence[str]) -> list[str]:
+        """Build the staged-install container command (install mode).
+
+        Single argv, no shell: the helper execs
+        ``pip install --target <staging>/delta`` inside the container; the
+        live pool is not mounted into this container.
+
+        Args:
+            specs: Package specs to install into the staging delta.
+
+        Returns:
+            Command and arguments as a single argv list (no shell).
+        """
+        return [
+            "python",
+            self.UPDATE_HELPER_CONTAINER_PATH,
+            "--install-into",
+            f"{self.STAGING_CONTAINER_PATH}/delta",
+            "--",
+            *specs,
+        ]
+
+    def updateHelperHostPath(self) -> Path:
+        """Return the host-side path of the update helper script.
+
+        The manager mounts this file read-only into the update container.
+        Derived from the install Dockerfile's directory — zero new config
+        keys, same directory convention as the Dockerfiles.
+
+        Returns:
+            Path of ``pool_pip_runner.py`` next to the install Dockerfile.
+        """
+        return Path(self._config.installDockerfile).parent / "pool_pip_runner.py"
 
     def listCommand(self, stdoutPath: str, stderrPath: str) -> list[str]:
         """Build the Docker command for listing installed packages.

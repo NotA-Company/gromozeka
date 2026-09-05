@@ -15,6 +15,8 @@ Classes:
     FileInfo: Lightweight metadata about a file inside the workspace.
     FileContent: File content read back from the workspace (may be truncated).
     PackageInfo: A resolved package name and version.
+    PackageUpdate: Version transition of one package across an update run.
+    LibraryUpdateResult: Outcome of a SandboxManager.updateRuntimeLibraries call.
     HealthcheckResult: Aggregated health status of the sandbox subsystem.
     GcResult: Outcome of a garbage-collection sweep.
 """
@@ -371,6 +373,60 @@ class PackageInfo:
             name=data["name"],
             version=data.get("version", ""),
         )
+
+
+@dataclass(slots=True)
+class PackageUpdate:
+    """Version transition of one package across an update run.
+
+    Attributes:
+        name: Canonical package name (PEP 503).
+        oldVersion: Version enumerated from the pool's dist-infos before the
+            update, or None when the package was absent from the pool
+            (fresh install). Derived from pool enumeration, not from
+            packages.json.
+        newVersion: Version after the update, or None when the package is
+            absent from the pool after the run.
+    """
+
+    name: str
+    oldVersion: str | None
+    newVersion: str | None
+
+
+@dataclass(slots=True)
+class LibraryUpdateResult:
+    """Outcome of a SandboxManager.updateRuntimeLibraries call.
+
+    Attributes:
+        runtime: The runtime whose pool was updated.
+        success: True when the request completed without failure — including
+            no-op results (empty request, nothing outdated after the
+            pre-filter, update-all on an empty pool) as well as a staged
+            install that was swapped in.
+        updated: Packages whose version changed (newVersion != oldVersion).
+        unchanged: Packages with identical versions before and after.
+        upToDate: Names the pre-filter skipped as already current.
+        failedSpecs: (spec, reason) pairs rejected at validation time.
+        containerId: Kept container id on failure (docker logs hint), or
+            None otherwise.
+        metadataRefreshed: None when the packages.json refresh was not
+            attempted (no-op results and stage failures); False when it was
+            attempted after a successful swap and failed — the stored
+            metadata is then stale, but the reported diff is NOT
+            under-reported: updated/unchanged derive from before/after pool
+            dist-info enumerations, never from packages.json; True when the
+            refresh succeeded.
+    """
+
+    runtime: RuntimeName
+    success: bool
+    updated: list[PackageUpdate]
+    unchanged: list[PackageUpdate]
+    upToDate: list[str]
+    failedSpecs: list[tuple[str, str]]
+    containerId: str | None
+    metadataRefreshed: bool | None
 
 
 @dataclass(slots=True)
