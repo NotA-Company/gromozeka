@@ -75,10 +75,10 @@ STAGING_IO_DIRNAME = "io"
 """Name of the container I/O subtree inside a staging run directory.
 
 The ONLY part of a run dir any update container sees (mounted rw at the
-runtime's ``STAGING_CONTAINER_PATH``): it holds ``report.json`` and
-``delta/``. ``newpool``/``oldpool`` live OUTSIDE it, directly in the run
-dir, so package build code running in the stage container can never touch
-the future live pool.
+staging target selected by the runtime's StagingRun plan): it holds
+``report.json`` and ``delta/``. ``newpool``/``oldpool`` live OUTSIDE it,
+directly in the run dir, so package build code running in the stage
+container can never touch the future live pool.
 """
 
 
@@ -1920,39 +1920,6 @@ class SandboxManager:
             timeoutGraceSeconds=60,
         )
 
-    def _stagingMounts(self, runtimeImpl: Runtime, runDir: Path) -> list[dict[str, str]]:
-        """Build the mounts shared by both update containers (plan §4.2).
-
-        Only the run dir's container I/O subtree (``<runDir>/io``) is mounted
-        read-write, plus the helper script read-only. The rest of the run dir
-        — ``newpool`` and ``oldpool`` in particular — is never visible to a
-        container: package build code must not be able to modify the future
-        live pool copy and bypass the controlled merge. The live pool itself
-        is NEVER mounted into a networked container — pip (the attack surface
-        touching PyPI) only ever sees a scratch delta.
-
-        Args:
-            self: The SandboxManager instance.
-            runtimeImpl: The runtime providing the container-side paths.
-            runDir: Host-side per-run staging directory (must already contain
-                the ``io/`` subtree).
-
-        Returns:
-            Mount list for the ContainerSpec.
-        """
-        return [
-            {
-                "hostPath": str((runDir / STAGING_IO_DIRNAME).absolute()),
-                "containerPath": runtimeImpl.STAGING_CONTAINER_PATH,
-                "mode": "rw",
-            },
-            {
-                "hostPath": str(runtimeImpl.updateHelperHostPath().absolute()),
-                "containerPath": runtimeImpl.UPDATE_HELPER_CONTAINER_PATH,
-                "mode": "ro",
-            },
-        ]
-
     async def _runPrefilterContainer(
         self,
         runtime: RuntimeName,
@@ -1991,13 +1958,15 @@ class SandboxManager:
         try:
             runDir.mkdir(parents=True, exist_ok=True)
             # The container's rw mount is scoped to this io/ subtree only.
-            (runDir / STAGING_IO_DIRNAME).mkdir(exist_ok=True)
+            ioDir = runDir / STAGING_IO_DIRNAME
+            ioDir.mkdir(exist_ok=True)
+            stagingRun = runtimeImpl.reportRun(ioDir, list(specs))
             outcome = await self._backend.runOneshot(
                 spec=ContainerSpec(
                     name=f"sandbox-update-{runId}",
                     image=runtimeImpl._config.installImageTag,
-                    command=runtimeImpl.reportCommand(list(specs)),
-                    mounts=self._stagingMounts(runtimeImpl, runDir),
+                    command=stagingRun.command,
+                    mounts=stagingRun.mounts,
                     env={},
                     limits=self._stagingLimits(runtimeImpl, timeoutSeconds),
                     network="bridge",  # pip needs internet
@@ -2020,7 +1989,7 @@ class SandboxManager:
                 await self._backend.removeContainer(outcome.containerId)
             except Exception as exc:
                 logger.error("Failed to remove update pre-filter container %s: %s", outcome.containerId, exc)
-            report = parsePipReport(runDir / STAGING_IO_DIRNAME / "report.json")
+            report = parsePipReport(ioDir / "report.json")
             return _splitOutdatedSpecs(specs, baselineVersions, report, duplicateNames)
         finally:
             shutil.rmtree(runDir, ignore_errors=True)
@@ -2112,12 +2081,13 @@ class SandboxManager:
 
             # Step 4 (stage): pip writes into the private delta; the live
             # pool is not mounted into the container at all.
+            stagingRun = runtimeImpl.stageRun(ioDir, list(specs))
             outcome = await self._backend.runOneshot(
                 spec=ContainerSpec(
                     name=f"sandbox-{purpose}-{runId}",
                     image=runtimeImpl._config.installImageTag,
-                    command=runtimeImpl.stageInstallCommand(list(specs)),
-                    mounts=self._stagingMounts(runtimeImpl, runDir),
+                    command=stagingRun.command,
+                    mounts=stagingRun.mounts,
                     env={},
                     limits=self._stagingLimits(runtimeImpl, timeoutSeconds),
                     network="bridge",  # pip needs internet

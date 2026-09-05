@@ -3,8 +3,9 @@
 Covers:
 - ``runCommand`` shape with and without stdin redirection.
 - ``runCommand`` timeout value placement.
-- ``reportCommand`` / ``stageInstallCommand`` argv shapes (single argv, no
-  shell, ``--`` before specs) and the staging container path constants.
+- ``reportRun`` / ``stageRun`` argv shapes (single argv, no shell, ``--``
+  before specs), the staging mount pair, and the staging container path
+  constants.
 - ``updateHelperHostPath`` derivation from the install Dockerfile
   (``pool_pip_runner.py``).
 - ``listCommand`` exact output.
@@ -128,12 +129,14 @@ class TestStagingContainerPath:
         assert PythonRuntime.UPDATE_HELPER_CONTAINER_PATH == "/sandbox/pool_pip_runner.py"
 
 
-class TestReportCommand:
-    """Tests for :meth:`PythonRuntime.reportCommand`."""
+class TestReportRun:
+    """Tests for :meth:`PythonRuntime.reportRun`."""
 
-    def testArgvShape(self, runtime: PythonRuntime) -> None:
+    def testArgvShape(self, runtime: PythonRuntime, tmp_path: Path) -> None:
         """Verify the single-argv report-mode shape (no shell, -- before specs)."""
-        cmd = runtime.reportCommand(["numpy>=2.0", "requests"])
+        ioDir = tmp_path / "run" / "io"
+        stagingRun = runtime.reportRun(ioDir, ["numpy>=2.0", "requests"])
+        cmd = stagingRun.command
 
         assert cmd == [
             "python",
@@ -150,13 +153,33 @@ class TestReportCommand:
         assert separatorIdx < len(cmd) - 1, "-- must precede the specs"
         assert cmd[separatorIdx + 1 :] == ["numpy>=2.0", "requests"]
 
+    def testMounts(self, runtime: PythonRuntime, tmp_path: Path) -> None:
+        """Verify the mount pair: io subtree rw at the staging path, helper ro."""
+        ioDir = tmp_path / "run" / "io"
+        stagingRun = runtime.reportRun(ioDir, ["numpy>=2.0", "requests"])
 
-class TestStageInstallCommand:
-    """Tests for :meth:`PythonRuntime.stageInstallCommand`."""
+        assert stagingRun.mounts == [
+            {
+                "hostPath": str(ioDir.absolute()),
+                "containerPath": PythonRuntime.STAGING_CONTAINER_PATH,
+                "mode": "rw",
+            },
+            {
+                "hostPath": str(runtime.updateHelperHostPath().absolute()),
+                "containerPath": PythonRuntime.UPDATE_HELPER_CONTAINER_PATH,
+                "mode": "ro",
+            },
+        ]
 
-    def testArgvShape(self, runtime: PythonRuntime) -> None:
+
+class TestStageRun:
+    """Tests for :meth:`PythonRuntime.stageRun`."""
+
+    def testArgvShape(self, runtime: PythonRuntime, tmp_path: Path) -> None:
         """Verify the single-argv install-mode shape (no shell, -- before specs)."""
-        cmd = runtime.stageInstallCommand(["numpy>=2.0"])
+        ioDir = tmp_path / "run" / "io"
+        stagingRun = runtime.stageRun(ioDir, ["numpy>=2.0"])
+        cmd = stagingRun.command
 
         assert cmd == [
             "python",
@@ -171,6 +194,24 @@ class TestStageInstallCommand:
         separatorIdx = cmd.index("--")
         assert separatorIdx < len(cmd) - 1, "-- must precede the specs"
         assert cmd[separatorIdx + 1 :] == ["numpy>=2.0"]
+
+    def testMounts(self, runtime: PythonRuntime, tmp_path: Path) -> None:
+        """Verify the mount pair: io subtree rw at the staging path, helper ro."""
+        ioDir = tmp_path / "run" / "io"
+        stagingRun = runtime.stageRun(ioDir, ["numpy>=2.0"])
+
+        assert stagingRun.mounts == [
+            {
+                "hostPath": str(ioDir.absolute()),
+                "containerPath": PythonRuntime.STAGING_CONTAINER_PATH,
+                "mode": "rw",
+            },
+            {
+                "hostPath": str(runtime.updateHelperHostPath().absolute()),
+                "containerPath": PythonRuntime.UPDATE_HELPER_CONTAINER_PATH,
+                "mode": "ro",
+            },
+        ]
 
 
 class TestUpdateHelperHostPath:

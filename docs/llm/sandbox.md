@@ -19,7 +19,7 @@
 | `storage.py` | Workspace path resolution, atomic JSON writes, directory layout |
 | `gc.py` | Garbage collector for expired sessions, orphan workspaces, run records, stale staging artifacts under `<root>/tmp` |
 | `backends/docker.py` | Docker backend via `aiodocker==0.27.0` |
-| `runtimes/python/runtime.py` | Python runtime with `timeout` wrapper and artifact detection; `reportCommand` / `stageInstallCommand` / `updateHelperHostPath` argv+helper builders for staged pool installs |
+| `runtimes/python/runtime.py` | Python runtime with `timeout` wrapper and artifact detection; `reportRun` / `stageRun` (return `StagingRun` command+mounts plans) / `updateHelperHostPath` builders for staged pool installs |
 | `runtimes/python/pool_pip_runner.py` | In-container pip runner for staged pool installs/updates (mutually exclusive `--report <file>` / `--install-into <dir>` modes, `--` before specs; mounted read-only into containers, never baked into the image) |
 | `runtimes/python/pool_staging.py` | Host-side staging module — dist-info/METADATA enumeration, RECORD parsing with jail checks, staged-delta merge, atomic pool swap, dry-run report parsing |
 | `metadata/filesystem.py` | Filesystem-backed metadata store (JSON) |

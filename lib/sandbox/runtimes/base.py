@@ -7,16 +7,39 @@ implementation.
 
 Classes:
     Runtime: Protocol for language runtimes.
+    StagingRun: Container-side plan (command + mounts) for one staging container.
 """
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
 from ..config import BasicRuntimeConfig
 from ..enums import RuntimeName
 from ..types import ContainerOutcome, PackageInfo, ResourceLimits
+
+
+@dataclass(frozen=True, slots=True)
+class StagingRun:
+    """Container-side plan for one staging container (pre-filter or stage).
+
+    Built and returned by the runtime — the owner of its container-side
+    layout — and consumed verbatim by :class:`SandboxManager` when
+    assembling the :class:`ContainerSpec`.
+
+    Attributes:
+        command: Container argv (single argv, no shell).
+        mounts: Volume mount specifications, same shape as
+            :attr:`ContainerSpec.mounts`.
+    """
+
+    command: list[str]
+    """Container argv (single argv, no shell)."""
+
+    mounts: list[dict[str, str]]
+    """Volume mount specifications (hostPath, containerPath, mode)."""
 
 
 class Runtime(ABC):
@@ -28,24 +51,6 @@ class Runtime(ABC):
     """
 
     name: RuntimeName
-
-    UPDATE_HELPER_CONTAINER_PATH: str
-    """Container-side path where the update helper script is mounted.
-
-    Set by concrete runtimes; the manager mounts the file returned by
-    ``updateHelperHostPath()`` at this path, read-only.
-    """
-
-    STAGING_CONTAINER_PATH: str
-    """Container-side mount target of the per-run staging directory.
-
-    Set by concrete runtimes; the manager mounts the per-run staging
-    directory's container I/O subtree (``io/``) read-write at this path for
-    the update containers (dry-run report, staged pip delta). The live pool,
-    the pool copies (``newpool``/``oldpool``) and the rest of the run dir are
-    never mounted into staging containers
-    (docs/plans/sandbox-update-v1.md §4.2).
-    """
 
     def __init__(self, config: BasicRuntimeConfig) -> None:
         """Initialize the runtime with configuration.
@@ -102,26 +107,38 @@ class Runtime(ABC):
         ...
 
     @abstractmethod
-    def reportCommand(self, specs: Sequence[str]) -> list[str]:
-        """Build the dry-run pre-filter container command (report mode).
+    def reportRun(self, hostStagingIoDir: Path, specs: Sequence[str]) -> StagingRun:
+        """Build the full container plan for the dry-run pre-filter (report mode).
+
+        The runtime owns its container-side layout: it returns the complete
+        argv plus the mount list (the staging io subtree bind rw and the
+        helper script bind ro), so the manager never assembles mounts itself.
 
         Args:
+            hostStagingIoDir: Host-side per-run staging I/O directory (the
+                run dir's ``io/`` subtree) to bind rw into the container.
             specs: Package specs to resolve (already validated host-side).
 
         Returns:
-            Command and arguments as a single argv list (no shell).
+            The StagingRun plan (command + mounts) for the pre-filter container.
         """
         ...
 
     @abstractmethod
-    def stageInstallCommand(self, specs: Sequence[str]) -> list[str]:
-        """Build the staged-install container command (install mode).
+    def stageRun(self, hostStagingIoDir: Path, specs: Sequence[str]) -> StagingRun:
+        """Build the full container plan for the staged install (install mode).
+
+        The runtime owns its container-side layout: it returns the complete
+        argv plus the mount list (the staging io subtree bind rw and the
+        helper script bind ro), so the manager never assembles mounts itself.
 
         Args:
+            hostStagingIoDir: Host-side per-run staging I/O directory (the
+                run dir's ``io/`` subtree) to bind rw into the container.
             specs: Package specs to install into the staging delta.
 
         Returns:
-            Command and arguments as a single argv list (no shell).
+            The StagingRun plan (command + mounts) for the stage container.
         """
         ...
 
@@ -129,7 +146,9 @@ class Runtime(ABC):
     def updateHelperHostPath(self) -> Path:
         """Return the host-side path of the update helper script.
 
-        The manager mounts this file read-only into the update container.
+        The runtime uses this path to construct the helper's read-only bind
+        mount in its StagingRun plan. The manager also uses it to verify
+        that the helper exists before staging.
 
         Returns:
             Path derived from the install Dockerfile's directory.

@@ -14,7 +14,7 @@ Covers:
 - installRuntimeLibraries() staged core (docs/plans/sandbox-update-v1.md
   §5.5): the install container is a staging container — it mounts the run
   dir's ``io/`` subtree rw plus the helper read-only, NEVER the live pool —
-  runs ``stageInstallCommand`` and carries the ``sandbox.purpose="install"``
+  runs ``stageRun`` and carries the ``sandbox.purpose="install"``
   + ``sandbox.stagingRunId`` labels. Also pinned: the ratified corruption-bug
   regression (reinstalling an already-present package replaces the old
   dist-info cleanly — no lying metadata, no duplicates, no stale code),
@@ -770,7 +770,7 @@ class TestInstallRuntimeLibrariesStagedCore:
     Pins the NEW install container contract (plan §5.5): the install
     container is a staging container — it mounts the run dir's ``io/``
     subtree read-write and the helper script read-only, NEVER the live
-    pool — runs ``stageInstallCommand`` and carries the
+    pool — runs ``stageRun`` and carries the
     ``sandbox.purpose="install"`` + ``sandbox.stagingRunId`` labels. Also
     pins the ratified corruption-bug regression: reinstalling an
     already-present package cleanly replaces the old dist-info (the old
@@ -832,7 +832,7 @@ class TestInstallRuntimeLibrariesStagedCore:
 
         runtimeImpl = manager._runtimes[RuntimeName.PYTHON]
         stageSpec = backend.runOneshot.await_args_list[0].kwargs["spec"]
-        assert stageSpec.command == runtimeImpl.stageInstallCommand(["pybullet"])
+        assert stageSpec.command == runtimeImpl.stageRun(Path("io"), ["pybullet"]).command
         assert stageSpec.name.startswith("sandbox-install-")
         assert stageSpec.labels["sandbox.purpose"] == "install"
         assert stageSpec.labels["sandbox.managed"] == "true"
@@ -1013,7 +1013,7 @@ class TestInstallRuntimeLibrariesStagedCore:
         assert success is True
         runtimeImpl = manager._runtimes[RuntimeName.PYTHON]
         stageSpec = backend.runOneshot.await_args_list[0].kwargs["spec"]
-        assert stageSpec.command == runtimeImpl.stageInstallCommand(["numpy"])
+        assert stageSpec.command == runtimeImpl.stageRun(Path("io"), ["numpy"]).command
         assert "bad&spec" not in stageSpec.command
         assert (self._libsDir(tmp_path) / "numpy-2.0.dist-info").is_dir()
 
@@ -1077,7 +1077,7 @@ class TestInstallRuntimeLibrariesStagedCore:
         assert success is True
         runtimeImpl = manager._runtimes[RuntimeName.PYTHON]
         stageSpec = backend.runOneshot.await_args_list[0].kwargs["spec"]
-        assert stageSpec.command == runtimeImpl.stageInstallCommand(["numpy"])
+        assert stageSpec.command == runtimeImpl.stageRun(Path("io"), ["numpy"]).command
         assert "--upgrade" not in stageSpec.command
         libsDir = self._libsDir(tmp_path)
         assert [p.name for p in libsDir.glob("numpy-*.dist-info")] == ["numpy-2.0.dist-info"]
@@ -1151,8 +1151,8 @@ class TestUpdateRuntimeLibraries:
         runtimeImpl = manager._runtimes[RuntimeName.PYTHON]
         reportSpec = backend.runOneshot.await_args_list[0].kwargs["spec"]
         stageSpec = backend.runOneshot.await_args_list[1].kwargs["spec"]
-        assert reportSpec.command == runtimeImpl.reportCommand(["numpy"])
-        assert stageSpec.command == runtimeImpl.stageInstallCommand(["numpy"])
+        assert reportSpec.command == runtimeImpl.reportRun(Path("io"), ["numpy"]).command
+        assert stageSpec.command == runtimeImpl.stageRun(Path("io"), ["numpy"]).command
 
         for spec in (reportSpec, stageSpec):
             assert spec.labels["sandbox.purpose"] == "update"
@@ -1587,7 +1587,7 @@ class TestUpdateRuntimeLibraries:
         assert result.upToDate == []
         runtimeImpl = manager._runtimes[RuntimeName.PYTHON]
         stageSpec = backend.runOneshot.await_args_list[1].kwargs["spec"]
-        assert stageSpec.command == runtimeImpl.stageInstallCommand(["numpy", "requests"])
+        assert stageSpec.command == runtimeImpl.stageRun(Path("io"), ["numpy", "requests"]).command
 
     async def testMissingReportFileFailsSafeToo(self, tmp_path: Path) -> None:
         """A pre-filter that wrote no report at all also stages every spec.

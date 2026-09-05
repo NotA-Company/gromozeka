@@ -38,7 +38,7 @@ no-op parameter whose script is being deleted, and a double pool walk.
 
 ## 3. Work item 1 — Runtime-owned StagingRun plans
 
-- [ ] Implement
+- [x] Implement
 
 **What:**
 
@@ -72,6 +72,10 @@ no-op parameter whose script is being deleted, and a double pool walk.
 - `tests/lib/sandbox/test_manager.py` expected UNTOUCHED
   (symbolic-constant insulation — if it breaks, a mount-dict key drifted,
   which is exactly what those tests exist to catch).
+  Amended during implementation: five test_manager.py tests called the old
+  argv builders directly (self-referential expected values) and were
+  mechanically updated to `.command` of the new plan methods; mount
+  assertions were untouched and passed unchanged.
 
 **Acceptance:** `make format lint` + `make test` green; no production code
 outside `lib/sandbox` references the removed ABC members;

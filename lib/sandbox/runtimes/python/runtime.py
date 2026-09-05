@@ -21,7 +21,7 @@ from lib.sandbox.backends.base import ContainerOutcome
 from ...enums import RuntimeName
 from ...errors import InvalidPackageSpec
 from ...types import PackageInfo, ResourceLimits
-from ..base import Runtime
+from ..base import Runtime, StagingRun
 
 logger = logging.getLogger(__name__)
 
@@ -39,18 +39,10 @@ class PythonRuntime(Runtime):
     name: RuntimeName = RuntimeName.PYTHON
 
     UPDATE_HELPER_CONTAINER_PATH = "/sandbox/pool_pip_runner.py"
-    """Container-side path where the manager mounts the update helper script."""
+    """Container-side path where this runtime's update helper is mounted (ro)."""
 
     STAGING_CONTAINER_PATH = "/sandbox/staging"
-    """Container-side mount target of the per-run staging directory.
-
-    Both update containers mount the run dir's ``io/`` subtree
-    (``<storage-root>/tmp/<runId>/io``) rw here: the dry-run report lands at
-    ``<staging>/report.json`` and the pip delta at ``<staging>/delta``. The
-    live pool, the pool copies (``newpool``/``oldpool``) and the rest of the
-    run dir are never mounted into update containers
-    (docs/plans/sandbox-update-v1.md §4.2).
-    """
+    """Container-side mount target of the staging run dir's ``io/`` subtree (rw)."""
 
     def getScriptName(self) -> str:
         """Get the script file name for this runtime.
@@ -101,56 +93,99 @@ class PythonRuntime(Runtime):
         ]
         return cmd
 
-    def reportCommand(self, specs: Sequence[str]) -> list[str]:
-        """Build the dry-run pre-filter container command (report mode).
+    def _buildStagingMounts(self, hostStagingIoDir: Path) -> list[dict[str, str]]:
+        """Build the mounts shared by both staging containers (plan §4.2).
+
+        Only the run dir's container I/O subtree is mounted read-write, plus
+        the helper script read-only. The rest of the run dir — ``newpool``
+        and ``oldpool`` in particular — is never visible to a container:
+        package build code must not be able to modify the future live pool
+        copy and bypass the controlled merge. The live pool itself is NEVER
+        mounted into a networked container — pip (the attack surface touching
+        PyPI) only ever sees a scratch delta.
+
+        Args:
+            hostStagingIoDir: Host-side per-run staging I/O directory (the
+                run dir's ``io/`` subtree; must already exist).
+
+        Returns:
+            Mount list for the StagingRun.
+        """
+        return [
+            {
+                "hostPath": str(hostStagingIoDir.absolute()),
+                "containerPath": self.STAGING_CONTAINER_PATH,
+                "mode": "rw",
+            },
+            {
+                "hostPath": str(self.updateHelperHostPath().absolute()),
+                "containerPath": self.UPDATE_HELPER_CONTAINER_PATH,
+                "mode": "ro",
+            },
+        ]
+
+    def reportRun(self, hostStagingIoDir: Path, specs: Sequence[str]) -> StagingRun:
+        """Build the full container plan for the dry-run pre-filter (report mode).
 
         Single argv, no shell: the helper execs
         ``pip install --dry-run --report <staging>/report.json`` inside the
         container; the live pool is not mounted into this container.
 
         Args:
+            hostStagingIoDir: Host-side per-run staging I/O directory to bind
+                rw at :attr:`STAGING_CONTAINER_PATH`.
             specs: Package specs to resolve (already validated host-side).
 
         Returns:
-            Command and arguments as a single argv list (no shell).
+            The StagingRun plan (command + mounts) for the pre-filter container.
         """
-        return [
-            "python",
-            self.UPDATE_HELPER_CONTAINER_PATH,
-            "--report",
-            f"{self.STAGING_CONTAINER_PATH}/report.json",
-            "--",
-            *specs,
-        ]
+        return StagingRun(
+            command=[
+                "python",
+                self.UPDATE_HELPER_CONTAINER_PATH,
+                "--report",
+                f"{self.STAGING_CONTAINER_PATH}/report.json",
+                "--",
+                *specs,
+            ],
+            mounts=self._buildStagingMounts(hostStagingIoDir),
+        )
 
-    def stageInstallCommand(self, specs: Sequence[str]) -> list[str]:
-        """Build the staged-install container command (install mode).
+    def stageRun(self, hostStagingIoDir: Path, specs: Sequence[str]) -> StagingRun:
+        """Build the full container plan for the staged install (install mode).
 
         Single argv, no shell: the helper execs
         ``pip install --target <staging>/delta`` inside the container; the
         live pool is not mounted into this container.
 
         Args:
+            hostStagingIoDir: Host-side per-run staging I/O directory to bind
+                rw at :attr:`STAGING_CONTAINER_PATH`.
             specs: Package specs to install into the staging delta.
 
         Returns:
-            Command and arguments as a single argv list (no shell).
+            The StagingRun plan (command + mounts) for the stage container.
         """
-        return [
-            "python",
-            self.UPDATE_HELPER_CONTAINER_PATH,
-            "--install-into",
-            f"{self.STAGING_CONTAINER_PATH}/delta",
-            "--",
-            *specs,
-        ]
+        return StagingRun(
+            command=[
+                "python",
+                self.UPDATE_HELPER_CONTAINER_PATH,
+                "--install-into",
+                f"{self.STAGING_CONTAINER_PATH}/delta",
+                "--",
+                *specs,
+            ],
+            mounts=self._buildStagingMounts(hostStagingIoDir),
+        )
 
     def updateHelperHostPath(self) -> Path:
         """Return the host-side path of the update helper script.
 
-        The manager mounts this file read-only into the update container.
-        Derived from the install Dockerfile's directory — zero new config
-        keys, same directory convention as the Dockerfiles.
+        The runtime uses this path to construct the helper's read-only bind
+        mount in its StagingRun plan. The manager also uses it to verify
+        that the helper exists before staging. Derived from the install
+        Dockerfile's directory — zero new config keys, same directory
+        convention as the Dockerfiles.
 
         Returns:
             Path of ``pool_pip_runner.py`` next to the install Dockerfile.
