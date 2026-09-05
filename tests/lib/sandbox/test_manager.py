@@ -19,8 +19,8 @@ Covers:
   regression (reinstalling an already-present package replaces the old
   dist-info cleanly — no lying metadata, no duplicates, no stale code),
   fresh install into an empty pool, stage failure keeps the container with
-  the pool byte-identical, spec-validation semantics, LibraryPoolLocked
-  propagation, and ``upgrade=`` accepted as a documented no-op.
+  the pool byte-identical, spec-validation semantics, and LibraryPoolLocked
+  propagation.
 - updateRuntimeLibraries() staged flow (docs/plans/sandbox-update-v1.md
   §5.1): the two update ContainerSpecs (pre-filter report + staged install —
   staging mount, helper bind, never the pool, stagingRunId GC liveness
@@ -545,7 +545,7 @@ class TestInstallRuntimeLibrariesTimeout:
     Before the fix, ``installRuntimeLibraries()`` took ``timeoutSeconds: int = 600``
     as a method-parameter default and never read the parsed
     ``InstallContainerConfig.timeoutSeconds``. Every caller (the ``/sandbox install``
-    handler, the bootstrap script) omitted the argument, so the configured timeout
+    handler) omitted the argument, so the configured timeout
     was dead config and installs were watchdog-killed at 600s+60s+1s regardless of
     configuration.
     """
@@ -1044,43 +1044,6 @@ class TestInstallRuntimeLibrariesStagedCore:
 
         backend.runOneshot.assert_not_awaited()
         assert not self._libsDir(tmp_path).exists()
-
-    async def testUpgradeFlagAcceptedAndIgnored(self, tmp_path: Path) -> None:
-        """``upgrade=True`` is a documented no-op: the staged delta installs fresh.
-
-        pip ``--target`` has no satisfaction check, so there is nothing to
-        upgrade in an empty delta; the flag changes neither the container
-        command nor the outcome (plan §5.5).
-
-        Args:
-            tmp_path: pytest-provided temporary directory.
-
-        Returns:
-            None
-        """
-        _makePool(self._libsDir(tmp_path), {"numpy": "1.0"})
-        backend = _makeMockBackend(_makeContainerOutcome(exitCode=0))
-        backend.runOneshot = AsyncMock(
-            side_effect=_oneshotSequence(
-                _deltaSideEffect({"numpy": "2.0"}),
-                _makeContainerOutcome(exitCode=0, containerId="list-cid"),
-            )
-        )
-        manager = self._makeManager(tmp_path, backend)
-
-        success = await manager.installRuntimeLibraries(
-            packages=["numpy"],
-            runtime=RuntimeName.PYTHON,
-            upgrade=True,
-        )
-
-        assert success is True
-        runtimeImpl = manager._runtimes[RuntimeName.PYTHON]
-        stageSpec = backend.runOneshot.await_args_list[0].kwargs["spec"]
-        assert stageSpec.command == runtimeImpl.stageRun(Path("io"), ["numpy"]).command
-        assert "--upgrade" not in stageSpec.command
-        libsDir = self._libsDir(tmp_path)
-        assert [p.name for p in libsDir.glob("numpy-*.dist-info")] == ["numpy-2.0.dist-info"]
 
 
 # ============================================================================

@@ -60,7 +60,8 @@ timeout-seconds = 600
 memory-mb = 1024
 pids-limit = 256
 
-# Used by scripts/sandbox-bootstrap.py — not by the library itself.
+# Currently unused: the standalone bootstrap script that read this section
+# was removed; packages are installed at runtime via /sandbox install.
 [sandbox.bootstrap]
 starter-packages = [
     "numpy",

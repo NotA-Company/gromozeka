@@ -2294,23 +2294,11 @@ sudo mkdir -p /var/lib/gromozeka/sandbox
 sudo chown $USER /var/lib/gromozeka/sandbox
 ```
 
-Alternatively, use the `--init-storage` flag on the bootstrap script to create the directory with the correct permissions automatically.
-
 ### Building Docker Images
 
-The bootstrap script builds the run and install Docker images defined in `[sandbox.runtimes.python]`:
+`SandboxManager.prepareRuntime()` checks whether each image exists and builds missing images (or rebuilds them when `rebuildImage=True`). No manual build step is required.
 
-```bash
-./venv/bin/python3 scripts/sandbox_bootstrap.py --init-storage
-```
-
-This script:
-
-1. Creates the storage directory (if `--init-storage` is passed) with the configured `dir_mode` and `file_mode`.
-2. Builds the **run image** (`gromozeka-sandbox-python:run`) from `lib/sandbox/runtimes/python/Dockerfile`.
-3. Builds the **install image** (`gromozeka-sandbox-python:install`) from `lib/sandbox/runtimes/python/Dockerfile.install`, which includes the `starter-packages` listed in `[sandbox.bootstrap]`.
-
-Images are also built on demand by `SandboxManager.prepareRuntime()` if they are not present and `image_pull_policy` is not `"never"`.
+Packages are not baked into the images — they are installed into the library pool at runtime via the `/sandbox install` bot command.
 
 ### Configuration
 

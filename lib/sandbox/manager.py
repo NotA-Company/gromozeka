@@ -1006,7 +1006,6 @@ class SandboxManager:
         packages: Sequence[str],
         *,
         runtime: RuntimeName,
-        upgrade: bool = False,
         timeoutSeconds: int | None = None,
     ) -> bool:
         """Install packages into the runtime library pool via staged install + atomic swap.
@@ -1023,21 +1022,10 @@ class SandboxManager:
         inspection (``docker logs <containerId>``). On success the package
         list is refreshed best-effort.
 
-        The ``upgrade`` flag is a documented no-op: pip ``--target`` has no
-        satisfaction check, so a staged install always resolves and
-        installs fresh into the empty delta — there is nothing for
-        ``--upgrade`` to upgrade. The parameter is kept only for
-        ``scripts/sandbox_bootstrap.py`` call compatibility.
-
         Args:
             self: The SandboxManager instance.
             packages: Package specs (PEP 508 names, possibly with version constraints).
             runtime: The runtime to install into.
-            upgrade: Unused; kept for ``scripts/sandbox_bootstrap.py``
-                compatibility. A staged install always resolves fresh —
-                pip ``--target`` performs no satisfaction check, so there
-                is no prior version in the delta for ``--upgrade`` to
-                replace.
             timeoutSeconds: Timeout for the install operation. When None (default),
                 falls back to the runtime's ``install-container.timeout-seconds``
                 config value.

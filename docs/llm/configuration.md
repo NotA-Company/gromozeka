@@ -783,11 +783,11 @@ Default environment variables injected into Python containers. Keys are variable
 
 #### `[sandbox.bootstrap]`
 
-Used by `scripts/sandbox_bootstrap.py` — not by the library itself.
+Currently unused: the standalone bootstrap script that read it was removed; packages are installed into the pool at runtime via `/sandbox install` instead.
 
 | Key | Type | Default | Purpose |
 |---|---|---|---|
-| `starter-packages` | list[str] | `["numpy", "pandas", "matplotlib", ...]` | Packages pre-installed into the install image during bootstrap |
+| `starter-packages` | list[str] | `["numpy", "pandas", "matplotlib", ...]` | Formerly the starter package list pre-installed by the removed bootstrap script |
 
 ---
 

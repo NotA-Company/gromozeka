@@ -123,7 +123,7 @@ per container-runner; no free-form purpose strings at call sites.
 
 ## 5. Work item 3 — Remove sandbox_bootstrap + upgrade= parameter
 
-- [ ] Implement
+- [x] Implement
 
 **What:**
 
@@ -144,8 +144,21 @@ per container-runner; no free-form purpose strings at call sites.
   [`docs/llm/changelog.md`](../llm/changelog.md) entry style: declarative,
   past tense, start with the thing that changed.
 
-**Acceptance:** `make format lint` + `make test` green;
-`rg sandbox_bootstrap` returns nothing; CHANGELOG entry present.
+Amended during implementation: no `Removed` block existed under
+`[Unreleased]`, so one was created (Added → Changed → Removed → Fixed
+order); the pre-existing in-Unreleased `Fixed` entry that named
+`sandbox_bootstrap.py` alongside `/sandbox install` was reworded to drop
+the dead reference (nothing had shipped yet). The now-unread
+`[sandbox.bootstrap]` config section was deliberately KEPT (removal out of
+scope for this item); its docs rows and the `configs/00-defaults/sandbox.toml`
+comment were updated to mark it unused. developer-guide §13 was rewritten
+from script-driven setup to the `prepareRuntime()` on-demand image build
+(its "starter-packages baked into the install image" claim was already
+stale — `Dockerfile.install` is a plain toolchain image).
+
+**Acceptance:** `make format lint` + `make test` green; no live references
+to sandbox_bootstrap outside historical records (frozen plans, archive,
+teamlead memory) and the removal CHANGELOG entry; CHANGELOG entry present.
 
 ## 6. Work item 4 — Single pool walk at update Step 3
 

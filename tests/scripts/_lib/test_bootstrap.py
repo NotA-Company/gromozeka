@@ -15,17 +15,13 @@ Two test groups:
    ``bootstrapProxy`` from ``scripts._lib.bootstrap`` AND calls it AFTER
    ``ConfigManager(...)`` AND BEFORE the first proxy-consuming construct.
 
-   This catches the original regression in ``scripts/check_image_parsing.py``
-   (constructed ``LLMManager`` without proxy init → all providers raised
-   ``TypeError("need to call setGlobalProxyConfig() first")`` → script
-   silently exited with 0 testable models) and the same latent bug that
-   was simultaneously present in ``check_structured_output.py``,
-   ``check_tool_calling.py``, ``run_llm_debug_query.py``, and
-   ``list_models.py``.
-
-   ``scripts/sandbox_bootstrap.py`` is intentionally excluded: it only
-   loads ``[sandbox]`` / ``[storage]`` config and never constructs any
-   proxy-consuming service.
+    This catches the original regression in ``scripts/check_image_parsing.py``
+    (constructed ``LLMManager`` without proxy init → all providers raised
+    ``TypeError("need to call setGlobalProxyConfig() first")`` → script
+    silently exited with 0 testable models) and the same latent bug that
+    was simultaneously present in ``check_structured_output.py``,
+    ``check_tool_calling.py``, ``run_llm_debug_query.py``, and
+    ``list_models.py``.
 """
 
 from __future__ import annotations

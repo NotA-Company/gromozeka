@@ -261,18 +261,18 @@ The container's `timeout` command sends SIGTERM at `timeoutSeconds`, then waits 
 
 Install-container lifecycle: on success the install container is removed (best-effort — a removal failure is logged but does not fail the install); on failure the container is deliberately **kept** so the operator can inspect pip output with `docker logs <containerId>` (the container id is logged in the warning). GC eventually reaps kept containers per `sandbox.gc.orphan-container-retention-minutes`.
 
-### 13. Bootstrap script config lookup uses nested dict access
+### 13. Config lookups use nested dict access
 
-`sandbox_bootstrap.py` accesses the `sandbox` config section via `configManager.get("sandbox", {})` and then navigates nested dicts with `.get()`. **NEVER** use dotted-key access like `configManager.get("sandbox.bootstrap.starter-packages")` — ConfigManager returns nested dicts, not flat dotted-key namespaces.
+Config sections are accessed via `configManager.get("sandbox", {})` and then navigated with nested `.get()` calls. **NEVER** use dotted-key access like `configManager.get("sandbox.gc.orphan-workspace-retention-minutes")` — ConfigManager returns nested dicts, not flat dotted-key namespaces.
 
 ```python
 # CORRECT — nested dict access
 sandboxConfig = configManager.get("sandbox", {})
-bootstrapConfig = sandboxConfig.get("bootstrap", {})
-packages = bootstrapConfig.get("starter-packages", [])
+gcConfig = sandboxConfig.get("gc", {})
+retentionMinutes = gcConfig.get("orphan-workspace-retention-minutes", 60)
 
 # WRONG — dotted key (ConfigManager does not support this)
-packages = configManager.get("sandbox.bootstrap.starter-packages", [])
+retentionMinutes = configManager.get("sandbox.gc.orphan-workspace-retention-minutes", 60)
 ```
 
 ### 14. Startup recovery reconciles stale state
@@ -310,7 +310,6 @@ Invariants and operational facts:
 - **Pool-lock placement (load-bearing, pinned by regression tests):** the flock file lives at `<root>/runtimes/python/pool.lock` — a **sibling** of the swapped `libs/` directory, never inside it. A waiter holding the old inode's lock must not be silently excluded by a swap that replaces the directory containing the lock — therefore `recover()` and any future refactor must never swap the whole `runtimes/python` directory.
 - **Crash window between the two renames:** a hard crash there leaves no pool at the `libs` path; `recover()` (run once on the first cron tick, plus opportunistically before updates) adopts a surviving `<root>/tmp/*/newpool` — renames start only after the merge completed, so it is a complete pool — or restores the sibling `oldpool`. Containers carry a `sandbox.stagingRunId=<runId>` label so GC can tell in-flight staging containers from orphans.
 - **Staging GC:** a `collectAll` pass reaps `<root>/tmp/*` entries older than `sandbox.gc.orphan-workspace-retention-minutes` (default 60 min — in-flight runs take minutes at most, and millisecond-lived `.tmp-*` metadata temp files are never caught).
-- **`upgrade=` on `installRuntimeLibraries` is a documented no-op:** pip `--target` has no satisfaction check, so a staged install always resolves and installs fresh — there is nothing in the empty delta for `--upgrade` to act on. The parameter is kept only because `scripts/sandbox_bootstrap.py` passes it.
 - **In-flight runs:** run containers bind-mount the pool read-only, and Linux bind mounts pin the inode — containers that mounted the pool keep a consistent OLD view after the swap; runs started later get the new pool. Hence the reply note "sandbox runs started before this update keep seeing their previous pool".
 - **Repo checkout required on the host** for the helper mount — the host path is derived as the `install-dockerfile` parent's `pool_pip_runner.py`; a missing helper file raises `ConfigError` before any container starts.
 
@@ -322,14 +321,14 @@ Design and rationale: [`docs/plans/sandbox-update-v1.md`](../plans/sandbox-updat
 
 ### Package installation and updates are admin-only
 
-Package installation and updates in the sandbox are admin-only operations. End users cannot inject arbitrary package specs (URL-based, editable installs, etc.) — only the bot administrator can install or update packages via the bootstrap script or admin commands. `/sandbox install` and `/sandbox update` are additionally bot-owner-only at the handler layer; there is deliberately **no LLM tool** for either (destructive, owner-only — see the non-goals in the update design doc).
+Package installation and updates in the sandbox are admin-only operations. End users cannot inject arbitrary package specs (URL-based, editable installs, etc.) — only the bot administrator can install or update packages via admin commands. `/sandbox install` and `/sandbox update` are additionally bot-owner-only at the handler layer; there is deliberately **no LLM tool** for either (destructive, owner-only — see the non-goals in the update design doc).
 
 The `installRuntimeLibraries` and `updateRuntimeLibraries` methods in `SandboxManager` enforce this security boundary through:
 
 - **Input validation**: The `_validatePackageSpec` method rejects specs containing shell metacharacters (`&`, `|`, `;`, backticks, command substitution) or flag-like specs starting with `-`; pool-derived update-all names are additionally grammar-validated (`isValidCanonicalName`) before entering any argv
 - **Controlled execution**: The pip command is constructed as a single argv list (no shell) from pre-validated specs, with a `--` separator blocking pip option injection; spec-level injection is not possible
 - **Pool isolation**: The live pool is never mounted into a networked container — pip only ever writes to a scratch staging delta (see [Library Pool Mutations](#library-pool-mutations-staged-install--atomic-swap))
-- **Admin-only access**: The methods are only called from admin contexts (bootstrap scripts, admin commands) and never exposed to end-user code execution
+- **Admin-only access**: The methods are only called from admin contexts (admin commands) and never exposed to end-user code execution
 
 This design ensures that package installation remains a privileged operation, protecting against supply chain attacks that would otherwise allow end users to introduce arbitrary Python code via malicious package specs.
 
@@ -352,7 +351,6 @@ DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock" DOCKER_AVAILABLE=1 \
 - 10 Docker integration tests in `tests/lib/sandbox/backends/test_docker.py` (class `TestDockerBackendIntegration`)
 - Gated at the class level with `@skipUnlessDocker` (= `pytest.mark.skipif(not DOCKER_AVAILABLE, ...)`) plus `@pytest.mark.slow`
 - Other classes in the same file (`TestGetClientClientSessionLeak`, `TestRunOneshotContainerCleanup`) are mocked unit tests — they run without Docker
-- `~/.gromozeka-tests/` is used by `tests/scripts/test_sandbox_bootstrap.py` (bootstrap integration tests), not by the Docker backend tests
 - After tests, verify NO "Unclosed connector" warnings in output
 
 ### Singleton state in tests
