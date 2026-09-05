@@ -162,7 +162,7 @@ teamlead memory) and the removal CHANGELOG entry; CHANGELOG entry present.
 
 ## 6. Work item 4 — Single pool walk at update Step 3
 
-- [ ] Implement
+- [x] Implement
 
 **What:**
 
@@ -184,6 +184,17 @@ teamlead memory) and the removal CHANGELOG entry; CHANGELOG entry present.
 
 **Acceptance:** `make format lint` + `make test` green; Step 3 performs
 exactly one dist-info walk; OSError posture documented.
+
+Amended during implementation: the OSError posture was resolved as
+PROPAGATE — the hypothesis held (the unguarded versions walk ran first at
+the Step-3 site, so the duplicates walk's swallow was reachable only in a
+becomes-unreadable-between-calls TOCTOU race), and NO test pinned the
+swallow (`_collectDuplicatePoolNames` had zero direct test callers). The
+merged `_enumeratePoolWithDuplicates` keeps the missing-dir tolerance
+(returns empty results, no raise) that `testMissingHelperRaisesConfigError`
+silently depends on. The §7 keep-as-is entry for `_collectDuplicatePoolNames`
+is superseded by this item's mandated deletion (the other two named helpers
+remain kept as registered).
 
 ## 7. Keep-as-is register (audited 2026-09-05 — do NOT "simplify" these)
 

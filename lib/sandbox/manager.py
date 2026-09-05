@@ -1255,9 +1255,9 @@ class SandboxManager:
         # as the diff baseline and the already-current comparison source
         # (plan §5.1; packages.json is no longer the diff source). Names with
         # multiple dist-info entries are tracked separately: they are forced
-        # outdated so the staged merge heals the duplicates (plan §9).
-        baselineVersions = self._enumeratePoolVersions(libsDir)
-        duplicateNames = self._collectDuplicatePoolNames(libsDir)
+        # outdated so the staged merge heals the duplicates (plan §9). One
+        # enumerateDistInfos walk yields BOTH (plan §6, single pool walk).
+        baselineVersions, duplicateNames = self._enumeratePoolWithDuplicates(libsDir)
 
         # Step 4: Outdated pre-filter — read-only dry-run report container,
         # run BEFORE the pool lock; the live pool is not mounted (plan §4.1
@@ -1809,30 +1809,43 @@ class SandboxManager:
                 versions[canonicalName] = entries[0].version
         return versions
 
-    def _collectDuplicatePoolNames(self, libsDir: Path) -> set[str]:
-        """Find pool names carrying MULTIPLE dist-info entries (duplicate installs).
+    def _enumeratePoolWithDuplicates(self, libsDir: Path) -> tuple[dict[str, str], set[str]]:
+        """Enumerate the pool ONCE into the version map and the duplicate-name set.
 
-        Used by the pre-filter: a duplicated name is always forced into the
-        outdated set because the pip report can match at most one of its
-        dist-infos, and only a staged merge removes every old dist-info
-        (healing the duplicates, plan §9).
+        Collapses the former back-to-back versions + duplicate-names walks at
+        the update Step-3 site (plan §6): one ``enumerateDistInfos`` pass
+        yields both the canonical name → version snapshot (first entry when
+        legacy duplicate installs exist) and the names carrying MULTIPLE
+        dist-info entries. The duplicate names are forced outdated by the
+        pre-filter so the staged merge heals the duplicates (plan §9).
+
+        OSError posture: for a stable pool this single walk is equivalent
+        to the former call pair; errors from the sole enumeration propagate;
+        the removed second walk was the only location that swallowed
+        OSError. A missing or non-directory pool is NOT an error: empty
+        results are returned (the pre-filter then treats every spec as
+        outdated).
 
         Args:
             self: The SandboxManager instance.
             libsDir: The library pool directory to enumerate.
 
         Returns:
-            Set of canonical names with more than one dist-info entry; empty
-            when the pool directory cannot be enumerated.
+            Tuple of (canonical name → version map using the first dist-info
+            entry when legacy duplicate installs exist, set of canonical
+            names with more than one dist-info entry); both empty when the
+            pool directory does not exist yet.
         """
         if not libsDir.is_dir():
-            return set()
-        try:
-            inventory = enumerateDistInfos(libsDir)
-        except OSError as exc:
-            logger.warning("update: cannot enumerate pool duplicates for %s: %s", libsDir, exc)
-            return set()
-        return {canonicalName for canonicalName, entries in inventory.items() if len(entries) > 1}
+            return {}, set()
+        versions: dict[str, str] = {}
+        duplicateNames: set[str] = set()
+        for canonicalName, entries in enumerateDistInfos(libsDir).items():
+            if entries:
+                versions[canonicalName] = entries[0].version
+            if len(entries) > 1:
+                duplicateNames.add(canonicalName)
+        return versions, duplicateNames
 
     async def _collectUpdateAllNames(self, runtime: RuntimeName, libsDir: Path) -> set[str]:
         """Build the update-all name set: pool enumeration ∪ packages.json (plan §6).

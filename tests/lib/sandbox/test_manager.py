@@ -68,6 +68,7 @@ from lib.sandbox.config import (
 from lib.sandbox.enums import RuntimeName
 from lib.sandbox.errors import ConfigError, InvalidPackageSpec, LibraryPoolLocked, PoolSwapRollbackFailed
 from lib.sandbox.manager import STAGING_IO_DIRNAME, SandboxManager, _diffPoolVersions
+from lib.sandbox.runtimes.python.pool_staging import DistInfoEntry
 from lib.sandbox.runtimes.python.runtime import PythonRuntime
 from lib.sandbox.types import ContainerOutcome, ContainerSpec, PackageInfo, PackageUpdate, RunResult
 
@@ -1995,9 +1996,17 @@ class TestUpdateRuntimeLibraries:
 
         The pre-filter's baseline picks the first enumerated dist-info
         version; if that one matches the pip report the package used to be
-        classified up-to-date and the duplicates were never healed. Forcing
-        duplicated names into the outdated set sends them through the staged
-        merge, which removes every old dist-info (plan §9).
+        classified up-to-date and the duplicates were never healed. BOTH
+        duplicate dist-infos here parse to the SAME version ("1.0") and the
+        pip report pins that exact version, so the ordinary version-mismatch
+        path can never fire and ONLY the duplicate-name guard can force the
+        package into the outdated set — deterministically, regardless of
+        iterdir order (production re-enumerates the pool in a second
+        independent walk, so with differing duplicate versions the
+        unordered scans could disagree and let this test pass via the
+        mismatch path even with the guard broken). The forced outdated
+        classification sends the name through the staged merge, which
+        removes every old dist-info (plan §9).
 
         Args:
             tmp_path: pytest-provided temporary directory.
@@ -2007,22 +2016,22 @@ class TestUpdateRuntimeLibraries:
         """
         libsDir = self._libsDir(tmp_path)
         _makeDistInfo(libsDir, "foo-1.0.dist-info", name="foo", version="1.0", payloadFiles=["foo/__init__.py"])
-        _makeDistInfo(libsDir, "foo-2.0.dist-info", name="foo", version="2.0", payloadFiles=["foo/core.py"])
+        _makeDistInfo(libsDir, "foo-legacy-1.0.dist-info", name="foo", version="1.0", payloadFiles=["foo/legacy.py"])
 
         backend = _makeMockBackend(_makeContainerOutcome(exitCode=0))
         manager = self._makeManager(tmp_path, backend)
 
-        # The report resolves foo to EXACTLY the version the baseline
-        # enumeration picks — iterdir order is not deterministic (APFS
-        # returned foo-2.0 first), so a hard-coded "1.0" let the test
-        # pass even without the duplicate guard whenever the mismatch
-        # alone forced the spec outdated. With report == baseline the
-        # version comparison classifies the spec up-to-date, and ONLY
-        # the duplicate guard can force it into the staged heal path.
-        reportVersion = manager._enumeratePoolVersions(libsDir)["foo"]
+        # Identical parsed versions make the version comparison classify
+        # the spec up-to-date no matter which duplicate the first-entry
+        # selection picks — only the duplicate guard can force it into the
+        # staged heal path. The helper call here pins the duplicate set
+        # only; the report version is hard-coded, never derived from this
+        # test's own walk.
+        _, duplicateNames = manager._enumeratePoolWithDuplicates(libsDir)
+        assert duplicateNames == {"foo"}, "the helper must flag the duplicated name"
         backend.runOneshot = AsyncMock(
             side_effect=_oneshotSequence(
-                _reportSideEffect({"foo": reportVersion}),
+                _reportSideEffect({"foo": "1.0"}),
                 _deltaSideEffect({"foo": "3.0"}),
                 _makeContainerOutcome(exitCode=0, containerId="list-cid"),
             )
@@ -2034,7 +2043,80 @@ class TestUpdateRuntimeLibraries:
         assert result.upToDate == [], "the duplicated name must not be classified up-to-date"
         assert (libsDir / "foo-3.0.dist-info").is_dir()
         assert not (libsDir / "foo-1.0.dist-info").exists()
-        assert not (libsDir / "foo-2.0.dist-info").exists(), "the merge must heal duplicate dist-infos"
+        assert not (libsDir / "foo-legacy-1.0.dist-info").exists(), "the merge must heal duplicate dist-infos"
+
+    def testEnumeratePoolWithDuplicatesVersionsAndDuplicateNames(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_enumeratePoolWithDuplicates walks ONCE and pins FIRST-entry selection.
+
+        Uses a controlled ``enumerateDistInfos`` spy — patched at the
+        manager module's imported reference (manager.py binds it with a
+        ``from`` import) — returning a deterministic inventory, so the
+        merged Step-3 helper's invariants (plan §6) are pinned exactly:
+        the enumeration runs EXACTLY ONCE per call, the version map keeps
+        the FIRST dist-info entry per name, and names carrying multiple
+        entries land in the duplicate set. None of that is pinnable against
+        a real-filesystem scan, where iterdir order is not deterministic
+        (APFS).
+
+        Args:
+            tmp_path: pytest-provided temporary directory.
+            monkeypatch: pytest monkeypatch fixture.
+
+        Returns:
+            None
+        """
+        libsDir = self._libsDir(tmp_path)
+        libsDir.mkdir(parents=True)
+        spyPoolRoots: list[Path] = []
+
+        def spyEnumerateDistInfos(poolRoot: Path) -> dict[str, list[DistInfoEntry]]:
+            """Deterministic stand-in for the real dist-info enumeration.
+
+            Args:
+                poolRoot: Pool directory handed to the helper.
+
+            Returns:
+                A fixed two-entry "foo" inventory (versions 1.0 and 2.0)
+                plus a single-entry "bar" (version 0.9).
+            """
+            spyPoolRoots.append(poolRoot)
+            return {
+                "foo": [
+                    DistInfoEntry(path=poolRoot / "foo-1.0.dist-info", version="1.0"),
+                    DistInfoEntry(path=poolRoot / "foo-2.0.dist-info", version="2.0"),
+                ],
+                "bar": [DistInfoEntry(path=poolRoot / "bar-0.9.dist-info", version="0.9")],
+            }
+
+        monkeypatch.setattr("lib.sandbox.manager.enumerateDistInfos", spyEnumerateDistInfos)
+
+        manager = self._makeManager(tmp_path, _makeMockBackend(_makeContainerOutcome(exitCode=0)))
+        versions, duplicateNames = manager._enumeratePoolWithDuplicates(libsDir)
+
+        assert spyPoolRoots == [libsDir], "the helper must perform EXACTLY ONE enumeration walk"
+        assert versions == {"foo": "1.0", "bar": "0.9"}, "the FIRST enumerated entry per name must win"
+        assert duplicateNames == {"foo"}
+
+    def testEnumeratePoolWithDuplicatesMissingPoolYieldsEmpty(self, tmp_path: Path) -> None:
+        """_enumeratePoolWithDuplicates tolerates a MISSING pool directory.
+
+        The pre-check flow relies on a missing libs dir yielding empty
+        results instead of raising.
+
+        Args:
+            tmp_path: pytest-provided temporary directory.
+
+        Returns:
+            None
+        """
+        manager = self._makeManager(tmp_path, _makeMockBackend(_makeContainerOutcome(exitCode=0)))
+
+        versions, duplicateNames = manager._enumeratePoolWithDuplicates(self._libsDir(tmp_path))
+
+        assert versions == {}
+        assert duplicateNames == set()
 
     async def testUpdateAllAdoptsCrashLeftoverBeforeCollectingNames(self, tmp_path: Path) -> None:
         """update-all must adopt crash leftovers before enumerating the pool.
