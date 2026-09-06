@@ -2,7 +2,7 @@
 category: reference
 ---
 
-# lib/db extraction (discussion opened 2026-08-23 — NOT yet ratified/implemented)
+# lib/db + lib/cache extraction (ADR-022/ADR-024) — COMPLETE 2026-08-23..25
 
 Archived durable notes from [`teamlead-memory.md`](../teamlead-memory.md) (extracted 2026-09-02). See the live compact memory there for cross-cutting rules and workflow lessons.
 

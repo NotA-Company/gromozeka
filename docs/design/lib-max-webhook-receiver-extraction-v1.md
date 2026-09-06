@@ -116,7 +116,7 @@ Why move it at all:
    chain at startup (`app.py:305` → `database.manager.getProvider()` → the wrapper's
    migration init-hook registered at `internal/database/database.py:268`). Two processes
    racing migrations is a known limitation
-   ([`docs/llm/memories/max-webhook-support.md`](../llm/memories/max-webhook-support.md):54).
+   ([`docs/archive/llm-memories/max-webhook-support.md`](../archive/llm-memories/max-webhook-support.md):54).
    With lib-owned DDL + self-heal, the receiver never runs migrations at all.
    *(Amended 2026-08-25: the severance is now by OWNERSHIP, not merely by bypassing the
    wrapper — the receiver has its own `DatabaseManager` over its own config section and its
@@ -185,7 +185,7 @@ the D16 CHANGELOG line gains the new invocation (dated note in D16).)*
   go to `lib/db/`); `BaseRepository` is not moved to lib (D6).
 - **NG3** — No new dependency-management changes: `aiohttp==3.14.3` is already a direct pinned
   dependency (promoted during the original webhook work,
-  [`docs/llm/memories/max-webhook-support.md`](../llm/memories/max-webhook-support.md):29);
+  [`docs/archive/llm-memories/max-webhook-support.md`](../archive/llm-memories/max-webhook-support.md):29);
   `python-dateutil` likewise already direct.
 - **NG4** — No restructuring of the receiver's HTTP semantics (no new auth modes, no
   long-poll rework — the 0.5s busy-poll and the types-param gap carry over; §8).
@@ -2075,7 +2075,7 @@ commits: `Move Max webhook receiver to lib/max_webhook_receiver`.
   — *(added 2026-08-25)* database-README :92 schema-list entry and :512-513 repository
   entry REMOVED (bot database no longer has the table/repository); migrations README:
   table row for 029 + `Total Migrations` 28 → 29 (:134) + file-list entry (:52 area).
-- [`docs/llm/memories/max-webhook-support.md`](../llm/memories/max-webhook-support.md) — Files
+- [`docs/archive/llm-memories/max-webhook-support.md`](../archive/llm-memories/max-webhook-support.md) — Files
   section repointed; add a line: implementation now in lib, launcher thin, receiver no longer
   runs migrations (self-heal). *(Amended 2026-08-25: also — receiver owns its database file
   (`webhook_receiver_data.db` via `[webhook-receiver.database]`); the cross-process
@@ -2250,7 +2250,7 @@ still needs no action.)*
 
 | Risk / wrinkle | Severity | Mitigation / argument |
 |---|---|---|
-| **Carried-over limitations** (unchanged by design, see ADR-013 memory): busy-poll every 0.5s; marker advance on handler error defeats at-least-once; `types` param ignored; duplicate delivery if `markProcessed` fails | Accepted | Out of scope (NG4); tracked in [`docs/llm/memories/max-webhook-support.md`](../llm/memories/max-webhook-support.md) §Known limitations. *(Amended 2026-08-25: the cross-process migration guard item is REMOVED from the carry-over list — MOOT, the databases are fully separate (D12); the two-DB-files note below is ADDED to the operational list.)* |
+| **Carried-over limitations** (unchanged by design, see ADR-013 memory): busy-poll every 0.5s; marker advance on handler error defeats at-least-once; `types` param ignored; duplicate delivery if `markProcessed` fails | Accepted | Out of scope (NG4); tracked in [`docs/archive/llm-memories/max-webhook-support.md`](../archive/llm-memories/max-webhook-support.md) §Known limitations. *(Amended 2026-08-25: the cross-process migration guard item is REMOVED from the carry-over list — MOOT, the databases are fully separate (D12); the two-DB-files note below is ADDED to the operational list.)* |
 | **Removed receiver-side migration execution surprises an operator** who relied on the receiver to bring up a fresh shared DB | Low | Documented in ADR-025 + max-webhook-setup note (Arc 3): the receiver self-heals its own table; the bot remains responsible for the full chain — which matches every documented deployment (init.d orders receiver before bot, but the bot still migrates on ITS start). *(Amended 2026-08-25: reworded reality — the receiver self-heals its OWN database's complete schema (table + index, D15); there is no shared DB to bring up.)* |
 | **Destructive drop: migration_029 loses pending `webhook_updates` rows** — any unprocessed rows in an existing main DB are deleted when 029 applies | Accepted (user, pre-prod) | User-ratified acceptance: deployments are pre-production and the table is a transient buffer (TTL 1h); operators upgrading mid-flight should let the bot drain the queue (or stop Max webhooks) before upgrading. `down()` restores the (empty) table. Documented in the CHANGELOG entry (D16). |
 | **Two DB files on disk** — `bot_data.db` + `webhook_receiver_data.db`; operational awareness needed | Low | Both live at the repo root; both gitignored (`/*.db`). Backups must cover the receiver file too — documented in max-webhook-setup.md (Arc 3, D12 note) and the ADR-025 "Why". |
@@ -2324,7 +2324,7 @@ sketch (no `ConfigManager`). Still none blocking.)*
   — ADR-023, the `manager=` constructor precedent D5/D6 follow.
 - [`docs/llm/architecture.md`](../llm/architecture.md) — ADR-013 (:443-483, architecture
   unchanged by this move), ADR-024 (:881, highest existing; ADR-025 drafted in §6 here).
-- [`docs/llm/memories/max-webhook-support.md`](../llm/memories/max-webhook-support.md) —
+- [`docs/archive/llm-memories/max-webhook-support.md`](../archive/llm-memories/max-webhook-support.md) —
   receiver architecture context, post-review fixes, known limitations that carry over.
 - [`docs/llm/teamlead-memory.md`](../llm/teamlead-memory.md) — the extraction task record
   (:142-156) incl. the ratified decision forks.

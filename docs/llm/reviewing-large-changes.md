@@ -107,6 +107,7 @@ The output is a **classification table** with columns: feature batch slug, file 
 ### 3.2 Batch Size Guardrails
 
 - **Target:** 15-20 files per batch. This fits within the `code-reviewer` agent's typical ~60 step budget.
+- **Density adjustment (refined 2026-08-08):** 15-20 is right for typical code; dense production code with external I/O dependencies (async HTTP, PyAV, boto3) batches at **4-5 files**; light-depth docs (~16 files) and config files (~4) are fine at their natural sizes. Campaign record with the refinement rationale: [`memories/stt-media-transcription.md`](memories/stt-media-transcription.md).
 - **Upper bound:** 24 files. Above this, split the feature into sub-batches (e.g., data layer vs. handler layer within the same feature).
 - **Lower bound:** No strict lower limit. A 3-file batch is fine; a single-file batch is also valid if it represents an independent concern (e.g., a standalone migration).
 
@@ -202,7 +203,7 @@ When certain risk tags appear in a batch, the orchestrator must append domain-sp
 
 #### `[NEW-HANDLER]`
 
-- `LLMMessageHandler` ordering invariant: new handler is registered **before** `LLMMessageHandler` in `HandlersManager` (line ~534 in `manager.py`).
+- `LLMMessageHandler` ordering invariant: new handler is registered **before** `LLMMessageHandler` in `HandlersManager` (line ~639 in `manager.py`).
 - camelCase naming on all methods and variables in the handler.
 - `BaseBotHandler` pattern compliance: extends `BaseBotHandler`, calls `super().__init__()`, implements `newMessageHandler()` returning `HandlerResultStatus`.
 - Config-gating: if feature is optional, registered conditionally via `configManager.get(...)` check.

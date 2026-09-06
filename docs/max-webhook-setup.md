@@ -12,8 +12,8 @@ standalone **receiver** accepts Max's webhook POSTs and buffers them in the
 `GET /updates` instead of `platform-api2.max.ru`.
 
 > Prerequisite reading: [`docs/llm/architecture.md`](llm/architecture.md)
-> ADR-013 and the durable implementation notes in
-> [`docs/llm/memories/max-webhook-support.md`](llm/memories/max-webhook-support.md).
+> ADR-013 and the archived implementation notes in
+> [`docs/archive/llm-memories/max-webhook-support.md`](archive/llm-memories/max-webhook-support.md).
 
 ## How it fits together
 

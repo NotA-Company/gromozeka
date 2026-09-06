@@ -2,9 +2,11 @@
 category: reference
 ---
 
+> **Archived 2026-09-06** — superseded agent memory file, moved from `docs/llm/memories/`. Excluded from the markdown-mcp index/search; see [README.md](README.md) for the per-file index.
+
 # Large Review Campaign Lessons (2026-06-28)
 
-Archived durable notes from [`../teamlead-memory.md`](../teamlead-memory.md) (extracted 2026-07-18). See the live compact memory there for cross-cutting rules and workflow lessons.
+Archived durable notes from [`../../llm/teamlead-memory.md`](../../llm/teamlead-memory.md) (extracted 2026-07-18). See the live compact memory there for cross-cutting rules and workflow lessons.
 
 - Ran a 78-file review across 6 batches. Key learnings:
   - **Parallel dispatch works**: 6 `code-reviewer` agents dispatched in a single message, all completed independently. Read-only agents have zero conflicts.

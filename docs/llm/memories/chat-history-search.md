@@ -463,6 +463,7 @@ Five review findings addressed, then two further user decisions applied:
   files, be explicit about which files to NOT touch.
 - **`code-reviewer` subagent may return empty results** in some sessions. If it does twice, fall
   back to `general` agent for the review — use the same prompt structure, just route through
+  `general`.
 
 ## Post-Step-2 Enhancements — `search_messages` params (2026-07-15)
 
@@ -489,4 +490,3 @@ made the previously-stale "search_messages works regardless of EMBEDDINGS_ENABLE
 
 The 2026-06-28 decision to "drop client-side keyword matching" (above) is **not** reversed —
 `substring` is a DB-side `LIKE` filter, not a post-search client-side filter.
-  `general`.

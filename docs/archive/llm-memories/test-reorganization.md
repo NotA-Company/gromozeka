@@ -2,13 +2,15 @@
 category: reference
 ---
 
+> **Archived 2026-09-06** — superseded agent memory file, moved from `docs/llm/memories/`. Excluded from the markdown-mcp index/search; see [README.md](README.md) for the per-file index.
+
 # Test Reorganization Task Memory
 
 Durable task-specific memory for the completed test reorganization work (2026-05-21).
 
 How to use this file:
 - Read it when moving tests, changing test layout conventions, or debugging test discovery issues.
-- Keep only test-layout-scoped discoveries here; move repo-wide lessons back to [`../teamlead-memory.md`](../teamlead-memory.md).
+- Keep only test-layout-scoped discoveries here; move repo-wide lessons back to [`../../llm/teamlead-memory.md`](../../llm/teamlead-memory.md).
 - Never store secrets, tokens, `.env` values, or raw logs.
 
 ## Summary

@@ -13,8 +13,8 @@ How to use this file:
 
 ## Repo Facts And Gotchas
 
-- `lib/sandbox/bootstrap.py` does NOT exist, and the former standalone bootstrap script `scripts/sandbox_bootstrap.py` was removed 2026-09-05 (owner never used it — see `docs/plans/sandbox-update-simplification-v1.md` item 3, together with the `upgrade=` no-op parameter on `installRuntimeLibraries`). Starter setup happens via `/sandbox install`; images build on demand via `SandboxManager.prepareRuntime()`.
-- `lib/sandbox/` has 19 non-test Python files total (across main dir, `backends/`, `runtimes/`, `metadata/`).
+- `lib/sandbox/bootstrap.py` does NOT exist, and the former standalone bootstrap script `scripts/sandbox_bootstrap.py` was removed 2026-09-05 (owner never used it — see [`docs/archive/plans/sandbox-update-simplification-v1.md`](../../archive/plans/sandbox-update-simplification-v1.md) item 3, together with the `upgrade=` no-op parameter on `installRuntimeLibraries`). Starter setup happens via `/sandbox install`; images build on demand via `SandboxManager.prepareRuntime()`.
+- `lib/sandbox/` has 21 non-test Python files total (re-measured 2026-09-06, was 19; across main dir, `backends/`, `runtimes/`, `metadata/`).
 - Returns sections in `lib/sandbox/` use plain descriptions without type prefixes (e.g., `The resolved Path.` not `Path: The resolved path.`).
 - `runtimes/__init__.py` now has `from .base import Runtime` + `__all__ = ["Runtime"]` for consistency with `backends/` and `metadata/` subpackages.
 - Pre-existing import issue: `from lib.sandbox.storage import sessionHash` reported in `filesystem.py` was investigated and NOT reproducible. Likely stale `.pyc` cache.

@@ -2,6 +2,9 @@
 category: reference
 ---
 
+> **Archived 2026-09-06** — superseded agent memory file, moved from `docs/llm/memories/`. Excluded from the markdown-mcp index/search; see [README.md](README.md) for the per-file index.
+> Archive check 2026-09-06: the 4 "Patterns established" bullets below are NOT covered by `docs/llm/index.md` §3.3 (which carries only the blanket no-`Any` + concrete-singleton-typing rule) — preserved here as history only.
+
 # Any Type Cleanup
 
 Durable notes from the repo-wide `Any` type annotation audit and cleanup (2026-06-28). Read this when working on type annotations, encountering `Any` usage, or setting up type narrowing patterns.

@@ -2,6 +2,8 @@
 category: reference
 ---
 
+> **Archived 2026-09-06** — superseded agent memory file, moved from `docs/llm/memories/`. Excluded from the markdown-mcp index/search; see [README.md](README.md) for the per-file index.
+
 # Dedoodization
 
 Durable notes from the repo-wide removal of "dood" from comments, docstrings, log messages, and error messages (2026-07-02).

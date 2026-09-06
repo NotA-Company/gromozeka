@@ -2,7 +2,7 @@
 category: reference
 ---
 
-# User Memories (v1) — Task Memory
+# User Memories — Task Memory
 
 Durable implementation notes for the **unified per-`(chat, user, thread)`
 structured memory system** that replaced the legacy rolling-bio summary.
