@@ -781,14 +781,6 @@ Default environment variables injected into Python containers. Keys are variable
 | `memory-mb` | int | `1024` | Memory limit for the install container in megabytes |
 | `pids-limit` | int | `256` | Maximum PIDs inside the install container |
 
-#### `[sandbox.bootstrap]`
-
-Currently unused: the standalone bootstrap script that read it was removed; packages are installed into the pool at runtime via `/sandbox install` instead.
-
-| Key | Type | Default | Purpose |
-|---|---|---|---|
-| `starter-packages` | list[str] | `["numpy", "pandas", "matplotlib", ...]` | Formerly the starter package list pre-installed by the removed bootstrap script |
-
 ---
 
 ### `[webhook-receiver]`

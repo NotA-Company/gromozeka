@@ -59,17 +59,3 @@ PYTHONPATH = "/sandbox/libs"
 timeout-seconds = 600
 memory-mb = 1024
 pids-limit = 256
-
-# Currently unused: the standalone bootstrap script that read this section
-# was removed; packages are installed at runtime via /sandbox install.
-[sandbox.bootstrap]
-starter-packages = [
-    "numpy",
-    "pandas",
-    "matplotlib",
-    "scipy",
-    "sympy",
-    "scikit-learn",
-    "pillow",
-    "requests",
-]

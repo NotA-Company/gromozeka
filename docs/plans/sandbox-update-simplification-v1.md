@@ -220,3 +220,9 @@ Items 1-4 are independent; land as separate commits in numbered order. Items
 Every commit: `make format lint` + `make test` green, checkbox ticked in this
 file, commit message imperative (repo style, cf. "Add /sandbox update command
 via staged install and atomic pool swap").
+
+## 9. Follow-ups
+
+- [x] Delete the dead `[sandbox.bootstrap]` config section (`starter-packages` key — unused since work item 3).
+- [ ] Remove the dead `image-pull-policy` setting.
+- [ ] Relocate the real-Docker end-to-end install test to `tests/lib/sandbox/`.
