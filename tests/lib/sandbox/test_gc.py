@@ -13,9 +13,19 @@ Covers:
   run dir survive (in-flight update protection); with the run dir gone (or no
   label at all) aged containers are reaped.
 - GC disabled returns a disabled message and removes nothing.
+- Backend failure ≠ empty list: a ``listManagedContainers`` connection
+  failure is swallowed by ``collectOrphanContainers`` (early return, no
+  error recorded) and is pinned by a dedicated manager-level test, separate
+  from the empty-list path the other integration tests exercise.
 - Library pool directories are untouched by GC.
 - Full cycle: mixed sessions, runs, orphans; GcResult counts are accurate.
 - Empty GC: running on empty storage returns all zeros.
+- SandboxManager.collectGarbage integration: the manager is built through
+  ``getInstance()`` and ``swapBackend()`` (shared helper, defined in
+  ``tests/lib/sandbox/conftest.py``) then installs a mock backend into BOTH
+  constructor-time captures, so these tests never perform real Docker I/O
+  regardless of ``DOCKER_HOST`` (a live daemon used to expose them to real
+  container list/kill/remove calls behind the GC's swallowed errors).
 """
 
 import os
@@ -35,6 +45,7 @@ from lib.sandbox.metadata.base import SessionInfo
 from lib.sandbox.metadata.filesystem import FilesystemMetadataStore
 from lib.sandbox.storage import sessionHash
 from lib.sandbox.types import GcResult, ManagedContainerInfo, RunInfo
+from tests.lib.sandbox.conftest import swapBackend
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -155,6 +166,27 @@ def _ageDir(directory: Path, ageMinutes: float) -> None:
     """
     oldTime = time.time() - (ageMinutes * 60)
     os.utime(directory, (oldTime, oldTime))
+
+
+def _makeGcMockBackend() -> MagicMock:
+    """Build a mock backend standing in for the manager's real DockerBackend.
+
+    ``listManagedContainers`` resolves to ``[]`` — the same "no managed
+    containers" outcome ``collectOrphanContainers()`` produced on CI, where
+    the daemon was unreachable and its connection failure was swallowed —
+    so the ``SandboxManager.collectGarbage`` integration tests keep the
+    exact semantics they effectively ran under while making every backend
+    interaction observable (await counts) and inert (no daemon contact).
+
+    Returns:
+        A MagicMock backend with async list/kill/remove/close methods.
+    """
+    backend = MagicMock()
+    backend.listManagedContainers = AsyncMock(return_value=[])
+    backend.killContainer = AsyncMock(return_value=None)
+    backend.removeContainer = AsyncMock(return_value=None)
+    backend.close = AsyncMock(return_value=None)
+    return backend
 
 
 # ---------------------------------------------------------------------------
@@ -851,7 +883,30 @@ class TestCollectAll:
 
 
 class TestSandboxManagerCollectGarbage:
-    """Integration tests for SandboxManager.collectGarbage."""
+    """Integration tests for SandboxManager.collectGarbage.
+
+    The manager is built through ``getInstance()`` (so the real
+    constructor-time backend captures exist) and ``swapBackend()`` then
+    installs a mock backend into BOTH captures — ``manager._backend`` and
+    ``manager._gc._backend``. Without the swap, ``collectGarbage()`` →
+    ``_gc.collectAll()`` → ``collectOrphanContainers()`` performed REAL
+    Docker I/O whenever ``DOCKER_HOST`` resolved to a live daemon: listing
+    managed containers and kill/removing any ``sandbox.managed`` container
+    older than the 10-minute default retention. On daemon-less CI the same
+    tests passed only because the GC swallows backend connection failures —
+    which is exactly why the hazard stayed latent. The mock's empty
+    ``listManagedContainers`` result reproduces the CI semantics exactly
+    (no containers, no kill/remove, no errors). The await-count assertions
+    are load-bearing only on the enabled-path tests: the swapped mock is
+    the only backend reference left on the manager and the GC, so an
+    asserted count can only be met by calls reaching the mock — any
+    real-backend consultation leaves the asserted counts unmet. On the
+    disabled path ``assert_not_awaited`` proves the short-circuit, not the
+    swap — the ``is backend`` identity assertions there pin the swap
+    wiring itself. A dedicated test additionally pins the
+    swallowed-exception branch: backend failure means an early return with
+    no error recorded, distinct from the empty-list path's metadata scan.
+    """
 
     async def test_gcDisabledReturnsDisabledMessage(self, tmp_path: Path) -> None:
         """When gc.enabled=False, collectGarbage returns a disabled message and removes nothing."""
@@ -859,6 +914,11 @@ class TestSandboxManagerCollectGarbage:
         SandboxManager.injectConfig(config)
 
         manager = SandboxManager.getInstance()
+        backend = _makeGcMockBackend()
+        swapBackend(manager, backend)
+        # These identities pin the swap wiring; the not-awaited assertion below proves the disabled short-circuit.
+        assert manager._backend is backend
+        assert manager._gc._backend is backend
 
         # Create a session that would normally be expired
         now = datetime.now(timezone.utc)
@@ -881,12 +941,18 @@ class TestSandboxManagerCollectGarbage:
         loaded = await manager._metadata.loadSession("should-survive")
         assert loaded is not None
 
+        # No-daemon proof: the disabled short-circuit must return before ANY
+        # backend call.
+        backend.listManagedContainers.assert_not_awaited()
+
     async def test_gcEnabledRemovesExpiredSessions(self, tmp_path: Path) -> None:
         """When gc.enabled=True, collectGarbage removes expired sessions."""
         config = _makeConfig(tmp_path, gcEnabled=True)
         SandboxManager.injectConfig(config)
 
         manager = SandboxManager.getInstance()
+        backend = _makeGcMockBackend()
+        swapBackend(manager, backend)
 
         now = datetime.now(timezone.utc)
         sHash = sessionHash("expired-sess")
@@ -900,12 +966,22 @@ class TestSandboxManagerCollectGarbage:
         assert result.removedSessions >= 1
         assert await manager._metadata.loadSession("expired-sess") is None
 
+        # No-daemon proof: the swapped mock is the ONLY backend the manager
+        # and the GC hold, so the single list pass below is the entire Docker
+        # interaction of the run — and it never leaves the mock. Session GC
+        # must not reap any container.
+        assert backend.listManagedContainers.await_count == 1
+        backend.killContainer.assert_not_awaited()
+        backend.removeContainer.assert_not_awaited()
+
     async def test_libraryPoolUntouched(self, tmp_path: Path) -> None:
         """GC does not remove the library pool directory (runtimes/python/libs)."""
         config = _makeConfig(tmp_path, gcEnabled=True, orphanWorkspaceRetentionMinutes=1)
         SandboxManager.injectConfig(config)
 
         manager = SandboxManager.getInstance()
+        backend = _makeGcMockBackend()
+        swapBackend(manager, backend)
 
         # Create a library pool directory structure
         rootDir = Path(config.storage.rootDir)
@@ -929,12 +1005,19 @@ class TestSandboxManagerCollectGarbage:
         # Orphan should be gone
         assert not orphanDir.exists()
 
+        # No-daemon proof (same contract as test_gcEnabledRemovesExpiredSessions)
+        assert backend.listManagedContainers.await_count == 1
+        backend.killContainer.assert_not_awaited()
+        backend.removeContainer.assert_not_awaited()
+
     async def test_gcOnEmptyStorage(self, tmp_path: Path) -> None:
         """Running GC on empty storage returns all zeros."""
         config = _makeConfig(tmp_path, gcEnabled=True)
         SandboxManager.injectConfig(config)
 
         manager = SandboxManager.getInstance()
+        backend = _makeGcMockBackend()
+        swapBackend(manager, backend)
 
         result = await manager.collectGarbage()
         assert result.removedContainers == 0
@@ -942,3 +1025,48 @@ class TestSandboxManagerCollectGarbage:
         assert result.removedRuns == 0
         assert result.removedOrphans == 0
         assert result.errors == []
+
+        # No-daemon proof (same contract as test_gcEnabledRemovesExpiredSessions)
+        assert backend.listManagedContainers.await_count == 1
+        backend.killContainer.assert_not_awaited()
+        backend.removeContainer.assert_not_awaited()
+
+    async def test_gcSwallowsBackendFailureAndReturnsCleanResult(self, tmp_path: Path) -> None:
+        """A failing listManagedContainers is swallowed: clean GcResult, no error recorded.
+
+        Backend failure ≠ empty list: the shared mock's ``[]`` return keeps
+        GC on the normal path (active-run metadata scan), while a
+        daemon-unreachable ``ConnectionError`` hits the swallow branch at
+        gc.py:170-174 — logged warning, early ``return 0``, no entry in
+        ``GcResult.errors``. Pinned at the manager seam: ``collectGarbage()``
+        must not raise, must keep the all-zero result shape untouched, and
+        the single failed list must be the entire backend interaction (the
+        early return skips the metadata scan, so no container can be
+        reaped).
+        """
+        config = _makeConfig(tmp_path, gcEnabled=True)
+        SandboxManager.injectConfig(config)
+
+        manager = SandboxManager.getInstance()
+        backend = _makeGcMockBackend()
+        backend.listManagedContainers = AsyncMock(side_effect=ConnectionError("Docker daemon unavailable"))
+        swapBackend(manager, backend)
+
+        # The swallowed failure must not propagate out of the manager call.
+        result = await manager.collectGarbage()
+
+        # Swallow branch (early return BEFORE the metadata scan): the clean
+        # all-zeros shape with NO error recorded — exactly what daemon-less
+        # CI observed with the real unreachable daemon.
+        assert isinstance(result, GcResult)
+        assert result.removedContainers == 0
+        assert result.removedSessions == 0
+        assert result.removedRuns == 0
+        assert result.removedOrphans == 0
+        assert result.errors == []
+
+        # The failed list call is the whole backend interaction: no
+        # kill/remove can follow an early return.
+        assert backend.listManagedContainers.await_count == 1
+        backend.killContainer.assert_not_awaited()
+        backend.removeContainer.assert_not_awaited()
