@@ -7,3 +7,10 @@
 
 [docs]
 root = "./docs"
+exclude = ["archive/"]
+writable = true
+rescan_interval = 30
+
+[index]
+#location = "./.markdown-mcp/index.db"
+#model = "e5-small"
