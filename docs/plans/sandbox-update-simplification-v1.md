@@ -225,4 +225,14 @@ via staged install and atomic pool swap").
 
 - [x] Delete the dead `[sandbox.bootstrap]` config section (`starter-packages` key — unused since work item 3).
 - [x] Remove the dead `image-pull-policy` setting.
-- [ ] Relocate the real-Docker end-to-end install test to `tests/lib/sandbox/`.
+- [x] Relocate the real-Docker end-to-end install test to `tests/lib/sandbox/`.
+  Amendment: the relocated test (`tests/lib/sandbox/test_install_integration.py`)
+  is behavior-focused and CLI-independent — it constructs `SandboxManager`
+  directly against a per-run `~/.gromozeka-tests/` storage root (desktop Docker
+  VMs only share `/Users`) instead of driving the deleted bootstrap script.
+  Amendment 2 (Gate-1 review): image tags are per-run too
+  (`gromozeka-sandbox-test-install-<run-id>:run`/`:install`) so stale images
+  from aborted runs cannot make the build assertion vacuous and concurrent
+  runs cannot interfere; cleanup removes only the run's own UUID workspace
+  (never the shared parent) and re-verifies container/image removal against
+  the daemon, failing the test on residue.

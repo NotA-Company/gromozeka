@@ -353,6 +353,15 @@ DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock" DOCKER_AVAILABLE=1 \
 - Other classes in the same file (`TestGetClientClientSessionLeak`, `TestRunOneshotContainerCleanup`) are mocked unit tests — they run without Docker
 - After tests, verify NO "Unclosed connector" warnings in output
 
+### Real-Docker end-to-end install test
+`tests/lib/sandbox/test_install_integration.py` drives `SandboxManager.prepareRuntime()` + `installRuntimeLibraries()` against a real daemon — image build from the repo runtime Dockerfiles, staged-install container, host-side merge + atomic pool swap, and `packages.json` refresh. Run it with the same gate:
+```bash
+DOCKER_HOST="unix://${HOME}/.colima/default/docker.sock" DOCKER_AVAILABLE=1 \
+./venv/bin/pytest tests/lib/sandbox/test_install_integration.py -v -m slow
+```
+
+Two desktop-daemon deviations (kept for portability): the workspace lives under `~/.gromozeka-tests/` (unique per run — the Docker VM only shares `/Users` with the host, not `/tmp`), and containers run `0:0` (Colima presents host binds root-owned, so a non-root container cannot write the staging delta). Image tags and the workspace directory are derived from a per-run UUID; cleanup removes exactly that run's image/container/workspace set and re-verifies the removal against the daemon.
+
 ### Singleton state in tests
 Reset singleton state between tests:
 ```python
