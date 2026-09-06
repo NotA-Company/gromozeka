@@ -182,7 +182,7 @@ Chat mapping routes specific chats to specific data providers. This is useful fo
 - Segregating test chats from production
 - Distributing load across multiple databases
 
-### Configuration
+### Chat Mapping Configuration
 
 ```python
 "chatMapping": {
@@ -235,7 +235,7 @@ Readonly providers provide safe access to databases that should not be modified.
 3. **Backup Databases**: Query backups without modification risk
 4. **Shared Databases**: Multiple bots reading from same source
 
-### Configuration
+### Readonly Provider Configuration
 
 ```python
 "archive": {

@@ -1011,6 +1011,8 @@ production files (enum revert + main.py rewiring), one rewritten test file + doc
 - [`configs/00-defaults/stats.toml`](../../configs/00-defaults/stats.toml) —
   unchanged (keys already landed, §5).
 
+#### Phase 2 — tests (rewritten) and the behavior matrix
+
 **Tests** — `tests/services/stats/test_service.py` (**rewritten**; mirror
 `tests/services/queue_service/test_queue_service.py` patterns: reset
 `StatsAggregationService._instance = None` (and the QueueService singleton where
@@ -1038,6 +1040,8 @@ factory tests:
  | Five-call insertion order | **DEFERRED** — insertion order is an implementation detail of main.py call order (llm_request, llm_tool_call, stt_request, message, command). The compositional rationale: coordinator iterates `_statsStorages.values()` which preserves insertion order; the factory test verifies registration. |
  | Late-event correctness | **already covered** by `testMultiplePeriods` / `testTimestampNormalization` ([§2.7](#27-existing-test-coverage-already-locking-adjacent-behavior)) — cite, don't duplicate |
 | Refactor parity | **already covered** by the 70-row migration test — cite, don't duplicate |
+
+#### Phase 2 — docs sync and Gate 2
 
 **Docs sync:** `docs/llm/services.md` (new `StatsAggregationService` section —
 wording per the amendments: a CRON_JOB-rider aggregation cycle plus the
@@ -1084,12 +1088,19 @@ the parity lock is the safety net (same stance as stats-collecting-v1 §8).
 | R3 | **Retention deletes needed data** — a predicate bug could purge unprocessed events (permanent loss — events are append-only) | Low | High | `processed = 1` is part of the ABC contract docstring AND pinned by tests (old-unprocessed row survives); count-before-delete makes the summary line an audit trail; default 30 days far exceeds the aggregation lag (≤ 1 h); the day-truncated cutoff (A2) can only delay a deletion, never accelerate it — retention is effectively N..N+1 days, never less than N | Set `events-retention-days = 0` (keep forever) — instant, no code |
 | R4 | **Refactor changes truncation bytes** — back-fill buckets and live buckets split or shift | Low | Med | Shared helpers are the *only* truncation code path after D4; the 70-row test independently recomputes every expected byte and must pass unmodified | Revert Phase 1 |
 | R5 | **Stats disabled = silent no-op ticks** — `[stats] enabled = false` makes the factory hand out unregistered `NullStatsStorage`s; the registry stays empty and the registered handler returns after one truthiness check per tick (zero per-tick cost, equivalent to the old nothing-seeded state). If an operator enables stats expecting aggregates from a period when stats were off: there are none — **and none were recorded** (disabled stats record nothing either), so there is no silent backlog gap; enabling requires a restart, and the restart's first tick is the catch-up run (R11) | — (by design) | Low | Documented here; D5/A3 ratified no separate flag | n/a |
+
+### 8.1 Risk register, continued — runtime and operational risks (R6-R11)
+
+| # | Risk | Likelihood | Impact | Mitigation | Rollback |
+|---|---|---|---|---|---|
 | R6 | **Tick head-of-line blocking** — a big drain cycle (10 rounds × 5 storages) runs inside the shared CRON_JOB tick, delaying sibling tick handlers and the next tick on the single sequential loop (service.py:347-418) | Low | Low | Caps bound the cycle; the interval gate limits cycles to once per interval (default hourly); worst-case backlog after long downtime drains over consecutive cycles (10 k events/storage/cycle) | Raise `aggregation-interval-seconds` |
 | R7 | **Non-default datasources** — an operator pointing an event's `*-stats-data-source` at a source without migration 016/028 tables gets purge/aggregate errors | Low | Med | Per-storage try/except isolates to that storage; same precondition as recording today (stats-collecting-v1 §9 "Multi data-source mismatch"); the summary line names the failing storage | Keep `*-stats-data-source = "default"` |
 | R8 | **Config caveat** — interval/retention changes need a restart today (no ConfigManager reload, NG4) | — | Low | Per-cycle read is future-proof; documented | n/a |
 | R9 | **CRON_JOB tick coexistence** — the stats rider joins three existing consumers (QueueService's tick, `HandlersManager._dtCronJob`, `ProxyService._dtCronJob`) on the one shared 60-second tick; a registration mistake or handler misbehavior could disturb them | — (verified safe) | Low | Append-based registration is the **verified** mechanism (service.py:233-266; manager.py:634; proxy/service.py:108); the per-handler try/except isolates failures (service.py:390-399); the gated rider costs one comparison per tick; the old chain-death failure mode is gone because the tick's survival is structural, not the handler's responsibility | Revert the registration (the service/factory remain harmless) |
 | R10 | **Duplicate/concurrent cycles** — two overlapping cycles could double-claim batches (compounding R1) | — (structurally impossible) | Med | Singleton handler + a single in-memory gate advanced only at cycle completion + a tick that runs its handler list sequentially (service.py:390); NG5 keeps aggregation single-process | n/a |
 | R11 | **Restart resets the gate** — `_lastRunTime` is in-memory, so every restart makes the first tick a catch-up cycle (extra startup work, e.g. under frequent restarts or crash loops) | Certain | Low | By design — preserves G1's ratified catch-up property; the drain caps bound the catch-up cycle (R6); with an empty backlog the catch-up is a few no-op `aggregate()` calls | n/a |
+
+### 8.2 Rollback principle
 
 **Rollback principle:** the whole feature is gated on `[stats] enabled = false`
 (default) — disabling stats removes recording *and* empties the aggregation

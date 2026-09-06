@@ -198,6 +198,8 @@ top-level `temperature` key anymore and no `image_options` sub-table — see
 the `customParams` row below and the migration note at the end of this
 section.
 
+#### [models] provider types
+
 **Provider types:**
 - `yc-openai` — Yandex Cloud OpenAI-compatible API
 - `openrouter` — OpenRouter multi-model API
@@ -217,6 +219,8 @@ section.
 - `"iam_token"` — uses `iam_token` from config or `YC_IAM_TOKEN` env var
 - `"yc_cli"` — uses `yc` CLI (requires `yc_profile` for non-default profiles)
 
+#### [models] model configuration keys
+
 **Model configuration keys:**
 
 | Key | Type | Default | Purpose |
@@ -234,6 +238,8 @@ section.
 | `support_structured_output` | bool | `false` | Enable JSON schema output |
 | `image_generation_api` | str | unset | Image transport: `"openai-images"` for Images API, unset for chat-completions |
 | `input_image_format` | array of str (full MIME) | unset | Supported **INPUT** (vision) image MIME formats, e.g. `["image/jpeg", "image/png"]`. Unset/empty = accept any format. When set, input images whose detected MIME is not in the list are converted to the FIRST listed format before being sent to the model (e.g. webp→jpeg). Distinct from `support_images` / `image_generation_api` / `customParams` (image-output keys), which all concern OUTPUT (image generation). Use when a model rejects certain input formats (e.g. YC `qwen3.6-35b-a3b` rejects webp). OpenAI-compatible providers only; on conversion failure (corrupt/unsupported/oversized image) the original is sent unchanged. |
+
+#### [models] image generation configuration
 
 **Image generation configuration:**
 
@@ -265,6 +271,8 @@ whitelist** — every key under `customParams` is forwarded to
 | `n` | int | `1` | Number of images to generate |
 | `response_format` | str | `"b64_json"` | Response format |
 | `user` | str | `"user-123"` | User identifier for tracking |
+
+#### [models] image model example and migration note
 
 **Example — Yandex Cloud image model:**
 ```toml
@@ -493,6 +501,8 @@ Parse-structure-template placeholders: `{systemId}`, `{layoutName}`, `{descripti
 
 Optional web-page generation tier for `/stats --web` (or the `/stats_web` alias). A child section of `[stats]` — defaults live in [`configs/00-defaults/stats.toml`](../../configs/00-defaults/stats.toml) (the former standalone `stats-pages.toml` was deleted when the section merged). Read via `ConfigManager.getStatsPagesConfig()`, which reads the `[stats.pages]` table through an inline nested lookup (`self.get("stats", {})` with an `isinstance(dict)` guard, then `.get("pages", {})`) — `ConfigManager.get()` itself is literal-key-only (no dot navigation). The feature is tier-default-off: with `enabled = false` (the default) `--web`/`/stats_web` respond with an informative "disabled" message and no validation occurs. When `enabled = true`, the bot invokes the configured `generate-command` as a subprocess (raw-rows JSON payload on stdin, stdout `{"pageId","url"}` JSON), uses the returned `url` VERBATIM as the reply link (full URLs are built by the CLI when its `--base-url` flag appears in the generate-command template), and schedules one persisted one-shot delayed deletion task per page (delay = `ttl-hours × 3600`). The deletion task runs the `delete-command` with `{page_id}` substituted; the bot stores no page registry.
 
+#### [stats.pages] key reference
+
 | Key | Type | Default | Purpose |
 |---|---|---|---|
 | `enabled` | bool | `false` | Master switch — operator must flip to enable `--web`/`/stats_web` page generation |
@@ -502,6 +512,8 @@ Optional web-page generation tier for `/stats --web` (or the `/stats_web` alias)
  | `delete-command` | list[str] | `["./venv/bin/python3", "-m", "lib.stats.stats_pages", "delete", "{page_id}", "--output-dir=./stats-pages"]` | CLI invocation template for page deletion — used by the one-shot per-page deletion task. Substitutions: `{page_id}` (the UUID page id returned by generate). The shipped default already carries the required `--output-dir=...` token (matching generate-command) so TTL cleanup targets the correct directory. |
 
 There is no `base-url` key at the bot-config level — URL construction is the CLI's job (its `--base-url` flag), and the bot posts the stdout `url` verbatim.
+
+#### [stats.pages] validation and rate-limiter binding
 
 **Validation rules** (applied at `StatsHandler` construction when `enabled = true`; every failure raises `RuntimeError` naming the offending `[stats.pages]` key — startup fails loudly):
 - `generate-command` and `delete-command` must be non-empty `list[str]` entries whose ELEMENTS are all non-empty strings — fails on empty lists, non-list values, or empty/whitespace-only elements.
@@ -521,6 +533,8 @@ maxRequests = 3      # 3 pages per chat per 10 minutes
 [ratelimiter.queues]
 stats-pages = "stats-pages"
 ```
+
+#### [stats.pages] built-in generator and failure modes
 
 **Built-in generator** (`lib/stats/stats_pages/`):
 - Module-invocable: `./venv/bin/python3 -m lib.stats.stats_pages generate` reads a raw-rows JSON payload from stdin, renders a self-contained static HTML page server-side (UUID filename, inline CSS, inline SVG bar charts, no external resources, zero new dependencies), and prints `{"pageId": "<uuid>", "url": ...}` to stdout — `url` is the bare `<uuid>.html` filename, or `baseUrl + "/" + <uuid>.html` when `--base-url` is passed. The `delete` verb removes a page by `{page_id}` and prints `{"deleted": 0|1}` (0 = no such page — still a success exit).
@@ -567,6 +581,8 @@ The `MessagePreprocessorHandler.newMessageHandler` always schedules a background
 | `EMBEDDINGS_ENABLED` | `embeddings-enabled` | `LLM_PAID` | `BOOL` | Per-chat kill-switch. Required for `MessagePreprocessorHandler` to embed a message after save. Required by the `search_messages` LLM tool for **semantic** search (non-empty `query`); substring/filter-only `search_messages` calls (no `query`) and the `list_users` / `get_thread` tools work regardless (they only read `chat_messages`, not the vec0 virtual tables) |
 | `MAX_MESSAGES_FOR_SEMANTIC_SEARCH` | `max-messages-for-semantic-search` | `BOT_OWNER_SYSTEM` | `INT` | Cap on per-chat backfill volume. Read by `ChatSearchHandler._dtCronJob`; falls back to `100_000` on missing / unparsable / non-positive values |
 
+##### /search and /users slash commands
+
 **Slash command** (category `CommandCategory.TOOLS`, permission `CommandPermission.DEFAULT`):
 - `/search [args]` — parse a small DSL of `key: value` filters, then return matching messages as a raw, human-readable list (no LLM summary). Arguments:
   - `keywords: <text>` — substring filter on `message_text` (case-insensitive). The first known key wins; tokens without a key prefix are merged into `keywords`. Multiple `keywords:` occurrences are concatenated.
@@ -584,11 +600,15 @@ The `MessagePreprocessorHandler.newMessageHandler` always schedules a background
   - `last_active: N` — only users active within last N days.
   - Example: `/users`, `/users limit=20 min_messages=100`.
 
+##### search_messages and related LLM tools
+
 **LLM tools** (always registered when `ChatSearchHandler` is constructed, gated only by the handler-level `[search-history].enabled` switch, and gated at chat time solely by the chat's `USE_TOOLS` setting — the model is never sent any LLM tool when `USE_TOOLS=false`. They are NOT gated by `ALLOW_TOOLS_COMMANDS`, which gates only slash commands of `CommandCategory.TOOLS`):
 - `search_messages(query, limit?, max_age_days?, user_name?, thread_message_id?, current_thread_only?, substring?)` — semantic search over chat history. Uses embeddings to find messages similar to `query`. `limit` defaults to `5` (hardcoded in the handler signature; the `[search-history.defaults].max-results` config key feeds only the `/search` slash command — these are independent defaults). `max_age_days` defaults to `None` (no time filter; the `[search-history.defaults].default-days` config key feeds only the `/search` slash command). `user_name` filters by username (with or without `@`) or numeric `user_id` (when the identifier is purely numeric, it is treated as a `user_id` with no DB lookup). `thread_message_id` restricts to a thread; when provided it overrides `current_thread_only`. `current_thread_only` (default `true`) scopes results to the current message's thread/topic (`ensuredMessage.threadId` or `DEFAULT_THREAD_ID`); set to `false` to search the whole chat. `substring` is a case-insensitive exact-text filter on `message_text` (portable `LIKE '%...%'`), AND-combined with the other filters. When `query` is empty but `substring` (or any other filter) is set, embedding generation is skipped and the search runs as a pure text/filter lookup — this works WITHOUT `EMBEDDINGS_ENABLED` (the embeddings gate applies only when `query` is non-empty). Returns matching message texts with metadata.
 - `list_users(limit?, min_messages?)` — list chat participants with activity statistics. `limit` defaults to `20` (clamped to `1..200`), `min_messages` defaults to `None` (no minimum). Returns username, display name, message count, and last-active timestamp per user. (Distinct from the `/users` slash command, whose own `limit` default is `50`.)
 - `get_thread(message_id)` — retrieve full conversation thread for a given root message. Returns all messages in chronological order.
 - `get_messages_by_ids(message_ids)` — retrieve the full content of one or more chat messages by their IDs. Used by the model to read the originals underlying a condensed summary (summaries carry `coveredMessageIds`). Pure DB lookup — NOT gated on `EMBEDDINGS_ENABLED` or `ALLOW_TOOLS_COMMANDS`. `message_ids` is a list of message-ID strings (e.g. `["100", "101"]`). Returns each message in the same JSON shape as regular user messages, plus a `notFound` list for IDs that did not resolve. Messages are scoped to the current chat.
+
+##### Per-chat backfill cron
 
 **Per-chat backfill:** `ChatSearchHandler._dtCronJob` runs every 60s and round-robins over an in-memory `self._trackedChats: MutableSet[int]`. The set is populated by `newMessageHandler` — when it sees a message in a chat with `EMBEDDINGS_ENABLED=true`, it adds that chat id to `_trackedChats`; the cron then re-validates that setting per tick and evicts (one-way, via `.discard()`) any chat whose gate has since flipped to false. Backfill always runs whenever `EMBEDDINGS_ENABLED` is on (there is no separate one-shot regen trigger). **Cold-start tradeoff (intentional):** `_trackedChats` is empty on restart and only grows from live inbound messages, so a chat with a pre-existing backlog that stays quiet after a restart is not backfilled until a new message arrives; re-enabling embeddings on a chat does not re-add it until the next qualifying message. Per-tick batch size is capped at `[search-history.embeddings].reindex-batch-size` (default 100 messages) with a small inter-message sleep (`BACKFILL_INTER_MESSAGE_DELAY_SECS = 0.1`) so a long pass does not monopolise the asyncio loop; the next tick picks up where the previous one stopped, so a backlog naturally walks down minute by minute. There is no separate `BackfillWorker` class — the backfill duty lives in `ChatSearchHandler`. (The previous DB-scan discovery — the deleted `ChatSettingsRepository` method that queried `chat_settings` for `EMBEDDINGS_ENABLED` — was removed.)
 
@@ -789,6 +809,8 @@ Max Messenger webhook receiver configuration — **split across two files since 
 - The **bot** reads its `[webhook-receiver]` keys from the ConfigManager hierarchy; defaults live in [`configs/00-defaults/webhook-receiver.toml`](../../configs/00-defaults/webhook-receiver.toml) (bot-read keys only).
 - The **receiver process** ([`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/)) reads its OWN single TOML config file — passed via `--config` (default `webhook-receiver.toml`, cwd-relative), NOT part of the ConfigManager hierarchy. It is `[webhook-receiver]`-rooted and also holds the `[webhook-receiver.database]` section (same shape as the bot's `[database]`, pointing at the receiver's own SQLite file, `webhook_receiver_data.db` by default). Dotenv (`--dotenv-file`, default `.env`) + `${VAR}` substitution apply — the launcher uses stdlib `tomllib` + `substituteEnvVars` from [`lib/utils/utils.py`](../../lib/utils/utils.py), no `ConfigManager`.
 
+#### [webhook-receiver] bot-read keys
+
 **Bot-read keys** (ConfigManager hierarchy):
 
 | Key | Type | Default | Purpose |
@@ -801,6 +823,8 @@ Max Messenger webhook receiver configuration — **split across two files since 
 | `webhook-update-types` | list[str] | `[]` | Update types to subscribe to. Empty list = all types. |
 | `base-polling-url` | str | `"http://127.0.0.1:8443"` | URL of the receiver's `GET /updates` endpoint. The bot polls this when `enabled = true`. Becomes `MaxBotClient.basePollingUrl` (trailing slash stripped). |
 | `get-updates-secret` | str | `""` | Optional secret for the `GET /updates` endpoint (the bot sends it as the `Authorization` header when polling; the receiver checks it when set). Empty disables the check — relies on localhost binding. The bot rejects an unresolved `${VAR}` here whenever `enabled = true` (it would otherwise be sent verbatim as the `Authorization` header). **Dual-maintained** — see below. |
+
+#### [webhook-receiver] receiver-file keys
 
 **Receiver-file keys** (the receiver's own TOML file; missing non-secret keys fall back to the launcher's inline defaults):
 
@@ -817,6 +841,8 @@ Max Messenger webhook receiver configuration — **split across two files since 
 | `[webhook-receiver.database]` | table | see below | The receiver's OWN database config — same shape as the bot's `[database]` (`default` + `[webhook-receiver.database.providers.<name>]` with `provider` and a `parameters` sub-table; default `dbPath = "webhook_receiver_data.db"`). The receiver never runs the bot's migrations and never touches the bot's DB; pointing it at `bot_data.db` is unsupported (two processes writing one SQLite file contend) and not enforced. |
 
 **Dual-secret maintenance cost (ADR-025):** `secret` and `get-updates-secret` must be maintained in BOTH the bot config and the receiver's own file — the bot sends them, the receiver verifies them, and drift between the two copies yields 403s. In the standard deployment both values are `${VAR}`-substituted from the same dotenv source, which keeps single-env setups honest. Cross-reference comments in both example files point at each other.
+
+#### [webhook-receiver] deployment modes and defaults
 
 **Deployment modes:**
 - **Reverse proxy (default)** — receiver binds `127.0.0.1:8443` plain HTTP; a reverse proxy (nginx/Caddy) terminates TLS and forwards to `<listen-host>:<listen-port>`.
@@ -918,6 +944,8 @@ Speech-to-Text (media transcription) configuration. Defaults live in [`configs/0
 
 > **Validation lives in the provider constructor, not the service.** `STTService.initialize(configManager)` (no `database` arg) validates ONLY the provider name via `STT_PROVIDERS_MAP`. Each provider validates its own parameters (different providers have different params): `YandexSpeechKitProvider.__init__` owns cred / unresolved `${...}`-placeholder / cap-positivity / cross-field (`maxPollIntervalSeconds ≥ pollIntervalSeconds`) validation and raises `ValueError` on failure; `ProxyService.resolveProxy` `ValueError`s are also propagated.
 
+#### [stt] core service keys
+
 | Key | Type | Default | Purpose |
 |---|---|---|---|
 | `enabled` | bool | `false` | Master switch. When `false`, `STTService.initialize()` leaves the provider `None` and `isEnabled()` returns `False`. When `true`, the provider is constructed (which validates its own params — see the note above). |
@@ -935,6 +963,10 @@ Speech-to-Text (media transcription) configuration. Defaults live in [`configs/0
 | `poll-interval-seconds` | int | `2` | Initial operation-poll delay (seconds). |
 | `max-poll-interval-seconds` | int | `10` | Max operation-poll delay (seconds). Must be ≥ `poll-interval-seconds` (cross-field validation owned by the provider constructor). |
 | `max-result-bytes` | int | `5242880` (5 MiB) | Cap on the `getRecognition` streamed result body enforced inside `yandex_events.py` (the one surviving module-level cap inside `lib/stt`). Exceeding → `PROTOCOL_ERROR`. |
+#### [stt] v1.1 Object Storage and rate-limiter queue keys
+
+| Key | Type | Default | Purpose |
+|---|---|---|---|
 | `max-inline-bytes` | int | `41943040` (40 MiB) | **v1.1 gate-3** routing threshold. Measured on the *extracted* payload (`len(audio.data)`) inside the provider *after* extraction. Below → inline base64 `content` (v1 path, unchanged); at/above → Object Storage `uri` (when Object Storage is configured) or `STTErrorCode.SOURCE_TOO_LARGE` (when not). The 40 MiB default keeps base64-expanded requests under the 60 MB vendor inline ceiling. **No upper bound is enforced at startup** (only `> 0`) — an operator can set it higher, but values ≥ 60 MB risk opaque runtime SpeechKit rejection after base64 expansion. See [`docs/design/stt-v1.1.md`](../design/stt-v1.1.md) §4.1, §6.3. |
 | `object-storage-bucket` | str | *(unset; key commented out)* | **v1.1 gate-3** — Yandex Object Storage bucket name. Object Storage is **implicitly enabled when this key is set together with both access keys** (there is no `object-storage-enabled` flag); when unset, STT is inline-only and over-threshold clips fail with `SOURCE_TOO_LARGE`. Uses `${...}` env-var substitution. See validation rules below + [`docs/design/stt-v1.1.md`](../design/stt-v1.1.md) §3, §6.1, §6.3. |
 | `object-storage-prefix` | str | `"stt/"` | **v1.1 gate-3** — key prefix for staged objects under `object-storage-bucket`. Defaults to `"stt/"` when the bucket is configured and the key is unset. |
@@ -943,11 +975,15 @@ Speech-to-Text (media transcription) configuration. Defaults live in [`configs/0
 | `chat-ratelimiter-queue` | str | `"stt-chat"` | Per-chat rate-limiter queue name. The named queue must be registered under `[ratelimiter.queues]` (see below). |
 | `global-ratelimiter-queue` | str | `"stt-global"` | Global rate-limiter queue name. Must also be registered under `[ratelimiter.queues]`. |
 
+#### [stt] statistics gating and deleted keys
+
 > **STT statistics** are gated on the global `[stats].enabled` flag (via `main.py`), not on an STT-specific flag. When `[stats].enabled = true`, a `DatabaseStatsStorage(eventType="stt_request", dataSource=<from [stats].stt-stats-data-source>)` is constructed and passed to the provider; when `false`, the factory returns an unregistered `NullStatsStorage()` instance which is passed through to the provider (no-op outcome unchanged). STT stats use their own `[stats].stt-stats-data-source` config key (independent from `llm-stats-data-source`). See [`docs/design/stt-v1.1.md`](../design/stt-v1.1.md) §5, §6.2.
 
 > **Deleted keys (2026-08-02 simplification):** `max-duration-seconds`, `max-transcript-chars`, `admission-timeout`, and the old non-`-seconds` spellings (`request-timeout`, `operation-timeout`, `poll-initial-delay`, `poll-max-delay`) were removed. The transcript formatter is now thin (no `max-transcript-chars` truncation); duration bounding is the handler's job; admission is unbounded.
 
 > **Deleted key (simplification):** `stats-enabled` was removed from `[stt]` — STT statistics are now gated on the global `[stats].enabled` flag (one global stats flag, not an independent STT-specific flag).
+
+#### [stt] proxy and rate-limiter queues
 
 **Optional `[stt.proxy]` sub-table:** a per-service proxy override (same `type`/`address`/`user`/`password` keys as `[proxy]`). Follows the standard [`ProxyConfig.fromServiceConfig`](libraries.md#13-libproxy--proxy-resolution) semantics — include `enabled = true` inside the sub-table for the override to take effect; otherwise it inherits the global `[proxy]`.
 
@@ -971,6 +1007,8 @@ chat-ratelimiter-queue = "stt-chat"
 global-ratelimiter-queue = "stt-global"
 ```
 
+#### [stt] secrets discipline and Object Storage validation
+
 **Secrets discipline:** `api-key` and `folder-id` use `${...}` env-var substitution. Document the env-var names (`YC_API_KEY`, `YC_FOLDER_ID`) only — never paste the values, never commit `.env*`. An unresolved `${...}` placeholder fails startup when `enabled = true` (the provider constructor rejects it; it would otherwise be sent verbatim as a credential). The `object-storage-key-id` / `object-storage-key-secret` keys use the same `${...}` substitution convention (recommended env-var names: `YC_STT_S3_KEY_ID`, `YC_STT_S3_SECRET_KEY`).
 
 **v1.1 Object-Storage validation** (gate-3; enforced by the provider constructor when `object-storage-bucket` is set — see [`docs/design/stt-v1.1.md`](../design/stt-v1.1.md) §6.3 for the full rules):
@@ -982,6 +1020,8 @@ global-ratelimiter-queue = "stt-global"
 - **Endpoint/region are helper constants** (`https://storage.yandexcloud.net`, `ru-central1`), not config knobs.
 
 **Deployment recommendation (operator-side, not a `[stt]` key):** leaked objects (e.g. a bot crash between upload and the best-effort per-request delete) are reclaimed by a **Yandex Object Storage bucket lifecycle rule** expiring objects under `prefix` after a TTL of **86400 s (24 h)**. The bot runs **no sweep**; without this rule, leaked objects accumulate. See [`docs/design/stt-v1.1.md`](../design/stt-v1.1.md) §3.3, §6.3.
+
+#### [stt] chat settings keys
 
 **Chat settings keys** (defined in [`internal/bot/models/chat_settings.py`](../../internal/bot/models/chat_settings.py); defaults under `[bot.defaults]` in [`configs/00-defaults/bot-defaults.toml`](../../configs/00-defaults/bot-defaults.toml)) — the per-chat gates that, together with `[stt].enabled` and an eligible media type, control whether `_processMediaV2` transcribes an attachment:
 

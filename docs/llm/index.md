@@ -305,6 +305,11 @@ vanishingly rare in the Gromozeka codebase.
 | [`lib/bayes_filter/bayes_filter.py`](../../lib/bayes_filter/bayes_filter.py) | Naive Bayes spam filter |
 | [`lib/markdown/parser.py`](../../lib/markdown/parser.py) | Markdown → MarkdownV2 parser |
 | [`lib/max_bot/client.py`](../../lib/max_bot/client.py) | Max Messenger HTTP client |
+
+#### Integrations, receivers, and utilities
+
+| Path | Purpose |
+|---|---|
 | [`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/) | Standalone Max webhook receiver process (`aiohttp.web`): accepts Max webhook POSTs, stores raw payloads in `webhook_updates` in its OWN SQLite file (`webhook_receiver_data.db`), serves them to the bot via GET /updates. Fully standalone — own TOML config file, own `DatabaseManager`, zero internal imports (see [`architecture.md`](architecture.md) ADR-025). Run with `./venv/bin/python3 -m lib.max_webhook_receiver --config webhook-receiver.toml`. Two-process model: ADR-013. |
 | [`lib/openweathermap/client.py`](../../lib/openweathermap/client.py) | OpenWeatherMap API client |
 | [`lib/proxy/__init__.py`](../../lib/proxy/__init__.py) | Proxy resolution package — `ProxyConfig` class, `ProxyHelper` singleton, `ProxyType`/`HealthCheckType` StrEnums, `ProxyKwargs`/`ProxyLifecycleConfigDict` TypedDicts |

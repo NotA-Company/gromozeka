@@ -81,7 +81,7 @@ type = "fs"
 base-dir = "./storage/objects"
 ```
 
-### Usage Example
+### Filesystem Backend Usage Example
 
 ```python
 from pathlib import Path
@@ -158,7 +158,7 @@ bucket = "my-app-storage"
 prefix = "prod/"
 ```
 
-### Usage Example
+### S3 Backend Usage Example
 
 ```python
 from internal.services.storage import StorageService

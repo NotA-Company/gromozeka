@@ -26,6 +26,8 @@
 
 **Repository Pattern:** Database operations are now accessed through specialized repositories
 
+### chatMessages methods
+
 | Repository | Method | Returns | Purpose |
 |---|---|---|---|
 | `chatMessages` | `saveChatMessage(...)` | `None` | Save incoming/outgoing message |
@@ -36,38 +38,80 @@
 | `chatMessages` | `getChatMessagesSince(chatId, sinceDateTime?, tillDateTime?, threadId?, limit?, messageCategory?, userId?, *, dataSource?)` | `List[ChatMessageDict]` | Messages newer than `sinceDateTime` (ordered date DESC). The additive `userId` filter (`AND (:userId IS NULL OR c.user_id = :userId)`) scopes results to one sender — used by the memory-refinement cron to fetch a user's recent messages |
 | `chatMessages` | `updateChatMessageCategory(chatId, messageId, category)` | `None` | Update message category |
 | `chatMessages` | `updateChatMessageMetadata(chatId, messageId, metadata)` | `None` | Update message metadata |
+### chatSearch methods
+
+| Repository | Method | Returns | Purpose |
+|---|---|---|---|
 | `chatSearch` | `searchChatMessages(chatId, queryEmbedding=None, *, limit?, topK?, userFilter?, categoryFilter?, maxAgeDays?, rootMessageId?, modelName?, maxMessages?, threadId?, substring?, dataSource?)` | `List[ChatMessageDict]` | Combined filter + (optional) semantic search via cosine similarity over the `vec_message_embeddings_{N}` vec0 tables. When `queryEmbedding` is `None` results are returned in date order with `score=0.0`. Lives on the `chatSearch` repo (not `chatMessages`) — moved when `ChatSearchRepository` was split out to remove the old `_embeddingsRepo` back-reference. `SearchResultDict` was deleted; `ChatMessageDict` now carries an optional `score: NotRequired[float]` field populated by the search path. The repository takes a constructor-injected `modelIdResolver: Callable[[str, int], Awaitable[int]]` (Decision D10 — bound `EmbeddingModelsRepository.getOrCreateModelId`); the `modelName` arg is resolved to a `model_id` partition key internally without leaking that detail into the handler-facing signature (Decision D6 — handler-facing signatures stay stable). When `sqlite-vec` is unavailable, the semantic path returns `[]` (no numpy fallback — the numpy cosine path was retired alongside the `message_embeddings` BLOB store in `migration_025`). |
+### chatEmbeddings methods
+
+| Repository | Method | Returns | Purpose |
+|---|---|---|---|
 | `chatEmbeddings` | `saveMessageEmbedding(chatId, messageId, embedding, model)` | `None` | Single-write the float32 vector into the dimension-specific `vec_message_embeddings_{N}` vec0 table and `UPDATE chat_messages.model_id` with the resolved `model_id` (resolved via the constructor-injected `modelIdResolver`). `dimensions` is derived from `len(embedding)`. The previous dual-write to `message_embeddings` + vec0 is retired (`message_embeddings` was dropped in `migration_025`). |
 | `chatEmbeddings` | `getMessagesWithoutEmbeddings(chatId, *, limit, modelName?, dimensions?, dataSource?)` | `List[ChatMessageDict]` | Used by `ChatSearchHandler._dtCronJob` to find messages missing a current embedding. Returns full `ChatMessageDict` rows (joined with `chat_users` for `username`/`full_name`); uses a stale predicate keyed on `chat_messages.model_id` (NULL, or `model_id` differing from the resolved active `(model, dimensions)` pair). The `dimensions` filter scopes the check by dimensionality so model-drift re-embedding only surfaces rows embedded under a different (model, dimensions) tuple |
 | `chatEmbeddings` | `deleteObsoleteModelEmbeddings(chatId, currentModelId)` | `int` | Cleanup stale vec0 rows for a chat (used when switching to an incompatible model that produces different dimensions). Runs `DELETE FROM vec_message_embeddings_{N} WHERE chat_id = :chatId AND model_id != :currentModelId` across every `vec_message_embeddings_%` table enumerated via `provider.listTables()` |
+### chatUsers methods
+
+| Repository | Method | Returns | Purpose |
+|---|---|---|---|
 | `chatUsers` | `getChatUser(chatId, userId)` | `Optional[ChatUserDict]` | Get user in chat |
 | `chatUsers` | `updateChatUser(chatId, userId, username, fullName)` | `None` | Upsert user in chat |
 | `chatUsers` | `updateUserMetadata(chatId, userId, metadata)` | `None` | Update user metadata (JSON string). The `metadata` column carries an optional `memoryRefinement` sub-dict — write nested sub-dicts via read-modify-write through this method directly, NOT `setUserMetadata(isUpdate=True)` (see [`tasks.md`](tasks.md) §3 shallow-merge gotcha) |
 | `chatUsers` | `getChatUsers(chatId, limit?, minMessages?, lastActiveDays?, seenSince?, dataSource?)` | `List[ChatUserDict]` | List users in a chat. Default mode: order by `updated_at DESC` (most recently active first) with optional `seenSince` filter. Activity-filtered mode (any of `minMessages` / `lastActiveDays` set): order by `messages_count DESC` with both filters applied |
 | `chatUsers` | `getUserChats(userId, *, botStatus=ChatBotStatus.ACTIVE, dataSource?)` | `List[ChatInfoDict]` | Get all chats for user. `botStatus` filter (added by `migration_026`): default `ChatBotStatus.ACTIVE` excludes inaccessible chats; `None` returns all. Applied as `(:botStatus IS NULL OR ci.bot_status = :botStatus)` against the `chat_info` JOIN. `getAllGroupChats(...)` shares the same `botStatus` parameter and predicate |
+### mediaAttachments methods
+
+| Repository | Method | Returns | Purpose |
+|---|---|---|---|
 | `mediaAttachments` | `addMediaAttachment(...)` | `None` | Add media attachment record |
 | `mediaAttachments` | `getMediaAttachment(mediaId)` | `Optional[MediaAttachmentDict]` | Get media by unique ID |
 | `mediaAttachments` | `updateMediaAttachment(mediaId, ...)` | `bool` | Update media record fields (only non-`None` kwargs are written; `updated_at` is refreshed). Used by `_transcribeMedia` to terminalize STT rows (`PENDING`→`DONE`+`description` on success | `PENDING`→`FAILED` on failure/exception). Single attachments have no concurrent writes, so plain last-write semantics suffice — there is no CAS (the former `setStatusVerified` CAS helper was removed when the design was simplified). |
 | `mediaAttachments` | `ensureMediaInGroup(mediaId, mediaGroupId)` | `None` | Ensure media in group |
 | `mediaAttachments` | `getMediaGroupLastUpdatedAt(mediaGroupId)` | `Optional[datetime]` | Get MAX(created_at) from media_groups |
+### chatSettings methods
+
+| Repository | Method | Returns | Purpose |
+|---|---|---|---|
 | `chatSettings` | `setChatSetting(chatId, key, value, *, updatedBy)` | `None` | Set a chat setting with audit trail |
 | `chatSettings` | `getChatSetting(chatId, setting)` | `Optional[str]` | Get single setting value |
 | `chatSettings` | `getChatSettings(chatId)` | `Dict[str, tuple[str, int]]` | Get all settings as (value, updated_by) |
+### cache, delayed tasks, and Bayes cleanup methods
+
+| Repository | Method | Returns | Purpose |
+|---|---|---|---|
 | `cache` | `getCacheStorage(*, dataSource?)` / `setCacheStorage(namespace, key, value, *, dataSource?)` / `unsetCacheStorage(namespace, key)` | `List[CacheStorageDict]` / `bool` / `bool` | The `cache_storage` trio — persistence backing for `CacheService` (startup load via `getCacheStorage`, save-on-write via `setCacheStorage`, flush drops via `unsetCacheStorage`). The `cache` table itself is NOT accessed via the `Database` wrapper anymore: its SQL is owned inline by [`GenericDatabaseCache`](../../lib/cache/sql_cache.py) (`lib/cache`, ADR-024). The weekly TTL sweep runs as `GenericDatabaseCache(self.db.manager, namespace=<CacheType member>).clearOld(ttl)` from `HandlersManager._cleanupOldData()` (see `docs/llm/teamlead-memory.md` § "DB Cache Cleanup"): single pass over all `CacheType` members with conditional TTL (7-day aggressive TTL for `WEATHER`/`YANDEX_SEARCH`/`URL_CONTENT`/`URL_CONTENT_CONDENSED`, 365-day default floor for the rest). Constants live at the top of `internal/bot/common/handlers/manager.py` (`CACHE_CLEANUP_DEFAULT_TTL_SECS`, `CACHE_CLEANUP_AGGRESSIVE_TTL_SECS`, `AGGRESSIVE_CLEANUP_CACHE_TYPES`). Triggers: weekly cron (Monday 00:00 UTC via `_dtCronJob`) and on-shutdown (`_dtOnExit`) |
 | `delayedTasks` | `cleanupOldCompletedDelayedTasks(ttl)` | `bool` | Cleanup old completed delayed tasks. Called from `_cleanupOldData()` with `DELAYED_TASKS_CLEANUP_TTL_SECS` (30 days) |
 | `DatabaseBayesStorage` | `cleanupOldTokens(rules)` | `bool` | Delete old/rare rows from `bayes_tokens`. `rules` is a sequence of `(ttlSeconds, maxCount)` tuples; for each rule, runs `DELETE FROM bayes_tokens WHERE updated_at < :cutoffTime AND total_count <= :maxCount` across ALL tokens regardless of `chat_id` (one DELETE per rule). Returns `True` if all rules applied, `False` on any exception. NOTE: `DatabaseBayesStorage` is NOT a standard `self.db.<name>` repository — it's a separate class at [`internal/database/bayes_storage.py`](../../internal/database/bayes_storage.py), instantiated as `DatabaseBayesStorage(self.db)`. Called from `HandlersManager._cleanupOldData()` with `BAYES_TOKEN_CLEANUP_RULES` (defined near the top of `internal/bot/common/handlers/manager.py`; defaults: tokens with `total_count <= 1` older than 90 days, OR `total_count <= 2` older than 180 days). Sibling method `cleanupRareTokens(minCount, chatId=None)` is unrelated (no production caller in the cleanup path) |
+### divinations methods
+
+| Repository | Method | Returns | Purpose |
+|---|---|---|---|
 | `divinations` | `insertReading(...)` | `None` | Persist a tarot/runes reading row in `divinations` |
 | `divinations` | `getLayout(systemId, layoutName)` | `Optional[DivinationLayoutDict]` | Get cached layout with fuzzy search |
 | `divinations` | `saveLayout(...)` | `bool` | Save/update layout definition in cache |
 | `divinations` | `saveNegativeCache(systemId, layoutId)` | `bool` | Save negative cache entry for non-existent layout |
 | `divinations` | `isNegativeCacheEntry(layoutDict)` | `bool` | Check if layout dict is a negative cache entry |
+### userMemories add and read methods
+
+| Repository | Method | Returns | Purpose |
+|---|---|---|---|
 | `userMemories` | `addMemory(chatId, userId, memoryId, *, type, content, tags, permanent, source, embedding=None, embeddingModel=None, threadId=None)` | `None` | INSERT a memory row (caller generates the UUID hex; `memoryId` is not delegated to the DB). `source` is a `UserMemorySource`; when `embedding` (`List[float]`) + `embeddingModel` are provided the row is embedded during add |
 | `userMemories` | `getPermanentMemories(chatId, userId, threadId, *, limit=10)` | `List[UserMemoryDict]` | Permanent block for injection — merges cross-thread (`thread_id IS NULL`) AND this-thread permanent (`permanent = 1`), newest-updated-first |
 | `userMemories` | `getLatestMemories(chatId, userId, threadId, *, limit=5)` | `List[UserMemoryDict]` | Ephemeral-only (`permanent = 0`) newest-first, thread-scoped — backs the `latest` retrieval path (the fallback used when memory embeddings are off, i.e. not both `MEMORY_ENABLED && EMBEDDINGS_ENABLED`; semantic `searchMemories` is used when both are on) |
+### userMemories search and embedding methods
+
+| Repository | Method | Returns | Purpose |
+|---|---|---|---|
 | `userMemories` | `searchMemories(chatId, userId, queryEmbedding=None, *, threadId=None, type=None, tags=None, permanent=None, limit=20, embeddingModel, offset=0)` | `List[UserMemoryDict]` | Filter-only (`queryEmbedding is None`, plain SQL scan, `score = 0.0`) or semantic (`queryEmbedding` is a `List[float]`, vec0 KNN, `score = 1.0 - distance`). `embeddingModel` (required; pass `None` for filter-only) is resolved to `model_id` internally via the constructor-injected `modelIdResolver` (Decision D6 — handler-facing signature stable; D10 — `model_id` resolution happens inside the repo, never in handler code). Always scoped to one `(chat_id, user_id)`; `tags` applied as a portable SQL `LIKE '%"tagN"%'` filter against the JSON-TEXT column |
 | `userMemories` | `getMemoriesWithoutEmbeddings(chatId, *, limit=50, modelName=None, dimensions=None, dataSource=None)` | `List[UserMemoryDict]` | Backfill/regen-cron input — rows whose `model_id` is NULL or differs from the resolved active `(model, dimensions)` pair (single-table stale detection via a stale predicate keyed on `model_id`; also serves the initial backfill) |
 | `userMemories` | `saveMemoryEmbedding(chatId, userId, memoryId, embedding, embeddingModel)` | `bool` | Lazy-create `vec_user_memories_{dim}` (if missing) + upsert the vector (`embedding` is `List[float]`, `embeddingModel` resolved to `model_id` via `modelIdResolver`) + set `model_id` on the row (vec0 write must succeed before provenance is set) |
+### models lookup method
+
+| Repository | Method | Returns | Purpose |
+|---|---|---|---|
 | `models` | `getOrCreateModelId(model, dimensions)` | `int` | Cache-first allocation of the small sequential integer identifying a `(model, dimensions)` pair in the `models` lookup table (created by `migration_025`). Allocation: `COALESCE(MAX(model_id), 0) + 1` + `provider.upsert(..., updateExpressions={})` (portable `ON CONFLICT DO NOTHING`) + SELECT-back. Constructed FIRST in `Database.__init__` so its bound `getOrCreateModelId` can be injected as the `modelIdResolver` kwarg into `chatEmbeddings` / `chatSearch` / `userMemories` (Decision D10) |
+
+### Repository coverage notes
 
 The full `UserMemoriesRepository` has 12 public methods (the remainder are `deleteMemory` (soft-delete), `deleteMemoryEmbedding`, `deleteObsoleteMemoryEmbeddings`, `getMemory`/`getDistinctTags` wizard helpers, and `getMemoriesByIds` — the single read that skips the `deleted_at` filter to resolve soft-deleted memories for historical reconstruction); see [`docs/llm/memories/user-memories.md`](memories/user-memories.md) "Repository" and the schema docs for the complete list. There is no in-place content-PATCH method (`updateMemory` was removed — zero production callers; content changes go through `deleteMemory` + `addMemory`). All SQL goes through `BaseSQLProvider`. Embeddings (regen cron + the memory tools) are produced via `LLMService.generateEmbedding`.
 
@@ -451,6 +495,8 @@ This keeps handler-facing signatures stable (Decision D6 — `embeddingModel: st
 
 **Repository Pattern:** Database operations are organized into specialized repositories in `internal/database/repositories/`. Every repository inherits from `BaseRepository` (takes a `DatabaseManager`, NOT a `Database`) and goes through `BaseSQLProvider` for every query — never raw `sqlite3`, never `cursor.execute(..., ?)`, never `with self.db._getConnection()`. Those patterns predate the async refactor and the SQL-portability rules in AGENTS.md; they are NOT valid in new code.
 
+### Available repositories: message, search, and settings stores
+
 **Available Repositories** (16 total — all wired as attributes on the `Database` wrapper in [`internal/database/database.py`](../../internal/database/database.py)):
 
 | Attribute | Class | File |
@@ -461,10 +507,18 @@ This keeps handler-facing signatures stable (Decision D6 — `embeddingModel: st
 | `chatSearch` | `ChatSearchRepository` | `chat_search.py` (owns `searchChatMessages`) |
 | `chatUsers` | `ChatUsersRepository` | `chat_users.py` (`getUserChats` / `getAllGroupChats` accept `botStatus: Optional[ChatBotStatus] = ChatBotStatus.ACTIVE` — default excludes inaccessible chats; `None` returns all. Applied as the predicate `(:botStatus IS NULL OR ci.bot_status = :botStatus)` against the `chat_info` JOIN) |
 | `chatSettings` | `ChatSettingsRepository` | `chat_settings.py` |
+### Available repositories: chatInfo, memories, and media stores
+
+| Attribute | Class | File |
+|---|---|---|
 | `chatInfo` | `ChatInfoRepository` | `chat_info.py` (chat metadata; owns the `bot_status` accessibility column added by `migration_026`, column only — no supporting index). Surface: `getChatInfo` (read) and `updateChatInfo(..., *, botStatus: Optional[ChatBotStatus] = ChatBotStatus.ACTIVE)` (upsert). `updateChatInfo`'s `botStatus` is keyword-only with default `ChatBotStatus.ACTIVE`; `bot_status` is ALWAYS written into both the INSERT `values` and the `CONFLICT`-UPDATE expressions (via `ExcludedValue`). `CacheService.setChatInfo` forwards `info["bot_status"]` (direct subscript, NOT `.get(...)`), so `CacheService.markChatInaccessible` / `markChatActive` reach the column via the same upsert path as every other `chat_info` write. **Self-heal consequence:** because `TheBot.getChatInfo` hardcodes `bot_status = ChatBotStatus.ACTIVE` in both platform return dicts and `updateChatInfo`'s default is `ACTIVE`, the every-message refresh path (`BaseBotHandler.updateChatInfo` → `TheBot.getChatInfo` → `CacheService.setChatInfo` → repo `updateChatInfo`) ALWAYS writes `ACTIVE` — a transient `INACCESSIBLE` set by `markChatInaccessible` self-heals to `ACTIVE` on the next inbound message, which is correct because receiving a message proves the chat is accessible. There is no dedicated status-mutation repository method (`setChatBotStatus` / `getInactiveChatIds` were removed during the accessibility simplification — see [`docs/design/chat-accessibility-tracking.md`](../design/chat-accessibility-tracking.md) "Implementation Divergence (2026-08-12)"). |
 | `chatSummarization` | `ChatSummarizationRepository` | `chat_summarization.py` |
 | `userMemories` | `UserMemoriesRepository` | `user_memories.py` |
 | `mediaAttachments` | `MediaAttachmentsRepository` | `media_attachments.py` |
+### Available repositories: tasks, divination, cache, and models
+
+| Attribute | Class | File |
+|---|---|---|
 | `spam` | `SpamRepository` | `spam.py` |
 | `delayedTasks` | `DelayedTasksRepository` | `delayed_tasks.py` |
 | `divinations` | `DivinationsRepository` | `divinations.py` (reading rows + cached layout definitions) |
@@ -472,6 +526,8 @@ This keeps handler-facing signatures stable (Decision D6 — `embeddingModel: st
 | `embeddingModels` | `EmbeddingModelsRepository` | `embedding_models.py` (embedding-provenance lookup table; constructed FIRST so its bound `getOrCreateModelId` method can be injected as `modelIdResolver` into `chatEmbeddings` / `chatSearch` / `userMemories` — Decision D10) |
 
 > `DatabaseBayesStorage` (`internal/database/bayes_storage.py`) wraps a `Database` and is not exposed as `db.<name>`; `DatabaseStatsStorage` now lives at `lib/stats/sql_storage.py` and takes a `DatabaseManager` directly, constructed via the `StatsAggregationService` factory — see §1 for the Bayes cleanup-path usage. `WebhookUpdatesRepository` also left this tree with ADR-025 — it lives at [`lib/max_webhook_receiver/repository.py`](../../lib/max_webhook_receiver/repository.py) over the webhook receiver's OWN database and is no longer reachable from the `Database` wrapper.
+
+### Adding a method to an existing repository
 
 **Adding a method to an existing repository:**
 
@@ -509,6 +565,8 @@ async def myNewDbMethod(self, chatId: int, value: str) -> Optional[SomeDict]:
         logger.error(f"Failed myNewDbMethod for chat {chatId}: {e}")
         return None
 ```
+
+### dataSource routing and provider method cheatsheet
 
 **For read-only methods AND writes to global tables, take an optional `dataSource: Optional[str] = None`** so callers can pin a source explicitly. Per-chat-table writes instead route by `chatId` (the chat→source mapping is the routing mechanism) and MAY omit `dataSource`. See §3 "Multi-Source Database Routing" for the full convention.
 
@@ -549,6 +607,8 @@ async def getMyData(
 - `batchExecute([ParametrizedQuery(...), ...])` — multiple statements in one transaction
 - `upsert(table, values, conflictColumns, updateExpressions=...)` — portable upsert with `ExcludedValue` markers
 - `applyPagination(query, limit, offset)` / `getTextType(maxLength)` / `getCaseInsensitiveComparison(column, param)` / `getLikeComparison(column, param)` — dialect-portable helpers
+
+### Creating a new repository
 
 **Creating a new repository:**
 
@@ -614,6 +674,8 @@ class Database:
 ```
 
 Also export the new class from `internal/database/repositories/__init__.py` and add the attribute to `Database.__slots__` plus a class-level type annotation (every existing repo follows this pattern).
+
+### Checklist after modifying Database
 
 **Checklist after modifying `Database`:**
 - [ ] Method is `async`
@@ -811,6 +873,8 @@ success, value = sqlToCustomType("123", Union[int, str])
    - Ensure schema descriptions match migration history
    - Validate that all historical migrations are accounted for
 
+#### Known migrations 001-015
+
 **Known implemented migrations:**
 - `migration_001` to `migration_029` — Baseline migrations through latest schema updates
 - `migration_010`: Adds `updated_by INTEGER NOT NULL` to `chat_settings` table (audit trail)
@@ -818,17 +882,27 @@ success, value = sqlToCustomType("123", Union[int, str])
 - `migration_013`: Removes `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns (explicit timestamp handling)
 - `migration_014`: Adds the [`divinations`](#divinations) table (composite PK `(chat_id, message_id)`) plus `idx_divinations_user_created` index for tarot/runes readings
 - `migration_015`: Adds the [`divination_layouts`](#divination_layouts) table (composite PK `(system_id, layout_id)`) plus `idx_divination_layouts_system` index for layout discovery cache
+#### Known migrations 016-018
+
 - `migration_016`: Adds [`stat_events`](../../lib/stats/sql_storage.py) (append-only event log) and [`stat_aggregates`](../../lib/stats/sql_storage.py) (period buckets) tables for statistics collection
 - `migration_017`: Originally added the `message_embeddings` BLOB side table (composite PK `(chat_id, message_id)`) for semantic chat-history search. **Table + index subsequently DROPPED by `migration_025`** — chat-history embeddings now live in vec0 only with `chat_messages.model_id` (FK to `models`) carrying the provenance
 - `migration_018`: Originally added `idx_message_embeddings_chat_model` index on `message_embeddings (chat_id, model)`. **Index + table subsequently DROPPED by `migration_025`**
+#### Known migrations 019-021
+
 - `migration_019`: Originally added the `webhook_updates` table (`id TEXT PRIMARY KEY`) plus `idx_webhook_updates_unprocessed` on `(processed, received_at)` for Max webhook ingestion. Its `up()` now delegates the DDL to the lib-owned schema (`getForwardDDL()` in `lib/max_webhook_receiver/schema.py`) so the canonical DDL is single-sourced. **Table + index subsequently DROPPED from the bot's database by `migration_029`** — `webhook_updates` now lives only in the webhook receiver's own database (`webhook_receiver_data.db`, self-healed at receiver startup; see ADR-025 in [`architecture.md`](architecture.md))
 - `migration_020`: Adds the [`user_memories`](../../docs/database-schema-llm.md#user_memories) table (composite PK `(chat_id, user_id, memory_id)`) — the unified per-(chat, user, thread) memory store that retires `user_data` (table subsequently dropped in `migration_022`) and the rolling-bio JSON blob. Three indexes (`idx_user_memories_chat_user_thread`, `idx_user_memories_chat_user_permanent`, `idx_user_memories_type`). Backfills `user_data` rows into permanent cross-thread `type='fact'` memories and `chat_users.metadata.memoryRefinement` rolling-bio entries into permanent thread-scoped `type='bio'` memories. The vec0 virtual table (`vec_user_memories_{dim}`) is **not** created by the migration — it is created lazily at runtime on first write (mirrors `message_embeddings`). Schema/ADR: [`docs/llm/memories/user-memories.md`](memories/user-memories.md) and ADR-016.
+#### Known migrations 022-024
+
 - `migration_021`: Adds the nullable `deleted_at` column to [`user_memories`](../../docs/database-schema-llm.md#user_memories) (soft-delete — `deleteMemory` sets `deleted_at` + drops vec0 + nulls provenance instead of hard-`DELETE`-ing the row, so historical messages referencing a deleted memory can still resolve its content via `getMemoriesByIds`). Every live read gains `AND deleted_at IS NULL`. Additive nullable column; `down()` is a no-op that logs (portable `DROP COLUMN` unavailable). Part of memory-compaction-v1 (see ADR-017 and [`docs/archive/plans/memory-compaction-v1.md`](/docs/archive/plans/memory-compaction-v1.md)).
 - `migration_022`: DROP TABLE `user_data` (superseded by `user_memories`; data was backfilled into `user_memories` in `migration_020`). The no-op `down()` is intentional — re-creating the table would orphan the rows already moved to `user_memories`.
 - `migration_023`: Idempotent data migration renaming the `chat_settings` key `memory-injection-enabled` → `memory-enabled` via `UPDATE chat_settings SET key='memory-enabled' WHERE key='memory-injection-enabled'`. Companion to the in-code `MEMORY_INJECTION_ENABLED` → `MEMORY_ENABLED` `ChatSettingsKey` enum rename.
 - `migration_024`: Adds `idx_bayes_tokens_updated_at` index on `bayes_tokens (updated_at)` — optimizes the age-based `DatabaseBayesStorage.cleanupOldTokens` DELETE (`WHERE updated_at < :cutoffTime AND total_count <= :maxCount`), which runs across ALL chats from `HandlersManager._cleanupOldData()` on a weekly cron and at shutdown. The existing `bayes_tokens_total_idx(total_count)` and `bayes_tokens_chat_idx(chat_id)` do not help that DELETE (no chat_id filter; `updated_at` is the selective range predicate).
+#### Known migrations 025-026
+
 - `migration_025`: Normalises embedding provenance into a new [`models`](#55-models-lookup-table-embedding-provenance) lookup table (`model_id` integer PK with `UNIQUE(model, dimensions)`); swaps `chat_messages` and `user_memories` to carry `model_id` instead of the legacy `(model, dimensions)` / `(embedding_model, embedding_dimensions)` pairs. **DROPS the `message_embeddings` BLOB side table** (created by `migration_017`) and its `idx_message_embeddings_chat_model` index (`migration_018`). **DROPS both vec0 virtual-table families** (`vec_message_embeddings_{N}`, `vec_user_memories_{N}`) — they are lazily recreated at runtime with `model_id INTEGER PARTITION KEY` (was `model TEXT`). Temp-table swap pattern from `migration_013`. `down()` is schema-correct but data-lossy for vectors (the dropped BLOBs cannot be regenerated from `model_id` alone; vec0 tables are not re-created by `down()` — they re-populate via the normal backfill cron). DB backup strongly recommended before running the migration. See [`docs/plans/embedding-model-lookup-refactor-v1.md`](../archive/plans/embedding-model-lookup-refactor-v1.md).
 - `migration_026`: Adds `bot_status TEXT NOT NULL DEFAULT 'active'` to [`chat_info`](../../docs/database-schema-llm.md#chat_info) (column only — no supporting index). Backs the chat-accessibility-tracking subsystem (lazy mark-on-failure at `TheBot.getChatAdmins` catch sites, activity-based recovery in `MessagePreprocessorHandler`, and an optional `botStatus` filter on every chat-listing repository method). Portable DDL: string-literal `DEFAULT 'active'` backfills every existing row to `ACTIVE` as part of the `ALTER TABLE` (no separate backfill; no `AUTOINCREMENT`/`SERIAL`/`DEFAULT CURRENT_TIMESTAMP`). `down()` runs `DROP COLUMN bot_status` (SQLite ≥3.35). See [`docs/design/chat-accessibility-tracking.md`](../design/chat-accessibility-tracking.md) (and its "Implementation Divergence (2026-08-12)" section for the shipped design, which routes `bot_status` writes through `updateChatInfo(..., botStatus=...)` via `CacheService.setChatInfo` rather than a dedicated `setChatBotStatus` repository method).
+#### Known migrations 027-029
+
 - `migration_027`: Backfills `chat_messages` message history into [`stat_aggregates`](../../docs/database-schema-llm.md#stat_aggregates) as pre-aggregated `message` events (three periods — daily/monthly/total; hourly deliberately not backfilled; metrics `message_count` + `text_length`; same `jsonDumps`/`_hashLabels` canonicalization as the live aggregator), then **DROPS the legacy `chat_stats` and `chat_user_stats` tables** (write-only since `migration_001`). Applies the same exclusions as live recording (NULL/`DELETED`/`UNSPECIFIED` `message_category`); every backfilled row carries `sent = "False"` (uniform non-bot direction for history, bot-authored rows included — user decision 2026-08-22, migration edited in place before production deployment), so backfill and live user rows share the same `labels_hash` buckets and MERGE into one `stat_aggregates` bucket (direction stays binary at query time — bot = `sent` "True", users = "False" or absent, so label-less rows from legacy dev DBs that ran the older migration fold into users; the users/bot split is rendered only by the `/stats` HTML page generator, not the chat reply); `chat_type` is resolved per chat from `chat_info` with a chat-id-sign fallback. Python-side pre-aggregation with bounded memory — per-consumer buckets are flushed after each chat, while `__global__` running-total buckets accumulate across chats and flush once. Replace-semantics upserts make re-runs idempotent; `down()` recreates both legacy tables EMPTY (the original data is destroyed by the DROP, not restorable). See [`docs/design/stats-aggregation-v1.md`](../design/stats-aggregation-v1.md).
 - `migration_028`: Adds `idx_stat_events_retention` on [`stat_events`](../../docs/database-schema-llm.md#stat_events) `(processed, created_at)` — covers the retention-purge DELETE (`WHERE processed = 1 AND created_at < :cutoff`) that the periodic stats-aggregation task runs for `[stats] events-retention-days`, so processed-event cleanup stops table-scanning (same TTL-index precedent as `idx_cache_updated_at` from `migration_012` and `idx_bayes_tokens_updated_at` from `migration_024`). Idempotent (`CREATE INDEX IF NOT EXISTS`) and reversible (`down()` runs `DROP INDEX IF EXISTS`). See [`docs/design/stats-aggregation-v1.md`](../design/stats-aggregation-v1.md).
 - `migration_029`: **DROPS `webhook_updates` and `idx_webhook_updates_unprocessed` from the bot's database** (portable `DROP INDEX` / `DROP TABLE IF EXISTS`, index first) — the table moved to the webhook receiver's own database with ADR-025 (`lib/max_webhook_receiver/` runs its own `DatabaseManager` over `webhook_receiver_data.db` and self-heals both objects at startup; the canonical DDL lives in `lib/max_webhook_receiver/schema.py`). `down()` recreates both from the same lib-owned DDL (`getForwardDDL()`), single-sourcing the schema with `migration_019`'s delegated `up()`. See ADR-025 in [`architecture.md`](architecture.md).

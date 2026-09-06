@@ -22,6 +22,8 @@
 
 ## 1. CacheService
 
+### Usage overview
+
 **File:** [`internal/services/cache/service.py:195`](../../internal/services/cache/service.py:195)  
 **Import:** `from internal.services.cache import CacheService`
 
@@ -76,6 +78,8 @@ await cache.markChatInaccessible(otherChatId)        # async; reads getChatInfo,
 # Default chat settings are handled by config/database, not CacheService
 # Use config files in configs/ for defaults, or set per-chat via setChatSetting()
 ```
+
+### Cache-database coherence and key types
 
 **`chat_users` row cache (ADR-015):** the `CHAT_USERS` namespace (keyed `f"{chatId}:{userId}"`, `MEMORY_ONLY`) holds both the `user_data` blob (`data` field) and the `chat_users` row (`userInfo` field, lazily loaded). `getChatUser` is an LRU read with DB fallback on miss; `updateChatUser`/`updateUserMetadata` are write-through. Single-row `(chatId, userId)` reads/writes in handlers MUST go through `self.cache.*` — not `self.db.chatUsers.*` — so the cache stays consistent.
 
@@ -141,6 +145,8 @@ emptyTask: asyncio.Task = makeEmptyAsyncTask()
 
 ## 3. LLMService
 
+### Usage overview and core generation API
+
 **File:** [`internal/services/llm/service.py:144`](../../internal/services/llm/service.py:144)  
 **Import:** `from internal.services.llm import LLMService`
 **Optional import:** `from lib.stats.stats_storage import StatsStorage, NullStatsStorage` (for tool call statistics, gated by `[stats]` enabled)
@@ -201,6 +207,8 @@ llmService.injectStatsStorage(toolStatsStorage)  # or None for NullStatsStorage 
 
 **`chatId` / `doRateLimit` semantics (all generation methods):** `chatId` is a **mandatory `int`** on `generateText` / `generateStructured` / `generateImage` / `generateEmbedding` / `generateTextViaLLM`. It always threads `consumerId=str(chatId)` into the model call for `llm_request` stats attribution (merged into `labels["consumer"]` by `StatsStorage`; chats are never conflated into `__global__`). Rate limiting is controlled independently by the keyword-only `doRateLimit: bool = True` flag: background/system-initiated work (embedding backfill, memory refinement) passes the **real** chat id with `doRateLimit=False` — the per-chat hot-path limiter is skipped while attribution is preserved. `condenseContext` takes a stats-only keyword-only `consumerId: Optional[str]` (the condensing path never rate-limits); `generateTextViaLLM` threads it automatically for every per-round condense.
 
+### The generateTextViaLLM tool-execution loop
+
 **`generateTextViaLLM` — tool-execution loop:**
 
 The multi-turn variant of `generateText` that executes tool calls requested by the LLM until a final text response is produced. Resolves primary/fallback models, condenses context, detects tool calls (including text-embedded ones), executes them, and feeds results back. Supports an optional streaming `callback` for intermediate results.
@@ -239,9 +247,13 @@ useTools={TOOLS_DEFAULT_DICT_KEY: True, ToolName.SANDBOX_SEND_FILE: False}
 
 Resolution happens in the private `_resolveTools(useTools)` method, which returns the filtered `List[LLMToolFunction]` sent to the model. The execution guard also uses this filtered set: if the LLM requests a dict-disabled tool, the loop returns an error listing only the **actually available** tool names (not the full registry), so the model is not tempted to retry a disabled tool.
 
+### Tool call statistics and round budget
+
 **Tool call statistics:** When `injectStatsStorage` is called with a `StatsStorage` instance (constructed in `main.py` gated by `[stats] enabled`), each tool dispatch in the `generateTextViaLLM` loop records an `llm_tool_call` event with stats `tool_call_count=1` (every dispatch), `tool_exec_count=1` (**executed-only** — present only when the tool actually executed, not merely was requested), `elapsed_time` (seconds, float), and `is_error` (0/1; `1` when the dict result has `done is False` **or** a truthy `error`/`errorMessage` field). Labels are `user_id` (from `extraData["ensuredMessage"].sender.id`) and `toolName`. The `consumerId` is the chat ID from `ensuredMessage.recipient.id`. Recording is skipped when `ensuredMessage` is absent. Tools that raise exceptions propagate unrecorded (per the never-raise contract).
 
 **`maxRounds` — tool-calling round budget** (`Optional[int]`, default `DEFAULT_MAX_ROUNDS` = 32, defined in [`internal/services/llm/constants.py`](../../internal/services/llm/constants.py) and re-exported from [`internal.services.llm`](../../internal/services/llm/__init__.py)): bounds the number of rounds the model may call tools before the budget is considered exhausted. Must be a non-negative integer or `None` (negative raises `ValueError`). Once `roundN >= maxRounds`: tool schemas are dropped (`tools=[]`), the `filteredToolNames` execution allowlist is cleared (so even healed tool calls cannot execute), tool-call healing is disabled, a steering directive is folded into the leading system message (or a `user` message when none exists), and the loop is hard-bounded to a single additional round — terminating regardless of the model's response. On any post-budget termination `ModelRunResult.roundLimitHit` is set to `True` and a service-level `logger.warning` fires, so callers can detect that the result may be incomplete. A fallback answer is synthesized **only** when the model returned no usable text and the status is `FINAL` or a post-budget `TOOL_CALLS` (a glitching model that ignored the empty `tools=[]`); genuine error statuses (`ERROR` / `CONTENT_FILTER` / `UNKNOWN`) propagate with their original status and empty text so callers can detect the failure. Pass `maxRounds=None` to disable the limit (unlimited rounds, legacy behavior); `maxRounds=0` drops tools on the very first call.
+
+### Structured output
 
 **Generate structured (JSON-Schema) output:**
 ```python
@@ -296,6 +308,8 @@ limiting unless `doRateLimit=False`, then delegates to
 ```python
 from lib.ai import ModelStructuredResult
 ```
+
+### Result statuses, singleton guard, and proxy flow
 
 **`ModelResultStatus` values** (from [`lib/ai/models.py`](../../lib/ai/models.py); see `ERROR_STATUSES` frozenset there for the failure subset):
 - `FINAL` — complete, final response (the success case callers usually check)
@@ -590,6 +604,8 @@ class MyService:
 
 ## 9. StatsAggregationService
 
+### Overview, initialization, and per-cycle behavior
+
 **File:** [`internal/services/stats/service.py`](../../internal/services/stats/service.py)  
 **Import:** `from internal.services.stats import StatsAggregationService`
 
@@ -609,6 +625,8 @@ class MyService:
 4. Set `_lastRunTime = cycleStart` (gate advanced to cycle-start timestamp).
 
 **First tick after startup is an immediate catch-up run** (`_lastRunTime = 0.0` → the gate always passes).
+
+### Configuration, read accessor, and factory semantics
 
 **Configuration:**
 - `[stats] enabled` (default `false`): master switch; when false, the factory returns unregistered `NullStatsStorage` and the registry stays empty — zero per-tick cost.

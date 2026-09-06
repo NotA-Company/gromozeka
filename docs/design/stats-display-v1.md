@@ -23,6 +23,8 @@ again in place, D10's validation home moves to `StatsHandler` construction,
 §2.13's seeding analysis is mooted, and §4-§11 are updated accordingly.
 U9's ratified text below stays as history.
 
+### U1-U10 — ratified amendment texts (2026-08-18, user round 3)
+
 - **U1 — Default outputs** (supersedes the D6 multi-section digest default and
   part of D3): GROUP chat → MESSAGE STATS ONLY for that chat (other sections
   via `--section=`); PRIVATE chat → message stats for the current private
@@ -73,6 +75,9 @@ U9's ratified text below stays as history.
 - **U10 — Housekeeping**: §4 wiring, §5 config, §6 phases, §7 gates, §8
   risks, §9 open questions, §10 documentation impact, and §11 references
   updated; D-numbers unchanged (D14 rewritten in place; D16 added).
+
+### U11 (same-day) and the Gate-1 Round B P3b deviation note
+
 - **U11 — No page tracking: one persisted one-shot deletion task per page**
   (2026-08-18, later than U9-U10; supersedes U9's *mechanism* — U9's
   ratified text above stays as history): NO page registry at all — no
@@ -106,6 +111,8 @@ U9's ratified text below stays as history.
   (was "page-registry cutoff").
 
  - **Deviation 2026-08-18 (Gate-1 Round B P3b) — D11's "grouping logic exists exactly once" not fully achieved**: The reply-text renderers and the payload builders remain two pipelines (unification deferred — follow-up candidate). Mitigations shipped: chatList condition aligned (private ∧ no user filter), possiblyIncomplete propagated into payload sections (FIX 5), averages now correct (FIX 1), subprocess mechanics extracted to `lib/stats/stats_pages/launcher.py` (satisfying the "exactly once" principle at the subprocess level). *(Superseded 2026-08-19 by U12-9 below — the page payload is now raw rows, mooting the two-pipeline concern.)*
+
+### U12 — user round 4 (2026-08-19): preamble and sub-decisions 1-5
 
 - **U12 — /stats command + web-tier revision** (2026-08-19, user round 4 —
   later than U11 and the P3b deviation note above; supersedes the listed
@@ -149,6 +156,9 @@ U9's ratified text below stays as history.
      optional `--base-url <url>` argument — operators put it directly in
      the generate-command template; url = base.rstrip("/")+"/"+filename
      when given, else the bare filename.
+
+### U12 (continued) — sub-decisions 6-10
+
   6. **Rate limiting (SUPERSEDES D13's pre-check+refuse):** applyLimit-only —
      `await RateLimiterManager.getInstance().applyLimit(queue, key)` with
      the issuing-chat key, exactly like the weather/geocode/yandex client
@@ -1802,6 +1812,8 @@ error), decided by an ad-hoc `configManager.get("stats-pages", {})` read
 arrives in Phase 3a), so P2 alias/grammar tests have a defined expectation
 for the web path.
 
+#### Phase 2 — tests, docs, and Gate 2
+
 **Tests:**
 
 - `tests/lib/stats/test_analysis.py` — `StatsAnalyzer` matrix: consumer-scope
@@ -2003,6 +2015,8 @@ No live/operator smoke gate is mandatory beyond the optional Phase 3 local smoke
 | R12 | **Template placeholder drift** (unknown placeholder in a custom template) | Med | Low | Strict `format_map` → KeyError → D15 note + WARNING log naming the command | Fix the templates |
 | R13 | **Orphaned page on failed deletion** — the one-shot task's delete-command call fails (external tool broken/removed); SINGLE attempt, no retry | Low | Low | WARNING log naming the page id; **accepted** (U11): the page just outlives TTL — no data risk, only storage | Fix or remove the external tool; manual delete |
 | R14 | **`request_count` counts attempts, not logical requests** (fallback loop, §2.2) | — (documented) | Low | Rendered as "requests (attempts)" in help/footnote; not fixable display-side | n/a |
+
+### 8.1 Rollback principle
 
 **Rollback principle:** the whole display tier is gated on `[stats] enabled`
 (the command, the chat-setting gate and page generation disappear with one

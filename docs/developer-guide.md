@@ -143,6 +143,8 @@ The project is organized in a strict layered architecture where each layer only 
 
 ## 3. Directory Structure
 
+### Repository Root Files
+
 ```
 gromozeka/
 ├── main.py                         # Entry point - GromozekBot orchestrator
@@ -151,6 +153,11 @@ gromozeka/
 ├── pyproject.toml                  # Tool configuration (black, flake8, pyright, pytest, isort)
 ├── requirements.txt                # Python dependencies
 │
+```
+
+### configs/ Directory
+
+```
 ├── configs/                        # Hierarchical TOML configuration
 │   ├── 00-defaults/                # Base default configs (loaded first)
 │   │   ├── 00-config.toml          # Core settings (bot, db, rate limiter, APIs)
@@ -163,6 +170,11 @@ gromozeka/
 │   ├── prod-telegram/              # Production Telegram-specific overrides
 │   └── prod-max/                   # Production Max-specific overrides
 
+```
+
+### internal/ Directory
+
+```
 ├── internal/                       # Application-specific internal code
 │   ├── bot/                        # Bot layer
 │   │   ├── common/                 # Shared bot logic
@@ -204,6 +216,11 @@ gromozeka/
 │   │       ├── chat_settings.py    # ChatSettingsKey, ChatSettingsValue, etc.
 │   │       └── command_handlers.py # CommandHandlerInfo, decorators
 │   │
+```
+
+#### internal/config/ and internal/database/
+
+```
 │   ├── config/                     # Configuration management
 │   │   └── manager.py              # ConfigManager - hierarchical TOML loader
 │   │
@@ -240,6 +257,11 @@ gromozeka/
 │   │       ├── create_migration.py # Script to scaffold new migrations
 │   │       └── versions/           # Migration files (migration_001 to migration_029)
 │   │
+```
+
+#### internal/services/ and internal/models/
+
+```
 │   ├── services/                   # Service layer (singletons)
 │   │   ├── cache/                  # Cache service
 │   │   │   ├── service.py          # CacheService singleton
@@ -256,6 +278,11 @@ gromozeka/
 │   └── models/                     # Shared internal models
 │       └── ...                     # MessageId, MessageType, etc.
 │
+```
+
+### lib/ Directory
+
+```
 ├── lib/                            # Reusable library components
 │   ├── ai/                         # LLM abstraction layer
 │   │   ├── abstract.py             # AbstractModel, AbstractLLMProvider
@@ -290,6 +317,11 @@ gromozeka/
 │   ├── geocode_maps/               # Geocode Maps API client
 │   │   ├── client.py               # GeocodeMapsClient
 │   │   └── models.py               # SearchResponse, ReverseResponse, etc.
+```
+
+#### lib/markdown/ and lib/sandbox/
+
+```
 │   ├── markdown/                   # Custom Markdown parser
 │   │   ├── parser.py               # MarkdownParser (main entry point)
 │   │   ├── tokenizer.py            # Tokenizer
@@ -319,6 +351,11 @@ gromozeka/
 │   ├── logging_utils.py            # Logging helpers (initLogging)
 │   └── utils.py                    # Shared utility functions
 │
+```
+
+### tests/ and docs/ Directories
+
+```
 ├── tests/                          # Test suite (all tests live here)
 │   ├── conftest.py                 # Shared pytest fixtures
 │   ├── utils.py                    # Test utilities
@@ -562,7 +599,7 @@ yandexConfig = configManager.getYandexSearchConfig()
 
 The database layer provides SQL access via [`Database`](/internal/database/database.py) with multi-source routing, connection pooling, repository pattern, and an automatic migration system It supports SQLite, MySQL, and PostgreSQL through a provider abstraction
 
-### Database
+### Database Class
 
 [`Database`](/internal/database/database.py) is the main interface to the database It supports multiple named database providers, with per-chat routing so different chats can use different databases The database uses a repository pattern with 15 specialized repositories for different data domains
 
@@ -1948,7 +1985,7 @@ body unless a cyclic dependency makes it genuinely unavoidable.
 
 ## 11. Deployment
 
-### Prerequisites
+### Deployment Prerequisites
 
 - Python 3.12+
 - Virtual environment with all dependencies
@@ -2029,7 +2066,7 @@ EOF
     --dotenv-file /etc/gromozeka/.env
 ```
 
-### Storage Directory
+### Deployment Storage Directory
 
 By default, the bot changes its working directory to the `root-dir` specified in `[application]` All relative paths (database, logs) are relative to this directory
 
@@ -2281,11 +2318,11 @@ The `ProxyConfig` class in `lib/proxy/__init__.py` applies a 4-step resolution:
 
 The sandbox library (`lib/sandbox/`) executes untrusted Python code inside Docker containers. Before using it, you need to set up the storage directory and build the Docker images.
 
-### Prerequisites
+### Sandbox Prerequisites
 
 - **Docker** must be installed and running on the host. The sandbox communicates with Docker via the daemon socket (default: `unix:///var/run/docker.sock`).
 
-### Storage Directory
+### Sandbox Storage Directory
 
 The sandbox stores session workspaces, metadata, and library pools under `[sandbox.storage].root_dir` (default: `/var/lib/gromozeka/sandbox`). Create this directory and ensure the bot process can write to it:
 
@@ -2602,6 +2639,8 @@ class MyProvider(AbstractLLMProvider):
         return model
 ```
 
+#### Registering the Provider in LLMManager
+
 **Step 2**: Register in [`LLMManager._initProviders()`](/lib/ai/manager.py:36)
 
 ```python
@@ -2617,6 +2656,8 @@ providerTypes = {
     "my-provider": MyProvider,    # Add here
 }
 ```
+
+#### Configuring the Provider in TOML
 
 **Step 3**: Configure in TOML
 

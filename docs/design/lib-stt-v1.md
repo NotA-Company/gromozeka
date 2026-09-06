@@ -229,6 +229,8 @@ anymore. The shared-enum vocabulary codes above are retained so the service can 
 `TranscriptionResult(ERROR, ...)`. The v1.1 round added a *new* ninth member, `OBJECT_STORAGE_ERROR`,
 which is provider-surfaced — see §4.5 of [`docs/design/stt-v1.1.md`](./stt-v1.1.md).)
 
+### 4.1 Container type enum and wire-label mapping
+
 ```python
 class STTAudioContainerType(StrEnum):
     """Audio containers a provider accepts inline.
@@ -255,6 +257,8 @@ class STTAudioContainerType(StrEnum):
         """Return the protobuf-JSON wire label for this container (§7.1)."""
         # match self: WAV -> "WAV", OGG_OPUS -> "OGG_OPUS", MP3 -> "MP3"; else ValueError.
 ```
+
+### 4.2 Record types (frozen dataclasses)
 
 **Records (frozen dataclasses, immutable tuples).**
 
@@ -380,6 +384,8 @@ class ExtractedAudio:
     durationMs: int
 ```
 
+### 4.3 Channel policy and forceMono
+
 **Channel policy.** On the pass-through path `ExtractedAudio.channels` equals the source channel
 count (preserved). On the transcode path it is clamped to the target spec's `[minChannels,
 maxChannels]` range via `AudioResampler` (downmix when too many, upmix when too few), and the output
@@ -397,6 +403,8 @@ pass-through, while otherwise pass-through multi-channel inputs negotiate the ex
 downmix path. This opt-in is lossy, adds decode/re-encode work, and can change the extracted payload
 enough to affect inline-versus-Object-Storage routing; it is not a recognition-quality guarantee.
 
+### 4.4 Loader boundary supersession and service-owned fields
+
 **Loader boundary (gone — simplified to a `bytes` argument).** The pre-simplification design passed a
 typed async loader callable into `lib/stt` (an `STTMediaLoader` returning an `STTLoaderResult` with
 `data` / `fileSize` / `mimeType`). That seam is **deleted**. The boundary is now a plain `bytes`
@@ -408,6 +416,8 @@ correction #1 calls out are `STTService`-side, **not** `lib/stt` — they are ha
 doc ([`stt-next-steps.md`](../archive/design/stt-next-steps.md) §3), not here. Correction #3 (TEXT media rendering must
 reuse the already-computed multi-attachment content so Max per-item descriptions are not lost) is
 handler/rendering-side and likewise out of scope here.
+
+### 4.5 Raise / return contract
 
 **Raise / return contract (load-bearing contract #2 — clarification made explicit).**
 
@@ -433,6 +443,8 @@ This is the uniform rule for failure handling across `lib/stt`:
 3. **Constructors may raise on startup config validation when STT is enabled** (parent §11.2): missing
    credentials, unresolved `${...}` placeholders, non-positive limits. These are startup failures, not
    runtime `transcribe()` failures.
+
+### 4.6 Error-code production map
 
 **Which `STTErrorCode` values are produced where:**
 
@@ -478,6 +490,8 @@ summarizes the codes as "stable categories" and references §4. The pre-simplifi
 `SourceTooLargeError` / `DurationExceededError` / `AudioTooLargeError` (the three cap exceptions); they
 are **deleted** — caps moved out of `lib/stt`, so nothing raises them anymore.)
 
+### 5.1 Negotiation contract and channel/rate policy
+
 **`extractAudio()` negotiation contract (this section is authoritative; parent §8.4 summarizes it).**
 Signature: `extractAudio(data, supportedInputFormats) -> ExtractedAudio`. **No caps** — the function
 receives only the source bytes and the provider's ordered accepted containers; it does **NOT** bound
@@ -493,6 +507,8 @@ path clamps channels to the target spec's `[minChannels, maxChannels]` range (do
 upmix when too few) and the output sample rate to `[minSampleRate, maxSampleRate]` (nearest bound;
 OGG_OPUS always uses the 48 kHz Opus-native rate), both via an `AudioResampler`. A source already
 inside the spec is carried through the resampler unchanged.
+
+### 5.2 Decision flow (probe, pass-through, transcode)
 
 **Decision flow.** `audio.py` receives the provider's ordered `supportedInputFormats` and produces an
 `ExtractedAudio` via exactly one of two paths:
@@ -533,6 +549,8 @@ non-opus OGG stream maps to `None` and routes to the transcode path. WAV and MP3
 alone. Comma-separated demuxer aliases (e.g. the `mov,mp4,m4a,3gp,3g2,mj2` list for an MP4 container)
 never alias one of the three inline containers and route to the transcode path.
 
+### 5.3 Channel ceiling and accepted decoded-memory gap
+
 **Channel ceiling on the transcode path.** Both transcode targets (libopus / libmp3lame) support at
 most 2 channels. The codec ceiling is enforced against the spec's `maxChannels` up front — a spec
 declaring `maxChannels > 2` raises `EncoderError` (a configuration error: the codec cannot honour it).
@@ -549,6 +567,8 @@ practice bounds the decoded-memory spike; `lib/stt` does not double-check those 
 decoded-buffer cap. If parent §13.3 gate-5 (peak RSS) fails at integration, revisit — i.e. restore a
 decoded-buffer cap inside `extractAudio` (see [`stt-next-steps.md`](../archive/design/stt-next-steps.md) §5). This is
 documented in the `extractAudio` docstring and the module docstring of [`audio.py`](../../lib/stt/audio.py).
+
+### 5.4 Cancellation, shutdown, and caps ownership
 
 **Cancellation & resource notes (part of the §5 contract; parent §8.4 summarizes it).** `asyncio.to_thread()`
 cancellation does **not** stop native decoding. Do not use a coroutine timeout as the primary CPU/memory
@@ -866,6 +886,8 @@ aurumentation-powered `tests/lib/stt/golden/` suite (`test_golden.py`,
 itself has no singletons, so no singleton-reset fixtures are needed.) This section is the authoritative
 lib/stt test matrix; parent §13.2 summarizes and references it.
 
+### 9.1 Models and exceptions
+
 **Models and exceptions**
 
 - Enum membership and exact string values for `STTResultStatus`, `STTErrorCode` (the **nine** shared
@@ -879,12 +901,16 @@ lib/stt test matrix; parent §13.2 summarizes and references it.
 - The typed extraction-exception taxonomy (3 subclasses): the 1:1 (and shared) exception →
   `STTErrorCode` mapping and the `isinstance` relationship to `STTExtractionError`.
 
+### 9.2 Service formatter coverage
+
 **Service formatter coverage (outside `tests/lib/stt/`; see §6)**
 
 - `tests/services/stt/test_formatter.py` asserts exact tagged and untagged range
   output and the equal-timestamp single-time form.
 - `tests/services/stt/test_transcribe.py` verifies that tagged output propagates
   through `STTService` and that `NO_SPEECH` produces an empty description.
+
+### 9.3 Abstract provider — stt() never-raise surface
 
 **Abstract provider (`stt()` never-raise surface — load-bearing)**
 
@@ -899,6 +925,8 @@ lib/stt test matrix; parent §13.2 summarizes and references it.
   unexpected exception is caught by the base `transcribe`'s defense-in-depth branch (logged +
   PROVIDER_ERROR) rather than escaping. (Pre-refactor, `transcribe` sat after the try/except and a
   raise escaped `stt`.)
+
+### 9.4 PyAV extraction
 
 **PyAV extraction**
 
@@ -924,6 +952,8 @@ lib/stt test matrix; parent §13.2 summarizes and references it.
 - (There are **no** source-byte / decoded-buffer / duration / inline-payload cap tests in `lib/stt` —
   those caps moved to `STTService` and are exercised in the integration test suite, not here. See §8.1.
   Likewise there are no `STTManager` tests — the class is deleted.)
+
+### 9.5 Yandex golden HTTP
 
 **Yandex golden HTTP**
 

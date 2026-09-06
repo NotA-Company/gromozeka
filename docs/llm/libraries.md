@@ -32,6 +32,8 @@
 
 ## 1. `lib/ai` — LLM Abstraction
 
+### 1.1 Imports and key classes
+
 **Import paths:**
 ```python
 from lib.ai import LLMManager, AbstractModel, ModelMessage, ModelResultStatus, ModelStructuredResult
@@ -67,6 +69,8 @@ from lib.ai.models import (
 | [`LLMToolFunction`](../../lib/ai/models.py:345) | `lib/ai/models.py` | Tool/function definition for LLM |
 | [`LLMFunctionParameter`](../../lib/ai/models.py:277) | `lib/ai/models.py` | Tool parameter definition |
 | [`LLMParameterType`](../../lib/ai/models.py:253) | `lib/ai/models.py` | `STRING`, `NUMBER`, `BOOLEAN`, `ARRAY`, `OBJECT` |
+
+### 1.2 Key methods on models
 
 **Key methods on `AbstractModel`:**
 ```python
@@ -109,6 +113,8 @@ model.modelId      # str
 ```
 
 `consumerId` (typically `str(chatId)`) is forwarded by `LLMService` to every generation method and used as the stats-storage partition key — see [`services.md`](services.md). Embeddings have **no** `fallbackModels` parameter: vectors from different models live in incompatible spaces, so swapping mid-stream would silently corrupt downstream cosine scores.
+
+### 1.3 Sessions, fallback, statistics, and message construction
 
 **Request session identification (`sessionId`):** every public generation
 method accepts an optional `sessionId` — a stable conversation identifier
@@ -183,6 +189,8 @@ imgMsg = ModelImageMessage(
 )
 ```
 
+### 1.4 Structured output and provider support
+
 **Structured (JSON-Schema) output:**
 
 `generateStructured` sends a JSON Schema to the model and returns a
@@ -236,6 +244,8 @@ and route through `_handleSDKError()`, which maps `AioRpcError` details
 (e.g. content filter violations → `CONTENT_FILTER`) and logs `RunError`
 specifically.
 
+### 1.5 Image generation
+
 **Abstract/split pattern:** Similar to `generateText` / `_generateText`,
 the image generation methods follow the same pattern:
 - `_generateImage` — the `@abstractmethod` that providers implement
@@ -270,6 +280,8 @@ models: `art://{folderId}/{modelId}/{modelVersion}` (vs. `gpt://...` for text).
 The `_getImageModelId()` override in `YcOpenaiModel` constructs this URI.
 Additionally, `_getClientParams()` in `YcOpenaiProvider` adds the `project`
 parameter required by YC's Images API endpoint.
+
+### 1.6 Schema requirements and new providers
 
 **Schema requirements (strict mode).** Most providers forward your
 schema to OpenAI's `response_format = {"type": "json_schema",
@@ -331,6 +343,8 @@ from lib.ai import ModelStructuredResult
 3. Must implement: `_createModel(modelConfig) -> AbstractModel`
 4. Register in `lib/ai/manager.py:118` — add to `providerTypes` dict: `{"my-provider": MyProvider}`
 5. Tests in `tests/lib/ai/providers/test_my_provider.py`
+
+### 1.7 FastEmbed provider and proxy support
 
 **FastEmbed provider (`fastembed`):**
 
@@ -470,6 +484,8 @@ result: str = markdownToMarkdownV2(text: str) -> str
 
 ## 5. `lib/max_bot` — Max Messenger Client
 
+### 5.1 Client core — imports, endpoint, TLS, and models
+
 **Import:**
 ```python
 import lib.max_bot as libMax
@@ -495,6 +511,8 @@ from lib.max_bot import MaxBotClient, MAX_MESSAGE_LENGTH
 - [`lib/max_bot/models/enums.py`](../../lib/max_bot/models/enums.py) — Enum types
 - [`lib/max_bot/models/keyboard.py`](../../lib/max_bot/models/keyboard.py) — Keyboard/button models
 - [`lib/max_bot/models/update.py`](../../lib/max_bot/models/update.py) — Update/event models
+
+### 5.2 Platform gotchas and transport modes
 
 **IMPORTANT gotcha — Max platform sticker stubs:**
 Animated stickers have stub URLs, not real images. Always check `url.startswith(...)` before processing
@@ -586,6 +604,8 @@ places   = await client.lookup(["R2623018", "N107775"])      # OSM lookup by ID 
 
 ## 9. `lib/stats` — Statistics Collection
 
+### 9.1 Storage interface and key classes
+
 Generic, storage-agnostic interface for recording time-series statistics events and aggregating them into periodic buckets.
 
 **Import:**
@@ -637,6 +657,8 @@ await statsStorage.query(
 ) -> list[StatsAggregateDict]
 ```
 
+### 9.2 Method details and read-side analysis
+
 **Method details:**
 
 - `record()`: Append a raw stat event to the log. Failures are logged but not raised.
@@ -648,6 +670,8 @@ await statsStorage.query(
 - `StatsAnalyzer(rows)` — immutable analyzer over `list[StatsAggregateDict]`; filter methods return new instances: `filterByLabelIn(key, values)` / `filterByLabel(key, value)` (callers filter the `consumer` label to concrete chat IDs, which naturally excludes `__global__` rows), plus `sumMetric(metricKey)`, `groupSum(groupLabel, metricKey)`, `topN(groupLabel, metricKey, n)`, and `average(valueKey, countKey)` (weighted average Σvalue / Σcount — never an average of averages).
 - `mapPeriodArgToPeriodType(periodArg)` — maps `/stats` period args to query granularity (constants in `PeriodArg` / `PeriodType`, both `StrEnum`): `1h`–`24h` → `hourly`, `1d`–`31d` → `daily`, `Nm` (`N ≥ 1`, calendar months) → `monthly`, `all` → `total`; `ValueError` otherwise.
 - `computePeriodRange(periodArg, *, now=None)` — returns `(periodStartFrom, periodStartTo)` ISO-8601 UTC bounds (`(None, None)` for `all`); the start is truncated to the period boundary so the partial current day is included (7d → 8 daily buckets, 30d → 31). `now` is keyword-only; when supplied it MUST be timezone-aware (`ValueError` on a naive datetime) and is normalized to UTC; `None` defaults to the current UTC time.
+
+### 9.3 Usage, DB-backed storage, and integration points
 
 **Usage example:**
 ```python
@@ -901,6 +925,8 @@ async with httpx.AsyncClient(**proxyKwargs, timeout=30) as client:
 
 ## 16. `lib/stt` — Provider-neutral Speech-to-Text
 
+### 16.1 Overview and dependency firewall
+
 Provider-neutral Speech-to-Text library: PyAV-based audio extraction with container-driven format negotiation (probe → pass-through / transcode; pass-through preserves source channels, transcode converts out-of-spec channels/rates via AudioResampler), a typed extraction-exception taxonomy, provider-neutral models/enums, an abstract provider exposing a **never-raise** `stt(data)` entry, and a single concrete provider (Yandex SpeechKit v3). It owns no DB rows, no bot state, no admission/concurrency policy, no caps, no transcript formatting, and no config reading.
 
 > **Service formatter:** [`internal/services/stt/formatter.py`](../../internal/services/stt/formatter.py) formats the structured result, not `lib/stt`. It emits `[Speaker#<tag>] [start..end] text` for a non-empty `attributionTag` on a `SPEAKER` result; for `CHANNEL`, it emits `[Ch#<tag>] [start..end] text` only when more than one distinct non-empty tag is present, otherwise `[start..end] text`. Speaker labels are opaque and recording-local. One timestamp is used when start equals end.
@@ -908,6 +934,8 @@ Provider-neutral Speech-to-Text library: PyAV-based audio extraction with contai
 **Authoritative spec:** [`docs/design/lib-stt-v1.md`](../design/lib-stt-v1.md) — this section is a quick-reference; the design doc is the single source of truth for `lib/stt` internals (contracts, module layout, test matrix). **Integration status** (now wired via the stateless `STTService`) lives in [`docs/archive/design/stt-next-steps.md`](../archive/design/stt-next-steps.md) and [`services.md`](services.md) §7.
 
 **Dependency firewall (load-bearing):** `lib/stt` is bot-free — it must never import `internal.bot`, `internal.database`, or any singleton service. The proxy is **injected** into the provider constructor (never resolved inside `lib/stt`); the audio bytes are a plain `bytes` argument to `extractAudio` / `stt` (never a bot download callable). The Yandex SpeechKit HTTP client runs on httpx2 (aliased as `httpx` process-wide — see [`architecture.md`](architecture.md) ADR-021). Sits alongside other bot-free libraries (`lib/ai/`, `lib/yandex_search/`, `lib/openweathermap/`).
+
+### 16.2 Key modules
 
 **Key modules:**
 
@@ -921,6 +949,8 @@ Provider-neutral Speech-to-Text library: PyAV-based audio extraction with contai
 | [`providers/yandex_object_storage.py`](../../lib/stt/providers/yandex_object_storage.py) | **v1.1 (gate-3)** — co-located Yandex-Object-Storage-specific helper used directly by `YandexSpeechKitProvider`. boto3 is a hard, unconditional top-level import (pinned dependency); the boto3 client is built once with a bounded `botocore.config.Config` (connect/read timeouts + retry cap). `upload(data) -> str` (key `{prefix}{uuid}`, `put_object`, returns the SpeechKit URI) and `delete(uri) -> None` (missing object = no-op). Yandex endpoint/region are constants baked into the helper. boto3 is *external* (not `internal.*`), so the `lib/stt` firewall is intact |
 | [`providers/yandex_events.py`](../../lib/stt/providers/yandex_events.py) | `getRecognition` streaming-JSON event parser. It reads only canonical envelope `channelTag` into generic attribution (missing/null/empty → `None`; all other JSON values → `str(value)`) and ignores deprecated `final.channelTag`. The result role is `CHANNEL` normally or `SPEAKER` when labeling was requested; refinement retains attribution and uses the canonical tag with a valid cursor to correlate speakers. |
 
+### 16.3 Contracts and tests
+
 **Never-raise contract:** `AbstractSTTProvider.stt(data: bytes)` is the integration entry point. It wraps `extractAudio` + `transcribe` and catches every failure — a typed `STTExtractionError` maps to `TranscriptionResult(ERROR, errorCode=exc.errorCode)`; any other exception maps to `TranscriptionResult(ERROR, PROVIDER_ERROR)`. So calling `stt(data)` can never raise for any expected or unexpected failure. The only runtime raise-point inside `lib/stt` is `audio.extractAudio()` when called **directly** (not via `stt()`); constructors may raise `ValueError` on startup config validation (the `YandexSpeechKitProvider` constructor owns cred / `${...}`-placeholder / cap-positivity / cross-field validation — see [`configuration.md`](configuration.md) `[stt]`). The downstream `STTService` is the final never-raise boundary — see [ADR-020](architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall).
 
 **Accepted decoded-memory gap (load-bearing):** `extractAudio` does **NOT** bound decoded PCM memory — a large/long source can decode to hundreds of MB during probe/measure/transcode. This is an accepted simplification: the owning service (`STTService`) bounds source bytes AND duration BEFORE calling `stt(data)`. If RSS gate-5 ([`stt-next-steps.md`](../archive/design/stt-next-steps.md) §4) fails at release, the ratified fallback is to restore a decoded-buffer cap inside `extractAudio`, not a service-side change. Documented in the `extractAudio` docstring and [`docs/design/lib-stt-v1.md`](../design/lib-stt-v1.md) §5.
@@ -932,6 +962,8 @@ Provider-neutral Speech-to-Text library: PyAV-based audio extraction with contai
 ---
 
 ## 17. `lib/stats/stats_pages/` — Statistics Page Generator
+
+### 17.1 Layout and CLI contract
 
 Self-contained HTML page generator for statistics display. Used by `StatsHandler` via subprocess invocation for the `--web` tier. Module-invocable: `./venv/bin/python3 -m lib.stats.stats_pages`. Zero new runtime dependencies (stdlib `argparse`/`html`/`json`/`uuid`/`pathlib` only).
 
@@ -950,6 +982,8 @@ Self-contained HTML page generator for statistics display. Used by `StatsHandler
 - `delete PAGE_ID` — validates the pageId against `^[0-9a-f]{32}$` first and prints `{"deleted": 0}` on mismatch without touching the filesystem (path-traversal guard); otherwise removes the page by UUID filename stem and prints `{"deleted": 0\|1}` to stdout (0 = no such page, still a success exit). Accepts `--output-dir` flag.
 - Exit codes: 0 for success, nonzero for any failure (with a human-readable stderr line).
 - Failure modes: invalid JSON on stdin → nonzero exit + error message; missing required fields in payload → nonzero exit + error message; file write errors → nonzero exit + error message.
+
+### 17.2 StatsPayload and rendering
 
 **StatsPayload TypedDict** (stdin JSON contract — the bot applies ONLY scope/granularity/range filters and the 10000-row limit; ALL grouping, time-series construction, and rendering happens server-side in the generator):
 ```python
@@ -984,6 +1018,8 @@ class StatsPayload(TypedDict):
 - Large numbers formatted with commas (e.g., `15,000`).
 - Emojis used as section headers: 💬 Messages, 🔧 Commands, 🛠️ Tools, 🧠 LLM, 📋 Your Chats, 🎤 Speech-to-Text.
 - Responsive design: max-width 900px container, clean table layout, hover effects.
+
+### 17.3 Integration with the bot and tests
 
 **Integration with bot:**
 - Not imported as a handler dependency for state — pure lib package; `StatsHandler` imports only the payload/entry TypedDicts and the launcher.
@@ -1033,6 +1069,8 @@ from lib.db.providers.base import ExcludedValue, ParametrizedQuery, VectorColumn
 
 ## 19. `lib/max_webhook_receiver` — Standalone Max Webhook Receiver
 
+### 19.1 Entry point, imports, and key modules
+
 Fully standalone aiohttp receiver process implementing ADR-013's two-process webhook architecture: accepts Max webhook POSTs, buffers them in the `webhook_updates` table in its OWN SQLite database, and serves them back to the bot via a `GET /updates` endpoint speaking the Max API protocol. Extracted from `internal/` in a single big-bang move (the old `internal/max_webhook_receiver/` package deleted; no shims) — see [`architecture.md`](architecture.md) ADR-025 and [`docs/design/lib-max-webhook-receiver-extraction-v1.md`](../design/lib-max-webhook-receiver-extraction-v1.md).
 
 **Entry point** (module-invocable like `lib.stats.stats_pages`):
@@ -1061,6 +1099,8 @@ from lib.max_webhook_receiver.schema import ensureWebhookUpdatesSchema, getForwa
 | [`models.py`](../../lib/max_webhook_receiver/models.py) | `WebhookUpdatesRow` TypedDict (moved verbatim from `internal/database/models.py`) |
 | [`schema.py`](../../lib/max_webhook_receiver/schema.py) | Canonical `webhook_updates` DDL (`WEBHOOK_UPDATES_TABLE_DDL`, `WEBHOOK_UPDATES_INDEX_DDL`), `getForwardDDL()` — the migration-side batch consumed by `migration_019.up()` and `migration_029.down()` — and `ensureWebhookUpdatesSchema(sqlProvider)`, the startup self-heal that creates BOTH the table and the index |
 | [`__main__.py`](../../lib/max_webhook_receiver/__main__.py) | The launcher: `load_dotenv` → stdlib `tomllib` → `substituteEnvVars` ([`lib/utils/utils.py`](../../lib/utils/utils.py)) → `[webhook-receiver]` reads → `${VAR}` secret guard (`SystemExit(1)`) → `DatabaseManager` over `[webhook-receiver.database]` (pure passthrough) → `createApp(...)` → optional TLS → `web.run_app` |
+
+### 19.2 Config, firewall, deployment, and tests
 
 **Own config + own database (ADR-025):** the receiver does NOT use `ConfigManager` — it reads its OWN single TOML config file (`--config`, default `webhook-receiver.toml`; `[webhook-receiver]`-rooted, dotenv + `${VAR}` substitution). Its `[webhook-receiver.database]` section (same shape as the bot's `[database]`) feeds a bare `DatabaseManager` pointing at the receiver's own file (`webhook_receiver_data.db` by default). The receiver never runs the bot's migrations and never touches the bot's database — the bot's chain dropped `webhook_updates` via `migration_029`, so the startup self-heal is the only schema authority for the receiver's database. `secret`/`get-updates-secret` are maintained in BOTH the bot config and the receiver file (drift = 403s) — see [`configuration.md`](configuration.md) §`[webhook-receiver]` for the split and the dual-secret cost.
 

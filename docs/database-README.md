@@ -130,7 +130,7 @@ A streamlined reference optimized for LLM consumption, featuring:
 
 ## 🔍 Key Features
 
-### SQL Portability
+### SQL Portability Overview
 The database system is designed for cross-RDBMS compatibility, supporting multiple database backends:
 - **Registered providers**: SQLite (`sqlite3`) and SQLink (`sqlink`) — the only two wired into the `getSqlProvider` factory today (see [`lib/db/providers/__init__.py`](../lib/db/providers/__init__.py:90))
 - **Implemented, not yet selectable**: MySQL and PostgreSQL provider classes exist at [`lib/db/providers/mysql.py`](../lib/db/providers/mysql.py) and [`lib/db/providers/postgresql.py`](../lib/db/providers/postgresql.py) but are not registered in the factory. SQL must still stay portable so they can be turned on without rewrites.
@@ -379,7 +379,7 @@ keepConnection = false  # Connect on demand (default for file-based SQLite)
 - **Upsert**: Uses `INSERT ... ON CONFLICT DO UPDATE` syntax
 - **Connection management**: In-memory databases (`:memory:`) default to `keepConnection=True` to prevent data loss
 
-#### MySQL
+#### MySQL Specifics
 - **Connection pooling**: Uses `aiomysql.Pool` for connection management
 - **Date/time**: Application code sets timestamps explicitly (no `DEFAULT CURRENT_TIMESTAMP`)
 - **Case sensitivity**: `getCaseInsensitiveComparison()` uses `column COLLATE utf8mb4_general_ci = :param`; `getLikeComparison()` uses `LOWER(column) LIKE LOWER(:param)`
@@ -387,7 +387,7 @@ keepConnection = false  # Connect on demand (default for file-based SQLite)
 - **Upsert**: Uses `INSERT ... ON DUPLICATE KEY UPDATE` syntax
 - **Connection management**: Defaults to `keepConnection=False` (connect on demand)
 
-#### PostgreSQL
+#### PostgreSQL Specifics
 - **Connection pooling**: Uses `asyncpg.Pool` for connection management
 - **Date/time**: Application code sets timestamps explicitly (no `DEFAULT CURRENT_TIMESTAMP`)
 - **Case sensitivity**: `getCaseInsensitiveComparison()` and `getLikeComparison()` use `LOWER(column) [LIKE] LOWER(:param)` (not `ILIKE`, for cross-provider portability)
@@ -404,7 +404,7 @@ To switch between database providers:
 3. **Migrate data**: Use database-specific tools to migrate data (e.g., `pg_dump` for PostgreSQL)
 4. **Test thoroughly**: Ensure all operations work correctly with the new provider
 
-### Best Practices
+### SQL Portability Best Practices
 
 1. **Use provider methods**: Always use provider methods instead of raw SQL for portable operations
 2. **Test on all providers**: Ensure your code works with all supported providers
@@ -412,7 +412,7 @@ To switch between database providers:
 4. **Document provider dependencies**: Note any provider-specific requirements in your code
 5. **Use parameterized queries**: Always use parameterized queries to prevent SQL injection
 
-### Related Documentation
+### SQL Portability References
 
 - **SQL Portability Guide**: [`sql-portability-guide.md`](sql-portability-guide.md)
 - **Provider Base Class**: [`lib/db/providers/base.py`](../lib/db/providers/base.py:1)
@@ -426,6 +426,8 @@ To switch between database providers:
 The database system uses a repository pattern with 16 specialized repositories, each responsible for a specific domain of data operations:
 
 #### Available Repositories
+
+##### Core Chat Data Repositories
 
 1. **[`chatMessages`](../internal/database/repositories/chat_messages.py:1)** - Message storage and retrieval
    - `saveChatMessage()` - Store new messages
@@ -452,6 +454,8 @@ The database system uses a repository pattern with 16 specialized repositories, 
    - `getChatSetting()` - Get specific setting value
    - `setChatSetting()` - Update a setting
    - `unsetChatSetting()` - Remove a setting
+
+##### Cache, Media, Spam, and Task Repositories
 
 5. **[`chatSummarization`](../internal/database/repositories/chat_summarization.py:1)** - Summary caching
    - `addChatSummarization()` - Store a chat summary
@@ -480,6 +484,8 @@ The database system uses a repository pattern with 16 specialized repositories, 
    - `unsetCacheStorage()` - Remove a `cache_storage` entry
    - The `cache` table itself is owned by `GenericDatabaseCache` in [`lib/cache/sql_cache.py`](../lib/cache/sql_cache.py) (ADR-024)
 
+##### System, Search, and Feature Repositories
+
 10. **[`common`](../internal/database/repositories/common.py:1)** - Common operations
     - `getSettings()` - Get global system settings
     - `getSetting()` - Get a specific setting
@@ -498,6 +504,8 @@ The database system uses a repository pattern with 16 specialized repositories, 
    - `getLayout()` - Retrieve a cached layout definition
    - `saveLayout()` - Cache a layout definition
    - `saveNegativeCache()` - Cache negative result (layout not found)
+
+##### Memory, Webhook, and Model Registry Repositories
 
 14. **[`userMemories`](../internal/database/repositories/user_memories.py:1)** - Unified per-(chat, user, thread) structured memory store
    - `addMemory()` - Store a memory entry (permanent or ephemeral)
@@ -616,7 +624,7 @@ settingValue = await db.chatSettings.getChatSetting(
 )
 ```
 
-### Cache Operations
+### Cache Operations Examples
 ```python
 from lib.cache import GenericDatabaseCache
 from internal.database.models import CacheType

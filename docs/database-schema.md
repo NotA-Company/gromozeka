@@ -56,7 +56,7 @@ The database stores chat messages, user information, settings, media attachments
 
 ## Multi-Source Architecture
 
-### Overview
+### Multi-Source Overview
 
 The database supports routing different chats to different SQLite database files. This enables:
 
@@ -122,7 +122,7 @@ Sources marked as `readonly = true` will:
 
 ## Migration System
 
-### Overview
+### Migration Manager Overview
 
 The migration system ([`MigrationManager`](../internal/database/migrations/manager.py:25)) provides version-controlled database schema changes with:
 
@@ -135,6 +135,8 @@ The migration system ([`MigrationManager`](../internal/database/migrations/manag
 ### Migration Files
 
 Migrations are located in [`internal/database/migrations/versions/`](../internal/database/migrations/versions/):
+
+#### Foundational Schema (Migrations 1-13)
 
 | Version | File | Description |
 |---------|------|-------------|
@@ -151,18 +153,38 @@ Migrations are located in [`internal/database/migrations/versions/`](../internal
 | 11 | [`migration_011_add_confidence_to_spam_messages.py`](../internal/database/migrations/versions/migration_011_add_confidence_to_spam_messages.py:1) | Adds `confidence` column to [`spam_messages`](#spam_messages) and [`ham_messages`](#ham_messages) |
 | 12 | [`migration_012_unify_cache_tables.py`](../internal/database/migrations/versions/migration_012_unify_cache_tables.py:1) | Unifies all cache tables into single [`cache`](#cache) table |
 | 13 | [`migration_013_remove_timestamp_defaults.py`](../internal/database/migrations/versions/migration_013_remove_timestamp_defaults.py:1) | Removes `DEFAULT CURRENT_TIMESTAMP` from all timestamp columns |
+
+#### Feature Tables (Migrations 14-18)
+
+| Version | File | Description |
+|---------|------|-------------|
 | 14 | [`migration_014_add_divinations_table.py`](../internal/database/migrations/versions/migration_014_add_divinations_table.py:1) | Creates [`divinations`](#divinations) table and `idx_divinations_user_created` index |
 | 15 | [`migration_015_add_divination_layouts_table.py`](../internal/database/migrations/versions/migration_015_add_divination_layouts_table.py:1) | Creates [`divination_layouts`](#divination_layouts) table and `idx_divination_layouts_system` index |
 | 16 | [`migration_016_add_stat_tables.py`](../internal/database/migrations/versions/migration_016_add_stat_tables.py:1) | Creates [`stat_events`](#stat_events) and [`stat_aggregates`](#stat_aggregates) tables |
 | 17 | [`migration_017_message_embeddings.py`](../internal/database/migrations/versions/migration_017_message_embeddings.py:1) | Creates [`message_embeddings`](#message_embeddings) table for semantic search |
 | 18 | [`migration_018_message_embeddings_index.py`](../internal/database/migrations/versions/migration_018_message_embeddings_index.py:1) | Adds secondary index on `message_embeddings` (chat_id, model) |
+
+#### User Memory and Webhook (Migrations 19-22)
+
+| Version | File | Description |
+|---------|------|-------------|
 | 19 | [`migration_019_add_webhook_updates_table.py`](../internal/database/migrations/versions/migration_019_add_webhook_updates_table.py:1) | Creates `webhook_updates` table for Max webhook ingestion; `up()` delegates its DDL to the lib-owned schema (`getForwardDDL()`). Table + index subsequently DROPPED from the bot's database by migration_029 — moved to the webhook receiver's own database (ADR-025) |
 | 20 | [`migration_020_user_memories.py`](../internal/database/migrations/versions/migration_020_user_memories.py:1) | Creates [`user_memories`](#user_memories) table (unified per-user memory store) with backfills from `user_data` + rolling-bio |
 | 21 | [`migration_021_user_memories_soft_delete.py`](../internal/database/migrations/versions/migration_021_user_memories_soft_delete.py:1) | Adds nullable `deleted_at` to [`user_memories`](#user_memories) for soft-delete semantics (`down()` is a no-op — portable `DROP COLUMN` unavailable) |
 | 22 | [`migration_022_drop_user_data.py`](../internal/database/migrations/versions/migration_022_drop_user_data.py:1) | DROP TABLE `user_data` (superseded by `user_memories`; backfilled in migration_020). No-op downgrade is intentional — re-creating the table would orphan the backfilled rows |
+
+#### Settings, Bayes Index, and Model Lookup (Migrations 23-25)
+
+| Version | File | Description |
+|---------|------|-------------|
 | 23 | [`migration_023_rename_memory_injection_enabled_to_memory_enabled.py`](../internal/database/migrations/versions/migration_023_rename_memory_injection_enabled_to_memory_enabled.py:1) | Idempotent data migration: `UPDATE chat_settings SET key='memory-enabled' WHERE key='memory-injection-enabled'` (companion to the `MEMORY_INJECTION_ENABLED` → `MEMORY_ENABLED` enum rename) |
 | 24 | [`migration_024_add_bayes_tokens_updated_at_index.py`](../internal/database/migrations/versions/migration_024_add_bayes_tokens_updated_at_index.py:1) | Adds secondary index on `bayes_tokens` (`updated_at`) to optimize the age-based `cleanupOldTokens` DELETE |
 | 25 | [`migration_025_embedding_model_lookup.py`](../internal/database/migrations/versions/migration_025_embedding_model_lookup.py:1) | Normalises embedding provenance into a new [`models`](#models) lookup table (`model_id` integer PK, `UNIQUE(model, dimensions)`); swaps `chat_messages` and `user_memories` to carry `model_id` instead of the legacy `(model, dimensions)` / `(embedding_model, embedding_dimensions)` pairs; DROPS the [`message_embeddings`](#message_embeddings-dropped) BLOB side table + `idx_message_embeddings_chat_model` index; DROPS both vec0 virtual-table families (`vec_message_embeddings_{N}`, `vec_user_memories_{N}`) — they are lazily recreated at runtime with `model_id INTEGER PARTITION KEY`. `down()` is schema-correct but data-lossy for vectors (the dropped BLOBs cannot be regenerated from `model_id`; vec0 tables are not re-created by `down()` — they re-populate via the normal backfill cron). |
+
+#### Chat Accessibility, Stats, and Webhook Cutover (Migrations 26-29)
+
+| Version | File | Description |
+|---------|------|-------------|
 | 26 | [`migration_026_chat_accessibility_bot_status.py`](../internal/database/migrations/versions/migration_026_chat_accessibility_bot_status.py:1) | Adds `bot_status TEXT NOT NULL DEFAULT 'active'` to [`chat_info`](#chat_info) (column only — no supporting index). Backs the chat-accessibility-tracking subsystem (lazy mark-on-failure at `TheBot.getChatAdmins` catch sites, activity-based recovery in `MessagePreprocessorHandler`, and an optional `botStatus` filter on every chat-listing repository method). Portable DDL: string-literal `DEFAULT 'active'` backfills every existing row to `ACTIVE` as part of the `ALTER TABLE` (no separate backfill; no `AUTOINCREMENT`/`SERIAL`/`DEFAULT CURRENT_TIMESTAMP`). `down()` runs `DROP COLUMN bot_status` (SQLite ≥3.35). See [`docs/design/chat-accessibility-tracking.md`](design/chat-accessibility-tracking.md). |
 | 27 | [`migration_027_drop_chat_stats_backfill_aggregates.py`](../internal/database/migrations/versions/migration_027_drop_chat_stats_backfill_aggregates.py:1) | Backfill chat_messages history into stat_aggregates (real categories/types, text_length) and drop chat_stats/chat_user_stats; tables: chat_stats, chat_user_stats, stat_aggregates |
 | 28 | [`migration_028_add_stat_events_retention_index.py`](../internal/database/migrations/versions/migration_028_add_stat_events_retention_index.py:1) | Add retention index on stat_events (processed, created_at) to support efficient deletion of processed events older than the retention window |
@@ -214,6 +236,8 @@ Stores all chat messages with detailed metadata.
 
 **Primary Key**: `(chat_id, message_id)`
 
+#### Columns, Relationships, and TypedDict
+
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
 | `chat_id` | INTEGER | No | - | Telegram chat identifier |
@@ -241,6 +265,8 @@ Stores all chat messages with detailed metadata.
 - Self-references via `reply_id` and `root_message_id`
 
 **TypedDict**: [`ChatMessageDict`](../internal/database/models.py:129)
+
+#### Metadata JSON Convention
 
 **`metadata` JSON convention:** the column holds a JSON object (`internal/bot/models/message_metadata.py` → `MetadataDict`, `total=False`) with optional keys. The keys relevant to the condensed-context-retrieval feature (ADR-019) are:
 
@@ -872,6 +898,8 @@ Semantic search runs over a vec0 virtual table (`vec_user_memories_{dim}`, cosin
 
 **Primary Key**: `(chat_id, user_id, memory_id)` — composite natural key (no `AUTOINCREMENT`).
 
+#### Columns, Indexes, and TypedDict
+
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
 | `chat_id` | INTEGER | No | - | Chat identifier |
@@ -897,6 +925,8 @@ Semantic search runs over a vec0 virtual table (`vec_user_memories_{dim}`, cosin
 
 **Enum**: [`MemoryType`](../internal/database/models.py:445) (`BIO`/`PREFERENCE`/`FACT`/`EVENT`/`RELATIONSHIP`); [`UserMemorySource`](../internal/database/models.py:487) (`REFINEMENT`/`CHAT`/`MIGRATION`/`USER`).
 
+#### UserMemoriesRepository Methods
+
 **Repository** (`UserMemoriesRepository`, accessed as `db.userMemories`) — 10 public methods; all SQL goes through `BaseSQLProvider`:
 - `addMemory(chatId, userId, memoryId, *, type, content, tags, permanent, source, embedding=None, embeddingModel=None, threadId=None) -> None` — INSERT (caller generates the UUID). `source` is a `UserMemorySource`; `threadId` is keyword-only; when both `embedding` (`List[float]`) and `embeddingModel` are provided the row is embedded during add.
 - `deleteMemory(chatId, userId, memoryId) -> bool` — SOFT DELETE: sets `deleted_at` + bumps `updated_at`, drops the vec0 row, nulls `model_id` (via `deleteMemoryEmbedding(..., vecOnly=False)`). Unrestricted (may target permanent). The row survives so `getMemoriesByIds` can still resolve it; never raises (returns `False` on error or already-deleted).
@@ -908,6 +938,8 @@ Semantic search runs over a vec0 virtual table (`vec_user_memories_{dim}`, cosin
 - `deleteMemoryEmbedding(chatId, userId, memoryId) -> None` — best-effort vec0 DELETE across every `vec_user_memories_{N}` table; never raises.
 - `getMemoriesWithoutEmbeddings(chatId, *, limit=50, modelName=None, dimensions=None, dataSource=None) -> List[UserMemoryDict]` — single-table stale detection (NULL `model_id`, or `model_id` differing from the resolved active `(model, dimensions)` pair); backs the regen cron and the initial backfill.
 - `deleteObsoleteMemoryEmbeddings(chatId, currentModel, currentDimensions) -> int` — model-drift cleanup: resets stale rows' `model_id` to NULL and drops their vec0 rows.
+
+#### Backfills and Migration Notes
 
 **Backfills** (`migration_020.up()`):
 - `user_data` rows → permanent cross-thread `type='fact'`, `content="{key}: {data}"`, `tags=[]`, `source='migration'`, original timestamps preserved.

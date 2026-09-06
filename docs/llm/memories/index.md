@@ -22,6 +22,9 @@ Use these files as companions to [`../teamlead-memory.md`](../teamlead-memory.md
 - [`db-maintenance-scripts.md`](db-maintenance-scripts.md) — Standalone `/scripts/` DB-maintenance conventions: direct `sqlite3.connect` precedent, `dest="dryRun"`, `StrEnum` over literals, JSON serializer for `chat_users.metadata`.
 - [`dedoodization.md`](dedoodization.md) — durable notes for the dedoodization script and repo-wide cleanup of informal language.
 - [`delete-from-user.md`](delete-from-user.md) — durable notes for the `DeleteFromUserMessageHandler`: message deletion commands, author extraction gotchas.
+
+### Audits, doc campaigns, and migrations
+
 - [`dependency-usage-tests.md`](dependency-usage-tests.md) — Durable notes for the `tests/dependencies/` dep-usage regression test suite: PURE/EXTERNAL/MIXED/DEV classification, version-pinning convention, behavioral findings (dateutil, html-to-markdown, numpy, sqlite-vec).
 - [`doc-link-fix-campaign.md`](doc-link-fix-campaign.md) — `make check-docs` link checker + 376-broken-link fix campaign; leading-slash link convention, exclusion prefixes, depth gotchas.
 - [`documentation-audit.md`](documentation-audit.md) — Durable notes from the 2026-06-28 documentation audit: drift-pattern taxonomy, highest/medium/low-drift doc lists, common drift failure modes.
@@ -29,6 +32,9 @@ Use these files as companions to [`../teamlead-memory.md`](../teamlead-memory.md
 - [`embedding-model-lookup-refactor.md`](embedding-model-lookup-refactor.md) — Durable notes for the embedding model-lookup refactor: migration_025, `EmbeddingModelsRepository`, vec0 partition key, D7 INTEGER PK, Gate 1+2 reviews, git-stash disaster recovery, dataSource plumbing, numpy removal.
 - [`full-docs-audit.md`](full-docs-audit.md) — Durable notes from the 2026-07-18 85-file full `/docs` audit: ~78 fixes, 13 archives, 5-phase process, ~30 YC SDK drifts, 19 recurring drift patterns, archive-vs-live decision principle.
 - [`httpx2-migration.md`](httpx2-migration.md) — httpx→httpx2 research + completed migration (2026-08-13): `alias_httpx()`, PTB b2 decision, native SOCKS `proxy=`, lockfile facts, h2-over-SOCKS5 verdict (D3 guard removed as dead weight).
+
+### LLM subsystem and review-campaign memories
+
 - [`large-review-campaign.md`](large-review-campaign.md) — Durable lessons from the 2026-06-28 78-file/6-batch parallel review campaign: batch sizing (15–20 sweet spot), integration pass, documentation drift as the top cross-batch failure mode.
 - [`llm-customparams-refactor.md`](llm-customparams-refactor.md) — Durable notes for the 2026-07-20 LLM `customParams` refactor in `lib/ai`: architecture (5 provider + 5 model classes), per-request param flow, TOML shape, test patterns.
 - [`llm-empty-truncated-final.md`](llm-empty-truncated-final.md) — Empty `TRUNCATED_FINAL` production bug (Qwen3 budget exhaustion → empty content → `BadRequest`): Item 1 observability dump + handler-level `SKIPPED_BY_MODEL` silent-drop mitigation shipped; Option A provider downgrade, `bot.py` empty-string guard, and regression tests still pending.
@@ -36,6 +42,9 @@ Use these files as companions to [`../teamlead-memory.md`](../teamlead-memory.md
 - [`llm-messages-handler.md`](llm-messages-handler.md) — Durable anchors for `internal/bot/common/handlers/llm_messages.py` (`_sendLLMChatMessage`, `handleReply`/`handleMention`/`handleRandomMessage`, abstention sentinel, `<media-description>` extraction, chat-settings symbol locations).
 - [`llm-tool-call-healing.md`](llm-tool-call-healing.md) — Durable notes for the LLM tool-call healing subsystem (`_tryHealToolCall` orchestrator + 5 matchers, broken-known-tool fallback, `LLMToolCall.errorMessage` consumer-audit gotcha).
 - [`llm-user-message-format.md`](llm-user-message-format.md) — Durable notes for the LLM user-message JSON format: `EnsuredMessage.formatForLLM` JSON branch, `chat-prompt-suffix` enumeration, ADR-018/019 render entry points.
+
+### Platform and infrastructure memories
+
 - [`lib-db-extraction.md`](lib-db-extraction.md) — lib/db extraction arc (ADR-022): providers + DatabaseManager + utils moves, Protocol `.asStr()` cut, DatabaseStatsStorage → lib/stats, lib/cache extraction (ADR-024, `clearOld` on CacheInterface), SQLinkProvider test suite; `git mv` nesting catch, census/anchor lessons.
 - [`max-api-migration.md`](max-api-migration.md) — durable notes for the Max API endpoint migration: `platform-api2`, TLS/SSL, SOCKS5 caveat, polling.
 - [`max-webhook-receiver-extraction.md`](max-webhook-receiver-extraction.md) — receiver → lib arc (ADR-025): ratification + design rounds, own-DB amendment (migration_029), commit-per-step series B→G, Docker artifacts + httpx2-alias rework, setup-docs live audit, scripts alias-crash fix, receiver runtime-closure facts.
@@ -43,6 +52,9 @@ Use these files as companions to [`../teamlead-memory.md`](../teamlead-memory.md
 - [`memories-context-dedup.md`](memories-context-dedup.md) — ADR-018 lazy render-time memory resolution + per-context newest→oldest dedup; companion to `user-memories.md` §"Render-time resolution".
 - [`proxy.md`](proxy.md) — durable notes for `lib/proxy/`, proxy configuration, per-service proxy overrides, HTTP client inventory, and the proxy refactoring anti-patterns.
 - [`proxy-lifecycle.md`](proxy-lifecycle.md) — durable notes for the proxy lifecycle management feature: `ProxyService`, `ProxyLifecycle`, subprocess management, health checks, and call-site migration.
+
+### Handlers and runtime subsystems
+
 - [`resender.md`](resender.md) — durable notes for the Resender module: cron-based message forwarding, media group handling, forward feature.
 - [`review-fix-lessons.md`](review-fix-lessons.md) — Durable lessons from the 2026-07-01 review-fix round on branch `max-v2`: single-developer many-fix dispatch, `logger.exception` misuse pattern, `except Exception` narrowing, config-defaults alignment.
 - [`sandbox.md`](sandbox.md) — durable notes for `lib/sandbox/`, sandbox config, Docker runtime behavior, and sandbox bot integration.
@@ -51,6 +63,9 @@ Use these files as companions to [`../teamlead-memory.md`](../teamlead-memory.md
 - [`stats-subsystem.md`](stats-subsystem.md) — the lib/stats arc: subsystem map, stats-collecting-v1 (message/llm_tool_call/command events, migration_027), StatsAggregationService (fail-fast config, delayed-task trigger, retention), stats-display v1 (`/stats` command, argparse-like grammar, fenced Top blocks, web tier + `[stats.pages]`), U11/U12/user-amend rounds, whole-branch review + reversal campaigns, getBotId/botUsername TTL caches.
 - [`stt-media-transcription.md`](stt-media-transcription.md) — STT media-transcription arc: lib/stt design + implementation + user simplifications, stateless STTService, `_processMediaV2` handler integration, v1.1 Object Storage + provider stats, speaker attribution/channelTag closeout, aurumentation golden suite, v1+v1.1 review campaign.
 - [`telegram-send-retry.md`](telegram-send-retry.md) — `TheBot._retryTelegramSend` (PTB TimedOut/NetworkError/RetryAfter ordering, 3 attempts, narrowed-except markdown-fallback restructure, idempotency stance) + PTBDeprecationWarning test-warnings triage (32 → 0).
+
+### Tests, tools, and vector search
+
 - [`test-reorganization.md`](test-reorganization.md) — durable notes for the test layout migration (collocated -> `tests/` mirror), conventions, and post-reorg doc audit.
 - [`test-suite-speedup.md`](test-suite-speedup.md) — Durable notes from the 2026-07-12 test-suite speedup effort (107s→38.17s, −64.3%): performance profile, fake-clock + no-op asyncio.sleep patterns, unittest/pytest fixture interaction gotchas, flagged-but-not-fixed items.
 - [`use-tools-filtering.md`](use-tools-filtering.md) — durable notes for per-tool LLM filtering: `ToolName` StrEnum, `UseToolsType`, execution guard.

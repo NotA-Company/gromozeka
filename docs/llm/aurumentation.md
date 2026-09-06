@@ -471,6 +471,8 @@ Consequences (all load-bearing gotchas):
 
 These are the traps that will cost time if ignored. Each is grounded in source.
 
+### Record/replay patching and matching traps
+
 1. **The global patch is neither re-entrant nor concurrency-safe.** Both
    `GoldenDataRecorder.__aenter__` ([`recorder.py`](../../lib/aurumentation/recorder.py):79-89)
    and `GoldenDataReplayer.__aenter__` ([`replayer.py`](../../lib/aurumentation/replayer.py):79-87)
@@ -515,6 +517,8 @@ These are the traps that will cost time if ignored. Each is grounded in source.
    acknowledged **stub** — it only checks `len(recordings) > 0`, i.e. "any
    recording exists", not "all were consumed". Do not rely on it for coverage
    assertions.
+
+### Collector, fixture-storage, and CLI traps
 
 4. **The collector discards the return value.** Only `type(result).__name__`
    is stored ([`collector.py`](../../lib/aurumentation/collector.py):175). At

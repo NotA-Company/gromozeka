@@ -100,6 +100,8 @@ documented core set — the `/memory_config` wizard helpers `getMemory` /
 `dbUtils.sqlToTypedDict(row, UserMemoryDict)`). Method params are camelCase;
 dict keys are snake_case to match columns.
 
+### Write and read methods
+
 - **Writes:** `addMemory` (INSERT — requires `embedding: Optional[List[float]]`,
   `embeddingModel: Optional[str]`, and `source: UserMemorySource`; `threadId`
   is keyword-only; embeds during add when both `embedding` and `embeddingModel`
@@ -120,6 +122,9 @@ dict keys are snake_case to match columns.
   `getProvider(chatId=..., dataSource=..., readonly=True)`; default `None` →
   default DB). Every live read method adds `AND deleted_at IS NULL` so
   soft-deleted rows are skipped on the live injection/search path.
+
+### Search and embedding methods
+
 - **Search:** `searchMemories` — filter-only (`queryEmbedding is None`, plain
   SQL scan, `score = 0.0`) and semantic (`queryEmbedding` is a `List[float]`,
   vec0 native, `score = 1.0 - distance`). `embeddingModel: str` is required
@@ -158,6 +163,8 @@ dict keys are snake_case to match columns.
   (the message-search analog — a DIFFERENT file from the memory repo; both
   regen crons forward the current dimensionality so cross-dimensional drift
   is detected on each path).
+
+### `deleteMemory` soft-delete semantics
 
 `deleteMemory` soft-delete semantics: instead of hard-`DELETE`-ing the row,
 `deleteMemory` runs `UPDATE user_memories SET deleted_at = :deletedAt,
@@ -372,6 +379,8 @@ media-only messages DO produce a non-empty formatted string, get embedded, and
 trigger semantic memory retrieval (the description is the searchable content).
 Truly-empty messages (no text + no media) format to empty and skip embedding.
 
+#### Injection steps
+
 1. Bail when `MEMORY_ENABLED` is false.
 2. **Permanent** — read from the write-through permanent-memories cache via
    `cache.getChatUserPermanentMemories(chatId, userId, threadId)`
@@ -408,6 +417,8 @@ Truly-empty messages (no text + no media) format to empty and skip embedding.
    lazy, in `formatForLLM`; see "Render-time resolution (lazy + dedup)"). The
    `setUserMemories` setter method was removed in the context-dedup change
    (ADR-018).
+
+#### Persistence and compaction context
 
 `injectMemories()` is called inside `newMessageHandler` AFTER `saveChatMessage`;
 the compact IDs are then re-persisted via a separate
@@ -456,6 +467,9 @@ resolves the compact IDs **on-demand** in its JSON branch:
   IDs — the invariant ADR-017 deviation #1 established). When all referenced IDs
   fail to resolve (or none survive the exclude filter), the `"userMemories"` key
   is omitted entirely.
+
+#### Dedup mechanics across render sites
+
 - **Per-context dedup** is applied **inline at each call site** (no shared
   helper). Each site walks its message sequence newest→oldest, accumulating an
   exclude-set: for each message it applies `excludeMemoryIds = ownIds ∩ seen`
@@ -477,6 +491,8 @@ resolves the compact IDs **on-demand** in its JSON branch:
   (once at the root, once at its latest tail occurrence). The common
   (non-condensed) thread case is unaffected — there the root participates in
   the newest→oldest walk and deduplicates normally.
+
+#### Compact-format support and render sites
 
 Only the **compact format** (`{"permanentIds": [...], "shortTermIds": [...]}`)
 is supported. Old-format messages (`{"permanent": [...], "shortTerm": [...]}`,

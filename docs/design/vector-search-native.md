@@ -510,6 +510,8 @@ for metadata columns. The ``date`` column is declared as ``TEXT`` since
 :meth:`createVectorTable` maps ``VectorColumnType`` values to these native
 types (see Section 4.5).
 
+#### 4.3.1 Proposed `vectorSearch()` implementation
+
 ```python
 async def vectorSearch(
     self,
@@ -593,6 +595,8 @@ async def vectorSearch(
         ))
     return results
 ```
+
+#### 4.3.2 Complexity analysis
 
 **Complexity**: This is still O(N x D) brute-force inside SQLite's C engine (vec0 does not yet support ANN indexing), but it eliminates:
 - Transferring all N BLOBs to Python.
@@ -780,6 +784,8 @@ async def _semanticSearch(self, ...) -> List[ChatMessageDict]:
 
 This new private method replaces steps 1-3 of the current flow:
 
+#### 5.2.1 Signature, contract docstring, and input guards
+
 ```python
 async def _nativeVectorSearch(
     self,
@@ -875,6 +881,11 @@ async def _nativeVectorSearch(
     # Build the query vector as bytes
     queryVectorBytes: bytes = array.array("f", queryEmbedding).tobytes()
 
+```
+
+#### 5.2.2 Filter construction and the `maxMessages` date cutoff
+
+```python
     # The vec0 virtual table handles partition-key filtering natively.
     # For user/category/age/thread, we use a post-filter approach:
     # call vectorSearch on vec_message_embeddings_{dimension} with (chatId, model)
@@ -925,6 +936,11 @@ async def _nativeVectorSearch(
     # catches and falls through to numpy.
     vecTable = f"vec_message_embeddings_{dimension}"
 
+```
+
+#### 5.2.3 Native `vectorSearch()` call, post-filtering, and result assembly
+
+```python
     vecResults = await sqlProvider.vectorSearch(
         table=vecTable,
         vectorColumn="embedding",

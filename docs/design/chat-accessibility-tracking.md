@@ -43,6 +43,9 @@ the body below in these ways:
   `CacheService.setChatInfo` forwards `info["bot_status"]` (direct subscript, NOT
   `.get(...)`), so `markChatInaccessible` / `markChatActive` reach the column via the
   same upsert path as every other `chat_info` write.
+
+### Divergence: superseded non-clobber rule and removed surfaces
+
 - **SUPERSEDED (2026-08-12): the non-clobber rule from §3.4 of the body.** The shipped
   implementation does NOT preserve an existing `bot_status` value across a routine
   refresh — it self-heals instead. `TheBot.getChatInfo` hardcodes
@@ -67,6 +70,8 @@ the body below in these ways:
   It is no longer needed: `isChatInaccessible` is cache-aside and reads the DB on a
   cache miss, so the first post-restart probe of a known-dead chat hits the DB once
   and is then cached — there is no separate warm-up pass.
+
+### Divergence: behavioural nuance and unchanged decisions
 
 **Behavioral nuance (self-heal on refresh).** The every-message refresh writes
 `bot_status = ACTIVE` to BOTH the in-process `CacheService` cache AND the DB (see the

@@ -42,7 +42,7 @@ The database layer currently uses SQLite-specific syntax that is not directly co
 **Impact**: All upsert operations will fail  
 **Status**: ✅ **RESOLVED** - Portable `upsert()` method implemented on `BaseSQLProvider` (and every concrete provider). All repositories route through `provider.upsert(...)` instead of hand-written `ON CONFLICT`.
 
-#### Problem Description
+#### Problem Description: ON CONFLICT Syntax Incompatibility
 
 SQLite uses `ON CONFLICT` for upsert operations, but the syntax differs significantly between RDBMS:
 
@@ -50,7 +50,7 @@ SQLite uses `ON CONFLICT` for upsert operations, but the syntax differs signific
 - **MySQL**: `ON DUPLICATE KEY UPDATE ...` (requires UNIQUE/PRIMARY key)
 - **PostgreSQL**: `ON CONFLICT(column) DO UPDATE SET ...` (similar to SQLite but with different conflict target syntax)
 
-#### Affected Locations
+#### Affected Locations: ON CONFLICT Upserts
 
 | File | Line | Query Type |
 |------|------|------------|
@@ -63,7 +63,9 @@ SQLite uses `ON CONFLICT` for upsert operations, but the syntax differs signific
 | [`internal/database/repositories/chat_info.py`](/internal/database/repositories/chat_info.py:71) | 71 | Chat info upsert |
 | [`internal/database/repositories/media_attachments.py`](/internal/database/repositories/media_attachments.py:61) | 61 | Media group upsert |
 
-#### Example Code
+#### Example Code: ON CONFLICT Upserts
+
+##### Current Upsert Syntax and the ExcludedValue Marker
 
 **Current (SQLite)**:
 ```sql
@@ -108,6 +110,8 @@ class ExcludedValue:
     def __repr__(self) -> str:
         return f"ExcludedValue({self.column})"
 ```
+
+##### Provider Implementation: SQLite
 
 **Provider Implementations** (illustrative — see
 [`lib/db/providers/`](/lib/db/providers/) for the real
@@ -161,7 +165,11 @@ async def upsert(
     """
     
     return await self.execute(query, values)
+```
 
+##### Provider Implementation: MySQL
+
+```python
 # lib/db/providers/mysql.py
 async def upsert(
     self,
@@ -208,7 +216,11 @@ async def upsert(
     """
     
     return await self.execute(query, values)
+```
 
+##### Provider Implementation: PostgreSQL
+
+```python
 # lib/db/providers/postgresql.py
 async def upsert(
     self,
@@ -257,6 +269,8 @@ async def upsert(
     
     return await self.execute(query, values)
 ```
+
+##### Usage Examples and Benefits
 
 **Usage Examples**:
 
@@ -330,7 +344,7 @@ await sqlProvider.upsert(
 **Files Affected**: 10 files  
 **Impact**: Query execution failures, parameter binding errors
 
-#### Problem Description
+#### Problem Description: Mixed Parameter Binding
 
 The codebase inconsistently uses both positional (`?`) and named (`:name`) parameter binding:
 
@@ -339,7 +353,7 @@ The codebase inconsistently uses both positional (`?`) and named (`:name`) param
 
 While both styles work in SQLite, MySQL and PostgreSQL have different preferences and limitations.
 
-#### Affected Locations
+#### Affected Locations: Mixed Parameter Binding
 
 | File | Line | Binding Style |
 |------|------|---------------|
@@ -352,7 +366,7 @@ While both styles work in SQLite, MySQL and PostgreSQL have different preference
 | [`internal/database/repositories/cache.py`](/internal/database/repositories/cache.py:84) | 84 | Named (`:name`) |
 | [`internal/database/repositories/cache.py`](/internal/database/repositories/cache.py:174) | 174 | Named (`:name`) |
 
-#### Example Code
+#### Example Code: Mixed Parameter Binding
 
 **Current (Mixed)**:
 ```python
@@ -420,7 +434,7 @@ await sqlProvider.execute(
 
 **Status**: ✅ **RESOLVED** - Portable SQL patterns implemented in migration_013 and all repository code
 
-#### Problem Description
+#### Problem Description: CURRENT_TIMESTAMP Behavior
 
 `CURRENT_TIMESTAMP` behaves differently across RDBMS:
 
@@ -430,7 +444,7 @@ await sqlProvider.execute(
 
 This can cause inconsistencies in timestamp comparisons and data integrity issues.
 
-#### Solution Implemented
+#### Solution Implemented: CURRENT_TIMESTAMP Removal
 
 **Migration 013**: Removed all `DEFAULT CURRENT_TIMESTAMP` from schema definitions
 - All timestamp columns are now `TIMESTAMP NOT NULL` without defaults
@@ -452,7 +466,7 @@ This can cause inconsistencies in timestamp comparisons and data integrity issue
 | [`internal/database/repositories/chat_users.py`](/internal/database/repositories/chat_users.py:73) | 73 | Chat user insert |
 | [`internal/database/repositories/chat_settings.py`](/internal/database/repositories/chat_settings.py:64) | 64 | Chat settings insert |
 
-#### Example Code
+#### Example Code: CURRENT_TIMESTAMP Handling
 
 **Before (Problematic)**:
 ```sql
@@ -505,7 +519,7 @@ await sqlProvider.execute(
 **Impact**: Case-sensitive comparisons may fail unexpectedly
 **Status**: ✅ **RESOLVED** - Portable `getCaseInsensitiveComparison()` and `getLikeComparison()` methods implemented
 
-#### Problem Description
+#### Problem Description: Case Sensitivity in WHERE Clauses
 
 String comparisons behave differently across RDBMS:
 
@@ -515,14 +529,14 @@ String comparisons behave differently across RDBMS:
 
 This affects username lookups and other string-based queries.
 
-#### Affected Locations
+#### Affected Locations: Case-Sensitive Lookups
 
 | File | Line | Query |
 |------|------|-------|
 | [`internal/database/repositories/chat_users.py`](/internal/database/repositories/chat_users.py:182) | 182 | Username lookup |
 | [`internal/database/repositories/spam.py`](/internal/database/repositories/spam.py:149) | 149 | Spam text search |
 
-#### Example Code
+#### Example Code: Case-Insensitive Comparison
 
 **Current**:
 ```sql
@@ -574,7 +588,7 @@ query = f"""
 **Impact**: Pattern matching queries may fail to match across cases
 **Status**: ✅ **RESOLVED** - Portable `getLikeComparison()` method implemented
 
-#### Problem Description
+#### Problem Description: LIKE Case Sensitivity
 
 LIKE pattern matching with case-insensitive matching behaves differently across RDBMS:
 - **SQLite**: `LIKE` is case-insensitive for ASCII by default, case-sensitive for Unicode
@@ -583,7 +597,7 @@ LIKE pattern matching with case-insensitive matching behaves differently across 
 
 This affects text search queries where you want to match patterns regardless of case (e.g., searching for layout names).
 
-#### Solution Implemented
+#### Solution Implemented: LIKE Case-Insensitive Matching
 
 **Base Provider Abstract Method**: Added `getLikeComparison()` to `BaseSQLProvider` to abstract RDBMS-specific syntax:
 
@@ -707,7 +721,7 @@ The portable implementation prioritizes consistency across RDBMS and configurabi
 **Files Affected**: 5 files  
 **Impact**: Query syntax errors in some RDBMS
 
-#### Problem Description
+#### Problem Description: LIMIT Clause Placement
 
 While all three RDBMS support `LIMIT`, the placement and combination with `OFFSET` can vary:
 
@@ -716,14 +730,14 @@ While all three RDBMS support `LIMIT`, the placement and combination with `OFFSE
 
 The current code uses `LIMIT n` which is compatible, but future pagination may need attention.
 
-#### Affected Locations
+#### Affected Locations: LIMIT Clause Placement
 
 | File | Line | Context |
 |------|------|---------|
 | [`internal/database/repositories/chat_users.py`](/internal/database/repositories/chat_users.py:225) | 225 | User list limit |
 | [`internal/database/repositories/chat_messages.py`](/internal/database/repositories/chat_messages.py:233) | 233 | Message list limit |
 
-#### Example Code
+#### Example Code: LIMIT Pagination
 
 **Current**:
 ```python
@@ -773,7 +787,7 @@ query = sqlProvider.applyPagination(query, limit=10, offset=0)
 **Files Affected**: 4 files  
 **Impact**: Type conversion errors, incorrect boolean comparisons
 
-#### Problem Description
+#### Problem Description: Boolean Type Handling
 
 Boolean types are handled differently:
 
@@ -783,14 +797,14 @@ Boolean types are handled differently:
 
 This affects queries that use boolean literals or comparisons.
 
-#### Affected Locations
+#### Affected Locations: Boolean Type Handling
 
 | File | Line | Context |
 |------|------|---------|
 | [`internal/database/repositories/chat_messages.py`](/internal/database/repositories/chat_messages.py:211) | 211 | Message category filter |
 | [`internal/database/repositories/cache.py`](/internal/database/repositories/cache.py:287) | 287 | Cache type filter |
 
-#### Example Code
+#### Example Code: Boolean Type Handling
 
 **Current**:
 ```python
@@ -825,7 +839,7 @@ def toDbBoolean(value: Optional[bool]) -> Optional[int]:
 **Files Affected**: 3 files  
 **Impact**: Limited JSON functionality, performance degradation
 
-#### Problem Description
+#### Problem Description: JSON Data Type Support
 
 JSON handling varies significantly:
 
@@ -835,14 +849,14 @@ JSON handling varies significantly:
 
 Current implementation stores JSON as TEXT strings.
 
-#### Affected Locations
+#### Affected Locations: JSON Data Type Support
 
 | File | Line | Context |
 |------|------|---------|
 | [`internal/database/repositories/chat_messages.py`](/internal/database/repositories/chat_messages.py:60) | 60 | Message metadata |
 | [`internal/database/repositories/media_attachments.py`](/internal/database/repositories/media_attachments.py:81) | 81 | Media metadata |
 
-#### Example Code
+#### Example Code: JSON Storage
 
 **Current**:
 ```python
@@ -888,7 +902,7 @@ def getJsonExtractFunction(self, column: str, path: str) -> str:
 **Impact**: Schema creation failures  
 **Status**: ✅ **RESOLVED** - No migration in the current tree uses `AUTOINCREMENT` / `AUTO_INCREMENT` / `SERIAL`. Every primary key is either a composite natural key, a single natural key, or an app-generated UUID/ULID stored as `TEXT PRIMARY KEY NOT NULL`.
 
-#### Problem Description
+#### Problem Description: AUTO_INCREMENT vs SERIAL
 
 Auto-incrementing primary keys use different syntax:
 
@@ -898,11 +912,11 @@ Auto-incrementing primary keys use different syntax:
 
 Because all three dialects spell it differently, `AUTOINCREMENT` is **forbidden** in Gromozeka migrations.
 
-#### Affected Locations
+#### Affected Locations: AUTO_INCREMENT vs SERIAL
 
 All migration files under [`internal/database/migrations/versions/`](/internal/database/migrations/versions/) were audited. The current `migration_001_initial_schema.py` defines every table with one of the portable PK shapes below — no `AUTOINCREMENT` appears anywhere in the migration tree.
 
-#### Example Code
+#### Example Code: Primary Key Strategies
 
 **Forbidden (SQLite-only, breaks MySQL/PostgreSQL)**:
 ```sql
@@ -924,7 +938,7 @@ CREATE TABLE chat_users (
 )
 ```
 
-#### Recommended Solution
+#### Recommended Solution: Portable Primary Keys
 
 No `getAutoIncrementType()` helper is provided on `BaseSQLProvider` — by design. Pick a portable PK strategy instead (in order of preference):
 
@@ -946,7 +960,7 @@ No `getAutoIncrementType()` helper is provided on `BaseSQLProvider` — by desig
 **Files Affected**: Migration files  
 **Impact**: Data truncation in some RDBMS
 
-#### Problem Description
+#### Problem Description: TEXT Type Length Limits
 
 TEXT type behavior differs:
 
@@ -954,7 +968,7 @@ TEXT type behavior differs:
 - **MySQL**: TEXT (65,535 bytes), MEDIUMTEXT (16MB), LONGTEXT (4GB)
 - **PostgreSQL**: TEXT unlimited
 
-#### Recommended Solution**:
+#### Recommended Solution: TEXT Type Selection
 
 Use appropriate TEXT types based on expected data size:
 
@@ -987,14 +1001,14 @@ def getTextType(self, max_length: Optional[int] = None) -> str:
 **Files Affected**: Migration files  
 **Impact**: Index creation failures
 
-#### Problem Description**
+#### Problem Description: Index Creation Syntax
 
 Index creation syntax varies slightly:
 
 - **SQLite/PostgreSQL**: `CREATE INDEX idx_name ON table(column)`
 - **MySQL**: Same syntax, but index name length limited to 64 characters
 
-#### Recommended Solution**:
+#### Recommended Solution: Standard Index Syntax
 
 Skip index creation syntax handling for now.
 
@@ -1019,7 +1033,7 @@ CREATE UNIQUE INDEX idx_table_column ON table(column)
 **Files Affected**: Database manager  
 **Impact**: Concurrency issues, data inconsistency
 
-#### Problem Description**
+#### Problem Description: Transaction Isolation Levels
 
 Transaction isolation levels differ:
 
@@ -1027,7 +1041,7 @@ Transaction isolation levels differ:
 - **MySQL**: READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ, SERIALIZABLE
 - **PostgreSQL**: READ COMMITTED, REPEATABLE READ, SERIALIZABLE
 
-#### Recommended Solution**:
+#### Recommended Solution: Transaction Isolation Levels
 
 Skip transaction isolation level handling for now.
 
@@ -1051,7 +1065,7 @@ Use default transaction isolation levels provided by each RDBMS:
 **Files Affected**: Database initialization  
 **Impact**: Data integrity issues
 
-#### Problem Description**
+#### Problem Description: Foreign Key Enforcement
 
 Foreign key enforcement differs:
 
@@ -1059,7 +1073,7 @@ Foreign key enforcement differs:
 - **MySQL**: Enabled by default
 - **PostgreSQL**: Enabled by default
 
-#### Recommended Solution**:
+#### Recommended Solution: Foreign Key Enforcement
 
 Add a parameter to all SQLite-based providers to enable foreign key constraints, off by default for backward compatibility.
 
@@ -1125,7 +1139,7 @@ enable_foreign_keys = true  # Enable foreign keys for this source
 **Files Affected**: All database providers
 **Impact**: Resource usage, performance, data integrity
 
-#### Problem Description
+#### Problem Description: Connection Management Strategy
 
 Different database providers have different optimal connection management strategies:
 
@@ -1134,7 +1148,7 @@ Different database providers have different optimal connection management strate
 - **PostgreSQL**: Connection pooling is built-in, but establishing connections has overhead
 - **SQLink**: Lightweight async client, can connect on demand
 
-#### Recommended Solution
+#### Recommended Solution: Connection Management Strategy
 
 Add a `keepConnection` parameter to all database providers to control when connections are established.
 

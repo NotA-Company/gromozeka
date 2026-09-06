@@ -87,6 +87,8 @@ deployed command are still unchanged.)*
 and the receiver reads its OWN config file rather than the ConfigManager hierarchy (D17/D19).
 The HTTP contract and marker protocol still stand.)*
 
+### Motivation for the move
+
 Why move it at all:
 
 1. **The receiver is not bot code.** After the ADR-022/023/024 arc series moved the SQL
@@ -116,6 +118,8 @@ Why move it at all:
    wrapper — the receiver has its own `DatabaseManager` over its own config section and its
    own DB file, so it cannot race the bot's chain even in principle; D12. The old
    "no cross-process migration guard" limitation is MOOT.)*
+
+### Goal in one paragraph
 
 **Goal in one paragraph:** create `lib/max_webhook_receiver/` holding the aiohttp app, the
 repository (manager-injected, provider-level SQL), the row TypedDict, and the canonical
@@ -304,6 +308,8 @@ hook, no migrations, ever, from the receiver process. `DatabaseManager.__init__`
 same config dict shape (manager.py:64-93; the `testDatabase` fixture in
 [`tests/conftest.py`](../../tests/conftest.py):117-128 builds exactly this shape).
 
+#### 2.5.1 Amended config reads and the receiver-owned database section
+
 **Amended 2026-08-25 (D12/D13):** the launcher reads exactly **7** keys from
 `[webhook-receiver]` (the 8 above minus `datasource`) plus the guard and TLS pair, and the
 `DatabaseManager` config source changes: NOT `configManager.getDatabaseConfig()` (the bot's
@@ -339,6 +345,8 @@ commented TLS after removing `datasource`, plus the 7-key `[webhook-receiver.dat
 section: `default`, `provider`, `dbPath`, `readOnly`, `timeout`, `useWal`, `keepConnection` —
 exact TOML in D12).
 
+#### 2.5.2 Amendment #2 supersessions and the corrected key count
+
 *(Amended 2026-08-25, amendment #2: the navigation SOURCE above — `configManager.config` —
 is superseded: the launcher has NO `ConfigManager`; it navigates its OWN `tomllib`-parsed
 dict (D17, §4.3). The inline `.get()` chaining idiom, the zero-dict-building rule, and the
@@ -354,6 +362,8 @@ receiver's OWN file carries 7 live receiver-read keys + the 2 commented TLS pair
 amendment-#1 BOT-defaults-file count (13 live + 2 commented TLS + 7 database) including
 the 6 bot-only live keys that D19 strips out of the receiver's file; the bot defaults file
 itself keeps 8 live bot-read keys.)*
+
+#### 2.5.3 Injection-shape precedent for the lib API
 
 Injection-shape precedent for the lib side: `DatabaseStatsStorage.__init__(manager:
 DatabaseManager, eventType: str, *, dataSource: str)`
@@ -1138,6 +1148,8 @@ launcher reads its OWN single TOML file, dotenv-first.)*
 
 `lib/max_webhook_receiver/__main__.py` — full final shape:
 
+#### 4.3.1 Module setup: docstring, imports, and argument parsing
+
 ```python
 """Entry point for the Max webhook receiver process.
 
@@ -1194,6 +1206,11 @@ def parseArgs() -> argparse.Namespace:
     return parser.parse_args()
 
 
+```
+
+#### 4.3.2 The `main()` routine: config load, secret guard, receiver wiring, and serving
+
+```python
 def main() -> None:
     """Run the webhook receiver process.
 
@@ -1639,6 +1656,9 @@ Arc 1 commit AT ALL — the "dual-home check" is now an everything-gone check.)*
   ```
 
   Net app-test count: 22 − 3 + 1 = 20.
+
+#### 5.3.1 test_app.py mock reshape and _buildApp rewiring
+
 - Mock reshape — `_makeMockDatabase()` (:62-83) splits into two builders; the exact shape
   matters because the startup hook now *awaits* `provider.execute(...)`:
 
@@ -1677,6 +1697,8 @@ Arc 1 commit AT ALL — the "dual-home check" is now an everything-gone check.)*
   over unchanged, +1 new `TestDefaultProviderUsage` test = 20; `_buildApp` drops any
   `datasource=` kwarg from the original sketch.)*
 
+#### 5.3.2 test_repository.py fixture swap
+
 **`tests/lib/max_webhook_receiver/test_repository.py`** (moved + fixture swap):
 
 - The 14 `repo = testDatabase.webhookUpdates` lines collapse into one local fixture the tests
@@ -1712,6 +1734,8 @@ Arc 1 commit AT ALL — the "dual-home check" is now an everything-gone check.)*
   (`inMemoryDbPath` comes from [`tests/conftest.py`](../../tests/conftest.py):58-66 — shared,
   no conftest edits needed. All 14 tests keep their assertions verbatim; only the fixture
   signature and import lines change.)
+
+#### 5.3.3 test_main.py rewrite (TestLauncherConfig)
 
 **`tests/lib/max_webhook_receiver/test_main.py`** (MOVED from
 `tests/max_webhook_receiver/test_main.py` + REWRITTEN — amendment #2, D17/D18/D19; the old
@@ -1775,6 +1799,8 @@ and the whole `tests/max_webhook_receiver/` dir dies with the package):
   navigation, `webhookConfig.get("database", {})` (the §4.3 launcher sketch's `dbConfig`
   line), which is what `main()` hands to `DatabaseManager`.)*
 
+#### 5.3.4 test_main.py test matrix
+
   Test matrix (each test patches `parseArgs` to the real file paths, then drives `main()`):
 
   | Test | TOML fixture | Expectation |
@@ -1788,6 +1814,8 @@ and the whole `tests/max_webhook_receiver/` dir dies with the package):
   provider is ever opened. Sync tests, nothing async. Env hygiene via
   `monkeypatch.setenv`/`delenv` so a developer shell exporting `MAX_WEBHOOK_SECRET` cannot
   flip the placeholder test.)
+
+#### 5.3.5 Superseded TestLauncherDatabaseConfigNavigation sketch
 
   **Superseded 2026-08-25 (amendment #2): `TestLauncherDatabaseConfigNavigation`** — the
   Gate-1B real-`ConfigManager` integration test specced by amendment #1 (build a real
@@ -2008,6 +2036,9 @@ commits: `Move Max webhook receiver to lib/max_webhook_receiver`.
 - [`docs/llm/libraries.md`](../llm/libraries.md) — new `lib/max_webhook_receiver` entry
   (house pattern: purpose, public API, used-by, dependency note); the aiohttp §15 "Used by"
   (:867) repointed.
+
+#### Arc 2.1 Agent-doc edits: database, configuration, testing, schema docs
+
 - [`docs/llm/database.md`](../llm/database.md) — delete the `webhookUpdates` wrapper-table row
   (:64-65), the `WebhookUpdatesRow` models row (:335), the repository table row (:478);
   rewrite the migration_019 note (:830) to mention lib-owned DDL + delegation.
@@ -2033,6 +2064,9 @@ commits: `Move Max webhook receiver to lib/max_webhook_receiver`.
   `lib/max_webhook_receiver/schema.py` module docstring and the operator guide
   [`docs/max-webhook-setup.md`](../max-webhook-setup.md) — the receiver's own schema is
   documented THERE (Arc 3), not in the bot schema docs.)*
+
+#### Arc 2.2 Agent-doc edits: READMEs, memories, and AGENTS.md
+
 - [`docs/database-README.md`](../database-README.md) + [`internal/database/migrations/README.md`](../../internal/database/migrations/README.md)
   — *(added 2026-08-25)* database-README :92 schema-list entry and :512-513 repository
   entry REMOVED (bot database no longer has the table/repository); migrations README:
@@ -2053,6 +2087,8 @@ commits: `Move Max webhook receiver to lib/max_webhook_receiver`.
   extraction task (append-style, house convention).
 - This design doc §8 — no-touch (follow-ups list only updated if something landed).
 
+#### Arc 2.3 Gate, commit message, and ADR-025 draft
+
 **Gate:** `make lint` + `make check-docs` + the Arc-2 invocation zero-grep: ZERO
 `internal[./]max_webhook_receiver` remains in the LIVE Arc-2 docs (AGENTS.md,
 docs/llm/architecture.md, docs/llm/index.md) *(added 2026-08-25, Gate-1B fix round — Arc 2
@@ -2069,6 +2105,8 @@ it replaces the earlier shared-database draft. Rewritten again 2026-08-25 per am
 the receiver is now fully lib-standalone: own config file, own database, no internal
 imports, `-m lib.max_webhook_receiver` invocation (D17–D19); the amendment #1 draft is
 superseded.)*
+
+#### Arc 2.4 Ready-to-paste ADR-025 text
 
 ```text
 ### ADR-025: Max webhook receiver extracted to `lib/max_webhook_receiver/` — fully standalone (own config file, own database)
@@ -2203,11 +2241,21 @@ still needs no action.)*
 | **models.py anchor-rot knock-on** — deleting :310-330 shifts every later TypedDict anchor; schema docs were hand-repaired for exactly this on 2026-08-25 | Med (docs) | Explicitly scheduled as an Arc 2 line item with the shifted-anchor list (§2.8); `make check-docs` does not catch content drift, so the item is checklist-enforced. |
 | **Dual-home survival** (old repo file / old row TypedDict left behind) | Med | git-mv + `git status` verification + §5.5 greps; house rule: no dual-home survives a commit. |
 | **Someone later "completes" the `__init__.py` re-exports with `.app`** | Low | D9 note in the `__init__.py` docstring itself explains the constraint where the future editor will see it. |
+
+### 7.1 Operational and deployment risks
+
+| Risk / wrinkle | Severity | Mitigation / argument |
+|---|---|---|
 | **Carried-over limitations** (unchanged by design, see ADR-013 memory): busy-poll every 0.5s; marker advance on handler error defeats at-least-once; `types` param ignored; duplicate delivery if `markProcessed` fails | Accepted | Out of scope (NG4); tracked in [`docs/llm/memories/max-webhook-support.md`](../llm/memories/max-webhook-support.md) §Known limitations. *(Amended 2026-08-25: the cross-process migration guard item is REMOVED from the carry-over list — MOOT, the databases are fully separate (D12); the two-DB-files note below is ADDED to the operational list.)* |
 | **Removed receiver-side migration execution surprises an operator** who relied on the receiver to bring up a fresh shared DB | Low | Documented in ADR-025 + max-webhook-setup note (Arc 3): the receiver self-heals its own table; the bot remains responsible for the full chain — which matches every documented deployment (init.d orders receiver before bot, but the bot still migrates on ITS start). *(Amended 2026-08-25: reworded reality — the receiver self-heals its OWN database's complete schema (table + index, D15); there is no shared DB to bring up.)* |
 | **Destructive drop: migration_029 loses pending `webhook_updates` rows** — any unprocessed rows in an existing main DB are deleted when 029 applies | Accepted (user, pre-prod) | User-ratified acceptance: deployments are pre-production and the table is a transient buffer (TTL 1h); operators upgrading mid-flight should let the bot drain the queue (or stop Max webhooks) before upgrading. `down()` restores the (empty) table. Documented in the CHANGELOG entry (D16). |
 | **Two DB files on disk** — `bot_data.db` + `webhook_receiver_data.db`; operational awareness needed | Low | Both live at the repo root; both gitignored (`/*.db`). Backups must cover the receiver file too — documented in max-webhook-setup.md (Arc 3, D12 note) and the ADR-025 "Why". |
 | **Same-file-as-bot misconfiguration footgun** — an operator may point `[webhook-receiver.database]` at `bot_data.db` | Low (documented, not enforced) | Unsupported (two processes writing one SQLite file contend on the write lock; the receiver's self-heal DDL would also fight the bot's migration chain). Documented in the TOML comment (D12 sketch) + max-webhook-setup.md; config-level policing explicitly out of scope. |
+
+### 7.2 Config-surface and package-deletion risks
+
+| Risk / wrinkle | Severity | Mitigation / argument |
+|---|---|---|
 | **Secret dual-maintenance drift** *(amendment #2, D19)* — `secret` + `get-updates-secret` live in BOTH the bot config hierarchy and the receiver's own file; a diverged pair yields 403s | Accepted (user, amendment #2) | Cross-reference comments in BOTH example files (the D19 block + the bot defaults file) and the max-webhook-setup.md copy (Arc 3); both values are `${VAR}`-substituted from the same dotenv in the standard deployment, keeping single-env setups honest. |
 | **Receiver config leaves the ConfigManager hierarchy** *(amendment #2, D17/D19)* — no multi-dir merge/defaults for the receiver; a typo'd `--config` path or unreadable file fails startup | Low (by design) | Single-file-by-design is the amendment's point; a missing/unreadable file fails fast at launch (same bucket as the secret guard); the D19 example file ships in user docs (Arc 3); `TestLauncherConfig` pins the real-file flow (§5.3). |
 | **Same-named `substituteEnvVars` in `lib.aurumentation.collector`** *(amendment #2, D18)* — two lib functions share the name with different semantics after the move | Low | Distinct modules, no import collision (§2.10 census); D18 records the distinction; docstrings on both state their scope (config-tree substitution vs golden-recording kwargs). |

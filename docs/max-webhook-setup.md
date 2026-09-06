@@ -418,6 +418,8 @@ so sqlink's hard `import httpx` resolves to httpx2 and the image carries
 `pip install --no-deps` because sqlink's metadata declares `httpx>=0.28`, and
 plain dependency resolution would pull the real package right back in.
 
+### Building the Image
+
 Build from the **repo root** so the `.dockerignore` applies:
 
 ```sh
@@ -439,6 +441,8 @@ with no credentials at all — confirmed in a real smoke build — so try the pl
 build command above first and set up this netrc secret only if the `sqlink`
 fetch fails authentication.
 
+### Preparing the Data Directory
+
 Create the project-local data directory before the first run. On Linux the
 host directory must be writable by the container user (`uid 10001`) — either
 chown it to that uid or run the container under your own uid/gid; on
@@ -451,6 +455,8 @@ sudo chown -R 10001:10001 ./data
 # ... or Linux, option B: run the container with your own identity instead:
 #   docker run -u "$(id -u):$(id -g)" ...
 ```
+
+### Running the Container
 
 Run the image with the receiver config mounted read-only at
 `/app/webhook-receiver.toml` and the project-local `./data` directory bound to
@@ -479,6 +485,8 @@ the boot log shows one `ERROR - File .env not found` line at startup — this is
 harmless, since `${VAR}` substitution reads the real environment and the `-e`
 values still work.
 
+### Docker Config Overrides
+
 This TOML block is a **fragment**, not a complete file — start from the full
 receiver config file from Step 4 and apply these two overrides; the fragment
 alone is missing required `[webhook-receiver.database]` keys and would fail
@@ -498,6 +506,8 @@ listen-host = "0.0.0.0"
 # Keep the database on the persisted volume.
 dbPath = "/data/webhook_receiver_data.db"
 ```
+
+### Operational Notes
 
 Docker notes:
 
