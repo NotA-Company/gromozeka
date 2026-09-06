@@ -4,6 +4,8 @@ Gromozeka is a production-ready, multi-platform AI bot supporting Telegram and M
 
 See [CHANGELOG.md](CHANGELOG.md) for notable changes.
 
+The documentation tree is indexed by audience (humans / agents / reference) in [docs/README.md](docs/README.md).
+
 ## Requirements
 
 - Python 3.12+

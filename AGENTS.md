@@ -285,6 +285,7 @@ TOML, hierarchical, merged recursively. Loaded by
 
 - [`docs/llm/index.md`](docs/llm/index.md) — canonical agent guide and index
 - [`docs/llm/{architecture,handlers,database,services,libraries,configuration,testing,tasks}.md`](docs/llm/)
+- [`docs/README.md`](docs/README.md) — docs-tree index organized by audience (humans / agents / reference)
 - [`docs/developer-guide.md`](docs/developer-guide.md) — human-oriented
 - [`docs/database-schema.md`](docs/database-schema.md) and
   [`docs/database-schema-llm.md`](docs/database-schema-llm.md) — keep both in
