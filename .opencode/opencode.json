@@ -35,18 +35,6 @@
                 "MARKDOWN_MCP_CONFIG": ".markdown-mcp.toml"
             },
             "timeout": 300000
-        },
-        "yandex-cloud-documentation": {
-            "enabled": false,
-            "type": "remote",
-            "url": "https://docs.mcp.cloud.yandex.net/mcp",
-            "timeout": 300000
-        },
-        "sourcecraft": {
-            "enabled": false,
-            "type": "remote",
-            "url": "https://api.sourcecraft.tech/mcp",
-            "timeout": 300000
         }
     },
 
