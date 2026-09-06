@@ -10,8 +10,8 @@ Welcome to the Gromozeka bot's database documentation. This directory contains c
 > **Canonical sources.** This file is a landing-page overview; for authoritative
 > schema details, see [`database-schema.md`](database-schema.md) (human-facing)
 > and [`database-schema-llm.md`](database-schema-llm.md) (LLM-facing). Counts
-> and method signatures are maintained as of the latest audit; when in doubt
-> against code, the schema docs are authoritative.
+> and method signatures are not duplicated here; when in doubt against code,
+> the schema docs are authoritative.
 
 
 ## Documentation Files
@@ -170,7 +170,7 @@ All database operations use TypedDict models:
 - **Type safety**: IDE autocomplete and type checking
 - **Documentation**: Clear field names and types
 - **Validation**: Runtime validation for data integrity
-- **Repository pattern**: Organized access through 16 specialized repositories
+- **Repository pattern**: Organized access through 15 specialized repositories
 
 Learn more: [TypedDict Models](database-schema.md#typeddict-models)
 
@@ -182,369 +182,22 @@ The Gromozeka database system is designed to work with multiple relational datab
 
 ### Supported Database Providers
 
-#### SQLite (Default)
-- **Provider**: [`SQLite3Provider`](../lib/db/providers/sqlite3.py:1)
-- **Library**: `aiosqlite` (async wrapper over Python's `sqlite3` stdlib module)
-- **Use case**: Embedded databases, development, testing, small to medium deployments
-- **Features**: Zero configuration, file-based, ACID compliant, optional `sqlite-vec` extension for native vector search
-- **Status**: Registered in `getSqlProvider` factory
+- **SQLite** (`sqlite3`, default) — registered in the `getSqlProvider` factory; embedded file-based database with optional `sqlite-vec` vector search ([`SQLite3Provider`](../lib/db/providers/sqlite3.py:1), `aiosqlite`)
+- **SQLink** (`sqlink`) — registered in the factory; async HTTP client for a remote SQLink database server, with optional proxy support ([`SQLinkProvider`](../lib/db/providers/sqlink.py:1))
+- **MySQL** (`mysql`) — implemented ([`MySQLProvider`](../lib/db/providers/mysql.py:1), `aiomysql`) but **not yet registered** in the factory; cannot be selected via config today
+- **PostgreSQL** (`postgresql`) — implemented ([`PostgreSQLProvider`](../lib/db/providers/postgresql.py:1), `asyncpg`) but **not yet registered** in the factory; cannot be selected via config today
 
-#### MySQL
-- **Provider**: [`MySQLProvider`](../lib/db/providers/mysql.py:1)
-- **Library**: `aiomysql` (async MySQL driver)
-- **Use case**: Production deployments, high concurrency, large datasets
-- **Features**: Connection pooling, async operations, enterprise-grade
-- **Status**: Implemented but **not yet registered** in the `getSqlProvider` factory; cannot be selected via config today
+### Ownership of Portability Details
 
-#### PostgreSQL
-- **Provider**: [`PostgreSQLProvider`](../lib/db/providers/postgresql.py:1)
-- **Library**: `asyncpg` (async PostgreSQL driver)
-- **Use case**: Production deployments, complex queries, advanced features
-- **Features**: Connection pooling, async operations, rich data types
-- **Status**: Implemented but **not yet registered** in the `getSqlProvider` factory; cannot be selected via config today
-
-#### SQLink
-- **Provider**: [`SQLinkProvider`](../lib/db/providers/sqlink.py:1)
-- **Library**: `sqlink` (HTTP client for a remote SQLink database server)
-- **Use case**: Remote database operations via a SQLink HTTP server (with optional HTTP/HTTPS proxy)
-- **Features**: Async operations, HTTP-based remote access, proxy support
-- **Status**: Registered in `getSqlProvider` factory
-
-### Provider Methods
-
-The `BaseSQLProvider` class defines a common interface that all providers implement. Key methods for SQL portability:
-
-#### `upsert()`
-Perform an "insert or update" operation with provider-specific SQL syntax.
-
-```python
-from lib.db.providers.base import ExcludedValue
-
-# Insert or update a chat message
-await db.chatMessages.saveChatMessage(
-    date=datetime.now(),
-    chatId=-1001234567890,
-    userId=123456789,
-    messageId="12345",
-    messageText="Hello, world!",
-    messageType=MessageType.TEXT,
-    messageCategory=MessageCategory.USER
-)
-
-# The provider automatically handles the upsert syntax:
-# - SQLite/PostgreSQL: INSERT ... ON CONFLICT DO UPDATE
-# - MySQL: INSERT ... ON DUPLICATE KEY UPDATE
-```
-
-#### `getCaseInsensitiveComparison()`
-Generate a case-insensitive equality comparison SQL expression.
-
-The method returns a complete SQL expression fragment that compares a column
-against a bound parameter using case-insensitive semantics:
-
-```python
-# Case-insensitive exact match search
-expr = provider.getCaseInsensitiveComparison("name_en", "searchName")
-# Returns: 'LOWER(name_en) = LOWER(:searchName)' for SQLite/PostgreSQL/SQLink
-# Returns: 'name_en COLLATE utf8mb4_general_ci = :searchName' for MySQL
-```
-
-**Key details:**
-- Takes two arguments: `column` (column name) and `param` (parameter name, without the `:` prefix)
-- Returns a complete SQL expression, not just an operator — ready to embed in a WHERE clause
-- SQLite, PostgreSQL, and SQLink use `LOWER(column) = LOWER(:param)`
-- MySQL uses `column COLLATE utf8mb4_general_ci = :param`
-
-#### `getLikeComparison()`
-Get a complete SQL LIKE expression for case-insensitive pattern matching. Takes a column name and a parameter name, and returns a full expression suitable for embedding in a WHERE clause.
-
-```python
-# Case-insensitive fuzzy search
-expression = provider.getLikeComparison('name', 'search')
-# Returns: "LOWER(name) LIKE LOWER(:search)" for SQLite / SQLink / MySQL / PostgreSQL
-# (All current implementations use the LOWER/LIKE shape; PostgreSQL does NOT use ILIKE,
-# to keep the expression portable across providers.)
-```
-
-**Use cases:**
-- Fuzzy/partial text search (e.g., searching layout names in divinations)
-- Type-ahead functionality where user input is incomplete
-- Pattern matching across different RDBMS
-
-**Example:**
-```python
-# Fuzzy search for layout name
-query = f"SELECT * FROM layouts WHERE {provider.getLikeComparison('name', 'search')}"
-# Executes as: SELECT * FROM layouts WHERE LOWER(name) LIKE LOWER(:search)
-# With parameter: search = "%three card%"
-```
-
-#### `applyPagination()`
-Apply pagination to a query with provider-specific syntax.
-
-```python
-# Paginated query
-query = "SELECT * FROM chat_messages WHERE chatId = ?"
-paginatedQuery = provider.applyPagination(query, limit=50, offset=100)
-# Returns: 'SELECT * FROM chat_messages WHERE chatId = ? LIMIT 50 OFFSET 100' for SQLite/SQLink/MySQL/PostgreSQL
-# (All current implementations use the same 'LIMIT {limit} OFFSET {offset}' shape.)
-```
-
-#### `getTextType()`
-Get the appropriate text data type for the provider.
-
-```python
-# Schema migrations
-textType = provider.getTextType()
-# Returns: 'TEXT' for SQLite / SQLink / PostgreSQL
-# Returns: 'TEXT' for MySQL (or 'MEDIUMTEXT' / 'LONGTEXT' when maxLength exceeds 64KB / 16MB)
-```
-
-### The `ExcludedValue` Class
-
-The `ExcludedValue` class is a special marker that allows provider-specific translation of upsert update expressions:
-
-```python
-from lib.db.providers.base import ExcludedValue
-
-# In an upsert operation, use ExcludedValue to reference the new value
-update_expressions = {
-    "value": ExcludedValue(),  # Will be translated to excluded.value or VALUES(value)
-    "count": "count + 1"  # Custom expression
-}
-
-# Provider-specific translation:
-# - SQLite/PostgreSQL: excluded.column
-# - MySQL: VALUES(column)
-```
-
-### Configuration Examples
-
-> **Schema note.** The configuration key is `[database.providers.<name>]`
-> (not `sources`), with a `provider = "..."` field selecting the provider
-> class and a `[database.providers.<name>.parameters]` sub-table for
-> constructor kwargs. See `configs/00-defaults/00-config.toml` for the
-> live default.
-
-#### MySQL Configuration
-
-```toml
-[database.providers.mysql_primary]
-provider = "mysql"
-host = "localhost"
-port = 3306
-user = "gromozeka"
-password = "your_password"
-database = "gromozeka_db"
-readOnly = false
-
-[database.providers.mysql_primary.parameters]
-keepConnection = false  # Connect on demand (default for MySQL)
-```
-
-#### PostgreSQL Configuration
-
-```toml
-[database.providers.postgres_primary]
-provider = "postgresql"
-host = "localhost"
-port = 5432
-user = "gromozeka"
-password = "your_password"
-database = "gromozeka_db"
-readOnly = false
-
-[database.providers.postgres_primary.parameters]
-keepConnection = false  # Connect on demand (default for PostgreSQL)
-```
-
-#### SQLite Configuration (Default)
-
-```toml
-[database.providers.sqlite_primary]
-provider = "sqlite3"
-# Constructor kwargs go under [parameters]; key names match SQLite3Provider.__init__:
-#   dbPath, readOnly, useWal, timeout, enableForeignKeys, keepConnection, vectorExtensionPath
-[database.providers.sqlite_primary.parameters]
-dbPath = "bot.db"
-readOnly = false
-timeout = 30
-enableForeignKeys = true
-keepConnection = false  # Connect on demand (default for file-based SQLite)
-# For in-memory SQLite, use: keepConnection = true
-```
-
-### Database-Specific Considerations
-
-#### SQLite
-- **Foreign keys**: Must be enabled with `PRAGMA foreign_keys = ON` (handled by `enableForeignKeys` parameter, defaults to `True`)
-- **Date/time**: Application code sets timestamps explicitly (no `DEFAULT CURRENT_TIMESTAMP` — see [SQL Portability Guide](sql-portability-guide.md))
-- **Case sensitivity**: `getCaseInsensitiveComparison()` uses `LOWER(column) = LOWER(:param)` (not `COLLATE NOCASE`)
-- **Pagination**: Uses `LIMIT {limit} OFFSET {offset}` syntax
-- **Upsert**: Uses `INSERT ... ON CONFLICT DO UPDATE` syntax
-- **Connection management**: In-memory databases (`:memory:`) default to `keepConnection=True` to prevent data loss
-
-#### MySQL Specifics
-- **Connection pooling**: Uses `aiomysql.Pool` for connection management
-- **Date/time**: Application code sets timestamps explicitly (no `DEFAULT CURRENT_TIMESTAMP`)
-- **Case sensitivity**: `getCaseInsensitiveComparison()` uses `column COLLATE utf8mb4_general_ci = :param`; `getLikeComparison()` uses `LOWER(column) LIKE LOWER(:param)`
-- **Pagination**: Uses `LIMIT {limit} OFFSET {offset}` syntax (same shape as the other providers; not MySQL's positional `LIMIT offset, limit` form)
-- **Upsert**: Uses `INSERT ... ON DUPLICATE KEY UPDATE` syntax
-- **Connection management**: Defaults to `keepConnection=False` (connect on demand)
-
-#### PostgreSQL Specifics
-- **Connection pooling**: Uses `asyncpg.Pool` for connection management
-- **Date/time**: Application code sets timestamps explicitly (no `DEFAULT CURRENT_TIMESTAMP`)
-- **Case sensitivity**: `getCaseInsensitiveComparison()` and `getLikeComparison()` use `LOWER(column) [LIKE] LOWER(:param)` (not `ILIKE`, for cross-provider portability)
-- **Pagination**: Uses `LIMIT {limit} OFFSET {offset}` syntax
-- **Upsert**: Uses `INSERT ... ON CONFLICT DO UPDATE` syntax
-- **Connection management**: Defaults to `keepConnection=False` (connect on demand)
-
-### Migration Between Providers
-
-To switch between database providers:
-
-1. **Update configuration**: Change the provider type in your config file
-2. **Run migrations**: The migration system will create the schema in the new database
-3. **Migrate data**: Use database-specific tools to migrate data (e.g., `pg_dump` for PostgreSQL)
-4. **Test thoroughly**: Ensure all operations work correctly with the new provider
-
-### SQL Portability Best Practices
-
-1. **Use provider methods**: Always use provider methods instead of raw SQL for portable operations
-2. **Test on all providers**: Ensure your code works with all supported providers
-3. **Handle provider-specific features**: Use conditional logic for features that differ between providers
-4. **Document provider dependencies**: Note any provider-specific requirements in your code
-5. **Use parameterized queries**: Always use parameterized queries to prevent SQL injection
-
-### SQL Portability References
-
-- **SQL Portability Guide**: [`sql-portability-guide.md`](sql-portability-guide.md)
-- **Provider Base Class**: [`lib/db/providers/base.py`](../lib/db/providers/base.py:1)
-- **SQLite Provider**: [`lib/db/providers/sqlite3.py`](../lib/db/providers/sqlite3.py:1)
-- **MySQL Provider**: [`lib/db/providers/mysql.py`](../lib/db/providers/mysql.py:1)
-- **PostgreSQL Provider**: [`lib/db/providers/postgresql.py`](../lib/db/providers/postgresql.py:1)
-- **SQLink Provider**: [`lib/db/providers/sqlink.py`](../lib/db/providers/sqlink.py:1)
+The [SQL Portability Guide](sql-portability-guide.md) owns the provider hook contracts (`upsert()` with the `ExcludedValue` marker, `applyPagination()`, `getCaseInsensitiveComparison()` / `getLikeComparison()`, `getTextType()`), per-provider considerations, the no-`DEFAULT CURRENT_TIMESTAMP` timestamp rule, and portability best practices — always use those hooks instead of hand-writing dialect-specific SQL. Multi-source provider configuration (TOML `[database.providers.<name>]` with a `provider` field and a `parameters` sub-table of constructor kwargs) is owned by the [Multi-Source Database Configuration Guide](database-multi-source.md).
 
 ### Repository Pattern Architecture
 
-The database system uses a repository pattern with 16 specialized repositories, each responsible for a specific domain of data operations:
+The database system uses a repository pattern: each repository is exposed as an attribute on the `Database` wrapper (for example `db.chatMessages`) and owns one domain of data operations, with all SQL going through `BaseSQLProvider`. The one exception is the webhook receiver's `WebhookUpdatesRepository` — since ADR-025 it lives in [`lib/max_webhook_receiver/`](../lib/max_webhook_receiver/repository.py) over the receiver's own database and is not on the bot's `Database` wrapper.
 
-#### Available Repositories
-
-##### Core Chat Data Repositories
-
-1. **[`chatMessages`](../internal/database/repositories/chat_messages.py:1)** - Message storage and retrieval
-   - `saveChatMessage()` - Store new messages
-   - `getChatMessageByMessageId()` - Fetch specific message
-   - `getChatMessagesSince()` - Retrieve messages by date range
-   - `getChatMessagesByRootId()` - Get messages in a thread
-   - `getChatMessagesByUser()` - Get messages by user
-   - `getMessageThread()` - Fetch a message thread
-
-2. **[`chatUsers`](../internal/database/repositories/chat_users.py:1)** - User information management
-   - `updateChatUser()` - Store/update user data
-   - `getChatUser()` - Retrieve user information
-   - `getChatUsers()` - List users in a chat
-   - `getChatUserByUsername()` - Look up user by username
-
-3. **[`chatInfo`](../internal/database/repositories/chat_info.py:1)** - Chat metadata operations
-   - `updateChatInfo()` - Store chat information
-   - `getChatInfo()` - Retrieve chat metadata
-   - `updateChatTopicInfo()` - Store forum topic data
-   - `getChatTopics()` - List forum topics
-
-4. **[`chatSettings`](../internal/database/repositories/chat_settings.py:1)** - Configuration management
-   - `getChatSettings()` - Get all settings for a chat
-   - `getChatSetting()` - Get specific setting value
-   - `setChatSetting()` - Update a setting
-   - `unsetChatSetting()` - Remove a setting
-
-##### Cache, Media, Spam, and Task Repositories
-
-5. **[`chatSummarization`](../internal/database/repositories/chat_summarization.py:1)** - Summary caching
-   - `addChatSummarization()` - Store a chat summary
-   - `getChatSummarization()` - Retrieve cached summaries
-
-6. **[`mediaAttachments`](../internal/database/repositories/media_attachments.py:1)** - Media file tracking
-   - `addMediaAttachment()` - Store media metadata
-   - `updateMediaAttachment()` - Update media metadata
-   - `getMediaAttachment()` - Retrieve media information
-   - `getMediaAttachmentsByGroupId()` - Get media by group ID
-
-7. **[`spam`](../internal/database/repositories/spam.py:1)** - Spam detection
-   - `addSpamMessage()` - Track spam messages
-   - `addHamMessage()` - Track legitimate messages
-   - `getSpamMessages()` - Get recorded spam messages
-
-8. **[`delayedTasks`](../internal/database/repositories/delayed_tasks.py:1)** - Task scheduling
-   - `addDelayedTask()` - Schedule a task
-   - `getPendingDelayedTasks()` - Retrieve pending tasks
-   - `updateDelayedTask()` - Mark a task as done
-   - `cleanupOldCompletedDelayedTasks()` - Remove old completed tasks
-
-9. **[`cache`](../internal/database/repositories/cache.py:1)** - `cache_storage` persistence (backing for `CacheService`)
-   - `getCacheStorage()` - List all `cache_storage` entries
-   - `setCacheStorage()` - Store a `cache_storage` entry
-   - `unsetCacheStorage()` - Remove a `cache_storage` entry
-   - The `cache` table itself is owned by `GenericDatabaseCache` in [`lib/cache/sql_cache.py`](../lib/cache/sql_cache.py) (ADR-024)
-
-##### System, Search, and Feature Repositories
-
-10. **[`common`](../internal/database/repositories/common.py:1)** - Common operations
-    - `getSettings()` - Get global system settings
-    - `getSetting()` - Get a specific setting
-    - `setSetting()` - Update a system setting
-
-11. **[`chatSearch`](../internal/database/repositories/chat_search.py:1)** - Chat message search
-    - `searchChatMessages()` - Search messages (filter-only or semantic)
-
-12. **[`chatEmbeddings`](../internal/database/repositories/chat_embeddings.py:1)** - Message embedding vectors
-   - `saveMessageEmbedding()` - Store message embedding (writes vec0 row only; the model provenance is recorded in `chat_messages.model_id` via the injected `modelIdResolver`)
-   - `deleteObsoleteModelEmbeddings()` - Drop stale vec0 families for a model that no longer has any embeddings
-   - `getMessagesWithoutEmbeddings()` - Find messages needing embeddings
-
-13. **[`divinations`](../internal/database/repositories/divinations.py:1)** - Divination readings and layouts
-   - `insertReading()` - Save a divination reading
-   - `getLayout()` - Retrieve a cached layout definition
-   - `saveLayout()` - Cache a layout definition
-   - `saveNegativeCache()` - Cache negative result (layout not found)
-
-##### Memory, Webhook, and Model Registry Repositories
-
-14. **[`userMemories`](../internal/database/repositories/user_memories.py:1)** - Unified per-(chat, user, thread) structured memory store
-   - `addMemory()` - Store a memory entry (permanent or ephemeral)
-   - `getMemory()` - Fetch a single memory by id
-   - `getPermanentMemories()` - List permanent memories for a (chat, user, thread)
-   - `getLatestMemories()` - List most-recent memories
-   - `searchMemories()` - Search memories (filter-only or semantic)
-   - `deleteMemory()` - Soft-delete a memory entry
-   - `saveMemoryEmbedding()` - Store a memory embedding vector (model provenance resolved internally to `model_id` via the injected `modelIdResolver`; handler signature stays model-agnostic)
-   - `getMemoriesWithoutEmbeddings()` - Backfill helper for missing embeddings
-
-15. **[`webhookUpdates`](../lib/max_webhook_receiver/repository.py)** - Max webhook payload buffer (two-process webhook mode; see ADR-013). Since ADR-025 this repository lives in the webhook receiver and works over the receiver's OWN database — it is NOT on the bot's `Database` wrapper
-   - `addUpdate()` - Enqueue an incoming webhook payload
-   - `getUnprocessedUpdates()` - Pull pending payloads for consumption
-   - `markProcessed()` - Mark payloads as consumed
-   - `markProcessedBeforeMarker()` - Bulk-mark up to a marker
-   - `deleteProcessedOlderThan()` - Reap old processed payloads
-
-16. **[`embedding_models`](../internal/database/repositories/embedding_models.py:1)** - Embedding-model provenance lookup (process-local cache; injected as `modelIdResolver` into `chatEmbeddings`, `chatSearch`, and `userMemories`)
-   - `getOrCreateModelId()` - Resolve `(model, dimensions)` to a stable `model_id`, inserting a row on first sight
-   - `getModelById()` - Reverse lookup `model_id` → `ModelDict`
-   - `listModels()` - Enumerate all registered models
-
-#### Accessing Repositories
-
-All internal repositories are accessed through the main `Database` instance (the webhook receiver's `webhookUpdates` repository is the one exception — the receiver constructs it over its own database, ADR-025):
-
-```python
-# Access repositories via the db instance
-await db.chatMessages.saveChatMessage(...)
-await db.chatSettings.getChatSetting(...)
-```
-
-Each repository is automatically initialized when the `Database` class is instantiated and provides type-safe access to its domain-specific operations.
+- **Full method signatures (owner)**: [Database Operations](database-schema-llm.md#database-operations) in `database-schema-llm.md`
+- **Human-readable repository index (owner)**: [Repository Pattern](database-schema.md#repository-pattern) in `database-schema.md`
+- **Repository sources**: [`internal/database/repositories/`](../internal/database/repositories/)
 
 ## Getting Started
 
@@ -596,16 +249,8 @@ message = await db.chatMessages.getChatMessageByMessageId(
 ```
 
 ### Multi-Source Routing
-```python
-# Explicit source routing
-messages = await db.chatMessages.getChatMessagesSince(chatId=123, dataSource="archive")
 
-# Chat mapping routing (configured in config.toml)
-messages = await db.chatMessages.getChatMessagesSince(chatId=-1001234567890)  # Routes to mapped source
-
-# Default routing
-messages = await db.chatMessages.getChatMessagesSince(chatId=456)  # Routes to default source
-```
+Reads route through a 3-tier chain (explicit `dataSource` parameter, then chat mapping, then the default source); per-chat writes route by `chatId`. Worked routing examples and the operator-level configuration behind them are owned by the [Multi-Source Database Configuration Guide](database-multi-source.md#routing-priority).
 
 ### Chat Settings Management
 ```python
@@ -654,71 +299,7 @@ cachedData = await cache.get(
 
 ### SQL Portability Examples
 
-#### Using Provider Methods
-```python
-# Access the provider for the current data source
-provider = await db.manager.getProvider(dataSource="primary")
-
-# Apply pagination
-query = "SELECT * FROM chat_messages WHERE chatId = ?"
-paginatedQuery = provider.applyPagination(query, limit=50, offset=100)
-# Returns provider-specific pagination syntax
-
-# Case-insensitive exact match search
-expr = provider.getCaseInsensitiveComparison("name", "searchName")
-# Returns: 'LOWER(name) = LOWER(:searchName)' for SQLite/PostgreSQL/SQLink
-# Returns: 'name COLLATE utf8mb4_general_ci = :searchName' for MySQL
-```
-
-#### Cross-Provider Upsert
-```python
-from lib.db.providers.base import ExcludedValue
-
-# Upsert operation works the same across all providers
-await db.chatMessages.saveChatMessage(
-    date=datetime.now(),
-    chatId=-1001234567890,
-    userId=123456789,
-    messageId="12345",
-    messageText="Hello, world!",
-    messageType=MessageType.TEXT,
-    messageCategory=MessageCategory.USER
-)
-
-# The provider automatically handles the upsert syntax:
-# - SQLite: INSERT ... ON CONFLICT DO UPDATE
-# - MySQL: INSERT ... ON DUPLICATE KEY UPDATE
-# - PostgreSQL: INSERT ... ON CONFLICT DO UPDATE
-```
-
-#### Provider-Specific Configuration
-```toml
-# SQLite with foreign keys enabled
-[database.providers.sqlite]
-provider = "sqlite3"
-
-[database.providers.sqlite.parameters]
-dbPath = "bot.db"
-enableForeignKeys = true  # SQLite-specific option
-
-# MySQL (provider class exists; not yet selectable in getSqlProvider)
-[database.providers.mysql]
-provider = "mysql"
-host = "localhost"
-port = 3306
-user = "gromozeka"
-password = "password"
-database = "gromozeka_db"
-
-# PostgreSQL (provider class exists; not yet selectable in getSqlProvider)
-[database.providers.postgres]
-provider = "postgresql"
-host = "localhost"
-port = 5432
-user = "gromozeka"
-password = "password"
-database = "gromozeka_db"
-```
+Provider-method usage (pagination, case-insensitive comparison, portable upsert with `ExcludedValue`) and per-provider TOML configuration examples are owned by the [SQL Portability Guide](sql-portability-guide.md); multi-source configuration examples live in the [Multi-Source Database Configuration Guide](database-multi-source.md).
 
 ## Related Documentation
 
@@ -734,12 +315,11 @@ database = "gromozeka_db"
 
 ### Creating New Migrations
 
-1. Create file: `internal/database/migrations/versions/migration_XXX_description.py`
-2. Implement `BaseMigration` class with `version`, `description`, `up()`, and `down()` methods
-3. Add `getMigration()` function returning the migration class
-4. The migration will be auto-discovered on next startup
+1. Create `internal/database/migrations/versions/migration_XXX_description.py` with the next sequential version number
+2. Implement a `BaseMigration` subclass (`version`, `description`, `up()`, `down()`) plus a `getMigration()` function
+3. The migration is auto-discovered on next startup
 
-See: [Creating New Migrations](database-schema.md#creating-new-migrations)
+The full recipe — worked example, portable-SQL requirements, and primary-key strategies — is owned by [Adding a Database Migration](llm/database.md#4-adding-a-database-migration) in the agent guide.
 
 ### Best Practices
 
@@ -753,17 +333,7 @@ See: [Best Practices](database-schema.md#best-practices)
 
 ## Database Statistics
 
-> These counts drift easily. For the canonical, up-to-date table list see
-> [`database-schema.md`](database-schema.md); for migration files see
-> [`internal/database/migrations/versions/`](../internal/database/migrations/versions/).
-
-- **Total Tables**: 22 base tables (plus dynamic vec0 tables per embedding dimension; `webhook_updates` moved to the webhook receiver's own database — ADR-025, `migration_029`)
-- **Core Tables**: 5 (`chat_messages`, `chat_users`, `chat_info`, `chat_topics`, `chat_settings`)
-- **Cache Tables**: 3 (`chat_summarization_cache`, `cache_storage`, `cache` — unified into one namespace-keyed table by `migration_012`; the `cache` table's SQL is owned by `GenericDatabaseCache` in `lib/cache`)
-- **Spam Detection Tables**: 4 (`spam_messages`, `ham_messages`, `bayes_tokens`, `bayes_classes`)
-- **Statistics Tables**: 2 (`stat_events`, `stat_aggregates`) — legacy `chat_stats` and `chat_user_stats` dropped in migration_027
-- **Current Migration Version**: 29
-- **Total Repositories**: 15 specialised repositories on the `Database` class (plus the webhook receiver's own `WebhookUpdatesRepository` in `lib/max_webhook_receiver/` — ADR-025)
+These counts drift easily, so this landing page no longer carries them. Canonical sources: the table inventory in [database-schema.md](database-schema.md), the migration files in [`internal/database/migrations/versions/`](../internal/database/migrations/versions/), and the repository signatures in [database-schema-llm.md](database-schema-llm.md#database-operations).
 
 ## Contributing
 

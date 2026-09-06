@@ -70,49 +70,11 @@ The database supports routing different chats to different SQLite database files
 
 ### Configuration
 
-Multi-source configuration is defined in the bot's config file:
-
-```toml
-[database]
-default = "default"  # Default provider name
-
-[database.providers.default]
-provider = "sqlite3"
-
-[database.providers.default.parameters]
-dbPath = "data/bot.db"
-readOnly = false
-timeout = 30
-useWal = true
-
-[database.providers.archive]
-provider = "sqlite3"
-
-[database.providers.archive.parameters]
-dbPath = "data/archive.db"
-readOnly = true
-timeout = 10
-```
+Multi-source configuration lives in the `[database]` TOML section: each provider is declared as `[database.providers.<name>]` with a `provider` type and a `[database.providers.<name>.parameters]` sub-table of constructor kwargs, `[database] default` names the fallback source, and `[database.chatMapping]` pins individual chats to named sources. The full parameter reference and worked configuration examples are owned by the [Multi-Source Database Configuration Guide](database-multi-source.md#configuration-structure).
 
 ### Routing Logic
 
-The database implements 3-tier routing through the repository pattern:
-
-1. **Tier 1 (Highest Priority)**: Explicit `dataSource` parameter
-2. **Tier 2 (Medium Priority)**: Chat ID mapping lookup
-3. **Tier 3 (Lowest Priority)**: Default source fallback
-
-Example:
-```python
-# Explicit source routing (Tier 1)
-db.chatMessages.getChatMessages(chatId=123, dataSource="archive")
-
-# Chat mapping routing (Tier 2)
-db.chatMessages.getChatMessages(chatId=-1001234567890)  # Routes to "archive" via mapping
-
-# Default routing (Tier 3)
-db.chatMessages.getChatMessages(chatId=456)  # Routes to "default" source
-```
+Routing is a 3-tier chain: an explicit `dataSource` parameter wins (Tier 1), then the chat-mapping lookup (Tier 2), then the default source (Tier 3). The operator narrative and examples are owned by the [Multi-Source Database Configuration Guide](database-multi-source.md#routing-priority); the agent-facing `dataSource` convention (MUST-level rule for repository methods) lives in [the agent guide §3](llm/database.md#3-multi-source-database-routing).
 
 ### Read-Only Sources
 
@@ -195,39 +157,11 @@ Migrations are located in [`internal/database/migrations/versions/`](../internal
 
 ### Creating New Migrations
 
-To create a new migration:
+1. Create `internal/database/migrations/versions/migration_XXX_description.py` with the next sequential version number
+2. Implement a `BaseMigration` subclass (`version`, `description`, `up()`, `down()`) plus a `getMigration()` function
+3. The migration is auto-discovered on next startup
 
-1. Create file: `internal/database/migrations/versions/migration_XXX_description.py`
-2. Implement [`BaseMigration`](../internal/database/migrations/base.py:7) class with `version`, `description`, `up()`, and `down()` methods
-3. Add `getMigration()` function returning the migration class
-4. The migration will be auto-discovered on next startup
-
-Example:
-```python
-from typing import Type
-
-from ...providers import BaseSQLProvider, ParametrizedQuery
-from ..base import BaseMigration
-
-class Migration008AddNewColumn(BaseMigration):
-    version = 8
-    description = "Add new_column to some_table"
-
-    async def up(self, sqlProvider: BaseSQLProvider) -> None:
-        await sqlProvider.execute("""
-            ALTER TABLE some_table
-            ADD COLUMN new_column TEXT
-        """)
-
-    async def down(self, sqlProvider: BaseSQLProvider) -> None:
-        await sqlProvider.execute("""
-            ALTER TABLE some_table
-            DROP COLUMN new_column
-        """)
-
-def getMigration() -> Type[BaseMigration]:
-    return Migration008AddNewColumn
-```
+The full recipe — worked example, portable-SQL requirements, and primary-key strategies — is owned by [Adding a Database Migration](llm/database.md#4-adding-a-database-migration) in the agent guide.
 
 ---
 
@@ -930,12 +864,14 @@ Semantic search runs over a vec0 virtual table (`vec_user_memories_{dim}`, cosin
 
 #### UserMemoriesRepository Methods
 
-**Repository** (`UserMemoriesRepository`, accessed as `db.userMemories`) — 10 public methods; all SQL goes through `BaseSQLProvider`:
+**Repository** (`UserMemoriesRepository`, accessed as `db.userMemories`) — 12 public methods; all SQL goes through `BaseSQLProvider`:
 - `addMemory(chatId, userId, memoryId, *, type, content, tags, permanent, source, embedding=None, embeddingModel=None, threadId=None) -> None` — INSERT (caller generates the UUID). `source` is a `UserMemorySource`; `threadId` is keyword-only; when both `embedding` (`List[float]`) and `embeddingModel` are provided the row is embedded during add.
 - `deleteMemory(chatId, userId, memoryId) -> bool` — SOFT DELETE: sets `deleted_at` + bumps `updated_at`, drops the vec0 row, nulls `model_id` (via `deleteMemoryEmbedding(..., vecOnly=False)`). Unrestricted (may target permanent). The row survives so `getMemoriesByIds` can still resolve it; never raises (returns `False` on error or already-deleted).
 - `getPermanentMemories(chatId, userId, threadId, *, limit=10) -> List[UserMemoryDict]` — merges cross-thread permanent (`thread_id IS NULL`) AND this-thread permanent (`thread_id = :threadId`); bio is thread-scoped so a thread's permanent block includes its own bio. Filters `deleted_at IS NULL`.
 - `getLatestMemories(chatId, userId, threadId, *, limit=5) -> List[UserMemoryDict]` — thread-scoped newest-first, **ephemeral-only** (`permanent = 0`); permanent memories are served by `getPermanentMemories`. Filters `deleted_at IS NULL`.
+- `getMemory(chatId, userId, memoryId, *, dataSource=None) -> Optional[UserMemoryDict]` — single-row read by the full PK `(chatId, userId, memoryId)`; backs the `/memory_config` wizard's per-memory detail view. Unrestricted by `permanent`/`thread_id`. Filters `deleted_at IS NULL`.
 - `getMemoriesByIds(memoryIds: List[str], *, chatId: Optional[int] = None, dataSource: Optional[str] = None) -> List[UserMemoryDict]` — the single read that does NOT filter `deleted_at`: resolves UUIDs to content for historical message reconstruction (compact-ID storage — see [`docs/llm/memories/user-memories.md`](llm/memories/user-memories.md) "By-id resolution cache"). No `chatId`/`userId` scoping in the WHERE clause (UUIDs globally unique); `chatId`/`dataSource` are routing-only (forwarded to `getProvider(..., readonly=True)`); default `None` → default DB.
+- `getDistinctTags(chatId, userId, memoryType=None, *, dataSource=None) -> List[str]` — sorted distinct tag strings across the user's (live) memories; backs the wizard's tag-filter picker. Optional `memoryType` filter.
 - `searchMemories(chatId, userId, queryEmbedding=None, *, threadId=None, type=None, tags=None, permanent=None, limit=20, embeddingModel, offset=0) -> List[UserMemoryDict]` — filter-only (`queryEmbedding is None`, plain SQL scan, `score = 0.0`) or semantic (vec0 KNN, `score = 1.0 - distance`). `queryEmbedding` is `Optional[List[float]]`; `embeddingModel` (required, pass `None` for filter-only) is resolved to `model_id` internally via the injected `modelIdResolver` (Decision D6 — handler-facing signatures unchanged; D10 — `model_id` resolution happens inside the repo). Always scoped to one `(chat_id, user_id)`; `tags` applied as a portable SQL `LIKE '%"tagN"%'` filter (ANY-match) against the JSON-TEXT `tags` column. Both modes filter `deleted_at IS NULL`.
 - `saveMemoryEmbedding(chatId, userId, memoryId, embedding, embeddingModel) -> bool` — lazy-create `vec_user_memories_{dim}` + upsert the vector (`embedding` is `List[float]`, `embeddingModel` the model name) + set `model_id` (resolved via `modelIdResolver`; vec0 write must succeed before provenance is set). Its internal row SELECT also filters `deleted_at IS NULL` (defense-in-depth — a deleted memory is never re-embedded).
 - `deleteMemoryEmbedding(chatId, userId, memoryId) -> None` — best-effort vec0 DELETE across every `vec_user_memories_{N}` table; never raises.
@@ -1045,6 +981,19 @@ Defines available cache types for dynamic cache tables.
 | `GM_SEARCH` | Geocode Maps search cache |
 | `GM_REVERSE` | Geocode Maps reverse geocoding cache |
 | `GM_LOOKUP` | Geocode Maps lookup cache |
+
+---
+
+### ChatBotStatus
+
+Durable accessibility state of the bot for a chat. Backs the `chat_info.bot_status` column (added by `migration_026`; column only — no supporting index).
+
+**Defined in**: [`internal/database/models.py:108`](../internal/database/models.py:108)
+
+| Value | Description |
+|-------|-------------|
+| `ACTIVE` | Bot is present / assumed present in the chat — optimistic default (backfilled by `migration_026`'s `DEFAULT 'active'`; re-written by the every-message refresh path, so a transient `INACCESSIBLE` self-heals on the next inbound message) |
+| `INACCESSIBLE` | Bot was kicked / restricted / lost admin rights (lazily marked when a `getChatAdmins` probe fails; excluded from chat listings by default) |
 
 ---
 

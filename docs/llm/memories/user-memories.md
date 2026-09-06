@@ -97,7 +97,7 @@ time (see "Injection"). Schema: `migration_020_user_memories`. Repository:
 
 ## Repository — `UserMemoriesRepository`
 
-`internal/database/repositories/user_memories.py` (10 public methods in the
+`internal/database/repositories/user_memories.py` (12 public methods in the
 documented core set — the `/memory_config` wizard helpers `getMemory` /
 `getDistinctTags` are tracked separately; all SQL goes through
 `BaseSQLProvider` and rows decode via

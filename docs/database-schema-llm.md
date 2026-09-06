@@ -1194,7 +1194,7 @@ storage.cleanupRareTokens(minCount: int = 2, chatId: Optional[int] = None) -> No
 storage.cleanupOldTokens(rules: Sequence[Tuple[int, int]]) -> bool   # each rule = (ttlSeconds, maxCount)
 ```
 
-Note the asymmetric parameter names: `getTokenStats` / `getClassStats` use `chatId`, but `updateTokenStats` uses `chat_id` (and `is_spam` snake_case) — these come straight from the `BayesStorageInterface`. `updateClassStats` is camelCased. The underlying tables (`bayes_tokens`, `bayes_classes`) were added by `migration_006`.
+Note the asymmetric parameter names: `getTokenStats` / `getClassStats` use `chatId`, but `updateTokenStats` uses `chat_id` (and `is_spam` snake_case) — these come straight from the `BayesStorageInterface`. `updateClassStats` is camelCased. The underlying tables (`bayes_tokens`, `bayes_classes`) were added by `migration_001` (the `idx_bayes_tokens_updated_at` index came later, in `migration_024`).
 
 ---
 

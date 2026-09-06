@@ -1067,7 +1067,8 @@ Use default transaction isolation levels provided by each RDBMS:
 
 **Severity**: High  
 **Files Affected**: Database initialization  
-**Impact**: Data integrity issues
+**Impact**: Data integrity issues  
+**Status**: **RESOLVED** - Shipped. `SQLite3Provider` takes a keyword-only `enableForeignKeys` constructor parameter (camelCase, like every provider parameter) and emits `PRAGMA foreign_keys = ON` on every connect. It defaults to `True` — foreign-key enforcement is ON unless a source explicitly opts out.
 
 #### Problem Description: Foreign Key Enforcement
 
@@ -1077,62 +1078,49 @@ Foreign key enforcement differs:
 - **MySQL**: Enabled by default
 - **PostgreSQL**: Enabled by default
 
-#### Recommended Solution: Foreign Key Enforcement
+#### Implemented Solution: Foreign Key Enforcement
 
-Add a parameter to all SQLite-based providers to enable foreign key constraints, off by default for backward compatibility.
+`SQLite3Provider` accepts `enableForeignKeys: bool = True` and applies the pragma at connect time:
 
 ```python
-# lib/db/providers/sqlite3.py
+# lib/db/providers/sqlite3.py (shipped signature)
 class SQLite3Provider(BaseSQLProvider):
-    def __init__(self, connection_string: str, enable_foreign_keys: bool = False):
-        """Initialize SQLite3 provider.
-        
-        Args:
-            connection_string: Database connection string
-            enable_foreign_keys: Enable foreign key constraints (default: False for backward compatibility)
-        """
-        super().__init__(connection_string)
-        self.enableForeignKeys = enable_foreign_keys
-    
-    async def initialize(self) -> None:
-        """Initialize database connection and settings."""
-        await super().initialize()
-        
+    def __init__(
+        self,
+        dbPath: str,
+        *,
+        readOnly: bool = False,
+        useWal: bool = False,
+        timeout: int = 30,
+        enableForeignKeys: bool = True,
+        keepConnection: Optional[bool] = None,
+        vectorExtensionPath: Optional[str] = None,
+    ) -> None:
+        ...
+        # In connect():
         if self.enableForeignKeys:
-            await self.execute("PRAGMA foreign_keys = ON")
+            await connection.execute("PRAGMA foreign_keys = ON")
+```
 
-# lib/db/providers/sqlink.py
-class SqlinkProvider(BaseSQLProvider):
-    def __init__(self, connection_string: str, enable_foreign_keys: bool = False):
-        """Initialize Sqlink provider.
-        
-        Args:
-            connection_string: Database connection string
-            enable_foreign_keys: Enable foreign key constraints (default: False for backward compatibility)
-        """
-        super().__init__(connection_string)
-        self.enableForeignKeys = enable_foreign_keys
-    
-    async def initialize(self) -> None:
-        """Initialize database connection and settings."""
-        await super().initialize()
-        
-        if self.enableForeignKeys:
-            await self.execute("PRAGMA foreign_keys = ON")
+`SQLinkProvider` has no `enableForeignKeys` parameter — FK pragmas are a SQLite concern; the remote SQLink server owns its own enforcement.
 
-# Usage in configuration
-# configs/00-defaults/providers.toml
-[[sources]]
-name = "source1"
-type = "sqlite3"
-connection_string = "file:./storage/source1.db"
-enable_foreign_keys = true  # Enable foreign keys for this source
+**Configuration** — the live `[database]` TOML dialect: each provider is declared as `[database.providers.<name>]` with a `parameters` sub-table whose entries are passed to the provider constructor as keyword arguments (see [`configs/00-defaults/00-config.toml`](../configs/00-defaults/00-config.toml)):
+
+```toml
+[database.providers.default]
+provider = "sqlite3"
+
+[database.providers.default.parameters]
+dbPath = "bot_data.db"
+readOnly = false
+timeout = 30
+# Optional: disable FK enforcement for this source only (default is true)
+# enableForeignKeys = false
 ```
 
 **Benefits**:
-- Backward compatible (disabled by default)
-- Explicit opt-in for foreign key enforcement
-- Consistent behavior across SQLite-based providers
+- On by default (data-integrity safe); per-source opt-out via `parameters.enableForeignKeys = false`
+- The pragma is re-applied on every connect, so the setting is consistent across connections
 - MySQL and PostgreSQL already have foreign keys enabled by default
 
 ---
@@ -1355,7 +1343,7 @@ the higher-level design and the chat-embeddings consumer that drives this API.
    - Add `upsert()` method to each provider (sqlite3, sqlink, mysql, postgresql)
    - Add `applyPagination()` method to each provider
    - Add `getTextType()` method to each provider
-   - Add `enable_foreign_keys` parameter to SQLite-based providers
+   - Add `enableForeignKeys` parameter to SQLite-based providers (done — default `True`)
 
 2. **Create Utility Functions**
    - Add `getCurrentTimestamp()` helper in [`lib/db/utils.py`](../lib/db/utils.py)
@@ -1465,11 +1453,10 @@ The following items have been intentionally skipped for now:
   - [ ] Add `upsert()` method to [`lib/db/providers/sqlite3.py`](/lib/db/providers/sqlite3.py)
   - [ ] Add `applyPagination()` method to [`lib/db/providers/sqlite3.py`](/lib/db/providers/sqlite3.py)
   - [ ] Add `getTextType()` method to [`lib/db/providers/sqlite3.py`](/lib/db/providers/sqlite3.py)
-  - [ ] Add `enable_foreign_keys` parameter to [`lib/db/providers/sqlite3.py`](/lib/db/providers/sqlite3.py)
+  - [ ] Add `enableForeignKeys` parameter to [`lib/db/providers/sqlite3.py`](/lib/db/providers/sqlite3.py) (done — default `True`)
   - [ ] Add `upsert()` method to [`lib/db/providers/sqlink.py`](/lib/db/providers/sqlink.py)
   - [ ] Add `applyPagination()` method to [`lib/db/providers/sqlink.py`](/lib/db/providers/sqlink.py)
   - [ ] Add `getTextType()` method to [`lib/db/providers/sqlink.py`](/lib/db/providers/sqlink.py)
-  - [ ] Add `enable_foreign_keys` parameter to [`lib/db/providers/sqlink.py`](/lib/db/providers/sqlink.py)
 
 - [ ] **Implement MySQL provider**
   - [ ] Create `lib/db/providers/mysql.py`
