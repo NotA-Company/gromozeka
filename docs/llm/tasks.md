@@ -308,7 +308,7 @@ Two complementary tools exist for replaying LLM interactions outside the normal 
 
 ## 2. Anti-Patterns — NEVER Do These
 
-### ❌ Direct singleton construction
+### Direct singleton construction
 ```python
 # WRONG — creates second instance with empty state
 cache = CacheService()
@@ -317,7 +317,7 @@ cache = CacheService()
 cache = CacheService.getInstance()
 ```
 
-### ❌ Calling platform APIs directly from handlers
+### Calling platform APIs directly from handlers
 ```python
 # WRONG — tightly couples handler to Telegram
 await self.tgBot.send_message(...)
@@ -326,7 +326,7 @@ await self.tgBot.send_message(...)
 await self.sendMessage(ensuredMessage, messageText="...", messageCategory=MessageCategory.BOT)
 ```
 
-### ❌ Adding `LLMMessageHandler` before the last position
+### Adding `LLMMessageHandler` before the last position
 ```python
 # WRONG — LLMMessageHandler MUST be last
 self.handlers = [
@@ -341,7 +341,7 @@ self.handlers = [
 ]
 ```
 
-### ❌ Using `cd` to change into subdirectory
+### Using `cd` to change into subdirectory
 ```bash
 # WRONG
 cd internal && python test.py
@@ -350,7 +350,7 @@ cd internal && python test.py
 ./venv/bin/python3 internal/test.py
 ```
 
-### ❌ Missing docstrings
+### Missing docstrings
 ```python
 # WRONG — no docstring
 def getChatSettings(self, chatId: int) -> ChatSettingsDict:
@@ -369,7 +369,7 @@ def getChatSettings(self, chatId: int) -> ChatSettingsDict:
     return self.cache.get(chatId)
 ```
 
-### ❌ Using snake_case for variables/functions
+### Using snake_case for variables/functions
 ```python
 # WRONG — snake_case is not allowed for variables/functions
 chat_settings = getChatSettings()
@@ -382,7 +382,7 @@ def getChatSettings():
     ...
 ```
 
-### ❌ Using camelCase for constants
+### Using camelCase for constants
 ```python
 # WRONG
 defaultThreadId = 0
@@ -391,7 +391,7 @@ defaultThreadId = 0
 DEFAULT_THREAD_ID: int = 0
 ```
 
-### ❌ Skipping `make format lint` before committing
+### Skipping `make format lint` before committing
 ```bash
 # WRONG workflow
 # Edit file → git commit
@@ -400,7 +400,7 @@ DEFAULT_THREAD_ID: int = 0
 # Edit file → make format lint → make test → git commit
 ```
 
-### ❌ Not resetting singletons in tests
+### Not resetting singletons in tests
 ```python
 # WRONG — may carry state from previous test
 def testSomething():
@@ -416,7 +416,7 @@ def resetSingleton():
     LLMService._instance = None
 ```
 
-### ❌ Returning wrong `HandlerResultStatus`
+### Returning wrong `HandlerResultStatus`
 ```python
 # WRONG — FINAL stops the chain; if other handlers should run
 return HandlerResultStatus.FINAL  # Stops all subsequent handlers
@@ -426,7 +426,7 @@ return HandlerResultStatus.SKIPPED  # Let others handle it
 return HandlerResultStatus.NEXT     # I processed it, but continue
 ```
 
-### ❌ Forgetting to check if feature is enabled in config
+### Forgetting to check if feature is enabled in config
 ```python
 # WRONG — handler always active even when disabled
 class WeatherHandler(BaseBotHandler):
@@ -439,7 +439,7 @@ if self.configManager.getOpenWeatherMapConfig().get("enabled", False):
     )
 ```
 
-### ❌ Not using `Optional` type for nullable values
+### Not using `Optional` type for nullable values
 ```python
 # WRONG
 def getChatInfo(self, chatId: int) -> ChatInfoDict:
@@ -450,7 +450,7 @@ def getChatInfo(self, chatId: int) -> Optional[ChatInfoDict]:
     ...
 ```
 
-### ❌ Creating migration with wrong version number
+### Creating migration with wrong version number
 ```bash
 # WRONG — assuming version without checking
 # Just created migration_005.py without checking existing migrations

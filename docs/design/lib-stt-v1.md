@@ -1004,7 +1004,7 @@ static review (full detail in parent §13.3):
    processing does not complete within the existing 300-second media poll, reduce default duration or
    redesign originating-turn waiting before release (never attach an unbounded worker task).
 5. **Peak RSS** — measure peak RSS and CPU with two max-size (1 GiB) source files and worst-case decoded output
-   on deployment-equivalent hardware, including enabled attachment storage. ⚠️ Decoded memory is now
+   on deployment-equivalent hardware, including enabled attachment storage. Decoded memory is now
    **unbounded in `lib/stt`** (§5 accepted gap) — the service's source (`max-source-bytes`, currently 1 GiB)
    + duration caps bound it indirectly; measure the real spike and reduce source/duration/concurrency defaults if the deployment
    memory budget cannot absorb it (see [`stt-next-steps.md`](../archive/design/stt-next-steps.md) §5).

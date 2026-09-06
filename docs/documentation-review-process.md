@@ -401,7 +401,7 @@ The review generated 64+ actionable items:
 - **Related items**: Group together under parent item
 - **Implementation vs. documentation**: Separate TODOs from follow-up documentation updates
 - **Completed items**: Mark with `✅ IMPLEMENTED` or remove from active list
-- WONTFIX items**: Document why with "Status: ✅ IMPLEMENTED (update docs only)" or similar
+- WONTFIX items**: Document why with "Status: IMPLEMENTED (update docs only)" or similar
 
 ---
 
@@ -595,7 +595,7 @@ make check-docs
 
 ### Automation Opportunities
 
-1. **Automated link checking** — ✅ IMPLEMENTED (2026-07-11)
+1. **Automated link checking** — IMPLEMENTED (2026-07-11)
    ```bash
    # The project's local-link checker is live (scripts/check_docs.py)
    make check-docs    # exits 1 on any broken local markdown link

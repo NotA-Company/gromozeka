@@ -4,7 +4,7 @@ category: guide
 
 # Multi-Source Database Configuration Guide
 
-> **Status:** ✅ OPERATIONAL — This is a current/reference-style documentation retained at `docs/` root for easy access
+> **Status:** OPERATIONAL — This is a current/reference-style documentation retained at `docs/` root for easy access
 > **Note:** Multi-source database architecture is implemented and operational using the provider abstraction pattern. This guide is kept at `docs/` root as it serves as operational reference documentation rather than a forward-looking implementation plan.
 
 **Version:** 1.0

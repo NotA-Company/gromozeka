@@ -14,7 +14,7 @@ Welcome to the Gromozeka bot's database documentation. This directory contains c
 > against code, the schema docs are authoritative.
 
 
-## 📚 Documentation Files
+## Documentation Files
 
 ### [Database Schema Documentation](database-schema.md)
 **Audience**: Developers, Database Administrators, System Architects
@@ -51,7 +51,7 @@ A streamlined reference optimized for LLM consumption, featuring:
 - Reference enum values
 - Get concise table structure information
 
-## 🗂️ Quick Navigation
+## Quick Navigation
 
 ### Core Concepts
 
@@ -133,7 +133,7 @@ A streamlined reference optimized for LLM consumption, featuring:
 - [Get Cache](database-schema-llm.md#cache-operations) - Retrieve cached data
 - [Set Cache](database-schema-llm.md#cache-operations) - Store cached data
 
-## 🔍 Key Features
+## Key Features
 
 ### SQL Portability Overview
 The database system is designed for cross-RDBMS compatibility, supporting multiple database backends:
@@ -174,7 +174,7 @@ All database operations use TypedDict models:
 
 Learn more: [TypedDict Models](database-schema.md#typeddict-models)
 
-## 🔌 SQL Portability
+## SQL Portability
 
 ### Overview
 
@@ -546,7 +546,7 @@ await db.chatSettings.getChatSetting(...)
 
 Each repository is automatically initialized when the `Database` class is instantiated and provides type-safe access to its domain-specific operations.
 
-## 🚀 Getting Started
+## Getting Started
 
 ### For Developers
 
@@ -563,7 +563,7 @@ Each repository is automatically initialized when the `Database` class is instan
 3. **Copy Method Signatures**: Use the [Database Operations](database-schema-llm.md#database-operations) section for exact signatures
 4. **Check Enum Values**: Reference [Enums](database-schema-llm.md#enums) section for valid values
 
-## 📖 Usage Examples
+## Usage Examples
 
 ### Basic Message Storage
 ```python
@@ -720,7 +720,7 @@ password = "password"
 database = "gromozeka_db"
 ```
 
-## 🔗 Related Documentation
+## Related Documentation
 
 - **Database Class**: [`internal/database/database.py`](../internal/database/database.py:1)
 - **Database Manager**: [`lib/db/manager.py`](../lib/db/manager.py:1)
@@ -730,7 +730,7 @@ database = "gromozeka_db"
 - **Migration Base Class**: [`internal/database/migrations/base.py`](../internal/database/migrations/base.py:41)
 - **Chat Settings Keys**: [`internal/bot/models/chat_settings.py`](../internal/bot/models/chat_settings.py:281)
 
-## 🛠️ Development Guidelines
+## Development Guidelines
 
 ### Creating New Migrations
 
@@ -751,7 +751,7 @@ See: [Creating New Migrations](database-schema.md#creating-new-migrations)
 
 See: [Best Practices](database-schema.md#best-practices)
 
-## 📊 Database Statistics
+## Database Statistics
 
 > These counts drift easily. For the canonical, up-to-date table list see
 > [`database-schema.md`](database-schema.md); for migration files see
@@ -765,7 +765,7 @@ See: [Best Practices](database-schema.md#best-practices)
 - **Current Migration Version**: 29
 - **Total Repositories**: 15 specialised repositories on the `Database` class (plus the webhook receiver's own `WebhookUpdatesRepository` in `lib/max_webhook_receiver/` — ADR-025)
 
-## 🤝 Contributing
+## Contributing
 
 When modifying the database schema:
 
@@ -777,7 +777,7 @@ When modifying the database schema:
 4. Add corresponding methods to the appropriate repository in [`internal/database/repositories/`](../internal/database/repositories/)
 5. Test migrations on all configured data sources
 
-## 📝 License
+## License
 
 This documentation is part of the Gromozeka bot project.
 

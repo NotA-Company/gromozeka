@@ -44,7 +44,7 @@ The database layer currently uses SQLite-specific syntax that is not directly co
 **Severity**: Critical  
 **Files Affected**: 8 files  
 **Impact**: All upsert operations will fail  
-**Status**: ✅ **RESOLVED** - Portable `upsert()` method implemented on `BaseSQLProvider` (and every concrete provider). All repositories route through `provider.upsert(...)` instead of hand-written `ON CONFLICT`.
+**Status**: **RESOLVED** - Portable `upsert()` method implemented on `BaseSQLProvider` (and every concrete provider). All repositories route through `provider.upsert(...)` instead of hand-written `ON CONFLICT`.
 
 #### Problem Description: ON CONFLICT Syntax Incompatibility
 
@@ -436,7 +436,7 @@ await sqlProvider.execute(
 **Files Affected**: 12 files
 **Impact**: Incorrect timestamp values, timezone issues
 
-**Status**: ✅ **RESOLVED** - Portable SQL patterns implemented in migration_013 and all repository code
+**Status**: **RESOLVED** - Portable SQL patterns implemented in migration_013 and all repository code
 
 #### Problem Description: CURRENT_TIMESTAMP Behavior
 
@@ -521,7 +521,7 @@ await sqlProvider.execute(
 **Severity**: Medium
 **Files Affected**: 3 files
 **Impact**: Case-sensitive comparisons may fail unexpectedly
-**Status**: ✅ **RESOLVED** - Portable `getCaseInsensitiveComparison()` and `getLikeComparison()` methods implemented
+**Status**: **RESOLVED** - Portable `getCaseInsensitiveComparison()` and `getLikeComparison()` methods implemented
 
 #### Problem Description: Case Sensitivity in WHERE Clauses
 
@@ -552,7 +552,7 @@ WHERE
 
 **Recommended Solution**:
 
-**Status**: ✅ Implemented — Use `getCaseInsensitiveComparison()` from provider
+**Status**: Implemented — Use `getCaseInsensitiveComparison()` from provider
 
 Use the provider's `getCaseInsensitiveComparison()` method for explicit case-insensitive equality comparisons:
 
@@ -590,7 +590,7 @@ query = f"""
 **Severity**: Medium
 **Files Affected**: Base provider abstract method, MySQL/PostgreSQL implementations
 **Impact**: Pattern matching queries may fail to match across cases
-**Status**: ✅ **RESOLVED** - Portable `getLikeComparison()` method implemented
+**Status**: **RESOLVED** - Portable `getLikeComparison()` method implemented
 
 #### Problem Description: LIKE Case Sensitivity
 
@@ -904,7 +904,7 @@ def getJsonExtractFunction(self, column: str, path: str) -> str:
 **Severity**: High  
 **Files Affected**: Migration files  
 **Impact**: Schema creation failures  
-**Status**: ✅ **RESOLVED** - No migration in the current tree uses `AUTOINCREMENT` / `AUTO_INCREMENT` / `SERIAL`. Every primary key is either a composite natural key, a single natural key, or an app-generated UUID/ULID stored as `TEXT PRIMARY KEY NOT NULL`.
+**Status**: **RESOLVED** - No migration in the current tree uses `AUTOINCREMENT` / `AUTO_INCREMENT` / `SERIAL`. Every primary key is either a composite natural key, a single natural key, or an app-generated UUID/ULID stored as `TEXT PRIMARY KEY NOT NULL`.
 
 #### Problem Description: AUTO_INCREMENT vs SERIAL
 
@@ -1262,7 +1262,7 @@ The migration system now relies on the provider's `keepConnection` parameter for
 
 ## Native Vector Search Portability
 
-**Status**: ✅ Implemented on `BaseSQLProvider` (default implementations raise `NotImplementedError`; providers with vector extensions override)
+**Status**: Implemented on `BaseSQLProvider` (default implementations raise `NotImplementedError`; providers with vector extensions override)
 
 Native vector similarity search is exposed through four hooks on
 [`BaseSQLProvider`](/lib/db/providers/base.py) plus a small type
@@ -1386,11 +1386,11 @@ the higher-level design and the chat-embeddings consumer that drives this API.
    - Update 12 affected files
    - Ensure timezone consistency
 
- 4. **Address String Comparisons** ✅ **DONE**
-    - ✅ Add case-insensitive comparison helpers (`getCaseInsensitiveComparison()`)
-    - ✅ Add case-insensitive LIKE helpers (`getLikeComparison()`)
-    - ℹ️ Implementation in base provider, MySQL, PostgreSQL, SQLite providers
-    - ℹ️ Used in divinations repository for layout name searches
+ 4. **Address String Comparisons** **DONE**
+    - Add case-insensitive comparison helpers (`getCaseInsensitiveComparison()`)
+    - Add case-insensitive LIKE helpers (`getLikeComparison()`)
+    - Implementation in base provider, MySQL, PostgreSQL, SQLite providers
+    - Used in divinations repository for layout name searches
 
 ### Phase 3: Schema Migration (Week 5-6)
 
@@ -1713,7 +1713,7 @@ async def test_cache_performance(db_manager):
 
 ### 1. Use Named Parameters
 
-**❌ Avoid**:
+**Avoid**:
 ```python
 await sqlProvider.execute(
     "SELECT * FROM users WHERE id = ? AND name = ?",
@@ -1721,7 +1721,7 @@ await sqlProvider.execute(
 )
 ```
 
-**✅ Prefer**:
+**Prefer**:
 ```python
 await sqlProvider.execute(
     "SELECT * FROM users WHERE id = :userId AND name = :userName",
@@ -1731,7 +1731,7 @@ await sqlProvider.execute(
 
 ### 2. Avoid RDBMS-Specific Functions
 
-**❌ Avoid**:
+**Avoid**:
 ```python
 # SQLite-specific
 "SELECT datetime('now') as current_time"
@@ -1743,7 +1743,7 @@ await sqlProvider.execute(
 "SELECT CURRENT_TIMESTAMP as current_time"
 ```
 
-**✅ Prefer**:
+**Prefer**:
 ```python
 # Use helper function for consistent timestamps
 from lib.db.utils import getCurrentTimestamp
@@ -1757,7 +1757,7 @@ await sqlProvider.execute(
 
 ### 3. Use Provider-Specific Methods for Complex Operations
 
-**❌ Avoid**:
+**Avoid**:
 ```python
 # Direct upsert with RDBMS-specific syntax
 await sqlProvider.execute(
@@ -1769,7 +1769,7 @@ await sqlProvider.execute(
 )
 ```
 
-**✅ Prefer**:
+**Prefer**:
 ```python
 # Use provider-specific upsert method. Kwargs are camelCase.
 from lib.db.providers.base import ExcludedValue
@@ -1799,13 +1799,13 @@ await sqlProvider.upsert(
 
 ### 4. Handle Timezones Consistently
 
-**❌ Avoid**:
+**Avoid**:
 ```python
 # Rely on database timezone settings
 "SELECT CURRENT_TIMESTAMP"
 ```
 
-**✅ Prefer**:
+**Prefer**:
 ```python
 # Use explicit UTC timestamps
 current_time = datetime.datetime.now(datetime.UTC)
@@ -1817,13 +1817,13 @@ await sqlProvider.execute(
 
 ### 5. Use Portable SQL Types
 
-**❌ Avoid**:
+**Avoid**:
 ```python
 # RDBMS-specific types
 "TINYINT", "MEDIUMTEXT", "JSONB"
 ```
 
-**✅ Prefer**:
+**Prefer**:
 ```python
 # Portable types
 "INTEGER", "TEXT"
@@ -1836,13 +1836,13 @@ text_type = sqlProvider.getTextType(max_length=100000)
 
 ### 6. Avoid Implicit Type Conversions
 
-**❌ Avoid**:
+**Avoid**:
 ```python
 # Implicit boolean conversion
 "SELECT * FROM users WHERE is_active = 1"
 ```
 
-**✅ Prefer**:
+**Prefer**:
 ```python
 # Explicit type conversion
 is_active = 1 if user_is_active else 0
@@ -1854,13 +1854,13 @@ await sqlProvider.execute(
 
 ### 7. Use Explicit Column Lists
 
-**❌ Avoid**:
+**Avoid**:
 ```python
 # Implicit column list
 "INSERT INTO users VALUES (:id, :name, :email)"
 ```
 
-**✅ Prefer**:
+**Prefer**:
 ```python
 # Explicit column list
 "INSERT INTO users (id, name, email) VALUES (:id, :name, :email)"
@@ -1868,13 +1868,13 @@ await sqlProvider.execute(
 
 ### 8. Limit String Lengths
 
-**❌ Avoid**:
+**Avoid**:
 ```python
 # Unlimited string length
 username = user_input  # Could be very long
 ```
 
-**✅ Prefer**:
+**Prefer**:
 ```python
 # Explicit length limits
 username = user_input[:255]  # Limit to 255 characters
@@ -1882,7 +1882,7 @@ username = user_input[:255]  # Limit to 255 characters
 
 ### 9. Use Transactions for Multi-Step Operations
 
-**❌ Avoid**:
+**Avoid**:
 ```python
 # Multiple operations without transaction
 await sqlProvider.execute("INSERT INTO orders ...")
@@ -1890,7 +1890,7 @@ await sqlProvider.execute("UPDATE inventory ...")
 await sqlProvider.execute("UPDATE users ...")
 ```
 
-**✅ Prefer**:
+**Prefer**:
 ```python
 # Use transaction
 async with sqlProvider:
@@ -1901,13 +1901,13 @@ async with sqlProvider:
 
 ### 10. Test with SQLite
 
-**❌ Avoid**:
+**Avoid**:
 ```python
 # Skip testing entirely
 # No tests written
 ```
 
-**✅ Prefer**:
+**Prefer**:
 ```python
 # Test with SQLite to ensure code portability
 @pytest.mark.asyncio

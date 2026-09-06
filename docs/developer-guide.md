@@ -767,7 +767,7 @@ cp internal/database/migrations/versions/migration_012_unify_cache_tables.py \
 
 5. **Run the bot** — migrations are applied automatically
 
-> ⚠️ **NEVER reuse or skip version numbers!** The version number is immutable once deployed
+> **NEVER reuse or skip version numbers!** The version number is immutable once deployed
 
 ---
 
@@ -792,6 +792,8 @@ The handler system is the core of message processing All incoming messages go th
    - Custom handlers via CustomHandlerLoader.loadAll() (if custom-handlers.enabled)
 3. LLMMessageHandler is registered last (always SEQUENTIAL)
 4. Messages flow through handlers in the specified order
+```
+
 ```
 Incoming Message
        │
@@ -1053,7 +1055,7 @@ order = 10
 enabled = true
 ```
 
-See [Custom Handler Modules design](../design/custom-modules-design.md) for the complete custom handler loading system design, and `internal/bot/common/handlers/module_loader.py` for the live `CustomHandlerLoader` implementation.
+See [Custom Handler Modules design](design/custom-modules-design.md) for the complete custom handler loading system design, and `internal/bot/common/handlers/module_loader.py` for the live `CustomHandlerLoader` implementation.
 
 ### 6.1 Divination Layout Discovery
 
@@ -1601,7 +1603,7 @@ await manager.installLibrary(session.sessionId, "numpy")
 await manager.shutdown()
 ```
 
-**Configuration:** Defaults in [`configs/00-defaults/sandbox.toml`](configs/00-defaults/sandbox.toml). See [Section 13 - Bootstrapping the Sandbox](#13-bootstrapping-the-sandbox) for setup instructions.
+**Configuration:** Defaults in [`configs/00-defaults/sandbox.toml`](/configs/00-defaults/sandbox.toml). See [Section 13 - Bootstrapping the Sandbox](#13-bootstrapping-the-sandbox) for setup instructions.
 
 ---
 
@@ -1640,7 +1642,7 @@ make coverage
 
 ### Test Structure
 
-Test files are discovered from three paths (configured in [`pyproject.toml`](pyproject.toml:59)), but all test files now live exclusively under `tests/` — there are no collocated test files in `lib/` or `internal/`. Test directories mirror source structure: `internal/X/Y.py` → `tests/X/test_Y.py`; `lib/X/Y.py` → `tests/lib/X/test_Y.py`.
+Test files are discovered from three paths (configured in [`pyproject.toml`](/pyproject.toml:59)), but all test files now live exclusively under `tests/` — there are no collocated test files in `lib/` or `internal/`. Test directories mirror source structure: `internal/X/Y.py` → `tests/X/test_Y.py`; `lib/X/Y.py` → `tests/lib/X/test_Y.py`.
 
 Test files must match `test_*.py` or `*_test.py`. Test classes must start with `Test`, and test functions with `test_`
 
@@ -1765,7 +1767,7 @@ def test_createAndGetChat(tempDb):
 
 ### Test Markers
 
-Configure special markers in [`pyproject.toml`](pyproject.toml:66):
+Configure special markers in [`pyproject.toml`](/pyproject.toml:66):
 
 ```python
 @pytest.mark.slow        # Mark slow tests (skipped with -m "not slow")
@@ -1868,7 +1870,7 @@ def processMessage(self, chat_id, message, ttl=None):
 
 ### Linting & Formatting
 
-The project uses four code quality tools configured in [`pyproject.toml`](pyproject.toml)
+The project uses four code quality tools configured in [`pyproject.toml`](/pyproject.toml)
 
 | Tool | Purpose | Config |
 |---|---|---|
@@ -2344,7 +2346,7 @@ Packages are not baked into the images — they are installed into the library p
 
 ### Configuration
 
-All sandbox settings live in [`configs/00-defaults/sandbox.toml`](configs/00-defaults/sandbox.toml). See [`docs/llm/configuration.md`](docs/llm/configuration.md) for the full `[sandbox.*]` reference.
+All sandbox settings live in [`configs/00-defaults/sandbox.toml`](/configs/00-defaults/sandbox.toml). See [`docs/llm/configuration.md`](llm/configuration.md) for the full `[sandbox.*]` reference.
 
 ---
 
@@ -2686,7 +2688,7 @@ tier = "free"
 
 ### 14.4 Adding a Database Migration
 
-> ⚠️ **Critical**: Always verify the current highest version before creating a migration
+> **Critical**: Always verify the current highest version before creating a migration
 
 **Step 1**: Find the highest current migration version
 
@@ -2760,7 +2762,7 @@ class ChatSettingsKey(StrEnum):
 
 **Step 2**: Add the setting metadata in `getChatSettingsInfo()` for type/validation info
 
-**Step 3**: Add a default value in [`configs/00-defaults/bot-defaults.toml`](configs/00-defaults/bot-defaults.toml)
+**Step 3**: Add a default value in [`configs/00-defaults/bot-defaults.toml`](/configs/00-defaults/bot-defaults.toml)
 
 ```toml
 [bot.defaults]
@@ -2783,8 +2785,8 @@ myValue: str = settings[ChatSettingsKey.MY_NEW_SETTING].toStr()
 
 | What | Where |
 |---|---|
-| Entry point | [`main.py`](main.py) |
-| Bot orchestrator class | [`main.py:31`](main.py:31) → `GromozekBot` |
+| Entry point | [`main.py`](/main.py) |
+| Bot orchestrator class | [`main.py:31`](/main.py:31) → `GromozekBot` |
 | Multi-platform bot client | [`internal/bot/common/bot.py:31`](/internal/bot/common/bot.py:31) → `TheBot` |
 | Base handler class | [`internal/bot/common/handlers/base.py:110`](/internal/bot/common/handlers/base.py:110) → `BaseBotHandler` |
 | Handler result enum | [`internal/bot/common/handlers/base.py:82`](/internal/bot/common/handlers/base.py:82) → `HandlerResultStatus` |
@@ -2799,8 +2801,8 @@ myValue: str = settings[ChatSettingsKey.MY_NEW_SETTING].toStr()
 | Rate limiter manager | [`lib/rate_limiter/manager.py:12`](/lib/rate_limiter/manager.py:12) → `RateLimiterManager` |
 | Cache interface | [`lib/cache/interface.py:15`](/lib/cache/interface.py:15) → `CacheInterface[K, V]` |
 | Migration base class | [`internal/database/migrations/base.py:9`](/internal/database/migrations/base.py:9) → `BaseMigration` |
-| Default config | [`configs/00-defaults/00-config.toml`](configs/00-defaults/00-config.toml) |
-| Bot defaults config | [`configs/00-defaults/bot-defaults.toml`](configs/00-defaults/bot-defaults.toml) |
+| Default config | [`configs/00-defaults/00-config.toml`](/configs/00-defaults/00-config.toml) |
+| Bot defaults config | [`configs/00-defaults/bot-defaults.toml`](/configs/00-defaults/bot-defaults.toml) |
 | Custom handler example | [`internal/bot/common/handlers/example_custom_handler.py`](/internal/bot/common/handlers/example_custom_handler.py) |
 | Markdown parser | [`lib/markdown/parser.py`](/lib/markdown/parser.py) → `MarkdownParser` |
 | Max Bot client | [`lib/max_bot/client.py:75`](/lib/max_bot/client.py:75) → `MaxBotClient` |
@@ -2858,4 +2860,4 @@ main()
 
 ---
 
-*This guide was written with love and enthusiasm by a Prinny If something is missing, wrong, or outdated — file an issue or update the docs directly Stay awesome! 🐧*
+*This guide was written with love and enthusiasm by a Prinny If something is missing, wrong, or outdated — file an issue or update the docs directly Stay awesome!*
