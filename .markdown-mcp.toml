@@ -14,3 +14,8 @@ rescan_interval = 30
 [index]
 #location = "./.markdown-mcp/index.db"
 #model = "e5-small"
+
+[read]
+# Deliberate owner-ratified caps (2026-09-06), not drift.
+section_read_cap = 8192
+disk_read_cap = 65536
