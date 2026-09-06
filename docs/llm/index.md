@@ -91,7 +91,8 @@ make test
 | Classes | PascalCase | `BaseBotHandler`, `CacheService` |
 | Constants | UPPER_CASE | `DEFAULT_THREAD_ID`, `MIGRATION_VERSION_KEY` |
 
-**Source:** [`AGENTS.md`](../../AGENTS.md)
+Snake_case is **wrong here even though it is idiomatic Python** — this convention
+overrides the language default everywhere in this repo.
 
 ### 3.2 Docstrings (MUST have)
 
@@ -113,8 +114,6 @@ def getChatSettings(self, chatId: Optional[int], *, returnDefault: bool = True) 
     """
 ```
 
-**Source:** [`AGENTS.md`](../../AGENTS.md)
-
 ### 3.3 Type Hints (MUST have)
 
 - ALWAYS write type hints for function/method arguments
@@ -130,6 +129,21 @@ def parseCommand(self, ensuredMessage: EnsuredMessage) -> Optional[Tuple[str, st
 # WRONG - no type hints
 def parseCommand(self, ensuredMessage):
     ...
+```
+
+**No `Any` type.** Never use `Any` except when a method genuinely accepts any type
+(e.g., a generic container, a passthrough decorator). Always use the concrete
+type. For singletons, import the class and use it directly rather than typing
+parameters as `Any`:
+
+```python
+# CORRECT - concrete singleton type
+def getCache(self) -> CacheService:
+    return CacheService.getInstance()
+
+# WRONG - Any instead of the concrete type
+def getCache(self) -> Any:
+    return CacheService.getInstance()
 ```
 
 ### 3.4 Python Runtime (MUST follow)
@@ -205,9 +219,54 @@ For **optional dependencies** that may not be installed, use a module-level
        _SQLITE_VEC_AVAILABLE = False
 
 The ``_AVAILABLE`` flag is checked at usage sites rather than relying on a
-runtime ``ImportError`` during execution. Inline imports are **only** acceptable
-when a genuine cyclic dependency makes a top-level import impossible — this is
-vanishingly rare in the Gromozeka codebase.
+runtime ``ImportError`` during execution.
+
+Do **not** assign ``None`` or define a dummy stub class in the ``except`` branch —
+leave the block empty aside from the ``_AVAILABLE`` flag. Do **not** use PEP 695
+``type`` aliases (``type AsyncProxyTransport = NoneType``) for conditional-import
+fallbacks either: pyright cannot reconcile a union of a runtime class and a
+``TypeAliasType``. Pyright follows the ``try`` branch for type resolution, and the
+``_AVAILABLE`` guard prevents runtime access to the undefined name.
+
+Inline imports are **only** acceptable when a genuine cyclic dependency makes a
+top-level import impossible — this is vanishingly rare in the Gromozeka codebase.
+When adding imports to the top of a file, run ``make format`` afterwards so isort
+organises them.
+
+### 3.8 Dependencies (`requirements.txt` Is Frozen)
+
+`requirements.txt` is a **frozen/locked file**. Never add non-pinned dependency
+entries to it, and never edit it by hand. To add a new direct dependency:
+
+1. Add it to `requirements.direct.txt` (under the `# Runtime` section) with an
+   exact version pin.
+2. Regenerate `requirements.txt` from `requirements.direct.txt` via
+   `freeze-requirements` (`make freeze-requirements`).
+
+### 3.9 No Pydantic
+
+The repo deliberately avoids pydantic. Model data with raw dicts plus
+hand-rolled, type-hinted classes or `TypedDict` definitions instead. Validation
+and defaults are written in plain Python, not declared as pydantic models.
+
+### 3.10 Prefer Class-Based Designs
+
+When a feature has related operations that share state or compose together, put
+them in a cohesive class with methods rather than a collection of module-level
+free functions. Apply the established project patterns from the start rather
+than retrofitting them later: `StrEnum` for string enums, `TypedDict` /
+type-hinted classes for structured data, singletons accessed via
+`getInstance()`.
+
+### 3.11 Regression Tests on Every Bug Fix
+
+When fixing a bug — whether in production code, test code, or config — write a
+regression test that **fails before the fix** and **passes after it**. Include
+tests for the edge cases the bug touched (e.g., `Optional`/`Union` conversion,
+`None` handling, schema column mismatches). Never rely on existing test coverage
+to catch regressions. The
+[write-regression-test skill](../../.agents/skills/write-regression-test/SKILL.md)
+is the step-by-step recipe.
 
 ---
 
