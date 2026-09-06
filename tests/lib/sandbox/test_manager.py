@@ -1,6 +1,11 @@
 """Tests for SandboxManager (lib.sandbox.manager).
 
 Covers:
+- _swapBackend() two-reference invariant: the helper must rewire BOTH
+  backend captures the manager's constructor makes — ``manager._backend``
+  and the ``GarbageCollector``'s constructor-time ``manager._gc._backend``
+  — so the mock-backend isolation contract is pinned structurally and
+  cannot regress silently when the Docker daemon is unreachable.
 - runCode() workDir behaviour: RunResult.workDir is set to the expected
   workspace-relative path format and the work/ directory is created on disk.
 - RunResult.workDir default: the field defaults to empty string when not
@@ -152,6 +157,31 @@ def _makeMockBackend(outcome: ContainerOutcome) -> MagicMock:
     backend.ensureImage = AsyncMock(return_value=None)
     backend.healthcheck = AsyncMock(return_value=MagicMock(ok=True, errors=[]))
     return backend
+
+
+def _swapBackend(manager: SandboxManager, backend: MagicMock) -> None:
+    """Install a mock backend everywhere the manager captured the real one.
+
+    ``SandboxManager.__init__`` hands the real ``DockerBackend`` to BOTH
+    ``manager._backend`` and the internal ``GarbageCollector``
+    (``manager._gc._backend``). Swapping only ``manager._backend`` left the
+    GC holding the real backend, so ``recover()`` → ``collectGarbage()``
+    → ``_gc.collectAll()`` performed REAL Docker I/O (list/kill/remove of
+    managed containers) whenever ``DOCKER_HOST`` resolved to a live daemon.
+    The aiodocker client that I/O opened was then dropped unclosed by the
+    singleton reset, surfacing as ``ResourceWarning: Unclosed
+    connector/socket``. Rewiring both references makes the tests' "no Docker
+    calls are made" contract actually hold.
+
+    Args:
+        manager: The manager whose backend references to replace.
+        backend: Mock backend to install.
+
+    Returns:
+        None
+    """
+    manager._backend = backend
+    manager._gc._backend = backend
 
 
 def _makeDistInfo(
@@ -369,6 +399,83 @@ def _resetSandboxManagerSingleton():
 
 
 # ============================================================================
+# Tests — _swapBackend helper (two-reference invariant)
+# ============================================================================
+
+
+class TestSwapBackendHelper:
+    """Pins the ``_swapBackend`` two-reference invariant.
+
+    ``SandboxManager.__init__`` captures the real ``DockerBackend`` twice:
+    once in ``manager._backend`` and once inside the internal
+    ``GarbageCollector`` (``manager._gc._backend``, the constructor-time
+    ``backend=`` argument). A regression that rewires only the first
+    capture leaves the GC holding the real backend, and with Docker
+    unreachable (the CI default) every mock-backend test would STILL pass —
+    the GC's real-Docker failures are swallowed inside ``collectGarbage()``.
+    Pinning the invariant directly makes that regression fail
+    deterministically, independent of daemon reachability.
+    """
+
+    def _makeFreshManager(self, tmp_path: Path) -> SandboxManager:
+        """Build a fresh SandboxManager still holding its real backend.
+
+        Same construction sequence as the per-class ``_makeManager``
+        factories in this file, but WITHOUT the ``_swapBackend`` call —
+        the swap itself is the behaviour under test.
+
+        Args:
+            tmp_path: pytest-provided temporary directory.
+
+        Returns:
+            A newly constructed SandboxManager (singleton reset by the
+            autouse fixture) with both real backend captures in place.
+        """
+        SandboxManager.injectConfig(_makeSandboxConfig(str(tmp_path / "sandbox")))
+        return SandboxManager.getInstance()
+
+    def testSwapBackendReplacesBothManagerAndGcReferences(self, tmp_path: Path) -> None:
+        """_swapBackend must rewire BOTH manager._backend AND manager._gc._backend.
+
+        Why the second identity matters: the ``GarbageCollector`` holds a
+        SECOND, constructor-time capture of the real ``DockerBackend``
+        (``SandboxManager.__init__`` passes ``backend=self._backend`` into
+        the ``GarbageCollector``). A regression that removes the second
+        assignment in ``_swapBackend`` keeps that capture real, so
+        ``recover()`` → ``collectGarbage()`` performs REAL Docker I/O
+        (list/kill/remove of managed containers): the orphaned aiodocker
+        client surfaces as ``ResourceWarning: Unclosed connector/socket``
+        and the I/O itself is an orphan-container kill/remove hazard. The
+        behavioural tests cannot catch this — the GC swallows backend
+        connection failures — so only this structural identity pin makes
+        the regression fail deterministically, regardless of whether a
+        Docker daemon is reachable.
+
+        Args:
+            tmp_path: pytest-provided temporary directory.
+
+        Returns:
+            None
+        """
+        manager = self._makeFreshManager(tmp_path)
+
+        # Constructor-time precondition: both captures hold the SAME real
+        # backend, so re-wiring one while missing the other is observable.
+        assert (
+            manager._backend is manager._gc._backend
+        ), "SandboxManager.__init__ must hand the same backend to the manager and the GC"
+
+        backend = MagicMock(name="distinctive-swap-backend")
+        _swapBackend(manager, backend)
+
+        assert manager._backend is backend, "manager._backend must hold the swapped mock backend"
+        assert manager._gc._backend is backend, (
+            "manager._gc._backend must hold the swapped mock backend too — leaving the "
+            "GC's constructor-time capture real makes recover()→collectGarbage() do real Docker I/O"
+        )
+
+
+# ============================================================================
 # Tests — RunResult.workDir default
 # ============================================================================
 
@@ -477,7 +584,7 @@ async def testRunCodeSetsWorkDirAndCreatesDirectory(tmp_path: Path) -> None:
 
     # Replace the backend with a mock so no Docker calls are made.
     mockOutcome = _makeContainerOutcome(exitCode=0)
-    manager._backend = _makeMockBackend(mockOutcome)
+    _swapBackend(manager, _makeMockBackend(mockOutcome))
 
     # Mark the Python runtime as prepared so prepareRuntime() is skipped.
     manager._runtimes[RuntimeName.PYTHON].markPrepared()
@@ -518,7 +625,7 @@ async def testRunCodeWorkDirIsWorkspaceRelative(tmp_path: Path) -> None:
 
     manager = SandboxManager.getInstance()
     mockOutcome = _makeContainerOutcome(exitCode=0)
-    manager._backend = _makeMockBackend(mockOutcome)
+    _swapBackend(manager, _makeMockBackend(mockOutcome))
     manager._runtimes[RuntimeName.PYTHON].markPrepared()
 
     result = await manager.runCode(
@@ -573,7 +680,8 @@ class TestInstallRuntimeLibrariesTimeout:
         SandboxManager.injectConfig(config)
 
         manager = SandboxManager.getInstance()
-        manager._backend = _makeMockBackend(_makeContainerOutcome(exitCode=0))
+        backend = _makeMockBackend(_makeContainerOutcome(exitCode=0))
+        _swapBackend(manager, backend)
 
         success = await manager.installRuntimeLibraries(
             packages=["pybullet"],
@@ -584,7 +692,7 @@ class TestInstallRuntimeLibrariesTimeout:
         # First runOneshot call is the staged-install (stage) container (a
         # second one may follow from _refreshPackageList on the success
         # path).
-        installSpec = manager._backend.runOneshot.await_args_list[0].kwargs["spec"]
+        installSpec = backend.runOneshot.await_args_list[0].kwargs["spec"]
         assert (
             installSpec.limits.timeoutSeconds == 7200
         ), "install-container.timeout-seconds config must drive the install container timeout"
@@ -606,7 +714,8 @@ class TestInstallRuntimeLibrariesTimeout:
         SandboxManager.injectConfig(config)
 
         manager = SandboxManager.getInstance()
-        manager._backend = _makeMockBackend(_makeContainerOutcome(exitCode=0))
+        backend = _makeMockBackend(_makeContainerOutcome(exitCode=0))
+        _swapBackend(manager, backend)
 
         success = await manager.installRuntimeLibraries(
             packages=["pybullet"],
@@ -615,7 +724,7 @@ class TestInstallRuntimeLibrariesTimeout:
         )
         assert success is True
 
-        installSpec = manager._backend.runOneshot.await_args_list[0].kwargs["spec"]
+        installSpec = backend.runOneshot.await_args_list[0].kwargs["spec"]
         assert installSpec.limits.timeoutSeconds == 300, "explicit timeoutSeconds argument must override config"
 
     async def testInstallDefaultConfigTimeoutRemains600(self, tmp_path: Path) -> None:
@@ -635,7 +744,8 @@ class TestInstallRuntimeLibrariesTimeout:
         SandboxManager.injectConfig(config)
 
         manager = SandboxManager.getInstance()
-        manager._backend = _makeMockBackend(_makeContainerOutcome(exitCode=0))
+        backend = _makeMockBackend(_makeContainerOutcome(exitCode=0))
+        _swapBackend(manager, backend)
 
         success = await manager.installRuntimeLibraries(
             packages=["pybullet"],
@@ -643,7 +753,7 @@ class TestInstallRuntimeLibrariesTimeout:
         )
         assert success is True
 
-        installSpec = manager._backend.runOneshot.await_args_list[0].kwargs["spec"]
+        installSpec = backend.runOneshot.await_args_list[0].kwargs["spec"]
         assert installSpec.limits.timeoutSeconds == 600
 
 
@@ -674,7 +784,7 @@ class TestInstallRuntimeLibrariesContainerCleanup:
         """
         SandboxManager.injectConfig(_makeSandboxConfig(str(tmp_path / "sandbox")))
         manager = SandboxManager.getInstance()
-        manager._backend = backend
+        _swapBackend(manager, backend)
         return manager
 
     async def testInstallRemovesInstallContainerOnSuccess(self, tmp_path: Path) -> None:
@@ -791,7 +901,7 @@ class TestInstallRuntimeLibrariesStagedCore:
         """
         SandboxManager.injectConfig(_makeSandboxConfig(str(tmp_path / "sandbox")))
         manager = SandboxManager.getInstance()
-        manager._backend = backend
+        _swapBackend(manager, backend)
         return manager
 
     def _libsDir(self, tmp_path: Path) -> Path:
@@ -1073,7 +1183,7 @@ class TestUpdateRuntimeLibraries:
         """
         SandboxManager.injectConfig(_makeSandboxConfig(str(tmp_path / "sandbox")))
         manager = SandboxManager.getInstance()
-        manager._backend = backend
+        _swapBackend(manager, backend)
         return manager
 
     def _libsDir(self, tmp_path: Path) -> Path:
@@ -2192,7 +2302,7 @@ class TestUpdateRuntimeLibraries:
         )
         SandboxManager.injectConfig(_makeSandboxConfig(str(rootDir)))
         manager = SandboxManager.getInstance()
-        manager._backend = backend
+        _swapBackend(manager, backend)
 
         result = await manager.updateRuntimeLibraries(None, runtime=RuntimeName.PYTHON)
 
@@ -2337,7 +2447,7 @@ class TestRecoverCrashWindowAdoption:
         """
         SandboxManager.injectConfig(_makeSandboxConfig(str(tmp_path / "sandbox")))
         manager = SandboxManager.getInstance()
-        manager._backend = backend
+        _swapBackend(manager, backend)
         return manager
 
     def _libsDir(self, tmp_path: Path) -> Path:
@@ -2544,7 +2654,7 @@ class TestRecoverCrashWindowAdoption:
         backend = _makeMockBackend(_makeContainerOutcome(exitCode=0))
         SandboxManager.injectConfig(_makeSandboxConfig(str(rootDir)))
         manager = SandboxManager.getInstance()
-        manager._backend = backend
+        _swapBackend(manager, backend)
 
         success = await manager.installRuntimeLibraries(["numpy"], runtime=RuntimeName.PYTHON)
 
