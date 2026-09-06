@@ -2,7 +2,7 @@
 
 Archived durable notes from [`teamlead-memory.md`](../teamlead-memory.md) (extracted 2026-08-08). See the live compact memory there for cross-cutting rules and workflow lessons.
 
-Plan: [`docs/plans/embedding-model-lookup-refactor-v1.md`](../../plans/embedding-model-lookup-refactor-v1.md) — APPROVED + architect-self-reviewed, 1893 lines. Decisions D1–D10 ratified. **All phases complete + repo renamed + dataSource plumbing added.** `make test` = 3468 passed / 11 skipped (pre-existing); `make format lint` = 0/0/0; `make check-docs` = 0 broken.
+Plan: [`docs/plans/embedding-model-lookup-refactor-v1.md`](../../archive/plans/embedding-model-lookup-refactor-v1.md) — APPROVED + architect-self-reviewed, 1893 lines. Decisions D1–D10 ratified. **All phases complete + repo renamed + dataSource plumbing added.** `make test` = 3468 passed / 11 skipped (pre-existing); `make format lint` = 0/0/0; `make check-docs` = 0 broken.
 
 **User-driven simplification pass (2026-07-21):** the user simplified the refactor substantially beyond the original plan, and the teamlead dispatched doc-sync to match:
 - **Migration Step 2 (`_backfillModels`) DELETED entirely** — `models` table now created EMPTY; allocation is lazy via `getOrCreateModelId` on first embed. R6 invariant (probe-then-insert idempotency for migration-time backfill) is GONE — the runtime `getOrCreateModelId` still uses probe-then-insert against UNIQUE constraint, but the migration-side R6 section is stale.

@@ -2,7 +2,7 @@
 
 > **Audience:** LLM agents
 > **Purpose:** Coding patterns, constraints, and anti-patterns for lib/sandbox/
-> **Design docs:** [`docs/plans/python-sandboxing-v1.md`](../plans/python-sandboxing-v1.md), [`docs/plans/sandbox-update-v1.md`](../plans/sandbox-update-v1.md)
+> **Design docs:** [`docs/plans/python-sandboxing-v1.md`](../plans/python-sandboxing-v1.md), [`docs/plans/sandbox-update-v1.md`](../archive/plans/sandbox-update-v1.md)
 
 ---
 
@@ -313,7 +313,7 @@ Invariants and operational facts:
 - **In-flight runs:** run containers bind-mount the pool read-only, and Linux bind mounts pin the inode — containers that mounted the pool keep a consistent OLD view after the swap; runs started later get the new pool. Hence the reply note "sandbox runs started before this update keep seeing their previous pool".
 - **Repo checkout required on the host** for the helper mount — the host path is derived as the `install-dockerfile` parent's `pool_pip_runner.py`; a missing helper file raises `ConfigError` before any container starts.
 
-Design and rationale: [`docs/plans/sandbox-update-v1.md`](../plans/sandbox-update-v1.md).
+Design and rationale: [`docs/plans/sandbox-update-v1.md`](../archive/plans/sandbox-update-v1.md).
 
 ---
 

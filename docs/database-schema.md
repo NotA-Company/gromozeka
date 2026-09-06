@@ -809,7 +809,7 @@ await repo.saveLayout(
 
 ### models
 
-Lookup table that normalises embedding provenance into one row per distinct `(model, dimensions)` pair seen by the system. The small app-generated sequential integer `model_id` is the FK-like key stored on every embedding-bearing row (`chat_messages.model_id`, `user_memories.model_id`, and the vec0 partition keys) so the `(model, dimensions)` pair itself is stored exactly once. Created by `migration_025` (Phase 2 of the embedding-model-lookup refactor; see [`docs/plans/embedding-model-lookup-refactor-v1.md`](plans/embedding-model-lookup-refactor-v1.md)).
+Lookup table that normalises embedding provenance into one row per distinct `(model, dimensions)` pair seen by the system. The small app-generated sequential integer `model_id` is the FK-like key stored on every embedding-bearing row (`chat_messages.model_id`, `user_memories.model_id`, and the vec0 partition keys) so the `(model, dimensions)` pair itself is stored exactly once. Created by `migration_025` (Phase 2 of the embedding-model-lookup refactor; see [`docs/plans/embedding-model-lookup-refactor-v1.md`](archive/plans/embedding-model-lookup-refactor-v1.md)).
 
 **Primary Key**: `model_id` (app-generated sequential integer — Decision D7 of the refactor: small ints are cheaper as vec0 partition keys than UUID strings; the DB does not generate IDs, no `AUTOINCREMENT`/`SERIAL`).
 

@@ -5,7 +5,7 @@ Supersedes: [`python-sandboxing-v0.gpt.md`](../archive/plans/python-sandboxing-v
 Companion: [`python-sandboxing-v1-integration.md`](../archive/plans/python-sandboxing-v1-integration.md) (Gromozeka-specific wiring)
 Scope: retained design reference for the implemented lib/sandbox/ package.
 
-> **Superseded in part (2026-09-05):** the package install/update mechanics described here (§5.6, §8.3, and the `installCommand` design in §14.3) were replaced by the staged-install + atomic-swap design in [`sandbox-update-v1.md`](sandbox-update-v1.md) — pip stages into a private delta and never writes into the live pool; `installCommand`/`updateCommand` no longer exist on the `Runtime` ABC (replaced by `reportCommand`/`stageInstallCommand`/`updateHelperHostPath`). Everything else in this document remains the design record for `lib/sandbox/` v1.
+> **Superseded in part (2026-09-05):** the package install/update mechanics described here (§5.6, §8.3, and the `installCommand` design in §14.3) were replaced by the staged-install + atomic-swap design in [`sandbox-update-v1.md`](../archive/plans/sandbox-update-v1.md) — pip stages into a private delta and never writes into the live pool; `installCommand`/`updateCommand` no longer exist on the `Runtime` ABC (replaced by `reportCommand`/`stageInstallCommand`/`updateHelperHostPath`). Everything else in this document remains the design record for `lib/sandbox/` v1.
 
 This document covers the **standalone, language- and bot-agnostic sandbox library** living under [`lib/sandbox/`](../../lib/). Gromozeka integration (adapter service, handlers, config wiring) is split out into the companion doc.
 

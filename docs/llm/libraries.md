@@ -719,7 +719,7 @@ singleton `SandboxManager` entry point that composes a backend (Docker),
 runtimes (Python), metadata store (filesystem), and lock registry.
 
 - **Coding patterns & constraints:** [`sandbox.md`](sandbox.md)
-- **Design:** [`docs/plans/python-sandboxing-v1.md`](../plans/python-sandboxing-v1.md), [`docs/plans/sandbox-update-v1.md`](../plans/sandbox-update-v1.md) (staged install + atomic swap for pool installs/updates)
+- **Design:** [`docs/plans/python-sandboxing-v1.md`](../plans/python-sandboxing-v1.md), [`docs/plans/sandbox-update-v1.md`](../archive/plans/sandbox-update-v1.md) (staged install + atomic swap for pool installs/updates)
 - **Integration:** [`docs/archive/plans/python-sandboxing-v1-integration.md`](../archive/plans/python-sandboxing-v1-integration.md) (archived)
 
 Key modules:
