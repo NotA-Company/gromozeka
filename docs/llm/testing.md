@@ -135,6 +135,8 @@ python_functions = ["test_*", "test*"]
 asyncio_mode = "auto"  # All async tests run automatically
 ```
 
+**Warnings policy:** `filterwarnings = ["error::ResourceWarning"]` — any `ResourceWarning` (unclosed file/socket/client, in test or production code) is a hard test failure repo-wide. Fix leaks with deterministic close (try/finally, context manager, fixture teardown); suppress only with the narrowest per-test `@pytest.mark.filterwarnings` and a comment naming the third-party cause.
+
 **Test markers** (registered in `pyproject.toml` under `markers = [...]`; none are auto-skipped):
 - `@pytest.mark.slow` — slow tests (deselect with `-m "not slow"`)
 - `@pytest.mark.performance` — performance tests
