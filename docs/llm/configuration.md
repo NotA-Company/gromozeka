@@ -706,7 +706,6 @@ Sandboxed code execution configuration. Defaults live in [`configs/00-defaults/s
 | Key | Type | Default | Purpose |
 |---|---|---|---|
 | `base-url` | str | `"unix:///var/run/docker.sock"` | Docker daemon socket URL or TCP address |
-| `image-pull-policy` | str | `"if-not-present"` | When to pull images: `"never"`, `"if-not-present"`, or `"always"` |
 
 #### `[sandbox.defaults]`
 

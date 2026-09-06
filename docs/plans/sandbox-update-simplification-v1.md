@@ -224,5 +224,5 @@ via staged install and atomic pool swap").
 ## 9. Follow-ups
 
 - [x] Delete the dead `[sandbox.bootstrap]` config section (`starter-packages` key — unused since work item 3).
-- [ ] Remove the dead `image-pull-policy` setting.
+- [x] Remove the dead `image-pull-policy` setting.
 - [ ] Relocate the real-Docker end-to-end install test to `tests/lib/sandbox/`.

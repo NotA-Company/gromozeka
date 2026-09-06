@@ -800,7 +800,6 @@ class StorageConfig:
 @dataclass(slots=True)
 class DockerBackendConfig:
     baseUrl: str = "unix:///var/run/docker.sock"
-    imagePullPolicy: Literal["never", "if-not-present", "always"] = "if-not-present"
 
 @dataclass(slots=True)
 class BackendConfig:
