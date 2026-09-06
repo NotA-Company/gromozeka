@@ -1,3 +1,7 @@
+---
+category: design
+---
+
 # Design: Statistics aggregation v1 — periodic trigger and retention
 
 **Date**: 2026-08-17

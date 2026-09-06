@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Database Schema Reference for LLMs
 
 ## Quick Reference

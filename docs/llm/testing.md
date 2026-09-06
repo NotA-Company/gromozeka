@@ -1,3 +1,7 @@
+---
+category: guide
+---
+
 # Gromozeka — Testing Guide
 
 > **Audience:** LLM agents  

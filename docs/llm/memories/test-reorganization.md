@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Test Reorganization Task Memory
 
 Durable task-specific memory for the completed test reorganization work (2026-05-21).

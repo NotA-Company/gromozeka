@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Doc-Link Fix Campaign + `make check-docs`
 
 Durable record of the 2026-07-11 doc-link fix campaign and the conventions it locked in. Covers [`scripts/check_docs.py`](/scripts/check_docs.py) (the local-link checker), the `check-docs` [`Makefile`](/Makefile) target, the sweep that repaired all 376 broken local markdown links the checker reported on first run, and the durable lessons that apply to ALL future doc edits in this repo. Read this before writing or editing any cross-file markdown link — especially the leading-slash convention and the depth gotcha.

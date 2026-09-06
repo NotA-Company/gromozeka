@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Sandbox Task Memory
 
 Durable task-specific memory for the completed `lib/sandbox` / sandbox bot integration work.

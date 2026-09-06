@@ -1,3 +1,7 @@
+---
+category: guide
+---
+
 # Gromozeka — Sandbox Code Execution Patterns
 
 > **Audience:** LLM agents

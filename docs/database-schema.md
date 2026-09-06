@@ -1,3 +1,6 @@
+---
+category: reference
+---
 
 # Database Schema Documentation
 

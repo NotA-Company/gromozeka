@@ -1,3 +1,7 @@
+---
+category: design
+---
+
 # Custom Handler Modules — Design Document
 
 > **Status:** Implemented (living design reference for `internal/bot/common/handlers/module_loader.py`)  

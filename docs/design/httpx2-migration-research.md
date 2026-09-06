@@ -1,3 +1,7 @@
+---
+category: design
+---
+
 # Research: httpx → httpx2 migration feasibility
 
 **Date**: 2026-08-13 (sources verified this date)

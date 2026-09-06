@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Any Type Cleanup
 
 Durable notes from the repo-wide `Any` type annotation audit and cleanup (2026-06-28). Read this when working on type annotations, encountering `Any` usage, or setting up type narrowing patterns.

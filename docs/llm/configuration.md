@@ -1,3 +1,7 @@
+---
+category: guide
+---
+
 # Gromozeka — Configuration Reference
 
 > **Audience:** LLM agents  

@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Condensed-Context Retrieval
 
 Durable notes for the conversation-condensing machinery and the ADR-019 "condensed-context retrieval" feature (record which message IDs each summary covers, render summaries as JSON, expose a `get_messages_by_ids` LLM tool). Read this when touching `LLMService.condenseContext()`, `CondensingDict` / `CondensedDateRangeDict`, the `condensedThread` / `randomContext` persistent write paths, the `get_messages_by_ids` tool, or `/scripts/check_condensing.py`.

@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Pull Request: [PR Title]
 
 **Author:** [Developer Name]

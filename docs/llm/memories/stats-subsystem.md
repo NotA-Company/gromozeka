@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # lib/stats subsystem (mapped 2026-08-13, branch `lib-stat-improvement`)
 
 Archived durable notes from [`teamlead-memory.md`](../teamlead-memory.md) (extracted 2026-09-02). See the live compact memory there for cross-cutting rules and workflow lessons.

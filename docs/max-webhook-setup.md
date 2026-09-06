@@ -1,3 +1,8 @@
+---
+category: guide
+description: Deployment guide for Max Messenger webhook mode (two-process receiver + bot).
+---
+
 # Max Messenger webhook — deployment guide
 
 Operator-facing guide for switching the Max bot from long-polling to webhook

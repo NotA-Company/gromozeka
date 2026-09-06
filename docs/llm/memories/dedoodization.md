@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Dedoodization
 
 Durable notes from the repo-wide removal of "dood" from comments, docstrings, log messages, and error messages (2026-07-02).

@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Teamlead Memory
 
 Durable working memory for `.opencode/agents/teamlead.md`.

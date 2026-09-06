@@ -1,3 +1,7 @@
+---
+category: design
+---
+
 # Design: Extract SQL providers and DatabaseManager into `lib/db` (v1)
 
 **Date**: 2026-08-23

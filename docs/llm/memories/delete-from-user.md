@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # DeleteFromUserMessageHandler
 
 Durable notes from the DeleteFromUserMessageHandler implementation (2026-07-02). Read this when working on `internal/bot/common/handlers/delete_from_user.py` or message deletion features.

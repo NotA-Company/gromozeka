@@ -1,3 +1,7 @@
+---
+category: design
+---
+
 # Design: Statistics display v2 — owner-facing operational analytics
 
 **Status: DRAFT — goals only, not designed.** Parking-lot document; no decisions beyond

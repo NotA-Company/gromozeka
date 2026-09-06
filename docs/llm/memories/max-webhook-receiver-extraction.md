@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Max webhook receiver → lib extraction (opened 2026-08-25 — COMPLETE 2026-08-26; see "IMPLEMENTATION" bullets below for commit series)
 
 Archived durable notes from [`teamlead-memory.md`](../teamlead-memory.md) (extracted 2026-09-02). See the live compact memory there for cross-cutting rules and workflow lessons.

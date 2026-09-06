@@ -1,3 +1,7 @@
+---
+category: process
+---
+
 # Gromozeka — Reviewing Large Changes
 
 > **Audience:** `code-reviewer` agent (read-only, structured reports), `teamlead` agent (orchestrates review campaigns)

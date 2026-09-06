@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # DB Cache Cleanup (verified 2026-07-18; mechanism updated 2026-08-25 after the ADR-024 `GenericDatabaseCache` move, commit `c1ac3395`)
 
 Archived durable notes from [`../teamlead-memory.md`](../teamlead-memory.md) (extracted 2026-07-18). See the live compact memory there for cross-cutting rules and workflow lessons.

@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Gromozeka — Architecture & Design Decisions
 
 > **Audience:** LLM agents  

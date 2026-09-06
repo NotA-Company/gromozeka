@@ -1,3 +1,7 @@
+---
+category: design
+---
+
 # Native Vector Search in the SQL Provider Abstraction
 
 **Task**: Add native vector similarity search to `BaseSQLProvider`, with SQLite (`sqlite-vec`) as the primary backend.

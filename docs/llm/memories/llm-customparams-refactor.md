@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # LLM customParams Refactor (lib/ai, 2026-07-20)
 
 Archived durable notes from [`teamlead-memory.md`](../teamlead-memory.md) (extracted 2026-08-08). See the live compact memory there for cross-cutting rules and workflow lessons.

@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # LLM `useTools` Per-Tool Filtering
 
 Durable notes from the per-tool filtering implementation for `useTools` (2026-07-04). Read this when working on LLM tool registration, tool filtering, or the `ToolName` StrEnum.

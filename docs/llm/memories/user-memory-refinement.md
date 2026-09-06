@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # User Memory Refinement — Task Memory
 
 > **⚠ SUPERSEDED (2026-07-07) by the unified user-memories system.** This

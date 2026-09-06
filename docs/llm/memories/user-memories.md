@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # User Memories (v1) — Task Memory
 
 Durable implementation notes for the **unified per-`(chat, user, thread)`

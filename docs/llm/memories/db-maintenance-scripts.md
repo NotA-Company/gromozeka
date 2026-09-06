@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # DB Maintenance Scripts
 
 Durable conventions and precedents for standalone maintenance scripts under `/scripts/` that perform direct DB maintenance (open a SQLite DB by path, mutate rows, drop tables). Read this when adding or editing a script in `/scripts/` that touches the DB directly. Underlying rules (camelCase, `./venv/bin/python3`) live in `AGENTS.md`; this file captures the established script-class patterns.

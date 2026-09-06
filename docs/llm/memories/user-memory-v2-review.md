@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # user-memory-v2 Pre-Merge Review (2026-07-14)
 
 Archived durable notes from [`../teamlead-memory.md`](../teamlead-memory.md) (extracted 2026-07-18). See the live compact memory there for cross-cutting rules and workflow lessons.

@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Chat History Search — Durable Memory
 
 Durable task-specific memory for the completed chat history search feature (Steps 1 & 2 completed

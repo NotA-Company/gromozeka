@@ -1,3 +1,7 @@
+---
+category: design
+---
+
 # Design: Statistics display v1 — `/stats` command and optional web pages
 
 **Date**: 2026-08-18

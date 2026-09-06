@@ -1,3 +1,7 @@
+---
+category: design
+---
+
 # Design: Media Transcription (Speech-to-Text) v1
 
 Status: **REVIEWED** — implementation-ready; release is gated by the smoke tests in §13.3  

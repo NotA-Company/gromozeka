@@ -1,3 +1,7 @@
+---
+category: design
+---
+
 # Design: consumerId gaps in llm_request stats — issue parking lot
 
 **Status: IMPLEMENTED (2026-08-23).** Originally a DRAFT issue parking lot

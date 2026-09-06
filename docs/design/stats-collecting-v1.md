@@ -1,3 +1,7 @@
+---
+category: design
+---
+
 # Design: Statistics collection v1 — messages, tool calls, commands
 
 **Date**: 2026-08-14

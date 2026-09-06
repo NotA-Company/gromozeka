@@ -1,3 +1,7 @@
+---
+category: design
+---
+
 # Design: Extract the Max webhook receiver into `lib/max_webhook_receiver/` (v1)
 
 **Date**: 2026-08-25

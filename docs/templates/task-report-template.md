@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Task [X.Y.Z] Completion Report: [Task Name]
 
 **Category:** [Major Task Category]

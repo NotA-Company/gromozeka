@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Chat Users Cache (ADR-015)
 
 Write-through `chat_users` cache in `CacheService`, eliminating 2–5 redundant `chat_users` reads per inbound message (memory-summary reads during LLM history reconstruction, spam `checkSpam`, per-message `updateChatUser` upsert, internal metadata-read inside `setUserMetadata`). Read this file when working on `CacheService` chat-user methods, `SpamHandler._getUserInfoFreshIfMessagesLessThan`, any `chat_users.metadata` writer, or the `chatUserMetadataLock()` concurrency contract. Canonical decision: ADR-015 in [`../architecture.md`](../architecture.md); plan of record: [`../../archive/plans/user-info-cache-plan-v1.md`](../../archive/plans/user-info-cache-plan-v1.md). For the nested-write hazard as it affects the refinement path, see the companion [`user-memory-refinement.md`](user-memory-refinement.md); for the structured-memory rewrite that still relies on this cache for the message-cursor persist, see [`user-memories.md`](user-memories.md).

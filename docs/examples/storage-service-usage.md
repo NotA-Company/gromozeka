@@ -1,3 +1,7 @@
+---
+category: guide
+---
+
 # Storage Service Usage Examples
 
 Practical examples demonstrating how to use the Storage Service in various scenarios.

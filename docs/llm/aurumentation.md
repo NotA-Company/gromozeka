@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # `lib/aurumentation` — Golden Data Testing System v2 (Reference)
 
 > **Audience:** maintainers of the library itself and of the golden-data suites.

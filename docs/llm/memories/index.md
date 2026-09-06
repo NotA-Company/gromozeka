@@ -1,3 +1,8 @@
+---
+category: reference
+description: Index of task-specific agent memory files — read the relevant one before working on a subsystem.
+---
+
 # Task-Specific Memories
 
 Archived durable working memory for completed features and subsystems.

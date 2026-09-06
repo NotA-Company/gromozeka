@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Chat Accessibility & getChatAdmins Graceful Degradation (2026-08-12)
 
 Archived durable notes from [`teamlead-memory.md`](../teamlead-memory.md) (extracted 2026-09-02). See the live compact memory there for cross-cutting rules and workflow lessons.

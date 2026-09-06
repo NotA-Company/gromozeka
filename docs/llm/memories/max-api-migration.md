@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Max API Migration
 
 Durable notes from the Max Messenger API endpoint migration and TLS/certificate trust implementation. Read this when working on `lib/max_bot/`, `internal/bot/max/`, Max API endpoints, or TLS/SSL configuration for Max.

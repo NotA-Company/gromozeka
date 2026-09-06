@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Telegram Send Retry (TheBot._retryTelegramSend)
 
 Archived durable notes from [`teamlead-memory.md`](../teamlead-memory.md) (extracted 2026-09-02). See the live compact memory there for cross-cutting rules and workflow lessons.

@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Documentation Audit Lessons (2026-06-28)
 
 Archived durable notes from [`../teamlead-memory.md`](../teamlead-memory.md) (extracted 2026-07-18; re-verified 2026-07-18 during the second docs audit, with inline as-of stamps on re-checked claims). See the live compact memory there for cross-cutting rules and workflow lessons.

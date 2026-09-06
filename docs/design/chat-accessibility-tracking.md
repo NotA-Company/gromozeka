@@ -1,3 +1,7 @@
+---
+category: design
+---
+
 # Chat Accessibility Tracking — Design Document
 
 > Status: implementation-ready, single phase

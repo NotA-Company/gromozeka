@@ -1,3 +1,7 @@
+---
+category: guide
+---
+
 # Gromozeka — Common Tasks & Anti-Patterns
 
 > **Audience:** LLM agents  

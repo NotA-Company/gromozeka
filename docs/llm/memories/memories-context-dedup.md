@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Memories Context Dedup (ADR-018)
 
 Implementation history and lessons-learned companion for the memories

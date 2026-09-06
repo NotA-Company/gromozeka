@@ -1,3 +1,7 @@
+---
+category: plan
+---
+
 # Sandboxed Code Execution — Design v1
 
 Status: **implemented** — `lib/sandbox/` package is live; this doc is the retained design reference.

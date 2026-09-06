@@ -1,3 +1,7 @@
+---
+category: design
+---
+
 # Design: Decode trio → `lib/db` and `DatabaseStatsStorage` → `lib/stats` (v1)
 
 **Date**: 2026-08-24

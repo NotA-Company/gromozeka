@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Vector Search — Native Provider Support
 
 Durable notes from the vector search design and native sqlite-vec implementation (2026-06-28/29). Read this when working on `ChatSearchRepository`, `ChatEmbeddingsRepository`, `SQLite3Provider`, or vector search infrastructure.

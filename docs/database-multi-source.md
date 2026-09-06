@@ -1,3 +1,7 @@
+---
+category: guide
+---
+
 # Multi-Source Database Configuration Guide
 
 > **Status:** ✅ OPERATIONAL — This is a current/reference-style documentation retained at `docs/` root for easy access

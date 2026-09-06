@@ -1,3 +1,7 @@
+---
+category: design
+---
+
 # Design: lib/stt v1 (first implementation step)
 
 Status: **IMPLEMENTED (simplified shape) — lib/stt built; integration pending**  

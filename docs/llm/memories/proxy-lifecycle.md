@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Proxy Lifecycle Management — Durable Memory
 
 Archived notes from the proxy lifecycle management feature (completed 2026-06-26).

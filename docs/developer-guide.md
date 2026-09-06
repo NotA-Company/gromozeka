@@ -1,3 +1,8 @@
+---
+category: guide
+description: "End-to-end developer guide: setup, architecture, handlers, services, libraries, testing, and deployment."
+---
+
 # Gromozeka Developer Guide
 
 > Hey  Welcome to the Gromozeka developer guide! This doc covers everything you need to understand, maintain, and extend the project Buckle up because there's a LOT to cover

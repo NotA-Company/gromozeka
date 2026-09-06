@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Max Webhook Support (superseded by ADR-025 — updated 2026-08-26)
 
 Durable notes from the Max Messenger webhook receiver implementation. Read this when working on `lib/max_webhook_receiver/`, Max webhook infrastructure, `webhook_updates` table, or the two-process local-API-proxy architecture.

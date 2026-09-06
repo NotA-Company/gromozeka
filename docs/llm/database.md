@@ -1,3 +1,7 @@
+---
+category: guide
+---
+
 # Gromozeka — Database Operations
 
 > **Audience:** LLM agents

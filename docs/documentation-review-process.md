@@ -1,3 +1,7 @@
+---
+category: process
+---
+
 # Documentation Review Process
 
 > **Purpose**: Establish a systematic, repeatable process for reviewing and maintaining Gromozeka documentation to ensure accuracy, consistency, and alignment with the codebase.

@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Proxy Task Memory
 
 Durable task-specific memory for the completed proxy support work (2026-05-23).

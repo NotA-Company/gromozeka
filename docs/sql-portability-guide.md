@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # SQL Portability Guide: Cross-RDBMS Compatibility Analysis
 
 ## Executive Summary

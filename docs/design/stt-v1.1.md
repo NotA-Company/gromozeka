@@ -1,3 +1,7 @@
+---
+category: design
+---
+
 # Design: STT v1.1 — Object Storage routing (gate-3) + statistics recording (gate-4)
 
 Status: **IMPLEMENTED** (branch `add-audio-transcribation-v2`; 3873 passed / 11 skipped / 0 failed)

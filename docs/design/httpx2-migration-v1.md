@@ -1,3 +1,7 @@
+---
+category: design
+---
+
 # Design: httpx → httpx2 migration (v1)
 
 **Date**: 2026-08-13

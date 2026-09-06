@@ -1,3 +1,7 @@
+---
+category: reference
+---
+
 # Review-Fix Round Lessons (2026-07-01)
 
 Archived durable notes from [`../teamlead-memory.md`](../teamlead-memory.md) (extracted 2026-07-18). See the live compact memory there for cross-cutting rules and workflow lessons.

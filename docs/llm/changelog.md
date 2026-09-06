@@ -1,3 +1,7 @@
+---
+category: process
+---
+
 # Changelog Process
 
 A lightweight, agent-friendly process for maintaining a `CHANGELOG.md` that stays accurate without becoming a chore. Designed for projects where an AI agent does most of the coding — the changelog is updated as part of the work, not as an afterthought.

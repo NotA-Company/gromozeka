@@ -1,3 +1,7 @@
+---
+category: guide
+---
+
 # Gromozeka — Library API Quick Reference
 
 > **Audience:** LLM agents  

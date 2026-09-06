@@ -1,3 +1,7 @@
+---
+category: guide
+---
+
 # Gromozeka — Handler System
 
 > **Audience:** LLM agents  

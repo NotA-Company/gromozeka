@@ -1,3 +1,8 @@
+---
+category: reference
+description: "Reference index for the database layer: schema, repositories, migrations, and SQL portability."
+---
+
 # Database Documentation
 
 Welcome to the Gromozeka bot's database documentation. This directory contains comprehensive documentation for the database schema and operations.

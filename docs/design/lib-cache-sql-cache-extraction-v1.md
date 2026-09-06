@@ -1,3 +1,7 @@
+---
+category: design
+---
+
 # Design: `GenericDatabaseCache` → `lib/cache/sql_cache.py` + `clearOld` on `CacheInterface` (v1)
 
 **Date**: 2026-08-24
