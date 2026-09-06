@@ -13,8 +13,13 @@ of its content.
 
 - [`../README.md`](../README.md) — project overview: features, quick start,
   minimal configuration, run commands.
-- [`developer-guide.md`](developer-guide.md) — contributor guide: code style,
-  testing, handler creation, migrations, architecture.
+- [`guides/getting-started.md`](guides/getting-started.md) — start here:
+  project and architecture overview, directory structure, quick reference.
+- [`guides/`](guides/) — topic guides for developers: handlers, database,
+  services, configuration, libraries, quality & testing, operations.
+- [`developer-guide.md`](developer-guide.md) — full map of the guides above
+  (the former monolithic contributor guide, split into `guides/` on
+  2026-09-06).
 - [`product-page.md`](product-page.md) — product-level description of what
   the bot does.
 - [`database-README.md`](database-README.md) — landing page for the database
