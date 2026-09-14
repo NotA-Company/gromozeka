@@ -52,21 +52,9 @@ tier            = "paid"
 customParams.temperature = 0.3
 
 [models.models."yc/gpt-oss-120b"]
+enabled         = false # Deprecated from 2026.09.30
 provider        = "yc-openai"
 model_id        = "gpt-oss-120b"
-model_version   = "latest"
-context         = 131072
-support_tools   = true
-support_text    = true
-support_images  = false
-support_structured_output = true
-tier            = "paid"
-customParams.temperature = 0.3
-
-[models.models."yc/deepseek-v32"]
-enabled         = false # Will be decomissioned in 2026.06
-provider        = "yc-openai"
-model_id        = "deepseek-v32"
 model_version   = "latest"
 context         = 131072
 support_tools   = true
@@ -89,6 +77,7 @@ tier            = "paid"
 customParams.temperature = 0.3
 
 [models.models."yc/gpt-oss-20b"]
+enabled         = false # Deprecated from 2026.09.30
 provider        = "yc-openai"
 model_id        = "gpt-oss-20b"
 model_version   = "latest"
@@ -101,6 +90,7 @@ tier            = "paid"
 customParams.temperature = 0.1
 
 [models.models."yc/qwen3-235b-a22b-fp8"]
+enabled         = false # Deprecated from 2026.10.30
 provider        = "yc-openai"
 model_id        = "qwen3-235b-a22b-fp8"
 model_version   = "latest"
