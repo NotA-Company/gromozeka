@@ -45,8 +45,8 @@ of its content.
   ongoing workflow for docs work through markdown-mcp.
 - [`llm/markdown-mcp-adoption.md`](llm/markdown-mcp-adoption.md) — research
   plan for adopting the markdown-mcp workflow across agent-facing surfaces
-  (applied 2026-09-14 at the instruction/prompt level; permission plumbing
-  and CI items deferred).
+  (applied 2026-09-14; permission matrix verified and applied; CI items
+  deferred).
 - [`llm/markdown-mcp-benchmark.md`](llm/markdown-mcp-benchmark.md) — measured
   tool-traffic comparison of the markdown-mcp tools vs manual file tools,
   with per-call data and usage guidance.

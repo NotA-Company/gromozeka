@@ -13,7 +13,19 @@
             "model": "standard"
         },
         "explore": {
-            "model": "cheap"
+            "model": "cheap",
+            "permission": {
+                "markdown-mcp_doc_write": "deny",
+                "markdown-mcp_doc_section_edit": "deny",
+                "markdown-mcp_doc_delete": "deny",
+                "markdown-mcp_doc_categories": "allow",
+                "markdown-mcp_doc_lint": "allow",
+                "markdown-mcp_doc_list": "allow",
+                "markdown-mcp_doc_outline": "allow",
+                "markdown-mcp_doc_read": "allow",
+                "markdown-mcp_doc_search": "allow",
+                "markdown-mcp_doc_tags": "allow"
+            }
         },
         "title": {
             "model": "cheap"

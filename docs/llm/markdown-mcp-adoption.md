@@ -13,6 +13,21 @@ playbook-link reorder. The body below remains the historical plan/spec,
 unchanged; every fact in it was verified against file contents at research
 time; inferences flagged as such.
 
+Permission resolution (verified 2026-09-14, post-restart): the deferred
+§1.4(b)/§1.6 permission work is resolved — opencode `permission:` blocks can
+target MCP tool names (permission keys are wildcard patterns matched against
+the underlying tool name; MCP tools register as `serverName_toolName`), and a
+live probe proved `edit: deny` alone does NOT gate MCP tools (code-analyst
+executed `doc_write` end-to-end before the fix). The permission matrix was
+applied 2026-09-14 — write-trio deny (`markdown-mcp_doc_write`,
+`markdown-mcp_doc_section_edit`, `markdown-mcp_doc_delete`) on code-analyst,
+code-reviewer, and teamlead (agent frontmatter) plus the built-in explore
+agent (via an `agent.explore.permission` override in
+`.opencode/opencode.json`), explicit allows on docs-writer and architect,
+software-developer, debugger, and general left on default-allow — effective
+after an opencode restart; the only remaining deferred adoption item is
+§1.9 CI (deliberate).
+
 ## 0. Verified ground truth
 
 | Fact | Evidence |
@@ -131,6 +146,7 @@ Reads `AGENTS.md`/`tasks.md` (`:122`), Step 7 Documentation (`:168-174`). Same t
 - `.opencode/opencode.json:4` — `default_agent: teamlead`; `:5-24` model tiers; **no `mcp` block** (`:26-27` is just `"lsp": {}`).
 - The server is configured **globally**: `~/.config/opencode/opencode.jsonc:41-46`. Nothing in the project config needs to change for tool availability — the probe confirms inheritance.
 - **Required decision, not config:** whether to pin MCP tool permissions per agent in the frontmatter `permission:` blocks (see §1.4). If opencode supports MCP tool entries in `permission:` (unverified), docs-writer/architect get explicit allows; teamlead/code-reviewer get explicit write denies. **This is the one true blocker for flipping write-path defaults.**
+  RESOLVED 2026-09-14: permission keys support MCP tool names (wildcard-matched `serverName_toolName`); matrix applied and live-verified — write-trio denies on code-analyst/code-reviewer/teamlead; docs-writer/architect explicit allows (round-trip verified); explore: explicit allows for the 7 read-only tools with the write-trio denies kept as future-proofing (its built-in deny-all already blocks writes).
 - No agent model-tier changes are needed: markdown-mcp is a local MCP server, not a model.
 
 ### 1.7 `docs/llm/*.md` normative text — priority: High
@@ -218,7 +234,7 @@ Place the canonical version in **one** location (`AGENTS.md`, "Existing instruct
 2. **Index freshness**: normal writes self-reindex in-call (check `reindex.status`); out-of-band bulk edits need incremental `markdown-mcp index`; the serve process rescans every 30s; **never `index --force`**.
 3. **Serve process dependency**: config is pinned at process start (exclude-list changes need restart); the server holds the SQLite writer lock (CLI index runs must tolerate/avoid contention).
 4. **Gate interaction**: adoption **adds** `doc_lint`/CLI lint to the docs gate; it does not replace `make check-docs` (links) or `make test` (code examples in docs). `make format lint` continues before/after edits per AGENTS.md.
-5. **Verify opencode MCP permission semantics** (the one open technical question): can `permission:` blocks in agent frontmatter target `markdown-mcp_doc_write` etc.? Until verified, do not assume `edit:`/`write:` blocks constrain MCP tools.
+5. **Verify opencode MCP permission semantics** (the one open technical question): can `permission:` blocks in agent frontmatter target `markdown-mcp_doc_write` etc.? Until verified, do not assume `edit:`/`write:` blocks constrain MCP tools. (resolved 2026-09-14 — see §1.6 status)
 
 ## 3. Drift found during this research (fix alongside adoption)
 
@@ -240,6 +256,6 @@ Place the canonical version in **one** location (`AGENTS.md`, "Existing instruct
 
 ## 5. Caveats
 
-- opencode's permission semantics for MCP tools (whether `permission:` blocks can name `markdown-mcp_doc_*`) could not be verified from repo files — it is the load-bearing unknown behind the §1.4 governance risks and §2.3(5). Verify with a sandboxed probe before flipping any write-path defaults.
+- opencode's permission semantics for MCP tools (whether `permission:` blocks can name `markdown-mcp_doc_*`) could not be verified from repo files — it is the load-bearing unknown behind the §1.4 governance risks and §2.3(5). Verify with a sandboxed probe before flipping any write-path defaults. (resolved 2026-09-14 — see §1.6 status)
 - Slug examples in proposed changes were deliberately avoided (slugs rot; derive via `doc_outline` at use time).
 - Line numbers for `docs/llm/reviewing-large-changes.md` were taken from grep hits; treat those refs as approximate anchors for the quoted phrases.
