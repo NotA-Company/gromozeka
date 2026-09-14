@@ -6,14 +6,14 @@ category: reference
 
 Durable working memory for `.opencode/agents/teamlead.md`.
 
-How to use this file:
-- Read it at the beginning of every task.
-- If the task touches a subsystem with archived task memory under [`memories/`](memories/index.md), read the relevant file too.
-- Re-read it when prior context feels uncertain or incomplete.
-- Update it immediately after learning durable new information.
-- Consolidate and clean it before finishing a task.
-- Store reusable facts, not temporary task chatter.
-- Never store secrets, tokens, `.env` values, or raw logs.
+How to use this file (markdown-mcp era, updated 2026-09-14):
+- Read the FULL file at the beginning of every task — deliberate recall insurance. Semantic search is score-floored and must not gate first exposure to gotchas; the full read is the guarantee.
+- Mid-task re-reads: when markdown-mcp is available, prefer `doc_outline("llm/teamlead-memory.md")` + targeted `doc_read(section_slug=…)` over re-reading the whole file; plain `read` is the exact fallback. Section names are the addressing API — keep them descriptive when adding content.
+- Subsystem memory discovery: `doc_search(query, file_glob="llm/memories/*.md")` surfaces relevant archived memories semantically — use it alongside the topic catalog below (raw Grep stays the exhaustive completion check for sweeps).
+- Re-read when prior context feels uncertain or incomplete.
+- Update immediately after learning durable new information; consolidate and clean before finishing a task.
+- Writes to this file stay on the native `edit` tool — markdown-mcp write tools are denied for teamlead by the permission matrix (deliberate). Bulk extraction to `memories/` goes through `/refine-memory` (docs-writer owns the MCP writes there).
+- Store reusable facts, not temporary task chatter. Never store secrets, tokens, `.env` values, or raw logs.
 
 ## User Preferences
 
@@ -167,12 +167,26 @@ Full catalog with one-liners: [`memories/index.md`](memories/index.md). Retired 
 - **Adoption plan applied 2026-09-14 (§1.4(b)/§1.6 permission work resolved + matrix applied post-restart; §1.9 CI still deferred): [`markdown-mcp-adoption.md`](markdown-mcp-adoption.md)** — full surface inventory (AGENTS.md, global AGENTS.md, 8 skills, 7 agent defs, 4 slash commands, docs/llm normative text, CI) + fallback wording + division of labor. §3 drift it flagged is fixed as of 2026-09-14: playbooks corrected to global MCP registration + owner-ratified caps 8192/65536 (was 5000/50000); `docs/llm/index.md` "Last updated" refreshed to 2026-09-14. Two operative carve-outs from the Gate-2 fix loop: (1) **teamlead-memory.md writes stay on native `edit` — MCP READS only on that file** (refine-memory command enforces this; now ALSO hard-enforced at tool level by the write-trio deny on teamlead); (2) structural lint is TIERED everywhere: MCP `doc_lint` → CLI if installed/permitted → skip+note (check-docs links gate stays unconditional). Applied agent-prompt changes (incl. teamlead.md MCP-first memory reads) take effect NEXT session — opencode loads agent prompts at session start.
 - **markdown-mcp house style (normative since the adoption arc, Gate-2 enforced):** every MCP preference phrased conditionally ("when the markdown-mcp tools are available") with tool-unavailability explicitly in the fallback list; MCP call examples docs-root-relative; slugs resolved via `doc_outline` at use time, never hard-coded; instructions must remain valid for MCP-less agents.
 - **`doc_section_edit` blank-line normalization hazard (CONFIRMED systemic, 2026-09-14):** replace ops eat the blank lines around the edited body AND at both junctions to adjacent headings — 15 + 13 + 14 native-edit repairs across three docs-writer passes in one arc (every section replace did it). Budget a native-`edit` repair + `git diff -U0` boundary check after EVERY doc_section_edit batch. For row-level tweaks inside big table sections, prefer native `edit` outright (full-section CAS bodies make `doc_section_edit` heavy) — the serve 30s rescan re-indexes; lint validity is unaffected when headings/slugs don't change.
-- check-docs baseline 2026-09-14 (post-adoption-application): 146 files / 2912 links / 0 broken (was 146/2906 after the reports landed; the file-count drop from the 2026-09-06 147-file baseline is user-side tree change, not ours).
+- **Fitness audit + fix pass (2026-09-14, measured):** section-addressability and memories/ discovery FIT; gaps were snippet self-containment + metadata. Fix pass landed (2 prose callouts in `llm/tasks.md` §3.1, descriptions on 5 hot docs, intro sentence, §9 See-also) + owner-ratified minimal tag vocabulary {agent, sql, testing, process, workflow}. **Measured lessons: short self-contained prose H4 callouts are THE lever — the two new callouts became the top-2 scoring chunks of the whole 10-query re-run (Q7 partial→win; Q9 improved but snippet still cuts mid-accessor-list). Inbound links (See-also) and thin intro sentences have ZERO ranking effect — retrieval follows section content volume + title match; to move a losing query, promote its key content into a dedicated short section.** New doc_search gotchas: duplicate window chunks of ONE section consume multiple top-k slots (contracted no-dedup; window constants hard-coded); snippet truncation cuts mid-cell/mid-list regardless of content; only search knobs = `[search] min_score` (default ~0.828) + per-call top_k. **markdown-mcp is the user's OWN local checkout** (`~/Development/NotA/markdown-mcp`, v1.8.0, editable install) — dedup is an evidence-gated backlog item there (v1.1-backlog §5); our audit/validation queries are the measured examples the gate wants.
+- check-docs baseline 2026-09-14 (post-fitness-fix-pass): 146 files / 2911 links / 0 broken.
 - The running `serve` process holds its config from process start — exclude changes apply only after a restart; its 30s rescan also beats the CLI (`indexed=0` after edits is normal — verify currency via the index.db files-table hash).
 - NEVER run `markdown-mcp index --force` — the embedding rebuild times out; incremental `markdown-mcp index` repairs partial rebuilds.
 - Plain `grep -c '^# '` overcounts H1s (fenced `#` comments) — trust `doc_lint`/outline only.
 - Structural-split sanctions: GFM tables split by repeating header+delimiter rows at boundaries; code fences split by added fence-marker lines + a heading between parts; mega table-rows converted word-identical to prose under headings. Rewording any heading (slug change) requires a repo-wide anchor grep first.
 - `make check-docs` cannot see links inside phantom code blocks — an unfenced diagram can hide broken links; fencing a diagram can surface latent breaks.
+
+## Models Catalog Generation Arc (2026-09-14, in progress)
+
+Reference: fusion-agent `scripts/{catalog_common,fetch_opencode_models,fetch_openrouter_models}.py` + `docs/model-catalogs.md`. Design (architect ses_f5f095f58ffe6cCWlk2RMYfNFZ) locked: `scripts/models_catalog.py` (pure logic, stdlib-only) + `scripts/fetch_models.py` (thin CLI, httpx2 fetch of models.dev api.json, `--provider/--all/--filters/--output-dir/--api-url/--dry-run`) + `scripts/models-filters.toml` (per-provider whitelist/blacklist/disabled-by-default globs, tier-rules, overrides, extra-models; fnmatch.fnmatchcase against upstream model_id, `*` crosses `/`; exact whitelist id matching nothing = HARD error drift guard). Output: tracked `configs/00-defaults/{openrouter,opencode-go}-models.toml`; openrouter-models-free.toml deleted (folded via extra-models `openrouter/free`); commented opencode-go example block appended to providers.toml. User decisions: both catalogs tracked in 00-defaults + example provider block; single file + tier rules.
+
+### Durable gotchas discovered (design-verified)
+
+- **ChatTier strings use HYPHENS** (`bot-owner`, `free-personal`, `internal/bot/models/chat_settings.py:60`); `ChatTier.fromStr` returns `None` for underscore variants (`bot_owner`) → model invisible in picker (base.py:321, configure.py:545). Gitignored `configs/common/01-opencode-go.toml` has `tier = "bot_owner"` everywhere = latent bug (per-deployment manual fix). `lib/ai/abstract.py:827` defaults `"bot_owner"` too (inconsistent, flagged not fixed).
+- **Missing `${VAR}` in config passes through LITERALLY** (lib/utils/utils.py `replaceMatchToEnv` → `os.getenv(key, match.group(0))`) — no error, no empty string. Tracked config must keep env-dependent provider blocks COMMENTED OUT (silent bad api_key otherwise).
+- **`_initModels` skips `enabled = false` BEFORE provider lookup** (manager.py:172-174 before 182) — an all-disabled catalog for an undeclared provider produces ZERO startup warnings. This is what makes shipping a tracked opencode-go catalog safe.
+- **Model name conventions:** openrouter = `openrouter/` + model_id minus first vendor segment (`anthropic/claude-haiku-4.5` → `openrouter/claude-haiku-4.5`); opencode-go = `opencode/` + bare id (prefix `opencode`, NOT `opencode-go` — legacy overlay names). Name overrides needed for date-suffixed ids (`qwen3.5-flash-02-23` → `openrouter/qwen3.5-flash`).
+- **models.dev may not list auto-routers** (`openrouter/free`) — extra-models mechanism covers it. models.dev model fields verified: `tool_call` bool, `structured_output` opt bool, `temperature` opt bool, `status` (alpha/beta/deprecated), `modalities.input/output`, `limit.context`. gromozeka model schema has NO price fields — cost.* dropped.
+- **Filter/tooling config must NOT live under configs/** — ConfigManager rglobs every `*.toml` in config dirs into merged runtime config.
 
 ## Opencode Slash-Command Mechanism
 

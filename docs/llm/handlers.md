@@ -1,4 +1,6 @@
 ---
+description: "Handler system guide — file reference, creation checklist, skeleton template, command decorator, registration, and chain-order rules"
+tags: [agent]
 category: guide
 ---
 
@@ -201,7 +203,7 @@ Call sites:
 
 ## 2. Handler Creation Checklist
 
-Step-by-step for adding a new bot command handler
+Step-by-step for adding a new bot command handler. This is the end-to-end recipe for adding a new handler (a new bot command, message interceptor, or reactive handler) to the chain.
 
 ### Step 1: Create handler file
 

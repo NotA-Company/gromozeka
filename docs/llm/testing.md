@@ -1,4 +1,6 @@
 ---
+description: "Testing guide — writing and running tests, shared fixtures, markers, and the golden-data API-test framework"
+tags: [agent, testing]
 category: guide
 ---
 

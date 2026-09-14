@@ -1,6 +1,7 @@
 ---
 category: guide
 description: Index and quick reference for the agent documentation set — start here before non-trivial work.
+tags: [agent]
 ---
 
 # Gromozeka LLM Agent Guide — Index & Quick Reference

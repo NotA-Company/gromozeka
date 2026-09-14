@@ -1,4 +1,6 @@
 ---
+description: "Database operations guide — key methods, chat settings, multi-source routing, migration recipe, and migration documentation protocol"
+tags: [agent, sql]
 category: guide
 ---
 
@@ -313,6 +315,7 @@ def getMigration() -> Type[BaseMigration]:
 **See also:**
 - [`internal/database/migrations/README.md`](../../internal/database/migrations/README.md) — Full migration guide with patterns
 - [`docs/sql-portability-guide.md`](/docs/sql-portability-guide.md) — SQL portability rules
+- [Section 9 — Migration Documentation Protocol](#9-migration-documentation-protocol) — mandatory schema-doc updates after every migration
 
 ---
 

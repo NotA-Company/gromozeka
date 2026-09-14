@@ -1,4 +1,6 @@
 ---
+description: "Decision trees for common coding tasks, plus the anti-patterns, subtle gotchas, and lessons-learned that bite agents in this repo"
+tags: [agent]
 category: guide
 ---
 
@@ -491,6 +493,23 @@ ls -1 internal/database/migrations/versions/ | grep "migration_" | sort -V | tai
 | Schema requirements for structured output | OpenAI strict mode: all properties required, `additionalProperties: false`, no root `oneOf`/`anyOf` | See tasks.md §4.2 for complete rules and example |
 | `sqlToCustomType()` handles `Optional[T]` | Returns `(True, None)` for `Optional[...]` when data is `None` | Properly unwraps Union types and handles `None` values for nullable columns |
 | `TTLDict.set(key, value, ttl=None)` clears expiration | Passing `ttl=None` explicitly removes any previous expiration, making the entry never expire | If you want to keep the existing TTL when rewriting a value, use `d.set(key, value)` (no `ttl` arg) to apply `defaultTTL`, or pass the desired TTL explicitly |
+
+#### MessageId platform IDs
+
+`MessageId` (`internal/models/types.py`) wraps `int | str`: Telegram message IDs are `int`, Max
+message IDs are `str` — never assume a plain `int`. Wrap values with `MessageId(...)`, and pick the
+accessor per destination: `.asInt()` for Telegram API calls, `.asStr()` for Max/SQL, `.asMessageId()`
+for JSON serialization.
+
+#### Chat-settings return shapes by layer
+
+Handler-facing `getChatSettings()` (and `CacheService`) returns `ChatSettingsDict` —
+`Dict[ChatSettingsKey, ChatSettingsValue]`. Values are `ChatSettingsValue` objects read via
+`.toBool()` / `.toStr()` / `.toInt()` / `.toFloat()` / `.toList()` / `.toModel()`, never tuple indexing
+(`ChatSettingsValue` is not subscriptable). The `(value, updatedBy)` tuple shape exists ONLY at the
+DB-repo layer (`self.db.chatSettings.getChatSettings()` returns `Dict[str, tuple[str, int]]`).
+Handler writes are keyword-only: `setChatSetting(..., *, user: MessageSender)`; `updatedBy=` is the
+repo-layer keyword.
 
 ### 3.2 Config access, LLM replies, search, and subprocess handling
 

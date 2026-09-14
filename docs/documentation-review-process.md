@@ -1,4 +1,6 @@
 ---
+description: "Systematic, repeatable process for reviewing and maintaining documentation for accuracy, consistency, and codebase alignment"
+tags: [process]
 category: process
 ---
 
