@@ -50,6 +50,9 @@ of its content.
 - [`llm/markdown-mcp-benchmark.md`](llm/markdown-mcp-benchmark.md) — measured
   tool-traffic comparison of the markdown-mcp tools vs manual file tools,
   with per-call data and usage guidance.
+- [`llm/markdown-mcp-search-quality-evidence.md`](llm/markdown-mcp-search-quality-evidence.md) —
+  measured search-quality evidence for the markdown-mcp maintainers
+  (duplicate chunks, truncation, score separation).
 
 ## Reference and supporting material
 
