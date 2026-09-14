@@ -63,7 +63,7 @@ The traps Python/general instincts will walk you into:
 2. **Optionally plan with `todowrite`** for multi-step work (3+ logical edits). One short list, then move on.
 3. **Implement.** Call `edit` (or `write` for new files). Edits are reversible; a wrong edit is fixed by another edit, so don't over-verify before committing one.
 4. **Verify.** `make format lint` after edits. `make test` (or `./venv/bin/pytest path::test -v` for a targeted run) on anything that touches behavior. For a brand-new script, minimum bar is `./venv/bin/python3 path/to/script.py --help` running clean. For non-trivial changes, delegate to `code-reviewer`. After verification passes, stop invoking tools and write the final handoff.
-5. **Sync docs** if behavior/schema/config/public contracts changed (load `update-project-docs`). After syncing, stop invoking tools and write the final handoff.
+5. **Sync docs** if behavior/schema/config/public contracts changed (load `update-project-docs`). For files under `docs/`, prefer markdown-mcp tools when available — `doc_read` → `doc_section_edit` (CAS-gated; check `reindex.status`), `doc_write` for new docs; see `docs/docs-playbook/mcp-docs-workflow.md`. Root files (`AGENTS.md`, `CHANGELOG.md`, `README.md`) and non-docs markdown are always edited with plain `edit`/`write`. After syncing, stop invoking tools and write the final handoff.
 
 ## Delegation
 

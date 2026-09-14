@@ -126,6 +126,9 @@ START
 │           - docs/database-schema.md (human-oriented)
 │           - docs/database-schema-llm.md (LLM-oriented)
 │           - docs/llm/database.md (migration pattern + version list)
+│         All three live inside the markdown-mcp docs root: when markdown-mcp
+│           is available, update them via doc_section_edit (doc_read first for
+│           the CAS token). The three-in-sync rule is unchanged.
 │         Add migration entry with description.
 │         Update affected table schemas.
 │

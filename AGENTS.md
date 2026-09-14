@@ -1,8 +1,13 @@
 # AGENTS.md
 
 Compact agent guide for the Gromozeka repo. The canonical, deeper guide lives in
-[`docs/llm/`](docs/llm/index.md) — read it before non-trivial work. This file
-captures only what an agent would likely get wrong without help.
+[`docs/llm/`](docs/llm/index.md) — read it before non-trivial work. When the
+markdown-mcp MCP tools are available, prefer `doc_list` + `doc_outline("llm/index.md")`
++ targeted `doc_read` (docs-root-relative paths; slugs resolved via `doc_outline` at
+use time) over reading whole files, and `doc_search` for targeted questions; plain
+`read` remains fully valid without markdown-mcp (see the fallback policy in
+"Existing instruction sources" below). This file captures only what an agent would
+likely get wrong without help.
 
 ## Stack snapshot
 
@@ -36,6 +41,11 @@ make check-docs         # checks local markdown links resolve (read-only; exit 1
 make ci                 # run the full CI pipeline locally in the Alpine container (mirrors .sourcecraft/ci.yaml); needs Docker
 ```
 
+`make check-docs` validates links only. When markdown-mcp is available, `doc_lint` /
+CLI `markdown-mcp lint` complement it (structural lint: duplicate slugs, front
+matter); on disputes the CLI lint stays authoritative (older MCP `doc_lint` builds
+surfaced excluded-path noise; current builds honor the exclude list).
+
 ## Hard rules (enforced socially, not by tooling)
 
 **camelCase** naming (PascalCase classes, UPPER_CASE constants), docstrings with
@@ -43,7 +53,10 @@ make ci                 # run the full CI pipeline locally in the Alpine contain
 from the repo root, `requirements.txt` is frozen (pins go into
 `requirements.direct.txt`), no pydantic, no `Any`, imports at file top, `StrEnum`
 over `Literal`, regression test on every bug fix. **Normative text:**
-[`docs/llm/index.md`](docs/llm/index.md) §3 — read it before editing code.
+[`docs/llm/index.md`](docs/llm/index.md) §3 — read it before editing code. When
+markdown-mcp is available, read §3 via `doc_read("llm/index.md", section_slug=…)`
+(resolve the slug from `doc_outline` at use time; cite sections by name, not
+hard-coded slugs).
 
 ## Lint/format pipeline
 
@@ -86,7 +99,8 @@ feature, behavior change, schema migration, or user-facing bug fix, add a
 one-line entry under `## [Unreleased]` in `CHANGELOG.md` (Added / Changed /
 Fixed) **as part of the same change**, before committing. For the full format,
 entry-style rules, and "when / when-not to update" criteria, see
-[`docs/llm/changelog.md`](docs/llm/changelog.md).
+[`docs/llm/changelog.md`](docs/llm/changelog.md). `CHANGELOG.md` sits outside
+the markdown-mcp docs root and is always edited with normal file tools.
 
 - Skip the changelog for style/formatting fixes, internal refactors with no
   user-visible effect, doc-only tweaks (unless documenting a new feature),
@@ -235,6 +249,10 @@ TOML, hierarchical, merged recursively. Loaded by
   sync when changing schema
 - [`docs/documentation-review-process.md`](docs/documentation-review-process.md) — systematic
   process for reviewing and maintaining documentation
+- [`docs/docs-playbook/mcp-docs-workflow.md`](docs/docs-playbook/mcp-docs-workflow.md) +
+  [`docs/docs-playbook/gromozeka-workflow-brief.md`](docs/docs-playbook/gromozeka-workflow-brief.md) —
+  how to work the docs tree via markdown-mcp (prefer over manual reads when the
+  MCP server is available)
 - [`.agents/skills/`](.agents/skills/) — loadable task-specific skills. Load
   the matching one via the `skill` tool when its trigger applies:
   - [`read-project-docs`](.agents/skills/read-project-docs/SKILL.md) — onboarding / context-building before non-trivial work
@@ -246,3 +264,11 @@ TOML, hierarchical, merged recursively. Loaded by
   - [`add-llm-tool`](.agents/skills/add-llm-tool/SKILL.md) — add an LLM tool end-to-end, with the never-raise contract and D3 chat-time gating across four coordinated sites
   - [`add-chat-setting`](.agents/skills/add-chat-setting/SKILL.md) — wire a new `ChatSettingsKey` across all four required sites
 - [`README.md`](README.md) — user docs
+
+**markdown-mcp fallback policy (canonical):** When the markdown-mcp MCP tools
+(`doc_search`/`doc_read`/`doc_outline`/…) are available, use them for everything
+under `./docs` (see `docs/docs-playbook/mcp-docs-workflow.md`). Otherwise use the
+normal file tools — every instruction in this repo remains satisfiable without
+markdown-mcp. Files outside the docs root (`AGENTS.md`, `CHANGELOG.md`, root
+`README.md`, `TODO.md`, `.agents/**`, `.opencode/**`, inline `lib/**`/`internal/**`
+READMEs) are always edited with normal tools.

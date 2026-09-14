@@ -72,10 +72,12 @@ real tree.
   readable.
 - Fix `duplicate-slug` findings by rewording headings. Do not rely on the
   automatic `-2` suffixes; links and agents reference slugs.
-- Break up files with `oversized-section` findings: a flat section body
-  over 5000 characters is also the section-read cap, so such sections
-  truncate on read and cannot be section-edited. Split the topic into child
-  sections or move detail into a new file.
+- Break up files with `oversized-section` findings: the finding fires on a
+  flat section body over 5000 characters. The generic markdown-mcp default
+  section-read cap is also 5000, but this repo overrides it to 8192
+  (`section_read_cap` in `.markdown-mcp.toml`, owner-ratified 2026-09-06);
+  sections over the cap truncate on read and cannot be section-edited.
+  Split the topic into child sections or move detail into a new file.
 - Create or refresh a docs-root README or index page as the entry point:
   short, linking the main documents. Link; do not duplicate content.
 

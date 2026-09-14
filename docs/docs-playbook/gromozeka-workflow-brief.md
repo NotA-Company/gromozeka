@@ -20,8 +20,12 @@ server. gromozeka's `AGENTS.md` wins on any conflict with this brief.
   defaults apply: index database at `./.markdown-mcp/index.db` (gitignored)
   and the `e5-small` embedding model. No `[search].min_score` is set, so
   the built-in default applies.
-- Registered in `.opencode/opencode.json` as a local MCP server running
-  `markdown-mcp serve` with `MARKDOWN_MCP_CONFIG=.markdown-mcp.toml`.
+- Registered in the **global** `~/.config/opencode/opencode.jsonc` (under
+  `mcp."markdown-mcp"`) as a local MCP server running
+  `markdown-mcp --use-global-config serve`; the project
+  `.opencode/opencode.json` has no `mcp` block. The repo-root
+  `.markdown-mcp.toml` is found by markdown-mcp's walk-up config
+  discovery, not by a `MARKDOWN_MCP_CONFIG` env var.
 - Because `writable = true`, tools/list has ten tools: seven read tools
   (`doc_search`, `doc_list`, `doc_tags`, `doc_categories`, `doc_outline`,
   `doc_read`, `doc_lint`) plus the gated edit tools (`doc_write`,
@@ -66,10 +70,15 @@ server. gromozeka's `AGENTS.md` wins on any conflict with this brief.
 `doc_read(file_path, section_slug?)` has two modes:
 
 - With `section_slug`: the section's stored body from the index, capped at
-  5000 characters (`truncated: true` means cut off).
-- Without it: the whole current file from disk, capped at 50000 characters.
+  8192 characters (`truncated: true` means cut off).
+- Without it: the whole current file from disk, capped at 65536 characters.
   Disk content can be newer than the index; trust the `mode`/`source` in the
   response to know which generation you got.
+
+(The caps above are this repo's owner-ratified overrides, set on 2026-09-06
+in `.markdown-mcp.toml` `[read]`: `section_read_cap = 8192`,
+`disk_read_cap = 65536`. The generic defaults these override are
+5000/50000.)
 
 Both modes return a top-level `sha256`. You never compute hashes yourself —
 these are the compare-and-swap (CAS) tokens the edit tools consume. Rule:
@@ -105,8 +114,11 @@ Omit parameters entirely when the contract says they must be absent — e.g.
   heading; `delete` removes the section with its descendants. `new_text` is
   REQUIRED for `replace` and `insert_after` and must be ABSENT for
   `delete` — omit it, never pass an explicit null.
-- Sections over the 5000-character cap are not section-editable — edit the
-  whole file with `doc_write` instead.
+- Use `doc_section_edit` only when the section's complete flat body is
+  available and the section read was not truncated (the configured
+  `section_read_cap` is 8192 — see `.markdown-mcp.toml`); there is no
+  second independent size cap. For a truncated read, edit the whole file
+  with `doc_write`.
 - `doc_write` and `doc_section_edit` publish atomically and attempt an
   in-call single-file reindex. Inspect `reindex.status`: `indexed` means
   search, outline, and section reads are current; `excluded` means the path
@@ -177,12 +189,15 @@ Omit parameters entirely when the contract says they must be absent — e.g.
     rebuilds when the index is missing, has an older schema, the embedding
     model is incompatible, or the database format is corrupted. A structural
     validation failure (the database opens but fails integrity checks) is
-    reported and the command exits without automatic retry — a rebuild may
-    then require `markdown-mcp index --force`. Plain `index` refuses to
-    touch a NEWER-schema index (created by a newer markdown-mcp) with an
-    "upgrade markdown-mcp" message; upgrade the package instead.
-  - `markdown-mcp index --force` is a deliberate full rebuild; it replaces
-    any existing index, including a newer-schema one.
+    reported and the command exits without automatic retry. Plain `index`
+    refuses to touch a NEWER-schema index (created by a newer markdown-mcp)
+    with an "upgrade markdown-mcp" message; upgrade the package instead.
+  - Generic tool capability, NOT permitted in this repo: `markdown-mcp
+    index --force` is a deliberate full rebuild that replaces any existing
+    index, including a newer-schema one. The repo rule is never `--force`
+    (the embedding rebuild times out); incremental `markdown-mcp index`
+    repairs partial rebuilds, and if it cannot repair the index, escalate
+    recovery to the owner.
 - `markdown-mcp config show` prints the resolved configuration if the setup
   ever looks wrong; `markdown-mcp stats` shows index health.
 

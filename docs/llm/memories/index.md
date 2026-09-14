@@ -1,6 +1,6 @@
 ---
 category: reference
-description: Index of task-specific agent memory files — read the relevant one before working on a subsystem.
+description: Index of task-specific agent memory files — searchable via doc_search(query, file_glob="llm/memories/*.md") or read the relevant one before working on a subsystem.
 ---
 
 # Task-Specific Memories

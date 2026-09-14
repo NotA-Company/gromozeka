@@ -42,16 +42,21 @@ leading text from a section, not necessarily the passage that made it
 relevant).
 
 - `doc_read(file_path)` (disk mode) returns the whole current file from
-  disk, capped at 50000 characters, plus a top-level `sha256` that hashes
+  disk, capped at 65536 characters, plus a top-level `sha256` that hashes
   the complete file — including content past the display cap.
 - `doc_read(file_path, section_slug)` returns that section's stored body
-  from the index, capped at 5000 characters (`truncated: true` when cut
+  from the index, capped at 8192 characters (`truncated: true` when cut
   off), plus a top-level `sha256` for the indexed generation. The section's
   exact served body is the `expected_text` CAS basis for section edits.
 - Disk content can be newer than the index; use `mode`/`source` to know
   which generation you got.
 - Paths matching `[docs].exclude` are readable in disk mode but never
   indexed or searchable.
+
+(The caps above are this repo's owner-ratified overrides, set on 2026-09-06
+in `.markdown-mcp.toml` `[read]`: `section_read_cap = 8192`,
+`disk_read_cap = 65536`. The generic defaults these override are
+5000/50000.)
 
 ## Write discipline
 
@@ -107,8 +112,11 @@ index rows. No backup file is written; version control is the backup story.
 3. On a mismatch (`ShaMismatchError`/`SectionTextMismatchError`) the error
    never contains the fresh token — re-read and retry against what you
    observe now, never against a remembered value.
-4. Sections over 5000 characters are not section-editable; use whole-file
-   `doc_write` operations for those.
+4. Use `doc_section_edit` only when the section's complete flat body is
+   available and the section read was not truncated (in this repo the
+   configured `section_read_cap` is 8192 — see `.markdown-mcp.toml`);
+   there is no second independent size threshold. For a truncated read,
+   edit the whole file with `doc_write`.
 
 ### After every write
 
@@ -120,9 +128,11 @@ index rows. No backup file is written; version control is the backup story.
 - `excluded` — the path matches `[docs].exclude`; the write stands and the
   path stays intentionally unindexed.
 - `error` — the disk write stands, but index-backed views may be stale;
-  run `markdown-mcp index` later, or `markdown-mcp index --force` (or
-  upgrade markdown-mcp first) when the error names a newer schema. A failed
-  reindex never undoes the write.
+  run incremental `markdown-mcp index` later (upgrade markdown-mcp first
+  when the error names a newer schema). A failed reindex never undoes the
+  write. `markdown-mcp index --force` exists as a generic tool capability
+  but is NOT permitted in this repo; if incremental indexing cannot repair
+  the index, escalate recovery to the owner.
 - Use the returned `outline` for slugs. Slugs are NOT stable across edits —
   re-derive them from the outline describing the published generation;
   never cache slugs across tool calls.
@@ -160,12 +170,15 @@ After out-of-band bulk edits (scripts, rebases, direct file writes), run
   rebuilds when the index is missing, has an older schema, the embedding
   model is incompatible, or the database format is corrupted. A structural
   validation failure (the database opens but fails integrity checks) is
-  reported and the command exits without automatic retry — a rebuild may
-  then require `markdown-mcp index --force`. Plain `index` refuses to touch
-  a NEWER-schema index (created by a newer markdown-mcp) with an "upgrade
-  markdown-mcp" message; upgrade the package instead.
-- `markdown-mcp index --force` is a deliberate full rebuild; it replaces
-  any existing index, including a newer-schema one.
+  reported and the command exits without automatic retry. Plain `index`
+  refuses to touch a NEWER-schema index (created by a newer markdown-mcp)
+  with an "upgrade markdown-mcp" message; upgrade the package instead.
+- Generic tool capability, NOT permitted in this repo: `markdown-mcp
+  index --force` is a deliberate full rebuild that replaces any existing
+  index, including a newer-schema one. The repo rule is never `--force`
+  (the embedding rebuild times out); incremental `markdown-mcp index`
+  repairs partial rebuilds, and if it cannot repair the index, escalate
+  recovery to the owner.
 
 ## Pitfalls
 

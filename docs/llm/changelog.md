@@ -213,4 +213,4 @@ Do NOT add an entry for:
 - Dependency bumps with no behavioral change
 ```
 
-This gives the agent a clear trigger (new feature, bug fix, behavioral change, schema migration, or feature-introducing docs) and a clear stop (no user-visible change = no entry). The agent updates the changelog as part of the work, not as a separate step.
+This gives the agent a clear trigger (new feature, bug fix, behavioral change, schema migration, or feature-introducing docs) and a clear stop (no user-visible change = no entry). The agent updates the changelog as part of the work, not as a separate step. `CHANGELOG.md` sits outside the markdown-mcp docs root; edit it with normal file tools.

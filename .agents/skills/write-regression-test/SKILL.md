@@ -51,10 +51,12 @@ Two failure modes this skill prevents:
 
 Load `read-project-docs` first; specifically:
 
-- [`docs/llm/testing.md`](../../../docs/llm/testing.md) — directory structure, fixtures, pytest config, handler/DB test templates, singleton-reset patterns.
-- [`docs/llm/tasks.md`](../../../docs/llm/tasks.md) §1.6 (bug-fix decision tree), §3 (gotchas), §4 (lessons).
-- [`docs/llm/teamlead-memory.md`](../../../docs/llm/teamlead-memory.md) — "Teamlead Workflow Lessons" and "Test Mocking: Chat Settings Must Be Complete Dicts" sections.
-- [`AGENTS.md`](../../../AGENTS.md) — the regression-test hard rule, naming/typing/docstring rules.
+**Mechanism (conditional preference, never exclusive):** when the markdown-mcp MCP tools (`doc_outline`, `doc_read`, `doc_search`) are available, prefer them for the `./docs` targets below, using docs-root-relative paths — `doc_outline("llm/tasks.md")` first to resolve section slugs, then targeted `doc_read(file_path="llm/tasks.md", section_slug=…)`; `doc_search(query, file_glob="llm/teamlead-memory.md")` locates a section by content. Resolve `section_slug` values at use time — never hard-code them. Without MCP, plain `read` on the linked relative paths is an exact substitute.
+
+- [`docs/llm/testing.md`](../../../docs/llm/testing.md) — directory structure, fixtures, pytest config, handler/DB test templates, singleton-reset patterns. With MCP: `doc_outline("llm/testing.md")` + targeted `doc_read(section_slug=…)` of the sections you need.
+- [`docs/llm/tasks.md`](../../../docs/llm/tasks.md) §1.6 (bug-fix decision tree), §3 (gotchas), §4 (lessons) — with MCP, three targeted section reads instead of a whole-file read.
+- [`docs/llm/teamlead-memory.md`](../../../docs/llm/teamlead-memory.md) — "Teamlead Workflow Lessons" and "Test Mocking: Chat Settings Must Be Complete Dicts" sections. The file is large (265+ lines); with MCP, targeted section reads are the win.
+- [`AGENTS.md`](../../../AGENTS.md) — the regression-test hard rule, naming/typing/docstring rules. Manual `read` only — it sits at the repo root, outside the markdown-mcp docs root, so no `doc_*` tool reaches it.
 
 ## Step 0 — Explore before fixing (mandatory)
 

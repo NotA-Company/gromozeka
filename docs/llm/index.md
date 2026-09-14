@@ -30,6 +30,7 @@ description: Index and quick reference for the agent documentation set — start
 | Maintain `CHANGELOG.md` (when to update, entry style, semver) | [`changelog.md`](changelog.md) |
 | Reuse durable cross-task memory and repo gotchas | [`teamlead-memory.md`](teamlead-memory.md) |
 | Review large diffs that exceed single-pass agent budget | [`reviewing-large-changes.md`](reviewing-large-changes.md) |
+| Work the docs tree itself (read/edit via markdown-mcp) | [`docs/docs-playbook/mcp-docs-workflow.md`](../docs-playbook/mcp-docs-workflow.md) |
 | Reuse archived task-specific memories for completed subsystems | [`memories/index.md`](memories/index.md) |
 
 ---
@@ -73,6 +74,10 @@ make test
 
 # Run single test file
 ./venv/bin/pytest tests/database/test_db_wrapper.py -v
+
+# Docs tree maintenance (markdown-mcp) — after bulk out-of-band docs edits
+markdown-mcp index   # incremental index repair; never --force (embedding rebuild times out)
+markdown-mcp lint    # structural lint: duplicate slugs, front matter
 ```
 
 ---
@@ -176,6 +181,8 @@ make test
 
 **Linting tools:** Black (120 chars), Flake8, Pyright, isort  
 **Config:** [`pyproject.toml`](../../pyproject.toml)
+
+**Docs changes:** when markdown-mcp is available (MCP tools or CLI), docs changes additionally keep `doc_lint`/CLI `markdown-mcp lint` clean (structure) alongside `make check-docs` (links); when neither is available, proceed with the manual workflow and note the skipped structural check.
 
 ### 3.6 Enum Conventions
 
@@ -419,4 +426,4 @@ See [`teamlead-memory.md`](teamlead-memory.md) for the full pattern (`_llmTool*`
 ---
 
 *This guide is auto-maintained and should be updated whenever significant architectural changes are made*
-*Last updated: 2026-07-18*
+*Last updated: 2026-09-14*

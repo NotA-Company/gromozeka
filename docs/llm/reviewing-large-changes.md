@@ -186,7 +186,7 @@ The `code-reviewer` agent's multi-pass analysis (architectural fit, correctness,
 | Production logic (handlers, services, repos, providers) | Full review: all 5 passes | Correctness, security, error handling, conventions, concurrency |
 | Tests | Focused: correctness + coverage | Test logic correctness, edge case coverage, async patterns, fixture usage, no mocks that mask bugs |
 | Config TOML files | Light: consistency | Keys match code expectations, no broken references, correct TOML syntax, defaults present for new settings |
-| Documentation (markdown) | Light: consistency | Descriptions match code changes, no stale references, no broken links, examples use correct commands |
+| Documentation (markdown) | Light: consistency | Descriptions match code changes, no stale references, no broken links, examples use correct commands; reviewers may run `doc_lint` (markdown-mcp) for structural findings |
 
 ### 4.4 Special Attention Tags
 
@@ -255,7 +255,7 @@ One final `code-reviewer` pass on the **full diff** (all files since the base co
 
 1. **Cross-batch inconsistencies:** Duplicate logic, conflicting config keys, incompatible style choices between batches.
 2. **Orphaned references:** A class or function imported in one batch's file but only referenced in another batch's file. An import added in Batch A and used in Batch B should have been visible during Batch B's review, but if neither review caught the full import chain, the integration pass will.
-3. **Stale documentation:** Docs that reference pre-change state, config keys that were renamed in one batch but not updated in docs, code examples in docs that no longer compile.
+3. **Stale documentation:** Docs that reference pre-change state, config keys that were renamed in one batch but not updated in docs, code examples in docs that no longer compile. `doc_search` (markdown-mcp, fresh after an incremental `markdown-mcp index`) is a useful stale-reference sweep input alongside a raw Grep pass.
 4. **Conflicting styles:** Two batches that chose different patterns for the same problem (e.g., one batch uses `Optional[Type]` and another uses `Type | None`) -- inconsistencies like these should be normalised.
 5. **Missed quality gates:** Files that bypassed a specific convention check because each per-batch reviewer assumed another batch would handle it.
 

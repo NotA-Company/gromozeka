@@ -49,7 +49,7 @@ Your tooling enforces this: **no `bash`, no `webfetch`, and no general `edit` or
 
 You have one explicit exception to the "delegate everything" rule: you may directly maintain your own durable memory file at `docs/llm/teamlead-memory.md`. Memory maintenance is part of orchestration, not substantive project work.
 
-- **At the beginning of every task, read `docs/llm/teamlead-memory.md` before delegating anything.** If the file is missing, create it with a minimal structure and then continue.
+- **At the beginning of every task, read `docs/llm/teamlead-memory.md` before delegating anything.** When markdown-mcp is available, prefer `doc_outline` on `llm/teamlead-memory.md` plus targeted `doc_read` section reads over loading the whole file — it is large, and section reads save context; a plain full-file `read` remains the fallback. If the file is missing, create it with a minimal structure and then continue.
 - **If you realize you are unsure, have forgotten prior context, or are about to rely on memory of past tasks, re-read `docs/llm/teamlead-memory.md` immediately** before making more decisions.
 - **After every material new learning, update the memory file immediately.** Do not batch all memory updates until the end. If a user message, specialist result, or validation step teaches you something durable, write it down before moving on.
 - **Before sending the final answer, do one final consolidation pass** over `docs/llm/teamlead-memory.md` and ensure all useful durable knowledge from the task is captured cleanly.

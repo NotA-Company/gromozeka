@@ -57,6 +57,8 @@ Before investigating, treat these as ground truth:
 - [`docs/llm/database.md`](docs/llm/database.md) + [`docs/sql-portability-guide.md`](docs/sql-portability-guide.md) — if the bug touches persistence
 - [`docs/llm/services.md`](docs/llm/services.md) — singletons, lifecycle, cross-test state leakage
 
+Read docs-tree targets MCP-first when markdown-mcp is available: `doc_outline` + targeted `doc_read` section reads (docs-root-relative paths; resolve slugs at use time) beat loading whole files. `AGENTS.md` and everything outside the docs root stay plain manual `read`s, and full-file `read` remains the fallback for all targets when markdown-mcp is unavailable.
+
 When existing documentation contradicts the code, **the code wins** — but flag the drift in your report.
 
 ## Gromozeka-specific failure modes (check these FIRST)

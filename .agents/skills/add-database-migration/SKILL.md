@@ -35,9 +35,11 @@ description: >
 
 Load `read-project-docs` if you haven't already, specifically:
 
-- [`docs/llm/database.md`](../../../docs/llm/database.md) — migration pattern and current version list.
+**Mechanism (conditional preference, never exclusive):** when the markdown-mcp MCP tools (`doc_outline`, `doc_read`) are available, prefer them for the `./docs` targets below, using docs-root-relative paths — `doc_outline("llm/database.md")` first to resolve section slugs, then targeted `doc_read(file_path="llm/database.md", section_slug=…)`. Resolve `section_slug` values at use time — never hard-code them. Without MCP, plain `read` on the linked relative paths is an exact substitute.
+
+- [`docs/llm/database.md`](../../../docs/llm/database.md) — migration pattern and current version list. With MCP: `doc_outline("llm/database.md")` + targeted `doc_read(section_slug=…)` rather than a whole-file read.
 - [`docs/sql-portability-guide.md`](../../../docs/sql-portability-guide.md) — the full portability ruleset.
-- [`AGENTS.md`](../../../AGENTS.md) "SQL portability" section — the compact rules.
+- [`AGENTS.md`](../../../AGENTS.md) "SQL portability" section — the compact rules. Manual `read` only — it sits at the repo root, outside the markdown-mcp docs root, so no `doc_*` tool reaches it.
 
 ## Step 1 — Pick the next migration number
 
@@ -205,7 +207,9 @@ Every schema change must update **all three** of:
 2. [`docs/database-schema-llm.md`](../../../docs/database-schema-llm.md) — LLM-oriented schema reference.
 3. [`docs/llm/database.md`](../../../docs/llm/database.md) — migration pattern + current version list.
 
-Also update [`internal/database/migrations/README.md`](../../../internal/database/migrations/README.md) if the migration introduces a new pattern.
+All three sit inside the markdown-mcp docs root: when the MCP tools are available, update them via `doc_section_edit` — `doc_read` the target section first for the CAS token, resolve the slug from `doc_outline` at use time, and check `reindex.status` after the edit. The three-in-sync rule is unchanged. Without MCP, plain `read` + `edit` is the exact substitute.
+
+Also update [`internal/database/migrations/README.md`](../../../internal/database/migrations/README.md) if the migration introduces a new pattern. Manual tools only — it lives under `internal/`, outside the markdown-mcp docs root, so no `doc_*` tool reaches it.
 
 If the change adjusts portability rules themselves, update [`docs/sql-portability-guide.md`](../../../docs/sql-portability-guide.md).
 

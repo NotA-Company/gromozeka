@@ -5,8 +5,13 @@ tags: [markdown-mcp, adoption]
 
 # markdown-mcp adoption plan (research report)
 
-Status: research-only, 2026-09-14. No files were modified. Every fact below
-verified against current file contents; inferences flagged as such.
+Status: applied 2026-09-14 at the instruction/prompt level, EXCEPT deferred
+items: the §1.4 permission-plumbing ("(b)" parts) and the §1.6 permission
+decision (owner-deferred until after; opencode restart required), the §1.9 CI
+recommendations (deliberately not adopted), and the optional §1.8 docs/README
+playbook-link reorder. The body below remains the historical plan/spec,
+unchanged; every fact in it was verified against file contents at research
+time; inferences flagged as such.
 
 ## 0. Verified ground truth
 

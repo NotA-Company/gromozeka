@@ -57,6 +57,10 @@ heading present at all times, even if it ends up empty.
   if it does not yet exist. Preserve existing ordering. Keep a `## [Unreleased]`
   heading present at all times, even if it ends up empty.
 
+Note: `CHANGELOG.md` sits at the repo root, OUTSIDE the markdown-mcp docs
+root — always edit it with normal file tools, never with markdown-mcp tools
+(this applies to every branch of this command).
+
 If the diff is ambiguous, do NOT ask — make a best-effort classification
 decision, insert the entry, and STATE the assumption you made in your summary.
 Never fabricate capabilities: if the diff genuinely reveals no user-facing

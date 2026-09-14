@@ -101,7 +101,16 @@ kept) must be stated in the summary with a one-line reason.
 
 ## Extraction Mechanism
 
-For each section chosen for extraction:
+All files touched here live inside the markdown-mcp docs root. When
+markdown-mcp tools are available, prefer them as described below — a
+conditional preference alongside the manual fallback, never a replacement
+for it; the whole workflow must stay executable without MCP. One carve-out:
+writes to `teamlead-memory.md` itself stay on the native `edit` tool (MCP
+reads only) — see the stub rule below for why. MCP paths are
+docs-root-relative (e.g. `llm/teamlead-memory.md`), and section slugs are
+resolved at run time via `doc_outline`, never hard-coded.
+
+For each section chosen for extraction, in this order:
 
 - **Slug.** Kebab-case, descriptive. Mirror the naming style of existing
   slugs like `chat-history-search`, `proxy-lifecycle`, `use-tools-filtering`,
@@ -110,7 +119,13 @@ For each section chosen for extraction:
   new descriptive kebab-case slug that does not collide with an existing
   one. Reuse an existing slug from `docs/llm/memories/index.md` if one
   already covers the topic; otherwise create a new file.
-- **New file.** Create `docs/llm/memories/<slug>.md`. Header is two lines:
+- **Destination file FIRST.** Create `docs/llm/memories/<slug>.md` and
+  verify the write BEFORE stubbing `teamlead-memory.md` — the extraction
+  source must still be intact at this point. With markdown-mcp: `doc_write`
+  op=write (fails if the file already exists), with front matter carrying
+  `category: reference` (matching `memories/index.md` and every existing
+  memory file). Manual fallback: create the file with normal file tools.
+  Content after the front matter opens with two lines:
   1. `# <Original Section Heading>` (verbatim).
   2. A one-line context note, verbatim:
      `Archived durable notes from [`teamlead-memory.md`](../teamlead-memory.md) (extracted <YYYY-MM-DD>). See the live compact memory there for cross-cutting rules and workflow lessons.`
@@ -119,21 +134,44 @@ For each section chosen for extraction:
   link that was `` [`foo.py`](../../internal/foo.py) `` from
   `docs/llm/teamlead-memory.md` becomes
   `` [`foo.py`](../../../internal/foo.py) `` from
-  `docs/llm/memories/<slug>.md` (one extra `../`).
-- **Stub in `teamlead-memory.md`.** Keep the original heading; replace the
-  section body with a single pointer line:
+  `docs/llm/memories/<slug>.md` (one extra `../`). Markdown-mcp does NOT
+  solve this step — `doc_write` writes content verbatim, so the link
+  fix-up is still yours, and `make check-docs` remains the link gate.
+- **Stub in `teamlead-memory.md` — only after the destination file exists
+  and is verified.** Keep the original heading; replace the section body
+  with a single pointer line:
   `See [`memories/<slug>.md`](memories/<slug>.md) — <one-line summary of what is archived>.`
+  The edit itself MUST be a native `edit` on `docs/llm/teamlead-memory.md`
+  (teamlead's one sanctioned file) — NEVER `doc_section_edit` or `doc_write`
+  on this file, until `docs/llm/markdown-mcp-adoption.md` §1.4(b) (teamlead
+  MCP write permissions) is resolved. Markdown-mcp READS are still fine for
+  locating the target: `doc_outline("llm/teamlead-memory.md")` to resolve
+  the section's slug and a targeted `doc_read` to see its current flat
+  body — then apply the stub with `edit`, preserving the heading and
+  swapping only the body (remove the whole section, heading included, only
+  if it must go away entirely). Without markdown-mcp, plain `read` + `edit`
+  is the exact substitute.
 - **Index entry.** Add a bullet to the "Available Files" list in
   `docs/llm/memories/index.md` in alphabetical position, matching the
   existing format:
   `- [`<slug>.md`](<slug>.md) — <one-line description>.`
+  With markdown-mcp: `doc_section_edit` op=replace on that section (slug
+  via `doc_outline("llm/memories/index.md")`) when available; manual
+  fallback: normal file tools.
+
+**Ordering is load-bearing:** destination memory file first (written from
+the INTACT `teamlead-memory.md`) and verified; then the stub; then the
+index entry. Never stub the source before the destination exists.
 
 **Edit split:** teamlead edits `docs/llm/teamlead-memory.md` in place
 directly (scoped allow in `teamlead.md`) — it stubs out extracted sections
-and updates the "Task-Specific Memory Files" pointer. `docs-writer` creates
-the new files under `docs/llm/memories/`, updates `memories/index.md`, and
-runs `make check-docs`. Teamlead coordinates the dispatch — it does not
-write to `memories/` itself.
+and updates the "Task-Specific Memory Files" pointer, always with the
+native `edit` tool (MCP reads on that file are fine; MCP writes are not —
+see the stub rule above). `docs-writer` creates the new files under
+`docs/llm/memories/` (`doc_write` op=write), updates `memories/index.md`
+(`doc_section_edit`), and runs `make check-docs` — MCP-first on its own
+surfaces, with the manual fallback. Teamlead coordinates the dispatch — it
+does not write to `memories/` itself.
 
 ## Index Pointer Update
 
@@ -144,14 +182,29 @@ accurate — the list is illustrative, not exhaustive.
 
 ## Post-Condition / Verification
 
-Run `make check-docs` after all edits. It is read-only and exits `1` if any
-local markdown link is broken. Fix every breakage before declaring done —
-the path-depth fix described in "Extraction Mechanism" is the usual culprit.
+Verification has two gates; both must pass before declaring done.
+
+- **`doc_lint` (when markdown-mcp is available).** Run after all edits as a
+  structural post-check (duplicate slugs, front-matter problems). It does
+  NOT check links, so it complements rather than replaces
+  `make check-docs`. No separate re-index step is needed: each `doc_write`
+  / `doc_section_edit` reindexes the touched file in-call (check
+  `reindex.status` in the tool result). Without markdown-mcp, skip this
+  gate.
+- **`make check-docs` (always — the link gate).** Run after all edits. It
+  is read-only and exits `1` if any local markdown link is broken. Fix
+  every breakage before declaring done — the path-depth fix described in
+  "Extraction Mechanism" is the usual culprit.
+
 Do NOT run `make test` (no source changed).
 
 **Executor:** `make check-docs` is run by `docs-writer` (teamlead has
-`bash: deny`). Teamlead coordinates the dispatch — it does not invoke `make`
-itself.
+`bash: deny`); `doc_lint` and the MCP writes under `memories/` (the
+`doc_write` of the destination memory file and the `doc_section_edit` on
+`memories/index.md`) also belong to `docs-writer`. Teamlead performs the
+stub edits on `teamlead-memory.md` with the native `edit` tool only — no
+MCP writes on that file. Teamlead coordinates the dispatch — it does not
+invoke `make` itself.
 
 ## Summary Output
 
@@ -161,6 +214,8 @@ The final summary MUST list:
 - Every section kept — with a one-line reason.
 - Every judgment call made — with the decision and rationale.
 - The `make check-docs` result (clean pass, or breakages found and fixed).
+- The `doc_lint` result, when markdown-mcp was available (clean, or
+  findings found and fixed).
 
 ## Hard Rules
 
