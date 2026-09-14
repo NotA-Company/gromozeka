@@ -43,6 +43,12 @@ of its content.
   ongoing agent workflow briefing for this repository.
 - [`docs-playbook/mcp-docs-workflow.md`](docs-playbook/mcp-docs-workflow.md) —
   ongoing workflow for docs work through markdown-mcp.
+- [`llm/markdown-mcp-adoption.md`](llm/markdown-mcp-adoption.md) — research
+  plan for adopting the markdown-mcp workflow across agent-facing surfaces
+  (research-only; nothing it proposes has been applied).
+- [`llm/markdown-mcp-benchmark.md`](llm/markdown-mcp-benchmark.md) — measured
+  tool-traffic comparison of the markdown-mcp tools vs manual file tools,
+  with per-call data and usage guidance.
 
 ## Reference and supporting material
 
