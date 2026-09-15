@@ -128,3 +128,31 @@ gate-reviewed). Companion reports:
 [markdown-mcp-benchmark.md](markdown-mcp-benchmark.md) (tool-traffic A/B) and
 [markdown-mcp-adoption.md](markdown-mcp-adoption.md) (workflow adoption) in
 the same directory.
+
+## Revalidation (2026-09-15 — post-improvement)
+
+**What shipped** (verified in the local checkout, master @ `21722b6`, 10 commits past the v1.8.0 release cut): (1) merge dedup at `(file_path, slug)` — one highest-scoring representative per key, numeric line-range tie-break, W2 windows (null slug) never collapse, lists may return shorter than `top_k` when distinct keys run out (commits `9be17ee`, `f311241`); (2) sentence-boundary-aware snippet ends — the 200-char cut backtracks ≤50 chars to the last sentence/line boundary, else last whitespace, ≥150-char floor, never longer (commits `46c82ec`, `84ea3ab`). Score separation/margin stays parked — the maintainers' disposition cites this report's own flat-band (0.006 margins) evidence. Both fixes are query-time only; the index was not rebuilt.
+
+**Correction to this report:** the original text maps dedup to v1.1-backlog §5; per the maintainers' dogfood log (2026-09-15), §5 closed 2026-09-06 with the no-dedup merge as the shipped contract — the implemented evidence gate was §6. The original body is left verbatim; this section carries the correction.
+
+**Method:** identical 11 queries (the 10 above + the findability query "duplicate window chunks search quality evidence"), `top_k=3`, live `doc_search`.
+
+**Results:**
+
+| Metric | Baseline | Post-content-fix (old tool) | New tool (2026-09-15) |
+|---|---|---|---|
+| Clean 1-call wins | 4 | 5 | **6** (Q10 converts: duplicate pair gone, three distinct sections) |
+| Partials | 2 | 2 | 2 (Q4, Q9 — both improved in mechanism) |
+| Misses | 3 | 2 | 2 (Q1, Q5 — unchanged) |
+| Duplicate (file,slug) pairs in top-k | ≥4 observed | ≥2 | **0 across all 33 slots** |
+| Mid-token snippet cuts | ≥2 ("Dict[Ch…", "pick the acce…") | ≥1 | **0** (6/11 line/list boundaries, 5/11 whitespace fallback) |
+
+**Fix 1 (dedup) — confirmed by three independent effects:** Q4's §7 double-window pair (0.915/0.904, overlapping windows) collapsed to a single representative; Q10's same-section pair is gone (three distinct slugs now); the findability query's same-slug triple sweep (all 3 slots, one slug) dropped to two DISTINCT-section hits plus one foreign file. No list ever returned fewer than 3 (the shorter-list branch was not exercised).
+
+**Fix 2 (boundary snippets) — confirmed:** zero mid-token cuts; the two historically bad cuts now land cleanly ("…Dict[Ch…" → word-boundary "…read via"; "…pick the acce…" → word-boundary "…pick the"). Q9's top snippet ends exactly before "accessor" — the `.asInt()`/`.asStr()` names remain excluded, as contracted (snippets only got shorter; a longer rank-1 snippet is explicitly out of scope upstream).
+
+**Unchanged, exactly as predicted:** raw scores are digit-for-digit identical (e.g. 0.9172651842236519 for the chat-settings callout; 0.9007272273302078 for this report's Issue-1 section) — the band stays flat and scores remain unusable as relevance signals; Q1's canonical `llm/handlers.md` §2 and Q5's `llm/database.md` §9 still do not surface (verified present in the index — ranking is untouched by both fixes); Q4's canonical §2 "Available Fixtures" still absent — the slot freed by dedup went to distinct but unrelated documents.
+
+**Residual levers, with fresh measured cases for the parked MMR/rerank follow-up:** (a) ranking — Q1/Q5 canonical sections exist in the index but never reach top-3 while human-oriented substitutes do; (b) result usefulness after dedup — Q4's freed slot filled with unrelated documents rather than the canonical fixture section; (c) optional file-level diversity — the findability query still returns this report in 2 of 3 slots (distinct slugs are distinct keys; per-FILE representation would be a further, separate change).
+
+**Provenance:** revalidated 2026-09-15 in the gromozeka repo, same corpus (109 docs-scoped index files; content unchanged since the 2026-09-14 fix pass). Original report body unchanged; this section appended as the closing record.
