@@ -178,7 +178,6 @@ use-proxy = true
 ```
 
 ### `[models]`
-
 ```toml
 [models.providers.<name>]
 type = "yc-openai"  # or "openrouter", "yc-sdk", "custom-openai", "opencode-go"
@@ -204,9 +203,9 @@ section.
 
 Where catalog *contents* come from (regenerating the generated catalogs from
 models.dev, maintaining the manual Yandex AI Studio catalogs, enabling or
-disabling models via config overlays) is documented in
+disabling models via config overlays) — and how to migrate stale model ids
+out of per-chat `chat_settings` rows when ids churn — is documented in
 [`model-catalogs.md`](model-catalogs.md).
-
 #### [models] provider types
 
 **Provider types:**

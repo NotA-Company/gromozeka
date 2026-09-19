@@ -13,7 +13,6 @@ tags: [agent]
 ---
 
 ## Navigation — Which Doc Should I Read?
-
  | If you need to... | Read this doc |
 |---|---|
 | Understand project overview, commands, mandatory rules | **This file** (`index.md`) |
@@ -25,7 +24,7 @@ tags: [agent]
 | Use lib/ai, lib/cache, lib/markdown, lib/max_bot, etc. | [`libraries.md`](libraries.md) |
 | Use or modify the sandbox library | [`sandbox.md`](sandbox.md) |
 | Add or change TOML configuration | [`configuration.md`](configuration.md) |
-| Regenerate model catalogs from models.dev or maintain the manual Yandex AI Studio catalogs | [`model-catalogs.md`](model-catalogs.md) |
+| Regenerate model catalogs from models.dev, maintain the manual Yandex AI Studio catalogs, or migrate stale model ids in `chat_settings` | [`model-catalogs.md`](model-catalogs.md) |
 | Write or run tests, understand test fixtures | [`testing.md`](testing.md) |
 | Maintain or extend the golden-data record/replay library (`lib/aurumentation`) | [`aurumentation.md`](aurumentation.md) |
 | Follow a step-by-step task workflow or avoid pitfalls | [`tasks.md`](tasks.md) |
@@ -36,7 +35,6 @@ tags: [agent]
 | Reuse archived task-specific memories for completed subsystems | [`memories/index.md`](memories/index.md) |
 
 ---
-
 ## 1. Project Identity
 
 | Field | Value |
@@ -409,7 +407,6 @@ See [`teamlead-memory.md`](teamlead-memory.md) for the full pattern (`_llmTool*`
 ---
 
 ## See Also
-
 - [`architecture.md`](architecture.md) — ADRs, component dependencies, design patterns
 - [`handlers.md`](handlers.md) — Handler system, creation checklist, command decorators
 - [`database.md`](database.md) — DB operations, migrations, schema, multi-source routing
@@ -417,7 +414,7 @@ See [`teamlead-memory.md`](teamlead-memory.md) for the full pattern (`_llmTool*`
 - [`libraries.md`](libraries.md) — lib/ai, lib/cache, lib/markdown, lib/max_bot and more
 - [`sandbox.md`](sandbox.md) — Sandbox coding patterns, configuration, and anti-patterns
 - [`configuration.md`](configuration.md) — TOML config sections, ConfigManager methods
-- [`model-catalogs.md`](model-catalogs.md) — Model catalog generation from models.dev, manual Yandex AI Studio catalogs, enabling models via overlays
+- [`model-catalogs.md`](model-catalogs.md) — Model catalog generation from models.dev, manual Yandex AI Studio catalogs, enabling models via overlays, model-id migration in `chat_settings`
 - [`testing.md`](testing.md) — Test fixtures, pytest patterns, golden data framework
 - [`aurumentation.md`](aurumentation.md) — `lib/aurumentation` internals: HTTP record/replay transports, masking, the consumer suite pattern, gotchas
 - [`tasks.md`](tasks.md) — Step-by-step task workflows, anti-patterns

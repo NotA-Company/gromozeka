@@ -1,5 +1,5 @@
 ---
-description: "Model catalog guide — generated catalogs from models.dev (fetch_models.py, models-filters.toml), manual Yandex AI Studio catalogs, naming conventions, and enabling models via config overlays"
+description: "Model catalog guide — generated catalogs from models.dev (fetch_models.py, models-filters.toml), manual Yandex AI Studio catalogs, naming conventions, enabling models via config overlays, and model-id migration in chat_settings (migrate_models.py)"
 tags: [agent, models]
 category: guide
 ---
@@ -13,16 +13,15 @@ category: guide
 ---
 
 ## Table of Contents
-
 1. [Overview](#1-overview)
 2. [Generated Catalogs](#2-generated-catalogs)
 3. [Manual Maintenance: Yandex AI Studio Catalogs](#3-manual-maintenance-yandex-ai-studio-catalogs)
-4. [Naming Conventions](#4-naming-conventions)
-5. [Adding a New Generated Provider Catalog](#5-adding-a-new-generated-provider-catalog)
-6. [See Also](#6-see-also)
+4. [Model-Id Migration in the Chat Settings Table](#4-model-id-migration-in-the-chat-settings-table)
+5. [Naming Conventions](#5-naming-conventions)
+6. [Adding a New Generated Provider Catalog](#6-adding-a-new-generated-provider-catalog)
+7. [See Also](#7-see-also)
 
 ---
-
 ## 1. Overview
 
 The model catalogs are the `[models.models]` TOML files under
@@ -270,7 +269,67 @@ maintainer:
 
 ---
 
-## 4. Naming Conventions
+## 4. Model-Id Migration in the Chat Settings Table
+When a model id churns (renamed upstream, an `[[overrides]]` `name` change,
+a YC deprecation per §3), per-chat `chat_settings` rows can keep holding the
+old app-level id — chat-time validation drops unknown ids **silently**, so
+affected chats quietly fall back to defaults.
+[`scripts/migrate_models.py`](../../scripts/migrate_models.py) (plus the
+[`run-migrate-models.sh`](../../scripts/run-migrate-models.sh) wrapper, same
+`--env=NAME` handling as the other `run-*.sh` wrappers) audits and rewrites
+those rows. "Model id" here means the app-level id — the `[models.models]`
+table key — stored verbatim in `chat_settings.value`.
+
+```bash
+# Report (default): every model setting per merged config layer, plus
+# model | setting key | chats using it | status from chat_settings,
+# each value marked ok / unavailable:
+./scripts/run-migrate-models.sh
+
+# Dry-run migration (the default) — affected rows, per-key counts, and any
+# merged config layers still referencing the old id:
+./scripts/run-migrate-models.sh --migrate old-model new-model
+
+# Write it — stop the bot first:
+./scripts/run-migrate-models.sh --migrate old-model new-model --apply
+```
+
+Safety model and scope:
+
+- **Dry-run by default.** `--migrate OLD NEW` only previews; `--apply`
+  rewrites the rows inside one transaction and verifies the affected row
+  count against the preview (mismatch → rollback, exit `2`). Only `value`
+  and `updated_at` change — `updated_by` stays untouched. NEW must be
+  available per `LLMManager.getModelInfo()` (OLD being unavailable is fine —
+  that is the situation the tool exists for).
+- **Stop the bot before `--apply`:** concurrent chat-settings writes race
+  with the transaction.
+- **`chat_settings` only.** Only MODEL / IMAGE_MODEL chat-setting keys are in
+  scope (embedding models excluded), and no other table is touched — stats
+  tables and the embedding `models` table are never written.
+- **Config files are never rewritten.** The report names the merged config
+  layers (`[bot.defaults]`, `[bot.<chat-type>-defaults]`,
+  `[bot.tier-defaults.<tier>]`) still referencing OLD; edit the overlays by
+  hand.
+- **Raw sqlite3 on the `[database.providers.<default>.parameters]` dbPath** —
+  deliberately not the `Database` class, which runs pending migrations as a
+  side effect.
+
+Flags: `--config-dir DIR` (repeatable; explicit values replace the default
+`configs/00-defaults` + `configs/local` pair), `--dotenv-file FILE` (default
+`.env`), `--migrate OLD NEW`, `--apply`. Exit codes: `0` success (in report
+mode only an unresolved database path, missing database file, or missing
+`chat_settings` table is tolerated — the usage section is skipped with a
+note; any other database or runtime failure exits `1`); `1` validation
+errors (unavailable NEW, `--apply` without `--migrate`, unusable database in
+migration mode); `2` rollback on count mismatch, and bad command lines.
+
+Run the report after any catalog rename or deprecation to catch stale ids
+before users notice the silent fallback.
+
+---
+
+## 5. Naming Conventions
 - **openrouter** — `openrouter/` + upstream id minus the **first vendor
   segment**: `anthropic/claude-haiku-4.5` → `openrouter/claude-haiku-4.5`
   (remaining slashes are kept: `a/b/c` → `openrouter/b/c`).
@@ -295,7 +354,7 @@ maintainer:
 
 ---
 
-## 5. Adding a New Generated Provider Catalog
+## 6. Adding a New Generated Provider Catalog
 Checklist:
 
 1. Add a `[providers.<name>]` section to
@@ -318,7 +377,7 @@ Checklist:
 
 ---
 
-## 6. See Also
+## 7. See Also
 
 - [`configuration.md`](configuration.md) — the `[models]` config schema
   (providers, model keys, `customParams`) and the config loading order.
