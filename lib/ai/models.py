@@ -880,7 +880,7 @@ class ModelImageMessage(ModelMessage):
 
             content = []
             if self.content:
-                content.append({"type": "text", "content": self.content})
+                content.append({"type": "text", "text": self.content})
 
             content.append(
                 {

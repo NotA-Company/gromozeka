@@ -1,4 +1,4 @@
-"""Tests for ModelStructuredResult and ModelRunResult.__str__ touch-up.
+"""Tests for ModelStructuredResult, ModelRunResult.__str__ touch-up, and ModelImageMessage.toDict payload shape.
 
 Covers:
 - ModelStructuredResult instantiation with all fields and with defaults.
@@ -11,11 +11,16 @@ Covers:
 - Per-field renderer overrides (_STR_RENDERERS).
 - Default-skip rules (None, False, empty containers).
 - Integer 0 tokens are NOT skipped.
+- ModelImageMessage.toDict multimodal payload shape (regression: the text
+  part must carry the OpenAI ``text`` key, not ``content``).
 """
 
-import pytest
+from io import BytesIO
 
-from lib.ai.models import ModelResultStatus, ModelRunResult, ModelStructuredResult
+import pytest
+from PIL import Image
+
+from lib.ai.models import ModelImageMessage, ModelResultStatus, ModelRunResult, ModelStructuredResult
 
 # ============================================================================
 # ModelStructuredResult — instantiation
@@ -347,3 +352,77 @@ def testStrSubclassDataNoneOmitted() -> None:
     text = str(result)
     assert "data=" not in text
     assert "error=" in text
+
+
+# ============================================================================
+# ModelImageMessage.toDict — multimodal payload shape
+# ============================================================================
+
+
+def _tinyPngBytes() -> bytes:
+    """Return a tiny valid PNG image (4x4 green).
+
+    Returns:
+        bytes of a PNG-encoded image.
+    """
+    buf = BytesIO()
+    Image.new("RGB", (4, 4), (0, 255, 0)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class TestModelImageMessageTextPart:
+    """Regression: multimodal text part must carry the OpenAI ``text`` key.
+
+    Before the fix, ``ModelImageMessage.toDict()`` emitted
+    ``{"type": "text", "content": ...}`` for a non-empty prompt. Strict
+    OpenAI-compatible upstreams reject that payload with ``400 text content
+    parts must carry a string "text" (got undefined)``. The OpenAI chat
+    schema requires ``{"type": "text", "text": "..."}``.
+    """
+
+    def testTextPartUsesTextKey(self) -> None:
+        """A non-empty prompt renders a text part keyed by ``text``, not ``content``.
+
+        Returns:
+            None
+        """
+        msg = ModelImageMessage(role="user", content="Что изображено на фотографии?", image=bytearray(_tinyPngBytes()))
+
+        rendered = msg.toDict()
+
+        content = rendered["content"]
+        assert isinstance(content, list)
+        textBlocks = [block for block in content if isinstance(block, dict) and block.get("type") == "text"]
+        assert len(textBlocks) == 1
+        assert textBlocks[0]["text"] == "Что изображено на фотографии?"
+        assert "content" not in textBlocks[0]
+
+    def testTextPartPrecedesImagePart(self) -> None:
+        """The text part is emitted before the image_url part.
+
+        Returns:
+            None
+        """
+        msg = ModelImageMessage(role="user", content="describe", image=bytearray(_tinyPngBytes()))
+
+        rendered = msg.toDict()
+
+        typesList = [block["type"] for block in rendered["content"] if isinstance(block, dict)]
+        assert typesList == ["text", "image_url"]
+
+    def testEmptyPromptOmitsTextPart(self) -> None:
+        """An empty prompt emits no text part — only the image_url block.
+
+        Pins the production image-parsing path (base.py / media.py), which
+        sends the prompt as a separate system message and leaves the user
+        message content empty.
+
+        Returns:
+            None
+        """
+        msg = ModelImageMessage(role="user", content="", image=bytearray(_tinyPngBytes()))
+
+        rendered = msg.toDict()
+
+        typesList = [block["type"] for block in rendered["content"] if isinstance(block, dict)]
+        assert typesList == ["image_url"]
