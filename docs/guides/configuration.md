@@ -185,7 +185,7 @@ enabled = true
 support_images = false
 support_tools = true
 # Tier access
-tier = "free"     # "free", "paid", "bot_owner"
+tier = "free"     # "free", "free-personal", "paid", "friend", "bot-owner", "banned"
 ```
 
 #### `[logging]`

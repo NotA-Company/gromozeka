@@ -1,0 +1,104 @@
+# Filter rules for scripts/fetch_models.py (model-catalog generation).
+# This file is tooling config, NOT bot runtime config - never place it under configs/.
+#
+# Glob semantics: patterns are matched with fnmatch (case-sensitive) against the
+# UPSTREAM model_id ONLY (e.g. "anthropic/claude-haiku-4.5", "deepseek-v4-flash") -
+# never against the generated config name. fnmatch has NO path semantics: '*' matches
+# ANY characters INCLUDING '/', '?' matches any single character, [a-z] classes work.
+#
+# Application order (per model):
+#   0. structural skips: models with missing/null modalities (or an absent
+#      modalities.input) count as text-input and are INCLUDED; only an
+#      explicit input list lacking "text" (e.g. ["audio"]) skips;
+#      status == "deprecated" skips (when skip-deprecated = true)
+#   1. whitelist  - absent/empty means INCLUDE ALL
+#   2. blacklist  - exclusions win over whitelist
+#   3. disabled-by-default - matching models are emitted with enabled = false
+#   4. [[overrides]] in order, last matching override wins PER FIELD (an
+#      override may itself set tier/name/enabled/capabilities/custom-params/...)
+# extra-models bypass all rules and are emitted verbatim.
+# Exact (wildcard-free) whitelist ids that match nothing are a HARD ERROR (drift guard).
+
+[providers.openrouter]
+provider-key = "openrouter"            # key in https://models.dev/api.json
+name-prefix = "openrouter"             # [models.models] key prefix
+output-file = "openrouter-models.toml" # written into --output-dir
+model-url-template = "https://openrouter.ai/{model_id}"
+skip-deprecated = true
+whitelist = [
+    # "aion-labs/aion-rp-llama-3.1-8b", # Example of model with no tools\structured output support
+    "openrouter/free",
+    "deepseek/deepseek-chat-v3.1",
+    "qwen/qwen3-235b-a22b",
+    "qwen/qwen3.5-flash-02-23",
+    "qwen/qwen3-vl-235b-a22b-instruct",
+    "qwen/qwen3.6-plus",
+    "qwen/qwen3.8-*",
+    "~deepseek/deepseek-v4-flash-latest",
+    "deepseek/deepseek-v4*",
+    "google/gemini-*-image*",
+]
+blacklist = [
+    "*:free" # Free versions are quite useless
+]
+disabled-by-default = [
+    "deepseek/deepseek-chat-v3.1", # Old model, not needed
+    "deepseek/deepseek-*-pro*", # deepseek pro is too expensive for chat bot
+]
+tier = "paid"
+
+#[providers.openrouter.defaults]
+#support-tools = true
+#support-structured-output = true
+#custom-params = { temperature = 0.3 }
+
+[[providers.openrouter.overrides]]
+match = "google/*-image*"
+tier = "friend"
+support-text = false                   # policy: do not use image models for text
+#support-structured-output = false
+#support-tools = false
+
+[[providers.openrouter.overrides]]
+match = "qwen/qwen3.5-flash-02-23"
+name = "openrouter/qwen3.5-flash"      # keep legacy name (drops the -02-23 suffix)
+
+[[providers.openrouter.overrides]]
+match = "openrouter/free"
+tier = "free"
+
+# Keeped as example of extra-models addition
+#[[providers.openrouter.extra-models]]
+#name = "openrouter/free"
+#provider = "openrouter"
+#model_id = "openrouter/free"
+#model_version = "latest"
+#context = 200000
+#support_tools = true
+#support_text = true
+#support_images = false
+#support_structured_output = true
+#tier = "free"
+
+[providers.opencode-go]
+provider-key = "opencode-go"
+name-prefix = "opencode"               # NOT "opencode-go": legacy overlay names
+output-file = "opencode-go-models.toml"
+skip-deprecated = true
+# no whitelist => include everything the opencode-go gateway lists in models.dev
+blacklist = []
+disabled-by-default = ["*"]            # provider is opt-in (commented out in
+# providers.toml); users enable via overlay
+tier = "bot-owner"
+
+[providers.opencode-go.defaults]
+support-tools = true
+support-structured-output = false
+
+[[providers.opencode-go.overrides]]
+match = "deepseek-v4-flash"
+tier = "paid"
+
+[[providers.opencode-go.overrides]]
+match = "glm-5.3-flash"
+tier = "paid"

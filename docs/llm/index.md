@@ -25,6 +25,7 @@ tags: [agent]
 | Use lib/ai, lib/cache, lib/markdown, lib/max_bot, etc. | [`libraries.md`](libraries.md) |
 | Use or modify the sandbox library | [`sandbox.md`](sandbox.md) |
 | Add or change TOML configuration | [`configuration.md`](configuration.md) |
+| Regenerate model catalogs from models.dev or maintain the manual Yandex AI Studio catalogs | [`model-catalogs.md`](model-catalogs.md) |
 | Write or run tests, understand test fixtures | [`testing.md`](testing.md) |
 | Maintain or extend the golden-data record/replay library (`lib/aurumentation`) | [`aurumentation.md`](aurumentation.md) |
 | Follow a step-by-step task workflow or avoid pitfalls | [`tasks.md`](tasks.md) |
@@ -416,6 +417,7 @@ See [`teamlead-memory.md`](teamlead-memory.md) for the full pattern (`_llmTool*`
 - [`libraries.md`](libraries.md) — lib/ai, lib/cache, lib/markdown, lib/max_bot and more
 - [`sandbox.md`](sandbox.md) — Sandbox coding patterns, configuration, and anti-patterns
 - [`configuration.md`](configuration.md) — TOML config sections, ConfigManager methods
+- [`model-catalogs.md`](model-catalogs.md) — Model catalog generation from models.dev, manual Yandex AI Studio catalogs, enabling models via overlays
 - [`testing.md`](testing.md) — Test fixtures, pytest patterns, golden data framework
 - [`aurumentation.md`](aurumentation.md) — `lib/aurumentation` internals: HTTP record/replay transports, masking, the consumer suite pattern, gotchas
 - [`tasks.md`](tasks.md) — Step-by-step task workflows, anti-patterns

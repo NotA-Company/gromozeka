@@ -156,6 +156,40 @@ class ChatTier(StrEnum):
         except ValueError:
             return None
 
+    @classmethod
+    def resolveModelTier(cls, modelName: str, tierStr: Optional[str]) -> "ChatTier":
+        """Resolve a model-config tier string to a ChatTier.
+
+        Model configs may omit the ``tier`` key or carry a value no ChatTier
+        value matches (e.g. ``"bot_owner"`` with an underscore). Only ``None``
+        or whitespace-only input counts as missing and resolves silently to
+        the documented owner-only default; any other string ``fromStr``
+        rejects is also treated as owner-only, but a warning naming the model
+        and the raw value is logged so the misconfiguration stays visible
+        instead of the model silently disappearing. The raw string is parsed
+        as-is (whitespace is NOT stripped first): ``" free "`` is an invalid
+        value, not ``FREE``.
+
+        Args:
+            modelName: Model name the tier string belongs to; used in the warning.
+            tierStr: Raw tier value from the model config; ``None``, empty or
+                whitespace-only counts as missing.
+
+        Returns:
+            ChatTier: The parsed tier, or ``BOT_OWNER`` for missing or invalid
+            values (invalid values additionally produce a logged warning).
+        """
+        if tierStr is None or not tierStr.strip():
+            # Documented default: a model without a tier is owner-only.
+            return cls.BOT_OWNER
+
+        tier = cls.fromStr(tierStr)
+        if tier is None:
+            logger.warning(f"Model '{modelName}' has invalid tier '{tierStr}'; treating as '{cls.BOT_OWNER.value}'")
+            return cls.BOT_OWNER
+
+        return tier
+
 
 class ChatSettingsPage(IntEnum):
     """Pages where chat settings are organized in the UI.

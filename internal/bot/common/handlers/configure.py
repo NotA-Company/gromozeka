@@ -95,7 +95,12 @@ class ConfigureCommandHandler(BaseBotHandler):
 
         for modelName in llmManager.listModels():
             modelInfo = llmManager.getModelInfo(modelName)
-            if modelInfo and modelInfo.get("tier", None):
+            if modelInfo:
+                # Missing/invalid tiers resolve to bot-owner (owner-only, gated
+                # again at picker time); warns on invalid values so tier typos
+                # surface at startup instead of the model silently disappearing.
+                # Pass the raw value: None means "missing tier" (silent default).
+                ChatTier.resolveModelTier(modelName, modelInfo.get("tier", ""))
                 selectableModels.append(modelName)
         self.selectableModels = selectableModels
         logger.debug(f"Selectable models are: {selectableModels}")
@@ -542,9 +547,10 @@ class ConfigureCommandHandler(BaseBotHandler):
                     # For MODEL, skip models, which does not support text generation
                     continue
 
-                modelTier = ChatTier.fromStr(modelInfo.get("tier", ""))
-                if modelTier is None or chatTier is None or not chatTier.isBetterOrEqualThan(modelTier):
-                    # If some tier is not set or chat has 'worse' tier, skip it
+                modelTier = ChatTier.resolveModelTier(modelName, modelInfo.get("tier", ""))
+                if chatTier is None or not chatTier.isBetterOrEqualThan(modelTier):
+                    # Missing/invalid model tiers resolve to bot-owner; skip
+                    # chats with a 'worse' tier than the model requires
                     continue
 
                 buttonText = f"{modelTier.emoji()} {modelName}"
@@ -720,8 +726,10 @@ class ConfigureCommandHandler(BaseBotHandler):
                     else:
                         value = self.selectableModels[value]
                         modelInfo = self.llmService.getLLMManager().getModelInfo(value)
-                        modelTier = ChatTier.fromStr(modelInfo.get("tier", "") if modelInfo is not None else "")
-                        if modelTier is None or not chatTier.isBetterOrEqualThan(modelTier):
+                        modelTier = ChatTier.resolveModelTier(
+                            value, modelInfo.get("tier", "") if modelInfo is not None else ""
+                        )
+                        if not chatTier.isBetterOrEqualThan(modelTier):
                             value = currentValue
                 else:
                     value = currentValue

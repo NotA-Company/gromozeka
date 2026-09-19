@@ -318,9 +318,10 @@ class BaseBotHandler(CommandHandlerMixin):
                 if modelInfo is None:
                     # Wrong model, fallback to default
                     continue
-                modelTier = ChatTier.fromStr(modelInfo.get("tier", ""))
-                if not isSetByBotOwner and (modelTier is None or not chatTier.isBetterOrEqualThan(modelTier)):
-                    # Chat no longer able to use such LLM due to lower Tier
+                modelTier = ChatTier.resolveModelTier(v.toStr(), modelInfo.get("tier", ""))
+                if not isSetByBotOwner and not chatTier.isBetterOrEqualThan(modelTier):
+                    # Missing/invalid model tiers resolve to bot-owner; chat no
+                    # longer able to use such LLM due to lower Tier
                     continue
 
             retSettings[k] = v

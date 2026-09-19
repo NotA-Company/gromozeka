@@ -202,6 +202,11 @@ top-level `temperature` key anymore and no `image_options` sub-table — see
 the `customParams` row below and the migration note at the end of this
 section.
 
+Where catalog *contents* come from (regenerating the generated catalogs from
+models.dev, maintaining the manual Yandex AI Studio catalogs, enabling or
+disabling models via config overlays) is documented in
+[`model-catalogs.md`](model-catalogs.md).
+
 #### [models] provider types
 
 **Provider types:**
@@ -224,7 +229,6 @@ section.
 - `"yc_cli"` — uses `yc` CLI (requires `yc_profile` for non-default profiles)
 
 #### [models] model configuration keys
-
 **Model configuration keys:**
 
 | Key | Type | Default | Purpose |
@@ -234,7 +238,7 @@ section.
 | `model_version` | str | `"latest"` | Model version string |
 | `customParams.*` | dotted-key (mixed) | `{}` | Per-model parameters forwarded to the underlying API call. Common text keys: `temperature` (float, default `0.5` when unset — see `DEFAULT_TEMPERATURE` in [`lib/ai/abstract.py`](../../lib/ai/abstract.py)), `top_p`, `max_tokens`, `frequency_penalty`, `presence_penalty`, `stop`, OpenRouter's `extra_headers`, etc. Image-API keys (`size`, `quality`, `output_format`, `background`, `moderation`, `n`, `response_format`, `user`) flow through the same namespace when `image_generation_api = "openai-images"` (no separate whitelist). Fastembed forwards the entire `customParams` dict as `**kwargs` to `TextEmbedding(model_name=..., **customParams)`. User-supplied keys always reach the API verbatim; provider overrides (`YcOpenaiModel`, `OpenrouterModel`) only *add* provider-specific defaults via `_getExtraParams()` — `customParams` wins on key collision. |
 | `context` | int | required | Max context window in tokens |
-| `tier` | str | `"free"` | Access tier for rate limiting |
+| `tier` | str | `"bot-owner"` | Access tier gating model visibility (model picker + chat-settings model filters). Valid values are the hyphenated `ChatTier` strings: `free`, `free-personal`, `paid`, `friend`, `bot-owner`, `banned`. Missing/empty/whitespace-only resolves silently to `bot-owner` (owner-only); any other unparseable value (e.g. `bot_owner` with an underscore — parsed as-is, whitespace is not stripped) also resolves to `bot-owner`, with a logged warning (`ChatTier.resolveModelTier` in [`internal/bot/models/chat_settings.py`](../../internal/bot/models/chat_settings.py)). |
 | `enabled` | bool | `true` | Whether model is available |
 | `support_tools` | bool | `false` | Enable tool/function calling |
 | `support_text` | bool | `true` | Enable text generation |

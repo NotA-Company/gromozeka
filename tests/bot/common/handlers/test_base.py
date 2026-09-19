@@ -18,9 +18,10 @@ lock acquisition can be spied on.
 
 import asyncio
 import datetime
+import logging
 import types
-from typing import Generator, List, Optional, cast
-from unittest.mock import AsyncMock, Mock
+from typing import Dict, Generator, List, Optional, TypedDict, cast
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -41,9 +42,11 @@ from internal.database import Database
 from internal.database.models import MediaStatus, MemoryType, UserMemorySource
 from internal.database.repositories.user_memories import UserMemoryDict
 from internal.services.cache import CacheService
+from internal.services.llm.service import LLMService
 from internal.services.queue_service import QueueService
 from internal.services.storage import StorageService
 from internal.services.stt import STTOutcome, STTService
+from lib.ai.manager import LLMManager
 from lib.stt.models import STTErrorCode
 
 # ---------------------------------------------------------------------------
@@ -1634,3 +1637,200 @@ class TestProcessMediaV2STT:
         assert row is not None
         assert row["status"] == MediaStatus.DONE
         assert row["description"] is None
+
+
+class _ModelInfoDict(TypedDict, total=False):
+    """``getModelInfo`` payload for one mocked model-catalog entry.
+
+    Keys mirror the fields the model-tier gate actually reads; all optional
+    so a tier-less model is expressed by omitting ``tier``.
+    """
+
+    tier: str
+    support_text: bool
+
+
+class TestGetChatSettingsModelTierFilterRegression:
+    """Pins the model-tier gate in ``BaseBotHandler.getChatSettings``.
+
+    Regression for the silently-invisible-model bug: a MODEL-type setting
+    pointing at a model whose ``tier`` is missing or invalid used to be
+    dropped from the merged settings for every chat (``ChatTier.fromStr``
+    returned ``None``), with no diagnostic. Missing/invalid tiers must now
+    resolve to ``bot-owner``: kept for bot-owner-tier chats, dropped for
+    lower tiers, with a logged warning naming the model and the raw invalid
+    value.
+    """
+
+    _CHAT_ID = 100
+    """Chat ID used for the mocked per-chat settings."""
+
+    @staticmethod
+    def _makeLlmManager(modelInfos: Dict[str, Optional[_ModelInfoDict]]) -> Mock:
+        """Build a mock LLMManager serving *modelInfos*.
+
+        Args:
+            modelInfos: Mapping of model name to ``getModelInfo`` payload.
+
+        Returns:
+            Mock with ``listModels``/``getModelInfo`` wired to *modelInfos*.
+        """
+        manager = Mock(spec=LLMManager)
+        manager.listModels = Mock(return_value=list(modelInfos.keys()))
+        manager.getModelInfo = Mock(side_effect=lambda name: modelInfos.get(name))
+        return manager
+
+    @staticmethod
+    def _tierGateChatSettings(baseTier: str, modelName: str) -> ChatSettingsDict:
+        """Build per-chat settings pointing ``CHAT_MODEL`` at *modelName*.
+
+        ``updatedBy=7`` (a non-owner user) so the bot-owner bypass in the tier
+        gate does not mask the model-tier comparison under test.
+
+        Args:
+            baseTier: Value for ``BASE_TIER``.
+            modelName: Value for ``CHAT_MODEL``.
+
+        Returns:
+            ChatSettingsDict served by the mocked ``cache.getChatSettings``.
+        """
+        return {
+            ChatSettingsKey.BASE_TIER: ChatSettingsValue(baseTier, updatedBy=7),
+            ChatSettingsKey.CHAT_MODEL: ChatSettingsValue(modelName, updatedBy=7),
+        }
+
+    async def _getFilteredSettings(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        *,
+        modelInfos: Dict[str, Optional[_ModelInfoDict]],
+        baseTier: str,
+        modelName: str,
+    ) -> ChatSettingsDict:
+        """Run the real ``getChatSettings`` tier filter over a mocked chat.
+
+        Args:
+            caplog: pytest log-capture fixture (WARNING level is enabled).
+            modelInfos: Mock model catalog for the LLM manager.
+            baseTier: ``BASE_TIER`` of the chat.
+            modelName: Model the chat's ``CHAT_MODEL`` setting points at.
+
+        Returns:
+            The filtered settings dict produced by ``getChatSettings``.
+        """
+        llmManager = self._makeLlmManager(modelInfos)
+        llmService = Mock()
+        llmService.getLLMManager = Mock(return_value=llmManager)
+        cache = Mock()
+        cache.getCachedChatSettings = Mock(return_value=None)
+        cache.getChatSettings = AsyncMock(return_value=self._tierGateChatSettings(baseTier, modelName))
+        cache.getDefaultChatSettings = Mock(return_value={})
+        cache.cacheChatSettings = Mock(return_value=None)
+
+        with (
+            patch.object(CacheService, "getInstance", return_value=cache),
+            patch.object(QueueService, "getInstance", return_value=Mock()),
+            patch.object(StorageService, "getInstance", return_value=Mock()),
+            patch.object(LLMService, "getInstance", return_value=llmService),
+        ):
+            handler = UserMemoriesHandler(
+                configManager=_makeConfigManager(),
+                database=Mock(spec=Database),
+                botProvider=BotProvider.TELEGRAM,
+            )
+
+        bot = Mock()
+        bot.isBotOwner = Mock(return_value=False)
+        handler.injectBot(bot)
+
+        with caplog.at_level(logging.WARNING):
+            return await handler.getChatSettings(self._CHAT_ID, returnDefault=False)
+
+    async def test_ownerTierChatKeepsInvalidTierModelSetting_withWarning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A bot-owner-tier chat keeps a MODEL setting pointing at a model
+        with an invalid tier, and the invalid value is logged.
+
+        Before the fix the setting was silently dropped even for owner-tier
+        chats.
+
+        Args:
+            caplog: pytest log-capture fixture.
+
+        Returns:
+            None
+        """
+        result = await self._getFilteredSettings(
+            caplog,
+            modelInfos={"invalid-tier-model": {"tier": "bot_owner", "support_text": True}},
+            baseTier="bot-owner",
+            modelName="invalid-tier-model",
+        )
+
+        assert ChatSettingsKey.CHAT_MODEL in result
+        assert result[ChatSettingsKey.CHAT_MODEL].toStr() == "invalid-tier-model"
+        assert "invalid-tier-model" in caplog.text
+        assert "has invalid tier 'bot_owner'" in caplog.text
+
+    async def test_freeChatDropsInvalidTierModelSetting_withWarning(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A free-tier chat has a MODEL setting pointing at an invalid-tier
+        model dropped, and the invalid value is logged.
+
+        Args:
+            caplog: pytest log-capture fixture.
+
+        Returns:
+            None
+        """
+        result = await self._getFilteredSettings(
+            caplog,
+            modelInfos={"invalid-tier-model": {"tier": "bot_owner", "support_text": True}},
+            baseTier="free",
+            modelName="invalid-tier-model",
+        )
+
+        assert ChatSettingsKey.CHAT_MODEL not in result
+        assert "has invalid tier 'bot_owner'" in caplog.text
+
+    async def test_ownerTierChatKeepsNoTierModelSetting_silently(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A bot-owner-tier chat keeps a MODEL setting pointing at a model
+        with NO tier key, without any warning (documented default).
+
+        Args:
+            caplog: pytest log-capture fixture.
+
+        Returns:
+            None
+        """
+        result = await self._getFilteredSettings(
+            caplog,
+            modelInfos={"no-tier-model": {"support_text": True}},
+            baseTier="bot-owner",
+            modelName="no-tier-model",
+        )
+
+        assert ChatSettingsKey.CHAT_MODEL in result
+        assert result[ChatSettingsKey.CHAT_MODEL].toStr() == "no-tier-model"
+        assert "has invalid tier" not in caplog.text
+
+    async def test_paidTierChatKeepsPaidModelSetting(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A valid ``"paid"`` tier model keeps its existing filtering
+        behaviour (paid-and-better chats keep the setting).
+
+        Args:
+            caplog: pytest log-capture fixture.
+
+        Returns:
+            None
+        """
+        result = await self._getFilteredSettings(
+            caplog,
+            modelInfos={"paid-model": {"tier": "paid", "support_text": True}},
+            baseTier="paid",
+            modelName="paid-model",
+        )
+
+        assert ChatSettingsKey.CHAT_MODEL in result
+        assert result[ChatSettingsKey.CHAT_MODEL].toStr() == "paid-model"
+        assert "has invalid tier" not in caplog.text

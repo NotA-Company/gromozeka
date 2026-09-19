@@ -793,7 +793,7 @@ class AbstractModel(ABC):
                 - support_images: Whether the model supports image generation
                 - support_structured_output: Whether the model supports structured output
                 - support_embeddings: Whether the model supports text embeddings
-                - tier: Model tier (e.g., "bot_owner")
+                - tier: Model tier (e.g., "bot-owner")
                 - extra: Additional configuration options
 
         Example:
@@ -809,7 +809,7 @@ class AbstractModel(ABC):
                 'support_images': False,
                 'support_structured_output': False,
                 'support_embeddings': False,
-                'tier': 'bot_owner',
+                'tier': 'bot-owner',
                 'extra': {}
             }
         """
@@ -824,7 +824,7 @@ class AbstractModel(ABC):
             "support_images": self._config.get("support_images", False),
             "support_structured_output": self._config.get("support_structured_output", False),
             "support_embeddings": self._config.get("support_embeddings", False),
-            "tier": self._config.get("tier", "bot_owner"),
+            "tier": self._config.get("tier", "bot-owner"),
             "extra": self._config.copy(),
         }
 
