@@ -2,7 +2,7 @@
 # Changes will be overwritten by scripts/fetch_models.py.
 #
 # Source: https://models.dev/api.json (provider key: "openrouter")
-# Fetched: 2026-09-19T18:55:06.986334+00:00
+# Fetched: 2026-09-19T20:36:21.337806+00:00
 # Regenerate: ./venv/bin/python3 scripts/fetch_models.py --provider openrouter
 # Filters: scripts/models-filters.toml
 #
@@ -11,24 +11,9 @@
 #   [models.models."openrouter/some-model"]
 #   enabled = false
 
-# DeepSeek V3.1
-# https://openrouter.ai/deepseek/deepseek-chat-v3.1
-# Price: $0.25 in / $0.95 out per 1M tokens (cache read: $0.13)
-[models.models."openrouter/deepseek-chat-v3.1"]
-enabled = false
-provider = "openrouter"
-model_id = "deepseek/deepseek-chat-v3.1"
-model_version = "latest"
-context = 163840
-support_tools = true
-support_text = true
-support_images = false
-support_structured_output = true
-tier = "paid"
-
 # DeepSeek V4 Flash
 # https://openrouter.ai/deepseek/deepseek-v4-flash
-# Price: $0.0406 in / $0.0812 out per 1M tokens (cache read: $0.00812)
+# Price: $0.03976 in / $0.07952 out per 1M tokens (cache read: $0.007952)
 [models.models."openrouter/deepseek-v4-flash"]
 enabled = true
 provider = "openrouter"
@@ -78,36 +63,6 @@ tier = "paid"
 enabled = true
 provider = "openrouter"
 model_id = "deepseek/deepseek-v4-flash-vision-exp"
-model_version = "latest"
-context = 1048576
-support_tools = true
-support_text = true
-support_images = false
-support_structured_output = true
-tier = "paid"
-
-# DeepSeek V4 Pro
-# https://openrouter.ai/deepseek/deepseek-v4-pro
-# Price: $0.422298 in / $0.844596 out per 1M tokens (cache read: $0.035192)
-[models.models."openrouter/deepseek-v4-pro"]
-enabled = false
-provider = "openrouter"
-model_id = "deepseek/deepseek-v4-pro"
-model_version = "latest"
-context = 1048576
-support_tools = true
-support_text = true
-support_images = false
-support_structured_output = true
-tier = "paid"
-
-# DeepSeek V4 Pro 0813
-# https://openrouter.ai/deepseek/deepseek-v4-pro-0813
-# Price: $0.57816 in / $1.73448 out per 1M tokens (cache read: $0.018396)
-[models.models."openrouter/deepseek-v4-pro-0813"]
-enabled = false
-provider = "openrouter"
-model_id = "deepseek/deepseek-v4-pro-0813"
 model_version = "latest"
 context = 1048576
 support_tools = true
@@ -176,21 +131,6 @@ support_images = true
 support_structured_output = true
 tier = "friend"
 
-# Nano Banana Pro Preview
-# https://openrouter.ai/google/gemini-3-pro-image-preview
-# Price: $2 in / $12 out per 1M tokens (cache read: $0.2)
-[models.models."openrouter/gemini-3-pro-image-preview"]
-enabled = true
-provider = "openrouter"
-model_id = "google/gemini-3-pro-image-preview"
-model_version = "latest"
-context = 65536
-support_tools = false
-support_text = false
-support_images = true
-support_structured_output = true
-tier = "friend"
-
 # Nano Banana 2
 # https://openrouter.ai/google/gemini-3.1-flash-image
 # Price: $0.5 in / $3 out per 1M tokens
@@ -200,21 +140,6 @@ provider = "openrouter"
 model_id = "google/gemini-3.1-flash-image"
 model_version = "latest"
 context = 131072
-support_tools = false
-support_text = false
-support_images = true
-support_structured_output = true
-tier = "friend"
-
-# Nano Banana 2 Preview
-# https://openrouter.ai/google/gemini-3.1-flash-image-preview
-# Price: $0.5 in / $3 out per 1M tokens
-[models.models."openrouter/gemini-3.1-flash-image-preview"]
-enabled = true
-provider = "openrouter"
-model_id = "google/gemini-3.1-flash-image-preview"
-model_version = "latest"
-context = 65536
 support_tools = false
 support_text = false
 support_images = true
@@ -236,71 +161,26 @@ support_images = true
 support_structured_output = false
 tier = "friend"
 
-# Qwen3 235B-A22B
-# https://openrouter.ai/qwen/qwen3-235b-a22b
-# Price: $0.455 in / $1.82 out per 1M tokens
-[models.models."openrouter/qwen3-235b-a22b"]
+# Qwen3.7 Flash
+# https://openrouter.ai/qwen/qwen3.7-flash
+# Price: $0.03 in / $0.13 out per 1M tokens (cache read: $0.006)
+[models.models."openrouter/qwen3.7-flash"]
 enabled = true
 provider = "openrouter"
-model_id = "qwen/qwen3-235b-a22b"
+model_id = "qwen/qwen3.7-flash"
 model_version = "latest"
-context = 131072
+context = 1000000
 support_tools = true
 support_text = true
 support_images = false
 support_structured_output = false
 tier = "paid"
 
-# Qwen3 VL 235B A22B Instruct
-# https://openrouter.ai/qwen/qwen3-vl-235b-a22b-instruct
-# Price: $0.21 in / $1.9 out per 1M tokens (cache read: $0.1)
-[models.models."openrouter/qwen3-vl-235b-a22b-instruct"]
-enabled = true
-provider = "openrouter"
-model_id = "qwen/qwen3-vl-235b-a22b-instruct"
-model_version = "latest"
-context = 262144
-support_tools = true
-support_text = true
-support_images = false
-support_structured_output = true
-tier = "paid"
-
-# Qwen3.5-Flash
-# https://openrouter.ai/qwen/qwen3.5-flash-02-23
-# Price: $0.065 in / $0.26 out per 1M tokens
-[models.models."openrouter/qwen3.5-flash"]
-enabled = true
-provider = "openrouter"
-model_id = "qwen/qwen3.5-flash-02-23"
-model_version = "latest"
-context = 1000000
-support_tools = true
-support_text = true
-support_images = false
-support_structured_output = true
-tier = "paid"
-
-# Qwen3.6 Plus
-# https://openrouter.ai/qwen/qwen3.6-plus
-# Price: $0.325 in / $1.95 out per 1M tokens
-[models.models."openrouter/qwen3.6-plus"]
-enabled = true
-provider = "openrouter"
-model_id = "qwen/qwen3.6-plus"
-model_version = "latest"
-context = 1000000
-support_tools = true
-support_text = true
-support_images = false
-support_structured_output = true
-tier = "paid"
-
 # Qwen3.8 2.4T A95B
 # https://openrouter.ai/qwen/qwen3.8-2.4t-a95b
 # Price: $2 in / $6 out per 1M tokens (cache read: $0.25)
 [models.models."openrouter/qwen3.8-2.4t-a95b"]
-enabled = true
+enabled = false
 provider = "openrouter"
 model_id = "qwen/qwen3.8-2.4t-a95b"
 model_version = "latest"
@@ -315,7 +195,7 @@ tier = "paid"
 # https://openrouter.ai/qwen/qwen3.8-27b
 # Price: $0.214 in / $2.55 out per 1M tokens (cache read: $0.15)
 [models.models."openrouter/qwen3.8-27b"]
-enabled = true
+enabled = false
 provider = "openrouter"
 model_id = "qwen/qwen3.8-27b"
 model_version = "latest"
@@ -345,7 +225,7 @@ tier = "paid"
 # https://openrouter.ai/qwen/qwen3.8-max-0902
 # Price: $2 in / $6 out per 1M tokens (cache read: $0.25)
 [models.models."openrouter/qwen3.8-max-0902"]
-enabled = true
+enabled = false
 provider = "openrouter"
 model_id = "qwen/qwen3.8-max-0902"
 model_version = "latest"

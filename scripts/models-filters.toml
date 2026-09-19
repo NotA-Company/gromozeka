@@ -28,22 +28,26 @@ skip-deprecated = true
 whitelist = [
     # "aion-labs/aion-rp-llama-3.1-8b", # Example of model with no tools\structured output support
     "openrouter/free",
-    "deepseek/deepseek-chat-v3.1",
-    "qwen/qwen3-235b-a22b",
-    "qwen/qwen3.5-flash-02-23",
-    "qwen/qwen3-vl-235b-a22b-instruct",
-    "qwen/qwen3.6-plus",
+    "qwen/qwen3.*-flash*",
     "qwen/qwen3.8-*",
     "~deepseek/deepseek-v4-flash-latest",
-    "deepseek/deepseek-v4*",
+    "deepseek/deepseek-v4*-flash*",
     "google/gemini-*-image*",
 ]
 blacklist = [
-    "*:free" # Free versions are quite useless
+    "*:free", # Free versions are quite useless
+    #Old QWEN
+    "qwen/qwen3.5-*",
+    "qwen/qwen3.6-*",
+    #Google Gemini Old previews
+    "google/gemini-3.1-flash-image-preview",
+    "google/gemini-3-pro-image-preview",
 ]
 disabled-by-default = [
-    "deepseek/deepseek-chat-v3.1", # Old model, not needed
-    "deepseek/deepseek-*-pro*", # deepseek pro is too expensive for chat bot
+    # Too expensive
+    "qwen/qwen3.8-2.4t-a95b",
+    "qwen/qwen3.8-27b",
+    "qwen/qwen3.8-max*",
 ]
 tier = "paid"
 
@@ -86,9 +90,18 @@ name-prefix = "opencode"               # NOT "opencode-go": legacy overlay names
 output-file = "opencode-go-models.toml"
 skip-deprecated = true
 # no whitelist => include everything the opencode-go gateway lists in models.dev
-blacklist = []
+blacklist = [
+    # Old versions
+    "glm-5.1",
+    "glm-5.2",
+    "kimi-k2*",
+    "minimax-m2.7",
+    "qwen3.6*",
+    "qwen3.7*",
+    "muse-spark-*", # Require Opt-In
+]
 disabled-by-default = ["*"]            # provider is opt-in (commented out in
-# providers.toml); users enable via overlay
+                                       # providers.toml); users enable via overlay
 tier = "bot-owner"
 
 [providers.opencode-go.defaults]

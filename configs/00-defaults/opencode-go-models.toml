@@ -2,7 +2,7 @@
 # Changes will be overwritten by scripts/fetch_models.py.
 #
 # Source: https://models.dev/api.json (provider key: "opencode-go")
-# Fetched: 2026-09-19T18:38:40.112110+00:00
+# Fetched: 2026-09-19T20:36:21.337806+00:00
 # Regenerate: ./venv/bin/python3 scripts/fetch_models.py --provider opencode-go
 # Filters: scripts/models-filters.toml
 #
@@ -59,34 +59,6 @@ tier = "bot-owner"
 enabled = false
 provider = "opencode-go"
 model_id = "deepseek-v4.1-flash"
-model_version = "latest"
-context = 1000000
-support_tools = true
-support_text = true
-support_images = false
-support_structured_output = true
-tier = "bot-owner"
-
-# GLM-5.1
-# Price: $1.4 in / $4.4 out per 1M tokens (cache read: $0.26)
-[models.models."opencode/glm-5.1"]
-enabled = false
-provider = "opencode-go"
-model_id = "glm-5.1"
-model_version = "latest"
-context = 202752
-support_tools = true
-support_text = true
-support_images = false
-support_structured_output = false
-tier = "bot-owner"
-
-# GLM-5.2
-# Price: $1.4 in / $4.4 out per 1M tokens (cache read: $0.26)
-[models.models."opencode/glm-5.2"]
-enabled = false
-provider = "opencode-go"
-model_id = "glm-5.2"
 model_version = "latest"
 context = 1000000
 support_tools = true
@@ -179,34 +151,6 @@ support_images = false
 support_structured_output = false
 tier = "bot-owner"
 
-# Kimi K2.6
-# Price: $0.95 in / $4 out per 1M tokens (cache read: $0.16)
-[models.models."opencode/kimi-k2.6"]
-enabled = false
-provider = "opencode-go"
-model_id = "kimi-k2.6"
-model_version = "latest"
-context = 262144
-support_tools = true
-support_text = true
-support_images = false
-support_structured_output = false
-tier = "bot-owner"
-
-# Kimi K2.7 Code
-# Price: $0.95 in / $4 out per 1M tokens (cache read: $0.19)
-[models.models."opencode/kimi-k2.7-code"]
-enabled = false
-provider = "opencode-go"
-model_id = "kimi-k2.7-code"
-model_version = "latest"
-context = 262144
-support_tools = true
-support_text = true
-support_images = false
-support_structured_output = true
-tier = "bot-owner"
-
 # Kimi K3
 # Price: $3 in / $15 out per 1M tokens (cache read: $0.3)
 [models.models."opencode/kimi-k3"]
@@ -263,96 +207,12 @@ support_images = false
 support_structured_output = false
 tier = "bot-owner"
 
-# MiniMax-M2.7
-# Price: $0.3 in / $1.2 out per 1M tokens (cache read: $0.06)
-[models.models."opencode/minimax-m2.7"]
-enabled = false
-provider = "opencode-go"
-model_id = "minimax-m2.7"
-model_version = "latest"
-context = 204800
-support_tools = true
-support_text = true
-support_images = false
-support_structured_output = false
-tier = "bot-owner"
-
 # MiniMax-M3
 # Price: $0.3 in / $1.2 out per 1M tokens (cache read: $0.06)
 [models.models."opencode/minimax-m3"]
 enabled = false
 provider = "opencode-go"
 model_id = "minimax-m3"
-model_version = "latest"
-context = 1000000
-support_tools = true
-support_text = true
-support_images = false
-support_structured_output = false
-tier = "bot-owner"
-
-# Muse Spark 1.2 Contributor
-# Price: $0.1 in / $0.2 out per 1M tokens (cache read: $0.002)
-[models.models."opencode/muse-spark-1.2-contributor"]
-enabled = false
-provider = "opencode-go"
-model_id = "muse-spark-1.2-contributor"
-model_version = "latest"
-context = 1048576
-support_tools = true
-support_text = true
-support_images = false
-support_structured_output = true
-tier = "bot-owner"
-
-# Muse Spark 1.3 Contributor
-# Price: $0.1 in / $0.2 out per 1M tokens (cache read: $0.002)
-[models.models."opencode/muse-spark-1.3-contributor"]
-enabled = false
-provider = "opencode-go"
-model_id = "muse-spark-1.3-contributor"
-model_version = "latest"
-context = 1048576
-support_tools = true
-support_text = true
-support_images = false
-support_structured_output = true
-tier = "bot-owner"
-
-# Qwen3.6 Plus
-# Price: $0.5 in / $3 out per 1M tokens (cache read: $0.05)
-[models.models."opencode/qwen3.6-plus"]
-enabled = false
-provider = "opencode-go"
-model_id = "qwen3.6-plus"
-model_version = "latest"
-context = 1000000
-support_tools = true
-support_text = true
-support_images = false
-support_structured_output = false
-tier = "bot-owner"
-
-# Qwen3.7 Max
-# Price: $2.5 in / $7.5 out per 1M tokens (cache read: $0.5)
-[models.models."opencode/qwen3.7-max"]
-enabled = false
-provider = "opencode-go"
-model_id = "qwen3.7-max"
-model_version = "latest"
-context = 1000000
-support_tools = true
-support_text = true
-support_images = false
-support_structured_output = false
-tier = "bot-owner"
-
-# Qwen3.7 Plus
-# Price: $0.4 in / $1.6 out per 1M tokens (cache read: $0.04)
-[models.models."opencode/qwen3.7-plus"]
-enabled = false
-provider = "opencode-go"
-model_id = "qwen3.7-plus"
 model_version = "latest"
 context = 1000000
 support_tools = true
