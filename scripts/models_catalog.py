@@ -62,6 +62,7 @@ _ALLOWED_OVERRIDE_KEYS: Dict[str, str] = {
     "support-tools": "support_tools",
     "support-text": "support_text",
     "support-images": "support_images",
+    "support-image-input": "support_image_input",
     "support-structured-output": "support_structured_output",
     "custom-params": "customParams",
     "input-image-format": "input_image_format",
@@ -74,6 +75,7 @@ _BOOLEAN_OVERRIDE_KEYS: Set[str] = {
     "support-tools",
     "support-text",
     "support-images",
+    "support-image-input",
     "support-structured-output",
 }
 
@@ -113,6 +115,7 @@ _CANONICAL_MODEL_KEYS: Tuple[str, ...] = (
     "support_tools",
     "support_text",
     "support_images",
+    "support_image_input",
     "support_structured_output",
     "tier",
 )
@@ -212,6 +215,8 @@ class ModelSpec:
         supportTools: tool-calling capability flag.
         supportText: "text" in upstream modalities.output.
         supportImages: "image" in upstream modalities.output.
+        supportImageInput: "image" in upstream modalities.input (vision /
+            "can see" — image INPUT, orthogonal to supportImages).
         supportStructuredOutput: structured-output capability flag.
         inputImageFormat: override-forced input_image_format list, or None.
         imageGenerationApi: override-forced image_generation_api string, or
@@ -234,6 +239,7 @@ class ModelSpec:
     supportTools: bool
     supportText: bool
     supportImages: bool
+    supportImageInput: bool
     supportStructuredOutput: bool
     inputImageFormat: Optional[List[str]] = field(default=None, kw_only=True)
     imageGenerationApi: Optional[str] = field(default=None, kw_only=True)
@@ -605,6 +611,7 @@ def _validateExtraModel(entry: Dict[str, _TomlValue], name: str, providerName: s
         "support_tools",
         "support_text",
         "support_images",
+        "support_image_input",
         "support_structured_output",
         "support_embeddings",
     ):
@@ -1063,6 +1070,10 @@ def applyFilters(
             outputModalities = []
         supportText = "text" in outputModalities
         supportImages = "image" in outputModalities
+        # Image INPUT (vision): "image" among the input modalities (inputModalities
+        # already defaulted to ["text"] above, so a missing/null modalities table
+        # yields False).
+        supportImageInput = "image" in inputModalities
         supportTools = bool(model["tool_call"]) if "tool_call" in model else config.defaultSupportTools
         supportStructuredOutput = (
             bool(model["structured_output"]) if "structured_output" in model else config.defaultSupportStructuredOutput
@@ -1106,6 +1117,8 @@ def applyFilters(
                 supportText = cast(bool, fields["support_text"])
             if "support_images" in fields:
                 supportImages = cast(bool, fields["support_images"])
+            if "support_image_input" in fields:
+                supportImageInput = cast(bool, fields["support_image_input"])
             if "support_structured_output" in fields:
                 supportStructuredOutput = cast(bool, fields["support_structured_output"])
             if "input_image_format" in fields:
@@ -1134,6 +1147,7 @@ def applyFilters(
                 supportTools=supportTools,
                 supportText=supportText,
                 supportImages=supportImages,
+                supportImageInput=supportImageInput,
                 supportStructuredOutput=supportStructuredOutput,
                 inputImageFormat=inputImageFormat,
                 imageGenerationApi=imageGenerationApi,
@@ -1285,6 +1299,7 @@ def emitCatalog(
         lines.append(f"support_tools = {formatTomlValue(spec.supportTools)}")
         lines.append(f"support_text = {formatTomlValue(spec.supportText)}")
         lines.append(f"support_images = {formatTomlValue(spec.supportImages)}")
+        lines.append(f"support_image_input = {formatTomlValue(spec.supportImageInput)}")
         lines.append(f"support_structured_output = {formatTomlValue(spec.supportStructuredOutput)}")
         if spec.inputImageFormat is not None:
             lines.append(f"input_image_format = {formatTomlValue(cast(List[_TomlValue], spec.inputImageFormat))}")

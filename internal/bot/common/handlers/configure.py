@@ -20,6 +20,7 @@ from typing import List, Optional
 import lib.utils as utils
 from internal.bot.common.models import CallbackButton, UpdateObjectType
 from internal.bot.common.typing_manager import TypingManager
+from internal.bot.constants import EYE_EMOJI
 from internal.bot.models import (
     BotProvider,
     ButtonConfigureAction,
@@ -554,6 +555,8 @@ class ConfigureCommandHandler(BaseBotHandler):
                     continue
 
                 buttonText = f"{modelTier.emoji()} {modelName}"
+                if modelInfo.get("support_image_input", False):
+                    buttonText += f" {EYE_EMOJI}"
                 if modelName == chatSettings[key].toStr():
                     buttonText += " (*)"
                 keyboard.append(

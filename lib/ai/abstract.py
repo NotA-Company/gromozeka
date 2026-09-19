@@ -791,6 +791,9 @@ class AbstractModel(ABC):
                 - support_tools: Whether the model supports tools
                 - support_text: Whether the model supports text generation
                 - support_images: Whether the model supports image generation
+                - support_image_input: Whether the model supports image input
+                    (vision / "can see"); distinct from support_images, which
+                    is image generation (output)
                 - support_structured_output: Whether the model supports structured output
                 - support_embeddings: Whether the model supports text embeddings
                 - tier: Model tier (e.g., "bot-owner")
@@ -807,6 +810,7 @@ class AbstractModel(ABC):
                 'support_tools': True,
                 'support_text': True,
                 'support_images': False,
+                'support_image_input': False,
                 'support_structured_output': False,
                 'support_embeddings': False,
                 'tier': 'bot-owner',
@@ -822,6 +826,7 @@ class AbstractModel(ABC):
             "support_tools": self._config.get("support_tools", False),
             "support_text": self._config.get("support_text", True),
             "support_images": self._config.get("support_images", False),
+            "support_image_input": self._config.get("support_image_input", False),
             "support_structured_output": self._config.get("support_structured_output", False),
             "support_embeddings": self._config.get("support_embeddings", False),
             "tier": self._config.get("tier", "bot-owner"),

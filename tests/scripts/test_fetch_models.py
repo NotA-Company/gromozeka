@@ -166,6 +166,7 @@ _FULL_OPENROUTER_SECTION = _openrouterSection(
         "support_tools = true\n"
         "support_text = true\n"
         "support_images = false\n"
+        "support_image_input = false\n"
         "support_structured_output = true\n"
         'tier = "free"\n'
         "customParams.temperature = 0.3\n"
@@ -211,6 +212,7 @@ context = 200000
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = false
 support_structured_output = true
 tier = "free"
 customParams.temperature = 0.3
@@ -536,6 +538,16 @@ class TestExtraModelValidation:
         with pytest.raises(CatalogError, match="extra-model 'openrouter/x': 'context' must be an integer"):
             _parseSection(self._sectionWithExtraModel(entry))
 
+    def test_supportImageInputNonBooleanRejected(self) -> None:
+        """support_image_input = "yes" (string masquerading as bool) raises.
+
+        Returns:
+            None
+        """
+        entry = 'name = "openrouter/x"\nprovider = "openrouter"\nmodel_id = "up/id"\nsupport_image_input = "yes"\n'
+        with pytest.raises(CatalogError, match="extra-model 'openrouter/x': 'support_image_input' must be a boolean"):
+            _parseSection(self._sectionWithExtraModel(entry))
+
     def test_validCanonicalEntryParses(self) -> None:
         """A fully-populated canonical entry passes validation unchanged.
 
@@ -551,6 +563,7 @@ class TestExtraModelValidation:
             "support_tools = true\n"
             "support_text = true\n"
             "support_images = false\n"
+            "support_image_input = true\n"
             "support_structured_output = true\n"
             'tier = "bot-owner"\n'
             "customParams.temperature = 0.3\n"
@@ -559,6 +572,7 @@ class TestExtraModelValidation:
         config = _parseSection(self._sectionWithExtraModel(entry))
         assert config.extraModels[0]["model_id"] == "up/id"
         assert config.extraModels[0]["tier"] == "bot-owner"
+        assert config.extraModels[0]["support_image_input"] is True
         assert config.extraModels[0]["input_image_format"] == ["image/png"]
 
 
@@ -711,6 +725,103 @@ class TestApplyFilters:
         assert byName["openrouter/gemini-2.5-flash-image"].supportImages is True
         assert byName["openrouter/claude-haiku-4.5"].supportText is True
         assert byName["openrouter/claude-haiku-4.5"].supportImages is False
+
+    def test_supportImageInputFromInputModalities(self) -> None:
+        """support_image_input derives from modalities.input (vision / "can see").
+
+        Orthogonal to support_images (which is image GENERATION from
+        modalities.output): claude-haiku-4.5 sees images but generates none.
+        A missing / null modalities table or a missing input list defaults
+        the input to ["text"], so support_image_input is False.
+
+        Returns:
+            None
+        """
+        section = _openrouterSection(
+            '"anthropic/claude-haiku-4.5", "deepseek/deepseek-v4-flash", '
+            '"qwen/qwen3-vl-235b-a22b-instruct", "google/gemini-2.5-flash-image"'
+        )
+        specs, _ = _applyFixture(section)
+        byName = {spec.name: spec for spec in specs}
+        assert byName["openrouter/claude-haiku-4.5"].supportImageInput is True
+        assert byName["openrouter/claude-haiku-4.5"].supportImages is False  # input != output
+        assert byName["openrouter/deepseek-v4-flash"].supportImageInput is False
+        assert byName["openrouter/qwen3-vl-235b-a22b-instruct"].supportImageInput is True
+        assert byName["openrouter/gemini-2.5-flash-image"].supportImageInput is True
+
+        # Missing / null modalities (and a text-only input list): no image input.
+        config = _parseSection(_openrouterSection(""))
+        models = json.loads(
+            "{"
+            '"no-modalities": {"name": "NoM"},'
+            '"null-modalities": {"name": "NullM", "modalities": null},'
+            '"text-only-input": {"name": "Txt", "modalities": {"input": ["text"], "output": ["text"]}}'
+            "}"
+        )
+        syntheticSpecs, _ = applyFilters(models, config)
+        assert {spec.modelId for spec in syntheticSpecs} == {"no-modalities", "null-modalities", "text-only-input"}
+        assert all(spec.supportImageInput is False for spec in syntheticSpecs)
+
+    def test_supportImageInputOverrideForcesValueAndValidatesType(self) -> None:
+        """An [[overrides]] support-image-input forces the flag; non-bool raises.
+
+        The kebab-case override key is the escape hatch for bad upstream
+        modalities data: it can force the flag either direction.
+
+        Returns:
+            None
+        """
+        forceOffSection = _openrouterSection(
+            '"anthropic/claude-haiku-4.5"',
+            body=("\n[[overrides]]\n" 'match = "anthropic/claude-haiku-4.5"\n' "support-image-input = false\n"),
+        )
+        specs, _ = _applyFixture(forceOffSection)
+        assert specs[0].supportImageInput is False
+
+        forceOnSection = _openrouterSection(
+            '"deepseek/deepseek-v4-flash"',
+            body=("\n[[overrides]]\n" 'match = "deepseek/deepseek-v4-flash"\n' "support-image-input = true\n"),
+        )
+        specs, _ = _applyFixture(forceOnSection)
+        assert specs[0].supportImageInput is True
+
+        with pytest.raises(CatalogError, match="override field 'support-image-input' must be a boolean"):
+            _parseSection(
+                _openrouterSection('"anthropic/claude-haiku-4.5"')
+                + '\n[[overrides]]\nmatch = "anthropic/claude-haiku-4.5"\nsupport-image-input = "yes"\n'
+            )
+
+    def test_supportImageInputOverridePrecedence_lastMatchWinsPerField(self) -> None:
+        """Later matching overrides win per field; unrelated fields never reset it.
+
+        Chain against an upstream-true model (claude-haiku-4.5): a broad
+        pattern forces the flag true (no-op upstream), a LATER exact override
+        forces it false (last match wins), then a still-later override
+        touching ONLY tier must leave the false in place (overrides apply
+        field-by-field — an unrelated field must not reset earlier ones to
+        the upstream value).
+
+        Returns:
+            None
+        """
+        section = _openrouterSection(
+            '"anthropic/claude-haiku-4.5"',
+            body=(
+                "\n[[overrides]]\n"
+                'match = "anthropic/*"\n'
+                "support-image-input = true\n"
+                "\n[[overrides]]\n"
+                'match = "anthropic/claude-haiku-4.5"\n'
+                "support-image-input = false\n"
+                "\n[[overrides]]\n"
+                'match = "anthropic/claude-haiku-4.5"\n'
+                'tier = "friend"\n'
+            ),
+        )
+        specs, _ = _applyFixture(section)
+        assert len(specs) == 1
+        assert specs[0].supportImageInput is False
+        assert specs[0].tier == "friend"  # the last (unrelated-field) override did apply
 
     def test_capabilityFallbacksAndExplicitFalse(self) -> None:
         """Missing tool_call/structured_output fall back to defaults; explicit
@@ -1130,9 +1241,24 @@ class TestEmitCatalog:
         assert spec["support_tools"] is True
         assert spec["support_text"] is True
         assert spec["support_images"] is False
+        assert spec["support_image_input"] is False
         assert spec["support_structured_output"] is True
         assert spec["tier"] == "paid"
         assert spec["customParams"] == {"temperature": 0.3}
+
+    def test_supportImageInputAlwaysEmittedAndOrdered(self) -> None:
+        """support_image_input is on every table, between support_images and support_structured_output.
+
+        Returns:
+            None
+        """
+        text, _ = self._renderFull()
+        models = tomllib.loads(text)["models"]["models"]
+        for name, table in models.items():
+            assert "support_image_input" in table, f"missing support_image_input on {name}"
+        tableText = text[text.index('[models.models."openrouter/claude-haiku-4.5"]') :]
+        assert tableText.index("support_images = ") < tableText.index("support_image_input = ")
+        assert tableText.index("support_image_input = ") < tableText.index("support_structured_output = ")
 
     def test_enabledAlwaysEmittedAndExtraModelsVerbatim(self) -> None:
         """Upstream tables always carry enabled; extra models emit verbatim.
@@ -1153,10 +1279,47 @@ class TestEmitCatalog:
             "support_tools": True,
             "support_text": True,
             "support_images": False,
+            "support_image_input": False,
             "support_structured_output": True,
             "tier": "free",
             "customParams": {"temperature": 0.3},
         }
+
+    def test_extraModelOmittingSupportImageInput_staysAbsentFromEmission(self) -> None:
+        """An [[extra-models]] entry omitting support_image_input emits no key.
+
+        Extra models are emitted verbatim (``_validateExtraModel`` only
+        type-checks the field when present; ``_extraModelLines`` emits keys
+        "where present"), so the omitted key is absent from the emitted
+        table — the runtime ``getInfo()`` then defaults it to False.
+
+        Returns:
+            None
+        """
+        entry = (
+            'name = "openrouter/manual"\n'
+            'provider = "openrouter"\n'
+            'model_id = "openrouter/manual"\n'
+            'model_version = "latest"\n'
+            "context = 1000\n"
+            'tier = "free"\n'
+        )
+        section = _openrouterSection('"deepseek/deepseek-v4-flash"', body="\n[[extra-models]]\n" + entry)
+        config = _parseSection(section)
+        models = extractProviderSection(_loadFixtureCatalog(), config.providerKey)
+        specs, _ = applyFilters(models, config)
+        text = emitCatalog(
+            specs,
+            config,
+            "https://models.dev/api.json",
+            datetime.datetime(2026, 9, 14, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            "./venv/bin/python3 scripts/fetch_models.py --provider openrouter",
+        )
+        parsedModels = tomllib.loads(text)["models"]["models"]
+        # Contrast: upstream tables always carry the key...
+        assert "support_image_input" in parsedModels["openrouter/deepseek-v4-flash"]
+        # ...while the verbatim extra model omits it entirely.
+        assert "support_image_input" not in parsedModels["openrouter/manual"]
 
     def test_imageOverrideFieldsCarriedThroughAndOrdered(self) -> None:
         """Override-forced image fields land between support_structured_output and tier.
@@ -1271,6 +1434,7 @@ class TestEscaping:
             supportTools=True,
             supportText=True,
             supportImages=False,
+            supportImageInput=False,
             supportStructuredOutput=False,
             tier="paid",
             customParams=customParams,

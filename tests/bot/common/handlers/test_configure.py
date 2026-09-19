@@ -18,6 +18,7 @@ import pytest
 
 import lib.utils as utils
 from internal.bot.common.handlers.configure import ConfigureCommandHandler
+from internal.bot.constants import EYE_EMOJI
 from internal.bot.models import (
     BotProvider,
     ButtonConfigureAction,
@@ -51,6 +52,7 @@ class _ModelInfoDict(TypedDict, total=False):
     tier: str
     support_text: bool
     support_images: bool
+    support_image_input: bool
 
 
 def _modelInfos(*, includeInvalid: bool = True, includeNoTier: bool = True) -> Dict[str, _ModelInfoDict]:
@@ -135,15 +137,20 @@ def _makeHandler(
     return handler, cache, editMessageMock
 
 
-def _chatSettings(baseTier: str, *, currentModel: str = "free-model") -> ChatSettingsDict:
+def _chatSettings(
+    baseTier: str, *, currentModel: str = "free-model", currentImageModel: str = "free-model"
+) -> ChatSettingsDict:
     """Build a complete chat-settings dict for the configure paths.
 
     Covers every ``ChatSettingsKey`` the picker/SetValue paths subscript
-    (production reads settings via direct subscript, never ``.get()``).
+    (production reads settings via direct subscript, never ``.get()``);
+    ``IMAGE_GENERATION_MODEL`` is required by the ConfigureKey path for both
+    picker types (``wasChanged`` / current-value rendering subscript it).
 
     Args:
         baseTier: Value for ``BASE_TIER`` ("free", "paid", "bot-owner", ...).
         currentModel: Current ``CHAT_MODEL`` value (the revert target).
+        currentImageModel: Current ``IMAGE_GENERATION_MODEL`` value.
 
     Returns:
         ChatSettingsDict for the mocked ``getChatSettings``.
@@ -151,6 +158,7 @@ def _chatSettings(baseTier: str, *, currentModel: str = "free-model") -> ChatSet
     return {
         ChatSettingsKey.BASE_TIER: ChatSettingsValue(baseTier),
         ChatSettingsKey.CHAT_MODEL: ChatSettingsValue(currentModel),
+        ChatSettingsKey.IMAGE_GENERATION_MODEL: ChatSettingsValue(currentImageModel),
     }
 
 
@@ -356,6 +364,123 @@ class TestConfigureKeyModelPickerRegression:
         assert any("free-model" in text for text in freeTexts)
         assert not any("no-tier-model" in text for text in freeTexts)
         assert not any("invalid-tier-model" in text for text in freeTexts)
+
+
+class TestConfigureKeyModelPickerVisionMarker:
+    """Pins the 👁️ vision marker on /configure model-picker buttons.
+
+    Models whose ``modelInfo`` carries a truthy ``support_image_input`` get an
+    ``EYE_EMOJI`` suffix appended to their button label, BEFORE the ``" (*)"``
+    selection marker. The render site is shared by the MODEL and IMAGE_MODEL
+    pickers, so an image-generation model that also accepts image input is
+    marked in the IMAGE_MODEL picker too.
+    """
+
+    _VISION_MODEL_INFOS: Dict[str, _ModelInfoDict] = {
+        "gpt-oculus": {"tier": "free", "support_text": True, "support_images": False, "support_image_input": True},
+        "gpt-plain": {"tier": "free", "support_text": True, "support_images": False},
+        "dall-e-oculus": {"tier": "free", "support_text": False, "support_images": True, "support_image_input": True},
+        "dall-e-plain": {"tier": "free", "support_text": False, "support_images": True, "support_image_input": False},
+    }
+
+    async def _collectButtonTexts(self, *, key: ChatSettingsKey, currentModel: str = "no-model-selected") -> List[str]:
+        """Render the picker for *key* against the shared vision-model catalog.
+
+        Args:
+            key: ``ChatSettingsKey`` whose picker is rendered
+                (``CHAT_MODEL`` or ``IMAGE_GENERATION_MODEL``).
+            currentModel: Current ``CHAT_MODEL`` value; anything absent from
+                the catalog keeps the ``" (*)"`` selection marker off every
+                button.
+
+        Returns:
+            Button texts the picker produced.
+        """
+        handler, _cache, editMessageMock = _makeHandler(isOwnerUser=False, modelInfos=dict(self._VISION_MODEL_INFOS))
+        handler.getChatSettings = AsyncMock(  # type: ignore[method-assign]
+            return_value=_chatSettings("paid", currentModel=currentModel)
+        )
+        handler.selectableModels = list(self._VISION_MODEL_INFOS.keys())
+
+        data: utils.PayloadDict = {ButtonDataKey.Key: key.getId()}
+        await handler.chatConfiguration_ConfigureKey(
+            data,
+            messageId=MessageId(_MESSAGE_ID),
+            messageChatId=_OWNER_CHAT_ID,
+            user=MessageSender(id=_REGULAR_USER_ID, name="User", username="user"),
+            chatId=_OWNER_CHAT_ID,
+        )
+        return _buttonTexts(editMessageMock)
+
+    async def test_eyeEmojiConstant_hasExactCodepointSequence(self) -> None:
+        """``EYE_EMOJI`` is exactly U+1F441 + U+FE0F: VS16 forces emoji
+        presentation, so silently stripping it (plain monochrome glyph) must
+        fail this pin, not just the behavior tests above that reuse the
+        constant itself.
+
+        Returns:
+            None
+        """
+        assert [ord(character) for character in EYE_EMOJI] == [0x1F441, 0xFE0F]
+
+    async def test_visionModelButtonShowsEyeMarker(self) -> None:
+        """A ``support_image_input`` model's button label contains the eye.
+
+        Returns:
+            None
+        """
+        texts = await self._collectButtonTexts(key=ChatSettingsKey.CHAT_MODEL)
+
+        visionButtons = [text for text in texts if "gpt-oculus" in text]
+        assert visionButtons, "vision model button missing from picker"
+        assert all(EYE_EMOJI in text for text in visionButtons)
+
+    async def test_nonVisionModelButtonHasNoEyeMarker(self) -> None:
+        """A model without ``support_image_input`` gets no eye — including the
+        absent-key default (``gpt-plain`` omits the field entirely).
+
+        Returns:
+            None
+        """
+        texts = await self._collectButtonTexts(key=ChatSettingsKey.CHAT_MODEL)
+
+        plainButtons = [text for text in texts if "gpt-plain" in text]
+        assert plainButtons, "plain model button missing from picker"
+        assert all(EYE_EMOJI not in text for text in plainButtons)
+
+    async def test_selectedVisionModel_eyeAppearsBeforeSelectionMarker(self) -> None:
+        """A selected vision model reads ``<emoji> <name> <eye> (*)``.
+
+        The eye is appended before the ``" (*)"`` selection marker.
+
+        Returns:
+            None
+        """
+        texts = await self._collectButtonTexts(key=ChatSettingsKey.CHAT_MODEL, currentModel="gpt-oculus")
+
+        selectedButtons = [text for text in texts if "gpt-oculus" in text]
+        assert selectedButtons, "selected vision model button missing from picker"
+        for text in selectedButtons:
+            assert text.endswith(f"{EYE_EMOJI} (*)")
+            assert text.index(EYE_EMOJI) < text.index("(*)")
+
+    async def test_imageModelPicker_visionImageModelGetsEyeMarker(self) -> None:
+        """The shared render site marks vision-capable image-generation models.
+
+        Both ``support_images`` models are listed in the IMAGE_MODEL picker;
+        only the one with ``support_image_input`` carries the eye.
+
+        Returns:
+            None
+        """
+        texts = await self._collectButtonTexts(key=ChatSettingsKey.IMAGE_GENERATION_MODEL)
+
+        visionButtons = [text for text in texts if "dall-e-oculus" in text]
+        plainButtons = [text for text in texts if "dall-e-plain" in text]
+        assert visionButtons, "vision image model missing from IMAGE_MODEL picker"
+        assert plainButtons, "non-vision image model missing from IMAGE_MODEL picker"
+        assert all(EYE_EMOJI in text for text in visionButtons)
+        assert all(EYE_EMOJI not in text for text in plainButtons)
 
 
 class TestSetValueTierValidationRegression:

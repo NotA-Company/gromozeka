@@ -127,7 +127,7 @@ bot's config tree.
 | `blacklist` | no | Glob list of exclusions; wins over the whitelist |
 | `disabled-by-default` | no | Glob list; matching models are emitted with `enabled = false` |
 | `[providers.<name>.defaults]` | no | Fallbacks for models where models.dev carries no signal: `support-tools` (default `true`), `support-structured-output` (default `false`), `custom-params` (default empty) |
-| `[[providers.<name>.overrides]]` | no | `match` glob + fields (`name`, `enabled`, `tier`, `context`, `support-tools`, `support-text`, `support-images`, `support-structured-output`, `custom-params`, `input-image-format`, `image-generation-api`); last-match-wins **per field** |
+| `[[providers.<name>.overrides]]` | no | `match` glob + fields (`name`, `enabled`, `tier`, `context`, `support-tools`, `support-text`, `support-images`, `support-image-input`, `support-structured-output`, `custom-params`, `input-image-format`, `image-generation-api`); last-match-wins **per field** |
 | `[[providers.<name>.extra-models]]` | no | Full verbatim model entries for models that are not in models.dev (e.g. the `openrouter/free` auto-router); schema-validated; participate in name-collision detection |
 
 **Application order, per upstream model:**
@@ -177,6 +177,7 @@ logged warning — fix the spelling to get the intended visibility.
 | `context` | `limit.context`, falling back to `32768` |
 | `support_text` | `"text"` in `modalities.output` |
 | `support_images` | `"image"` in `modalities.output` (output generation, not input) |
+| `support_image_input` | `"image"` in `modalities.input` (image INPUT / vision — orthogonal to `support_images`, which is generation); always emitted between `support_images` and `support_structured_output`; a missing/null `modalities` table yields `false` — fix bad upstream data via the `support-image-input` override field |
 | `support_tools` | Upstream `tool_call` signal, else `defaults.support-tools` |
 | `support_structured_output` | `bool(structured_output)`, else `defaults.support-structured-output` |
 | `customParams.*` | `defaults.custom-params` dotted keys; the `temperature` key is suppressed when the upstream model declares `temperature == false` (its API rejects the parameter) |

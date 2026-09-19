@@ -300,6 +300,39 @@ def testGetInfoIncludesSupportStructuredOutputTrue() -> None:
     assert info["support_structured_output"] is True
 
 
+def testGetInfoSupportImageInputDefaultsFalse() -> None:
+    """Verify getInfo includes support_image_input=False when not configured.
+
+    Returns:
+        None
+    """
+    model = _makeNoStructuredModel()
+    info = model.getInfo()
+
+    assert "support_image_input" in info
+    assert info["support_image_input"] is False
+
+
+def testGetInfoSupportImageInputPassthroughTrue() -> None:
+    """Verify getInfo reports the configured support_image_input value.
+
+    Returns:
+        None
+    """
+    model = _NoStructuredModel(
+        provider=_makeProvider(),
+        modelId="vision-model",
+        modelVersion="1.0",
+        customParams={"temperature": 0.5},
+        contextSize=4096,
+        statsStorage=NullStatsStorage(),
+        extraConfig={"support_image_input": True},
+    )
+    info = model.getInfo()
+
+    assert info["support_image_input"] is True
+
+
 # Tests: _runWithFallback helper
 
 

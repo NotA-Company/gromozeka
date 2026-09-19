@@ -2,7 +2,7 @@
 # Changes will be overwritten by scripts/fetch_models.py.
 #
 # Source: https://models.dev/api.json (provider key: "openrouter")
-# Fetched: 2026-09-19T20:36:21.337806+00:00
+# Fetched: 2026-09-19T21:47:57.416754+00:00
 # Regenerate: ./venv/bin/python3 scripts/fetch_models.py --provider openrouter
 # Filters: scripts/models-filters.toml
 #
@@ -13,7 +13,7 @@
 
 # DeepSeek V4 Flash
 # https://openrouter.ai/deepseek/deepseek-v4-flash
-# Price: $0.03976 in / $0.07952 out per 1M tokens (cache read: $0.007952)
+# Price: $0.03948 in / $0.07896 out per 1M tokens (cache read: $0.007896)
 [models.models."openrouter/deepseek-v4-flash"]
 enabled = true
 provider = "openrouter"
@@ -23,6 +23,7 @@ context = 1048576
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = false
 support_structured_output = true
 tier = "paid"
 
@@ -38,6 +39,7 @@ context = 1310720
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = false
 support_structured_output = true
 tier = "paid"
 
@@ -53,6 +55,7 @@ context = 1310720
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = false
 support_structured_output = true
 tier = "paid"
 
@@ -68,6 +71,7 @@ context = 1048576
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = true
 support_structured_output = true
 tier = "paid"
 
@@ -83,6 +87,7 @@ context = 1048576
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = true
 support_structured_output = true
 tier = "paid"
 
@@ -98,6 +103,7 @@ context = 200000
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = true
 support_structured_output = true
 tier = "free"
 
@@ -113,6 +119,7 @@ context = 32768
 support_tools = false
 support_text = false
 support_images = true
+support_image_input = true
 support_structured_output = true
 tier = "friend"
 
@@ -128,6 +135,7 @@ context = 131072
 support_tools = true
 support_text = false
 support_images = true
+support_image_input = true
 support_structured_output = true
 tier = "friend"
 
@@ -143,6 +151,7 @@ context = 131072
 support_tools = false
 support_text = false
 support_images = true
+support_image_input = true
 support_structured_output = true
 tier = "friend"
 
@@ -158,6 +167,7 @@ context = 65536
 support_tools = false
 support_text = false
 support_images = true
+support_image_input = true
 support_structured_output = false
 tier = "friend"
 
@@ -173,6 +183,7 @@ context = 1000000
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = true
 support_structured_output = false
 tier = "paid"
 
@@ -188,6 +199,7 @@ context = 1048576
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = false
 support_structured_output = true
 tier = "paid"
 
@@ -203,6 +215,7 @@ context = 1000000
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = true
 support_structured_output = true
 tier = "paid"
 
@@ -218,6 +231,7 @@ context = 1000000
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = true
 support_structured_output = true
 tier = "paid"
 
@@ -233,5 +247,6 @@ context = 1000000
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = true
 support_structured_output = true
 tier = "paid"

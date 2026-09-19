@@ -242,10 +242,10 @@ out of per-chat `chat_settings` rows when ids churn — is documented in
 | `support_tools` | bool | `false` | Enable tool/function calling |
 | `support_text` | bool | `true` | Enable text generation |
 | `support_images` | bool | `false` | Enable image generation |
+| `support_image_input` | bool | `false` | Declare support for image input (vision — the model "can see" images in messages). Capability metadata only: it drives UI markers (e.g. the 👁️ suffix on model buttons in /configure) and does NOT gate or enable image sending. Orthogonal to `support_images`, which is image GENERATION (output): a model may see but not generate images and vice versa. Derived from models.dev `modalities.input` in generated catalogs; also exposed by `getInfo()`. |
 | `support_structured_output` | bool | `false` | Enable JSON schema output |
 | `image_generation_api` | str | unset | Image transport: `"openai-images"` for Images API, unset for chat-completions |
 | `input_image_format` | array of str (full MIME) | unset | Supported **INPUT** (vision) image MIME formats, e.g. `["image/jpeg", "image/png"]`. Unset/empty = accept any format. When set, input images whose detected MIME is not in the list are converted to the FIRST listed format before being sent to the model (e.g. webp→jpeg). Distinct from `support_images` / `image_generation_api` / `customParams` (image-output keys), which all concern OUTPUT (image generation). Use when a model rejects certain input formats (e.g. YC `qwen3.6-35b-a3b` rejects webp). OpenAI-compatible providers only; on conversion failure (corrupt/unsupported/oversized image) the original is sent unchanged. |
-
 #### [models] image generation configuration
 
 **Image generation configuration:**

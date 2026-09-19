@@ -2,7 +2,7 @@
 # Changes will be overwritten by scripts/fetch_models.py.
 #
 # Source: https://models.dev/api.json (provider key: "opencode-go")
-# Fetched: 2026-09-19T20:36:21.337806+00:00
+# Fetched: 2026-09-19T21:47:57.416754+00:00
 # Regenerate: ./venv/bin/python3 scripts/fetch_models.py --provider opencode-go
 # Filters: scripts/models-filters.toml
 #
@@ -22,6 +22,7 @@ context = 1000000
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = false
 support_structured_output = true
 tier = "paid"
 
@@ -36,6 +37,7 @@ context = 1000000
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = true
 support_structured_output = true
 tier = "bot-owner"
 
@@ -50,6 +52,7 @@ context = 1000000
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = false
 support_structured_output = true
 tier = "bot-owner"
 
@@ -64,6 +67,7 @@ context = 1000000
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = true
 support_structured_output = true
 tier = "bot-owner"
 
@@ -78,6 +82,7 @@ context = 1000000
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = false
 support_structured_output = true
 tier = "bot-owner"
 
@@ -92,6 +97,7 @@ context = 1000000
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = true
 support_structured_output = true
 tier = "paid"
 
@@ -106,6 +112,7 @@ context = 1050000
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = true
 support_structured_output = true
 tier = "bot-owner"
 
@@ -120,6 +127,7 @@ context = 500000
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = true
 support_structured_output = true
 tier = "bot-owner"
 
@@ -134,6 +142,7 @@ context = 256000
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = false
 support_structured_output = false
 tier = "bot-owner"
 
@@ -148,6 +157,7 @@ context = 1024000
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = false
 support_structured_output = false
 tier = "bot-owner"
 
@@ -162,6 +172,7 @@ context = 1048576
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = true
 support_structured_output = true
 tier = "bot-owner"
 
@@ -176,6 +187,7 @@ context = 1000000
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = false
 support_structured_output = false
 tier = "bot-owner"
 
@@ -190,6 +202,7 @@ context = 1000000
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = true
 support_structured_output = false
 tier = "bot-owner"
 
@@ -204,6 +217,7 @@ context = 1048576
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = false
 support_structured_output = false
 tier = "bot-owner"
 
@@ -218,6 +232,7 @@ context = 1000000
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = true
 support_structured_output = false
 tier = "bot-owner"
 
@@ -232,6 +247,7 @@ context = 1000000
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = true
 support_structured_output = true
 tier = "bot-owner"
 
@@ -246,5 +262,6 @@ context = 1000000
 support_tools = true
 support_text = true
 support_images = false
+support_image_input = true
 support_structured_output = true
 tier = "bot-owner"

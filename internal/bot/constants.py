@@ -91,6 +91,9 @@ CHAT_ICON: str = "👥"
 PRIVATE_ICON: str = "👤"
 """Emoji used to represent private chats."""
 
+EYE_EMOJI: str = "👁️"
+"""Emoji used to mark models that support image input (vision)."""
+
 # Telegram limits
 # TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 TELEGRAM_MAX_MESSAGE_LENGTH: int = telegram.constants.MessageLimit.MAX_TEXT_LENGTH
