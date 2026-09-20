@@ -150,7 +150,6 @@ emptyTask: asyncio.Task = makeEmptyAsyncTask()
 ## 3. LLMService
 
 ### Usage overview and core generation API
-
 **File:** [`internal/services/llm/service.py:144`](../../internal/services/llm/service.py:144)  
 **Import:** `from internal.services.llm import LLMService`
 **Optional import:** `from lib.stats.stats_storage import StatsStorage, NullStatsStorage` (for tool call statistics, gated by `[stats]` enabled)
@@ -186,6 +185,7 @@ condensed, coverageMap = await llmService.condenseContext(
     condensingModel=condensingModel,
     condensingPrompt=condensingPrompt,
     condensingSystemPrompt=condensingSystemPrompt,
+    consumerId=str(chatId),      # stats attribution; handler condense sites pass it
 )
 # coverageMap values are the CondensingDicts to persist (Path A extends its
 # condensedThread list; Path B merges them via mergeCondensingDicts).
@@ -209,8 +209,9 @@ llmService.injectStatsStorage(toolStatsStorage)  # or None for NullStatsStorage 
 
 **Rule:** Always use a `ToolName` member (from `internal.bot.constants`) for the `name=` argument. See the [add-handler skill](../../.agents/skills/add-handler/SKILL.md) Step 5 for the full registration workflow.
 
-**`chatId` / `doRateLimit` semantics (all generation methods):** `chatId` is a **mandatory `int`** on `generateText` / `generateStructured` / `generateImage` / `generateEmbedding` / `generateTextViaLLM`. It always threads `consumerId=str(chatId)` into the model call for `llm_request` stats attribution (merged into `labels["consumer"]` by `StatsStorage`; chats are never conflated into `__global__`). Rate limiting is controlled independently by the keyword-only `doRateLimit: bool = True` flag: background/system-initiated work (embedding backfill, memory refinement) passes the **real** chat id with `doRateLimit=False` — the per-chat hot-path limiter is skipped while attribution is preserved. `condenseContext` takes a stats-only keyword-only `consumerId: Optional[str]` (the condensing path never rate-limits); `generateTextViaLLM` threads it automatically for every per-round condense.
+**`chatId` / `doRateLimit` semantics (all generation methods):** `chatId` is a **mandatory `int`** on `generateText` / `generateStructured` / `generateImage` / `generateEmbedding` / `generateTextViaLLM`. It always threads `consumerId=str(chatId)` into the model call for `llm_request` stats attribution (merged into `labels["consumer"]` by `StatsStorage`; chats are never conflated into `__global__`). Rate limiting is controlled independently by the keyword-only `doRateLimit: bool = True` flag: background/system-initiated work (embedding backfill, memory refinement) passes the **real** chat id with `doRateLimit=False` — the per-chat hot-path limiter is skipped while attribution is preserved. `condenseContext` takes a stats-only keyword-only `consumerId: Optional[str]` (the condensing path never rate-limits); handler condense call sites pass `consumerId=str(chatId)` explicitly, and `generateTextViaLLM` threads it automatically for every per-round condense.
 
+**`sessionId` auto-fallback:** every generation method also accepts an optional keyword-only `sessionId` — the prompt-cache affinity identity consumed by the `opencode-go` provider. When it is omitted, the five `chatId`-carrying entry points (`generateTextViaLLM` / `generateText` / `generateStructured` / `generateImage` / `generateEmbedding`) resolve a chat-level floor `gromozeka-auto-<chatId>` via `buildSessionId` ([`lib/ai/session.py`](../../lib/ai/session.py)); `condenseContext` (no `chatId`) derives `gromozeka-auto-<consumerId>` when `consumerId` is present (both `None` → stays `None`). The fallback resolves once per public entry point (inner forwards inherit the resolved value) and is logged at DEBUG; an explicitly passed `sessionId` always wins. Call sites should pass a semantic session id up front ([`handlers.md`](handlers.md) §"`sessionId` conventions for LLM calls"; domain scheme in [`architecture.md`](architecture.md) ADR-026) — the fallback is defense-in-depth, not the primary mechanism.
 ### The generateTextViaLLM tool-execution loop
 
 **`generateTextViaLLM` — tool-execution loop:**

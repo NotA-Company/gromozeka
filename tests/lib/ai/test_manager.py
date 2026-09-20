@@ -767,7 +767,7 @@ def testModelInitializationWithMissingProvider(
 def testModelInitializationWithException(
     caplog: pytest.LogCaptureFixture, mockProviderClasses: Dict[str, type]
 ) -> None:
-    """Test model initialization handles exceptions.
+    """Test model initialization handles exceptions and logs the failing model name.
 
     Args:
         caplog: Pytest fixture for capturing log output
@@ -802,6 +802,10 @@ def testModelInitializationWithException(
 
             assert "failing-model" not in manager.modelRegistry
             assert "Failed to initialize model" in caplog.text
+            # Regression: the error line must attribute the failing config entry
+            # (the modelName dict key), not a nonexistent 'name' field ('unknown').
+            assert "Failed to initialize model failing-model" in caplog.text
+            assert "Failed to initialize model unknown" not in caplog.text
 
 
 def testModelInitializationWithDefaultValues(mockProviderClasses: Dict[str, type]) -> None:

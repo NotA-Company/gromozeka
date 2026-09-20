@@ -51,6 +51,7 @@ import dataclasses
 import logging
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -95,9 +96,13 @@ from lib.ai import (  # noqa: E402
     ModelResultStatus,
     ModelRunResult,
 )
+from lib.ai.session import buildSessionId  # noqa: E402
 from scripts._lib.bootstrap import bootstrapProxy  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+# Per-run session bucket for opencode-go prompt-cache affinity (see lib/ai/session.py).
+_SESSION_TS = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 # ---------------------------------------------------------------------------
 # Default prompt — matches configs/00-defaults/bot-defaults.toml
@@ -237,7 +242,9 @@ async def probeModel(
     try:
         start = time.monotonic()
         result: ModelRunResult = await asyncio.wait_for(
-            model.generateText(messages=messages),
+            model.generateText(
+                messages=messages, sessionId=buildSessionId("script", "check-image-parsing", modelName, _SESSION_TS)
+            ),
             timeout=_PROBE_TIMEOUT_SECONDS,
         )
         elapsed = time.monotonic() - start

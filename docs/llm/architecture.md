@@ -1072,6 +1072,98 @@ doc with the D1–D19 decisions and the full census:
 
 ---
 
+### ADR-026: Semantic sessionId Domains for `lib/ai` Calls
+
+**Date:** 2026-09-20 (design approved by user; fully implemented and reviewed)
+**Status:** Accepted
+
+#### ADR-026: Context
+
+`lib/ai` transports a per-request sessionId via a ContextVar (`_requestSessionIdVar`,
+`lib/ai/abstract.py`); the four `AbstractModel.generate*` wrappers set/reset it around each
+call (the always-set-even-`None` discipline prevents stale-session leakage across asyncio
+tasks), and all `LLMService` methods forward it verbatim. The sole consumer is the
+opencode-go provider (`lib/ai/providers/opencode_go_provider.py`), which sends it as the
+`x-opencode-session` header — mandatory since 2026-09-06, driving prompt-cache affinity and
+sticky routing. Fallback chain: request sessionId → provider `session_fallback` config →
+`DEFAULT_SESSION_ID = "gromozeka"`.
+
+A 2026-09-20 audit found only 2 of ~32 production call sites passing a proper sessionId
+(both in `llm_messages.py` via `getLLMRequestSessionId()`); every other site silently merged
+into the shared `"gromozeka"` bucket — no error, just destroyed per-conversation cache
+affinity. Scripts and the grabliarium ext module (indirect seam via
+`LLMService.getInstance().getLLMManager()`) omitted it too. The pre-existing canonical
+identity `gromozeka-<chatId>-<rootMessageId>` (chat + thread root;
+`BaseBotHandler.getLLMRequestSessionId()`, from the 2026-09-04 decision that the bot builds
+context differently for different conversations inside a chat) is correct ONLY for
+conversation-shaped flows — one-shot flows (e.g. media parsing, keyed by the media item, not
+chat+thread) needed semantically different identities.
+
+#### ADR-026: Decision — `lib/ai/session.py` foundation
+
+- `buildSessionId(*components, namespace="gromozeka")` — the single construction point for
+  session ids.
+- `sanitizeSessionIdComponent` — charset `[A-Za-z0-9._-]`, preserves dash structure (negative
+  chatIds keep the historical double dash).
+- `hashSessionIdComponent` — sha256 hex[:16] for free-text/URLs.
+- 128-char total cap with a loud `ValueError` (silent truncation would split cache buckets).
+
+`BaseBotHandler.getLLMRequestSessionId()` is reimplemented on top of `buildSessionId`,
+byte-identical to the legacy f-string for token-safe ids.
+
+#### ADR-026: Decision — semantic domains
+Sharing rule: two calls share a session ⇔ they share an evolving prompt prefix. Only
+persistent identifiers are used — never uuids/runIds (they would defeat cache affinity).
+
+- **D1 conversation/thread:** `gromozeka-<chatId>-<rootMessageId>` (compat shape) —
+  condensing, chat image gen, random-message condense, media tool.
+- **D2 one-shot content:** `gromozeka-media-<fileUniqueId>`, `gromozeka-url-<hash(url)>`,
+  `gromozeka-layout-<hash(canonicalLayoutId)>` — the same content parsed anywhere shares the
+  bucket (mirrors the per-URL/per-file result caches). When `/analyze` has no stored media id
+  (freshly downloaded media), it falls back to the analyzing command message instead:
+  `gromozeka-analyze-<chatId>-<commandMessageId>`.
+- **D3 feature-flow:** `gromozeka-<feature>-<chatId>-<messageId>` — divination reading
+  shared across its text+image calls; draw; summary per-run; the `dev-` tag for
+  `llm_replay` (deliberately NOT the conversation bucket). Divination discovery is
+  content-keyed instead: `divination-discovery-<hash(layoutId)>`.
+- **D4 user memory store:** `gromozeka-memory-<chatId>-<userId>-<threadId>` (refinement
+  tool-loop).
+- **D5 background/embeddings:** DEFERRED — no provider consumes sessionId on embeddings
+  today; revisit when a session-consuming provider gains embeddings (the auto-fallback
+  below covers them meanwhile).
+- **D6 scripts:** `gromozeka-script-<name>[-<model>]-<startTs>` with a UTC
+  `%Y%m%dT%H%M%SZ` start timestamp — per-run buckets (user decision), same-run probe
+  affinity.
+- **Extension modules:** `gromozeka-<moduleName>-<flowIdentity>`
+#### ADR-026: Defense-in-depth auto-fallback
+
+When `sessionId is None`, the five chatId-carrying `LLMService` methods resolve
+`gromozeka-auto-<chatId>` and `condenseContext` derives `gromozeka-auto-<consumerId>`, with
+`logger.debug` on fallback (user-approved). The self-identifying `auto-` tag keeps omissions
+greppable; explicit values always win. Related fix: the `/search` embedding bypass in
+`chat_search.py` was routed through `LLMService.generateEmbedding` (recovers consumerId
+stats attribution; `doRateLimit=False` since the command pre-gates).
+
+> **Amendment (during implementation):** layout extraction hashes the canonical layout id
+> rather than sanitizing it raw — `_generateLayoutId` preserves Cyrillic (raw sanitization
+> would collapse distinct names onto identical dash-runs) and is unbounded in length (the
+> cap would raise mid-flow).
+
+#### ADR-026: Consequences
+
+- Every production text/structured/image call now carries an explicit semantic session or
+  the `auto-` floor; nothing lands in the shared `"gromozeka"` bucket silently.
+- Known limitation (documented, test-pinned): `analyze_command`'s stored-media-id lookup is
+  index-aligned with successful downloads — on partial download failure the surviving item's
+  session bucket shifts deterministically (cache-affinity impact only; no crash).
+- `consumerId=str(chatId)` now flows at the three condense sites (stats attribution
+  recovered).
+- Byte-identity caveat: builder output equals the legacy f-string only for nonempty
+  token-safe ids ≤128 chars; empty/overlong now raise (documented in `lib/ai/session.py`).
+- grabliarium lives in a gitignored nested repo — its changes are tracked there, not in the
+  main repo diff.
+
+---
 ## 2. Dependency Map
 
 ### 2.1 Component Dependency Graph

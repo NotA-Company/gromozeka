@@ -359,12 +359,12 @@ is the step-by-step recipe.
 | [`internal/services/storage/service.py`](../../internal/services/storage/service.py) | `StorageService` singleton |
 
 ### 4.6 `lib/` Directory
-
 | Path | Purpose |
 |---|---|
 | [`lib/ai/abstract.py`](../../lib/ai/abstract.py) | `AbstractModel`, `AbstractLLMProvider` |
 | [`lib/ai/manager.py`](../../lib/ai/manager.py) | `LLMManager` — model + provider registry |
 | [`lib/ai/models.py`](../../lib/ai/models.py) | `ModelMessage`, `ModelRunResult`, `LLMToolFunction`, etc. |
+| [`lib/ai/session.py`](../../lib/ai/session.py) | Session-id construction for LLM requests — `buildSessionId` / `sanitizeSessionIdComponent` / `hashSessionIdComponent` (token-safe charset, 128-char cap; semantic session domains per [`architecture.md`](architecture.md) ADR-026) |
 | [`lib/ai/providers/`](../../lib/ai/providers/) | Provider implementations (OpenAI-compatible, OpenRouter, Yandex Cloud, `fastembed`) |
 | [`lib/db/`](../../lib/db/) | SQL provider abstraction + `DatabaseManager` — `BaseSQLProvider`, SQLite3/SQLink provider impls (`mysql.py`/`postgresql.py` exist but are unregistered), the `getSqlProvider` factory, `DatabaseManager` multi-source routing, and `utils.py` (SQL decode trio + `getCurrentTimestamp`/`DEFAULT_THREAD_ID`). Bot-free; `internal/database/` (Database wrapper, repositories, migrations) imports the SQL layer from here. See [`architecture.md`](architecture.md) ADR-022/ADR-023. |
 | [`lib/cache/interface.py`](../../lib/cache/interface.py) | `CacheInterface[K,V]` — generic cache ABC (get/set/clear/`clearOld`/getStats) |
@@ -376,7 +376,6 @@ is the step-by-step recipe.
 | [`lib/bayes_filter/bayes_filter.py`](../../lib/bayes_filter/bayes_filter.py) | Naive Bayes spam filter |
 | [`lib/markdown/parser.py`](../../lib/markdown/parser.py) | Markdown → MarkdownV2 parser |
 | [`lib/max_bot/client.py`](../../lib/max_bot/client.py) | Max Messenger HTTP client |
-
 #### Integrations, receivers, and utilities
 
 | Path | Purpose |

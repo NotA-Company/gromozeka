@@ -43,6 +43,7 @@ import asyncio
 import json
 import logging
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -83,11 +84,15 @@ from internal.services.cache import CacheService  # noqa: E402
 from internal.services.llm.service import LLMService  # noqa: E402
 from lib.ai import ModelMessage  # noqa: E402
 from lib.ai.manager import LLMManager  # noqa: E402
+from lib.ai.session import buildSessionId  # noqa: E402
 from lib.rate_limiter import RateLimiterManager  # noqa: E402
 from scripts._lib.bootstrap import bootstrapProxy  # noqa: E402
 
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
+
+# Per-run session bucket for opencode-go prompt-cache affinity (see lib/ai/session.py).
+_SESSION_TS = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 # ---------------------------------------------------------------------------
 # Default config directories (same as main.py and sibling scripts)
@@ -418,6 +423,7 @@ async def main() -> int:
         chatSettings=dict(chatSettings),
         modelKey=model,
         fallbackKey=ChatSettingsKey.FALLBACK_MODEL,
+        sessionId=buildSessionId("script", "layout-extract", str(args.chat_id), _SESSION_TS),
     )
 
     # ------------------------------------------------------------------

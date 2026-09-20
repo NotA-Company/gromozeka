@@ -112,7 +112,6 @@ construction time) and `EMBEDDINGS_ENABLED` are both on.
 ## Implementation Decisions (2026-06-20 / 2026-06-21)
 
 ### Architecture & Design Decisions
-
 - **`MAX_MESSAGES_FOR_SEMANTIC_SEARCH` page**: `BOT_OWNER` (resolved from plan inconsistency).
 - **Backfill chat discovery**: round-robin over the in-memory
   `_trackedChats` set (populated by `newMessageHandler` when
@@ -143,11 +142,12 @@ construction time) and `EMBEDDINGS_ENABLED` are both on.
   — it only registers `CRON_JOB`. The `QueueService` has its own built-in `_doExitHandler`.
   Handlers that own resources (sandbox runs, pending sends, periodic cleanups) register one;
   `ChatSearchHandler` does not.
-- **Semantic search wired into `/search`**: keywords → `generateEmbeddings` → `queryEmbedding`
-  passed to `searchChatMessages` (falls back to filter-only on failure).
+- **Semantic search wired into `/search`**: keywords → `LLMService.generateEmbedding` (routed
+  through the service since the sessionId-domain wave — recovers `consumerId` stats attribution;
+  `doRateLimit=False`, the command pre-gates) → `queryEmbedding` passed to `searchChatMessages`
+  (falls back to filter-only on failure).
 - **No cache in DB layer**: Embedding cache was initially inside `ChatMessagesRepository` and was
   removed entirely. Caching is a handler-layer concern.
-
 ### Model & Config Decisions
 
 - **Embedding model history**: Switched from English-only `bge-small-en-v1.5` (384d) → multilingual

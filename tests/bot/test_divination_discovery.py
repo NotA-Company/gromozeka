@@ -22,6 +22,7 @@ from internal.bot.models import (
     MessageSender,
 )
 from lib.ai.models import ModelResultStatus, ModelRunResult, ModelStructuredResult
+from lib.ai.session import buildSessionId, hashSessionIdComponent
 from lib.divination import Layout, TarotSystem
 
 # ---------------------------------------------------------------------------
@@ -145,7 +146,7 @@ class TestLayoutDiscovery:
     """Test suite for layout discovery functionality."""
 
     @pytest.fixture
-    async def mockDivinationHandler(self):
+    async def mockDivinationHandler(self) -> DivinationHandler:
         """Create a DivinationHandler with discovery enabled."""
         return _makeHandler(discoveryEnabled=True)
 
@@ -318,6 +319,124 @@ class TestLayoutDiscovery:
             ToolName.GET_URL_CONTENT: True,
         }
         assert firstCall.kwargs.get("useTools") == expectedTools
+
+    async def testDiscoveryWebSearchCallCarriesContentKeyedSessionId(
+        self, mockDivinationHandler: DivinationHandler
+    ) -> None:
+        """generateTextViaLLM during discovery carries a content-keyed sessionId.
+
+        The session id is derived from the canonical layout id (hashed), NOT
+        from the chat or the invocation, so identical layout-discovery
+        requests share one prompt-cache bucket regardless of which chat
+        asks for the layout.
+        """
+        layoutName = "My Custom Layout"
+        canonicalLayoutId = mockDivinationHandler._generateLayoutId(layoutName)
+
+        infoResponse = ModelRunResult(
+            rawResult={},
+            status=ModelResultStatus.FINAL,
+            resultText="A 3-card layout used for simple readings. Positions: Past, Present, Future.",
+        )
+        generateTextMock = AsyncMock(return_value=infoResponse)
+        structuredMock = AsyncMock(
+            return_value=ModelStructuredResult(
+                rawResult={},
+                status=ModelResultStatus.FINAL,
+                data={
+                    "layout_id": "my_custom_layout",
+                    "name_en": "My Custom Layout",
+                    "name_ru": "Мой специальный расклад",
+                    "positions": ["Past", "Present", "Future"],
+                    "description": "Simple three card reading.",
+                },
+                resultText='{"layout_id": "my_custom_layout"}',
+            )
+        )
+
+        chatSettings = {
+            ChatSettingsKey.DIVINATION_DISCOVERY_INFO_PROMPT: ChatSettingsValue(
+                "Find info about {layoutName}, {systemId}"
+            ),
+            ChatSettingsKey.DIVINATION_DISCOVERY_SYSTEM_PROMPT: ChatSettingsValue("You are a layout expert."),
+            ChatSettingsKey.DIVINATION_PARSE_STRUCTURE_SYSTEM_PROMPT: ChatSettingsValue(
+                "You are a layout structuring expert."
+            ),
+            ChatSettingsKey.DIVINATION_PARSE_STRUCTURE_PROMPT: ChatSettingsValue(
+                "Extract layout from: {layoutName}, {systemId}, {description}"
+            ),
+            ChatSettingsKey.CHAT_MODEL: ChatSettingsValue("gpt-4"),
+            ChatSettingsKey.FALLBACK_MODEL: ChatSettingsValue("gpt-3.5"),
+        }
+
+        with patch.object(mockDivinationHandler, "getChatSettings", AsyncMock(return_value=chatSettings)):
+            with patch.object(mockDivinationHandler.llmService, "generateTextViaLLM", generateTextMock):
+                with patch.object(mockDivinationHandler.llmService, "generateStructured", structuredMock):
+                    result = await mockDivinationHandler._discoverLayoutWithLLM(
+                        systemCls=TarotSystem,
+                        layoutName=layoutName,
+                        canonicalLayoutId=canonicalLayoutId,
+                        chatId=456,
+                        ensuredMessage=_makeEnsuredMessage(chatId=456),
+                    )
+
+        assert result is not None
+        generateTextMock.assert_called_once()
+        expectedSessionId = buildSessionId("divination-discovery", hashSessionIdComponent(canonicalLayoutId))
+        assert generateTextMock.call_args.kwargs["sessionId"] == expectedSessionId
+
+    async def testExtractLayoutStructuredCallCarriesContentKeyedSessionId(
+        self, mockDivinationHandler: DivinationHandler
+    ) -> None:
+        """generateStructured in layout extraction carries a content-keyed sessionId.
+
+        The session id is built from the canonical layout id (hashed) — the
+        same canonical key used for DB cache consistency — so one canonical
+        layout always maps to exactly one prompt-cache bucket.
+        """
+        layoutName = "My Custom Layout"
+        canonicalLayoutId = mockDivinationHandler._generateLayoutId(layoutName)
+
+        structuredMock = AsyncMock(
+            return_value=ModelStructuredResult(
+                rawResult={},
+                status=ModelResultStatus.FINAL,
+                data={
+                    "layout_id": "my_custom_layout",
+                    "name_en": "My Custom Layout",
+                    "name_ru": "Мой специальный расклад",
+                    "positions": ["Past", "Present", "Future"],
+                    "description": "Simple three card reading.",
+                },
+                resultText='{"layout_id": "my_custom_layout"}',
+            )
+        )
+
+        chatSettings = {
+            ChatSettingsKey.DIVINATION_PARSE_STRUCTURE_SYSTEM_PROMPT: ChatSettingsValue(
+                "You are a layout structuring expert, return only JSON structure."
+            ),
+            ChatSettingsKey.DIVINATION_PARSE_STRUCTURE_PROMPT: ChatSettingsValue(
+                "Extract layout from: {layoutName}, {systemId}, {description}"
+            ),
+            ChatSettingsKey.CHAT_MODEL: ChatSettingsValue("gpt-4"),
+            ChatSettingsKey.FALLBACK_MODEL: ChatSettingsValue("gpt-3.5"),
+        }
+
+        with patch.object(mockDivinationHandler, "getChatSettings", AsyncMock(return_value=chatSettings)):
+            with patch.object(mockDivinationHandler.llmService, "generateStructured", structuredMock):
+                result = await mockDivinationHandler._extractLayoutFromText(
+                    systemCls=TarotSystem,
+                    layoutName=layoutName,
+                    canonicalLayoutId=canonicalLayoutId,
+                    chatId=456,
+                    layoutDescription="A 3-card layout used for simple readings.",
+                )
+
+        assert result is not None
+        structuredMock.assert_called_once()
+        expectedSessionId = buildSessionId("layout", hashSessionIdComponent(canonicalLayoutId))
+        assert structuredMock.call_args.kwargs["sessionId"] == expectedSessionId
 
     async def testDiscoverLayoutFailureNegativeCache(self, mockDivinationHandler):
         """Test that failed discoveries are cached as negative."""

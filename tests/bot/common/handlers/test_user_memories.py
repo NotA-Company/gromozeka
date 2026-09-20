@@ -74,6 +74,7 @@ from internal.services.cache import CacheService, UserActiveActionEnum
 from internal.services.queue_service.service import QueueService
 from internal.services.queue_service.types import DelayedTask, DelayedTaskFunction
 from lib.ai import LLMToolCall, ModelMessage, ModelResultStatus, ModelRunResult
+from lib.ai.session import buildSessionId
 from lib.db.utils import DEFAULT_THREAD_ID
 
 # ---------------------------------------------------------------------------
@@ -729,6 +730,12 @@ class TestCronJobAndRefinement:
         ``llm_request`` stats attribution to ``__global__`` — even though the
         chat id is known (it builds the synthetic ensuredMessage from it). The
         call must pass the real chat id and skip only the limiter.
+
+        Also pins the prompt-cache-affinity session id (D4): the refinement
+        call must carry ``sessionId`` built from the per-user memory-store
+        identity (``memory-<chatId>-<userId>-<threadId>``), so consecutive
+        refinement runs for the same user share the opencode-go session and
+        its evolving prompt prefix.
         """
         handler = await _makeHandler(testDatabase, configManager=_makeUserMemoryConfigManager(enabled=True))
         _stubGetChatSettings(handler, memoryRefinementEnabled=True)
@@ -754,6 +761,11 @@ class TestCronJobAndRefinement:
         kwargs = mockGenerate.await_args.kwargs
         assert kwargs["chatId"] == chatId
         assert kwargs["doRateLimit"] is False
+        # The session id is built from the persistent (chat, user, thread)
+        # identity — both the builder expression and the literal shape are
+        # pinned so an accidental component drop/format change is caught.
+        assert kwargs["sessionId"] == buildSessionId("memory", str(chatId), str(userId), str(threadId))
+        assert kwargs["sessionId"] == "gromozeka-memory-340-11-0"
 
     async def test_runSingleRefinementBailsWhenFewerThanMinMessages(self, testDatabase: Database) -> None:
         """Below ``min-messages`` → ``_runSingleRefinement`` returns with no LLM call.

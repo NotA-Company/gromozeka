@@ -65,6 +65,7 @@ from lib.ai import (
     ModelMessage,
 )
 from lib.ai.models import ModelRunResult
+from lib.ai.session import buildSessionId
 from lib.db.utils import DEFAULT_THREAD_ID
 
 from .base import BaseBotHandler, HandlerResultStatus
@@ -1319,6 +1320,12 @@ class UserMemoriesHandler(BaseBotHandler):
                     "typingManager": None,
                     "isRefinement": True,
                 },
+                # D4: the per-user memory store is a slowly evolving context —
+                # consecutive refinement runs for the same (chat, user, thread)
+                # share most of the prompt prefix, and the multi-round tool loop
+                # inherits the session automatically (opencode-go
+                # x-opencode-session prompt-cache affinity).
+                sessionId=buildSessionId("memory", str(chatId), str(userId), str(threadId)),
             )
 
             logger.debug(f"Result of refining memory for {chatId}:{userId}, thread:{threadId}: {result}")

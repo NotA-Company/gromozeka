@@ -31,6 +31,7 @@ from lib.ai.models import (
     ModelRunResult,
     ModelStructuredResult,
 )
+from lib.ai.session import buildSessionId
 from lib.rate_limiter.manager import RateLimiterManager
 from lib.stats import NullStatsStorage, StatsStorage
 
@@ -843,12 +844,20 @@ class LLMService:
             sessionId: Optional conversation identifier (e.g.
                 ``gromozeka-<chatId>-<rootMessageId>``) forwarded to every
                 model call in this loop so providers can optimize prompt
-                caching (OpenCode Go's ``x-opencode-session`` header).
+                caching (OpenCode Go's ``x-opencode-session`` header). When
+                ``None``, a chat-level fallback ``gromozeka-auto-<chatId>``
+                is built via :func:`lib.ai.session.buildSessionId` so
+                omissions land in a per-chat prompt-cache bucket instead of
+                the shared provider default.
 
         Returns:
             ModelRunResult containing the final LLM response, with toolsUsed flag set
             if any tools were executed during the conversation
         """
+        if sessionId is None:
+            sessionId = buildSessionId("auto", str(chatId))
+            logger.debug("generateTextViaLLM: sessionId not provided, using chat-level fallback")
+
         if callId is None:
             callId = str(uuid.uuid4())
 
@@ -1152,7 +1161,11 @@ class LLMService:
                 no chat to attribute the work to
             sessionId: Optional conversation identifier forwarded to the
                 condensing model calls (OpenCode Go's ``x-opencode-session``
-                prompt-cache affinity)
+                prompt-cache affinity). When ``None`` and ``consumerId`` is
+                provided, a ``gromozeka-auto-<consumerId>`` fallback is built
+                via :func:`lib.ai.session.buildSessionId`; when both are
+                ``None`` the session id stays ``None`` (the provider default
+                bucket applies)
 
         Returns:
             A ``(messages, coverage)`` tuple. The first element is the
@@ -1166,6 +1179,10 @@ class LLMService:
             second element is ``{}``. Path C callers (``generateTextViaLLM``)
             ignore the second element.
         """
+        if sessionId is None and consumerId:
+            sessionId = buildSessionId("auto", consumerId)
+            logger.debug("condenseContext: sessionId not provided, using consumerId fallback")
+
         coverage: Dict[int, CondensingDict] = {}
         if not messages:
             return (messages, coverage)
@@ -1342,12 +1359,18 @@ class LLMService:
             sessionId: Optional conversation identifier (e.g.
                 ``gromozeka-<chatId>-<rootMessageId>``) forwarded to the model
                 call so providers can optimize prompt caching (OpenCode Go's
-                ``x-opencode-session`` header)
+                ``x-opencode-session`` header). When ``None``, a chat-level
+                fallback ``gromozeka-auto-<chatId>`` is built via
+                :func:`lib.ai.session.buildSessionId`
 
         Returns:
             ModelRunResult containing the generated text response, status, and any tool
             calls made during generation
         """
+        if sessionId is None:
+            sessionId = buildSessionId("auto", str(chatId))
+            logger.debug("generateText: sessionId not provided, using chat-level fallback")
+
         llmModel = self.resolveModel(modelKey, chatSettings=chatSettings, defaultKey=ChatSettingsKey.CHAT_MODEL)
         fallbackModel = self.resolveModel(
             fallbackKey, chatSettings=chatSettings, defaultKey=ChatSettingsKey.FALLBACK_MODEL
@@ -1429,7 +1452,9 @@ class LLMService:
                 NOT affected
             sessionId: Optional conversation identifier forwarded to the model
                 call (OpenCode Go's ``x-opencode-session`` prompt-cache
-                affinity)
+                affinity). When ``None``, a chat-level fallback
+                ``gromozeka-auto-<chatId>`` is built via
+                :func:`lib.ai.session.buildSessionId`
 
         Returns:
             ModelStructuredResult with data populated on success, or status=ERROR
@@ -1440,6 +1465,10 @@ class LLMService:
                 model has support_structured_output=True. No model call is made in
                 this case
         """
+        if sessionId is None:
+            sessionId = buildSessionId("auto", str(chatId))
+            logger.debug("generateStructured: sessionId not provided, using chat-level fallback")
+
         llmModel = self.resolveModel(modelKey, chatSettings=chatSettings, defaultKey=ChatSettingsKey.CHAT_MODEL)
         fallbackModel = self.resolveModel(
             fallbackKey, chatSettings=chatSettings, defaultKey=ChatSettingsKey.FALLBACK_MODEL
@@ -1509,11 +1538,17 @@ class LLMService:
                 NOT affected
             sessionId: Optional conversation identifier forwarded to the model
                 call (OpenCode Go's ``x-opencode-session`` prompt-cache
-                affinity)
+                affinity). When ``None``, a chat-level fallback
+                ``gromozeka-auto-<chatId>`` is built via
+                :func:`lib.ai.session.buildSessionId`
 
         Returns:
             ModelRunResult containing the generated image response and metadata
         """
+        if sessionId is None:
+            sessionId = buildSessionId("auto", str(chatId))
+            logger.debug("generateImage: sessionId not provided, using chat-level fallback")
+
         imageGenerationModel = self.resolveModel(
             ChatSettingsKey.IMAGE_GENERATION_MODEL,
             chatSettings=chatSettings,
@@ -1568,12 +1603,17 @@ class LLMService:
                 budget). Stats attribution via ``chatId`` is NOT affected.
             sessionId: Optional conversation identifier forwarded to the model
                 call (OpenCode Go's ``x-opencode-session`` prompt-cache
-                affinity)
+                affinity). When ``None``, a chat-level fallback
+                ``gromozeka-auto-<chatId>`` is built via
+                :func:`lib.ai.session.buildSessionId`
 
         Returns:
             A ``(modelName, embeddingVector)`` tuple on success, or ``None``
             when embedding failed (the exception is logged).
         """
+        if sessionId is None:
+            sessionId = buildSessionId("auto", str(chatId))
+            logger.debug("generateEmbedding: sessionId not provided, using chat-level fallback")
 
         try:
             embeddingModel = self.resolveModel(

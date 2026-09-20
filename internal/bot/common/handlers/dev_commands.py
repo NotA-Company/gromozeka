@@ -47,6 +47,7 @@ from internal.database.models import MessageCategory
 from internal.services.cache import CacheNamespace
 from internal.services.llm.models import ExtraDataDict
 from lib.ai import ModelMessage, ModelResultStatus, ModelRunResult
+from lib.ai.session import buildSessionId
 
 from .base import BaseBotHandler
 
@@ -1024,6 +1025,10 @@ class DevCommandsHandler(BaseBotHandler):
                 fallbackModelKey=ChatSettingsKey.FALLBACK_MODEL,
                 useTools=chatSettings[ChatSettingsKey.USE_TOOLS].toBool(),
                 callback=processIntermediateMessages,
+                # Deliberately NOT the conversation session: a replayed frozen
+                # transcript must not share a prompt-cache bucket with a live
+                # evolving thread. Keyed by the command message instead.
+                sessionId=buildSessionId("dev", str(ensuredMessage.recipient.id), ensuredMessage.messageId.asStr()),
                 extraData={
                     "ensuredMessage": ensuredMessage,
                     "typingManager": typingManager,

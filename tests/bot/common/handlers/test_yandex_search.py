@@ -44,6 +44,7 @@ from internal.bot.models import (
     MessageSender,
 )
 from lib.ai import ModelMessage, ModelResultStatus, ModelRunResult
+from lib.ai.session import buildSessionId, hashSessionIdComponent
 from lib.cache import JsonKeyGenerator
 from lib.proxy import ProxyHelper, ProxyType
 
@@ -478,6 +479,25 @@ class TestCondensingPrompt:
         assert digestA != digestB
         assert len(digestA) == 128
         assert len(digestB) == 128
+
+    async def test_condense_session_id_is_url_keyed(self) -> None:
+        """The condensing ``generateText`` call carries a URL-keyed ``sessionId``.
+
+        D2: session identity mirrors the condensed-cache identity — built
+        from the hashed URL only (no chat id), so two chats condensing the
+        same URL share the prompt-cache bucket (cache win).
+        """
+        handler = _newHandler()
+        em = _makeEnsuredMessage()
+        calls = self._wireGenerate(handler)
+        url = "http://example.com/session-check"
+
+        await handler._llmToolGetUrlContent(
+            extraData={"ensuredMessage": em},
+            url=url,
+        )
+
+        assert calls[0]._kwargs["sessionId"] == buildSessionId("url", hashSessionIdComponent(url))
 
     async def test_condensed_cache_hit_short_circuits(self) -> None:
         """A condensed-cache hit returns the cached value without download or condense.

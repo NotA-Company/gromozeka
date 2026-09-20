@@ -1059,6 +1059,8 @@ class TestMediaDescriptionExtraction:
             return_value=_modelRunResult("<media-description>foo</media-description>bar")
         )
         liveHandler.llmService.generateImage = AsyncMock(return_value=_imageRunResult())  # type: ignore[method-assign]
+        # No stored thread root → the session id falls back to the message's own id.
+        liveHandler.db.chatMessages.getChatMessageByMessageId = AsyncMock(return_value=None)
         em = _liveEnsuredMessage()
         messagesHistory = [ModelMessage(role="user", content="test")]
         typingManager = AsyncMock()
@@ -1068,6 +1070,8 @@ class TestMediaDescriptionExtraction:
         assert outcome == LLMReplyOutcome.SENT
         liveHandler.llmService.generateImage.assert_awaited_once()  # type: ignore[attr-defined]
         assert liveHandler.llmService.generateImage.call_args.args[0] == "foo"  # type: ignore[attr-defined]
+        # D1: image generation shares the conversation's session id.
+        assert liveHandler.llmService.generateImage.call_args.kwargs["sessionId"] == "gromozeka--100-42"
         liveHandler.sendMessage.assert_awaited_once()  # type: ignore[attr-defined]
         assert liveHandler.sendMessage.call_args.kwargs["messageText"] == "bar"  # type: ignore[attr-defined]
 
@@ -1752,6 +1756,8 @@ class TestHandleRandomMessageCondensing:
         em, stack, updateMetaMock = self._wireCondensePath(
             liveHandler, rows=rows, condensedRet=condensedRet, coverage=coverage
         )
+        # No stored thread root → the session id falls back to the message's own id.
+        liveHandler.db.chatMessages.getChatMessageByMessageId = AsyncMock(return_value=None)
 
         with stack, patch("random.random", return_value=0.0):
             result = await liveHandler.handleRandomMessage(em, Mock())
@@ -1773,6 +1779,12 @@ class TestHandleRandomMessageCondensing:
         assert set(randomContext["participants"]) == {f"user{i}" for i in range(10)}
         assert randomContext["messageCount"] == 10
         assert randomContext["dateRange"] == {"from": 1000.0, "to": 1900.0}
+
+        # D1: condensing shares the conversation's session id and attributes
+        # condensing stats to the chat.
+        condenseKwargs = liveHandler.llmService.condenseContext.call_args.kwargs  # type: ignore[attr-defined]
+        assert condenseKwargs["sessionId"] == "gromozeka--100-42"
+        assert condenseKwargs["consumerId"] == "-100"
 
     async def testCondenseMultiBatchCoverageUnion(self, liveHandler: LLMMessageHandler) -> None:
         """Two coverage batches → randomContext is the merged union of both.

@@ -270,6 +270,24 @@ make format lint
 make test
 ```
 
+### `sessionId` conventions for LLM calls
+Handlers never assemble session ids from raw strings. Conversation-shaped flows call
+`await self.getLLMRequestSessionId(ensuredMessage)` (the `gromozeka-<chatId>-<rootMessageId>`
+thread identity); content- or feature-scoped flows build ids through
+`buildSessionId(...)` / `hashSessionIdComponent(...)` from
+[`lib/ai/session.py`](../../lib/ai/session.py), using persistent identifiers only — never
+uuids/runIds (they would defeat prompt-cache affinity). Handler-facing domains:
+
+| Domain | Shape (`gromozeka-` namespace) | Used by |
+|---|---|---|
+| D1 conversation/thread | `gromozeka-<chatId>-<rootMessageId>` | condensing, chat image gen, random-message condense, media tool |
+| D2 one-shot content | `gromozeka-media-<fileUniqueId>` / `gromozeka-url-<hash(url)>` / `gromozeka-layout-<hash(canonicalLayoutId)>`; `/analyze` with no stored media id falls back to `gromozeka-analyze-<chatId>-<commandMessageId>` | `/analyze`, URL condensing, layout extraction |
+| D3 feature flow | `gromozeka-<feature>-<chatId>-<messageId>` (`divination-`, `draw-`, `summary-`, `dev-`) | divination reading, `/draw`, per-run summaries, `/llm_replay` |
+| D4 user memory | `gromozeka-memory-<chatId>-<userId>-<threadId>` | background memory refinement |
+
+`LLMService` still resolves a defense-in-depth fallback (`gromozeka-auto-<chatId>`) when
+`sessionId` is omitted — see [`services.md`](services.md) §3 and the full design record in
+[`architecture.md`](architecture.md) ADR-026.
 ### Checklist after creating/modifying a handler
 
 - [ ] Docstring on class and all methods

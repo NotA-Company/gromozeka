@@ -39,13 +39,16 @@ from internal.bot.models import (
     UserMetadataDict,
 )
 from internal.database import Database
-from internal.database.models import MediaStatus, MemoryType, UserMemorySource
+from internal.database.models import MediaStatus, MemoryType, MessageCategory, UserMemorySource
+from internal.database.repositories.chat_messages import ChatMessageDict
 from internal.database.repositories.user_memories import UserMemoryDict
+from internal.models import MessageId
 from internal.services.cache import CacheService
 from internal.services.llm.service import LLMService
 from internal.services.queue_service import QueueService
 from internal.services.storage import StorageService
 from internal.services.stt import STTOutcome, STTService
+from lib.ai import ModelMessage, ModelResultStatus, ModelRunResult
 from lib.ai.manager import LLMManager
 from lib.stt.models import STTErrorCode
 
@@ -56,18 +59,28 @@ from lib.stt.models import STTErrorCode
 
 @pytest.fixture(autouse=True)
 def _resetCacheServiceSingleton() -> Generator[None, None, None]:
-    """Reset the ``CacheService`` singleton around every test in this module.
+    """Reset the ``CacheService`` and ``QueueService`` singletons around every test.
 
     Keeps the closed in-memory database from one test from leaking into the
     next via the ``CacheService`` singleton (which is not reset by
-    ``tests/conftest.py``).
+    ``tests/conftest.py``). The ``QueueService`` singleton additionally
+    accumulates CRON_JOB handler registrations from every ``_makeHandler``
+    call (each constructed ``UserMemoriesHandler`` registers its
+    ``_dtCronJob`` on the process-wide singleton), and resetting
+    ``LLMService`` does not remove them — so without a reset those
+    references persist across the session. Resetting both before *and*
+    after each test keeps every test hermetic and prevents leakage into
+    other test modules that run afterwards (same pattern as
+    ``tests/bot/common/handlers/test_user_memories.py``).
 
     Yields:
         None.
     """
     CacheService._instance = None
+    QueueService._instance = None
     yield
     CacheService._instance = None
+    QueueService._instance = None
 
 
 # ---------------------------------------------------------------------------
@@ -1834,3 +1847,326 @@ class TestGetChatSettingsModelTierFilterRegression:
         assert ChatSettingsKey.CHAT_MODEL in result
         assert result[ChatSettingsKey.CHAT_MODEL].toStr() == "paid-model"
         assert "has invalid tier" not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# getLLMRequestSessionId — session-id shape via lib.ai.session.buildSessionId
+# ---------------------------------------------------------------------------
+
+
+class TestGetLLMRequestSessionId:
+    """Tests for :meth:`BaseBotHandler.getLLMRequestSessionId`.
+
+    The helper resolves the thread root the same way ``saveChatMessage`` /
+    ``getThreadByMessageForLLM`` do (the DB row's ``root_message_id`` when
+    present, the message's own id otherwise) and formats the session id via
+    :func:`lib.ai.session.buildSessionId`. The id feeds the OpenCode Go
+    ``x-opencode-session`` header, so the exact shape is pinned here:
+    ``gromozeka-<chatId>-<messageId>``, with negative group chat ids
+    producing the historical double dash (``gromozeka--100123-...``).
+
+    Exercised through :class:`UserMemoriesHandler` (a concrete
+    :class:`BaseBotHandler` subclass) against the real in-memory database;
+    the ``chatMessages`` repository is swapped for a ``Mock`` where a stored
+    thread root (or a DB failure) must be simulated.
+    """
+
+    @staticmethod
+    def _makeMessage(*, chatId: int, messageId: int) -> EnsuredMessage:
+        """Build a Telegram-platform :class:`EnsuredMessage`.
+
+        Args:
+            chatId: Recipient chat id (negative for groups).
+            messageId: Message id (int for Telegram).
+
+        Returns:
+            A freshly constructed :class:`EnsuredMessage`.
+        """
+        return EnsuredMessage(
+            sender=MessageSender(id=7, name="Alice", username="@alice"),
+            recipient=MessageRecipient(id=chatId, chatType=ChatType.GROUP if chatId < 0 else ChatType.PRIVATE),
+            messageId=messageId,
+            date=datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            messageText="hello",
+        )
+
+    async def test_noDbRow_fallsBackToOwnMessageId(self, testDatabase: Database) -> None:
+        """A message missing from the DB uses its own id as the session tail.
+
+        The DB lookup returns no row (real in-memory database, nothing
+        seeded), so the session id is built from the message's own id.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+
+        result = await handler.getLLMRequestSessionId(self._makeMessage(chatId=100, messageId=456))
+
+        assert result == "gromozeka-100-456"
+
+    async def test_storedRoot_usedAsSessionTail(self, testDatabase: Database) -> None:
+        """A stored ``root_message_id`` replaces the message's own id.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture (used to build
+                the handler; the ``chatMessages`` repository is swapped for
+                a mock afterwards).
+        """
+        handler = await _makeHandler(testDatabase)
+        mockChatMessages = Mock()
+        mockChatMessages.getChatMessageByMessageId = AsyncMock(
+            return_value=cast(ChatMessageDict, {"root_message_id": MessageId(1001)})
+        )
+        handler.db.chatMessages = mockChatMessages  # type: ignore[assignment]
+
+        result = await handler.getLLMRequestSessionId(self._makeMessage(chatId=100, messageId=456))
+
+        assert result == "gromozeka-100-1001"
+
+    async def test_negativeGroupChatId_doubleDashPreserved(self, testDatabase: Database) -> None:
+        """A negative group chat id yields the historical double dash.
+
+        Pins the byte-identity requirement: the sanitizer behind
+        ``buildSessionId`` must not strip or collapse dashes, so
+        ``-100123`` produces ``gromozeka--100123-456`` exactly like the old
+        f-string did.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+        """
+        handler = await _makeHandler(testDatabase)
+
+        result = await handler.getLLMRequestSessionId(self._makeMessage(chatId=-100123, messageId=456))
+
+        assert result == "gromozeka--100123-456"
+
+    async def test_dbFailure_fallsBackToOwnMessageId(self, testDatabase: Database) -> None:
+        """A DB error falls back to the message's own id (never raises).
+
+        Args:
+            testDatabase: Fresh in-memory database fixture (used to build
+                the handler; the ``chatMessages`` repository is swapped for
+                a mock afterwards).
+        """
+        handler = await _makeHandler(testDatabase)
+        mockChatMessages = Mock()
+        mockChatMessages.getChatMessageByMessageId = AsyncMock(side_effect=RuntimeError("DB down"))
+        handler.db.chatMessages = mockChatMessages  # type: ignore[assignment]
+
+        result = await handler.getLLMRequestSessionId(self._makeMessage(chatId=100, messageId=456))
+
+        assert result == "gromozeka-100-456"
+
+
+# ---------------------------------------------------------------------------
+# D1/D2 session/consumer ids threaded into the LLMService boundary
+# ---------------------------------------------------------------------------
+
+
+class TestLLMCallSiteSessionIds:
+    """Session/consumer id threading into the ``BaseBotHandler`` lib/ai call sites.
+
+    Pins the D1/D2 wiring: both ``condenseContext`` calls inside
+    :meth:`BaseBotHandler.getThreadByMessageForLLM` must forward the canonical
+    conversation session id (:meth:`BaseBotHandler.getLLMRequestSessionId`,
+    ``gromozeka-<chatId>-<rootMessageId>``) plus ``consumerId=str(chatId)`` for
+    condensing-stats attribution, and the one-shot media parse in
+    :meth:`BaseBotHandler._parseImage` must forward a media-scoped session id
+    built from the attachment's persistent ``file_unique_id``
+    (:func:`lib.ai.session.buildSessionId`).
+
+    Exercised through :class:`UserMemoriesHandler` (a concrete
+    :class:`BaseBotHandler` subclass). The ``chatMessages`` /
+    ``mediaAttachments`` repositories are swapped for mocks and
+    ``EnsuredMessage.fromDBChatMessage`` / ``EnsuredMessage.toModelMessageList``
+    are patched at class level (``EnsuredMessage`` uses ``__slots__``).
+    """
+
+    _CHAT_ID = 100
+    """Recipient chat id (positive → private chat)."""
+
+    _ROOT_ID = 1001
+    """Message id of the thread root (the session-id tail)."""
+
+    _TAIL_ID = 1002
+    """Message id of the tail message ``getThreadByMessageForLLM`` is called for."""
+
+    @staticmethod
+    def _makeRow(*, messageId: int, messageText: str) -> ChatMessageDict:
+        """Build a ``ChatMessageDict`` row belonging to the test thread.
+
+        Args:
+            messageId: Row message id (root or tail).
+            messageText: Message body text.
+
+        Returns:
+            A dict matching the ``ChatMessageDict`` shape with all required keys.
+        """
+        rowDate = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+        return {
+            "chat_id": TestLLMCallSiteSessionIds._CHAT_ID,
+            "message_id": MessageId(messageId),
+            "date": rowDate,
+            "user_id": 7,
+            "reply_id": None,
+            "thread_id": 0,
+            "root_message_id": MessageId(TestLLMCallSiteSessionIds._ROOT_ID),
+            "message_text": messageText,
+            "message_type": "text",
+            "message_category": MessageCategory.USER,
+            "quote_text": None,
+            "media_id": None,
+            "created_at": rowDate,
+            "metadata": "{}",
+            "markup": "",
+            "media_group_id": None,
+            "username": "alice",
+            "full_name": "alice",
+        }
+
+    @staticmethod
+    def _makeChatSettings() -> ChatSettingsDict:
+        """Build chat settings covering every key ``getThreadByMessageForLLM`` reads.
+
+        Production code subscripts ``chatSettings[KEY]`` directly (never
+        ``.get()``), so every key on the condensing path must be present.
+        ``CHAT_MODEL`` / ``CONDENSING_MODEL`` are wrapped in real
+        :class:`ChatSettingsValue` instances; ``ChatSettingsValue.toModel`` is
+        patched per-test to avoid the real LLM manager.
+
+        Returns:
+            A complete :class:`ChatSettingsDict` with deterministic values.
+        """
+        return {
+            ChatSettingsKey.CHAT_PROMPT: ChatSettingsValue("CHAT_PROMPT_BASE"),
+            ChatSettingsKey.CHAT_PROMPT_SUFFIX: ChatSettingsValue("CHAT_PROMPT_SUFFIX_BASE"),
+            ChatSettingsKey.LLM_MESSAGE_FORMAT: ChatSettingsValue("text"),
+            ChatSettingsKey.MEMORY_ENABLED: ChatSettingsValue("false"),
+            ChatSettingsKey.CHAT_MODEL: ChatSettingsValue("dummy-chat-model"),
+            ChatSettingsKey.CONDENSING_MODEL: ChatSettingsValue("dummy-condensing-model"),
+            ChatSettingsKey.CONDENSING_PROMPT: ChatSettingsValue("condense prompt body"),
+            ChatSettingsKey.CONDENSING_SYSTEM_PROMPT: ChatSettingsValue("condense sys body"),
+        }
+
+    @staticmethod
+    def _makeEnsuredMessage() -> EnsuredMessage:
+        """Build the tail :class:`EnsuredMessage` the thread is resolved for.
+
+        Returns:
+            A constructed :class:`EnsuredMessage` for the tail message.
+        """
+        return EnsuredMessage(
+            sender=MessageSender(id=7, name="Alice", username="@alice"),
+            recipient=MessageRecipient(id=TestLLMCallSiteSessionIds._CHAT_ID, chatType=ChatType.PRIVATE),
+            messageId=TestLLMCallSiteSessionIds._TAIL_ID,
+            date=datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            messageText="tail",
+        )
+
+    async def testCondenseContextCallsPassSessionIdAndConsumerId(self, testDatabase: Database) -> None:
+        """Both condense passes share the conversation session id and chat consumer.
+
+        The thread token estimate is forced above the condense threshold so
+        ``getThreadByMessageForLLM`` runs the first condense pass AND the
+        re-condense of the cache (the mocked token estimator always reports an
+        overflow). Each ``condenseContext`` call must carry
+        ``sessionId="gromozeka-<chatId>-<rootMessageId>"`` (resolved through the
+        stored ``root_message_id``) and ``consumerId=str(chatId)``.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture (used to build the
+                handler; the ``chatMessages`` repository is swapped for a mock
+                afterwards).
+        """
+        handler = await _makeHandler(testDatabase)
+
+        tailRow = self._makeRow(messageId=self._TAIL_ID, messageText="tail")
+        rootRow = self._makeRow(messageId=self._ROOT_ID, messageText="root")
+        mockRepo = Mock()
+        mockRepo.getChatMessageByMessageId = AsyncMock(return_value=tailRow)
+        mockRepo.getChatMessagesByRootId = AsyncMock(return_value=[rootRow, tailRow])
+        mockRepo.updateChatMessageMetadata = AsyncMock()
+        handler.db.chatMessages = mockRepo  # type: ignore[assignment]
+        handler.getChatSettings = AsyncMock(return_value=self._makeChatSettings())  # type: ignore[method-assign]
+        condenseMock = AsyncMock(return_value=([ModelMessage(role="user", content="SUMMARY")], {}))
+        handler.llmService.condenseContext = condenseMock  # type: ignore[method-assign]
+
+        async def fakeFromDB(dbRow: ChatMessageDict, db: Database) -> EnsuredMessage:
+            """Stand in for ``EnsuredMessage.fromDBChatMessage``.
+
+            Args:
+                dbRow: The DB row to render.
+                db: Database (unused, mirrors the real signature).
+
+            Returns:
+                A plain :class:`EnsuredMessage` built from the row.
+            """
+            return EnsuredMessage(
+                sender=MessageSender(id=7, name="Alice", username="@alice"),
+                recipient=MessageRecipient(id=dbRow["chat_id"], chatType=ChatType.PRIVATE),
+                messageId=dbRow["message_id"],
+                date=dbRow["date"],
+                messageText=dbRow["message_text"],
+            )
+
+        # Force the overflow: maxTokens = contextSize * 0.5 = 50, estimator
+        # always reports 1000 → first pass runs AND the cache re-condense runs.
+        overflowModel = Mock()
+        overflowModel.contextSize = 100
+        overflowModel.getEstimateTokensCount = Mock(return_value=1000)
+
+        em = self._makeEnsuredMessage()
+        with (
+            patch.object(EnsuredMessage, "fromDBChatMessage", AsyncMock(side_effect=fakeFromDB)),
+            patch.object(
+                EnsuredMessage,
+                "toModelMessageList",
+                AsyncMock(return_value=[ModelMessage(role="user", content="body")]),
+            ),
+            patch.object(ChatSettingsValue, "toModel", Mock(return_value=overflowModel)),
+        ):
+            await handler.getThreadByMessageForLLM(em)
+
+        assert condenseMock.await_count == 2
+        for call in condenseMock.await_args_list:
+            assert call.kwargs["sessionId"] == f"gromozeka-{self._CHAT_ID}-{self._ROOT_ID}"
+            assert call.kwargs["consumerId"] == str(self._CHAT_ID)
+
+    async def testParseImageGenerateTextPassesMediaSessionId(self, testDatabase: Database) -> None:
+        """The one-shot image parse uses a media-scoped session id.
+
+        ``_parseImage`` must forward ``sessionId=buildSessionId("media",
+        fileUniqueId)`` — the attachment's persistent id, not the conversation
+        session — so repeated parses of the same media reuse one cache bucket.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture (used to build the
+                handler; the ``mediaAttachments`` repository is swapped for a
+                mock afterwards).
+        """
+        handler = await _makeHandler(testDatabase)
+        handler.getChatSettings = AsyncMock(  # type: ignore[method-assign]
+            return_value={
+                ChatSettingsKey.IMAGE_PARSING_MODEL: ChatSettingsValue("dummy-image-model"),
+                ChatSettingsKey.IMAGE_PARSING_FALLBACK_MODEL: ChatSettingsValue("dummy-image-fallback"),
+            }
+        )
+        mockMediaRepo = Mock()
+        mockMediaRepo.updateMediaAttachment = AsyncMock()
+        handler.db.mediaAttachments = mockMediaRepo  # type: ignore[assignment]
+        generateMock = AsyncMock(
+            return_value=ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="a cat on a sofa")
+        )
+        handler.llmService.generateText = generateMock  # type: ignore[method-assign]
+
+        result = await handler._parseImage(
+            self._makeEnsuredMessage(),
+            "file-unique-123",
+            [ModelMessage(role="user", content="image payload")],
+        )
+
+        assert result is True
+        generateMock.assert_awaited_once()
+        assert generateMock.call_args.kwargs["sessionId"] == "gromozeka-media-file-unique-123"
+        mockMediaRepo.updateMediaAttachment.assert_awaited_once()

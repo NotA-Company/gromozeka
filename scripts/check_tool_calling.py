@@ -53,6 +53,7 @@ import asyncio  # noqa: E402
 import dataclasses  # noqa: E402
 import logging  # noqa: E402
 import sys  # noqa: E402
+from datetime import datetime, timezone  # noqa: E402
 from pathlib import Path  # noqa: E402
 from typing import Dict, List, Optional  # noqa: E402
 
@@ -91,9 +92,13 @@ from lib.ai import (  # noqa: E402
     ModelResultStatus,
     ModelRunResult,
 )
+from lib.ai.session import buildSessionId  # noqa: E402
 from scripts._lib.bootstrap import bootstrapProxy  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+# Per-run session bucket for opencode-go prompt-cache affinity (see lib/ai/session.py).
+_SESSION_TS = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 # ---------------------------------------------------------------------------
 # ANSI colour helpers
@@ -376,11 +381,15 @@ async def probeModel(modelName: str, model: AbstractModel, providerName: str) ->
         messages: List[ModelMessage] = list(_PROBE_MESSAGES)
         start = time.monotonic()
 
+        # One session per model probe: the multi-turn loop is an accumulating conversation.
+        probeSessionId: str = buildSessionId("script", "check-tool-calling", modelName, _SESSION_TS)
+
         for turn in range(_MAX_TOOL_TURNS + 1):
             result: ModelRunResult = await asyncio.wait_for(
                 model.generateText(
                     messages=messages,
                     tools=[_WEATHER_TOOL],
+                    sessionId=probeSessionId,
                 ),
                 timeout=_PROBE_TIMEOUT_SECONDS,
             )

@@ -54,6 +54,7 @@ from lib.ai import (
     LLMParameterType,
 )
 from lib.ai.models import ModelMessage, ModelResultStatus
+from lib.ai.session import buildSessionId, hashSessionIdComponent
 from lib.cache import (
     GenericDatabaseCache,
     JsonKeyGenerator,
@@ -532,6 +533,10 @@ class YandexSearchHandler(BaseBotHandler):
                     chatSettings=chatSettings,
                     modelKey=ChatSettingsKey.CHAT_MODEL,
                     fallbackKey=ChatSettingsKey.CONDENSING_MODEL,
+                    # D2: content-keyed — the session identity mirrors the
+                    # per-URL condensed-cache identity, so two chats
+                    # condensing the same URL share the prompt-cache bucket.
+                    sessionId=buildSessionId("url", hashSessionIdComponent(url)),
                 )
                 logger.debug(f"Condensed len is {len(mlRet.resultText)}")
                 if mlRet.status == ModelResultStatus.FINAL and mlRet.resultText:

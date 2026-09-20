@@ -39,6 +39,7 @@ from internal.bot.models import (
 from internal.services.llm.service import LLMService
 from lib.ai import ModelResultStatus
 from lib.ai.models import ModelRunResult
+from lib.ai.session import buildSessionId
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -355,6 +356,29 @@ async def test_taroCommandSuccess() -> None:
     # drawsJson is passed as a list directly to the repository.
     drawsList = insertKwargs["drawsJson"]
     assert len(drawsList) == 3
+
+
+async def test_readingSessionIdSharedByTextAndImageCalls() -> None:
+    """One reading invocation shares a single sessionId between its two LLM calls.
+
+    ``generateText`` (interpretation) and ``generateImage`` (spread
+    illustration) of the SAME reading must carry the identical sessionId so
+    both requests hit the same prompt-cache bucket. The bucket is keyed by
+    persistent identifiers only: chat id + originating message id.
+    """
+    handler, mocks = _makeHandler()
+    em = _makeEnsuredMessage(chatId=100, messageId=42)
+
+    await _callTaro(handler, em, "three_card что меня ждёт")
+
+    textKwargs = mocks["generateText"].call_args.kwargs
+    imageKwargs = mocks["generateImage"].call_args.kwargs
+
+    expectedSessionId = buildSessionId("divination", "100", "42")
+    assert textKwargs["sessionId"] == expectedSessionId
+    assert imageKwargs["sessionId"] == expectedSessionId
+    # Pin the exact shape: namespace + explicit components joined with "-".
+    assert expectedSessionId == "gromozeka-divination-100-42"
 
 
 async def test_runesCommandNoImage() -> None:

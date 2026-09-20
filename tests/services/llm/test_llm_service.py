@@ -7,6 +7,7 @@ error handling, and integration scenarios.
 
 import asyncio
 import datetime
+import logging
 import uuid
 from typing import Any, Dict, List, Optional
 from unittest.mock import Mock, patch
@@ -29,6 +30,7 @@ from lib.ai.models import (
     ModelRunResult,
     ModelStructuredResult,
 )
+from lib.ai.session import buildSessionId
 from tests.utils import createAsyncMock
 
 # ============================================================================
@@ -2753,3 +2755,511 @@ class TestConsumerIdAttribution:
         )
 
         rateLimitMock.assert_not_called()
+
+
+# ============================================================================
+# sessionId auto-fallback Tests
+# (defense-in-depth: generation calls that omit sessionId previously fell
+#  into the shared provider-default bucket, breaking opencode-go prompt-cache
+#  affinity; now every LLMService entry point resolves a self-identifying
+#  "gromozeka-auto-<chatId|consumerId>" fallback via
+#  lib.ai.session.buildSessionId so omissions stay greppable)
+# ============================================================================
+
+
+def _makeSettingsResolvingModel(model: AbstractModel) -> Mock:
+    """Build a chatSettings mock resolving every ChatSettingsKey to ``model``.
+
+    Args:
+        model: The AbstractModel mock that ``ChatSettingsValue.toModel()``
+            should return for any settings key.
+
+    Returns:
+        A ``Mock(spec=ChatSettingsDict)`` whose ``__getitem__`` returns a
+        value mock with ``toModel() -> model`` and ``toStr() -> "test-model"``.
+    """
+    settings = Mock(spec=ChatSettingsDict)
+    valueMock = Mock(toModel=Mock(return_value=model), toStr=Mock(return_value="test-model"))
+    settings.__getitem__ = Mock(return_value=valueMock)
+    return settings
+
+
+class TestSessionIdFallback:
+    """Tests for the chat-level sessionId auto-fallback in LLMService.
+
+    Pins the approved defense-in-depth contract: when a caller omits
+    ``sessionId``, the five ``chatId``-based entry points resolve
+    ``gromozeka-auto-<chatId>`` (and ``condenseContext`` resolves
+    ``gromozeka-auto-<consumerId>``), so omitted session ids land in a
+    coarse per-chat prompt-cache bucket instead of the shared provider
+    default. Explicit session ids always win; the fallback is resolved once
+    per public entry point and inherited by all internal forwards.
+    """
+
+    async def testGenerateTextFallsBackToChatLevelSessionId(
+        self, llmService: LLMService, mockChatSettings: Mock, mockModel: Mock
+    ) -> None:
+        """``generateText`` without ``sessionId`` sends ``gromozeka-auto-<chatId>``.
+
+        The mocked model must receive the resolved chat-level fallback in the
+        ``sessionId`` kwarg instead of ``None``.
+        """
+        mockModel.generateText = createAsyncMock(
+            returnValue=ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="ok")
+        )
+        llmService.rateLimit = createAsyncMock()
+
+        await llmService.generateText(
+            [ModelMessage(role="user", content="hi")],
+            chatId=42,
+            chatSettings=mockChatSettings,
+            modelKey=mockModel,
+            fallbackKey=mockModel,
+        )
+
+        assert mockModel.generateText.await_args is not None
+        kwargs = mockModel.generateText.await_args.kwargs
+        assert kwargs.get("sessionId") == "gromozeka-auto-42"
+        # The rest of the call contract is untouched by the fallback.
+        assert kwargs.get("consumerId") == "42"
+
+    async def testGenerateTextViaLLMResolvesFallbackOnceForInnerCalls(
+        self, llmService: LLMService, mockChatSettings: Mock, mockModel: Mock
+    ) -> None:
+        """``generateTextViaLLM`` resolves the fallback once; inner calls inherit it.
+
+        Both internal forwards — the per-round ``condenseContext`` call and the
+        per-round ``generateText`` model call — must receive the SAME resolved
+        ``gromozeka-auto-<chatId>`` value, and the inner ``generateText``'s own
+        fallback guard must not re-resolve or override it. Equal downstream
+        values alone would not prove single resolution (the builder is
+        deterministic, so a discarded-then-rebuilt value looks identical), so
+        :func:`lib.ai.session.buildSessionId` is spied and pinned to exactly
+        one call.
+
+        Args:
+            llmService: Fresh LLMService instance.
+            mockChatSettings: Chat-settings mock resolving every key.
+            mockModel: AbstractModel mock.
+        """
+        mockModel.generateText = createAsyncMock(
+            returnValue=ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="ok")
+        )
+        condenseMock = createAsyncMock(
+            sideEffect=lambda messages, *args, **kwargs: (messages, {})  # type: ignore[misc]
+        )
+        llmService.condenseContext = condenseMock  # type: ignore[method-assign]
+        llmService.rateLimit = createAsyncMock()
+
+        with patch("internal.services.llm.service.buildSessionId", wraps=buildSessionId) as buildSessionIdSpy:
+            ret = await llmService.generateTextViaLLM(
+                messages=[ModelMessage(role="user", content="hi")],
+                chatId=555,
+                chatSettings=mockChatSettings,
+                modelKey=mockModel,
+                fallbackModelKey=mockModel,
+                extraData={},
+            )
+
+        assert ret.status == ModelResultStatus.FINAL
+        # The fallback was resolved exactly once — at the outer entry point.
+        buildSessionIdSpy.assert_called_once_with("auto", "555")
+        # condenseContext (invoked per round) inherits the resolved id.
+        assert condenseMock.await_args is not None
+        assert condenseMock.await_args.kwargs.get("sessionId") == "gromozeka-auto-555"
+        # The inner generateText model call inherits the SAME resolved value.
+        assert mockModel.generateText.await_args is not None
+        assert mockModel.generateText.await_args.kwargs.get("sessionId") == "gromozeka-auto-555"
+
+    async def testExplicitSessionIdWins(self, llmService: LLMService, mockChatSettings: Mock, mockModel: Mock) -> None:
+        """An explicit ``sessionId`` is forwarded verbatim — no fallback override.
+
+        The fallback fires only when ``sessionId is None``; a caller-provided
+        value must reach the model untouched.
+        """
+        mockModel.generateText = createAsyncMock(
+            returnValue=ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="ok")
+        )
+        llmService.rateLimit = createAsyncMock()
+
+        await llmService.generateText(
+            [ModelMessage(role="user", content="hi")],
+            chatId=42,
+            chatSettings=mockChatSettings,
+            modelKey=mockModel,
+            fallbackKey=mockModel,
+            sessionId="gromozeka-42-100",
+        )
+
+        assert mockModel.generateText.await_args is not None
+        assert mockModel.generateText.await_args.kwargs.get("sessionId") == "gromozeka-42-100"
+
+    async def testGenerateTextViaLLMExplicitSessionIdWins(
+        self, llmService: LLMService, mockChatSettings: Mock, mockModel: Mock
+    ) -> None:
+        """An explicit ``sessionId`` threads through ``generateTextViaLLM`` verbatim.
+
+        Both internal forwards (``condenseContext`` and the model
+        ``generateText``) must carry the caller-provided id, not a rebuilt
+        fallback.
+
+        Args:
+            llmService: Fresh LLMService instance.
+            mockChatSettings: Chat-settings mock resolving every key.
+            mockModel: AbstractModel mock.
+        """
+        mockModel.generateText = createAsyncMock(
+            returnValue=ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="ok")
+        )
+        condenseMock = createAsyncMock(
+            sideEffect=lambda messages, *args, **kwargs: (messages, {})  # type: ignore[misc]
+        )
+        llmService.condenseContext = condenseMock  # type: ignore[method-assign]
+        llmService.rateLimit = createAsyncMock()
+
+        await llmService.generateTextViaLLM(
+            messages=[ModelMessage(role="user", content="hi")],
+            chatId=42,
+            chatSettings=mockChatSettings,
+            modelKey=mockModel,
+            fallbackModelKey=mockModel,
+            extraData={},
+            sessionId="gromozeka-42-100",
+        )
+
+        assert condenseMock.await_args is not None
+        assert condenseMock.await_args.kwargs.get("sessionId") == "gromozeka-42-100"
+        assert mockModel.generateText.await_args is not None
+        assert mockModel.generateText.await_args.kwargs.get("sessionId") == "gromozeka-42-100"
+
+    async def testCondenseContextExplicitSessionIdWins(self, llmService: LLMService) -> None:
+        """An explicit ``sessionId`` reaches the condensing model verbatim.
+
+        The value deliberately differs from the ``gromozeka-auto-<consumerId>``
+        fallback shape so a regression to fallback resolution cannot pass.
+
+        Args:
+            llmService: Fresh LLMService instance.
+        """
+        messages = [
+            ModelMessage(role="system", content="sys"),
+            ModelMessage(role="user", content="hello world"),
+            ModelMessage(role="user", content="bye"),
+        ]
+        model = _makeCountingModel(4096)
+        condensing = _makeCondensingModel(1000, ["summary-0"])
+
+        await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=0,
+            force=True,
+            condensingModel=condensing,
+            condensingPrompt="Summarize.",
+            condensingSystemPrompt="Condenser.",
+            maxTokens=1000,
+            consumerId="555",
+            sessionId="gromozeka-555-100",
+        )
+
+        condensing.generateText.assert_awaited_once()
+        assert condensing.generateText.await_args is not None
+        assert condensing.generateText.await_args.kwargs.get("sessionId") == "gromozeka-555-100"
+
+    async def testGenerateImageExplicitSessionIdWins(self, llmService: LLMService) -> None:
+        """An explicit ``sessionId`` reaches the image model verbatim.
+
+        Args:
+            llmService: Fresh LLMService instance.
+        """
+        imageModel = _makeCountingModel(4096)
+        imageModel.generateImage = createAsyncMock(
+            returnValue=ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="img")
+        )
+        chatSettings = _makeSettingsResolvingModel(imageModel)
+        llmService.rateLimit = createAsyncMock()
+
+        await llmService.generateImage(
+            "a cat", chatId=42, chatSettings=chatSettings, sessionId="gromozeka-media-file-1"
+        )
+
+        imageModel.generateImage.assert_awaited_once()
+        assert imageModel.generateImage.await_args is not None
+        assert imageModel.generateImage.await_args.kwargs.get("sessionId") == "gromozeka-media-file-1"
+
+    async def testCondenseContextFallsBackToConsumerIdSessionId(self, llmService: LLMService) -> None:
+        """``condenseContext`` without ``sessionId`` uses ``gromozeka-auto-<consumerId>``.
+
+        ``condenseContext`` has no ``chatId``; ``consumerId`` is the chat
+        identity available at this layer, so the fallback derives from it.
+        """
+        messages = [
+            ModelMessage(role="system", content="sys"),
+            ModelMessage(role="user", content="hello world"),
+            ModelMessage(role="user", content="bye"),
+        ]
+        model = _makeCountingModel(4096)
+        condensing = _makeCondensingModel(1000, ["summary-0"])
+
+        await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=0,
+            force=True,
+            condensingModel=condensing,
+            condensingPrompt="Summarize.",
+            condensingSystemPrompt="Condenser.",
+            maxTokens=1000,
+            consumerId="555",
+        )
+
+        condensing.generateText.assert_awaited_once()
+        assert condensing.generateText.await_args is not None
+        kwargs = condensing.generateText.await_args.kwargs
+        assert kwargs.get("sessionId") == "gromozeka-auto-555"
+        assert kwargs.get("consumerId") == "555"
+
+    async def testCondenseContextBothNoneStaysNone(self, llmService: LLMService) -> None:
+        """``sessionId=None`` + ``consumerId=None`` leaves the session id ``None``.
+
+        With no chat identity at all there is nothing to bucket on — the model
+        call must receive ``sessionId=None`` so the provider default applies.
+        """
+        messages = [
+            ModelMessage(role="system", content="sys"),
+            ModelMessage(role="user", content="hello world"),
+            ModelMessage(role="user", content="bye"),
+        ]
+        model = _makeCountingModel(4096)
+        condensing = _makeCondensingModel(1000, ["summary-0"])
+
+        await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=0,
+            force=True,
+            condensingModel=condensing,
+            condensingPrompt="Summarize.",
+            condensingSystemPrompt="Condenser.",
+            maxTokens=1000,
+        )
+
+        condensing.generateText.assert_awaited_once()
+        assert condensing.generateText.await_args is not None
+        assert condensing.generateText.await_args.kwargs.get("sessionId") is None
+
+    async def testChatLevelFallbackDebugLogEmitted(
+        self, llmService: LLMService, mockChatSettings: Mock, mockModel: Mock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Every entry-point fallback logs at DEBUG level, naming the method.
+
+        Regression guard: the fallback records are purely informational and
+        must stay DEBUG. ``caplog.at_level(logging.DEBUG)`` captures WARNING
+        and above too, so asserting only the message text would keep passing
+        if a fallback degraded back to ``logger.warning`` — the records'
+        ``levelno`` is therefore asserted explicitly. All six fallback
+        methods are exercised.
+
+        Args:
+            llmService: Fresh LLMService instance.
+            mockChatSettings: Chat-settings mock resolving every key.
+            mockModel: AbstractModel mock.
+            caplog: pytest log-capture fixture.
+        """
+        mockModel.generateText = createAsyncMock(
+            returnValue=ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="ok")
+        )
+        llmService.rateLimit = createAsyncMock()
+
+        condenseMessages = [
+            ModelMessage(role="system", content="sys"),
+            ModelMessage(role="user", content="hello world"),
+            ModelMessage(role="user", content="bye"),
+        ]
+        countingModel = _makeCountingModel(4096)
+        condensingModel = _makeCondensingModel(1000, ["summary-0"])
+        imageModel = _makeCountingModel(4096)
+        imageModel.generateImage = createAsyncMock(
+            returnValue=ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="img")
+        )
+        embeddingModel = _makeCountingModel(4096)
+        embeddingModel.generateEmbeddings = createAsyncMock(returnValue=[0.1, 0.2])
+        structuredModel = _makeStructuredModel(True, "structured-model")
+        structuredModel.generateStructured = createAsyncMock(
+            returnValue=ModelStructuredResult(
+                rawResult=None,
+                status=ModelResultStatus.FINAL,
+                data={"x": 1},
+                resultText='{"x": 1}',
+            )
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="internal.services.llm.service"):
+            # generateTextViaLLM: the inner condenseContext is replaced for the
+            # duration so only the entry point's own fallback record exists for
+            # it (the forwarded sessionId suppresses the inner guards anyway).
+            with patch.object(
+                llmService,
+                "condenseContext",
+                createAsyncMock(sideEffect=lambda messages, *args, **kwargs: (messages, {})),  # type: ignore[misc]
+            ):
+                await llmService.generateTextViaLLM(
+                    messages=[ModelMessage(role="user", content="hi")],
+                    chatId=1,
+                    chatSettings=mockChatSettings,
+                    modelKey=mockModel,
+                    fallbackModelKey=mockModel,
+                    extraData={},
+                )
+            # condenseContext falls back to the consumerId-derived bucket.
+            await llmService.condenseContext(
+                condenseMessages,
+                countingModel,
+                keepFirstN=0,
+                keepLastN=0,
+                force=True,
+                condensingModel=condensingModel,
+                condensingPrompt="Summarize.",
+                condensingSystemPrompt="Condenser.",
+                maxTokens=1000,
+                consumerId="2",
+            )
+            await llmService.generateText(
+                [ModelMessage(role="user", content="hi")],
+                chatId=3,
+                chatSettings=mockChatSettings,
+                modelKey=mockModel,
+                fallbackKey=mockModel,
+            )
+            await llmService.generateStructured(
+                [ModelMessage(content="give me x")],
+                {"type": "object"},
+                chatId=4,
+                doRateLimit=False,
+                chatSettings=mockChatSettings,
+                modelKey=structuredModel,
+                fallbackKey=structuredModel,
+            )
+            await llmService.generateImage("a cat", chatId=5, chatSettings=_makeSettingsResolvingModel(imageModel))
+            await llmService.generateEmbedding(
+                "hello", chatId=6, chatSettings=_makeSettingsResolvingModel(embeddingModel)
+            )
+
+        fallbackRecords = [record for record in caplog.records if "sessionId not provided" in record.message]
+        for methodName in (
+            "generateTextViaLLM",
+            "condenseContext",
+            "generateText",
+            "generateStructured",
+            "generateImage",
+            "generateEmbedding",
+        ):
+            matching = [
+                record
+                for record in fallbackRecords
+                if record.message.startswith(f"{methodName}: sessionId not provided")
+            ]
+            assert len(matching) == 1, (
+                f"expected exactly one fallback record for {methodName}, got "
+                f"{[record.levelname + ': ' + record.message for record in matching]}"
+            )
+        for record in fallbackRecords:
+            assert record.levelno == logging.DEBUG, f"fallback log degraded to {record.levelname}: {record.message}"
+
+        # With an explicit sessionId no fallback record is emitted at all —
+        # captured at INFO so a WARNING-degraded record would still surface.
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger="internal.services.llm.service"):
+            await llmService.generateText(
+                [ModelMessage(role="user", content="hi")],
+                chatId=42,
+                chatSettings=mockChatSettings,
+                modelKey=mockModel,
+                fallbackKey=mockModel,
+                sessionId="gromozeka-42-100",
+            )
+        assert not [record for record in caplog.records if "sessionId not provided" in record.message]
+
+    async def testNegativeChatIdDoubleDashShape(
+        self, llmService: LLMService, mockChatSettings: Mock, mockModel: Mock
+    ) -> None:
+        """Negative group chat ids produce the expected double-dash session id.
+
+        ``buildSessionId`` sanitization preserves leading dashes (Telegram
+        group chats are negative): ``buildSessionId("auto", "-100123")`` →
+        ``gromozeka-auto--100123``.
+        """
+        mockModel.generateText = createAsyncMock(
+            returnValue=ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="ok")
+        )
+        llmService.rateLimit = createAsyncMock()
+
+        await llmService.generateText(
+            [ModelMessage(role="user", content="hi")],
+            chatId=-100123,
+            chatSettings=mockChatSettings,
+            modelKey=mockModel,
+            fallbackKey=mockModel,
+        )
+
+        assert mockModel.generateText.await_args is not None
+        assert mockModel.generateText.await_args.kwargs.get("sessionId") == "gromozeka-auto--100123"
+
+    async def testGenerateStructuredFallsBackToChatLevelSessionId(
+        self, llmService: LLMService, mockChatSettings: Mock, mockLlmManager: Mock, sampleSchema: Dict[str, Any]
+    ) -> None:
+        """``generateStructured`` without ``sessionId`` sends ``gromozeka-auto-<chatId>``."""
+        primaryModel = _makeStructuredModel(True, "primary-model")
+        fallbackModel = _makeStructuredModel(True, "fallback-model")
+        primaryModel.generateStructured.return_value = ModelStructuredResult(
+            rawResult=None,
+            status=ModelResultStatus.FINAL,
+            data={"x": 1},
+            resultText='{"x": 1}',
+        )
+
+        await llmService.generateStructured(
+            [ModelMessage(content="give me x")],
+            sampleSchema,
+            chatId=42,
+            doRateLimit=False,
+            chatSettings=mockChatSettings,
+            modelKey=primaryModel,
+            fallbackKey=fallbackModel,
+        )
+
+        primaryModel.generateStructured.assert_awaited_once()
+        assert primaryModel.generateStructured.await_args is not None
+        assert primaryModel.generateStructured.await_args.kwargs.get("sessionId") == "gromozeka-auto-42"
+
+    async def testGenerateImageFallsBackToChatLevelSessionId(self, llmService: LLMService) -> None:
+        """``generateImage`` without ``sessionId`` sends ``gromozeka-auto-<chatId>``."""
+        imageModel = _makeCountingModel(4096)
+        imageModel.generateImage = createAsyncMock(
+            returnValue=ModelRunResult(rawResult={}, status=ModelResultStatus.FINAL, resultText="img")
+        )
+        chatSettings = _makeSettingsResolvingModel(imageModel)
+        llmService.rateLimit = createAsyncMock()
+
+        await llmService.generateImage("a cat", chatId=42, chatSettings=chatSettings)
+
+        imageModel.generateImage.assert_awaited_once()
+        assert imageModel.generateImage.await_args is not None
+        assert imageModel.generateImage.await_args.kwargs.get("sessionId") == "gromozeka-auto-42"
+
+    async def testGenerateEmbeddingFallsBackToChatLevelSessionId(self, llmService: LLMService) -> None:
+        """``generateEmbedding`` without ``sessionId`` sends ``gromozeka-auto-<chatId>``."""
+        embeddingModel = _makeCountingModel(4096)
+        embeddingModel.generateEmbeddings = createAsyncMock(returnValue=[0.1, 0.2])
+        chatSettings = _makeSettingsResolvingModel(embeddingModel)
+        llmService.rateLimit = createAsyncMock()
+
+        ret = await llmService.generateEmbedding("hello", chatId=123, chatSettings=chatSettings)
+
+        assert ret is not None
+        embeddingModel.generateEmbeddings.assert_awaited_once()
+        assert embeddingModel.generateEmbeddings.await_args is not None
+        assert embeddingModel.generateEmbeddings.await_args.kwargs.get("sessionId") == "gromozeka-auto-123"

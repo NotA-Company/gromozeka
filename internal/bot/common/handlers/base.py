@@ -76,6 +76,7 @@ from lib.ai import (
     ModelMessage,
     ModelResultStatus,
 )
+from lib.ai.session import buildSessionId
 from lib.stats import NullStatsStorage, StatsStorage
 
 logger = logging.getLogger(__name__)
@@ -753,6 +754,13 @@ class BaseBotHandler(CommandHandlerMixin):
         Returns:
             Session ID string in the form
             ``gromozeka-<chatId>-<rootMessageId>``, stable across restarts
+
+        Raises:
+            ValueError: If a component is empty or sanitizes to empty, or
+                if the joined session id exceeds 128 characters. NOT caught
+                by the DB-error fallback above: that ``try``/``except``
+                only guards thread-root resolution, while the
+                ``buildSessionId`` call runs outside it and propagates.
         """
         chatId = ensuredMessage.recipient.id
         rootMessageId: MessageId = ensuredMessage.messageId
@@ -762,7 +770,18 @@ class BaseBotHandler(CommandHandlerMixin):
                 rootMessageId = dbMessage["root_message_id"]
         except Exception as e:
             logger.debug(f"Failed to resolve thread root for session ID, falling back to message ID: {e}")
-        return f"gromozeka-{chatId}-{rootMessageId.asStr()}"
+        # Byte-identity: buildSessionId reproduces the previous
+        # f"gromozeka-{chatId}-{...}" shape exactly for int chat ids — the
+        # leading "-" of a negative group chat id is preserved, yielding the
+        # historical double dash (e.g. "gromozeka--100123-42"). The identity
+        # guarantee covers nonempty token-safe ids whose complete result
+        # fits within 128 characters; empty components and longer results
+        # now raise ValueError where the old f-string passed them through.
+        # Known accepted delta: a Max-platform string message id containing
+        # characters outside [A-Za-z0-9._-] is now replaced with "-" (the
+        # old f-string passed such characters through unchanged) —
+        # deliberate, deterministic, and limited to exotic ids.
+        return buildSessionId(str(chatId), rootMessageId.asStr())
 
     async def getThreadByMessageForLLM(
         self,
@@ -944,6 +963,8 @@ class BaseBotHandler(CommandHandlerMixin):
             condensingModel=chatSettings[ChatSettingsKey.CONDENSING_MODEL].toModel(),
             condensingPrompt=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
             condensingSystemPrompt=chatSettings[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT].toStr(),
+            sessionId=await self.getLLMRequestSessionId(ensuredMessage),
+            consumerId=str(chatId),
         )
 
         condenseCacheMessages.extend(condensedRet)
@@ -962,6 +983,8 @@ class BaseBotHandler(CommandHandlerMixin):
                 condensingModel=chatSettings[ChatSettingsKey.CONDENSING_MODEL].toModel(),
                 condensingPrompt=chatSettings[ChatSettingsKey.CONDENSING_PROMPT].toStr(),
                 condensingSystemPrompt=chatSettings[ChatSettingsKey.CONDENSING_SYSTEM_PROMPT].toStr(),
+                sessionId=await self.getLLMRequestSessionId(ensuredMessage),
+                consumerId=str(chatId),
             )
             # We'll need to rewrite cache, so empty it here
             condenseCache = list(condensingDictMap.values())
@@ -1434,6 +1457,7 @@ class BaseBotHandler(CommandHandlerMixin):
                 chatSettings=chatSettings,
                 modelKey=ChatSettingsKey.IMAGE_PARSING_MODEL,
                 fallbackKey=ChatSettingsKey.IMAGE_PARSING_FALLBACK_MODEL,
+                sessionId=buildSessionId("media", fileUniqueId),
             )
             logger.debug(f"Image LLM Response: {llmRet}")
 

@@ -41,6 +41,7 @@ import dataclasses
 import json
 import logging
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -76,9 +77,13 @@ httpx2.alias_httpx()
 
 from internal.config.manager import ConfigManager  # noqa: E402
 from lib.ai import AbstractModel, LLMManager, ModelMessage, ModelResultStatus, ModelStructuredResult  # noqa: E402
+from lib.ai.session import buildSessionId  # noqa: E402
 from scripts._lib.bootstrap import bootstrapProxy  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+# Per-run session bucket for opencode-go prompt-cache affinity (see lib/ai/session.py).
+_SESSION_TS = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 # ---------------------------------------------------------------------------
 # ANSI colour helpers (used only when stdout is a TTY)
@@ -275,6 +280,7 @@ async def probeModel(modelName: str, model: AbstractModel, providerName: str) ->
                 schema=_PROBE_SCHEMA,
                 schemaName="checkResponse",
                 strict=True,
+                sessionId=buildSessionId("script", "check-structured-output", modelName, _SESSION_TS),
             ),
             timeout=_PROBE_TIMEOUT_SECONDS,
         )

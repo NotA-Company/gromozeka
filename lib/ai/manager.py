@@ -201,7 +201,7 @@ class LLMManager:
                 logger.info(f"Added model {modelName} to provider {providerName}")
 
             except Exception as e:
-                logger.error(f"Failed to initialize model {modelConfig.get('name', 'unknown')}: {e}")
+                logger.exception(f"Failed to initialize model {modelName}: {e}")
 
     def listModels(self) -> List[str]:
         """List all available models across all providers.

@@ -119,22 +119,37 @@ model.modelId      # str
 `consumerId` (typically `str(chatId)`) is forwarded by `LLMService` to every generation method and used as the stats-storage partition key — see [`services.md`](services.md). Embeddings have **no** `fallbackModels` parameter: vectors from different models live in incompatible spaces, so swapping mid-stream would silently corrupt downstream cosine scores.
 
 ### 1.3 Sessions, fallback, statistics, and message construction
-
 **Request session identification (`sessionId`):** every public generation
-method accepts an optional `sessionId` — a stable conversation identifier
-the bot fills as `gromozeka-<chatId>-<rootMessageId>` (built by
-`BaseBotHandler.getLLMRequestSessionId`, `internal/bot/common/handlers/base.py`).
+method accepts an optional `sessionId` — a stable identifier built
+exclusively via the builders in [`lib/ai/session.py`](../../lib/ai/session.py)
+(`buildSessionId` / `sanitizeSessionIdComponent` / `hashSessionIdComponent`;
+token-safe `[A-Za-z0-9._-]` charset, 128-char cap, `ValueError` on
+violations). Conversation-shaped flows use
+`gromozeka-<chatId>-<rootMessageId>` (built by
+`BaseBotHandler.getLLMRequestSessionId`, `internal/bot/common/handlers/base.py`);
+one-shot content and feature flows use domain-tagged ids
+(`gromozeka-media-<fileUniqueId>`, `gromozeka-url-<hash(url)>`,
+`gromozeka-draw-<chatId>-<messageId>`, `gromozeka-memory-…`) — the full
+semantic-domain scheme lives in [`architecture.md`](architecture.md) ADR-026.
 For the duration of the call it is exposed to provider code via a
 task-local `ContextVar` (`getCurrentRequestSessionId()` in
 [`lib/ai/abstract.py`](../../lib/ai/abstract.py)) — task-local means
 concurrent requests never observe each other's session. `LLMService`
 threads `sessionId` through `generateTextViaLLM` / `generateText` /
 `generateStructured` / `generateImage` / `generateEmbedding`, including the
-condensing path inside the tool loop. Consumer: the `opencode-go` provider
+condensing path inside the tool loop. When a caller omits `sessionId`,
+`LLMService` resolves a coarse chat-level fallback `gromozeka-auto-<chatId>`
+via `buildSessionId` in `lib/ai/session.py` (`condenseContext`, which has no
+`chatId`, derives `gromozeka-auto-<consumerId>`; when both are `None` the id
+stays `None`) — the `gromozeka-auto-` tag keeps omissions greppable in logs
+and headers, and the fallback resolves once per public entry point (inner
+forwards inherit the resolved value). Consumer: the `opencode-go` provider
 uses it to fill the mandatory `x-opencode-session` header (OpenCode Go
-requires it from 2026-09-06 for prompt-cache optimization); when no
-request session is set, the provider falls back to its `session_fallback`
-config value (default `"gromozeka"`). User `customParams.extra_headers`
+requires it from 2026-09-06 for prompt-cache optimization); the provider's
+`session_fallback` config value (default `"gromozeka"`) now applies only to
+calls that still reach it with no session set at all (the residual
+`condenseContext` `None`+`None` case and direct `lib/ai` callers). User
+`customParams.extra_headers`
 merge at the header level and win per header name. Separately, all
 OpenAI-compatible clients identify themselves with a
 `User-Agent: GromozekaBot/<version>` `default_headers` entry
@@ -192,7 +207,6 @@ imgMsg = ModelImageMessage(
     image=bytearray(imageData),
 )
 ```
-
 ### 1.4 Structured output and provider support
 
 **Structured (JSON-Schema) output:**
