@@ -49,7 +49,7 @@ disabled-by-default = [
     "qwen/qwen3.8-27b",
     "qwen/qwen3.8-max*",
 ]
-tier = "paid"
+tier = "friend"
 
 #[providers.openrouter.defaults]
 #support-tools = true

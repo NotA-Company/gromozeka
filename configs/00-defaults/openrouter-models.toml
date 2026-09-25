@@ -2,7 +2,7 @@
 # Changes will be overwritten by scripts/fetch_models.py.
 #
 # Source: https://models.dev/api.json (provider key: "openrouter")
-# Fetched: 2026-09-19T21:47:57.416754+00:00
+# Fetched: 2026-09-25T14:01:21.511354+00:00
 # Regenerate: ./venv/bin/python3 scripts/fetch_models.py --provider openrouter
 # Filters: scripts/models-filters.toml
 #
@@ -13,7 +13,7 @@
 
 # DeepSeek V4 Flash
 # https://openrouter.ai/deepseek/deepseek-v4-flash
-# Price: $0.03948 in / $0.07896 out per 1M tokens (cache read: $0.007896)
+# Price: $0.049 in / $0.098 out per 1M tokens (cache read: $0.0098)
 [models.models."openrouter/deepseek-v4-flash"]
 enabled = true
 provider = "openrouter"
@@ -25,11 +25,11 @@ support_text = true
 support_images = false
 support_image_input = false
 support_structured_output = true
-tier = "paid"
+tier = "friend"
 
 # DeepSeek V4 Flash 0731
 # https://openrouter.ai/deepseek/deepseek-v4-flash-0731
-# Price: $0.04 in / $0.08 out per 1M tokens (cache read: $0.016)
+# Price: $0.03 in / $0.32 out per 1M tokens (cache read: $0.016)
 [models.models."openrouter/deepseek-v4-flash-0731"]
 enabled = true
 provider = "openrouter"
@@ -41,11 +41,11 @@ support_text = true
 support_images = false
 support_image_input = false
 support_structured_output = true
-tier = "paid"
+tier = "friend"
 
 # DeepSeek V4 Flash Latest
 # https://openrouter.ai/~deepseek/deepseek-v4-flash-latest
-# Price: $0.04 in / $0.08 out per 1M tokens (cache read: $0.016)
+# Price: $0.03 in / $0.32 out per 1M tokens (cache read: $0.016)
 [models.models."openrouter/deepseek-v4-flash-latest"]
 enabled = true
 provider = "openrouter"
@@ -57,11 +57,11 @@ support_text = true
 support_images = false
 support_image_input = false
 support_structured_output = true
-tier = "paid"
+tier = "friend"
 
 # DeepSeek V4 Flash Vision Exp
 # https://openrouter.ai/deepseek/deepseek-v4-flash-vision-exp
-# Price: $0.2156 in / $0.6468 out per 1M tokens (cache read: $0.00686)
+# Price: $0.22 in / $0.66 out per 1M tokens (cache read: $0.007)
 [models.models."openrouter/deepseek-v4-flash-vision-exp"]
 enabled = true
 provider = "openrouter"
@@ -73,7 +73,7 @@ support_text = true
 support_images = false
 support_image_input = true
 support_structured_output = true
-tier = "paid"
+tier = "friend"
 
 # DeepSeek V4.1 Flash
 # https://openrouter.ai/deepseek/deepseek-v4.1-flash
@@ -89,7 +89,7 @@ support_text = true
 support_images = false
 support_image_input = true
 support_structured_output = true
-tier = "paid"
+tier = "friend"
 
 # Free Models Router
 # https://openrouter.ai/openrouter/free
@@ -185,7 +185,7 @@ support_text = true
 support_images = false
 support_image_input = true
 support_structured_output = false
-tier = "paid"
+tier = "friend"
 
 # Qwen3.8 2.4T A95B
 # https://openrouter.ai/qwen/qwen3.8-2.4t-a95b
@@ -201,11 +201,11 @@ support_text = true
 support_images = false
 support_image_input = false
 support_structured_output = true
-tier = "paid"
+tier = "friend"
 
 # Qwen3.8 27B
 # https://openrouter.ai/qwen/qwen3.8-27b
-# Price: $0.214 in / $2.55 out per 1M tokens (cache read: $0.15)
+# Price: $0.42 in / $3 out per 1M tokens (cache read: $0.085)
 [models.models."openrouter/qwen3.8-27b"]
 enabled = false
 provider = "openrouter"
@@ -217,7 +217,7 @@ support_text = true
 support_images = false
 support_image_input = true
 support_structured_output = true
-tier = "paid"
+tier = "friend"
 
 # Qwen3.8 Flash
 # https://openrouter.ai/qwen/qwen3.8-flash
@@ -233,7 +233,7 @@ support_text = true
 support_images = false
 support_image_input = true
 support_structured_output = true
-tier = "paid"
+tier = "friend"
 
 # Qwen3.8 Max 0902
 # https://openrouter.ai/qwen/qwen3.8-max-0902
@@ -249,4 +249,36 @@ support_text = true
 support_images = false
 support_image_input = true
 support_structured_output = true
-tier = "paid"
+tier = "friend"
+
+# Qwen 3.8 Max Prime
+# https://openrouter.ai/qwen/qwen3.8-max-prime
+# Price: $4 in / $12 out per 1M tokens (cache read: $0.5)
+[models.models."openrouter/qwen3.8-max-prime"]
+enabled = false
+provider = "openrouter"
+model_id = "qwen/qwen3.8-max-prime"
+model_version = "latest"
+context = 1000000
+support_tools = true
+support_text = true
+support_images = false
+support_image_input = true
+support_structured_output = true
+tier = "friend"
+
+# Qwen3.8 Omni Flash
+# https://openrouter.ai/qwen/qwen3.8-omni-flash
+# Price: $0.15 in / $0.47 out per 1M tokens (cache read: $0.016)
+[models.models."openrouter/qwen3.8-omni-flash"]
+enabled = true
+provider = "openrouter"
+model_id = "qwen/qwen3.8-omni-flash"
+model_version = "latest"
+context = 1000000
+support_tools = true
+support_text = true
+support_images = false
+support_image_input = true
+support_structured_output = true
+tier = "friend"
