@@ -128,7 +128,7 @@ context         = 1048576
 support_tools   = true
 support_text    = true
 support_images  = false
-support_image_input = false
+support_image_input = true
 support_structured_output = true
 tier            = "paid"
 
