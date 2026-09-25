@@ -4,7 +4,7 @@ enabled         = true
 provider        = "yc-openai"
 model_id        = "aliceai-llm"
 model_version   = "latest"
-context         = 65536
+context         = 131072
 support_tools   = true
 support_text    = true
 support_images  = false
@@ -16,7 +16,7 @@ customParams.temperature = 0.2
 [models.models.aliceai-llm-flash]
 enabled         = true
 provider        = "yc-openai"
-model_id        = "aliceai-llm"
+model_id        = "aliceai-llm-flash"
 model_version   = "latest"
 context         = 65536
 support_tools   = true
@@ -55,6 +55,58 @@ support_structured_output = true
 tier            = "paid"
 customParams.temperature = 0.3
 
+[models.models."yc/gpt-oss-120b"]
+enabled         = false # Deprecated from 2026.10.30
+provider        = "yc-openai"
+model_id        = "gpt-oss-120b"
+model_version   = "latest"
+context         = 131072
+support_tools   = true
+support_text    = true
+support_images  = false
+support_image_input = false
+support_structured_output = true
+tier            = "paid"
+
+[models.models."yc/gpt-oss-20b"]
+enabled         = false # Deprecated from 2026.10.30
+provider        = "yc-openai"
+model_id        = "gpt-oss-20b"
+model_version   = "latest"
+context         = 131072
+support_tools   = true
+support_text    = true
+support_images  = false
+support_image_input = false
+support_structured_output = true
+tier            = "paid"
+
+[models.models."yc/yandexgpt-5-pro"]
+enabled         = false # Worse and more expensive than Alice AI
+provider        = "yc-openai"
+model_id        = "yandexgpt-5-pro"
+model_version   = "latest"
+context         = 32768
+support_tools   = true
+support_text    = true
+support_images  = false
+support_image_input = false
+support_structured_output = true
+tier            = "paid"
+
+[models.models."yc/yandexgpt-5-lite"]
+enabled         = false # Worse and more expensive than Alice AI Flash
+provider        = "yc-openai"
+model_id        = "yandexgpt-5-lite"
+model_version   = "latest"
+context         = 32768
+support_tools   = true
+support_text    = true
+support_images  = false
+support_image_input = false
+support_structured_output = true
+tier            = "paid"
+
 [models.models."yc/deepseek-v4-flash"]
 provider        = "yc-openai"
 model_id        = "deepseek-v4-flash"
@@ -67,6 +119,18 @@ support_image_input = false
 support_structured_output = true
 tier            = "paid"
 customParams.temperature = 0.3
+
+[models.models."yc/deepseek-v4.1-flash"]
+provider        = "yc-openai"
+model_id        = "deepseek-v4.1-flash"
+model_version   = "latest"
+context         = 1048576
+support_tools   = true
+support_text    = true
+support_images  = false
+support_image_input = false
+support_structured_output = true
+tier            = "paid"
 
 [models.models."yc/qwen3.6-35b-a3b"]
 provider        = "yc-openai"
@@ -81,6 +145,19 @@ support_structured_output = true
 input_image_format = ["image/png", "image/jpeg"]
 tier            = "paid"
 customParams.temperature = 0.3
+
+[models.models."yc/qwen3-235b-a22b-fp8"]
+enabled         = false # Deprecated from 2026.09.30
+provider        = "yc-openai"
+model_id        = "qwen3-235b-a22b-fp8"
+model_version   = "latest"
+context         = 262144
+support_tools   = true
+support_text    = true
+support_images  = false
+support_image_input = false
+support_structured_output = true
+tier            = "paid"
 
 [models.models."aliceai-image-art"]
 provider        = "yc-openai"
