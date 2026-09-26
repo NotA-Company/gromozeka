@@ -37,6 +37,7 @@ Use these files as companions to [`../teamlead-memory.md`](../teamlead-memory.md
 - [`embedding-model-lookup-refactor.md`](embedding-model-lookup-refactor.md) — Durable notes for the embedding model-lookup refactor: migration_025, `EmbeddingModelsRepository`, vec0 partition key, D7 INTEGER PK, Gate 1+2 reviews, git-stash disaster recovery, dataSource plumbing, numpy removal.
 - [`full-docs-audit.md`](full-docs-audit.md) — Durable notes from the 2026-07-18 85-file full `/docs` audit: ~78 fixes, 13 archives, 5-phase process, ~30 YC SDK drifts, 19 recurring drift patterns, archive-vs-live decision principle.
 - [`httpx2-migration.md`](httpx2-migration.md) — httpx→httpx2 research + completed migration (2026-08-13): `alias_httpx()`, PTB b2 decision, native SOCKS `proxy=`, lockfile facts, h2-over-SOCKS5 verdict (D3 guard removed as dead weight).
+- [`markdown-mcp-adoption-arc.md`](markdown-mcp-adoption-arc.md) — markdown-mcp adoption arc (2026-09-14): owner decisions, live-verified permission matrix (write-trio denies, explore read-allows), benchmark verdict, global agent tuning, search-quality evidence + upstream revalidation.
 
 ### LLM subsystem and review-campaign memories
 
@@ -44,6 +45,7 @@ Use these files as companions to [`../teamlead-memory.md`](../teamlead-memory.md
 - [`llm-empty-truncated-final.md`](llm-empty-truncated-final.md) — Empty `TRUNCATED_FINAL` production bug (Qwen3 budget exhaustion → empty content → `BadRequest`): Item 1 observability dump + handler-level `SKIPPED_BY_MODEL` silent-drop mitigation shipped; Option A provider downgrade, `bot.py` empty-string guard, and regression tests still pending.
 - [`llm-max-rounds.md`](llm-max-rounds.md) — Durable notes for the `LLMService.generateTextViaLLM(maxRounds=...)` budget/round-limit feature: `budgetExhausted` gates, `roundLimitHit` flag, steering fold-in, layering of `internal/services/llm/constants.py`.
 - [`llm-messages-handler.md`](llm-messages-handler.md) — Durable anchors for `internal/bot/common/handlers/llm_messages.py` (`_sendLLMChatMessage`, `handleReply`/`handleMention`/`handleRandomMessage`, abstention sentinel, `<media-description>` extraction, chat-settings symbol locations).
+- [`llm-sessionid-domains.md`](llm-sessionid-domains.md) — lib/ai sessionId contract & domain design (2026-09-20): pre-implementation audit snapshot (ContextVar transport, sole consumer, ~30 omission sites) + completed D1–D6 implementation (lib/ai/session.py, auto-fallback, grabliarium seam); canonical record ADR-026.
 - [`llm-tool-call-healing.md`](llm-tool-call-healing.md) — Durable notes for the LLM tool-call healing subsystem (`_tryHealToolCall` orchestrator + 6 matchers, broken-known-tool fallback, `LLMToolCall.errorMessage` consumer-audit gotcha).
 - [`llm-user-message-format.md`](llm-user-message-format.md) — Durable notes for the LLM user-message JSON format: `EnsuredMessage.formatForLLM` JSON branch, `chat-prompt-suffix` enumeration, ADR-018/019 render entry points.
 - [`review-fix-lessons.md`](review-fix-lessons.md) — Durable lessons from the 2026-07-01 review-fix round on branch `max-v2`: single-developer many-fix dispatch, `logger.exception` misuse pattern, `except Exception` narrowing, config-defaults alignment.
@@ -54,8 +56,11 @@ Use these files as companions to [`../teamlead-memory.md`](../teamlead-memory.md
 - [`max-api-migration.md`](max-api-migration.md) — durable notes for the Max API endpoint migration: `platform-api2`, TLS/SSL, SOCKS5 caveat, polling.
 - [`max-webhook-receiver-extraction.md`](max-webhook-receiver-extraction.md) — receiver → lib arc (ADR-025): ratification + design rounds, own-DB amendment (migration_029), commit-per-step series B→G, Docker artifacts + httpx2-alias rework, setup-docs live audit, scripts alias-crash fix, receiver runtime-closure facts.
 - [`memories-context-dedup.md`](memories-context-dedup.md) — ADR-018 lazy render-time memory resolution + per-context newest→oldest dedup; companion to `user-memories.md` §"Render-time resolution".
+- [`model-migration-tool.md`](model-migration-tool.md) — `scripts/migrate_models.py` arc (2026-09-19): chat-settings model-id migration tool + wrapper + 21 offline tests; verified facts for tools touching model ids; argparse exit-2 / dotenv-dependent LLMManager / override-without-base gotchas.
+- [`models-catalog-generation.md`](models-catalog-generation.md) — models-catalog generation arc (2026-09-14 → 2026-09-25): `scripts/fetch_models.py` pipeline + drift-guard tests, tier-rescue follow-on (`ChatTier.resolveModelTier`), price comments, Yandex manual-catalog facts.
 - [`proxy.md`](proxy.md) — durable notes for `lib/proxy/`, proxy configuration, per-service proxy overrides, HTTP client inventory, and the proxy refactoring anti-patterns.
 - [`proxy-lifecycle.md`](proxy-lifecycle.md) — durable notes for the proxy lifecycle management feature: `ProxyService`, `ProxyLifecycle`, subprocess management, health checks, and call-site migration.
+- [`vision-flag.md`](vision-flag.md) — per-model `support_image_input` vision flag arc (2026-09-20): catalog pipeline touchpoints, test pins, /configure eye-emoji label, capability-metadata-only stance.
 
 ### Handlers and runtime subsystems
 
