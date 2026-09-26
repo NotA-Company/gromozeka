@@ -202,7 +202,6 @@ gromozeka/
 ```
 
 #### internal/config/ and internal/database/
-
 ```
 │   ├── config/                     # Configuration management
 │   │   └── manager.py              # ConfigManager - hierarchical TOML loader
@@ -238,10 +237,9 @@ gromozeka/
 │   │       ├── base.py             # BaseMigration abstract class
 │   │       ├── manager.py          # MigrationManager - auto-discovery + apply
 │   │       ├── create_migration.py # Script to scaffold new migrations
-│   │       └── versions/           # Migration files (migration_001 to migration_029)
+│   │       └── versions/           # Migration files (migration_001 to migration_030)
 │   │
 ```
-
 #### internal/services/ and internal/models/
 
 ```

@@ -752,6 +752,17 @@ class ConfigureCommandHandler(BaseBotHandler):
             f"Новое значение:\n```\n{chatSettings[key].toStr()}\n```\n"
         )
 
+        # Native-vision null-backend warning (design §3.2, fail-soft layer 1):
+        # enabling native-vision while the storage backend is the no-op null
+        # backend means images will never actually be stored. Tell the owner
+        # right in the confirmation instead of failing silently later.
+        if key == ChatSettingsKey.NATIVE_VISION and action == ButtonConfigureAction.SetTrue:
+            if self.storage.backendType == "null":
+                resp += (
+                    "\n⚠️ **Внимание:** для этой настройки требуется настроенное хранилище "
+                    "(storage backend) — при текущем null-хранилище изображения сохраняться не будут.\n"
+                )
+
         keyboard.append(
             [
                 CallbackButton(

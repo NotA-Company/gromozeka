@@ -19,6 +19,7 @@ The documentation tree is indexed by audience (humans / agents / reference) in [
 - **Provider fallback**: Automatic failover between AI providers
 - **AI tool calling**: Function calling support for extended capabilities
 - **Image generation and analysis**: Text-to-image and image/sticker understanding
+- **Native vision**: optional per-chat `native-vision` setting (owner-settable, default off) sends images/static stickers directly to vision-capable chat models instead of text descriptions; requires a configured storage backend; EXIF-stripped at store
 - **Media transcription (speech-to-text)**: Voice/video/video-note/audio transcripts delivered to the LLM as a structured `mediaDescription` field; default-off. Transcription requires all three activation gates: global `[stt].enabled = true` plus the per-chat `PARSE_ATTACHMENTS` and friend-gated `TRANSCRIBE_MEDIA` settings. Final Yandex mono submissions automatically request opaque, recording-local speaker labels; opt-in `[stt].force-mono` downmixes compatible multi-channel audio.
 - **ML-powered spam detection**: Naive Bayes classifier with learning (`/spam`, `/learn_spam`, `/learn_ham`)
 - **Divination**: Tarot and runes readings with LLM-based layout discovery
@@ -26,7 +27,7 @@ The documentation tree is indexed by audience (humans / agents / reference) in [
 - **Web search**: Yandex Search integration with caching and rate limiting
 - **Chat summarization**: Summarize conversations and topics
 - **Hierarchical TOML config**: Layered `--config-dir` overrides with `${VAR}` substitution
-- **SQLite with provider abstraction**: PostgreSQL and MySQL providers exist; 29 versioned migrations
+- **SQLite with provider abstraction**: PostgreSQL and MySQL providers exist; 30 versioned migrations
 - **Rate limiting**: Sliding window algorithm with multiple queues
 - **File storage**: Local filesystem or S3-compatible via `StorageService`
 - **Custom handler loading**: Dynamic handler loading via TOML config

@@ -250,6 +250,34 @@ class TestStorageServiceInjectConfigErrors:
                 service.injectConfig(mockConfigManager)
 
 
+class TestStorageServiceBackendType:
+    """Test the read-only ``backendType`` introspection property"""
+
+    def testBackendTypeUninitializedReturnsNone(self):
+        """Test that backendType is None before initialization"""
+        service = StorageService.getInstance()
+
+        assert service.backendType is None
+
+    def testBackendTypeNull(self, mockConfigManager):
+        """Test that a configured null backend reports the "null" type"""
+        mockConfigManager.getStorageConfig.return_value = {"type": "null"}
+
+        service = StorageService.getInstance()
+        service.injectConfig(mockConfigManager)
+
+        assert service.backendType == "null"
+
+    def testBackendTypeFS(self, mockConfigManager, tmp_path):
+        """Test that a configured filesystem backend reports the "fs" type"""
+        mockConfigManager.getStorageConfig.return_value = {"type": "fs", "fs": {"base-dir": str(tmp_path)}}
+
+        service = StorageService.getInstance()
+        service.injectConfig(mockConfigManager)
+
+        assert service.backendType == "fs"
+
+
 class TestStorageServiceOperations:
     """Test StorageService operations"""
 

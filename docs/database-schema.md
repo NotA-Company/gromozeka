@@ -155,6 +155,11 @@ Migrations are located in [`internal/database/migrations/versions/`](../internal
 | 28 | [`migration_028_add_stat_events_retention_index.py`](../internal/database/migrations/versions/migration_028_add_stat_events_retention_index.py:1) | Add retention index on stat_events (processed, created_at) to support efficient deletion of processed events older than the retention window |
 | 29 | [`migration_029_drop_webhook_updates.py`](../internal/database/migrations/versions/migration_029_drop_webhook_updates.py:1) | Drops `webhook_updates` + `idx_webhook_updates_unprocessed` from the bot's database — the table moved to the webhook receiver's own database (ADR-025; `lib/max_webhook_receiver/` self-heals both objects at startup over `webhook_receiver_data.db`). `down()` recreates both from the same lib-owned DDL |
 
+#### Native Vision (Migration 30)
+
+| Version | File | Description |
+|---------|------|-------------|
+| 30 | [`migration_030_add_vision_url.py`](../internal/database/migrations/versions/migration_030_add_vision_url.py:1) | Adds nullable `vision_url TEXT` (no default) to [`media_attachments`](#media_attachments) — the StorageService key of the NORMALIZED image bytes (long-edge capped, re-encoded, EXIF-stripped via `lib.ai.models.normalizeVisionImageStrict`) attached natively by the native-vision feature; distinct from `local_url`, which keeps serving the ORIGINAL bytes. Intentionally nullable with no default: pre-feature rows have no vision bytes, and "has vision bytes" stays a cheap `NULL` predicate a future TTL-GC cron can clear with one UPDATE. `down()` runs `DROP COLUMN vision_url` (SQLite ≥ 3.35, same constraint as migration_026's rollback). Spec: [`docs/design/native-vision-design-v1.md`](design/native-vision-design-v1.md); see also ADR-027 in [`docs/llm/architecture.md`](llm/architecture.md). |
 ### Creating New Migrations
 
 1. Create `internal/database/migrations/versions/migration_XXX_description.py` with the next sequential version number
@@ -446,7 +451,6 @@ Stores media group relationships for messages with multiple media items sent tog
 ---
 
 ### media_attachments
-
 Stores information about media attachments (images, documents, etc.).
 
 **Primary Key**: `file_unique_id`
@@ -461,6 +465,7 @@ Stores information about media attachments (images, documents, etc.).
 | `status` | TEXT | No | 'pending' | Processing status (see [`MediaStatus`](#mediastatus)) |
 | `mime_type` | TEXT | Yes | NULL | MIME type of the file |
 | `local_url` | TEXT | Yes | NULL | Local file path if downloaded |
+| `vision_url` | TEXT | Yes | NULL | StorageService key of the NORMALIZED image bytes for native-vision (added by `migration_030`; see below) |
 | `prompt` | TEXT | Yes | NULL | Prompt used for image generation |
 | `description` | TEXT | Yes | NULL | AI-generated description of media; also carries the STT transcript — see STT semantics below. |
 | `created_at` | TIMESTAMP | No | - | Record creation timestamp (must be provided explicitly) |
@@ -473,8 +478,9 @@ Stores information about media attachments (images, documents, etc.).
 
 **STT (media-transcription) semantics:** For STT semantics (lifecycle, gating, CAS-removal), see [ADR-020](llm/architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall).
 
----
+**Native-vision `vision_url` semantics:** `vision_url` (added by `migration_030`) points at content-deduplicated NORMALIZED image bytes (`{store-prefix}{sha512}.{ext}`, default prefix `vision/`) held in StorageService — written by `BaseBotHandler._storeVisionImage` at receipt time when the chat's `native-vision` setting is on, read at chat time by `LLMMessageHandler._applyNativeVision`. It is deliberately distinct from `local_url`: `local_url` serves the ORIGINAL bytes (e.g. to the resender), `vision_url` the normalized copy (long edge ≤ `max-image-dimension`, re-encoded, EXIF stripped). NULL until the store step runs; rows whose bytes are missing (never stored, backend failure, or pre-feature) degrade to the text `description` path. Stored objects are retained until the TTL-GC follow-up lands — `bot.vision.ttl-days` is target retention only. Spec: [`docs/design/native-vision-design-v1.md`](design/native-vision-design-v1.md).
 
+---
 ## User Data Tables (DROPPED)
 
 ### user_data

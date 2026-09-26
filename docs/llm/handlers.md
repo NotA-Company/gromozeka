@@ -13,7 +13,6 @@ category: guide
 ---
 
 ## Table of Contents
-
 1. [Handler Files Reference](#1-handler-files-reference)
 2. [Handler Creation Checklist](#2-handler-creation-checklist)
 3. [Handler Skeleton Template](#3-handler-skeleton-template)
@@ -22,9 +21,9 @@ category: guide
 6. [Handler Chain Order](#6-handler-chain-order)
 7. [HandlerResultStatus Reference](#7-handlerresultstatus-reference)
 8. [Chat Accessibility Tracking](#8-chat-accessibility-tracking)
+9. [Native Vision](#9-native-vision)
 
 ---
-
 ## 1. Handler Files Reference
 
 **Directory:** [`internal/bot/common/handlers/`](../../internal/bot/common/handlers/)
@@ -106,11 +105,9 @@ Usage-statistics display (if `[stats].enabled`; `__init__` raises `RuntimeError`
 Reply format (2026-08-22 redesign): header `📊 Stats — {period} (UTC) — {prettyChat}` (prettyChat = `getChatTitle(useMarkdown=True, addChatId=True, addChatType=False)` → chat-type emoji + bold title + backticked `#id`; plain `#id` fallback), bold `**Messages:**`/`**Commands:**`/`**Tools:**`/`**LLM:**` headers with avg folded in when >0, Top lists rendered as a fenced code block with the caption (`Top:`/`Top models:`) as the fence's info-string (` ```Top:` / ` ```Top\xa0models:` — multi-word captions use U+00A0 non-breaking space so Telegram renders them as one block caption), column-aligned `•` bullets inside, bare `@name` usernames (the fence prevents accidental mentions; column widths computed on the FORMATTED counts), `⚠`-prefixed top-level error lines when >0 (the STT errors sub-line is numbered without `⚠`). Pretty numbers (2026-08-22): `_formatCount` renders counts ≥1000 as k/m/g with 3 significant digits, ROUND-first (999999→`1m`, 9999→`10k`, 1484→`1,48k`; comma decimal separator, trailing zeros stripped) — applied everywhere (section totals, tokens in/out, error counts, Top-block counts, chat-list `messages_count`, `и ещё N чатов` overflow); `_formatDuration` keeps per-site decimals under 60s (STT audio 1, avgs 2) and compounds ≥60s (`1m 15.4s`, `1h 02m 25.0s`) — used for the folded `· avg` in **Tools:**/**LLM:** headers and the STT `audio:`/`avg time:` sub-lines; the STT sub-header is bold `**STT:** N`. Full output sent in ~3000-char whole-line chunks (fence-atomic — a fenced Top block is never split; MarkdownV2 per chunk), paced `_CHUNK_SEND_DELAY_SECONDS = 0.5` s between consecutive chunk sends. STT stats folded into the `llm` section. Web tier (`--web`/`/stats_web`, gated by `[stats.pages]`): config is read at construction via `getStatsPagesConfig()` — when `enabled = true` validation is applied at construction: `generate-command` and `delete-command` must be non-empty `list[str]` of non-empty strings; `ttl-hours` must be a positive int (all raise `RuntimeError` naming the offending key). Payload is raw-rows JSON in a single query pass (the brief is derived from the same payload — no second query); stdout {"pageId","url"} verbatim; applyLimit-only rate limit with a bounded wait (3/600s per issuing chat; `applyLimit(timeout=60)` — refuses with a "лимит исчерпан" reply when no slot frees within 60 s, CLI not invoked); one-shot `STATS_PAGES_CLEANUP` deletion task (delay = `ttl-hours × 3600`).
 
 ### Handler file: llm_messages.py
-
 | File | Handler Class | Purpose |
 |---|---|---|
-| [`llm_messages.py`](../../internal/bot/common/handlers/llm_messages.py) | `LLMMessageHandler` | **LAST** in chain; LLM responses. Wraps `LLMService.generateTextViaLLM` via `_generateTextViaLLM`, forwarding a `useTools` value (`bool \| dict[str, bool]`, type alias `UseToolsType`) that supports per-tool enable/disable with a `TOOLS_DEFAULT_DICT_KEY` fallback (see [`services.md`](services.md)). When constructing the dict form, use members of the `ToolName` StrEnum from [`internal.bot.constants`](../../internal/bot/constants.py) as keys (raw strings also work since `ToolName` is a `StrEnum`). Default `useTools` comes from the `USE_TOOLS` chat setting (`.toBool()` — callers wanting dict-level control must bypass the setting and pass a dict explicitly). **`newMessageHandler` gating order** (each gate can short-circuit with `SKIPPED`/`FINAL`): (1) **bot-sender probability gate** — if the sender's username ends with `bot`, the message is skipped unless a `random.random()` roll passes the `BOT_ANSWER_PROBABILITY` chat setting (default `0.05`); `0.0` = never answer bots. This gate runs **before** reply/mention, so even explicit replies or mentions from bot accounts are throttled — intentional, to prevent bot-to-bot reply loops; (2) `handleReply` (reply to a bot message); (3) `handleMention` (bot mentioned); (4) `handleRandomMessage` (`RANDOM_ANSWER_PROBABILITY`). `_sendLLMChatMessage` returns `LLMReplyOutcome` (`SENT` / `SKIPPED_BY_MODEL` / `ERROR`), not `bool` — callers compare `== LLMReplyOutcome.SENT`, never truthiness. `handleRandomMessage` additionally appends `RANDOM_ANSWER_PROMPT` to the system message (both thread and non-thread paths) and abstains on `SKIPPED_BY_MODEL` (see "Random-answer context & model abstention" below). |
-
+| [`llm_messages.py`](../../internal/bot/common/handlers/llm_messages.py) | `LLMMessageHandler` | **LAST** in chain; LLM responses. Wraps `LLMService.generateTextViaLLM` via `_generateTextViaLLM`, forwarding a `useTools` value (`bool \| dict[str, bool]`, type alias `UseToolsType`) that supports per-tool enable/disable with a `TOOLS_DEFAULT_DICT_KEY` fallback (see [`services.md`](services.md)). When constructing the dict form, use members of the `ToolName` StrEnum from [`internal.bot.constants`](../../internal/bot/constants.py) as keys (raw strings also work since `ToolName` is a `StrEnum`). Default `useTools` comes from the `USE_TOOLS` chat setting (`.toBool()` — callers wanting dict-level control must bypass the setting and pass a dict explicitly). **`newMessageHandler` gating order** (each gate can short-circuit with `SKIPPED`/`FINAL`): (1) **bot-sender probability gate** — if the sender's username ends with `bot`, the message is skipped unless a `random.random()` roll passes the `BOT_ANSWER_PROBABILITY` chat setting (default `0.05`); `0.0` = never answer bots. This gate runs **before** reply/mention, so even explicit replies or mentions from bot accounts are throttled — intentional, to prevent bot-to-bot reply loops; (2) `handleReply` (reply to a bot message); (3) `handleMention` (bot mentioned); (4) `handleRandomMessage` (`RANDOM_ANSWER_PROBABILITY`). `_sendLLMChatMessage` returns `LLMReplyOutcome` (`SENT` / `SKIPPED_BY_MODEL` / `ERROR`), not `bool` — callers compare `== LLMReplyOutcome.SENT`, never truthiness. Before generation, `_sendLLMChatMessage` also runs `_applyNativeVision`, which swaps eligible user image/static-sticker messages for native `ModelImagesMessage`s when the per-chat `native-vision` setting is on (see [Section 9 — Native Vision](#9-native-vision)). `handleRandomMessage` additionally appends `RANDOM_ANSWER_PROMPT` to the system message (both thread and non-thread paths) and abstains on `SKIPPED_BY_MODEL` (see "Random-answer context & model abstention" below). |
 ### Handler files: examples
 
 | File | Handler Class | Purpose |
@@ -617,6 +614,28 @@ Every chat-listing consumer excludes inaccessible chats by default: the reposito
 
 The **one** exception is the bot-owner `/list_chats all` branch in [`CommonHandler`](../../internal/bot/common/handlers/common.py), which passes `botStatus=None` (no SQL predicate) so the owner sees inaccessible chats for diagnostics. That branch is already gated `isBotOwner(...)`, so it is the single user-facing signal that means "show me everything, including chats I was kicked from". See design doc §7.4 (owner-visibility note) for the rationale.
 
+## 9. Native Vision
+
+Native vision sends user images and static stickers **natively** to vision-capable chat models (`image_url` blocks) instead of the text-descriptions-only path. Design spec: [`docs/design/native-vision-design-v1.md`](../design/native-vision-design-v1.md); ADR-027 in [`architecture.md`](architecture.md).
+
+**Gate:** a new **default-OFF, owner-settable per-chat Bool `native-vision`** chat setting. It is an independent, parallel gate to `parse-attachments` — neither implies the other, and the image-parsing keys are deliberately NOT consulted by the native-vision paths.
+
+**Receipt-time flow** (`BaseBotHandler._processMediaV2` + `_storeVisionImage` in [`base.py`](../../internal/bot/common/handlers/base.py)):
+
+- When the chat's `native-vision` is on (`needVisionStore`), user image/static-sticker bytes are downloaded **even when save/parse attachments are off**.
+- Bytes are normalized exactly once via `normalizeVisionImageStrict` ([`lib/ai/models.py`](../../lib/ai/models.py)) — **fail-closed**: on any normalization failure nothing is stored (no lenient fallback at the storage boundary). Long side capped at `max-image-dimension` (LANCZOS, never upscaled), re-encoded per `image-format`/`image-quality`, animated inputs take frame 0, and **EXIF metadata is stripped (including orientation)**.
+- Normalized bytes go to StorageService under `vision/{sha512}.{ext}` (`store-prefix`; sha512 content dedup), and the key is written to `media_attachments.vision_url` (migration 030 — see [`database.md`](database.md) / [`docs/database-schema.md`](../database-schema.md)).
+- `_storeVisionImage` is **fail-soft**: any storage failure is logged, the attachment keeps `vision_url = NULL`, and chat time falls back to descriptions. With a **null storage backend** (the default) the feature degrades via 3-layer fail-soft: (1) an enable-time `/configure` warning («требуется настроенное хранилище»), (2) a once-per-chat process-lifetime WARNING at first receipt, (3) silent description fallback thereafter.
+
+**Chat-time flow** (`LLMMessageHandler._applyNativeVision`, invoked inside `_sendLLMChatMessage` in [`llm_messages.py`](../../internal/bot/common/handlers/llm_messages.py)):
+
+- Walks the request's user messages **newest-first**; within an album, images attach in album order. The message envelope (its text/caption) is kept as a text part of the swapped `ModelImagesMessage`.
+- `max-images-per-request` (default 5) is a **request-wide cap**; capacity is consumed **only by bytes actually loaded** from storage — an image whose stored bytes are missing does not eat budget. A WARNING is logged when the cap trips; overflowing images and missing-byte images degrade to their text `description` part.
+- Eligibility requires **both** `CHAT_MODEL` and `FALLBACK_MODEL` to declare `support_image_input`.
+
+**Fallback matrix:** both models vision-capable AND stored bytes present → native `image_url` attach; either model text-only, OR stored bytes missing → the existing text-description path.
+
+**Media scope:** static stickers are IN, video stickers are OUT (a MIME guard rejects animation/video containers before store). Stored `vision/` objects are retained until the TTL-GC follow-up lands — `bot.vision.ttl-days` is target retention only; no cleanup cron exists yet (see [`configuration.md`](configuration.md) §`[bot.vision]`).
 ## See Also
 
 - [`index.md`](index.md) — Project overview, mandatory rules

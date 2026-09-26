@@ -411,6 +411,8 @@ class ChatSettingsKey(StrEnum):
     """Whether bot analyzes attachments (images, stickers)."""
     SAVE_ATTACHMENTS = "save-attachments"
     """Whether bot saves attachments for later use."""
+    NATIVE_VISION = "native-vision"
+    """Whether normalized images are stored at receipt for native input to vision-capable chat models."""
     SAVE_PREFIX = "save-prefix"
     """Prefix for saved attachment files."""
     TOOLS_USED_PREFIX = "tools-used-prefix"
@@ -914,6 +916,19 @@ _chatSettingsInfo: Dict[ChatSettingsKey, ChatSettingsInfoValue] = {
         "short": "Сохранять вложения",
         "long": "Должен ли бот созранять вложения для дальнейшего использования.\n"
         "На данный момент полезно только для использования совместно с Resender-модулем.",
+        "page": ChatSettingsPage.BOT_OWNER,
+    },
+    ChatSettingsKey.NATIVE_VISION: {
+        "type": ChatSettingsType.BOOL,
+        "short": "Показывать изображения модели напрямую",
+        "long": (
+            "Отправлять изображения напрямую в vision-модели чата вместо "
+            "одного лишь текстового описания. Работает только если ОБЕ модели "
+            "чата (основная и запасная) поддерживают приём изображений.\n"
+            "Требуется настроенное хранилище (storage backend): включение этой "
+            "настройки означает, что изображения будут сохраняться на диск. \n"
+            "EXIF-метаданные (геолокация, данные устройства) при сохранении удаляются."
+        ),
         "page": ChatSettingsPage.BOT_OWNER,
     },
     ChatSettingsKey.SAVE_PREFIX: {

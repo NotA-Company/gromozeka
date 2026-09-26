@@ -1164,6 +1164,28 @@ stats attribution; `doRateLimit=False` since the command pre-gates).
   main repo diff.
 
 ---
+### ADR-027: Native Vision
+
+**Date:** 2026-09-26
+**Status:** Accepted (implemented)
+
+**Context:** chat models increasingly declare `support_image_input`, but the bot's only image path was text descriptions produced by a separate vision call behind `parse-attachments`. Chats running vision-capable models wanted user photos/static stickers to reach the model directly, without forcing the description pipeline on.
+
+**Decisions:**
+
+- **Per-chat, default-OFF owner gate.** A new `native-vision` Bool chat setting (owner-settable via `/configure`), independent and parallel to `parse-attachments` — neither key implies the other, and the image-parsing keys are deliberately not consulted at chat time.
+- **FS store via StorageService, normalize-once at store.** Receipt (`_processMediaV2` → `_storeVisionImage`) downloads bytes even when save/parse are off, normalizes exactly once via `normalizeVisionImageStrict` (fail-closed — the lenient variant's original-bytes fallback would poison the dedup store), and stores via StorageService as `vision/{sha512}.{ext}` (content dedup); the key lands in `media_attachments.vision_url` (migration 030). Long side ≤ `max-image-dimension` (LANCZOS, never upscaled), JPEG at `image-quality`, animated → frame 0, EXIF stripped.
+- **Both-models eligibility.** Native attach requires BOTH `CHAT_MODEL` and `FALLBACK_MODEL` to declare `support_image_input`; otherwise — or when stored bytes are missing — the message falls back to its text description.
+- **Attach always, most-recent-N under a request-wide cap.** `_applyNativeVision` walks user messages newest-first (album order within an album), keeps the envelope text as a text part of the swapped `ModelImagesMessage`, and enforces `max-images-per-request` — capacity consumed only by actually-loaded bytes, WARNING on trip, overflow → descriptions.
+- **3-layer fail-soft on null backend.** With no storage backend configured (the default): enable-time `/configure` warning, once-per-chat process WARNING, then silent description fallback — never an error path.
+- **Estimator trusted boundary.** `getEstimateTokensCount` strips inline image data-URIs only when the entire input is a serialized message list (`_isMessageList`); accepted limitation: the flag spans the whole envelope inside a trusted list.
+- **Condensation strip.** `LLMService.condenseContext` passes text-only copies via `stripImagesForCondensing` — the condenser never sees image bytes.
+
+**Consequences:** static stickers attach natively but video stickers do not (MIME guard); `vision/` objects accumulate until the TTL-GC follow-up (`ttl-days` is target retention only); `vision_url` is deliberately nullable and has no clear path from `updateMediaAttachment` (the future TTL-GC cron owns clearing).
+
+**Follow-ups (backlog, not implemented):** TTL-GC cron for `vision/` objects; skip-300s-media-wait optimization; `/analyze` reuse of stored vision bytes.
+
+**References:** design spec [`docs/design/native-vision-design-v1.md`](../design/native-vision-design-v1.md); handler flow in [`handlers.md`](handlers.md) §9; config in [`configuration.md`](configuration.md) §`[bot.vision]`; schema in [`docs/database-schema.md`](../database-schema.md).
 ## 2. Dependency Map
 
 ### 2.1 Component Dependency Graph

@@ -20,10 +20,13 @@ import asyncio
 import datetime
 import logging
 import types
-from typing import Dict, Generator, List, Optional, TypedDict, cast
+from io import BytesIO
+from pathlib import Path
+from typing import Dict, Generator, List, Optional, Tuple, TypedDict, cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from PIL import Image
 
 from internal.bot.common.handlers.user_memories import UserMemoriesHandler, _formatMemoriesBlockRaw
 from internal.bot.models import (
@@ -33,6 +36,7 @@ from internal.bot.models import (
     ChatSettingsValue,
     ChatType,
     EnsuredMessage,
+    MediaProcessingInfo,
     MessageRecipient,
     MessageSender,
     MessageType,
@@ -41,6 +45,7 @@ from internal.bot.models import (
 from internal.database import Database
 from internal.database.models import MediaStatus, MemoryType, MessageCategory, UserMemorySource
 from internal.database.repositories.chat_messages import ChatMessageDict
+from internal.database.repositories.media_attachments import MediaAttachmentsRepository
 from internal.database.repositories.user_memories import UserMemoryDict
 from internal.models import MessageId
 from internal.services.cache import CacheService
@@ -675,6 +680,7 @@ class TestProcessMediaV2STT:
         transcribeMedia: bool = False,
         saveAttachments: bool = False,
         parseAttachments: bool = False,
+        nativeVision: bool = False,
     ) -> ChatSettingsDict:
         """Build a :class:`ChatSettingsDict` with every key ``_processMediaV2`` reads.
 
@@ -686,6 +692,7 @@ class TestProcessMediaV2STT:
             transcribeMedia: Value for ``TRANSCRIBE_MEDIA``.
             saveAttachments: Value for ``SAVE_ATTACHMENTS``.
             parseAttachments: Value for ``PARSE_ATTACHMENTS``.
+            nativeVision: Value for ``NATIVE_VISION``.
 
         Returns:
             A :class:`ChatSettingsDict` with deterministic test values.
@@ -696,6 +703,7 @@ class TestProcessMediaV2STT:
             ChatSettingsKey.SAVE_PREFIX: ChatSettingsValue(""),
             ChatSettingsKey.PARSE_ATTACHMENTS: ChatSettingsValue("true" if parseAttachments else "false"),
             ChatSettingsKey.PARSE_IMAGE_PROMPT: ChatSettingsValue("describe this image"),
+            ChatSettingsKey.NATIVE_VISION: ChatSettingsValue("true" if nativeVision else "false"),
         }
 
     @staticmethod
@@ -1650,6 +1658,969 @@ class TestProcessMediaV2STT:
         assert row is not None
         assert row["status"] == MediaStatus.DONE
         assert row["description"] is None
+
+
+class TestProcessMediaV2Vision:
+    """Tests for the native-vision store branch in ``_processMediaV2`` (Phase 1b).
+
+    Validates the receipt-time half of the native-vision design
+    (docs/design/native-vision-design-v1.md §3.2/§3.5):
+
+    1. **Gate**: ``NATIVE_VISION`` on + mediaType in (IMAGE, STICKER) engages
+       the store branch even when save-attachments and parse-attachments are
+       both off; the setting off keeps the exact status-quo behavior.
+    2. **Download sharing**: bytes are downloaded at most once per message —
+       the vision branch reuses the save-path download, and the parse path
+       reuses the vision download.
+    3. **Store**: normalized (JPEG) bytes land under ``vision/{sha512}.jpeg``
+       with content dedup; ``vision_url`` is written synchronously after the
+       row upsert; ``local_url`` is untouched.
+    4. **Fail-soft**: null backend / storage errors produce a WARNING
+       rate-limited once per chat, never an exception, and never a media
+       status change.
+    5. **Independence**: the parse task still spawns per its own
+       ``needParseImage`` gate; video stickers (mp4) skip the branch naturally.
+
+    Uses a real in-memory SQLite database (``testDatabase`` fixture) and a
+    real ``StorageService`` over a tmp filesystem backend (or the null
+    backend) so ``exists``/``store``/``get`` exercise real transitions.
+    """
+
+    _CHAT_ID = 400
+    """Chat id used for every EnsuredMessage in these tests."""
+
+    _MEDIA_ID = "image-file-unique-id-001"
+    """file_unique_id used for image attachments."""
+
+    _FILE_ID = "image-platform-file-id-001"
+    """Platform file id passed to downloadAttachment."""
+
+    _MEDIA_GROUP_ID = "media-group-vision-test"
+    """mediaGroupId attached to every EnsuredMessage (required by _processMediaV2)."""
+
+    _VISION_CONFIG: Dict[str, object] = {
+        "max-image-dimension": 2048,
+        "image-format": "image/jpeg",
+        "image-quality": 85,
+        "store-prefix": "vision/",
+        "max-images-per-request": 5,
+        "ttl-days": 30,
+    }
+    """``[bot.vision]`` config served by the mocked ConfigManager."""
+
+    @staticmethod
+    def _makeImageBytes(
+        *, color: Tuple[int, int, int] = (255, 0, 0), fmt: str = "PNG", size: Tuple[int, int] = (10, 10)
+    ) -> bytes:
+        """Build real image bytes via Pillow.
+
+        Args:
+            color: RGB fill color.
+            fmt: Pillow format ("PNG" for photos, "WEBP" for static stickers).
+            size: Image dimensions in pixels.
+
+        Returns:
+            Encoded image bytes.
+        """
+        buf = BytesIO()
+        Image.new("RGB", size, color).save(buf, format=fmt)
+        return buf.getvalue()
+
+    @staticmethod
+    def _makeMp4Bytes() -> bytes:
+        """Build minimal bytes libmagic reports as ``video/mp4``.
+
+        Returns:
+            A tiny ftyp-box-only MP4 header (a video sticker payload stand-in).
+        """
+        return b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
+
+    @staticmethod
+    def _buildChatSettings(
+        *, nativeVision: bool, saveAttachments: bool = False, parseAttachments: bool = False
+    ) -> ChatSettingsDict:
+        """Build a :class:`ChatSettingsDict` reusing the STT-class builder shape.
+
+        Production code subscripts ``chatSettings[KEY]`` directly (never
+        ``.get()``), so every key ``_processMediaV2`` touches must be present.
+
+        Args:
+            nativeVision: Value for ``NATIVE_VISION``.
+            saveAttachments: Value for ``SAVE_ATTACHMENTS``.
+            parseAttachments: Value for ``PARSE_ATTACHMENTS``.
+
+        Returns:
+            A :class:`ChatSettingsDict` with deterministic test values.
+        """
+        return TestProcessMediaV2STT._buildChatSettings(
+            saveAttachments=saveAttachments,
+            parseAttachments=parseAttachments,
+            nativeVision=nativeVision,
+        )
+
+    @staticmethod
+    def _makeMockConfigManager(*, storageType: str, storageBaseDir: str) -> Mock:
+        """Build a ``ConfigManager`` stub with vision + storage config.
+
+        ``BaseBotHandler.__init__`` caches ``_sttEnabled`` from
+        ``getSttConfig()`` at construction; ``StorageService.injectConfig``
+        reads ``getStorageConfig()``; the vision branch reads
+        ``getVisionConfig()`` — all must be wired before construction.
+
+        Args:
+            storageType: "fs" or "null" (the two backends these tests use).
+            storageBaseDir: Base dir for the fs backend (ignored for null).
+
+        Returns:
+            A ``Mock`` serving controlled vision/storage config dicts.
+        """
+        cm = Mock()
+        cm.getBotConfig = Mock(return_value={"token": "test_token", "owners": [123456]})
+        cm.getSttConfig = Mock(return_value={"enabled": False})
+        cm.getVisionConfig = Mock(return_value=dict(TestProcessMediaV2Vision._VISION_CONFIG))
+        if storageType == "fs":
+            cm.getStorageConfig = Mock(return_value={"type": "fs", "fs": {"base-dir": storageBaseDir}})
+        else:
+            cm.getStorageConfig = Mock(return_value={"type": "null"})
+        cm.get = Mock(return_value={})
+        return cm
+
+    @pytest.fixture(autouse=True)
+    def _resetSingletons(self) -> Generator[None, None, None]:
+        """Reset the service singletons around every test in this class.
+
+        Prevents state leakage from one test to the next. ``LLMService`` is
+        already reset by the conftest autouse fixture.
+
+        Yields:
+            None.
+        """
+        STTService._instance = None
+        StorageService._instance = None
+        QueueService._instance = None
+        CacheService._instance = None
+        yield
+        STTService._instance = None
+        StorageService._instance = None
+        QueueService._instance = None
+        CacheService._instance = None
+
+    async def _makeHandler(
+        self,
+        testDatabase: Database,
+        tmpPath: Path,
+        *,
+        storageType: str = "fs",
+    ) -> UserMemoriesHandler:
+        """Construct a handler wired to a real in-memory DB and a real StorageService.
+
+        Resets ``CacheService``, injects the test database into it, configures
+        the ``StorageService`` singleton (fs backend under *tmpPath*, or the
+        null backend), then constructs the handler.
+
+        Args:
+            testDatabase: Fresh in-memory :class:`Database` (``testDatabase``
+                fixture).
+            tmp_path: pytest tmp dir used as the fs backend base-dir.
+            storageType: "fs" or "null".
+
+        Returns:
+            A handler whose ``self.db`` is *testDatabase* and whose
+            ``self.storage`` is the configured singleton.
+        """
+        CacheService._instance = None
+        cache = CacheService.getInstance()
+        await cache.injectDatabase(testDatabase)
+
+        configManager = self._makeMockConfigManager(storageType=storageType, storageBaseDir=str(tmpPath))
+        StorageService.getInstance().injectConfig(configManager)
+        return UserMemoriesHandler(
+            configManager=configManager,
+            database=testDatabase,
+            botProvider=BotProvider.TELEGRAM,
+        )
+
+    @staticmethod
+    def _makeEnsuredMessage() -> EnsuredMessage:
+        """Build a minimal :class:`EnsuredMessage` with a ``mediaGroupId``.
+
+        Returns:
+            A freshly constructed :class:`EnsuredMessage`.
+        """
+        return EnsuredMessage(
+            sender=MessageSender(id=7, name="Alice", username="@alice"),
+            recipient=MessageRecipient(
+                id=TestProcessMediaV2Vision._CHAT_ID,
+                chatType=ChatType.PRIVATE,
+            ),
+            messageId=9101,
+            date=datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            mediaGroupId=TestProcessMediaV2Vision._MEDIA_GROUP_ID,
+        )
+
+    @staticmethod
+    def _assertVisionKeyShape(key: str, *, ext: str = "jpeg") -> None:
+        """Assert a storage key matches ``vision/{sha512}.{ext}``.
+
+        Args:
+            key: The key to check.
+            ext: Expected file extension.
+        """
+        prefix = TestProcessMediaV2Vision._VISION_CONFIG["store-prefix"]
+        assert key.startswith(str(prefix))
+        assert key.endswith(f".{ext}")
+        shaPart = key[len(str(prefix)) : -len(f".{ext}")]
+        assert len(shaPart) == 128
+        assert all(c in "0123456789abcdef" for c in shaPart)
+
+    def _wireDownload(self, handler: UserMemoriesHandler, data: Optional[bytes]) -> AsyncMock:
+        """Wire ``handler._bot.downloadAttachment`` to return *data*.
+
+        Args:
+            handler: Handler under test.
+            data: Bytes the mock returns (None simulates a failed download).
+
+        Returns:
+            The ``AsyncMock`` installed as ``downloadAttachment``, so tests
+            can assert on its call count.
+        """
+        botMock = Mock()
+        downloadMock = AsyncMock(return_value=data)
+        botMock.downloadAttachment = downloadMock
+        handler._bot = botMock
+        return downloadMock
+
+    async def _processImage(
+        self,
+        handler: UserMemoriesHandler,
+        *,
+        mediaId: str,
+        data: bytes,
+        mediaType: MessageType = MessageType.IMAGE,
+        saveAttachments: bool = False,
+        parseAttachments: bool = False,
+    ) -> Tuple[MediaProcessingInfo, AsyncMock]:
+        """Run ``_processMediaV2`` for one image with vision-oriented defaults.
+
+        Wires ``downloadAttachment`` to return *data*, mocks
+        ``getChatSettings`` with vision on, and disables
+        ``_parseImage`` so an accidental parse spawn cannot reach the LLM.
+
+        Args:
+            handler: The handler under test.
+            mediaId: file_unique_id for the media row.
+            data: Bytes ``downloadAttachment`` returns.
+            mediaType: Media type to process (IMAGE or STICKER).
+            saveAttachments: Value for ``SAVE_ATTACHMENTS``.
+            parseAttachments: Value for ``PARSE_ATTACHMENTS``.
+
+        Returns:
+            Tuple of the :class:`MediaProcessingInfo` returned by
+            ``_processMediaV2`` and the ``downloadAttachment`` AsyncMock
+            installed for this call, so tests can assert on download counts.
+        """
+        downloadMock = self._wireDownload(handler, data)
+        handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
+            return_value=self._buildChatSettings(
+                nativeVision=True, saveAttachments=saveAttachments, parseAttachments=parseAttachments
+            ),
+        )
+        handler._parseImage = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        ret = await handler._processMediaV2(
+            ensuredMessage=self._makeEnsuredMessage(),
+            mediaType=mediaType,
+            mediaId=mediaId,
+            fileId=self._FILE_ID,
+        )
+        return (ret, downloadMock)
+
+    # ------------------------------------------------------------------
+    # Happy path: vision on, save/parse off → stored + vision_url written
+    # ------------------------------------------------------------------
+
+    async def test_visionOn_saveAndParseOff_storesNormalizedAndWritesVisionUrl(
+        self, testDatabase: Database, tmp_path: Path
+    ) -> None:
+        """Vision on with both other gates off downloads once, stores JPEG, writes vision_url.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        pngBytes = self._makeImageBytes()
+        downloadMock = self._wireDownload(handler, pngBytes)
+        handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
+            return_value=self._buildChatSettings(nativeVision=True),
+        )
+        handler._parseImage = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+        capturedTasks: list[asyncio.Task] = []
+
+        async def captureTask(task: asyncio.Task) -> None:
+            capturedTasks.append(task)
+
+        handler.queueService.addBackgroundTask = AsyncMock(side_effect=captureTask)  # type: ignore[assignment]
+
+        ret = await handler._processMediaV2(
+            ensuredMessage=self._makeEnsuredMessage(),
+            mediaType=MessageType.IMAGE,
+            mediaId=self._MEDIA_ID,
+            fileId=self._FILE_ID,
+        )
+
+        assert ret.id == self._MEDIA_ID
+        downloadMock.assert_awaited_once()
+        assert capturedTasks == []
+
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        # Synchronous store: vision_url exists right after the call.
+        assert row["vision_url"] is not None
+        visionUrl = str(row["vision_url"])
+        self._assertVisionKeyShape(visionUrl, ext="jpeg")
+        # Separate lifecycle from save-attachments: local_url untouched.
+        assert row["local_url"] is None
+        assert row["status"] == MediaStatus.DONE
+
+        stored = handler.storage.get(visionUrl)
+        assert stored is not None
+        with Image.open(BytesIO(stored)) as img:
+            assert img.format == "JPEG"
+
+    # ------------------------------------------------------------------
+    # Status quo: vision off + both gates off → no download at all
+    # ------------------------------------------------------------------
+
+    async def test_visionOff_bothGatesOff_noDownloadNoVisionUrl(self, testDatabase: Database, tmp_path: Path) -> None:
+        """With ``NATIVE_VISION`` off, both gates off keeps today's ephemeral behavior.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        handler._bot = Mock()
+        handler._bot.downloadAttachment = AsyncMock(return_value=self._makeImageBytes())
+        handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
+            return_value=self._buildChatSettings(nativeVision=False),
+        )
+
+        await handler._processMediaV2(
+            ensuredMessage=self._makeEnsuredMessage(),
+            mediaType=MessageType.IMAGE,
+            mediaId=self._MEDIA_ID,
+            fileId=self._FILE_ID,
+        )
+
+        handler._bot.downloadAttachment.assert_not_called()
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        assert row["vision_url"] is None
+        assert row["local_url"] is None
+        assert row["status"] == MediaStatus.DONE
+
+    # ------------------------------------------------------------------
+    # Download sharing: save-path download is reused, no double download
+    # ------------------------------------------------------------------
+
+    async def test_visionOn_saveOn_reusesDownloadedBytes(self, testDatabase: Database, tmp_path: Path) -> None:
+        """The vision branch reuses the bytes the save-attachments path downloaded.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        pngBytes = self._makeImageBytes()
+        handler._bot = Mock()
+        handler._bot.downloadAttachment = AsyncMock(return_value=pngBytes)
+        handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
+            return_value=self._buildChatSettings(nativeVision=True, saveAttachments=True),
+        )
+
+        await handler._processMediaV2(
+            ensuredMessage=self._makeEnsuredMessage(),
+            mediaType=MessageType.IMAGE,
+            mediaId=self._MEDIA_ID,
+            fileId=self._FILE_ID,
+        )
+
+        handler._bot.downloadAttachment.assert_awaited_once()
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        assert row["local_url"] is not None
+        assert row["vision_url"] is not None
+
+    # ------------------------------------------------------------------
+    # Fail-soft: storage error → no exception, no status change, warn once
+    # ------------------------------------------------------------------
+
+    async def test_storeFailure_noException_noStatusChange_warningOncePerChat(
+        self, testDatabase: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A storage error is swallowed: row stays DONE, one WARNING per chat.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+            caplog: pytest log-capture fixture.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+
+        def brokenStore(key: str, data: bytes) -> None:
+            raise RuntimeError("disk on fire")
+
+        handler.storage.store = brokenStore  # type: ignore[method-assign]
+
+        with caplog.at_level(logging.WARNING):
+            await self._processImage(handler, mediaId=self._MEDIA_ID, data=self._makeImageBytes())
+            # Second image, same chat: must NOT produce a second WARNING.
+            await self._processImage(
+                handler, mediaId=f"{self._MEDIA_ID}-2", data=self._makeImageBytes(color=(0, 255, 0))
+            )
+
+        warnings = [r for r in caplog.records if "Native-vision store failed" in r.message]
+        assert len(warnings) == 1
+        assert warnings[0].levelno == logging.WARNING
+
+        for mediaId in (self._MEDIA_ID, f"{self._MEDIA_ID}-2"):
+            row = await testDatabase.mediaAttachments.getMediaAttachment(mediaId)
+            assert row is not None
+            # The media status machine is untouched: no FAILED.
+            assert row["status"] == MediaStatus.DONE
+            assert row["vision_url"] is None
+
+    # ------------------------------------------------------------------
+    # Fail-soft: null backend → skip without storing, warn once per chat
+    # ------------------------------------------------------------------
+
+    async def test_nullBackend_skipsStore_warnsOncePerChat(
+        self, testDatabase: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """With the null backend the vision branch skips and warns once per chat.
+
+        The null-backend check runs BEFORE any vision-only download (review
+        finding 5): a misconfigured backend must not waste a fetch, so the
+        download mock must stay untouched.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir (unused by the null backend).
+            caplog: pytest log-capture fixture.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path, storageType="null")
+
+        with caplog.at_level(logging.WARNING):
+            _, downloadMock1 = await self._processImage(handler, mediaId=self._MEDIA_ID, data=self._makeImageBytes())
+            _, downloadMock2 = await self._processImage(
+                handler, mediaId=f"{self._MEDIA_ID}-2", data=self._makeImageBytes(color=(0, 255, 0))
+            )
+
+        # No wasted download: the null-backend short-circuit precedes it.
+        downloadMock1.assert_not_called()
+        downloadMock2.assert_not_called()
+
+        warnings = [r for r in caplog.records if "Native-vision store failed" in r.message]
+        assert len(warnings) == 1
+        assert "null" in warnings[0].message
+
+        for mediaId in (self._MEDIA_ID, f"{self._MEDIA_ID}-2"):
+            row = await testDatabase.mediaAttachments.getMediaAttachment(mediaId)
+            assert row is not None
+            assert row["vision_url"] is None
+            assert row["status"] == MediaStatus.DONE
+
+    # ------------------------------------------------------------------
+    # Stickers: static webp stored, video mp4 skipped
+    # ------------------------------------------------------------------
+
+    async def test_staticStickerWebp_storedAsNormalizedJpeg(self, testDatabase: Database, tmp_path: Path) -> None:
+        """A static (webp) sticker is treated as an image and stored normalized.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        webpBytes = self._makeImageBytes(fmt="WEBP")
+
+        ret, _downloadMock = await self._processImage(
+            handler, mediaId=self._MEDIA_ID, data=webpBytes, mediaType=MessageType.STICKER
+        )
+
+        assert ret.task is not None
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        assert row["vision_url"] is not None
+        visionUrl = str(row["vision_url"])
+        self._assertVisionKeyShape(visionUrl, ext="jpeg")
+        stored = handler.storage.get(visionUrl)
+        assert stored is not None
+        with Image.open(BytesIO(stored)) as img:
+            assert img.format == "JPEG"
+
+    async def test_videoStickerMp4_visionBranchSkipped(self, testDatabase: Database, tmp_path: Path) -> None:
+        """A video sticker (mp4) is not an image/*: vision branch skips without a warning.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        handler._bot = Mock()
+        handler._bot.downloadAttachment = AsyncMock(return_value=self._makeMp4Bytes())
+        handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
+            return_value=self._buildChatSettings(nativeVision=True),
+        )
+
+        ret = await handler._processMediaV2(
+            ensuredMessage=self._makeEnsuredMessage(),
+            mediaType=MessageType.STICKER,
+            mediaId=self._MEDIA_ID,
+            fileId=self._FILE_ID,
+        )
+
+        assert ret.task is not None
+        # MIME guard required a download, but nothing may be stored.
+        handler._bot.downloadAttachment.assert_awaited_once()
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        assert row["vision_url"] is None
+        assert row["status"] == MediaStatus.DONE
+
+    async def test_videoStickerMp4_parseOn_bytesHandedToParse_singleDownload(
+        self, testDatabase: Database, tmp_path: Path
+    ) -> None:
+        """A video sticker's downloaded bytes reach the parse path without a re-download.
+
+        Regression (Phase 1b re-review finding): the non-image MIME guard
+        inside ``_storeVisionImage`` used to return ``(None, None)`` after a
+        successful download, so with ``PARSE_ATTACHMENTS`` on the parse path
+        re-downloaded the same attachment (or FAILED the row when that
+        re-download returned nothing). The vision branch must skip the store
+        but hand the bytes back; the parse path's own MIME guard then marks
+        the row NEW without spawning an image-parse task. The download mock
+        raises on a second call, so an accidental re-fetch fails loudly.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        mp4Bytes = self._makeMp4Bytes()
+        handler._bot = Mock()
+        # A second call means the bytes were NOT handed off — fail loudly.
+        handler._bot.downloadAttachment = AsyncMock(side_effect=[mp4Bytes, RuntimeError("unexpected second download")])
+        handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
+            return_value=self._buildChatSettings(nativeVision=True, parseAttachments=True),
+        )
+        handler._parseImage = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+        ret = await handler._processMediaV2(
+            ensuredMessage=self._makeEnsuredMessage(),
+            mediaType=MessageType.STICKER,
+            mediaId=self._MEDIA_ID,
+            fileId=self._FILE_ID,
+        )
+
+        assert ret.task is not None
+        # Exactly one download: the vision branch's. The parse path reused
+        # the handed-off bytes instead of fetching again.
+        handler._bot.downloadAttachment.assert_awaited_once()
+        # No image-parse task: the parse MIME guard rejected the mp4 bytes.
+        handler._parseImage.assert_not_called()
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        # Vision store skipped, but the parse guard's non-image outcome is NEW.
+        assert row["vision_url"] is None
+        assert row["status"] == MediaStatus.NEW
+        # The reused bytes were recorded by the parse path.
+        assert row["mime_type"] == "video/mp4"
+        assert row["file_size"] == len(mp4Bytes)
+
+    # ------------------------------------------------------------------
+    # Dedup: identical bytes stored only once
+    # ------------------------------------------------------------------
+
+    async def test_identicalBytesTwice_storeCalledOnce(self, testDatabase: Database, tmp_path: Path) -> None:
+        """Two identical images dedup to one ``storage.store`` call via ``exists()``.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        storeSpy = Mock(side_effect=handler.storage.store)
+        handler.storage.store = storeSpy  # type: ignore[method-assign]
+
+        await self._processImage(handler, mediaId=self._MEDIA_ID, data=self._makeImageBytes())
+        await self._processImage(handler, mediaId=f"{self._MEDIA_ID}-2", data=self._makeImageBytes())
+
+        storeSpy.assert_called_once()
+
+        keys = []
+        for mediaId in (self._MEDIA_ID, f"{self._MEDIA_ID}-2"):
+            row = await testDatabase.mediaAttachments.getMediaAttachment(mediaId)
+            assert row is not None
+            assert row["vision_url"] is not None
+            keys.append(str(row["vision_url"]))
+        assert keys[0] == keys[1]
+
+    # ------------------------------------------------------------------
+    # Independence: parse task still spawns per its own gate
+    # ------------------------------------------------------------------
+
+    async def test_parseStillSpawns_whenParseOnAndVisionOn(self, testDatabase: Database, tmp_path: Path) -> None:
+        """With both gates on, the parse task spawns AND vision_url is written.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        handler._bot = Mock()
+        handler._bot.downloadAttachment = AsyncMock(return_value=self._makeImageBytes())
+        handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
+            return_value=self._buildChatSettings(nativeVision=True, parseAttachments=True),
+        )
+        handler._parseImage = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+        capturedTasks: list[asyncio.Task] = []
+
+        async def captureTask(task: asyncio.Task) -> None:
+            capturedTasks.append(task)
+
+        handler.queueService.addBackgroundTask = AsyncMock(side_effect=captureTask)  # type: ignore[assignment]
+
+        ret = await handler._processMediaV2(
+            ensuredMessage=self._makeEnsuredMessage(),
+            mediaType=MessageType.IMAGE,
+            mediaId=self._MEDIA_ID,
+            fileId=self._FILE_ID,
+        )
+
+        # Parse task spawned via queueService, per its own gate.
+        assert len(capturedTasks) == 1
+        assert ret.task is capturedTasks[0]
+        handler._bot.downloadAttachment.assert_awaited_once()
+
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        assert row["status"] == MediaStatus.PENDING
+        assert row["vision_url"] is not None
+
+    # ------------------------------------------------------------------
+    # Fail-soft boundary: vision-only download raising is contained
+    # ------------------------------------------------------------------
+
+    async def test_visionDownloadRaise_noException_warningOnce_statusDone(
+        self, testDatabase: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A raising vision-only download stays inside the fail-soft boundary.
+
+        Regression (review finding 1): the receipt-side vision download used
+        to run OUTSIDE ``_storeVisionImage``'s try/except, so a download
+        exception escaped ``_processMediaV2`` entirely. It must now be
+        swallowed, warned about once per chat, and leave the media row DONE
+        with no vision_url.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+            caplog: pytest log-capture fixture.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        botMock = Mock()
+        downloadMock = AsyncMock(side_effect=RuntimeError("network gone"))
+        botMock.downloadAttachment = downloadMock
+        handler._bot = botMock
+        handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
+            return_value=self._buildChatSettings(nativeVision=True),
+        )
+        handler._parseImage = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+        with caplog.at_level(logging.WARNING):
+            await handler._processMediaV2(
+                ensuredMessage=self._makeEnsuredMessage(),
+                mediaType=MessageType.IMAGE,
+                mediaId=self._MEDIA_ID,
+                fileId=self._FILE_ID,
+            )
+            await handler._processMediaV2(
+                ensuredMessage=self._makeEnsuredMessage(),
+                mediaType=MessageType.IMAGE,
+                mediaId=f"{self._MEDIA_ID}-2",
+                fileId=self._FILE_ID,
+            )
+
+        # One attempt per message: the vision branch never retries.
+        assert downloadMock.await_count == 2
+        warnings = [r for r in caplog.records if "Native-vision store failed" in r.message]
+        assert len(warnings) == 1
+        assert warnings[0].levelno == logging.WARNING
+
+        for mediaId in (self._MEDIA_ID, f"{self._MEDIA_ID}-2"):
+            row = await testDatabase.mediaAttachments.getMediaAttachment(mediaId)
+            assert row is not None
+            # The media status machine is untouched: no FAILED.
+            assert row["status"] == MediaStatus.DONE
+            assert row["vision_url"] is None
+
+    # ------------------------------------------------------------------
+    # Fail-soft boundary: vision_url DB-write failure cannot abort parsing
+    # ------------------------------------------------------------------
+
+    async def test_visionUrlWriteFails_parseStillScheduled(
+        self, testDatabase: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A failing vision_url write does not abort the parse pipeline.
+
+        Regression (review finding 1): ``updateMediaAttachment(...,
+        visionUrl=...)`` used to run OUTSIDE the fail-soft boundary, so a
+        DB error aborted ``_processMediaV2`` before ``_parseImage`` could be
+        scheduled — leaving the row PENDING with no task. The write now
+        happens inside ``_storeVisionImage``; its failure must be swallowed
+        and the parse path must continue with the downloaded bytes.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+            caplog: pytest log-capture fixture.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        downloadMock = self._wireDownload(handler, self._makeImageBytes())
+        handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
+            return_value=self._buildChatSettings(nativeVision=True, parseAttachments=True),
+        )
+        handler._parseImage = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+        capturedTasks: list[asyncio.Task] = []
+
+        async def captureTask(task: asyncio.Task) -> None:
+            capturedTasks.append(task)
+
+        handler.queueService.addBackgroundTask = AsyncMock(side_effect=captureTask)  # type: ignore[assignment]
+
+        realUpdate = MediaAttachmentsRepository.updateMediaAttachment
+
+        async def flakyUpdate(
+            repo: MediaAttachmentsRepository,
+            mediaId: str,
+            *,
+            fileSize: Optional[int] = None,
+            status: Optional[MediaStatus] = None,
+            metadata: Optional[Dict[str, object] | str] = None,
+            mimeType: Optional[str] = None,
+            localUrl: Optional[str] = None,
+            description: Optional[str] = None,
+            prompt: Optional[str] = None,
+            visionUrl: Optional[str] = None,
+        ) -> bool:
+            """Pass through to the real update, failing only the vision_url write.
+
+            The repository uses ``__slots__``, so the interception must be
+            installed at CLASS level (bound via ``patch.object``): *repo*
+            is the instance the production call site invokes the method on.
+
+            Args:
+                repo: The media-attachments repository instance.
+                mediaId: Media attachment unique identifier.
+                fileSize: Optional file size update.
+                status: Optional status update.
+                metadata: Optional metadata update.
+                mimeType: Optional MIME type update.
+                localUrl: Optional local URL update.
+                description: Optional description update.
+                prompt: Optional prompt update.
+                visionUrl: Optional vision URL update — simulated to fail.
+
+            Returns:
+                The real repository result for non-vision writes.
+
+            Raises:
+                RuntimeError: Simulated DB failure when *visionUrl* is set.
+            """
+            if visionUrl is not None:
+                raise RuntimeError("vision_url write failed")
+            return await realUpdate(
+                repo,
+                mediaId,
+                fileSize=fileSize,
+                status=status,
+                metadata=metadata,
+                mimeType=mimeType,
+                localUrl=localUrl,
+                description=description,
+                prompt=prompt,
+                visionUrl=visionUrl,
+            )
+
+        with patch.object(MediaAttachmentsRepository, "updateMediaAttachment", new=flakyUpdate):
+            with caplog.at_level(logging.WARNING):
+                ret = await handler._processMediaV2(
+                    ensuredMessage=self._makeEnsuredMessage(),
+                    mediaType=MessageType.IMAGE,
+                    mediaId=self._MEDIA_ID,
+                    fileId=self._FILE_ID,
+                )
+
+        # Parse pipeline unaffected: the task spawned per its own gate...
+        assert len(capturedTasks) == 1
+        assert ret.task is capturedTasks[0]
+        # ...reusing the bytes the vision branch downloaded (single fetch).
+        downloadMock.assert_awaited_once()
+        # The failure was reported fail-soft, exactly once.
+        warnings = [r for r in caplog.records if "Native-vision store failed" in r.message]
+        assert len(warnings) == 1
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        assert row["status"] == MediaStatus.PENDING  # NOT FAILED
+        assert row["vision_url"] is None
+
+    # ------------------------------------------------------------------
+    # No implicit retries: a None download result is not re-fetched
+    # ------------------------------------------------------------------
+
+    async def test_visionDownloadReturnsNone_downloadsOnceNoRetry(
+        self, testDatabase: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A None download result is not re-fetched inside the vision branch.
+
+        Regression (review finding 4): ``_storeVisionImage`` used to treat
+        *mediaData is None* as "not downloaded yet" and download again.
+        When the vision branch owns the download it must attempt exactly
+        once; the parse pipeline (off here) is unaffected.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+            caplog: pytest log-capture fixture.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        botMock = Mock()
+        downloadMock = AsyncMock(return_value=None)
+        botMock.downloadAttachment = downloadMock
+        handler._bot = botMock
+        handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
+            return_value=self._buildChatSettings(nativeVision=True),
+        )
+        handler._parseImage = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+        with caplog.at_level(logging.WARNING):
+            await handler._processMediaV2(
+                ensuredMessage=self._makeEnsuredMessage(),
+                mediaType=MessageType.IMAGE,
+                mediaId=self._MEDIA_ID,
+                fileId=self._FILE_ID,
+            )
+
+        downloadMock.assert_awaited_once()
+        warnings = [r for r in caplog.records if "Native-vision store failed" in r.message]
+        assert len(warnings) == 1
+        assert "returned no data" in warnings[0].message
+
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        assert row["vision_url"] is None
+        assert row["status"] == MediaStatus.DONE
+
+    async def test_visionOn_saveOnDownloadFailed_noVisionRetry(
+        self, testDatabase: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """When the save path already attempted a download, vision must not retry.
+
+        Regression (review finding 4): the save-attachments download
+        returned None; the vision branch used to download again (and the
+        parse branch would have made a third attempt). "Attempted but
+        unavailable" must be distinguished from "not attempted": the vision
+        branch adds no second fetch.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+            caplog: pytest log-capture fixture.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        botMock = Mock()
+        downloadMock = AsyncMock(return_value=None)
+        botMock.downloadAttachment = downloadMock
+        handler._bot = botMock
+        handler.getChatSettings = AsyncMock(  # type: ignore[assignment]
+            return_value=self._buildChatSettings(nativeVision=True, saveAttachments=True),
+        )
+        handler._parseImage = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+        with caplog.at_level(logging.WARNING):
+            await handler._processMediaV2(
+                ensuredMessage=self._makeEnsuredMessage(),
+                mediaType=MessageType.IMAGE,
+                mediaId=self._MEDIA_ID,
+                fileId=self._FILE_ID,
+            )
+
+        # Exactly the save-path attempt: no implicit vision retry.
+        downloadMock.assert_awaited_once()
+        warnings = [r for r in caplog.records if "Native-vision store failed" in r.message]
+        assert len(warnings) == 1
+        assert "returned no data" in warnings[0].message
+
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        assert row["local_url"] is None
+        assert row["vision_url"] is None
+        assert row["status"] == MediaStatus.DONE
+
+    # ------------------------------------------------------------------
+    # Fail closed on normalization: fallback bytes are never stored
+    # ------------------------------------------------------------------
+
+    async def test_normalizationFailure50MP_noStoreNoVisionUrl_warnsOnce(
+        self,
+        testDatabase: Database,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A normalization fallback must NOT be stored or published.
+
+        Regression (review finding 2): the 50MP guard makes the lenient
+        normalization return the ORIGINAL bytes; the old MIME-only check
+        stored them, publishing an oversized, EXIF-bearing image via
+        vision_url (send time does no resize). With the strict variant the
+        store is skipped entirely: no ``storage.store`` call, no
+        ``vision_url``, status untouched, one rate-limited warning.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+            caplog: pytest log-capture fixture.
+            monkeypatch: pytest fixture for temporary attribute patching.
+        """
+        handler = await self._makeHandler(testDatabase, tmp_path)
+        storeSpy = Mock(side_effect=handler.storage.store)
+        handler.storage.store = storeSpy  # type: ignore[method-assign]
+
+        original = self._makeImageBytes()
+        oversizedHeader = Mock()
+        oversizedHeader.width = 10_000
+        oversizedHeader.height = 10_000
+        # Fixture bytes are built BEFORE the patch; normalization is the
+        # only step in this flow that opens the image afterwards.
+        monkeypatch.setattr(Image, "open", Mock(return_value=oversizedHeader))
+
+        with caplog.at_level(logging.WARNING):
+            await self._processImage(handler, mediaId=self._MEDIA_ID, data=original)
+
+        storeSpy.assert_not_called()
+        warnings = [r for r in caplog.records if "Native-vision store failed" in r.message]
+        assert len(warnings) == 1
+        assert "normalization" in warnings[0].message
+
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        assert row["vision_url"] is None
+        assert row["status"] == MediaStatus.DONE
 
 
 class _ModelInfoDict(TypedDict, total=False):

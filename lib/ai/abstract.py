@@ -34,6 +34,8 @@ from lib.stats import StatsStorage
 from .models import (
     ERROR_STATUSES,
     LLMAbstractTool,
+    ModelImageMessage,
+    ModelImagesMessage,
     ModelMessage,
     ModelResultStatus,
     ModelRunResult,
@@ -43,6 +45,129 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 _R = TypeVar("_R", ModelRunResult, ModelStructuredResult)
+
+_IMAGE_DATA_URI_PREFIX = "data:image/"
+"""Prefix identifying an image-typed base64 data URI (``data:image/<subtype>;base64,...``).
+
+Used by :func:`_isImageDataUrl` to structurally identify inline image payloads.
+"""
+
+_IMAGE_DATA_PLACEHOLDER = "<image-data>"
+"""Short replacement for an inline base64 image payload (native-vision design v1 §3.4).
+
+Used by :func:`_estimateTokenView` so image tokens are invisible to the
+char-based token estimator.
+"""
+
+
+def _isImageDataUrl(url: object) -> bool:
+    """Check whether a serialized ``image_url.url`` value is an inline image data URI.
+
+    Only image-typed base64 data URIs qualify: non-image MIME types
+    (``data:text/plain;base64,...``), remote URLs (``https://...``), and
+    already-placeholder values are estimation-relevant text and stay counted.
+
+    Args:
+        url: The ``url`` value extracted from an ``image_url`` block (any
+            serialized JSON scalar; narrowed by isinstance).
+
+    Returns:
+        bool: True only for ``data:image/...;base64,...`` strings.
+    """
+    return isinstance(url, str) and url.startswith(_IMAGE_DATA_URI_PREFIX) and ";base64," in url
+
+
+def _isMessageDict(value: object) -> bool:
+    """Check whether a value is a serialized chat message.
+
+    A serialized chat message is a dict with a string ``role`` key plus a
+    ``content`` key — the shape ``ModelMessage.toDict()`` and provider
+    payloads emit. A JSON Schema describing messages does not qualify: its
+    ``role`` value is itself a schema dict, not a string.
+
+    Used only by :func:`_isMessageList` for the trusted-input boundary check
+    in :meth:`AbstractModel.getEstimateTokensCount`. It is deliberately NOT
+    applied to values discovered during the recursive walk: a message-shaped
+    dict nested inside arbitrary structured data (e.g. a JSON Schema
+    ``examples`` entry) must never re-arm image normalization.
+
+    Args:
+        value: Arbitrary JSON-like value.
+
+    Returns:
+        bool: True for ``{"role": "...", "content": ...}`` dicts.
+    """
+    return isinstance(value, dict) and isinstance(value.get("role"), str) and "content" in value
+
+
+def _isMessageList(value: object) -> bool:
+    """Check whether a whole estimator input is a serialized message LIST.
+
+    This is the trusted input boundary: the image-normalization decision is
+    made ONCE, here, from what the input IS — a list whose every element is
+    a serialized chat message (:func:`_isMessageDict`). Only
+    message-estimation call sites produce this shape
+    (``[message.toDict() for message in messages]``), so image payloads
+    inside it are provider-interpreted image attachments. Anything else — a
+    JSON Schema (even one with message-shaped ``examples`` instances), a
+    bare message-shaped dict, a string — fails the predicate and its
+    contents are counted verbatim.
+
+    Args:
+        value: The top-level estimator input.
+
+    Returns:
+        bool: True only for a list of message-shaped dicts.
+    """
+    return isinstance(value, list) and all(_isMessageDict(v) for v in value)
+
+
+def _estimateTokenView(value: object, inMessageContent: bool = False) -> object:
+    """Build a non-mutating estimation view of TRUSTED MESSAGE data with image payloads stripped.
+
+    The walk itself makes NO context decisions: image payloads are replaced
+    only where the caller already armed ``inMessageContent`` —
+    :meth:`AbstractModel.getEstimateTokensCount` sets it ONCE at the trusted
+    input boundary, for inputs recognized as serialized message lists
+    (:func:`_isMessageList`). While armed, the flag propagates through every
+    nested list and dict — the message envelopes and their ``content``
+    values at any nesting depth. At an armed position, an image block — a
+    dict carrying an ``image_url`` key whose value is a dict with an image
+    data-URI ``url`` (the OpenAI multimodal shape ``{"type": "image_url",
+    "image_url": {"url": "data:...;base64,..."}}``; the ``type``
+    discriminator is optional, matching provider payloads) — is replaced by
+    :data:`_IMAGE_DATA_PLACEHOLDER`.
+
+    Everything else keeps being counted verbatim: bare JSON Schemas and
+    arbitrary structured payloads (e.g. the schema itself, estimated
+    alongside the messages by ``generateStructured``), image-block shapes in
+    inputs that are not message lists (schemas, schema ``examples`` entries,
+    bare dicts), non-image MIME data URIs, ordinary text content, tool
+    results, and plain-string inputs. Those characters are really sent, so
+    collapsing them would let requests bypass context sizing.
+
+    Args:
+        value: Arbitrary JSON-like data (dicts / lists / scalars).
+        inMessageContent: Whether ``value`` sits inside a trusted message
+            payload; armed only at the API boundary, never discovered during
+            the walk (internal recursion state).
+
+    Returns:
+        object: A copy of the structure with image payloads replaced by
+            :data:`_IMAGE_DATA_PLACEHOLDER` at armed positions; scalars are
+            returned as-is and no input container is mutated.
+    """
+    if isinstance(value, dict):
+        imageUrl = value.get("image_url")
+        if inMessageContent and isinstance(imageUrl, dict) and _isImageDataUrl(imageUrl.get("url")):
+            ret = dict(value)
+            ret["image_url"] = {"url": _IMAGE_DATA_PLACEHOLDER}
+            return ret
+        return {k: _estimateTokenView(v, inMessageContent=inMessageContent) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_estimateTokenView(v, inMessageContent=inMessageContent) for v in value]
+    return value
+
 
 _requestSessionIdVar: ContextVar[Optional[str]] = ContextVar("llmRequestSessionId", default=None)
 """Task-local session identifier for the in-flight LLM request.
@@ -242,7 +367,7 @@ class AbstractModel(ABC):
                 )
 
             # Original logic when no fallbacks
-            tokensCount = self.getEstimateTokensCount(messages)
+            tokensCount = self._estimateMessagesTokens(messages)
             logger.debug(
                 f"generateText(messages={len(messages)}, tools={len(tools) if tools else None}), "
                 f"estimateTokens={tokensCount}, model: {self.provider}/{self.modelId}"
@@ -477,7 +602,7 @@ class AbstractModel(ABC):
                 )
 
             # Original logic when no fallbacks
-            tokensCount = self.getEstimateTokensCount(messages) + self.getEstimateTokensCount(schema)
+            tokensCount = self._estimateMessagesTokens(messages) + self.getEstimateTokensCount(schema)
             logger.debug(
                 f"generateStructured(messages={len(messages)}, schema_keys={list(schema.keys())}), "
                 f"estimateTokens={tokensCount}, model: {self.provider}/{self.modelId}"
@@ -748,10 +873,21 @@ class AbstractModel(ABC):
         This method estimates the token count by converting the data to a string
         and using a heuristic: average token length is 3.5 characters. The result
         is multiplied by a coefficient (default 1.1) to ensure we don't underestimate.
+        Before counting, inline base64 payloads are stripped — but only when the
+        WHOLE input is recognized as a serialized chat-message list
+        (:func:`_isMessageList`, the shape message-estimation call sites pass
+        as ``[message.toDict() for message in messages]``). Normalization is
+        decided once at this trusted API boundary, from what the input IS;
+        message-shaped structures found during the recursive walk (e.g. JSON
+        Schema ``examples`` entries) never re-arm it
+        (:func:`_estimateTokenView`). Bare schemas, arbitrary structured
+        payloads, and plain-string inputs are counted verbatim.
 
         Args:
             data: Data to estimate token count for. Can be a string or any object
-                convertible to JSON.
+                convertible to JSON. A list of role+content message dicts gets
+                image-block normalization; everything else (e.g. a JSON Schema
+                passed by ``generateStructured``) is counted as-is.
 
         Returns:
             Estimated number of tokens in the data.
@@ -766,13 +902,60 @@ class AbstractModel(ABC):
         if isinstance(data, str):
             text = data
         else:
-            text = json.dumps(data, ensure_ascii=False, default=str)
+            # Trusted input boundary: image-block normalization is decided ONCE,
+            # from what the top-level input IS — a serialized message list from a
+            # message-estimation call site. Message-shaped structures discovered
+            # later during the walk (schema examples, bare message-shaped dicts)
+            # never re-arm it.
+            text = json.dumps(
+                _estimateTokenView(data, inMessageContent=_isMessageList(data)),
+                ensure_ascii=False,
+                default=str,
+            )
+        # Inline base64 image payloads (multimodal ``image_url`` data URIs) are
+        # estimation noise: one normalized photo is ~0.5MB of base64 (~150k
+        # estimated "tokens" by this heuristic) while the model bills it as
+        # ~1-3k image tokens. Counting the raw payload would force context
+        # condensing on nearly every image-bearing request. Payloads are
+        # stripped ONLY when the whole input is a serialized message list
+        # (:func:`_isMessageList` — armed once at this boundary; image blocks
+        # inside genuine message payloads, discriminator optional). Schemas,
+        # arbitrary structured payloads, message-shaped schema examples, data
+        # URIs inside ordinary text or tool results, and plain strings are
+        # real sent characters and keep being counted, so text-only requests
+        # and schema data cannot bypass context sizing. The
+        # max-images-per-request cap is the real guard for image cost.
         # According my experience, average, each token is 3-4 characters long, so use 3.5
         # For being conservative
         tokensCount = len(text) / 3.5
         # As we use estimated token count, it won't count tokens properly,
         # so we need to multiply by some coefficient to be sure
         return int(tokensCount * self.tokensCountCoeff)
+
+    def _estimateMessagesTokens(self, messages: Sequence[ModelMessage]) -> int:
+        """Estimate the token count of a message sequence at a generation gate.
+
+        Image-bearing sequences (:class:`ModelImageMessage`,
+        :class:`ModelImagesMessage`) are serialized with the canonical
+        ``[message.toDict() for message in messages]`` shape first, so the
+        estimator's trusted boundary (:func:`_isMessageList`) recognizes the
+        list and normalizes inline base64 payloads to the short image
+        placeholder. Without this, raw message OBJECTS fall through the
+        trusted boundary and ``json.dumps(..., default=str)`` embeds every
+        image's full base64 (via ``ModelMessage.__str__``) into the estimate,
+        spuriously rejecting valid native-vision requests at the
+        ``contextSize * 2`` gate. Text-only sequences keep the exact existing
+        estimation path: the raw object list is passed verbatim.
+
+        Args:
+            messages: Message sequence about to be sent to the provider.
+
+        Returns:
+            Estimated number of tokens for the sequence.
+        """
+        if any(isinstance(m, (ModelImageMessage, ModelImagesMessage)) for m in messages):
+            return self.getEstimateTokensCount([m.toDict() for m in messages])
+        return self.getEstimateTokensCount(messages)
 
     def getInfo(self) -> Dict[str, Any]:
         """Get model information and configuration.

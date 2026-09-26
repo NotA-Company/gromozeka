@@ -47,10 +47,10 @@ tags: [agent]
 | Status | Production-ready, active development |
 
 ### Key Features
-
 - Multi-platform bot support (Telegram and Max Messenger)
 - Max Messenger webhook mode: standalone aiohttp webhook-receiver process ([`lib/max_webhook_receiver/`](../../lib/max_webhook_receiver/) — own config file + own database since ADR-025) that buffers Max webhook POSTs in `webhook_updates` and serves them back to the bot via a local GET /updates endpoint (two-process local-API-proxy pattern; see [`architecture.md`](architecture.md) ADR-013/ADR-025)
 - Advanced LLM integration with multiple providers (YC SDK, OpenAI-compatible, OpenRouter)
+- Native vision: optional per-chat `native-vision` setting (owner-settable, default off) attaches user images/static stickers directly to vision-capable chat models (`support_image_input` on both chat and fallback model) instead of text descriptions — requires a configured storage backend (normalized, EXIF-stripped copies stored under `vision/`). See [`handlers.md`](handlers.md) §9, ADR-027, and [`docs/design/native-vision-design-v1.md`](../design/native-vision-design-v1.md)
 - Comprehensive API integrations (Weather, Search, Geocoding)
 - ML-powered spam detection with Bayes filter
 - Golden data testing framework for reliable API testing
@@ -59,7 +59,6 @@ tags: [agent]
 - Chat accessibility tracking: the bot records per-chat presence in `chat_info.bot_status`, excludes kicked/inaccessible chats from chat lists by default (so `/configure` and similar no longer crash on them), surfaces them to the owner via `/list_chats all`, and auto-recovers on the next inbound message. Design: [`docs/design/chat-accessibility-tracking.md`](../design/chat-accessibility-tracking.md).
 
 ---
-
 ## 2. Critical Commands
 
 ```bash

@@ -46,6 +46,7 @@ Exports:
     LLMToolCall: Model for tool/function call results
     ModelMessage: Model for text messages
     ModelImageMessage: Model for image messages
+    ModelImagesMessage: Model for multi-image messages
     ModelResultStatus: Enum for result status (success, error, timeout)
     ModelRunResult: Model for model run results
 """
@@ -59,6 +60,7 @@ from .models import (
     LLMToolCall,
     LLMToolFunction,
     ModelImageMessage,
+    ModelImagesMessage,
     ModelMessage,
     ModelResultStatus,
     ModelRunResult,
@@ -79,6 +81,7 @@ __all__ = [
     "LLMToolCall",
     "ModelMessage",
     "ModelImageMessage",
+    "ModelImagesMessage",
     "ModelResultStatus",
     "ModelRunResult",
     "ModelStructuredResult",

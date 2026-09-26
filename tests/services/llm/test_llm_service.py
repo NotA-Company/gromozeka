@@ -7,6 +7,7 @@ error handling, and integration scenarios.
 
 import asyncio
 import datetime
+import json
 import logging
 import uuid
 from typing import Any, Dict, List, Optional
@@ -25,6 +26,8 @@ from lib.ai.models import (
     LLMParameterType,
     LLMToolCall,
     LLMToolFunction,
+    ModelImageMessage,
+    ModelImagesMessage,
     ModelMessage,
     ModelResultStatus,
     ModelRunResult,
@@ -2142,6 +2145,105 @@ class TestCondenseContextCoverage:
         # ``source=resDict`` and ``coverage[key]=resDict`` — same object).
         assert result[1].role == "user"
         assert result[1].source is coverage[0]
+
+    async def testImageBearingBodyCondensedAsTextOnly(self, llmService):
+        """Image-bearing body messages cross into the condenser as TEXT-ONLY copies.
+
+        Regression (Phase 2b review, finding 1): the chat-time vision swap runs
+        BEFORE ``generateTextViaLLM``, whose per-round ``condenseContext``
+        passes body messages straight to the condensing model. The condensing
+        model's image-input capability is never checked (the ratified
+        eligibility rule covers only the chat pair), so a text-only condenser
+        would hard-reject a batch carrying serialized ``image_url`` parts —
+        and the failed-batch path skips that batch's TEXT context too.
+        ``condenseContext`` must strip image payloads at the condenser
+        boundary while preserving the envelope text and the ``source`` (for
+        coverage tracking), and must not mutate the caller's messages.
+
+        Returns:
+            None
+        """
+        source = EnsuredMessage(
+            sender=MessageSender(id=1, name="user1", username="user1"),
+            recipient=MessageRecipient(id=-100, chatType=ChatType.GROUP),
+            messageId=MessageId(7),
+            date=datetime.datetime.fromtimestamp(1000.0, datetime.timezone.utc),
+            messageText="IMG ENVELOPE",
+        )
+        imageMessage = ModelImagesMessage(role="user", content="IMG ENVELOPE", images=[bytearray(b"FAKE-IMG")])
+        imageMessage.source = source
+        messages = [
+            ModelMessage(role="system", content=self.SYS_PROMPT),
+            imageMessage,
+            ModelMessage(role="user", content="last"),
+        ]
+        model = _makeCountingModel(4096)
+        condensing = _makeCondensingModel(1000, ["summary-0"])
+
+        result, coverage = await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=1,
+            force=True,
+            condensingModel=condensing,
+            condensingPrompt=self.CONDENSING_PROMPT,
+            condensingSystemPrompt=self.CONDENSING_SYSTEM_PROMPT,
+            maxTokens=1000,
+        )
+
+        # The condenser saw ONE batch of plain text messages: no image
+        # message types and no serialized image blocks anywhere in the
+        # request (a text-only condenser can process it).
+        condensing.generateText.assert_awaited_once()
+        requestMessages = condensing.generateText.call_args.args[0]
+        assert all(isinstance(m, ModelMessage) for m in requestMessages)
+        assert all(not isinstance(m, (ModelImageMessage, ModelImagesMessage)) for m in requestMessages)
+        serialized = [m.toDict() for m in requestMessages]
+        assert all("image_url" not in json.dumps(s, default=str) for s in serialized)
+        # The envelope text (not a blanked placeholder) reached the condenser.
+        assert "IMG ENVELOPE" in [m["content"] for m in serialized]
+
+        # Coverage survived the text-only copy: the summary still covers the
+        # image message's source metadata.
+        assert set(coverage.keys()) == {0}
+        assert coverage[0].get("text") == "summary-0"
+        assert coverage[0].get("messageIds") == [MessageId(7)]
+        assert coverage[0].get("participants") == ["user1"]
+        assert coverage[0].get("messageCount") == 1
+
+        # The caller's list is untouched: the image message keeps its payload.
+        assert messages[1] is imageMessage
+        assert imageMessage.images == [bytearray(b"FAKE-IMG")]
+        assert imageMessage.source is source
+
+    async def testNoCondensationLeavesImageBearingBodyUntouched(self, llmService):
+        """Without condensation the body keeps its image messages untouched.
+
+        The text-only swap at the condenser boundary must not alter the
+        non-condensing behaviour: when the context fits, the original sequence
+        (image payloads included) is what the CHAT model receives.
+
+        Returns:
+            None
+        """
+        imageMessage = ModelImagesMessage(role="user", content="IMG ENVELOPE", images=[bytearray(b"FAKE-IMG")])
+        messages = [
+            ModelMessage(role="system", content=self.SYS_PROMPT),
+            imageMessage,
+            ModelMessage(role="user", content="last"),
+        ]
+        model = _makeCountingModel(4096)
+
+        # Huge budget + no force → nothing condenses.
+        ret, coverage = await llmService.condenseContext(
+            messages, model, keepFirstN=0, keepLastN=1, maxTokens=1_000_000
+        )
+
+        assert ret is messages
+        assert isinstance(ret[1], ModelImagesMessage)
+        assert ret[1].images == [bytearray(b"FAKE-IMG")]
+        assert coverage == {}
 
     async def testMultiBatchCoverage(self, llmService):
         """Two summary batches → two coverage entries with disjoint contiguous messageIds.

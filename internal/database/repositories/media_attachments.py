@@ -188,6 +188,7 @@ class MediaAttachmentsRepository(BaseRepository):
         localUrl: Optional[str] = None,
         description: Optional[str] = None,
         prompt: Optional[str] = None,
+        visionUrl: Optional[str] = None,
     ) -> bool:
         """Update a media attachment in the database.
 
@@ -204,6 +205,8 @@ class MediaAttachmentsRepository(BaseRepository):
             localUrl: Optional local URL to update.
             description: Optional description to update.
             prompt: Optional prompt to update.
+            visionUrl: Optional StorageService URL of the normalized vision
+                image to update (native-vision feature).
 
         Returns:
             bool: True if the media attachment was updated successfully, False otherwise.
@@ -236,6 +239,9 @@ class MediaAttachmentsRepository(BaseRepository):
             if prompt is not None:
                 query += "prompt = :prompt, "
                 values["prompt"] = prompt
+            if visionUrl is not None:
+                query += "vision_url = :visionUrl, "
+                values["visionUrl"] = visionUrl
             if fileSize is not None:
                 query += "file_size = :fileSize, "
                 values["fileSize"] = fileSize

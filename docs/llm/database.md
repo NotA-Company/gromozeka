@@ -208,7 +208,6 @@ db.chatMessages.saveChatMessage(..., dataSource="readonly")  # ERROR!
 ---
 
 ## 4. Adding a Database Migration
-
 **File location:** [`internal/database/migrations/versions/`](../../internal/database/migrations/versions/)
 
 **Quick start:** Use the migration generator script:
@@ -224,7 +223,7 @@ db.chatMessages.saveChatMessage(..., dataSource="readonly")  # ERROR!
    ```bash
    ls -1 internal/database/migrations/versions/ | grep migration_ | sort -V | tail -1
    ```
-   If the last is `migration_029_*.py`, the next is `030`. Never reuse a version number — `migration_016` is already taken by `migration_016_add_stat_tables.py`, so the example below uses `030`.
+   If the last is `migration_030_*.py`, the next is `031`. Never reuse a version number — `migration_016` is already taken by `migration_016_add_stat_tables.py`, so the example below uses `031`.
 
 2. **Create the migration file** with the pattern `migration_{version:03d}_{description}.py`
 
@@ -239,15 +238,15 @@ from lib.db.providers import BaseSQLProvider, ParametrizedQuery
 from ..base import BaseMigration
 
 
-class Migration030AddUserPreferences(BaseMigration):
+class Migration031AddUserPreferences(BaseMigration):
     """Add user preferences table.
 
     Attributes:
-        version: Migration version number (30).
+        version: Migration version number (31).
         description: Human-readable description.
     """
 
-    version: int = 30
+    version: int = 31
     description: str = "Add user preferences table"
 
     async def up(self, sqlProvider: BaseSQLProvider) -> None:
@@ -292,7 +291,7 @@ def getMigration() -> Type[BaseMigration]:
     Returns:
         Type[BaseMigration]: The migration class for this module.
     """
-    return Migration030AddUserPreferences
+    return Migration031AddUserPreferences
 ```
 
 **Migration pattern requirements:**
@@ -318,7 +317,6 @@ def getMigration() -> Type[BaseMigration]:
 - [Section 9 — Migration Documentation Protocol](#9-migration-documentation-protocol) — mandatory schema-doc updates after every migration
 
 ---
-
 ## 5. Database Models Reference
 
 **File:** [`internal/database/models.py`](../../internal/database/models.py)

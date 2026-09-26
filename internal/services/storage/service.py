@@ -7,7 +7,7 @@ through pluggable backend implementations (filesystem, S3, null).
 
 import logging
 import threading
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Optional, Union
 
 from .backends.abstract import AbstractStorageBackend
 from .backends.filesystem import FSStorageBackend
@@ -192,6 +192,29 @@ class StorageService:
         """
         if not self.initialized or self.backend is None:
             raise StorageConfigError("StorageService is not initialized. Call injectConfig() first")
+
+    @property
+    def backendType(self) -> Optional[str]:
+        """Name of the configured backend type, for read-only introspection.
+
+        Mirrors the ``type`` value accepted by :meth:`injectConfig`, so callers
+        can adapt behavior without reaching into the backend object (e.g. the
+        native-vision feature warns when storage is the no-op null backend).
+
+        Returns:
+            ``"null"``, ``"fs"`` or ``"s3"`` per the configured backend class,
+            ``None`` when the service is not initialized (no backend yet), or
+            the backend class name for unknown custom backends.
+        """
+        if self.backend is None:
+            return None
+        if isinstance(self.backend, NullStorageBackend):
+            return "null"
+        if isinstance(self.backend, FSStorageBackend):
+            return "fs"
+        if isinstance(self.backend, S3StorageBackend):
+            return "s3"
+        return type(self.backend).__name__
 
     def store(self, key: str, data: bytes) -> None:
         """

@@ -282,6 +282,8 @@ class MediaAttachmentDict(TypedDict):
     """Prompt for media generation."""
     description: Optional[str]
     """Media description."""
+    vision_url: Optional[str]
+    """StorageService URL of the normalized vision image (native-vision feature); None when not stored."""
     created_at: datetime.datetime
     """Record creation timestamp."""
     updated_at: datetime.datetime

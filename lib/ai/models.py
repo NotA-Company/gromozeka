@@ -45,7 +45,7 @@ from io import BytesIO
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import magic
-from PIL import Image
+from PIL import Image, ImageOps
 
 import lib.utils as utils
 
@@ -63,6 +63,17 @@ _MIME_TO_PIL_FORMAT: Dict[str, str] = {
     "image/png": "PNG",
     "image/webp": "WEBP",
     "image/gif": "GIF",
+}
+
+#: Output formats :func:`normalizeVisionImage` may re-encode into. Deliberately
+#: NARROWER than :data:`_MIME_TO_PIL_FORMAT` (which also serves
+#: :func:`convertImageIfNeeded` and accepts WebP/GIF as send-time INPUT
+#: formats): design v1 §4 defines only JPEG/PNG as normalized storage
+#: formats, and the helper's docstring promises a passthrough for anything
+#: else.
+_VISION_OUTPUT_PIL_FORMATS: Dict[str, str] = {
+    "image/jpeg": "JPEG",
+    "image/png": "PNG",
 }
 
 #: Maximum pixel count (width × height) for an image we are willing to
@@ -149,6 +160,245 @@ def convertImageIfNeeded(imageBytes: bytes, supportedFormats: Optional[List[str]
             f"returning original bytes unchanged"
         )
         return (imageBytes, currentMime)
+
+
+def normalizeVisionImage(
+    imageBytes: bytes,
+    maxDimension: int = 2048,
+    outputFormat: str = "image/jpeg",
+    quality: int = 85,
+) -> Tuple[bytes, str]:
+    """Normalize raw image bytes for storage as a native-vision attachment.
+
+    Lenient, never-raise entry point wrapping
+    :func:`_normalizeVisionImageImpl` — see that function for the full
+    pipeline description. Intended to run ONCE at receipt time (before
+    storing), unlike :func:`convertImageIfNeeded` which runs at send time
+    per target model.
+
+    This function NEVER raises: on any failure (unreadable bytes,
+    unsupported target format, oversized image, Pillow error, or even a
+    libmagic failure during MIME detection) the ORIGINAL bytes are
+    returned unchanged so the caller can still store/parse them. When
+    MIME detection itself fails the returned type is
+    ``application/octet-stream``. Because the fallback is
+    indistinguishable from success by inspecting the result alone,
+    STORAGE callers must use :func:`normalizeVisionImageStrict` instead:
+    storing the fallback would publish oversized, EXIF-bearing originals.
+
+    Args:
+        imageBytes: Raw image bytes in any format Pillow can open.
+        maxDimension: Pixel cap for the long edge; never upscales.
+            ``0`` disables resizing. Defaults to 2048.
+        outputFormat: Target MIME type, currently ``"image/jpeg"`` (the
+            default) or ``"image/png"``. Any other value — including WebP
+            and GIF, although :func:`convertImageIfNeeded` accepts those
+            as send-time INPUT formats — degrades to a passthrough of the
+            original bytes.
+        quality: JPEG encoder quality (1-95); values outside the range
+            are clamped into it with a logged warning. Ignored for PNG.
+
+    Returns:
+        A ``(normalizedBytes, mimeType)`` tuple where *normalizedBytes*
+        is the (possibly original) image bytes and *mimeType* is the MIME
+        type of those bytes — *outputFormat* on success, the detected
+        source MIME on graceful degradation.
+    """
+    result = _normalizeVisionImageImpl(
+        imageBytes=imageBytes,
+        maxDimension=maxDimension,
+        outputFormat=outputFormat,
+        quality=quality,
+    )
+    if result is not None:
+        return result
+    # Graceful degradation per the never-raise contract: hand back the
+    # ORIGINAL bytes tagged with the best MIME we can detect for them.
+    try:
+        return (imageBytes, magic.from_buffer(imageBytes, mime=True))
+    except Exception:  # noqa: BLE001 — never-raise contract on libmagic failure
+        return (imageBytes, "application/octet-stream")
+
+
+def normalizeVisionImageStrict(
+    imageBytes: bytes,
+    maxDimension: int = 2048,
+    outputFormat: str = "image/jpeg",
+    quality: int = 85,
+) -> Optional[Tuple[bytes, str]]:
+    """Strict variant of :func:`normalizeVisionImage` that reports success.
+
+    Runs the exact same pipeline (see :func:`_normalizeVisionImageImpl`)
+    but FAILS CLOSED: instead of degrading to the original bytes, it
+    returns ``None`` whenever normalization did not fully succeed (MIME
+    detection failure, unsupported target format, oversized image rejected
+    by the :data:`MAX_VISION_IMAGE_PIXELS` guard, or a Pillow error).
+
+    Storage callers (the receipt-time vision store) MUST use this variant:
+    the lenient fallback returned by :func:`normalizeVisionImage` may be
+    oversized and still carry EXIF metadata — the re-encode is what strips
+    it — and send-time delivery does no resize, so storing the fallback
+    would break both the pixel cap and the EXIF privacy promise. Like the
+    lenient variant, this function NEVER raises; failures are logged.
+
+    Args:
+        imageBytes: Raw image bytes in any format Pillow can open.
+        maxDimension: Pixel cap for the long edge; never upscales.
+            ``0`` disables resizing. Defaults to 2048.
+        outputFormat: Target MIME type, currently ``"image/jpeg"`` (the
+            default) or ``"image/png"``.
+        quality: JPEG encoder quality (1-95); values outside the range
+            are clamped into it with a logged warning. Ignored for PNG.
+
+    Returns:
+        A ``(normalizedBytes, outputFormat)`` tuple on success, or
+        ``None`` when normalization failed for any reason.
+    """
+    return _normalizeVisionImageImpl(
+        imageBytes=imageBytes,
+        maxDimension=maxDimension,
+        outputFormat=outputFormat,
+        quality=quality,
+    )
+
+
+def _normalizeVisionImageImpl(
+    imageBytes: bytes,
+    maxDimension: int = 2048,
+    outputFormat: str = "image/jpeg",
+    quality: int = 85,
+) -> Optional[Tuple[bytes, str]]:
+    """Run the vision normalization pipeline, reporting success explicitly.
+
+    Shared core of :func:`normalizeVisionImage` (lenient wrapper) and
+    :func:`normalizeVisionImageStrict` (strict entry point); both expose
+    the same pipeline and differ only in how failure is reported. The
+    normalization pipeline:
+
+    - Animated sources (GIF/WebP stickers) collapse to the FIRST frame;
+    - EXIF orientation (e.g. 6/8 from portrait phone shots) is baked into
+      the pixel layout via ``ImageOps.exif_transpose`` so the image is not
+      left sideways once the metadata is stripped;
+    - The image is downscaled so the LONG side is at most *maxDimension*
+      pixels using LANCZOS resampling; it is NEVER upscaled. When
+      *maxDimension* is ``0`` the resize step is skipped entirely
+      (``0 = no resize``, see ``configs/00-defaults/vision.toml``).
+      Palette/bilevel sources (modes ``P``/``1``) are converted to RGB/RGBA
+      BEFORE resizing, because Pillow silently forces NEAREST resampling
+      for those modes and would ignore the LANCZOS request;
+    - The image is re-encoded to *outputFormat*; for ``image/jpeg`` an
+      alpha channel is flattened onto RGB and *quality* controls the
+      encoder (values outside 1-95 are clamped into range with a logged
+      warning — Pillow itself accepts out-of-range integers). The re-save
+      also drops EXIF metadata (GPS/device data) as a deliberate privacy
+      property;
+    - The same decompression-bomb guard as :func:`convertImageIfNeeded`
+      (:data:`MAX_VISION_IMAGE_PIXELS`, 50 MP) rejects crafted oversized
+      images BEFORE the expensive decode runs.
+
+    Unlike the lenient wrapper this core reports success explicitly: any
+    failure (unreadable bytes, unsupported target format, oversized image,
+    Pillow error, or even a libmagic failure during MIME detection) is
+    logged and yields ``None``. It still NEVER raises.
+
+    Args:
+        imageBytes: Raw image bytes in any format Pillow can open.
+        maxDimension: Pixel cap for the long edge; never upscales.
+            ``0`` disables resizing. Defaults to 2048.
+        outputFormat: Target MIME type, currently ``"image/jpeg"`` (the
+            default) or ``"image/png"``.
+        quality: JPEG encoder quality (1-95); values outside the range
+            are clamped into it with a logged warning. Ignored for PNG.
+
+    Returns:
+        A ``(normalizedBytes, outputFormat)`` tuple on success, or
+        ``None`` when normalization failed for any reason.
+    """
+    try:
+        currentMime = magic.from_buffer(imageBytes, mime=True)
+    except Exception:  # noqa: BLE001 — libmagic failure on malformed bytes; callers handle None
+        logger.error("Failed to detect image MIME for vision normalization; normalization failed")
+        return None
+
+    pilFormat = _VISION_OUTPUT_PIL_FORMATS.get(outputFormat)
+    if pilFormat is None:
+        logger.warning(
+            f"Cannot normalize image to unsupported target MIME {outputFormat!r} "
+            f"(current {currentMime!r}); normalization failed"
+        )
+        return None
+
+    try:
+        logger.debug(f"Normalizing image for vision: {currentMime} -> {outputFormat} (maxDimension={maxDimension})")
+        with BytesIO(imageBytes) as inBuf:
+            img = Image.open(inBuf)
+            # Cheap header read has populated width/height before any decode;
+            # reject oversized images so the (memory-expensive) decode never
+            # runs. Scoped cap — the global Image.MAX_IMAGE_PIXELS is NOT
+            # mutated. MUST stay before ImageOps.exif_transpose below, which
+            # decodes pixels.
+            if img.width * img.height > MAX_VISION_IMAGE_PIXELS:
+                logger.error(
+                    f"Image too large to normalize for vision ({img.width}x{img.height}="
+                    f"{img.width * img.height} pixels > {MAX_VISION_IMAGE_PIXELS}); "
+                    f"current={currentMime!r} target={outputFormat!r}"
+                )
+                return None
+            # Animated content (GIF/WebP stickers): keep the first frame only.
+            if getattr(img, "is_animated", False) and getattr(img, "n_frames", 1) > 1:
+                img.seek(0)
+            # Bake EXIF orientation into the pixels BEFORE stripping metadata:
+            # portrait phone shots carry orientation 6/8 while the stored
+            # pixel layout stays landscape, so a plain re-save would produce
+            # a sideways image with no tag left to explain it. exif_transpose
+            # returns a new image with the transform applied (and DECODES
+            # pixels — hence it runs after the guard above).
+            transposed = ImageOps.exif_transpose(img)
+            if transposed is not None:
+                img = transposed
+            # Palette/bilevel sources: Pillow silently forces NEAREST
+            # resampling for modes "P" and "1", ignoring the LANCZOS request
+            # in the resize below. Convert to truecolor BEFORE resizing
+            # (keeping the alpha channel when the palette carries
+            # transparency) so the requested resampler actually applies.
+            if img.mode == "P":
+                img = img.convert("RGBA" if "transparency" in img.info else "RGB")
+            elif img.mode == "1":
+                img = img.convert("RGB")
+            # Downscale so the long edge is at most maxDimension; never
+            # upscale. maxDimension == 0 disables the resize step.
+            longSide = max(img.width, img.height)
+            if maxDimension > 0 and longSide > maxDimension:
+                scale = maxDimension / longSide
+                newWidth = max(1, round(img.width * scale))
+                newHeight = max(1, round(img.height * scale))
+                img = img.resize((newWidth, newHeight), Image.Resampling.LANCZOS)
+            # JPEG has no alpha channel; flatten onto an RGB canvas first so
+            # Pillow can encode transparency-bearing sources (PNG/WebP) into JPEG.
+            if outputFormat == "image/jpeg":
+                img = img.convert("RGB")
+            # Pillow's JPEG encoder accepts integer qualities outside the
+            # documented 1-95 band (e.g. 96-100 save without error), so
+            # out-of-range values are clamped explicitly, with a warning
+            # when an adjustment happens. Inside the guarded path so the
+            # never-raise contract holds even for pathological input.
+            effectiveQuality = quality
+            if outputFormat == "image/jpeg" and not 1 <= quality <= 95:
+                effectiveQuality = min(95, max(1, quality))
+                logger.warning(f"JPEG quality {quality} outside 1-95; clamped to {effectiveQuality}")
+            with BytesIO() as outBuf:
+                # Saving without an ``exif`` argument strips ALL EXIF metadata
+                # (GPS/device data) — the orientation tag was already consumed
+                # by exif_transpose above.
+                if outputFormat == "image/jpeg":
+                    img.save(outBuf, format=pilFormat, quality=effectiveQuality)
+                else:
+                    img.save(outBuf, format=pilFormat)
+                normalized = outBuf.getvalue()
+        return (normalized, outputFormat)
+    except Exception as e:  # noqa: BLE001 — graceful degradation is the contract
+        logger.error(f"Failed to normalize image for vision from {currentMime!r} to {outputFormat!r}: {e}")
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -772,7 +1022,7 @@ class ModelMessage:
         """
         return f"{type(self).__name__}({str(self)})"
 
-    def toLogMessage(self, contentLengthLimit=128, _selfDict: Optional[Dict[str, Any]] = None) -> str:
+    def toLogMessage(self, contentLengthLimit: int = 128, _selfDict: Optional[Dict[str, Any]] = None) -> str:
         """Return a string representation of the message for logging.
 
         Args:
@@ -893,7 +1143,146 @@ class ModelImageMessage(ModelMessage):
 
         return super().toDict(contentKey, content=content, skipRole=skipRole)
 
-    def toLogMessage(self, contentLengthLimit=128, _selfDict: Optional[Dict[str, Any]] = None) -> str:
+    def toLogMessage(self, contentLengthLimit: int = 128, _selfDict: Optional[Dict[str, Any]] = None) -> str:
+        """Return a string representation of the message for logging.
+
+        Args:
+            contentLengthLimit: The maximum length of the content to include in the log message.
+            _selfDict: Optional dictionary representation of the message. To be used by subclasses only.
+
+        Returns:
+            str: String representation of the message.
+        """
+        selfDict = _selfDict if _selfDict is not None else self.toDict()
+        if "content" in selfDict and isinstance(selfDict["content"], list):
+            newContent = []
+            for item in selfDict["content"]:
+                if isinstance(item, dict) and "image_url" in item:
+                    newItem = item.copy()
+                    if isinstance(item["image_url"], dict) and "url" in item["image_url"]:
+                        urlLen = len(item["image_url"]["url"])
+                        newItem["image_url"]["url"] = f"{newItem['image_url']['url'][:32]}...({urlLen} bytes)"
+
+                    newContent.append(newItem)
+                    continue
+                newContent.append(item)
+            selfDict["content"] = newContent
+        return super().toLogMessage(contentLengthLimit, selfDict)
+
+
+class ModelImagesMessage(ModelMessage):
+    """Represents a message with multiple images for multimodal LLMs.
+
+    Multi-image sibling of :class:`ModelImageMessage` (native-vision design
+    v1 §3.4): holds an ordered list of images (e.g. a Telegram album or a Max
+    multi-attachment) and serialises them into a single OpenAI-style multipart
+    user message — an optional text block followed by one ``image_url`` block
+    per image, in list order.
+
+    Example:
+        >>> message = ModelImagesMessage(
+        ...     role="user",
+        ...     content="What are in these images?",
+        ...     images=[bytearray(b"fake_image_data_1"), bytearray(b"fake_image_data_2")]
+        ... )
+        >>> message_dict = message.toDict()
+        >>> "image_url" in str(message_dict)
+        True
+    """
+
+    def __init__(self, role: str = "user", content: str = "", images: List[bytearray] = []) -> None:
+        """Initialize a multi-image message.
+
+        Args:
+            role: The message role (default: "user").
+            content: The text content of the message (default: "").
+            images: Ordered list of image bytearrays; each becomes one
+                ``image_url`` block in list order (default: empty list).
+
+        Returns:
+            None
+        """
+        super().__init__(role, content)
+        self.images = images
+
+    def toDict(
+        self,
+        contentKey: Optional[str] = None,
+        # Override-compatibility exceptions (Phase 2a review precedent): the
+        # parent ``ModelMessage.toDict`` declares ``content: Optional[Any]``;
+        # narrowing a parameter in an override violates LSP and is rejected
+        # by pyright, so ``Any`` here is forced by the parent signature. The
+        # returned content value is caller-controlled through that same
+        # parameter, and the honestly-typed ``Dict[str, object]`` return
+        # trips un-narrowed iteration/subscript of ``toDict()`` results in
+        # existing sanctioned tests — so the parent's ``Dict[str, Any]``
+        # return contract is kept.
+        content: Optional[Any] = None,
+        skipRole: bool = False,
+        supportedImageFormats: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Convert the message to a dictionary with multiple image blocks.
+
+        This method overrides the parent to convert every embedded image to
+        base64 and format the message according to the OpenAI multimodal
+        message specification: an optional ``{"type": "text"}`` block (only
+        when the text content is non-empty) followed by one
+        ``{"type": "image_url"}`` block per image, in list order.
+
+        Args:
+            contentKey: Optional override for the content key (default: None).
+            content: Optional override for the content value (default: None).
+            skipRole: If True, omit the role from the output (default: False).
+            supportedImageFormats: Optional ordered list of acceptable input
+                image MIME types for the target model. Every embedded image's
+                detected MIME is checked independently; when it is not in the
+                list, that image is re-encoded to the first listed format
+                (e.g. WebP -> JPEG). ``None`` or empty preserves the original
+                formats. Conversion results are derived into LOCAL variables;
+                ``self.images`` is never mutated, so repeated serialisation
+                (e.g. primary then fallback model) always starts from the
+                original bytes.
+
+        Returns:
+            Dict[str, Any]: A dictionary representation with the images
+                embedded as base64 data URIs.
+
+        Note:
+            Each image MIME type is automatically detected using the
+            python-magic library. Conversion failures degrade gracefully:
+            the original bytes are sent unchanged (see
+            :func:`convertImageIfNeeded`).
+
+        Example:
+            >>> message = ModelImagesMessage(
+            ...     role="user",
+            ...     content="Describe these images",
+            ...     images=[bytearray(b"fake_image_data")]
+            ... )
+            >>> result = message.toDict()
+            >>> isinstance(result.get("content"), list)
+            True
+        """
+        if content is None:
+            content = []
+            if self.content:
+                content.append({"type": "text", "text": self.content})
+
+            for image in self.images:
+                imageBytes, mimeType = convertImageIfNeeded(bytes(image), supportedImageFormats)
+                base64Image = base64.b64encode(imageBytes).decode("utf-8")
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{mimeType};base64,{base64Image}",
+                        },
+                    }
+                )
+
+        return super().toDict(contentKey, content=content, skipRole=skipRole)
+
+    def toLogMessage(self, contentLengthLimit: int = 128, _selfDict: Optional[Dict[str, object]] = None) -> str:
         """Return a string representation of the message for logging.
 
         Args:

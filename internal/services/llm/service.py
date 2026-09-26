@@ -26,6 +26,8 @@ from lib.ai.models import (
     LLMFunctionParameter,
     LLMToolCall,
     LLMToolFunction,
+    ModelImageMessage,
+    ModelImagesMessage,
     ModelMessage,
     ModelResultStatus,
     ModelRunResult,
@@ -143,6 +145,38 @@ def generateCondensingDict(text: str, messages: Sequence[ModelMessage]) -> Conde
     if messageCount:
         ret["messageCount"] = messageCount
     return ret
+
+
+def stripImagesForCondensing(message: ModelMessage) -> ModelMessage:
+    """Return a text-only copy of an image-bearing message for the condensing model.
+
+    The condensing model's image-input capability is never checked (the ratified
+    eligibility rule covers only CHAT_MODEL + FALLBACK_MODEL), so a batch
+    containing serialized ``image_url`` parts can be hard-rejected by a
+    text-only condenser — and the failed-batch path then skips that batch's
+    TEXT context too. At the boundary where body messages cross into the
+    condensing model (:meth:`LLMService.condenseContext`), image payloads are
+    dropped while the envelope (``role`` / ``content``), ``contentKey``,
+    ``weight``, and ``source`` are preserved so coverage tracking
+    (:func:`generateCondensingDict`) stays intact. Plain messages are returned
+    as-is; nothing is mutated.
+
+    Args:
+        message: The body message crossing into the condensing model.
+
+    Returns:
+        ModelMessage: The same instance for plain messages, or a new plain
+            :class:`ModelMessage` carrying the same envelope without images.
+    """
+    if not isinstance(message, (ModelImageMessage, ModelImagesMessage)):
+        return message
+    return ModelMessage(
+        role=message.role,
+        content=message.content,
+        contentKey=message.contentKey,
+        weight=message.weight,
+        source=message.source,
+    )
 
 
 class LLMService:
@@ -1232,6 +1266,14 @@ class LLMService:
 
             logger.debug(f"Condensed context: {ret}")
             return (ret, coverage)
+
+        # The condensing model's image-input capability is never checked, so
+        # image-bearing body messages are swapped to text-only copies BEFORE
+        # they cross into the condenser (a text-only condenser would otherwise
+        # reject the batch and its text context with it). Envelope and source
+        # survive the copy for coverage tracking. retHead / retTail keep their
+        # images — those go to the CHAT model, not the condenser.
+        body = [stripImagesForCondensing(v) for v in body]
 
         if condensingPrompt is None:
             condensingPrompt = (

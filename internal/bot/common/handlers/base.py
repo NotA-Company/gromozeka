@@ -76,6 +76,7 @@ from lib.ai import (
     ModelMessage,
     ModelResultStatus,
 )
+from lib.ai.models import normalizeVisionImageStrict
 from lib.ai.session import buildSessionId
 from lib.stats import NullStatsStorage, StatsStorage
 
@@ -171,6 +172,10 @@ class BaseBotHandler(CommandHandlerMixin):
         # Cached config flags — read once at init, require restart to take effect.
         # Mirrors the _searchEnabled pattern in MessagePreprocessorHandler.
         self._sttEnabled: bool = bool(self.configManager.getSttConfig().get("enabled", False))
+
+        # Chats for which a native-vision store failure WARNING has already been
+        # logged (rate-limit: once per chat, see _warnVisionStoreFailureOncePerChat).
+        self._visionWarnedChats: set[int] = set()
 
         # self._tgBot: Optional[telegramExt.ExtBot] = None
         # self._maxBot: Optional[libMax.MaxBotClient] = None
@@ -1984,9 +1989,11 @@ class BaseBotHandler(CommandHandlerMixin):
 
         chatSettings = await self.getChatSettings(ensuredMessage.recipient.id)
         mediaData: Optional[bytes] = None
+        mediaDataDownloadAttempted = False
         if chatSettings[ChatSettingsKey.SAVE_ATTACHMENTS].toBool():
             if self._bot is None:
                 raise ValueError("Bot is not initialized")
+            mediaDataDownloadAttempted = True
             mediaData = await self._bot.downloadAttachment(mediaId, fileId)
             if mediaData is not None:
                 localUrl = await self.storeAttachment(
@@ -1996,6 +2003,10 @@ class BaseBotHandler(CommandHandlerMixin):
                 )
 
         needParseImage = chatSettings[ChatSettingsKey.PARSE_ATTACHMENTS].toBool() and mediaType in (
+            MessageType.IMAGE,
+            MessageType.STICKER,
+        )
+        needVisionStore = chatSettings[ChatSettingsKey.NATIVE_VISION].toBool() and mediaType in (
             MessageType.IMAGE,
             MessageType.STICKER,
         )
@@ -2041,6 +2052,31 @@ class BaseBotHandler(CommandHandlerMixin):
                 fileSize=None,
                 description=None,
             )
+
+        # Native-vision store branch (Phase 1b): normalize + persist the image
+        # bytes so Phase 2 can attach them natively at chat time. Runs
+        # synchronously right after the row upsert; the description pipeline
+        # below still spawns per its own `needParseImage` gate. The ENTIRE
+        # vision-specific operation — null-backend check, config access,
+        # download, normalization, storage, and the vision_url write — lives
+        # inside `_storeVisionImage`'s fail-soft boundary
+        # (docs/design/native-vision-design-v1.md §3.2): any failure is
+        # logged as a rate-limited WARNING (once per chat) and skipped, and
+        # the media status machine is never touched by this branch. Bytes
+        # the branch downloaded successfully are returned so the parse path
+        # below can reuse them; the parse path keeps its own pre-existing
+        # "download when mediaData is still None" retry.
+        if needVisionStore:
+            visionUrl, visionMediaData = await self._storeVisionImage(
+                chatId=ensuredMessage.recipient.id,
+                mediaId=ret.id,
+                mediaType=mediaType,
+                fileId=fileId,
+                mediaData=mediaData,
+                mediaDataDownloadAttempted=mediaDataDownloadAttempted,
+            )
+            if visionMediaData is not None:
+                mediaData = visionMediaData
 
         # Need to process Attachment somehow
         if needParseImage or needProcessSTT:
@@ -2115,6 +2151,144 @@ class BaseBotHandler(CommandHandlerMixin):
             ret.task = makeEmptyAsyncTask()
 
         return ret
+
+    def _warnVisionStoreFailureOncePerChat(self, chatId: int, reason: str) -> None:
+        """
+        Log a WARNING about a native-vision store failure, rate-limited to once per chat.
+
+        The native-vision store path is fail-soft by design (design doc §3.2):
+        a broken or unconfigured storage backend must never surface an error to
+        end users, but it should stay visible in the logs. Only the first
+        failure per chat produces a WARNING; subsequent ones are DEBUG.
+
+        Args:
+            chatId: Chat where the failure happened (rate-limit key).
+            reason: Human-readable failure description for the log line.
+
+        Returns:
+            None
+        """
+        if chatId in self._visionWarnedChats:
+            logger.debug(f"Native-vision store failed again for chat {chatId}: {reason}")
+            return
+        self._visionWarnedChats.add(chatId)
+        logger.warning(f"Native-vision store failed for chat {chatId} (warned once per chat): {reason}")
+
+    async def _storeVisionImage(
+        self,
+        *,
+        chatId: int,
+        mediaId: str,
+        mediaType: MessageType,
+        fileId: str,
+        mediaData: Optional[bytes],
+        mediaDataDownloadAttempted: bool,
+    ) -> Tuple[Optional[str], Optional[bytes]]:
+        """
+        Run the complete native-vision receipt-time store operation; never raises.
+
+        This method OWNS the whole vision-specific flow and is its single
+        fail-soft boundary (docs/design/native-vision-design-v1.md §3.2):
+        the null-backend check, ``getVisionConfig()`` access, download,
+        libmagic image guard, strict normalization, object storage, and the
+        ``media_attachments.vision_url`` write all happen inside one
+        try/except. Any failure is reported through
+        [`_warnVisionStoreFailureOncePerChat`](internal/bot/common/handlers/base.py)
+        (once per chat) and the media status machine is NOT touched.
+
+        Ordering contract:
+
+        - The null-backend check runs BEFORE any vision-only download, so a
+          misconfigured backend never wastes a fetch;
+        - the download happens at most once, and only when *mediaData* is
+          empty AND no download was already attempted for this media (by
+          the save-attachments path) — the vision branch never makes an
+          implicit retry;
+        - normalization uses the STRICT variant of
+          [`normalizeVisionImage`](lib/ai/models.py): on any normalization
+          failure the store is skipped and ``vision_url`` stays unpublished
+          — the lenient fallback is the ORIGINAL bytes (oversized, still
+          carrying EXIF), and send-time delivery does no resize;
+        - storage happens before the DB write: a failed write may leave an
+          orphan storage object (acceptable), but ``vision_url`` is never
+          published before the object exists.
+
+        Args:
+            chatId: Chat the media belongs to (warning rate-limit key).
+            mediaId: Media identifier, for logging.
+            mediaType: Media type (only IMAGE/STICKER reach this method).
+            fileId: Platform file id used when a download is required.
+            mediaData: Already-downloaded bytes (e.g. fetched by the
+                save-attachments path), or None when no bytes are available.
+            mediaDataDownloadAttempted: True when a download was already
+                attempted for this media earlier in the receipt flow
+                (successfully or not); the vision branch then must not
+                download again.
+
+        Returns:
+            ``(visionUrl, availableMediaData)`` where *visionUrl* is the
+            storage key written to ``media_attachments.vision_url`` (None on
+            skip/failure) and *availableMediaData* is whatever bytes exist
+            after this method's download step (None when there are none),
+            for reuse by the parse path.
+        """
+        try:
+            if self.storage.backendType == "null":
+                self._warnVisionStoreFailureOncePerChat(
+                    chatId,
+                    "storage backend is 'null' — configure a real storage backend to use native-vision",
+                )
+                return (None, None)
+
+            visionConfig = self.configManager.getVisionConfig()
+
+            if mediaData is None and not mediaDataDownloadAttempted:
+                if self._bot is None:
+                    raise ValueError("Bot is not initialized")
+                mediaData = await self._bot.downloadAttachment(mediaId, fileId)
+            if mediaData is None:
+                self._warnVisionStoreFailureOncePerChat(chatId, f"download of {mediaType}#{mediaId} returned no data")
+                return (None, None)
+
+            # Same guard style as the parse path: only real images.
+            mimeType = magic.from_buffer(mediaData, mime=True)
+            if not mimeType.startswith("image/"):
+                logger.debug(f"{mediaType}#{mediaId} is not an image ({mimeType}), skipping vision store")
+                # Hand the downloaded bytes back so the parse path (which
+                # accepts any media and applies its own MIME guard) can
+                # reuse them instead of re-downloading.
+                return (None, mediaData)
+
+            normalized = normalizeVisionImageStrict(
+                imageBytes=mediaData,
+                maxDimension=visionConfig.get("max-image-dimension", 2048),
+                outputFormat=visionConfig.get("image-format", "image/jpeg"),
+                quality=visionConfig.get("image-quality", 85),
+            )
+            if normalized is None:
+                # Strict normalization failed (50MP guard, undecodable
+                # bytes, encoder error, ...): the lenient fallback would be
+                # the ORIGINAL bytes — oversized and still carrying EXIF —
+                # and send time does no resize, so fail closed instead.
+                self._warnVisionStoreFailureOncePerChat(chatId, f"normalization of {mediaType}#{mediaId} failed")
+                return (None, mediaData)
+
+            normalizedBytes, normalizedMime = normalized
+            storePrefix = visionConfig.get("store-prefix", "vision/")
+            ext = normalizedMime.split("/")[-1]
+            sha512 = hashlib.sha512(normalizedBytes).hexdigest()
+            key = f"{storePrefix}{sha512}.{ext}"
+            # Content dedup: store only when not already present, mirroring storeAttachment.
+            if not self.storage.exists(key):
+                self.storage.store(key, normalizedBytes)
+            # Store-then-write: the write below may still fail (leaving an
+            # orphan storage object — acceptable), but vision_url is never
+            # published before the object exists.
+            await self.db.mediaAttachments.updateMediaAttachment(mediaId=mediaId, visionUrl=key)
+            return (key, mediaData)
+        except Exception as e:
+            self._warnVisionStoreFailureOncePerChat(chatId, f"{type(e).__name__}: {e}")
+            return (None, mediaData)
 
     async def storeAttachment(self, data: bytes, prefix: str, mediaType: str) -> Optional[str]:
         """

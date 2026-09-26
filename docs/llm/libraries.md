@@ -37,13 +37,13 @@ category: guide
 ## 1. `lib/ai` — LLM Abstraction
 
 ### 1.1 Imports and key classes
-
 **Import paths:**
 ```python
 from lib.ai import LLMManager, AbstractModel, ModelMessage, ModelResultStatus, ModelStructuredResult
 from lib.ai.models import (
     ModelMessage,
     ModelImageMessage,
+    ModelImagesMessage,
     ModelRunResult,
     ModelStructuredResult,
     ModelResultStatus,
@@ -67,13 +67,13 @@ from lib.ai.models import (
 | [`OpencodeGoProvider`](../../lib/ai/providers/opencode_go_provider.py) / [`OpencodeGoModel`](../../lib/ai/providers/opencode_go_provider.py) | `lib/ai/providers/opencode_go_provider.py` | OpenCode Go endpoint — like `custom-openai`, but attaches the mandatory `x-opencode-session` header to every request (see "Request session identification" below) |
 | [`ModelMessage`](../../lib/ai/models.py:550) | `lib/ai/models.py` | Standard text message for LLM. `__slots__ = (role, content, contentKey, toolCalls, toolCallId, weight, source)` — `source` is an optional passthrough for the originating handler message (used by the llm-messages-handler to round-trip provenance, see [`memories/llm-messages-handler.md`](memories/llm-messages-handler.md)) |
 | [`ModelImageMessage`](../../lib/ai/models.py) | `lib/ai/models.py` | Message with embedded image |
+| [`ModelImagesMessage`](../../lib/ai/models.py) | `lib/ai/models.py` | Multi-image sibling of `ModelImageMessage`: carries `images: List[bytearray]` and serialises as ONE text block + N `image_url` blocks (the shape the native-vision chat-time attach produces). Runs `convertImageIfNeeded` per image (format/MIME normalization) and **never mutates `self.images`** — encoding works on copies |
 | [`ModelRunResult`](../../lib/ai/models.py:965) | `lib/ai/models.py` | LLM response container. `__slots__` add `isFallback`, `isToolsUsed`, `roundLimitHit` (set by `LLMService.generateTextViaLLM` when the `maxRounds` tool-loop budget is exhausted, regardless of resulting status — see [`memories/user-memory-refinement.md`](memories/user-memory-refinement.md)), and the optional provider-reported usage fields `cachedInputTokens` (subset of `inputTokens`, from `prompt_tokens_details.cached_tokens`), `reasoningTokens` (subset of `outputTokens`, from `completion_tokens_details.reasoning_tokens` / YC SDK `usage.reasoning_tokens`), and `cost` (USD, e.g. OpenRouter's extra `usage.cost`) — all `None` when the provider doesn't report them |
 | [`ModelStructuredResult`](../../lib/ai/models.py) | `lib/ai/models.py` | Structured-output result; adds `data: Optional[Dict]` |
 | [`ModelResultStatus`](../../lib/ai/models.py) | `lib/ai/models.py` | `FINAL`, `ERROR`, `TIMEOUT`, etc. |
 | [`LLMToolFunction`](../../lib/ai/models.py:345) | `lib/ai/models.py` | Tool/function definition for LLM |
 | [`LLMFunctionParameter`](../../lib/ai/models.py:277) | `lib/ai/models.py` | Tool parameter definition |
 | [`LLMParameterType`](../../lib/ai/models.py:253) | `lib/ai/models.py` | `STRING`, `NUMBER`, `BOOLEAN`, `ARRAY`, `OBJECT` |
-
 ### 1.2 Key methods on models
 
 **Key methods on `AbstractModel`:**
@@ -207,6 +207,12 @@ imgMsg = ModelImageMessage(
     image=bytearray(imageData),
 )
 ```
+
+**Image normalization contract (`normalizeVisionImage` / `normalizeVisionImageStrict`):** the lenient `normalizeVisionImage` is **never-raise** — on any failure it returns the original input bytes; the strict `normalizeVisionImageStrict` is **fail-closed** — it returns `None` instead. STORAGE callers MUST use the Strict variant: the lenient fallback can return the original oversized, EXIF-bearing bytes, which would poison the dedup store. Both cap the long side at `maxDimension` (LANCZOS, never upscale; `maxDimension=0` disables resizing), re-encode per `imageFormat`/`imageQuality`, take frame 0 of animated inputs, strip EXIF (including orientation), and refuse inputs over ~50 MP.
+
+**Estimator trusted boundary:** `getEstimateTokensCount` strips inline `image_url` data-URIs from the estimate **only when the whole input is a serialized message list** (the `_isMessageList` gate is the trusted boundary). Accepted limitation: inside a trusted list, the flag spans the whole envelope — a nested non-message blob inside a trusted list is not re-examined.
+
+**Condensation:** `LLMService.condenseContext` strips image messages at the condenser boundary via `stripImagesForCondensing` — the condensing model always sees text-only copies (a `ModelImagesMessage` degrades to its text/envelope part).
 ### 1.4 Structured output and provider support
 
 **Structured (JSON-Schema) output:**

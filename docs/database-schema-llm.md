@@ -5,15 +5,13 @@ category: reference
 # Database Schema Reference for LLMs
 
 ## Quick Reference
-
 **Database**: SQLite with multi-source support
 **Database Class**: [`Database`](../internal/database/database.py:1)
 **Models**: [`internal/database/models.py`](../internal/database/models.py:1)
 **Repositories**: [`internal/database/repositories/`](../internal/database/repositories/)
-**Migrations**: 29 (up to `migration_029`)
+**Migrations**: 30 (up to `migration_030`)
 
 ---
-
 ## Table Definitions
 
 ### chat_messages
@@ -188,6 +186,7 @@ CREATE TABLE media_attachments (
     status TEXT NOT NULL DEFAULT 'pending',
     mime_type TEXT,
     local_url TEXT,
+    vision_url TEXT,                     -- migration_030; StorageService key of normalized vision bytes
     prompt TEXT,
     description TEXT,
     created_at TIMESTAMP NOT NULL,
@@ -195,14 +194,15 @@ CREATE TABLE media_attachments (
 )
 ```
 
-**TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:262)
+**TypedDict**: [`MediaAttachmentDict`](../internal/database/models.py:262) — includes `vision_url: Optional[str]` (the key is present on every read: a present nullable column whose SQL NULL reads back as `None` until the native-vision store step writes it — not an optional/missing dict key).
 
 **STT (media-transcription) semantics:** For STT semantics (lifecycle, gating, CAS-removal), see [ADR-020](llm/architecture.md#adr-020-sttservice--synchronous-stateless-stt-service-and-dependency-firewall).
 
 **Note on `metadata`:** `migration_013` declares `metadata TEXT NOT NULL` (no `DEFAULT ''`) for cross-RDBMS portability — application code always supplies the value.
 
----
+**Note on `vision_url`:** Added by `migration_030` (nullable TEXT, no default) for the native-vision feature — the StorageService key of the content-deduplicated NORMALIZED image bytes (`{store-prefix}{sha512}.{ext}`, default prefix `vision/`), written at receipt time by `BaseBotHandler._storeVisionImage` when the chat's `native-vision` setting is on, read at chat time by `LLMMessageHandler._applyNativeVision`. Distinct from `local_url` (ORIGINAL bytes, e.g. resender). NULL = no vision bytes → the chat-time path degrades to the text `description`. Objects are retained until the TTL-GC follow-up lands (`bot.vision.ttl-days` is target retention only). See ADR-027 in [`llm/architecture.md`](llm/architecture.md) and the spec [`docs/design/native-vision-design-v1.md`](design/native-vision-design-v1.md).
 
+---
 ### user_data (DROPPED)
 
 Dropped in `migration_022` (superseded by [`user_memories`](#user_memories)). Historical rows were backfilled into `user_memories` by `migration_020`.
@@ -1012,7 +1012,6 @@ db.common.getSettings(
 ---
 
 ### Media Operations
-
 **Add Media Attachment**
 ```python
 db.mediaAttachments.addMediaAttachment(
@@ -1029,7 +1028,7 @@ db.mediaAttachments.addMediaAttachment(
     description: Optional[str] = None
 ) -> bool
 ```
-Note: **all parameters are keyword-only**, the default `status` is `MediaStatus.NEW` (not `PENDING`), and `fileId` is **required** (no default).
+Note: **all parameters are keyword-only**, the default `status` is `MediaStatus.NEW` (not `PENDING`), and `fileId` is **required** (no default). There is no `visionUrl` parameter — the vision key is written later, only by the native-vision receipt-time store.
 
 **Update Media Attachment (unified partial update)**
 ```python
@@ -1041,11 +1040,12 @@ db.mediaAttachments.updateMediaAttachment(
     metadata: Optional[str | Dict[str, Any]] = None,
     mimeType: Optional[str] = None,
     localUrl: Optional[str] = None,
+    visionUrl: Optional[str] = None,
     description: Optional[str] = None,
     prompt: Optional[str] = None
 ) -> bool
 ```
-Single method that updates any subset of fields (only non-`None` fields are written). Replaces the older separate `updateMediaStatus` / `updateMediaDescription` methods that no longer exist.
+Single method that updates any subset of fields (only non-`None` fields are written). Replaces the older separate `updateMediaStatus` / `updateMediaDescription` methods that no longer exist. The `visionUrl` kwarg writes `media_attachments.vision_url` (migration_030) — the StorageService key of the normalized image bytes, set only by the native-vision receipt-time store (`BaseBotHandler._storeVisionImage`); there is deliberately no way to clear it back to NULL from this method yet (a future TTL-GC cron owns that).
 
 **Get Media Attachment**
 ```python
@@ -1086,7 +1086,6 @@ db.mediaAttachments.ensureMediaInGroup(
 Idempotent upsert into `media_groups` (`ON CONFLICT DO NOTHING`).
 
 ---
-
 ### Spam Detection Operations
 
 `db.spam` (`SpamRepository`) only owns the **message-log** side of spam/ham training (rows in `spam_messages` / `ham_messages`). The Bayes-model statistics live in `bayes_tokens` / `bayes_classes` and are exposed through a **separate** class, `DatabaseBayesStorage` (`internal/database/bayes_storage.py`) — see [Bayes Statistics Operations](#bayes-statistics-operations) below.

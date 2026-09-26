@@ -34,7 +34,9 @@ Three feature areas are covered, each in its own class:
 import contextlib
 import datetime
 import json
+import logging
 from collections.abc import Awaitable, Callable, Sequence
+from typing import Optional, cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -55,12 +57,12 @@ from internal.bot.models import (
     MessageType,
 )
 from internal.bot.models.message_metadata import CondensingDict, mergeCondensingDicts
-from internal.database.models import ChatMessageDict, MessageCategory
+from internal.database.models import ChatMessageDict, MediaAttachmentDict, MessageCategory
 from internal.models import MessageId
 from internal.services.cache.service import CacheService
 from internal.services.queue_service.service import QueueService
 from internal.services.storage.service import StorageService
-from lib.ai import ModelMessage, ModelResultStatus, ModelRunResult
+from lib.ai import ModelImagesMessage, ModelMessage, ModelResultStatus, ModelRunResult
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -370,6 +372,7 @@ def _fullChatSettings(
     *,
     randomAnswerProbability: float = 1.0,
     llmMessageFormat: str = "text",
+    nativeVision: bool = False,
 ) -> ChatSettingsDict:
     """Build a chat-settings dict covering every key the non-condensing paths read.
 
@@ -389,6 +392,8 @@ def _fullChatSettings(
         llmMessageFormat: Value for ``LLM_MESSAGE_FORMAT``. Defaults to
             ``"text"`` so the JSON-unwrap branch in ``_sendLLMChatMessage``
             runs (needed by the JSON-wrapped ``<skip>`` test).
+        nativeVision: Value for ``NATIVE_VISION``. Defaults to ``False``
+            (the production default) so vision tests opt in explicitly.
 
     Returns:
         A complete :class:`ChatSettingsDict` with deterministic test values.
@@ -414,6 +419,7 @@ def _fullChatSettings(
         # that exercise the gate override MEMORY_ENABLED inline by
         # building a settings dict with it set to "true" directly.
         ChatSettingsKey.MEMORY_ENABLED: ChatSettingsValue("false"),
+        ChatSettingsKey.NATIVE_VISION: ChatSettingsValue("true" if nativeVision else "false"),
     }
 
 
@@ -1865,3 +1871,634 @@ class TestHandleRandomMessageCondensing:
         metadata = updateMetaMock.call_args.kwargs["metadata"]
         # Empty coverage → randomContext is NOT written (the write is skipped).
         assert "randomContext" not in metadata
+
+
+# ---------------------------------------------------------------------------
+# Native vision, Phase 2b: chat-time attach (design v1 §3.4/§3.5/§3.6)
+#
+# The swap lives in `LLMMessageHandler._applyNativeVision`, wired into
+# `_sendLLMChatMessage` (the single chokepoint shared by handleReply /
+# handleMention / handleRandomMessage), so the tests below drive
+# `_sendLLMChatMessage` directly with hand-assembled message lists whose
+# `ModelMessage.source` points at real EnsuredMessages carrying media.
+# ---------------------------------------------------------------------------
+
+
+def _visionModel(supportsImageInput: bool) -> Mock:
+    """Build a model double whose ``getInfo()`` reports image-input support.
+
+    Args:
+        supportsImageInput: Value reported for the ``support_image_input`` key.
+
+    Returns:
+        A model mock usable as ``resolveModel``'s return value.
+    """
+    model = Mock()
+    model.getInfo.return_value = {"support_image_input": supportsImageInput}
+    return model
+
+
+def _enableVision(
+    liveHandler: LLMMessageHandler,
+    *,
+    maxImages: int = 5,
+    resolveSideEffect: Optional[object] = None,
+    resolveReturn: Optional[Mock] = None,
+) -> Mock:
+    """Turn NATIVE_VISION on and wire the vision config + model resolution.
+
+    Args:
+        liveHandler: Live handler fixture.
+        maxImages: Value reported for ``max-images-per-request``.
+        resolveSideEffect: Optional ``side_effect`` for ``llmService.resolveModel``
+            (called primary first, fallback second).
+        resolveReturn: Optional fixed return value for ``llmService.resolveModel``.
+
+    Returns:
+        The Mock installed as ``llmService.resolveModel`` for per-test assertions.
+    """
+    liveHandler.getChatSettings = AsyncMock(  # type: ignore[method-assign]
+        return_value=_fullChatSettings(nativeVision=True)
+    )
+    liveHandler.configManager.getVisionConfig = Mock(  # type: ignore[method-assign]
+        return_value={"max-images-per-request": maxImages}
+    )
+    resolveMock = Mock()
+    if resolveSideEffect is not None:
+        resolveMock.side_effect = resolveSideEffect
+    else:
+        resolveMock.return_value = resolveReturn if resolveReturn is not None else _visionModel(True)
+    liveHandler.llmService.resolveModel = resolveMock  # type: ignore[method-assign]
+    return resolveMock
+
+
+def _mediaSource(mediaIds: list[str], *, senderId: int = 7) -> EnsuredMessage:
+    """Build a real EnsuredMessage carrying the given media ids (album order).
+
+    Args:
+        mediaIds: Media attachment ids appended to ``mediaList`` in order.
+        senderId: Sender user id.
+
+    Returns:
+        A constructed EnsuredMessage with media descriptions attached.
+    """
+    em = _liveEnsuredMessage(senderId=senderId)
+    for mediaId in mediaIds:
+        em.addMedia(mediaId, f"description of {mediaId}")
+    return em
+
+
+def _wireMediaRows(liveHandler: LLMMessageHandler, rows: dict[str, Optional[dict[str, Optional[str]]]]) -> AsyncMock:
+    """Stub ``db.mediaAttachments.getMediaAttachment`` with a mediaId → row map.
+
+    Args:
+        liveHandler: Live handler fixture.
+        rows: Mapping of mediaId to a minimal row dict (only ``vision_url`` is
+            read by production code) or None for a missing row.
+
+    Returns:
+        The AsyncMock installed for per-test assertions.
+    """
+
+    async def lookup(mediaId: str, *args: object, **kwargs: object) -> Optional[MediaAttachmentDict]:
+        row = rows.get(mediaId)
+        if row is None:
+            return None
+        return cast(MediaAttachmentDict, row)
+
+    getMediaAttachment = AsyncMock(side_effect=lookup)
+    liveHandler.db.mediaAttachments.getMediaAttachment = getMediaAttachment  # type: ignore[attr-defined]
+    return getMediaAttachment
+
+
+def _wireStorage(liveHandler: LLMMessageHandler, data: dict[str, bytes]) -> Mock:
+    """Stub ``storage.get`` with a key → bytes map.
+
+    Args:
+        liveHandler: Live handler fixture.
+        data: Mapping of storage keys to stored image bytes.
+
+    Returns:
+        The Mock installed for per-test assertions (``get`` is sync, like the
+        real StorageService).
+    """
+    storageMock = Mock()
+    storageMock.get = Mock(side_effect=lambda key: data.get(key))
+    liveHandler.storage = storageMock  # type: ignore[method-assign]
+    return storageMock
+
+
+class TestNativeVisionChatAttach:
+    """The §3.6 fallback matrix: chat-time native-vision attach behaviour.
+
+    Each test drives ``_sendLLMChatMessage`` directly (the shared chokepoint)
+    with a hand-assembled list: ``[system, history-user, current-user]``.
+    """
+
+    async def _runChat(
+        self, liveHandler: LLMMessageHandler, messages: list[ModelMessage]
+    ) -> tuple[LLMReplyOutcome, Sequence[ModelMessage]]:
+        """Send a message list through ``_sendLLMChatMessage`` and capture the LLM arg.
+
+        Args:
+            liveHandler: Live handler fixture (vision wiring already applied).
+            messages: Assembled request messages.
+
+        Returns:
+            An ``(outcome, llmMessages)`` pair: the handler outcome and the
+            message list that reached ``generateTextViaLLM``.
+        """
+        generate, captured = _captureGenerate("ok")
+        liveHandler.llmService.generateTextViaLLM = generate  # type: ignore[method-assign]
+        outcome = await liveHandler._sendLLMChatMessage(_liveEnsuredMessage(), messages, typingManager=Mock())
+        return outcome, captured["messages"]
+
+    async def testVisionOffKeepsStatusQuoAndReadsNoStorage(self, liveHandler: LLMMessageHandler) -> None:
+        """§3.6 row 1: vision off → no swap, zero storage reads.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        liveHandler.getChatSettings = AsyncMock(  # type: ignore[method-assign]
+            return_value=_fullChatSettings(nativeVision=False)
+        )
+        liveHandler.llmService.resolveModel = Mock(return_value=_visionModel(True))  # type: ignore[method-assign]
+        storageMock = _wireStorage(liveHandler, {"vision/a.jpg": b"IMG"})
+        getMediaAttachment = _wireMediaRows(liveHandler, {"media-1": {"vision_url": "vision/a.jpg"}})
+
+        historyEm = _mediaSource(["media-1"])
+        currentEm = _mediaSource(["media-1"])
+        messages = [
+            ModelMessage(role="system", content="SYS"),
+            ModelMessage(role="user", content="HIST", source=historyEm),
+            ModelMessage(role="user", content="CUR", source=currentEm),
+        ]
+        outcome, llmMessages = await self._runChat(liveHandler, messages)
+
+        assert outcome is LLMReplyOutcome.SENT
+        assert all(not isinstance(m, ModelImagesMessage) for m in llmMessages)
+        storageMock.get.assert_not_called()
+        getMediaAttachment.assert_not_awaited()
+
+    async def testVisionOnBothModelsCapableSwapsCurrentAndHistory(self, liveHandler: LLMMessageHandler) -> None:
+        """§3.6 row 2: both models vision-capable + bytes available → attach.
+
+        Current AND history user messages are swapped; the envelope text is
+        preserved as the text part; images keep mediaList (album) order; the
+        system message is untouched; model resolution happens exactly once
+        per request.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        resolveMock = _enableVision(liveHandler)
+        _wireMediaRows(
+            liveHandler,
+            {
+                "hist-media": {"vision_url": "vision/hist.jpg"},
+                "cur-media-1": {"vision_url": "vision/cur-1.jpg"},
+                "cur-media-2": {"vision_url": "vision/cur-2.jpg"},
+            },
+        )
+        storageMock = _wireStorage(
+            liveHandler,
+            {
+                "vision/hist.jpg": b"HIST-IMG",
+                "vision/cur-1.jpg": b"CUR-IMG-1",
+                "vision/cur-2.jpg": b"CUR-IMG-2",
+            },
+        )
+
+        systemMessage = ModelMessage(role="system", content="SYS")
+        messages = [
+            systemMessage,
+            ModelMessage(role="user", content="HIST ENVELOPE", source=_mediaSource(["hist-media"])),
+            ModelMessage(role="user", content="CUR ENVELOPE", source=_mediaSource(["cur-media-1", "cur-media-2"])),
+        ]
+        outcome, llmMessages = await self._runChat(liveHandler, messages)
+
+        assert outcome is LLMReplyOutcome.SENT
+        assert llmMessages[0] is systemMessage
+
+        historyMessage = llmMessages[1]
+        assert isinstance(historyMessage, ModelImagesMessage)
+        assert historyMessage.content == "HIST ENVELOPE"
+        assert historyMessage.images == [bytearray(b"HIST-IMG")]
+
+        currentMessage = llmMessages[2]
+        assert isinstance(currentMessage, ModelImagesMessage)
+        # Envelope preserved as the text part, images in album order.
+        assert currentMessage.toDict()["content"][0] == {"type": "text", "text": "CUR ENVELOPE"}
+        assert currentMessage.images == [bytearray(b"CUR-IMG-1"), bytearray(b"CUR-IMG-2")]
+        # Album order == mediaList order, both storage reads issued.
+        storageMock.get.assert_any_call("vision/cur-1.jpg")
+        storageMock.get.assert_any_call("vision/cur-2.jpg")
+        # Eligibility resolved once per request: primary + fallback.
+        assert resolveMock.call_count == 2
+
+    async def testVisionOnPrimaryModelLacksImageInputNoSwap(self, liveHandler: LLMMessageHandler) -> None:
+        """§3.6 row 3a: PRIMARY lacks support_image_input → description path.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        _enableVision(
+            liveHandler,
+            resolveSideEffect=[_visionModel(False), _visionModel(True)],
+        )
+        storageMock = _wireStorage(liveHandler, {"vision/a.jpg": b"IMG"})
+        _wireMediaRows(liveHandler, {"media-1": {"vision_url": "vision/a.jpg"}})
+
+        messages = [
+            ModelMessage(role="system", content="SYS"),
+            ModelMessage(role="user", content="CUR", source=_mediaSource(["media-1"])),
+        ]
+        outcome, llmMessages = await self._runChat(liveHandler, messages)
+
+        assert outcome is LLMReplyOutcome.SENT
+        assert all(not isinstance(m, ModelImagesMessage) for m in llmMessages)
+        storageMock.get.assert_not_called()
+
+    async def testVisionOnFallbackModelLacksImageInputNoSwap(self, liveHandler: LLMMessageHandler) -> None:
+        """§3.6 row 3b: FALLBACK lacks support_image_input → description path.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        _enableVision(
+            liveHandler,
+            resolveSideEffect=[_visionModel(True), _visionModel(False)],
+        )
+        storageMock = _wireStorage(liveHandler, {"vision/a.jpg": b"IMG"})
+        _wireMediaRows(liveHandler, {"media-1": {"vision_url": "vision/a.jpg"}})
+
+        messages = [
+            ModelMessage(role="system", content="SYS"),
+            ModelMessage(role="user", content="CUR", source=_mediaSource(["media-1"])),
+        ]
+        outcome, llmMessages = await self._runChat(liveHandler, messages)
+
+        assert outcome is LLMReplyOutcome.SENT
+        assert all(not isinstance(m, ModelImagesMessage) for m in llmMessages)
+        storageMock.get.assert_not_called()
+
+    async def testBytesUnavailableMessageStaysPlainOthersStillAttach(self, liveHandler: LLMMessageHandler) -> None:
+        """§3.6 row 4: bytes unavailable → that message degrades, others attach.
+
+        The history message's row predates the feature (no ``vision_url``) and
+        the current message's second album item fails at the storage layer
+        (``get`` returns None) — the current message still attaches its FIRST
+        image while the history message stays plain text.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        _enableVision(liveHandler)
+        _wireMediaRows(
+            liveHandler,
+            {
+                "hist-media": {"vision_url": None},  # no vision_url stored
+                "cur-media-1": {"vision_url": "vision/cur-1.jpg"},
+                "cur-media-2": {"vision_url": "vision/cur-2.jpg"},  # storage miss below
+            },
+        )
+        _wireStorage(liveHandler, {"vision/cur-1.jpg": b"CUR-IMG-1"})  # cur-2 absent → None
+
+        messages = [
+            ModelMessage(role="system", content="SYS"),
+            ModelMessage(role="user", content="HIST", source=_mediaSource(["hist-media"])),
+            ModelMessage(role="user", content="CUR", source=_mediaSource(["cur-media-1", "cur-media-2"])),
+        ]
+        outcome, llmMessages = await self._runChat(liveHandler, messages)
+
+        assert outcome is LLMReplyOutcome.SENT
+        # History stays plain text (description-only degradation).
+        assert isinstance(llmMessages[1], ModelMessage)
+        assert not isinstance(llmMessages[1], ModelImagesMessage)
+        assert llmMessages[1].content == "HIST"
+        # Current still attaches the one loadable image.
+        currentMessage = llmMessages[2]
+        assert isinstance(currentMessage, ModelImagesMessage)
+        assert currentMessage.images == [bytearray(b"CUR-IMG-1")]
+        assert currentMessage.content == "CUR"
+
+    async def testStorageMissWithinAlbumLetsLaterImageUseSlot(self, liveHandler: LLMMessageHandler) -> None:
+        """Cap regression: a storage miss must not burn the slot a later image can use.
+
+        cap=1, album ``[missing-A, available-B]``: only B is loadable, so B is
+        attached. The pre-slice implementation attempted only A (skipping B)
+        and dropped the message despite the unused slot. Also pins unmocked
+        source stamping: the swapped message keeps the source EnsuredMessage.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        _enableVision(liveHandler, maxImages=1)
+        _wireMediaRows(
+            liveHandler,
+            {
+                "media-a": {"vision_url": "vision/a.jpg"},  # storage miss below
+                "media-b": {"vision_url": "vision/b.jpg"},
+            },
+        )
+        _wireStorage(liveHandler, {"vision/b.jpg": b"IMG-B"})
+
+        sourceEm = _mediaSource(["media-a", "media-b"])
+        messages = [
+            ModelMessage(role="system", content="SYS"),
+            ModelMessage(role="user", content="CUR", source=sourceEm),
+        ]
+        outcome, llmMessages = await self._runChat(liveHandler, messages)
+
+        assert outcome is LLMReplyOutcome.SENT
+        currentMessage = llmMessages[1]
+        assert isinstance(currentMessage, ModelImagesMessage)
+        # The loadable SECOND album image took the single slot.
+        assert currentMessage.images == [bytearray(b"IMG-B")]
+        assert currentMessage.content == "CUR"
+        # Unmocked source stamping: the swap keeps the source EnsuredMessage
+        # for post-assembly pairing.
+        assert currentMessage.source is sourceEm
+
+    async def testMissingMediaRowDegradesMessageOnly(self, liveHandler: LLMMessageHandler) -> None:
+        """Missing ``media_attachments`` row → image skipped, message stays plain.
+
+        A mediaId with no row at all (not just ``vision_url=None``) resolves
+        to no URL: the message degrades to its description and storage is
+        never read.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        _enableVision(liveHandler)
+        getMediaAttachment = _wireMediaRows(liveHandler, {"ghost-media": None})
+        storageMock = _wireStorage(liveHandler, {"vision/a.jpg": b"IMG"})  # never referenced
+
+        messages = [
+            ModelMessage(role="system", content="SYS"),
+            ModelMessage(role="user", content="CUR", source=_mediaSource(["ghost-media"])),
+        ]
+        outcome, llmMessages = await self._runChat(liveHandler, messages)
+
+        assert outcome is LLMReplyOutcome.SENT
+        assert isinstance(llmMessages[1], ModelMessage)
+        assert not isinstance(llmMessages[1], ModelImagesMessage)
+        assert llmMessages[1].content == "CUR"
+        getMediaAttachment.assert_awaited_once_with("ghost-media")
+        storageMock.get.assert_not_called()
+
+    async def testMediaRowDbExceptionDegradesMessageOnly(self, liveHandler: LLMMessageHandler) -> None:
+        """``getMediaAttachment`` raising → image skipped, send continues (fail-soft).
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        _enableVision(liveHandler)
+        getMediaAttachment = AsyncMock(side_effect=RuntimeError("db unavailable"))
+        liveHandler.db.mediaAttachments.getMediaAttachment = getMediaAttachment  # type: ignore[attr-defined]
+        storageMock = _wireStorage(liveHandler, {"vision/a.jpg": b"IMG"})
+
+        messages = [
+            ModelMessage(role="system", content="SYS"),
+            ModelMessage(role="user", content="CUR", source=_mediaSource(["ghost-media"])),
+        ]
+        outcome, llmMessages = await self._runChat(liveHandler, messages)
+
+        assert outcome is LLMReplyOutcome.SENT
+        assert isinstance(llmMessages[1], ModelMessage)
+        assert not isinstance(llmMessages[1], ModelImagesMessage)
+        assert llmMessages[1].content == "CUR"
+        storageMock.get.assert_not_called()
+
+    async def testStorageExceptionSkipsImageAndLaterAlbumImageAttaches(self, liveHandler: LLMMessageHandler) -> None:
+        """``storage.get`` raising → that image skipped, later album image attaches.
+
+        Combines the fail-soft read failure with the slot-preservation rule:
+        the failing first candidate does not consume capacity, so the
+        loadable second album image is attached.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+
+        def getSideEffect(key: str) -> Optional[bytes]:
+            if key == "vision/a.jpg":
+                raise RuntimeError("storage read error")
+            return b"IMG-B"
+
+        _enableVision(liveHandler)
+        _wireMediaRows(
+            liveHandler,
+            {
+                "media-a": {"vision_url": "vision/a.jpg"},
+                "media-b": {"vision_url": "vision/b.jpg"},
+            },
+        )
+        storageMock = Mock()
+        storageMock.get = Mock(side_effect=getSideEffect)
+        liveHandler.storage = storageMock  # type: ignore[method-assign]
+
+        messages = [
+            ModelMessage(role="system", content="SYS"),
+            ModelMessage(role="user", content="CUR", source=_mediaSource(["media-a", "media-b"])),
+        ]
+        outcome, llmMessages = await self._runChat(liveHandler, messages)
+
+        assert outcome is LLMReplyOutcome.SENT
+        currentMessage = llmMessages[1]
+        assert isinstance(currentMessage, ModelImagesMessage)
+        assert currentMessage.images == [bytearray(b"IMG-B")]
+        assert currentMessage.content == "CUR"
+
+    async def testOverCapAttachesMostRecentOnlyAndLogsTrip(
+        self, liveHandler: LLMMessageHandler, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """§3.6 row 5: cap trip → most-recent N attached, older stay text, WARNING logged.
+
+        Args:
+            liveHandler: Live handler fixture.
+            caplog: Log capture fixture.
+        """
+        _enableVision(liveHandler, maxImages=2)
+        _wireMediaRows(
+            liveHandler,
+            {
+                "old-media": {"vision_url": "vision/old.jpg"},
+                "mid-media": {"vision_url": "vision/mid.jpg"},
+                "cur-media": {"vision_url": "vision/cur.jpg"},
+            },
+        )
+        _wireStorage(
+            liveHandler,
+            {"vision/old.jpg": b"OLD", "vision/mid.jpg": b"MID", "vision/cur.jpg": b"CUR"},
+        )
+
+        messages = [
+            ModelMessage(role="system", content="SYS"),
+            ModelMessage(role="user", content="OLD", source=_mediaSource(["old-media"])),
+            ModelMessage(role="user", content="MID", source=_mediaSource(["mid-media"])),
+            ModelMessage(role="user", content="CUR", source=_mediaSource(["cur-media"])),
+        ]
+        outcome, llmMessages = await self._runChat(liveHandler, messages)
+
+        assert outcome is LLMReplyOutcome.SENT
+        # Oldest message stays plain text.
+        assert isinstance(llmMessages[1], ModelMessage)
+        assert not isinstance(llmMessages[1], ModelImagesMessage)
+        # Newest two attach (current first, then history newest→oldest).
+        assert isinstance(llmMessages[2], ModelImagesMessage)
+        assert llmMessages[2].images == [bytearray(b"MID")]
+        assert isinstance(llmMessages[3], ModelImagesMessage)
+        assert llmMessages[3].images == [bytearray(b"CUR")]
+        # The cap trip is logged (image tokens are invisible to the estimator).
+        warnings = [
+            r for r in caplog.records if r.levelno == logging.WARNING and "max-images-per-request" in r.getMessage()
+        ]
+        assert len(warnings) == 1
+
+    async def testOverCapWithinOneAlbumAttachesFirstSlots(self, liveHandler: LLMMessageHandler) -> None:
+        """Cap edge: a single 3-image album with 2 slots left attaches the first two.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        _enableVision(liveHandler, maxImages=2)
+        _wireMediaRows(
+            liveHandler,
+            {f"media-{i}": {"vision_url": f"vision/{i}.jpg"} for i in (1, 2, 3)},
+        )
+        _wireStorage(liveHandler, {"vision/1.jpg": b"I1", "vision/2.jpg": b"I2", "vision/3.jpg": b"I3"})
+
+        messages = [
+            ModelMessage(role="system", content="SYS"),
+            ModelMessage(role="user", content="CUR", source=_mediaSource(["media-1", "media-2", "media-3"])),
+        ]
+        outcome, llmMessages = await self._runChat(liveHandler, messages)
+
+        assert outcome is LLMReplyOutcome.SENT
+        currentMessage = llmMessages[1]
+        assert isinstance(currentMessage, ModelImagesMessage)
+        # Album order preserved; the third image degrades to its description.
+        assert currentMessage.images == [bytearray(b"I1"), bytearray(b"I2")]
+
+    async def testModelResolutionFailureFallsBackToStatusQuo(self, liveHandler: LLMMessageHandler) -> None:
+        """§3.6 eligibility fail-soft: resolution error → status quo, no crash.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        _enableVision(liveHandler, resolveSideEffect=RuntimeError("models config unavailable"))
+        storageMock = _wireStorage(liveHandler, {"vision/a.jpg": b"IMG"})
+        _wireMediaRows(liveHandler, {"media-1": {"vision_url": "vision/a.jpg"}})
+
+        messages = [
+            ModelMessage(role="system", content="SYS"),
+            ModelMessage(role="user", content="CUR", source=_mediaSource(["media-1"])),
+        ]
+        outcome, llmMessages = await self._runChat(liveHandler, messages)
+
+        assert outcome is LLMReplyOutcome.SENT
+        assert all(not isinstance(m, ModelImagesMessage) for m in llmMessages)
+        storageMock.get.assert_not_called()
+
+    async def testAssistantRoleMessagesNeverSwapped(self, liveHandler: LLMMessageHandler) -> None:
+        """Only user messages are eligible: an assistant media message stays plain.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        _enableVision(liveHandler)
+        _wireMediaRows(liveHandler, {"bot-media": {"vision_url": "vision/bot.jpg"}})
+        _wireStorage(liveHandler, {"vision/bot.jpg": b"BOT-IMG"})
+
+        messages = [
+            ModelMessage(role="system", content="SYS"),
+            ModelMessage(role="assistant", content="BOT ENVELOPE", source=_mediaSource(["bot-media"], senderId=999)),
+        ]
+        outcome, llmMessages = await self._runChat(liveHandler, messages)
+
+        assert outcome is LLMReplyOutcome.SENT
+        assert isinstance(llmMessages[1], ModelMessage)
+        assert not isinstance(llmMessages[1], ModelImagesMessage)
+        assert llmMessages[1].content == "BOT ENVELOPE"
+
+    async def testMentionWiringSwappedListReachesGenerateTextViaLLMMocked(self, liveHandler: LLMMessageHandler) -> None:
+        """§3.6 wiring guard (MOCKED boundary): handleMention → swap → generateTextViaLLM.
+
+        BOUNDARY NOTE: this test mocks BOTH ``EnsuredMessage.toModelMessage``
+        (including its ``source`` stamp) and ``generateTextViaLLM`` — it
+        proves only that the hook is wired at the right place: the ONE
+        assembled list reaches ``generateTextViaLLM`` with the image attached
+        exactly once, no per-attempt rebuild. The ``_runChat``-driven tests
+        above are hand-assembled-message tests with a mocked generation
+        boundary: the swap and source PRESERVATION run for real, but the
+        message lists (and their ``source`` stamps) are built by hand at
+        construction time, so they do not exercise real ``toModelMessage``
+        assembly or source stamping. The real stamping path — actual
+        ``toModelMessage`` assigning ``.source``, then the swap carrying that
+        already-assigned source onto the swapped message — is pinned
+        separately by ``testRealToModelMessageStampsSourceAndSwapPreservesIt``
+        below.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        _enableVision(liveHandler)
+        _wireMediaRows(liveHandler, {"cur-media": {"vision_url": "vision/cur.jpg"}})
+        _wireStorage(liveHandler, {"vision/cur.jpg": b"CUR-IMG"})
+
+        em = _mediaSource(["cur-media"])
+        generate, captured = _captureGenerate("ok")
+        liveHandler.llmService.generateTextViaLLM = generate  # type: ignore[method-assign]
+        stack = contextlib.ExitStack()
+        stack.enter_context(
+            patch.object(
+                EnsuredMessage,
+                "toModelMessage",
+                AsyncMock(return_value=ModelMessage(role="user", content="CUR ENVELOPE", source=em)),
+            )
+        )
+        liveHandler.checkEMMentionsMe = AsyncMock(  # type: ignore[method-assign]
+            return_value=MentionCheckResult(byName=(0, 4), restText="посмотри")
+        )
+
+        with stack:
+            result = await liveHandler.handleMention(em, Mock())
+
+        assert result is True
+        llmMessages = captured["messages"]
+        imageMessages = [m for m in llmMessages if isinstance(m, ModelImagesMessage)]
+        assert len(imageMessages) == 1
+        assert imageMessages[0].images == [bytearray(b"CUR-IMG")]
+        assert imageMessages[0].content == "CUR ENVELOPE"
+
+    async def testRealToModelMessageStampsSourceAndSwapPreservesIt(self, liveHandler: LLMMessageHandler) -> None:
+        """Real ``toModelMessage`` stamps the source; the real swap carries it over.
+
+        Complements the hand-assembled tests in this class: the ``ModelMessage``
+        comes from the REAL ``EnsuredMessage.toModelMessage`` (unmocked), its
+        ``.source`` is asserted to be the source EnsuredMessage BEFORE the
+        swap, and the real ``_applyNativeVision`` swap must carry that same
+        already-assigned source onto the swapped ``ModelImagesMessage`` — the
+        pairing key post-assembly media lookups rely on.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        _enableVision(liveHandler)
+        _wireMediaRows(liveHandler, {"cur-media": {"vision_url": "vision/cur.jpg", "status": "done"}})
+        _wireStorage(liveHandler, {"vision/cur.jpg": b"CUR-IMG"})
+
+        em = _mediaSource(["cur-media"])
+        assembled = await em.toModelMessage(liveHandler.db, cache=None)
+        # Real stamping: the source is present BEFORE the swap.
+        assert assembled.source is em
+        assert assembled.role == "user"
+        assert not isinstance(assembled, ModelImagesMessage)
+
+        swapped = await liveHandler._applyNativeVision([assembled], chatSettings=_fullChatSettings(nativeVision=True))
+        assert isinstance(swapped[0], ModelImagesMessage)
+        assert swapped[0].images == [bytearray(b"CUR-IMG")]
+        assert swapped[0].content == assembled.content
+        # The swap preserves the already-stamped source.
+        assert swapped[0].source is em

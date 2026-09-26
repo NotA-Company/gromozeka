@@ -1004,6 +1004,66 @@ ttl = 3600
         assert statsPagesConfig3["enabled"] is True
         assert statsPagesConfig3["ttl-hours"] == 48
 
+    def testGetVisionConfig(self, tempDir: Path) -> None:
+        """Test getting the [bot.vision] section nested under [bot].
+
+        Args:
+            tempDir: Temporary directory fixture for test files.
+        """
+        config = """
+[bot]
+token = "test_token"
+
+[bot.vision]
+max-image-dimension = 2048
+image-format = "image/jpeg"
+image-quality = 85
+store-prefix = "vision/"
+max-images-per-request = 5
+ttl-days = 30
+"""
+        configPath = createConfigFile(tempDir, "config.toml", config)
+        manager = ConfigManager(str(configPath))
+
+        visionConfig = manager.getVisionConfig()
+
+        assert visionConfig == {
+            "max-image-dimension": 2048,
+            "image-format": "image/jpeg",
+            "image-quality": 85,
+            "store-prefix": "vision/",
+            "max-images-per-request": 5,
+            "ttl-days": 30,
+        }
+
+    def testGetVisionConfigEmpty(self, tempDir: Path) -> None:
+        """Test getting vision config when [bot.vision] is absent.
+
+        Tests:
+        - [bot] present but no [bot.vision] → {}
+        - merged configs where a later dir adds [bot.vision] → table visible
+        """
+        # bot present, no vision section
+        config1 = """
+[bot]
+token = "test_token"
+"""
+        configPath1 = createConfigFile(tempDir, "config1.toml", config1)
+        manager1 = ConfigManager(str(configPath1))
+        assert manager1.getVisionConfig() == {}
+
+        # vision section arrives via a second config dir (hierarchical merge)
+        override = """
+[bot.vision]
+max-image-dimension = 1024
+"""
+        configPath2 = createConfigFile(tempDir, "config2.toml", config1)
+        configDir = createConfigDir(tempDir, "configs", {"vision-override.toml": override})
+        manager2 = ConfigManager(str(configPath2), configDirs=[str(configDir)])
+        visionConfig = manager2.getVisionConfig()
+        # .get() because TypedDict keys are non-required (total=False).
+        assert visionConfig.get("max-image-dimension") == 1024
+
 
 # ============================================================================
 # Error Handling Tests

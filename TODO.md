@@ -1,6 +1,10 @@
 # Our TODO list
 
 - [x] `/sandbox update` to update packages
+- [ ] re-getting "old" attachments - need to re-save (for vision as well)
+- [ ] just like `VisionConfigDict` - add typed-dicts for other configs
+- [ ] `ModelImagesMessage` + `ModelImageMessage` - merge to `ModelImagesMessage`
+- [ ] vision: add storage service choosing
 - [ ] Add ability to store resized images + send them to context
 - [ ] `Опять тихий краш без вывода — инструмент прячет stdout при ненулевом exit code, значит падает сам рендер. Оберну его в дочерний процесс и вытащу вывод оттуда, как следователь — улики:`
 - [ ] gifs from sandbox sent as static image
