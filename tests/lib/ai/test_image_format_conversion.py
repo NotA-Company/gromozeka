@@ -1,6 +1,6 @@
 """Tests for image input-format conversion.
 
-Covers :func:`lib.ai.models.convertImageIfNeeded` and the
+Covers :func:`lib.ai.imaging.convertImageIfNeeded` and the
 ``supportedImageFormats`` threading in :meth:`ModelImageMessage.toDict`:
 
 - Passthrough when *supportedFormats* is None / empty / already contains the MIME.
@@ -17,7 +17,8 @@ from io import BytesIO
 import pytest
 from PIL import Image
 
-from lib.ai.models import ModelImageMessage, convertImageIfNeeded
+from lib.ai.imaging import convertImageIfNeeded
+from lib.ai.models import ModelImageMessage
 
 #: MIME types python-magic reports for our tiny factory images.
 _JPEG_MIME = "image/jpeg"
@@ -79,7 +80,7 @@ def _rgbaPngBytes() -> bytes:
 
 
 class TestConvertImageIfNeeded:
-    """Tests for :func:`lib.ai.models.convertImageIfNeeded`."""
+    """Tests for :func:`lib.ai.imaging.convertImageIfNeeded`."""
 
     def testPassthroughWhenNone(self) -> None:
         """supportedFormats=None returns the original bytes and detected MIME.
@@ -159,7 +160,7 @@ class TestConvertImageIfNeeded:
             None
         """
         original = _webpBytes()
-        with caplog.at_level(logging.WARNING, logger="lib.ai.models"):
+        with caplog.at_level(logging.WARNING, logger="lib.ai.imaging"):
             result, mime = convertImageIfNeeded(original, ["image/bmp"])
         # Original bytes returned untouched.
         assert result == original
@@ -200,7 +201,7 @@ class TestConvertImageIfNeeded:
             None
         """
         corrupt = b"\x00\x01\x02\x03not-an-image-at-all-garbage"
-        with caplog.at_level(logging.ERROR, logger="lib.ai.models"):
+        with caplog.at_level(logging.ERROR, logger="lib.ai.imaging"):
             result, mime = convertImageIfNeeded(corrupt, [_JPEG_MIME])
         # Original bytes returned untouched (graceful degradation; never raises).
         assert result == corrupt

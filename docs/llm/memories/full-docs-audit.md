@@ -20,24 +20,19 @@ End-to-end audit of all 85 files under `/docs/` (excluding `docs/archive/`): 36 
 8. **Handler chain ordering** — full list (verified `manager.py:478-612`): 9 always-on + 3 Telegram-only (`DeleteFromUserMessageHandler` at position 10, `ReactOnUserMessageHandler`, `TopicManagerHandler`) + 6 config-gated (`MessagePreprocessorHandler`, `SpamHandler`, `ChatSearchHandler`, `ResenderHandler`, `SandboxHandler`, `DivinationHandler`) + custom-loader + `LLMMessageHandler` (MUST BE LAST — appended after conditional/custom handlers). Don't forget `DeleteFromUserMessageHandler` (registered before `ReactOnUserMessageHandler`).
 
 #### Renames, return types, and wiring (items 9-13)
-
 9. **Method renames** — `saveChatUser`→`updateChatUser`, `saveChatInfo`→`updateChatInfo`, `saveChatTopic`→`updateChatTopicInfo`, `getMessages`→`getChatMessagesSince`, `addMessage`→`saveChatMessage`, `saveMediaAttachment`→`addMediaAttachment`, `saveSpamMessage`→`addSpamMessage`, `saveHamMessage`→`addHamMessage`, `saveDelayedTask`→`addDelayedTask`, `getCache`/`setCache`→`getCacheEntry`/`setCacheEntry`, `getChatSummarizationCache`/`setChatSummarizationCache`→`getChatSummarization`/`addChatSummarization`, `markDelayedTaskDone(taskId)`→`updateDelayedTask(id, isDone)`. Pattern: `save*`/`get*` (legacy) → `update*`/`add*`/descriptive (current). Always grep current code before trusting doc method names.
 10. **`HandlersManager.injectBot` was renamed to `initialize`** — `BaseBotHandler.injectBot` (`base.py:178`) is now the narrower method that just sets `self._bot`. Don't conflate them in refactor proposals.
 11. **`_sendLLMChatMessage` returns `LLMReplyOutcome` StrEnum** (3 members: SENT/ERROR/SKIPPED_BY_MODEL), not `bool`. Span `llm_messages.py:221-443`. `SKIPPED_BY_MODEL` returned by handler-level empty-guard at L394 (Option B handler-half of `llm-empty-truncated-final` fix).
-12. **`ModelResultStatus` has 8 values**: UNSPECIFIED, PARTIAL, TRUNCATED_FINAL, FINAL, CONTENT_FILTER, TOOL_CALLS, UNKNOWN, ERROR (`lib/ai/models.py:923-950`). `ERROR_STATUSES = {UNSPECIFIED, CONTENT_FILTER, UNKNOWN, ERROR}` (excludes TRUNCATED_FINAL, PARTIAL, FINAL, TOOL_CALLS). Older docs fabricated `TIMEOUT`/`EMPTY` — they don't exist.
+12. **`ModelResultStatus` has 8 values**: UNSPECIFIED, PARTIAL, TRUNCATED_FINAL, FINAL, CONTENT_FILTER, TOOL_CALLS, UNKNOWN, ERROR (`lib/ai/models.py:963-990`). `ERROR_STATUSES = {UNSPECIFIED, CONTENT_FILTER, UNKNOWN, ERROR}` (excludes TRUNCATED_FINAL, PARTIAL, FINAL, TOOL_CALLS). Older docs fabricated `TIMEOUT`/`EMPTY` — they don't exist.
 13. **`RANDOM_ANSWER_PROMPT` wiring** — `ChatSettingsKey` at `chat_settings.py:334`; entry at `:701-707` (page `BOT_OWNER_SYSTEM`); TOML default at `bot-defaults.toml:227-237`; used in `handleRandomMessage` at `llm_messages.py:865-874` (thread path, slice-rebuild) and `:878-887` (non-thread path).
-
 #### Line-drift, counts, and verified pins (items 14-19)
-
 14. **`HandlersManager` line refs drifted massively (~200+ lines)** since early 2026: class 177→382, `__init__` 185→416, `self.handlers` list 249→478, `awaitStepDone` 110→236, `messageProcessed` 149→330, `injectBot`/`initialize` 389→703, `shutdown` 430→738. **Always re-locate by symbol before trusting line numbers.**
 15. **`lib/ext_modules/grabliarium/tests/` is sanctioned-collocated** — vendored subpackage with its own `pyproject.toml`/tests. **AGENTS.md L127 carve-out added 2026-07-18** (Phase 10 follow-up); `docs/llm/testing.md` also documents it.
 16. **Counts as of 2026-07-18**: 36 memories + `memories/index.md` = 37; ADR count = 19 (ADR-001..019); `ToolName` StrEnum = 22 members; `registerTool` call sites = 22; migrations = 24 (`migration_001..024`); `Database` repos = 15; tests ≈ 3392 collected. These drift monotonically — re-verify before relying on absolute counts.
 17. **YC SDK docs fully re-captured against pinned v0.22.0** (2026-07-18, Phase 12 wave of 7 parallel agents + Gate 2 fix dispatch + serial verification): all 7 files in `docs/other/yc-ai-sdk/` now have H1 stamp `(verified against pinned v0.22.0, 2026-07-18)` and a banner stating verification scope. ~30 newly-discovered drifts fixed across the bundle (most critical: `embeddings-and-other.md` had 13 — nonexistent `as_batch()`/`query()` methods, invalid `"BM25"`/`"TextGeneration"` enums, etc.; `chat-openai-compat.md` had wrong `ChatModelResult` dataclass fields; `speech.md`/`completions.md`/`chat-openai-compat.md` had `await run_stream()` bugs that would raise `TypeError` — async generator, not coroutine). `⚠` convention: server-side facts only (model catalogues, context sizes, required scopes). `make check-docs` green.
 18. **Max Messenger host lineage**: `botapi.max.ru` (legacy, retired 2026-07-19) → `platform-api.max.ru` (deprecated, also retired 2026-07-19) → `platform-api2.max.ru` (current production host, `lib/max_bot/constants.py:18`). Migration COMPLETE per `memories/max-api-migration.md`. Schema snapshots in `docs/other/Max-Messenger/` carry deprecation banners.
-19. **Dependency pins (verified 2026-07-18)**: `aiodocker==0.27.0` (was 0.26.0); `sqlite-vec==0.1.9` (was 0.1.10a4); `httpx-socks[asyncio]==0.11.0` (was `>=0.10.0`); `numpy==2.5.1` (was 2.4.6); `pillow==12.3.0` (new direct dep at `lib/ai/models.py:48`, **zero dep-usage coverage — candidate for future round**); `aiohttp==3.14.1`.
-
+19. **Dependency pins (verified 2026-07-18)**: `aiodocker==0.27.0` (was 0.26.0); `sqlite-vec==0.1.9` (was 0.1.10a4); `httpx-socks[asyncio]==0.11.0` (was `>=0.10.0`); `numpy==2.5.1` (was 2.4.6); `pillow==12.3.0` (direct dep — `from PIL import Image, ImageOps` at `lib/ai/imaging.py:32` since the 2026-09-27 imaging extraction, was `lib/ai/models.py:48`; **zero dep-usage coverage — candidate for future round**); `aiohttp==3.14.1`.
 ### Cross-cutting code-side follow-ups (ALL RESOLVED 2026-07-18 in Phase 8-9 follow-up pass)
-
 All items below were flagged as out-of-`/docs`-scope during the initial audit; the user requested them resolved. Status: every item landed, `make format lint` clean, `make test` green (3389 passed).
 
 - ✅ **`internal/database/database.py`** class docstring (removed `divinationLayouts`; added `userMemories`/`chatEmbeddings`/`chatSearch`) + module/class example `getMessages`→`getChatMessagesSince` (×2).
@@ -45,7 +40,7 @@ All items below were flagged as out-of-`/docs`-scope during the initial audit; t
 - ✅ **`internal/services/llm/service.py:78-80`** `generateCondensingDict` docstring → `messageCount += 1` is unconditional; only metadata extraction skipped in None branch.
 - ✅ **`internal/bot/models/message_metadata.py:289`** `mergeCondensingDicts` docstring → "set-unique (unsorted)" for participants; "plain extend (NO de-dup)" for messageIds.
 - ✅ **`internal/bot/common/handlers/chat_search.py:974-978`** comment → `extra=` is commented out; runtime `str(mid).strip()` + `MessageId(midStr)` coercion is the actual safety net.
-- ✅ **`internal/bot/common/handlers/dev_commands.py:842`** docstring → `reconstructMessages` replaced with `ModelMessage.fromDictList` (the actual consumer at `lib/ai/models.py:676`).
+- ✅ **`internal/bot/common/handlers/dev_commands.py:842`** docstring → `reconstructMessages` replaced with `ModelMessage.fromDictList` (the actual consumer at `lib/ai/models.py:577`).
 - ✅ **`internal/bot/max/application.py:127`** `unregister-webhook` code default `True` → `False` (RUNTIME change; aligns with config default `false`; doc-sync rippled to 4 docs).
 - ✅ **`internal/bot/common/handlers/manager.py:491-492`** comment → corrected handler-ordering misattribution.
 - ✅ **`internal/bot/constants.py:65,168`** stale paths → `docs/archive/plans/...`.
@@ -55,7 +50,6 @@ All items below were flagged as out-of-`/docs`-scope during the initial audit; t
 - ✅ **`.agents/skills/add-llm-tool/SKILL.md:353`** stale `~line 1306` ref → symbol-only reference.
 - ✅ **17 stale `docs/plans/` paths in code/tests** all → `docs/archive/plans/...` (8 in `user_memories.py`, 2 in `constants.py`, 1 each in `migration_020/021`, `llm/models.py`, 5 across 4 test files).
 - ✅ **Regression tests for `llm_messages.py:394` empty-guard** — `TestLLMEmptyResponseGuard` class (5 tests) added to `tests/bot/common/handlers/test_llm_messages.py`; `testPostStopUnregisterWebhookKeyAbsentDefaultsToFalse` added to `tests/bot/max/test_webhook_mode.py`. Test count: 3381 → 3389.
-
 ### Open documentation decisions (status as of 2026-07-18 end-of-day)
 
 - ✅ **`docs/database-README.md`**: FREEZE-and-link framing removed (Phase 11); file is now a normal maintained overview with positive "Canonical sources" navigation pointer. All 27 Phase 3c drift fixes intact.

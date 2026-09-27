@@ -49,9 +49,12 @@ Exports:
     ModelImagesMessage: Model for multi-image messages
     ModelResultStatus: Enum for result status (success, error, timeout)
     ModelRunResult: Model for model run results
+    ModelStructuredResult: Model for structured-output model run results
+    VisionOutputImageFormat: Enum of normalized vision output formats (JPEG/PNG)
 """
 
 from .abstract import AbstractLLMProvider, AbstractModel
+from .imaging import VisionOutputImageFormat
 from .manager import LLMManager
 from .models import (
     LLMAbstractTool,
@@ -65,7 +68,6 @@ from .models import (
     ModelResultStatus,
     ModelRunResult,
     ModelStructuredResult,
-    VisionOutputImageFormat,
 )
 
 __all__ = [

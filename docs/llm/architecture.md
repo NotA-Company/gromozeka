@@ -1254,7 +1254,6 @@ Services MUST be initialized in this order:
 8. `HandlersManager.injectBot(bot)` — injects `TheBot` into all handlers
 
 ### 2.3 What Breaks if You Modify These Files
-
 | File Modified | What Could Break | Verification |
 |---|---|---|
 | [`internal/database/database.py`](../../internal/database/database.py) | All DB operations, all handlers that use `self.db` | `make test` — `tests/database/integration/` |
@@ -1265,10 +1264,10 @@ Services MUST be initialized in this order:
 | [`lib/ai/abstract.py`](../../lib/ai/abstract.py) | ALL LLM provider implementations | `make test` — `tests/lib/ai/` |
 | [`lib/ai/manager.py`](../../lib/ai/manager.py) | Model selection, provider init | `make test` — `tests/lib/ai/` |
 | [`lib/ai/models.py`](../../lib/ai/models.py) | Message format, tool definitions | ALL handler tests that use LLM |
+| [`lib/ai/imaging.py`](../../lib/ai/imaging.py) | Image conversion/normalization for every vision path (send-time `convertImageIfNeeded`, receipt-time `normalizeVisionImage`/`Strict`; imported by `models.py` and `base.py`) | `make test` — `tests/lib/ai/` |
 | [`lib/cache/interface.py`](../../lib/cache/interface.py) | All cache implementations | `make test` — cache tests |
 | [`internal/bot/common/bot.py`](../../internal/bot/common/bot.py) | All message sending/receiving operations | Full `make test` |
 | [`lib/markdown/parser.py`](../../lib/markdown/parser.py) | All message formatting in both platforms | Markdown tests in `tests/lib/markdown/` |
-
 ### 2.4 Safe vs. Risky Modifications
 
 #### Safe (isolated)

@@ -76,7 +76,7 @@ from lib.ai import (
     ModelMessage,
     ModelResultStatus,
 )
-from lib.ai.models import VisionOutputImageFormat, normalizeVisionImageStrict
+from lib.ai.imaging import VisionOutputImageFormat, normalizeVisionImageStrict
 from lib.ai.session import buildSessionId
 from lib.stats import NullStatsStorage, StatsStorage
 
@@ -2194,7 +2194,7 @@ class BaseBotHandler(CommandHandlerMixin):
           the save-attachments path) is RETRIED here — a transient failure
           must not cost the chat its stored image;
         - normalization uses the STRICT variant of
-          [`normalizeVisionImage`](lib/ai/models.py): on any normalization
+          [`normalizeVisionImage`](lib/ai/imaging.py): on any normalization
           failure the store is skipped and ``vision_url`` stays unpublished
           — the lenient fallback is the ORIGINAL bytes (oversized, still
           carrying EXIF), and send-time delivery does no resize;

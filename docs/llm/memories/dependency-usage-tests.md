@@ -1,7 +1,6 @@
 ---
 category: reference
 ---
-
 # Dependency-Usage Regression Tests (2026-07-15, COMPLETED)
 
 Archived durable notes from [`../teamlead-memory.md`](../teamlead-memory.md) (extracted 2026-07-18). See the live compact memory there for cross-cutting rules and workflow lessons.
@@ -9,7 +8,7 @@ Archived durable notes from [`../teamlead-memory.md`](../teamlead-memory.md) (ex
 Task: add tests that lock in our *usage* of third-party libs so a dep-version bump can't silently break us. **DONE: 6 files, 59 tests under `tests/dependencies/` (new dir/convention; counts re-measured 2026-09-06 — the 2026-07-15 original round was 5 files/58 tests, +1 file/+1 test from `test_httpx2.py` added by the httpx2 migration), all gates green (3300 passed/11 skipped, pyright 0/0/0).** Scope was PURE libs + sqlite-vec; EXTERNAL libs deferred to golden follow-up.
 
 **Direct-dep classification (27 in `requirements.direct.txt` as of 2026-07-21; `numpy` was removed as a direct dep after the embedding-model-lookup refactor — was 28 at 2026-07-18, was 27 at extraction before `pillow` was added):**
-- **PURE (6):** `python-dateutil` 2.9.0.post0, `html-to-markdown` 3.8.3, `packaging` 26.2, `python-magic` 0.4.27, `tomli` 2.4.1, `pillow` 12.3.0 (added post-hoc; `from PIL import Image` in `lib/ai/models.py:48`; no dep-usage test yet — candidate for a future round).
+- **PURE (6):** `python-dateutil` 2.9.0.post0, `html-to-markdown` 3.8.3, `packaging` 26.2, `python-magic` 0.4.27, `tomli` 2.4.1, `pillow` 12.3.0 (added post-hoc; `from PIL import Image, ImageOps` in `lib/ai/imaging.py:32` since the 2026-09-27 imaging extraction — was `lib/ai/models.py:48`; no dep-usage test yet — candidate for a future round).
 - **EXTERNAL (7, out of scope this round):** `openai`, `yandex-ai-studio-sdk`, `fastembed`, `aiodocker`, `boto3`, `httpx-socks`, `sqlink`. *(Note: `httpx-socks` has since been REMOVED from the repo entirely during the 2026-08-13 httpx→httpx2 migration — see `architecture.md` ADR-021; httpx2's native `proxy="socks5://..."` replaced it.)*
 - **MIXED (5):** `aiosqlite`, `aiohttp`, `httpx`, `python-telegram-bot`, **`sqlite-vec` 0.1.9** (testable in-process — INCLUDED this round).
 - **DEV (9):** black/isort/flake8/flake8-pyproject/pyright + pytest/pytest-asyncio/pytest-cov stack + `PyYAML` (debug scripts only).

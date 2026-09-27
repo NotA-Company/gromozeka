@@ -3,7 +3,7 @@
 This migration adds a nullable ``vision_url`` column to the
 ``media_attachments`` table. The column stores the StorageService key of the
 NORMALIZED image bytes (long-edge capped, re-encoded, EXIF-stripped — see
-``lib.ai.models.normalizeVisionImage``) used by the native-vision feature to
+``lib.ai.imaging.normalizeVisionImage``) used by the native-vision feature to
 attach raw images to chat LLM requests, distinct from ``local_url`` which
 keeps serving the ORIGINAL bytes (e.g. to resender).
 

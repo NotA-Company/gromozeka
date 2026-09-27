@@ -54,8 +54,8 @@ from internal.services.queue_service import QueueService
 from internal.services.storage import StorageService
 from internal.services.stt import STTOutcome, STTService
 from lib.ai import ModelMessage, ModelResultStatus, ModelRunResult
+from lib.ai.imaging import VisionOutputImageFormat
 from lib.ai.manager import LLMManager
-from lib.ai.models import VisionOutputImageFormat
 from lib.stt.models import STTErrorCode
 
 # ---------------------------------------------------------------------------
