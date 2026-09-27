@@ -85,18 +85,18 @@ if lmRetText.strip().strip("`").strip() == "<skip>":
 On `SKIPPED_BY_MODEL`, `handleRandomMessage` returns `False` → `newMessageHandler` falls through to `HandlerResultStatus.NEXT` (nothing is sent). Only `random-answer-prompt` asks for `<skip>`, but the check is global in `_sendLLMChatMessage`; see [`handlers.md`](handlers.md) "Random-answer context & model abstention" for the full `LLMReplyOutcome` plumbing.
 
 #### `[bot.vision]`
-Native-vision receipt/store settings (ADR-027; full feature flow in [`handlers.md`](handlers.md) §9 "Native Vision"). **File:** [`configs/00-defaults/vision.toml`](../../configs/00-defaults/vision.toml). Read via `ConfigManager.getVisionConfig()` (returns `VisionConfigDict`: the raw table when the section is present, exactly `{}` when it is missing — the getter does no default-merging; consumers apply the documented defaults via `.get(key, default)` at each use site — see §3).
+Native-vision receipt/store settings (ADR-027; full feature flow in [`handlers.md`](handlers.md) §9 "Native Vision"). **File:** [`configs/00-defaults/vision.toml`](../../configs/00-defaults/vision.toml). Read via `ConfigManager.getVisionConfig()` (returns `VisionConfigDict` — defined in [`internal/config/models.py`](../../internal/config/models.py), the designated home for future config TypedDicts; `manager.py` imports it from there): the raw table when the section is present, exactly `{}` when it is missing — the getter does no default-merging; consumers apply the documented defaults via `.get(key, default)` at each use site (see §3), and the native-vision handlers cache the values once at `__init__`.
 
 | Key | Type | Default | Purpose |
 |---|---|---|---|
 | `max-image-dimension` | int | `2048` | Cap on the normalized image's long side (LANCZOS downscale, never upscaled; `0` disables resizing) |
-| `image-format` | str | `"image/jpeg"` | Re-encode format for stored vision bytes |
+| `image-format` | str | `"image/jpeg"` | Re-encode format for stored vision bytes (`"image/jpeg"`/`"image/png"`; converted to the `VisionOutputImageFormat` enum once at handler init — an invalid value warns and falls back to JPEG) |
 | `image-quality` | int | `85` | JPEG quality of the re-encode |
 | `store-prefix` | str | `"vision/"` | StorageService key prefix — objects stored as `{store-prefix}{sha512}.{ext}` (content dedup) |
-| `max-images-per-request` | int | `5` | Request-wide cap on natively attached images in `_applyNativeVision`; capacity is consumed only by bytes actually loaded, WARNING on trip |
+| `max-images-per-request` | int | `5` | Request-wide cap on natively attached images in `_applyNativeVision` (default `DEFAULT_MAX_IMAGES_PER_REQUEST` in `internal/bot/constants.py`); capacity is consumed only by bytes actually loaded, WARNING on trip |
 | `ttl-days` | int | `30` | **Target retention only** — the TTL-GC cleanup cron is a follow-up and does not exist yet; stored objects are retained until it lands |
 
-**`native-vision` chat setting** (owner page in `/configure`, Bool, default `false`): the per-chat master gate — an independent, parallel gate to `parse-attachments` (neither implies the other). Requires a configured (non-null) storage backend: on a null backend the feature fail-softs in 3 layers (enable-time `/configure` warning «требуется настроенное хранилище», once-per-chat process WARNING, then description fallback). Eligibility at chat time additionally requires both `CHAT_MODEL` and `FALLBACK_MODEL` to declare `support_image_input`.
+**`native-vision` chat setting** (owner page in `/configure`, Bool, default `false`): the per-chat master gate — an independent, parallel gate to `parse-attachments` (neither implies the other). Requires a configured (non-null) storage backend: on a null backend the feature fail-softs in 2 layers (a per-occurrence process-time WARNING at receipt, then description fallback) — `/configure` itself stays generic and emits no per-setting warning. Eligibility at chat time additionally requires both `CHAT_MODEL` and `FALLBACK_MODEL` to declare `support_image_input`.
 ### `[database]`
 
 | Key | Type | Purpose |
@@ -1052,7 +1052,7 @@ global-ratelimiter-queue = "stt-global"
 ---
 
 ## 3. ConfigManager Methods
-**File:** [`internal/config/manager.py`](../../internal/config/manager.py) — class `ConfigManager` (singleton instantiated from `main.py`). The recursive `${VAR}` substitution helper `substituteEnvVars(value: T) -> T` lives in [`lib/utils/utils.py`](../../lib/utils/utils.py) (moved there in the ADR-025 arc so the webhook receiver launcher could share it; `ConfigManager.__init__` calls it via `utils.substituteEnvVars`); `__init__` also calls `os.chdir(rootDir)` when `application.root-dir` is set.
+**File:** [`internal/config/manager.py`](../../internal/config/manager.py) — class `ConfigManager` (singleton instantiated from `main.py`). The recursive `${VAR}` substitution helper `substituteEnvVars(value: T) -> T` lives in [`lib/utils/utils.py`](../../lib/utils/utils.py) (moved there in the ADR-025 arc so the webhook receiver launcher could share it; `ConfigManager.__init__` calls it via `utils.substituteEnvVars`); `__init__` also calls `os.chdir(rootDir)` when `application.root-dir` is set. Config TypedDicts live in [`internal/config/models.py`](../../internal/config/models.py) — the designated home for future config TypedDicts (manager.py imports them).
 
 | Method | Returns | Purpose |
 |---|---|---|
@@ -1072,7 +1072,7 @@ global-ratelimiter-queue = "stt-global"
 | `getProxyConfig()` | `ProxyConfigDict` | `[proxy]` section (typed `TypedDict` from [`lib/proxy`](../../lib/proxy/__init__.py)) |
 | `getSearchHistoryConfig()` | `Dict[str, Any]` | `[search-history]` section (returns `{}` when missing) |
 | `getSttConfig()` | `Dict[str, Any]` | `[stt]` section (returns `{}` when missing); consumed by `STTService.initialize()` |
-| `getVisionConfig()` | `VisionConfigDict` | `[bot.vision]` section — returns the raw table when present, `{}` when the section is missing (no default-merging in the getter; consumers apply the documented defaults via `.get(key, default)` at each use site — see `[bot.vision]` above); consumed by the native-vision receipt/store path in `BaseBotHandler` |
+| `getVisionConfig()` | `VisionConfigDict` | `[bot.vision]` section — returns the raw table when present, `{}` when the section is missing (no default-merging in the getter; consumers apply the documented defaults via `.get(key, default)` at each use site — see `[bot.vision]` above); typed dict defined in [`internal/config/models.py`](../../internal/config/models.py); consumed by the native-vision handlers (cached once at `__init__`) |
 
 ---
 ## 4. Adding Configuration

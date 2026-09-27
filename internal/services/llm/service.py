@@ -147,32 +147,79 @@ def generateCondensingDict(text: str, messages: Sequence[ModelMessage]) -> Conde
     return ret
 
 
+#: Appended to the stripped copy of a single-image message's text when the
+#: envelope carries no media description, so a text-only condenser still
+#: knows an image was there (and was dropped deliberately, not lost).
+_STRIPPED_IMAGE_MARKER = "\n[image attached, omitted for condensing]"
+
+#: Appended to the stripped copy of a multi-image message's text when the
+#: envelope carries no media description. ``{imageCount}`` is the number of
+#: dropped images; ``{imagePlural}`` is ``"s"`` unless exactly one image was
+#: dropped (grammatical singular).
+_STRIPPED_IMAGES_MARKER_TEMPLATE = "\n[{imageCount} image{imagePlural} attached, omitted for condensing]"
+
+
+def _contentCarriesMediaDescription(content: str) -> bool:
+    """Return whether an LLM-facing message text embeds a media description.
+
+    String-based detection mirroring the ``EnsuredMessage.formatForLLM``
+    rendering. This detection adds NO additional bot-layer dependency beyond
+    the module's pre-existing ``internal.bot.models`` imports (which are out
+    of scope of that claim) and never calls the renderer itself: the JSON
+    envelope emits the ``"mediaDescription"`` key only when the description
+    is non-empty, and the TEXT envelope prepends a
+    ``<media-description>...</media-description>`` block.
+
+    Args:
+        content: The message text as serialized for the LLM.
+
+    Returns:
+        bool: True when a media description marker is present in the text.
+    """
+    return '"mediaDescription"' in content or "<media-description>" in content
+
+
 def stripImagesForCondensing(message: ModelMessage) -> ModelMessage:
     """Return a text-only copy of an image-bearing message for the condensing model.
 
-    The condensing model's image-input capability is never checked (the ratified
-    eligibility rule covers only CHAT_MODEL + FALLBACK_MODEL), so a batch
-    containing serialized ``image_url`` parts can be hard-rejected by a
-    text-only condenser — and the failed-batch path then skips that batch's
-    TEXT context too. At the boundary where body messages cross into the
-    condensing model (:meth:`LLMService.condenseContext`), image payloads are
-    dropped while the envelope (``role`` / ``content``), ``contentKey``,
-    ``weight``, and ``source`` are preserved so coverage tracking
-    (:func:`generateCondensingDict`) stays intact. Plain messages are returned
-    as-is; nothing is mutated.
+    Image payloads are dropped while the envelope (``role`` / ``content``),
+    ``contentKey``, ``weight``, and ``source`` are preserved so coverage
+    tracking (:func:`generateCondensingDict`) stays intact. Plain messages
+    are returned as-is; nothing is mutated.
+
+    When the envelope text carries NO media description, a short marker
+    (:data:`_STRIPPED_IMAGE_MARKER` / :data:`_STRIPPED_IMAGES_MARKER_TEMPLATE`)
+    is appended so a text-only condenser knows an image was there and was
+    dropped deliberately — not lost. Description detection is string-based on
+    the content (:func:`_contentCarriesMediaDescription`); a description-
+    bearing envelope is preserved exactly, with no marker.
+
+    Whether this function is applied at all is decided by the caller
+    (:meth:`LLMService.condenseContext` gates it on the condensing model's
+    ``support_image_input`` capability).
 
     Args:
         message: The body message crossing into the condensing model.
 
     Returns:
         ModelMessage: The same instance for plain messages, or a new plain
-            :class:`ModelMessage` carrying the same envelope without images.
+            :class:`ModelMessage` carrying the same envelope (plus the
+            omission marker when no description is present) without images.
     """
     if not isinstance(message, (ModelImageMessage, ModelImagesMessage)):
         return message
+    content = message.content
+    if not _contentCarriesMediaDescription(content):
+        if isinstance(message, ModelImagesMessage):
+            imageCount = len(message.images)
+            content += _STRIPPED_IMAGES_MARKER_TEMPLATE.format(
+                imageCount=imageCount, imagePlural="" if imageCount == 1 else "s"
+            )
+        else:
+            content += _STRIPPED_IMAGE_MARKER
     return ModelMessage(
         role=message.role,
-        content=message.content,
+        content=content,
         contentKey=message.contentKey,
         weight=message.weight,
         source=message.source,
@@ -1267,13 +1314,23 @@ class LLMService:
             logger.debug(f"Condensed context: {ret}")
             return (ret, coverage)
 
-        # The condensing model's image-input capability is never checked, so
-        # image-bearing body messages are swapped to text-only copies BEFORE
-        # they cross into the condenser (a text-only condenser would otherwise
-        # reject the batch and its text context with it). Envelope and source
-        # survive the copy for coverage tracking. retHead / retTail keep their
-        # images — those go to the CHAT model, not the condenser.
-        body = [stripImagesForCondensing(v) for v in body]
+        # Image-bearing body messages cross into the condenser as-is ONLY
+        # when the condensing model declares vision support
+        # (``support_image_input``); otherwise they are swapped to text-only
+        # copies BEFORE they cross (a text-only condenser would hard-reject a
+        # batch carrying serialized ``image_url`` parts — and the failed-batch
+        # path then skips that batch's TEXT context too). The capability probe
+        # is fail-soft: an exception from getInfo(), a missing key, or a falsy
+        # value all mean "does not support images" → strip. Envelope and
+        # source survive the copy for coverage tracking. retHead / retTail
+        # keep their images — those go to the CHAT model, not the condenser.
+        condensingModelSupportsImages = False
+        try:
+            condensingModelSupportsImages = bool(condensingModel.getInfo().get("support_image_input"))
+        except Exception:  # noqa: BLE001 — the capability probe must never break condensing
+            logger.warning("Failed to probe condensing model vision capability; treating the condenser as text-only")
+        if not condensingModelSupportsImages:
+            body = [stripImagesForCondensing(v) for v in body]
 
         if condensingPrompt is None:
             condensingPrompt = (

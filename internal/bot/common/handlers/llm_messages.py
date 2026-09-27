@@ -28,7 +28,7 @@ import re
 from collections import deque
 from collections.abc import MutableSet, Sequence
 from enum import StrEnum
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import telegram
 
@@ -65,14 +65,6 @@ from lib.ai import (
 from .base import BaseBotHandler, HandlerResultStatus
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_MAX_IMAGES_PER_REQUEST: int = 5
-"""Fallback for the ``max-images-per-request`` vision config key.
-
-Mirrors the ``configs/00-defaults`` default; used when the config section is
-missing or unreadable so the cap is always active (native-vision design v1
-§3.4 — the cap is the only real cost guard for attached images).
-"""
 
 
 class LLMReplyOutcome(StrEnum):
@@ -133,99 +125,43 @@ class LLMMessageHandler(BaseBotHandler):
 
         self.llmService = LLMService.getInstance()
 
+        # Cached config value — read once at init, requires restart to take
+        # effect. Mirrors the _sttEnabled pattern in BaseBotHandler.
+        self._maxImagesPerRequest: int = self.configManager.getVisionConfig().get(
+            "max-images-per-request", constants.DEFAULT_MAX_IMAGES_PER_REQUEST
+        )
+
     ###
     # Native vision (design v1 §3.4/§3.5): chat-time attach of stored image
     # bytes to the assembled LLM request.
     ###
 
-    def _checkVisionModelsEligibility(self, chatSettings: ChatSettingsDict) -> bool:
-        """Check that BOTH chat models (primary and fallback) accept image input.
-
-        One assembled message list is serialized for both the primary and the
-        fallback attempt (see ``_generateTextViaLLM``), so a text-only fallback
-        would hard-error on ``image_url`` parts. Both models must therefore
-        declare ``support_image_input`` (native-vision design v1 §3.4). Any
-        resolution failure fails soft to "not eligible" — the description-only
-        status quo is always a safe answer.
-
-        Args:
-            chatSettings (ChatSettingsDict): Chat-specific settings used to
-                resolve both model keys.
-
-        Returns:
-            bool: True only if both resolved models declare
-                ``support_image_input``.
-        """
-        try:
-            primaryModel = self.llmService.resolveModel(
-                ChatSettingsKey.CHAT_MODEL,
-                chatSettings=chatSettings,
-                defaultKey=ChatSettingsKey.CHAT_MODEL,
-            )
-            fallbackModel = self.llmService.resolveModel(
-                ChatSettingsKey.FALLBACK_MODEL,
-                chatSettings=chatSettings,
-                defaultKey=ChatSettingsKey.FALLBACK_MODEL,
-            )
-            primarySupportsImageInput = bool(primaryModel.getInfo().get("support_image_input", False))
-            fallbackSupportsImageInput = bool(fallbackModel.getInfo().get("support_image_input", False))
-        except Exception as e:
-            logger.warning(f"Native vision eligibility check failed, using descriptions only: {type(e).__name__}#{e}")
-            return False
-
-        return primarySupportsImageInput and fallbackSupportsImageInput
-
-    def _getMaxImagesPerRequest(self) -> int:
-        """Read the ``max-images-per-request`` cap from the vision config.
-
-        Args:
-            None
-
-        Returns:
-            int: The configured cap, or ``DEFAULT_MAX_IMAGES_PER_REQUEST``
-                when the vision config section is missing/unreadable.
-        """
-        try:
-            visionConfig = self.configManager.getVisionConfig()
-            return int(visionConfig.get("max-images-per-request", DEFAULT_MAX_IMAGES_PER_REQUEST))
-        except Exception as e:
-            logger.warning(
-                f"Failed to read vision config, using default cap "
-                f"{DEFAULT_MAX_IMAGES_PER_REQUEST}: {type(e).__name__}#{e}"
-            )
-            return DEFAULT_MAX_IMAGES_PER_REQUEST
-
-    async def _getVisionUrl(self, mediaId: str, urlCache: Dict[str, Optional[str]]) -> Optional[str]:
+    async def _getVisionUrl(self, mediaId: str) -> Optional[str]:
         """Fetch the stored vision URL for one media attachment.
 
         The ``vision_url`` column is written at receipt time by
         ``_processMediaV2`` and never lives on the in-memory
         ``EnsuredMessage.mediaList`` entries, so it is always re-fetched from
         ``media_attachments`` by mediaId here (the in-memory model stays
-        untouched). Results are cached per request.
+        untouched). There is deliberately no per-request cache: the DB
+        lookup is cheap and the same image appearing twice in one thread is
+        rare.
 
         Args:
             mediaId (str): Media attachment unique identifier (``file_unique_id``).
-            urlCache (Dict[str, Optional[str]]): Per-request cache keyed by mediaId.
 
         Returns:
             Optional[str]: The StorageService key of the normalized image
                 bytes, or None when the row/URL is missing (image pre-dates
                 the feature, store failed, or TTL-collected).
         """
-        if mediaId in urlCache:
-            return urlCache[mediaId]
-
-        visionUrl: Optional[str] = None
         try:
             mediaRow = await self.db.mediaAttachments.getMediaAttachment(mediaId)
             if mediaRow is not None:
-                visionUrl = mediaRow["vision_url"]
+                return mediaRow["vision_url"]
         except Exception as e:
             logger.debug(f"Native vision: failed to read media attachment {mediaId}: {type(e).__name__}#{e}")
-
-        urlCache[mediaId] = visionUrl
-        return visionUrl
+        return None
 
     def _loadVisionBytes(self, visionUrl: str) -> Optional[bytes]:
         """Load normalized image bytes from the storage service.
@@ -251,23 +187,27 @@ class LLMMessageHandler(BaseBotHandler):
         *,
         chatSettings: ChatSettingsDict,
     ) -> Sequence[ModelMessage]:
-        """Swap vision-eligible user messages to multi-image messages.
+        """Swap vision-eligible messages to multi-image messages.
 
         Walks the assembled request list NEWEST to OLDEST (the current message
-        is assembled last), pairs each user ``ModelMessage`` with its source
+        is assembled last), pairs each ``ModelMessage`` with its source
         :class:`EnsuredMessage` (stamped into ``ModelMessage.source`` by
         ``toModelMessage``), loads the stored normalized bytes for the source's
         media list in album order, and replaces the plain message with a
         :class:`ModelImagesMessage` whose text part is the existing
-        ``formatForLLM`` envelope. System, tool and assistant messages are
-        never touched; the existing envelope text (including media
-        descriptions) is always preserved.
+        ``formatForLLM`` envelope. Eligibility is role-INDEPENDENT: any
+        source-paired message carrying stored images swaps, assistant
+        messages included (the owner wants bot-sent images attachable for
+        future image-editing support). System and tool messages have no
+        media sources, so they stay excluded naturally; the existing
+        envelope text (including media descriptions) is always preserved.
 
-        The ``max-images-per-request`` cap applies across the ENTIRE request:
-        the most-recent N images are attached, overflow images degrade to
-        their text descriptions. A WARNING is logged when the cap trips,
-        because image tokens are invisible to the char-based token estimator —
-        the cap is the only real cost guard (native-vision design v1 §3.4).
+        The ``max-images-per-request`` cap (cached at ``__init__``) applies
+        across the ENTIRE request: the most-recent N images are attached,
+        overflow images degrade to their text descriptions. A WARNING is
+        logged when the cap trips, because image tokens are invisible to the
+        char-based token estimator — the cap is the only real cost guard
+        (native-vision design v1 §3.4).
 
         Args:
             messages (Sequence[ModelMessage]): Assembled request messages
@@ -282,13 +222,30 @@ class LLMMessageHandler(BaseBotHandler):
         if not chatSettings[ChatSettingsKey.NATIVE_VISION].toBool():
             return messages
 
-        if not self._checkVisionModelsEligibility(chatSettings):
+        # One assembled message list is serialized for both the primary and
+        # the fallback attempt (see ``_generateTextViaLLM``), so a text-only
+        # fallback would hard-error on ``image_url`` parts. Both models must
+        # therefore declare ``support_image_input`` (native-vision design v1
+        # §3.4). Any resolution failure fails soft to "not eligible" — the
+        # description-only status quo is always a safe answer.
+        try:
+            primaryModel = self.llmService.resolveModel(
+                ChatSettingsKey.CHAT_MODEL, chatSettings=chatSettings, defaultKey=ChatSettingsKey.CHAT_MODEL
+            )
+            fallbackModel = self.llmService.resolveModel(
+                ChatSettingsKey.FALLBACK_MODEL, chatSettings=chatSettings, defaultKey=ChatSettingsKey.FALLBACK_MODEL
+            )
+            primarySupportsImageInput = bool(primaryModel.getInfo().get("support_image_input", False))
+            fallbackSupportsImageInput = bool(fallbackModel.getInfo().get("support_image_input", False))
+        except Exception as e:
+            logger.warning(f"Native vision eligibility check failed, using descriptions only: {type(e).__name__}#{e}")
+            return messages
+        if not (primarySupportsImageInput and fallbackSupportsImageInput):
             logger.debug("Native vision is on, but chat models are not image-capable; using descriptions only")
             return messages
 
-        maxImages = self._getMaxImagesPerRequest()
+        maxImages = self._maxImagesPerRequest
         result = list(messages)
-        urlCache: Dict[str, Optional[str]] = {}
         attachedCount = 0
         capTripped = False
 
@@ -296,7 +253,7 @@ class LLMMessageHandler(BaseBotHandler):
         # images first, then history from newest to oldest.
         for index in range(len(result) - 1, -1, -1):
             msg = result[index]
-            if msg.role != "user" or isinstance(msg, ModelImagesMessage):
+            if isinstance(msg, ModelImagesMessage):
                 continue
             source = msg.source
             if not isinstance(source, EnsuredMessage) or not source.mediaList:
@@ -304,7 +261,7 @@ class LLMMessageHandler(BaseBotHandler):
 
             visionUrls: List[str] = []
             for media in source.mediaList:  # album order
-                visionUrl = await self._getVisionUrl(media.id, urlCache)
+                visionUrl = await self._getVisionUrl(media.id)
                 if visionUrl:
                     visionUrls.append(visionUrl)
             if not visionUrls:

@@ -1,11 +1,15 @@
 # Our TODO list
 
 - [x] `/sandbox update` to update packages
+
+## Vision:
+- [x] Add ability to store resized images + send them to context
 - [ ] re-getting "old" attachments - need to re-save (for vision as well)
 - [ ] just like `VisionConfigDict` - add typed-dicts for other configs
 - [ ] `ModelImagesMessage` + `ModelImageMessage` - merge to `ModelImagesMessage`
 - [ ] vision: add storage service choosing
-- [ ] Add ability to store resized images + send them to context
+- [ ] store images on ensuredMessage.toLLM method (so we can skip save media_description) + save media description in metadata (for condensing purposes)
+
 - [ ] `Опять тихий краш без вывода — инструмент прячет stdout при ненулевом exit code, значит падает сам рендер. Оберну его в дочерний процесс и вытащу вывод оттуда, как следователь — улики:`
 - [ ] gifs from sandbox sent as static image
 - [ ] Work on the stats display v2 design (owner global/per-model/per-chat-per-model) — see docs/design/stats-display-v2-draft.md

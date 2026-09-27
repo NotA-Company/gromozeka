@@ -10,7 +10,7 @@ import datetime
 import json
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from unittest.mock import Mock, patch
 
 import pytest
@@ -1979,6 +1979,12 @@ def _makeCountingModel(contextSize: int) -> Mock:
     model = Mock(spec=AbstractModel)
     model.contextSize = contextSize
     model.getEstimateTokensCount = Mock(side_effect=_condenseTokensFor)
+    # A bare ``Mock(spec=AbstractModel)`` auto-creates ``getInfo()`` returning
+    # a truthy Mock, which the condenseContext vision gate would misread as
+    # "supports images". Wire an explicit TEXT-ONLY capability so the default
+    # condenser takes the strip path; tests needing a vision condenser
+    # override ``getInfo`` explicitly.
+    model.getInfo = Mock(return_value={})
     return model
 
 
@@ -2202,7 +2208,11 @@ class TestCondenseContextCoverage:
         serialized = [m.toDict() for m in requestMessages]
         assert all("image_url" not in json.dumps(s, default=str) for s in serialized)
         # The envelope text (not a blanked placeholder) reached the condenser.
-        assert "IMG ENVELOPE" in [m["content"] for m in serialized]
+        # The envelope carries no media description, so the omission marker
+        # is appended: the condenser knows an image was there and dropped
+        # deliberately, not lost.
+        assert any("IMG ENVELOPE" in m["content"] for m in serialized)
+        assert "IMG ENVELOPE\n[1 image attached, omitted for condensing]" in [m["content"] for m in serialized]
 
         # Coverage survived the text-only copy: the summary still covers the
         # image message's source metadata.
@@ -2654,6 +2664,184 @@ class TestCondenseContextCoverage:
         # Sanity: the summary text came back and the result holds the summary.
         assert cov["text"] == "multi-emit-summary"
         assert result[1].source is coverage[0]
+
+
+class TestCondenseContextImageStripGating:
+    """Tests for the vision-capability gate on the condenser image strip (Wave C).
+
+    ``condenseContext`` swaps image-bearing body messages to text-only copies
+    ONLY when the condensing model does NOT declare ``support_image_input``;
+    a vision-capable condenser receives the image payloads natively
+    (untouched instances). The capability probe is fail-soft: an exception
+    from ``getInfo()``, a missing key, or a falsy value all mean "does not
+    support images" → strip; a truthy value passes image-bearing messages
+    through UNTOUCHED.
+    """
+
+    SYS_PROMPT = "sys"
+
+    def _messagesWithImageBody(self) -> Tuple[List[ModelMessage], ModelImagesMessage]:
+        """Build ``[system, image-bearing user, tail user]`` for gating tests.
+
+        Returns:
+            A ``(messages, imageMessage)`` tuple; the image message sits at
+            index 1 and is the entire condensable body (``keepFirstN=0``,
+            ``keepLastN=1``).
+        """
+        imageMessage = ModelImagesMessage(role="user", content="IMG ENVELOPE", images=[bytearray(b"FAKE-IMG")])
+        messages: List[ModelMessage] = [
+            ModelMessage(role="system", content=self.SYS_PROMPT),
+            imageMessage,
+            ModelMessage(role="user", content="last"),
+        ]
+        return (messages, imageMessage)
+
+    async def testVisionCapableCondenserReceivesImagePayloads(self, llmService: LLMService) -> None:
+        """``support_image_input=True`` → body crosses UNTOUCHED, images intact.
+
+        The condenser request must contain the ORIGINAL image-bearing
+        instance (no text-only copy substituted) with its serialized
+        ``image_url`` payload, so a vision-capable condenser sees the image
+        natively.
+
+        Args:
+            llmService: Fresh LLMService instance.
+
+        Returns:
+            None
+        """
+        messages, imageMessage = self._messagesWithImageBody()
+        model = _makeCountingModel(4096)
+        condensing = _makeCondensingModel(1000, ["summary-0"])
+        condensing.getInfo = Mock(return_value={"support_image_input": True})
+
+        result, coverage = await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=1,
+            force=True,
+            condensingModel=condensing,
+            condensingPrompt="Summarize.",
+            condensingSystemPrompt="Condenser.",
+            maxTokens=1000,
+        )
+
+        assert isinstance(result, list)
+        condensing.generateText.assert_awaited_once()
+        requestMessages = condensing.generateText.call_args.args[0]
+        # The ORIGINAL image-bearing instance crossed into the condenser: no
+        # text-only copy was substituted for it.
+        assert any(m is imageMessage for m in requestMessages)
+        # Its serialized form carries the native image payload(s).
+        serialized = [m.toDict() for m in requestMessages]
+        assert any("image_url" in json.dumps(s, default=str) for s in serialized)
+        # The summary was still produced and covers the batch.
+        assert set(coverage.keys()) == {0}
+        assert coverage[0].get("text") == "summary-0"
+
+    async def testTextOnlyCondenserStripsImages(self, llmService: LLMService) -> None:
+        """``support_image_input=False`` → stripped (no image payloads reach the condenser).
+
+        Args:
+            llmService: Fresh LLMService instance.
+
+        Returns:
+            None
+        """
+        messages, _imageMessage = self._messagesWithImageBody()
+        model = _makeCountingModel(4096)
+        condensing = _makeCondensingModel(1000, ["summary-0"])
+        condensing.getInfo = Mock(return_value={"support_image_input": False})
+
+        result, coverage = await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=1,
+            force=True,
+            condensingModel=condensing,
+            condensingPrompt="Summarize.",
+            condensingSystemPrompt="Condenser.",
+            maxTokens=1000,
+        )
+
+        assert isinstance(result, list)
+        condensing.generateText.assert_awaited_once()
+        requestMessages = condensing.generateText.call_args.args[0]
+        assert all(not isinstance(m, (ModelImageMessage, ModelImagesMessage)) for m in requestMessages)
+        serialized = [m.toDict() for m in requestMessages]
+        assert all("image_url" not in json.dumps(s, default=str) for s in serialized)
+        # The envelope text survived the strip.
+        assert any("IMG ENVELOPE" in m.content for m in requestMessages)
+        assert set(coverage.keys()) == {0}
+
+    async def testMissingCapabilityKeyStripsImages(self, llmService: LLMService) -> None:
+        """``getInfo()`` without the ``support_image_input`` key → stripped.
+
+        Args:
+            llmService: Fresh LLMService instance.
+
+        Returns:
+            None
+        """
+        messages, _imageMessage = self._messagesWithImageBody()
+        model = _makeCountingModel(4096)
+        condensing = _makeCondensingModel(1000, ["summary-0"])
+        # Capability dict that carries unrelated keys only.
+        condensing.getInfo = Mock(return_value={"support_tools": True})
+
+        result, coverage = await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=1,
+            force=True,
+            condensingModel=condensing,
+            condensingPrompt="Summarize.",
+            condensingSystemPrompt="Condenser.",
+            maxTokens=1000,
+        )
+
+        assert isinstance(result, list)
+        condensing.generateText.assert_awaited_once()
+        requestMessages = condensing.generateText.call_args.args[0]
+        assert all(not isinstance(m, (ModelImageMessage, ModelImagesMessage)) for m in requestMessages)
+        assert any("IMG ENVELOPE" in m.content for m in requestMessages)
+        assert set(coverage.keys()) == {0}
+
+    async def testGetInfoFailureStripsImages(self, llmService: LLMService) -> None:
+        """A raising ``getInfo()`` → fail-soft strip, condensing still completes.
+
+        Args:
+            llmService: Fresh LLMService instance.
+
+        Returns:
+            None
+        """
+        messages, _imageMessage = self._messagesWithImageBody()
+        model = _makeCountingModel(4096)
+        condensing = _makeCondensingModel(1000, ["summary-0"])
+        condensing.getInfo = Mock(side_effect=RuntimeError("capability probe boom"))
+
+        result, coverage = await llmService.condenseContext(
+            messages,
+            model,
+            keepFirstN=0,
+            keepLastN=1,
+            force=True,
+            condensingModel=condensing,
+            condensingPrompt="Summarize.",
+            condensingSystemPrompt="Condenser.",
+            maxTokens=1000,
+        )
+
+        # The gate's exception must not propagate; condensing completed.
+        assert isinstance(result, list)
+        condensing.generateText.assert_awaited_once()
+        requestMessages = condensing.generateText.call_args.args[0]
+        assert all(not isinstance(m, (ModelImageMessage, ModelImagesMessage)) for m in requestMessages)
+        assert set(coverage.keys()) == {0}
 
 
 # ============================================================================

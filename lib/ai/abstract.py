@@ -367,7 +367,7 @@ class AbstractModel(ABC):
                 )
 
             # Original logic when no fallbacks
-            tokensCount = self._estimateMessagesTokens(messages)
+            tokensCount = self.getEstimateTokensCount(messages)
             logger.debug(
                 f"generateText(messages={len(messages)}, tools={len(tools) if tools else None}), "
                 f"estimateTokens={tokensCount}, model: {self.provider}/{self.modelId}"
@@ -602,7 +602,7 @@ class AbstractModel(ABC):
                 )
 
             # Original logic when no fallbacks
-            tokensCount = self._estimateMessagesTokens(messages) + self.getEstimateTokensCount(schema)
+            tokensCount = self.getEstimateTokensCount(messages) + self.getEstimateTokensCount(schema)
             logger.debug(
                 f"generateStructured(messages={len(messages)}, schema_keys={list(schema.keys())}), "
                 f"estimateTokens={tokensCount}, model: {self.provider}/{self.modelId}"
@@ -873,21 +873,38 @@ class AbstractModel(ABC):
         This method estimates the token count by converting the data to a string
         and using a heuristic: average token length is 3.5 characters. The result
         is multiplied by a coefficient (default 1.1) to ensure we don't underestimate.
-        Before counting, inline base64 payloads are stripped — but only when the
-        WHOLE input is recognized as a serialized chat-message list
-        (:func:`_isMessageList`, the shape message-estimation call sites pass
-        as ``[message.toDict() for message in messages]``). Normalization is
-        decided once at this trusted API boundary, from what the input IS;
-        message-shaped structures found during the recursive walk (e.g. JSON
-        Schema ``examples`` entries) never re-arm it
-        (:func:`_estimateTokenView`). Bare schemas, arbitrary structured
-        payloads, and plain-string inputs are counted verbatim.
+
+        Raw message OBJECT lists are handled here directly: when *data* is a
+        list/tuple whose every element is a :class:`ModelMessage` and at least
+        one is image-bearing (:class:`ModelImageMessage` /
+        :class:`ModelImagesMessage`), it is first serialized with the
+        canonical ``[message.toDict() for message in data]`` shape. Without
+        that, the object list would fall through the trusted boundary below
+        and ``json.dumps(..., default=str)`` would embed every image's FULL
+        base64 payload (via ``ModelMessage.__str__``) into the estimate,
+        spuriously rejecting valid native-vision requests at the
+        ``contextSize * 2`` generation gate. Text-only object lists, mixed
+        lists, and every other input keep the EXACT pre-existing estimation
+        path — the off-path estimate is an identity that must not drift.
+
+        Before counting, inline base64 payloads are stripped — but only when
+        the WHOLE input is recognized as a serialized chat-message list
+        (:func:`_isMessageList`, the shape the serialization above and the
+        message-estimation call sites produce). Normalization is decided once
+        at this trusted API boundary, from what the input IS; message-shaped
+        structures found during the recursive walk (e.g. JSON Schema
+        ``examples`` entries) never re-arm it (:func:`_estimateTokenView`).
+        Bare schemas, arbitrary structured payloads, and plain-string inputs
+        are counted verbatim.
 
         Args:
-            data: Data to estimate token count for. Can be a string or any object
-                convertible to JSON. A list of role+content message dicts gets
-                image-block normalization; everything else (e.g. a JSON Schema
-                passed by ``generateStructured``) is counted as-is.
+            data: Data to estimate token count for. Can be a string, any
+                object convertible to JSON, or a list/tuple of
+                :class:`ModelMessage` objects (image-bearing object lists are
+                serialized to the trusted dict shape first; see above). A
+                list of role+content message dicts gets image-block
+                normalization; everything else (e.g. a JSON Schema passed by
+                ``generateStructured``) is counted as-is.
 
         Returns:
             Estimated number of tokens in the data.
@@ -898,6 +915,16 @@ class AbstractModel(ABC):
             >>> model.getEstimateTokensCount({"key": "value"})
             3
         """
+        if (
+            isinstance(data, (list, tuple))
+            and all(isinstance(m, ModelMessage) for m in data)
+            and any(isinstance(m, (ModelImageMessage, ModelImagesMessage)) for m in data)
+        ):
+            # Image-bearing message OBJECT list: serialize to the exact shape
+            # the trusted boundary (:func:`_isMessageList`) recognizes, so
+            # base64 payloads are placeholder-normalized below. Serialization
+            # here never mutates the messages (``toDict`` derives fresh dicts).
+            data = [m.toDict() for m in data]
         text = ""
         if isinstance(data, str):
             text = data
@@ -931,31 +958,6 @@ class AbstractModel(ABC):
         # As we use estimated token count, it won't count tokens properly,
         # so we need to multiply by some coefficient to be sure
         return int(tokensCount * self.tokensCountCoeff)
-
-    def _estimateMessagesTokens(self, messages: Sequence[ModelMessage]) -> int:
-        """Estimate the token count of a message sequence at a generation gate.
-
-        Image-bearing sequences (:class:`ModelImageMessage`,
-        :class:`ModelImagesMessage`) are serialized with the canonical
-        ``[message.toDict() for message in messages]`` shape first, so the
-        estimator's trusted boundary (:func:`_isMessageList`) recognizes the
-        list and normalizes inline base64 payloads to the short image
-        placeholder. Without this, raw message OBJECTS fall through the
-        trusted boundary and ``json.dumps(..., default=str)`` embeds every
-        image's full base64 (via ``ModelMessage.__str__``) into the estimate,
-        spuriously rejecting valid native-vision requests at the
-        ``contextSize * 2`` gate. Text-only sequences keep the exact existing
-        estimation path: the raw object list is passed verbatim.
-
-        Args:
-            messages: Message sequence about to be sent to the provider.
-
-        Returns:
-            Estimated number of tokens for the sequence.
-        """
-        if any(isinstance(m, (ModelImageMessage, ModelImagesMessage)) for m in messages):
-            return self.getEstimateTokensCount([m.toDict() for m in messages])
-        return self.getEstimateTokensCount(messages)
 
     def getInfo(self) -> Dict[str, Any]:
         """Get model information and configuration.

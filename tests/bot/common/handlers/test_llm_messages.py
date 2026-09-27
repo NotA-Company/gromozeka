@@ -43,7 +43,7 @@ import pytest
 
 from internal.bot.common.handlers.base import HandlerResultStatus
 from internal.bot.common.handlers.llm_messages import LLMMessageHandler, LLMReplyOutcome
-from internal.bot.constants import ToolName
+from internal.bot.constants import DEFAULT_MAX_IMAGES_PER_REQUEST, ToolName
 from internal.bot.models import (
     BotProvider,
     ChatSettingsDict,
@@ -73,6 +73,11 @@ from lib.ai import ModelImagesMessage, ModelMessage, ModelResultStatus, ModelRun
 def mockConfig() -> Mock:
     """Build a minimal ConfigManager stub.
 
+    ``getVisionConfig()`` returns ``{}`` so the vision settings cached in
+    ``LLMMessageHandler.__init__`` resolve to the documented defaults
+    deterministically (an unconfigured Mock return would carry the raw-string
+    image-format through the ValueError fallback and log a warning).
+
     Returns:
         Mock: A ``ConfigManager`` whose ``getBotConfig()`` returns a token/owners
         dict sufficient for ``BaseBotHandler.__init__``.
@@ -81,6 +86,7 @@ def mockConfig() -> Mock:
 
     cm = Mock(spec=ConfigManager)
     cm.getBotConfig.return_value = {"token": "test_token", "owners": [123456]}
+    cm.getVisionConfig.return_value = {}
     return cm
 
 
@@ -1905,11 +1911,15 @@ def _enableVision(
     resolveSideEffect: Optional[object] = None,
     resolveReturn: Optional[Mock] = None,
 ) -> Mock:
-    """Turn NATIVE_VISION on and wire the vision config + model resolution.
+    """Turn NATIVE_VISION on and wire the vision cap + model resolution.
+
+    The cap is cached at handler construction (``_maxImagesPerRequest``
+    attribute), so tests set the attribute directly instead of mocking
+    ``getVisionConfig``.
 
     Args:
         liveHandler: Live handler fixture.
-        maxImages: Value reported for ``max-images-per-request``.
+        maxImages: Value for the handler's ``_maxImagesPerRequest`` attribute.
         resolveSideEffect: Optional ``side_effect`` for ``llmService.resolveModel``
             (called primary first, fallback second).
         resolveReturn: Optional fixed return value for ``llmService.resolveModel``.
@@ -1920,9 +1930,7 @@ def _enableVision(
     liveHandler.getChatSettings = AsyncMock(  # type: ignore[method-assign]
         return_value=_fullChatSettings(nativeVision=True)
     )
-    liveHandler.configManager.getVisionConfig = Mock(  # type: ignore[method-assign]
-        return_value={"max-images-per-request": maxImages}
-    )
+    liveHandler._maxImagesPerRequest = maxImages
     resolveMock = Mock()
     if resolveSideEffect is not None:
         resolveMock.side_effect = resolveSideEffect
@@ -1986,6 +1994,85 @@ def _wireStorage(liveHandler: LLMMessageHandler, data: dict[str, bytes]) -> Mock
     storageMock.get = Mock(side_effect=lambda key: data.get(key))
     liveHandler.storage = storageMock  # type: ignore[method-assign]
     return storageMock
+
+
+class TestVisionCapConstructorWiring:
+    """The ``max-images-per-request`` cap is read ONCE at construction.
+
+    ``LLMMessageHandler.__init__`` resolves the cap from ``getVisionConfig()``
+    into the cached ``_maxImagesPerRequest`` attribute (the same
+    "cached config value — read once at init" pattern as ``_sttEnabled``);
+    request time must consult only that attribute — the ConfigManager must
+    not be re-read per request.
+    """
+
+    def testEmptyVisionConfigFallsBackToDefaultCap(self, handler: LLMMessageHandler) -> None:
+        """An empty vision config resolves the cap to the documented default.
+
+        Args:
+            handler: Handler fixture (its ``getVisionConfig()`` returns ``{}``).
+
+        Returns:
+            None
+        """
+        assert handler._maxImagesPerRequest == DEFAULT_MAX_IMAGES_PER_REQUEST
+
+    def testNonDefaultCapOverrideHonored(self, mockConfig: Mock, mockDb: Mock) -> None:
+        """An integer ``max-images-per-request`` override is honored verbatim.
+
+        Args:
+            mockConfig: ConfigManager stub.
+            mockDb: Database stub.
+
+        Returns:
+            None
+        """
+        mockConfig.getVisionConfig.return_value = {"max-images-per-request": 3}
+        with (
+            patch.object(CacheService, "getInstance", return_value=Mock()),
+            patch.object(QueueService, "getInstance", return_value=Mock()),
+            patch.object(StorageService, "getInstance", return_value=Mock()),
+        ):
+            h = LLMMessageHandler(  # type: ignore[call-arg]
+                configManager=mockConfig,
+                database=mockDb,
+                botProvider=BotProvider.MAX,
+            )
+
+        assert h._maxImagesPerRequest == 3
+
+    async def testRequestTimeDoesNotReReadVisionConfig(self, liveHandler: LLMMessageHandler, mockConfig: Mock) -> None:
+        """A vision-attach request reads only the cached cap, never the config.
+
+        Exactly TWO ``getVisionConfig()`` calls are legitimate, both at
+        construction: the base ``__init__`` receipt-settings read and the
+        subclass cap read. The attach path must use the cached
+        ``_maxImagesPerRequest`` attribute, so the call count after a full
+        request must equal the construction total.
+
+        Args:
+            liveHandler: Live handler fixture.
+            mockConfig: The same ConfigManager stub the fixture built with.
+
+        Returns:
+            None
+        """
+        constructionCalls = mockConfig.getVisionConfig.call_count
+        assert constructionCalls == 2  # base __init__ receipt settings + subclass cap
+        _enableVision(liveHandler, maxImages=3)
+        _wireMediaRows(liveHandler, {"media-1": {"vision_url": "vision/a.jpg"}})
+        _wireStorage(liveHandler, {"vision/a.jpg": b"IMG"})
+
+        generate, _captured = _captureGenerate("ok")
+        liveHandler.llmService.generateTextViaLLM = generate  # type: ignore[method-assign]
+        messages = [
+            ModelMessage(role="system", content="SYS"),
+            ModelMessage(role="user", content="CUR", source=_mediaSource(["media-1"])),
+        ]
+        outcome = await liveHandler._sendLLMChatMessage(_liveEnsuredMessage(), messages, typingManager=Mock())
+
+        assert outcome is LLMReplyOutcome.SENT
+        assert mockConfig.getVisionConfig.call_count == constructionCalls
 
 
 class TestNativeVisionChatAttach:
@@ -2401,8 +2488,13 @@ class TestNativeVisionChatAttach:
         assert all(not isinstance(m, ModelImagesMessage) for m in llmMessages)
         storageMock.get.assert_not_called()
 
-    async def testAssistantRoleMessagesNeverSwapped(self, liveHandler: LLMMessageHandler) -> None:
-        """Only user messages are eligible: an assistant media message stays plain.
+    async def testAssistantRoleMediaMessagesSwapToo(self, liveHandler: LLMMessageHandler) -> None:
+        """Role-independent eligibility: an assistant media message swaps.
+
+        The swap walk has no user-role restriction — bot/assistant-sent
+        images with stored vision bytes attach too (future image-editing
+        support). The system message (no media source) stays excluded
+        naturally. Mirrors the flipped ``testAssistantRoleMessagesNeverSwapped``.
 
         Args:
             liveHandler: Live handler fixture.
@@ -2411,16 +2503,74 @@ class TestNativeVisionChatAttach:
         _wireMediaRows(liveHandler, {"bot-media": {"vision_url": "vision/bot.jpg"}})
         _wireStorage(liveHandler, {"vision/bot.jpg": b"BOT-IMG"})
 
+        systemMessage = ModelMessage(role="system", content="SYS")
         messages = [
-            ModelMessage(role="system", content="SYS"),
+            systemMessage,
             ModelMessage(role="assistant", content="BOT ENVELOPE", source=_mediaSource(["bot-media"], senderId=999)),
         ]
         outcome, llmMessages = await self._runChat(liveHandler, messages)
 
         assert outcome is LLMReplyOutcome.SENT
-        assert isinstance(llmMessages[1], ModelMessage)
-        assert not isinstance(llmMessages[1], ModelImagesMessage)
-        assert llmMessages[1].content == "BOT ENVELOPE"
+        # System message untouched (no media source → excluded naturally).
+        assert llmMessages[0] is systemMessage
+        # Assistant message WITH eligible media swaps.
+        swapped = llmMessages[1]
+        assert isinstance(swapped, ModelImagesMessage)
+        assert swapped.role == "assistant"
+        assert swapped.content == "BOT ENVELOPE"
+        assert swapped.images == [bytearray(b"BOT-IMG")]
+
+    async def testSystemMessageWithoutSourceNeverSwapped(self, liveHandler: LLMMessageHandler) -> None:
+        """System/tool messages have no media sources → excluded naturally.
+
+        Pins the role-removal invariant: with the user-role restriction gone,
+        the natural exclusion of source-less messages is what keeps system
+        prompts (and tool outputs) plain.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        _enableVision(liveHandler)
+        _wireMediaRows(liveHandler, {})
+        _wireStorage(liveHandler, {})
+
+        systemMessage = ModelMessage(role="system", content="SYS")
+        toolMessage = ModelMessage(role="tool", content="TOOL OUTPUT", toolCallId="call-1")
+        messages = [systemMessage, toolMessage]
+        outcome, llmMessages = await self._runChat(liveHandler, messages)
+
+        assert outcome is LLMReplyOutcome.SENT
+        assert llmMessages[0] is systemMessage
+        assert llmMessages[1] is toolMessage
+        assert all(not isinstance(m, ModelImagesMessage) for m in llmMessages)
+
+    async def testSameMediaInTwoMessagesRefetchedNoCache(self, liveHandler: LLMMessageHandler) -> None:
+        """No per-request URL cache: the same media id is fetched once per message.
+
+        The owner dropped the ``urlCache`` (DB query is cheap, same image
+        twice in a thread is rare) — pin that both messages still swap and
+        each triggers its own ``getMediaAttachment`` fetch.
+
+        Args:
+            liveHandler: Live handler fixture.
+        """
+        _enableVision(liveHandler)
+        getMediaAttachment = _wireMediaRows(liveHandler, {"media-1": {"vision_url": "vision/a.jpg"}})
+        _wireStorage(liveHandler, {"vision/a.jpg": b"IMG"})
+
+        messages = [
+            ModelMessage(role="system", content="SYS"),
+            ModelMessage(role="user", content="HIST", source=_mediaSource(["media-1"])),
+            ModelMessage(role="user", content="CUR", source=_mediaSource(["media-1"])),
+        ]
+        outcome, llmMessages = await self._runChat(liveHandler, messages)
+
+        assert outcome is LLMReplyOutcome.SENT
+        assert getMediaAttachment.await_count == 2
+        assert isinstance(llmMessages[1], ModelImagesMessage)
+        assert isinstance(llmMessages[2], ModelImagesMessage)
+        assert llmMessages[1].images == [bytearray(b"IMG")]
+        assert llmMessages[2].images == [bytearray(b"IMG")]
 
     async def testMentionWiringSwappedListReachesGenerateTextViaLLMMocked(self, liveHandler: LLMMessageHandler) -> None:
         """§3.6 wiring guard (MOCKED boundary): handleMention → swap → generateTextViaLLM.

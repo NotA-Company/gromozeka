@@ -26,35 +26,16 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TypedDict, cast
+from typing import Any, Dict, List, Optional, cast
 
 import tomli
 
 import lib.utils as utils
+from internal.config.models import VisionConfigDict
 from lib.proxy import ProxyConfigDict
 from lib.rate_limiter import RateLimiterManagerConfig
 
 logger = logging.getLogger(__name__)
-
-#: Configuration shape of the ``[bot.vision]`` table (nested under ``[bot]``).
-#: Defined with the functional TypedDict syntax because the TOML keys are
-#: dashed and therefore not valid identifiers for the class-based syntax.
-#: Keys are individually optional (``total=False``) so partial overrides
-#: merged from additional config dirs remain valid and the "section absent"
-#: fallback can be an empty mapping. Key strings match
-#: ``configs/00-defaults/vision.toml`` exactly.
-VisionConfigDict = TypedDict(
-    "VisionConfigDict",
-    {
-        "max-image-dimension": int,
-        "image-format": str,
-        "image-quality": int,
-        "store-prefix": str,
-        "max-images-per-request": int,
-        "ttl-days": int,
-    },
-    total=False,
-)
 
 
 class ConfigManager:

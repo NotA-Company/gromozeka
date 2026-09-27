@@ -15,6 +15,7 @@ The constants are organized into logical groups:
 - Knowledge-config wizard limits
 - Chat-search-history defaults and backfill tuning
 - Sandbox file-size limits
+- Native-vision request limits
 
 These constants provide centralized configuration for bot behavior and
 ensure consistency across all bot handlers and services.
@@ -324,3 +325,12 @@ truncation tolerated)."""
 MAX_SANDBOX_SEND_BYTES: int = 20 * 1024 * 1024  # 20 MB
 """Max bytes for a file sent via the ``sandbox_send_file`` LLM tool; larger
 files are rejected before being sent to the user."""
+
+# Native vision
+DEFAULT_MAX_IMAGES_PER_REQUEST: int = 5
+"""Fallback for the ``max-images-per-request`` vision config key.
+
+Mirrors the ``configs/00-defaults`` default; used when the config section is
+missing or unreadable so the cap is always active (native-vision design v1
+§3.4 — the cap is the only real cost guard for attached images).
+"""

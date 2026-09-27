@@ -21,10 +21,18 @@ Also covers generateEmbeddings:
 - empty text raises ValueError.
 - attempts<1 raises ValueError.
 - supportsEmbedding property reads support_embeddings from extraConfig.
+
+Also covers getEstimateTokensCount with raw message OBJECT lists (review
+refactor folding _estimateMessagesTokens into the estimator):
+- image-bearing object lists are serialized to the canonical dict shape
+  first, so their estimate matches the serialized-dict estimate exactly;
+- text-only / mixed object lists keep the EXACT verbatim
+  ``json.dumps(..., default=str)`` estimate (off-path identity pin).
 """
 
 import asyncio
 import io
+import json
 import random
 from collections.abc import Sequence
 from typing import Any, Dict, Optional
@@ -34,7 +42,14 @@ import pytest
 from PIL import Image
 
 from lib.ai.abstract import AbstractLLMProvider, AbstractModel
-from lib.ai.models import ModelImagesMessage, ModelMessage, ModelResultStatus, ModelRunResult, ModelStructuredResult
+from lib.ai.models import (
+    ModelImageMessage,
+    ModelImagesMessage,
+    ModelMessage,
+    ModelResultStatus,
+    ModelRunResult,
+    ModelStructuredResult,
+)
 from lib.stats import NullStatsStorage, StatsStorage
 
 # ============================================================================
@@ -935,6 +950,118 @@ class TestEstimateTokensCountImageDataUris:
 
 
 # ============================================================================
+# getEstimateTokensCount — raw message OBJECT lists (review refactor: the old
+# _estimateMessagesTokens gate-helper folded into the public estimator)
+# ============================================================================
+
+
+class TestEstimateTokensCountMessageObjects:
+    """Image-bearing message OBJECT lists are serialized inside the estimator.
+
+    Review refactor: ``generateText``/``generateStructured`` now call
+    ``getEstimateTokensCount(messages)`` directly, so the estimator itself
+    must convert image-bearing object lists to the canonical
+    ``[message.toDict() ...]`` shape before the trusted boundary
+    (:func:`lib.ai.abstract._isMessageList`) — raw objects would fall
+    through it and have every image's full base64 embedded by
+    ``default=str``. Every input WITHOUT image messages keeps the EXACT
+    verbatim ``json.dumps(..., default=str)`` estimate: the off-path
+    estimation identity is a hard requirement.
+    """
+
+    def testImageObjectListEstimateMatchesSerializedDictEstimate(self) -> None:
+        """A ModelImagesMessage object list estimates exactly like its dict serialization.
+
+        Also pins the underlying regression: the verbatim object
+        serialization (which would embed the base64) must estimate
+        decisively LARGER, i.e. the conversion actually happened.
+
+        Returns:
+            None
+        """
+        model = _makeNoStructuredModel()
+        messages = [
+            ModelImagesMessage(role="user", content="describe the picture", images=[bytearray(_makeLargePngBytes())])
+        ]
+        verbatimEstimate = int(
+            len(json.dumps(messages, ensure_ascii=False, default=str)) / 3.5 * model.tokensCountCoeff
+        )
+
+        objectEstimate = model.getEstimateTokensCount(messages)
+
+        assert objectEstimate == model.getEstimateTokensCount([m.toDict() for m in messages])
+        assert objectEstimate < verbatimEstimate
+
+    def testSingleImageObjectListEstimateMatchesSerializedDictEstimate(self) -> None:
+        """The single-image ModelImageMessage sibling gets the same conversion.
+
+        Returns:
+            None
+        """
+        model = _makeNoStructuredModel()
+        messages = [
+            ModelMessage(role="user", content="look at this"),
+            ModelImageMessage(role="user", content="describe", image=bytearray(_makeLargePngBytes())),
+        ]
+
+        assert model.getEstimateTokensCount(messages) == model.getEstimateTokensCount([m.toDict() for m in messages])
+
+    def testImageMessageTupleInputEstimateMatchesSerializedDictEstimate(self) -> None:
+        """A tuple of image messages is handled like a list.
+
+        Returns:
+            None
+        """
+        model = _makeNoStructuredModel()
+        messages = (
+            ModelImagesMessage(role="user", content="describe the picture", images=[bytearray(_makeLargePngBytes())]),
+        )
+
+        assert model.getEstimateTokensCount(messages) == model.getEstimateTokensCount([m.toDict() for m in messages])
+
+    def testTextOnlyObjectListKeepsVerbatimJsonDumpsEstimate(self) -> None:
+        """Text-only object lists keep the EXACT pre-fold estimate (identity pin).
+
+        The value is pinned to the literal estimator formula over the
+        verbatim ``json.dumps(..., default=str)`` serialization — the
+        off-path estimate must not drift.
+
+        Returns:
+            None
+        """
+        model = _makeNoStructuredModel()
+        messages = [
+            ModelMessage(role="user", content="hello there"),
+            ModelMessage(role="assistant", content="general greeting"),
+        ]
+        serialized = json.dumps(messages, ensure_ascii=False, default=str)
+        expected = int(len(serialized) / 3.5 * model.tokensCountCoeff)
+
+        assert model.getEstimateTokensCount(messages) == expected
+
+    def testMixedListWithNonMessageElementKeepsVerbatimPath(self) -> None:
+        """A list mixing a message with a non-ModelMessage element stays verbatim.
+
+        The conversion requires EVERY element to be a ModelMessage; a mixed
+        list falls back to the verbatim path (its estimate is pinned to the
+        same formula), so a non-message payload can never slip into the
+        normalized path.
+
+        Returns:
+            None
+        """
+        model = _makeNoStructuredModel()
+        data: list[ModelMessage | str] = [
+            ModelImagesMessage(role="user", content="describe", images=[bytearray(_makeLargePngBytes())]),
+            "not a message",
+        ]
+        serialized = json.dumps(data, ensure_ascii=False, default=str)
+        expected = int(len(serialized) / 3.5 * model.tokensCountCoeff)
+
+        assert model.getEstimateTokensCount(data) == expected
+
+
+# ============================================================================
 # generateText / generateStructured — image-bearing message OBJECT lists must
 # be serialized before the generation-gate estimation (native-vision Gate 2
 # regression: base64 counted as text at the final context guard)
@@ -1020,6 +1147,41 @@ class TestGenerationGateWithImageMessages:
         assert result.resultText == "primary ok"
         assert result.isFallback is False
         primary._generateText.assert_awaited_once()
+
+    async def testGenerateTextPrimaryFailsFallbackReachesProviderWithImage(self) -> None:
+        """A primary failure hands the image request to the fallback's own gate.
+
+        The Gate 2 fix must hold on the fallback path too: the wrapper
+        re-enters the PUBLIC ``generateText`` on the fallback model, whose
+        context gate re-estimates the same image-bearing objects. A base64
+        miscount would short-circuit THAT attempt with "Context too large"
+        before the fallback provider was ever awaited.
+
+        Returns:
+            None
+        """
+        primary = _makeStructuredModel(contextSize=100)
+        fallback = _makeStructuredModel(contextSize=100)
+        primary._generateText = AsyncMock(side_effect=RuntimeError("primary provider down"))
+        fallback._generateText = AsyncMock(
+            return_value=ModelRunResult(rawResult=None, status=ModelResultStatus.FINAL, resultText="fallback vision ok")
+        )
+        messages = [
+            ModelImagesMessage(role="user", content="describe the picture", images=[bytearray(_makeLargePngBytes())])
+        ]
+
+        result = await primary.generateText(messages, fallbackModels=[fallback])
+
+        assert result.status is ModelResultStatus.FINAL
+        assert result.isFallback is True
+        assert result.resultText == "fallback vision ok"
+        assert result.error is None
+        primary._generateText.assert_awaited_once()
+        fallback._generateText.assert_awaited_once()
+        awaitedCall = fallback._generateText.await_args
+        assert awaitedCall is not None
+        awaitedMessages = awaitedCall.kwargs["messages"]
+        assert isinstance(awaitedMessages[0], ModelImagesMessage)
 
     async def testGenerateStructuredReachesProviderWithImage(self) -> None:
         """generateStructured's equivalent estimate also serializes image messages.

@@ -55,6 +55,7 @@ from internal.services.storage import StorageService
 from internal.services.stt import STTOutcome, STTService
 from lib.ai import ModelMessage, ModelResultStatus, ModelRunResult
 from lib.ai.manager import LLMManager
+from lib.ai.models import VisionOutputImageFormat
 from lib.stt.models import STTErrorCode
 
 # ---------------------------------------------------------------------------
@@ -1759,17 +1760,21 @@ class TestProcessMediaV2Vision:
         )
 
     @staticmethod
-    def _makeMockConfigManager(*, storageType: str, storageBaseDir: str) -> Mock:
+    def _makeMockConfigManager(
+        *, storageType: str, storageBaseDir: str, visionConfig: Optional[Dict[str, object]] = None
+    ) -> Mock:
         """Build a ``ConfigManager`` stub with vision + storage config.
 
         ``BaseBotHandler.__init__`` caches ``_sttEnabled`` from
-        ``getSttConfig()`` at construction; ``StorageService.injectConfig``
-        reads ``getStorageConfig()``; the vision branch reads
-        ``getVisionConfig()`` — all must be wired before construction.
+        ``getSttConfig()`` AND the native-vision settings from
+        ``getVisionConfig()`` at construction; ``StorageService.injectConfig``
+        reads ``getStorageConfig()`` — all must be wired before construction.
 
         Args:
             storageType: "fs" or "null" (the two backends these tests use).
             storageBaseDir: Base dir for the fs backend (ignored for null).
+            visionConfig: Optional override for the ``[bot.vision]`` table;
+                defaults to the class's standard :data:`_VISION_CONFIG`.
 
         Returns:
             A ``Mock`` serving controlled vision/storage config dicts.
@@ -1777,7 +1782,9 @@ class TestProcessMediaV2Vision:
         cm = Mock()
         cm.getBotConfig = Mock(return_value={"token": "test_token", "owners": [123456]})
         cm.getSttConfig = Mock(return_value={"enabled": False})
-        cm.getVisionConfig = Mock(return_value=dict(TestProcessMediaV2Vision._VISION_CONFIG))
+        if visionConfig is None:
+            visionConfig = dict(TestProcessMediaV2Vision._VISION_CONFIG)
+        cm.getVisionConfig = Mock(return_value=visionConfig)
         if storageType == "fs":
             cm.getStorageConfig = Mock(return_value={"type": "fs", "fs": {"base-dir": storageBaseDir}})
         else:
@@ -1811,6 +1818,7 @@ class TestProcessMediaV2Vision:
         tmpPath: Path,
         *,
         storageType: str = "fs",
+        visionConfig: Optional[Dict[str, object]] = None,
     ) -> UserMemoriesHandler:
         """Construct a handler wired to a real in-memory DB and a real StorageService.
 
@@ -1823,6 +1831,8 @@ class TestProcessMediaV2Vision:
                 fixture).
             tmp_path: pytest tmp dir used as the fs backend base-dir.
             storageType: "fs" or "null".
+            visionConfig: Optional override for the ``[bot.vision]`` table
+                served to ``BaseBotHandler.__init__``.
 
         Returns:
             A handler whose ``self.db`` is *testDatabase* and whose
@@ -1832,7 +1842,9 @@ class TestProcessMediaV2Vision:
         cache = CacheService.getInstance()
         await cache.injectDatabase(testDatabase)
 
-        configManager = self._makeMockConfigManager(storageType=storageType, storageBaseDir=str(tmpPath))
+        configManager = self._makeMockConfigManager(
+            storageType=storageType, storageBaseDir=str(tmpPath), visionConfig=visionConfig
+        )
         StorageService.getInstance().injectConfig(configManager)
         return UserMemoriesHandler(
             configManager=configManager,
@@ -2053,13 +2065,16 @@ class TestProcessMediaV2Vision:
         assert row["vision_url"] is not None
 
     # ------------------------------------------------------------------
-    # Fail-soft: storage error → no exception, no status change, warn once
+    # Fail-soft: storage error → no exception, no status change, warn each time
     # ------------------------------------------------------------------
 
-    async def test_storeFailure_noException_noStatusChange_warningOncePerChat(
+    async def test_storeFailure_noException_noStatusChange_warnsEachOccurrence(
         self, testDatabase: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """A storage error is swallowed: row stays DONE, one WARNING per chat.
+        """A storage error is swallowed: row stays DONE, one WARNING per occurrence.
+
+        There is deliberately no rate-limiting: every failing store logs its
+        own WARNING (the once-per-chat limiter was removed by owner decision).
 
         Args:
             testDatabase: Fresh in-memory database fixture.
@@ -2075,14 +2090,14 @@ class TestProcessMediaV2Vision:
 
         with caplog.at_level(logging.WARNING):
             await self._processImage(handler, mediaId=self._MEDIA_ID, data=self._makeImageBytes())
-            # Second image, same chat: must NOT produce a second WARNING.
+            # Second image, same chat: a plain WARNING per occurrence now.
             await self._processImage(
                 handler, mediaId=f"{self._MEDIA_ID}-2", data=self._makeImageBytes(color=(0, 255, 0))
             )
 
         warnings = [r for r in caplog.records if "Native-vision store failed" in r.message]
-        assert len(warnings) == 1
-        assert warnings[0].levelno == logging.WARNING
+        assert len(warnings) == 2
+        assert all(r.levelno == logging.WARNING for r in warnings)
 
         for mediaId in (self._MEDIA_ID, f"{self._MEDIA_ID}-2"):
             row = await testDatabase.mediaAttachments.getMediaAttachment(mediaId)
@@ -2092,13 +2107,13 @@ class TestProcessMediaV2Vision:
             assert row["vision_url"] is None
 
     # ------------------------------------------------------------------
-    # Fail-soft: null backend → skip without storing, warn once per chat
+    # Fail-soft: null backend → skip without storing, warn each time
     # ------------------------------------------------------------------
 
-    async def test_nullBackend_skipsStore_warnsOncePerChat(
+    async def test_nullBackend_skipsStore_warnsEachOccurrence(
         self, testDatabase: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """With the null backend the vision branch skips and warns once per chat.
+        """With the null backend the vision branch skips and warns per occurrence.
 
         The null-backend check runs BEFORE any vision-only download (review
         finding 5): a misconfigured backend must not waste a fetch, so the
@@ -2122,8 +2137,8 @@ class TestProcessMediaV2Vision:
         downloadMock2.assert_not_called()
 
         warnings = [r for r in caplog.records if "Native-vision store failed" in r.message]
-        assert len(warnings) == 1
-        assert "null" in warnings[0].message
+        assert len(warnings) == 2
+        assert all("null" in r.message for r in warnings)
 
         for mediaId in (self._MEDIA_ID, f"{self._MEDIA_ID}-2"):
             row = await testDatabase.mediaAttachments.getMediaAttachment(mediaId)
@@ -2314,16 +2329,16 @@ class TestProcessMediaV2Vision:
     # Fail-soft boundary: vision-only download raising is contained
     # ------------------------------------------------------------------
 
-    async def test_visionDownloadRaise_noException_warningOnce_statusDone(
+    async def test_visionDownloadRaise_noException_warnsEachOccurrence_statusDone(
         self, testDatabase: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """A raising vision-only download stays inside the fail-soft boundary.
 
         Regression (review finding 1): the receipt-side vision download used
         to run OUTSIDE ``_storeVisionImage``'s try/except, so a download
-        exception escaped ``_processMediaV2`` entirely. It must now be
-        swallowed, warned about once per chat, and leave the media row DONE
-        with no vision_url.
+        exception escaped ``_processMediaV2`` entirely. It must be swallowed,
+        warned about per occurrence, and leave the media row DONE with no
+        vision_url.
 
         Args:
             testDatabase: Fresh in-memory database fixture.
@@ -2354,11 +2369,16 @@ class TestProcessMediaV2Vision:
                 fileId=self._FILE_ID,
             )
 
-        # One attempt per message: the vision branch never retries.
+        # One attempt per message: the guarantee is at most one download per
+        # ``_storeVisionImage()`` invocation (bytes that DO download are
+        # returned for downstream reuse); here the download always raises,
+        # so no bytes ever become available and each receipt's single vision
+        # download attempt fails — separate stages (save/vision/parse) may
+        # each download only when bytes remain unavailable to them.
         assert downloadMock.await_count == 2
         warnings = [r for r in caplog.records if "Native-vision store failed" in r.message]
-        assert len(warnings) == 1
-        assert warnings[0].levelno == logging.WARNING
+        assert len(warnings) == 2
+        assert all(r.levelno == logging.WARNING for r in warnings)
 
         for mediaId in (self._MEDIA_ID, f"{self._MEDIA_ID}-2"):
             row = await testDatabase.mediaAttachments.getMediaAttachment(mediaId)
@@ -2479,18 +2499,17 @@ class TestProcessMediaV2Vision:
         assert row["vision_url"] is None
 
     # ------------------------------------------------------------------
-    # No implicit retries: a None download result is not re-fetched
+    # Download semantics: vision-only None result warns; save-path failure is retried
     # ------------------------------------------------------------------
 
-    async def test_visionDownloadReturnsNone_downloadsOnceNoRetry(
+    async def test_visionOnlyDownloadReturnsNone_warnsNoData(
         self, testDatabase: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """A None download result is not re-fetched inside the vision branch.
+        """A None download result on the vision-only path warns and skips.
 
-        Regression (review finding 4): ``_storeVisionImage`` used to treat
-        *mediaData is None* as "not downloaded yet" and download again.
-        When the vision branch owns the download it must attempt exactly
-        once; the parse pipeline (off here) is unaffected.
+        The vision branch downloads exactly once per receipt when no bytes
+        are preloaded (a None result is not re-fetched within the same
+        call); the parse pipeline (off here) is unaffected.
 
         Args:
             testDatabase: Fresh in-memory database fixture.
@@ -2525,16 +2544,15 @@ class TestProcessMediaV2Vision:
         assert row["vision_url"] is None
         assert row["status"] == MediaStatus.DONE
 
-    async def test_visionOn_saveOnDownloadFailed_noVisionRetry(
+    async def test_visionOn_saveOnDownloadFailed_visionRetriesDownload(
         self, testDatabase: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """When the save path already attempted a download, vision must not retry.
+        """A save-path download that returned None IS retried by the vision branch.
 
-        Regression (review finding 4): the save-attachments download
-        returned None; the vision branch used to download again (and the
-        parse branch would have made a third attempt). "Attempted but
-        unavailable" must be distinguished from "not attempted": the vision
-        branch adds no second fetch.
+        Owner semantics: ``_storeVisionImage`` downloads whenever *mediaData*
+        is None — a previously failed download (returned None) gets retried,
+        so a transient save-path failure does not cost the chat its stored
+        image. The ``mediaDataDownloadAttempted`` guard was removed.
 
         Args:
             testDatabase: Fresh in-memory database fixture.
@@ -2559,8 +2577,8 @@ class TestProcessMediaV2Vision:
                 fileId=self._FILE_ID,
             )
 
-        # Exactly the save-path attempt: no implicit vision retry.
-        downloadMock.assert_awaited_once()
+        # Attempt 1: the save-attachments path. Attempt 2: the vision retry.
+        assert downloadMock.await_count == 2
         warnings = [r for r in caplog.records if "Native-vision store failed" in r.message]
         assert len(warnings) == 1
         assert "returned no data" in warnings[0].message
@@ -2575,7 +2593,7 @@ class TestProcessMediaV2Vision:
     # Fail closed on normalization: fallback bytes are never stored
     # ------------------------------------------------------------------
 
-    async def test_normalizationFailure50MP_noStoreNoVisionUrl_warnsOnce(
+    async def test_normalizationFailure50MP_noStoreNoVisionUrl_warns(
         self,
         testDatabase: Database,
         tmp_path: Path,
@@ -2589,7 +2607,7 @@ class TestProcessMediaV2Vision:
         stored them, publishing an oversized, EXIF-bearing image via
         vision_url (send time does no resize). With the strict variant the
         store is skipped entirely: no ``storage.store`` call, no
-        ``vision_url``, status untouched, one rate-limited warning.
+        ``vision_url``, status untouched, one WARNING per occurrence.
 
         Args:
             testDatabase: Fresh in-memory database fixture.
@@ -2621,6 +2639,84 @@ class TestProcessMediaV2Vision:
         assert row is not None
         assert row["vision_url"] is None
         assert row["status"] == MediaStatus.DONE
+
+    # ------------------------------------------------------------------
+    # Init-time vision config caching (owner directive: read once, store values)
+    # ------------------------------------------------------------------
+
+    async def test_initCachesVisionSettings(self, testDatabase: Database, tmp_path: Path) -> None:
+        """``BaseBotHandler.__init__`` reads the vision config ONCE and stores it.
+
+        The four receipt-time settings (dimension, output format, quality,
+        store prefix) are cached as attributes; ``_storeVisionImage`` uses
+        them without per-call config reads. The raw ``image-format`` string
+        is converted to the enum exactly once at construction.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+        """
+        CacheService._instance = None
+        cache = CacheService.getInstance()
+        await cache.injectDatabase(testDatabase)
+
+        configManager = self._makeMockConfigManager(storageType="fs", storageBaseDir=str(tmp_path))
+        StorageService.getInstance().injectConfig(configManager)
+        handler = UserMemoriesHandler(
+            configManager=configManager,
+            database=testDatabase,
+            botProvider=BotProvider.TELEGRAM,
+        )
+
+        configManager.getVisionConfig.assert_called_once()
+        assert handler._visionMaxImageDimension == 2048
+        assert handler._visionImageFormat is VisionOutputImageFormat.JPEG
+        assert handler._visionImageQuality == 85
+        assert handler._visionStorePrefix == "vision/"
+
+    async def test_initBadImageFormatString_warnsAndFallsBackToJpeg(
+        self, testDatabase: Database, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An invalid ``image-format`` config string falls back to JPEG with a warning.
+
+        The conversion failure is logged once at construction and the JPEG
+        fallback must take EFFECT downstream: a stored image keeps the
+        ``.jpeg`` extension.
+
+        Args:
+            testDatabase: Fresh in-memory database fixture.
+            tmp_path: pytest tmp dir for the fs storage backend.
+            caplog: pytest log-capture fixture.
+        """
+        badConfig = dict(self._VISION_CONFIG)
+        badConfig["image-format"] = "image/webp"  # not a VisionOutputImageFormat member
+
+        CacheService._instance = None
+        cache = CacheService.getInstance()
+        await cache.injectDatabase(testDatabase)
+
+        configManager = self._makeMockConfigManager(
+            storageType="fs", storageBaseDir=str(tmp_path), visionConfig=badConfig
+        )
+        StorageService.getInstance().injectConfig(configManager)
+
+        with caplog.at_level(logging.WARNING):
+            handler = UserMemoriesHandler(
+                configManager=configManager,
+                database=testDatabase,
+                botProvider=BotProvider.TELEGRAM,
+            )
+
+        warnings = [r for r in caplog.records if "image-format" in r.message]
+        assert len(warnings) == 1
+        assert handler._visionImageFormat is VisionOutputImageFormat.JPEG
+
+        # The cached fallback enum takes effect at store time.
+        await self._processImage(handler, mediaId=self._MEDIA_ID, data=self._makeImageBytes())
+        row = await testDatabase.mediaAttachments.getMediaAttachment(self._MEDIA_ID)
+        assert row is not None
+        assert row["vision_url"] is not None
+        assert str(row["vision_url"]).endswith(".jpeg")
 
 
 class _ModelInfoDict(TypedDict, total=False):

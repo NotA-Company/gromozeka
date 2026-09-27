@@ -27,6 +27,7 @@ from typing import Iterator
 import pytest
 
 from internal.config.manager import ConfigManager
+from internal.config.models import VisionConfigDict
 
 # ============================================================================
 # Fixtures
@@ -1007,6 +1008,10 @@ ttl = 3600
     def testGetVisionConfig(self, tempDir: Path) -> None:
         """Test getting the [bot.vision] section nested under [bot].
 
+        Also pins the ``VisionConfigDict`` import path (``internal.config.models``):
+        the TypedDict is assigned from the NEW location, so a move back into
+        ``manager.py`` or a rename fails this test at import/collection time.
+
         Args:
             tempDir: Temporary directory fixture for test files.
         """
@@ -1027,7 +1032,7 @@ ttl-days = 30
 
         visionConfig = manager.getVisionConfig()
 
-        assert visionConfig == {
+        expected: VisionConfigDict = {
             "max-image-dimension": 2048,
             "image-format": "image/jpeg",
             "image-quality": 85,
@@ -1035,6 +1040,7 @@ ttl-days = 30
             "max-images-per-request": 5,
             "ttl-days": 30,
         }
+        assert visionConfig == expected
 
     def testGetVisionConfigEmpty(self, tempDir: Path) -> None:
         """Test getting vision config when [bot.vision] is absent.

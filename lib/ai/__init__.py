@@ -65,6 +65,7 @@ from .models import (
     ModelResultStatus,
     ModelRunResult,
     ModelStructuredResult,
+    VisionOutputImageFormat,
 )
 
 __all__ = [
@@ -85,4 +86,5 @@ __all__ = [
     "ModelResultStatus",
     "ModelRunResult",
     "ModelStructuredResult",
+    "VisionOutputImageFormat",
 ]
